@@ -1,0 +1,17 @@
+{
+  "name": "@amazon-ai-ops/browser-worker",
+  "version": "1.2.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0",
+    "@amazon-ai-ops/shared-types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}

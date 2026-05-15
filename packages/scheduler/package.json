@@ -1,0 +1,13 @@
+{
+  "name": "@amazon-ai-ops/scheduler",
+  "version": "1.2.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}

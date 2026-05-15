@@ -1,0 +1,17 @@
+{
+  "name": "@amazon-ai-ops/report-parser",
+  "version": "1.2.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5",
+    "@amazon-ai-ops/shared-types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}

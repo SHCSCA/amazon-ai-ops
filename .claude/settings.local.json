@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm --filter @amazon-ai-ops/shared-types run build)",
+      "Bash(node ../../node_modules/vite/bin/vite.js build)",
+      "Bash(ls node_modules/.bin/vite*)",
+      "Bash(ls ../../node_modules/.bin/vite*)"
+    ]
+  }
+}

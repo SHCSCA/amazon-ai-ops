@@ -1,0 +1,17 @@
+{
+  "name": "@amazon-ai-ops/audit-log",
+  "version": "1.2.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@amazon-ai-ops/local-db": "workspace:*",
+    "@amazon-ai-ops/shared-types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,46 @@
+# electron-builder configuration for Amazon AI Ops Desktop
+appId: com.amazon-ai-ops.desktop
+productName: AmazonAIOpsAgent
+copyright: Copyright © 2026 Amazon AI Ops
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+extraMetadata:
+  main: dist/main/index.js
+
+win:
+  target:
+    - target: dir
+      arch:
+        - x64
+  artifactName: ${productName}-${version}.${ext}
+  signAndEditExecutable: false
+
+nsis: {}
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.business
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Office
+
+publish: null
+
+asar: false
+
+npmRebuild: false
