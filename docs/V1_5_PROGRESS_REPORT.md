@@ -1,6 +1,6 @@
 # Amazon AI Ops Agent v1.5 Progress Report
 
-Date: 2026-06-02
+Date: 2026-06-03
 
 ## Goal
 
@@ -8,7 +8,7 @@ Execute the v1.5 plan while preserving the current codebase. Missing modules are
 
 ## Current Completion
 
-Overall v1.5 structural completion is high: the workspace builds, typechecks, packages, and starts from the packaged executable. The remaining production blocker is live Lingxing download-center automation, which still needs manual selector verification against a logged-in real account.
+Overall v1.5 structural completion is high: the workspace builds, typechecks, packages, and starts from the packaged executable. The real Lingxing Ads download-center URL has now been verified in a logged-in browser session. The remaining production blocker is unattended live Lingxing download-center automation, which still needs scoped action selector verification, same-model desktop diagnostic evidence, and a live 8-report E2E run.
 
 Implemented and verified:
 
@@ -88,19 +88,29 @@ Implemented and verified:
 - UI report table now shows automatic retry count and links to screenshot/DOM/Trace evidence when present.
 - Manual row-level `重试` still creates a new single-report retry batch.
 - Stabilized the status-poller success-path test timeout so full parallel test runs do not fail before the second status read under local load. Production polling defaults were not changed.
+- Verified the real ERP login surface in a Playwright persistent browser session: `https://erp.lingxing.com/` uses `input[name="account"]`, `input[name="pwd"]`, and `button.loginBtn`; the older `www.lingxing.com/login` path is not the app login surface.
+- Verified that the Ads system is a distinct surface at `https://ads.lingxing.com/home`; login handling now validates the Ads session after ERP login and throws a clear operator message if Ads authorization/session is not ready.
+- Verified the real Ads download center at `https://ads.lingxing.com/ak_download/download_center/download_report_log/index`; the bundled page model now starts from that URL and allowlists `ads.lingxing.com`.
+- Captured read-only live Ads download center evidence under `output/playwright/lingxing-ads-download-center-2026-06-03T02-16-06-375Z/`, including rows for the 8 SP report types and `.JS-download-report` download links.
+- Captured read-only create-report evidence under `output/playwright/lingxing-ads-create-report-modal-2026-06-03T02-17-17-750Z/`, including store selection, report name, report type, start/end date fields, metric controls, and the `生成报告` button. No live report generation was clicked.
+- Updated selector-candidate collection to include the real Ads download-center DOM families: DataTables rows, Element UI date/select/dialog controls, `.JS-download-report`, and role-based rows/dialogs.
 
 ## Verification
 
 Latest local evidence:
 
+- `pnpm test`: passed, 24 test files / 142 passed / 2 skipped.
+- `pnpm typecheck`: passed across workspace packages and desktop app.
+- `pnpm test -- download-center-page-model-validation.test.ts page-model-diagnostic.test.ts`: passed after accepting `ads.lingxing.com` and updating the bundled page model.
+- `pnpm --filter @amazon-ai-ops/desktop run build:win`: passed and generated `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`.
+- Current installer evidence: size `123073708` bytes, SHA-256 `2D755766B29EB4FA917BF54FFD063B465791102818100B817B3DDE34FF1C472A`, last write time `2026-06-03 10:41:32`.
+- Packaged executable smoke test: `apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe` remained alive after 8 seconds, then was stopped.
 - `pnpm --filter @amazon-ai-ops/desktop test -- collection-preflight-export.test.ts`: passed after extracting the preflight evidence bundle writer, adding the review checklist, and adding `preflight-bundle-index.json`.
 - `pnpm --filter @amazon-ai-ops/desktop test -- download-center-diagnostic-evidence-files.test.ts`: passed after adding the preflight diagnostic evidence bundle helper.
-- `pnpm test`: passed, 23 test files / 139 passed, 2 skipped capability-gated symlink tests.
-- `pnpm typecheck`: passed across workspace packages and desktop app after the latest preflight evidence-bundle export change.
 - `git diff --check`: passed with only expected Windows LF-to-CRLF warnings.
-- `pnpm build`: passed after the latest preflight evidence-bundle export change and generated `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`.
+- `pnpm build`: previously passed after the preflight evidence-bundle export change and generated `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`; the latest installer evidence above is from `build:win`.
 - A re-run after a transient NSIS-stage nonzero exit also passed; the retry reached `building block map` and exited successfully.
-- Packaged executable smoke test: process started and remained alive after 8 seconds.
+- Earlier packaged executable smoke test: process started and remained alive after 8 seconds.
 - Latest post-smoke process check found no remaining `AmazonAIOpsAgent`, `7za`, or `electron` process.
 
 Known build warnings:
@@ -111,23 +121,33 @@ Known build warnings:
 
 ## Active Blocker
 
-Real Lingxing download-center automation is intentionally fail-closed until these live UI details are verified:
+Real Lingxing download-center automation is intentionally fail-closed. These items are now verified:
 
-- Download-center URL and navigation path.
-- Report type names and creation entry points.
-- Date range controls.
-- Create report button.
+- ERP login selectors.
+- Ads system URL and session check.
+- Ads download-center URL and menu link.
+- Read-only historical rows for the 8 SP report types.
+- Create-report page presence, including report name, report type, date fields, metrics, and generate button.
+
+These live automation details still need verification before disabling `requiresManualVerification`:
+
+- Store selector action flow.
+- Report type dropdown action flow for each of the 8 reports.
+- Date range control fill behavior.
+- Create report button click plus any confirm/result dialog.
 - Generation/ready status indicator.
-- Download button and final filenames.
+- Row scoping for report name/date/status.
+- Download button selector scoped by report/date and final filenames.
 - Real Playwright tracing lifecycle for failed download attempts.
 
 Until those are verified, the app can diagnose the page, record retry/evidence metadata, and expose retry workflows, but it must not claim that real Lingxing report creation/download is complete.
 
 ## Next Work
 
-1. Use the `验证页面` diagnostic against a real logged-in Lingxing session and optionally export the diagnostic evidence bundle for manual review.
-2. Review the evidence bundle, solidify the local download-center page-model override from that evidence, and set `requiresManualVerification` to `false`.
-3. Re-run `验证页面` for the same collection date range so the active page-model snapshot has stored selector evidence.
-4. Verify the selector-driven `createReport`, `waitForReportReady`, and `downloadReport` path against real Lingxing.
-5. Verify Playwright trace content against a real Lingxing failure path.
-6. Run live E2E: full 8-report batch, automatic retry failure path, manual single-report retry, manifest verification, and downloaded file parsing.
+1. Run the desktop `验证页面` diagnostic against the updated Ads page model and export the diagnostic evidence bundle.
+2. Review the evidence bundle, solidify a local download-center page-model override with scoped action selectors, and keep `requiresManualVerification` true until all action selector checks are usable and unambiguous.
+3. Re-run `验证页面` for the same collection date range so the enabled page-model snapshot has stored selector evidence.
+4. Run `导出启用审计`; only if the audit passes should `requiresManualVerification` be set to `false`.
+5. Verify the selector-driven `createReport`, `waitForReportReady`, and `downloadReport` path against real Lingxing.
+6. Verify Playwright trace content against a real Lingxing failure path.
+7. Run live E2E: full 8-report batch, automatic retry failure path, manual single-report retry, manifest verification, and downloaded file parsing.

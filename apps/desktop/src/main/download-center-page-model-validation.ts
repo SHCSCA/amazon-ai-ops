@@ -1,6 +1,6 @@
 import type { DownloadCenterActionSelectors, DownloadCenterPageModel } from '@amazon-ai-ops/shared-types';
 
-const ALLOWED_DOWNLOAD_CENTER_HOSTS = new Set(['lingxing.com', 'www.lingxing.com', 'erp.lingxing.com']);
+const ALLOWED_DOWNLOAD_CENTER_HOSTS = new Set(['lingxing.com', 'www.lingxing.com', 'erp.lingxing.com', 'ads.lingxing.com']);
 
 export function selectorUsesReportScope(selector: string): boolean {
   return selector.includes('{reportType}')

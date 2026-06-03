@@ -230,26 +230,66 @@ async function handleBrowserLogin(username: string, password: string): Promise<v
   state.browserController = controller;
 
   await controller.launch();
-  await controller.navigate('https://www.lingxing.com/login');
+  await controller.navigate('https://erp.lingxing.com/');
+  await controller.waitForTimeout(2500);
 
-  // Wait for login page to load
-  await controller.waitForSelector('input[name="username"]', 10000);
+  const page = getControllerPageOrThrow(controller);
+  const accountInput = page.locator('input[name="account"], input[placeholder*="用户名"], input[placeholder*="手机号"]').first();
+  const passwordInput = page.locator('input[name="pwd"], input[type="password"]').first();
+  const needsLogin = await accountInput.isVisible({ timeout: 5000 }).catch(() => false);
 
-  // Fill credentials
-  await controller.fill('input[name="username"]', username);
-  await controller.fill('input[name="password"]', password);
+  if (needsLogin) {
+    await accountInput.fill(username);
+    await passwordInput.fill(password);
+    await Promise.all([
+      page.waitForURL(/\/erp\/home|\/erp\/index|dashboard|home|index/, { timeout: 30000 }).catch(() => undefined),
+      page.locator('button.loginBtn, button:has-text("登录")').first().click(),
+    ]);
+    await controller.waitForTimeout(3000);
+  }
 
-  // Click login
-  await controller.click('button[type="submit"]');
+  const erpLoginState = await page.evaluate(() => ({
+    url: window.location.href,
+    bodyText: document.body?.innerText ?? '',
+    hasAccountInput: Boolean(document.querySelector('input[name="account"]')),
+  }));
+  if (erpLoginState.hasAccountInput && erpLoginState.bodyText.includes('账号登录')) {
+    throw new Error('领星 ERP 登录未完成：仍停留在账号登录页，请检查账号、密码或验证码要求');
+  }
 
-  // Wait for navigation to dashboard
-  await controller.waitForURL(/dashboard|home|index/, 30000);
+  await ensureLingxingAdsSession(controller);
 
   state.isLoggedIn = true;
   state.currentStore = username;
 
   // Store only the username; password stays with the user's manual ERP session.
   state.settingsRepo?.saveCredentials({ username });
+}
+
+async function ensureLingxingAdsSession(controller: BrowserController): Promise<void> {
+  const page = getControllerPageOrThrow(controller);
+  await page.goto('https://ads.lingxing.com/home', { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await controller.waitForTimeout(6000);
+
+  const adsState = await page.evaluate(() => ({
+    url: window.location.href,
+    title: document.title,
+    bodyText: document.body?.innerText ?? '',
+  }));
+  const isAdsPage = adsState.url.includes('ads.lingxing.com')
+    && (adsState.bodyText.includes('领星广告系统')
+      || adsState.bodyText.includes('下载中心')
+      || adsState.bodyText.includes('广告组合')
+      || adsState.bodyText.includes('返回ERP'));
+  const looksLoggedOut = adsState.bodyText.includes('账号登录')
+    || adsState.bodyText.includes('微信登录')
+    || adsState.url.includes('login');
+
+  if (!isAdsPage || looksLoggedOut) {
+    throw new Error(
+      `领星 ERP 已尝试登录，但广告系统会话未就绪。请先在打开的浏览器中进入“广告”系统完成授权，再重试。当前页面：${adsState.title || adsState.url}`,
+    );
+  }
 }
 
 async function handleBrowserLogout(): Promise<void> {
@@ -276,39 +316,9 @@ async function handleScreenshot(label: 'before' | 'after' | 'error'): Promise<st
 // ============================================================================
 
 async function handleDownloadReport(dateRange: { start: string; end: string }): Promise<string> {
-  if (!state.browserController || !state.isLoggedIn) {
-    throw new Error('Not logged in');
-  }
-
-  const controller = state.browserController;
-
-  // Navigate to ad report page
-  await controller.navigate('https://www.lingxing.com/ads/report');
-  await controller.waitForSelector('.ant-table-tbody', 15000);
-
-  // Set date range
-  await controller.click('.ant-picker-input input');
-  await controller.waitForSelector('.ant-picker-panel', 5000);
-
-  // Select custom range - simplified, real implementation needs more steps
-  // Click export button
-  await controller.click('button:has-text("导出")');
-  await controller.waitForSelector('.ant-modal', 5000);
-
-  // In modal, select report type and confirm
-  await controller.click('button:has-text("确认导出")');
-
-  // Wait for download (simulate - real implementation needs file watcher)
-  await controller.waitForTimeout(5000);
-
-  // Find downloaded file
-  const downloadDir = DOWNLOADS_DIR;
-  if (!fs.existsSync(downloadDir)) {
-    fs.mkdirSync(downloadDir, { recursive: true });
-  }
-
-  // Return path (actual file path would be determined by file watcher)
-  return downloadDir;
+  throw new Error(
+    `旧版单报表下载入口已停用，避免访问过期的领星页面和未验证 selector。请在 v1.5 工作台使用“采集预检”/“验证页面”/“启动采集”流程。日期范围：${dateRange.start} - ${dateRange.end}`,
+  );
 }
 
 async function handleParseReport(filePath: string): Promise<number> {
@@ -1060,7 +1070,29 @@ async function collectDownloadCenterSelectorCandidates(controller: BrowserContro
       '用户搜索词',
       '日期',
     ];
-    const elements = Array.from(document.querySelectorAll('button, input, textarea, [role="button"], a, tr, .ant-picker, .ant-select, .ant-modal, .ant-table-row'));
+    const elements = Array.from(document.querySelectorAll([
+      'button',
+      'input',
+      'textarea',
+      '[role="button"]',
+      '[role="dialog"]',
+      'a',
+      'tr',
+      'tr[role="row"]',
+      'td',
+      '.ant-picker',
+      '.ant-select',
+      '.ant-modal',
+      '.ant-table-row',
+      '.el-date-editor',
+      '.el-select',
+      '.el-dialog',
+      '.el-checkbox',
+      '.el-radio',
+      '.JS-download-report',
+      '.dataTable',
+      '.vxe-body--row',
+    ].join(', ')));
 
     function maskText(value: string): string {
       return value
@@ -1128,11 +1160,14 @@ async function collectDownloadCenterSelectorCandidates(controller: BrowserContro
 
     function roleFor(element: Element, text: string): string {
       const tag = element.tagName.toLowerCase();
-      if (tag === 'button' || element.getAttribute('role') === 'button') return text.includes('下载') ? 'downloadButton' : 'createOrConfirmButton';
+      if (element.classList.contains('JS-download-report')) return 'downloadButton';
+      if (tag === 'button' || tag === 'a' || element.getAttribute('role') === 'button') {
+        return text.includes('下载') ? 'downloadButton' : 'createOrConfirmButton';
+      }
       if (tag === 'input' || tag === 'textarea') return 'input';
-      if (tag === 'tr' || element.classList.contains('ant-table-row')) return 'readyReportSelector';
-      if (element.classList.contains('ant-picker')) return 'dateInput';
-      if (element.classList.contains('ant-modal')) return 'confirmDialog';
+      if (tag === 'tr' || element.getAttribute('role') === 'row' || element.classList.contains('ant-table-row') || element.classList.contains('vxe-body--row')) return 'readyReportSelector';
+      if (element.classList.contains('ant-picker') || element.classList.contains('el-date-editor') || text.includes('开始日期') || text.includes('结束日期')) return 'dateInput';
+      if (element.classList.contains('ant-modal') || element.classList.contains('el-dialog') || element.getAttribute('role') === 'dialog') return 'confirmDialog';
       return 'candidate';
     }
 

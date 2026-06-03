@@ -93,6 +93,12 @@ describe('validateDownloadCenterPageModel', () => {
     }))).toThrow(/领星域名/);
   });
 
+  it('accepts the real Lingxing Ads download center host', () => {
+    expect(() => validateDownloadCenterPageModel(model({
+      candidateUrls: ['https://ads.lingxing.com/ak_download/download_center/download_report_log/index'],
+    }))).not.toThrow();
+  });
+
   it('rejects unsafe action selector timeouts', () => {
     expect(() => validateDownloadCenterPageModel(model({
       actionSelectors: { ...verifiedSelectors(), readyTimeoutMs: 999 },

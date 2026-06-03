@@ -31,29 +31,30 @@
 | Acceptance audit diagnostic lookup regression | `download-center-diagnostic-store.test.ts` verifies the default diagnostic lookup is constrained by page model name, exact page-model snapshot JSON, and date range | Implemented |
 | Acceptance audit path-boundary regression | `apps/desktop/src/main/acceptance-audit-export.test.ts` covers safe manifest path handling, same-prefix sibling directory rejection, `manifest.json` basename enforcement, unreadable JSON handling, export directory segment sanitization, and capability-gated symlink escape rejection | Implemented; symlink case runs only when the OS account can create file symlinks |
 | File path and status display | v1.5 report batch table, open path IPC constrained to app-owned evidence/download/export directories and safe file extensions | Implemented |
-| Download center page-model diagnostic | Read-only diagnostic IPC/UI, `download_center_diagnostics` table, screenshot path, sanitized DOM snapshot, selector candidates, action selector locator checks, active page-model source/readiness display, diagnostic screenshot/DOM evidence file readiness tests, `evaluateDownloadCenterPageModel` test | Implemented |
+| Download center page-model diagnostic | Read-only diagnostic IPC/UI, `download_center_diagnostics` table, screenshot path, sanitized DOM snapshot, selector candidates, action selector locator checks, active page-model source/readiness display, diagnostic screenshot/DOM evidence file readiness tests, `evaluateDownloadCenterPageModel` test, and bundled Ads download-center URL/verify selectors from live evidence | Implemented |
 | Download center diagnostic evidence bundle | UI/IPC export by persisted diagnostic id creates a local folder with DB-loaded diagnostic JSON, active page model, readiness JSON, selector candidates, action selector checks, screenshot/DOM evidence copies, and a manual verification checklist | Implemented structurally |
 | Download center page-model draft from diagnostic | `buildDownloadCenterPageModelDraft`, desktop `生成模型草稿` IPC/UI export by persisted diagnostic id, exported draft JSON and solidification notes; draft keeps `requiresManualVerification: true` so it cannot enable unattended collection by itself | Implemented structurally |
 | Download center page-model enablement audit | `auditDownloadCenterPageModelEnablement`, desktop `导出启用审计` IPC/UI export, JSON/Markdown audit, active saved model, optional DB-loaded diagnostic evidence, diagnostic screenshot/DOM file readiness, safe diagnostic evidence copies, and machine-readable `enablement-bundle-index.json`; audit says yes only when scoped automation selectors, same-model/same-date setup diagnostic evidence, and local diagnostic evidence files are present | Implemented structurally |
-| Download center page-model override validation | `download-center-page-model-validation.test.ts` covers manual-verification-on bundled models, fully scoped verified selectors, missing required action selectors, missing report/date placeholders, non-HTTPS/non-allowlisted URLs, and timeout bounds | Implemented |
+| Download center page-model override validation | `download-center-page-model-validation.test.ts` covers manual-verification-on bundled models, fully scoped verified selectors, missing required action selectors, missing report/date placeholders, non-HTTPS/non-allowlisted URLs, trusted `ads.lingxing.com` download-center URLs, and timeout bounds | Implemented |
 | Download center page-model override history | Saving an override writes metadata and backs up the previous override; resetting backs up the current override before removal; `download-center-page-model-override-store.test.ts` covers first save, replacement backup, and reset backup | Implemented |
 | Collection preflight | `buildDownloadCenterCollectionPreflight`, desktop `采集预检`, and hard start gates for `启动采集` / row-level `重试` combine page-model automation readiness, latest same-model/same-date diagnostic evidence readiness, local screenshot/DOM evidence file presence, and browser login/session readiness before any batch is created or live click/download action runs | Implemented structurally; real pass still requires live diagnostic evidence |
 | Collection preflight export | Desktop `导出预检` writes `collection-preflight.json`, `collection-preflight.md`, `active-page-model.json`, `diagnostic-evidence-files.json`, `preflight-review-checklist.md`, and machine-readable `preflight-bundle-index.json`; when a matching diagnostic exists, it also writes `diagnostic.json` plus safe copied diagnostic screenshot/DOM evidence into a local export folder for before/after verification evidence | Implemented structurally |
 | Selector-driven download-center automation path | Page model `actionSelectors`, optional `statusTextSelector`, local page-model override save/reset, readiness gate, recent same-model/same-date diagnostic setup-selector gate with unit tests, per-action visible-locator uniqueness and report/date scope preflight, guarded Playwright create/wait/status/download implementation | Implemented structurally: disabled until selectors are manually verified and diagnosed |
-| Real Lingxing download center automation | Page model requires manual verification; create/download fail closed | Needs manual verification |
-| E2E with real Lingxing session | Requires logged-in Lingxing account and real page selectors | Not verified |
+| Real Lingxing download center automation | Real Ads download-center URL and read-only DOM evidence are verified; bundled model points at `https://ads.lingxing.com/ak_download/download_center/download_report_log/index`; action selectors still require manual verification and create/download fail closed | Needs manual verification |
+| E2E with real Lingxing session | Real ERP login, Ads navigation, Ads download-center read-only page, and create-report page were verified with screenshots/DOM snapshots; no report was generated or downloaded | Partially verified; live create/download not verified |
 | User can open downloaded/evidence files | UI open path IPC implemented with path/extension allowlist; real downloaded report files still need verified page model | Partially verified |
 
 ## Remaining Manual Gate
 
-The only major blocker is the real Lingxing download center page model. The implementation intentionally throws before creating or downloading reports until these items are verified against the live Lingxing UI:
+The only major blocker is the real Lingxing download center action model. The real Ads URL and read-only page have been verified, but the implementation intentionally throws before creating or downloading reports until these items are verified against the live Lingxing UI and saved through a same-model diagnostic:
 
-- download center URL
-- report type names
+- store selector action flow
+- report type dropdown action flow for each of the 8 report types
 - date range controls, including both start and end date selectors before automation can be enabled
-- create report button
+- create report button and any confirm/result dialog
 - generation status indicator
-- download button
+- report/date-scoped ready row selector
+- report/date-scoped download button
 - browser download behavior and final filenames
 
 Once these selectors are confirmed, save them as the local download-center page-model override and set `requiresManualVerification` to `false`. The existing collector port will then use the selector-driven Playwright actions. Local overrides are validated on save and read; invalid overrides are reported in the UI and the bundled model is shown for recovery.

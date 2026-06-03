@@ -10,10 +10,11 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | GitHub 推送 | 已完成 | `origin/master` 指向 v1.5 当前代码 |
 | 本地测试 | 通过 | `pnpm test` 通过，最近记录见 `docs/V1_5_PROGRESS_REPORT.md` |
 | 类型检查 | 通过 | `pnpm typecheck` 通过 |
-| 桌面构建 | 通过 | `pnpm build` 生成 Windows 桌面包 |
+| 桌面构建 | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:win` 生成 Windows 安装包 |
 | 打包应用冒烟 | 通过 | 打包 exe 可启动并保持运行 |
+| 当前安装包 | 已生成 | `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`，SHA-256 `2D755766B29EB4FA917BF54FFD063B465791102818100B817B3DDE34FF1C472A`，大小 `123073708` bytes |
 | 关键词/Listing v1.5 工作流 | 已结构完成 | 导入、诊断、机会评分、建议、草稿、导出已接入 |
-| 领星下载中心采集 | 结构完成，未实采通过 | 自动化路径 fail-closed，等待真实登录会话验证页面模型 |
+| 领星下载中心采集 | 真实广告下载中心已定位，自动化仍未放行 | 已用真实登录会话定位 Ads 下载中心；动作 selectors 和 8 报表 E2E 仍 fail-closed |
 
 ## 核心目标
 
@@ -43,19 +44,24 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | SQLite | v1.5 批次、文件、关键词、Listing、诊断、草稿等表已补齐 |
 | 桌面 UI/API | IPC、preload、v1.5 工作台界面已接入 |
 
-## 当前卡点
+## 真实浏览器验证结论
 
-| 卡点 | 当前证据 | 结论 |
+| 项目 | 当前证据 | 结论 |
 |---|---|---|
-| 领星下载中心真实 URL | 真实浏览器打开候选地址后，`erp.lingxing.com` 跳回登录页 | 未登录状态不能验证内部下载中心 URL |
-| 官网候选地址 | `https://www.lingxing.com/download-center` 返回官网 404 页面 | 不是可用下载中心 |
-| 下载中心 action selectors | 当前无法进入已登录内部页面 | 不允许猜测 selector |
+| ERP 登录入口 | `https://erp.lingxing.com/` 真实登录页字段为 `input[name="account"]`、`input[name="pwd"]`、`button.loginBtn` | 旧的 `www.lingxing.com/login` 和 `username/password` selector 不可用 |
+| Ads 系统入口 | ERP 顶部“广告”进入 `https://ads.lingxing.com/home`，页面显示“领星广告系统” | ERP 登录和 Ads 会话必须分别校验，不能只看 ERP 是否登录 |
+| Ads 下载中心真实 URL | `https://ads.lingxing.com/ak_download/download_center/download_report_log/index`，标题“下载中心” | 已固化为内置 page model 的首选候选 URL |
+| 下载中心已读证据 | 页面存在“创建报告”“搜索店铺”“报告类型”“生成成功”“下载”，下载链接类名 `.JS-download-report` | 只证明只读页面和历史行可见，未证明自动创建/下载可安全执行 |
+| 创建报告页面 | `create_report` 页面存在店铺选择、报告名称、报告类型、开始/结束日期、每日明细、全部指标、生成报告按钮 | 已记录 DOM/截图，但尚未点击“生成报告” |
+| 下载中心 action selectors | `actionSelectors` 仍为空且 `requiresManualVerification: true` | 不允许基于单次 DOM 猜测无人值守动作 selector |
 | 真实 8 报表 E2E | 需要已登录领星账号和真实页面模型 | 未完成 |
 | 真实失败 Trace 内容 | 需要真实失败路径触发 | 未完成 |
 
 ## 真实浏览器验证记录
 
-用户明确要求必须打开浏览器验证，不能猜测。已使用 Playwright 持久化 Chromium 会话打开页面模型候选 URL，产物在本地：
+用户明确要求必须打开浏览器验证，不能猜测。已使用 Playwright 持久化 Chromium 会话完成两轮验证。
+
+第一轮未登录候选 URL 验证产物：
 
 `output/playwright/lingxing-download-center-2026-06-03T01-35-38-629Z/`
 
@@ -65,7 +71,18 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | `https://www.lingxing.com/download-center` | 停留在官网 URL，页面提示“对不起，您访问的页面不存在” | 官网路径不可用 |
 | `https://erp.lingxing.com/report/download` | 跳转到 `https://erp.lingxing.com/`，页面内容为登录 | 当前浏览器会话未登录 |
 
-因此，当前只能证明“未登录会话会被重定向到登录页”，不能证明下载中心内部 selector。下一步必须在同一持久化浏览器 profile 中完成领星登录，再重新运行诊断。
+第二轮真实登录和 Ads 下载中心验证产物：
+
+| 证据目录 | 证明内容 |
+|---|---|
+| `output/playwright/lingxing-login-probe-2026-06-03T01-56-31-491Z/` | ERP 登录页真实字段和按钮 selector |
+| `output/playwright/lingxing-login-session-2026-06-03T01-57-48-284Z/` | 真实账号登录后进入 `https://erp.lingxing.com/erp/home` |
+| `output/playwright/lingxing-ad-menu-probe-2026-06-03T02-12-52-205Z/` | ERP “广告”入口进入 Ads 系统 |
+| `output/playwright/lingxing-ads-links-2026-06-03T02-14-53-432Z/` | Ads 系统存在下载中心链接 `/ak_download/download_center/download_report_log/index` |
+| `output/playwright/lingxing-ads-download-center-2026-06-03T02-16-06-375Z/` | 真实 Ads 下载中心截图、HTML、JSON 快照，历史 8 类报告行可见 |
+| `output/playwright/lingxing-ads-create-report-modal-2026-06-03T02-17-17-750Z/` | 创建报告页面截图、HTML、JSON 快照；未点击“生成报告” |
+
+因此，当前已证明下载中心真实页面位于 Ads 系统，而不是旧的 ERP/官网候选 URL。下一步不是继续找 URL，而是用桌面应用的 `验证页面` 针对新内置 page model 生成同模型同日期诊断证据，再基于证据固化动作 selectors。
 
 ## 下一个 AI 接手步骤
 
@@ -73,8 +90,8 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 |---:|---|---|
 | 1 | 确认 Git 状态 | `git status --short --branch` 显示 `master...origin/master`，除本地运行产物外无未提交代码 |
 | 2 | 确认不要提交运行产物 | `output/`、`storage/` 是本地证据和浏览器 profile，已加入 `.gitignore` |
-| 3 | 用真实浏览器登录领星 | 使用项目浏览器架构或桌面应用保持同一 `storage/browser-data` profile |
-| 4 | 运行下载中心诊断 | 在桌面 UI 使用 `验证页面`，确认进入真实下载中心，而不是登录页 |
+| 3 | 用真实浏览器登录领星 | 使用项目浏览器架构或桌面应用保持同一 `storage/browser-data` profile，并同时确认 Ads 系统会话 |
+| 4 | 运行下载中心诊断 | 在桌面 UI 使用 `验证页面`，确认进入 `ads.lingxing.com` 下载中心，而不是 ERP 登录页或 ERP 导出中心 |
 | 5 | 导出诊断证据包 | 使用 `导出证据包`，保存截图、DOM、selector candidates、action selector checks |
 | 6 | 固化页面模型 | 从证据中填写 `actionSelectors`，保存本地 page-model override |
 | 7 | 启用前审计 | 运行 `导出启用审计`，只有 scoped selectors 和同模型同日期诊断都通过后才能将 `requiresManualVerification` 设为 `false` |
@@ -102,4 +119,4 @@ pnpm --filter @amazon-ai-ops/desktop run build:win
 
 ## 交付边界
 
-当前交付是“结构闭环 + 本地验证通过 + 主分支已推送”。还不能宣称“领星真实下载中心自动采集完成”。真实采集完成的最低证据是：已登录真实领星会话、同一 page-model snapshot 的诊断证据、可唯一定位的 action selectors、完整 8 报表下载、manifest 与数据库/文件系统一致、最终验收审计通过。
+当前交付是“结构闭环 + 本地验证通过 + 真实 Ads 下载中心只读定位完成”。还不能宣称“领星真实下载中心自动采集完成”。真实采集完成的最低证据是：已登录真实领星和 Ads 会话、同一 page-model snapshot 的桌面诊断证据、可唯一定位的 action selectors、完整 8 报表下载、manifest 与数据库/文件系统一致、最终验收审计通过。

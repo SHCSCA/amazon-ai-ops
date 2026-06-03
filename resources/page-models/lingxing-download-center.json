@@ -1,12 +1,12 @@
 {
   "name": "lingxing-download-center",
-  "description": "领星下载中心广告报告采集页面模型。真实选择器需要人工用领星页面验证后固化。",
+  "description": "领星广告系统下载中心页面模型。真实动作选择器需要人工用领星页面验证后固化。",
   "candidateUrls": [
-    "https://erp.lingxing.com/download-center",
-    "https://www.lingxing.com/download-center",
-    "https://erp.lingxing.com/report/download"
+    "https://ads.lingxing.com/ak_download/download_center/download_report_log/index",
+    "https://ads.lingxing.com/home",
+    "https://erp.lingxing.com/erp/home"
   ],
-  "entryHints": ["下载中心", "报表下载", "广告报告"],
+  "entryHints": ["下载中心", "创建报告", "领星广告系统"],
   "reportNames": [
     "广告活动报告",
     "广告组报告",
@@ -18,10 +18,12 @@
     "用户搜索词报告"
   ],
   "verifySelectors": [
-    { "name": "table", "selector": ".ant-table-tbody", "required": false },
-    { "name": "modal", "selector": ".ant-modal", "required": false },
-    { "name": "primary-button", "selector": ".ant-btn-primary", "required": false },
-    { "name": "date-picker", "selector": ".ant-picker", "required": false }
+    { "name": "ads-download-center-menu", "selector": "a[href=\"/ak_download/download_center/download_report_log/index\"]", "required": true },
+    { "name": "download-link", "selector": ".JS-download-report", "required": false },
+    { "name": "store-search", "selector": "input[placeholder=\"搜索店铺\"]", "required": false },
+    { "name": "report-name-input", "selector": "input[placeholder=\"报告名称\"]", "required": false },
+    { "name": "date-start-input", "selector": "input[placeholder=\"开始日期\"]", "required": false },
+    { "name": "date-end-input", "selector": "input[placeholder=\"结束日期\"]", "required": false }
   ],
   "actionSelectors": {
     "reportSearchInput": "",
