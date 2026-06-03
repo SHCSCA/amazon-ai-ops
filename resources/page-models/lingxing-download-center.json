@@ -1,0 +1,39 @@
+{
+  "name": "lingxing-download-center",
+  "description": "领星下载中心广告报告采集页面模型。真实选择器需要人工用领星页面验证后固化。",
+  "candidateUrls": [
+    "https://erp.lingxing.com/download-center",
+    "https://www.lingxing.com/download-center",
+    "https://erp.lingxing.com/report/download"
+  ],
+  "entryHints": ["下载中心", "报表下载", "广告报告"],
+  "reportNames": [
+    "广告活动报告",
+    "广告组报告",
+    "广告位报告",
+    "广告（推广的商品）报告",
+    "自动投放报告",
+    "关键词报告",
+    "商品投放报告",
+    "用户搜索词报告"
+  ],
+  "verifySelectors": [
+    { "name": "table", "selector": ".ant-table-tbody", "required": false },
+    { "name": "modal", "selector": ".ant-modal", "required": false },
+    { "name": "primary-button", "selector": ".ant-btn-primary", "required": false },
+    { "name": "date-picker", "selector": ".ant-picker", "required": false }
+  ],
+  "actionSelectors": {
+    "reportSearchInput": "",
+    "dateStartInput": "",
+    "dateEndInput": "",
+    "createReportButton": "",
+    "confirmCreateButton": "",
+    "readyReportSelector": "",
+    "statusTextSelector": "",
+    "downloadButton": "",
+    "readyTimeoutMs": 300000,
+    "downloadTimeoutMs": 120000
+  },
+  "requiresManualVerification": true
+}

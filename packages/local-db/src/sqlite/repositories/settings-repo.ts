@@ -53,9 +53,11 @@ export class SettingsRepository {
   }
 
   // Desktop 主进程使用的高级方法
-  saveCredentials(creds: { username: string; password: string }): void {
+  saveCredentials(creds: { username: string; password?: string }): void {
     this.set('login_username', creds.username);
-    this.set('login_password', creds.password);
+    if (creds.password) {
+      this.set('login_password', creds.password);
+    }
   }
 
   save(settings: Record<string, string>): void {

@@ -20,6 +20,7 @@ export class BrowserController {
     this.context = await chromium.launchPersistentContext(this.userDataDir, {
       headless: this.config.headless ?? false,
       viewport: this.config.viewport || { width: 1400, height: 900 },
+      acceptDownloads: true,
       args: ['--disable-blink-features=AutomationControlled'],
     });
     this.page = this.context.pages()[0] || await this.context.newPage();

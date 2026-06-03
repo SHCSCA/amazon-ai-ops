@@ -1,0 +1,11 @@
+{
+  "rawKeyword": ["Customer Search Term", "Search Term", "用户搜索词", "搜索词"],
+  "campaignName": ["Campaign", "广告活动"],
+  "adGroupName": ["Ad Group", "广告组"],
+  "impressions": ["Impressions", "曝光"],
+  "clicks": ["Clicks", "点击"],
+  "cost": ["Spend", "花费"],
+  "orders": ["Orders", "订单"],
+  "sales": ["Sales", "销售额"],
+  "acos": ["ACOS"]
+}

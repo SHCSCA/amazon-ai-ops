@@ -7,3 +7,4 @@ export * from './recommendation';
 export * from './task';
 export * from './browser';
 export * from './common';
+export * from './v1_5';

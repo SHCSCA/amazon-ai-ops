@@ -11,12 +11,19 @@ files:
   - dist/**/*
   - package.json
 
+extraResources:
+  - from: ../../resources
+    to: resources
+
 extraMetadata:
   main: dist/main/index.js
 
 win:
   target:
     - target: dir
+      arch:
+        - x64
+    - target: nsis
       arch:
         - x64
   artifactName: ${productName}-${version}.${ext}

@@ -1,15 +1,11 @@
 import { Database } from 'duckdb';
 import * as path from 'path';
-import { app } from 'electron';
 
 function getUserDataPath(): string {
-  try {
-    return app.getPath('userData');
-  } catch {
-    return process.env.APPDATA
+  return process.env.AMAZON_AI_OPS_USER_DATA
+    || (process.env.APPDATA
       ? path.join(process.env.APPDATA, 'AmazonAIOps')
-      : path.join(process.env.HOME || '', 'AmazonAIOps');
-  }
+      : path.join(process.env.HOME || '', 'AmazonAIOps'));
 }
 
 let _db: Database | null = null;

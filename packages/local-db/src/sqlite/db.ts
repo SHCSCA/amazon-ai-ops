@@ -1,17 +1,12 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
-import { app } from 'electron';
 
 // 获取用户数据目录
 function getUserDataPath(): string {
-  try {
-    return app.getPath('userData');
-  } catch {
-    // Electron 外部使用
-    return process.env.APPDATA 
+  return process.env.AMAZON_AI_OPS_USER_DATA
+    || (process.env.APPDATA
       ? path.join(process.env.APPDATA, 'AmazonAIOps')
-      : path.join(process.env.HOME || '', 'AmazonAIOps');
-  }
+      : path.join(process.env.HOME || '', 'AmazonAIOps'));
 }
 
 let db: Database.Database | null = null;
@@ -228,6 +223,242 @@ function runMigrations(database: Database.Database): void {
     )
   `);
 
+  // v1.5 lingxing_report_batches
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS lingxing_report_batches (
+      id TEXT PRIMARY KEY,
+      app_version TEXT,
+      date_start TEXT NOT NULL,
+      date_end TEXT NOT NULL,
+      status TEXT NOT NULL,
+      download_dir TEXT NOT NULL,
+      manifest_path TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      completed_at TEXT
+    )
+  `);
+  ensureColumn(database, 'lingxing_report_batches', 'app_version', 'TEXT');
+
+  // v1.5 lingxing_report_files
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS lingxing_report_files (
+      id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL,
+      report_type TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      max_auto_retries INTEGER DEFAULT 2,
+      auto_retry_count INTEGER DEFAULT 0,
+      file_path TEXT,
+      file_size_bytes INTEGER DEFAULT 0,
+      error_message TEXT,
+      attempt_errors_json TEXT DEFAULT '[]',
+      failure_screenshot_path TEXT,
+      failure_dom_snapshot_path TEXT,
+      failure_trace_path TEXT,
+      trace_unavailable_reason TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (batch_id) REFERENCES lingxing_report_batches(id)
+    )
+  `);
+  ensureColumn(database, 'lingxing_report_files', 'max_auto_retries', 'INTEGER DEFAULT 2');
+  ensureColumn(database, 'lingxing_report_files', 'auto_retry_count', 'INTEGER DEFAULT 0');
+  ensureColumn(database, 'lingxing_report_files', 'attempt_errors_json', "TEXT DEFAULT '[]'");
+  ensureColumn(database, 'lingxing_report_files', 'failure_screenshot_path', 'TEXT');
+  ensureColumn(database, 'lingxing_report_files', 'failure_dom_snapshot_path', 'TEXT');
+  ensureColumn(database, 'lingxing_report_files', 'failure_trace_path', 'TEXT');
+  ensureColumn(database, 'lingxing_report_files', 'trace_unavailable_reason', 'TEXT');
+
+  // v1.5 keyword_metrics
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS keyword_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      normalized_keyword TEXT NOT NULL,
+      raw_keyword TEXT NOT NULL,
+      source TEXT NOT NULL,
+      asin TEXT,
+      impressions INTEGER DEFAULT 0,
+      clicks INTEGER DEFAULT 0,
+      cost REAL DEFAULT 0,
+      orders INTEGER DEFAULT 0,
+      sales REAL DEFAULT 0,
+      acos REAL DEFAULT 0,
+      cvr REAL DEFAULT 0,
+      source_file TEXT,
+      source_row INTEGER,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // v1.5 listing_content
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS listing_content (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      asin TEXT NOT NULL,
+      title TEXT DEFAULT '',
+      bullets_json TEXT DEFAULT '[]',
+      a_plus TEXT,
+      image_copy TEXT,
+      backend_terms TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // v1.5 keyword_coverage
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS keyword_coverage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      asin TEXT NOT NULL,
+      normalized_keyword TEXT NOT NULL,
+      covered INTEGER DEFAULT 0,
+      sections_json TEXT DEFAULT '[]',
+      strength REAL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // v1.5 keyword_opportunities
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS keyword_opportunities (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      asin TEXT,
+      normalized_keyword TEXT NOT NULL,
+      opportunity_level TEXT NOT NULL,
+      score REAL DEFAULT 0,
+      evidence TEXT,
+      risk_flags_json TEXT DEFAULT '[]',
+      recommended_sections_json TEXT DEFAULT '[]',
+      status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  ensureColumn(database, 'keyword_opportunities', 'asin', 'TEXT');
+
+  // v1.5 listing_suggestions
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS listing_suggestions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      asin TEXT NOT NULL,
+      keyword TEXT NOT NULL,
+      section TEXT NOT NULL,
+      current_text TEXT,
+      suggested_text TEXT NOT NULL,
+      evidence TEXT,
+      risk_warnings_json TEXT DEFAULT '[]',
+      status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // v1.5 listing_drafts
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS listing_drafts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      asin TEXT NOT NULL,
+      section TEXT NOT NULL,
+      current_text TEXT,
+      drafted_text TEXT NOT NULL,
+      keywords_json TEXT DEFAULT '[]',
+      evidence TEXT,
+      risk_warnings_json TEXT DEFAULT '[]',
+      source TEXT DEFAULT 'rule',
+      status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // v1.5 download_center_diagnostics
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS download_center_diagnostics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      app_version TEXT,
+      page_model TEXT NOT NULL,
+      page_model_source TEXT,
+      page_model_snapshot_json TEXT,
+      date_start TEXT,
+      date_end TEXT,
+      url TEXT,
+      title TEXT,
+      ready INTEGER DEFAULT 0,
+      requires_manual_verification INTEGER DEFAULT 1,
+      matched_entry_hints_json TEXT DEFAULT '[]',
+      matched_report_names_json TEXT DEFAULT '[]',
+      selector_checks_json TEXT DEFAULT '[]',
+      missing_required_selectors_json TEXT DEFAULT '[]',
+      selector_candidates_json TEXT DEFAULT '[]',
+      action_selector_checks_json TEXT DEFAULT '[]',
+      screenshot_path TEXT,
+      dom_snapshot_path TEXT,
+      error_message TEXT,
+      checked_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  ensureColumn(database, 'download_center_diagnostics', 'selector_candidates_json', "TEXT DEFAULT '[]'");
+  ensureColumn(database, 'download_center_diagnostics', 'action_selector_checks_json', "TEXT DEFAULT '[]'");
+  ensureColumn(database, 'download_center_diagnostics', 'dom_snapshot_path', 'TEXT');
+  ensureColumn(database, 'download_center_diagnostics', 'page_model_source', 'TEXT');
+  ensureColumn(database, 'download_center_diagnostics', 'page_model_snapshot_json', 'TEXT');
+  ensureColumn(database, 'download_center_diagnostics', 'date_start', 'TEXT');
+  ensureColumn(database, 'download_center_diagnostics', 'date_end', 'TEXT');
+
+  // v1.5 duplicate-import safeguards. Keep one row per imported source row and
+  // one current opportunity per ASIN/keyword pair before adding unique indexes.
+  database.exec(`
+    DELETE FROM keyword_metrics
+    WHERE source_file IS NOT NULL
+      AND source_row IS NOT NULL
+      AND id NOT IN (
+        SELECT keep_id
+        FROM (
+          SELECT MIN(id) AS keep_id
+          FROM keyword_metrics
+          WHERE source_file IS NOT NULL
+            AND source_row IS NOT NULL
+          GROUP BY source, source_file, source_row
+        )
+      );
+
+    UPDATE keyword_opportunities
+    SET status = CASE
+      WHEN EXISTS (
+        SELECT 1 FROM keyword_opportunities duplicate
+        WHERE COALESCE(duplicate.asin, '') = COALESCE(keyword_opportunities.asin, '')
+          AND duplicate.normalized_keyword = keyword_opportunities.normalized_keyword
+          AND duplicate.status = 'accepted'
+      ) THEN 'accepted'
+      WHEN EXISTS (
+        SELECT 1 FROM keyword_opportunities duplicate
+        WHERE COALESCE(duplicate.asin, '') = COALESCE(keyword_opportunities.asin, '')
+          AND duplicate.normalized_keyword = keyword_opportunities.normalized_keyword
+          AND duplicate.status = 'ignored'
+      ) THEN 'ignored'
+      ELSE status
+    END
+    WHERE id IN (
+      SELECT keep_id
+      FROM (
+        SELECT MIN(id) AS keep_id
+        FROM keyword_opportunities
+        GROUP BY COALESCE(asin, ''), normalized_keyword
+      )
+    );
+
+    DELETE FROM keyword_opportunities
+    WHERE id NOT IN (
+      SELECT keep_id
+      FROM (
+        SELECT MIN(id) AS keep_id
+        FROM keyword_opportunities
+        GROUP BY COALESCE(asin, ''), normalized_keyword
+      )
+    );
+  `);
+
   // 创建索引
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_ad_metrics_date ON ad_daily_metrics(date);
@@ -236,7 +467,26 @@ function runMigrations(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_recommendations_status ON action_recommendations(status);
     CREATE INDEX IF NOT EXISTS idx_recommendations_risk ON action_recommendations(risk_level);
     CREATE INDEX IF NOT EXISTS idx_action_logs_created ON action_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_lingxing_report_files_batch ON lingxing_report_files(batch_id);
+    CREATE INDEX IF NOT EXISTS idx_keyword_metrics_keyword ON keyword_metrics(normalized_keyword);
+    CREATE INDEX IF NOT EXISTS idx_keyword_metrics_source_file ON keyword_metrics(source, source_file);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_keyword_metrics_unique_source_file_row ON keyword_metrics(source, source_file, source_row)
+      WHERE source_file IS NOT NULL AND source_row IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_keyword_opportunities_status ON keyword_opportunities(status);
+    CREATE INDEX IF NOT EXISTS idx_keyword_opportunities_asin_keyword ON keyword_opportunities(asin, normalized_keyword);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_keyword_opportunities_unique_asin_keyword ON keyword_opportunities(COALESCE(asin, ''), normalized_keyword);
+    CREATE INDEX IF NOT EXISTS idx_listing_suggestions_status ON listing_suggestions(status);
+    CREATE INDEX IF NOT EXISTS idx_listing_drafts_status ON listing_drafts(status);
+    CREATE INDEX IF NOT EXISTS idx_download_center_diagnostics_checked ON download_center_diagnostics(checked_at);
+    CREATE INDEX IF NOT EXISTS idx_download_center_diagnostics_model_date ON download_center_diagnostics(page_model, date_start, date_end, checked_at);
   `);
+}
+
+function ensureColumn(database: Database.Database, tableName: string, columnName: string, definition: string): void {
+  const columns = database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === columnName)) {
+    database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
 }
 
 export function closeSqlite(): void {

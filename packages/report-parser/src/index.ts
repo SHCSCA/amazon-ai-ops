@@ -1,5 +1,10 @@
 export { ReportParser } from './parser';
+export { keywordMetricDiagnosticsToCsv, parseKeywordMetrics, parseKeywordMetricsWithDiagnostics } from './keyword-metrics';
+export type { KeywordMetricParseDiagnostics, KeywordMetricParseIssue, KeywordMetricParseResult } from './keyword-metrics';
+export { parseListingContent } from './listing-content';
 export { normalizeFieldName, mapRowFields, AD_REPORT_FIELD_MAPPING } from './field-mapper';
 export { validateBatch, cleanNumericFields, validateMetrics } from './validators';
+export type { ParseKeywordMetricsOptions } from './keyword-metrics';
+export type { ParseListingContentOptions } from './listing-content';
 export type { ValidationError, ValidationResult } from './validators';
 export type { ParseOptions, ParseResult } from './parser';

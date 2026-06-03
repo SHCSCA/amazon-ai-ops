@@ -2,16 +2,19 @@
   "name": "@amazon-ai-ops/audit-log",
   "version": "1.2.0",
   "private": true,
-  "main": "dist/index.js",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@amazon-ai-ops/local-db": "workspace:*",
-    "@amazon-ai-ops/shared-types": "workspace:*"
+    "@amazon-ai-ops/shared-types": "workspace:*",
+    "better-sqlite3": "^12.10.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "typescript": "^5.3.0"
   }
 }

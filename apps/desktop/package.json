@@ -1,6 +1,6 @@
 {
   "name": "@amazon-ai-ops/desktop",
-  "version": "1.2.0",
+  "version": "1.5.0",
   "description": "Amazon AI Ops Agent - 亚马逊广告运营自动化工具",
   "author": "Amazon AI Ops Team",
   "private": true,
@@ -11,6 +11,7 @@
     "build:preload": "node scripts/build-preload.js && node -e \"require('fs').copyFileSync('dist/preload/index.cjs','dist/preload/index.js')\"",
     "build:renderer": "vite build",
     "build": "npm run build:main && npm run build:preload && npm run build:renderer && electron-builder",
+    "build:win": "npm run build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -18,17 +19,22 @@
     "@amazon-ai-ops/ai-adapter": "workspace:*",
     "@amazon-ai-ops/audit-log": "workspace:*",
     "@amazon-ai-ops/browser-worker": "workspace:*",
+    "@amazon-ai-ops/keyword-opportunity": "workspace:*",
+    "@amazon-ai-ops/lingxing-report-collector": "workspace:*",
+    "@amazon-ai-ops/listing-analyzer": "workspace:*",
     "@amazon-ai-ops/local-db": "workspace:*",
     "@amazon-ai-ops/page-models": "workspace:*",
     "@amazon-ai-ops/report-parser": "workspace:*",
     "@amazon-ai-ops/rules-engine": "workspace:*",
     "@amazon-ai-ops/scheduler": "workspace:*",
     "@amazon-ai-ops/shared-types": "workspace:*",
+    "better-sqlite3": "^12.10.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",

@@ -2,7 +2,7 @@ const path = require('path');
 const child_process = require('child_process');
 
 const rootDir = path.join(__dirname, '..', '..', '..');
-const esbuildPath = path.join(rootDir, 'node_modules/.pnpm/esbuild@0.21.5/node_modules/esbuild/bin/esbuild');
+const esbuildPath = require.resolve('esbuild/bin/esbuild');
 const desktopDir = path.join(rootDir, 'apps/desktop');
 
 const args = [
@@ -18,4 +18,4 @@ const args = [
 ];
 
 console.log('Building preload script...');
-child_process.spawn('node', args, { stdio: 'inherit', cwd: desktopDir });
+child_process.execFileSync('node', args, { stdio: 'inherit', cwd: desktopDir });
