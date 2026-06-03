@@ -38,3 +38,7 @@ builder-debug.yml
 *.tmp
 *.temp
 .cache/
+
+# Local runtime/evidence artifacts
+output/
+storage/
