@@ -33,6 +33,51 @@ interface Recommendation {
   evidence?: { acos: number; cost: number; clicks: number; };
 }
 
+type DeliveryGateStatus = 'passed' | 'blocked' | 'pending' | 'warning';
+
+interface DeliveryGateItem {
+  name: string;
+  status: DeliveryGateStatus;
+  detail: string;
+}
+
+const DELIVERY_GATE_LABELS: Record<DeliveryGateStatus, string> = {
+  passed: '通过',
+  blocked: '阻塞',
+  pending: '待验证',
+  warning: '需复核',
+};
+
+const LINGXING_REPORT_OPTIONS = [
+  { type: 'campaign', label: '广告活动报告' },
+  { type: 'ad_group', label: '广告组报告' },
+  { type: 'placement', label: '广告位报告' },
+  { type: 'advertised_product', label: '广告（推广的商品）报告' },
+  { type: 'auto_targeting', label: '自动投放报告' },
+  { type: 'keyword', label: '关键词报告' },
+  { type: 'product_targeting', label: '商品投放报告' },
+  { type: 'user_search_term', label: '用户搜索词报告' },
+];
+
+function normalized(value?: string): string {
+  return (value || '').trim();
+}
+
+function sameScope(
+  item: any,
+  scope: { start: string; end: string; storeName: string; marketplaceCode: string },
+): boolean {
+  if (!item) return false;
+  return normalized(item.dateStart || item.start) === scope.start
+    && normalized(item.dateEnd || item.end) === scope.end
+    && normalized(item.storeName) === scope.storeName
+    && normalized(item.marketplaceCode) === scope.marketplaceCode;
+}
+
+function stableJson(value: any): string {
+  return value ? JSON.stringify(value) : '';
+}
+
 // Zustand store
 const useStore = create<AppState>((set) => ({
   isLoggedIn: false,
@@ -414,6 +459,7 @@ function V15Workspace() {
   const [dateEnd, setDateEnd] = useState('2026-05-25');
   const [collectionStoreName, setCollectionStoreName] = useState('FT-US-US');
   const [collectionMarketplaceCode, setCollectionMarketplaceCode] = useState('US');
+  const [canaryReportType, setCanaryReportType] = useState('keyword');
   const [message, setMessage] = useState('');
   const [selectedReportFile, setSelectedReportFile] = useState('');
   const [keywordSource, setKeywordSource] = useState('search_term');
@@ -440,6 +486,12 @@ function V15Workspace() {
   useEffect(() => {
     loadDownloadCenterPageModel();
   }, []);
+
+  const clearLiveCollectionEvidence = () => {
+    setDownloadCenterDiagnostic(null);
+    setCollectionPreflight(null);
+    setReportBatchResult(null);
+  };
 
   const collectionRequest = () => ({
     start: dateStart,
@@ -504,6 +556,26 @@ function V15Workspace() {
       );
     } catch (e: any) {
       setMessage(e.message || '单项重试失败');
+    }
+  };
+
+  const runCanaryReport = async () => {
+    const selected = LINGXING_REPORT_OPTIONS.find((item) => item.type === canaryReportType);
+    setMessage(`正在执行单报表验证：${selected?.label || canaryReportType}...`);
+    try {
+      const result = await (window as any).electronAPI.retryLingxingReport(
+        collectionRequest(),
+        canaryReportType,
+      );
+      setReportBatchResult(result);
+      const file = result.files?.[0];
+      setMessage(
+        file?.status === 'downloaded'
+          ? `单报表验证成功：${file.displayName}，文件：${file.filePath}`
+          : `单报表验证未通过：${file?.errorMessage || '未下载文件'}`,
+      );
+    } catch (e: any) {
+      setMessage(e.message || '单报表验证失败');
     }
   };
 
@@ -599,6 +671,7 @@ function V15Workspace() {
       const result = await (window as any).electronAPI.saveDownloadCenterPageModel(model);
       setDownloadCenterPageModelInfo(result);
       setDownloadCenterPageModelText(JSON.stringify(result.model, null, 2));
+      clearLiveCollectionEvidence();
       const backupNote = result.overrideSaveMetadata?.backupPath ? `，旧 override 已备份：${result.overrideSaveMetadata.backupPath}` : '';
       const metadataNote = result.overrideSaveMetadata?.overridePath ? `，保存元数据：${result.overrideMetadataPath}` : '';
       const postSaveDiagnosticNote = result.overrideSaveMetadata?.postSaveDiagnosticRequired
@@ -617,6 +690,7 @@ function V15Workspace() {
       const result = await (window as any).electronAPI.resetDownloadCenterPageModel();
       setDownloadCenterPageModelInfo(result);
       setDownloadCenterPageModelText(JSON.stringify(result.model, null, 2));
+      clearLiveCollectionEvidence();
       setMessage(result.resetBackupPath ? `已恢复使用打包内置页面模型，旧 override 已备份：${result.resetBackupPath}` : '已恢复使用打包内置页面模型');
     } catch (e: any) {
       setMessage(e.message || '重置下载中心页面模型失败');
@@ -762,12 +836,99 @@ function V15Workspace() {
     setMessage(`已生成 ${data.length} 条 Listing 修改草案`);
   };
 
+  const currentScope = {
+    start: normalized(dateStart),
+    end: normalized(dateEnd),
+    storeName: normalized(collectionStoreName),
+    marketplaceCode: normalized(collectionMarketplaceCode),
+  };
+  const pageModelReady = Boolean(downloadCenterPageModelInfo?.readiness?.ready);
+  const preflightMatchesCurrentScope = collectionPreflight
+    && normalized(collectionPreflight.dateRange?.start) === currentScope.start
+    && normalized(collectionPreflight.dateRange?.end) === currentScope.end
+    && normalized(collectionPreflight.target?.storeName) === currentScope.storeName
+    && normalized(collectionPreflight.target?.marketplaceCode) === currentScope.marketplaceCode;
+  const diagnosticPreflightCheck = collectionPreflight?.checks?.find((check: any) => check.name === 'diagnostic_evidence_ready');
+  const diagnosticMatchesCurrentScope = sameScope(downloadCenterDiagnostic, currentScope);
+  const diagnosticMatchesCurrentModel = stableJson(downloadCenterDiagnostic?.pageModelSnapshot)
+    === stableJson(downloadCenterPageModelInfo?.model);
+  const diagnosticPassedForCurrentScope = (preflightMatchesCurrentScope && diagnosticPreflightCheck?.status === 'passed')
+    || (Boolean(downloadCenterDiagnostic?.ready) && diagnosticMatchesCurrentScope && diagnosticMatchesCurrentModel);
+  const batchMatchesCurrentScope = sameScope(reportBatchResult?.batch, currentScope);
+  const downloadedReportCount = reportBatchResult?.files?.filter((file: any) => file.status === 'downloaded').length || 0;
+  const failedReportCount = reportBatchResult?.files?.filter((file: any) => file.status === 'failed').length || 0;
+  const fullBatchDownloaded = batchMatchesCurrentScope
+    && reportBatchResult?.batch?.status === 'completed'
+    && downloadedReportCount === 8
+    && (reportBatchResult?.files?.length || 0) === 8;
+  const scopeLabel = `${currentScope.start || '未选日期'} ~ ${currentScope.end || '未选日期'} / ${currentScope.storeName || '未选店铺'} / ${currentScope.marketplaceCode || '未选站点'}`;
+  const deliveryGates: DeliveryGateItem[] = [
+    {
+      name: '采集范围',
+      status: currentScope.start && currentScope.end && currentScope.storeName && currentScope.marketplaceCode ? 'passed' : 'blocked',
+      detail: scopeLabel,
+    },
+    {
+      name: '页面模型',
+      status: pageModelReady ? 'passed' : 'blocked',
+      detail: pageModelReady
+        ? '已具备自动化结构'
+        : (downloadCenterPageModelInfo?.readiness?.reason || downloadCenterPageModelInfo?.readiness?.missing?.join(', ') || '未读取页面模型'),
+    },
+    {
+      name: '同范围诊断',
+      status: diagnosticPassedForCurrentScope ? 'passed' : (downloadCenterDiagnostic ? 'warning' : 'pending'),
+      detail: diagnosticPassedForCurrentScope
+        ? `诊断 ${downloadCenterDiagnostic?.id || collectionPreflight?.diagnosticEvidenceReadiness?.diagnosticId || '-'} 匹配当前范围`
+        : (!preflightMatchesCurrentScope && collectionPreflight
+          ? '预检范围已变化，需要重新预检或验证页面'
+          : (!diagnosticMatchesCurrentModel && downloadCenterDiagnostic
+            ? '页面模型已变化，需要重新运行验证页面'
+            : (diagnosticPreflightCheck?.detail || '需要当前范围的验证页面证据'))),
+    },
+    {
+      name: '8 报表采集',
+      status: fullBatchDownloaded ? 'passed' : (reportBatchResult ? 'warning' : 'pending'),
+      detail: reportBatchResult
+        ? `${downloadedReportCount}/8 已下载，${failedReportCount} 失败，批次 ${reportBatchResult.batch?.id || '-'}`
+        : '尚无当前范围完整批次',
+    },
+    {
+      name: '验收审计',
+      status: fullBatchDownloaded ? 'pending' : 'blocked',
+      detail: fullBatchDownloaded ? '可导出并检查审计包' : '需先完成当前范围 8 报表下载',
+    },
+  ];
+  const activeGate = deliveryGates.find((gate) => gate.status !== 'passed');
+
   return (
     <div style={styles.page}>
       <h2 style={styles.sectionTitle}>v1.5 关键词与 Listing 工作台</h2>
       <div style={styles.panelGrid}>
-        <div style={styles.panel}>
+        <div style={{ ...styles.panel, gridColumn: '1 / -1' }}>
           <h3 style={styles.panelTitle}>广告报告采集</h3>
+          <div style={styles.deliveryGate}>
+            <div style={styles.deliveryGateHeader}>
+              <div>
+                <div style={styles.deliveryGateTitle}>真实采集验收门</div>
+                <div style={styles.deliveryGateScope}>{scopeLabel}</div>
+              </div>
+              <div style={styles.deliveryGateFocus}>
+                {activeGate ? `${activeGate.name}：${activeGate.detail}` : '等待最终审计'}
+              </div>
+            </div>
+            <div style={styles.deliveryGateGrid}>
+              {deliveryGates.map((gate) => (
+                <div key={gate.name} style={styles.deliveryGateItem}>
+                  <div style={styles.deliveryGateItemHeader}>
+                    <span>{gate.name}</span>
+                    <span style={styles.deliveryGateBadge(gate.status)}>{DELIVERY_GATE_LABELS[gate.status]}</span>
+                  </div>
+                  <div style={styles.deliveryGateDetail}>{gate.detail}</div>
+                </div>
+              ))}
+            </div>
+          </div>
           <div style={styles.inlineForm}>
             <input value={dateStart} onChange={(e) => setDateStart(e.target.value)} style={styles.input} />
             <input value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} style={styles.input} />
@@ -790,6 +951,12 @@ function V15Workspace() {
             <button onClick={exportDownloadCenterDiagnosticBundle} style={styles.btnSmall}>导出证据包</button>
             <button onClick={exportDownloadCenterPageModelDraft} style={styles.btnSmall}>生成模型草稿</button>
             <button onClick={exportDownloadCenterPageModelEnablementAudit} style={styles.btnSmall}>导出启用审计</button>
+            <select aria-label="单报表验证类型" value={canaryReportType} onChange={(e) => setCanaryReportType(e.target.value)} style={styles.input}>
+              {LINGXING_REPORT_OPTIONS.map((item) => (
+                <option key={item.type} value={item.type}>{item.label}</option>
+              ))}
+            </select>
+            <button onClick={runCanaryReport} style={styles.btnExecute}>单报表验证</button>
           </div>
           {collectionPreflight && (
             <div style={styles.summaryLine}>
@@ -1229,8 +1396,28 @@ const styles: any = {
   logoutButton: { padding: '6px 16px', background: '#ff4d4f', border: 'none', borderRadius: '4px', color: '#fff', cursor: 'pointer', fontSize: '13px' },
   body: { display: 'flex', flex: 1, overflow: 'hidden' },
   sidebar: { width: '200px', background: '#fff', borderRight: '1px solid #e8e8e8', display: 'flex', flexDirection: 'column', padding: '8px 0' },
-  navItem: { padding: '12px 24px', background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer', fontSize: '14px', color: '#333', width: '100%' },
-  navItemActive: { background: '#e6f7ff', color: '#1890ff', borderRight: '3px solid #1890ff' },
+  navItem: {
+    padding: '12px 24px',
+    background: 'none',
+    borderTopWidth: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderTopStyle: 'solid',
+    borderRightStyle: 'solid',
+    borderBottomStyle: 'solid',
+    borderLeftStyle: 'solid',
+    borderTopColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderLeftColor: 'transparent',
+    textAlign: 'left',
+    cursor: 'pointer',
+    fontSize: '14px',
+    color: '#333',
+    width: '100%',
+  },
+  navItemActive: { background: '#e6f7ff', color: '#1890ff', borderRightWidth: '3px', borderRightColor: '#1890ff' },
   content: { flex: 1, overflow: 'auto', padding: '24px' },
   loginContainer: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#001529' },
   loginCard: { background: '#fff', padding: '48px', borderRadius: '8px', width: '400px', textAlign: 'center' },
@@ -1246,6 +1433,24 @@ const styles: any = {
   panelGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', marginBottom: '16px' },
   panel: { background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '16px', minWidth: 0 },
   panelTitle: { fontSize: '15px', fontWeight: 700, margin: '0 0 12px', color: '#333' },
+  deliveryGate: { border: '1px solid #e8e8e8', borderRadius: '6px', padding: '12px', marginBottom: '12px', background: '#fafafa' },
+  deliveryGateHeader: { display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start', marginBottom: '10px', flexWrap: 'wrap' },
+  deliveryGateTitle: { fontSize: '14px', fontWeight: 700, color: '#333' },
+  deliveryGateScope: { marginTop: '4px', color: '#666', fontSize: '12px', wordBreak: 'break-word' },
+  deliveryGateFocus: { maxWidth: '520px', color: '#333', fontSize: '12px', lineHeight: 1.5, wordBreak: 'break-word' },
+  deliveryGateGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px' },
+  deliveryGateItem: { minWidth: 0, padding: '8px', borderTop: '1px solid #eee' },
+  deliveryGateItemHeader: { display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', color: '#333', fontSize: '13px', fontWeight: 600 },
+  deliveryGateDetail: { marginTop: '6px', color: '#666', fontSize: '12px', lineHeight: 1.45, wordBreak: 'break-word' },
+  deliveryGateBadge: (status: DeliveryGateStatus) => {
+    const palette: Record<DeliveryGateStatus, { background: string; color: string }> = {
+      passed: { background: '#f6ffed', color: '#389e0d' },
+      blocked: { background: '#fff1f0', color: '#cf1322' },
+      pending: { background: '#e6f7ff', color: '#0958d9' },
+      warning: { background: '#fffbe6', color: '#ad6800' },
+    };
+    return { display: 'inline-block', padding: '2px 6px', borderRadius: '4px', fontSize: '12px', whiteSpace: 'nowrap', ...palette[status] };
+  },
   inlineForm: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', alignItems: 'center', minWidth: 0 },
   stackedForm: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '8px', alignItems: 'center', minWidth: 0 },
   listingGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(240px, 1fr))', gap: '10px', marginBottom: '12px' },

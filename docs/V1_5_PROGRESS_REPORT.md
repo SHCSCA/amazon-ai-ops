@@ -28,6 +28,12 @@ Implemented and verified:
 
 ## Latest Increment
 
+- Added a first-screen delivery-gate summary to the v1.5 report-collection panel. It shows the selected date/store/site scope, page-model readiness, same-scope diagnostic status, 8-report batch status, and final audit gate in one place so operators can see the next blocker before clicking live actions.
+- Added an operator-facing `单报表验证` canary control with all 8 Lingxing report types. It reuses the existing single-report batch path and hard preflight gate, making it possible to prove live create/ready/download behavior on one report before attempting the full 8-report E2E run.
+- Renderer smoke evidence for the new delivery-gate UI: `output/codex-evidence/v15-delivery-gate-ui-smoke.png`. The smoke check verified the v1.5 page renders, the gate is visible, the canary dropdown exposes 8 report types, the canary button is in the first viewport, and no console warnings/errors are emitted.
+- Fixed the packaged runtime dependency closure for `better-sqlite3` by making the desktop package explicitly include `bindings` and `file-uri-to-path`. Packaged smoke now reaches `sqlite-ready`, `ipc-ready`, and `window-created` instead of merely keeping an Electron process alive.
+- A current packaged app launch migrated the live AppData DB to include `download_center_diagnostics.store_name/marketplace_code` and `lingxing_report_batches.store_name/marketplace_code`. Existing historical diagnostics still have null store/site, so they cannot unlock same-scope live collection.
+- Evidence audit still says not READY: the current Electron DB has only read-only diagnostic evidence and no current v1.5 completed report batch; the existing diagnostic's ready/download action selector checks do not prove a newly generated report row.
 - Fixed the v1.5 workbench panel layout that let the keyword-opportunity panel overlap the report-collection panel and intercept the `验证页面` click target. The top-level panel grid and nested forms now use responsive minimum widths with `minWidth: 0`, and small buttons rely on layout gaps instead of extra margins.
 - Renderer QA evidence now proves the `验证页面` button is the actual element under the click center and that the diagnostic success state can render through the UI path: `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.json` and `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.png`.
 - Removed the deprecated `daily_report_download` scheduled task registration and scheduler task type. The current scheduler UI no longer exposes a legacy single-report path that is intentionally disabled under v1.5; operators should use `采集预检` / `验证页面` / `启动采集`.
@@ -122,7 +128,7 @@ Latest local evidence:
 - Renderer layout QA: `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.json` shows `elementFromPoint` at the `验证页面` button center resolves to the button and that the mocked UI diagnostic success message appears.
 - `pnpm test -- download-center-page-model-validation.test.ts page-model-diagnostic.test.ts`: passed after accepting `ads.lingxing.com` and updating the bundled page model.
 - `pnpm --filter @amazon-ai-ops/desktop run build:win`: passed and generated `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`.
-- Current installer evidence: size `89593098` bytes, SHA-256 `99BB783E2E813224A6C097CF7477DA7FA54FEBCE6FD9D8B6E34E8F57F5A2A6A8`, last write time `2026-06-08 09:37:54`.
+- Current installer evidence: size `89604164` bytes, SHA-256 `69C6CDEE156A0B13B86884AC12E3463EDD64428DC84B66099ADB4E6B0EA3010F`, last write time `2026-06-08 10:18:26`.
 - Packaged executable smoke test: `apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe` remained alive after 8 seconds, then was stopped.
 - Real desktop IPC diagnostic evidence: diagnostic id `4`, `ready: true`, `missingRequiredSelectors: []`; create-page setup selectors were all found and usable with match count `1`. `readyReportSelector` and `downloadButton` remain unproven because no generated report row for the unique generated name exists yet.
 - `pnpm --filter @amazon-ai-ops/desktop test -- collection-preflight-export.test.ts`: passed after extracting the preflight evidence bundle writer, adding the review checklist, and adding `preflight-bundle-index.json`.

@@ -23,6 +23,12 @@ importers:
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
+      bindings:
+        specifier: ^1.5.0
+        version: 1.5.0
+      file-uri-to-path:
+        specifier: ^1.0.0
+        version: 1.0.0
       playwright:
         specifier: ^1.40.0
         version: 1.60.0

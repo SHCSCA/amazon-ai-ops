@@ -7,12 +7,12 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | 项目 | 状态 | 证据/位置 |
 |---|---:|---|
 | v1.5 基线合并 | 已完成 | `master...origin/master` 当前同步到已推送的 v1.5 基线 |
-| 本轮收尾改动 | 已提交/推送 | `a4b5cb2 fix: harden lingxing v1.5 delivery flow` 已推送到 `origin/master` |
+| 本轮收尾改动 | 已实现待推送 | 新增操作员验收门、单报表 canary 和 packaged runtime 依赖修复；最终提交以 `git log -1 --oneline` 为准 |
 | 本地测试 | 通过 | `pnpm test` 通过，最近记录见 `docs/V1_5_PROGRESS_REPORT.md` |
 | 类型检查 | 通过 | `pnpm typecheck` 通过 |
 | 桌面构建 | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:win` 生成 Windows 安装包 |
-| 打包应用冒烟 | 通过 | 打包 exe 可启动并保持运行 |
-| 当前安装包 | 已生成 | `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`，SHA-256 `99BB783E2E813224A6C097CF7477DA7FA54FEBCE6FD9D8B6E34E8F57F5A2A6A8`，大小 `89593098` bytes，最后构建 `2026-06-08 09:37:54` |
+| 打包应用冒烟 | 通过 | 打包 exe 可启动并执行到 `sqlite-ready`、`ipc-ready`、`window-created` |
+| 当前安装包 | 已生成 | `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`，SHA-256 `69C6CDEE156A0B13B86884AC12E3463EDD64428DC84B66099ADB4E6B0EA3010F`，大小 `89604164` bytes，最后构建 `2026-06-08 10:18:26` |
 | 关键词/Listing v1.5 工作流 | 已结构完成 | 导入、诊断、机会评分、建议、草稿、导出已接入 |
 | 领星下载中心采集 | 创建页 selector 已只读诊断，自动化仍未放行 | 已用真实登录会话完成 Ads 下载中心两阶段诊断；真实生成/下载和 8 报表 E2E 仍 fail-closed |
 
@@ -37,13 +37,13 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | 下载中心诊断 | 页面诊断、截图、DOM 快照、selector candidates、action selector 检查、证据包导出 |
 | 页面模型覆盖 | 本地 override 保存、重置、备份、校验、启用审计 |
 | 采集预检 | 启动采集前检查页面模型、同店铺/站点/日期范围诊断证据、截图/DOM 文件、浏览器登录状态 |
-| v1.5 工作台收尾 | 修复 `验证页面` 点击区域被相邻面板覆盖的问题；移除旧版 `daily_report_download` 定时入口 |
+| v1.5 工作台收尾 | 修复 `验证页面` 点击区域被相邻面板覆盖的问题；移除旧版 `daily_report_download` 定时入口；新增真实采集验收门和单报表验证入口 |
 | 关键词导入 | Search Term/SQP/keyword report 映射、诊断、重复导入策略、错误行导出 |
 | 关键词机会 | ASIN + normalized keyword 聚合、评分、风险过滤 |
 | Listing 分析 | 手工/Excel 导入、覆盖分析、建议生成、接受/忽略、AI/规则草稿 |
 | 导出 | CSV/XLSX/Markdown、验收审计、预检证据包、诊断证据包 |
 | SQLite | v1.5 批次、文件、关键词、Listing、诊断、草稿等表已补齐 |
-| 桌面 UI/API | IPC、preload、v1.5 工作台界面已接入 |
+| 桌面 UI/API | IPC、preload、v1.5 工作台界面已接入；打包依赖包含 `better-sqlite3` native loader 所需运行时依赖 |
 
 ## 真实浏览器验证结论
 
@@ -97,6 +97,8 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 |---|---|
 | `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.json` | `验证页面` 按钮中心点命中按钮本身，点击后能渲染诊断通过状态 |
 | `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.png` | 同次 UI 布局截图 |
+| `output/codex-evidence/v15-delivery-gate-ui-smoke.png` | v1.5 工作台首屏显示真实采集验收门和 8 类单报表验证入口 |
+| `output/codex-evidence/packaged-smoke.out.log` | 打包应用启动到 `sqlite-ready`、`ipc-ready`、`window-created`，并对历史 AppData DB 执行 store/site 列迁移 |
 
 因此，当前已证明下载中心真实页面位于 Ads 系统，而不是旧的 ERP/官网候选 URL；也已证明创建报告页的店铺、报告名称、报告类型、日期、每日明细、生成按钮等关键 selector 在只读诊断中可唯一定位。尚未证明真实报告生成后的 ready 行和下载按钮，也未完成真实 8 报表下载。
 
@@ -104,15 +106,16 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 
 | 顺序 | 任务 | 验收条件 |
 |---:|---|---|
-| 1 | 确认 Git 状态 | `git status --short --branch` 显示 `master...origin/master`，当前收尾提交应为 `a4b5cb2` |
+| 1 | 确认 Git 状态 | `git status --short --branch` 显示 `master...origin/master`，并确认最新收尾提交已推送到 `origin/master` |
 | 2 | 确认不要提交运行产物 | `output/`、`storage/` 是本地证据和浏览器 profile，已加入 `.gitignore` |
 | 3 | 用真实浏览器登录领星 | 使用项目浏览器架构或桌面应用保持同一 `storage/browser-data` profile，并同时确认 Ads 系统会话 |
 | 4 | 复核下载中心诊断证据 | 已有 IPC 诊断 id `4` 和 UI 布局点击证据；真实 Lingxing 会话稳定后，从桌面 UI 再点击 `验证页面` 刷新当前构建的同模型、同日期、同店铺、同站点证据 |
 | 5 | 导出诊断证据包 | 使用 `导出证据包`，保存截图、DOM、selector candidates、action selector checks |
 | 6 | 复核页面模型 | 内置 `actionSelectors` 已填写；保持 `requiresManualVerification: true`，直到 ready/download 也有真实生成行证据 |
 | 7 | 启用前审计 | 运行 `导出启用审计`，只有 scoped selectors、同模型同日期同店铺同站点诊断、截图/DOM 文件证据都通过后才能考虑关闭人工验证 |
-| 8 | 真实采集 E2E | 跑完整 8 报表批次，验证 manifest、文件名日期 token、文件大小、失败重试、单报表重试 |
-| 9 | 导出最终验收审计 | 使用 `导出验收审计`，要求所有 8 个报表、诊断证据、manifest、批次店铺/站点和文件证据一致 |
+| 8 | 单报表 canary | 选择一个报表类型点击 `单报表验证`，证明真实 create/ready/download selector、文件名日期 token 和文件大小 |
+| 9 | 真实采集 E2E | canary 成功后跑完整 8 报表批次，验证 manifest、文件名日期 token、文件大小、失败重试、单报表重试 |
+| 10 | 导出最终验收审计 | 使用 `导出验收审计`，要求所有 8 个报表、诊断证据、manifest、批次店铺/站点和文件证据一致 |
 
 ## 常用命令
 
