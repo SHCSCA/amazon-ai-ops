@@ -394,12 +394,14 @@ function persistLingxingBatch(result: Awaited<ReturnType<typeof runLingxingRepor
   const save = state.db.transaction(() => {
     state.db!.prepare(`
       INSERT OR REPLACE INTO lingxing_report_batches
-        (id, app_version, date_start, date_end, status, download_dir, manifest_path, created_at, completed_at)
+        (id, app_version, date_start, date_end, store_name, marketplace_code, status, download_dir, manifest_path, created_at, completed_at)
       VALUES
-        (@id, @appVersion, @dateStart, @dateEnd, @status, @downloadDir, @manifestPath, @createdAt, @completedAt)
+        (@id, @appVersion, @dateStart, @dateEnd, @storeName, @marketplaceCode, @status, @downloadDir, @manifestPath, @createdAt, @completedAt)
     `).run({
       ...result.batch,
       appVersion: result.batch.appVersion ?? APP_VERSION,
+      storeName: result.batch.storeName ?? null,
+      marketplaceCode: result.batch.marketplaceCode ?? null,
       manifestPath: result.batch.manifestPath ?? null,
       completedAt: result.batch.completedAt ?? null,
     });
@@ -439,7 +441,7 @@ async function handleCollectLingxingReports(input: unknown) {
   const dateRange = { start: request.start, end: request.end };
   const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
   validateDateRange(dateRange);
-  assertLingxingCollectionPreflightReady(dateRange);
+  assertLingxingCollectionPreflightReady(dateRange, target);
 
   if (!state.browserController || !state.isLoggedIn) {
     throw new Error('请先启动并登录领星 ERP 浏览器');
@@ -448,6 +450,8 @@ async function handleCollectLingxingReports(input: unknown) {
   const result = await runLingxingReportBatch({
     dateStart: dateRange.start,
     dateEnd: dateRange.end,
+    storeName: target.storeName,
+    marketplaceCode: target.marketplaceCode,
     rootDownloadDir: DOWNLOADS_DIR,
     appVersion: APP_VERSION,
     automation: createDownloadCenterAutomation(state.browserController, target),
@@ -461,17 +465,24 @@ function handlePreflightLingxingCollection(input: unknown) {
   const dateRange = { start: request.start, end: request.end };
   validateDateRange(dateRange);
   const model = readDownloadCenterPageModel();
-  const diagnosticEvidenceReadiness = getDownloadCenterDiagnosticEvidenceReadiness(model, dateRange);
+  const diagnosticEvidenceReadiness = getDownloadCenterDiagnosticEvidenceReadiness(model, dateRange, {
+    storeName: request.storeName,
+    marketplaceCode: request.marketplaceCode,
+  });
   const browserSessionReady = Boolean(state.browserController && state.isLoggedIn);
   return buildDownloadCenterCollectionPreflight(model, dateRange, undefined, {
+    target: {
+      storeName: request.storeName,
+      marketplaceCode: request.marketplaceCode,
+    },
     diagnosticEvidenceReadiness,
     browserSessionReady,
     browserSessionReason: browserSessionReady ? undefined : '请先启动并登录领星 ERP 浏览器',
   });
 }
 
-function assertLingxingCollectionPreflightReady(dateRange: { start: string; end: string }): void {
-  const preflight = handlePreflightLingxingCollection(dateRange);
+function assertLingxingCollectionPreflightReady(dateRange: { start: string; end: string }, target: LingxingCollectionTarget = {}): void {
+  const preflight = handlePreflightLingxingCollection({ ...dateRange, ...target });
   assertDownloadCenterCollectionPreflightReady(preflight);
 }
 
@@ -482,7 +493,10 @@ function handleExportLingxingCollectionPreflight(input: unknown): string {
   const model = readDownloadCenterPageModel();
   const diagnostic = preflight.diagnosticEvidenceReadiness.diagnosticId
     ? loadPersistedDownloadCenterDiagnostic(preflight.diagnosticEvidenceReadiness.diagnosticId, dateRange.start, dateRange.end)
-    : loadLatestPersistedDownloadCenterDiagnosticForModel(model, dateRange.start, dateRange.end);
+    : loadLatestPersistedDownloadCenterDiagnosticForModel(model, dateRange.start, dateRange.end, {
+      storeName: request.storeName,
+      marketplaceCode: request.marketplaceCode,
+    });
   const exportDir = path.join(
     EXPORTS_DIR,
     `lingxing_collection_preflight_${safeFileSegment(dateRange.start)}_${safeFileSegment(dateRange.end)}_${Date.now()}`,
@@ -506,7 +520,7 @@ async function handleRetryLingxingReport(input: unknown, reportType: LingxingRep
   const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
   validateDateRange(dateRange);
   validateLingxingReportType(reportType);
-  assertLingxingCollectionPreflightReady(dateRange);
+  assertLingxingCollectionPreflightReady(dateRange, target);
 
   if (!state.browserController || !state.isLoggedIn) {
     throw new Error('请先启动并登录领星 ERP 浏览器');
@@ -515,6 +529,8 @@ async function handleRetryLingxingReport(input: unknown, reportType: LingxingRep
   const result = await runLingxingReportBatch({
     dateStart: dateRange.start,
     dateEnd: dateRange.end,
+    storeName: target.storeName,
+    marketplaceCode: target.marketplaceCode,
     rootDownloadDir: DOWNLOADS_DIR,
     appVersion: APP_VERSION,
     reportTypes: [reportType],
@@ -621,7 +637,7 @@ function createDownloadCenterAutomation(controller: BrowserController, target: L
     },
     async createReport(report, dateRange) {
       assertDownloadCenterAutomationReady(automationReadiness, report.displayName);
-      assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName);
+      assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName, target);
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
       const context = reportContext(report, dateRange);
@@ -715,7 +731,7 @@ function createDownloadCenterAutomation(controller: BrowserController, target: L
     },
     async waitForReportReady(report, dateRange) {
       assertDownloadCenterAutomationReady(automationReadiness, report.displayName);
-      assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName);
+      assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName, target);
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
       const context = reportContext(report, dateRange);
@@ -738,7 +754,7 @@ function createDownloadCenterAutomation(controller: BrowserController, target: L
     },
     async downloadReport(report, downloadDir, dateRange) {
       assertDownloadCenterAutomationReady(automationReadiness, report.displayName);
-      assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName);
+      assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName, target);
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
       fs.mkdirSync(downloadDir, { recursive: true });
@@ -828,17 +844,19 @@ function assertDownloadCenterDiagnosticEvidenceReady(
   model: DownloadCenterPageModel,
   dateRange: { start: string; end: string },
   displayName: string,
+  target: LingxingCollectionTarget = {},
 ): void {
-  const evidence = getDownloadCenterDiagnosticEvidenceReadiness(model, dateRange);
+  const evidence = getDownloadCenterDiagnosticEvidenceReadiness(model, dateRange, target);
   if (evidence.ready) return;
   throw new Error(
-    `下载中心页面模型缺少同模型、同日期范围的近期诊断证据，无法创建或下载：${displayName}。请先运行“验证页面”。${evidence.reason || ''}${evidence.missing.length ? ` 缺失：${evidence.missing.join(', ')}` : ''}`,
+    `下载中心页面模型缺少同模型、同日期范围、同店铺/站点的近期诊断证据，无法创建或下载：${displayName}。请先运行“验证页面”。${evidence.reason || ''}${evidence.missing.length ? ` 缺失：${evidence.missing.join(', ')}` : ''}`,
   );
 }
 
 function getDownloadCenterDiagnosticEvidenceReadiness(
   model: DownloadCenterPageModel,
   dateRange: { start: string; end: string },
+  target: LingxingCollectionTarget = {},
 ): { ready: boolean; missing: string[]; reason?: string; diagnosticId?: number; checkedAt?: string } {
   if (!state.db) {
     return { ready: false, missing: ['download_center_diagnostics'], reason: 'local database is not available' };
@@ -852,6 +870,8 @@ function getDownloadCenterDiagnosticEvidenceReadiness(
       page_model_snapshot_json AS pageModelSnapshotJson,
       date_start AS dateStart,
       date_end AS dateEnd,
+      store_name AS storeName,
+      marketplace_code AS marketplaceCode,
       action_selector_checks_json AS actionSelectorChecksJson,
       screenshot_path AS screenshotPath,
       dom_snapshot_path AS domSnapshotPath,
@@ -861,6 +881,8 @@ function getDownloadCenterDiagnosticEvidenceReadiness(
       AND page_model_snapshot_json = @modelSnapshotJson
       AND date_start = @dateStart
       AND date_end = @dateEnd
+      AND COALESCE(store_name, '') = COALESCE(@storeName, '')
+      AND COALESCE(marketplace_code, '') = COALESCE(@marketplaceCode, '')
     ORDER BY checked_at DESC, id DESC
     LIMIT 1
   `).get({
@@ -868,13 +890,15 @@ function getDownloadCenterDiagnosticEvidenceReadiness(
     modelSnapshotJson,
     dateStart: dateRange.start,
     dateEnd: dateRange.end,
-  }) as { id: number; ready: number; pageModel?: string; pageModelSnapshotJson?: string; dateStart?: string; dateEnd?: string; actionSelectorChecksJson?: string; screenshotPath?: string; domSnapshotPath?: string; checkedAt?: string } | undefined;
+    storeName: target.storeName ?? '',
+    marketplaceCode: target.marketplaceCode ?? '',
+  }) as { id: number; ready: number; pageModel?: string; pageModelSnapshotJson?: string; dateStart?: string; dateEnd?: string; storeName?: string; marketplaceCode?: string; actionSelectorChecksJson?: string; screenshotPath?: string; domSnapshotPath?: string; checkedAt?: string } | undefined;
 
   if (!row) {
     return {
       ready: false,
       missing: ['diagnosticEvidence'],
-      reason: 'no matching download-center diagnostic exists for this page model and date range',
+      reason: 'no matching download-center diagnostic exists for this page model, date range, store, and marketplace',
     };
   }
 
@@ -887,6 +911,8 @@ function getDownloadCenterDiagnosticEvidenceReadiness(
       pageModelSnapshot: parseDownloadCenterPageModelSnapshot(row.pageModelSnapshotJson),
       dateStart: row.dateStart ?? undefined,
       dateEnd: row.dateEnd ?? undefined,
+      storeName: row.storeName ?? undefined,
+      marketplaceCode: row.marketplaceCode ?? undefined,
       url: '',
       title: '',
       ready: Boolean(row.ready),
@@ -898,6 +924,7 @@ function getDownloadCenterDiagnosticEvidenceReadiness(
       actionSelectorChecks: parseDiagnosticActionSelectorChecks(row.actionSelectorChecksJson),
       checkedAt: row.checkedAt || '',
     },
+    { target },
   );
   const fileReadiness = evaluateDownloadCenterDiagnosticEvidenceFiles(row, {
     screenshotsDir: SCREENSHOTS_DIR,
@@ -1178,6 +1205,8 @@ async function handleDiagnoseLingxingDownloadCenter(input?: unknown): Promise<Do
     result.pageModelSnapshot = model;
     result.dateStart = dateRange?.start;
     result.dateEnd = dateRange?.end;
+    result.storeName = target.storeName;
+    result.marketplaceCode = target.marketplaceCode;
     result.selectorCandidates = selectorCandidates;
     result.actionSelectorChecks = actionSelectorChecks;
   } catch (error) {
@@ -1187,6 +1216,8 @@ async function handleDiagnoseLingxingDownloadCenter(input?: unknown): Promise<Do
       pageModelSnapshot: model,
       dateStart: dateRange?.start,
       dateEnd: dateRange?.end,
+      storeName: target.storeName,
+      marketplaceCode: target.marketplaceCode,
       url,
       title: '',
       ready: false,
@@ -1739,12 +1770,12 @@ function persistDownloadCenterDiagnostic(result: DownloadCenterDiagnosticResult)
 
   const insert = state.db.prepare(`
     INSERT INTO download_center_diagnostics
-      (app_version, page_model, page_model_source, page_model_snapshot_json, date_start, date_end, url, title, ready, requires_manual_verification, matched_entry_hints_json,
+      (app_version, page_model, page_model_source, page_model_snapshot_json, date_start, date_end, store_name, marketplace_code, url, title, ready, requires_manual_verification, matched_entry_hints_json,
        matched_report_names_json, selector_checks_json, missing_required_selectors_json, selector_candidates_json,
        action_selector_checks_json,
        screenshot_path, dom_snapshot_path, error_message, checked_at)
     VALUES
-      (@appVersion, @pageModel, @pageModelSource, @pageModelSnapshotJson, @dateStart, @dateEnd, @url, @title, @ready, @requiresManualVerification, @matchedEntryHintsJson,
+      (@appVersion, @pageModel, @pageModelSource, @pageModelSnapshotJson, @dateStart, @dateEnd, @storeName, @marketplaceCode, @url, @title, @ready, @requiresManualVerification, @matchedEntryHintsJson,
        @matchedReportNamesJson, @selectorChecksJson, @missingRequiredSelectorsJson, @selectorCandidatesJson,
        @actionSelectorChecksJson,
        @screenshotPath, @domSnapshotPath, @errorMessage, @checkedAt)
@@ -1756,6 +1787,8 @@ function persistDownloadCenterDiagnostic(result: DownloadCenterDiagnosticResult)
     pageModelSnapshotJson: result.pageModelSnapshot ? JSON.stringify(result.pageModelSnapshot) : null,
     dateStart: result.dateStart ?? null,
     dateEnd: result.dateEnd ?? null,
+    storeName: result.storeName ?? null,
+    marketplaceCode: result.marketplaceCode ?? null,
     url: result.url,
     title: result.title,
     ready: result.ready ? 1 : 0,
@@ -2402,9 +2435,12 @@ function handleExportDownloadCenterPageModelDraft(diagnosticId: number): { expor
 }
 
 function handleExportDownloadCenterPageModelEnablementAudit(
-  dateRange: { start: string; end: string },
+  input: unknown,
   diagnosticId?: number,
 ): { exportPath: string; canDisableManualVerification: boolean; missing: string[] } {
+  const request = normalizeLingxingCollectionRequest(input);
+  const dateRange = { start: request.start, end: request.end };
+  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
   validateDateRange(dateRange);
   if (diagnosticId !== undefined && (!Number.isInteger(diagnosticId) || diagnosticId <= 0)) {
     throw new Error('下载中心诊断 ID 无效');
@@ -2412,9 +2448,9 @@ function handleExportDownloadCenterPageModelEnablementAudit(
   const model = readDownloadCenterPageModel();
   const diagnostic = diagnosticId
     ? loadPersistedDownloadCenterDiagnostic(diagnosticId, dateRange.start, dateRange.end)
-    : loadLatestPersistedDownloadCenterDiagnosticForModel(model, dateRange.start, dateRange.end);
+    : loadLatestPersistedDownloadCenterDiagnosticForModel(model, dateRange.start, dateRange.end, target);
   const selectorEvidenceReadiness = diagnostic
-    ? evaluateDownloadCenterDiagnosticEvidenceReadiness(model, dateRange, diagnostic)
+    ? evaluateDownloadCenterDiagnosticEvidenceReadiness(model, dateRange, diagnostic, { target })
     : undefined;
   const diagnosticFileReadiness = diagnostic
     ? evaluateDownloadCenterDiagnosticEvidenceFiles(diagnostic, {
@@ -2431,6 +2467,7 @@ function handleExportDownloadCenterPageModelEnablementAudit(
     }
     : selectorEvidenceReadiness;
   const audit = auditDownloadCenterPageModelEnablement(model, dateRange, diagnostic, {
+    target,
     diagnosticEvidenceReadiness,
   });
   const auditDir = path.join(
@@ -2460,12 +2497,13 @@ function handleExportLingxingAcceptanceAudit(batchId: string, diagnosticId?: num
   }
   const persisted = loadPersistedLingxingBatch(batchId);
   const { batch, files } = persisted;
+  const target = { storeName: batch.storeName, marketplaceCode: batch.marketplaceCode };
   const activeModel = readDownloadCenterPageModel();
   const diagnostic = diagnosticId
     ? loadPersistedDownloadCenterDiagnostic(diagnosticId, batch.dateStart, batch.dateEnd)
-    : loadLatestPersistedDownloadCenterDiagnosticForModel(activeModel, batch.dateStart, batch.dateEnd);
+    : loadLatestPersistedDownloadCenterDiagnosticForModel(activeModel, batch.dateStart, batch.dateEnd, target);
   const selectorEvidenceReadiness = diagnostic
-    ? evaluateDownloadCenterDiagnosticEvidenceReadiness(activeModel, { start: batch.dateStart, end: batch.dateEnd }, diagnostic)
+    ? evaluateDownloadCenterDiagnosticEvidenceReadiness(activeModel, { start: batch.dateStart, end: batch.dateEnd }, diagnostic, { target })
     : undefined;
   const diagnosticFileReadiness = diagnostic
     ? evaluateDownloadCenterDiagnosticEvidenceFiles(diagnostic, {
@@ -2550,6 +2588,8 @@ function loadPersistedLingxingBatch(batchId: string): { batch: LingxingReportBat
       app_version AS appVersion,
       date_start AS dateStart,
       date_end AS dateEnd,
+      store_name AS storeName,
+      marketplace_code AS marketplaceCode,
       status,
       download_dir AS downloadDir,
       manifest_path AS manifestPath,
@@ -2589,6 +2629,8 @@ function loadPersistedLingxingBatch(batchId: string): { batch: LingxingReportBat
     batch: {
       ...batchRow,
       appVersion: batchRow.appVersion ?? undefined,
+      storeName: batchRow.storeName ?? undefined,
+      marketplaceCode: batchRow.marketplaceCode ?? undefined,
       manifestPath: batchRow.manifestPath ?? undefined,
       completedAt: batchRow.completedAt ?? undefined,
     },
@@ -2629,9 +2671,10 @@ function loadLatestPersistedDownloadCenterDiagnosticForModel(
   model: DownloadCenterPageModel,
   dateStart: string,
   dateEnd: string,
+  target: LingxingCollectionTarget = {},
 ): DownloadCenterDiagnosticResult | undefined {
   if (!state.db) return undefined;
-  const row = getLatestDownloadCenterDiagnosticRowForModel(state.db, model, dateStart, dateEnd);
+  const row = getLatestDownloadCenterDiagnosticRowForModel(state.db, model, dateStart, dateEnd, target);
   if (!row) return undefined;
   return mapDownloadCenterDiagnosticRow(row as Record<string, unknown>);
 }
@@ -2645,6 +2688,8 @@ function mapDownloadCenterDiagnosticRow(row: Record<string, unknown>): DownloadC
     pageModelSnapshot: parseDownloadCenterPageModelSnapshot(stringOrUndefined(row.page_model_snapshot_json)),
     dateStart: stringOrUndefined(row.date_start),
     dateEnd: stringOrUndefined(row.date_end),
+    storeName: stringOrUndefined(row.store_name),
+    marketplaceCode: stringOrUndefined(row.marketplace_code),
     url: String(row.url || ''),
     title: String(row.title || ''),
     ready: Boolean(row.ready),

@@ -572,7 +572,7 @@ function V15Workspace() {
   const exportDownloadCenterPageModelEnablementAudit = async () => {
     try {
       const result = await (window as any).electronAPI.exportDownloadCenterPageModelEnablementAudit(
-        { start: dateStart, end: dateEnd },
+        collectionRequest(),
       );
       setMessage(result.canDisableManualVerification
         ? `页面模型启用审计通过：${result.exportPath}`

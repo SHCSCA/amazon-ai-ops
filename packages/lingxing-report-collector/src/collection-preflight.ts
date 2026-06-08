@@ -19,6 +19,10 @@ export interface DownloadCenterCollectionPreflightResult {
   ready: boolean;
   generatedAt: string;
   dateRange: { start: string; end: string };
+  target?: {
+    storeName?: string;
+    marketplaceCode?: string;
+  };
   pageModel: string;
   requiresManualVerification: boolean;
   automationReadiness: ReturnType<typeof getDownloadCenterAutomationReadiness>;
@@ -51,7 +55,7 @@ export function buildDownloadCenterCollectionPreflight(
     {
       name: 'diagnostic_evidence_ready',
       status: diagnosticEvidenceReadiness.ready ? 'passed' : 'blocked',
-      detail: diagnosticEvidenceReadiness.reason || `diagnostic ${diagnosticEvidenceReadiness.diagnosticId ?? 'unknown'} is fresh and matches the active page model/date range`,
+      detail: diagnosticEvidenceReadiness.reason || `diagnostic ${diagnosticEvidenceReadiness.diagnosticId ?? 'unknown'} is fresh and matches the active page model/date range/store/site scope`,
       missing: diagnosticEvidenceReadiness.missing,
     },
   ];
@@ -68,6 +72,7 @@ export function buildDownloadCenterCollectionPreflight(
     ready: checks.every((check) => check.status === 'passed'),
     generatedAt: new Date(options.nowMs ?? Date.now()).toISOString(),
     dateRange,
+    target: options.target,
     pageModel: model.name,
     requiresManualVerification: model.requiresManualVerification,
     automationReadiness,
@@ -83,6 +88,8 @@ export function downloadCenterCollectionPreflightToMarkdown(result: DownloadCent
     `Ready: ${result.ready ? 'yes' : 'no'}`,
     `Generated at: ${result.generatedAt}`,
     `Date range: ${result.dateRange.start} to ${result.dateRange.end}`,
+    `Store: ${result.target?.storeName || 'not specified'}`,
+    `Marketplace: ${result.target?.marketplaceCode || 'not specified'}`,
     `Page model: ${result.pageModel}`,
     `Requires manual verification: ${result.requiresManualVerification ? 'yes' : 'no'}`,
     '',

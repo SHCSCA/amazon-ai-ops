@@ -32,6 +32,10 @@ export interface LingxingCollectionPreflightBundleIndex {
   generatedAt: string;
   ready: boolean;
   dateRange: { start: string; end: string };
+  target?: {
+    storeName?: string;
+    marketplaceCode?: string;
+  };
   pageModel: string;
   requiresManualVerification: boolean;
   diagnosticId?: number;
@@ -109,6 +113,7 @@ export function lingxingCollectionPreflightBundleIndex(
     generatedAt: new Date().toISOString(),
     ready: preflight.ready,
     dateRange: preflight.dateRange,
+    target: preflight.target,
     pageModel: model.name,
     requiresManualVerification: model.requiresManualVerification,
     diagnosticId: diagnostic?.id,
@@ -136,6 +141,8 @@ export function lingxingCollectionPreflightReviewChecklist(
     '',
     `Ready: ${preflight.ready ? 'yes' : 'no'}`,
     `Date range: ${preflight.dateRange.start} to ${preflight.dateRange.end}`,
+    `Store: ${preflight.target?.storeName || 'not specified'}`,
+    `Marketplace: ${preflight.target?.marketplaceCode || 'not specified'}`,
     `Page model: ${model.name}`,
     `Requires manual verification: ${model.requiresManualVerification ? 'yes' : 'no'}`,
     `Matching diagnostic: ${diagnostic?.id ?? 'none'}`,
@@ -145,10 +152,10 @@ export function lingxingCollectionPreflightReviewChecklist(
     '',
     '- Confirm `collection-preflight.json` and `collection-preflight.md` describe the same readiness state.',
     '- Confirm `active-page-model.json` is the model intended for the next diagnostic or collection attempt.',
-    '- Confirm the selected date range matches the intended live report window.',
+    '- Confirm the selected date range, store, and marketplace match the intended live report window.',
     '- Confirm every blocked check below is resolved before running `启动采集` or row-level `重试`.',
     '- If a diagnostic is present, compare `diagnostic.json`, the copied screenshot, and the copied DOM snapshot before trusting selector evidence.',
-    '- If no diagnostic is present, run `验证页面` for this exact model and date range before collection.',
+    '- If no diagnostic is present, run `验证页面` for this exact model, date range, store, and marketplace before collection.',
     '- Keep `requiresManualVerification` enabled until the enablement audit passes for the saved model and a fresh enabled-snapshot diagnostic exists.',
     '',
     '## Blocked Checks',

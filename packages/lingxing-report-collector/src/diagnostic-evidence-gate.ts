@@ -19,6 +19,10 @@ export interface EvaluateDownloadCenterDiagnosticEvidenceOptions {
   nowMs?: number;
   ttlMs?: number;
   allowedFutureSkewMs?: number;
+  target?: {
+    storeName?: string;
+    marketplaceCode?: string;
+  };
 }
 
 export function evaluateDownloadCenterDiagnosticEvidenceReadiness(
@@ -31,7 +35,7 @@ export function evaluateDownloadCenterDiagnosticEvidenceReadiness(
     return {
       ready: false,
       missing: ['diagnosticEvidence'],
-      reason: 'no matching download-center diagnostic exists for this page model and date range',
+      reason: 'no matching download-center diagnostic exists for this page model, date range, store, and marketplace',
     };
   }
   if (diagnostic.pageModel !== model.name || JSON.stringify(diagnostic.pageModelSnapshot) !== JSON.stringify(model)) {
@@ -48,6 +52,20 @@ export function evaluateDownloadCenterDiagnosticEvidenceReadiness(
       ready: false,
       missing: ['diagnosticDateRange'],
       reason: 'diagnostic date range does not match the selected collection range',
+      diagnosticId: diagnostic.id,
+      checkedAt: diagnostic.checkedAt,
+    };
+  }
+  const targetStoreName = normalizeOptionalScope(options.target?.storeName);
+  const targetMarketplaceCode = normalizeOptionalScope(options.target?.marketplaceCode);
+  if (
+    normalizeOptionalScope(diagnostic.storeName) !== targetStoreName
+    || normalizeOptionalScope(diagnostic.marketplaceCode) !== targetMarketplaceCode
+  ) {
+    return {
+      ready: false,
+      missing: ['diagnosticStoreSite'],
+      reason: 'diagnostic store/site scope does not match the selected collection scope',
       diagnosticId: diagnostic.id,
       checkedAt: diagnostic.checkedAt,
     };
@@ -111,6 +129,10 @@ export function missingDownloadCenterActionSelectorSetupEvidence(
   }
 
   return Array.from(new Set(missing));
+}
+
+function normalizeOptionalScope(value: string | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function requireUsableSelectorEvidence(

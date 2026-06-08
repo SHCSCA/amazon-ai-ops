@@ -230,6 +230,8 @@ function runMigrations(database: Database.Database): void {
       app_version TEXT,
       date_start TEXT NOT NULL,
       date_end TEXT NOT NULL,
+      store_name TEXT,
+      marketplace_code TEXT,
       status TEXT NOT NULL,
       download_dir TEXT NOT NULL,
       manifest_path TEXT,
@@ -238,6 +240,8 @@ function runMigrations(database: Database.Database): void {
     )
   `);
   ensureColumn(database, 'lingxing_report_batches', 'app_version', 'TEXT');
+  ensureColumn(database, 'lingxing_report_batches', 'store_name', 'TEXT');
+  ensureColumn(database, 'lingxing_report_batches', 'marketplace_code', 'TEXT');
 
   // v1.5 lingxing_report_files
   database.exec(`
@@ -388,6 +392,8 @@ function runMigrations(database: Database.Database): void {
       page_model_snapshot_json TEXT,
       date_start TEXT,
       date_end TEXT,
+      store_name TEXT,
+      marketplace_code TEXT,
       url TEXT,
       title TEXT,
       ready INTEGER DEFAULT 0,
@@ -412,6 +418,8 @@ function runMigrations(database: Database.Database): void {
   ensureColumn(database, 'download_center_diagnostics', 'page_model_snapshot_json', 'TEXT');
   ensureColumn(database, 'download_center_diagnostics', 'date_start', 'TEXT');
   ensureColumn(database, 'download_center_diagnostics', 'date_end', 'TEXT');
+  ensureColumn(database, 'download_center_diagnostics', 'store_name', 'TEXT');
+  ensureColumn(database, 'download_center_diagnostics', 'marketplace_code', 'TEXT');
 
   // v1.5 duplicate-import safeguards. Keep one row per imported source row and
   // one current opportunity per ASIN/keyword pair before adding unique indexes.
@@ -486,6 +494,7 @@ function runMigrations(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_listing_drafts_status ON listing_drafts(status);
     CREATE INDEX IF NOT EXISTS idx_download_center_diagnostics_checked ON download_center_diagnostics(checked_at);
     CREATE INDEX IF NOT EXISTS idx_download_center_diagnostics_model_date ON download_center_diagnostics(page_model, date_start, date_end, checked_at);
+    CREATE INDEX IF NOT EXISTS idx_download_center_diagnostics_scope ON download_center_diagnostics(page_model, date_start, date_end, store_name, marketplace_code, checked_at);
   `);
 }
 

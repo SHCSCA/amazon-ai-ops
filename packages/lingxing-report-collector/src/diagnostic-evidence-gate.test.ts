@@ -132,6 +132,22 @@ describe('evaluateDownloadCenterDiagnosticEvidenceReadiness', () => {
     expect(result).toMatchObject({ ready: true, missing: [] });
   });
 
+  it('fails closed when diagnostic store/site scope does not match the selected collection scope', () => {
+    const activeModel = model();
+    const result = evaluateDownloadCenterDiagnosticEvidenceReadiness(
+      activeModel,
+      { start: '2026-05-01', end: '2026-05-31' },
+      diagnostic(activeModel, { storeName: 'FT-US-US', marketplaceCode: 'US' }),
+      { nowMs, target: { storeName: 'FT-CA-CA', marketplaceCode: 'CA' } },
+    );
+
+    expect(result).toMatchObject({
+      ready: false,
+      missing: ['diagnosticStoreSite'],
+    });
+    expect(result.reason).toContain('store/site');
+  });
+
   it('does not require pre-existing ready/download row evidence before creating reports', () => {
     const activeModel = model();
     const result = evaluateDownloadCenterDiagnosticEvidenceReadiness(

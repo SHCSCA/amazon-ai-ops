@@ -8,6 +8,8 @@ import { writeManifest } from './manifest';
 export interface RunBatchOptions {
   dateStart: string;
   dateEnd: string;
+  storeName?: string;
+  marketplaceCode?: string;
   rootDownloadDir: string;
   appVersion?: string;
   reportTypes?: LingxingReportType[];
@@ -45,6 +47,8 @@ export async function runLingxingReportBatch(options: RunBatchOptions): Promise<
     appVersion: options.appVersion,
     dateStart: options.dateStart,
     dateEnd: options.dateEnd,
+    storeName: options.storeName,
+    marketplaceCode: options.marketplaceCode,
     status: 'running',
     downloadDir,
     createdAt: new Date().toISOString(),

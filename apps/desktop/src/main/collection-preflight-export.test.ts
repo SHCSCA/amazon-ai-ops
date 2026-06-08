@@ -99,7 +99,7 @@ describe('writeLingxingCollectionPreflightEvidenceBundle', () => {
         diagnosticEvidenceReadiness: {
           ready: false,
           missing: ['diagnosticEvidence'],
-          reason: 'no matching download-center diagnostic exists for this page model and date range',
+          reason: 'no matching download-center diagnostic exists for this page model, date range, store, and marketplace',
         },
       }),
       model: pageModel(),
@@ -119,7 +119,7 @@ describe('writeLingxingCollectionPreflightEvidenceBundle', () => {
       readiness: {
         ready: false,
         missing: ['diagnosticEvidence'],
-        reason: 'no matching download-center diagnostic exists for this page model and date range',
+        reason: 'no matching download-center diagnostic exists for this page model, date range, store, and marketplace',
       },
     });
     expect(JSON.parse(fs.readFileSync(path.join(exportDir, 'preflight-bundle-index.json'), 'utf8'))).toMatchObject({
@@ -128,7 +128,7 @@ describe('writeLingxingCollectionPreflightEvidenceBundle', () => {
       blockedChecks: [
         {
           name: 'diagnostic_evidence_ready',
-          detail: 'no matching download-center diagnostic exists for this page model and date range',
+          detail: 'no matching download-center diagnostic exists for this page model, date range, store, and marketplace',
           missing: ['diagnosticEvidence'],
         },
       ],
@@ -140,8 +140,8 @@ describe('writeLingxingCollectionPreflightEvidenceBundle', () => {
     });
     const checklist = fs.readFileSync(path.join(exportDir, 'preflight-review-checklist.md'), 'utf8');
     expect(checklist).toContain('Matching diagnostic: none');
-    expect(checklist).toContain('- If no diagnostic is present, run `验证页面` for this exact model and date range before collection.');
-    expect(checklist).toContain('diagnostic_evidence_ready: no matching download-center diagnostic exists for this page model and date range');
+    expect(checklist).toContain('- If no diagnostic is present, run `验证页面` for this exact model, date range, store, and marketplace before collection.');
+    expect(checklist).toContain('diagnostic_evidence_ready: no matching download-center diagnostic exists for this page model, date range, store, and marketplace');
   });
 });
 
@@ -213,7 +213,7 @@ function preflight(overrides: Partial<DownloadCenterCollectionPreflightResult> =
       {
         name: 'diagnostic_evidence_ready',
         status: diagnosticEvidenceReadiness.ready ? 'passed' : 'blocked',
-        detail: diagnosticEvidenceReadiness.reason || 'diagnostic 12 is fresh and matches the active page model/date range',
+        detail: diagnosticEvidenceReadiness.reason || 'diagnostic 12 is fresh and matches the active page model/date range/store/site scope',
         missing: diagnosticEvidenceReadiness.missing,
       },
     ],

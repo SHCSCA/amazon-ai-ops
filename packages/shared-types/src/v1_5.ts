@@ -101,6 +101,8 @@ export interface DownloadCenterDiagnosticResult {
   pageModelSnapshot?: DownloadCenterPageModel;
   dateStart?: string;
   dateEnd?: string;
+  storeName?: string;
+  marketplaceCode?: string;
   url: string;
   title: string;
   ready: boolean;
@@ -122,6 +124,8 @@ export interface LingxingReportBatch {
   appVersion?: string;
   dateStart: string;
   dateEnd: string;
+  storeName?: string;
+  marketplaceCode?: string;
   status: 'pending' | 'running' | 'completed' | 'completed_with_errors' | 'failed';
   downloadDir: string;
   manifestPath?: string;

@@ -28,6 +28,10 @@ export interface DownloadCenterPageModelEnablementBundleIndex {
   generatedAt: string;
   canDisableManualVerification: boolean;
   dateRange: { start: string; end: string };
+  target?: {
+    storeName?: string;
+    marketplaceCode?: string;
+  };
   pageModel: string;
   currentlyRequiresManualVerification: boolean;
   diagnosticId?: number;
@@ -99,6 +103,7 @@ export function downloadCenterPageModelEnablementBundleIndex(
     generatedAt: new Date().toISOString(),
     canDisableManualVerification: audit.canDisableManualVerification,
     dateRange: audit.dateRange,
+    target: audit.target,
     pageModel: model.name,
     currentlyRequiresManualVerification: model.requiresManualVerification,
     diagnosticId: diagnostic?.id,

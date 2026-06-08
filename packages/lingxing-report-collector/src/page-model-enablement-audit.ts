@@ -19,6 +19,10 @@ export interface DownloadCenterPageModelEnablementAuditResult {
   canDisableManualVerification: boolean;
   generatedAt: string;
   dateRange: { start: string; end: string };
+  target?: {
+    storeName?: string;
+    marketplaceCode?: string;
+  };
   pageModel: string;
   currentlyRequiresManualVerification: boolean;
   automationReadiness: ReturnType<typeof getDownloadCenterAutomationReadiness>;
@@ -58,7 +62,7 @@ export function auditDownloadCenterPageModelEnablement(
       name: 'diagnostic_evidence_ready',
       status: diagnosticEvidenceReadiness.ready ? 'passed' : 'blocked',
       missing: diagnosticEvidenceReadiness.missing,
-      detail: diagnosticEvidenceReadiness.reason || `diagnostic ${diagnosticEvidenceReadiness.diagnosticId ?? 'unknown'} proves the saved page model/date setup selectors`,
+      detail: diagnosticEvidenceReadiness.reason || `diagnostic ${diagnosticEvidenceReadiness.diagnosticId ?? 'unknown'} proves the saved page model/date/store/site setup selectors`,
     },
   ];
 
@@ -66,6 +70,7 @@ export function auditDownloadCenterPageModelEnablement(
     canDisableManualVerification: checks.every((check) => check.status === 'passed'),
     generatedAt: new Date(options.nowMs ?? Date.now()).toISOString(),
     dateRange,
+    target: options.target,
     pageModel: model.name,
     currentlyRequiresManualVerification: model.requiresManualVerification,
     automationReadiness,
@@ -83,6 +88,8 @@ export function downloadCenterPageModelEnablementAuditToMarkdown(
     `Can disable manual verification: ${result.canDisableManualVerification ? 'yes' : 'no'}`,
     `Generated at: ${result.generatedAt}`,
     `Date range: ${result.dateRange.start} to ${result.dateRange.end}`,
+    `Store: ${result.target?.storeName || 'not specified'}`,
+    `Marketplace: ${result.target?.marketplaceCode || 'not specified'}`,
     `Page model: ${result.pageModel}`,
     `Currently requires manual verification: ${result.currentlyRequiresManualVerification ? 'yes' : 'no'}`,
     '',
@@ -93,7 +100,7 @@ export function downloadCenterPageModelEnablementAuditToMarkdown(
     '## Operator Rule',
     '',
     '- Only set `requiresManualVerification` to `false` after this audit says `yes` and the screenshot/DOM evidence has been manually reviewed.',
-    '- After saving the enabled override, run the read-only diagnostic again for the same date range before starting collection.',
+    '- After saving the enabled override, run the read-only diagnostic again for the same date range, store, and marketplace before starting collection.',
     '',
   ].join('\n');
 }

@@ -257,6 +257,25 @@ describe('auditLingxingAcceptanceEvidence', () => {
     });
   });
 
+  it('stays incomplete when diagnostic evidence is for another store or marketplace even if readiness provenance matches', () => {
+    const batchValue = batch({ storeName: 'FT-US-US', marketplaceCode: 'US' });
+    const result = auditLingxingAcceptanceEvidence({
+      batch: batchValue,
+      files: files(),
+      diagnostic: diagnostic({ storeName: 'FT-CA-CA', marketplaceCode: 'CA' }),
+      diagnosticEvidenceReadiness: diagnosticReadiness(),
+      manifest: manifest(batchValue),
+      fileExists: () => true,
+      getFileSizeBytes: () => 256,
+    });
+
+    expect(result.status).toBe('incomplete');
+    expect(result.checks.find((check) => check.name === 'download_center_diagnostic')).toMatchObject({
+      status: 'incomplete',
+      detail: expect.stringContaining('diagnostic store/site scope FT-CA-CA/CA does not match batch FT-US-US/US'),
+    });
+  });
+
   it('does not pass when diagnostic screenshot or DOM evidence files are missing', () => {
     const result = auditLingxingAcceptanceEvidence({
       batch: batch(),

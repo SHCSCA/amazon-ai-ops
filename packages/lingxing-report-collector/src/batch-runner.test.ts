@@ -13,6 +13,8 @@ describe('runLingxingReportBatch', () => {
     const result = await runLingxingReportBatch({
       dateStart: '2026-05-01',
       dateEnd: '2026-05-25',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
       rootDownloadDir,
       appVersion: '1.5.0-test',
       automation: {
@@ -44,6 +46,8 @@ describe('runLingxingReportBatch', () => {
     const manifest = JSON.parse(fs.readFileSync(result.batch.manifestPath!, 'utf8'));
     expect(manifest.appVersion).toBe('1.5.0-test');
     expect(manifest.batch.id).toBe(result.batch.id);
+    expect(manifest.batch.storeName).toBe('FT-US-US');
+    expect(manifest.batch.marketplaceCode).toBe('US');
     expect(manifest.files).toHaveLength(8);
     expect(calls.filter((call) => call === 'navigate')).toHaveLength(8);
   });

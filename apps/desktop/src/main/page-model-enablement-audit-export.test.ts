@@ -78,7 +78,7 @@ describe('writeDownloadCenterPageModelEnablementAuditBundle', () => {
         diagnosticEvidenceReadiness: {
           ready: false,
           missing: ['diagnosticEvidence'],
-          reason: 'no matching download-center diagnostic exists for this page model and date range',
+          reason: 'no matching download-center diagnostic exists for this page model, date range, store, and marketplace',
         },
         checks: [
           {
@@ -90,7 +90,7 @@ describe('writeDownloadCenterPageModelEnablementAuditBundle', () => {
           {
             name: 'diagnostic_evidence_ready',
             status: 'blocked',
-            detail: 'no matching download-center diagnostic exists for this page model and date range',
+            detail: 'no matching download-center diagnostic exists for this page model, date range, store, and marketplace',
             missing: ['diagnosticEvidence'],
           },
         ],
@@ -111,7 +111,7 @@ describe('writeDownloadCenterPageModelEnablementAuditBundle', () => {
       readiness: {
         ready: false,
         missing: ['diagnosticEvidence'],
-        reason: 'no matching download-center diagnostic exists for this page model and date range',
+        reason: 'no matching download-center diagnostic exists for this page model, date range, store, and marketplace',
       },
     });
     expect(JSON.parse(fs.readFileSync(path.join(auditDir, 'enablement-bundle-index.json'), 'utf8'))).toMatchObject({
@@ -120,7 +120,7 @@ describe('writeDownloadCenterPageModelEnablementAuditBundle', () => {
       blockedChecks: [
         {
           name: 'diagnostic_evidence_ready',
-          detail: 'no matching download-center diagnostic exists for this page model and date range',
+          detail: 'no matching download-center diagnostic exists for this page model, date range, store, and marketplace',
           missing: ['diagnosticEvidence'],
         },
       ],
@@ -199,7 +199,7 @@ function enablementAudit(overrides: Partial<DownloadCenterPageModelEnablementAud
       {
         name: 'diagnostic_evidence_ready',
         status: 'passed',
-        detail: 'diagnostic 7 proves the saved page model/date setup selectors',
+        detail: 'diagnostic 7 proves the saved page model/date/store/site setup selectors',
         missing: [],
       },
     ],

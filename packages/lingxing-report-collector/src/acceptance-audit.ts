@@ -199,6 +199,16 @@ function diagnosticCheck(
       detail: `diagnostic date range ${diagnostic.dateStart || 'unknown'} to ${diagnostic.dateEnd || 'unknown'} does not match batch`,
     };
   }
+  if (
+    normalizeOptionalScope(diagnostic.storeName) !== normalizeOptionalScope(batch.storeName)
+    || normalizeOptionalScope(diagnostic.marketplaceCode) !== normalizeOptionalScope(batch.marketplaceCode)
+  ) {
+    return {
+      name: 'download_center_diagnostic',
+      status: 'incomplete',
+      detail: `diagnostic store/site scope ${diagnostic.storeName || 'not specified'}/${diagnostic.marketplaceCode || 'not specified'} does not match batch ${batch.storeName || 'not specified'}/${batch.marketplaceCode || 'not specified'}`,
+    };
+  }
   if (!diagnosticEvidenceReadiness?.ready) {
     return {
       name: 'download_center_diagnostic',
@@ -238,6 +248,10 @@ function diagnosticReadinessProvenanceProblem(
     return 'diagnostic evidence readiness checkedAt does not match the diagnostic';
   }
   return undefined;
+}
+
+function normalizeOptionalScope(value: string | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function downloadedFileSizeProblems(
@@ -328,6 +342,8 @@ function manifestConsistencyProblems(
   if (manifest.batch?.downloadDir !== batch.downloadDir) problems.push({ status: 'failed', detail: 'manifest batch downloadDir does not match' });
   if (manifest.batch?.manifestPath !== batch.manifestPath) problems.push({ status: 'failed', detail: 'manifest batch manifestPath does not match' });
   if (manifest.batch?.dateStart !== batch.dateStart || manifest.batch?.dateEnd !== batch.dateEnd) problems.push({ status: 'failed', detail: 'manifest date range does not match' });
+  if (manifest.batch?.storeName !== batch.storeName) problems.push({ status: 'failed', detail: 'manifest batch storeName does not match' });
+  if (manifest.batch?.marketplaceCode !== batch.marketplaceCode) problems.push({ status: 'failed', detail: 'manifest batch marketplaceCode does not match' });
   if (manifest.batch?.status !== batch.status) problems.push({ status: 'failed', detail: 'manifest batch status does not match' });
   if (!Array.isArray(manifest.files) || manifest.files.length !== files.length) {
     problems.push({ status: 'failed', detail: 'manifest file count does not match' });

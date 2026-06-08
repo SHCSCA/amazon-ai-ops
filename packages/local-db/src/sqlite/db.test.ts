@@ -21,21 +21,37 @@ afterEach(() => {
 });
 
 describe('initSqlite v1.5 schema', () => {
-  it('keeps Lingxing report batch appVersion for final manifest audit traceability', () => {
+  it('keeps Lingxing report batch appVersion and store/site scope for final manifest audit traceability', () => {
     const db = initSqlite(tempDbPath());
     try {
       const columns = db.prepare('PRAGMA table_info(lingxing_report_batches)').all() as Array<{ name: string }>;
 
       expect(columns.map((column) => column.name)).toContain('app_version');
+      expect(columns.map((column) => column.name)).toContain('store_name');
+      expect(columns.map((column) => column.name)).toContain('marketplace_code');
       db.prepare(`
         INSERT INTO lingxing_report_batches
-          (id, app_version, date_start, date_end, status, download_dir, created_at)
+          (id, app_version, date_start, date_end, store_name, marketplace_code, status, download_dir, created_at)
         VALUES
-          ('batch_1', '1.5.0-test', '2026-05-01', '2026-05-31', 'completed', 'C:/tmp/downloads', '2026-06-01T00:00:00.000Z')
+          ('batch_1', '1.5.0-test', '2026-05-01', '2026-05-31', 'FT-US-US', 'US', 'completed', 'C:/tmp/downloads', '2026-06-01T00:00:00.000Z')
       `).run();
 
-      const row = db.prepare('SELECT app_version AS appVersion FROM lingxing_report_batches WHERE id = ?').get('batch_1') as { appVersion?: string };
+      const row = db.prepare('SELECT app_version AS appVersion, store_name AS storeName, marketplace_code AS marketplaceCode FROM lingxing_report_batches WHERE id = ?').get('batch_1') as { appVersion?: string; storeName?: string; marketplaceCode?: string };
       expect(row.appVersion).toBe('1.5.0-test');
+      expect(row.storeName).toBe('FT-US-US');
+      expect(row.marketplaceCode).toBe('US');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('keeps download-center diagnostic store/site scope for live proof traceability', () => {
+    const db = initSqlite(tempDbPath());
+    try {
+      const columns = db.prepare('PRAGMA table_info(download_center_diagnostics)').all() as Array<{ name: string }>;
+
+      expect(columns.map((column) => column.name)).toContain('store_name');
+      expect(columns.map((column) => column.name)).toContain('marketplace_code');
     } finally {
       db.close();
     }

@@ -42,7 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:reports:export-download-center-diagnostic-bundle', { diagnosticId }),
   exportDownloadCenterPageModelDraft: (diagnosticId: number) =>
     ipcRenderer.invoke('v1_5:reports:export-download-center-page-model-draft', { diagnosticId }),
-  exportDownloadCenterPageModelEnablementAudit: (dateRange: { start: string; end: string }, diagnosticId?: number) =>
+  exportDownloadCenterPageModelEnablementAudit: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, diagnosticId?: number) =>
     ipcRenderer.invoke('v1_5:reports:export-download-center-page-model-enablement-audit', { dateRange, diagnosticId }),
   getDownloadCenterPageModel: () => ipcRenderer.invoke('v1_5:reports:get-download-center-page-model'),
   saveDownloadCenterPageModel: (model: any) => ipcRenderer.invoke('v1_5:reports:save-download-center-page-model', model),

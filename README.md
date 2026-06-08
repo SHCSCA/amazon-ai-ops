@@ -12,7 +12,7 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | 类型检查 | 通过 | `pnpm typecheck` 通过 |
 | 桌面构建 | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:win` 生成 Windows 安装包 |
 | 打包应用冒烟 | 通过 | 打包 exe 可启动并保持运行 |
-| 当前安装包 | 已生成 | `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`，SHA-256 `96A09A11CFB78C8BD10455274E33A2528C0430C0244BEF3933319DD9E202077D`，大小 `89594452` bytes，最后构建 `2026-06-04 16:28:38` |
+| 当前安装包 | 已生成 | `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`，SHA-256 `99BB783E2E813224A6C097CF7477DA7FA54FEBCE6FD9D8B6E34E8F57F5A2A6A8`，大小 `89593098` bytes，最后构建 `2026-06-08 09:37:54` |
 | 关键词/Listing v1.5 工作流 | 已结构完成 | 导入、诊断、机会评分、建议、草稿、导出已接入 |
 | 领星下载中心采集 | 创建页 selector 已只读诊断，自动化仍未放行 | 已用真实登录会话完成 Ads 下载中心两阶段诊断；真实生成/下载和 8 报表 E2E 仍 fail-closed |
 
@@ -36,7 +36,7 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | 领星报表采集器 | 8 类广告报表定义、批次 manifest、文件校验、失败重试、单报表重试、模拟 E2E |
 | 下载中心诊断 | 页面诊断、截图、DOM 快照、selector candidates、action selector 检查、证据包导出 |
 | 页面模型覆盖 | 本地 override 保存、重置、备份、校验、启用审计 |
-| 采集预检 | 启动采集前检查页面模型、诊断证据、截图/DOM 文件、浏览器登录状态 |
+| 采集预检 | 启动采集前检查页面模型、同店铺/站点/日期范围诊断证据、截图/DOM 文件、浏览器登录状态 |
 | v1.5 工作台收尾 | 修复 `验证页面` 点击区域被相邻面板覆盖的问题；移除旧版 `daily_report_download` 定时入口 |
 | 关键词导入 | Search Term/SQP/keyword report 映射、诊断、重复导入策略、错误行导出 |
 | 关键词机会 | ASIN + normalized keyword 聚合、评分、风险过滤 |
@@ -107,12 +107,12 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | 1 | 确认 Git 状态 | `git status --short --branch` 显示 `master...origin/master`，当前收尾提交应为 `a4b5cb2` |
 | 2 | 确认不要提交运行产物 | `output/`、`storage/` 是本地证据和浏览器 profile，已加入 `.gitignore` |
 | 3 | 用真实浏览器登录领星 | 使用项目浏览器架构或桌面应用保持同一 `storage/browser-data` profile，并同时确认 Ads 系统会话 |
-| 4 | 复核下载中心诊断证据 | 已有 IPC 诊断 id `4` 和 UI 布局点击证据；真实 Lingxing 会话稳定后，从桌面 UI 再点击 `验证页面` 刷新当前构建的同模型证据 |
+| 4 | 复核下载中心诊断证据 | 已有 IPC 诊断 id `4` 和 UI 布局点击证据；真实 Lingxing 会话稳定后，从桌面 UI 再点击 `验证页面` 刷新当前构建的同模型、同日期、同店铺、同站点证据 |
 | 5 | 导出诊断证据包 | 使用 `导出证据包`，保存截图、DOM、selector candidates、action selector checks |
 | 6 | 复核页面模型 | 内置 `actionSelectors` 已填写；保持 `requiresManualVerification: true`，直到 ready/download 也有真实生成行证据 |
-| 7 | 启用前审计 | 运行 `导出启用审计`，只有 scoped selectors、同模型同日期诊断、截图/DOM 文件证据都通过后才能考虑关闭人工验证 |
+| 7 | 启用前审计 | 运行 `导出启用审计`，只有 scoped selectors、同模型同日期同店铺同站点诊断、截图/DOM 文件证据都通过后才能考虑关闭人工验证 |
 | 8 | 真实采集 E2E | 跑完整 8 报表批次，验证 manifest、文件名日期 token、文件大小、失败重试、单报表重试 |
-| 9 | 导出最终验收审计 | 使用 `导出验收审计`，要求所有 8 个报表、诊断证据、manifest 和文件证据一致 |
+| 9 | 导出最终验收审计 | 使用 `导出验收审计`，要求所有 8 个报表、诊断证据、manifest、批次店铺/站点和文件证据一致 |
 
 ## 常用命令
 
@@ -135,4 +135,4 @@ pnpm --filter @amazon-ai-ops/desktop run build:win
 
 ## 交付边界
 
-当前交付是“结构闭环 + 本地验证通过 + 真实 Ads 下载中心只读定位完成 + 创建报告页 selector 诊断通过”。还不能宣称“领星真实下载中心自动采集完成”。真实采集完成的最低证据是：已登录真实领星和 Ads 会话、同一 page-model snapshot 的桌面诊断证据、可唯一定位的创建/ready/download action selectors、完整 8 报表下载、manifest 与数据库/文件系统一致、最终验收审计通过。
+当前交付是“结构闭环 + 本地验证通过 + 真实 Ads 下载中心只读定位完成 + 创建报告页 selector 诊断通过”。还不能宣称“领星真实下载中心自动采集完成”。真实采集完成的最低证据是：已登录真实领星和 Ads 会话、同一 page-model snapshot、日期范围、店铺和站点的桌面诊断证据、可唯一定位的创建/ready/download action selectors、完整 8 报表下载、manifest 与数据库/文件系统/店铺站点一致、最终验收审计通过。

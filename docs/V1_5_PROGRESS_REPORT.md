@@ -1,6 +1,6 @@
 # Amazon AI Ops Agent v1.5 Progress Report
 
-Date: 2026-06-04
+Date: 2026-06-08
 
 ## Goal
 
@@ -16,7 +16,7 @@ Implemented and verified:
 - Added v1.5 shared types, resources, field mappings, prompts, and page-model diagnostics.
 - Added Lingxing report collector with 8 report definitions, batch manifest, file verification, report subset batches, manual single-report retry, automatic retry metadata, and failure evidence hooks.
 - Added a local simulated download-center E2E test that drives the exact 8 report types through create, wait, download, file verification, and manifest generation, with manifest/result parity assertions. This proves the local orchestration path but does not replace live Lingxing E2E.
-- Added Lingxing E2E acceptance audit export. After a batch, the app can export JSON/Markdown audit evidence plus DB-loaded batch result, DB-loaded same-model/same-date diagnostic evidence, and a bounded manifest copy; the audit only passes when all 8 expected reports, files, filename date tokens, manifest identity/content, and matching diagnostic gate evidence are present.
+- Added Lingxing E2E acceptance audit export. After a batch, the app can export JSON/Markdown audit evidence plus DB-loaded batch result, DB-loaded same-model/same-date/same-store/same-marketplace diagnostic evidence, and a bounded manifest copy; the audit only passes when all 8 expected reports, files, filename date tokens, manifest identity/content, batch store/site scope, and matching diagnostic gate evidence are present.
 - Added desktop main-process path-boundary tests for acceptance audit manifest handling, including same-prefix sibling directory rejection, manifest filename enforcement, unreadable JSON handling, safe export directory segment sanitization, and a capability-gated symlink escape regression.
 - Added keyword report import, keyword opportunity scoring, Listing import/manual entry, coverage analysis, suggestions, drafts, status updates, and CSV/XLSX/Markdown export.
 - Keyword report import now uses parse diagnostics: missing critical keyword columns fail clearly, invalid row ratios above 5% fail the import, and optional missing/unparseable numeric fields are surfaced as warnings instead of being silently hidden.
@@ -47,18 +47,18 @@ Implemented and verified:
 - Download-center diagnostics can now be exported as a local evidence bundle containing the diagnostic JSON, active page model, readiness result, selector candidates, action selector checks, copied screenshot/DOM evidence, and a manual verification checklist.
 - Download-center diagnostic bundle export now takes only a diagnostic ID from the renderer and reloads the persisted diagnostic in the main process before writing evidence files.
 - Download-center diagnostics can now generate a safe page-model draft from persisted evidence. The draft is exported with selector candidates and solidification notes, filled into the UI editor, and keeps `requiresManualVerification: true` until the operator deliberately completes and re-diagnoses the verified selector set. Unit tests cover the manual gate, trusted Lingxing URL promotion, selector deduplication, and operator notes.
-- Added a page-model enablement audit for the final selector-solidification step. It exports JSON/Markdown evidence for the active saved page model and can only say manual verification may be disabled when scoped action selectors and recent same-model/same-date diagnostic setup evidence both pass. Tests also pin the post-enable requirement: after `requiresManualVerification` is saved as `false`, an older manual-gated diagnostic no longer matches and collection remains blocked until a fresh enabled-snapshot diagnostic exists.
+- Added a page-model enablement audit for the final selector-solidification step. It exports JSON/Markdown evidence for the active saved page model and can only say manual verification may be disabled when scoped action selectors and recent same-model/same-date/same-store/same-marketplace diagnostic setup evidence both pass. Tests also pin the post-enable requirement: after `requiresManualVerification` is saved as `false`, an older manual-gated diagnostic no longer matches and collection remains blocked until a fresh enabled-snapshot diagnostic exists.
 - Page-model enablement audit export now also applies diagnostic screenshot/DOM evidence file readiness, safely copies those files into the audit folder, and writes `diagnostic-evidence-files.json`; missing local evidence files block the audit from saying manual verification can be disabled.
-- Acceptance audit diagnostic lookup now uses a tested same-model/same-date query helper so the default UI path cannot accidentally fall back to a different page-model snapshot.
-- Download-center collection now requires a recent matching diagnostic record for the active page-model snapshot and selected date range before any create, wait, or download action can run. The runtime gate verifies page/date/create selector evidence, while ready/download selectors are checked live immediately before use to avoid self-locking new date-range report creation.
-- The diagnostic evidence gate is now a tested `lingxing-report-collector` helper covering missing/failed diagnostics, stale or future timestamps, malformed selector-check evidence, model/date mismatches, optional confirm dialogs, and new date-range creation without pre-existing ready/download rows.
+- Acceptance audit diagnostic lookup now uses a tested same-model/same-date/same-store/same-marketplace query helper so the default UI path cannot accidentally fall back to a different page-model snapshot or another collection scope.
+- Download-center collection now requires a recent matching diagnostic record for the active page-model snapshot, selected date range, store, and marketplace before any create, wait, or download action can run. The runtime gate verifies page/date/create selector evidence, while ready/download selectors are checked live immediately before use to avoid self-locking new date-range report creation.
+- The diagnostic evidence gate is now a tested `lingxing-report-collector` helper covering missing/failed diagnostics, stale or future timestamps, malformed selector-check evidence, model/date/store/site mismatches, optional confirm dialogs, and new date-range creation without pre-existing ready/download rows.
 - Local evidence opening is now constrained to app-owned download, screenshot, DOM snapshot, trace, report, and export directories with a safe extension allowlist.
 - DOM evidence metadata now strips URL query/hash fragments and redacts token/session/cookie/auth-like values before writing local snapshots.
 - Selector candidate collection now tolerates unusual DOM id/class values by using CSS escaping and skipping only the bad element instead of failing the whole diagnostic.
 - Download-center page models now support a local override in app storage, with IPC/UI save, reload, reset, source display, validation, invalid-override recovery feedback, and readiness feedback. This lets verified live selectors be applied without rebuilding the app.
 - Download-center page-model overrides now save metadata and automatically back up previous override files before save/reset, preserving selector-solidification history. Metadata also records whether manual verification is disabled and whether a fresh post-save diagnostic is required for the exact enabled snapshot.
 - Download-center page-model validation is now isolated in a testable main-process helper. Tests cover manual-verification-on bundled models, complete selector-scoped verified models, missing required selectors, missing report/date placeholders, non-HTTPS/non-allowlisted URLs, and timeout bounds.
-- Added a non-mutating Lingxing collection preflight. The desktop can now show whether collection is blocked by page-model readiness, missing/stale/mismatched same-model diagnostic evidence, or missing browser login/session before it clicks anything.
+- Added a non-mutating Lingxing collection preflight. The desktop can now show whether collection is blocked by page-model readiness, missing/stale/mismatched same-model/date/store/site diagnostic evidence, or missing browser login/session before it clicks anything.
 - `启动采集` and row-level `重试` now run the same preflight as a hard gate before creating a collection batch, so known-unready page models or missing diagnostics fail before noisy failed batches are produced.
 - The hard preflight gate is now a package-level assertion helper reused by the desktop main process, with regression tests proving blocked starts throw a batch-preserving error and ready preflights pass through.
 - Collection preflight now also verifies that the matching diagnostic screenshot and sanitized DOM snapshot files still exist inside the app-owned evidence directories before any collection batch is created.
@@ -86,7 +86,9 @@ Implemented and verified:
 - Added collection preflight export. Operators can write a local preflight evidence folder before attempting live report creation.
 - Collection preflight export now also writes the active page model, diagnostic evidence-file readiness index, matching diagnostic JSON when available, and safe copies of diagnostic screenshot/DOM evidence. This makes before/after selector-solidification review possible from the export folder without querying the local database.
 - Collection preflight export is now extracted into a pure main-process helper with tests covering both matching-diagnostic and missing-diagnostic evidence bundle outputs.
-- Collection preflight export now includes `preflight-review-checklist.md`, so live selector-solidification sessions have a fixed local review checklist covering blocked checks, date range, active model, diagnostic evidence, and next required action.
+- Collection preflight export now includes `preflight-review-checklist.md`, so live selector-solidification sessions have a fixed local review checklist covering blocked checks, date range, store/site scope, active model, diagnostic evidence, and next required action.
+- Download-center diagnostics, collection preflight, enablement audit, collection batches, batch manifest, persisted batch rows, and final acceptance audit now carry the selected store/site scope. A diagnostic for one store/site no longer unlocks collection or enablement for another scope, and the final manifest check compares persisted batch store/site with the manifest batch snapshot.
+- A follow-up reality-check review found a package-level final-audit gap: callers could provide matching diagnostic readiness provenance while the diagnostic itself belonged to a different store/site. `auditLingxingAcceptanceEvidence` now directly compares diagnostic store/site scope with the persisted batch scope and stays incomplete on mismatch.
 - Collection preflight export now also writes `preflight-bundle-index.json`, a machine-readable index of readiness, blocked checks, diagnostic evidence readiness, diagnostic ID, and expected bundle files for automated review of pre-live evidence folders.
 - Download-center diagnostics now include read-only Playwright visible-locator counts for configured action selectors, including placeholder-expanded checks across the 8 report types, plus usable/ambiguous labels so broad selectors are not mistaken for safe automation targets.
 - Real collection now repeats per-action visible-locator safety checks before filling fields or clicking create/download controls, and ready/download selectors must include both report and date placeholders so old report rows fail closed before download.
@@ -113,12 +115,14 @@ Latest local evidence:
 
 - `pnpm vitest run packages/lingxing-report-collector/src/page-model-diagnostic.test.ts packages/lingxing-report-collector/src/diagnostic-evidence-gate.test.ts packages/lingxing-report-collector/src/page-model-enablement-audit.test.ts packages/lingxing-report-collector/src/collection-preflight.test.ts packages/lingxing-report-collector/src/batch-runner.test.ts apps/desktop/src/main/download-center-page-model-validation.test.ts`: passed, 6 test files / 52 passed.
 - `pnpm -r run typecheck`: passed across workspace packages and desktop app.
-- `pnpm test`: passed, 24 test files / 143 passed / 2 skipped. The first run failed only because `better-sqlite3` was still compiled for Electron ABI `119`; after rebuilding the local Node-side binary with MSVC v143, `packages/local-db/src/sqlite/db.test.ts` and the full suite passed.
+- `pnpm test`: passed, 24 test files / 146 passed / 2 skipped.
+- Targeted scope-regression run: `pnpm test -- acceptance-audit.test.ts diagnostic-evidence-gate.test.ts batch-runner.test.ts collection-preflight-export.test.ts page-model-enablement-audit-export.test.ts` passed, 5 test files / 53 passed.
+- After packaging rebuilt `better-sqlite3` for Electron ABI `119`, the local Node-side binary was restored with `D:\PY\python.exe`, VS BuildTools/MSBuild, and `PlatformToolset=v143`; `pnpm --filter @amazon-ai-ops/local-db exec node -e "require('better-sqlite3')"` passed, followed by `pnpm test -- db.test.ts acceptance-audit.test.ts` passing, 2 files / 32 passed.
 - Deprecated scheduler cleanup targeted checks: `pnpm --filter @amazon-ai-ops/scheduler run typecheck` and `pnpm --filter @amazon-ai-ops/desktop run typecheck` both passed after removing `daily_report_download`.
 - Renderer layout QA: `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.json` shows `elementFromPoint` at the `验证页面` button center resolves to the button and that the mocked UI diagnostic success message appears.
 - `pnpm test -- download-center-page-model-validation.test.ts page-model-diagnostic.test.ts`: passed after accepting `ads.lingxing.com` and updating the bundled page model.
 - `pnpm --filter @amazon-ai-ops/desktop run build:win`: passed and generated `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`.
-- Current installer evidence: size `89594452` bytes, SHA-256 `96A09A11CFB78C8BD10455274E33A2528C0430C0244BEF3933319DD9E202077D`, last write time `2026-06-04 16:28:38`.
+- Current installer evidence: size `89593098` bytes, SHA-256 `99BB783E2E813224A6C097CF7477DA7FA54FEBCE6FD9D8B6E34E8F57F5A2A6A8`, last write time `2026-06-08 09:37:54`.
 - Packaged executable smoke test: `apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe` remained alive after 8 seconds, then was stopped.
 - Real desktop IPC diagnostic evidence: diagnostic id `4`, `ready: true`, `missingRequiredSelectors: []`; create-page setup selectors were all found and usable with match count `1`. `readyReportSelector` and `downloadButton` remain unproven because no generated report row for the unique generated name exists yet.
 - `pnpm --filter @amazon-ai-ops/desktop test -- collection-preflight-export.test.ts`: passed after extracting the preflight evidence bundle writer, adding the review checklist, and adding `preflight-bundle-index.json`.
@@ -155,14 +159,14 @@ These live automation details still need verification before disabling `requires
 - Row scoping for report name/date/status.
 - Download button selector scoped by report/date and final filenames.
 - Real Playwright tracing lifecycle for failed download attempts.
-- Full desktop UI `验证页面` rerun with a live Lingxing session should still be used to refresh same-model evidence, but the prior click blocker was a renderer layout overlap and is now covered by renderer QA. Direct desktop IPC diagnostic remains proven by diagnostic id `4`.
+- Full desktop UI `验证页面` rerun with a live Lingxing session should still be used to refresh same-model/date/store/site evidence, but the prior click blocker was a renderer layout overlap and is now covered by renderer QA. Direct desktop IPC diagnostic remains proven by diagnostic id `4`.
 
 Until those are verified, the app can diagnose the page, record retry/evidence metadata, and expose retry workflows, but it must not claim that real Lingxing report creation/download is complete.
 
 ## Next Work
 
 1. Export the diagnostic evidence bundle for diagnostic id `4`, then review screenshot, DOM, and action selector checks.
-2. Rerun the desktop UI `验证页面` path after the Lingxing login/Ads session is stable to refresh same-model evidence from the current build.
+2. Rerun the desktop UI `验证页面` path after the Lingxing login/Ads session is stable to refresh same-model/date/store/site evidence from the current build.
 3. If report generation is approved, run a controlled single-report live create/download proof before enabling all 8 reports.
 4. Use the generated report row to verify ready/download selectors scoped by `{generatedReportName}` and selected date range.
 5. Run `导出启用审计`; only if setup, ready, download, same-model/date diagnostic, and evidence-file checks pass should `requiresManualVerification` be considered for disablement.

@@ -22,7 +22,7 @@ function model(): DownloadCenterPageModel {
 }
 
 describe('getLatestDownloadCenterDiagnosticRowForModel', () => {
-  it('queries by page model name, exact snapshot json, and date range', () => {
+  it('queries by page model name, exact snapshot json, date range, and store/site scope', () => {
     const activeModel = model();
     const captured: { sql?: string; params?: unknown[] } = {};
     const db: DiagnosticRowDatabase = {
@@ -37,18 +37,25 @@ describe('getLatestDownloadCenterDiagnosticRowForModel', () => {
       },
     };
 
-    const row = getLatestDownloadCenterDiagnosticRowForModel(db, activeModel, '2026-05-01', '2026-05-31');
+    const row = getLatestDownloadCenterDiagnosticRowForModel(db, activeModel, '2026-05-01', '2026-05-31', {
+      storeName: 'SHC US',
+      marketplaceCode: 'US',
+    });
 
     expect(row).toEqual({ id: 7 });
     expect(captured.sql).toContain('page_model = ?');
     expect(captured.sql).toContain('page_model_snapshot_json = ?');
     expect(captured.sql).toContain('date_start = ?');
     expect(captured.sql).toContain('date_end = ?');
+    expect(captured.sql).toContain('store_name');
+    expect(captured.sql).toContain('marketplace_code');
     expect(captured.params).toEqual([
       'lingxing-download-center',
       JSON.stringify(activeModel),
       '2026-05-01',
       '2026-05-31',
+      'SHC US',
+      'US',
     ]);
   });
 });
