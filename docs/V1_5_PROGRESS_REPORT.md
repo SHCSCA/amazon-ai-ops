@@ -128,7 +128,7 @@ Latest local evidence:
 - Renderer layout QA: `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.json` shows `elementFromPoint` at the `验证页面` button center resolves to the button and that the mocked UI diagnostic success message appears.
 - `pnpm test -- download-center-page-model-validation.test.ts page-model-diagnostic.test.ts`: passed after accepting `ads.lingxing.com` and updating the bundled page model.
 - `pnpm --filter @amazon-ai-ops/desktop run build:win`: passed and generated `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`.
-- Current installer evidence: size `89604164` bytes, SHA-256 `69C6CDEE156A0B13B86884AC12E3463EDD64428DC84B66099ADB4E6B0EA3010F`, last write time `2026-06-08 10:18:26`.
+- Current installer evidence: size `89601584` bytes, SHA-256 `6039B60FADCC0AF2BA0553B2316A0534D9258E68C735A1E072DDCB3304994C7F`, last write time `2026-06-08 10:35:51`.
 - Packaged executable smoke test: `apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe` remained alive after 8 seconds, then was stopped.
 - Real desktop IPC diagnostic evidence: diagnostic id `4`, `ready: true`, `missingRequiredSelectors: []`; create-page setup selectors were all found and usable with match count `1`. `readyReportSelector` and `downloadButton` remain unproven because no generated report row for the unique generated name exists yet.
 - `pnpm --filter @amazon-ai-ops/desktop test -- collection-preflight-export.test.ts`: passed after extracting the preflight evidence bundle writer, adding the review checklist, and adding `preflight-bundle-index.json`.

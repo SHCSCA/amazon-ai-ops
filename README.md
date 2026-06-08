@@ -12,7 +12,7 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | 类型检查 | 通过 | `pnpm typecheck` 通过 |
 | 桌面构建 | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:win` 生成 Windows 安装包 |
 | 打包应用冒烟 | 通过 | 打包 exe 可启动并执行到 `sqlite-ready`、`ipc-ready`、`window-created` |
-| 当前安装包 | 已生成 | `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`，SHA-256 `69C6CDEE156A0B13B86884AC12E3463EDD64428DC84B66099ADB4E6B0EA3010F`，大小 `89604164` bytes，最后构建 `2026-06-08 10:18:26` |
+| 当前安装包 | 已生成 | `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`，SHA-256 `6039B60FADCC0AF2BA0553B2316A0534D9258E68C735A1E072DDCB3304994C7F`，大小 `89601584` bytes，最后构建 `2026-06-08 10:35:51` |
 | 关键词/Listing v1.5 工作流 | 已结构完成 | 导入、诊断、机会评分、建议、草稿、导出已接入 |
 | 领星下载中心采集 | 创建页 selector 已只读诊断，自动化仍未放行 | 已用真实登录会话完成 Ads 下载中心两阶段诊断；真实生成/下载和 8 报表 E2E 仍 fail-closed |
 
