@@ -7,7 +7,7 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | 项目 | 状态 | 证据/位置 |
 |---|---:|---|
 | v1.5 基线合并 | 已完成 | `master...origin/master` 当前同步到已推送的 v1.5 基线 |
-| 本轮收尾改动 | 本地待提交/推送 | 本轮 UI 布局、旧定时入口清理、文档和安装包证据已在本地完成，尚未提交到 `origin/master` |
+| 本轮收尾改动 | 已提交/推送 | `a4b5cb2 fix: harden lingxing v1.5 delivery flow` 已推送到 `origin/master` |
 | 本地测试 | 通过 | `pnpm test` 通过，最近记录见 `docs/V1_5_PROGRESS_REPORT.md` |
 | 类型检查 | 通过 | `pnpm typecheck` 通过 |
 | 桌面构建 | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:win` 生成 Windows 安装包 |
@@ -104,7 +104,7 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 
 | 顺序 | 任务 | 验收条件 |
 |---:|---|---|
-| 1 | 确认 Git 状态 | `git status --short --branch` 显示 `master...origin/master`；本轮收尾改动仍在本地，提交/推送前需复核变更范围 |
+| 1 | 确认 Git 状态 | `git status --short --branch` 显示 `master...origin/master`，当前收尾提交应为 `a4b5cb2` |
 | 2 | 确认不要提交运行产物 | `output/`、`storage/` 是本地证据和浏览器 profile，已加入 `.gitignore` |
 | 3 | 用真实浏览器登录领星 | 使用项目浏览器架构或桌面应用保持同一 `storage/browser-data` profile，并同时确认 Ads 系统会话 |
 | 4 | 复核下载中心诊断证据 | 已有 IPC 诊断 id `4` 和 UI 布局点击证据；真实 Lingxing 会话稳定后，从桌面 UI 再点击 `验证页面` 刷新当前构建的同模型证据 |
