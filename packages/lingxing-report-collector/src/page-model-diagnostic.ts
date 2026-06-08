@@ -21,7 +21,8 @@ const REPORT_SCOPED_ACTION_SELECTOR_KEYS = [
 function usesReportScope(selector: string): boolean {
   return selector.includes('{reportType}')
     || selector.includes('{reportName}')
-    || selector.includes('{expectedFilenameKeyword}');
+    || selector.includes('{expectedFilenameKeyword}')
+    || selector.includes('{generatedReportName}');
 }
 
 function usesDateScope(selector: string): boolean {

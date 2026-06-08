@@ -7,7 +7,12 @@ import { AuditLogger, ScreenshotManager, TraceManager, CleanupManager } from '@a
 import { RecommendationGenerator, DEFAULT_RULE_CONFIG } from '@amazon-ai-ops/rules-engine';
 import { ReportParser, keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics, parseListingContent } from '@amazon-ai-ops/report-parser';
 import { OpenAICompatibleProvider, DailyReportGenerator } from '@amazon-ai-ops/ai-adapter';
-import { initSqlite, getSqliteDb, SettingsRepository, ProductRepository, ActionLogRepository, AdMetricsRepository, RecommendationRepository } from '@amazon-ai-ops/local-db';
+import { initSqlite, getSqliteDb } from '@amazon-ai-ops/local-db/src/sqlite/db';
+import { ActionLogRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/action-log-repo';
+import { AdMetricsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/ad-metrics-repo';
+import { ProductRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/product-repo';
+import { RecommendationRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/recommendation-repo';
+import { SettingsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/settings-repo';
 import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, runLingxingReportBatch, type DownloadCenterAutomationPort } from '@amazon-ai-ops/lingxing-report-collector';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
@@ -141,10 +146,13 @@ function createWindow(): void {
 // ============================================================================
 
 async function initApp(): Promise<void> {
+  console.log('[App] init:start');
   ensureDirs();
+  console.log('[App] init:dirs-ready');
 
   // Init database
   state.db = initSqlite(DB_PATH);
+  console.log('[App] init:sqlite-ready');
 
   // Init repositories
   state.settingsRepo = new SettingsRepository(state.db);
@@ -152,6 +160,7 @@ async function initApp(): Promise<void> {
   state.actionLogRepo = new ActionLogRepository(state.db);
   state.adMetricsRepo = new AdMetricsRepository(state.db);
   state.recommendationRepo = new RecommendationRepository(state.db);
+  console.log('[App] init:repositories-ready');
 
   // Init audit/trace/screenshot managers
   const auditLogger = new AuditLogger(state.db);
@@ -180,13 +189,6 @@ async function initApp(): Promise<void> {
   });
 
   // Register scheduled tasks
-  state.scheduler.register({
-    name: 'daily_report_download',
-    cron: '30 8 * * *',
-    enabled: false,
-    callback: () => runDailyReportDownload(),
-  });
-
   state.scheduler.register({
     name: 'daily_recommendation_generate',
     cron: '0 9 * * *',
@@ -271,19 +273,61 @@ async function ensureLingxingAdsSession(controller: BrowserController): Promise<
   await page.goto('https://ads.lingxing.com/home', { waitUntil: 'domcontentloaded', timeout: 45000 });
   await controller.waitForTimeout(6000);
 
-  const adsState = await page.evaluate(() => ({
+  let adsState = await page.evaluate(() => ({
     url: window.location.href,
     title: document.title,
     bodyText: document.body?.innerText ?? '',
   }));
-  const isAdsPage = adsState.url.includes('ads.lingxing.com')
+  let isAdsPage = adsState.url.includes('ads.lingxing.com')
     && (adsState.bodyText.includes('领星广告系统')
       || adsState.bodyText.includes('下载中心')
       || adsState.bodyText.includes('广告组合')
       || adsState.bodyText.includes('返回ERP'));
-  const looksLoggedOut = adsState.bodyText.includes('账号登录')
+  let looksLoggedOut = adsState.bodyText.includes('账号登录')
     || adsState.bodyText.includes('微信登录')
     || adsState.url.includes('login');
+
+  if ((!isAdsPage || looksLoggedOut) && (adsState.url.includes('/restartLogin') || adsState.bodyText.includes('请从领星ERP进入到广告系统'))) {
+    const context = controller.getContext();
+    await page.goto('https://erp.lingxing.com/erp/home', { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await controller.waitForTimeout(4000);
+
+    const erpState = await page.evaluate(() => ({
+      url: window.location.href,
+      title: document.title,
+      bodyText: document.body?.innerText ?? '',
+      hasAccountInput: Boolean(document.querySelector('input[name="account"]')),
+    }));
+    if (erpState.hasAccountInput || erpState.bodyText.includes('账号登录')) {
+      throw new Error('领星 ERP 登录未完成：请先完成账号登录，再进入广告系统');
+    }
+
+    const popupPromise = context?.waitForEvent('page', { timeout: 15000 }).catch(() => null);
+    await page.getByText('广告', { exact: true }).first().click({ timeout: 15000 });
+    const popup = await popupPromise;
+    const adsPage = popup
+      || context?.pages().find((candidate) => candidate.url().includes('ads.lingxing.com'))
+      || page;
+    if (adsPage !== page) {
+      controller.setActivePage(adsPage);
+    }
+    await adsPage.waitForLoadState('domcontentloaded', { timeout: 45000 }).catch(() => undefined);
+    await adsPage.waitForTimeout(6000);
+    adsState = await adsPage.evaluate(() => ({
+      url: window.location.href,
+      title: document.title,
+      bodyText: document.body?.innerText ?? '',
+    }));
+    isAdsPage = adsState.url.includes('ads.lingxing.com')
+      && (adsState.bodyText.includes('领星广告系统')
+        || adsState.bodyText.includes('下载中心')
+        || adsState.bodyText.includes('广告组合')
+        || adsState.bodyText.includes('返回ERP'));
+    looksLoggedOut = adsState.bodyText.includes('账号登录')
+      || adsState.bodyText.includes('微信登录')
+      || adsState.url.includes('login')
+      || adsState.url.includes('/restartLogin');
+  }
 
   if (!isAdsPage || looksLoggedOut) {
     throw new Error(
@@ -390,7 +434,10 @@ function persistLingxingBatch(result: Awaited<ReturnType<typeof runLingxingRepor
   save();
 }
 
-async function handleCollectLingxingReports(dateRange: { start: string; end: string }) {
+async function handleCollectLingxingReports(input: unknown) {
+  const request = normalizeLingxingCollectionRequest(input);
+  const dateRange = { start: request.start, end: request.end };
+  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
   validateDateRange(dateRange);
   assertLingxingCollectionPreflightReady(dateRange);
 
@@ -403,13 +450,15 @@ async function handleCollectLingxingReports(dateRange: { start: string; end: str
     dateEnd: dateRange.end,
     rootDownloadDir: DOWNLOADS_DIR,
     appVersion: APP_VERSION,
-    automation: createDownloadCenterAutomation(state.browserController),
+    automation: createDownloadCenterAutomation(state.browserController, target),
   });
   persistLingxingBatch(result);
   return result;
 }
 
-function handlePreflightLingxingCollection(dateRange: { start: string; end: string }) {
+function handlePreflightLingxingCollection(input: unknown) {
+  const request = normalizeLingxingCollectionRequest(input);
+  const dateRange = { start: request.start, end: request.end };
   validateDateRange(dateRange);
   const model = readDownloadCenterPageModel();
   const diagnosticEvidenceReadiness = getDownloadCenterDiagnosticEvidenceReadiness(model, dateRange);
@@ -426,8 +475,10 @@ function assertLingxingCollectionPreflightReady(dateRange: { start: string; end:
   assertDownloadCenterCollectionPreflightReady(preflight);
 }
 
-function handleExportLingxingCollectionPreflight(dateRange: { start: string; end: string }): string {
-  const preflight = handlePreflightLingxingCollection(dateRange);
+function handleExportLingxingCollectionPreflight(input: unknown): string {
+  const request = normalizeLingxingCollectionRequest(input);
+  const dateRange = { start: request.start, end: request.end };
+  const preflight = handlePreflightLingxingCollection(request);
   const model = readDownloadCenterPageModel();
   const diagnostic = preflight.diagnosticEvidenceReadiness.diagnosticId
     ? loadPersistedDownloadCenterDiagnostic(preflight.diagnosticEvidenceReadiness.diagnosticId, dateRange.start, dateRange.end)
@@ -449,7 +500,10 @@ function handleExportLingxingCollectionPreflight(dateRange: { start: string; end
   return exportDir;
 }
 
-async function handleRetryLingxingReport(dateRange: { start: string; end: string }, reportType: LingxingReportType) {
+async function handleRetryLingxingReport(input: unknown, reportType: LingxingReportType) {
+  const request = normalizeLingxingCollectionRequest(input);
+  const dateRange = { start: request.start, end: request.end };
+  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
   validateDateRange(dateRange);
   validateLingxingReportType(reportType);
   assertLingxingCollectionPreflightReady(dateRange);
@@ -464,58 +518,210 @@ async function handleRetryLingxingReport(dateRange: { start: string; end: string
     rootDownloadDir: DOWNLOADS_DIR,
     appVersion: APP_VERSION,
     reportTypes: [reportType],
-    automation: createDownloadCenterAutomation(state.browserController),
+    automation: createDownloadCenterAutomation(state.browserController, target),
   });
   persistLingxingBatch(result);
   return result;
 }
 
-function createDownloadCenterAutomation(controller: BrowserController): DownloadCenterAutomationPort {
+const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS = {
+  createReportButton: 'a:has-text("创建报告")',
+  storeSearchInput: '.el-transfer-panel:has-text("待选店铺") input[placeholder="店铺搜索"]',
+  storeOption: '.el-transfer-panel:has-text("待选店铺") label.el-transfer-panel__item:has-text("{storeName}")',
+  storeMoveButton: '.el-transfer__buttons button:has(.el-icon-arrow-right)',
+  reportSearchInput: 'input[placeholder="报告名称"].el-input__inner',
+  reportTypeSelect: '.report-item .el-select input.el-input__inner',
+  reportTypeOption: '.el-select-dropdown:visible .el-select-dropdown__item:has-text("{reportName}")',
+  dateStartInput: 'input[placeholder="开始日期"].el-range-input',
+  dateEndInput: 'input[placeholder="结束日期"].el-range-input',
+  dailyDetailRadio: 'label.el-radio:has-text("每日明细")',
+  confirmCreateButton: 'button:has-text("生成报告")',
+} as const;
+
+function reportContextKey(report: { type: LingxingReportType }, dateRange: { start: string; end: string }): string {
+  return `${report.type}:${dateRange.start}:${dateRange.end}`;
+}
+
+async function waitForDownloadCenterListPage(page: NonNullable<ReturnType<BrowserController['getPage']>>): Promise<boolean> {
+  await page.waitForTimeout(1500);
+  const state = await page.evaluate(() => ({
+    url: window.location.href,
+    title: document.title,
+    bodyText: document.body?.innerText ?? '',
+  }));
+  return state.url.includes('/ak_download/download_center/download_report_log/index')
+    && state.bodyText.includes('下载中心')
+    && state.bodyText.includes('创建报告');
+}
+
+async function navigateToLingxingDownloadCenter(controller: BrowserController, model: DownloadCenterPageModel): Promise<void> {
+  await ensureLingxingAdsSession(controller);
+  const page = getControllerPageOrThrow(controller);
+
+  await page.goto(model.candidateUrls[0], { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
+  if (await waitForDownloadCenterListPage(page)) return;
+
+  const menuSelectors = [
+    'a.fa-download_menu[href="/ak_download/download_center/download_report_log/index"]',
+    'a.not-root[href="/ak_download/download_center/download_report_log/index"]',
+    'a[href="/ak_download/download_center/download_report_log/index"]:has-text("下载中心")',
+  ];
+  for (const selector of menuSelectors) {
+    const locator = page.locator(selector).first();
+    const visible = await locator.isVisible({ timeout: 5000 }).catch(() => false);
+    if (!visible) continue;
+    await Promise.all([
+      page.waitForLoadState('domcontentloaded', { timeout: 45000 }).catch(() => undefined),
+      locator.click({ timeout: 15000 }),
+    ]);
+    if (await waitForDownloadCenterListPage(page)) return;
+  }
+
+  await page.evaluate(() => {
+    window.location.href = '/ak_download/download_center/download_report_log/index';
+  });
+  await page.waitForLoadState('domcontentloaded', { timeout: 45000 }).catch(() => undefined);
+  if (await waitForDownloadCenterListPage(page)) return;
+  throw new Error(`无法进入领星广告下载中心，当前页面：${await page.title().catch(() => page.url())}`);
+}
+
+async function waitForCreateReportPage(page: NonNullable<ReturnType<BrowserController['getPage']>>): Promise<void> {
+  await page.waitForURL(/\/ak_download\/download_center\/download_report_log\/create_report/, { timeout: 45000 }).catch(() => undefined);
+  const container = page.locator('.create-report-container').first();
+  if (await container.isVisible({ timeout: 5000 }).catch(() => false)) return;
+  await page.getByText('创建报告', { exact: false }).first().waitFor({ state: 'visible', timeout: 30000 });
+}
+
+function createDownloadCenterAutomation(controller: BrowserController, target: LingxingCollectionTarget = {}): DownloadCenterAutomationPort {
   const model = readDownloadCenterPageModel();
   const automationReadiness = getDownloadCenterAutomationReadiness(model);
+  const generatedReportNames = new Map<string, string>();
   let traceStarted = false;
   let traceStartError: string | undefined;
 
+  const reportContext = (
+    report: { type: LingxingReportType; displayName: string; expectedFilenameKeyword: string },
+    dateRange: { start: string; end: string },
+  ): DownloadCenterReportSelectorContext => {
+    const key = reportContextKey(report, dateRange);
+    if (!generatedReportNames.has(key)) {
+      generatedReportNames.set(key, buildGeneratedDownloadCenterReportName(report, dateRange));
+    }
+    return {
+      ...report,
+      generatedReportName: generatedReportNames.get(key),
+      storeName: target.storeName,
+      marketplaceCode: target.marketplaceCode,
+    };
+  };
+
   return {
     async navigateToDownloadCenter() {
-      await controller.navigate(model.candidateUrls[0]);
+      await navigateToLingxingDownloadCenter(controller, model);
     },
     async createReport(report, dateRange) {
       assertDownloadCenterAutomationReady(automationReadiness, report.displayName);
       assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName);
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
-
-      if (selectors.reportSearchInput) {
-        const reportSearchInput = await assertUsableDownloadCenterActionSelector(page, 'reportSearchInput', selectors.reportSearchInput, undefined, dateRange);
-        await page.locator(reportSearchInput).fill(report.displayName);
-      }
-      if (selectors.dateStartInput) {
-        const dateStartInput = await assertUsableDownloadCenterActionSelector(page, 'dateStartInput', selectors.dateStartInput, undefined, dateRange);
-        await page.locator(dateStartInput).fill(dateRange.start);
-      }
-      if (selectors.dateEndInput) {
-        const dateEndInput = await assertUsableDownloadCenterActionSelector(page, 'dateEndInput', selectors.dateEndInput, undefined, dateRange);
-        await page.locator(dateEndInput).fill(dateRange.end);
+      const context = reportContext(report, dateRange);
+      if (!context.storeName) {
+        throw new Error('启动领星报表采集前必须选择店铺，例如 FT-US-US');
       }
 
-      const createReportButton = await assertUsableDownloadCenterActionSelector(page, 'createReportButton', selectors.createReportButton, report, dateRange);
+      const createReportButton = await assertUsableDownloadCenterActionSelector(
+        page,
+        'createReportButton',
+        selectors.createReportButton || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.createReportButton,
+        context,
+        dateRange,
+      );
       await page.locator(createReportButton).click();
-      if (selectors.confirmCreateButton) {
-        const confirmCreateButton = renderDownloadCenterSelector(selectors.confirmCreateButton, report, dateRange);
-        await page.locator(confirmCreateButton).waitFor({ state: 'visible', timeout: 15000 });
-        await assertUsableDownloadCenterActionSelector(page, 'confirmCreateButton', selectors.confirmCreateButton, report, dateRange);
-        await page.locator(confirmCreateButton).click();
+      await waitForCreateReportPage(page);
+
+      const storeSearchInput = selectors.storeSearchInput || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.storeSearchInput;
+      const storeOptionSelector = selectors.storeOption || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.storeOption;
+      const storeMoveButtonSelector = selectors.storeMoveButton || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.storeMoveButton;
+      const renderedStoreSearchInput = renderDownloadCenterSelector(storeSearchInput, context, dateRange);
+      const renderedStoreOption = renderDownloadCenterSelector(storeOptionSelector, context, dateRange);
+      const renderedStoreMoveButton = renderDownloadCenterSelector(storeMoveButtonSelector, context, dateRange);
+      await page.locator(renderedStoreSearchInput).fill(context.storeName);
+      await page.locator(renderedStoreOption).click();
+      await page.locator(renderedStoreMoveButton).click();
+
+      const reportSearchInput = await assertUsableDownloadCenterActionSelector(
+        page,
+        'reportSearchInput',
+        selectors.reportSearchInput || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.reportSearchInput,
+        context,
+        dateRange,
+      );
+      await page.locator(reportSearchInput).fill(context.generatedReportName || report.displayName);
+
+      const reportTypeSelect = renderDownloadCenterSelector(
+        selectors.reportTypeSelect || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.reportTypeSelect,
+        context,
+        dateRange,
+      );
+      await page.locator(reportTypeSelect).click();
+      const reportTypeOption = renderDownloadCenterSelector(
+        selectors.reportTypeOption || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.reportTypeOption,
+        context,
+        dateRange,
+      );
+      await page.locator(reportTypeOption).click();
+
+      const dateStartInput = await assertUsableDownloadCenterActionSelector(
+        page,
+        'dateStartInput',
+        selectors.dateStartInput || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.dateStartInput,
+        context,
+        dateRange,
+      );
+      await page.locator(dateStartInput).fill(dateRange.start);
+      const dateEndInput = await assertUsableDownloadCenterActionSelector(
+        page,
+        'dateEndInput',
+        selectors.dateEndInput || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.dateEndInput,
+        context,
+        dateRange,
+      );
+      await page.locator(dateEndInput).fill(dateRange.end);
+
+      const dailyDetailRadio = renderDownloadCenterSelector(
+        selectors.dailyDetailRadio || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.dailyDetailRadio,
+        context,
+        dateRange,
+      );
+      const dailyVisible = await page.locator(dailyDetailRadio).isVisible({ timeout: 5000 }).catch(() => false);
+      if (dailyVisible) {
+        await page.locator(dailyDetailRadio).click();
       }
+
+      const confirmCreateButton = renderDownloadCenterSelector(
+        selectors.confirmCreateButton || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.confirmCreateButton,
+        context,
+        dateRange,
+      );
+      await page.locator(confirmCreateButton).waitFor({ state: 'visible', timeout: 15000 });
+      await assertUsableDownloadCenterActionSelector(page, 'confirmCreateButton', confirmCreateButton, context, dateRange);
+      await page.locator(confirmCreateButton).click();
+      await page.getByText('正在创建报告', { exact: false }).waitFor({ state: 'visible', timeout: 15000 }).catch(() => undefined);
+      const okButton = page.locator('.layui-layer-btn0, button:has-text("确定"), a:has-text("确定")').first();
+      if (await okButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await okButton.click();
+      }
+      await navigateToLingxingDownloadCenter(controller, model);
     },
     async waitForReportReady(report, dateRange) {
       assertDownloadCenterAutomationReady(automationReadiness, report.displayName);
       assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName);
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
+      const context = reportContext(report, dateRange);
       if (selectors.statusTextSelector) {
         await pollReportGenerationStatus(async () => {
-          const statusTextSelector = await assertUsableDownloadCenterActionSelector(page, 'statusTextSelector', selectors.statusTextSelector!, report, dateRange);
+          const statusTextSelector = await assertUsableDownloadCenterActionSelector(page, 'statusTextSelector', selectors.statusTextSelector!, context, dateRange);
           await page.locator(statusTextSelector).waitFor({ state: 'visible', timeout: 10000 });
           return page.locator(statusTextSelector).innerText();
         }, {
@@ -523,12 +729,12 @@ function createDownloadCenterAutomation(controller: BrowserController): Download
           timeoutMs: selectors.readyTimeoutMs ?? 300000,
         });
       } else {
-        const readyReportSelector = renderDownloadCenterSelector(selectors.readyReportSelector, report, dateRange);
+        const readyReportSelector = renderDownloadCenterSelector(selectors.readyReportSelector, context, dateRange);
         await page
           .locator(readyReportSelector)
           .waitFor({ state: 'visible', timeout: selectors.readyTimeoutMs ?? 300000 });
       }
-      await assertUsableDownloadCenterActionSelector(page, 'readyReportSelector', selectors.readyReportSelector, report, dateRange);
+      await assertUsableDownloadCenterActionSelector(page, 'readyReportSelector', selectors.readyReportSelector, context, dateRange);
     },
     async downloadReport(report, downloadDir, dateRange) {
       assertDownloadCenterAutomationReady(automationReadiness, report.displayName);
@@ -536,7 +742,8 @@ function createDownloadCenterAutomation(controller: BrowserController): Download
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
       fs.mkdirSync(downloadDir, { recursive: true });
-      const downloadButton = await assertUsableDownloadCenterActionSelector(page, 'downloadButton', selectors.downloadButton, report, dateRange);
+      const context = reportContext(report, dateRange);
+      const downloadButton = await assertUsableDownloadCenterActionSelector(page, 'downloadButton', selectors.downloadButton, context, dateRange);
 
       const [download] = await Promise.all([
         page.waitForEvent('download', { timeout: selectors.downloadTimeoutMs ?? 120000 }),
@@ -732,15 +939,72 @@ function getControllerPageOrThrow(controller: BrowserController) {
   return page;
 }
 
+interface LingxingCollectionTarget {
+  storeName?: string;
+  marketplaceCode?: string;
+}
+
+interface LingxingCollectionRequest extends LingxingCollectionTarget {
+  start: string;
+  end: string;
+}
+
+interface DownloadCenterReportSelectorContext {
+  type: LingxingReportType;
+  displayName: string;
+  expectedFilenameKeyword: string;
+  generatedReportName?: string;
+  storeName?: string;
+  marketplaceCode?: string;
+}
+
+function normalizeLingxingCollectionRequest(input: unknown): LingxingCollectionRequest {
+  const value = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+  const start = typeof value.start === 'string' ? value.start : '';
+  const end = typeof value.end === 'string' ? value.end : '';
+  return {
+    start,
+    end,
+    storeName: optionalTrimmedString(value.storeName),
+    marketplaceCode: optionalTrimmedString(value.marketplaceCode ?? value.site),
+  };
+}
+
+function optionalTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function safeReportNameSegment(value: string): string {
+  return value
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'report';
+}
+
+function buildGeneratedDownloadCenterReportName(
+  report: { expectedFilenameKeyword: string },
+  dateRange: { start: string; end: string },
+): string {
+  const start = dateRange.start.replaceAll('-', '');
+  const end = dateRange.end.replaceAll('-', '');
+  const suffix = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+  return `AmazonAIOps_${start}_${end}_${safeReportNameSegment(report.expectedFilenameKeyword)}_${suffix}`;
+}
+
 function renderDownloadCenterSelector(
   selector: string,
-  report: { type: LingxingReportType; displayName: string; expectedFilenameKeyword: string },
+  report: DownloadCenterReportSelectorContext,
   dateRange?: { start: string; end: string },
 ): string {
   return selector
     .replaceAll('{reportType}', report.type)
     .replaceAll('{reportName}', report.displayName)
     .replaceAll('{expectedFilenameKeyword}', report.expectedFilenameKeyword)
+    .replaceAll('{generatedReportName}', report.generatedReportName ?? report.displayName)
+    .replaceAll('{storeName}', report.storeName ?? '')
+    .replaceAll('{marketplaceCode}', report.marketplaceCode ?? '')
     .replaceAll('{dateStart}', dateRange?.start ?? '')
     .replaceAll('{dateEnd}', dateRange?.end ?? '')
     .replaceAll('{dateRange}', dateRange ? `${dateRange.start}_${dateRange.end}` : '');
@@ -750,7 +1014,7 @@ async function assertUsableDownloadCenterActionSelector(
   page: ReturnType<BrowserController['getPage']>,
   name: keyof DownloadCenterActionSelectors,
   selector: string,
-  report: { type: LingxingReportType; displayName: string; expectedFilenameKeyword: string } | undefined,
+  report: DownloadCenterReportSelectorContext | undefined,
   dateRange?: { start: string; end: string },
 ): Promise<string> {
   if (!page) {
@@ -862,10 +1126,13 @@ async function captureReportFailureEvidence(
   };
 }
 
-async function handleDiagnoseLingxingDownloadCenter(dateRange?: { start: string; end: string }): Promise<DownloadCenterDiagnosticResult> {
+async function handleDiagnoseLingxingDownloadCenter(input?: unknown): Promise<DownloadCenterDiagnosticResult> {
   if (!state.browserController || !state.isLoggedIn) {
     throw new Error('请先启动并登录领星 ERP 浏览器');
   }
+  const request = input ? normalizeLingxingCollectionRequest(input) : undefined;
+  const dateRange = request ? { start: request.start, end: request.end } : undefined;
+  const target = request ? { storeName: request.storeName, marketplaceCode: request.marketplaceCode } : {};
   if (dateRange) {
     validateDateRange(dateRange);
   }
@@ -877,8 +1144,7 @@ async function handleDiagnoseLingxingDownloadCenter(dateRange?: { start: string;
   let result: DownloadCenterDiagnosticResult;
 
   try {
-    await controller.navigate(url);
-    await controller.waitForTimeout(2500);
+    await navigateToLingxingDownloadCenter(controller, model);
     const selectorMatches: Record<string, boolean> = {};
     for (const hint of model.verifySelectors) {
       selectorMatches[hint.selector] = await controller.evaluate<boolean>((selector: string) => {
@@ -891,7 +1157,18 @@ async function handleDiagnoseLingxingDownloadCenter(dateRange?: { start: string;
       bodyText: document.body?.innerText ?? '',
     }));
     const selectorCandidates = await collectDownloadCenterSelectorCandidates(controller);
-    const actionSelectorChecks = await collectDownloadCenterActionSelectorChecks(controller, model, dateRange);
+    const diagnosticContext: DownloadCenterReportSelectorContext = {
+      ...LINGXING_AD_REPORTS[0],
+      generatedReportName: dateRange ? buildGeneratedDownloadCenterReportName(LINGXING_AD_REPORTS[0], dateRange) : undefined,
+      storeName: target.storeName,
+      marketplaceCode: target.marketplaceCode,
+    };
+    const actionSelectorChecks = await collectDownloadCenterDiagnosticActionSelectorChecks(
+      controller,
+      model,
+      dateRange,
+      diagnosticContext,
+    );
 
     result = evaluateDownloadCenterPageModel(model, {
       ...snapshot,
@@ -1249,7 +1526,7 @@ function evaluateActionSelectorUsability(name: string, selector: string, matchCo
     return {
       usable: false,
       ambiguous: false,
-      errorMessage: '报告相关 selector 必须包含 {reportName}、{reportType} 或 {expectedFilenameKeyword} 占位符',
+      errorMessage: '报告相关 selector 必须包含 {reportName}、{reportType}、{expectedFilenameKeyword} 或 {generatedReportName} 占位符',
     };
   }
   if (requiresDateScope && !selectorUsesDateScope(selector)) {
@@ -1266,6 +1543,10 @@ async function collectDownloadCenterActionSelectorChecks(
   controller: BrowserController,
   model: DownloadCenterPageModel,
   dateRange?: { start: string; end: string },
+  options: {
+    names?: Set<string>;
+    context?: DownloadCenterReportSelectorContext;
+  } = {},
 ): Promise<DownloadCenterActionSelectorCheck[]> {
   const selectors = model.actionSelectors;
   if (!selectors) {
@@ -1274,6 +1555,7 @@ async function collectDownloadCenterActionSelectorChecks(
   const page = getControllerPageOrThrow(controller);
   const checks: DownloadCenterActionSelectorCheck[] = [];
   const entries = Object.entries(selectors)
+    .filter(([name]) => !options.names || options.names.has(name))
     .filter(([name, selector]) => !name.endsWith('TimeoutMs') && typeof selector === 'string') as Array<[keyof DownloadCenterActionSelectors, string]>;
 
   for (const [name, selector] of entries) {
@@ -1296,8 +1578,9 @@ async function collectDownloadCenterActionSelectorChecks(
 
     const needsReport = selector.includes('{reportType}')
       || selector.includes('{reportName}')
-      || selector.includes('{expectedFilenameKeyword}');
-    const reports = needsReport ? LINGXING_AD_REPORTS : [undefined];
+      || selector.includes('{expectedFilenameKeyword}')
+      || selector.includes('{generatedReportName}');
+    const reports = options.context ? [options.context] : needsReport ? LINGXING_AD_REPORTS : [undefined];
 
     for (const report of reports) {
       const renderedSelector = report
@@ -1341,6 +1624,78 @@ async function collectDownloadCenterActionSelectorChecks(
   }
 
   return checks;
+}
+
+async function collectDownloadCenterDiagnosticActionSelectorChecks(
+  controller: BrowserController,
+  model: DownloadCenterPageModel,
+  dateRange: { start: string; end: string } | undefined,
+  context: DownloadCenterReportSelectorContext,
+): Promise<DownloadCenterActionSelectorCheck[]> {
+  const listPageSelectorNames = new Set([
+    'createReportButton',
+    'readyReportSelector',
+    'statusTextSelector',
+    'downloadButton',
+  ]);
+  const createPageSelectorNames = new Set([
+    'storeSearchInput',
+    'storeOption',
+    'storeMoveButton',
+    'reportSearchInput',
+    'reportTypeSelect',
+    'reportTypeOption',
+    'dateStartInput',
+    'dateEndInput',
+    'dailyDetailRadio',
+    'confirmCreateButton',
+  ]);
+
+  const listChecks = await collectDownloadCenterActionSelectorChecks(controller, model, dateRange, {
+    names: listPageSelectorNames,
+    context,
+  });
+  const selectors = model.actionSelectors;
+  if (!selectors?.createReportButton?.trim()) {
+    return [
+      ...listChecks,
+      ...await collectDownloadCenterActionSelectorChecks(controller, model, dateRange, {
+        names: createPageSelectorNames,
+        context,
+      }),
+    ];
+  }
+
+  const page = getControllerPageOrThrow(controller);
+  const createReportButton = renderDownloadCenterSelector(selectors.createReportButton, context, dateRange);
+  const canOpenCreatePage = await page.locator(createReportButton).isVisible({ timeout: 5000 }).catch(() => false);
+  if (!canOpenCreatePage) {
+    return [
+      ...listChecks,
+      ...await collectDownloadCenterActionSelectorChecks(controller, model, dateRange, {
+        names: createPageSelectorNames,
+        context,
+      }),
+    ];
+  }
+
+  await page.locator(createReportButton).click();
+  await waitForCreateReportPage(page);
+  const reportTypeSelect = renderDownloadCenterSelector(
+    selectors.reportTypeSelect || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.reportTypeSelect,
+    context,
+    dateRange,
+  );
+  if (await page.locator(reportTypeSelect).isVisible({ timeout: 5000 }).catch(() => false)) {
+    await page.locator(reportTypeSelect).click();
+    await page.waitForTimeout(500);
+  }
+  const createChecks = await collectDownloadCenterActionSelectorChecks(controller, model, dateRange, {
+    names: createPageSelectorNames,
+    context,
+  });
+  await navigateToLingxingDownloadCenter(controller, model);
+  return [...listChecks, ...createChecks];
 }
 
 async function collectSanitizedDomEvidence(controller: BrowserController): Promise<string> {
@@ -2535,19 +2890,6 @@ async function handleExecuteRecommendation(recommendationId: number): Promise<vo
 // Daily Reports
 // ============================================================================
 
-async function runDailyReportDownload(): Promise<void> {
-  const today = new Date();
-  const end = today.toISOString().split('T')[0];
-  const start = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-  try {
-    await handleDownloadReport({ start, end });
-    console.log('[Scheduler] Daily report download completed');
-  } catch (err) {
-    console.error('[Scheduler] Daily report download failed:', err);
-  }
-}
-
 async function runDailyReportGeneration(): Promise<void> {
   const today = new Date().toISOString().split('T')[0];
 
@@ -2772,15 +3114,23 @@ function registerIpcHandlers(): void {
 // ============================================================================
 
 app.whenReady().then(async () => {
-  await initApp();
-  registerIpcHandlers();
-  createWindow();
+  try {
+    console.log('[App] ready');
+    await initApp();
+    registerIpcHandlers();
+    console.log('[App] ipc-ready');
+    createWindow();
+    console.log('[App] window-created');
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  } catch (error) {
+    console.error('[App] startup failed:', error);
+    throw error;
+  }
 });
 
 app.on('window-all-closed', () => {

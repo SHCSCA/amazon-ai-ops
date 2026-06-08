@@ -15,22 +15,46 @@ function model(overrides: Partial<DownloadCenterPageModel> = {}): DownloadCenter
     verifySelectors: [{ name: 'body', selector: 'body', required: true }],
     requiresManualVerification: false,
     actionSelectors: {
+      storeSearchInput: '#store-search',
+      storeOption: '#store-option',
+      storeMoveButton: '#store-move',
+      reportSearchInput: '#report-search',
+      reportTypeSelect: '#report-type-select',
+      reportTypeOption: '#report-type-option',
       dateStartInput: '#start',
       dateEndInput: '#end',
+      dailyDetailRadio: '#daily-detail',
       createReportButton: '#create',
+      confirmCreateButton: '.modal .confirm',
       readyReportSelector: 'tr:has-text("{reportName}"):has-text("{dateRange}")',
       downloadButton: 'tr:has-text("{reportName}"):has-text("{dateRange}") .download',
-      confirmCreateButton: '.modal .confirm',
     },
     ...overrides,
   };
 }
 
+function selectorFor(name: string): string {
+  return ({
+    storeSearchInput: '#store-search',
+    storeOption: '#store-option',
+    storeMoveButton: '#store-move',
+    reportSearchInput: '#report-search',
+    reportTypeSelect: '#report-type-select',
+    reportTypeOption: '#report-type-option',
+    dateStartInput: '#start',
+    dateEndInput: '#end',
+    dailyDetailRadio: '#daily-detail',
+    createReportButton: '#create',
+    confirmCreateButton: '.modal .confirm',
+  } as Record<string, string>)[name] ?? `#${name}`;
+}
+
 function check(name: string, usable = true): DownloadCenterActionSelectorCheck {
+  const selector = selectorFor(name);
   return {
     name,
-    selector: name === 'dateStartInput' ? '#start' : name === 'dateEndInput' ? '#end' : name === 'createReportButton' ? '#create' : `#${name}`,
-    renderedSelector: name === 'dateStartInput' ? '#start' : name === 'dateEndInput' ? '#end' : name === 'createReportButton' ? '#create' : `#${name}`,
+    selector,
+    renderedSelector: selector,
     required: true,
     kind: name.includes('Input') ? 'input' : 'click',
     matchCount: usable ? 1 : 0,
@@ -38,6 +62,22 @@ function check(name: string, usable = true): DownloadCenterActionSelectorCheck {
     usable,
     ambiguous: false,
   };
+}
+
+function setupChecks(overrides: Partial<Record<string, DownloadCenterActionSelectorCheck>> = {}): DownloadCenterActionSelectorCheck[] {
+  return [
+    'storeSearchInput',
+    'storeOption',
+    'storeMoveButton',
+    'reportSearchInput',
+    'reportTypeSelect',
+    'reportTypeOption',
+    'dateStartInput',
+    'dateEndInput',
+    'dailyDetailRadio',
+    'createReportButton',
+    'confirmCreateButton',
+  ].map((name) => overrides[name] ?? check(name));
 }
 
 function diagnostic(pageModel: DownloadCenterPageModel, overrides: Partial<DownloadCenterDiagnosticResult> = {}): DownloadCenterDiagnosticResult {
@@ -55,11 +95,7 @@ function diagnostic(pageModel: DownloadCenterPageModel, overrides: Partial<Downl
     matchedReportNames: ['关键词报告'],
     selectorChecks: [{ name: 'body', selector: 'body', required: true, found: true }],
     missingRequiredSelectors: [],
-    actionSelectorChecks: [
-      check('dateStartInput'),
-      check('dateEndInput'),
-      check('createReportButton'),
-    ],
+    actionSelectorChecks: setupChecks(),
     checkedAt,
     ...overrides,
   };
@@ -96,7 +132,7 @@ describe('evaluateDownloadCenterDiagnosticEvidenceReadiness', () => {
     expect(result).toMatchObject({ ready: true, missing: [] });
   });
 
-  it('does not require confirmCreateButton evidence before the create click opens a dialog', () => {
+  it('does not require pre-existing ready/download row evidence before creating reports', () => {
     const activeModel = model();
     const result = evaluateDownloadCenterDiagnosticEvidenceReadiness(
       activeModel,
@@ -105,7 +141,7 @@ describe('evaluateDownloadCenterDiagnosticEvidenceReadiness', () => {
       { nowMs },
     );
 
-    expect(result.missing).not.toContain('confirmCreateButton:evidence');
+    expect(result).toMatchObject({ ready: true, missing: [] });
   });
 
   it('requires reportSearchInput evidence when configured because it is visible before create', () => {
@@ -118,7 +154,9 @@ describe('evaluateDownloadCenterDiagnosticEvidenceReadiness', () => {
     const result = evaluateDownloadCenterDiagnosticEvidenceReadiness(
       activeModel,
       { start: '2026-05-01', end: '2026-05-31' },
-      diagnostic(activeModel),
+      diagnostic(activeModel, {
+        actionSelectorChecks: setupChecks({ reportSearchInput: undefined as any }).filter((item) => item.name !== 'reportSearchInput'),
+      }),
       { nowMs },
     );
 
@@ -187,6 +225,7 @@ describe('evaluateDownloadCenterDiagnosticEvidenceReadiness', () => {
       { start: '2026-05-01', end: '2026-05-31' },
       diagnostic(activeModel, {
         actionSelectorChecks: [
+          ...setupChecks().filter((item) => !['dateStartInput', 'dateEndInput', 'createReportButton'].includes(item.name)),
           { name: 'dateStartInput', usable: true } as any,
           { name: 'dateEndInput', usable: true } as any,
           { name: 'createReportButton', usable: true } as any,
@@ -210,8 +249,7 @@ describe('evaluateDownloadCenterDiagnosticEvidenceReadiness', () => {
       { start: '2026-05-01', end: '2026-05-31' },
       diagnostic(activeModel, {
         actionSelectorChecks: [
-          check('dateStartInput'),
-          check('dateEndInput'),
+          ...setupChecks().filter((item) => item.name !== 'createReportButton'),
           { ...check('createReportButton'), ambiguous: true, matchCount: 2 },
         ],
       }),

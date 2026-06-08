@@ -17,6 +17,8 @@ const args = [
   '--external:mock-aws-s3',
   '--external:aws-sdk',
   '--external:chromium-bidi',
+  '--external:playwright',
+  '--external:playwright-core',
   '--external:@mapbox/node-pre-gyp',
   '--external:better-sqlite3',
   '--external:duckdb',

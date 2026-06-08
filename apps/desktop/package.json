@@ -15,6 +15,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "playwright": "^1.40.0"
+  },
+  "devDependencies": {
     "@amazon-ai-ops/action-executor": "workspace:*",
     "@amazon-ai-ops/ai-adapter": "workspace:*",
     "@amazon-ai-ops/audit-log": "workspace:*",
@@ -28,12 +32,6 @@
     "@amazon-ai-ops/rules-engine": "workspace:*",
     "@amazon-ai-ops/scheduler": "workspace:*",
     "@amazon-ai-ops/shared-types": "workspace:*",
-    "better-sqlite3": "^12.10.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "zustand": "^4.5.0"
-  },
-  "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
@@ -41,8 +39,11 @@
     "electron": "^28.0.0",
     "electron-builder": "^24.9.0",
     "esbuild": "^0.20.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "typescript": "^5.3.0",
-    "vite": "^5.0.0"
+    "vite": "^5.0.0",
+    "zustand": "^4.5.0"
   },
   "build": {
     "extends": "../../electron-builder.yml"

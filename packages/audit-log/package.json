@@ -11,7 +11,7 @@
   "dependencies": {
     "@amazon-ai-ops/local-db": "workspace:*",
     "@amazon-ai-ops/shared-types": "workspace:*",
-    "better-sqlite3": "^12.10.0"
+    "better-sqlite3": "^11.10.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

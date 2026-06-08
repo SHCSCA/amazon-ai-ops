@@ -43,9 +43,15 @@ export interface DownloadCenterPageModel {
 }
 
 export interface DownloadCenterActionSelectors {
+  storeSearchInput?: string;
+  storeOption?: string;
+  storeMoveButton?: string;
   reportSearchInput?: string;
+  reportTypeSelect?: string;
+  reportTypeOption?: string;
   dateStartInput?: string;
   dateEndInput?: string;
+  dailyDetailRadio?: string;
   createReportButton: string;
   confirmCreateButton?: string;
   readyReportSelector: string;

@@ -26,17 +26,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('report:download', dateRange),
   parseReport: (filePath: string) => ipcRenderer.invoke('report:parse', filePath),
   selectReportFile: () => ipcRenderer.invoke('report:select-file'),
-  collectLingxingReports: (dateRange: { start: string; end: string }) =>
+  collectLingxingReports: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
     ipcRenderer.invoke('v1_5:reports:collect-lingxing', dateRange),
-  preflightLingxingCollection: (dateRange: { start: string; end: string }) =>
+  preflightLingxingCollection: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
     ipcRenderer.invoke('v1_5:reports:preflight-lingxing-collection', dateRange),
-  exportLingxingCollectionPreflight: (dateRange: { start: string; end: string }) =>
+  exportLingxingCollectionPreflight: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
     ipcRenderer.invoke('v1_5:reports:export-lingxing-collection-preflight', dateRange),
-  retryLingxingReport: (dateRange: { start: string; end: string }, reportType: string) =>
+  retryLingxingReport: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, reportType: string) =>
     ipcRenderer.invoke('v1_5:reports:retry-lingxing-report', { dateRange, reportType }),
   exportLingxingAcceptanceAudit: (batchId: string, diagnosticId?: number) =>
     ipcRenderer.invoke('v1_5:reports:export-acceptance-audit', { batchId, diagnosticId }),
-  diagnoseLingxingDownloadCenter: (dateRange?: { start: string; end: string }) =>
+  diagnoseLingxingDownloadCenter: (dateRange?: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
     ipcRenderer.invoke('v1_5:reports:diagnose-download-center', dateRange),
   exportDownloadCenterDiagnosticBundle: (diagnosticId: number) =>
     ipcRenderer.invoke('v1_5:reports:export-download-center-diagnostic-bundle', { diagnosticId }),

@@ -5,7 +5,8 @@ const ALLOWED_DOWNLOAD_CENTER_HOSTS = new Set(['lingxing.com', 'www.lingxing.com
 export function selectorUsesReportScope(selector: string): boolean {
   return selector.includes('{reportType}')
     || selector.includes('{reportName}')
-    || selector.includes('{expectedFilenameKeyword}');
+    || selector.includes('{expectedFilenameKeyword}')
+    || selector.includes('{generatedReportName}');
 }
 
 export function selectorUsesDateScope(selector: string): boolean {
@@ -107,7 +108,7 @@ function validateDownloadCenterActionSelectors(
       const selector = selectors[key];
       if (!selector) continue;
       if (!selectorUsesReportScope(selector)) {
-        throw new Error(`关闭人工验证前 actionSelectors.${key} 必须包含 {reportName}、{reportType} 或 {expectedFilenameKeyword} 占位符`);
+        throw new Error(`关闭人工验证前 actionSelectors.${key} 必须包含 {reportName}、{reportType}、{expectedFilenameKeyword} 或 {generatedReportName} 占位符`);
       }
       if (!selectorUsesDateScope(selector)) {
         throw new Error(`关闭人工验证前 actionSelectors.${key} 必须包含 {dateStart}、{dateEnd} 或 {dateRange} 占位符，避免匹配旧报表`);

@@ -50,4 +50,4 @@ publish: null
 
 asar: false
 
-npmRebuild: false
+npmRebuild: true

@@ -94,11 +94,20 @@ export function missingDownloadCenterActionSelectorSetupEvidence(
   const selectors = model.actionSelectors;
   if (!selectors) return ['actionSelectors'];
 
-  for (const name of ['dateStartInput', 'dateEndInput', 'createReportButton'] as const) {
+  for (const name of [
+    'storeSearchInput',
+    'storeOption',
+    'storeMoveButton',
+    'reportSearchInput',
+    'reportTypeSelect',
+    'reportTypeOption',
+    'dateStartInput',
+    'dateEndInput',
+    'dailyDetailRadio',
+    'createReportButton',
+    'confirmCreateButton',
+  ] as const) {
     requireUsableSelectorEvidence(name, selectors[name], checks, missing);
-  }
-  if (typeof selectors.reportSearchInput === 'string' && selectors.reportSearchInput.trim()) {
-    requireUsableSelectorEvidence('reportSearchInput', selectors.reportSearchInput, checks, missing);
   }
 
   return Array.from(new Set(missing));
@@ -149,5 +158,6 @@ function invalidActionSelectorCheckReason(
 function expectedActionSelectorKind(name: keyof DownloadCenterActionSelectors): DownloadCenterActionSelectorCheck['kind'] | undefined {
   if (name === 'dateStartInput' || name === 'dateEndInput' || name === 'reportSearchInput') return 'input';
   if (name === 'createReportButton') return 'click';
+  if (name === 'confirmCreateButton') return 'click';
   return undefined;
 }

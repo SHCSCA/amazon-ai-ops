@@ -1,7 +1,6 @@
 import { EventEmitter } from 'events';
 
 export type TaskName = 
-  | 'daily_report_download'
   | 'daily_recommendation_generate'
   | 'daily_report_generate'
   | 'data_cleanup'

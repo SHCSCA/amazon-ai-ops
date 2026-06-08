@@ -20,6 +20,13 @@ importers:
 
   apps/desktop:
     dependencies:
+      better-sqlite3:
+        specifier: ^11.10.0
+        version: 11.10.0
+      playwright:
+        specifier: ^1.40.0
+        version: 1.60.0
+    devDependencies:
       '@amazon-ai-ops/action-executor':
         specifier: workspace:*
         version: link:../../packages/action-executor
@@ -59,19 +66,6 @@ importers:
       '@amazon-ai-ops/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
-      better-sqlite3:
-        specifier: ^12.10.0
-        version: 12.10.0
-      react:
-        specifier: ^18.2.0
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.2.0
-        version: 18.3.1(react@18.3.1)
-      zustand:
-        specifier: ^4.5.0
-        version: 4.5.7(@types/react@18.3.28)(react@18.3.1)
-    devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -93,12 +87,21 @@ importers:
       esbuild:
         specifier: ^0.20.0
         version: 0.20.2
+      react:
+        specifier: ^18.2.0
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.2.0
+        version: 18.3.1(react@18.3.1)
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
       vite:
         specifier: ^5.0.0
         version: 5.4.21(@types/node@25.7.0)
+      zustand:
+        specifier: ^4.5.0
+        version: 4.5.7(@types/react@18.3.28)(react@18.3.1)
 
   packages/action-executor:
     dependencies:
@@ -138,8 +141,8 @@ importers:
         specifier: workspace:*
         version: link:../shared-types
       better-sqlite3:
-        specifier: ^12.10.0
-        version: 12.10.0
+        specifier: ^11.10.0
+        version: 11.10.0
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -200,8 +203,8 @@ importers:
         specifier: workspace:*
         version: link:../shared-types
       better-sqlite3:
-        specifier: ^12.10.0
-        version: 12.10.0
+        specifier: ^11.10.0
+        version: 11.10.0
       duckdb:
         specifier: ^1.1.0
         version: 1.4.4(encoding@0.1.13)
@@ -1087,9 +1090,8 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
-  better-sqlite3@12.10.0:
-    resolution: {integrity: sha512-CyzaZRQKyHkB2ZInfTTl2nvT33EbDpjkLEbE8/Zck3Ll6O0qqvuGdrJ45HgtH+HykRg88ITY3AdreBGN70aBSQ==}
-    engines: {node: 20.x || 22.x || 23.x || 24.x || 25.x || 26.x}
+  better-sqlite3@11.10.0:
+    resolution: {integrity: sha512-EwhOpyXiOEL/lKzHz9AW1msWFNzGc/z+LzeB3/jnFJpxu+th2yqvzsSWas1v9jgs9+xiXJcD5A8CJxAG2TaghQ==}
 
   bindings@1.5.0:
     resolution: {integrity: sha512-p2q/t/mhvuOj/UeLlV6566GD/guowlr0hHxClI0W9m7MWYkL1F0hLo+0Aexs9HSPCtR1SXQ0TD3MMKrXZajbiQ==}
@@ -3357,7 +3359,7 @@ snapshots:
 
   baseline-browser-mapping@2.10.29: {}
 
-  better-sqlite3@12.10.0:
+  better-sqlite3@11.10.0:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3

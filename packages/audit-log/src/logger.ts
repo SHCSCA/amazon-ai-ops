@@ -1,4 +1,4 @@
-import { ActionLogRepository } from '@amazon-ai-ops/local-db';
+import { ActionLogRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/action-log-repo';
 import type { ActionLog, AdActionType, ExecutionStatus } from '@amazon-ai-ops/shared-types';
 import type { Database } from 'better-sqlite3';
 

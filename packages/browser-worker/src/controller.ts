@@ -42,6 +42,10 @@ export class BrowserController {
     return this.page;
   }
 
+  setActivePage(page: Page): void {
+    this.page = page;
+  }
+
   getContext(): BrowserContext | null {
     return this.context;
   }

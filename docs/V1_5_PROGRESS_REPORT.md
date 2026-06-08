@@ -1,6 +1,6 @@
 # Amazon AI Ops Agent v1.5 Progress Report
 
-Date: 2026-06-03
+Date: 2026-06-04
 
 ## Goal
 
@@ -8,7 +8,7 @@ Execute the v1.5 plan while preserving the current codebase. Missing modules are
 
 ## Current Completion
 
-Overall v1.5 structural completion is high: the workspace builds, typechecks, packages, and starts from the packaged executable. The real Lingxing Ads download-center URL has now been verified in a logged-in browser session. The remaining production blocker is unattended live Lingxing download-center automation, which still needs scoped action selector verification, same-model desktop diagnostic evidence, and a live 8-report E2E run.
+Overall v1.5 structural completion is high: the workspace builds, typechecks, packages, and starts from the packaged executable. The real Lingxing Ads download-center URL has been verified in a logged-in browser session. A same-model desktop IPC diagnostic now also verifies the create-report setup selectors in a read-only two-phase flow. The remaining production blocker is unattended live Lingxing report creation/download: ready/download row selectors, final filenames, and the full live 8-report E2E run still need real generated-report evidence.
 
 Implemented and verified:
 
@@ -28,6 +28,18 @@ Implemented and verified:
 
 ## Latest Increment
 
+- Fixed the v1.5 workbench panel layout that let the keyword-opportunity panel overlap the report-collection panel and intercept the `验证页面` click target. The top-level panel grid and nested forms now use responsive minimum widths with `minWidth: 0`, and small buttons rely on layout gaps instead of extra margins.
+- Renderer QA evidence now proves the `验证页面` button is the actual element under the click center and that the diagnostic success state can render through the UI path: `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.json` and `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.png`.
+- Removed the deprecated `daily_report_download` scheduled task registration and scheduler task type. The current scheduler UI no longer exposes a legacy single-report path that is intentionally disabled under v1.5; operators should use `采集预检` / `验证页面` / `启动采集`.
+- Added store/site inputs to the desktop report-collection panel and passes them through collect, preflight, retry, diagnostic, and enablement-audit IPC calls.
+- Download-center automation now generates unique report names per report/date range and renders `{generatedReportName}`, `{storeName}`, and `{marketplaceCode}` placeholders for scoped selectors.
+- Download-center navigation now handles the ERP-logged-in/Ads-not-entered case by entering the Ads system through the ERP advertising menu before navigating to the Ads download-center URL.
+- Create-report automation now opens the create-report page before filling controls, then fills store transfer search/selection, generated report name, report type dropdown, start/end dates, and daily-detail radio before the guarded generate action.
+- The bundled download-center page model now contains an action selector draft for create-page controls, generated-report scoped ready rows, and generated-report scoped download buttons, while keeping `requiresManualVerification: true`.
+- Download-center diagnostics now perform a two-phase read-only selector check: list-page selectors first, then create-report page setup selectors after opening the page and report type dropdown without clicking `生成报告`.
+- The diagnostic evidence gate now requires the full create setup selector set: store search/option/move, report name, report type select/option, start/end dates, daily detail, create button, and confirm-create button.
+- Real desktop IPC diagnostic evidence: `output/codex-evidence/desktop-ipc-two-phase-diagnostic-1780542152692.json`, diagnostic id `4`, `ready: true`, `missingRequiredSelectors: []`, URL `https://ads.lingxing.com/ak_download/download_center/download_report_log/index`, screenshot `C:\Users\wz\AppData\Roaming\@amazon-ai-ops\desktop\storage\screenshots\download_center_diagnostic_1780542191091.png`, DOM snapshot `C:\Users\wz\AppData\Roaming\@amazon-ai-ops\desktop\storage\dom-snapshots\download_center_diagnostic_1780542191254.html`.
+- Desktop/native startup hardening now avoids pulling `duckdb` into desktop main/audit-log runtime paths, externalizes Playwright/DuckDB in the main-process build, and rebuilds packaged native dependencies with `npmRebuild: true`.
 - Collector now retries each failed report up to 2 automatic retries before final failure.
 - Final failed report rows record attempt errors, screenshot path, DOM snapshot path, Playwright Trace path when tracing starts successfully, and a Trace unavailable reason when tracing cannot be produced.
 - Download-center automation now has a selector-driven Playwright path for create, wait-ready, and download. The path stays disabled until the page model is manually verified and action selectors are filled.
@@ -99,12 +111,16 @@ Implemented and verified:
 
 Latest local evidence:
 
-- `pnpm test`: passed, 24 test files / 142 passed / 2 skipped.
-- `pnpm typecheck`: passed across workspace packages and desktop app.
+- `pnpm vitest run packages/lingxing-report-collector/src/page-model-diagnostic.test.ts packages/lingxing-report-collector/src/diagnostic-evidence-gate.test.ts packages/lingxing-report-collector/src/page-model-enablement-audit.test.ts packages/lingxing-report-collector/src/collection-preflight.test.ts packages/lingxing-report-collector/src/batch-runner.test.ts apps/desktop/src/main/download-center-page-model-validation.test.ts`: passed, 6 test files / 52 passed.
+- `pnpm -r run typecheck`: passed across workspace packages and desktop app.
+- `pnpm test`: passed, 24 test files / 143 passed / 2 skipped. The first run failed only because `better-sqlite3` was still compiled for Electron ABI `119`; after rebuilding the local Node-side binary with MSVC v143, `packages/local-db/src/sqlite/db.test.ts` and the full suite passed.
+- Deprecated scheduler cleanup targeted checks: `pnpm --filter @amazon-ai-ops/scheduler run typecheck` and `pnpm --filter @amazon-ai-ops/desktop run typecheck` both passed after removing `daily_report_download`.
+- Renderer layout QA: `output/codex-evidence/renderer-v15-diagnose-layout-qa-1780561270634.json` shows `elementFromPoint` at the `验证页面` button center resolves to the button and that the mocked UI diagnostic success message appears.
 - `pnpm test -- download-center-page-model-validation.test.ts page-model-diagnostic.test.ts`: passed after accepting `ads.lingxing.com` and updating the bundled page model.
 - `pnpm --filter @amazon-ai-ops/desktop run build:win`: passed and generated `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`.
-- Current installer evidence: size `123073708` bytes, SHA-256 `2D755766B29EB4FA917BF54FFD063B465791102818100B817B3DDE34FF1C472A`, last write time `2026-06-03 10:41:32`.
+- Current installer evidence: size `89594452` bytes, SHA-256 `96A09A11CFB78C8BD10455274E33A2528C0430C0244BEF3933319DD9E202077D`, last write time `2026-06-04 16:28:38`.
 - Packaged executable smoke test: `apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe` remained alive after 8 seconds, then was stopped.
+- Real desktop IPC diagnostic evidence: diagnostic id `4`, `ready: true`, `missingRequiredSelectors: []`; create-page setup selectors were all found and usable with match count `1`. `readyReportSelector` and `downloadButton` remain unproven because no generated report row for the unique generated name exists yet.
 - `pnpm --filter @amazon-ai-ops/desktop test -- collection-preflight-export.test.ts`: passed after extracting the preflight evidence bundle writer, adding the review checklist, and adding `preflight-bundle-index.json`.
 - `pnpm --filter @amazon-ai-ops/desktop test -- download-center-diagnostic-evidence-files.test.ts`: passed after adding the preflight diagnostic evidence bundle helper.
 - `git diff --check`: passed with only expected Windows LF-to-CRLF warnings.
@@ -117,7 +133,7 @@ Known build warnings:
 
 - Vite CJS Node API deprecation warning.
 - electron-builder warns `asar: false`.
-- electron-builder skips dependency rebuild because `npmRebuild: false`.
+- electron-builder warns `cannot find prebuild-install` during native dependency rebuild, but the build continued and completed NSIS packaging.
 
 ## Active Blocker
 
@@ -131,23 +147,23 @@ Real Lingxing download-center automation is intentionally fail-closed. These ite
 
 These live automation details still need verification before disabling `requiresManualVerification`:
 
-- Store selector action flow.
-- Report type dropdown action flow for each of the 8 reports.
-- Date range control fill behavior.
+- Store selector action flow through an actual generate attempt, including the already-selected-store case.
+- Report type dropdown action flow for all 8 reports, not only the campaign-report diagnostic context.
+- Date range control fill behavior through Lingxing's Vue/Element UI state, not only visible input uniqueness.
 - Create report button click plus any confirm/result dialog.
 - Generation/ready status indicator.
 - Row scoping for report name/date/status.
 - Download button selector scoped by report/date and final filenames.
 - Real Playwright tracing lifecycle for failed download attempts.
+- Full desktop UI `验证页面` rerun with a live Lingxing session should still be used to refresh same-model evidence, but the prior click blocker was a renderer layout overlap and is now covered by renderer QA. Direct desktop IPC diagnostic remains proven by diagnostic id `4`.
 
 Until those are verified, the app can diagnose the page, record retry/evidence metadata, and expose retry workflows, but it must not claim that real Lingxing report creation/download is complete.
 
 ## Next Work
 
-1. Run the desktop `验证页面` diagnostic against the updated Ads page model and export the diagnostic evidence bundle.
-2. Review the evidence bundle, solidify a local download-center page-model override with scoped action selectors, and keep `requiresManualVerification` true until all action selector checks are usable and unambiguous.
-3. Re-run `验证页面` for the same collection date range so the enabled page-model snapshot has stored selector evidence.
-4. Run `导出启用审计`; only if the audit passes should `requiresManualVerification` be set to `false`.
-5. Verify the selector-driven `createReport`, `waitForReportReady`, and `downloadReport` path against real Lingxing.
-6. Verify Playwright trace content against a real Lingxing failure path.
-7. Run live E2E: full 8-report batch, automatic retry failure path, manual single-report retry, manifest verification, and downloaded file parsing.
+1. Export the diagnostic evidence bundle for diagnostic id `4`, then review screenshot, DOM, and action selector checks.
+2. Rerun the desktop UI `验证页面` path after the Lingxing login/Ads session is stable to refresh same-model evidence from the current build.
+3. If report generation is approved, run a controlled single-report live create/download proof before enabling all 8 reports.
+4. Use the generated report row to verify ready/download selectors scoped by `{generatedReportName}` and selected date range.
+5. Run `导出启用审计`; only if setup, ready, download, same-model/date diagnostic, and evidence-file checks pass should `requiresManualVerification` be considered for disablement.
+6. Run live E2E: full 8-report batch, automatic retry failure path, manual single-report retry, manifest verification, downloaded file parsing, and final acceptance audit.

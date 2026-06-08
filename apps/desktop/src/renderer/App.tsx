@@ -412,6 +412,8 @@ function Scheduler() {
 function V15Workspace() {
   const [dateStart, setDateStart] = useState('2026-05-01');
   const [dateEnd, setDateEnd] = useState('2026-05-25');
+  const [collectionStoreName, setCollectionStoreName] = useState('FT-US-US');
+  const [collectionMarketplaceCode, setCollectionMarketplaceCode] = useState('US');
   const [message, setMessage] = useState('');
   const [selectedReportFile, setSelectedReportFile] = useState('');
   const [keywordSource, setKeywordSource] = useState('search_term');
@@ -439,10 +441,17 @@ function V15Workspace() {
     loadDownloadCenterPageModel();
   }, []);
 
+  const collectionRequest = () => ({
+    start: dateStart,
+    end: dateEnd,
+    storeName: collectionStoreName.trim(),
+    marketplaceCode: collectionMarketplaceCode.trim(),
+  });
+
   const collectReports = async () => {
     setMessage('正在启动领星报告采集...');
     try {
-      const result = await (window as any).electronAPI.collectLingxingReports({ start: dateStart, end: dateEnd });
+      const result = await (window as any).electronAPI.collectLingxingReports(collectionRequest());
       setReportBatchResult(result);
       const failed = result.files.filter((file: any) => file.status === 'failed');
       setMessage(
@@ -458,7 +467,7 @@ function V15Workspace() {
   const preflightCollection = async () => {
     setMessage('正在执行领星采集预检...');
     try {
-      const result = await (window as any).electronAPI.preflightLingxingCollection({ start: dateStart, end: dateEnd });
+      const result = await (window as any).electronAPI.preflightLingxingCollection(collectionRequest());
       setCollectionPreflight(result);
       setMessage(result.ready
         ? '采集预检通过：页面模型、近期诊断证据和浏览器登录状态均满足启动条件'
@@ -471,7 +480,7 @@ function V15Workspace() {
   const exportCollectionPreflight = async () => {
     setMessage('正在导出采集预检证据...');
     try {
-      const exportPath = await (window as any).electronAPI.exportLingxingCollectionPreflight({ start: dateStart, end: dateEnd });
+      const exportPath = await (window as any).electronAPI.exportLingxingCollectionPreflight(collectionRequest());
       setMessage(`采集预检证据已导出：${exportPath}`);
       await openReportPath(exportPath);
     } catch (e: any) {
@@ -483,7 +492,7 @@ function V15Workspace() {
     setMessage(`正在重试 ${file.displayName}...`);
     try {
       const result = await (window as any).electronAPI.retryLingxingReport(
-        { start: dateStart, end: dateEnd },
+        collectionRequest(),
         file.reportType,
       );
       setReportBatchResult(result);
@@ -523,7 +532,7 @@ function V15Workspace() {
   const diagnoseDownloadCenter = async () => {
     setMessage('正在只读验证领星下载中心页面模型...');
     try {
-      const result = await (window as any).electronAPI.diagnoseLingxingDownloadCenter({ start: dateStart, end: dateEnd });
+      const result = await (window as any).electronAPI.diagnoseLingxingDownloadCenter(collectionRequest());
       setDownloadCenterDiagnostic(result);
       setMessage(result.ready ? '下载中心页面模型诊断通过，仍需人工确认后才能打开自动下载。' : `下载中心页面模型未通过：${result.errorMessage || '缺少页面文本或关键选择器'}`);
     } catch (e: any) {
@@ -762,6 +771,18 @@ function V15Workspace() {
           <div style={styles.inlineForm}>
             <input value={dateStart} onChange={(e) => setDateStart(e.target.value)} style={styles.input} />
             <input value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} style={styles.input} />
+            <input
+              value={collectionStoreName}
+              onChange={(e) => setCollectionStoreName(e.target.value)}
+              placeholder="店铺，如 FT-US-US"
+              style={styles.input}
+            />
+            <input
+              value={collectionMarketplaceCode}
+              onChange={(e) => setCollectionMarketplaceCode(e.target.value)}
+              placeholder="站点，如 US"
+              style={styles.input}
+            />
             <button onClick={collectReports} style={styles.saveButton}>启动采集</button>
             <button onClick={preflightCollection} style={styles.btnSmall}>采集预检</button>
             <button onClick={exportCollectionPreflight} style={styles.btnSmall}>导出预检</button>
@@ -1222,11 +1243,11 @@ const styles: any = {
   dashboard: { padding: '0 8px' },
   page: { padding: '0 8px' },
   sectionTitle: { fontSize: '20px', fontWeight: 'bold', marginBottom: '24px', color: '#333' },
-  panelGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px', marginBottom: '16px' },
-  panel: { background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '16px' },
+  panelGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px', marginBottom: '16px' },
+  panel: { background: '#fff', border: '1px solid #eee', borderRadius: '6px', padding: '16px', minWidth: 0 },
   panelTitle: { fontSize: '15px', fontWeight: 700, margin: '0 0 12px', color: '#333' },
-  inlineForm: { display: 'grid', gridTemplateColumns: 'minmax(130px, 1fr) minmax(130px, 1fr) auto auto', gap: '8px', alignItems: 'center' },
-  stackedForm: { display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '8px', alignItems: 'center' },
+  inlineForm: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', alignItems: 'center', minWidth: 0 },
+  stackedForm: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '8px', alignItems: 'center', minWidth: 0 },
   listingGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(240px, 1fr))', gap: '10px', marginBottom: '12px' },
   textarea: { padding: '12px 16px', borderRadius: '4px', border: '1px solid #d9d9d9', fontSize: '14px', width: '100%', minHeight: '88px', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit' },
   buttonRow: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' },
@@ -1248,7 +1269,7 @@ const styles: any = {
   btnApprove: { marginRight: '8px', padding: '4px 12px', background: '#52c41a', border: 'none', borderRadius: '4px', color: '#fff', cursor: 'pointer', fontSize: '12px' },
   btnReject: { marginRight: '8px', padding: '4px 12px', background: '#ff4d4f', border: 'none', borderRadius: '4px', color: '#fff', cursor: 'pointer', fontSize: '12px' },
   btnExecute: { padding: '4px 12px', background: '#1890ff', border: 'none', borderRadius: '4px', color: '#fff', cursor: 'pointer', fontSize: '12px' },
-  btnSmall: { marginRight: '8px', padding: '4px 12px', background: '#f0f0f0', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' },
+  btnSmall: { padding: '4px 12px', background: '#f0f0f0', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' },
   filterTabs: { display: 'flex', gap: '8px', marginBottom: '16px' },
   tab: { padding: '6px 16px', background: '#f0f0f0', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' },
   tabActive: { background: '#1890ff', color: '#fff' },
