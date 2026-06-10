@@ -82,4 +82,27 @@ describe('aggregateKeywordMetrics', () => {
     expect(result.map((item) => item.asin).sort()).toEqual(['B001', 'B002']);
     expect(result.every((item) => item.normalizedKeyword === 'insulated mug')).toBe(true);
   });
+
+  it('keeps cost, traffic, and source trace in opportunity evidence', () => {
+    const [opportunity] = buildKeywordOpportunities([
+      metric({
+        rawKeyword: 'Insulated Mug',
+        clicks: 20,
+        impressions: 1000,
+        cost: 24,
+        orders: 3,
+        sales: 120,
+        source: 'keyword_report',
+        sourceFile: 'C:/reports/keyword.xlsx',
+        sourceRow: 12,
+      }),
+    ]);
+
+    expect(opportunity.evidence).toContain('cost=24');
+    expect(opportunity.evidence).toContain('impressions=1000');
+    expect(opportunity.evidence).toContain('cvr=0.15');
+    expect(opportunity.evidence).toContain('source=keyword_report');
+    expect(opportunity.evidence).toContain('source_file=C:/reports/keyword.xlsx');
+    expect(opportunity.evidence).toContain('source_row=12');
+  });
 });

@@ -48,6 +48,8 @@ export class AdActionReasonExplainer {
       return {
         explanation: `建议${input.recommendedAction}：基于当前ACOS ${(input.currentMetrics.acos * 100).toFixed(1)}%的表现做出的判断。`,
         riskWarnings: ['无法获取AI详细解释'],
+        source: 'rule',
+        aiFallbackReason: response.error || 'AI 未返回解释，使用规则解释',
       };
     }
 
@@ -57,11 +59,13 @@ export class AdActionReasonExplainer {
         explanation: parsed.explanation || '',
         riskWarnings: parsed.riskWarnings || [],
         alternativeSuggestions: parsed.alternativeSuggestions || [],
+        source: 'ai',
       };
     } catch {
       return {
         explanation: response.content || '无法解析AI响应',
         riskWarnings: [],
+        source: 'ai',
       };
     }
   }

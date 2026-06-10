@@ -16,14 +16,18 @@ export class BrowserController {
   }
 
   async launch(): Promise<void> {
-    // 使用 Chromium persistent profile
-    this.context = await chromium.launchPersistentContext(this.userDataDir, {
-      headless: this.config.headless ?? false,
-      viewport: this.config.viewport || { width: 1400, height: 900 },
-      acceptDownloads: true,
-      args: ['--disable-blink-features=AutomationControlled'],
-    });
-    this.page = this.context.pages()[0] || await this.context.newPage();
+    try {
+      // 使用 Chromium persistent profile
+      this.context = await chromium.launchPersistentContext(this.userDataDir, {
+        headless: this.config.headless ?? false,
+        viewport: this.config.viewport || { width: 1400, height: 900 },
+        acceptDownloads: true,
+        args: ['--disable-blink-features=AutomationControlled'],
+      });
+      this.page = this.context.pages()[0] || await this.context.newPage();
+    } catch (error) {
+      throw new Error(toUserFacingBrowserLaunchError(error));
+    }
   }
 
   async close(): Promise<void> {
@@ -80,7 +84,25 @@ export class BrowserController {
   }
 
   async evaluate<T = unknown>(fn: string | Function, ...args: any[]): Promise<T> {
-    return this.getPageOrThrow().evaluate(fn as any, ...args) as Promise<T>;
+    const page = this.getPageOrThrow();
+    if (args.length === 0) {
+      return page.evaluate(fn as any) as Promise<T>;
+    }
+    if (args.length === 1) {
+      return page.evaluate(fn as any, args[0]) as Promise<T>;
+    }
+
+    if (typeof fn === 'string') {
+      throw new Error('BrowserController.evaluate only supports multiple arguments when the page function is a Function.');
+    }
+
+    return page.evaluate(
+      ({ source, values }) => {
+        const pageFunction = (0, eval)(`(${source})`);
+        return pageFunction(...values);
+      },
+      { source: fn.toString(), values: args },
+    ) as Promise<T>;
   }
 
   async isVisible(selector: string): Promise<boolean> {
@@ -128,4 +150,22 @@ export class BrowserController {
       takenAt: new Date().toISOString(),
     };
   }
+}
+
+export function toUserFacingBrowserLaunchError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (/user[- ]data[- ]dir|profile|ProcessSingleton|already in use|另一个程序/i.test(message)) {
+    return '浏览器启动失败：领星自动化浏览器配置正在被另一个实例占用。请关闭上一个自动化浏览器窗口后重试。';
+  }
+
+  if (/Executable doesn't exist|chrome-win64|chromium/i.test(message)) {
+    return '浏览器启动失败：打包浏览器运行时不可用。请重新安装或重新构建桌面应用后重试。';
+  }
+
+  if (/Target page, context or browser has been closed/i.test(message)) {
+    return '浏览器连接已关闭：请重新打开登录窗口后再试。';
+  }
+
+  return '浏览器启动失败：请关闭残留的自动化浏览器窗口后重试。';
 }

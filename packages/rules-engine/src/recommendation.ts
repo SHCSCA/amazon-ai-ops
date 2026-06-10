@@ -44,6 +44,12 @@ export class RecommendationGenerator {
 
     // 构建证据对象
     const evidence = {
+      date: metrics.date,
+      portfolioName: metrics.portfolioName,
+      campaignName: metrics.campaignName,
+      adGroupName: metrics.adGroupName,
+      asin: metrics.asin,
+      targeting: metrics.targeting,
       impressions: metrics.impressions,
       clicks: metrics.clicks,
       cost: metrics.cost,
@@ -59,8 +65,8 @@ export class RecommendationGenerator {
     return {
       id: undefined,
       taskId: options.taskId,
-      storeName: options.storeName,
-      marketplaceCode: options.marketplaceCode,
+      storeName: metrics.storeName || options.storeName,
+      marketplaceCode: metrics.marketplaceCode || options.marketplaceCode,
       asin: metrics.asin,
       msku: metrics.msku,
       entityType: metrics.searchTerm ? 'search_term' : 'target',

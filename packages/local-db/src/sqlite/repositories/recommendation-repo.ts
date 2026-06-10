@@ -4,6 +4,10 @@ import type { ActionRecommendation, RecommendationFilter } from '@amazon-ai-ops/
 export class RecommendationRepository {
   constructor(private db: Database) {}
 
+  private metricDateExpression(): string {
+    return "date(COALESCE(NULLIF(json_extract(evidence_json, '$.date'), ''), created_at))";
+  }
+
   insert(rec: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>): number {
     const stmt = this.db.prepare(`
       INSERT INTO action_recommendations (
@@ -37,6 +41,39 @@ export class RecommendationRepository {
       status: rec.status,
     });
     return result.lastInsertRowid as number;
+  }
+
+  insertIfNoDuplicate(rec: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>): { id: number; inserted: boolean } {
+    const duplicate = this.findDuplicate(rec);
+    if (duplicate?.id) {
+      return { id: duplicate.id, inserted: false };
+    }
+    return { id: this.insert(rec), inserted: true };
+  }
+
+  findDuplicate(rec: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>): ActionRecommendation | undefined {
+    const evidenceDate = rec.evidence?.date || '';
+    const row = this.db.prepare(`
+      SELECT *
+      FROM action_recommendations
+      WHERE store_name = ?
+        AND marketplace_code = ?
+        AND upper(asin) = upper(?)
+        AND entity_id = ?
+        AND action_type = ?
+        AND COALESCE(NULLIF(json_extract(evidence_json, '$.date'), ''), '') = ?
+        AND status IN ('pending', 'approved', 'rejected', 'executed')
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(
+      rec.storeName,
+      rec.marketplaceCode,
+      rec.asin,
+      rec.entityId,
+      rec.actionType,
+      evidenceDate,
+    ) as any;
+    return row ? this.mapRow(row) : undefined;
   }
 
   findById(id: number): ActionRecommendation | undefined {
@@ -75,13 +112,13 @@ export class RecommendationRepository {
       params.push(filter.status);
     }
     if (filter.dateFrom) {
-      sql += ' AND date(created_at) >= ?';
-      countSql += ' AND date(created_at) >= ?';
+      sql += ` AND ${this.metricDateExpression()} >= ?`;
+      countSql += ` AND ${this.metricDateExpression()} >= ?`;
       params.push(filter.dateFrom);
     }
     if (filter.dateTo) {
-      sql += ' AND date(created_at) <= ?';
-      countSql += ' AND date(created_at) <= ?';
+      sql += ` AND ${this.metricDateExpression()} <= ?`;
+      countSql += ` AND ${this.metricDateExpression()} <= ?`;
       params.push(filter.dateTo);
     }
 
@@ -110,21 +147,21 @@ export class RecommendationRepository {
 
   countByDate(date: string): number {
     const row = this.db.prepare(
-      "SELECT COUNT(*) as total FROM action_recommendations WHERE date(created_at) = ?"
+      `SELECT COUNT(*) as total FROM action_recommendations WHERE ${this.metricDateExpression()} = ?`
     ).get(date) as { total: number };
     return row.total;
   }
 
   countByDateAndStatus(date: string, status: string): number {
     const row = this.db.prepare(
-      "SELECT COUNT(*) as total FROM action_recommendations WHERE date(created_at) = ? AND status = ?"
+      `SELECT COUNT(*) as total FROM action_recommendations WHERE ${this.metricDateExpression()} = ? AND status = ?`
     ).get(date, status) as { total: number };
     return row.total;
   }
 
   findByDateAndStatus(date: string, status: string, limit = 100): ActionRecommendation[] {
     const rows = this.db.prepare(
-      "SELECT * FROM action_recommendations WHERE date(created_at) = ? AND status = ? ORDER BY created_at DESC LIMIT ?"
+      `SELECT * FROM action_recommendations WHERE ${this.metricDateExpression()} = ? AND status = ? ORDER BY created_at DESC LIMIT ?`
     ).all(date, status, limit) as any[];
     return rows.map(this.mapRow);
   }

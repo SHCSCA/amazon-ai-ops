@@ -86,11 +86,46 @@ function diagnostic(pageModel = model(), overrides: Partial<DownloadCenterDiagno
 describe('auditDownloadCenterPageModelEnablement', () => {
   it('passes for a manual-gated model candidate with complete scoped selectors and fresh matching diagnostic evidence', () => {
     const candidate = model();
-    const result = auditDownloadCenterPageModelEnablement(candidate, dateRange, diagnostic(candidate), { nowMs });
+    const result = auditDownloadCenterPageModelEnablement(candidate, dateRange, diagnostic(candidate), {
+      nowMs,
+      canaryReportTypes: [
+        'campaign',
+        'ad_group',
+        'placement',
+        'advertised_product',
+        'auto_targeting',
+        'keyword',
+        'product_targeting',
+        'user_search_term',
+      ],
+    });
 
     expect(result.canDisableManualVerification).toBe(true);
     expect(result.currentlyRequiresManualVerification).toBe(true);
     expect(result.checks.every((check) => check.status === 'passed')).toBe(true);
+  });
+
+  it('blocks when only one report type has real canary evidence', () => {
+    const candidate = model();
+    const result = auditDownloadCenterPageModelEnablement(candidate, dateRange, diagnostic(candidate), {
+      nowMs,
+      canaryReportTypes: ['campaign'],
+    });
+
+    expect(result.canDisableManualVerification).toBe(false);
+    expect(result.canaryEvidenceReadiness.coveredReportTypes).toEqual(['campaign']);
+    expect(result.canaryEvidenceReadiness.missingReportTypes).toEqual([
+      'ad_group',
+      'placement',
+      'advertised_product',
+      'auto_targeting',
+      'keyword',
+      'product_targeting',
+      'user_search_term',
+    ]);
+    expect(result.checks.find((check) => check.name === 'canary_evidence_ready')).toMatchObject({
+      status: 'blocked',
+    });
   });
 
   it('blocks when scoped automation selectors are incomplete even if basic diagnostic evidence exists', () => {
@@ -157,11 +192,24 @@ describe('auditDownloadCenterPageModelEnablement', () => {
   });
 
   it('renders a markdown audit summary with the operator rule', () => {
-    const result = auditDownloadCenterPageModelEnablement(model(), dateRange, diagnostic(), { nowMs });
+    const result = auditDownloadCenterPageModelEnablement(model(), dateRange, diagnostic(), {
+      nowMs,
+      canaryReportTypes: [
+        'campaign',
+        'ad_group',
+        'placement',
+        'advertised_product',
+        'auto_targeting',
+        'keyword',
+        'product_targeting',
+        'user_search_term',
+      ],
+    });
     const markdown = downloadCenterPageModelEnablementAuditToMarkdown(result);
 
     expect(markdown).toContain('# Lingxing Download Center Page Model Enablement Audit');
     expect(markdown).toContain('Can disable manual verification: yes');
+    expect(markdown).toContain('Canary coverage: campaign');
     expect(markdown).toContain('Only set `requiresManualVerification` to `false` after this audit says `yes`');
   });
 });

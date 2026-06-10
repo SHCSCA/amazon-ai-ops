@@ -85,6 +85,9 @@ function runMigrations(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS ad_daily_metrics (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id TEXT,
+      report_type TEXT,
+      portfolio_name TEXT,
       date TEXT,
       store_name TEXT,
       marketplace_code TEXT,
@@ -239,6 +242,9 @@ function runMigrations(database: Database.Database): void {
       completed_at TEXT
     )
   `);
+  ensureColumn(database, 'ad_daily_metrics', 'batch_id', 'TEXT');
+  ensureColumn(database, 'ad_daily_metrics', 'report_type', 'TEXT');
+  ensureColumn(database, 'ad_daily_metrics', 'portfolio_name', 'TEXT');
   ensureColumn(database, 'lingxing_report_batches', 'app_version', 'TEXT');
   ensureColumn(database, 'lingxing_report_batches', 'store_name', 'TEXT');
   ensureColumn(database, 'lingxing_report_batches', 'marketplace_code', 'TEXT');
@@ -376,11 +382,34 @@ function runMigrations(database: Database.Database): void {
       evidence TEXT,
       risk_warnings_json TEXT DEFAULT '[]',
       source TEXT DEFAULT 'rule',
+      ai_fallback_reason TEXT,
       status TEXT DEFAULT 'pending',
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
+  ensureColumn(database, 'listing_suggestions', 'keyword', 'TEXT');
+  ensureColumn(database, 'listing_suggestions', 'current_text', 'TEXT');
+  ensureColumn(database, 'listing_suggestions', 'suggested_text', "TEXT DEFAULT ''");
+  ensureColumn(database, 'listing_suggestions', 'evidence', 'TEXT');
+  ensureColumn(database, 'listing_suggestions', 'risk_warnings_json', "TEXT DEFAULT '[]'");
+  ensureColumn(database, 'listing_suggestions', 'status', "TEXT DEFAULT 'pending'");
+  ensureColumn(database, 'listing_suggestions', 'updated_at', "TEXT DEFAULT (datetime('now'))");
+  ensureColumn(database, 'listing_content', 'title', "TEXT DEFAULT ''");
+  ensureColumn(database, 'listing_content', 'bullets_json', "TEXT DEFAULT '[]'");
+  ensureColumn(database, 'listing_content', 'a_plus', 'TEXT');
+  ensureColumn(database, 'listing_content', 'image_copy', 'TEXT');
+  ensureColumn(database, 'listing_content', 'backend_terms', 'TEXT');
+  ensureColumn(database, 'listing_content', 'updated_at', "TEXT DEFAULT (datetime('now'))");
+  ensureColumn(database, 'listing_drafts', 'current_text', 'TEXT');
+  ensureColumn(database, 'listing_drafts', 'drafted_text', "TEXT DEFAULT ''");
+  ensureColumn(database, 'listing_drafts', 'keywords_json', "TEXT DEFAULT '[]'");
+  ensureColumn(database, 'listing_drafts', 'evidence', 'TEXT');
+  ensureColumn(database, 'listing_drafts', 'risk_warnings_json', "TEXT DEFAULT '[]'");
+  ensureColumn(database, 'listing_drafts', 'source', "TEXT DEFAULT 'rule'");
+  ensureColumn(database, 'listing_drafts', 'status', "TEXT DEFAULT 'pending'");
+  ensureColumn(database, 'listing_drafts', 'updated_at', "TEXT DEFAULT (datetime('now'))");
+  ensureColumn(database, 'listing_drafts', 'ai_fallback_reason', 'TEXT');
 
   // v1.5 download_center_diagnostics
   database.exec(`

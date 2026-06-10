@@ -14,21 +14,21 @@ export interface ValidationResult {
   invalidCount: number;
 }
 
-// 关键字段：解析时必须有值
-const REQUIRED_FIELDS = ['date', 'storeName', 'asin', 'campaignName'];
+// 关键字段：关键词/搜索词/投放报表通常没有 ASIN，不能因为缺 ASIN 丢弃真实广告明细。
+const REQUIRED_FIELDS = ['date', 'storeName', 'campaignName'];
 
 // 数值字段：必须是数字
 const NUMERIC_FIELDS = ['impressions', 'clicks', 'cost', 'orders', 'sales', 'acos', 'cpc', 'cvr'];
 
 // 数值字段名可能的变体
 const NUMERIC_FIELD_ALIASES: Record<string, string[]> = {
-  impressions: ['展现量', '展示量'],
+  impressions: ['展现量', '展示量', '曝光量'],
   clicks: ['点击量', '点击'],
-  cost: ['花费', '花费金额', '消耗'],
-  orders: ['订单数', '转化数'],
-  sales: ['销售额', '销售'],
-  acos: ['ACOS'],
-  cpc: ['CPC', '平均点击成本'],
+  cost: ['花费', '花费金额', '消耗', '花费-本币'],
+  orders: ['订单数', '转化数', '广告订单'],
+  sales: ['销售额', '销售', '广告销售额-本币'],
+  acos: ['ACOS', 'ACoS'],
+  cpc: ['CPC', 'CPC-本币', '平均点击成本'],
   cvr: ['转化率'],
 };
 

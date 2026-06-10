@@ -101,14 +101,26 @@ export class AdActionExecutor {
 
       // 5. 等待 Toast 提示
       const toast = await page.locator('text=成功').first().isVisible({ timeout: 5000 }).catch(() => false);
+      if (!toast) {
+        return {
+          success: false,
+          executionId,
+          actionType: recommendation.actionType,
+          beforeValue,
+          afterValue: `否定的关键词: ${recommendation.entityName}`,
+          verified: false,
+          error: '未检测到成功提示，广告动作未通过回读确认',
+          executedAt: new Date().toISOString(),
+        };
+      }
 
       return {
-        success: toast || true,
+        success: true,
         executionId,
         actionType: recommendation.actionType,
         beforeValue,
         afterValue: `否定的关键词: ${recommendation.entityName}`,
-        verified: true, // 以 Toast 为准
+        verified: true,
         executedAt: new Date().toISOString(),
       };
     } catch (error) {
@@ -169,12 +181,13 @@ export class AdActionExecutor {
       );
 
       return {
-        success: true,
+        success: verified,
         executionId,
         actionType: recommendation.actionType,
         beforeValue,
         afterValue: targetBid.toFixed(2),
         verified,
+        error: verified ? undefined : '回读校验失败，广告出价未确认变更',
         executedAt: new Date().toISOString(),
       };
     } catch (error) {
@@ -243,12 +256,13 @@ export class AdActionExecutor {
       );
 
       return {
-        success: true,
+        success: verified,
         executionId,
         actionType: recommendation.actionType,
         beforeValue,
         afterValue: enabled ? 'enabled' : 'paused',
         verified,
+        error: verified ? undefined : '回读校验失败，广告状态未确认变更',
         executedAt: new Date().toISOString(),
       };
     } catch (error) {

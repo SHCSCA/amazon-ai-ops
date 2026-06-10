@@ -227,6 +227,7 @@ export interface ListingDraft {
   evidence: string;
   riskWarnings: string[];
   source: 'ai' | 'rule';
+  aiFallbackReason?: string;
   status: 'pending' | 'accepted' | 'ignored';
   createdAt?: string;
 }

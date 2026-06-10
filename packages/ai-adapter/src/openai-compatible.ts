@@ -2,6 +2,29 @@ import { BaseAIProvider } from './provider';
 import type { AIConfig, AIResponse } from './types';
 import type { ChatMessage } from './provider';
 
+function shouldDisableDeepSeekThinking(baseUrl: string | undefined, model: string): boolean {
+  const target = `${baseUrl || ''} ${model}`.toLowerCase();
+  return target.includes('deepseek');
+}
+
+function buildChatCompletionBody(
+  config: AIConfig,
+  model: string,
+  messages: ChatMessage[],
+  temperature: number,
+  maxTokens: number
+) {
+  return {
+    model,
+    messages,
+    temperature,
+    max_tokens: maxTokens,
+    ...(shouldDisableDeepSeekThinking(config.baseUrl, model)
+      ? { thinking: { type: 'disabled' } }
+      : {}),
+  };
+}
+
 export class OpenAICompatibleProvider extends BaseAIProvider {
   private defaultModel: string;
 
@@ -23,12 +46,7 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
       const response = await fetch(url, {
         method: 'POST',
         headers: this.buildHeaders(),
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature,
-          max_tokens: maxTokens,
-        }),
+        body: JSON.stringify(buildChatCompletionBody(this.config, model, messages, temperature, maxTokens)),
       });
 
       if (!response.ok) {
@@ -86,3 +104,8 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
     }
   }
 }
+
+export const __test__ = {
+  buildChatCompletionBody,
+  shouldDisableDeepSeekThinking,
+};

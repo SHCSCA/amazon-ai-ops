@@ -12,6 +12,8 @@ export const AD_REPORT_FIELD_MAPPING: Record<string, string> = {
   '店铺名': 'storeName',
   '站点': 'marketplaceCode',
   '站点/市场': 'marketplaceCode',
+  '国家': 'marketplaceCode',
+  '广告组合': 'portfolioName',
   
   // ASIN/MSKU
   'ASIN': 'asin',
@@ -37,11 +39,13 @@ export const AD_REPORT_FIELD_MAPPING: Record<string, string> = {
   '关键词': 'targeting',
   '关键词/ASIN': 'targeting',
   '投放关键词': 'targeting',
+  '投放': 'targeting',
   'Target': 'targeting',
   'target': 'targeting',
   'Search Term': 'searchTerm',
   'search term': 'searchTerm',
   '搜索词': 'searchTerm',
+  '用户搜索词': 'searchTerm',
   '搜索词报告': 'searchTerm',
   
   // 匹配方式
@@ -53,6 +57,7 @@ export const AD_REPORT_FIELD_MAPPING: Record<string, string> = {
   // 展现量
   '展现量': 'impressions',
   '展示量': 'impressions',
+  '曝光量': 'impressions',
   'Impressions': 'impressions',
   'impressions': 'impressions',
   
@@ -64,6 +69,7 @@ export const AD_REPORT_FIELD_MAPPING: Record<string, string> = {
   
   // 花费
   '花费': 'cost',
+  '花费-本币': 'cost',
   '花费金额': 'cost',
   '消耗': 'cost',
   'Cost': 'cost',
@@ -74,12 +80,14 @@ export const AD_REPORT_FIELD_MAPPING: Record<string, string> = {
   // 订单数
   '订单数': 'orders',
   '订单': 'orders',
+  '广告订单': 'orders',
   'Orders': 'orders',
   'orders': 'orders',
   '转化数': 'orders',
   
   // 销售额
   '销售额': 'sales',
+  '广告销售额-本币': 'sales',
   '销售': 'sales',
   'Sales': 'sales',
   'sales': 'sales',
@@ -94,6 +102,7 @@ export const AD_REPORT_FIELD_MAPPING: Record<string, string> = {
   
   // CPC
   'CPC': 'cpc',
+  'CPC-本币': 'cpc',
   'cpc': 'cpc',
   '平均点击成本': 'cpc',
   '点击成本': 'cpc',

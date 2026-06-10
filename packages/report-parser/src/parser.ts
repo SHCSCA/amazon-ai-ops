@@ -12,6 +12,22 @@ export interface ParseOptions {
   dateFormat?: string;      // 日期格式，默认 'YYYY-MM-DD'
 }
 
+function inferReportType(sourceFile: string): string | undefined {
+  const baseName = path.basename(sourceFile).toLowerCase();
+  const candidates = [
+    'advertised_product',
+    'product_targeting',
+    'auto_targeting',
+    'user_search_term',
+    'search_term',
+    'ad_group',
+    'placement',
+    'campaign',
+    'keyword',
+  ];
+  return candidates.find((candidate) => baseName.includes(candidate));
+}
+
 export interface ParseResult {
   success: boolean;
   data: AdDailyMetrics[];
@@ -94,7 +110,7 @@ export class ReportParser {
     // 转换为 AdDailyMetrics
     const metrics: AdDailyMetrics[] = normalizedRows.map((row, index) => {
       return this.mapToAdMetrics(row, sourceFile);
-    }).filter(m => m.date && m.asin); // 过滤无效行
+    }).filter(m => m.date && (m.asin || m.campaignName || m.adGroupName || m.targeting || m.searchTerm)); // 过滤无效行
 
     return {
       success: validation.validCount > 0,
@@ -138,6 +154,7 @@ export class ReportParser {
       date,
       storeName: String(getValue('storeName') || getValue('店铺') || 'unknown'),
       marketplaceCode: String(getValue('marketplaceCode') || getValue('站点') || 'US'),
+      portfolioName: String(getValue('portfolioName') || getValue('广告组合') || ''),
       asin: String(getValue('asin') || getValue('ASIN') || ''),
       msku: String(getValue('msku') || getValue('MSKU') || ''),
       campaignName: String(getValue('campaignName') || getValue('广告活动') || ''),
@@ -154,6 +171,7 @@ export class ReportParser {
       cpc,
       cvr,
       sourceFile,
+      reportType: inferReportType(sourceFile),
     };
   }
 

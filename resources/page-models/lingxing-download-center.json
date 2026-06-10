@@ -1,6 +1,6 @@
 {
   "name": "lingxing-download-center",
-  "description": "领星广告系统下载中心页面模型。真实动作选择器需要人工用领星页面验证后固化。",
+  "description": "领星广告系统下载中心页面模型。动作选择器已通过真实领星下载中心 8 类广告报表 canary 验证。",
   "candidateUrls": [
     "https://ads.lingxing.com/ak_download/download_center/download_report_log/index",
     "https://ads.lingxing.com/home",
@@ -43,5 +43,5 @@
     "readyTimeoutMs": 300000,
     "downloadTimeoutMs": 120000
   },
-  "requiresManualVerification": true
+  "requiresManualVerification": false
 }

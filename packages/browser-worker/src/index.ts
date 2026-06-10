@@ -1,4 +1,4 @@
-export { BrowserController } from './controller';
+export { BrowserController, toUserFacingBrowserLaunchError } from './controller';
 export { ElementLocatorManager } from './locator';
 export { SessionManager } from './session-manager';
 export * from './types';

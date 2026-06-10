@@ -42,3 +42,6 @@ builder-debug.yml
 # Local runtime/evidence artifacts
 output/
 storage/
+
+# Local Codex runtime config
+.codex/config.toml

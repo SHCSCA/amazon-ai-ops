@@ -36,6 +36,9 @@ export interface DownloadCenterPageModelEnablementBundleIndex {
   currentlyRequiresManualVerification: boolean;
   diagnosticId?: number;
   diagnosticEvidenceReady: boolean;
+  canaryEvidenceReady: boolean;
+  canaryCoveredReportTypes: string[];
+  canaryMissingReportTypes: string[];
   blockedChecks: Array<{ name: string; detail: string; missing: string[] }>;
   files: Array<{ file: string; role: string; required: boolean; present: boolean }>;
 }
@@ -108,6 +111,9 @@ export function downloadCenterPageModelEnablementBundleIndex(
     currentlyRequiresManualVerification: model.requiresManualVerification,
     diagnosticId: diagnostic?.id,
     diagnosticEvidenceReady: diagnosticEvidenceFiles.readiness.ready,
+    canaryEvidenceReady: audit.canaryEvidenceReadiness.ready,
+    canaryCoveredReportTypes: audit.canaryEvidenceReadiness.coveredReportTypes,
+    canaryMissingReportTypes: audit.canaryEvidenceReadiness.missingReportTypes,
     blockedChecks: audit.checks
       .filter((check) => check.status !== 'passed')
       .map((check) => ({

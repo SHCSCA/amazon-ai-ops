@@ -19,6 +19,9 @@ export function buildRuleBasedListingDrafts(
   const groups = new Map<string, ListingSuggestion[]>();
 
   for (const suggestion of suggestions) {
+    if (suggestion.status !== 'accepted') {
+      continue;
+    }
     if (suggestion.riskWarnings.some((flag) => BLOCKING_RISK_FLAGS.has(flag))) {
       continue;
     }

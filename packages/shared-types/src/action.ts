@@ -44,11 +44,23 @@ export interface ActionEvidence {
   cpc: number;
   cvr: number;
   // 额外证据
+  date?: string;
+  portfolioName?: string;
+  campaignName?: string;
+  adGroupName?: string;
+  asin?: string;
+  targeting?: string;
   searchTerm?: string;
   matchType?: string;
   competitorAsin?: string;
   historicalAcos?: number[];
   conversionRate7d?: number;
+  explanationSource?: 'ai' | 'rule';
+  aiExplanation?: string;
+  aiRiskWarnings?: string[];
+  aiAlternativeSuggestions?: string[];
+  aiFallbackReason?: string;
+  aiModel?: string;
 }
 
 export interface ActionLog {

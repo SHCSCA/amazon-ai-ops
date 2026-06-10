@@ -19,6 +19,9 @@ export interface AdDailyMetrics {
   cpc: number;                     // 点击成本 = cost/clicks
   cvr: number;                     // 转化率 = orders/clicks
   sourceFile: string;
+  batchId?: string;
+  reportType?: string;
+  portfolioName?: string;
   createdAt?: string;
 }
 

@@ -49,6 +49,8 @@ export interface AdActionExplainOutput {
   explanation: string;
   riskWarnings: string[];
   alternativeSuggestions?: string[];
+  source: 'ai' | 'rule';
+  aiFallbackReason?: string;
 }
 
 export interface DailyReportSummaryInput {

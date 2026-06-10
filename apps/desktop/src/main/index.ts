@@ -6,19 +6,19 @@ import { LocalScheduler } from '@amazon-ai-ops/scheduler';
 import { AuditLogger, ScreenshotManager, TraceManager, CleanupManager } from '@amazon-ai-ops/audit-log';
 import { RecommendationGenerator, DEFAULT_RULE_CONFIG } from '@amazon-ai-ops/rules-engine';
 import { ReportParser, keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics, parseListingContent } from '@amazon-ai-ops/report-parser';
-import { OpenAICompatibleProvider, DailyReportGenerator } from '@amazon-ai-ops/ai-adapter';
+import { AdActionReasonExplainer, OpenAICompatibleProvider, DailyReportGenerator } from '@amazon-ai-ops/ai-adapter';
 import { initSqlite, getSqliteDb } from '@amazon-ai-ops/local-db/src/sqlite/db';
 import { ActionLogRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/action-log-repo';
 import { AdMetricsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/ad-metrics-repo';
 import { ProductRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/product-repo';
 import { RecommendationRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/recommendation-repo';
 import { SettingsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/settings-repo';
-import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, runLingxingReportBatch, type DownloadCenterAutomationPort } from '@amazon-ai-ops/lingxing-report-collector';
+import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, runLingxingReportBatch, type DownloadCenterAutomationPort } from '@amazon-ai-ops/lingxing-report-collector';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
-import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
+import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, draftsToCsv, draftsToMarkdown, draftsToXlsxBuffer, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
 import type { RuleConfig } from '@amazon-ai-ops/rules-engine';
 import type { TaskName } from '@amazon-ai-ops/scheduler';
-import type { DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingDraft, ListingSuggestion } from '@amazon-ai-ops/shared-types';
+import type { ActionRecommendation, AdDailyMetrics, DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingDraft, ListingSuggestion } from '@amazon-ai-ops/shared-types';
 import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithinRealDirectory, isSafeManifestPath, readLingxingManifestForAudit, safeFileSegment } from './acceptance-audit-export';
 import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-preflight-export';
 import { copyDiagnosticEvidenceFileToBundle, copyReportFailureEvidenceFilesToBundle, evaluateDownloadCenterDiagnosticEvidenceFiles } from './download-center-diagnostic-evidence-files';
@@ -26,6 +26,10 @@ import { getLatestDownloadCenterDiagnosticRowForModel } from './download-center-
 import { writeDownloadCenterPageModelEnablementAuditBundle } from './page-model-enablement-audit-export';
 import { selectorUsesDateScope, selectorUsesReportScope, validateDownloadCenterPageModel } from './download-center-page-model-validation';
 import { backupExistingDownloadCenterPageModelOverride, getDownloadCenterPageModelOverrideMetadataPath, saveDownloadCenterPageModelOverride } from './download-center-page-model-override-store';
+import { getLingxingSessionNavigationPlan, isLingxingAdsLoggedInPage } from './lingxing-session-flow';
+import { buildAdExecutionUnavailableResult, buildActionLogForExecution, getRecommendationExecutionOutcome } from './recommendation-execution-policy';
+import { extractLingxingListingFromSnapshot, type ListingDomFieldSnapshot, type ListingExtractionResult, type ListingPageSnapshot } from './listing-lingxing-extractor';
+import { adReadbackEvidenceToMarkdown, buildAdReadbackEvidence, type AdReadbackEvidenceInput } from './ad-readback-evidence';
 
 // ============================================================================
 // App State
@@ -193,7 +197,9 @@ async function initApp(): Promise<void> {
     name: 'daily_recommendation_generate',
     cron: '0 9 * * *',
     enabled: false,
-    callback: () => runRecommendationGeneration(),
+    callback: async () => {
+      await runRecommendationGeneration();
+    },
   });
 
   state.scheduler.register({
@@ -223,7 +229,45 @@ async function initApp(): Promise<void> {
 // Browser / Session
 // ============================================================================
 
-async function handleBrowserLogin(username: string, password: string): Promise<void> {
+type BrowserLoginResult = {
+  ok: true;
+  erpSessionReused: boolean;
+  adsEntryMode: 'erp_ads_entry';
+  adsUrl: string;
+  adsTitle: string;
+};
+
+type AdsSessionResult = {
+  entryMode: 'erp_ads_entry';
+  adsUrl: string;
+  adsTitle: string;
+};
+
+async function readLingxingPageState(page: NonNullable<ReturnType<BrowserController['getPage']>>) {
+  return page.evaluate(() => ({
+    url: window.location.href,
+    title: document.title,
+    bodyText: document.body?.innerText ?? '',
+    hasAccountInput: Boolean(document.querySelector('input[name="account"]')),
+  }));
+}
+
+function adsSessionResultFromPageState(pageState: { url: string; title?: string }): AdsSessionResult {
+  return {
+    entryMode: 'erp_ads_entry',
+    adsUrl: pageState.url,
+    adsTitle: pageState.title || pageState.url,
+  };
+}
+
+async function handleBrowserLogin(username: string, password: string): Promise<BrowserLoginResult> {
+  if (state.browserController) {
+    await state.browserController.close().catch(() => undefined);
+    state.browserController = null;
+    state.isLoggedIn = false;
+  }
+
+  const navigationPlan = getLingxingSessionNavigationPlan();
   const controller = new BrowserController({
     headless: false,
     userDataDir: path.join(STORAGE_DIR, 'browser-data'),
@@ -231,109 +275,115 @@ async function handleBrowserLogin(username: string, password: string): Promise<v
 
   state.browserController = controller;
 
-  await controller.launch();
-  await controller.navigate('https://erp.lingxing.com/');
-  await controller.waitForTimeout(2500);
-
-  const page = getControllerPageOrThrow(controller);
-  const accountInput = page.locator('input[name="account"], input[placeholder*="用户名"], input[placeholder*="手机号"]').first();
-  const passwordInput = page.locator('input[name="pwd"], input[type="password"]').first();
-  const needsLogin = await accountInput.isVisible({ timeout: 5000 }).catch(() => false);
-
-  if (needsLogin) {
-    await accountInput.fill(username);
-    await passwordInput.fill(password);
-    await Promise.all([
-      page.waitForURL(/\/erp\/home|\/erp\/index|dashboard|home|index/, { timeout: 30000 }).catch(() => undefined),
-      page.locator('button.loginBtn, button:has-text("登录")').first().click(),
-    ]);
+  try {
+    await controller.launch();
+    await controller.navigate(navigationPlan.initialUrl);
     await controller.waitForTimeout(3000);
-  }
 
-  const erpLoginState = await page.evaluate(() => ({
-    url: window.location.href,
-    bodyText: document.body?.innerText ?? '',
-    hasAccountInput: Boolean(document.querySelector('input[name="account"]')),
-  }));
-  if (erpLoginState.hasAccountInput && erpLoginState.bodyText.includes('账号登录')) {
-    throw new Error('领星 ERP 登录未完成：仍停留在账号登录页，请检查账号、密码或验证码要求');
-  }
+    const page = getControllerPageOrThrow(controller);
+    const accountInput = page.locator('input[name="account"], input[placeholder*="用户名"], input[placeholder*="手机号"]').first();
+    const passwordInput = page.locator('input[name="pwd"], input[type="password"]').first();
+    const needsLogin = await accountInput.isVisible({ timeout: 5000 }).catch(() => false);
+    const erpSessionReused = !needsLogin;
 
-  await ensureLingxingAdsSession(controller);
+    if (needsLogin) {
+      await accountInput.fill(username);
+      await passwordInput.fill(password);
+      await Promise.all([
+        page.waitForURL(/\/erp\/home|\/erp\/index|dashboard|home|index/, { timeout: 30000 }).catch(() => undefined),
+        page.locator('button.loginBtn, button:has-text("登录")').first().click(),
+      ]);
+      await controller.waitForTimeout(3000);
+    }
 
-  state.isLoggedIn = true;
-  state.currentStore = username;
-
-  // Store only the username; password stays with the user's manual ERP session.
-  state.settingsRepo?.saveCredentials({ username });
-}
-
-async function ensureLingxingAdsSession(controller: BrowserController): Promise<void> {
-  const page = getControllerPageOrThrow(controller);
-  await page.goto('https://ads.lingxing.com/home', { waitUntil: 'domcontentloaded', timeout: 45000 });
-  await controller.waitForTimeout(6000);
-
-  let adsState = await page.evaluate(() => ({
-    url: window.location.href,
-    title: document.title,
-    bodyText: document.body?.innerText ?? '',
-  }));
-  let isAdsPage = adsState.url.includes('ads.lingxing.com')
-    && (adsState.bodyText.includes('领星广告系统')
-      || adsState.bodyText.includes('下载中心')
-      || adsState.bodyText.includes('广告组合')
-      || adsState.bodyText.includes('返回ERP'));
-  let looksLoggedOut = adsState.bodyText.includes('账号登录')
-    || adsState.bodyText.includes('微信登录')
-    || adsState.url.includes('login');
-
-  if ((!isAdsPage || looksLoggedOut) && (adsState.url.includes('/restartLogin') || adsState.bodyText.includes('请从领星ERP进入到广告系统'))) {
-    const context = controller.getContext();
-    await page.goto('https://erp.lingxing.com/erp/home', { waitUntil: 'domcontentloaded', timeout: 45000 });
-    await controller.waitForTimeout(4000);
-
-    const erpState = await page.evaluate(() => ({
+    const erpLoginState = await page.evaluate(() => ({
       url: window.location.href,
-      title: document.title,
       bodyText: document.body?.innerText ?? '',
       hasAccountInput: Boolean(document.querySelector('input[name="account"]')),
     }));
-    if (erpState.hasAccountInput || erpState.bodyText.includes('账号登录')) {
-      throw new Error('领星 ERP 登录未完成：请先完成账号登录，再进入广告系统');
+    if (erpLoginState.hasAccountInput && erpLoginState.bodyText.includes('账号登录')) {
+      throw new Error('领星 ERP 登录未完成：仍停留在账号登录页，请检查账号、密码或验证码要求');
     }
 
-    const popupPromise = context?.waitForEvent('page', { timeout: 15000 }).catch(() => null);
-    await page.getByText('广告', { exact: true }).first().click({ timeout: 15000 });
-    const popup = await popupPromise;
-    const adsPage = popup
-      || context?.pages().find((candidate) => candidate.url().includes('ads.lingxing.com'))
-      || page;
-    if (adsPage !== page) {
-      controller.setActivePage(adsPage);
+    const adsSession = await ensureLingxingAdsSession(controller);
+
+    state.isLoggedIn = true;
+    state.currentStore = username;
+
+    // Store only the username; password stays with the user's manual ERP session.
+    state.settingsRepo?.saveCredentials({ username });
+
+    return {
+      ok: true,
+      erpSessionReused,
+      adsEntryMode: adsSession.entryMode,
+      adsUrl: adsSession.adsUrl,
+      adsTitle: adsSession.adsTitle,
+    };
+  } catch (error) {
+    await controller.close().catch(() => undefined);
+    if (state.browserController === controller) {
+      state.browserController = null;
     }
-    await adsPage.waitForLoadState('domcontentloaded', { timeout: 45000 }).catch(() => undefined);
-    await adsPage.waitForTimeout(6000);
-    adsState = await adsPage.evaluate(() => ({
-      url: window.location.href,
-      title: document.title,
-      bodyText: document.body?.innerText ?? '',
-    }));
-    isAdsPage = adsState.url.includes('ads.lingxing.com')
-      && (adsState.bodyText.includes('领星广告系统')
-        || adsState.bodyText.includes('下载中心')
-        || adsState.bodyText.includes('广告组合')
-        || adsState.bodyText.includes('返回ERP'));
-    looksLoggedOut = adsState.bodyText.includes('账号登录')
-      || adsState.bodyText.includes('微信登录')
-      || adsState.url.includes('login')
-      || adsState.url.includes('/restartLogin');
+    state.isLoggedIn = false;
+    state.currentStore = '';
+    throw error;
+  }
+}
+
+async function ensureLingxingAdsSession(controller: BrowserController): Promise<AdsSessionResult> {
+  const navigationPlan = getLingxingSessionNavigationPlan();
+  const page = getControllerPageOrThrow(controller);
+  const currentState = await readLingxingPageState(page).catch(() => null);
+  if (currentState && isLingxingAdsLoggedInPage(currentState)) {
+    return adsSessionResultFromPageState(currentState);
   }
 
-  if (!isAdsPage || looksLoggedOut) {
+  await page.goto(navigationPlan.erpHomeUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await controller.waitForTimeout(4000);
+
+  const erpState = await readLingxingPageState(page);
+  if (erpState.hasAccountInput || erpState.bodyText.includes('账号登录')) {
+    throw new Error('领星 ERP 登录未完成：请先完成账号登录，再进入广告系统');
+  }
+
+  const context = controller.getContext();
+  const pagesBefore = new Set(context?.pages() ?? []);
+  const popupPromise = context?.waitForEvent('page', { timeout: 15000 }).catch(() => null);
+  const adTextEntry = page.getByText('广告', { exact: true }).first();
+  const hasAdTextEntry = await adTextEntry.isVisible({ timeout: 15000 }).catch(() => false);
+
+  if (hasAdTextEntry) {
+    await adTextEntry.click({ timeout: 15000 });
+  } else {
+    const adLinkEntry = page.locator('a[href*="ads.lingxing.com"], a[href*="/ak_"], [onclick*="ads.lingxing"]').first();
+    const hasAdLinkEntry = await adLinkEntry.isVisible({ timeout: 5000 }).catch(() => false);
+    if (!hasAdLinkEntry) {
+      throw new Error('领星 ERP 已登录，但未找到“广告”入口。请在打开的 ERP 页面手动进入广告系统后重试。');
+    }
+    await adLinkEntry.click({ timeout: 15000 });
+  }
+
+  const popup = await popupPromise;
+  const adsPage = popup
+    || context?.pages().find((candidate) => !pagesBefore.has(candidate) && candidate.url().includes('ads.lingxing.com'))
+    || context?.pages().find((candidate) => candidate.url().includes('ads.lingxing.com'))
+    || page;
+  if (adsPage !== page) {
+    controller.setActivePage(adsPage);
+  }
+
+  await adsPage.waitForLoadState('domcontentloaded', { timeout: 45000 }).catch(() => undefined);
+  await adsPage.waitForTimeout(6000);
+  const adsState = await readLingxingPageState(adsPage);
+
+  if (!isLingxingAdsLoggedInPage(adsState)) {
     throw new Error(
-      `领星 ERP 已尝试登录，但广告系统会话未就绪。请先在打开的浏览器中进入“广告”系统完成授权，再重试。当前页面：${adsState.title || adsState.url}`,
+      `领星 ERP 已登录，但广告系统会话未就绪。请在打开的 ERP 浏览器中通过“广告”入口完成授权后重试。当前页面：${adsState.title || adsState.url}`,
     );
   }
+
+  return adsSessionResultFromPageState(adsState);
 }
 
 async function handleBrowserLogout(): Promise<void> {
@@ -355,13 +405,22 @@ async function handleScreenshot(label: 'before' | 'after' | 'error'): Promise<st
   return screenshotPath;
 }
 
+async function tryCaptureExecutionScreenshot(label: 'before' | 'after'): Promise<string | undefined> {
+  try {
+    return await handleScreenshot(label);
+  } catch (error) {
+    console.warn(`[AdExecution] ${label} screenshot unavailable; writing fail-closed audit without screenshot`, error);
+    return undefined;
+  }
+}
+
 // ============================================================================
 // Report Download & Parse
 // ============================================================================
 
 async function handleDownloadReport(dateRange: { start: string; end: string }): Promise<string> {
   throw new Error(
-    `旧版单报表下载入口已停用，避免访问过期的领星页面和未验证 selector。请在 v1.5 工作台使用“采集预检”/“验证页面”/“启动采集”流程。日期范围：${dateRange.start} - ${dateRange.end}`,
+    `旧版单报表下载入口已停用，避免访问过期的领星页面和未验证 selector。请在左侧“广告报表”中使用“采集预检”/“验证页面”/“启动采集”流程。日期范围：${dateRange.start} - ${dateRange.end}`,
   );
 }
 
@@ -434,6 +493,170 @@ function persistLingxingBatch(result: Awaited<ReturnType<typeof runLingxingRepor
     }
   });
   save();
+}
+
+function metricProductContextKey(metric: { date?: string; campaignName?: string; adGroupName?: string }, includeDate: boolean): string {
+  return [
+    includeDate ? metric.date || '' : '*',
+    (metric.campaignName || '').trim().toLowerCase(),
+    (metric.adGroupName || '').trim().toLowerCase(),
+  ].join('|');
+}
+
+function uniqueProductContext(
+  map: Map<string, Map<string, { asin: string; msku: string }>>,
+  key: string,
+): { asin: string; msku: string } | undefined {
+  const values = map.get(key);
+  if (!values || values.size !== 1) return undefined;
+  return Array.from(values.values())[0];
+}
+
+function attachUniqueProductContext(metrics: AdDailyMetrics[]): AdDailyMetrics[] {
+  const productByKey = new Map<string, Map<string, { asin: string; msku: string }>>();
+  const addContext = (key: string, metric: AdDailyMetrics) => {
+    if (!metric.asin) return;
+    const bucket = productByKey.get(key) ?? new Map<string, { asin: string; msku: string }>();
+    bucket.set(metric.asin.toUpperCase(), { asin: metric.asin, msku: metric.msku || '' });
+    productByKey.set(key, bucket);
+  };
+
+  for (const metric of metrics) {
+    addContext(metricProductContextKey(metric, true), metric);
+    addContext(metricProductContextKey(metric, false), metric);
+  }
+
+  return metrics.map((metric) => {
+    if (metric.asin) return metric;
+    const exact = uniqueProductContext(productByKey, metricProductContextKey(metric, true));
+    const fallback = exact ?? uniqueProductContext(productByKey, metricProductContextKey(metric, false));
+    return fallback
+      ? { ...metric, asin: fallback.asin, msku: metric.msku || fallback.msku }
+      : metric;
+  });
+}
+
+function importLingxingDownloadedReportMetrics(result: Awaited<ReturnType<typeof runLingxingReportBatch>>): {
+  inserted: number;
+  parsedFiles: number;
+  skippedFiles: number;
+  deletedExisting: number;
+  errors: Array<{ reportType: string; filePath?: string; message: string }>;
+} {
+  if (!state.adMetricsRepo) {
+    return { inserted: 0, parsedFiles: 0, skippedFiles: result.files.length, deletedExisting: 0, errors: [] };
+  }
+
+  const parser = new ReportParser();
+  const errors: Array<{ reportType: string; filePath?: string; message: string }> = [];
+  const parsedMetrics: AdDailyMetrics[] = [];
+  let parsedFiles = 0;
+  let skippedFiles = 0;
+
+  for (const file of result.files) {
+    if (file.status !== 'downloaded' || !file.filePath) {
+      skippedFiles++;
+      continue;
+    }
+    try {
+      const parsed = parser.autoParse(file.filePath);
+      parsedMetrics.push(...parsed.data.map((metric) => ({
+        ...metric,
+        batchId: result.batch.id,
+        reportType: file.reportType,
+        storeName: result.batch.storeName || metric.storeName,
+        marketplaceCode: result.batch.marketplaceCode || metric.marketplaceCode,
+        sourceFile: file.filePath || metric.sourceFile,
+      })));
+      parsedFiles++;
+    } catch (error) {
+      errors.push({
+        reportType: file.reportType,
+        filePath: file.filePath,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const readyMetrics = attachUniqueProductContext(parsedMetrics);
+  const deletedExisting = state.adMetricsRepo.deleteByBatch(result.batch.id);
+  const inserted = readyMetrics.length ? state.adMetricsRepo.insertBatch(readyMetrics) : 0;
+  return { inserted, parsedFiles, skippedFiles, deletedExisting, errors };
+}
+
+function loadLatestCompletedLingxingBatchForScope(scope: {
+  dateFrom?: string;
+  dateTo?: string;
+  storeName?: string;
+  marketplaceCode?: string;
+}): Awaited<ReturnType<typeof runLingxingReportBatch>> | undefined {
+  if (!state.db || !scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode) return undefined;
+  const batch = state.db.prepare(`
+    SELECT *
+    FROM lingxing_report_batches
+    WHERE status = 'completed'
+      AND date_start = @dateFrom
+      AND date_end = @dateTo
+      AND store_name = @storeName
+      AND marketplace_code = @marketplaceCode
+    ORDER BY completed_at DESC, created_at DESC
+    LIMIT 1
+  `).get(scope) as any;
+  if (!batch) return undefined;
+
+  const rows = state.db.prepare(`
+    SELECT *
+    FROM lingxing_report_files
+    WHERE batch_id = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(batch.id) as any[];
+
+  return {
+    batch: {
+      id: batch.id,
+      appVersion: batch.app_version,
+      dateStart: batch.date_start,
+      dateEnd: batch.date_end,
+      storeName: batch.store_name,
+      marketplaceCode: batch.marketplace_code,
+      status: batch.status,
+      downloadDir: batch.download_dir,
+      manifestPath: batch.manifest_path,
+      createdAt: batch.created_at,
+      completedAt: batch.completed_at,
+    },
+    files: rows.map((row) => ({
+      id: row.id,
+      batchId: row.batch_id,
+      reportType: row.report_type,
+      displayName: row.display_name,
+      status: row.status,
+      maxAutoRetries: row.max_auto_retries,
+      autoRetryCount: row.auto_retry_count,
+      filePath: row.file_path,
+      fileSizeBytes: row.file_size_bytes,
+      errorMessage: row.error_message,
+      attemptErrors: row.attempt_errors_json ? JSON.parse(row.attempt_errors_json) : [],
+      failureScreenshotPath: row.failure_screenshot_path,
+      failureDomSnapshotPath: row.failure_dom_snapshot_path,
+      failureTracePath: row.failure_trace_path,
+      traceUnavailableReason: row.trace_unavailable_reason,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })),
+  };
+}
+
+function backfillAdMetricsFromLatestBatchIfNeeded(scope: {
+  dateFrom?: string;
+  dateTo?: string;
+  storeName?: string;
+  marketplaceCode?: string;
+}) {
+  const existing = state.adMetricsRepo?.findForRecommendations({ ...scope, limit: 1 }) ?? [];
+  if (existing.length > 0) return undefined;
+  const latestBatch = loadLatestCompletedLingxingBatchForScope(scope);
+  return latestBatch ? importLingxingDownloadedReportMetrics(latestBatch) : undefined;
 }
 
 async function handleCollectLingxingReports(input: unknown) {
@@ -537,6 +760,45 @@ async function handleRetryLingxingReport(input: unknown, reportType: LingxingRep
     automation: createDownloadCenterAutomation(state.browserController, target),
   });
   persistLingxingBatch(result);
+  const metricsImport = importLingxingDownloadedReportMetrics(result);
+  return { ...result, metricsImport };
+}
+
+async function handleRunLingxingCanaryReport(input: unknown, reportType: LingxingReportType) {
+  const request = normalizeLingxingCollectionRequest(input);
+  const dateRange = { start: request.start, end: request.end };
+  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
+  validateDateRange(dateRange);
+  validateLingxingReportType(reportType);
+
+  if (!state.browserController || !state.isLoggedIn) {
+    throw new Error('请先启动并登录领星 ERP 浏览器');
+  }
+
+  const model = readDownloadCenterPageModel();
+  const report = LINGXING_AD_REPORTS.find((item) => item.type === reportType);
+  const displayName = report?.displayName || reportType;
+  const automationReadiness = getDownloadCenterAutomationReadiness({
+    ...model,
+    requiresManualVerification: false,
+  });
+  assertDownloadCenterAutomationReady(automationReadiness, displayName);
+  assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, displayName, target);
+
+  const result = await runLingxingReportBatch({
+    dateStart: dateRange.start,
+    dateEnd: dateRange.end,
+    storeName: target.storeName,
+    marketplaceCode: target.marketplaceCode,
+    rootDownloadDir: DOWNLOADS_DIR,
+    appVersion: APP_VERSION,
+    reportTypes: [reportType],
+    maxRetries: 0,
+    automation: createDownloadCenterAutomation(state.browserController, target, {
+      allowManualVerificationForCanary: true,
+    }),
+  });
+  persistLingxingBatch(result);
   return result;
 }
 
@@ -608,9 +870,17 @@ async function waitForCreateReportPage(page: NonNullable<ReturnType<BrowserContr
   await page.getByText('创建报告', { exact: false }).first().waitFor({ state: 'visible', timeout: 30000 });
 }
 
-function createDownloadCenterAutomation(controller: BrowserController, target: LingxingCollectionTarget = {}): DownloadCenterAutomationPort {
+function createDownloadCenterAutomation(
+  controller: BrowserController,
+  target: LingxingCollectionTarget = {},
+  options: { allowManualVerificationForCanary?: boolean } = {},
+): DownloadCenterAutomationPort {
   const model = readDownloadCenterPageModel();
-  const automationReadiness = getDownloadCenterAutomationReadiness(model);
+  const automationReadiness = getDownloadCenterAutomationReadiness(
+    options.allowManualVerificationForCanary
+      ? { ...model, requiresManualVerification: false }
+      : model,
+  );
   const generatedReportNames = new Map<string, string>();
   let traceStarted = false;
   let traceStartError: string | undefined;
@@ -1016,8 +1286,9 @@ function buildGeneratedDownloadCenterReportName(
 ): string {
   const start = dateRange.start.replaceAll('-', '');
   const end = dateRange.end.replaceAll('-', '');
-  const suffix = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
-  return `AmazonAIOps_${start}_${end}_${safeReportNameSegment(report.expectedFilenameKeyword)}_${suffix}`;
+  const suffix = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(8, 14);
+  const reportToken = safeReportNameSegment(report.expectedFilenameKeyword).slice(0, 24);
+  return `AAO_${start}_${end}_${reportToken}_${suffix}`;
 }
 
 function renderDownloadCenterSelector(
@@ -2126,6 +2397,693 @@ function handleImportListingContent(filePath: string): ListingContent {
   return listing;
 }
 
+async function handleExtractListingFromLingxing(options: { expectedAsin?: string; persist?: boolean } = {}) {
+  if (!state.browserController || !state.isLoggedIn) {
+    throw new Error('请先通过本应用登录领星，并打开需要读取的 Listing 页面。');
+  }
+  const page = state.browserController.getPage();
+  if (!page) {
+    throw new Error('领星浏览器页面未就绪，请重新打开登录窗口后再试。');
+  }
+
+  await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => undefined);
+  const capturedAt = new Date().toISOString();
+  const screenshotPath = path.join(SCREENSHOTS_DIR, `lingxing_listing_read_${Date.now()}.png`);
+  await page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
+  const snapshot = await page.evaluate(() => {
+    const textOf = (element: Element | null | undefined) =>
+      (element?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const cssPathOf = (element: Element) => {
+      const parts: string[] = [];
+      let current: Element | null = element;
+      while (current && current !== document.body && parts.length < 4) {
+        const tag = current.tagName.toLowerCase();
+        const id = current.getAttribute('id');
+        if (id) {
+          parts.unshift(`${tag}#${CSS.escape(id)}`);
+          break;
+        }
+        const className = String(current.getAttribute('class') || '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((value) => `.${CSS.escape(value)}`)
+          .join('');
+        const siblings = current.parentElement
+          ? Array.from(current.parentElement.children).filter((item) => item.tagName === current!.tagName)
+          : [];
+        const nth = siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(current) + 1})` : '';
+        parts.unshift(`${tag}${className}${nth}`);
+        current = current.parentElement;
+      }
+      return parts.join(' > ');
+    };
+    const fieldLabel = (element: HTMLElement) => {
+      const id = element.getAttribute('id');
+      const explicit = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+      const closest = element.closest('label, .form-item, .ant-form-item, .el-form-item, .layui-form-item, tr');
+      const rect = element.getBoundingClientRect();
+      const nearbyLabels = Array.from(document.querySelectorAll('label, span, div'))
+        .map((candidate) => {
+          const labelRect = candidate.getBoundingClientRect();
+          const text = textOf(candidate);
+          return { text, rect: labelRect, childCount: candidate.children.length };
+        })
+        .filter((candidate) =>
+          candidate.text
+          && candidate.text.length <= 80
+          && candidate.childCount <= 4
+          && candidate.rect.width > 0
+          && candidate.rect.height > 0
+          && candidate.rect.left < rect.left
+          && candidate.rect.right <= rect.left + 12
+          && Math.abs((candidate.rect.top + candidate.rect.height / 2) - (rect.top + rect.height / 2)) <= Math.max(24, rect.height)
+        )
+        .sort((a, b) => Math.abs(a.rect.right - rect.left) - Math.abs(b.rect.right - rect.left))
+        .slice(0, 2)
+        .map((candidate) => candidate.text);
+      return [
+        textOf(explicit),
+        ...nearbyLabels,
+        element.getAttribute('aria-label') || '',
+        element.getAttribute('placeholder') || '',
+        element.getAttribute('name') || '',
+        textOf(closest),
+      ].filter(Boolean).join(' ');
+    };
+    const formFields: ListingDomFieldSnapshot[] = Array.from(
+      document.querySelectorAll('input, textarea, [contenteditable="true"], [role="textbox"]'),
+    ).map((element, index) => {
+      const htmlElement = element as HTMLInputElement | HTMLTextAreaElement | HTMLElement;
+      const value = 'value' in htmlElement
+        ? String(htmlElement.value || '')
+        : String(htmlElement.textContent || '');
+      return {
+        key: `${htmlElement.tagName.toLowerCase()}-${index}`,
+        label: fieldLabel(htmlElement),
+        value: value.replace(/\s+\n/g, '\n').trim(),
+      };
+    }).filter((field) => field.value || field.label);
+    const rowFields: ListingDomFieldSnapshot[] = Array.from(
+      document.querySelectorAll('tr, .el-table__row, .vxe-body--row, [role="row"], [class*="body--row"]'),
+    ).slice(0, 100).map((element, index) => ({
+      key: `row-${index}`,
+      label: 'listing table row visible text',
+      value: String(element.textContent || '').replace(/[ \t]+/g, ' ').replace(/\n\s+/g, '\n').trim().slice(0, 2000),
+    })).filter((field) => field.value);
+    const asinPattern = /\bB0[A-Z0-9]{8}\b/i;
+    const asinContextFields: ListingDomFieldSnapshot[] = [];
+    const seenContextText = new Set<string>();
+    for (const element of Array.from(document.querySelectorAll('*')).slice(0, 5000)) {
+      const text = String(element.textContent || '').replace(/[ \t]+/g, ' ').replace(/\n\s+/g, '\n').trim();
+      if (!asinPattern.test(text)) continue;
+      const row = element.closest('tr, .el-table__row, .vxe-body--row, [role="row"], [class*="body--row"], [class*="table"]') || element;
+      const rowText = String(row.textContent || '').replace(/[ \t]+/g, ' ').replace(/\n\s+/g, '\n').trim().slice(0, 2000);
+      if (!rowText || seenContextText.has(rowText)) continue;
+      seenContextText.add(rowText);
+      asinContextFields.push({
+        key: `asin-context-${asinContextFields.length}`,
+        label: 'listing asin row context visible text',
+        value: rowText,
+      });
+      if (asinContextFields.length >= 30) break;
+    }
+    const visualItems = Array.from(document.querySelectorAll('body *')).slice(0, 8000).map((element) => {
+      const rect = element.getBoundingClientRect();
+      const text = String(element.textContent || '').replace(/\s+/g, ' ').trim();
+      return {
+        text,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top / 6) * 6,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        childCount: element.children.length,
+      };
+    }).filter((item) =>
+      item.text
+      && item.text.length <= 220
+      && item.width > 0
+      && item.height > 0
+      && item.y > 60
+      && item.childCount <= 3
+    );
+    const visualRows = new Map<number, Array<{ text: string; x: number }>>();
+    for (const item of visualItems) {
+      const row = visualRows.get(item.y) || [];
+      row.push({ text: item.text, x: item.x });
+      visualRows.set(item.y, row);
+    }
+    const visualRowFields: ListingDomFieldSnapshot[] = Array.from(visualRows.entries())
+      .sort(([a], [b]) => a - b)
+      .slice(0, 120)
+      .map(([y, items], index) => ({
+        key: `visual-row-${index}`,
+        label: `listing visual row y=${y}`,
+        value: Array.from(new Set(items.sort((a, b) => a.x - b.x).map((item) => item.text))).join('\n').slice(0, 2000),
+      }))
+      .filter((field) => field.value);
+    const bodyVisibleText = String(document.body?.innerText || '').replace(/[ \t]+/g, ' ').trim().slice(0, 12000);
+    const bodyField: ListingDomFieldSnapshot[] = bodyVisibleText
+      ? [{
+          key: 'body-visible-text',
+          label: 'listing page visible body text',
+          value: bodyVisibleText,
+        }]
+      : [];
+    const detailCandidates = Array.from(document.querySelectorAll('a, button, [role="button"], .el-dropdown-menu__item, [class*="dropdown"], [class*="operation"]'))
+      .slice(0, 1200)
+      .map((element, index) => {
+        const htmlElement = element as HTMLElement;
+        const rect = htmlElement.getBoundingClientRect();
+        const text = textOf(element);
+        const href = element instanceof HTMLAnchorElement ? element.href : '';
+        const aria = htmlElement.getAttribute('aria-label') || '';
+        const title = htmlElement.getAttribute('title') || '';
+        return {
+          key: `detail-candidate-${index}`,
+          label: [aria, title].filter(Boolean).join(' '),
+          text,
+          href,
+          selectorHint: cssPathOf(element),
+          visible: rect.width > 0 && rect.height > 0,
+        };
+      })
+      .filter((candidate) => candidate.visible)
+      .filter((candidate) => {
+        const haystack = `${candidate.text} ${candidate.label} ${candidate.href}`.toLowerCase();
+        return /(详情|编辑|修改|查看|管理|listing|product|goods|spu|sku|edit|detail|view)/i.test(haystack);
+      })
+      .map(({ visible, ...candidate }) => candidate)
+      .slice(0, 30);
+    const fields = [...formFields, ...rowFields, ...asinContextFields, ...visualRowFields, ...bodyField];
+    const metaAsin = Array.from(document.querySelectorAll('meta, [data-asin], [asin]')).map((element) =>
+      [
+        element.getAttribute('content'),
+        element.getAttribute('data-asin'),
+        element.getAttribute('asin'),
+      ].filter(Boolean).join(' '),
+    );
+    return {
+      url: window.location.href,
+      title: document.title,
+      asinCandidates: [
+        window.location.href,
+        document.title,
+        ...metaAsin,
+        ...fields.map((field) => `${field.label} ${field.value}`),
+      ],
+      fields,
+      detailCandidates,
+      capturedAt: new Date().toISOString(),
+    } satisfies ListingPageSnapshot;
+  });
+
+  const result = extractLingxingListingFromSnapshot({ ...snapshot, capturedAt });
+  result.evidence.screenshotPath = screenshotPath;
+  result.evidence.pageUrl = sanitizeEvidenceUrl(result.evidence.pageUrl);
+  const expectedAsin = options.expectedAsin?.toUpperCase();
+  if (expectedAsin && result.listing?.asin && result.listing.asin.toUpperCase() !== expectedAsin) {
+    return {
+      ...result,
+      ready: false,
+      partialReady: false,
+      fullContentReady: false,
+      reason: `详情页 ASIN 与列表页不一致：期望 ${expectedAsin}，实际 ${result.listing.asin}`,
+      listing: undefined,
+      evidence: {
+        ...result.evidence,
+        partialReady: false,
+        fullContentReady: false,
+      },
+    };
+  }
+
+  if (result.ready && result.listing && options.persist !== false) {
+    persistListingContent(result.listing);
+  }
+
+  return result;
+}
+
+function persistListingContent(listing: ListingContent): void {
+  if (!state.db) return;
+  state.db.prepare(`
+    INSERT INTO listing_content (asin, title, bullets_json, a_plus, image_copy, backend_terms, updated_at)
+    VALUES (@asin, @title, @bulletsJson, @aPlus, @imageCopy, @backendTerms, datetime('now'))
+  `).run({
+    asin: listing.asin,
+    title: listing.title,
+    bulletsJson: JSON.stringify(listing.bullets),
+    aPlus: listing.aPlus ?? null,
+    imageCopy: listing.imageCopy ?? null,
+    backendTerms: listing.backendTerms ?? null,
+  });
+}
+
+async function clickLingxingListingReadOnlyTab(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  labels: string[],
+): Promise<boolean> {
+  return page.evaluate((targetLabels) => {
+    const textOf = (element: Element | null | undefined) =>
+      String(element?.textContent || '').replace(/\s+/g, ' ').trim();
+    const isVisible = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const candidates = Array.from(document.querySelectorAll('a, button, [role="tab"], [role="button"], li, span, div'))
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && isVisible(element))
+      .filter((element) => {
+        const text = textOf(element);
+        if (!targetLabels.some((label) => text === label || text.includes(label))) return false;
+        const rect = element.getBoundingClientRect();
+        return rect.left < 260 || /tab|menu|nav|sidebar|anchor/i.test(element.getAttribute('class') || '');
+      })
+      .sort((a, b) => {
+        const aText = textOf(a);
+        const bText = textOf(b);
+        const aExact = targetLabels.some((label) => aText === label) ? 0 : 1;
+        const bExact = targetLabels.some((label) => bText === label) ? 0 : 1;
+        return aExact - bExact || a.getBoundingClientRect().left - b.getBoundingClientRect().left;
+      });
+    const selected = candidates[0];
+    if (!selected) return false;
+    selected.click();
+    return true;
+  }, labels);
+}
+
+function mergeListingExtractionResults(
+  primary: ListingExtractionResult,
+  secondary: ListingExtractionResult,
+): ListingExtractionResult {
+  if (!primary.listing || !secondary.listing) {
+    return primary;
+  }
+  const listing: ListingContent = {
+    ...primary.listing,
+    title: primary.listing.title || secondary.listing.title,
+    bullets: secondary.listing.bullets.length > 0 ? secondary.listing.bullets : primary.listing.bullets,
+    aPlus: secondary.listing.aPlus || primary.listing.aPlus,
+    imageCopy: secondary.listing.imageCopy || primary.listing.imageCopy,
+    backendTerms: primary.listing.backendTerms || secondary.listing.backendTerms,
+    updatedAt: secondary.listing.updatedAt || primary.listing.updatedAt,
+  };
+  const partialReady = Boolean(listing.asin && listing.title);
+  const fullContentReady = Boolean(partialReady && listing.bullets.length > 0 && listing.backendTerms);
+  return {
+    ready: partialReady,
+    partialReady,
+    fullContentReady,
+    listing,
+    evidence: {
+      ...secondary.evidence,
+      fieldMatches: {
+        ...primary.evidence.fieldMatches,
+        ...secondary.evidence.fieldMatches,
+        title: primary.evidence.fieldMatches.title?.length ? primary.evidence.fieldMatches.title : secondary.evidence.fieldMatches.title,
+        backendTerms: primary.evidence.fieldMatches.backendTerms?.length
+          ? primary.evidence.fieldMatches.backendTerms
+          : secondary.evidence.fieldMatches.backendTerms,
+        bullets: secondary.evidence.fieldMatches.bullets?.length
+          ? secondary.evidence.fieldMatches.bullets
+          : primary.evidence.fieldMatches.bullets,
+      },
+      completeness: {
+        asin: Boolean(listing.asin),
+        title: Boolean(listing.title),
+        bullets: listing.bullets.length > 0,
+        backendTerms: Boolean(listing.backendTerms),
+      },
+      partialReady,
+      fullContentReady,
+      detailCandidates: [
+        ...(primary.evidence.detailCandidates ?? []),
+        ...(secondary.evidence.detailCandidates ?? []),
+      ].slice(0, 20),
+    },
+  };
+}
+
+async function handleOpenLingxingListingAndExtract(input: unknown) {
+  if (!state.browserController || !state.isLoggedIn) {
+    throw new Error('请先通过本应用登录领星，再打开 Listing 页面。');
+  }
+  const targetUrl = parseLingxingListingReadUrl(input);
+  const page = state.browserController.getPage();
+  if (!page) {
+    throw new Error('领星浏览器页面未就绪，请重新打开登录窗口后再试。');
+  }
+
+  await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await page.waitForTimeout(8000);
+  const hasNetworkError = await page.getByText('网络异常', { exact: false }).first().isVisible({ timeout: 1000 }).catch(() => false);
+  if (hasNetworkError) {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
+    await page.waitForTimeout(10000);
+  }
+  return handleExtractListingFromLingxing();
+}
+
+async function handleProbeLingxingListingDetailAndExtract(input?: unknown) {
+  if (!state.browserController || !state.isLoggedIn) {
+    throw new Error('请先通过本应用登录领星，再探测 Listing 详情页。');
+  }
+  const page = state.browserController.getPage();
+  if (!page) {
+    throw new Error('领星浏览器页面未就绪，请重新打开登录窗口后再试。');
+  }
+
+  const rawUrl = input && typeof input === 'object' && typeof (input as { url?: unknown }).url === 'string'
+    ? (input as { url: string }).url.trim()
+    : typeof input === 'string'
+      ? input.trim()
+      : '';
+  if (rawUrl) {
+    const targetUrl = parseLingxingListingReadUrl(rawUrl);
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.waitForTimeout(8000);
+  }
+
+  const current = await handleExtractListingFromLingxing({ persist: false });
+  const probe = {
+    started: true,
+    clicked: false,
+    status: 'not_attempted',
+    fromUrl: current.evidence.pageUrl,
+    finalUrl: current.evidence.pageUrl,
+    candidateCount: current.evidence.detailCandidates?.length || 0,
+    asinMatched: Boolean(current.listing?.asin),
+  };
+
+  if (current.fullContentReady) {
+    current.evidence.detailProbe = { ...probe, status: 'already_full_content_ready' };
+    return current;
+  }
+  const asin = current.listing?.asin?.toUpperCase();
+  if (!asin) {
+    current.evidence.detailProbe = { ...probe, status: 'no_asin', reason: '当前页面未读取到 ASIN，不能定位详情页候选。' };
+    return current;
+  }
+
+  const candidate = await findVisibleListingDetailCandidate(page, asin);
+  if (candidate.status !== 'unique' || !candidate.token) {
+    current.evidence.detailProbe = {
+      ...probe,
+      status: candidate.status,
+      candidateCount: candidate.candidateCount,
+      candidateText: candidate.text,
+      candidateHref: candidate.href,
+      reason: candidate.reason,
+    };
+    return current;
+  }
+
+  const context = state.browserController.getContext();
+  const popupPromise = context?.waitForEvent('page', { timeout: 12000 }).catch(() => null);
+  await page.locator(`[data-amazon-ai-ops-listing-probe="${candidate.token}"]`).first().click({ timeout: 15000 });
+  const popup = await popupPromise;
+  const detailPage = popup || page;
+  if (popup) {
+    state.browserController.setActivePage(popup);
+  }
+  await detailPage.waitForLoadState('domcontentloaded', { timeout: 45000 }).catch(() => undefined);
+  await detailPage.waitForTimeout(8000);
+
+  const finalUrl = detailPage.url();
+  let safeFinalUrl = '';
+  try {
+    safeFinalUrl = parseLingxingListingReadUrl(finalUrl);
+  } catch (error) {
+    current.evidence.detailProbe = {
+      ...probe,
+      clicked: true,
+      status: 'unsafe_final_url',
+      finalUrl: sanitizeEvidenceUrl(finalUrl),
+      candidateCount: candidate.candidateCount,
+      candidateText: candidate.text,
+      candidateHref: candidate.href,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+    return current;
+  }
+
+  const basicRead = await handleExtractListingFromLingxing({ expectedAsin: asin, persist: false });
+  let probed = basicRead;
+  if (!basicRead.fullContentReady) {
+    const switchedToDescription = await clickLingxingListingReadOnlyTab(detailPage, ['描述', 'Description', '商品描述']);
+    if (switchedToDescription) {
+      await detailPage.waitForTimeout(2500);
+      const descriptionRead = await handleExtractListingFromLingxing({ expectedAsin: asin, persist: false });
+      probed = mergeListingExtractionResults(basicRead, descriptionRead);
+    }
+  }
+  probed.evidence.detailProbe = {
+    ...probe,
+    clicked: true,
+    status: probed.fullContentReady ? 'full_content_ready' : 'partial_after_probe',
+    finalUrl: sanitizeEvidenceUrl(safeFinalUrl),
+    candidateCount: candidate.candidateCount,
+    candidateText: candidate.text,
+    candidateHref: candidate.href,
+    asinMatched: Boolean(probed.listing?.asin && probed.listing.asin.toUpperCase() === asin),
+    reason: probed.fullContentReady ? undefined : '详情页已打开，但仍未读取到完整五点和后台词。',
+  };
+  if (probed.fullContentReady && probed.listing) {
+    persistListingContent(probed.listing);
+  }
+  return probed;
+}
+
+async function findVisibleListingDetailCandidate(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  asin: string,
+): Promise<{ status: string; token?: string; candidateCount: number; text?: string; href?: string; reason?: string }> {
+  const direct = await page.evaluate((targetAsin) => {
+    const token = `aao-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const textOf = (element: Element | null | undefined) =>
+      String(element?.textContent || '').replace(/\s+/g, ' ').trim();
+    const isVisible = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const safeTextPattern = /(详情|查看|编辑本地信息|编辑在线商品|查看基本|detail|view|edit)/i;
+    const unsafeTextPattern = /(保存|发布|提交|同步|删除|移除|下架|上架|打印|条码|fnsku|help|帮助|save|submit|publish|delete|remove|sync|print|barcode)/i;
+    const globalToolbarPattern = /(更多筛选|操作记录|上传商品记录|导入配对记录|自动配对记录|导入分配负责人记录|导入本地信息记录|导入标签记录|导入调价记录)/;
+    const rowSelector = 'tr, .el-table__row, .vxe-body--row, [role="row"], [class*="body--row"], [class*="table-row"]';
+    const rows = Array.from(document.querySelectorAll(rowSelector))
+      .filter((element) => {
+        const text = textOf(element);
+        return text.toUpperCase().includes(targetAsin.toUpperCase()) && !globalToolbarPattern.test(text);
+      });
+    if (rows.length === 0) {
+      return { status: 'no_asin_row', candidateCount: 0, reason: '当前页面没有找到包含目标 ASIN 的可见行。' };
+    }
+    const candidates: Array<{ element: HTMLElement; text: string; href: string }> = [];
+    for (const row of rows.slice(0, 5)) {
+      for (const element of Array.from(row.querySelectorAll('a, button, [role="button"]'))) {
+        if (!(element instanceof HTMLElement) || !isVisible(element)) continue;
+        const text = textOf(element);
+        const href = element instanceof HTMLAnchorElement ? element.href : '';
+        const label = [
+          text,
+          element.getAttribute('aria-label') || '',
+          element.getAttribute('title') || '',
+          href,
+        ].join(' ');
+        if (!safeTextPattern.test(label) || unsafeTextPattern.test(label) || globalToolbarPattern.test(label)) continue;
+        candidates.push({ element, text, href });
+      }
+    }
+    const unique = candidates.filter((candidate, index) =>
+      candidates.findIndex((item) => item.text === candidate.text && item.href === candidate.href) === index,
+    );
+    if (unique.length === 0) {
+      return { status: 'no_candidate', candidateCount: 0, reason: '目标 ASIN 行内没有可见的详情/查看/编辑入口。' };
+    }
+    if (unique.length > 1) {
+      return {
+        status: 'ambiguous_candidates',
+        candidateCount: unique.length,
+        text: unique.slice(0, 3).map((candidate) => candidate.text || candidate.href || '未命名入口').join('；'),
+        href: unique[0].href,
+        reason: '目标 ASIN 行内发现多个候选入口，需要人工确认或更精确 selector。',
+      };
+    }
+    unique[0].element.setAttribute('data-amazon-ai-ops-listing-probe', token);
+    return {
+      status: 'unique',
+      token,
+      candidateCount: 1,
+      text: unique[0].text,
+      href: unique[0].href,
+    };
+  }, asin);
+  if (direct.status === 'unique' || direct.status === 'ambiguous_candidates') {
+    return direct;
+  }
+
+  const dropdown = await page.evaluate((targetAsin) => {
+    const token = `aao-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const textOf = (element: Element | null | undefined) =>
+      String(element?.textContent || '').replace(/\s+/g, ' ').trim();
+    const isVisible = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const rowSelector = 'tr, .el-table__row, .vxe-body--row, [role="row"], [class*="body--row"], [class*="table-row"]';
+    const globalToolbarPattern = /(更多筛选|操作记录|上传商品记录|导入配对记录|自动配对记录|导入分配负责人记录|导入本地信息记录|导入标签记录|导入调价记录)/;
+    const rowOperationPattern = /(操作|编辑在线商品|编辑本地信息|查看基本)/;
+    const targetOperationPattern = /(编辑在线商品|编辑本地信息|查看基本)/;
+    const isOperationDropdown = (element: Element) => {
+      const text = textOf(element);
+      const label = [
+        text,
+        element.getAttribute('aria-label') || '',
+        element.getAttribute('title') || '',
+        element.getAttribute('class') || '',
+      ].join(' ');
+      if (globalToolbarPattern.test(label)) return false;
+      if (!rowOperationPattern.test(label)) return false;
+      if (targetOperationPattern.test(label)) return true;
+      const parentText = textOf(element.closest('td, [role="cell"], .vxe-cell, .el-table__cell'));
+      return targetOperationPattern.test(parentText);
+    };
+    const allRows = Array.from(document.querySelectorAll(rowSelector));
+    const asinRows = allRows
+      .filter((element) => {
+        const text = textOf(element);
+        return text.toUpperCase().includes(targetAsin.toUpperCase()) && !globalToolbarPattern.test(text) && isVisible(element);
+      })
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { element, top: Math.round(rect.top), text: textOf(element) };
+      });
+    if (asinRows.length === 0) {
+      return { status: 'no_asin_row', candidateCount: 0, reason: '当前页面没有找到包含目标 ASIN 的可见行。' };
+    }
+
+    const operationDropdowns = Array.from(document.querySelectorAll('.ak-dropdown, [class*="dropdown"], [role="button"], button'))
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && isVisible(element))
+      .filter(isOperationDropdown)
+      .map((element) => {
+        const row = element.closest(rowSelector);
+        const rect = (row || element).getBoundingClientRect();
+        return { element, top: Math.round(rect.top), text: textOf(element), rowText: textOf(row || element) };
+      })
+      .filter((candidate) =>
+        asinRows.some((row) =>
+          candidate.rowText.toUpperCase().includes(targetAsin.toUpperCase())
+          || Math.abs(candidate.top - row.top) <= 6
+        )
+      )
+      .filter((candidate, index, list) =>
+        list.findIndex((item) => item.element === candidate.element) === index
+      );
+
+    const preferredDropdowns = operationDropdowns.filter((candidate) => targetOperationPattern.test(candidate.text));
+    const selectedDropdowns = preferredDropdowns.length > 0 ? preferredDropdowns : operationDropdowns;
+
+    if (selectedDropdowns.length === 1) {
+      const trigger = Array.from(selectedDropdowns[0].element.querySelectorAll('span, a, button, [role="button"]'))
+        .filter((element): element is HTMLElement => element instanceof HTMLElement && isVisible(element))
+        .find((element) => /^操作\s*$/.test(textOf(element)))
+        || selectedDropdowns[0].element;
+      trigger.setAttribute('data-amazon-ai-ops-listing-probe-dropdown', token);
+      return {
+        status: 'dropdown_unique',
+        token,
+        candidateCount: 1,
+        text: selectedDropdowns[0].text,
+      };
+    }
+    if (selectedDropdowns.length > 1) {
+      return {
+        status: 'ambiguous_dropdowns',
+        candidateCount: selectedDropdowns.length,
+        text: selectedDropdowns.slice(0, 3).map((candidate) => candidate.text || '未命名下拉').join('；'),
+        reason: '目标 ASIN 视觉行内发现多个操作下拉候选，需要更精确 selector。',
+      };
+    }
+    return { status: 'no_candidate', candidateCount: 0, reason: '目标 ASIN 行内没有可见的详情/查看/编辑入口。' };
+  }, asin);
+  if (dropdown.status !== 'dropdown_unique' || !dropdown.token) {
+    return dropdown;
+  }
+
+  const dropdownLocator = page.locator(`[data-amazon-ai-ops-listing-probe-dropdown="${dropdown.token}"]`).first();
+  await dropdownLocator.hover({ timeout: 15000 }).catch(() => undefined);
+  await page.waitForTimeout(800);
+  await dropdownLocator.click({ timeout: 15000 }).catch(() => undefined);
+  await page.waitForTimeout(1500);
+
+  return page.evaluate((dropdownText) => {
+    const token = `aao-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const textOf = (element: Element | null | undefined) =>
+      String(element?.textContent || '').replace(/\s+/g, ' ').trim();
+    const isVisible = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const priority = ['编辑在线商品', '查看基本', '编辑本地信息'];
+    const items = Array.from(document.querySelectorAll('.el-dropdown-menu__item, [role="menuitem"], .el-dropdown-menu *, .ak-dropdown-menu *, li, a, button, span'))
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && isVisible(element))
+      .map((element) => ({ element, text: textOf(element), href: element instanceof HTMLAnchorElement ? element.href : '' }))
+      .filter((item) => priority.some((label) => item.text === label || item.text.includes(label)));
+    const selected = priority
+      .map((label) => items.find((item) => item.text === label) || items.find((item) => item.text.includes(label)))
+      .find(Boolean);
+    if (!selected) {
+      return {
+        status: 'no_safe_dropdown_item',
+        candidateCount: items.length,
+        text: dropdownText,
+        reason: '已展开操作下拉，但没有找到明确的编辑在线商品/查看基本/编辑本地信息入口。',
+      };
+    }
+    selected.element.setAttribute('data-amazon-ai-ops-listing-probe', token);
+    return {
+      status: 'unique',
+      token,
+      candidateCount: 1,
+      text: selected.text,
+      href: selected.href,
+    };
+  }, dropdown.text || '');
+}
+
+function parseLingxingListingReadUrl(input: unknown): string {
+  const rawUrl = typeof input === 'string'
+    ? input
+    : input && typeof input === 'object' && typeof (input as { url?: unknown }).url === 'string'
+      ? (input as { url: string }).url
+      : '';
+  if (!rawUrl.trim()) {
+    throw new Error('请输入领星 Listing 页面 URL');
+  }
+
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error('领星 Listing URL 无效');
+  }
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== 'https:' || !['erp.lingxing.com', 'ads.lingxing.com'].includes(host)) {
+    throw new Error('仅允许打开领星 ERP/Ads 的 HTTPS 页面用于只读读取。');
+  }
+  const pathText = `${url.pathname} ${url.search}`.toLowerCase();
+  if (!/(listing|product|goods|spu|sku)/i.test(pathText)) {
+    throw new Error('该 URL 看起来不是 Listing/商品相关页面，请打开领星 Listing 页面后再读取。');
+  }
+  url.hash = '';
+  return url.toString();
+}
+
 function handleBuildListingSuggestions(listing: ListingContent, opportunities: KeywordOpportunity[]): ListingSuggestion[] {
   validateListing(listing);
   validateArray(opportunities, 'opportunities', 10000);
@@ -2186,32 +3144,45 @@ async function handleGenerateListingDrafts(suggestions: ListingSuggestion[]): Pr
   }
 
   let drafts = buildRuleBasedListingDrafts(suggestions, { appVersion: APP_VERSION });
-  const settings = state.settingsRepo?.getAll() ?? {};
-  const aiApiKey = settings.aiApiKey || settings.ai_api_key;
+  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const aiApiKey = settings.aiApiKey;
 
   if (aiApiKey) {
     drafts = await generateAiListingDrafts(drafts, settings);
+  } else {
+    drafts = drafts.map((draft) => ({
+      ...draft,
+      aiFallbackReason: '未配置 AI Key，使用规则草案',
+    }));
   }
 
   return persistListingDrafts(drafts);
 }
 
 async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<string, string>): Promise<ListingDraft[]> {
-  const provider = new OpenAICompatibleProvider({
-    apiKey: settings.aiApiKey || settings.ai_api_key,
-    baseUrl: settings.aiBaseUrl || settings.ai_base_url,
-    model: settings.aiModel || settings.ai_model || 'gpt-4o-mini',
-  });
+  const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
   const promptTemplate = readPromptTemplate('listing-rewrite.md');
 
   const enhanced: ListingDraft[] = [];
   for (const draft of drafts) {
-    const response = await provider.complete(buildListingRewritePrompt(promptTemplate, draft), {
-      temperature: 0.3,
-      maxTokens: 700,
-    });
+    let response;
+    try {
+      response = await provider.complete(buildListingRewritePrompt(promptTemplate, draft), {
+        temperature: 0.3,
+        maxTokens: 700,
+      });
+    } catch (error) {
+      enhanced.push({
+        ...draft,
+        aiFallbackReason: `AI 调用异常：${error instanceof Error ? error.message : String(error)}，使用规则草案`,
+      });
+      continue;
+    }
     if (!response.success || !response.content) {
-      enhanced.push(draft);
+      enhanced.push({
+        ...draft,
+        aiFallbackReason: response.error ? `AI 生成失败：${response.error}` : 'AI 未返回草案内容，使用规则草案',
+      });
       continue;
     }
 
@@ -2223,11 +3194,114 @@ async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<
           riskWarnings: Array.from(new Set([...draft.riskWarnings, ...parsed.riskWarnings])),
           evidence: `${draft.evidence}\nAI reason: ${parsed.reason}`,
           source: 'ai',
+          aiFallbackReason: undefined,
         }
-      : draft);
+      : {
+          ...draft,
+          aiFallbackReason: 'AI 响应无法解析为 Listing 草案，使用规则草案',
+        });
   }
 
   return enhanced;
+}
+
+function stringSetting(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeAiSettings(settings: Record<string, unknown>): Record<string, string> {
+  const asStrings = Object.fromEntries(
+    Object.entries(settings).map(([key, value]) => [key, String(value ?? '')]),
+  );
+  const apiKey = stringSetting(settings.ai_api_key) || stringSetting(settings.aiApiKey);
+  const baseUrl = (stringSetting(settings.ai_base_url) || stringSetting(settings.aiBaseUrl) || 'https://api.deepseek.com').replace(/\/+$/, '');
+  const model = stringSetting(settings.ai_model) || stringSetting(settings.aiModel) || 'deepseek-v4-flash';
+  const temperature = stringSetting(settings.ai_temperature) || stringSetting(settings.aiTemperature) || '0.3';
+  const maxTokens = stringSetting(settings.ai_max_tokens) || stringSetting(settings.aiMaxTokens) || '700';
+  return {
+    ...asStrings,
+    aiApiKey: apiKey,
+    ai_api_key: apiKey,
+    aiBaseUrl: baseUrl,
+    ai_base_url: baseUrl,
+    aiModel: model,
+    ai_model: model,
+    aiTemperature: temperature,
+    ai_temperature: temperature,
+    aiMaxTokens: maxTokens,
+    ai_max_tokens: maxTokens,
+  };
+}
+
+function buildAiProviderConfig(settings: Record<string, unknown>) {
+  const normalized = normalizeAiSettings(settings);
+  return {
+    apiKey: normalized.aiApiKey,
+    baseUrl: normalized.aiBaseUrl,
+    model: normalized.aiModel,
+    temperature: parseNumberSetting(normalized.aiTemperature, 0.3),
+    maxTokens: parseIntegerSetting(normalized.aiMaxTokens, 700),
+  };
+}
+
+async function handleTestAiSettings(settings: Record<string, unknown>) {
+  const config = buildAiProviderConfig(settings || {});
+  if (!config.apiKey.trim()) {
+    return {
+      success: false,
+      message: '未配置 AI Key：请填写 DeepSeek 或 OpenAI 兼容 API Key 后再测试。',
+      baseUrl: config.baseUrl,
+      model: config.model,
+    };
+  }
+
+  const provider = new OpenAICompatibleProvider(config);
+  const response = await provider.complete('只回复 ok，用于连接测试。', {
+    model: config.model,
+    temperature: 0,
+    maxTokens: 32,
+  });
+
+  if (!response.success || !response.content) {
+    return {
+      success: false,
+      message: summarizeAiError(response.error || 'AI 未返回内容'),
+      baseUrl: config.baseUrl,
+      model: config.model,
+    };
+  }
+
+  return {
+    success: true,
+    message: `AI 连接测试通过：${config.model}`,
+    baseUrl: config.baseUrl,
+    model: config.model,
+    usage: response.usage,
+  };
+}
+
+function parseNumberSetting(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseIntegerSetting(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+}
+
+function summarizeAiError(error: string): string {
+  const firstLine = String(error || '').split(/\r?\n/).find(Boolean) || '未知错误';
+  if (/401|unauthorized|invalid api key/i.test(firstLine)) {
+    return 'AI 连接失败：API Key 无效或没有权限。';
+  }
+  if (/429|rate limit|quota/i.test(firstLine)) {
+    return 'AI 连接失败：额度不足或请求频率过高。';
+  }
+  if (/network|fetch|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout/i.test(firstLine)) {
+    return 'AI 连接失败：网络或 Base URL 不可达。';
+  }
+  return `AI 连接失败：${firstLine.slice(0, 240)}`;
 }
 
 function persistListingDrafts(drafts: ListingDraft[]): ListingDraft[] {
@@ -2237,9 +3311,9 @@ function persistListingDrafts(drafts: ListingDraft[]): ListingDraft[] {
   const save = state.db.transaction(() => {
     const insert = state.db!.prepare(`
       INSERT INTO listing_drafts
-        (asin, section, current_text, drafted_text, keywords_json, evidence, risk_warnings_json, source, status, created_at)
+        (asin, section, current_text, drafted_text, keywords_json, evidence, risk_warnings_json, source, ai_fallback_reason, status, created_at)
       VALUES
-        (@asin, @section, @currentText, @draftedText, @keywordsJson, @evidence, @riskWarningsJson, @source, @status, @createdAt)
+        (@asin, @section, @currentText, @draftedText, @keywordsJson, @evidence, @riskWarningsJson, @source, @aiFallbackReason, @status, @createdAt)
     `);
     for (const draft of drafts) {
       const createdAt = draft.createdAt ?? new Date().toISOString();
@@ -2248,6 +3322,7 @@ function persistListingDrafts(drafts: ListingDraft[]): ListingDraft[] {
         currentText: draft.currentText ?? null,
         keywordsJson: JSON.stringify(draft.keywords),
         riskWarningsJson: JSON.stringify(draft.riskWarnings),
+        aiFallbackReason: draft.aiFallbackReason ?? null,
         createdAt,
       });
       persisted.push({
@@ -2321,6 +3396,29 @@ async function handleExportListingSuggestions(suggestions: ListingSuggestion[], 
     fs.mkdirSync(exportDir, { recursive: true });
   }
   const filePath = path.join(exportDir, `listing_suggestions_${Date.now()}.${extension}`);
+  fs.writeFileSync(filePath, output, typeof output === 'string' ? 'utf8' : undefined);
+  return filePath;
+}
+
+async function handleExportListingDrafts(drafts: ListingDraft[], format: 'csv' | 'markdown' | 'xlsx'): Promise<string> {
+  validateArray(drafts, 'drafts', 20000);
+  if (!['csv', 'markdown', 'xlsx'].includes(format)) {
+    throw new Error('导出格式只支持 csv、xlsx 或 markdown');
+  }
+  for (const draft of drafts) {
+    validateListingDraft(draft);
+  }
+
+  const extension = format === 'markdown' ? 'md' : format;
+  const output = format === 'markdown'
+    ? draftsToMarkdown(drafts)
+    : format === 'xlsx'
+      ? draftsToXlsxBuffer(drafts)
+      : draftsToCsv(drafts);
+  if (!fs.existsSync(EXPORTS_DIR)) {
+    fs.mkdirSync(EXPORTS_DIR, { recursive: true });
+  }
+  const filePath = path.join(EXPORTS_DIR, `listing_drafts_${Date.now()}.${extension}`);
   fs.writeFileSync(filePath, output, typeof output === 'string' ? 'utf8' : undefined);
   return filePath;
 }
@@ -2466,9 +3564,12 @@ function handleExportDownloadCenterPageModelEnablementAudit(
       reason: selectorEvidenceReadiness.ready ? diagnosticFileReadiness.reason : selectorEvidenceReadiness.reason,
     }
     : selectorEvidenceReadiness;
+  const canaryReportTypes = loadSuccessfulCanaryReportTypesForScope(dateRange, target);
+  const canaryEvidenceReadiness = evaluateDownloadCenterCanaryEvidenceReadiness(canaryReportTypes);
   const audit = auditDownloadCenterPageModelEnablement(model, dateRange, diagnostic, {
     target,
     diagnosticEvidenceReadiness,
+    canaryEvidenceReadiness,
   });
   const auditDir = path.join(
     EXPORTS_DIR,
@@ -2645,6 +3746,83 @@ function loadPersistedLingxingBatch(batchId: string): { batch: LingxingReportBat
       traceUnavailableReason: row.traceUnavailableReason ?? undefined,
     })),
   };
+}
+
+function loadSuccessfulCanaryReportTypesForScope(
+  dateRange: { start: string; end: string },
+  target: LingxingCollectionTarget,
+  afterCheckedAt?: string,
+): LingxingReportType[] {
+  if (!state.db) return [];
+  const rows = state.db.prepare(`
+    SELECT
+      b.id AS batchId,
+      b.created_at AS batchCreatedAt,
+      b.download_dir AS downloadDir,
+      f.report_type AS reportType,
+      f.file_path AS filePath,
+      f.file_size_bytes AS fileSizeBytes,
+      f.error_message AS errorMessage,
+      f.attempt_errors_json AS attemptErrorsJson
+    FROM lingxing_report_batches b
+    JOIN lingxing_report_files f ON f.batch_id = b.id
+    WHERE b.app_version = ?
+      AND b.date_start = ?
+      AND b.date_end = ?
+      AND COALESCE(b.store_name, '') = COALESCE(?, '')
+      AND COALESCE(b.marketplace_code, '') = COALESCE(?, '')
+      AND b.status = 'completed'
+      AND f.status = 'downloaded'
+      AND (
+        SELECT COUNT(*)
+        FROM lingxing_report_files count_files
+        WHERE count_files.batch_id = b.id
+      ) = 1
+    ORDER BY b.created_at DESC, b.id DESC
+  `).all(
+    APP_VERSION,
+    dateRange.start,
+    dateRange.end,
+    target.storeName ?? '',
+    target.marketplaceCode ?? '',
+  ) as Array<{
+    batchId: string;
+    batchCreatedAt: string;
+    downloadDir: string;
+    reportType: string;
+    filePath?: string | null;
+    fileSizeBytes?: number | null;
+    errorMessage?: string | null;
+    attemptErrorsJson?: string | null;
+  }>;
+
+  const afterMs = afterCheckedAt ? Date.parse(afterCheckedAt) : Number.NaN;
+  const dateStartToken = compactDateToken(dateRange.start);
+  const dateEndToken = compactDateToken(dateRange.end);
+  const covered = new Set<LingxingReportType>();
+
+  for (const row of rows) {
+    const report = LINGXING_AD_REPORTS.find((item) => item.type === row.reportType);
+    if (!report) continue;
+    const createdAtMs = Date.parse(row.batchCreatedAt);
+    if (Number.isFinite(afterMs) && (!Number.isFinite(createdAtMs) || createdAtMs < afterMs)) continue;
+    if (row.errorMessage) continue;
+    if (JSON.stringify(parseStringArray(row.attemptErrorsJson)) !== '[]') continue;
+    if (!row.filePath || !fs.existsSync(row.filePath)) continue;
+    if (!isPathInsideDirectory(path.resolve(row.filePath), path.resolve(row.downloadDir))) continue;
+    const actualSize = fs.statSync(row.filePath).size;
+    if (actualSize < 128 || row.fileSizeBytes !== actualSize) continue;
+    const basename = path.basename(row.filePath).toLowerCase();
+    if (!basename.includes(report.expectedFilenameKeyword.toLowerCase())) continue;
+    if (!basename.includes(dateStartToken) || !basename.includes(dateEndToken)) continue;
+    covered.add(report.type);
+  }
+
+  return [...covered];
+}
+
+function compactDateToken(value: string): string {
+  return value.replace(/[^0-9]/g, '');
 }
 
 function loadPersistedDownloadCenterDiagnostic(
@@ -2830,6 +4008,24 @@ function validateSuggestion(suggestion: ListingSuggestion): void {
   }
 }
 
+function validateListingDraft(draft: ListingDraft): void {
+  if (!draft || typeof draft.asin !== 'string' || typeof draft.draftedText !== 'string') {
+    throw new Error('Listing 草案无效');
+  }
+  if (!['title', 'bullet', 'a_plus', 'image_copy', 'backend_terms'].includes(draft.section)) {
+    throw new Error('Listing 草案位置无效');
+  }
+  if (!draft.draftedText.trim()) {
+    throw new Error('Listing 草案文案无效');
+  }
+  if (!Array.isArray(draft.keywords) || !Array.isArray(draft.riskWarnings)) {
+    throw new Error('Listing 草案关键词或风险字段无效');
+  }
+  if (!['ai', 'rule'].includes(draft.source)) {
+    throw new Error('Listing 草案来源无效');
+  }
+}
+
 function normalizeKeywordSource(source?: string): KeywordMetric['source'] | undefined {
   if (!source) return undefined;
   if (['search_term', 'sqp', 'keyword_report', 'manual'].includes(source)) {
@@ -2842,34 +4038,133 @@ function normalizeKeywordSource(source?: string): KeywordMetric['source'] | unde
 // Recommendation & Execution
 // ============================================================================
 
-async function runRecommendationGeneration(): Promise<void> {
+async function runRecommendationGeneration(request: any = {}): Promise<{
+  generated: number;
+  metrics: number;
+  skippedDuplicates: number;
+  scope: any;
+  metricsBackfill?: ReturnType<typeof backfillAdMetricsFromLatestBatchIfNeeded>;
+}> {
   if (!state.isLoggedIn) {
     throw new Error('Not logged in');
   }
 
-  // Get recent metrics
-  const metrics = state.adMetricsRepo?.getRecent(100) || [];
+  const operatorRequested = request && typeof request === 'object' && Object.keys(request).length > 0;
+  const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(1000, Number(request.limit))) : 300;
+  const scope = {
+    dateFrom: typeof request.dateFrom === 'string' && request.dateFrom.trim() ? request.dateFrom.trim() : undefined,
+    dateTo: typeof request.dateTo === 'string' && request.dateTo.trim() ? request.dateTo.trim() : undefined,
+    storeName: typeof request.storeName === 'string' && request.storeName.trim() ? request.storeName.trim() : operatorRequested ? undefined : state.currentStore || undefined,
+    marketplaceCode: typeof request.marketplaceCode === 'string' && request.marketplaceCode.trim() ? request.marketplaceCode.trim() : undefined,
+    asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
+    limit,
+  };
+
+  if (operatorRequested && (!scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode)) {
+    throw new Error('生成优化建议需要明确填写开始日期、结束日期、店铺和站点，不能使用登录账号名代替店铺范围。');
+  }
+
+  const hasScopedRequest = Boolean(scope.dateFrom || scope.dateTo || scope.storeName || scope.marketplaceCode || scope.asin);
+  const metricsBackfill = hasScopedRequest ? backfillAdMetricsFromLatestBatchIfNeeded(scope) : undefined;
+  const metrics = hasScopedRequest && state.adMetricsRepo?.findForRecommendations
+    ? state.adMetricsRepo.findForRecommendations(scope)
+    : state.adMetricsRepo?.getRecent(limit, scope.storeName) || [];
   if (metrics.length === 0) {
     console.log('[Scheduler] No metrics to process');
-    return;
+    return { generated: 0, metrics: 0, skippedDuplicates: 0, scope, metricsBackfill };
   }
 
   // Generate recommendations
   const generator = new RecommendationGenerator(state.ruleConfig);
-  const recommendations = generator.generateBatch(metrics, {
-    storeName: state.currentStore,
-    marketplaceCode: 'US',
+  const firstMetric = metrics[0];
+  let recommendations = generator.generateBatch(metrics, {
+    storeName: scope.storeName || firstMetric?.storeName || state.currentStore || 'unknown',
+    marketplaceCode: scope.marketplaceCode || firstMetric?.marketplaceCode || 'US',
     config: state.ruleConfig,
     taskId: `task_${Date.now()}`,
   });
+  recommendations = await enrichAdRecommendationsWithAiExplanations(recommendations);
 
   // Save to database
+  let inserted = 0;
+  let skippedDuplicates = 0;
   for (const rec of recommendations) {
-    state.recommendationRepo?.insert(rec);
+    const result = state.recommendationRepo?.insertIfNoDuplicate
+      ? state.recommendationRepo.insertIfNoDuplicate(rec)
+      : { id: state.recommendationRepo?.insert(rec) || 0, inserted: true };
+    if (result.inserted) {
+      inserted++;
+    } else {
+      skippedDuplicates++;
+    }
   }
 
-  console.log(`[Scheduler] Generated ${recommendations.length} recommendations`);
-  mainWindow?.webContents.send('recommendations:generated', recommendations.length);
+  console.log(`[Scheduler] Generated ${inserted} recommendations; skipped ${skippedDuplicates} duplicate(s)`);
+  mainWindow?.webContents.send('recommendations:generated', inserted);
+  return { generated: inserted, metrics: metrics.length, skippedDuplicates, scope, metricsBackfill };
+}
+
+async function enrichAdRecommendationsWithAiExplanations(
+  recommendations: ActionRecommendation[],
+): Promise<ActionRecommendation[]> {
+  if (recommendations.length === 0) return recommendations;
+
+  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const aiApiKey = settings.aiApiKey;
+  if (!aiApiKey) {
+    return recommendations.map((rec) => ({
+      ...rec,
+      evidence: {
+        ...rec.evidence,
+        explanationSource: 'rule',
+        aiFallbackReason: '未配置 AI Key，广告建议解释使用规则引擎',
+      },
+    }));
+  }
+
+  const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
+  const explainer = new AdActionReasonExplainer(provider);
+  const enhanced: ActionRecommendation[] = [];
+  for (const rec of recommendations) {
+    try {
+      const explanation = await explainer.explain({
+        actionType: rec.actionType,
+        entityName: rec.entityName,
+        currentMetrics: {
+          impressions: rec.evidence.impressions,
+          clicks: rec.evidence.clicks,
+          cost: rec.evidence.cost,
+          orders: rec.evidence.orders,
+          sales: rec.evidence.sales,
+          acos: rec.evidence.acos,
+        },
+        recommendedAction: rec.recommendedValue || rec.actionType,
+      });
+      enhanced.push({
+        ...rec,
+        reason: explanation.source === 'ai' && explanation.explanation ? explanation.explanation : rec.reason,
+        evidence: {
+          ...rec.evidence,
+          explanationSource: explanation.source,
+          aiExplanation: explanation.explanation,
+          aiRiskWarnings: explanation.riskWarnings,
+          aiAlternativeSuggestions: explanation.alternativeSuggestions,
+          aiFallbackReason: explanation.aiFallbackReason,
+          aiModel: settings.aiModel,
+        },
+      });
+    } catch (error) {
+      enhanced.push({
+        ...rec,
+        evidence: {
+          ...rec.evidence,
+          explanationSource: 'rule',
+          aiFallbackReason: `AI 广告解释异常：${error instanceof Error ? error.message : String(error)}，使用规则解释`,
+        },
+      });
+    }
+  }
+  return enhanced;
 }
 
 async function handleApproveRecommendation(recommendationId: number): Promise<void> {
@@ -2878,6 +4173,49 @@ async function handleApproveRecommendation(recommendationId: number): Promise<vo
 
 async function handleRejectRecommendation(recommendationId: number): Promise<void> {
   state.recommendationRepo?.updateStatus(recommendationId, 'rejected');
+}
+
+function handleGetRecommendations(filter: any = []): any[] {
+  const request = Array.isArray(filter) ? {} : (filter || {});
+  const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(500, Number(request.limit))) : 100;
+  const status = typeof request.status === 'string' && request.status.trim() ? request.status.trim() : undefined;
+
+  if (state.recommendationRepo?.findByFilter) {
+    const normalizedFilter = {
+      storeName: typeof request.storeName === 'string' && request.storeName.trim() ? request.storeName.trim() : undefined,
+      marketplaceCode: typeof request.marketplaceCode === 'string' && request.marketplaceCode.trim() ? request.marketplaceCode.trim() : undefined,
+      asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
+      status,
+      dateFrom: typeof request.dateFrom === 'string' && request.dateFrom.trim() ? request.dateFrom.trim() : request.date,
+      dateTo: typeof request.dateTo === 'string' && request.dateTo.trim() ? request.dateTo.trim() : request.date,
+      page: 0,
+      pageSize: limit,
+    };
+    return state.recommendationRepo.findByFilter(normalizedFilter).items;
+  }
+
+  if (request.date && status) {
+    return state.recommendationRepo?.findByDateAndStatus(request.date, status, limit) || [];
+  }
+
+  return [];
+}
+
+function handleExportAdReadbackEvidence(input: AdReadbackEvidenceInput): { jsonPath: string; markdownPath: string; status: string; readyForVerifier: boolean } {
+  const evidence = buildAdReadbackEvidence(input || {});
+  const exportDir = path.join(EXPORTS_DIR, 'ad-readback-evidence');
+  fs.mkdirSync(exportDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const jsonPath = path.join(exportDir, `real-ad-execution-readback-${stamp}.json`);
+  const markdownPath = jsonPath.replace(/\.json$/i, '.md');
+  fs.writeFileSync(jsonPath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(markdownPath, adReadbackEvidenceToMarkdown(evidence, jsonPath), 'utf8');
+  return {
+    jsonPath,
+    markdownPath,
+    status: evidence.status,
+    readyForVerifier: evidence.status === 'PASS',
+  };
 }
 
 async function handleExecuteRecommendation(recommendationId: number): Promise<void> {
@@ -2890,45 +4228,31 @@ async function handleExecuteRecommendation(recommendationId: number): Promise<vo
     throw new Error('Recommendation must be approved before execution');
   }
 
-  if (!state.browserController) {
-    throw new Error('Browser not initialized');
-  }
+  const executionResult = buildAdExecutionUnavailableResult(
+    recommendation,
+    '真实广告执行器尚未接入可验证回读。为避免误改广告账户或产生假成功记录，本次执行已阻断。',
+  );
+  const executionOutcome = getRecommendationExecutionOutcome(executionResult);
 
-  // Take before screenshot
-  const screenshotBefore = await handleScreenshot('before');
-
-  // Execute via action executor
-  // (simplified - full implementation would use AdActionExecutor)
-  const executionResult = {
-    success: true,
-    executionId: `exec_${Date.now()}`,
-    actionType: recommendation.actionType,
-    beforeValue: recommendation.currentValue,
-    afterValue: recommendation.recommendedValue,
-    verified: true,
-    executedAt: new Date().toISOString(),
-  };
-
-  // Take after screenshot
-  const screenshotAfter = await handleScreenshot('after');
+  const screenshotBefore = await tryCaptureExecutionScreenshot('before');
+  const screenshotAfter = await tryCaptureExecutionScreenshot('after');
 
   // Log execution
-  state.actionLogRepo?.insert({
+  state.actionLogRepo?.insert(buildActionLogForExecution({
     recommendationId,
-    taskId: recommendation.taskId,
-    actionType: recommendation.actionType,
-    entityType: recommendation.entityType,
-    entityId: recommendation.entityId,
-    entityName: recommendation.entityName,
-    beforeValue: recommendation.currentValue,
-    afterValue: recommendation.recommendedValue,
-    executionStatus: 'success',
-    screenshotBefore: screenshotBefore,
-    screenshotAfter: screenshotAfter,
-  });
+    recommendation,
+    executionResult,
+    outcome: executionOutcome,
+    screenshotBefore,
+    screenshotAfter,
+  }));
 
-  // Update status
-  state.recommendationRepo?.updateStatus(recommendationId, 'executed');
+  if (executionOutcome.shouldMarkExecuted) {
+    state.recommendationRepo?.updateStatus(recommendationId, executionOutcome.recommendationStatus);
+    return;
+  }
+
+  throw new Error(executionResult.error || '广告执行未通过回读确认，建议状态保持为 approved。');
 }
 
 // ============================================================================
@@ -2975,14 +4299,10 @@ async function runDailyReportGeneration(): Promise<void> {
   };
 
   // Generate AI report if configured
-  const settings = state.settingsRepo?.getAll();
-  if (settings?.aiApiKey) {
+  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  if (settings.aiApiKey) {
     try {
-      const provider = new OpenAICompatibleProvider({
-        apiKey: settings.aiApiKey,
-        baseUrl: settings.aiBaseUrl,
-        model: settings.aiModel || 'gpt-4o-mini',
-      });
+      const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
       const reportGen = new DailyReportGenerator(provider);
       const report = await reportGen.generate(summary);
 
@@ -3009,13 +4329,15 @@ function registerIpcHandlers(): void {
   }));
 
   // Settings
-  ipcMain.handle('settings:get', () => state.settingsRepo?.getAll() || null);
+  ipcMain.handle('settings:get', () => normalizeAiSettings(state.settingsRepo?.getAll() ?? {}));
   ipcMain.handle('settings:save', (_, settings) => {
-    state.settingsRepo?.save(settings);
+    state.settingsRepo?.save(normalizeAiSettings(settings || {}));
     if (settings.ruleConfig) {
       state.ruleConfig = settings.ruleConfig;
     }
+    return { success: true };
   });
+  ipcMain.handle('settings:test-ai', (_, settings) => handleTestAiSettings(settings || {}));
   ipcMain.handle('settings:get-rule-config', () => state.ruleConfig);
   ipcMain.handle('settings:save-rule-config', (_, config: RuleConfig) => {
     state.settingsRepo?.saveRuleConfig(config);
@@ -3046,6 +4368,9 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle('v1_5:reports:retry-lingxing-report', (_, { dateRange, reportType }) =>
     handleRetryLingxingReport(dateRange, reportType)
+  );
+  ipcMain.handle('v1_5:reports:run-lingxing-canary-report', (_, { dateRange, reportType }) =>
+    handleRunLingxingCanaryReport(dateRange, reportType)
   );
   ipcMain.handle('v1_5:reports:export-acceptance-audit', (_, { batchId, diagnosticId }) =>
     handleExportLingxingAcceptanceAudit(batchId, diagnosticId)
@@ -3085,13 +4410,12 @@ function registerIpcHandlers(): void {
   });
 
   // Recommendations
-  ipcMain.handle('recommendations:get', (_, { date, status, limit }) =>
-    state.recommendationRepo?.findByDateAndStatus(date, status, limit) || []
-  );
-  ipcMain.handle('recommendations:generate', () => runRecommendationGeneration());
+  ipcMain.handle('recommendations:get', (_, filter) => handleGetRecommendations(filter));
+  ipcMain.handle('recommendations:generate', (_, filter) => runRecommendationGeneration(filter));
   ipcMain.handle('recommendations:approve', (_, id) => handleApproveRecommendation(id));
   ipcMain.handle('recommendations:reject', (_, id) => handleRejectRecommendation(id));
   ipcMain.handle('recommendations:execute', (_, id) => handleExecuteRecommendation(id));
+  ipcMain.handle('recommendations:export-ad-readback-evidence', (_, input) => handleExportAdReadbackEvidence(input));
 
   // Scheduler
   ipcMain.handle('scheduler:get-tasks', () => state.scheduler?.getTasks() || []);
@@ -3140,6 +4464,15 @@ function registerIpcHandlers(): void {
   ipcMain.handle('v1_5:listing:import-content', (_, { filePath }) =>
     handleImportListingContent(filePath)
   );
+  ipcMain.handle('v1_5:listing:extract-from-lingxing', () =>
+    handleExtractListingFromLingxing()
+  );
+  ipcMain.handle('v1_5:listing:open-and-extract-from-lingxing', (_, input) =>
+    handleOpenLingxingListingAndExtract(input)
+  );
+  ipcMain.handle('v1_5:listing:probe-detail-and-extract', (_, input) =>
+    handleProbeLingxingListingDetailAndExtract(input)
+  );
   ipcMain.handle('v1_5:listing:build-suggestions', (_, { listing, opportunities }) =>
     handleBuildListingSuggestions(listing, opportunities)
   );
@@ -3151,6 +4484,9 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle('v1_5:listing:export-suggestions', (_, { suggestions, format }) =>
     handleExportListingSuggestions(suggestions, format)
+  );
+  ipcMain.handle('v1_5:listing:export-drafts', (_, { drafts, format }) =>
+    handleExportListingDrafts(drafts, format)
   );
 }
 

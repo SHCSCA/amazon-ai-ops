@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings: any) => ipcRenderer.invoke('settings:save', settings),
+  testAiSettings: (settings: any) => ipcRenderer.invoke('settings:test-ai', settings),
   getRuleConfig: () => ipcRenderer.invoke('settings:get-rule-config'),
   saveRuleConfig: (config: any) => ipcRenderer.invoke('settings:save-rule-config', config),
 
@@ -34,6 +35,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:reports:export-lingxing-collection-preflight', dateRange),
   retryLingxingReport: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, reportType: string) =>
     ipcRenderer.invoke('v1_5:reports:retry-lingxing-report', { dateRange, reportType }),
+  runLingxingCanaryReport: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, reportType: string) =>
+    ipcRenderer.invoke('v1_5:reports:run-lingxing-canary-report', { dateRange, reportType }),
   exportLingxingAcceptanceAudit: (batchId: string, diagnosticId?: number) =>
     ipcRenderer.invoke('v1_5:reports:export-acceptance-audit', { batchId, diagnosticId }),
   diagnoseLingxingDownloadCenter: (dateRange?: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
@@ -50,12 +53,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openReportPath: (targetPath: string) => ipcRenderer.invoke('v1_5:reports:open-path', targetPath),
 
   // Recommendations
-  getRecommendations: (params: { date?: string; status?: string; limit?: number }) =>
+  getRecommendations: (params: {
+    date?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    storeName?: string;
+    marketplaceCode?: string;
+    asin?: string;
+    batchId?: string;
+    status?: string;
+    limit?: number;
+  }) =>
     ipcRenderer.invoke('recommendations:get', params),
-  generateRecommendations: () => ipcRenderer.invoke('recommendations:generate'),
+  generateRecommendations: (params?: {
+    dateFrom?: string;
+    dateTo?: string;
+    storeName?: string;
+    marketplaceCode?: string;
+    asin?: string;
+    limit?: number;
+  }) => ipcRenderer.invoke('recommendations:generate', params),
   approveRecommendation: (id: number) => ipcRenderer.invoke('recommendations:approve', id),
   rejectRecommendation: (id: number) => ipcRenderer.invoke('recommendations:reject', id),
   executeRecommendation: (id: number) => ipcRenderer.invoke('recommendations:execute', id),
+  exportAdReadbackEvidence: (input: any) =>
+    ipcRenderer.invoke('recommendations:export-ad-readback-evidence', input),
 
   // Scheduler
   getScheduledTasks: () => ipcRenderer.invoke('scheduler:get-tasks'),
@@ -86,6 +108,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:listing:analyze-coverage', { listing, keywords }),
   importListingContent: (filePath: string) =>
     ipcRenderer.invoke('v1_5:listing:import-content', { filePath }),
+  extractListingFromLingxing: () =>
+    ipcRenderer.invoke('v1_5:listing:extract-from-lingxing'),
+  openLingxingListingAndExtract: (url: string) =>
+    ipcRenderer.invoke('v1_5:listing:open-and-extract-from-lingxing', { url }),
+  probeLingxingListingDetailAndExtract: (url?: string) =>
+    ipcRenderer.invoke('v1_5:listing:probe-detail-and-extract', { url }),
   buildListingSuggestions: (listing: any, opportunities: any[]) =>
     ipcRenderer.invoke('v1_5:listing:build-suggestions', { listing, opportunities }),
   updateListingSuggestionStatus: (id: number, status: 'pending' | 'accepted' | 'ignored') =>
@@ -94,6 +122,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:listing:generate-drafts', { suggestions }),
   exportListingSuggestions: (suggestions: any[], format: 'csv' | 'xlsx' | 'markdown') =>
     ipcRenderer.invoke('v1_5:listing:export-suggestions', { suggestions, format }),
+  exportListingDrafts: (drafts: any[], format: 'csv' | 'xlsx' | 'markdown') =>
+    ipcRenderer.invoke('v1_5:listing:export-drafts', { drafts, format }),
 
   // Event listeners
   onSchedulerTaskStart: (callback: (taskName: string) => void) => {

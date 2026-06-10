@@ -58,6 +58,8 @@ describe('writeDownloadCenterPageModelEnablementAuditBundle', () => {
       pageModel: 'lingxing-download-center',
       diagnosticId: 7,
       diagnosticEvidenceReady: true,
+      canaryEvidenceReady: true,
+      canaryMissingReportTypes: [],
       blockedChecks: [],
       files: expect.arrayContaining([
         expect.objectContaining({ file: 'enablement-audit.json', required: true, present: true }),
@@ -117,6 +119,7 @@ describe('writeDownloadCenterPageModelEnablementAuditBundle', () => {
     expect(JSON.parse(fs.readFileSync(path.join(auditDir, 'enablement-bundle-index.json'), 'utf8'))).toMatchObject({
       canDisableManualVerification: false,
       diagnosticEvidenceReady: false,
+      canaryEvidenceReady: true,
       blockedChecks: [
         {
           name: 'diagnostic_evidence_ready',
@@ -189,6 +192,30 @@ function enablementAudit(overrides: Partial<DownloadCenterPageModelEnablementAud
       diagnosticId: 7,
       checkedAt: '2026-06-03T00:00:00.000Z',
     },
+    canaryEvidenceReadiness: {
+      ready: true,
+      requiredReportTypes: [
+        'campaign',
+        'ad_group',
+        'placement',
+        'advertised_product',
+        'auto_targeting',
+        'keyword',
+        'product_targeting',
+        'user_search_term',
+      ],
+      coveredReportTypes: [
+        'campaign',
+        'ad_group',
+        'placement',
+        'advertised_product',
+        'auto_targeting',
+        'keyword',
+        'product_targeting',
+        'user_search_term',
+      ],
+      missingReportTypes: [],
+    },
     checks: [
       {
         name: 'automation_structure_ready',
@@ -200,6 +227,12 @@ function enablementAudit(overrides: Partial<DownloadCenterPageModelEnablementAud
         name: 'diagnostic_evidence_ready',
         status: 'passed',
         detail: 'diagnostic 7 proves the saved page model/date/store/site setup selectors',
+        missing: [],
+      },
+      {
+        name: 'canary_evidence_ready',
+        status: 'passed',
+        detail: 'successful same-scope canary evidence covers every Lingxing report type',
         missing: [],
       },
     ],
