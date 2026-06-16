@@ -8,8 +8,8 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 
 | 项目 | 状态 | 证据/位置 |
 |---|---:|---|
-| v1.5 基线合并 | 已完成 | 当前交付分支 `codex/business-ui-redesign` 已完成最终验收，待合并推送到 `master` |
-| 本轮收尾改动 | 已完成待合并 | 包含后台菜单重构、全局工作范围、真实广告数据链路、数据导入与校验、运营事件、广告量化、AI + 规则建议、审批/执行回读、关键词/Listing 页面拆分、READY safety 和交付证据包刷新 |
+| v1.5 基线合并 | 已完成 | v1.5 业务后台重构和最终验收已合入 `master` |
+| 本轮收尾改动 | 已完成 | 包含后台菜单重构、全局工作范围、真实广告数据链路、数据导入与校验、运营事件、广告量化、AI + 规则建议、审批/执行回读、关键词/Listing 页面拆分、READY safety 和交付证据包刷新 |
 | 本地测试 | 通过 | 最终节点已按用户要求跑一次全量：`pnpm test` 通过，50 test files / 240 passed / 2 skipped |
 | 类型检查 | 通过 | `pnpm -r run typecheck` 通过 |
 | 桌面构建 | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:win` 通过并生成最终 Windows 安装包 |
