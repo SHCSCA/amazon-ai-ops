@@ -29,7 +29,7 @@ export interface ActionRecommendation {
   evidence: ActionEvidence;
   confidence: number;             // 0-1
   riskLevel: RiskLevel;
-  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'expired';
+  status: 'pending' | 'needs_review' | 'approved' | 'rejected' | 'executed' | 'expired';
   createdAt?: string;
   updatedAt?: string;
 }
@@ -61,6 +61,33 @@ export interface ActionEvidence {
   aiAlternativeSuggestions?: string[];
   aiFallbackReason?: string;
   aiModel?: string;
+  aiStrategySource?: 'ai' | 'rule';
+  aiLifecycleStage?: string;
+  aiStrategySummary?: string;
+  aiMainProblems?: string[];
+  aiThresholdSuggestions?: Record<string, { value: number; reason: string }>;
+  aiStrategyRiskWarnings?: string[];
+  decisionAgreement?: 'aligned' | 'rule_only' | 'ai_only' | 'conflict';
+  decisionSource?: 'rule' | 'ai' | 'rule_ai';
+  decisionReasons?: string[];
+  decisionRiskWarnings?: string[];
+  decisionRequiresReview?: boolean;
+  operationEventCount?: number;
+  productContextCount?: number;
+  productStage?: string;
+  productTargetAcos?: number;
+  productTargetTacos?: number;
+  productTargetNetMargin?: number;
+  productMinPrice?: number;
+  quantStatus?: 'healthy' | 'watch' | 'waste' | 'scale' | 'blocked';
+  quantLifecycleStage?: string;
+  quantSeverity?: 'low' | 'medium' | 'high';
+  quantReasons?: string[];
+  quantThresholds?: Record<string, number>;
+  quantReviewRequired?: boolean;
+  batchId?: string;
+  sourceFiles?: string[];
+  sourceRow?: number;
 }
 
 export interface ActionLog {

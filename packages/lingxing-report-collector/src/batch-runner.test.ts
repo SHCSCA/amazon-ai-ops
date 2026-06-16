@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import type { LingxingReportDefinition } from '@amazon-ai-ops/shared-types';
-import { runLingxingReportBatch } from './batch-runner';
+import { downloadExistingLingxingReportBatch, runLingxingReportBatch } from './batch-runner';
 
 describe('runLingxingReportBatch', () => {
   it('records all report files and writes a manifest', async () => {
@@ -90,6 +90,48 @@ describe('runLingxingReportBatch', () => {
     const manifest = JSON.parse(fs.readFileSync(result.batch.manifestPath!, 'utf8'));
     expect(manifest.files).toHaveLength(1);
     expect(manifest.files[0].reportType).toBe('keyword');
+  });
+
+  it('downloads already-created report rows without creating new reports', async () => {
+    const rootDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingxing-batch-existing-'));
+    const calls: string[] = [];
+
+    const result = await downloadExistingLingxingReportBatch({
+      dateStart: '2026-05-01',
+      dateEnd: '2026-05-25',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      rootDownloadDir,
+      appVersion: '1.5.0-test',
+      reportTypes: ['keyword'],
+      automation: {
+        async navigateToDownloadCenter() {
+          calls.push('navigate');
+        },
+        async createReport(report: LingxingReportDefinition) {
+          calls.push(`create:${report.type}`);
+          throw new Error('download existing must not create reports');
+        },
+        async waitForReportReady(report: LingxingReportDefinition) {
+          calls.push(`ready:${report.type}`);
+        },
+        async downloadReport(report: LingxingReportDefinition, downloadDir: string) {
+          calls.push(`download:${report.type}`);
+          fs.mkdirSync(downloadDir, { recursive: true });
+          const filePath = path.join(downloadDir, `${report.expectedFilenameKeyword}_2026-05-01_2026-05-25_existing.xlsx`);
+          fs.writeFileSync(filePath, 'x'.repeat(256), 'utf8');
+          return filePath;
+        },
+      },
+    });
+
+    expect(result.batch.status).toBe('completed');
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0]).toMatchObject({
+      reportType: 'keyword',
+      status: 'downloaded',
+    });
+    expect(calls).toEqual(['navigate', 'ready:keyword', 'download:keyword']);
   });
 
   it('records a failed single-report retry batch with the file error', async () => {
@@ -236,6 +278,158 @@ describe('runLingxingReportBatch', () => {
     expect(result.files[0].status).toBe('failed');
     expect(result.files[0].fileSizeBytes).toBe(256);
     expect(result.files[0].errorMessage).toContain('文件名未包含采集日期范围');
+  });
+
+  it('accepts a localized filename when the workbook headers identify the requested report type', async () => {
+    const rootDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingxing-batch-localized-name-'));
+
+    const result = await runLingxingReportBatch({
+      dateStart: '2026-05-01',
+      dateEnd: '2026-05-25',
+      rootDownloadDir,
+      reportTypes: ['keyword'],
+      maxRetries: 0,
+      automation: {
+        async navigateToDownloadCenter() {
+          return;
+        },
+        async createReport() {
+          return;
+        },
+        async waitForReportReady() {
+          return;
+        },
+        async downloadReport(_report: LingxingReportDefinition, downloadDir: string) {
+          fs.mkdirSync(downloadDir, { recursive: true });
+          const filePath = path.join(downloadDir, '领星广告数据_2026-05-01_2026-05-25.csv');
+          fs.writeFileSync(
+            filePath,
+            [
+              '日期,广告活动,广告组,关键词,匹配方式,展现量,点击量,花费,订单,销售额',
+              '2026-05-01,Campaign,Ad Group,smart lock,exact,100,10,12.5,1,30',
+              '2026-05-02,Campaign,Ad Group,keyless entry,phrase,100,10,12.5,1,30',
+              '2026-05-03,Campaign,Ad Group,keypad lock,broad,100,10,12.5,1,30',
+            ].join('\n'),
+            'utf8',
+          );
+          return filePath;
+        },
+      },
+    });
+
+    expect(result.batch.status).toBe('completed');
+    expect(result.files[0].status).toBe('downloaded');
+    expect(path.basename(result.files[0].filePath!)).toBe('领星广告数据_2026-05-01_2026-05-25.csv');
+  });
+
+  it('rejects a localized filename when headers identify a different report type', async () => {
+    const rootDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingxing-batch-wrong-localized-name-'));
+
+    const result = await runLingxingReportBatch({
+      dateStart: '2026-05-01',
+      dateEnd: '2026-05-25',
+      rootDownloadDir,
+      reportTypes: ['keyword'],
+      maxRetries: 0,
+      automation: {
+        async navigateToDownloadCenter() {
+          return;
+        },
+        async createReport() {
+          return;
+        },
+        async waitForReportReady() {
+          return;
+        },
+        async downloadReport(_report: LingxingReportDefinition, downloadDir: string) {
+          fs.mkdirSync(downloadDir, { recursive: true });
+          const filePath = path.join(downloadDir, '领星广告数据_2026-05-01_2026-05-25.csv');
+          fs.writeFileSync(
+            filePath,
+            [
+              '日期,广告活动,广告组,用户搜索词,展现量,点击量,花费,订单,销售额',
+              '2026-05-01,Campaign,Ad Group,smart lock,100,10,12.5,1,30',
+              '2026-05-02,Campaign,Ad Group,keyless entry,100,10,12.5,1,30',
+              '2026-05-03,Campaign,Ad Group,keypad lock,100,10,12.5,1,30',
+            ].join('\n'),
+            'utf8',
+          );
+          return filePath;
+        },
+      },
+    });
+
+    expect(result.batch.status).toBe('failed');
+    expect(result.files[0].status).toBe('failed');
+    expect(result.files[0].errorMessage).toContain('文件内容表头也无法识别为对应报表');
+  });
+
+  it('fails a downloaded report when the returned file is only audit evidence', async () => {
+    const rootDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingxing-batch-evidence-like-file-'));
+
+    const result = await runLingxingReportBatch({
+      dateStart: '2026-05-01',
+      dateEnd: '2026-05-25',
+      rootDownloadDir,
+      reportTypes: ['keyword'],
+      maxRetries: 0,
+      automation: {
+        async navigateToDownloadCenter() {
+          return;
+        },
+        async createReport() {
+          return;
+        },
+        async waitForReportReady() {
+          return;
+        },
+        async downloadReport(report: LingxingReportDefinition, downloadDir: string) {
+          fs.mkdirSync(downloadDir, { recursive: true });
+          const filePath = path.join(downloadDir, `audit_${report.expectedFilenameKeyword}_2026-05-01_2026-05-25.xlsx`);
+          fs.writeFileSync(filePath, 'x'.repeat(256), 'utf8');
+          return filePath;
+        },
+      },
+    });
+
+    expect(result.batch.status).toBe('failed');
+    expect(result.files[0].status).toBe('failed');
+    expect(result.files[0].fileSizeBytes).toBe(256);
+    expect(result.files[0].errorMessage).toContain('不是领星广告数据表格');
+  });
+
+  it('fails a downloaded report when the returned file is outside the batch download directory', async () => {
+    const rootDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingxing-batch-outside-file-'));
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingxing-outside-download-'));
+
+    const result = await runLingxingReportBatch({
+      dateStart: '2026-05-01',
+      dateEnd: '2026-05-25',
+      rootDownloadDir,
+      reportTypes: ['keyword'],
+      maxRetries: 0,
+      automation: {
+        async navigateToDownloadCenter() {
+          return;
+        },
+        async createReport() {
+          return;
+        },
+        async waitForReportReady() {
+          return;
+        },
+        async downloadReport(report: LingxingReportDefinition) {
+          const filePath = path.join(outsideDir, `${report.expectedFilenameKeyword}_2026-05-01_2026-05-25.xlsx`);
+          fs.writeFileSync(filePath, 'x'.repeat(256), 'utf8');
+          return filePath;
+        },
+      },
+    });
+
+    expect(result.batch.status).toBe('failed');
+    expect(result.files[0].status).toBe('failed');
+    expect(result.files[0].fileSizeBytes).toBe(256);
+    expect(result.files[0].errorMessage).toContain('不在当前批次下载目录内');
   });
 
   it('rejects invalid collection dates before accepting a filename date match', async () => {

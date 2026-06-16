@@ -24,6 +24,7 @@ const REPORT_KEYWORDS = {
   product_targeting: 'product_targeting',
   user_search_term: 'search_term',
 };
+const EVIDENCE_FILE_NAME_PATTERN = /(manifest|audit|diagnostic|screenshot|dom|trace|evidence|acceptance|batch-result|downloaded-report-files|failure)/i;
 
 const repoRoot = path.resolve(__dirname, '..');
 const evidenceDir = path.join(repoRoot, 'output', 'codex-evidence');
@@ -333,6 +334,9 @@ function verifyCanaryEvidence(evidencePath, options = {}) {
       : fail(`文件大小不一致：db=${dbFile.file_size_bytes}, manifest=${manifestFile.fileSizeBytes}, actual=${actualSize}`));
 
     const baseName = path.basename(dbFile.file_path).toLowerCase();
+    checks.push(!EVIDENCE_FILE_NAME_PATTERN.test(baseName)
+      ? pass('下载文件名不像审计/诊断证据')
+      : fail(`下载文件名像审计/诊断证据：${baseName}`));
     const reportKeyword = REPORT_KEYWORDS[dbFile.report_type];
     checks.push(reportKeyword && baseName.includes(reportKeyword)
       ? pass(`文件名包含 report keyword：${reportKeyword}`)

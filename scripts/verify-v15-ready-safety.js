@@ -14,6 +14,10 @@ function latestEvidence(pattern) {
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
 }
 
+function latestFinalReadinessEvidence() {
+  return latestEvidence(/^final-readiness-\d{4}-\d{2}-\d{2}\.json$/i);
+}
+
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
@@ -45,7 +49,7 @@ for (let index = 2; index < process.argv.length; index += 1) {
   }
 }
 
-const finalReadinessPath = path.resolve(args.get('final-readiness') || latestEvidence(/^final-readiness-.*\.json$/i) || '');
+const finalReadinessPath = path.resolve(args.get('final-readiness') || latestFinalReadinessEvidence() || '');
 const smokePath = path.resolve(args.get('ui-smoke') || latestEvidence(/^v15-product-readiness-ui-smoke-.*\.json$/i) || '');
 const bundleManifestPath = path.resolve(args.get('bundle-manifest') || latestBundleManifest() || '');
 const readmePath = path.join(root, 'README.md');
@@ -87,6 +91,12 @@ check(/广告 readback 已通过/.test(smokeText), 'UI smoke contains ad readbac
 check(!/NEEDS_WORK \/ 待真实审批 \/ 不可作为 READY 证据/.test(smokeText), 'UI smoke no longer shows stale readback blocker', failures);
 check(bundleManifest.status === 'APP_READY' && bundleManifest.appReady === true, 'delivery bundle manifest is APP_READY', failures);
 check(Array.isArray(bundleManifest.files) && bundleManifest.files.some((file) => file.label === 'scripts/verify-v15-ready-safety.js'), 'delivery bundle includes READY safety verifier', failures);
+check(bundleManifest.dataReconciliation?.present === true, 'delivery bundle includes current-scope data reconciliation summary', failures);
+check(Boolean(bundleManifest.dataReconciliation?.bundleJson), 'delivery bundle includes data reconciliation JSON file', failures);
+check(Boolean(bundleManifest.dataReconciliation?.bundleMarkdown), 'delivery bundle includes data reconciliation Markdown file', failures);
+check(Boolean(bundleManifest.dataReconciliation?.canonicalSource), 'delivery bundle records canonical data source', failures);
+check(Number(bundleManifest.dataReconciliation?.canonical?.spend || 0) > 0, 'delivery bundle records non-zero canonical ad spend', failures);
+check(Array.isArray(bundleManifest.dataReconciliation?.blockers) && bundleManifest.dataReconciliation.blockers.length === 0, 'delivery bundle data reconciliation has no blockers', failures);
 
 if (failures.length > 0) {
   console.error(`\nNEEDS_WORK: ${failures.length} READY safety check(s) failed.`);

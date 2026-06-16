@@ -12,13 +12,15 @@ export interface AdDailyMetrics {
   matchType: 'broad' | 'phrase' | 'exact' | 'auto';
   impressions: number;
   clicks: number;
-  cost: number;                    // 花费，单位：元
+  cost: number;                    // 花费，单位：USD
   orders: number;
   sales: number;                   // 销售额
+  currency?: 'USD' | string;       // 跨境广告金额统一按 USD 入库和展示
   acos: number;                    // 广告成本销售比 = cost/sales
   cpc: number;                     // 点击成本 = cost/clicks
   cvr: number;                     // 转化率 = orders/clicks
   sourceFile: string;
+  sourceRow?: number;
   batchId?: string;
   reportType?: string;
   portfolioName?: string;

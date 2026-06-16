@@ -103,10 +103,12 @@ function runMigrations(database: Database.Database): void {
       cost REAL DEFAULT 0,
       orders INTEGER DEFAULT 0,
       sales REAL DEFAULT 0,
+      currency TEXT DEFAULT 'USD',
       acos REAL DEFAULT 0,
       cpc REAL DEFAULT 0,
       cvr REAL DEFAULT 0,
       source_file TEXT,
+      source_row INTEGER,
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
@@ -242,12 +244,36 @@ function runMigrations(database: Database.Database): void {
       completed_at TEXT
     )
   `);
+
+  // operation_events
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS operation_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_date TEXT NOT NULL,
+      store_name TEXT NOT NULL,
+      marketplace_code TEXT NOT NULL,
+      asin TEXT,
+      campaign_name TEXT,
+      ad_group_name TEXT,
+      event_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      impact_expectation TEXT,
+      notes TEXT,
+      evidence_path TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
   ensureColumn(database, 'ad_daily_metrics', 'batch_id', 'TEXT');
   ensureColumn(database, 'ad_daily_metrics', 'report_type', 'TEXT');
   ensureColumn(database, 'ad_daily_metrics', 'portfolio_name', 'TEXT');
+  ensureColumn(database, 'ad_daily_metrics', 'currency', "TEXT DEFAULT 'USD'");
+  ensureColumn(database, 'ad_daily_metrics', 'source_row', 'INTEGER');
   ensureColumn(database, 'lingxing_report_batches', 'app_version', 'TEXT');
   ensureColumn(database, 'lingxing_report_batches', 'store_name', 'TEXT');
   ensureColumn(database, 'lingxing_report_batches', 'marketplace_code', 'TEXT');
+  ensureColumn(database, 'operation_events', 'campaign_name', 'TEXT');
+  ensureColumn(database, 'operation_events', 'ad_group_name', 'TEXT');
 
   // v1.5 lingxing_report_files
   database.exec(`
@@ -279,6 +305,29 @@ function runMigrations(database: Database.Database): void {
   ensureColumn(database, 'lingxing_report_files', 'failure_dom_snapshot_path', 'TEXT');
   ensureColumn(database, 'lingxing_report_files', 'failure_trace_path', 'TEXT');
   ensureColumn(database, 'lingxing_report_files', 'trace_unavailable_reason', 'TEXT');
+
+  // v1.5 business report file index
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS report_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id TEXT NOT NULL,
+      report_type TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      file_size INTEGER DEFAULT 0,
+      status TEXT NOT NULL,
+      imported_rows INTEGER DEFAULT 0,
+      file_hash TEXT,
+      import_error TEXT,
+      last_imported_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(batch_id, report_type, file_path)
+    )
+  `);
+  ensureColumn(database, 'report_files', 'file_hash', 'TEXT');
+  ensureColumn(database, 'report_files', 'import_error', 'TEXT');
+  ensureColumn(database, 'report_files', 'last_imported_at', 'TEXT');
 
   // v1.5 keyword_metrics
   database.exec(`
@@ -450,9 +499,34 @@ function runMigrations(database: Database.Database): void {
   ensureColumn(database, 'download_center_diagnostics', 'store_name', 'TEXT');
   ensureColumn(database, 'download_center_diagnostics', 'marketplace_code', 'TEXT');
 
-  // v1.5 duplicate-import safeguards. Keep one row per imported source row and
-  // one current opportunity per ASIN/keyword pair before adding unique indexes.
+  // v1.5 duplicate-import safeguards. Keep one row per imported ad metric,
+  // one row per imported keyword source row, and one current opportunity per
+  // ASIN/keyword pair before adding unique indexes.
   database.exec(`
+    DELETE FROM ad_daily_metrics
+    WHERE id NOT IN (
+      SELECT keep_id
+      FROM (
+        SELECT MAX(id) AS keep_id
+        FROM ad_daily_metrics
+        GROUP BY
+          COALESCE(batch_id, ''),
+          COALESCE(report_type, ''),
+          COALESCE(date, ''),
+          COALESCE(store_name, ''),
+          COALESCE(marketplace_code, ''),
+          COALESCE(asin, ''),
+          COALESCE(msku, ''),
+          COALESCE(campaign_name, ''),
+          COALESCE(ad_group_name, ''),
+          COALESCE(targeting, ''),
+          COALESCE(search_term, ''),
+          COALESCE(match_type, ''),
+          COALESCE(source_file, ''),
+          COALESCE(source_row, -1)
+      )
+    );
+
     DELETE FROM keyword_metrics
     WHERE source_file IS NOT NULL
       AND source_row IS NOT NULL
@@ -501,17 +575,62 @@ function runMigrations(database: Database.Database): void {
         GROUP BY COALESCE(asin, ''), normalized_keyword
       )
     );
+
+    DELETE FROM products
+    WHERE id NOT IN (
+      SELECT keep_id
+      FROM (
+        SELECT MAX(id) AS keep_id
+        FROM products
+        GROUP BY COALESCE(asin, ''), COALESCE(store_name, ''), COALESCE(marketplace_code, '')
+      )
+    );
+
+    DELETE FROM product_costs
+    WHERE id NOT IN (
+      SELECT keep_id
+      FROM (
+        SELECT MAX(id) AS keep_id
+        FROM product_costs
+        GROUP BY product_id
+      )
+    );
   `);
 
   // 创建索引
   database.exec(`
+    DROP INDEX IF EXISTS idx_ad_metrics_unique_daily_report_identity;
+
     CREATE INDEX IF NOT EXISTS idx_ad_metrics_date ON ad_daily_metrics(date);
     CREATE INDEX IF NOT EXISTS idx_ad_metrics_store ON ad_daily_metrics(store_name, marketplace_code);
     CREATE INDEX IF NOT EXISTS idx_ad_metrics_asin ON ad_daily_metrics(asin);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_products_unique_scope_asin ON products(asin, store_name, marketplace_code);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_product_costs_unique_product ON product_costs(product_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ad_metrics_unique_daily_report_identity ON ad_daily_metrics(
+      COALESCE(batch_id, ''),
+      COALESCE(report_type, ''),
+      COALESCE(date, ''),
+      COALESCE(store_name, ''),
+      COALESCE(marketplace_code, ''),
+      COALESCE(asin, ''),
+      COALESCE(msku, ''),
+      COALESCE(campaign_name, ''),
+      COALESCE(ad_group_name, ''),
+      COALESCE(targeting, ''),
+      COALESCE(search_term, ''),
+      COALESCE(match_type, ''),
+      COALESCE(source_file, ''),
+      COALESCE(source_row, -1)
+    );
     CREATE INDEX IF NOT EXISTS idx_recommendations_status ON action_recommendations(status);
     CREATE INDEX IF NOT EXISTS idx_recommendations_risk ON action_recommendations(risk_level);
+    CREATE INDEX IF NOT EXISTS idx_operation_events_scope ON operation_events(event_date, store_name, marketplace_code, asin);
+    CREATE INDEX IF NOT EXISTS idx_operation_events_ad_context ON operation_events(campaign_name, ad_group_name);
+    CREATE INDEX IF NOT EXISTS idx_operation_events_type ON operation_events(event_type);
     CREATE INDEX IF NOT EXISTS idx_action_logs_created ON action_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_lingxing_report_files_batch ON lingxing_report_files(batch_id);
+    CREATE INDEX IF NOT EXISTS idx_report_files_batch ON report_files(batch_id);
+    CREATE INDEX IF NOT EXISTS idx_report_files_type_status ON report_files(report_type, status);
     CREATE INDEX IF NOT EXISTS idx_keyword_metrics_keyword ON keyword_metrics(normalized_keyword);
     CREATE INDEX IF NOT EXISTS idx_keyword_metrics_source_file ON keyword_metrics(source, source_file);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_keyword_metrics_unique_source_file_row ON keyword_metrics(source, source_file, source_row)

@@ -62,7 +62,7 @@ export class RecommendationRepository {
         AND entity_id = ?
         AND action_type = ?
         AND COALESCE(NULLIF(json_extract(evidence_json, '$.date'), ''), '') = ?
-        AND status IN ('pending', 'approved', 'rejected', 'executed')
+        AND status IN ('pending', 'needs_review', 'approved', 'rejected', 'executed')
       ORDER BY created_at DESC
       LIMIT 1
     `).get(
@@ -143,6 +143,19 @@ export class RecommendationRepository {
       SET status = ?, updated_at = datetime('now')
       WHERE id = ?
     `).run(status, id);
+  }
+
+  updateStatusWithEvidence(id: number, status: string, evidencePatch: Record<string, unknown>): void {
+    const current = this.findById(id);
+    const nextEvidence = {
+      ...(current?.evidence || {}),
+      ...evidencePatch,
+    };
+    this.db.prepare(`
+      UPDATE action_recommendations
+      SET status = ?, evidence_json = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(status, JSON.stringify(nextEvidence), id);
   }
 
   countByDate(date: string): number {

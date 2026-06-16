@@ -233,17 +233,35 @@ for (const gate of gates) {
 
 const reportReady = gates[0].ok;
 const listingReady = gates[1].ok;
-const appReady = gates.every((gate) => gate.ok);
+const allGatesPass = gates.every((gate) => gate.ok);
+const manifestDriven = Boolean(evidenceManifest);
+const appReady = manifestDriven && allGatesPass;
+const missing = [];
+const actionItems = [];
+if (!manifestDriven) {
+  missing.push('最终验收未使用 evidence manifest，latest fallback 只能用于诊断，不能声明 APP_READY。');
+  actionItems.push('先运行 write:v15-evidence-manifest，再用 --evidence-manifest 重新运行 verify:v15-final-readiness。');
+}
+for (const gate of gates) {
+  if (!gate.ok) {
+    missing.push(gate.message || `${gate.name} 未通过。`);
+    actionItems.push(`补齐 ${gate.name} 证据后重新运行最终验收。`);
+  }
+}
 const summary = {
   generatedAt: new Date().toISOString(),
   evidenceSelection: {
     mode: evidenceManifest ? 'manifest' : 'latest-fallback',
     manifestPath: evidenceManifestPath || null,
   },
+  manifestDriven,
   status: appReady ? 'APP_READY' : reportReady && listingReady ? 'APP_NEEDS_WORK' : 'REPORT_COLLECTION_NEEDS_WORK',
   reportCollectionReady: reportReady,
   listingReadReady: listingReady,
   appReady,
+  allGatesPass,
+  missing,
+  actionItems,
   gates: gates.map((gate) => ({
     name: gate.name,
     status: gate.status,

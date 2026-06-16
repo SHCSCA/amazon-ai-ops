@@ -20,9 +20,11 @@ function metric(overrides: Partial<KeywordMetric>): KeywordMetric {
 }
 
 describe('aggregateKeywordMetrics', () => {
-  it('aggregates multi-row metrics for the same asin and normalized keyword', () => {
+  it('aggregates multi-row metrics for the same asin, ad context, and normalized keyword', () => {
     const result = aggregateKeywordMetrics([
       metric({
+        campaignName: 'Auto Campaign',
+        adGroupName: 'Core Group',
         rawKeyword: 'Insulated Mug',
         clicks: 10,
         impressions: 100,
@@ -31,6 +33,8 @@ describe('aggregateKeywordMetrics', () => {
         sales: 100,
       }),
       metric({
+        campaignName: 'Auto Campaign',
+        adGroupName: 'Core Group',
         rawKeyword: ' insulated   mug ',
         clicks: 5,
         impressions: 50,
@@ -40,6 +44,8 @@ describe('aggregateKeywordMetrics', () => {
       }),
       metric({
         asin: 'B002',
+        campaignName: 'Auto Campaign',
+        adGroupName: 'Core Group',
         rawKeyword: 'Insulated Mug',
         clicks: 7,
         impressions: 70,
@@ -72,6 +78,21 @@ describe('aggregateKeywordMetrics', () => {
     expect(result.map((item) => item.asin).sort()).toEqual(['B001', 'B002']);
   });
 
+  it('keeps the same keyword separated across campaigns and ad groups', () => {
+    const result = aggregateKeywordMetrics([
+      metric({ asin: 'B001', campaignName: 'Auto Campaign', adGroupName: 'Core Group', rawKeyword: 'Insulated Mug', clicks: 10 }),
+      metric({ asin: 'B001', campaignName: 'Manual Campaign', adGroupName: 'Core Group', rawKeyword: 'Insulated Mug', clicks: 8 }),
+      metric({ asin: 'B001', campaignName: 'Auto Campaign', adGroupName: 'Research Group', rawKeyword: 'Insulated Mug', clicks: 6 }),
+    ]);
+
+    expect(result).toHaveLength(3);
+    expect(result.map((item) => `${item.campaignName}/${item.adGroupName}/${item.clicks}`).sort()).toEqual([
+      'Auto Campaign/Core Group/10',
+      'Auto Campaign/Research Group/6',
+      'Manual Campaign/Core Group/8',
+    ]);
+  });
+
   it('builds distinct opportunities for the same keyword on different ASINs', () => {
     const result = buildKeywordOpportunities([
       metric({ asin: 'B001', rawKeyword: 'Insulated Mug', clicks: 20, orders: 3, sales: 120, cost: 24 }),
@@ -80,6 +101,17 @@ describe('aggregateKeywordMetrics', () => {
 
     expect(result).toHaveLength(2);
     expect(result.map((item) => item.asin).sort()).toEqual(['B001', 'B002']);
+    expect(result.every((item) => item.normalizedKeyword === 'insulated mug')).toBe(true);
+  });
+
+  it('builds distinct opportunities for the same keyword in different ad groups', () => {
+    const result = buildKeywordOpportunities([
+      metric({ asin: 'B001', campaignName: 'Auto Campaign', adGroupName: 'Core Group', rawKeyword: 'Insulated Mug', clicks: 20, orders: 3, sales: 120, cost: 24 }),
+      metric({ asin: 'B001', campaignName: 'Auto Campaign', adGroupName: 'Research Group', rawKeyword: 'Insulated Mug', clicks: 18, orders: 2, sales: 80, cost: 16 }),
+    ]);
+
+    expect(result).toHaveLength(2);
+    expect(result.every((item) => item.asin === 'B001')).toBe(true);
     expect(result.every((item) => item.normalizedKeyword === 'insulated mug')).toBe(true);
   });
 

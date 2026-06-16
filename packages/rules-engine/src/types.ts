@@ -8,6 +8,7 @@ export interface RuleConfig {
   minCpc: number;               // 最小 CPC
   noOrderClickThreshold: number; // 无点击阈值（次）
   highAcosThreshold: number;    // 高 ACOS 阈值
+  minSpend: number;             // 最低样本花费
   lowPerformanceDays: number;   // 低效果天数阈值
   
   // 否词规则
@@ -34,6 +35,7 @@ export const DEFAULT_RULE_CONFIG: RuleConfig = {
   minCpc: 0.02,
   noOrderClickThreshold: 30,
   highAcosThreshold: 0.40,
+  minSpend: 10,
   lowPerformanceDays: 7,
   maxDailyNegativeWords: 50,
   maxBatchNegativeWords: 20,

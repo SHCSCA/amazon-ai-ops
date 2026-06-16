@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import type { LingxingReportType } from '@amazon-ai-ops/shared-types';
 import { analyzeFilenameDateRange, filenameDateRangeAnalysisSummary } from './filename-date-range';
+import { inspectReportFileContent } from './report-file-inspector';
 
 export interface FileVerificationResult {
   valid: boolean;
@@ -12,6 +14,21 @@ export interface DownloadedFileVerificationOptions {
   minBytes?: number;
   expectedFilenameKeyword?: string;
   expectedDateRange?: { start: string; end: string };
+  expectedDownloadDir?: string;
+  expectedReportType?: LingxingReportType;
+}
+
+const EVIDENCE_FILE_NAME_PATTERN = /(manifest|audit|diagnostic|screenshot|dom|trace|evidence|acceptance|batch-result|downloaded-report-files|failure)/i;
+
+function isPathInsideDirectory(candidatePath: string, parentDir: string): boolean {
+  try {
+    const realCandidate = fs.realpathSync(candidatePath);
+    const realParent = fs.realpathSync(parentDir);
+    const relative = path.relative(path.resolve(realParent), realCandidate);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  } catch {
+    return false;
+  }
 }
 
 export function verifyDownloadedFile(
@@ -35,8 +52,12 @@ export function verifyDownloadedFile(
   }
 
   const basename = path.basename(filePath);
-  if (options.expectedFilenameKeyword && !basename.toLowerCase().includes(options.expectedFilenameKeyword.toLowerCase())) {
-    return { valid: false, fileSizeBytes: stat.size, errorMessage: `文件名未包含预期关键词：${options.expectedFilenameKeyword}` };
+  if (EVIDENCE_FILE_NAME_PATTERN.test(basename)) {
+    return { valid: false, fileSizeBytes: stat.size, errorMessage: '文件名像审计/诊断证据，不是领星广告数据表格' };
+  }
+
+  if (options.expectedDownloadDir && !isPathInsideDirectory(filePath, options.expectedDownloadDir)) {
+    return { valid: false, fileSizeBytes: stat.size, errorMessage: '下载文件不在当前批次下载目录内' };
   }
 
   if (options.expectedDateRange) {
@@ -59,6 +80,23 @@ export function verifyDownloadedFile(
 
   if (stat.size < minBytes) {
     return { valid: false, fileSizeBytes: stat.size, errorMessage: '文件过小，可能下载失败' };
+  }
+
+  if (options.expectedFilenameKeyword && !basename.toLowerCase().includes(options.expectedFilenameKeyword.toLowerCase())) {
+    if (!options.expectedReportType) {
+      return { valid: false, fileSizeBytes: stat.size, errorMessage: `文件名未包含预期关键词：${options.expectedFilenameKeyword}` };
+    }
+    const inspection = inspectReportFileContent(filePath, options.expectedReportType);
+    if (!inspection.matched) {
+      const reason = inspection.readable
+        ? '文件内容表头也无法识别为对应报表'
+        : `文件内容不可读取：${inspection.errorMessage || 'unknown error'}`;
+      return {
+        valid: false,
+        fileSizeBytes: stat.size,
+        errorMessage: `文件名未包含预期关键词：${options.expectedFilenameKeyword}，${reason}`,
+      };
+    }
   }
 
   return { valid: true, fileSizeBytes: stat.size };

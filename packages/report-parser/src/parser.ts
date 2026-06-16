@@ -10,6 +10,7 @@ export interface ParseOptions {
   skipHeaderRows?: number;  // 跳过前几行表头，默认 0
   requiredFields?: string[]; // 额外必填字段
   dateFormat?: string;      // 日期格式，默认 'YYYY-MM-DD'
+  reportType?: string;      // 调用方已知报表类型，优先于文件名推断
 }
 
 function inferReportType(sourceFile: string): string | undefined {
@@ -62,7 +63,8 @@ export class ReportParser {
       throw new Error(`File not found: ${filePath}`);
     }
 
-    const workbook = XLSX.readFile(filePath, { type: 'file' });
+    const csvText = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+    const workbook = XLSX.read(csvText, { type: 'string' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     
@@ -109,7 +111,7 @@ export class ReportParser {
 
     // 转换为 AdDailyMetrics
     const metrics: AdDailyMetrics[] = normalizedRows.map((row, index) => {
-      return this.mapToAdMetrics(row, sourceFile);
+      return this.mapToAdMetrics(row, sourceFile, options, index + skipRows + 2);
     }).filter(m => m.date && (m.asin || m.campaignName || m.adGroupName || m.targeting || m.searchTerm)); // 过滤无效行
 
     return {
@@ -126,7 +128,7 @@ export class ReportParser {
   /**
    * 将行数据映射为 AdDailyMetrics
    */
-  private mapToAdMetrics(row: Record<string, any>, sourceFile: string): AdDailyMetrics {
+  private mapToAdMetrics(row: Record<string, any>, sourceFile: string, options: ParseOptions, sourceRow: number): AdDailyMetrics {
     // 尝试从多个可能的字段名中取值
     const getValue = (field: string): any => {
       const lowerField = field.toLowerCase();
@@ -167,11 +169,13 @@ export class ReportParser {
       cost,
       orders,
       sales,
+      currency: 'USD',
       acos,
       cpc,
       cvr,
       sourceFile,
-      reportType: inferReportType(sourceFile),
+      sourceRow,
+      reportType: options.reportType || inferReportType(sourceFile),
     };
   }
 

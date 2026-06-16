@@ -159,6 +159,9 @@ export interface KeywordMetric {
   rawKeyword: string;
   source: 'search_term' | 'sqp' | 'keyword_report' | 'manual';
   asin?: string;
+  portfolioName?: string;
+  campaignName?: string;
+  adGroupName?: string;
   clicks: number;
   impressions: number;
   cost: number;

@@ -5,6 +5,15 @@ export function toUserFacingError(error: unknown, fallback: string): string {
   if (/browser session is not ready/i.test(message)) {
     return '浏览器会话未就绪：请先登录领星 ERP，并从 ERP 广告入口进入 Ads 后重试。';
   }
+  if (/只读数据接口未暴露|getBusinessUiDataPipeline|electronAPI/i.test(message)) {
+    return '应用运行环境异常：当前页面没有连接到桌面端数据接口。请使用最新安装版或免安装版重新打开。';
+  }
+  if (/not implemented|not exposed|未暴露/i.test(message)) {
+    return '功能入口尚未连接到桌面端接口：请重新打开最新安装版；如果仍出现，请导出诊断证据。';
+  }
+  if (/missing|not found/i.test(message) && /report|file|path|batch/i.test(message)) {
+    return '当前范围缺少可用文件或数据批次：请先在数据采集页确认真实报表文件存在并完成导入。';
+  }
   if (/requires manual verification|manual verification/i.test(message)) {
     return '页面模型仍在人工复核状态：需完成 8 类单报表验证和启用审计后再放行完整采集。';
   }
