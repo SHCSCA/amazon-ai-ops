@@ -7,6 +7,7 @@ const SYSTEM_PROMPT = `你是一个亚马逊广告优化专家。你需要解释
 1. 清晰说明动作建议的理由
 2. 指出可能的风险和注意事项
 3. 提供可替代的建议（如果有）
+4. 金额全部使用 USD 货币格式，避免其他货币称谓或符号
 
 输出格式（JSON）：
 {
@@ -25,9 +26,9 @@ export class AdActionReasonExplainer {
 当前数据表现：
 - 展现量: ${input.currentMetrics.impressions}
 - 点击量: ${input.currentMetrics.clicks}
-- 花费: ¥${input.currentMetrics.cost.toFixed(2)}
+- 花费: USD ${input.currentMetrics.cost.toFixed(2)}
 - 订单数: ${input.currentMetrics.orders}
-- 销售额: ¥${input.currentMetrics.sales.toFixed(2)}
+- 销售额: USD ${input.currentMetrics.sales.toFixed(2)}
 - ACOS: ${(input.currentMetrics.acos * 100).toFixed(1)}%
 
 建议动作: ${input.recommendedAction}
@@ -46,7 +47,7 @@ export class AdActionReasonExplainer {
 
     if (!response.success) {
       return {
-        explanation: `建议${input.recommendedAction}：基于当前ACOS ${(input.currentMetrics.acos * 100).toFixed(1)}%的表现做出的判断。`,
+        explanation: `建议${input.recommendedAction}：基于当前 ACOS ${(input.currentMetrics.acos * 100).toFixed(1)}%、花费 USD ${input.currentMetrics.cost.toFixed(2)} 的表现做出的判断。`,
         riskWarnings: ['无法获取AI详细解释'],
         source: 'rule',
         aiFallbackReason: response.error || 'AI 未返回解释，使用规则解释',

@@ -1,5 +1,5 @@
 import type { AdDailyMetrics, ActionRecommendation, RiskLevel } from '@amazon-ai-ops/shared-types';
-import { AdRules } from './ad-rules';
+import { AdQuantifier, type QuantifiedAdMetric } from './quantification';
 import { RiskEvaluator } from './risk-evaluator';
 import type { RuleConfig, RuleResult } from './types';
 
@@ -11,11 +11,11 @@ export interface GenerateOptions {
 }
 
 export class RecommendationGenerator {
-  private adRules: AdRules;
+  private adQuantifier: AdQuantifier;
   private riskEvaluator: RiskEvaluator;
 
   constructor(config: RuleConfig) {
-    this.adRules = new AdRules(config);
+    this.adQuantifier = new AdQuantifier(config);
     this.riskEvaluator = new RiskEvaluator(config);
   }
 
@@ -23,20 +23,12 @@ export class RecommendationGenerator {
    * 为单条广告数据生成建议
    */
   generateFromMetrics(metrics: AdDailyMetrics, options: GenerateOptions): ActionRecommendation | null {
-    const input = {
-      metrics,
-      config: options.config,
-    };
-
-    // 执行所有规则
-    const results = this.adRules.evaluateAll(input);
-    
-    if (results.length === 0) {
+    const quant = this.adQuantifier.quantify(metrics);
+    if (!quant.recommendedAction) {
       return null;
     }
 
-    // 取第一条触发的规则
-    const ruleResult = results[0];
+    const ruleResult = quantToRuleResult(quant);
     
     // 评估风险
     const currentBid = parseFloat(metrics.cpc.toString());
@@ -60,6 +52,13 @@ export class RecommendationGenerator {
       cvr: metrics.cvr,
       searchTerm: metrics.searchTerm,
       matchType: metrics.matchType,
+      quantStatus: quant.status,
+      quantLifecycleStage: quant.lifecycleStage,
+      quantSeverity: quant.severity,
+      quantReasons: quant.reasons,
+      quantThresholds: quant.thresholds,
+      quantReviewRequired: quant.reviewRequired,
+      sourceRow: metrics.sourceRow,
     };
 
     return {
@@ -77,9 +76,9 @@ export class RecommendationGenerator {
       recommendedValue: ruleResult.recommendedValue || '',
       reason: ruleResult.reason,
       evidence,
-      confidence: ruleResult.confidence,
+      confidence: Math.max(ruleResult.confidence, quant.confidence),
       riskLevel: risk.riskLevel,
-      status: 'pending',
+      status: quant.reviewRequired ? 'needs_review' : 'pending',
     };
   }
 
@@ -103,7 +102,23 @@ export class RecommendationGenerator {
    * 更新配置并重建规则实例
    */
   updateConfig(config: RuleConfig): void {
-    this.adRules = new AdRules(config);
+    this.adQuantifier = new AdQuantifier(config);
     this.riskEvaluator = new RiskEvaluator(config);
   }
+}
+
+function quantToRuleResult(quant: QuantifiedAdMetric): RuleResult {
+  return {
+    triggered: true,
+    actionType: quant.recommendedAction,
+    recommendedValue: quant.recommendedValue,
+    reason: quant.reasons.join('；'),
+    confidence: quant.confidence,
+    evidence: {
+      metric: quant.status,
+      currentValue: Number(quant.metric.cost || 0),
+      threshold: quant.thresholds.minSpend,
+      unit: 'USD',
+    },
+  };
 }

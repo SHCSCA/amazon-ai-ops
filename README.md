@@ -8,17 +8,17 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 
 | 项目 | 状态 | 证据/位置 |
 |---|---:|---|
-| v1.5 基线合并 | 已完成 | `master...origin/master` 当前同步到已推送的 v1.5 基线 |
-| 本轮收尾改动 | 本地未提交 | 包含操作员验收门、单报表 canary、packaged runtime 依赖修复、ERP-to-Ads 登录入口修复、浏览器错误脱敏、广告执行 fail-closed、AI/DeepSeek 设置测试连接、AI live 脱敏证据脚本、Lingxing Listing 只读读取入口、源代码版 Listing 详情读取证据和交付证据脚本 |
-| 本地测试 | 通过 | 最终节点已按用户要求跑一次全量：`pnpm test` 通过，37 test files / 191 passed / 2 skipped |
+| v1.5 基线合并 | 已完成 | 当前交付分支 `codex/business-ui-redesign` 已完成最终验收，待合并推送到 `master` |
+| 本轮收尾改动 | 已完成待合并 | 包含后台菜单重构、全局工作范围、真实广告数据链路、数据导入与校验、运营事件、广告量化、AI + 规则建议、审批/执行回读、关键词/Listing 页面拆分、READY safety 和交付证据包刷新 |
+| 本地测试 | 通过 | 最终节点已按用户要求跑一次全量：`pnpm test` 通过，50 test files / 240 passed / 2 skipped |
 | 类型检查 | 通过 | `pnpm -r run typecheck` 通过 |
 | 桌面构建 | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:win` 通过并生成最终 Windows 安装包 |
 | 打包应用冒烟 | 通过 | `apps\desktop\release\win-unpacked\AmazonAIOpsAgent.exe` 启动后 8 秒仍存活，随后停止，无残留 `AmazonAIOpsAgent` 进程 |
-| 最终安装包证据 | 通过 | `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`，SHA-256 `96648ADD7F51C2CFAC8289CD61F5449FE2453C556127C049668F6FB3613FEBC1`，大小 `89678328` bytes，最后构建 `2026-06-10 14:48:01` |
+| 最终安装包证据 | 通过 | `apps/desktop/release/AmazonAIOpsAgent-1.5.0.exe`，SHA-256 `49CB66AB2356475B69988571CC1D3707586E293BCC013B09D3D4F1320BAD207E`，大小 `89809746` bytes，最后构建 `2026-06-16 00:55:11`；无安装版 `apps/desktop/release/AmazonAIOpsAgent-1.5.0-portable.exe`，SHA-256 `71E82D4752EC2BE14C60CF34A405BB844929EFAB106BB68A38CEB412B6CBA913`，大小 `89643993` bytes |
 | 当前安装版启动复验 | 通过 | 已清理 2026-06-03 旧安装目录并用当前 installer 覆盖；从系统应用入口打开进入登录页，不再出现主进程 JavaScript error |
-| 关键词/Listing v1.5 工作流 | 结构完成，真实详情读取已验证 | 左侧菜单已按后台业务域拆成 `广告运营`、`关键词与 Listing`、`交付与系统` 等分组，`交付验收` 不再混在日常操作入口前面；`广告报表`、`关键词机会`、`Listing 优化` 各自有独立页面说明、主任务和验收口径。Listing 页新增 `读取 Listing -> 生成建议 -> 采纳建议 -> 生成草案 -> 导出交付` 流程状态条；导入、诊断、机会评分、建议、只用已采纳建议生成草案、AI 回退原因、草案审查表、复制草案、最近导出打开、草案导出、从当前领星页面/指定 URL 只读读取入口已接入；源代码版真实详情页已读到 ASIN/title、10 条五点和后台词，AI 改写仍需真实 Key 证据 |
+| 关键词/Listing v1.5 工作流 | 结构完成，真实详情读取和 AI 草案已验证 | 左侧菜单已按后台业务域拆成 `运营总览`、`数据与量化`、`广告执行`、`关键词与 Listing`、`系统与交付`。`数据采集`、`数据导入与校验`、`广告量化`、`优化建议`、`审批中心`、`执行回读`、`关键词机会`、`Listing 优化` 各自独立承载业务流程，`交付验收` 只汇总证据，不承载日常操作。Listing 页已接入读取、建议、采纳、草案和导出流程；真实详情页读取和 Listing AI 草案均有最终 READY 证据 |
 | 领星下载中心采集 | full-8 真实 E2E 通过 | 当前安装版完成 ERP -> Ads 会话确认、启用后诊断 id `27` 通过；full-8 批次 `batch_20260609045655853_ft8uda` 下载 8/8、失败 0，DB/manifest/文件系统/验收审计均通过 `pnpm run verify:v15-delivery -- output\codex-evidence\desktop-live-full-8-e2e-2026-06-09.json` |
-| 广告指标口径 | 需复核 | `output/codex-evidence/full8-data-reconciliation-2026-06-09.json` 显示当前 full-8 范围权威用户搜索词口径为 spend `145.20`、orders `5`、sales `324.95`；campaign/ad_group/placement/advertised_product/user_search_term 是不同维度展开，不能直接相加 |
+| 广告指标口径 | 通过 | 当前 AppData 真实数据链路已通过：批次 `batch_20260612020905629_gkchz1`，范围 `2026-06-01` 至 `2026-06-12` / `FT-US-US` / `US`，8/8 真实报表文件，2416 行入库指标，权威 `user_search_term` 口径 spend USD `617.87`、orders `19`、sales `1089.79`。campaign/ad_group/placement/advertised_product/user_search_term 是不同维度展开，不能直接相加 |
 | 广告建议执行 | 人工 readback 样例已通过，应用内执行仍 fail-closed | UI 的列表执行按钮仍显示为“生成阻断审计”，避免未绑定动态目标时批量写入广告账户。真实执行验收通过的是一次人工 Ads UI 低风险动作：暂停 target `紧密匹配` 出价 `1.20 -> 1.08`，并完成 before/after/reload readback。建议生成已接入 DeepSeek/OpenAI-compatible 解释链：有 Key 时记录 `explanationSource=ai`、AI explanation/model/risk，缺 Key 或失败时保留规则建议并显示 fallback |
 | 广告建议 AI 解释证据 | 通过 | `output\codex-evidence\installed-ad-ai-explanation-user-key-2026-06-10.json` 由安装版 app 生成并通过 `pnpm run verify:ad-ai-explanation -- <evidence>`；证据证明 packaged app、真实 DeepSeek Key、AI 连接测试成功、只读安全标记、AI 设置恢复、266 条范围指标、1 条 `explanationSource=ai` 建议、store/site/ASIN/entity/action/metricDate 上下文、无 fallback、无密钥泄漏 |
 | 广告 readback 证据契约 | 真实样例通过，通用合同已接入 UI | `output\codex-evidence\real-ad-execution-readback-candidate-rec-1.json` 已通过 `pnpm run verify:ad-readback -- <evidence>`。证据包含显式 operator approval、可追溯审批凭证、低风险 action、store/site/campaign/ad group/entity/action 上下文、before/after 截图、live bid 来源说明、值变化、readback actualValue、独立 readback evidence 文件、`execution.channel=manual_ads_ui`、`appExecutorUsed=false`、执行人、时间顺序、无 full8/listing AI 混入、无密钥泄漏。UI 已从固定候选升级为通用目标录入：后续任意品、广告组或投放对象都必须填写自己的动态 target/source/before/after/readback 字段，不能复用本次 D6 样例 |
@@ -29,7 +29,7 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | Listing AI 草案证据 | 通过 | `output\codex-evidence\installed-listing-ai-draft-user-key-2026-06-10.json` 通过 `pnpm run verify:listing-ai-draft -- <evidence>`；证据证明本地 Listing 草案模式无广告写入/无 full-8 报表，AI 连接成功，基于 accepted suggestion 生成 `source=ai` 草案，无 fallback，含 `AI reason`，并恢复 AI 设置 |
 | 最终就绪聚合门 | 当前输出 APP_READY | `pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-1.json ...` 固定本次证据选择后，`pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-10.json --out output\codex-evidence\final-readiness-2026-06-10.json` 汇总报表采集、Listing 读取、AI live、广告建议 AI 解释、Listing AI 草案和广告真实回读证据；六项 gate 均 passed，`status=APP_READY` |
 | READY 安全门 | 通过 | `pnpm run verify:v15-ready-safety` 检查 final readiness、evidence manifest、README、最新 UI smoke 和 READY bundle manifest 口径一致。旧 `verify:v15-non-ready-safety` 只用于历史非 READY 阶段，不应作为当前 APP_READY 的最终门 |
-| 交付证据包 | 已导出 READY 包 | `output\delivery-bundles\v15-delivery-bundle-2026-06-10` 已基于当前 APP_READY 文档和最新 UI smoke 重新导出，manifest 状态 `APP_READY`；导出脚本强制 final readiness 必须来自 `evidenceSelection.mode=manifest`，并使用允许路径白名单、敏感信息扫描和禁入扩展名检查，不包含 DB、浏览器 profile、原始 xlsx、exe、API Key 或密码 |
+| 交付证据包 | 已导出 READY 包 | `output\delivery-bundles\v15-delivery-bundle-2026-06-15T17-00-08-661Z` 已基于当前 APP_READY 文档、最终 readiness、真实 readback 和当前批次数据对账重新导出，manifest 状态 `APP_READY`；导出脚本强制 final readiness 必须来自 `evidenceSelection.mode=manifest`，并使用允许路径白名单、敏感信息扫描和禁入扩展名检查，不包含 DB、浏览器 profile、原始 xlsx、exe、API Key 或密码 |
 | 交付证据脚本 | 通过 | `verify:v15-canary` 已覆盖 8/8 单报表；`verify:v15-enablement` 通过；`verify:v15-delivery` 已通过并同时验证广告执行 fail-closed、DB/manifest/audit 一致性和 full-8 xlsx 指标对账 |
 
 ## 核心目标
@@ -123,7 +123,8 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | `output/codex-evidence/installed-canary-campaign-2026-06-08T06-38Z.json` | 当前安装版在 `2026-05-01` ~ `2026-05-25` / `FT-US-US` / `US` 范围完成 `campaign` 单报表真实生成/下载；DB、manifest、文件系统、文件名日期 token 和文件大小一致 |
 | `output/codex-evidence/installed-live-diagnostic-enabled-model-2026-06-09.json` | 启用后的 page model 诊断 id `26` 通过；`requiresManualVerification: false`，preflight 三项全部 passed |
 | `output/codex-evidence/desktop-live-full-8-e2e-2026-06-09.json` | 安装版 full-8 E2E 通过；批次 `batch_20260609045655853_ft8uda`，8 个 `.xlsx` 均 downloaded，0 failed，acceptance audit passed |
-| `output/codex-evidence/v15-product-readiness-ui-smoke-1781072779324.json` | 当前产品状态 smoke；确认左侧菜单按 `运营总览/广告运营/关键词与 Listing/交付与系统` 分组，旧 `v1.5 工作台` 不再出现；`交付验收` 页显示 `APP_READY`、真实 readback 已通过和 manifest 聚合；`优化建议` 页显示已验证 readback 样例、通用执行合同、动态 target/source 录入、本地预检、Readback 操作手册复制按钮和 no console error |
+| `output/codex-evidence/business-ui-shell-smoke-1781541447674.json` | 当前后台框架 smoke；确认左侧菜单按 `运营总览`、`数据与量化`、`广告执行`、`关键词与 Listing`、`系统与交付` 分组，旧 `v1.5 工作台` 不再作为总入口；`交付验收` 只汇总最终证据，不承载日常操作 |
+| `output/codex-evidence/business-ui-data-pipeline-smoke-1781541458285.json` | 当前数据链路 smoke；确认 `数据采集` 和 `数据导入与校验` 分离，真实表格、导入指标、USD 口径和当前操作范围可见 |
 | `output/codex-evidence/v15-delivery-ui-smoke-1781072776206.png` | 当前 renderer build 的 `交付验收` 截图；显示“交付状态：APP_READY 证据已闭环”、六项 gate、广告 readback 已通过、最终发布前刷新 READY 包和安装包 |
 | `output/codex-evidence/v15-reports-ui-smoke-1781068095973.png` | 当前 `广告报表` 页面截图；显示当前范围、已验证 full-8 范围预设、下一步、页面诊断、单报表覆盖、完整采集和验收审计门 |
 | `output/codex-evidence/v15-recommendations-ad-readback-ui-smoke-1781072777685.png` | 当前 `优化建议` 页面截图；显示已验证 full-8 范围预设、建议生成、广告执行 readback PASS 样例、`通用执行合同`、动态目标字段（店铺/站点/广告组合/campaign/ad group/对象/action）、建议来源字段、before/after/readback 证据录入和导出 |
@@ -194,7 +195,7 @@ pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real
 pnpm run verify:v15-delivery
 pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-10.json --out output\codex-evidence\final-readiness-2026-06-10.json
 pnpm run verify:v15-ready-safety
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-2026-06-10.json --out output\delivery-bundles\v15-delivery-bundle-2026-06-10
+pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-2026-06-10.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-2026-06-15T17-00-08-661Z
 ```
 
 `run:v15-installed-live` 支持安装版只读诊断、显式指定的单报表 canary，以及 `--mode full8` 的完整 8 报表采集；三种模式都不会执行广告写操作。登录账号和密码必须通过环境变量 `LINGXING_USERNAME` / `LINGXING_PASSWORD` 提供，仓库不保存凭据。

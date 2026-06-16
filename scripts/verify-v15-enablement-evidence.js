@@ -13,6 +13,7 @@ const REPORTS = [
   ['product_targeting', 'product_targeting'],
   ['user_search_term', 'search_term'],
 ];
+const EVIDENCE_FILE_NAME_PATTERN = /(manifest|audit|diagnostic|screenshot|dom|trace|evidence|acceptance|batch-result|downloaded-report-files|failure)/i;
 
 const repoRoot = path.resolve(__dirname, '..');
 const evidenceDir = path.join(repoRoot, 'output', 'codex-evidence');
@@ -224,6 +225,7 @@ function verifyEnablementEvidence(evidencePath) {
         const actualSize = fs.statSync(row.filePath).size;
         if (actualSize < 128 || row.fileSizeBytes !== actualSize) return false;
         const basename = path.basename(row.filePath).toLowerCase();
+        if (EVIDENCE_FILE_NAME_PATTERN.test(basename)) return false;
         return basename.includes(keyword) && basename.includes(startToken) && basename.includes(endToken);
       });
       if (match) covered.add(reportType);

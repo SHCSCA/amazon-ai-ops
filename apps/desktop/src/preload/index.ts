@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testAiSettings: (settings: any) => ipcRenderer.invoke('settings:test-ai', settings),
   getRuleConfig: () => ipcRenderer.invoke('settings:get-rule-config'),
   saveRuleConfig: (config: any) => ipcRenderer.invoke('settings:save-rule-config', config),
+  getOperationScope: () => ipcRenderer.invoke('settings:get-operation-scope'),
+  saveOperationScope: (scope: any) => ipcRenderer.invoke('settings:save-operation-scope', scope),
 
   // Browser
   browserLogin: (username: string, password: string) =>
@@ -29,12 +31,38 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectReportFile: () => ipcRenderer.invoke('report:select-file'),
   collectLingxingReports: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
     ipcRenderer.invoke('v1_5:reports:collect-lingxing', dateRange),
+  getBusinessUiDataPipeline: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+    ipcRenderer.invoke('v1_5:business-ui:data-pipeline', scope),
+  getBusinessBatchOptions: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+    ipcRenderer.invoke('v1_5:business-ui:batch-options', scope),
+  importCurrentBusinessReports: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+    ipcRenderer.invoke('v1_5:business-ui:import-current-reports', scope),
+  importLocalBusinessReportFiles: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+    ipcRenderer.invoke('v1_5:business-ui:import-local-report-files', scope),
+  getDeliveryReadiness: () => ipcRenderer.invoke('v1_5:delivery:readiness'),
+  exportDeliveryBundle: (scope?: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+    ipcRenderer.invoke('v1_5:delivery:export-bundle', scope),
+  exportDataReconciliation: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+    ipcRenderer.invoke('v1_5:delivery:export-data-reconciliation', scope),
+  getStoragePaths: () => ipcRenderer.invoke('v1_5:settings:storage-paths'),
+  getBusinessKeywordOpportunities: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+    ipcRenderer.invoke('v1_5:business-ui:keyword-opportunities', scope),
+  listOperationEvents: (filter: any) =>
+    ipcRenderer.invoke('operation-events:list', filter),
+  createOperationEvent: (input: any) =>
+    ipcRenderer.invoke('operation-events:create', input),
+  updateOperationEvent: (input: any) =>
+    ipcRenderer.invoke('operation-events:update', input),
+  deleteOperationEvent: (input: number | { id: number }) =>
+    ipcRenderer.invoke('operation-events:delete', input),
   preflightLingxingCollection: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
     ipcRenderer.invoke('v1_5:reports:preflight-lingxing-collection', dateRange),
   exportLingxingCollectionPreflight: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
     ipcRenderer.invoke('v1_5:reports:export-lingxing-collection-preflight', dateRange),
   retryLingxingReport: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, reportType: string) =>
     ipcRenderer.invoke('v1_5:reports:retry-lingxing-report', { dateRange, reportType }),
+  downloadExistingLingxingReports: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, reportTypes: string[]) =>
+    ipcRenderer.invoke('v1_5:reports:download-existing-lingxing-reports', { dateRange, reportTypes }),
   runLingxingCanaryReport: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, reportType: string) =>
     ipcRenderer.invoke('v1_5:reports:run-lingxing-canary-report', { dateRange, reportType }),
   exportLingxingAcceptanceAudit: (batchId: string, diagnosticId?: number) =>
@@ -71,10 +99,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     storeName?: string;
     marketplaceCode?: string;
     asin?: string;
+    batchId?: string;
     limit?: number;
   }) => ipcRenderer.invoke('recommendations:generate', params),
-  approveRecommendation: (id: number) => ipcRenderer.invoke('recommendations:approve', id),
-  rejectRecommendation: (id: number) => ipcRenderer.invoke('recommendations:reject', id),
+  runAdStrategyDiagnosis: (params?: {
+    dateFrom?: string;
+    dateTo?: string;
+    storeName?: string;
+    marketplaceCode?: string;
+    asin?: string;
+    batchId?: string;
+    limit?: number;
+  }) => ipcRenderer.invoke('v1_5:business-ui:ad-strategy-diagnosis', params),
+  approveRecommendation: (input: number | { id: number; decision?: any }) => ipcRenderer.invoke('recommendations:approve', input),
+  rejectRecommendation: (input: number | { id: number; decision?: any }) => ipcRenderer.invoke('recommendations:reject', input),
   executeRecommendation: (id: number) => ipcRenderer.invoke('recommendations:execute', id),
   exportAdReadbackEvidence: (input: any) =>
     ipcRenderer.invoke('recommendations:export-ad-readback-evidence', input),
@@ -88,6 +126,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Products
   getProducts: () => ipcRenderer.invoke('products:get'),
   addProduct: (product: any) => ipcRenderer.invoke('products:add', product),
+  saveProductConfig: (input: any) => ipcRenderer.invoke('products:save-config', input),
 
   // Logs
   getLogs: (params: { dateFrom: string; dateTo: string; limit?: number }) =>
@@ -108,8 +147,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:listing:analyze-coverage', { listing, keywords }),
   importListingContent: (filePath: string) =>
     ipcRenderer.invoke('v1_5:listing:import-content', { filePath }),
-  extractListingFromLingxing: () =>
-    ipcRenderer.invoke('v1_5:listing:extract-from-lingxing'),
+  extractListingFromLingxing: (options?: { expectedAsin?: string; persist?: boolean }) =>
+    ipcRenderer.invoke('v1_5:listing:extract-from-lingxing', options ?? {}),
   openLingxingListingAndExtract: (url: string) =>
     ipcRenderer.invoke('v1_5:listing:open-and-extract-from-lingxing', { url }),
   probeLingxingListingDetailAndExtract: (url?: string) =>

@@ -17,14 +17,22 @@ The app remains local-first. It does not connect to Amazon SP-API or Amazon Ads 
 1. Open Amazon AI Ops Agent.
 2. Log in to Lingxing ERP through the visible browser session. The desktop app validates ERP first and then enters the Ads system through the ERP `广告` entry; it should not start by directly opening an Ads URL. After login, the header shows the ERP/Ads session status, including the Ads page title or URL when available. The verified Ads home after ERP entry is `https://ads.lingxing.com/home`, and the verified Ads download center is `https://ads.lingxing.com/ak_download/download_center/download_report_log/index`.
 3. Use the split left menu for the upgraded v1.5 workflow:
-   - `交付验收`: current delivery status, verified evidence snapshot, safe-mode blockers, and technical acceptance commands.
-   - `广告报表`: Lingxing Ads report diagnostics, canary verification, full 8-report collection, manifests, and acceptance audit.
-   - `关键词机会`: Search Term / SQP / keyword imports, deduplicated opportunity analysis, filters, and evidence columns.
-   - `Listing 优化`: Lingxing Listing read-only extraction, local Listing form, suggestions, accepted-only drafts, and exports.
+   - `运营总览` -> `仪表盘`: current range data health, report coverage, imported row count, AI state, pending recommendation count, USD spend/sales/orders, and ACOS.
+   - `数据与量化` -> `数据采集`: Lingxing Ads report diagnostics, canary verification, full 8-report collection, manifests, and acceptance audit.
+   - `数据与量化` -> `运营事件`: local notes for events such as discounts, BD, promotions, deals, coupons, or other external factors that affect daily advertising interpretation.
+   - `数据与量化` -> `广告量化`: daily DB-backed advertising metrics, rules thresholds, and AI threshold/strategy interpretation.
+   - `广告执行` -> `优化建议`: rules plus AI candidate generation and explanation for ad changes; approval and execution are intentionally separated from generation.
+   - `广告执行` -> `审批中心`: operator approval/rejection with approver, reason, scope, batch, target context, source values, and source files.
+   - `广告执行` -> `执行回读`: manual Ads UI before/after/readback evidence export for each specific future action.
+   - `关键词与 Listing` -> `关键词机会`: Search Term / SQP / keyword imports, ad-context-split opportunity analysis, filters, and evidence columns.
+   - `关键词与 Listing` -> `Listing 优化`: Lingxing Listing read-only extraction, local Listing form, suggestions, accepted-only drafts, and exports.
+   - `系统与交付` -> `定时任务`, `设置`, `交付验收`: scheduling, AI settings, and final evidence summary. `交付验收` is a proof page, not a daily operation workbench.
+
+Current 2026-06-16 no-install executable for validation: `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe`, SHA-256 `71E82D4752EC2BE14C60CF34A405BB844929EFAB106BB68A38CEB412B6CBA913`.
 
 ## Lingxing Report Collection
 
-Open `广告报表` from the left menu.
+Open `数据与量化` -> `数据采集` from the left menu.
 
 1. Set the start and end dates.
 2. Enter the target store and marketplace/site for this collection.
@@ -239,9 +247,10 @@ If the test fails or no API Key is configured, Listing drafts remain local rule-
 
 v1.5 is presented as an upgrade of the existing backend, not as a nested all-in-one workbench. Use the left navigation by task domain:
 
-- `广告运营`: collect Lingxing ad reports and review optimization recommendations.
+- `数据与量化`: define the current scope, collect/import real Lingxing reports, record operation events, maintain product configuration, and review ad quantification.
+- `广告执行`: review optimization recommendations, approve/reject concrete actions, and export execution readback evidence.
 - `关键词与 Listing`: import keyword/search-term data, generate keyword opportunities, read Listing content, generate suggestions, and export drafts.
-- `交付与系统`: review final delivery readiness, manage scheduled tasks, and configure AI settings.
+- `系统与交付`: review final delivery readiness, manage scheduled tasks, and configure AI settings.
 
 Each v1.5 task page shows its primary task and proof boundary at the top. `交付验收` is for final status and evidence review only; daily report collection and Listing work should be done from their own pages. On `Listing 优化`, follow the visible flow from `读取 Listing` to `导出交付`; real AI draft readiness still requires `source=ai` evidence from a real provider run.
 
@@ -264,7 +273,7 @@ pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence
 Finally export the bounded handoff bundle only after confirming final-readiness JSON was produced from the current evidence manifest and records `evidenceSelection.mode=manifest`:
 
 ```powershell
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-2026-06-10.json --out output\delivery-bundles\v15-delivery-bundle-2026-06-10
+pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-2026-06-10.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-2026-06-15T17-00-08-661Z
 ```
 
 Do not treat structural mock AI evidence as final AI readiness. It is only a local schema/redaction proof. Real AI readiness requires `verify:ai-live`, a real ad recommendation AI explanation evidence file, a real Listing AI draft evidence file, and no-key fallback must be gone. Real ad execution readiness requires `verify:ad-readback` with operator approval, before/after screenshots, and verified readback for each action. The current `APP_READY` state includes one verified low-risk manual Ads UI sample; the in-app execution button remains fail-closed and does not batch-write ads.

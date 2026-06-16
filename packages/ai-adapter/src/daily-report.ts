@@ -8,6 +8,7 @@ const SYSTEM_PROMPT = `你是一个亚马逊运营专家。你需要根据以下
 2. 给出可操作的建议
 3. 语气专业、简洁
 4. 中文输出
+5. 金额全部使用 USD 货币格式，避免其他货币称谓或符号
 
 日报格式（JSON）：
 {
@@ -32,14 +33,14 @@ export class DailyReportGenerator {
 店铺: ${input.storeName}
 
 销售概况：
-- 总营收: ¥${input.salesOverview.totalRevenue.toFixed(2)}
+- 总营收: USD ${input.salesOverview.totalRevenue.toFixed(2)}
 - 总订单: ${input.salesOverview.totalOrders}
-- 平均客单价: ¥${input.salesOverview.avgOrderValue.toFixed(2)}
+- 平均客单价: USD ${input.salesOverview.avgOrderValue.toFixed(2)}
 - 相比昨日: ${comparedToYesterday(input.salesOverview.comparedToYesterday)}
 
 广告表现：
-- 总花费: ¥${input.adPerformance.totalCost.toFixed(2)}
-- 广告销售: ¥${input.adPerformance.totalSales.toFixed(2)}
+- 总花费: USD ${input.adPerformance.totalCost.toFixed(2)}
+- 广告销售: USD ${input.adPerformance.totalSales.toFixed(2)}
 - 平均ACOS: ${(input.adPerformance.avgAcos * 100).toFixed(1)}%
 - 总点击: ${input.adPerformance.totalClicks}
 - 相比昨日: ${comparedToYesterday(input.adPerformance.comparedToYesterday)}
@@ -79,9 +80,9 @@ export class DailyReportGenerator {
     // 无法使用 AI 时，生成结构化日报
     const report = {
       title: `${input.date} 日报`,
-      summary: `今日广告花费 ¥${input.adPerformance.totalCost.toFixed(2)}，产生销售 ¥${input.adPerformance.totalSales.toFixed(2)}，ACOS ${(input.adPerformance.avgAcos * 100).toFixed(1)}%。`,
+      summary: `今日广告花费 USD ${input.adPerformance.totalCost.toFixed(2)}，产生销售 USD ${input.adPerformance.totalSales.toFixed(2)}，ACOS ${(input.adPerformance.avgAcos * 100).toFixed(1)}%。`,
       highlights: [
-        `广告销售 ¥${input.adPerformance.totalSales.toFixed(2)}`,
+        `广告销售 USD ${input.adPerformance.totalSales.toFixed(2)}`,
         `产生 ${input.recommendationsSummary.total} 条建议，其中 ${input.recommendationsSummary.auto} 条已自动执行`,
         `库存预警：缺货 ${input.inventoryAlerts.outOfStock} 个，低库存 ${input.inventoryAlerts.lowStock} 个`,
       ],

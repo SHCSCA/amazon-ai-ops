@@ -43,4 +43,14 @@ export class DownloadCenterPage {
     await this.port.waitForReportReady(report, dateRange);
     return this.port.downloadReport(report, downloadDir, dateRange);
   }
+
+  async downloadExisting(
+    report: LingxingReportDefinition,
+    dateRange: { start: string; end: string },
+    downloadDir: string,
+  ): Promise<string> {
+    await this.port.navigateToDownloadCenter();
+    await this.port.waitForReportReady(report, dateRange);
+    return this.port.downloadReport(report, downloadDir, dateRange);
+  }
 }

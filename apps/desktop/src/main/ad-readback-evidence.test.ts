@@ -27,6 +27,7 @@ function completeInput(): AdReadbackEvidenceInput {
       confirmedAt: '2026-06-10T10:00:00.000Z',
       approverName: 'Ops Owner',
       approvalArtifactPath: 'approval-ticket-123',
+      note: 'Approved only for the selected target and metric batch.',
     },
     target: {
       storeName: 'FT-US-US',
@@ -66,6 +67,44 @@ function completeInput(): AdReadbackEvidenceInput {
       executedAt: '2026-06-10T10:03:00.000Z',
       executedBy: 'operator@example.com',
     },
+    source: {
+      recommendationId: '101',
+      batchId: 'manual_ad_execution_batch',
+      metricDate: '2026-06-10',
+      sourceFiles: ['C:/reports/user_search_term.xlsx'],
+      explanationSource: 'ai',
+      aiModel: 'deepseek-chat',
+      entityType: 'target',
+      currentValue: '2.40',
+      recommendedValue: '2.16',
+      decisionAgreement: 'aligned',
+      decisionSource: 'rule_ai',
+      decisionReasons: ['AI: Coupon traffic did not convert enough orders.', 'Rule: ACOS crossed target.'],
+      decisionRiskWarnings: ['Keep approval and readback before live operation.'],
+      aiStrategySource: 'ai',
+      aiLifecycleStage: 'keyword_exploration',
+      aiStrategySummary: 'Constrain waste while preserving learning traffic.',
+      aiMainProblems: ['High ACOS on a target with enough clicks.'],
+      aiThresholdSuggestions: {
+        targetAcos: { value: 0.35, reason: 'Launch stage target from product margin.' },
+      },
+      aiStrategyRiskWarnings: ['Do not scale bids during promotion cooldown.'],
+      quantStatus: 'waste',
+      quantLifecycleStage: 'keyword_exploration',
+      quantReasons: ['Spend exceeded minimum with low conversion.'],
+      quantThresholds: {
+        targetAcos: 0.25,
+        highAcosThreshold: 0.5,
+      },
+      quantReviewRequired: false,
+      operationEventCount: 1,
+      productContextCount: 1,
+      productStage: 'keyword_exploration',
+      productTargetAcos: 0.35,
+      productTargetTacos: 0.12,
+      productTargetNetMargin: 0.22,
+      productMinPrice: 29.99,
+    },
   };
 }
 
@@ -104,6 +143,32 @@ describe('ad readback evidence builder', () => {
       performedBy: 'operator@example.com',
       appExecutorUsed: false,
     });
+    expect(evidence.approval.note).toBe('Approved only for the selected target and metric batch.');
+    expect(evidence.source).toMatchObject({
+      recommendationId: '101',
+      batchId: 'manual_ad_execution_batch',
+      metricDate: '2026-06-10',
+      explanationSource: 'ai',
+      aiModel: 'deepseek-chat',
+      decisionAgreement: 'aligned',
+      decisionSource: 'rule_ai',
+      aiStrategySource: 'ai',
+      aiLifecycleStage: 'keyword_exploration',
+      quantStatus: 'waste',
+      quantLifecycleStage: 'keyword_exploration',
+      productStage: 'keyword_exploration',
+      productTargetAcos: 0.35,
+      productTargetTacos: 0.12,
+      productTargetNetMargin: 0.22,
+      productMinPrice: 29.99,
+    });
+    expect(evidence.source.sourceFiles).toEqual(['C:/reports/user_search_term.xlsx']);
+    expect(evidence.source.decisionReasons).toEqual([
+      'AI: Coupon traffic did not convert enough orders.',
+      'Rule: ACOS crossed target.',
+    ]);
+    expect(evidence.source.aiThresholdSuggestions.targetAcos.value).toBe(0.35);
+    expect(evidence.source.quantThresholds.targetAcos).toBe(0.25);
     expect(evidence.notes.join('\n')).toContain('No ad write is performed by this export action');
   });
 
@@ -145,6 +210,15 @@ describe('ad readback evidence builder', () => {
 
     expect(markdown).toContain('pnpm run verify:ad-readback');
     expect(markdown).toContain('appExecutorUsed=false');
+    expect(markdown).toContain('Source batch: manual_ad_execution_batch');
+    expect(markdown).toContain('Source files: C:/reports/user_search_term.xlsx');
+    expect(markdown).toContain('Source explanation: ai / deepseek-chat');
+    expect(markdown).toContain('Product stage: keyword_exploration');
+    expect(markdown).toContain('Product targets: ACOS=0.35; TACOS=0.12; netMargin=0.22; minPrice=29.99');
+    expect(markdown).toContain('Decision: aligned / rule_ai');
+    expect(markdown).toContain('AI strategy: ai / keyword_exploration');
+    expect(markdown).toContain('"targetAcos":0.25');
+    expect(markdown).toContain('Approval note: Approved only for the selected target and metric batch.');
     expect(markdown).toContain('final acceptance still requires the verifier command above to pass');
   });
 });

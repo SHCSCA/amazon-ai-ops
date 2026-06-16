@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@amazon-ai-ops/shared-types": "workspace:*"
+    "@amazon-ai-ops/shared-types": "workspace:*",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "typescript": "^5.3.0"

@@ -45,7 +45,7 @@ export class AdRules {
     
     if (metrics.clicks >= config.noOrderClickThreshold && metrics.orders === 0 && metrics.cost > 5) {
       const isHighSpend = metrics.cost > 20;
-      const reason = `点击 ${metrics.clicks} 次无转化，花费 ¥${metrics.cost.toFixed(2)}，建议添加否定`;
+      const reason = `点击 ${metrics.clicks} 次无转化，花费 USD ${metrics.cost.toFixed(2)}，建议添加否定`;
       
       return {
         triggered: true,

@@ -64,7 +64,7 @@ export class RiskEvaluator {
       }
       
       if (recommended < this.config.minCpc) {
-        warnings.push(`建议 bid ¥${recommended.toFixed(2)} 低于最低出价 ¥${this.config.minCpc.toFixed(2)}`);
+        warnings.push(`建议 bid USD ${recommended.toFixed(2)} 低于最低出价 USD ${this.config.minCpc.toFixed(2)}`);
       }
     }
 

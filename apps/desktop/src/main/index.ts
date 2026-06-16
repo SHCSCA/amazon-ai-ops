@@ -1,24 +1,33 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { BrowserController } from '@amazon-ai-ops/browser-worker';
 import { LocalScheduler } from '@amazon-ai-ops/scheduler';
 import { AuditLogger, ScreenshotManager, TraceManager, CleanupManager } from '@amazon-ai-ops/audit-log';
-import { RecommendationGenerator, DEFAULT_RULE_CONFIG } from '@amazon-ai-ops/rules-engine';
+import { AdQuantifier, RecommendationGenerator, DEFAULT_RULE_CONFIG, mergeAdDecisions } from '@amazon-ai-ops/rules-engine';
 import { ReportParser, keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics, parseListingContent } from '@amazon-ai-ops/report-parser';
-import { AdActionReasonExplainer, OpenAICompatibleProvider, DailyReportGenerator } from '@amazon-ai-ops/ai-adapter';
+import { AdActionReasonExplainer, AdStrategyDiagnoser, OpenAICompatibleProvider, DailyReportGenerator, type AdStrategyDiagnosisOutput, type ProductStrategyContext } from '@amazon-ai-ops/ai-adapter';
 import { initSqlite, getSqliteDb } from '@amazon-ai-ops/local-db/src/sqlite/db';
+import {
+  adMetricCanonicalWhere,
+  adMetricGrainWhere,
+  inferAdMetricReportType,
+  type AdMetricReportGrain,
+} from '@amazon-ai-ops/local-db/src/sqlite/ad-metric-grain';
 import { ActionLogRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/action-log-repo';
 import { AdMetricsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/ad-metrics-repo';
 import { ProductRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/product-repo';
 import { RecommendationRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/recommendation-repo';
 import { SettingsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/settings-repo';
-import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, runLingxingReportBatch, type DownloadCenterAutomationPort } from '@amazon-ai-ops/lingxing-report-collector';
+import { OperationEventRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/operation-event-repo';
+import { ReportFileRepository, type ReportFileRecord } from '@amazon-ai-ops/local-db/src/sqlite/repositories/report-file-repo';
+import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, downloadExistingLingxingReportBatch, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, runLingxingReportBatch, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, draftsToCsv, draftsToMarkdown, draftsToXlsxBuffer, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
 import type { RuleConfig } from '@amazon-ai-ops/rules-engine';
 import type { TaskName } from '@amazon-ai-ops/scheduler';
-import type { ActionRecommendation, AdDailyMetrics, DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingDraft, ListingSuggestion } from '@amazon-ai-ops/shared-types';
+import type { ActionRecommendation, AdDailyMetrics, CreateOperationEventInput, DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingDraft, ListingSuggestion, OperationEventFilter, UpdateOperationEventInput } from '@amazon-ai-ops/shared-types';
 import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithinRealDirectory, isSafeManifestPath, readLingxingManifestForAudit, safeFileSegment } from './acceptance-audit-export';
 import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-preflight-export';
 import { copyDiagnosticEvidenceFileToBundle, copyReportFailureEvidenceFilesToBundle, evaluateDownloadCenterDiagnosticEvidenceFiles } from './download-center-diagnostic-evidence-files';
@@ -28,8 +37,19 @@ import { selectorUsesDateScope, selectorUsesReportScope, validateDownloadCenterP
 import { backupExistingDownloadCenterPageModelOverride, getDownloadCenterPageModelOverrideMetadataPath, saveDownloadCenterPageModelOverride } from './download-center-page-model-override-store';
 import { getLingxingSessionNavigationPlan, isLingxingAdsLoggedInPage } from './lingxing-session-flow';
 import { buildAdExecutionUnavailableResult, buildActionLogForExecution, getRecommendationExecutionOutcome } from './recommendation-execution-policy';
+import { assertRecommendationApprovalPolicy } from './recommendation-approval-policy';
 import { extractLingxingListingFromSnapshot, type ListingDomFieldSnapshot, type ListingExtractionResult, type ListingPageSnapshot } from './listing-lingxing-extractor';
 import { adReadbackEvidenceToMarkdown, buildAdReadbackEvidence, type AdReadbackEvidenceInput } from './ad-readback-evidence';
+import { annotateRecommendationsWithStrategy, buildAdStrategyDiagnosisInput, createAiOnlyRecommendationsFromDecisions } from './ad-recommendation-ai-context';
+import {
+  BUSINESS_REAL_REPORT_EXTENSIONS,
+  BUSINESS_REJECTED_EVIDENCE_EXTENSIONS,
+  isExistingRawBusinessReportFile,
+  isExistingRawBusinessReportPath,
+  isRejectedEvidenceLikePath,
+  resolveBusinessReportImportState,
+  selectLatestRawBusinessReportsByType,
+} from './business-report-files';
 
 // ============================================================================
 // App State
@@ -44,6 +64,8 @@ interface AppState {
   actionLogRepo: ActionLogRepository | null;
   adMetricsRepo: AdMetricsRepository | null;
   recommendationRepo: RecommendationRepository | null;
+  operationEventRepo: OperationEventRepository | null;
+  reportFileRepo: ReportFileRepository | null;
   ruleConfig: RuleConfig;
   isLoggedIn: boolean;
   currentStore: string;
@@ -58,6 +80,8 @@ const state: AppState = {
   actionLogRepo: null,
   adMetricsRepo: null,
   recommendationRepo: null,
+  operationEventRepo: null,
+  reportFileRepo: null,
   ruleConfig: DEFAULT_RULE_CONFIG,
   isLoggedIn: false,
   currentStore: '',
@@ -75,6 +99,9 @@ const TRACES_DIR = path.join(STORAGE_DIR, 'traces');
 const REPORTS_DIR = path.join(STORAGE_DIR, 'reports');
 const DOWNLOADS_DIR = path.join(STORAGE_DIR, 'downloads');
 const EXPORTS_DIR = path.join(STORAGE_DIR, 'exports');
+const DELIVERY_BUNDLES_DIR = path.join(EXPORTS_DIR, 'delivery-bundles');
+const REPO_ROOT_DIR = process.cwd();
+const CODEX_EVIDENCE_DIR = path.join(REPO_ROOT_DIR, 'output', 'codex-evidence');
 const PAGE_MODELS_DIR = path.join(STORAGE_DIR, 'page-models');
 const DOWNLOAD_CENTER_PAGE_MODEL_FILENAME = 'lingxing-download-center.json';
 const DOWNLOAD_CENTER_PAGE_MODEL_OVERRIDE_FILENAME = 'lingxing-download-center.override.json';
@@ -82,6 +109,68 @@ const DB_PATH = path.join(USER_DATA_DIR, 'amazon-ai-ops.db');
 const APP_VERSION = '1.5.0';
 const LINGXING_REPORT_TYPE_SET = new Set<string>(LINGXING_AD_REPORTS.map((report) => report.type));
 type KeywordImportDuplicateStrategy = 'overwrite' | 'merge' | 'skip';
+
+interface BusinessUiScope {
+  dateFrom?: string;
+  dateTo?: string;
+  storeName?: string;
+  marketplaceCode?: string;
+  asin?: string;
+  batchId?: string;
+  currency?: 'USD';
+}
+
+type NormalizedBusinessUiScope = ReturnType<typeof normalizeBusinessUiScope>;
+
+interface BusinessBatchResult {
+  batch: LingxingReportBatch;
+  files: LingxingReportFile[];
+  scopeMismatch?: string[];
+  sourceBatchIds?: string[];
+  fileDownloadDirs?: Record<string, string>;
+}
+
+interface BusinessMetricSource {
+  batchId?: string;
+  batchIds?: string[];
+  sourceFiles: string[];
+}
+
+interface BusinessBatchOptionView {
+  id: string;
+  status: string;
+  dateStart: string;
+  dateEnd: string;
+  storeName?: string;
+  marketplaceCode?: string;
+  downloadDir?: string;
+  manifestPath?: string;
+  createdAt?: string;
+  completedAt?: string;
+  totalFileRecords: number;
+  realReportFileCount: number;
+  importedRowCount: number;
+  missingReportLabels: string[];
+}
+
+interface BusinessKeywordOpportunityRow {
+  asin?: string;
+  portfolioName?: string;
+  campaignName?: string;
+  adGroupName?: string;
+  entityType: string;
+  keyword: string;
+  coverageStatus: string;
+  clicks: number;
+  orders: number;
+  spend: number;
+  sales: number;
+  acos: number;
+  opportunityLevel: 'high' | 'medium' | 'low';
+  recommendedPlacement: string;
+  risk: string;
+  sourceFile?: string;
+}
 
 function getBundledResourcesPath(): string {
   return app.isPackaged
@@ -164,6 +253,8 @@ async function initApp(): Promise<void> {
   state.actionLogRepo = new ActionLogRepository(state.db);
   state.adMetricsRepo = new AdMetricsRepository(state.db);
   state.recommendationRepo = new RecommendationRepository(state.db);
+  state.operationEventRepo = new OperationEventRepository(state.db);
+  state.reportFileRepo = new ReportFileRepository(state.db);
   console.log('[App] init:repositories-ready');
 
   // Init audit/trace/screenshot managers
@@ -493,6 +584,165 @@ function persistLingxingBatch(result: Awaited<ReturnType<typeof runLingxingRepor
     }
   });
   save();
+  syncReportFileIndex(result, new Map());
+}
+
+function syncReportFileIndex(
+  result: Awaited<ReturnType<typeof runLingxingReportBatch>>,
+  importedRowsByFilePath: Map<string, number>,
+  importErrorsByFilePath: Map<string, string> = new Map(),
+): void {
+  if (!state.reportFileRepo) return;
+  for (const file of result.files) {
+    if (file.status !== 'downloaded' || !file.filePath) continue;
+    const filePath = canonicalizeExistingPath(file.filePath);
+    const importedRows = importedRowsByFilePath.get(filePath) ?? 0;
+    const importError = importErrorsByFilePath.get(filePath) ?? null;
+    const status = importError ? 'import_failed' : importedRows > 0 ? 'imported' : file.status;
+    state.reportFileRepo.upsert({
+      batchId: file.batchId || result.batch.id,
+      reportType: file.reportType,
+      filePath,
+      fileName: path.basename(filePath),
+      fileSize: file.fileSizeBytes ?? fileSizeOrZero(filePath),
+      status,
+      importedRows,
+      fileHash: fileHashOrNull(filePath),
+      importError,
+      lastImportedAt: importedRows > 0 || importError ? new Date().toISOString() : null,
+    });
+  }
+}
+
+function localBatchStamp(): string {
+  return `${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 17)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function safeLocalReportFileName(filePath: string, index: number): string {
+  const extension = path.extname(filePath).toLowerCase();
+  const baseName = path.basename(filePath, path.extname(filePath)).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').slice(0, 96) || `report_${index + 1}`;
+  return `${String(index + 1).padStart(2, '0')}_${baseName}${extension}`;
+}
+
+function inferLingxingReportTypeFromLocalPath(filePath: string): LingxingReportType | undefined {
+  const name = path.basename(filePath).toLowerCase().replace(/[\s\-()（）]+/g, '_');
+  const explicit = inferAdMetricReportType('', name);
+  if (explicit === 'search_term') return 'user_search_term';
+  if (explicit && LINGXING_REPORT_TYPE_SET.has(explicit)) return explicit as LingxingReportType;
+  if (/用户.*搜索词|search.*term|搜索词/.test(name)) return 'user_search_term';
+  if (/商品.*投放|product.*target|asin.*target/.test(name)) return 'product_targeting';
+  if (/推广.*商品|广告.*商品|advertised.*product/.test(name)) return 'advertised_product';
+  if (/自动.*投放|auto.*target/.test(name)) return 'auto_targeting';
+  if (/关键词|keyword/.test(name)) return 'keyword';
+  if (/广告位|placement/.test(name)) return 'placement';
+  if (/广告组|ad_group|ad.*group/.test(name)) return 'ad_group';
+  if (/广告活动|campaign/.test(name)) return 'campaign';
+  return undefined;
+}
+
+function buildLocalBusinessReportBatch(scope: NormalizedBusinessUiScope, selectedPaths: string[]): { batch: LingxingReportBatch; files: LingxingReportFile[] } {
+  const uniquePaths = Array.from(new Set(selectedPaths.map((item) => canonicalizeExistingPath(item)).filter(Boolean)));
+  const rejectedPaths = uniquePaths.filter((filePath) => !isExistingRawBusinessReportPath(filePath));
+  if (rejectedPaths.length > 0) {
+    throw new Error(`本地导入被阻断：以下文件不是可用的 .xlsx/.xls/.csv 原始广告表格：${rejectedPaths.map((item) => path.basename(item)).join('、')}`);
+  }
+
+  const now = new Date().toISOString();
+  const batchId = `batch_local_${localBatchStamp()}`;
+  const downloadDir = path.join(
+    DOWNLOADS_DIR,
+    'lingxing-ad-reports',
+    `${scope.dateFrom}_${scope.dateTo}`,
+    batchId,
+  );
+  fs.mkdirSync(downloadDir, { recursive: true });
+
+  const files: LingxingReportFile[] = [];
+  const usedReportTypes = new Set<string>();
+  const unknownFiles: string[] = [];
+
+  uniquePaths.forEach((sourcePath, index) => {
+    const reportType = inferLingxingReportTypeFromLocalPath(sourcePath);
+    if (!reportType) {
+      unknownFiles.push(path.basename(sourcePath));
+      return;
+    }
+    if (usedReportTypes.has(reportType)) {
+      throw new Error(`本地导入被阻断：${path.basename(sourcePath)} 与已选择文件重复对应 ${reportType}，每类报表当前只保留 1 个文件。`);
+    }
+    usedReportTypes.add(reportType);
+    const definition = LINGXING_AD_REPORTS.find((item) => item.type === reportType);
+    const targetPath = path.join(downloadDir, safeLocalReportFileName(sourcePath, index));
+    fs.copyFileSync(sourcePath, targetPath);
+    const verification = verifyDownloadedFile(targetPath, {
+      minBytes: 1,
+      expectedDownloadDir: downloadDir,
+      expectedReportType: reportType,
+    });
+    if (!verification.valid) {
+      throw new Error(`本地导入被阻断：${path.basename(sourcePath)} 校验失败：${verification.errorMessage || '不是有效广告报表'}`);
+    }
+    files.push({
+      id: `${batchId}_${reportType}`,
+      batchId,
+      reportType,
+      displayName: definition?.displayName || reportType,
+      status: 'downloaded',
+      maxAutoRetries: 0,
+      autoRetryCount: 0,
+      filePath: targetPath,
+      fileSizeBytes: verification.fileSizeBytes,
+      attemptErrors: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+
+  if (unknownFiles.length > 0) {
+    throw new Error(`本地导入被阻断：无法从文件名识别报表类型：${unknownFiles.join('、')}。请使用包含 campaign、ad_group、placement、advertised_product、auto_targeting、keyword、product_targeting、search_term，或中文报表名的文件名。`);
+  }
+  if (files.length === 0) {
+    throw new Error('本地导入被阻断：未选择可导入的真实广告报表。');
+  }
+
+  const batch: LingxingReportBatch = {
+    id: batchId,
+    appVersion: APP_VERSION,
+    dateStart: scope.dateFrom,
+    dateEnd: scope.dateTo,
+    storeName: scope.storeName,
+    marketplaceCode: scope.marketplaceCode,
+    status: files.length === LINGXING_AD_REPORTS.length ? 'completed' : 'completed_with_errors',
+    downloadDir,
+    createdAt: now,
+    completedAt: now,
+  };
+  batch.manifestPath = writeManifest(batch, files);
+  return { batch, files };
+}
+
+function fileSizeOrZero(filePath: string): number {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return 0;
+  }
+}
+
+function fileHashOrNull(filePath: string): string | null {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function reportFileIndexKey(batchId: string, reportType: string, filePath: string): string {
+  return [
+    batchId,
+    reportType,
+    canonicalizeExistingPath(filePath).toLowerCase(),
+  ].join('|');
 }
 
 function metricProductContextKey(metric: { date?: string; campaignName?: string; adGroupName?: string }, includeDate: boolean): string {
@@ -550,6 +800,9 @@ function importLingxingDownloadedReportMetrics(result: Awaited<ReturnType<typeof
   const parser = new ReportParser();
   const errors: Array<{ reportType: string; filePath?: string; message: string }> = [];
   const parsedMetrics: AdDailyMetrics[] = [];
+  const parsedSourcesByBatchId = new Map<string, Set<string>>();
+  const parsedRowsByFilePath = new Map<string, number>();
+  const importErrorsByFilePath = new Map<string, string>();
   let parsedFiles = 0;
   let skippedFiles = 0;
 
@@ -559,32 +812,53 @@ function importLingxingDownloadedReportMetrics(result: Awaited<ReturnType<typeof
       continue;
     }
     try {
-      const parsed = parser.autoParse(file.filePath);
+      const fileBatchId = file.batchId || result.batch.id;
+      const sourceFile = canonicalizeExistingPath(file.filePath);
+      const sourceCandidates = metricSourceFileCandidates(sourceFile);
+      const parsed = parser.autoParse(file.filePath, { reportType: file.reportType });
+      if (parsed.data.length === 0) {
+        throw new Error(
+          `真实报表未解析出广告指标行：${path.basename(file.filePath)}。`
+          + ` 请确认表头、日期、campaign/ad group/关键词/投放对象和指标列可识别。`,
+        );
+      }
+      parsedRowsByFilePath.set(sourceFile, parsed.data.length);
       parsedMetrics.push(...parsed.data.map((metric) => ({
         ...metric,
-        batchId: result.batch.id,
+        batchId: fileBatchId,
         reportType: file.reportType,
         storeName: result.batch.storeName || metric.storeName,
         marketplaceCode: result.batch.marketplaceCode || metric.marketplaceCode,
-        sourceFile: file.filePath || metric.sourceFile,
+        sourceFile,
       })));
+      const batchSources = parsedSourcesByBatchId.get(fileBatchId) ?? new Set<string>();
+      for (const candidate of sourceCandidates) batchSources.add(candidate);
+      parsedSourcesByBatchId.set(fileBatchId, batchSources);
       parsedFiles++;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (file.filePath) {
+        importErrorsByFilePath.set(canonicalizeExistingPath(file.filePath), message);
+      }
       errors.push({
         reportType: file.reportType,
         filePath: file.filePath,
-        message: error instanceof Error ? error.message : String(error),
+        message,
       });
     }
   }
 
   const readyMetrics = attachUniqueProductContext(parsedMetrics);
-  const deletedExisting = state.adMetricsRepo.deleteByBatch(result.batch.id);
+  let deletedExisting = 0;
+  for (const [batchId, sourceFiles] of parsedSourcesByBatchId.entries()) {
+    deletedExisting += state.adMetricsRepo.deleteByBatchAndSourceFiles(batchId, Array.from(sourceFiles));
+  }
   const inserted = readyMetrics.length ? state.adMetricsRepo.insertBatch(readyMetrics) : 0;
+  syncReportFileIndex(result, parsedRowsByFilePath, importErrorsByFilePath);
   return { inserted, parsedFiles, skippedFiles, deletedExisting, errors };
 }
 
-function loadLatestCompletedLingxingBatchForScope(scope: {
+function loadLatestImportableLingxingBatchForScope(scope: {
   dateFrom?: string;
   dateTo?: string;
   storeName?: string;
@@ -594,7 +868,7 @@ function loadLatestCompletedLingxingBatchForScope(scope: {
   const batch = state.db.prepare(`
     SELECT *
     FROM lingxing_report_batches
-    WHERE status = 'completed'
+    WHERE status IN ('completed', 'completed_with_errors')
       AND date_start = @dateFrom
       AND date_end = @dateTo
       AND store_name = @storeName
@@ -655,8 +929,943 @@ function backfillAdMetricsFromLatestBatchIfNeeded(scope: {
 }) {
   const existing = state.adMetricsRepo?.findForRecommendations({ ...scope, limit: 1 }) ?? [];
   if (existing.length > 0) return undefined;
-  const latestBatch = loadLatestCompletedLingxingBatchForScope(scope);
+  const latestBatch = loadLatestImportableLingxingBatchForScope(scope);
   return latestBatch ? importLingxingDownloadedReportMetrics(latestBatch) : undefined;
+}
+
+function normalizeBusinessUiScope(input: unknown): Required<Pick<BusinessUiScope, 'dateFrom' | 'dateTo' | 'storeName' | 'marketplaceCode' | 'currency'>> & Pick<BusinessUiScope, 'asin' | 'batchId'> {
+  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const dateFrom = typeof value.dateFrom === 'string' ? value.dateFrom.trim() : '';
+  const dateTo = typeof value.dateTo === 'string' ? value.dateTo.trim() : '';
+  validateDateRange({ start: dateFrom, end: dateTo });
+  return {
+    dateFrom,
+    dateTo,
+    storeName: optionalTrimmedString(value.storeName) || state.currentStore || '',
+    marketplaceCode: optionalTrimmedString(value.marketplaceCode) || 'US',
+    asin: optionalTrimmedString(value.asin),
+    batchId: optionalTrimmedString(value.batchId),
+    currency: 'USD',
+  };
+}
+
+function businessMetricsWhere(
+  scope: NormalizedBusinessUiScope,
+  source?: BusinessMetricSource,
+  grain: AdMetricReportGrain = 'actionable',
+): { sql: string; params: (string | number)[] } {
+  let sql = `
+    date >= ?
+    AND date <= ?
+    AND COALESCE(store_name, '') = COALESCE(?, '')
+    AND COALESCE(marketplace_code, '') = COALESCE(?, '')
+    AND ${adMetricGrainWhere(grain)}
+  `;
+  const params: (string | number)[] = [scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode];
+  if (scope.asin) {
+    sql += ' AND upper(COALESCE(asin, \'\')) = upper(?)';
+    params.push(scope.asin);
+  }
+  const sourceFiles = Array.from(new Set(source?.sourceFiles.filter(Boolean) ?? []));
+  const batchIds = Array.from(new Set(source?.batchIds?.filter(Boolean) ?? (source?.batchId ? [source.batchId] : [])));
+  if (batchIds.length > 0 && sourceFiles.length > 0) {
+    sql += `
+      AND source_file IN (${sourceFiles.map(() => '?').join(', ')})
+      AND batch_id IN (${batchIds.map(() => '?').join(', ')})
+    `;
+    params.push(...sourceFiles, ...batchIds);
+  } else if (batchIds.length > 0) {
+    sql += ' AND 1 = 0';
+  } else if (sourceFiles.length > 0) {
+    sql += ` AND source_file IN (${sourceFiles.map(() => '?').join(', ')})`;
+    params.push(...sourceFiles);
+  } else {
+    sql += ' AND 1 = 0';
+  }
+  return { sql, params };
+}
+
+function collectBusinessBatchScopeMismatches(batch: LingxingReportBatch, scope: NormalizedBusinessUiScope): string[] {
+  const mismatches: string[] = [];
+  if (batch.dateStart !== scope.dateFrom) mismatches.push(`开始日期不一致：批次 ${batch.dateStart}，当前范围 ${scope.dateFrom}`);
+  if (batch.dateEnd !== scope.dateTo) mismatches.push(`结束日期不一致：批次 ${batch.dateEnd}，当前范围 ${scope.dateTo}`);
+  if ((batch.storeName || '') !== (scope.storeName || '')) mismatches.push(`店铺不一致：批次 ${batch.storeName || '-'}，当前范围 ${scope.storeName || '-'}`);
+  if ((batch.marketplaceCode || '') !== (scope.marketplaceCode || '')) mismatches.push(`站点不一致：批次 ${batch.marketplaceCode || '-'}，当前范围 ${scope.marketplaceCode || '-'}`);
+  return mismatches;
+}
+
+function loadLatestBusinessBatch(scope: NormalizedBusinessUiScope): BusinessBatchResult | undefined {
+  if (!state.db) return undefined;
+  if (scope.batchId) {
+    try {
+      const batchResult = loadPersistedLingxingBatch(scope.batchId);
+      const scopeMismatch = collectBusinessBatchScopeMismatches(batchResult.batch, scope);
+      const statusMismatch = batchResult.batch.status === 'completed' || batchResult.batch.status === 'completed_with_errors'
+        ? []
+        : [`数据批次尚未完成：当前状态 ${batchResult.batch.status}`];
+      const mismatches = [...statusMismatch, ...scopeMismatch];
+      return mismatches.length > 0
+        ? { ...batchResult, scopeMismatch: mismatches, sourceBatchIds: [batchResult.batch.id] }
+        : { ...batchResult, sourceBatchIds: [batchResult.batch.id] };
+    } catch {
+      return undefined;
+    }
+  }
+  return composeBusinessBatchForScope(scope);
+}
+
+function loadBusinessBatchesForScope(scope: NormalizedBusinessUiScope): BusinessBatchResult[] {
+  if (!state.db) return [];
+  const rows = state.db.prepare(`
+    SELECT id
+    FROM lingxing_report_batches
+    WHERE date_start = @dateFrom
+      AND date_end = @dateTo
+      AND COALESCE(store_name, '') = COALESCE(@storeName, '')
+      AND COALESCE(marketplace_code, '') = COALESCE(@marketplaceCode, '')
+      AND status IN ('completed', 'completed_with_errors')
+    ORDER BY completed_at DESC, created_at DESC, id DESC
+  `).all(scope) as Array<{ id?: string }>;
+  return rows
+    .map((row) => {
+      try {
+        return row.id ? loadPersistedLingxingBatch(row.id) : undefined;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter(Boolean) as BusinessBatchResult[];
+}
+
+function composeBusinessBatchForScope(scope: NormalizedBusinessUiScope): BusinessBatchResult | undefined {
+  const batches = loadBusinessBatchesForScope(scope);
+  if (batches.length === 0) return undefined;
+
+  const latestBatch = batches[0].batch;
+  const { files, fileDownloadDirs } = selectLatestRawBusinessReportsByType<LingxingReportFile>(batches);
+  return {
+    batch: {
+      ...latestBatch,
+      id: latestBatch.id,
+      status: files.length === LINGXING_AD_REPORTS.length ? 'completed' : 'completed_with_errors',
+    },
+    files,
+    sourceBatchIds: batches.map((item) => item.batch.id),
+    fileDownloadDirs,
+  };
+}
+
+function summarizeBusinessBatchOption(scope: NormalizedBusinessUiScope, batchResult: BusinessBatchResult): BusinessBatchOptionView {
+  const realFiles = batchResult.files.filter((file) => isExistingRawBusinessReportFile(file, batchResult.batch));
+  const realTypes = new Set(realFiles.map((file) => file.reportType));
+  const importedRowCount = realFiles.reduce((sum, file) => {
+    if (!file.filePath) return sum;
+    return sum + countImportedRowsForFile(scope, canonicalizeExistingPath(file.filePath), file.batchId || batchResult.batch.id);
+  }, 0);
+
+  return {
+    id: batchResult.batch.id,
+    status: batchResult.batch.status,
+    dateStart: batchResult.batch.dateStart,
+    dateEnd: batchResult.batch.dateEnd,
+    storeName: batchResult.batch.storeName,
+    marketplaceCode: batchResult.batch.marketplaceCode,
+    downloadDir: batchResult.batch.downloadDir,
+    manifestPath: batchResult.batch.manifestPath,
+    createdAt: batchResult.batch.createdAt,
+    completedAt: batchResult.batch.completedAt,
+    totalFileRecords: batchResult.files.length,
+    realReportFileCount: realFiles.length,
+    importedRowCount,
+    missingReportLabels: LINGXING_AD_REPORTS
+      .filter((report) => !realTypes.has(report.type))
+      .map((report) => report.displayName),
+  };
+}
+
+function handleGetBusinessBatchOptions(input: unknown): BusinessBatchOptionView[] {
+  const scope = normalizeBusinessUiScope(input);
+  return loadBusinessBatchesForScope(scope).map((batchResult) => summarizeBusinessBatchOption(scope, batchResult));
+}
+
+function isExistingRawReportFile(file: LingxingReportFile, batch?: LingxingReportBatch): file is LingxingReportFile & { filePath: string } {
+  return isExistingRawBusinessReportFile(file, batch);
+}
+
+function metricSourceFileCandidates(filePath: string): string[] {
+  return Array.from(new Set([
+    filePath,
+    canonicalizeExistingPath(filePath),
+  ]));
+}
+
+function countImportedRowsForFile(scope: NormalizedBusinessUiScope, filePath: string, batchId?: string): number {
+  if (!state.db) return 0;
+  const candidates = metricSourceFileCandidates(filePath);
+  let sql = `
+    date >= ?
+    AND date <= ?
+    AND COALESCE(store_name, '') = COALESCE(?, '')
+    AND COALESCE(marketplace_code, '') = COALESCE(?, '')
+    AND source_file IN (${candidates.map(() => '?').join(', ')})
+  `;
+  const params: (string | number)[] = [scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode, ...candidates];
+  if (scope.asin) {
+    sql += ' AND upper(COALESCE(asin, \'\')) = upper(?)';
+    params.push(scope.asin);
+  }
+  if (batchId) {
+    sql += ' AND batch_id = ?';
+    params.push(batchId);
+  }
+  const row = state.db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM ad_daily_metrics
+    WHERE ${sql}
+  `).get(...params) as { count?: number } | undefined;
+  return Number(row?.count || 0);
+}
+
+function readBusinessMetricSummary(sql: string, params: (string | number)[]) {
+  return state.db!.prepare(`
+    SELECT
+      COUNT(*) AS importedRows,
+      COALESCE(SUM(cost), 0) AS totalSpend,
+      COALESCE(SUM(sales), 0) AS totalSales,
+      COALESCE(SUM(orders), 0) AS totalOrders,
+      COALESCE(SUM(clicks), 0) AS totalClicks,
+      COALESCE(SUM(impressions), 0) AS totalImpressions
+    FROM ad_daily_metrics
+    WHERE ${sql}
+  `).get(...params) as {
+    importedRows?: number;
+    totalSpend?: number;
+    totalSales?: number;
+    totalOrders?: number;
+    totalClicks?: number;
+    totalImpressions?: number;
+  } | undefined;
+}
+
+function loadAvailableBusinessMetricReportTypes(sql: string, params: (string | number)[]): string[] {
+  if (!state.db) return [];
+  const rows = state.db.prepare(`
+    SELECT report_type AS reportType, source_file AS sourceFile
+    FROM ad_daily_metrics
+    WHERE ${sql}
+  `).all(...params) as Array<{ reportType?: string | null; sourceFile?: string | null }>;
+  return Array.from(new Set(
+    rows
+      .map((row) => inferAdMetricReportType(row.reportType, row.sourceFile))
+      .filter(Boolean),
+  ));
+}
+
+function loadBusinessQuantSummary(scope: NormalizedBusinessUiScope, realReportFileCount: number, source?: BusinessMetricSource) {
+  if (!state.db) {
+    return {
+      hasImportedMetrics: false,
+      importedRows: 0,
+      canonicalRows: 0,
+      actionableRows: 0,
+      breakdownRows: 0,
+      summarySource: 'blocked',
+      summaryWarning: undefined,
+      totalSpend: 0,
+      totalSales: 0,
+      totalOrders: 0,
+      totalClicks: 0,
+      totalImpressions: 0,
+      acos: 0,
+      cvr: 0,
+      cpc: 0,
+      wastedSpend: null,
+      highRiskCount: 0,
+      adObjectTimelines: [],
+      diagnostics: [],
+      blockers: ['本地数据库不可用，无法读取广告量化指标。'],
+    };
+  }
+
+  const allMetrics = businessMetricsWhere(scope, source, 'all');
+  const actionableMetrics = businessMetricsWhere(scope, source, 'actionable');
+  const breakdownMetrics = businessMetricsWhere(scope, source, 'breakdown');
+  const allSummary = readBusinessMetricSummary(allMetrics.sql, allMetrics.params);
+  const actionableSummary = readBusinessMetricSummary(actionableMetrics.sql, actionableMetrics.params);
+  const breakdownSummary = readBusinessMetricSummary(breakdownMetrics.sql, breakdownMetrics.params);
+  const canonical = adMetricCanonicalWhere(
+    loadAvailableBusinessMetricReportTypes(allMetrics.sql, allMetrics.params),
+  );
+  const canonicalSelection = canonical.selection;
+  const canonicalSql = `${allMetrics.sql} AND ${canonical.whereSql}`;
+  const canonicalSummary = readBusinessMetricSummary(canonicalSql, allMetrics.params);
+
+  const importedRows = Number(allSummary?.importedRows || 0);
+  const actionableRows = Number(actionableSummary?.importedRows || 0);
+  const breakdownRows = Number(breakdownSummary?.importedRows || 0);
+  const canonicalRows = Number(canonicalSummary?.importedRows || 0);
+  const summary = canonicalRows > 0 ? canonicalSummary : undefined;
+  const summarySource = canonicalRows > 0 ? canonicalSelection.summarySource : 'none';
+  const totalSpend = Number(summary?.totalSpend || 0);
+  const totalSales = Number(summary?.totalSales || 0);
+  const totalOrders = Number(summary?.totalOrders || 0);
+  const totalClicks = Number(summary?.totalClicks || 0);
+  const totalImpressions = Number(summary?.totalImpressions || 0);
+  const acos = totalSales > 0 ? totalSpend / totalSales : 0;
+  const cvr = totalClicks > 0 ? totalOrders / totalClicks : 0;
+  const cpc = totalClicks > 0 ? totalSpend / totalClicks : 0;
+
+  const rows = actionableRows > 0
+    ? state.db.prepare(`
+      SELECT
+        COALESCE(portfolio_name, '') AS portfolioName,
+        COALESCE(campaign_name, '') AS campaignName,
+        COALESCE(ad_group_name, '') AS adGroupName,
+        COALESCE(asin, '') AS asin,
+        COALESCE(report_type, '') AS reportType,
+        COALESCE(NULLIF(search_term, ''), NULLIF(targeting, ''), NULLIF(match_type, ''), '-') AS objectName,
+        COALESCE(NULLIF(search_term, ''), '') AS searchTerm,
+        COALESCE(NULLIF(targeting, ''), '') AS targeting,
+        COALESCE(NULLIF(match_type, ''), '') AS matchType,
+        MAX(date) AS metricDate,
+        COALESCE(SUM(impressions), 0) AS impressions,
+        COALESCE(SUM(cost), 0) AS spend,
+        COALESCE(SUM(sales), 0) AS sales,
+        COALESCE(SUM(orders), 0) AS orders,
+        COALESCE(SUM(clicks), 0) AS clicks
+      FROM ad_daily_metrics
+      WHERE ${actionableMetrics.sql}
+      GROUP BY portfolio_name, campaign_name, ad_group_name, asin, report_type, objectName
+      ORDER BY spend DESC, clicks DESC
+      LIMIT 50
+    `).all(...actionableMetrics.params) as Array<{
+      portfolioName?: string;
+      campaignName?: string;
+      adGroupName?: string;
+      asin?: string;
+      reportType?: string;
+      objectName?: string;
+      searchTerm?: string;
+      targeting?: string;
+      matchType?: string;
+      metricDate?: string;
+      impressions?: number;
+      spend?: number;
+      sales?: number;
+      orders?: number;
+      clicks?: number;
+    }>
+    : [];
+
+  const quantifier = new AdQuantifier(state.ruleConfig);
+  const timelineMetrics = actionableRows > 0
+    ? state.db.prepare(`
+      SELECT *
+      FROM ad_daily_metrics
+      WHERE ${actionableMetrics.sql}
+      ORDER BY date ASC, campaign_name, ad_group_name, source_row
+      LIMIT 3000
+    `).all(...actionableMetrics.params).map(mapBusinessAdMetricRow)
+    : [];
+  const adObjectTimelines = quantifier.quantifyTimeline(timelineMetrics)
+    .slice(0, 20)
+    .map((timeline) => ({
+      objectKey: timeline.objectKey,
+      objectType: timeline.objectType,
+      objectName: timeline.objectName,
+      asin: timeline.asin || undefined,
+      campaignName: timeline.campaignName || undefined,
+      adGroupName: timeline.adGroupName || undefined,
+      dateFrom: timeline.dateFrom,
+      dateTo: timeline.dateTo,
+      daysActive: timeline.daysActive,
+      lifecycleStage: timeline.lifecycleStage,
+      quantStatus: timeline.status,
+      recommendedAction: timeline.recommendedAction,
+      recommendedValue: timeline.recommendedValue,
+      trend: timeline.trend,
+      totals: timeline.totals,
+      thresholds: timeline.thresholdSuggestion,
+      reasons: timeline.reasons,
+      reviewRequired: timeline.reviewRequired,
+    }));
+  const diagnostics = rows.map((row) => {
+    const spend = Number(row.spend || 0);
+    const sales = Number(row.sales || 0);
+    const orders = Number(row.orders || 0);
+    const clicks = Number(row.clicks || 0);
+    const impressions = Number(row.impressions || 0);
+    const rowAcos = sales > 0 ? spend / sales : 0;
+    const rowCvr = clicks > 0 ? orders / clicks : 0;
+    const rowCpc = clicks > 0 ? spend / clicks : 0;
+    const quant = quantifier.quantify({
+      date: row.metricDate || scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: row.asin || '',
+      msku: '',
+      campaignName: row.campaignName || '',
+      adGroupName: row.adGroupName || '',
+      targeting: row.targeting || '',
+      searchTerm: row.searchTerm || (String(row.reportType || '').includes('search') ? row.objectName || '' : ''),
+      matchType: normalizeAdMetricMatchType(row.matchType),
+      impressions,
+      clicks,
+      cost: spend,
+      orders,
+      sales,
+      acos: rowAcos,
+      cpc: rowCpc,
+      cvr: rowCvr,
+      sourceFile: '',
+    });
+    return {
+      portfolioName: row.portfolioName || undefined,
+      campaignName: row.campaignName || undefined,
+      adGroupName: row.adGroupName || undefined,
+      asin: row.asin || undefined,
+      objectType: row.reportType || 'metric',
+      objectName: row.objectName || '-',
+      spend,
+      sales,
+      orders,
+      clicks,
+      acos: rowAcos,
+      cvr: rowCvr,
+      cpc: rowCpc,
+      quantStatus: quant.status,
+      lifecycleStage: quant.lifecycleStage,
+      severity: quant.severity,
+      recommendedAction: quant.recommendedAction,
+      recommendedValue: quant.recommendedValue,
+      thresholds: quant.thresholds,
+      diagnosis: quant.status === 'waste'
+        ? '浪费风险'
+        : quant.status === 'scale'
+          ? '可扩量候选'
+          : quant.status === 'watch'
+            ? '观察复核'
+            : quant.status === 'blocked'
+              ? '样本不足'
+              : '健康',
+      suggestedDirection: quant.recommendedAction
+        ? `${quant.recommendedAction}${quant.recommendedValue ? ` -> ${quant.recommendedValue}` : ''}`
+        : quant.reasons[0],
+    };
+  });
+
+  const blockers: string[] = [];
+  if (realReportFileCount === 0) blockers.push('当前范围还没有可量化的真实广告数据');
+  if (importedRows === 0) blockers.push('没有真实报表文件和导入指标，本页不生成建议。');
+  if (importedRows > 0 && actionableRows === 0) blockers.push('当前范围只有广告活动/广告组/广告位等分解报表，没有关键词、投放或搜索词等可生成建议的行动报表。');
+  if (canonicalSelection.warning) blockers.push(canonicalSelection.warning);
+
+  return {
+    hasImportedMetrics: actionableRows > 0,
+    importedRows,
+    canonicalRows,
+    actionableRows,
+    breakdownRows,
+    summarySource,
+    summaryWarning: canonicalSelection.warning,
+    totalSpend,
+    totalSales,
+    totalOrders,
+    totalClicks,
+    totalImpressions,
+    acos,
+    cvr,
+    cpc,
+    wastedSpend: importedRows > 0 ? diagnostics.filter((row) => row.sales <= 0).reduce((sum, row) => sum + row.spend, 0) : null,
+    highRiskCount: diagnostics.filter((row) => row.quantStatus === 'waste' || row.severity === 'high').length,
+    adObjectTimelines,
+    diagnostics,
+    blockers,
+  };
+}
+
+function normalizeAdMetricMatchType(value: unknown): AdDailyMetrics['matchType'] {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized === 'exact' || normalized === 'broad' || normalized === 'phrase' || normalized === 'auto') {
+    return normalized;
+  }
+  return 'auto';
+}
+
+function loadBusinessRecommendationMetrics(scope: NormalizedBusinessUiScope, source: BusinessMetricSource, limit: number): AdDailyMetrics[] {
+  if (!state.db) return [];
+  const { sql, params } = businessMetricsWhere(scope, source);
+  const rows = state.db.prepare(`
+    SELECT *
+    FROM ad_daily_metrics
+    WHERE ${sql}
+    ORDER BY date DESC, created_at DESC
+    LIMIT ?
+  `).all(...params, limit) as any[];
+  return rows.map(mapBusinessAdMetricRow);
+}
+
+function mapBusinessAdMetricRow(row: any): AdDailyMetrics {
+  return {
+    id: row.id,
+    batchId: row.batch_id,
+    reportType: row.report_type,
+    portfolioName: row.portfolio_name,
+    date: row.date,
+    storeName: row.store_name,
+    marketplaceCode: row.marketplace_code,
+    asin: row.asin,
+    msku: row.msku,
+    campaignName: row.campaign_name,
+    adGroupName: row.ad_group_name,
+    targeting: row.targeting,
+    searchTerm: row.search_term,
+    matchType: row.match_type,
+    impressions: row.impressions,
+    clicks: row.clicks,
+    cost: row.cost,
+    orders: row.orders,
+    sales: row.sales,
+    currency: row.currency || 'USD',
+    acos: row.acos,
+    cpc: row.cpc,
+    cvr: row.cvr,
+    sourceFile: row.source_file,
+    sourceRow: row.source_row ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+function getBusinessRecommendationGate(input: unknown): {
+  scope: NormalizedBusinessUiScope;
+  pipeline: ReturnType<typeof handleGetBusinessUiDataPipeline>;
+  metricSource: BusinessMetricSource;
+} {
+  const scope = normalizeBusinessUiScope(input);
+  const pipeline = handleGetBusinessUiDataPipeline(scope);
+  if (!pipeline.collection.realReportFiles.length) {
+    throw new Error('生成优化建议被阻断：当前范围没有真实 .xlsx/.xls/.csv 原始报表文件。');
+  }
+  if (!pipeline.quant.hasImportedMetrics || pipeline.quant.importedRows <= 0) {
+    throw new Error('生成优化建议被阻断：当前范围没有由真实报表导入的广告指标行。');
+  }
+  const batchId = pipeline.collection.latestBatch?.id;
+  const realReportBatchIds = Array.from(new Set(
+    pipeline.collection.realReportFiles
+      .map((file) => file.batchId || batchId)
+      .filter((value): value is string => typeof value === 'string' && value.length > 0),
+  ));
+  const batchIds = realReportBatchIds.length
+    ? realReportBatchIds
+    : (pipeline.collection.sourceBatchIds?.length ? pipeline.collection.sourceBatchIds : (batchId ? [batchId] : []));
+  const sourceFiles = pipeline.collection.realReportFiles.flatMap((file) => metricSourceFileCandidates(file.filePath));
+  if (batchIds.length === 0 || sourceFiles.length === 0) {
+    throw new Error('生成优化建议被阻断：缺少可绑定的当前数据批次或真实报表 source_file。');
+  }
+  return {
+    scope: { ...scope, batchId },
+    pipeline,
+    metricSource: { batchId, batchIds, sourceFiles },
+  };
+}
+
+function handleGetBusinessKeywordOpportunities(input: unknown): BusinessKeywordOpportunityRow[] {
+  const gate = getBusinessRecommendationGate(input);
+  const { sql, params } = businessMetricsWhere(gate.scope, gate.metricSource);
+  if (!state.db) return [];
+  const rows = state.db.prepare(`
+    SELECT
+      COALESCE(asin, '') AS asin,
+      COALESCE(portfolio_name, '') AS portfolioName,
+      COALESCE(campaign_name, '') AS campaignName,
+      COALESCE(ad_group_name, '') AS adGroupName,
+      COALESCE(report_type, '') AS entityType,
+      COALESCE(NULLIF(search_term, ''), NULLIF(targeting, ''), NULLIF(match_type, ''), '') AS keyword,
+      COALESCE(SUM(clicks), 0) AS clicks,
+      COALESCE(SUM(orders), 0) AS orders,
+      COALESCE(SUM(cost), 0) AS spend,
+      COALESCE(SUM(sales), 0) AS sales,
+      COALESCE(MAX(source_file), '') AS sourceFile
+    FROM ad_daily_metrics
+    WHERE ${sql}
+    GROUP BY asin, portfolio_name, campaign_name, ad_group_name, report_type, keyword
+    HAVING keyword <> ''
+    ORDER BY spend DESC, clicks DESC
+    LIMIT 200
+  `).all(...params) as Array<{
+    asin?: string;
+    portfolioName?: string;
+    campaignName?: string;
+    adGroupName?: string;
+    entityType?: string;
+    keyword?: string;
+    clicks?: number;
+    orders?: number;
+    spend?: number;
+    sales?: number;
+    sourceFile?: string;
+  }>;
+
+  const deduped = new Map<string, BusinessKeywordOpportunityRow>();
+  for (const row of rows) {
+    const clicks = Number(row.clicks || 0);
+    const orders = Number(row.orders || 0);
+    const spend = Number(row.spend || 0);
+    const sales = Number(row.sales || 0);
+    const acos = sales > 0 ? spend / sales : 0;
+    const key = [
+      gate.scope.storeName,
+      gate.scope.marketplaceCode,
+      row.asin || '',
+      row.campaignName || '',
+      row.adGroupName || '',
+      row.entityType || '',
+      (row.keyword || '').trim().toLowerCase(),
+    ].join('|');
+    if (deduped.has(key)) continue;
+    const waste = spend > 0 && orders === 0;
+    const converting = orders > 0 || sales > 0;
+    deduped.set(key, {
+      asin: row.asin || undefined,
+      portfolioName: row.portfolioName || undefined,
+      campaignName: row.campaignName || undefined,
+      adGroupName: row.adGroupName || undefined,
+      entityType: row.entityType || 'keyword',
+      keyword: row.keyword || '-',
+      coverageStatus: '待 Listing 覆盖核对',
+      clicks,
+      orders,
+      spend,
+      sales,
+      acos,
+      opportunityLevel: converting ? 'high' : waste ? 'medium' : 'low',
+      recommendedPlacement: converting ? '优先进入标题/五点或精准词库' : waste ? '先否定或降价后再观察' : '保留观察',
+      risk: waste ? '花费无订单，避免直接扩量' : '需结合 Listing 相关性复核',
+      sourceFile: row.sourceFile || undefined,
+    });
+  }
+
+  return Array.from(deduped.values());
+}
+
+function normalizeOperationEventFilter(input: unknown): OperationEventFilter {
+  const scope = normalizeBusinessUiScope(input);
+  const request = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+  return {
+    dateFrom: scope.dateFrom,
+    dateTo: scope.dateTo,
+    storeName: scope.storeName,
+    marketplaceCode: scope.marketplaceCode,
+    asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : scope.asin,
+    campaignName: typeof request.campaignName === 'string' && request.campaignName.trim() ? request.campaignName.trim() : undefined,
+    adGroupName: typeof request.adGroupName === 'string' && request.adGroupName.trim() ? request.adGroupName.trim() : undefined,
+    eventType: typeof request.eventType === 'string' && request.eventType.trim() ? request.eventType.trim() : undefined,
+    limit: typeof request.limit === 'number' ? request.limit : 200,
+  };
+}
+
+function requireString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${label}不能为空`);
+  }
+  return value.trim();
+}
+
+function normalizeOperationEventInput(input: unknown): CreateOperationEventInput {
+  const request = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+  const eventDate = requireString(request.eventDate, '事件日期');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
+    throw new Error('事件日期必须是 YYYY-MM-DD');
+  }
+  return {
+    eventDate,
+    storeName: requireString(request.storeName, '店铺'),
+    marketplaceCode: requireString(request.marketplaceCode, '站点'),
+    asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
+    campaignName: typeof request.campaignName === 'string' && request.campaignName.trim() ? request.campaignName.trim() : undefined,
+    adGroupName: typeof request.adGroupName === 'string' && request.adGroupName.trim() ? request.adGroupName.trim() : undefined,
+    eventType: requireString(request.eventType, '事件类型'),
+    title: requireString(request.title, '事件标题'),
+    impactExpectation: typeof request.impactExpectation === 'string' && request.impactExpectation.trim() ? request.impactExpectation.trim() : undefined,
+    notes: typeof request.notes === 'string' && request.notes.trim() ? request.notes.trim() : undefined,
+    evidencePath: typeof request.evidencePath === 'string' && request.evidencePath.trim() ? request.evidencePath.trim() : undefined,
+  };
+}
+
+function normalizeOperationEventPatch(input: unknown): { id: number; patch: UpdateOperationEventInput } {
+  const request = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+  const id = Number(request.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error('事件 ID 无效');
+  }
+  const patchInput = (request.patch && typeof request.patch === 'object') ? request.patch as Record<string, unknown> : request;
+  const patch: UpdateOperationEventInput = {};
+  const assignString = (key: keyof UpdateOperationEventInput, sourceKey = key) => {
+    if (Object.prototype.hasOwnProperty.call(patchInput, sourceKey)) {
+      const value = patchInput[sourceKey];
+      patch[key] = typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    }
+  };
+
+  assignString('eventDate');
+  assignString('storeName');
+  assignString('marketplaceCode');
+  assignString('asin');
+  assignString('campaignName');
+  assignString('adGroupName');
+  assignString('eventType');
+  assignString('title');
+  assignString('impactExpectation');
+  assignString('notes');
+  assignString('evidencePath');
+  if (patch.eventDate && !/^\d{4}-\d{2}-\d{2}$/.test(patch.eventDate)) {
+    throw new Error('事件日期必须是 YYYY-MM-DD');
+  }
+  return { id, patch };
+}
+
+function handleListOperationEvents(input: unknown) {
+  return state.operationEventRepo?.findByScope(normalizeOperationEventFilter(input)) || [];
+}
+
+function handleCreateOperationEvent(input: unknown) {
+  if (!state.operationEventRepo) throw new Error('运营事件仓库未初始化');
+  const id = state.operationEventRepo.create(normalizeOperationEventInput(input));
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return state.operationEventRepo.getById(id);
+}
+
+function handleUpdateOperationEvent(input: unknown) {
+  if (!state.operationEventRepo) throw new Error('运营事件仓库未初始化');
+  const { id, patch } = normalizeOperationEventPatch(input);
+  const changed = state.operationEventRepo.update(id, patch);
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return { changed, event: state.operationEventRepo.getById(id) };
+}
+
+function handleDeleteOperationEvent(input: unknown) {
+  if (!state.operationEventRepo) throw new Error('运营事件仓库未初始化');
+  const id = typeof input === 'number' ? input : Number((input as any)?.id);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('事件 ID 无效');
+  const deleted = state.operationEventRepo.delete(id);
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return { deleted };
+}
+
+function handleGetBusinessUiDataPipeline(input: unknown) {
+  const scope = normalizeBusinessUiScope(input);
+  const batchResult = loadLatestBusinessBatch(scope);
+  const availableBatches = loadBusinessBatchesForScope(scope).map((item) => summarizeBusinessBatchOption(scope, item));
+  const files = batchResult?.files || [];
+  const reportFileIndexByKey = new Map<string, ReportFileRecord>();
+  const indexBatchIds = Array.from(new Set([
+    batchResult?.batch.id,
+    ...(batchResult?.sourceBatchIds || []),
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0)));
+  for (const batchId of indexBatchIds) {
+    const indexedFiles = state.reportFileRepo?.find({ batchId, limit: 5000 }) || [];
+    for (const indexedFile of indexedFiles) {
+      reportFileIndexByKey.set(reportFileIndexKey(indexedFile.batchId, indexedFile.reportType, indexedFile.filePath), indexedFile);
+    }
+  }
+  const fileBatchForPath = (file: LingxingReportFile): LingxingReportBatch | undefined => {
+    const downloadDir = batchResult?.fileDownloadDirs?.[file.id] || batchResult?.batch.downloadDir;
+    return batchResult?.batch && downloadDir ? { ...batchResult.batch, downloadDir } : batchResult?.batch;
+  };
+  const realReportFiles = files
+    .filter((file) => isExistingRawReportFile(file, fileBatchForPath(file)))
+    .map((file) => {
+      const filePath = canonicalizeExistingPath(file.filePath);
+      const batchId = file.batchId || batchResult?.batch.id || '';
+      const indexedFile = reportFileIndexByKey.get(reportFileIndexKey(batchId, file.reportType, filePath));
+      const countedRows = countImportedRowsForFile(scope, filePath, batchId);
+      const { importedRows, status } = resolveBusinessReportImportState({
+        fileStatus: file.status,
+        indexedStatus: indexedFile?.status,
+        countedMetricRows: countedRows,
+      });
+      return {
+        id: file.id,
+        batchId,
+        reportType: file.reportType,
+        displayName: file.displayName,
+        status,
+        filePath,
+        folderPath: path.dirname(filePath),
+        fileName: path.basename(filePath),
+        fileSizeBytes: fs.statSync(filePath).size,
+        importedRows,
+        fileHash: indexedFile?.fileHash || undefined,
+        importError: indexedFile?.importError || undefined,
+        lastImportedAt: indexedFile?.lastImportedAt || undefined,
+        updatedAt: indexedFile?.updatedAt || file.updatedAt,
+      };
+    });
+  const realReportSourceFiles = Array.from(new Set(realReportFiles.flatMap((file) => metricSourceFileCandidates(file.filePath))));
+  const realReportBatchIds = Array.from(new Set(
+    realReportFiles
+      .map((file) => file.batchId || batchResult?.batch.id)
+      .filter((value): value is string => typeof value === 'string' && value.length > 0),
+  ));
+  const metricSource: BusinessMetricSource | undefined = batchResult && !batchResult.scopeMismatch?.length && realReportSourceFiles.length > 0
+    ? { batchId: batchResult.batch.id, batchIds: realReportBatchIds, sourceFiles: realReportSourceFiles }
+    : undefined;
+
+  const importedRowsByType = new Map<string, number>();
+  const realFileTypes = new Set<string>();
+  for (const file of realReportFiles) {
+    realFileTypes.add(file.reportType);
+    importedRowsByType.set(file.reportType, (importedRowsByType.get(file.reportType) || 0) + file.importedRows);
+  }
+  const latestFileByType = new Map<string, LingxingReportFile>();
+  for (const file of files) {
+    if (!latestFileByType.has(file.reportType)) latestFileByType.set(file.reportType, file);
+  }
+
+  const reportOptions = LINGXING_AD_REPORTS.map((report) => {
+    const file = latestFileByType.get(report.type);
+    return {
+      type: report.type,
+      label: report.displayName,
+      status: file?.status || 'missing',
+      realFileAvailable: realFileTypes.has(report.type),
+      importedRows: importedRowsByType.get(report.type) || 0,
+    };
+  });
+  const fileAuditRecords = files.map((file) => {
+    const filePath = file.filePath ? path.resolve(file.filePath) : '';
+    const extension = filePath ? path.extname(filePath).toLowerCase() : '';
+    let exists = false;
+    try {
+      exists = Boolean(filePath) && fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+    } catch {
+      exists = false;
+    }
+    const realReport = Boolean(filePath) && isExistingRawReportFile(file, fileBatchForPath(file));
+    return {
+      status: file.status,
+      extension,
+      exists,
+      realReport,
+      evidenceLike: exists && !realReport && isRejectedEvidenceLikePath(filePath),
+    };
+  });
+  const importedRowCount = reportOptions.reduce((sum, item) => sum + item.importedRows, 0);
+  const missingReportLabels = reportOptions
+    .filter((item) => !item.realFileAvailable)
+    .map((item) => item.label);
+
+  const quant = loadBusinessQuantSummary(scope, realReportFiles.length, metricSource);
+  const operationEvents = state.operationEventRepo?.findByScope({
+    dateFrom: scope.dateFrom,
+    dateTo: scope.dateTo,
+    storeName: scope.storeName,
+    marketplaceCode: scope.marketplaceCode,
+    asin: scope.asin,
+    limit: 50,
+  }) || [];
+  const productContexts = loadProductStrategyContexts(scope);
+  const blockers = Array.from(new Set([
+    ...(batchResult?.scopeMismatch?.length ? ['数据批次与当前运营范围不一致，已阻断文件和指标展示。', ...batchResult.scopeMismatch] : []),
+    ...(!batchResult ? ['当前范围没有匹配的数据批次。'] : []),
+    ...(realReportFiles.length === 0 ? ['当前范围还没有可量化的真实广告数据'] : []),
+    ...(quant.importedRows === 0 ? ['当前范围没有导入广告指标行，广告量化保持阻断。'] : []),
+  ]));
+
+  const evidencePaths = [
+    ...(batchResult?.batch.downloadDir ? [{ label: '下载文件夹', path: batchResult.batch.downloadDir, kind: 'folder' as const }] : []),
+    ...(batchResult?.batch.manifestPath ? [{ label: '采集 Manifest', path: batchResult.batch.manifestPath, kind: 'audit' as const }] : []),
+    ...realReportFiles.slice(0, 8).map((file) => ({ label: file.displayName, path: file.filePath, kind: 'file' as const })),
+  ];
+
+  return {
+    scope: {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: scope.asin,
+      batchId: scope.batchId,
+      currency: 'USD' as const,
+    },
+    generatedAt: new Date().toISOString(),
+    collection: {
+      status: realReportFiles.length === 8 && quant.importedRows > 0 ? 'ready' : realReportFiles.length > 0 ? 'partial' : 'blocked',
+      latestBatch: batchResult?.batch ? {
+        id: batchResult.batch.id,
+        status: batchResult.batch.status,
+        dateStart: batchResult.batch.dateStart,
+        dateEnd: batchResult.batch.dateEnd,
+        storeName: batchResult.batch.storeName,
+        marketplaceCode: batchResult.batch.marketplaceCode,
+        downloadDir: batchResult.batch.downloadDir,
+        manifestPath: batchResult.batch.manifestPath,
+        completedAt: batchResult.batch.completedAt,
+      } : null,
+      sourceBatchIds: batchResult?.sourceBatchIds || (batchResult?.batch.id ? [batchResult.batch.id] : []),
+      availableBatches,
+      reportOptions,
+      realReportFiles,
+      evidencePaths,
+      fileAudit: {
+        totalFileRecords: files.length,
+        downloadedFileRecords: fileAuditRecords.filter((file) => file.status === 'downloaded' && file.realReport).length,
+        existingFileRecords: fileAuditRecords.filter((file) => file.exists).length,
+        realReportFileCount: realReportFiles.length,
+        importedRowCount,
+        rejectedEvidenceFileCount: fileAuditRecords.filter((file) => file.evidenceLike).length,
+        missingReportLabels,
+        downloadDir: batchResult?.batch.downloadDir,
+        manifestPath: batchResult?.batch.manifestPath,
+      },
+      blockers,
+      audit: {
+        databaseReady: Boolean(state.db),
+        acceptedExtensions: Array.from(BUSINESS_REAL_REPORT_EXTENSIONS),
+        rejectedEvidenceExtensions: BUSINESS_REJECTED_EVIDENCE_EXTENSIONS,
+        notes: [
+          '只读读取 lingxing_report_batches、lingxing_report_files 和 ad_daily_metrics。',
+          '广告量化指标必须绑定当前数据批次 batch_id，旧导入数据仅允许通过当前真实报表 source_file 回退匹配。',
+          '手动输入的数据批次必须与当前日期、店铺和站点一致，否则整条数据管道阻断。',
+          '只有存在于磁盘的 .xlsx/.xls/.csv filePath 计为真实原始报表文件。',
+          '审计 JSON、PNG 截图、HTML/DOM 快照和 Trace 不计为真实报表文件。',
+          ...(batchResult?.scopeMismatch?.length ? batchResult.scopeMismatch : []),
+        ],
+      },
+    },
+    quant,
+    operations: {
+      events: operationEvents,
+      eventCount: operationEvents.length,
+      notes: [
+        '运营事件用于解释广告波动和 AI 阶段诊断，例如 Coupon、BD、价格、Listing、库存和站外推广。',
+        '当前版本由运营手动维护事件；后续可接入领星/亚马逊活动、价格和库存自动读取。',
+      ],
+    },
+    productContext: {
+      products: productContexts,
+      productCount: productContexts.length,
+      notes: [
+        '产品配置用于给 AI 提供推广阶段、成本结构、最低价、目标净利率、目标 ACOS 和目标 TACOS。',
+        '未配置产品时，AI 仍可分析广告数据，但动态阈值不会包含利润空间约束。',
+      ],
+    },
+  };
+}
+
+function assertBatchContainsRealReportFiles(
+  result: { batch: LingxingReportBatch; files: LingxingReportFile[] },
+  actionLabel: string,
+): void {
+  const realFiles = result.files.filter((file) => isExistingRawReportFile(file, result.batch));
+  if (realFiles.length > 0) return;
+
+  const failureReasons = result.files
+    .filter((file) => file.status === 'failed' || file.errorMessage)
+    .map((file) => `${file.displayName || file.reportType}: ${file.errorMessage || '未拿到真实报表文件'}`)
+    .slice(0, 5);
+  const detail = failureReasons.length ? `失败原因：${failureReasons.join('；')}` : '没有任何 .xlsx/.xls/.csv 原始报表落盘。';
+  throw new Error(`${actionLabel}未完成：当前动作没有拿到真实领星广告表格。${detail}`);
 }
 
 async function handleCollectLingxingReports(input: unknown) {
@@ -680,7 +1889,63 @@ async function handleCollectLingxingReports(input: unknown) {
     automation: createDownloadCenterAutomation(state.browserController, target),
   });
   persistLingxingBatch(result);
-  return result;
+  const metricsImport = importLingxingDownloadedReportMetrics(result);
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return { ...result, metricsImport };
+}
+
+function handleImportCurrentBusinessReports(input: unknown) {
+  const scope = normalizeBusinessUiScope(input);
+  const batchResult = loadLatestBusinessBatch(scope);
+  if (!batchResult) {
+    throw new Error('导入被阻断：当前范围没有 completed 数据批次。');
+  }
+  const fileBatchForPath = (file: LingxingReportFile): LingxingReportBatch => {
+    const downloadDir = batchResult.fileDownloadDirs?.[file.id] || batchResult.batch.downloadDir;
+    return { ...batchResult.batch, downloadDir };
+  };
+  const realReportFiles = batchResult.files.filter((file) => isExistingRawReportFile(file, fileBatchForPath(file)));
+  if (realReportFiles.length === 0) {
+    throw new Error('导入被阻断：当前范围没有真实 .xlsx/.xls/.csv 原始报表文件。');
+  }
+  const metricsImport = importLingxingDownloadedReportMetrics({ ...batchResult, files: realReportFiles });
+  return {
+    batch: batchResult.batch,
+    files: realReportFiles,
+    metricsImport,
+    pipeline: handleGetBusinessUiDataPipeline({ ...scope, batchId: batchResult.batch.id }),
+  };
+}
+
+async function handleImportLocalBusinessReportFiles(input: unknown) {
+  const scope = normalizeBusinessUiScope(input);
+  if (!mainWindow) {
+    throw new Error('本地导入被阻断：主窗口未就绪。');
+  }
+  const selected = await dialog.showOpenDialog(mainWindow, {
+    title: '选择领星原始广告报表',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Lingxing ad report files', extensions: ['xlsx', 'xls', 'csv'] },
+    ],
+  });
+  if (selected.canceled || selected.filePaths.length === 0) {
+    return {
+      cancelled: true,
+      metricsImport: { inserted: 0, parsedFiles: 0, skippedFiles: 0, deletedExisting: 0, errors: [] },
+      pipeline: handleGetBusinessUiDataPipeline(scope),
+    };
+  }
+  const result = buildLocalBusinessReportBatch(scope, selected.filePaths);
+  persistLingxingBatch(result);
+  const metricsImport = importLingxingDownloadedReportMetrics(result);
+  mainWindow.webContents.send('business-ui:data-updated');
+  return {
+    cancelled: false,
+    ...result,
+    metricsImport,
+    pipeline: handleGetBusinessUiDataPipeline({ ...scope, batchId: result.batch.id }),
+  };
 }
 
 function handlePreflightLingxingCollection(input: unknown) {
@@ -761,6 +2026,40 @@ async function handleRetryLingxingReport(input: unknown, reportType: LingxingRep
   });
   persistLingxingBatch(result);
   const metricsImport = importLingxingDownloadedReportMetrics(result);
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return { ...result, metricsImport };
+}
+
+async function handleDownloadExistingLingxingReports(input: unknown, reportTypes: LingxingReportType[]) {
+  const request = normalizeLingxingCollectionRequest(input);
+  const dateRange = { start: request.start, end: request.end };
+  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
+  const selectedReportTypes = Array.from(new Set(reportTypes));
+  validateDateRange(dateRange);
+  if (selectedReportTypes.length === 0) {
+    throw new Error('请至少选择 1 类已创建报表。');
+  }
+  selectedReportTypes.forEach(validateLingxingReportType);
+  assertLingxingCollectionPreflightReady(dateRange, target);
+
+  if (!state.browserController || !state.isLoggedIn) {
+    throw new Error('请先启动并登录领星 ERP 浏览器');
+  }
+
+  const result = await downloadExistingLingxingReportBatch({
+    dateStart: dateRange.start,
+    dateEnd: dateRange.end,
+    storeName: target.storeName,
+    marketplaceCode: target.marketplaceCode,
+    rootDownloadDir: DOWNLOADS_DIR,
+    appVersion: APP_VERSION,
+    reportTypes: selectedReportTypes,
+    maxRetries: 0,
+    automation: createDownloadCenterAutomation(state.browserController, target),
+  });
+  persistLingxingBatch(result);
+  const metricsImport = importLingxingDownloadedReportMetrics(result);
+  mainWindow?.webContents.send('business-ui:data-updated');
   return { ...result, metricsImport };
 }
 
@@ -799,6 +2098,7 @@ async function handleRunLingxingCanaryReport(input: unknown, reportType: Lingxin
     }),
   });
   persistLingxingBatch(result);
+  assertBatchContainsRealReportFiles(result, '单报表 canary');
   return result;
 }
 
@@ -3218,6 +4518,11 @@ function normalizeAiSettings(settings: Record<string, unknown>): Record<string, 
   const model = stringSetting(settings.ai_model) || stringSetting(settings.aiModel) || 'deepseek-v4-flash';
   const temperature = stringSetting(settings.ai_temperature) || stringSetting(settings.aiTemperature) || '0.3';
   const maxTokens = stringSetting(settings.ai_max_tokens) || stringSetting(settings.aiMaxTokens) || '700';
+  const lastTestStatus = stringSetting(settings.ai_last_test_status) || stringSetting(settings.aiLastTestStatus);
+  const lastTestAt = stringSetting(settings.ai_last_test_at) || stringSetting(settings.aiLastTestAt);
+  const lastTestBaseUrl = stringSetting(settings.ai_last_test_base_url) || stringSetting(settings.aiLastTestBaseUrl);
+  const lastTestModel = stringSetting(settings.ai_last_test_model) || stringSetting(settings.aiLastTestModel);
+  const lastTestMessage = stringSetting(settings.ai_last_test_message) || stringSetting(settings.aiLastTestMessage);
   return {
     ...asStrings,
     aiApiKey: apiKey,
@@ -3230,6 +4535,16 @@ function normalizeAiSettings(settings: Record<string, unknown>): Record<string, 
     ai_temperature: temperature,
     aiMaxTokens: maxTokens,
     ai_max_tokens: maxTokens,
+    aiLastTestStatus: lastTestStatus,
+    ai_last_test_status: lastTestStatus,
+    aiLastTestAt: lastTestAt,
+    ai_last_test_at: lastTestAt,
+    aiLastTestBaseUrl: lastTestBaseUrl,
+    ai_last_test_base_url: lastTestBaseUrl,
+    aiLastTestModel: lastTestModel,
+    ai_last_test_model: lastTestModel,
+    aiLastTestMessage: lastTestMessage,
+    ai_last_test_message: lastTestMessage,
   };
 }
 
@@ -3246,10 +4561,37 @@ function buildAiProviderConfig(settings: Record<string, unknown>) {
 
 async function handleTestAiSettings(settings: Record<string, unknown>) {
   const config = buildAiProviderConfig(settings || {});
+  function persistTestStatus(status: 'available' | 'failed', message: string) {
+    const testedAt = new Date().toISOString();
+    state.settingsRepo?.save({
+      aiApiKey: config.apiKey,
+      ai_api_key: config.apiKey,
+      aiBaseUrl: config.baseUrl,
+      ai_base_url: config.baseUrl,
+      aiModel: config.model,
+      ai_model: config.model,
+      aiTemperature: String(config.temperature),
+      ai_temperature: String(config.temperature),
+      aiMaxTokens: String(config.maxTokens),
+      ai_max_tokens: String(config.maxTokens),
+      aiLastTestStatus: status,
+      ai_last_test_status: status,
+      aiLastTestAt: testedAt,
+      ai_last_test_at: testedAt,
+      aiLastTestBaseUrl: config.baseUrl,
+      ai_last_test_base_url: config.baseUrl,
+      aiLastTestModel: config.model,
+      ai_last_test_model: config.model,
+      aiLastTestMessage: message,
+      ai_last_test_message: message,
+    });
+  }
+
   if (!config.apiKey.trim()) {
+    const message = '未配置 AI Key：请填写 DeepSeek 或 OpenAI 兼容 API Key 后再测试。';
     return {
       success: false,
-      message: '未配置 AI Key：请填写 DeepSeek 或 OpenAI 兼容 API Key 后再测试。',
+      message,
       baseUrl: config.baseUrl,
       model: config.model,
     };
@@ -3263,17 +4605,21 @@ async function handleTestAiSettings(settings: Record<string, unknown>) {
   });
 
   if (!response.success || !response.content) {
+    const message = summarizeAiError(response.error || 'AI 未返回内容');
+    persistTestStatus('failed', message);
     return {
       success: false,
-      message: summarizeAiError(response.error || 'AI 未返回内容'),
+      message,
       baseUrl: config.baseUrl,
       model: config.model,
     };
   }
 
+  const message = `AI 连接测试通过：${config.model}`;
+  persistTestStatus('available', message);
   return {
     success: true,
-    message: `AI 连接测试通过：${config.model}`,
+    message,
     baseUrl: config.baseUrl,
     model: config.model,
     usage: response.usage,
@@ -3430,6 +4776,7 @@ const OPEN_PATH_ALLOWED_DIRS = [
   TRACES_DIR,
   EXPORTS_DIR,
   REPORTS_DIR,
+  CODEX_EVIDENCE_DIR,
 ];
 
 const OPEN_PATH_ALLOWED_EXTENSIONS = new Set([
@@ -3446,6 +4793,588 @@ const OPEN_PATH_ALLOWED_EXTENSIONS = new Set([
   '.xlsx',
   '.zip',
 ]);
+
+interface DeliveryReadinessGate {
+  name: string;
+  status?: string;
+  ok: boolean;
+  evidencePath?: string | null;
+  message?: string;
+}
+
+interface DeliveryReadinessView {
+  available: boolean;
+  path: string | null;
+  exists: boolean;
+  status: string;
+  appReady: boolean;
+  manifestDriven: boolean;
+  generatedAt?: string;
+  checkedAt?: string;
+  gates: DeliveryReadinessGate[];
+  gatesSummary: {
+    total: number;
+    passed: number;
+    failed: number;
+  };
+  missing: string[];
+  actionItems: string[];
+  message?: string;
+}
+
+function readJsonFile(filePath: string): any {
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function latestFileByPattern(directory: string, pattern: RegExp): string | null {
+  if (!fs.existsSync(directory)) return null;
+  const files = fs.readdirSync(directory)
+    .filter((name) => pattern.test(name))
+    .map((name) => {
+      const filePath = path.join(directory, name);
+      return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return files[0]?.filePath || null;
+}
+
+function configuredFinalReadinessPath(): string | null {
+  const configured = process.env.AMAZON_AI_OPS_FINAL_READINESS_PATH || process.env.FINAL_READINESS_PATH;
+  if (!configured || !configured.trim()) return null;
+  return path.resolve(configured);
+}
+
+function getFinalReadinessPath(): string | null {
+  const configured = configuredFinalReadinessPath();
+  if (configured) return configured;
+  return latestFileByPattern(CODEX_EVIDENCE_DIR, /^final-readiness-.*\.json$/i);
+}
+
+function missingReadinessView(message: string): DeliveryReadinessView {
+  return {
+    available: false,
+    path: configuredFinalReadinessPath(),
+    exists: false,
+    status: 'APP_NEEDS_WORK',
+    appReady: false,
+    manifestDriven: false,
+    gates: [],
+    gatesSummary: {
+      total: 0,
+      passed: 0,
+      failed: 0,
+    },
+    missing: ['最终验收 manifest 尚未生成'],
+    actionItems: ['运行最终验收，生成 output/codex-evidence/final-readiness-*.json。'],
+    message,
+  };
+}
+
+function normalizeDeliveryReadiness(finalReadiness: any, filePath: string): DeliveryReadinessView {
+  const gates: DeliveryReadinessGate[] = Array.isArray(finalReadiness?.gates)
+    ? finalReadiness.gates.map((gate: any) => ({
+        name: String(gate?.name || 'unknown_gate'),
+        status: typeof gate?.status === 'string' ? gate.status : undefined,
+        ok: Boolean(gate?.ok),
+        evidencePath: typeof gate?.evidencePath === 'string' ? gate.evidencePath : null,
+        message: typeof gate?.message === 'string' ? gate.message : undefined,
+      }))
+    : [];
+  const manifestDriven = finalReadiness?.evidenceSelection?.mode === 'manifest' || finalReadiness?.manifestDriven === true;
+  const allGatesPass = gates.length > 0 && gates.every((gate: DeliveryReadinessGate) => gate.ok);
+  const appReady = manifestDriven && Boolean(finalReadiness?.appReady) && allGatesPass && finalReadiness?.status === 'APP_READY';
+  const failedGates = gates.filter((gate) => !gate.ok);
+  const missing = Array.isArray(finalReadiness?.missing)
+    ? finalReadiness.missing.map((item: unknown) => String(item)).filter(Boolean)
+    : failedGates.map((gate) => gate.message || `${gate.name} 未通过。`);
+  const actionItems = Array.isArray(finalReadiness?.actionItems)
+    ? finalReadiness.actionItems.map((item: unknown) => String(item)).filter(Boolean)
+    : failedGates.map((gate) => gate.message || `补齐 ${gate.name} 的验收证据后重新运行最终验收。`);
+  return {
+    available: true,
+    path: filePath,
+    exists: true,
+    status: appReady ? 'APP_READY' : String(finalReadiness?.status || 'APP_NEEDS_WORK'),
+    appReady,
+    manifestDriven,
+    generatedAt: typeof finalReadiness?.generatedAt === 'string' ? finalReadiness.generatedAt : undefined,
+    checkedAt: typeof finalReadiness?.checkedAt === 'string' ? finalReadiness.checkedAt : (
+      typeof finalReadiness?.generatedAt === 'string' ? finalReadiness.generatedAt : undefined
+    ),
+    gates,
+    gatesSummary: {
+      total: gates.length,
+      passed: gates.filter((gate) => gate.ok).length,
+      failed: failedGates.length,
+    },
+    missing,
+    actionItems,
+  };
+}
+
+function sanitizeAiSettingsForRenderer(settings: Record<string, unknown>): Record<string, string | boolean> {
+  const normalized = normalizeAiSettings(settings);
+  return {
+    aiApiKey: '',
+    ai_api_key: '',
+    aiKeyConfigured: Boolean(normalized.aiApiKey.trim()),
+    ai_key_configured: Boolean(normalized.aiApiKey.trim()),
+    aiBaseUrl: normalized.aiBaseUrl,
+    ai_base_url: normalized.ai_base_url,
+    aiModel: normalized.aiModel,
+    ai_model: normalized.ai_model,
+    aiTemperature: normalized.aiTemperature,
+    ai_temperature: normalized.ai_temperature,
+    aiMaxTokens: normalized.aiMaxTokens,
+    ai_max_tokens: normalized.ai_max_tokens,
+    aiLastTestStatus: normalized.aiLastTestStatus || '',
+    ai_last_test_status: normalized.aiLastTestStatus || '',
+    aiLastTestAt: normalized.aiLastTestAt || '',
+    ai_last_test_at: normalized.aiLastTestAt || '',
+    aiLastTestBaseUrl: normalized.aiLastTestBaseUrl || '',
+    ai_last_test_base_url: normalized.aiLastTestBaseUrl || '',
+    aiLastTestModel: normalized.aiLastTestModel || '',
+    ai_last_test_model: normalized.aiLastTestModel || '',
+    aiLastTestMessage: normalized.aiLastTestMessage || '',
+    ai_last_test_message: normalized.aiLastTestMessage || '',
+  };
+}
+
+function normalizeAiSettingsForSave(incoming: Record<string, unknown>): Record<string, string> {
+  const saved = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const normalized = normalizeAiSettings(incoming);
+  const incomingKey = stringSetting(incoming.ai_api_key) || stringSetting(incoming.aiApiKey);
+  const apiKey = incomingKey || saved.aiApiKey;
+  const incomingStatus = stringSetting(incoming.aiLastTestStatus) || stringSetting(incoming.ai_last_test_status);
+  const savedTestStillMatches =
+    !incomingStatus &&
+    !incomingKey &&
+    Boolean(saved.aiLastTestStatus) &&
+    saved.aiLastTestBaseUrl === normalized.aiBaseUrl &&
+    saved.aiLastTestModel === normalized.aiModel;
+  const lastTestStatus = incomingStatus || (savedTestStillMatches ? saved.aiLastTestStatus : '');
+  const lastTestAt =
+    stringSetting(incoming.aiLastTestAt) ||
+    stringSetting(incoming.ai_last_test_at) ||
+    (savedTestStillMatches ? saved.aiLastTestAt : '');
+  const lastTestBaseUrl =
+    stringSetting(incoming.aiLastTestBaseUrl) ||
+    stringSetting(incoming.ai_last_test_base_url) ||
+    (savedTestStillMatches ? saved.aiLastTestBaseUrl : '');
+  const lastTestModel =
+    stringSetting(incoming.aiLastTestModel) ||
+    stringSetting(incoming.ai_last_test_model) ||
+    (savedTestStillMatches ? saved.aiLastTestModel : '');
+  const lastTestMessage =
+    stringSetting(incoming.aiLastTestMessage) ||
+    stringSetting(incoming.ai_last_test_message) ||
+    (savedTestStillMatches ? saved.aiLastTestMessage : '');
+  return {
+    ...normalized,
+    aiApiKey: apiKey,
+    ai_api_key: apiKey,
+    aiLastTestStatus: lastTestStatus,
+    ai_last_test_status: lastTestStatus,
+    aiLastTestAt: lastTestAt,
+    ai_last_test_at: lastTestAt,
+    aiLastTestBaseUrl: lastTestBaseUrl,
+    ai_last_test_base_url: lastTestBaseUrl,
+    aiLastTestModel: lastTestModel,
+    ai_last_test_model: lastTestModel,
+    aiLastTestMessage: lastTestMessage,
+    ai_last_test_message: lastTestMessage,
+  };
+}
+
+function normalizeAiSettingsForTest(incoming: Record<string, unknown>): Record<string, string> {
+  const saved = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const normalized = normalizeAiSettings(incoming);
+  const incomingKey = stringSetting(incoming.ai_api_key) || stringSetting(incoming.aiApiKey);
+  const apiKey = incomingKey || saved.aiApiKey;
+  return {
+    ...normalized,
+    aiApiKey: apiKey,
+    ai_api_key: apiKey,
+  };
+}
+
+function handleGetDeliveryReadiness(): DeliveryReadinessView {
+  const finalReadinessPath = getFinalReadinessPath();
+  if (!finalReadinessPath) {
+    return missingReadinessView(`最终验收 manifest 尚未生成：${CODEX_EVIDENCE_DIR}`);
+  }
+  if (!fs.existsSync(finalReadinessPath)) {
+    return missingReadinessView(`最终验收 manifest 尚未生成：${finalReadinessPath}`);
+  }
+  try {
+    return normalizeDeliveryReadiness(readJsonFile(finalReadinessPath), finalReadinessPath);
+  } catch (error) {
+    return {
+      ...missingReadinessView(`最终验收 manifest 读取失败：${error instanceof Error ? error.message : String(error)}`),
+      path: finalReadinessPath,
+      exists: true,
+      missing: ['最终验收 manifest 无法解析'],
+      actionItems: ['重新运行最终验收，生成可解析的 final-readiness JSON。'],
+    };
+  }
+}
+
+function handleGetStoragePaths() {
+  return {
+    settingsPath: path.join(USER_DATA_DIR, 'settings.json'),
+    evidenceDir: CODEX_EVIDENCE_DIR,
+    downloadsDir: DOWNLOADS_DIR,
+    exportsDir: EXPORTS_DIR,
+    deliveryDir: DELIVERY_BUNDLES_DIR,
+    localDbPath: DB_PATH,
+  };
+}
+
+function normalizePersistedOperationScope(input: unknown) {
+  const request = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+  const dateFrom = typeof request.dateFrom === 'string' ? request.dateFrom.trim() : '';
+  const dateTo = typeof request.dateTo === 'string' ? request.dateTo.trim() : '';
+  const storeName = typeof request.storeName === 'string' ? request.storeName.trim() : '';
+  const marketplaceCode = typeof request.marketplaceCode === 'string' ? request.marketplaceCode.trim() : '';
+  if (!dateFrom || !dateTo || !storeName || !marketplaceCode) {
+    throw new Error('运营范围缺少日期、店铺或站点。');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+    throw new Error('运营范围日期必须是 YYYY-MM-DD。');
+  }
+  if (dateFrom > dateTo) {
+    throw new Error('运营范围开始日期不能晚于结束日期。');
+  }
+  return {
+    dateFrom,
+    dateTo,
+    storeName,
+    marketplaceCode,
+    asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
+    batchId: typeof request.batchId === 'string' && request.batchId.trim() ? request.batchId.trim() : undefined,
+    currency: 'USD' as const,
+  };
+}
+
+function handleGetOperationScope() {
+  const raw = state.settingsRepo?.get('operation_scope');
+  if (!raw) return null;
+  try {
+    return normalizePersistedOperationScope(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function handleSaveOperationScope(input: unknown) {
+  const scope = normalizePersistedOperationScope(input);
+  state.settingsRepo?.set('operation_scope', JSON.stringify(scope));
+  return scope;
+}
+
+function copyDeliveryBundleFile(sourcePath: string | undefined, targetDir: string, targetName: string): string | undefined {
+  if (!sourcePath || !fs.existsSync(sourcePath)) return undefined;
+  const targetPath = path.join(targetDir, targetName);
+  fs.copyFileSync(sourcePath, targetPath);
+  return targetPath;
+}
+
+function handleExportDeliveryBundle(input?: unknown) {
+  const readiness = handleGetDeliveryReadiness();
+  if (!readiness.available || !readiness.path) {
+    return {
+      success: false,
+      status: 'APP_NEEDS_WORK',
+      message: readiness.message || '最终验收 manifest 尚未生成，无法导出交付包。',
+      missing: readiness.missing,
+      actionItems: readiness.actionItems,
+    };
+  }
+  if (!readiness.manifestDriven) {
+    return {
+      success: false,
+      status: 'APP_NEEDS_WORK',
+      message: '最终就绪结果不是 manifest 驱动，请先重新生成 evidence manifest 并运行最终验收。',
+      finalReadinessPath: readiness.path,
+      missing: ['最终验收结果不是 manifest 驱动'],
+      actionItems: ['先运行 write:v15-evidence-manifest，再用该 manifest 运行 verify:v15-final-readiness。'],
+    };
+  }
+  if (!readiness.appReady) {
+    return {
+      success: false,
+      status: readiness.status,
+      message: '最终就绪 manifest 未通过，不能导出 READY 交付包。',
+      finalReadinessPath: readiness.path,
+      gates: readiness.gates,
+      missing: readiness.missing,
+      actionItems: readiness.actionItems,
+    };
+  }
+  const finalReadiness = readJsonFile(readiness.path);
+  const evidenceManifestPath = typeof finalReadiness?.evidenceSelection?.manifestPath === 'string'
+    ? path.resolve(finalReadiness.evidenceSelection.manifestPath)
+    : '';
+  if (!evidenceManifestPath || !fs.existsSync(evidenceManifestPath)) {
+    return {
+      success: false,
+      status: 'APP_NEEDS_WORK',
+      message: '最终就绪 evidence manifest 缺失，不能导出 READY 交付包。',
+      finalReadinessPath: readiness.path,
+      missing: ['最终就绪 evidence manifest 缺失'],
+      actionItems: ['重新运行 write:v15-evidence-manifest 和 verify:v15-final-readiness，确认 evidenceSelection.manifestPath 存在。'],
+    };
+  }
+  fs.mkdirSync(DELIVERY_BUNDLES_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const bundleDir = path.join(DELIVERY_BUNDLES_DIR, `v15-delivery-bundle-${stamp}`);
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const manifestPath = path.join(bundleDir, 'delivery-bundle-manifest.json');
+  const finalReadinessCopyPath = path.join(bundleDir, path.basename(readiness.path));
+  fs.copyFileSync(readiness.path, finalReadinessCopyPath);
+  let dataReconciliation: any = {
+    success: false,
+    blockers: ['未生成数据口径核对报告：交付包导出时没有收到当前运营范围。'],
+  };
+  let dataReconciliationJsonCopy: string | undefined;
+  let dataReconciliationMarkdownCopy: string | undefined;
+  try {
+    const reconciliationScope = input || handleGetOperationScope() || finalReadiness.scope;
+    if (reconciliationScope) {
+      dataReconciliation = handleExportDataReconciliation(reconciliationScope);
+      dataReconciliationJsonCopy = copyDeliveryBundleFile(dataReconciliation.jsonPath, bundleDir, 'data-reconciliation.json');
+      dataReconciliationMarkdownCopy = copyDeliveryBundleFile(dataReconciliation.markdownPath, bundleDir, 'data-reconciliation.md');
+    }
+  } catch (error) {
+    dataReconciliation = {
+      success: false,
+      blockers: [`数据口径核对报告生成失败：${error instanceof Error ? error.message : String(error)}`],
+    };
+  }
+  fs.writeFileSync(manifestPath, `${JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    status: readiness.status,
+    appReady: readiness.appReady,
+    finalReadinessPath: readiness.path,
+    finalReadinessCopy: path.basename(finalReadinessCopyPath),
+    dataReconciliation: {
+      canonicalSource: dataReconciliation.canonicalSource,
+      canonical: dataReconciliation.canonical,
+      blockers: dataReconciliation.blockers,
+      sourceJsonPath: dataReconciliation.jsonPath,
+      sourceMarkdownPath: dataReconciliation.markdownPath,
+      bundleJson: dataReconciliationJsonCopy ? path.basename(dataReconciliationJsonCopy) : undefined,
+      bundleMarkdown: dataReconciliationMarkdownCopy ? path.basename(dataReconciliationMarkdownCopy) : undefined,
+    },
+    gates: readiness.gates,
+    gatesSummary: readiness.gatesSummary,
+    note: 'Renderer-triggered delivery bundle marker created from the final readiness manifest. Includes current-scope data reconciliation; full evidence export can be refreshed with export-v15-delivery-bundle.js.',
+  }, null, 2)}\n`, 'utf8');
+  return {
+    success: true,
+    status: readiness.status,
+    bundleDir,
+    manifestPath,
+    dataReconciliation: {
+      jsonPath: dataReconciliationJsonCopy,
+      markdownPath: dataReconciliationMarkdownCopy,
+      canonical: dataReconciliation.canonical,
+      canonicalSource: dataReconciliation.canonicalSource,
+      blockers: dataReconciliation.blockers,
+    },
+  };
+}
+
+function roundMoney(value: unknown): number {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) ? Number(numeric.toFixed(2)) : 0;
+}
+
+function businessMetricSummaryForExport(sql: string, params: (string | number)[]) {
+  const summary = readBusinessMetricSummary(sql, params);
+  return {
+    rows: Number(summary?.importedRows || 0),
+    spend: roundMoney(summary?.totalSpend),
+    sales: roundMoney(summary?.totalSales),
+    orders: Number(summary?.totalOrders || 0),
+    clicks: Number(summary?.totalClicks || 0),
+    impressions: Number(summary?.totalImpressions || 0),
+    currency: 'USD',
+  };
+}
+
+function buildDataReconciliationMarkdown(report: any): string {
+  const blockers = Array.isArray(report.blockers) && report.blockers.length
+    ? report.blockers.map((item: string) => `- ${item}`).join('\n')
+    : '- none';
+  const files = (report.realReportFiles || [])
+    .map((file: any) => `- ${file.reportType}: ${file.filePath} (${file.importedRows || 0} rows)`)
+    .join('\n') || '- none';
+  const byType = (report.db?.byReportType || [])
+    .map((row: any) => `- ${row.reportType || 'unknown'}: ${row.rows} rows, spend ${row.spend} USD, orders ${row.orders}, sales ${row.sales} USD`)
+    .join('\n') || '- none';
+  return [
+    '# Amazon AI Ops Data Reconciliation',
+    '',
+    `Generated at: ${report.generatedAt}`,
+    `Scope: ${report.scope.dateFrom} to ${report.scope.dateTo} / ${report.scope.storeName} / ${report.scope.marketplaceCode} / USD`,
+    `Batch ids: ${(report.sourceBatchIds || []).join(', ') || 'none'}`,
+    '',
+    '## Canonical Totals',
+    '',
+    `Source: ${report.db?.canonical?.summarySource || 'none'}`,
+    `Rows: ${report.db?.totals?.canonical?.rows ?? 0}`,
+    `Spend: ${report.db?.totals?.canonical?.spend ?? 0} USD`,
+    `Orders: ${report.db?.totals?.canonical?.orders ?? 0}`,
+    `Sales: ${report.db?.totals?.canonical?.sales ?? 0} USD`,
+    `Clicks: ${report.db?.totals?.canonical?.clicks ?? 0}`,
+    '',
+    '## Real Report Files',
+    '',
+    files,
+    '',
+    '## DB By Report Type',
+    '',
+    byType,
+    '',
+    '## Blockers',
+    '',
+    blockers,
+    '',
+    '## Interpretation',
+    '',
+    '- Do not add campaign/ad_group/placement/advertised_product totals together with keyword/search term/targeting totals.',
+    '- Canonical totals use user_search_term first, then search_term, then actionable fallback only when no search term table exists.',
+    '- This report proves local data consistency only; final delivery still depends on the final readiness manifest.',
+    '',
+  ].join('\n');
+}
+
+function handleExportDataReconciliation(input: unknown) {
+  const scope = normalizeBusinessUiScope(input);
+  const pipeline = handleGetBusinessUiDataPipeline(scope);
+  const sourceFiles = Array.from(new Set((pipeline.collection.realReportFiles || []).flatMap((file: any) => metricSourceFileCandidates(file.filePath))));
+  const sourceBatchIds = Array.from(new Set((pipeline.collection.sourceBatchIds || []).filter(Boolean)));
+  const metricSource: BusinessMetricSource | undefined = sourceFiles.length > 0
+    ? { batchIds: sourceBatchIds, batchId: sourceBatchIds[0], sourceFiles }
+    : undefined;
+  const blockers = new Set<string>([
+    ...(pipeline.collection.blockers || []),
+    ...(pipeline.quant.blockers || []),
+  ]);
+  let dbReport: any = {
+    databaseReady: Boolean(state.db),
+    availableReportTypes: [],
+    canonical: { reportTypes: [], summarySource: 'none', isApproximate: false },
+    totals: {
+      canonical: { rows: 0, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0, currency: 'USD' },
+      actionable: { rows: 0, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0, currency: 'USD' },
+      breakdown: { rows: 0, spend: 0, sales: 0, orders: 0, clicks: 0, impressions: 0, currency: 'USD' },
+    },
+    byReportType: [],
+  };
+
+  if (!state.db) {
+    blockers.add('本地数据库不可用，无法导出口径核对。');
+  } else if (!metricSource) {
+    blockers.add('当前范围缺少真实报表文件，无法绑定 DB 指标来源。');
+  } else {
+    const allMetrics = businessMetricsWhere(scope, metricSource, 'all');
+    const actionableMetrics = businessMetricsWhere(scope, metricSource, 'actionable');
+    const breakdownMetrics = businessMetricsWhere(scope, metricSource, 'breakdown');
+    const availableReportTypes = loadAvailableBusinessMetricReportTypes(allMetrics.sql, allMetrics.params);
+    const canonical = adMetricCanonicalWhere(availableReportTypes);
+    const canonicalSql = `${allMetrics.sql} AND ${canonical.whereSql}`;
+    const byReportType = state.db.prepare(`
+      SELECT
+        report_type AS reportType,
+        COUNT(*) AS rows,
+        ROUND(COALESCE(SUM(cost), 0), 2) AS spend,
+        COALESCE(SUM(orders), 0) AS orders,
+        ROUND(COALESCE(SUM(sales), 0), 2) AS sales,
+        COALESCE(SUM(clicks), 0) AS clicks,
+        COALESCE(SUM(impressions), 0) AS impressions
+      FROM ad_daily_metrics
+      WHERE ${allMetrics.sql}
+      GROUP BY report_type
+      ORDER BY report_type
+    `).all(...allMetrics.params) as any[];
+    dbReport = {
+      databaseReady: true,
+      availableReportTypes,
+      canonical: canonical.selection,
+      totals: {
+        canonical: businessMetricSummaryForExport(canonicalSql, allMetrics.params),
+        actionable: businessMetricSummaryForExport(actionableMetrics.sql, actionableMetrics.params),
+        breakdown: businessMetricSummaryForExport(breakdownMetrics.sql, breakdownMetrics.params),
+      },
+      byReportType: byReportType.map((row) => ({
+        reportType: row.reportType || 'unknown',
+        rows: Number(row.rows || 0),
+        spend: roundMoney(row.spend),
+        orders: Number(row.orders || 0),
+        sales: roundMoney(row.sales),
+        clicks: Number(row.clicks || 0),
+        impressions: Number(row.impressions || 0),
+      })),
+    };
+    if (canonical.selection.warning) blockers.add(canonical.selection.warning);
+    if (dbReport.totals.canonical.rows === 0) blockers.add('DB canonical 汇总行数为 0，不能证明广告总盘口径。');
+  }
+
+  const report = {
+    generatedAt: new Date().toISOString(),
+    scope: pipeline.scope,
+    sourceBatchIds,
+    dbPath: DB_PATH,
+    collection: {
+      status: pipeline.collection.status,
+      realReportFileCount: pipeline.collection.realReportFiles.length,
+      importedRowCount: pipeline.collection.fileAudit.importedRowCount,
+      missingReportLabels: pipeline.collection.fileAudit.missingReportLabels,
+      manifestPath: pipeline.collection.fileAudit.manifestPath,
+      downloadDir: pipeline.collection.fileAudit.downloadDir,
+    },
+    realReportFiles: pipeline.collection.realReportFiles.map((file: any) => ({
+      reportType: file.reportType,
+      displayName: file.displayName,
+      filePath: file.filePath,
+      fileSizeBytes: file.fileSizeBytes,
+      importedRows: file.importedRows,
+      fileHash: file.fileHash,
+      status: file.status,
+    })),
+    quant: {
+      summarySource: pipeline.quant.summarySource,
+      canonicalRows: pipeline.quant.canonicalRows,
+      actionableRows: pipeline.quant.actionableRows,
+      breakdownRows: pipeline.quant.breakdownRows,
+      totalSpend: roundMoney(pipeline.quant.totalSpend),
+      totalSales: roundMoney(pipeline.quant.totalSales),
+      totalOrders: Number(pipeline.quant.totalOrders || 0),
+      totalClicks: Number(pipeline.quant.totalClicks || 0),
+      acos: pipeline.quant.acos,
+    },
+    db: dbReport,
+    blockers: Array.from(blockers).filter(Boolean),
+  };
+
+  fs.mkdirSync(EXPORTS_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const baseName = `data-reconciliation-${safeFileSegment(scope.dateFrom)}_${safeFileSegment(scope.dateTo)}_${safeFileSegment(scope.storeName)}_${safeFileSegment(scope.marketplaceCode)}_${stamp}`;
+  const jsonPath = path.join(EXPORTS_DIR, `${baseName}.json`);
+  const markdownPath = path.join(EXPORTS_DIR, `${baseName}.md`);
+  fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(markdownPath, buildDataReconciliationMarkdown(report), 'utf8');
+  return {
+    success: true,
+    jsonPath,
+    markdownPath,
+    canonical: dbReport.totals.canonical,
+    canonicalSource: dbReport.canonical.summarySource,
+    blockers: report.blockers,
+  };
+}
 
 function downloadCenterDiagnosticChecklist(diagnostic: DownloadCenterDiagnosticResult, readiness: ReturnType<typeof getDownloadCenterAutomationReadiness>): string {
   const missing = readiness.missing.length > 0 ? readiness.missing.join(', ') : 'none';
@@ -4042,6 +5971,16 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   generated: number;
   metrics: number;
   skippedDuplicates: number;
+  recommendationCandidates: number;
+  aiExplanation: {
+    configured: boolean;
+    invoked: boolean;
+    aiCount: number;
+    ruleCount: number;
+    reason: string;
+    model?: string;
+    strategyDiagnosis?: AdStrategyGenerationSummary;
+  };
   scope: any;
   metricsBackfill?: ReturnType<typeof backfillAdMetricsFromLatestBatchIfNeeded>;
 }> {
@@ -4064,26 +6003,80 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
     throw new Error('生成优化建议需要明确填写开始日期、结束日期、店铺和站点，不能使用登录账号名代替店铺范围。');
   }
 
-  const hasScopedRequest = Boolean(scope.dateFrom || scope.dateTo || scope.storeName || scope.marketplaceCode || scope.asin);
-  const metricsBackfill = hasScopedRequest ? backfillAdMetricsFromLatestBatchIfNeeded(scope) : undefined;
-  const metrics = hasScopedRequest && state.adMetricsRepo?.findForRecommendations
-    ? state.adMetricsRepo.findForRecommendations(scope)
-    : state.adMetricsRepo?.getRecent(limit, scope.storeName) || [];
+  if (!scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode) {
+    throw new Error('生成优化建议需要明确当前运营范围，并且必须先完成真实报表采集和导入。');
+  }
+
+  const gate = getBusinessRecommendationGate(scope);
+  const metricsBackfill = undefined;
+  const metrics = loadBusinessRecommendationMetrics(gate.scope, gate.metricSource, limit);
   if (metrics.length === 0) {
     console.log('[Scheduler] No metrics to process');
-    return { generated: 0, metrics: 0, skippedDuplicates: 0, scope, metricsBackfill };
+    const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+    return {
+      generated: 0,
+      metrics: 0,
+      skippedDuplicates: 0,
+      recommendationCandidates: 0,
+      aiExplanation: {
+        configured: Boolean(settings.aiApiKey),
+        invoked: false,
+        aiCount: 0,
+        ruleCount: 0,
+        reason: '当前范围没有可处理的广告指标，AI 不会被调用。',
+        model: settings.aiModel,
+      },
+      scope: gate.scope,
+      metricsBackfill,
+    };
   }
 
   // Generate recommendations
   const generator = new RecommendationGenerator(state.ruleConfig);
   const firstMetric = metrics[0];
+  const taskId = `task_${Date.now()}`;
   let recommendations = generator.generateBatch(metrics, {
     storeName: scope.storeName || firstMetric?.storeName || state.currentStore || 'unknown',
     marketplaceCode: scope.marketplaceCode || firstMetric?.marketplaceCode || 'US',
     config: state.ruleConfig,
-    taskId: `task_${Date.now()}`,
+    taskId,
   });
+  const recommendationCandidates = recommendations.length;
+  recommendations = recommendations.map((rec) => ({
+    ...rec,
+    evidence: {
+      ...rec.evidence,
+      batchId: gate.scope.batchId,
+      sourceFiles: gate.metricSource.sourceFiles,
+    },
+  }));
+  const strategyDiagnosisResult = await enrichAdRecommendationsWithStrategyDiagnosis(recommendations, metrics, gate.scope, {
+    taskId,
+    sourceFiles: gate.metricSource.sourceFiles,
+  });
+  recommendations = strategyDiagnosisResult.recommendations;
   recommendations = await enrichAdRecommendationsWithAiExplanations(recommendations);
+  const aiCount = recommendations.filter((rec) => rec.evidence?.aiStrategySource === 'ai' || rec.evidence?.explanationSource === 'ai').length;
+  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const aiInvoked = metrics.length > 0 && Boolean(settings.aiApiKey);
+  const aiFallbackReason = recommendations
+    .map((rec) => rec.evidence?.aiFallbackReason)
+    .find((reason): reason is string => typeof reason === 'string' && reason.length > 0);
+  const aiExplanation = {
+    configured: Boolean(settings.aiApiKey),
+    invoked: aiInvoked,
+    aiCount,
+    ruleCount: recommendations.length - aiCount,
+    strategyDiagnosis: strategyDiagnosisResult.summary,
+    reason: !settings.aiApiKey
+      ? '未配置 AI Key，建议解释使用规则引擎 fallback。'
+      : aiInvoked && aiCount === 0
+        ? `已尝试调用 AI，但本次没有可用 AI 输出，建议已回落到规则引擎。${aiFallbackReason ? `原因：${aiFallbackReason}` : ''}`
+      : recommendations.length === 0
+        ? 'AI 已运行广告阶段诊断，但没有找到可安全绑定到当前真实指标的可审批动作。'
+        : `AI 已参与广告阶段诊断、动态阈值建议和 ${aiCount}/${recommendations.length} 条建议解释；AI-only 动作仅进入人工审批。`,
+    model: settings.aiModel,
+  };
 
   // Save to database
   let inserted = 0;
@@ -4101,7 +6094,148 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
 
   console.log(`[Scheduler] Generated ${inserted} recommendations; skipped ${skippedDuplicates} duplicate(s)`);
   mainWindow?.webContents.send('recommendations:generated', inserted);
-  return { generated: inserted, metrics: metrics.length, skippedDuplicates, scope, metricsBackfill };
+  return { generated: inserted, metrics: metrics.length, skippedDuplicates, recommendationCandidates, aiExplanation, scope: gate.scope, metricsBackfill };
+}
+
+interface AdStrategyGenerationSummary {
+  source: 'ai' | 'rule';
+  lifecycleStage: string;
+  summary: string;
+  mainProblems: string[];
+  riskWarnings: string[];
+  thresholdSuggestions: AdStrategyDiagnosisOutput['thresholdSuggestions'];
+  aiCandidateCount: number;
+  operationEventCount: number;
+  productContextCount: number;
+  decisionCounts: {
+    total: number;
+    aligned: number;
+    ruleOnly: number;
+    aiOnly: number;
+    conflict: number;
+    reviewRequired: number;
+  };
+  finalCandidateCount: number;
+  filteredAiOnlyCandidateCount: number;
+  filterReasons: string[];
+  fallbackReason?: string;
+}
+
+function summarizeStrategyDiagnosis(
+  diagnosis: AdStrategyDiagnosisOutput,
+  operationEventCount: number,
+  productContextCount = 0,
+): AdStrategyGenerationSummary {
+  return {
+    source: diagnosis.source,
+    lifecycleStage: diagnosis.lifecycleStage,
+    summary: diagnosis.summary,
+    mainProblems: diagnosis.mainProblems,
+    riskWarnings: diagnosis.riskWarnings,
+    thresholdSuggestions: diagnosis.thresholdSuggestions,
+    aiCandidateCount: diagnosis.aiCandidates.length,
+    operationEventCount,
+    productContextCount,
+    decisionCounts: {
+      total: 0,
+      aligned: 0,
+      ruleOnly: 0,
+      aiOnly: 0,
+      conflict: 0,
+      reviewRequired: 0,
+    },
+    finalCandidateCount: 0,
+    filteredAiOnlyCandidateCount: 0,
+    filterReasons: [],
+    fallbackReason: diagnosis.aiFallbackReason,
+  };
+}
+
+function summarizeMergedDecisionDiagnostics(
+  decisions: Array<{ agreement: string; requiresReview?: boolean }>,
+  acceptedAiOnlyCount: number,
+  finalCandidateCount: number,
+) {
+  const decisionCounts = {
+    total: decisions.length,
+    aligned: decisions.filter((decision) => decision.agreement === 'aligned').length,
+    ruleOnly: decisions.filter((decision) => decision.agreement === 'rule_only').length,
+    aiOnly: decisions.filter((decision) => decision.agreement === 'ai_only').length,
+    conflict: decisions.filter((decision) => decision.agreement === 'conflict').length,
+    reviewRequired: decisions.filter((decision) => decision.requiresReview === true).length,
+  };
+  const filteredAiOnlyCandidateCount = Math.max(0, decisionCounts.aiOnly - acceptedAiOnlyCount);
+  const filterReasons: string[] = [];
+  if (decisions.length === 0) {
+    filterReasons.push('规则和 AI 都没有返回可合并的候选动作。');
+  }
+  if (filteredAiOnlyCandidateCount > 0) {
+    filterReasons.push(`${filteredAiOnlyCandidateCount} 条 AI-only 候选缺少可映射的真实 keyword/search term/target 指标，未进入待审批。`);
+  }
+  if (decisionCounts.conflict > 0) {
+    filterReasons.push(`${decisionCounts.conflict} 条 AI/规则冲突建议已标记为人工复核，不会直接进入普通审批。`);
+  }
+  if (decisionCounts.ruleOnly > 0) {
+    filterReasons.push(`${decisionCounts.ruleOnly} 条规则-only 建议缺少 AI 确认，仍需按证据完整性审批。`);
+  }
+  if (acceptedAiOnlyCount > 0) {
+    filterReasons.push(`${acceptedAiOnlyCount} 条 AI-only 候选已找到真实指标上下文，只能进入人工复核。`);
+  }
+  if (finalCandidateCount === 0 && filterReasons.length === 0) {
+    filterReasons.push('本次诊断完成，但没有形成可绑定当前广告对象的安全动作。');
+  }
+
+  return {
+    decisionCounts,
+    finalCandidateCount,
+    filteredAiOnlyCandidateCount,
+    filterReasons,
+  };
+}
+
+function loadProductStrategyContexts(scope: {
+  storeName?: string;
+  marketplaceCode?: string;
+  asin?: string;
+}): ProductStrategyContext[] {
+  if (!state.productRepo || !scope.storeName || !scope.marketplaceCode) return [];
+  const products = state.productRepo
+    .findAll(scope.storeName)
+    .filter((product) => product.marketplace_code === scope.marketplaceCode)
+    .filter((product) => !scope.asin || product.asin.toLowerCase() === scope.asin.toLowerCase())
+    .slice(0, 20);
+
+  return products.map((product) => {
+    const cost = state.productRepo?.getCost(product.id);
+    return {
+      asin: product.asin,
+      parentAsin: product.parent_asin || undefined,
+      msku: product.msku || undefined,
+      sku: product.sku || undefined,
+      title: product.title || undefined,
+      productStage: product.product_stage || undefined,
+      status: product.status || undefined,
+      cost: cost
+        ? {
+            purchaseCost: finiteNumberOrUndefined(cost.purchaseCost),
+            firstLegCost: finiteNumberOrUndefined(cost.firstLegCost),
+            fbaFee: finiteNumberOrUndefined(cost.fbaFee),
+            referralFeeRate: finiteNumberOrUndefined(cost.referralFeeRate),
+            storageFee: finiteNumberOrUndefined(cost.storageFee),
+            otherCost: finiteNumberOrUndefined(cost.otherCost),
+            minPrice: finiteNumberOrUndefined(cost.minPrice),
+            targetNetMargin: finiteNumberOrUndefined(cost.targetNetMargin),
+            targetAcos: finiteNumberOrUndefined(cost.targetAcos),
+            targetTacos: finiteNumberOrUndefined(cost.targetTacos),
+          }
+        : undefined,
+    };
+  });
+}
+
+function finiteNumberOrUndefined(value: unknown): number | undefined {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : undefined;
 }
 
 async function enrichAdRecommendationsWithAiExplanations(
@@ -4167,35 +6301,342 @@ async function enrichAdRecommendationsWithAiExplanations(
   return enhanced;
 }
 
-async function handleApproveRecommendation(recommendationId: number): Promise<void> {
-  state.recommendationRepo?.updateStatus(recommendationId, 'approved');
+async function enrichAdRecommendationsWithStrategyDiagnosis(
+  recommendations: ActionRecommendation[],
+  metrics: AdDailyMetrics[],
+  scope: {
+    dateFrom?: string;
+    dateTo?: string;
+    storeName?: string;
+    marketplaceCode?: string;
+    asin?: string;
+    batchId?: string;
+  },
+  options: {
+    taskId: string;
+    sourceFiles: string[];
+  },
+): Promise<{ recommendations: ActionRecommendation[]; summary?: AdStrategyGenerationSummary }> {
+  if (!scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode) {
+    return { recommendations };
+  }
+
+  const operationEvents = state.operationEventRepo?.findByScope({
+    dateFrom: scope.dateFrom,
+    dateTo: scope.dateTo,
+    storeName: scope.storeName,
+    marketplaceCode: scope.marketplaceCode,
+    asin: scope.asin,
+    limit: 100,
+  }) || [];
+  const productContexts = loadProductStrategyContexts(scope);
+  const diagnosisInput = buildAdStrategyDiagnosisInput({
+    scope: {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: scope.asin,
+      batchId: scope.batchId,
+    },
+    metrics,
+    operationEvents,
+    productContexts,
+    ruleConfig: state.ruleConfig as RuleConfig & { minSpend?: number },
+    recommendations,
+  });
+  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const diagnosis = settings.aiApiKey
+    ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings))).diagnose(diagnosisInput)
+    : {
+        lifecycleStage: 'unknown' as const,
+        summary: '未配置 AI Key，广告阶段诊断使用规则 fallback。',
+        mainProblems: [],
+        thresholdSuggestions: {
+          targetAcos: {
+            value: diagnosisInput.currentRuleConfig.targetAcos,
+            reason: '当前规则配置 fallback。',
+          },
+          highAcosThreshold: {
+            value: diagnosisInput.currentRuleConfig.highAcosThreshold,
+            reason: '当前规则配置 fallback。',
+          },
+          noOrderClickThreshold: {
+            value: diagnosisInput.currentRuleConfig.noOrderClickThreshold,
+            reason: '当前规则配置 fallback。',
+          },
+          minSpend: {
+            value: diagnosisInput.currentRuleConfig.minSpend,
+            reason: '当前规则配置 fallback。',
+          },
+        },
+        aiCandidates: [],
+        riskWarnings: ['AI unavailable'],
+        source: 'rule' as const,
+        aiFallbackReason: '未配置 AI Key，广告阶段诊断使用规则 fallback',
+      };
+  const decisions = mergeAdDecisions({
+    ruleCandidates: recommendations.map((recommendation) => ({
+      entityType: recommendation.entityType,
+      entityName: recommendation.entityName,
+      actionType: recommendation.actionType,
+      recommendedValue: recommendation.recommendedValue,
+      reason: recommendation.reason,
+      confidence: recommendation.confidence,
+    })),
+    aiCandidates: diagnosis.aiCandidates.map((candidate) => ({
+      entityType: candidate.entityType,
+      entityName: candidate.entityName,
+      actionType: candidate.actionType,
+      recommendedValue: candidate.recommendedValue,
+      reason: candidate.reason,
+      confidence: candidate.confidence,
+    })),
+  });
+
+  const annotated = annotateRecommendationsWithStrategy({
+    recommendations,
+    diagnosis,
+    decisions,
+    operationEventCount: operationEvents.length,
+    productContexts,
+  });
+  const aiOnlyRecommendations = createAiOnlyRecommendationsFromDecisions({
+    decisions,
+    diagnosis,
+    metrics,
+    scope: {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: scope.asin,
+      batchId: scope.batchId,
+    },
+    taskId: options.taskId,
+    sourceFiles: options.sourceFiles,
+    operationEventCount: operationEvents.length,
+    productContexts,
+  });
+  const decisionDiagnostics = summarizeMergedDecisionDiagnostics(
+    decisions,
+    aiOnlyRecommendations.length,
+    annotated.length + aiOnlyRecommendations.length,
+  );
+
+  return {
+    recommendations: [...annotated, ...aiOnlyRecommendations],
+    summary: {
+      ...summarizeStrategyDiagnosis(diagnosis, operationEvents.length, productContexts.length),
+      ...decisionDiagnostics,
+    },
+  };
 }
 
-async function handleRejectRecommendation(recommendationId: number): Promise<void> {
-  state.recommendationRepo?.updateStatus(recommendationId, 'rejected');
+async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
+  configured: boolean;
+  invoked: boolean;
+  model: string;
+  metrics: number;
+  ruleCandidateCount: number;
+  summary: AdStrategyGenerationSummary;
+}> {
+  const scope = {
+    dateFrom: typeof request.dateFrom === 'string' && request.dateFrom.trim() ? request.dateFrom.trim() : undefined,
+    dateTo: typeof request.dateTo === 'string' && request.dateTo.trim() ? request.dateTo.trim() : undefined,
+    storeName: typeof request.storeName === 'string' && request.storeName.trim() ? request.storeName.trim() : undefined,
+    marketplaceCode: typeof request.marketplaceCode === 'string' && request.marketplaceCode.trim() ? request.marketplaceCode.trim() : undefined,
+    asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
+    batchId: typeof request.batchId === 'string' && request.batchId.trim() ? request.batchId.trim() : undefined,
+  };
+  if (!scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode) {
+    throw new Error('AI 阶段诊断需要明确当前操作范围：开始日期、结束日期、店铺和站点。');
+  }
+
+  const gate = getBusinessRecommendationGate(scope);
+  const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(1000, Number(request.limit))) : 300;
+  const metrics = loadBusinessRecommendationMetrics(gate.scope, gate.metricSource, limit);
+  if (metrics.length === 0) {
+    throw new Error('AI 阶段诊断被阻断：当前范围没有可处理的 keyword/search term/target 广告指标。');
+  }
+
+  const generator = new RecommendationGenerator(state.ruleConfig);
+  const firstMetric = metrics[0];
+  const ruleCandidates = generator.generateBatch(metrics, {
+    storeName: scope.storeName || firstMetric?.storeName || state.currentStore || 'unknown',
+    marketplaceCode: scope.marketplaceCode || firstMetric?.marketplaceCode || 'US',
+    config: state.ruleConfig,
+    taskId: `strategy_${Date.now()}`,
+  });
+  const operationEvents = state.operationEventRepo?.findByScope({
+    dateFrom: scope.dateFrom,
+    dateTo: scope.dateTo,
+    storeName: scope.storeName,
+    marketplaceCode: scope.marketplaceCode,
+    asin: scope.asin,
+    limit: 100,
+  }) || [];
+  const productContexts = loadProductStrategyContexts(scope);
+  const diagnosisInput = buildAdStrategyDiagnosisInput({
+    scope: gate.scope,
+    metrics,
+    operationEvents,
+    productContexts,
+    ruleConfig: state.ruleConfig as RuleConfig & { minSpend?: number },
+    recommendations: ruleCandidates,
+  });
+  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const fallbackDiagnosis: AdStrategyDiagnosisOutput = {
+    lifecycleStage: 'unknown',
+    summary: '未配置 AI Key，广告阶段诊断使用规则 fallback。',
+    mainProblems: [],
+    thresholdSuggestions: {
+      targetAcos: {
+        value: diagnosisInput.currentRuleConfig.targetAcos,
+        reason: '当前规则配置 fallback。',
+      },
+      highAcosThreshold: {
+        value: diagnosisInput.currentRuleConfig.highAcosThreshold,
+        reason: '当前规则配置 fallback。',
+      },
+      noOrderClickThreshold: {
+        value: diagnosisInput.currentRuleConfig.noOrderClickThreshold,
+        reason: '当前规则配置 fallback。',
+      },
+      minSpend: {
+        value: diagnosisInput.currentRuleConfig.minSpend,
+        reason: '当前规则配置 fallback。',
+      },
+    },
+    aiCandidates: [],
+    riskWarnings: ['AI unavailable'],
+    source: 'rule',
+    aiFallbackReason: '未配置 AI Key，广告阶段诊断使用规则 fallback',
+  };
+  const diagnosis = settings.aiApiKey
+    ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings))).diagnose(diagnosisInput)
+    : fallbackDiagnosis;
+
+  return {
+    configured: Boolean(settings.aiApiKey),
+    invoked: Boolean(settings.aiApiKey),
+    model: settings.aiModel,
+    metrics: metrics.length,
+    ruleCandidateCount: ruleCandidates.length,
+    summary: summarizeStrategyDiagnosis(diagnosis, operationEvents.length, productContexts.length),
+  };
+}
+
+function assertRecommendationCurrentDataGate(recommendationId: number): ActionRecommendation {
+  const recommendation = state.recommendationRepo?.findById(recommendationId);
+  if (!recommendation) {
+    throw new Error('Recommendation not found');
+  }
+  const batchId = recommendation.evidence?.batchId;
+  if (!batchId) {
+    throw new Error('审批被阻断：该建议缺少当前数据批次 evidence.batchId，请基于真实报表重新生成建议。');
+  }
+  let batchResult: BusinessBatchResult;
+  try {
+    batchResult = loadPersistedLingxingBatch(batchId);
+  } catch {
+    throw new Error(`审批被阻断：建议绑定的数据批次不存在或不可读取：${batchId}`);
+  }
+  const scope = {
+    dateFrom: batchResult.batch.dateStart,
+    dateTo: batchResult.batch.dateEnd,
+    storeName: batchResult.batch.storeName || recommendation.storeName,
+    marketplaceCode: batchResult.batch.marketplaceCode || recommendation.marketplaceCode,
+    asin: recommendation.asin,
+    batchId,
+  };
+  getBusinessRecommendationGate(scope);
+  return recommendation;
+}
+
+function normalizeRecommendationDecisionInput(input: any): { id: number; decision: Record<string, any> } {
+  if (typeof input === 'number') return { id: input, decision: {} };
+  return {
+    id: Number(input?.id || 0),
+    decision: input?.decision && typeof input.decision === 'object' ? input.decision : {},
+  };
+}
+
+async function handleApproveRecommendation(input: any): Promise<void> {
+  const { id, decision } = normalizeRecommendationDecisionInput(input);
+  if (!id) throw new Error('批准建议失败：缺少 recommendation id。');
+  const recommendation = assertRecommendationCurrentDataGate(id);
+  assertRecommendationApprovalPolicy(recommendation);
+  if (!String(decision.approvedBy || '').trim()) {
+    throw new Error('审批被阻断：批准前必须填写审批人。');
+  }
+  if (Object.keys(decision).length > 0) {
+    state.recommendationRepo?.updateStatusWithEvidence(id, 'approved', {
+      approvalDecision: {
+        ...decision,
+        decision: 'approved',
+      },
+    });
+    return;
+  }
+  state.recommendationRepo?.updateStatus(id, 'approved');
+}
+
+async function handleRejectRecommendation(input: any): Promise<void> {
+  const { id, decision } = normalizeRecommendationDecisionInput(input);
+  if (!id) throw new Error('拒绝建议失败：缺少 recommendation id。');
+  if (Object.keys(decision).length > 0) {
+    state.recommendationRepo?.updateStatusWithEvidence(id, 'rejected', {
+      approvalDecision: {
+        ...decision,
+        decision: 'rejected',
+      },
+    });
+    return;
+  }
+  state.recommendationRepo?.updateStatus(id, 'rejected');
 }
 
 function handleGetRecommendations(filter: any = []): any[] {
   const request = Array.isArray(filter) ? {} : (filter || {});
   const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(500, Number(request.limit))) : 100;
   const status = typeof request.status === 'string' && request.status.trim() ? request.status.trim() : undefined;
+  const hasFullScope = Boolean(
+    typeof request.dateFrom === 'string' && request.dateFrom.trim()
+      && typeof request.dateTo === 'string' && request.dateTo.trim()
+      && typeof request.storeName === 'string' && request.storeName.trim()
+      && typeof request.marketplaceCode === 'string' && request.marketplaceCode.trim(),
+  );
+  if (!hasFullScope) {
+    return [];
+  }
+
+  let gate: ReturnType<typeof getBusinessRecommendationGate>;
+  try {
+    gate = getBusinessRecommendationGate({
+      dateFrom: request.dateFrom,
+      dateTo: request.dateTo,
+      storeName: request.storeName,
+      marketplaceCode: request.marketplaceCode,
+      asin: request.asin,
+      batchId: request.batchId,
+    });
+  } catch {
+    return [];
+  }
 
   if (state.recommendationRepo?.findByFilter) {
     const normalizedFilter = {
-      storeName: typeof request.storeName === 'string' && request.storeName.trim() ? request.storeName.trim() : undefined,
-      marketplaceCode: typeof request.marketplaceCode === 'string' && request.marketplaceCode.trim() ? request.marketplaceCode.trim() : undefined,
-      asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
+      storeName: gate.scope.storeName,
+      marketplaceCode: gate.scope.marketplaceCode,
+      asin: gate.scope.asin,
       status,
-      dateFrom: typeof request.dateFrom === 'string' && request.dateFrom.trim() ? request.dateFrom.trim() : request.date,
-      dateTo: typeof request.dateTo === 'string' && request.dateTo.trim() ? request.dateTo.trim() : request.date,
+      dateFrom: gate.scope.dateFrom,
+      dateTo: gate.scope.dateTo,
       page: 0,
       pageSize: limit,
     };
-    return state.recommendationRepo.findByFilter(normalizedFilter).items;
-  }
-
-  if (request.date && status) {
-    return state.recommendationRepo?.findByDateAndStatus(request.date, status, limit) || [];
+    return state.recommendationRepo.findByFilter(normalizedFilter).items.filter((item) => item.evidence?.batchId === gate.scope.batchId);
   }
 
   return [];
@@ -4329,20 +6770,28 @@ function registerIpcHandlers(): void {
   }));
 
   // Settings
-  ipcMain.handle('settings:get', () => normalizeAiSettings(state.settingsRepo?.getAll() ?? {}));
+  ipcMain.handle('settings:get', () => sanitizeAiSettingsForRenderer(state.settingsRepo?.getAll() ?? {}));
   ipcMain.handle('settings:save', (_, settings) => {
-    state.settingsRepo?.save(normalizeAiSettings(settings || {}));
+    state.settingsRepo?.save(normalizeAiSettingsForSave(settings || {}));
     if (settings.ruleConfig) {
       state.ruleConfig = settings.ruleConfig;
     }
+    mainWindow?.webContents.send('business-ui:data-updated');
     return { success: true };
   });
-  ipcMain.handle('settings:test-ai', (_, settings) => handleTestAiSettings(settings || {}));
+  ipcMain.handle('settings:test-ai', async (_, settings) => {
+    const result = await handleTestAiSettings(normalizeAiSettingsForTest(settings || {}));
+    mainWindow?.webContents.send('business-ui:data-updated');
+    return result;
+  });
   ipcMain.handle('settings:get-rule-config', () => state.ruleConfig);
   ipcMain.handle('settings:save-rule-config', (_, config: RuleConfig) => {
     state.settingsRepo?.saveRuleConfig(config);
     state.ruleConfig = config;
   });
+  ipcMain.handle('settings:get-operation-scope', () => handleGetOperationScope());
+  ipcMain.handle('settings:save-operation-scope', (_, scope) => handleSaveOperationScope(scope));
+  ipcMain.handle('settings:get-storage-paths', () => handleGetStoragePaths());
 
   // Browser
   ipcMain.handle('browser:login', (_, { username, password }) =>
@@ -4360,6 +6809,45 @@ function registerIpcHandlers(): void {
   ipcMain.handle('v1_5:reports:collect-lingxing', (_, dateRange) =>
     handleCollectLingxingReports(dateRange)
   );
+  ipcMain.handle('v1_5:business-ui:data-pipeline', (_, scope) =>
+    handleGetBusinessUiDataPipeline(scope)
+  );
+  ipcMain.handle('v1_5:business-ui:batch-options', (_, scope) =>
+    handleGetBusinessBatchOptions(scope)
+  );
+  ipcMain.handle('v1_5:business-ui:import-current-reports', (_, scope) =>
+    handleImportCurrentBusinessReports(scope)
+  );
+  ipcMain.handle('v1_5:business-ui:import-local-report-files', (_, scope) =>
+    handleImportLocalBusinessReportFiles(scope)
+  );
+  ipcMain.handle('v1_5:delivery:readiness', () =>
+    handleGetDeliveryReadiness()
+  );
+  ipcMain.handle('v1_5:delivery:export-bundle', (_, scope) =>
+    handleExportDeliveryBundle(scope)
+  );
+  ipcMain.handle('v1_5:delivery:export-data-reconciliation', (_, scope) =>
+    handleExportDataReconciliation(scope)
+  );
+  ipcMain.handle('v1_5:settings:storage-paths', () =>
+    handleGetStoragePaths()
+  );
+  ipcMain.handle('v1_5:business-ui:keyword-opportunities', (_, scope) =>
+    handleGetBusinessKeywordOpportunities(scope)
+  );
+  ipcMain.handle('operation-events:list', (_, filter) =>
+    handleListOperationEvents(filter)
+  );
+  ipcMain.handle('operation-events:create', (_, input) =>
+    handleCreateOperationEvent(input)
+  );
+  ipcMain.handle('operation-events:update', (_, input) =>
+    handleUpdateOperationEvent(input)
+  );
+  ipcMain.handle('operation-events:delete', (_, input) =>
+    handleDeleteOperationEvent(input)
+  );
   ipcMain.handle('v1_5:reports:preflight-lingxing-collection', (_, dateRange) =>
     handlePreflightLingxingCollection(dateRange)
   );
@@ -4368,6 +6856,9 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle('v1_5:reports:retry-lingxing-report', (_, { dateRange, reportType }) =>
     handleRetryLingxingReport(dateRange, reportType)
+  );
+  ipcMain.handle('v1_5:reports:download-existing-lingxing-reports', (_, { dateRange, reportTypes }) =>
+    handleDownloadExistingLingxingReports(dateRange, Array.isArray(reportTypes) ? reportTypes : [])
   );
   ipcMain.handle('v1_5:reports:run-lingxing-canary-report', (_, { dateRange, reportType }) =>
     handleRunLingxingCanaryReport(dateRange, reportType)
@@ -4412,6 +6903,7 @@ function registerIpcHandlers(): void {
   // Recommendations
   ipcMain.handle('recommendations:get', (_, filter) => handleGetRecommendations(filter));
   ipcMain.handle('recommendations:generate', (_, filter) => runRecommendationGeneration(filter));
+  ipcMain.handle('v1_5:business-ui:ad-strategy-diagnosis', (_, filter) => handleRunAdStrategyDiagnosis(filter));
   ipcMain.handle('recommendations:approve', (_, id) => handleApproveRecommendation(id));
   ipcMain.handle('recommendations:reject', (_, id) => handleRejectRecommendation(id));
   ipcMain.handle('recommendations:execute', (_, id) => handleExecuteRecommendation(id));
@@ -4430,6 +6922,54 @@ function registerIpcHandlers(): void {
   ipcMain.handle('products:get', () => state.productRepo?.findAll() || []);
   ipcMain.handle('products:add', (_, product) => {
     state.productRepo?.insert(product);
+  });
+  ipcMain.handle('products:save-config', (_, input) => {
+    if (!state.productRepo) throw new Error('Product repository is not initialized');
+    const product = input?.product || {};
+    const asin = String(product.asin || '').trim();
+    const storeName = String(product.storeName || product.store_name || '').trim();
+    const marketplaceCode = String(product.marketplaceCode || product.marketplace_code || '').trim();
+    if (!asin || !storeName || !marketplaceCode) {
+      throw new Error('保存产品配置需要 ASIN、店铺和站点。');
+    }
+    state.productRepo.upsert({
+      asin,
+      store_name: storeName,
+      marketplace_code: marketplaceCode,
+      parent_asin: String(product.parentAsin || product.parent_asin || ''),
+      msku: String(product.msku || ''),
+      sku: String(product.sku || ''),
+      title: String(product.title || ''),
+      product_stage: String(product.productStage || product.product_stage || 'keyword_exploration'),
+      status: String(product.status || 'active'),
+    });
+    const saved = state.productRepo.findByAsin(asin, storeName, marketplaceCode);
+    if (!saved?.id) throw new Error('产品基础信息已保存但无法读取 product id。');
+    if (input?.cost && typeof input.cost === 'object') {
+      const toNumber = (value: unknown, fallback = 0) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+      };
+      state.productRepo.updateCost(saved.id, {
+        productId: saved.id,
+        purchaseCost: toNumber(input.cost.purchaseCost),
+        firstLegCost: toNumber(input.cost.firstLegCost),
+        fbaFee: toNumber(input.cost.fbaFee),
+        referralFeeRate: toNumber(input.cost.referralFeeRate, 0.15),
+        storageFee: toNumber(input.cost.storageFee),
+        otherCost: toNumber(input.cost.otherCost),
+        minPrice: toNumber(input.cost.minPrice),
+        targetNetMargin: toNumber(input.cost.targetNetMargin),
+        targetAcos: toNumber(input.cost.targetAcos),
+        targetTacos: toNumber(input.cost.targetTacos),
+      });
+    }
+    mainWindow?.webContents.send('business-ui:data-updated');
+    return {
+      success: true,
+      product: state.productRepo.findByAsin(asin, storeName, marketplaceCode),
+      cost: state.productRepo.getCost(saved.id),
+    };
   });
 
   // Logs
@@ -4464,8 +7004,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle('v1_5:listing:import-content', (_, { filePath }) =>
     handleImportListingContent(filePath)
   );
-  ipcMain.handle('v1_5:listing:extract-from-lingxing', () =>
-    handleExtractListingFromLingxing()
+  ipcMain.handle('v1_5:listing:extract-from-lingxing', (_, input) =>
+    handleExtractListingFromLingxing({
+      expectedAsin: typeof input?.expectedAsin === 'string' ? input.expectedAsin : undefined,
+      persist: input?.persist === false ? false : undefined,
+    })
   );
   ipcMain.handle('v1_5:listing:open-and-extract-from-lingxing', (_, input) =>
     handleOpenLingxingListingAndExtract(input)

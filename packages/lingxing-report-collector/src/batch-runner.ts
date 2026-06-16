@@ -22,11 +22,21 @@ export interface RunBatchResult {
   files: LingxingReportFile[];
 }
 
+type ReportDownloadMode = 'create-and-download' | 'download-existing';
+
 function stamp(): string {
   return `${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 17)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export async function runLingxingReportBatch(options: RunBatchOptions): Promise<RunBatchResult> {
+  return runLingxingReportBatchInternal(options, 'create-and-download');
+}
+
+export async function downloadExistingLingxingReportBatch(options: RunBatchOptions): Promise<RunBatchResult> {
+  return runLingxingReportBatchInternal(options, 'download-existing');
+}
+
+async function runLingxingReportBatchInternal(options: RunBatchOptions, mode: ReportDownloadMode): Promise<RunBatchResult> {
   if (options.reportTypes && options.reportTypes.length === 0) {
     throw new Error('reportTypes must be omitted for a full batch or contain at least one report type');
   }
@@ -78,7 +88,7 @@ export async function runLingxingReportBatch(options: RunBatchOptions): Promise<
 
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       file.autoRetryCount = attempt;
-      file.status = 'creating';
+      file.status = mode === 'download-existing' ? 'downloading' : 'creating';
       const isFinalAttempt = attempt === maxRetries;
       let tracePath: string | undefined;
 
@@ -91,11 +101,15 @@ export async function runLingxingReportBatch(options: RunBatchOptions): Promise<
       }
 
       try {
-        const filePath = await page.createAndDownload(report, { start: options.dateStart, end: options.dateEnd }, downloadDir);
+        const filePath = mode === 'download-existing'
+          ? await page.downloadExisting(report, { start: options.dateStart, end: options.dateEnd }, downloadDir)
+          : await page.createAndDownload(report, { start: options.dateStart, end: options.dateEnd }, downloadDir);
         const verification = verifyDownloadedFile(filePath, {
           minBytes: 128,
           expectedFilenameKeyword: report.expectedFilenameKeyword,
           expectedDateRange: { start: options.dateStart, end: options.dateEnd },
+          expectedDownloadDir: downloadDir,
+          expectedReportType: report.type,
         });
         file.filePath = filePath;
         file.fileSizeBytes = verification.fileSizeBytes;

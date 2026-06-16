@@ -26,10 +26,16 @@ win:
     - target: nsis
       arch:
         - x64
+    - target: portable
+      arch:
+        - x64
   artifactName: ${productName}-${version}.${ext}
   signAndEditExecutable: false
 
 nsis: {}
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
 
 mac:
   target:

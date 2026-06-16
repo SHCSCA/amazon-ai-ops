@@ -35,6 +35,27 @@ function latestEvidence(pattern) {
   return files[0]?.filePath || null;
 }
 
+function latestFinalReadinessEvidence() {
+  return latestEvidence(/^final-readiness-\d{4}-\d{2}-\d{2}\.json$/i);
+}
+
+function latestFileInDir(dir, pattern) {
+  if (!dir || !fs.existsSync(dir)) return null;
+  const files = fs.readdirSync(dir)
+    .filter((name) => pattern.test(name))
+    .map((name) => {
+      const filePath = path.join(dir, name);
+      return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
+    })
+    .filter((entry) => fs.statSync(entry.filePath).isFile())
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return files[0]?.filePath || null;
+}
+
+function latestAppDataExport(pattern) {
+  return latestFileInDir(appDataStorageRoot ? path.join(appDataStorageRoot, 'exports') : '', pattern);
+}
+
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
@@ -144,42 +165,105 @@ function assertNoObviousSecret(filePath) {
   }
 }
 
-function collectEvidencePaths(finalReadiness) {
+function explicitFileArg(args, key) {
+  if (!args[key]) return null;
+  const filePath = path.resolve(args[key]);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    throw new Error(`Explicit --${key} file is missing: ${filePath}`);
+  }
+  return filePath;
+}
+
+function siblingMarkdownPath(jsonPath) {
+  if (!jsonPath) return null;
+  const markdownPath = jsonPath.replace(/\.json$/i, '.md');
+  return fs.existsSync(markdownPath) && fs.statSync(markdownPath).isFile() ? markdownPath : null;
+}
+
+function summarizeDataReconciliation(jsonPath, markdownPath) {
+  if (!jsonPath) {
+    return {
+      present: false,
+      sourceJsonPath: null,
+      sourceMarkdownPath: markdownPath || null,
+      canonicalSource: null,
+      canonical: null,
+      blockers: ['No current-scope data reconciliation JSON was found.'],
+    };
+  }
+  const report = readJson(jsonPath);
+  const canonical = report.canonical
+    || report.db?.totals?.canonical
+    || report.totals?.canonicalTotal
+    || null;
+  const canonicalSource = report.canonicalSource
+    || report.db?.canonical?.summarySource
+    || (report.totals?.canonicalTotal ? 'full8-data-reconciliation' : null);
+  return {
+    present: true,
+    sourceJsonPath: jsonPath,
+    sourceMarkdownPath: markdownPath || null,
+    canonicalSource,
+    canonical,
+    blockers: Array.isArray(report.blockers)
+      ? report.blockers
+      : Array.isArray(report.db?.blockers)
+        ? report.db.blockers
+        : [],
+  };
+}
+
+function resolveDataReconciliationEvidence(args) {
+  const explicitJson = explicitFileArg(args, 'data-reconciliation');
+  const explicitMarkdown = explicitFileArg(args, 'data-reconciliation-md');
+  const jsonPath = explicitJson
+    || latestEvidence(/^data-reconciliation-.*\.json$/i)
+    || latestAppDataExport(/^data-reconciliation-.*\.json$/i)
+    || latestEvidence(/^full8-data-reconciliation-.*\.json$/i);
+  const markdownPath = explicitMarkdown
+    || siblingMarkdownPath(jsonPath)
+    || latestEvidence(/^data-reconciliation-.*\.md$/i)
+    || latestAppDataExport(/^data-reconciliation-.*\.md$/i);
+  return summarizeDataReconciliation(jsonPath, markdownPath);
+}
+
+function collectEvidencePaths(finalReadiness, options = {}) {
+  const includeLatestExtras = options.includeLatestExtras !== false;
   const paths = new Set();
   paths.add(finalReadiness.__path);
   for (const gate of finalReadiness.gates || []) {
     if (gate.evidencePath) paths.add(gate.evidencePath);
   }
-  const smoke = latestEvidence(/^v15-product-readiness-ui-smoke-.*\.json$/i);
-  if (smoke) {
-    paths.add(smoke);
-    const smokeJson = readJson(smoke);
-    if (smokeJson.screenshotPath) paths.add(smokeJson.screenshotPath);
-    if (smokeJson.listingScreenshotPath) paths.add(smokeJson.listingScreenshotPath);
-    for (const page of Object.values(smokeJson.pages || {})) {
-      if (page && page.screenshotPath) paths.add(page.screenshotPath);
+  if (includeLatestExtras) {
+    const smoke = latestEvidence(/^v15-product-readiness-ui-smoke-.*\.json$/i);
+    if (smoke) {
+      paths.add(smoke);
+      const smokeJson = readJson(smoke);
+      if (smokeJson.screenshotPath) paths.add(smokeJson.screenshotPath);
+      if (smokeJson.listingScreenshotPath) paths.add(smokeJson.listingScreenshotPath);
+      for (const page of Object.values(smokeJson.pages || {})) {
+        if (page && page.screenshotPath) paths.add(page.screenshotPath);
+      }
     }
-  }
-  const reconciliation = latestEvidence(/^full8-data-reconciliation-.*\.json$/i);
-  if (reconciliation) paths.add(reconciliation);
-  const structuralAi = latestEvidence(/^structural-ai-openai-compatible-mock-.*\.json$/i);
-  if (structuralAi) paths.add(structuralAi);
-  const evidenceManifest = latestEvidence(/^v15-final-readiness-evidence-manifest-.*\.json$/i);
-  if (evidenceManifest) paths.add(evidenceManifest);
-  for (const pattern of [
-    /^real-ad-execution-readback-candidate-.*\.json$/i,
-    /^real-ad-execution-readback-candidate-.*\.md$/i,
-    /^real-ad-execution-readback-manual\.json$/i,
-    /^real-ad-execution-readback-manual\.md$/i,
-    /^ads-readonly-locate-.*\.json$/i,
-  ]) {
-    const adReadbackPacket = latestEvidence(pattern);
-    if (adReadbackPacket) {
-      paths.add(adReadbackPacket);
-      if (/^ads-readonly-locate-.*\.json$/i.test(path.basename(adReadbackPacket))) {
-        const readonlyLocation = readJson(adReadbackPacket);
-        for (const evidencePath of Object.values(readonlyLocation.evidence || {})) {
-          if (evidencePath) paths.add(evidencePath);
+    const structuralAi = latestEvidence(/^structural-ai-openai-compatible-mock-.*\.json$/i);
+    if (structuralAi) paths.add(structuralAi);
+    const evidenceManifest = latestEvidence(/^v15-final-readiness-evidence-manifest-.*\.json$/i);
+    if (evidenceManifest) paths.add(evidenceManifest);
+    for (const pattern of [
+      /^real-ad-execution-readback-candidate-.*\.json$/i,
+      /^real-ad-execution-readback-candidate-.*\.md$/i,
+      /^real-ad-execution-readback-manual\.json$/i,
+      /^real-ad-execution-readback-manual\.md$/i,
+      /^ads-readonly-locate-.*\.json$/i,
+    ]) {
+      const adReadbackPacket = latestEvidence(pattern);
+      if (adReadbackPacket) {
+        paths.add(adReadbackPacket);
+        if (/^ads-readonly-locate-.*\.json$/i.test(path.basename(adReadbackPacket))) {
+          const readonlyLocation = readJson(adReadbackPacket);
+          for (const evidencePath of Object.values(readonlyLocation.evidence || {})) {
+            if (evidencePath) paths.add(evidencePath);
+          }
         }
       }
     }
@@ -262,7 +346,7 @@ function writeGitSnapshot(bundleDir, manifest) {
 
 function main() {
   const args = parseArgs(process.argv);
-  const finalReadinessPath = path.resolve(args['final-readiness'] || latestEvidence(/^final-readiness-.*\.json$/i) || '');
+  const finalReadinessPath = path.resolve(args['final-readiness'] || latestFinalReadinessEvidence() || '');
   if (!finalReadinessPath || !fs.existsSync(finalReadinessPath)) {
     throw new Error('Missing final readiness evidence. Run pnpm run verify:v15-final-readiness first.');
   }
@@ -300,6 +384,16 @@ function main() {
     ],
     files: [],
     missing: [],
+    dataReconciliation: {
+      present: false,
+      canonicalSource: null,
+      canonical: null,
+      blockers: [],
+      sourceJsonPath: null,
+      sourceMarkdownPath: null,
+      bundleJson: null,
+      bundleMarkdown: null,
+    },
   };
 
   const docsDir = path.join(bundleDir, 'docs');
@@ -323,6 +417,7 @@ function main() {
     'scripts/export-v15-delivery-bundle.js',
     'scripts/write-v15-evidence-manifest.js',
     'scripts/verify-v15-delivery-evidence.js',
+    'scripts/smoke-export-v15-delivery-bundle.js',
     'scripts/verify-listing-read-evidence.js',
     'scripts/verify-ai-live.js',
     'scripts/verify-ai-live-connection.js',
@@ -342,7 +437,25 @@ function main() {
 
   const evidenceOutDir = path.join(bundleDir, 'evidence');
   const screenshotsDir = path.join(bundleDir, 'screenshots');
-  for (const sourcePath of collectEvidencePaths(finalReadiness)) {
+  const dataReconciliation = resolveDataReconciliationEvidence(args);
+  const copiedDataReconciliationJson = dataReconciliation.sourceJsonPath
+    ? copyFile(dataReconciliation.sourceJsonPath, evidenceOutDir, 'data-reconciliation:json', manifest)
+    : null;
+  const copiedDataReconciliationMarkdown = dataReconciliation.sourceMarkdownPath
+    ? copyFile(dataReconciliation.sourceMarkdownPath, evidenceOutDir, 'data-reconciliation:markdown', manifest)
+    : null;
+  manifest.dataReconciliation = {
+    present: dataReconciliation.present,
+    canonicalSource: dataReconciliation.canonicalSource,
+    canonical: dataReconciliation.canonical,
+    blockers: dataReconciliation.blockers,
+    sourceJsonPath: dataReconciliation.sourceJsonPath,
+    sourceMarkdownPath: dataReconciliation.sourceMarkdownPath,
+    bundleJson: copiedDataReconciliationJson ? path.relative(bundleDir, copiedDataReconciliationJson) : null,
+    bundleMarkdown: copiedDataReconciliationMarkdown ? path.relative(bundleDir, copiedDataReconciliationMarkdown) : null,
+  };
+
+  for (const sourcePath of collectEvidencePaths(finalReadiness, { includeLatestExtras: args['skip-latest-extras'] !== 'true' })) {
     const ext = path.extname(sourcePath).toLowerCase();
     const destinationDir = ['.png', '.jpg', '.jpeg', '.webp'].includes(ext) ? screenshotsDir : evidenceOutDir;
     const copied = copyFile(sourcePath, destinationDir, `evidence:${path.basename(sourcePath)}`, manifest);

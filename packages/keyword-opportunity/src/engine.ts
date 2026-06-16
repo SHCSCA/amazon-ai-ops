@@ -28,7 +28,14 @@ export function aggregateKeywordMetrics(metrics: KeywordMetric[]): KeywordMetric
 
   for (const metric of metrics) {
     const normalizedKeyword = metric.normalizedKeyword || normalizeKeyword(metric.rawKeyword);
-    const key = `${metric.asin || 'unknown'}::${normalizedKeyword}`;
+    const key = [
+      metric.asin || 'unknown',
+      metric.portfolioName || '',
+      metric.campaignName || '',
+      metric.adGroupName || '',
+      metric.source,
+      normalizedKeyword,
+    ].map((part) => part.trim().toLowerCase()).join('::');
     const existing = groups.get(key);
 
     if (!existing) {
