@@ -17,6 +17,11 @@ function writePng(filePath: string): string {
   return filePath;
 }
 
+function writeReport(filePath: string): string {
+  fs.writeFileSync(filePath, 'placeholder report file for readback source traceability\n', 'utf8');
+  return filePath;
+}
+
 function completeInput(): AdReadbackEvidenceInput {
   const dir = makeTempDir();
   return {
@@ -32,6 +37,7 @@ function completeInput(): AdReadbackEvidenceInput {
     target: {
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
       entityType: 'target',
@@ -71,7 +77,8 @@ function completeInput(): AdReadbackEvidenceInput {
       recommendationId: '101',
       batchId: 'manual_ad_execution_batch',
       metricDate: '2026-06-10',
-      sourceFiles: ['C:/reports/user_search_term.xlsx'],
+      sourceFiles: [writeReport(path.join(dir, 'user_search_term.xlsx'))],
+      sourceRow: 12,
       explanationSource: 'ai',
       aiModel: 'deepseek-chat',
       entityType: 'target',
@@ -148,6 +155,7 @@ describe('ad readback evidence builder', () => {
       recommendationId: '101',
       batchId: 'manual_ad_execution_batch',
       metricDate: '2026-06-10',
+      sourceRow: 12,
       explanationSource: 'ai',
       aiModel: 'deepseek-chat',
       decisionAgreement: 'aligned',
@@ -162,7 +170,7 @@ describe('ad readback evidence builder', () => {
       productTargetNetMargin: 0.22,
       productMinPrice: 29.99,
     });
-    expect(evidence.source.sourceFiles).toEqual(['C:/reports/user_search_term.xlsx']);
+    expect(evidence.source.sourceFiles[0]).toMatch(/user_search_term\.xlsx$/);
     expect(evidence.source.decisionReasons).toEqual([
       'AI: Coupon traffic did not convert enough orders.',
       'Rule: ACOS crossed target.',
@@ -170,6 +178,120 @@ describe('ad readback evidence builder', () => {
     expect(evidence.source.aiThresholdSuggestions.targetAcos.value).toBe(0.35);
     expect(evidence.source.quantThresholds.targetAcos).toBe(0.25);
     expect(evidence.notes.join('\n')).toContain('No ad write is performed by this export action');
+  });
+
+  it('preserves separated AI fallback reasons in readback source evidence and markdown', () => {
+    const input = completeInput();
+    input.source!.aiStrategyFallbackReason = 'AI 策略诊断 schemaVersion 错误，已回退规则。';
+    input.source!.aiActionFallbackReason = 'AI 单条解释无法解析 JSON，使用规则解释。';
+
+    const evidence = buildAdReadbackEvidence(input);
+    const markdown = adReadbackEvidenceToMarkdown(evidence, 'readback.json');
+
+    expect(evidence.source.aiStrategyFallbackReason).toBe('AI 策略诊断 schemaVersion 错误，已回退规则。');
+    expect(evidence.source.aiActionFallbackReason).toBe('AI 单条解释无法解析 JSON，使用规则解释。');
+    expect(markdown).toContain('AI strategy fallback: AI 策略诊断 schemaVersion 错误，已回退规则。');
+    expect(markdown).toContain('AI action explanation fallback: AI 单条解释无法解析 JSON，使用规则解释。');
+  });
+
+  it('does not mark evidence complete without original report source row', () => {
+    const input = completeInput();
+    delete input.source?.sourceRow;
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.source.sourceRow).toBeNull();
+  });
+
+  it('does not mark evidence complete without a product ASIN target binding', () => {
+    const input = completeInput();
+    input.target!.asin = '';
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.target.asin).toBe('');
+  });
+
+  it('does not mark evidence complete when original report source row is not positive', () => {
+    const input = completeInput();
+    input.source!.sourceRow = -1;
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.source.sourceRow).toBeNull();
+  });
+
+  it('does not mark evidence complete when the source report file is missing', () => {
+    const input = completeInput();
+    input.source!.sourceFiles = ['C:/reports/missing-user-search-term.xlsx'];
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(false);
+  });
+
+  it('does not mark evidence complete when the source file is an audit artifact instead of a spreadsheet report', () => {
+    const input = completeInput();
+    const dir = makeTempDir();
+    const auditPath = path.join(dir, 'acceptance-audit.json');
+    fs.writeFileSync(auditPath, '{}\n', 'utf8');
+    input.source!.sourceFiles = [auditPath];
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(false);
+  });
+
+  it('marks evidence complete when source current value differs from the live before value', () => {
+    const input = completeInput();
+    input.source!.currentValue = '2.10';
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('PASS');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(true);
+  });
+
+  it('marks evidence complete when source recommended value differs from the live after value', () => {
+    const input = completeInput();
+    input.source!.recommendedValue = '2.00';
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('PASS');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(true);
+  });
+
+  it('marks evidence complete when readback actual value numerically matches the after value with USD formatting', () => {
+    const input = completeInput();
+    input.after!.value = '2.16 USD';
+    input.readback!.actualValue = '$2.16';
+    input.source!.recommendedValue = '2.16';
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('PASS');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(true);
+  });
+
+  it('does not mark evidence complete when before and after values are numerically unchanged with different USD formatting', () => {
+    const input = completeInput();
+    input.target!.actionType = 'pause_target';
+    input.before!.value = '$2.16';
+    input.after!.value = '2.16 USD';
+    input.source!.currentValue = '2.16';
+    input.source!.recommendedValue = '2.16';
+    input.readback!.actualValue = '2.16';
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(false);
   });
 
   it('does not accept recommendation CPC values as live before/after proof', () => {
@@ -204,6 +326,38 @@ describe('ad readback evidence builder', () => {
     expect(evidence.before.capturedAt).toContain('FILL:');
   });
 
+  it('does not mark evidence complete when before and after screenshots reuse the same file', () => {
+    const input = completeInput();
+    input.after!.screenshotPath = input.before!.screenshotPath;
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(false);
+  });
+
+  it('does not mark evidence complete when readback proof reuses the after screenshot file', () => {
+    const input = completeInput();
+    input.readback!.evidencePath = input.after!.screenshotPath;
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(false);
+  });
+
+  it('does not mark lower_bid evidence complete when the after value is higher than the before value', () => {
+    const input = completeInput();
+    input.after!.value = '2.60';
+    input.readback!.actualValue = '2.60';
+    input.source!.recommendedValue = '2.60';
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(false);
+  });
+
   it('renders markdown that points to verifier instead of final readiness', () => {
     const evidence = buildAdReadbackEvidence(completeInput());
     const markdown = adReadbackEvidenceToMarkdown(evidence, 'C:\\evidence\\readback.json');
@@ -211,7 +365,9 @@ describe('ad readback evidence builder', () => {
     expect(markdown).toContain('pnpm run verify:ad-readback');
     expect(markdown).toContain('appExecutorUsed=false');
     expect(markdown).toContain('Source batch: manual_ad_execution_batch');
-    expect(markdown).toContain('Source files: C:/reports/user_search_term.xlsx');
+    expect(markdown).toContain('Source files: ');
+    expect(markdown).toContain('user_search_term.xlsx');
+    expect(markdown).toContain('Source row: 12');
     expect(markdown).toContain('Source explanation: ai / deepseek-chat');
     expect(markdown).toContain('Product stage: keyword_exploration');
     expect(markdown).toContain('Product targets: ACOS=0.35; TACOS=0.12; netMargin=0.22; minPrice=29.99');

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -36,7 +37,7 @@ function latestEvidence(pattern) {
 }
 
 function latestFinalReadinessEvidence() {
-  return latestEvidence(/^final-readiness-\d{4}-\d{2}-\d{2}\.json$/i);
+  return latestEvidence(/^final-readiness-(?:\d{4}-\d{2}-\d{2}|\d{10,})\.json$/i);
 }
 
 function latestFileInDir(dir, pattern) {
@@ -60,6 +61,17 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
+function runNode(script, args = []) {
+  const result = spawnSync(process.execPath, [path.join(root, script), ...args], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  return {
+    ok: result.status === 0,
+    output: `${result.stdout || ''}${result.stderr || ''}`,
+  };
+}
+
 function assertManifestDrivenFinalReadiness(finalReadiness, finalReadinessPath) {
   if (finalReadiness.evidenceSelection?.mode !== 'manifest') {
     throw new Error(
@@ -70,6 +82,38 @@ function assertManifestDrivenFinalReadiness(finalReadiness, finalReadinessPath) 
   const manifestPath = finalReadiness.evidenceSelection?.manifestPath;
   if (!manifestPath || !fs.existsSync(path.resolve(manifestPath))) {
     throw new Error(`Refusing to export delivery bundle because evidence manifest is missing: ${manifestPath || '<none>'}`);
+  }
+}
+
+function assertSelectedReadbackPassesVerifier(finalReadiness) {
+  if (finalReadiness.status !== 'APP_READY' && finalReadiness.appReady !== true) return;
+  const manifestPath = path.resolve(finalReadiness.evidenceSelection?.manifestPath || '');
+  const evidenceManifest = readJson(manifestPath);
+  const readbackPath = evidenceManifest.evidence?.adReadback?.absolutePath;
+  if (!readbackPath || !fs.existsSync(path.resolve(readbackPath))) {
+    throw new Error('Refusing to export APP_READY delivery bundle because manifest-selected ad readback evidence is missing.');
+  }
+  const verification = runNode('scripts/verify-ad-readback-evidence.js', [path.resolve(readbackPath)]);
+  if (!verification.ok) {
+    throw new Error(
+      'Refusing to export APP_READY delivery bundle because manifest-selected ad readback evidence failed verify:ad-readback.\n'
+      + verification.output.split(/\r?\n/).slice(-8).join('\n'),
+    );
+  }
+}
+
+function assertAppReadyReadmeState(finalReadiness, readmePath) {
+  if (finalReadiness.status !== 'APP_READY' && finalReadiness.appReady !== true) return;
+  const resolved = path.resolve(readmePath || path.join(root, 'README.md'));
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Refusing to export APP_READY delivery bundle because README is missing: ${resolved}`);
+  }
+  const text = fs.readFileSync(resolved, 'utf8');
+  if (!/^\*\*DELIVERY:\s*APP_READY\b/im.test(text)) {
+    throw new Error(
+      'Refusing to export APP_READY delivery bundle because README delivery line is not APP_READY. '
+      + 'Update the top-level README DELIVERY line before exporting the final handoff bundle.',
+    );
   }
 }
 
@@ -213,6 +257,202 @@ function summarizeDataReconciliation(jsonPath, markdownPath) {
   };
 }
 
+function isRealReportPath(value) {
+  return typeof value === 'string' && /\.(xlsx|xls|csv)$/i.test(value.trim());
+}
+
+function addReportReference(map, filePath, ref) {
+  if (!isRealReportPath(filePath)) return;
+  const resolved = path.resolve(String(filePath).trim());
+  const current = map.get(resolved) || {
+    sourcePath: resolved,
+    exists: fs.existsSync(resolved) && fs.statSync(resolved).isFile(),
+    sizeBytes: null,
+    sha256: null,
+    refs: [],
+  };
+  if (current.exists) {
+    current.sizeBytes = fs.statSync(resolved).size;
+    current.sha256 = sha256(resolved);
+  }
+  if (ref && !current.refs.includes(ref)) current.refs.push(ref);
+  map.set(resolved, current);
+}
+
+function collectReportReferencesFromValue(value, map, refPrefix) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectReportReferencesFromValue(item, map, `${refPrefix}[${index}]`));
+    return;
+  }
+  if (!value || typeof value !== 'object') {
+    return;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    const ref = `${refPrefix}.${key}`;
+    if (
+      ['filePath', 'file_path', 'sourceFile', 'source_file', 'sourceFiles', 'source_files', 'reportPath', 'report_path'].includes(key)
+    ) {
+      if (Array.isArray(nested)) nested.forEach((item, index) => addReportReference(map, item, `${ref}[${index}]`));
+      else addReportReference(map, nested, ref);
+    }
+    collectReportReferencesFromValue(nested, map, ref);
+  }
+}
+
+function isSyntheticUiEvidenceForReportIndex(filePath) {
+  const baseName = path.basename(String(filePath || ''));
+  return [
+    /^current-business-ui-smoke-.*\.json$/i,
+    /^business-ui-.*-smoke-.*\.json$/i,
+    /^v15-product-readiness-ui-smoke-.*\.json$/i,
+    /^structural-ai-openai-compatible-mock-.*\.json$/i,
+  ].some((pattern) => pattern.test(baseName));
+}
+
+function buildRealReportIndex({ finalReadiness, dataReconciliation, evidencePaths }) {
+  const reports = new Map();
+  collectReportReferencesFromValue(finalReadiness, reports, 'finalReadiness');
+  if (dataReconciliation) collectReportReferencesFromValue(dataReconciliation, reports, 'dataReconciliation');
+  for (const evidencePath of evidencePaths) {
+    if (path.extname(evidencePath).toLowerCase() !== '.json') continue;
+    if (isSyntheticUiEvidenceForReportIndex(evidencePath)) continue;
+    if (!fs.existsSync(evidencePath) || !fs.statSync(evidencePath).isFile()) continue;
+    try {
+      collectReportReferencesFromValue(readJson(evidencePath), reports, `evidence:${path.basename(evidencePath)}`);
+    } catch {
+      // Ignore malformed optional evidence here; the dedicated verifier owns validity.
+    }
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    copyPolicy: 'Raw Lingxing report spreadsheets are not copied into the delivery bundle; this index records local paths, existence, size, and hash.',
+    reports: Array.from(reports.values()).sort((a, b) => a.sourcePath.localeCompare(b.sourcePath)),
+  };
+}
+
+function collectFinalReadinessBlockers(finalReadiness) {
+  const blockers = [
+    ...(Array.isArray(finalReadiness.missing) ? finalReadiness.missing : []),
+    ...(Array.isArray(finalReadiness.actionItems) ? finalReadiness.actionItems : []),
+    ...(Array.isArray(finalReadiness.recommendationReviewReasons) ? finalReadiness.recommendationReviewReasons : []),
+    ...(Array.isArray(finalReadiness.reviewBlockers) ? finalReadiness.reviewBlockers : []),
+    ...(Array.isArray(finalReadiness.deliveryReviewReasons) ? finalReadiness.deliveryReviewReasons : []),
+  ];
+
+  for (const gate of finalReadiness.gates || []) {
+    if (gate && gate.ok === false) {
+      const name = String(gate.name || 'gate').trim();
+      const message = String(gate.message || gate.status || '未通过').trim();
+      blockers.push(`${name}: ${message}`);
+    }
+  }
+
+  return Array.from(new Set(blockers.map((item) => String(item || '').trim()).filter(Boolean)));
+}
+
+function writeRealReportIndex(bundleDir, evidenceOutDir, manifest, reportIndex) {
+  const indexPath = path.join(evidenceOutDir, 'real-report-file-index.json');
+  fs.mkdirSync(evidenceOutDir, { recursive: true });
+  fs.writeFileSync(indexPath, `${JSON.stringify(reportIndex, null, 2)}\n`, 'utf8');
+  manifest.files.push({
+    label: 'real-report-file-index',
+    sourcePath: 'generated',
+    bundlePath: path.relative(bundleDir, indexPath),
+    sizeBytes: fs.statSync(indexPath).size,
+    sha256: sha256(indexPath),
+  });
+  return indexPath;
+}
+
+function latestReleasePackageFiles(releaseDir) {
+  if (!releaseDir || !fs.existsSync(releaseDir)) return [];
+  const files = fs.readdirSync(releaseDir)
+    .filter((name) => /^AmazonAIOpsAgent-.*\.exe$/i.test(name))
+    .map((name) => path.join(releaseDir, name))
+    .filter((filePath) => fs.existsSync(filePath) && fs.statSync(filePath).isFile())
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+
+  const portable = files.find((filePath) => /portable/i.test(path.basename(filePath)));
+  const installer = files.find((filePath) => !/portable/i.test(path.basename(filePath)));
+  return [
+    installer ? { kind: 'installer', filePath: installer } : null,
+    portable ? { kind: 'portable', filePath: portable } : null,
+  ].filter(Boolean);
+}
+
+function buildPackageIndex(releaseDir) {
+  const packages = latestReleasePackageFiles(releaseDir).map((entry) => {
+    const stat = fs.statSync(entry.filePath);
+    return {
+      kind: entry.kind,
+      sourcePath: path.resolve(entry.filePath),
+      fileName: path.basename(entry.filePath),
+      exists: true,
+      sizeBytes: stat.size,
+      sha256: sha256(entry.filePath),
+      modifiedAt: stat.mtime.toISOString(),
+    };
+  });
+  return {
+    generatedAt: new Date().toISOString(),
+    releaseDir: path.resolve(releaseDir || path.join(root, 'apps', 'desktop', 'release')),
+    copyPolicy: 'Installer and portable EXE binaries are not copied into the delivery bundle; this index records local paths, existence, size, and SHA-256.',
+    packages,
+  };
+}
+
+function packageIdentity(item) {
+  return [
+    String(item?.kind || ''),
+    String(item?.sourcePath || ''),
+    String(item?.fileName || ''),
+  ].join('\u0000');
+}
+
+function packageListsMatch(leftPackages, rightPackages) {
+  if (!Array.isArray(leftPackages) || !Array.isArray(rightPackages)) return false;
+  if (leftPackages.length !== rightPackages.length) return false;
+  const left = [...leftPackages].sort((a, b) => packageIdentity(a).localeCompare(packageIdentity(b)));
+  const right = [...rightPackages].sort((a, b) => packageIdentity(a).localeCompare(packageIdentity(b)));
+  return left.every((item, index) => {
+    const other = right[index];
+    return item.kind === other.kind
+      && path.resolve(item.sourcePath) === path.resolve(other.sourcePath)
+      && item.fileName === other.fileName
+      && Number(item.sizeBytes || 0) === Number(other.sizeBytes || 0)
+      && String(item.sha256 || '').toUpperCase() === String(other.sha256 || '').toUpperCase();
+  });
+}
+
+function assertAppReadyFinalReadinessHasPackageEvidence(finalReadiness, packageIndex) {
+  if (!finalReadiness.appReady && finalReadiness.status !== 'APP_READY') return;
+  const packageGate = (finalReadiness.gates || []).find((gate) => gate.name === 'Release package hash');
+  if (!packageGate || packageGate.ok !== true || packageGate.status !== 'passed') {
+    throw new Error('Refusing to export APP_READY delivery bundle because final readiness package hash gate evidence is missing.');
+  }
+  const readinessIndex = finalReadiness.packageIndex;
+  if (!readinessIndex?.present || Number(readinessIndex.count || 0) <= 0) {
+    throw new Error('Refusing to export APP_READY delivery bundle because final readiness package index is missing.');
+  }
+  if (!Array.isArray(readinessIndex.packages) || !packageListsMatch(readinessIndex.packages, packageIndex.packages)) {
+    throw new Error('Refusing to export APP_READY delivery bundle because final readiness package index does not match current release package index.');
+  }
+}
+
+function writePackageIndex(bundleDir, evidenceOutDir, manifest, packageIndex) {
+  const indexPath = path.join(evidenceOutDir, 'release-package-index.json');
+  fs.mkdirSync(evidenceOutDir, { recursive: true });
+  fs.writeFileSync(indexPath, `${JSON.stringify(packageIndex, null, 2)}\n`, 'utf8');
+  manifest.files.push({
+    label: 'release-package-index',
+    sourcePath: 'generated',
+    bundlePath: path.relative(bundleDir, indexPath),
+    sizeBytes: fs.statSync(indexPath).size,
+    sha256: sha256(indexPath),
+  });
+  return indexPath;
+}
+
 function resolveDataReconciliationEvidence(args) {
   const explicitJson = explicitFileArg(args, 'data-reconciliation');
   const explicitMarkdown = explicitFileArg(args, 'data-reconciliation-md');
@@ -235,8 +475,8 @@ function collectEvidencePaths(finalReadiness, options = {}) {
     if (gate.evidencePath) paths.add(gate.evidencePath);
   }
   if (includeLatestExtras) {
-    const smoke = latestEvidence(/^v15-product-readiness-ui-smoke-.*\.json$/i);
-    if (smoke) {
+    const addSmokeEvidence = (smoke) => {
+      if (!smoke) return;
       paths.add(smoke);
       const smokeJson = readJson(smoke);
       if (smokeJson.screenshotPath) paths.add(smokeJson.screenshotPath);
@@ -244,7 +484,18 @@ function collectEvidencePaths(finalReadiness, options = {}) {
       for (const page of Object.values(smokeJson.pages || {})) {
         if (page && page.screenshotPath) paths.add(page.screenshotPath);
       }
+    };
+    addSmokeEvidence(latestEvidence(/^current-business-ui-smoke-.*\.json$/i));
+    for (const pattern of [
+      /^business-ui-shell-smoke-.*\.json$/i,
+      /^business-ui-data-pipeline-smoke-.*\.json$/i,
+      /^business-ui-ad-execution-smoke-.*\.json$/i,
+      /^business-ui-keyword-listing-smoke-.*\.json$/i,
+      /^business-ui-settings-delivery-smoke-.*\.json$/i,
+    ]) {
+      addSmokeEvidence(latestEvidence(pattern));
     }
+    addSmokeEvidence(latestEvidence(/^v15-product-readiness-ui-smoke-.*\.json$/i));
     const structuralAi = latestEvidence(/^structural-ai-openai-compatible-mock-.*\.json$/i);
     if (structuralAi) paths.add(structuralAi);
     const evidenceManifest = latestEvidence(/^v15-final-readiness-evidence-manifest-.*\.json$/i);
@@ -353,6 +604,9 @@ function main() {
   const finalReadiness = readJson(finalReadinessPath);
   finalReadiness.__path = finalReadinessPath;
   assertManifestDrivenFinalReadiness(finalReadiness, finalReadinessPath);
+  assertSelectedReadbackPassesVerifier(finalReadiness);
+  const readmePath = path.resolve(args.readme || path.join(root, 'README.md'));
+  assertAppReadyReadmeState(finalReadiness, readmePath);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const bundleDir = path.resolve(args.out || path.join(bundleRoot, `v15-delivery-bundle-${stamp}`));
@@ -394,11 +648,28 @@ function main() {
       bundleJson: null,
       bundleMarkdown: null,
     },
+    finalReadinessBlockers: collectFinalReadinessBlockers(finalReadiness),
+    realReportIndex: {
+      present: false,
+      count: 0,
+      existingCount: 0,
+      missingCount: 0,
+      bundleJson: null,
+      copyPolicy: 'Raw Lingxing report spreadsheets are not copied into the delivery bundle.',
+    },
+    packageIndex: {
+      present: false,
+      count: 0,
+      existingCount: 0,
+      missingCount: 0,
+      bundleJson: null,
+      copyPolicy: 'Installer and portable EXE binaries are not copied into the delivery bundle.',
+    },
   };
 
   const docsDir = path.join(bundleDir, 'docs');
+  copyFile(readmePath, docsDir, 'README.md', manifest);
   for (const relativePath of [
-    'README.md',
     'package.json',
     'docs/V1_5_PROGRESS_REPORT.md',
     'docs/V1_5_ACCEPTANCE_MATRIX.md',
@@ -428,6 +699,10 @@ function main() {
     'scripts/verify-ad-execution-fail-closed.js',
     'scripts/create-ad-readback-evidence-template.js',
     'scripts/create-ad-readback-candidate-from-recommendation.js',
+    'scripts/prepare-ad-readback-session.js',
+    'scripts/verify-ad-readback-session.js',
+    'scripts/fill-ad-readback-session.js',
+    'scripts/fill-ad-readback-evidence.js',
     'scripts/verify-ad-readback-evidence.js',
     'scripts/reconcile-lingxing-full8-data.js',
   ]) {
@@ -454,8 +729,64 @@ function main() {
     bundleJson: copiedDataReconciliationJson ? path.relative(bundleDir, copiedDataReconciliationJson) : null,
     bundleMarkdown: copiedDataReconciliationMarkdown ? path.relative(bundleDir, copiedDataReconciliationMarkdown) : null,
   };
+  if (manifest.appReady && manifest.dataReconciliation.blockers.length > 0) {
+    throw new Error(`Refusing to export APP_READY delivery bundle because data reconciliation has blockers: ${manifest.dataReconciliation.blockers.join('; ')}`);
+  }
+  if (manifest.appReady && Number(manifest.dataReconciliation.canonical?.spend || 0) <= 0) {
+    throw new Error('Refusing to export APP_READY delivery bundle because data reconciliation has no positive canonical ad spend.');
+  }
 
-  for (const sourcePath of collectEvidencePaths(finalReadiness, { includeLatestExtras: args['skip-latest-extras'] !== 'true' })) {
+  const evidencePaths = collectEvidencePaths(finalReadiness, { includeLatestExtras: args['skip-latest-extras'] !== 'true' });
+  const packageIndex = buildPackageIndex(path.resolve(args['release-dir'] || path.join(root, 'apps', 'desktop', 'release')));
+  assertAppReadyFinalReadinessHasPackageEvidence(finalReadiness, packageIndex);
+  const packageIndexPath = writePackageIndex(bundleDir, evidenceOutDir, manifest, packageIndex);
+  manifest.packageIndex = {
+    present: packageIndex.packages.length > 0,
+    count: packageIndex.packages.length,
+    existingCount: packageIndex.packages.filter((item) => item.exists).length,
+    missingCount: packageIndex.packages.filter((item) => !item.exists).length,
+    bundleJson: path.relative(bundleDir, packageIndexPath),
+    copyPolicy: packageIndex.copyPolicy,
+  };
+  if (manifest.appReady) {
+    if (!manifest.packageIndex.present || manifest.packageIndex.count <= 0) {
+      throw new Error('Refusing to export APP_READY delivery bundle because installer/package hash evidence is missing.');
+    }
+    if (!packageIndex.packages.some((item) => item.kind === 'installer')) {
+      throw new Error('Refusing to export APP_READY delivery bundle because installer package hash evidence is missing.');
+    }
+    if (!packageIndex.packages.some((item) => item.kind === 'portable')) {
+      throw new Error('Refusing to export APP_READY delivery bundle because portable no-install package hash evidence is missing.');
+    }
+    if (manifest.packageIndex.missingCount > 0) {
+      throw new Error('Refusing to export APP_READY delivery bundle because installer/package index has missing files.');
+    }
+  }
+
+  const reportIndex = buildRealReportIndex({
+    finalReadiness,
+    dataReconciliation: dataReconciliation.sourceJsonPath ? readJson(dataReconciliation.sourceJsonPath) : null,
+    evidencePaths,
+  });
+  const reportIndexPath = writeRealReportIndex(bundleDir, evidenceOutDir, manifest, reportIndex);
+  manifest.realReportIndex = {
+    present: reportIndex.reports.length > 0,
+    count: reportIndex.reports.length,
+    existingCount: reportIndex.reports.filter((report) => report.exists).length,
+    missingCount: reportIndex.reports.filter((report) => !report.exists).length,
+    bundleJson: path.relative(bundleDir, reportIndexPath),
+    copyPolicy: reportIndex.copyPolicy,
+  };
+  if (manifest.appReady) {
+    if (!manifest.realReportIndex.present || manifest.realReportIndex.count <= 0) {
+      throw new Error('Refusing to export APP_READY delivery bundle because real report index has no source reports.');
+    }
+    if (manifest.realReportIndex.missingCount > 0) {
+      throw new Error('Refusing to export APP_READY delivery bundle because real report index has missing source reports.');
+    }
+  }
+
+  for (const sourcePath of evidencePaths) {
     const ext = path.extname(sourcePath).toLowerCase();
     const destinationDir = ['.png', '.jpg', '.jpeg', '.webp'].includes(ext) ? screenshotsDir : evidenceOutDir;
     const copied = copyFile(sourcePath, destinationDir, `evidence:${path.basename(sourcePath)}`, manifest);

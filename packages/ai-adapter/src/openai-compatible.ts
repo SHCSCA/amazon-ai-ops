@@ -1,8 +1,14 @@
 import { BaseAIProvider } from './provider';
 import type { AIConfig, AIResponse } from './types';
-import type { ChatMessage } from './provider';
+import type { ChatMessage, ChatOptions, CompleteOptions } from './provider';
 
 function shouldDisableDeepSeekThinking(baseUrl: string | undefined, model: string): boolean {
+  const target = `${baseUrl || ''} ${model}`.toLowerCase();
+  return target.includes('deepseek');
+}
+
+function shouldRequestJsonObject(baseUrl: string | undefined, model: string, responseFormat?: string): boolean {
+  if (responseFormat !== 'json_object') return false;
   const target = `${baseUrl || ''} ${model}`.toLowerCase();
   return target.includes('deepseek');
 }
@@ -12,7 +18,8 @@ function buildChatCompletionBody(
   model: string,
   messages: ChatMessage[],
   temperature: number,
-  maxTokens: number
+  maxTokens: number,
+  responseFormat?: ChatOptions['responseFormat'],
 ) {
   return {
     model,
@@ -21,6 +28,9 @@ function buildChatCompletionBody(
     max_tokens: maxTokens,
     ...(shouldDisableDeepSeekThinking(config.baseUrl, model)
       ? { thinking: { type: 'disabled' } }
+      : {}),
+    ...(shouldRequestJsonObject(config.baseUrl, model, responseFormat)
+      ? { response_format: { type: 'json_object' } }
       : {}),
   };
 }
@@ -35,7 +45,7 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
 
   async chat(
     messages: ChatMessage[],
-    options?: { model?: string; temperature?: number; maxTokens?: number }
+    options?: ChatOptions
   ): Promise<AIResponse> {
     const url = this.buildUrl('/chat/completions');
     const model = options?.model || this.defaultModel;
@@ -46,7 +56,7 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
       const response = await fetch(url, {
         method: 'POST',
         headers: this.buildHeaders(),
-        body: JSON.stringify(buildChatCompletionBody(this.config, model, messages, temperature, maxTokens)),
+        body: JSON.stringify(buildChatCompletionBody(this.config, model, messages, temperature, maxTokens, options?.responseFormat)),
       });
 
       if (!response.ok) {
@@ -85,7 +95,7 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
 
   async complete(
     prompt: string,
-    options?: { model?: string; temperature?: number; maxTokens?: number }
+    options?: CompleteOptions
   ): Promise<AIResponse> {
     const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
     return this.chat(messages, options);
@@ -108,4 +118,5 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
 export const __test__ = {
   buildChatCompletionBody,
   shouldDisableDeepSeekThinking,
+  shouldRequestJsonObject,
 };

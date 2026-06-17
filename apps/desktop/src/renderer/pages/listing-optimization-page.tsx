@@ -1,12 +1,25 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import {
+  buildListingReadinessIssues,
+  buildListingSourceStatus,
+  buildListingWorkflowSummary,
+  isListingReadyForDraft,
+} from '../listing-workflow-summary';
+import { hasRealReportCoverage } from '../report-coverage';
 import type { ListingContentView, ListingDraftView, ListingHandoffPayload, ListingSection, ListingSuggestionView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 interface ListingReadEvidence {
   pageUrl?: string;
   screenshotPath?: string;
+  scope?: {
+    storeName?: string;
+    marketplaceCode?: string;
+  };
+  partialReady?: boolean;
+  fullContentReady?: boolean;
   completeness?: {
     asin?: boolean;
     title?: boolean;
@@ -41,13 +54,29 @@ function sectionLabel(section: ListingSection): string {
   return labels[section];
 }
 
-function readStatus(ok: boolean): string {
-  return ok ? '已读取' : '未读取';
+function readStatus(ok: boolean, missingLabel: string): string {
+  return ok ? '已读取' : missingLabel;
 }
 
 function draftSourceLabel(draft: ListingDraftView): string {
-  if (draft.aiFallbackReason) return '规则 fallback';
+  if (draft.aiFallbackReason) return '规则兜底';
   return draft.source === 'ai' ? 'AI' : '规则';
+}
+
+export function listingDraftGenerationMessage(quantReady: boolean, drafts: Array<Partial<ListingDraftView>>): string {
+  const aiCount = drafts.filter((draft) => draft.source === 'ai' && !draft.aiFallbackReason).length;
+  const fallbackDrafts = drafts.filter((draft) => draft.source !== 'ai' || draft.aiFallbackReason);
+  const fallbackCount = fallbackDrafts.length;
+  const fallbackReasons = Array.from(new Set(fallbackDrafts.map((draft) => draft.aiFallbackReason).filter(Boolean)));
+  const parts = [
+    aiCount ? `${aiCount} 条 AI 草案` : '',
+    fallbackCount ? `${fallbackCount} 条规则兜底草案` : '',
+  ].filter(Boolean).join('，') || `${drafts.length} 条 Listing 草案`;
+  const reason = fallbackReasons.length ? ` 兜底原因：${fallbackReasons.slice(0, 2).join('；')}。` : '';
+  if (!quantReady) {
+    return `已生成 ${parts}。当前范围缺真实广告数据，不能声明 AI 已验证。${reason}`;
+  }
+  return `已生成 ${parts}。${reason}草案只保存在本地，不会自动提交 Amazon。`;
 }
 
 function buildSuggestedText(keyword: string, section: ListingSection, currentText: string): string {
@@ -94,7 +123,7 @@ function listingAiStatusFromSettings(settings: Record<string, unknown> | null | 
   if (!settings) {
     return {
       label: 'Listing AI 状态未读取',
-      detail: '无法读取设置时仍可生成规则 fallback 草案，但不会声称 AI 已参与。',
+      detail: '无法读取设置时仍可生成规则兜底草案，但不会声称 AI 已参与。',
       tone: 'pending',
     };
   }
@@ -110,7 +139,7 @@ function listingAiStatusFromSettings(settings: Record<string, unknown> | null | 
   if (!keyPresent) {
     return {
       label: 'Listing AI 未配置',
-      detail: '未配置 API Key，Listing 草案只能使用规则 fallback。',
+      detail: '未配置 API Key，Listing 草案只能使用规则兜底。',
       tone: 'warning',
     };
   }
@@ -125,7 +154,7 @@ function listingAiStatusFromSettings(settings: Record<string, unknown> | null | 
   if (testMatchesCurrent && lastStatus === 'failed') {
     return {
       label: 'Listing AI 测试失败',
-      detail: lastMessage || '最近一次 AI 连接测试失败，草案会回落到规则 fallback。',
+      detail: lastMessage || '最近一次 AI 连接测试失败，草案会回落到规则兜底。',
       tone: 'blocked',
     };
   }
@@ -220,6 +249,17 @@ export function ListingOptimizationPage() {
   );
   const expectedAsin = (handoffPayload?.asin || scope.asin || '').trim().toUpperCase();
   const listingAsin = (listing?.asin || '').trim().toUpperCase();
+  const readScopeStore = readEvidence?.scope?.storeName || '';
+  const readScopeMarketplace = readEvidence?.scope?.marketplaceCode || '';
+  const currentScopeText = `${scope.storeName || '-'} / ${scope.marketplaceCode || '-'}`;
+  const readScopeText = readScopeStore || readScopeMarketplace ? `${readScopeStore || '-'} / ${readScopeMarketplace || '-'}` : '-';
+  const readScopeAvailable = Boolean(readScopeStore || readScopeMarketplace);
+  const listingScopeMatched = Boolean(
+    readScopeStore
+      && readScopeMarketplace
+      && readScopeStore === scope.storeName
+      && readScopeMarketplace === scope.marketplaceCode,
+  );
   const pageMatched = Boolean(listingAsin && (!expectedAsin || listingAsin === expectedAsin));
   const titleRead = Boolean(readEvidence?.completeness?.title ?? listing?.title);
   const bulletsRead = Boolean(readEvidence?.completeness?.bullets ?? listing?.bullets?.length);
@@ -227,11 +267,62 @@ export function ListingOptimizationPage() {
   const probeAsinMatched = readEvidence?.detailProbe?.asinMatched ?? true;
   const asinMatched = Boolean(pageMatched && probeAsinMatched);
   const detailProbeStatus = readEvidence?.detailProbe?.status;
-  const quantReady = Boolean(data?.collection.realReportFiles.length && data?.quant.hasImportedMetrics);
+  const fullContentReady = Boolean(readEvidence?.fullContentReady ?? (titleRead && bulletsRead && backendTermsRead));
+  const listingProbeAttempted = Boolean(
+    listing
+    || readEvidence?.partialReady
+    || readEvidence?.pageUrl
+    || readEvidence?.screenshotPath
+    || detailProbeStatus,
+  );
+  const quantReady = Boolean(hasRealReportCoverage(data?.collection) && data?.quant.hasImportedMetrics);
   const aiDraftCount = drafts.filter((draft) => draft.source === 'ai' && !draft.aiFallbackReason).length;
   const ruleDraftCount = drafts.length - aiDraftCount;
-  const listingReady = Boolean(listing && pageMatched && asinMatched && (titleRead || bulletsRead || backendTermsRead));
+  const listingReady = isListingReadyForDraft({
+    hasListing: Boolean(listing),
+    pageMatched,
+    asinMatched,
+    titleRead,
+    bulletsRead,
+    backendTermsRead,
+    scopeMatched: listingScopeMatched,
+    readScopeAvailable,
+  });
+  const listingReadinessIssues = buildListingReadinessIssues({
+    listingReadAttempted: listingProbeAttempted,
+    hasListing: Boolean(listing),
+    expectedAsin,
+    listingAsin,
+    pageMatched,
+    asinMatched,
+    titleRead,
+    bulletsRead,
+    backendTermsRead,
+    scopeMatched: listingScopeMatched,
+    readScopeAvailable,
+  });
+  const listingSourceStatus = buildListingSourceStatus({
+    listingReadAttempted: listingProbeAttempted,
+    hasListing: Boolean(listing),
+    listingReady,
+    pageMatched,
+    asinMatched,
+    titleRead,
+    bulletsRead,
+    backendTermsRead,
+  });
   const draftReady = drafts.length > 0;
+  const workflowSummary = buildListingWorkflowSummary({
+    keywordCount: keywords.length,
+    listingReadAttempted: listingProbeAttempted,
+    listingReady,
+    listingReadinessIssues,
+    draftCount: drafts.length,
+    aiDraftCount,
+    ruleDraftCount,
+    aiStatusLabel: aiStatus.label,
+    quantReady,
+  });
   const workflowBlocker = !keywords.length
     ? '先从关键词机会带入或粘贴关键词'
     : !listingReady
@@ -250,11 +341,20 @@ export function ListingOptimizationPage() {
     setMessage(null);
     try {
       const api = (window as any).electronAPI;
-      if (!api?.extractListingFromLingxing) {
+      if (!api?.extractListingFromLingxing && !api?.probeLingxingListingDetailAndExtract) {
         throw new Error('Listing 读取接口未暴露');
       }
-      const result = await api.extractListingFromLingxing({ expectedAsin: expectedAsin || undefined });
-      if (!result || result.ready === false) {
+      const readOptions = {
+        expectedAsin: expectedAsin || undefined,
+        scope: {
+          storeName: scope.storeName,
+          marketplaceCode: scope.marketplaceCode,
+        },
+      };
+      const result = api?.probeLingxingListingDetailAndExtract
+        ? await api.probeLingxingListingDetailAndExtract(readOptions)
+        : await api.extractListingFromLingxing(readOptions);
+      if (!result || (result.ready === false && result.partialReady !== true)) {
         throw new Error(result?.reason || '领星页面未返回可用 Listing 读取结果');
       }
       const content = result?.listing || result?.content || result;
@@ -267,11 +367,33 @@ export function ListingOptimizationPage() {
         backendTerms: content?.backendTerms,
         source: content?.source || 'lingxing',
       };
+      const evidence = result?.evidence || {};
       const blocker = getListingContentBlocker(nextListing);
       if (blocker) {
+        const hasProbeEvidence = Boolean(
+          result?.partialReady
+          || evidence?.partialReady
+          || evidence?.pageUrl
+          || evidence?.screenshotPath
+          || evidence?.detailProbe,
+        );
+        if (hasProbeEvidence) {
+          setListing(null);
+          setReadEvidence({
+            pageUrl: evidence?.pageUrl || result?.pageUrl || result?.url,
+            screenshotPath: evidence?.screenshotPath,
+            scope: evidence?.scope || readOptions.scope,
+            partialReady: Boolean(result?.partialReady ?? evidence?.partialReady ?? true),
+            fullContentReady: false,
+            completeness: evidence?.completeness,
+            detailProbe: evidence?.detailProbe,
+          });
+          setDrafts([]);
+          setMessage(result?.reason || `页面已探测但内容未完整读取：${blocker}。请切换到正确的领星 Listing 详情页或等待页面加载完成后重试。`);
+          return;
+        }
         throw new Error(blocker);
       }
-      const evidence = result?.evidence || {};
       setListing({
         ...nextListing,
         pageUrl: evidence?.pageUrl || result?.pageUrl || result?.url,
@@ -281,10 +403,17 @@ export function ListingOptimizationPage() {
       setReadEvidence({
         pageUrl: evidence?.pageUrl || result?.pageUrl || result?.url,
         screenshotPath: evidence?.screenshotPath,
+        scope: evidence?.scope || readOptions.scope,
+        partialReady: Boolean(result?.partialReady ?? evidence?.partialReady),
+        fullContentReady: Boolean(result?.fullContentReady ?? evidence?.fullContentReady),
         completeness: evidence?.completeness,
         detailProbe: evidence?.detailProbe,
       });
-      setMessage('已从当前领星页面读取 Listing 内容；请核对 ASIN、标题、五点和后台词。');
+      setMessage(
+        result?.fullContentReady
+          ? '已从当前领星页面读取完整 Listing 内容；请核对 ASIN、标题、五点和后台词。'
+          : '详情页已读取但 Listing 内容不完整：请核对标题、五点和后台词，必要时切换到正确详情页后重新读取。',
+      );
     } catch (caught) {
       setListing(null);
       setReadEvidence(null);
@@ -302,6 +431,10 @@ export function ListingOptimizationPage() {
     }
     if (expectedAsin && listingAsin !== expectedAsin) {
       setMessage(`Listing 页面 ASIN 与目标 ASIN 不匹配：页面 ${listing.asin || '-'}，目标 ${expectedAsin}。请切换到正确 Listing 后重新读取。`);
+      return;
+    }
+    if (!listingReady) {
+      setMessage('详情页已读取但 Listing 内容不完整：生成草案前必须读取并核对 ASIN、标题、五点和后台词。');
       return;
     }
     if (!keywords.length) {
@@ -325,18 +458,14 @@ export function ListingOptimizationPage() {
         section,
         currentText,
         suggestedText: buildSuggestedText(keyword, section, currentText),
-        evidence: quantReady ? '当前范围真实广告指标 + 关键词机会池' : '规则 fallback：当前范围未满足真实广告指标门槛',
+        evidence: quantReady ? '当前范围真实广告指标 + 关键词机会池' : '规则兜底：当前范围未满足真实广告指标门槛',
         riskWarnings: quantReady ? ['需人工复核相关性'] : ['缺当前真实广告数据门槛，不能声明 AI 已验证'],
         status: 'pending',
       };
       });
       const result = await (window as any).electronAPI?.generateListingDrafts?.(suggestions);
       setDrafts(Array.isArray(result) ? result : []);
-      setMessage(
-        quantReady
-          ? `已生成 ${Array.isArray(result) ? result.length : 0} 条 Listing 草案。草案只保存在本地，不会自动提交 Amazon。`
-          : `已生成 ${Array.isArray(result) ? result.length : 0} 条规则 fallback 草案。当前范围缺真实广告数据，不能声明 AI 已验证。`,
-      );
+      setMessage(listingDraftGenerationMessage(quantReady, Array.isArray(result) ? result : []));
     } catch (caught) {
       setMessage(errorMessage(caught, '生成 Listing 草案失败'));
     } finally {
@@ -369,6 +498,32 @@ export function ListingOptimizationPage() {
 
       <div className="business-stack">
         <Panel title="Listing 工作流状态" tone={draftReady ? 'success' : keywords.length && listingReady ? 'warning' : 'default'}>
+          <div className="evidence-check-panel">
+            <div className="business-split">
+              <div>
+                <h3>当前主任务</h3>
+                <p className="muted-line">{workflowSummary.headline}</p>
+              </div>
+              <StatusPill tone={workflowSummary.tone}>{workflowSummary.statusLabel}</StatusPill>
+            </div>
+            <div className="context-summary-grid">
+              <div>
+                <span>输入与读取</span>
+                <strong>{workflowSummary.facts.slice(0, 2).join(' / ')}</strong>
+                <p>{workflowSummary.blockers.length ? workflowSummary.blockers.join('；') : '当前输入满足下一步条件。'}</p>
+              </div>
+              <div>
+                <span>AI 与数据</span>
+                <strong>{workflowSummary.facts.slice(2).join(' / ')}</strong>
+                <p>{quantReady ? '草案可引用当前广告数据，但仍需人工复核。' : '缺真实广告数据时，草案只能按规则兜底标记。'}</p>
+              </div>
+              <div>
+                <span>下一步</span>
+                <strong>{workflowSummary.nextAction}</strong>
+                <p>{workflowSummary.boundary}</p>
+              </div>
+            </div>
+          </div>
           <div className="workflow-strip workflow-strip-readonly">
             <div className="workflow-step workflow-step-static">
               <span>1 关键词机会</span>
@@ -378,14 +533,14 @@ export function ListingOptimizationPage() {
             </div>
             <div className="workflow-step workflow-step-static">
               <span>2 领星 Listing 读取</span>
-              <strong>{listing ? (listingReady ? '当前页面内容可用' : '已读取但需要核对') : '尚未读取当前页面'}</strong>
-              <p>{listing ? `页面 ASIN：${listing.asin || '-'}，目标 ASIN：${expectedAsin || '-'}` : '必须在真实领星 Listing 页面读取标题、五点或后台词。'}</p>
-              <StatusPill tone={listingReady ? 'ready' : listing ? 'warning' : 'pending'}>{listingReady ? '通过' : listing ? '待核对' : '待读取'}</StatusPill>
+              <strong>{listingSourceStatus.headline}</strong>
+              <p>{listing ? `页面 ASIN：${listing.asin || '-'}，目标 ASIN：${expectedAsin || '-'}` : listingProbeAttempted ? '已保留页面 URL、截图和探测状态；需要切换到正确详情页或等待字段加载后重试。' : '必须在真实领星 Listing 页面读取标题、五点或后台词。'}</p>
+              <StatusPill tone={listingSourceStatus.tone}>{listingSourceStatus.label}</StatusPill>
             </div>
             <div className="workflow-step workflow-step-static">
               <span>3 AI / 规则草案</span>
               <strong>{draftReady ? `${aiDraftCount} AI / ${ruleDraftCount} 规则` : aiStatus.label}</strong>
-              <p>{quantReady ? aiStatus.detail : '缺真实广告数据时只允许规则 fallback 标记。'}</p>
+              <p>{quantReady ? aiStatus.detail : '缺真实广告数据时只允许规则兜底标记。'}</p>
               <StatusPill tone={draftReady ? 'ready' : listingReady && keywords.length ? aiStatus.tone : 'blocked'}>{draftReady ? '已生成' : aiStatus.label}</StatusPill>
             </div>
             <div className="workflow-step workflow-step-static">
@@ -398,16 +553,14 @@ export function ListingOptimizationPage() {
           <p className="muted-line">当前下一步：{workflowBlocker}。本页负责 Listing 草案闭环，不承载广告审批或真实广告执行。</p>
         </Panel>
 
-        <Panel title="Listing 来源" tone={listing ? (pageMatched ? 'success' : 'warning') : 'blocked'}>
+        <Panel title="Listing 来源" tone={listing ? (listingReady ? 'success' : 'warning') : listingProbeAttempted ? 'warning' : 'blocked'}>
           <div className="business-split">
             <div>
               <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
               <p className="muted-line">读取后必须核对 ASIN 是否匹配、标题、五点、后台词和页面 URL。</p>
               <p className="blocked-line">草案只保存在本地，不会自动提交 Amazon。</p>
             </div>
-            <StatusPill tone={listing ? (pageMatched ? 'ready' : 'pending') : 'blocked'}>
-              {listing ? (pageMatched ? 'ASIN 匹配' : '待核对 ASIN') : '未读取'}
-            </StatusPill>
+            <StatusPill tone={listingSourceStatus.tone}>{listingSourceStatus.label}</StatusPill>
           </div>
           <div className="action-row">
             <button className="primary-button" disabled={loading === 'read'} onClick={readFromLingxing} type="button">
@@ -415,13 +568,33 @@ export function ListingOptimizationPage() {
             </button>
           </div>
           <div className="evidence-grid">
-            <div><span>ASIN matched/status</span><strong>{listing ? `${asinMatched ? 'ASIN 匹配' : 'ASIN 待核对'}${detailProbeStatus ? ` / ${detailProbeStatus}` : ''}` : '未读取'}</strong></div>
-            <div><span>Title read</span><strong>{readStatus(titleRead)}</strong></div>
-            <div><span>Bullets read</span><strong>{readStatus(bulletsRead)}</strong></div>
-            <div><span>Backend terms read</span><strong>{readStatus(backendTermsRead)}</strong></div>
+            <div><span>ASIN matched/status</span><strong>{listing ? `${asinMatched ? 'ASIN 匹配' : 'ASIN 待核对'}${detailProbeStatus ? ` / ${detailProbeStatus}` : ''}` : listingProbeAttempted ? `ASIN 缺失${detailProbeStatus ? ` / ${detailProbeStatus}` : ''}` : '未读取'}</strong></div>
+            <div><span>Title read</span><strong>{readStatus(titleRead, listingSourceStatus.missingFieldLabel)}</strong></div>
+            <div><span>Bullets read</span><strong>{readStatus(bulletsRead, listingSourceStatus.missingFieldLabel)}</strong></div>
+            <div><span>Backend terms read</span><strong>{readStatus(backendTermsRead, listingSourceStatus.missingFieldLabel)}</strong></div>
+            <div><span>范围核对</span><strong>{readEvidence ? (listingScopeMatched ? '店铺/站点匹配' : '店铺/站点待核对') : '未读取'}</strong></div>
+            <div><span>当前店铺/站点</span><strong>{currentScopeText}</strong></div>
+            <div><span>读取店铺/站点</span><strong>{readScopeText}</strong></div>
             <div><span>Page URL</span><strong>{readEvidence?.pageUrl || listing?.pageUrl || '-'}</strong></div>
             <div><span>Screenshot path</span><strong>{readEvidence?.screenshotPath || listing?.screenshotPath || '-'}</strong></div>
           </div>
+          <div className="inline-alert">
+            <strong>Listing 读取缺口</strong>
+            <p>
+              {listingReadinessIssues.length
+                ? `生成草案前需补齐：${listingReadinessIssues.join('、')}。`
+                : '无，当前页面已满足草案门槛。'}
+            </p>
+          </div>
+          {readEvidence && !listingScopeMatched && (
+            <p className="warning-line">Listing 读取范围未能证明匹配当前店铺/站点：请确认当前范围后重新读取。</p>
+          )}
+          {listing && !listingReady && (
+            <p className="warning-line">详情页已读取但 Listing 内容不完整：生成草案前必须核对 ASIN、标题、五点和后台词。</p>
+          )}
+          {!listing && listingProbeAttempted && (
+            <p className="warning-line">页面已探测但内容未完整读取：已保留截图和页面 URL；请确认当前页是领星 Listing 详情页，并等待 ASIN、标题、五点和后台词加载后重新读取。</p>
+          )}
         </Panel>
 
         <Panel title="关键词交接与草案边界" tone={keywords.length ? 'success' : 'warning'}>
@@ -444,7 +617,7 @@ export function ListingOptimizationPage() {
             <div>
               <span>草案来源</span>
               <strong>{drafts.length ? `${aiDraftCount} AI / ${ruleDraftCount} 规则` : '未生成'}</strong>
-              <p>DeepSeek 不可用时会标记规则 fallback，不能当作 AI 已验证。</p>
+              <p>DeepSeek 不可用时会标记规则兜底，不能当作 AI 已验证。</p>
             </div>
             <div>
               <span>AI 连接</span>
@@ -494,14 +667,14 @@ export function ListingOptimizationPage() {
             粘贴关键词机会（逗号或换行分隔）
             <textarea value={keywordsText} onChange={(event) => setKeywordsText(event.target.value)} placeholder="keyword one&#10;keyword two" />
           </label>
-          <p className="muted-line">已输入 {keywords.length} 个关键词；生成草案前请确认关键词来自当前范围的真实广告数据。当前门槛：{quantReady ? '真实广告数据可用' : '缺真实广告数据，生成时按规则 fallback 标记'}。</p>
+          <p className="muted-line">已输入 {keywords.length} 个关键词；生成草案前请确认关键词来自当前范围的真实广告数据。当前门槛：{quantReady ? '真实广告数据可用' : '缺真实广告数据，生成时按规则兜底标记'}。</p>
         </Panel>
 
         <Panel title="本地修改建议与草案导出" tone={quantReady ? 'default' : 'warning'}>
           <div className="context-summary-grid">
             <div>
               <span>草案可信度</span>
-              <strong>{quantReady ? '可引用当前广告数据' : '规则 fallback'}</strong>
+              <strong>{quantReady ? '可引用当前广告数据' : '规则兜底'}</strong>
               <p>{quantReady ? '关键词来自当前范围真实广告数据，仍需人工复核。' : '缺真实广告数据时只生成本地占位草案，不能进入交付证据。'}</p>
             </div>
             <div>
@@ -516,8 +689,8 @@ export function ListingOptimizationPage() {
             </div>
           </div>
           <div className="action-row">
-            <button className="primary-button" disabled={!listing || loading === 'draft'} onClick={generateDrafts} type="button">
-              {loading === 'draft' ? '生成中...' : quantReady ? '生成本地草案' : '生成规则 fallback 草案'}
+            <button className="primary-button" disabled={!listingReady || loading === 'draft'} onClick={generateDrafts} type="button">
+              {loading === 'draft' ? '生成中...' : quantReady ? '生成本地草案' : '生成规则兜底草案'}
             </button>
             <button className="secondary-button" disabled={!drafts.length} onClick={exportDrafts} type="button">导出草案</button>
           </div>

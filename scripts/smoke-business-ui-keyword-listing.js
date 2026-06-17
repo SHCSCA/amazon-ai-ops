@@ -270,6 +270,64 @@ async function main() {
           },
         };
       },
+      probeLingxingListingDetailAndExtract: async (options) => {
+        window.__businessUiActionLog.push({ type: 'probeLingxingListingDetailAndExtract', options });
+        if (window.__mockEvidenceOnlyListingRead) {
+          return {
+            ready: false,
+            partialReady: true,
+            fullContentReady: false,
+            reason: '当前页面已探测，但未解析到 ASIN、标题、五点或后台词。',
+            evidence: {
+              pageUrl: 'https://erp.lingxing.com/erp/listing/mock/unparsed',
+              screenshotPath: 'C:/evidence/listing-read-unparsed.png',
+              completeness: { asin: false, title: false, bullets: false, backendTerms: false },
+              detailProbe: {
+                asinMatched: false,
+                status: 'no_asin',
+                finalUrl: 'https://erp.lingxing.com/erp/listing/mock/unparsed',
+                reason: '当前页面未读取到 ASIN。',
+              },
+            },
+          };
+        }
+        if (window.__mockPartialListingRead) {
+          return {
+            ready: true,
+            partialReady: true,
+            fullContentReady: false,
+            listing: {
+              asin: 'B0TESTASIN',
+              title: 'Rechargeable Motion Sensor Wall Light',
+              bullets: [],
+              backendTerms: '',
+            },
+            evidence: {
+              pageUrl: 'https://erp.lingxing.com/erp/listing/mock/detail',
+              screenshotPath: 'C:/evidence/listing-read-partial.png',
+              completeness: { asin: true, title: true, bullets: false, backendTerms: false },
+              detailProbe: { asinMatched: true, status: 'partial_after_probe', finalUrl: 'https://erp.lingxing.com/erp/listing/mock/detail' },
+            },
+          };
+        }
+        return {
+          ready: true,
+          partialReady: true,
+          fullContentReady: true,
+          listing: {
+            asin: 'B0TESTASIN',
+            title: 'Rechargeable Motion Sensor Wall Light',
+            bullets: ['Motion sensor lighting for closets', 'USB rechargeable battery'],
+            backendTerms: 'closet light wall sconce',
+          },
+          evidence: {
+            pageUrl: 'https://erp.lingxing.com/erp/listing/mock/detail',
+            screenshotPath: 'C:/evidence/listing-read.png',
+            completeness: { asin: true, title: true, bullets: true, backendTerms: true },
+            detailProbe: { asinMatched: true, status: 'full_content_ready', finalUrl: 'https://erp.lingxing.com/erp/listing/mock/detail' },
+          },
+        };
+      },
       generateListingDrafts: async (suggestions) => {
         window.__businessUiActionLog.push({ type: 'generateListingDrafts', suggestions });
         return suggestions.map((suggestion, index) => ({
@@ -279,10 +337,10 @@ async function main() {
           currentText: suggestion.currentText,
           draftedText: `${suggestion.suggestedText} - optimized draft`,
           keywords: [suggestion.keyword],
-          evidence: 'AI reason: keyword matched current scope; draft kept local',
+          evidence: 'AI 理由：关键词来自当前范围，草案仅本地保存',
           riskWarnings: ['需人工复核相关性'],
           source: index === 0 ? 'ai' : 'rule',
-          aiFallbackReason: index === 0 ? undefined : 'mock fallback rule state',
+          aiFallbackReason: index === 0 ? undefined : '模拟规则兜底状态',
           status: 'pending',
           createdAt: '2026-06-12T10:01:00.000Z',
         }));
@@ -391,9 +449,46 @@ async function main() {
   for (const text of ['Listing 工作流状态', '1 关键词机会', '2 领星 Listing 读取', '3 AI / 规则草案', '4 导出与发布边界']) {
     await expectInBody(page, text, 'listing workflow status');
   }
+  await expectVisible(page, '当前主任务');
+  await expectVisible(page, '关键词已就绪，但 Listing 读取未达到生成草案门槛。');
+  await expectVisible(page, '尚未读取领星 Listing 页面');
   for (const text of ['广告组合', 'D6 Portfolio', '广告活动', 'D6-auto-test', '广告组', 'D6-ad-group', '对象类型', 'user_search_term', '触发关键词', 'motion sensor wall light', '点击/订单', '36 / 4', '花费/销售 USD', '25.5 / 98.25', '来源文件', 'C:/reports/keyword.xlsx']) {
     await expectVisible(page, text);
   }
+  await page.evaluate(() => {
+    window.__mockEvidenceOnlyListingRead = true;
+  });
+  await page.getByRole('button', { name: '从当前领星页面读取' }).click();
+  await expectVisible(page, '已探测页面，但没有解析到可用 Listing 内容');
+  await expectVisible(page, '已探测未解析');
+  await expectInBody(page, 'no_asin', 'listing evidence-only detail probe status');
+  await expectVisible(page, 'https://erp.lingxing.com/erp/listing/mock/unparsed');
+  await expectVisible(page, 'C:/evidence/listing-read-unparsed.png');
+  await expectInBody(page, '当前页面已探测，但未解析到 ASIN、标题、五点或后台词。', 'listing evidence-only read guidance');
+  await page.getByRole('button', { name: '生成本地草案' }).evaluate((node) => {
+    if (!node.disabled) throw new Error('Draft generation button should stay disabled for evidence-only Listing read');
+  });
+  await page.evaluate(() => {
+    window.__mockEvidenceOnlyListingRead = false;
+  });
+  await page.evaluate(() => {
+    window.__mockPartialListingRead = true;
+  });
+  await page.getByRole('button', { name: '从当前领星页面读取' }).click();
+  await expectVisible(page, '已读取 Listing 部分内容，生成草案前需补齐缺失字段');
+  await expectVisible(page, '已读取部分内容');
+  await expectVisible(page, 'Bullets read');
+  await expectVisible(page, '缺失');
+  await expectVisible(page, 'Backend terms read');
+  await expectVisible(page, 'Listing 读取缺口');
+  await expectInBody(page, '生成草案前需补齐：五点缺失、后台词缺失', 'partial listing field-level blockers');
+  await expectInBody(page, '详情页已读取但 Listing 内容不完整', 'partial listing read guidance');
+  await page.getByRole('button', { name: '生成本地草案' }).evaluate((node) => {
+    if (!node.disabled) throw new Error('Draft generation button should stay disabled for partial Listing read');
+  });
+  await page.evaluate(() => {
+    window.__mockPartialListingRead = false;
+  });
   await page.getByRole('button', { name: '从当前领星页面读取' }).click();
   await expectVisible(page, 'ASIN matched/status');
   await expectVisible(page, 'Title read');
@@ -401,20 +496,28 @@ async function main() {
   await expectVisible(page, 'Backend terms read');
   await expectVisible(page, 'Page URL');
   await expectVisible(page, 'Screenshot path');
+  await expectVisible(page, '范围核对');
+  await expectVisible(page, '当前店铺/站点');
+  await expectVisible(page, '读取店铺/站点');
   await expectVisible(page, 'B0TESTASIN');
   await expectVisible(page, '目标 ASIN');
   await expectVisible(page, '页面匹配');
   await expectVisible(page, '通过');
+  await expectInBody(page, 'Listing 读取缺口', 'complete listing readiness section');
+  await expectInBody(page, '无，当前页面已满足草案门槛。', 'complete listing no blocker message');
   await expectVisible(page, 'Rechargeable Motion Sensor Wall Light');
+  await expectVisible(page, '关键词和 Listing 已就绪，可以生成本地草案。');
   await page.getByRole('button', { name: '生成本地草案' }).click();
-  await page.getByText('已生成 1 条 Listing 草案', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('已生成 1 条 AI 草案', { exact: false }).waitFor({ timeout: 5000 });
+  await expectVisible(page, '已有 1 条本地 Listing 草案，可导出给运营复核。');
+  await expectVisible(page, '导出草案并人工复核，不自动提交 Amazon 或改写 Lingxing Listing。');
   await expectVisible(page, '1 AI / 0 规则');
   await expectInBody(page, '条草案可导出', 'listing export readiness');
   await expectVisible(page, '标题');
   await expectVisible(page, '五点');
   await expectNotInBody(page, 'backend_terms');
   await expectInBody(page, 'AI', 'listing draft source');
-  await expectInBody(page, 'AI reason: keyword matched current scope; draft kept local', 'listing draft evidence');
+  await expectInBody(page, 'AI 理由：关键词来自当前范围，草案仅本地保存', 'listing draft evidence');
   await page.getByRole('button', { name: '导出草案' }).click();
   await page.getByText('已导出 Listing 草案', { exact: false }).waitFor({ timeout: 5000 });
   await assertGlobalGuards(page, 'listing-optimization');
@@ -432,14 +535,17 @@ async function main() {
     fail('Keyword opportunities IPC mock was not called', JSON.stringify(actionLog));
   }
   for (const call of keywordCalls) assertScopeParams(call.scope, 'getBusinessKeywordOpportunities');
-  for (const requiredAction of ['extractListingFromLingxing', 'generateListingDrafts', 'exportListingDrafts']) {
+  for (const requiredAction of ['probeLingxingListingDetailAndExtract', 'generateListingDrafts', 'exportListingDrafts']) {
     if (!actionLog.some((item) => item.type === requiredAction)) {
       fail('Expected Listing IPC mock was not called', requiredAction);
     }
   }
-  const listingReadAction = actionLog.find((item) => item.type === 'extractListingFromLingxing');
+  const listingReadAction = actionLog.find((item) => item.type === 'probeLingxingListingDetailAndExtract');
   if (listingReadAction?.options?.expectedAsin !== 'B0TESTASIN') {
     fail('Listing read did not pass expected ASIN to main process', JSON.stringify(listingReadAction));
+  }
+  if (listingReadAction?.options?.scope?.storeName !== 'FT-US-US' || listingReadAction?.options?.scope?.marketplaceCode !== 'US') {
+    fail('Listing read did not pass current store/site scope to main process', JSON.stringify(listingReadAction));
   }
   evidence.actionLog = actionLog;
 

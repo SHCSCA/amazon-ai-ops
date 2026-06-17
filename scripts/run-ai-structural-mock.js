@@ -34,7 +34,7 @@ function assertNoSecretLeak(serialized) {
 function buildMockOpenAiCompatibleExchange() {
   const request = {
     method: 'POST',
-    url: 'mock://openai-compatible/v1/chat/completions',
+    url: 'mock://openai-compatible/chat/completions',
     headers: {
       authorization: `Bearer ${fakeApiKey}`,
       'content-type': 'application/json',
@@ -56,6 +56,7 @@ function buildMockOpenAiCompatibleExchange() {
       ],
       temperature: 0.3,
       max_tokens: 700,
+      response_format: { type: 'json_object' },
     },
   };
 
@@ -112,7 +113,7 @@ function main() {
       type: 'openai-compatible',
       baseUrl: 'mock://openai-compatible',
       model: exchange.request.body.model,
-      endpointPath: '/v1/chat/completions',
+      endpointPath: '/chat/completions',
     },
     safety: {
       adWriteActionsPerformed: false,
@@ -126,11 +127,13 @@ function main() {
         "this.buildUrl('/chat/completions')",
         'this.buildHeaders()',
         'max_tokens',
+        'response_format',
+        "responseFormat !== 'json_object'",
         'choices?.[0]?.message?.content',
       ]),
       listingAiDraftFlow: includesAll(desktopMainSource, [
         'new OpenAICompatibleProvider(buildAiProviderConfig(settings))',
-        'AI reason:',
+        'AI 理由：',
         "source: 'ai'",
         'aiFallbackReason: undefined',
       ]),

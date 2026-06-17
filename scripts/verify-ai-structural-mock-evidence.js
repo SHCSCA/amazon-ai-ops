@@ -83,12 +83,13 @@ if (allPresent(evidence.sourceChecks?.listingAiDraftFlow)) {
 
 if (
   evidence.requestShape?.method === 'POST'
-  && /\/v1\/chat\/completions$/.test(evidence.requestShape?.url || '')
+  && /\/chat\/completions$/.test(evidence.requestShape?.url || '')
   && evidence.requestShape?.headers?.authorization === 'Bearer [redacted-mock-key]'
   && evidence.requestShape?.hasMessagesArray === true
   && evidence.requestShape?.usesOpenAiCompatibleTokenField === true
+  && evidence.requestShape?.body?.response_format?.type === 'json_object'
 ) {
-  pass('request shape matches OpenAI-compatible chat completions');
+  pass('request shape matches OpenAI-compatible chat completions with JSON object output');
 } else {
   fail('request shape is incomplete');
 }

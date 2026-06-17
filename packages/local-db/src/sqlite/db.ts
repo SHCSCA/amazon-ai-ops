@@ -222,11 +222,36 @@ function runMigrations(database: Database.Database): void {
       model TEXT,
       input_hash TEXT,
       output_json TEXT,
+      schema_version TEXT,
+      evidence_pack_summary_json TEXT,
       success INTEGER DEFAULT 1,
       error_message TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
+  ensureColumn(database, 'ai_call_logs', 'schema_version', 'TEXT');
+  ensureColumn(database, 'ai_call_logs', 'evidence_pack_summary_json', 'TEXT');
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS ai_diagnosis_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      prompt_key TEXT,
+      prompt_version TEXT,
+      model TEXT,
+      scope_json TEXT,
+      evidence_pack_summary_json TEXT,
+      evidence_pack_preview_json TEXT,
+      diagnosis_json TEXT,
+      insights_json TEXT,
+      formal_recommendation_count INTEGER DEFAULT 0,
+      success INTEGER DEFAULT 1,
+      error_message TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  ensureColumn(database, 'ai_diagnosis_runs', 'evidence_pack_preview_json', "TEXT DEFAULT '[]'");
+  ensureColumn(database, 'ai_diagnosis_runs', 'success', 'INTEGER DEFAULT 1');
+  ensureColumn(database, 'ai_diagnosis_runs', 'error_message', 'TEXT');
 
   // v1.5 lingxing_report_batches
   database.exec(`
@@ -362,11 +387,15 @@ function runMigrations(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS listing_content (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       asin TEXT NOT NULL,
+      store_name TEXT,
+      marketplace_code TEXT,
       title TEXT DEFAULT '',
       bullets_json TEXT DEFAULT '[]',
       a_plus TEXT,
       image_copy TEXT,
       backend_terms TEXT,
+      source_url TEXT,
+      screenshot_path TEXT,
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
@@ -424,6 +453,8 @@ function runMigrations(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS listing_drafts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       asin TEXT NOT NULL,
+      store_name TEXT,
+      marketplace_code TEXT,
       section TEXT NOT NULL,
       current_text TEXT,
       drafted_text TEXT NOT NULL,
@@ -449,7 +480,13 @@ function runMigrations(database: Database.Database): void {
   ensureColumn(database, 'listing_content', 'a_plus', 'TEXT');
   ensureColumn(database, 'listing_content', 'image_copy', 'TEXT');
   ensureColumn(database, 'listing_content', 'backend_terms', 'TEXT');
+  ensureColumn(database, 'listing_content', 'store_name', 'TEXT');
+  ensureColumn(database, 'listing_content', 'marketplace_code', 'TEXT');
+  ensureColumn(database, 'listing_content', 'source_url', 'TEXT');
+  ensureColumn(database, 'listing_content', 'screenshot_path', 'TEXT');
   ensureColumn(database, 'listing_content', 'updated_at', "TEXT DEFAULT (datetime('now'))");
+  ensureColumn(database, 'listing_drafts', 'store_name', 'TEXT');
+  ensureColumn(database, 'listing_drafts', 'marketplace_code', 'TEXT');
   ensureColumn(database, 'listing_drafts', 'current_text', 'TEXT');
   ensureColumn(database, 'listing_drafts', 'drafted_text', "TEXT DEFAULT ''");
   ensureColumn(database, 'listing_drafts', 'keywords_json', "TEXT DEFAULT '[]'");

@@ -305,6 +305,79 @@ async function main() {
         }] : [],
         notes: ['mock smoke product context'],
       },
+      productHistory: {
+        ledgerCount: importedRows > 0 ? 1 : 0,
+        ledgers: importedRows > 0 ? [{
+          asin: 'B0TESTASIN',
+          storeName: 'FT-US-US',
+          marketplaceCode: 'US',
+          dateFrom: '2026-06-01',
+          dateTo: '2026-06-12',
+          activeDays: 12,
+          firstMetricDate: '2026-06-01',
+          lastMetricDate: '2026-06-12',
+          inferredStage: 'keyword_exploration',
+          stageReasons: ['广告对象已连续 12 天有花费，订单 3 单，ACOS 高于目标。'],
+          totals: {
+            impressions: 1000,
+            clicks: 88,
+            cost: 170.25,
+            orders: 3,
+            sales: 300.5,
+            acos: 0.566,
+            cpc: 1.93,
+            cvr: 0.034,
+            currency: 'USD',
+          },
+          events: operationEvents,
+          product: {
+            productStage: 'keyword_exploration',
+            targetAcos: 0.35,
+            targetTacos: 0.12,
+            targetNetMargin: 0.22,
+            minPrice: 29.99,
+          },
+          daily: [
+            {
+              date: '2026-06-01',
+              impressions: 180,
+              clicks: 12,
+              cost: 22.5,
+              orders: 0,
+              sales: 0,
+              acos: 0,
+              cpc: 1.88,
+              cvr: 0,
+              currency: 'USD',
+            },
+            {
+              date: '2026-06-08',
+              impressions: 360,
+              clicks: 34,
+              cost: 63.2,
+              orders: 1,
+              sales: 99.99,
+              acos: 0.632,
+              cpc: 1.86,
+              cvr: 0.029,
+              currency: 'USD',
+            },
+            {
+              date: '2026-06-12',
+              impressions: 460,
+              clicks: 42,
+              cost: 84.55,
+              orders: 2,
+              sales: 200.51,
+              acos: 0.422,
+              cpc: 2.01,
+              cvr: 0.048,
+              currency: 'USD',
+            },
+          ],
+        }] : [],
+        notes: ['mock smoke product history ledger'],
+      },
       };
     }
     let operationEvents = [{
@@ -335,6 +408,30 @@ async function main() {
       browserLogout: async () => ({ success: true }),
       getBusinessUiDataPipeline: async () => pipeline,
       getBusinessBatchOptions: async () => pipeline.collection.availableBatches,
+      getDeliveryEvidenceStatus: async (scope) => {
+        window.__businessUiActionLog = window.__businessUiActionLog || [];
+        window.__businessUiActionLog.push({ type: 'getDeliveryEvidenceStatus', scope });
+        const hasRealListing = Boolean(pipeline.quant?.hasImportedMetrics);
+        return {
+          listing: {
+            readReady: hasRealListing,
+            draftReady: hasRealListing,
+            contentCount: hasRealListing ? 1 : 0,
+            fullContentCount: hasRealListing ? 1 : 0,
+            draftCount: hasRealListing ? 1 : 0,
+            aiDraftCount: hasRealListing ? 1 : 0,
+            ruleFallbackDraftCount: 0,
+            latestAsin: hasRealListing ? 'B0TESTASIN' : undefined,
+            latestUpdatedAt: hasRealListing ? '2026-06-12T10:10:00.000Z' : undefined,
+          },
+          readback: {
+            verifiedCount: 0,
+            latestStatus: 'NEEDS_WORK',
+            latestJsonPath: '',
+            latestUpdatedAt: '2026-06-12T10:11:00.000Z',
+          },
+        };
+      },
       getRuleConfig: async () => ({
         targetAcos: 0.25,
         highAcosThreshold: 0.4,
@@ -354,6 +451,115 @@ async function main() {
         aiLastTestModel: 'deepseek-chat',
         aiLastTestMessage: 'AI 连接测试通过：deepseek-chat',
       }),
+      listAiDiagnosisRuns: async (params) => {
+        window.__businessUiActionLog = window.__businessUiActionLog || [];
+        window.__businessUiActionLog.push({ type: 'listAiDiagnosisRuns', params });
+        return [{
+          id: 701,
+          promptKey: 'ad_strategy_diagnosis',
+          promptVersion: 'ad_strategy_diagnosis_v1',
+          model: 'deepseek-chat',
+          scope: {
+            dateFrom: '2026-06-01',
+            dateTo: '2026-06-12',
+            storeName: 'FT-US-US',
+            marketplaceCode: 'US',
+            batchId: 'mock_batch_scope',
+          },
+          evidencePackSummary: { total: 5, metric: 1, timeline: 1, operationEvent: 1, productContext: 1, ruleCandidate: 1 },
+          evidencePackPreview: [{
+            evidenceId: 'metric:mock_batch_scope:search_term:2026-06-12:search_term:history',
+            type: 'metric',
+            label: 'historical test search term / 2026-06-12',
+            dateRange: '2026-06-12~2026-06-12',
+            batchId: 'mock_batch_scope',
+            reportType: 'user_search_term',
+            sourceFile: 'C:/AmazonAIOps/storage/downloads/mock-batch/user_search_term.xlsx',
+            sourceRow: 19,
+            storeName: 'FT-US-US',
+            marketplaceCode: 'US',
+            asin: 'B0TESTASIN',
+            campaignName: 'D6-auto-test',
+            adGroupName: 'D6-ad-group',
+            entityType: 'search_term',
+            entityName: 'historical test search term',
+            metrics: {
+              cost: 170.25,
+              sales: 300.5,
+              orders: 3,
+              clicks: 88,
+              currency: 'USD',
+            },
+          }, {
+            evidenceId: 'timeline:mock_batch_scope:product:B0TESTASIN',
+            type: 'timeline',
+            label: 'product B0TESTASIN / keyword_exploration / 12 days',
+            dateRange: '2026-06-01~2026-06-12',
+            batchId: 'mock_batch_scope',
+            storeName: 'FT-US-US',
+            marketplaceCode: 'US',
+            asin: 'B0TESTASIN',
+            entityType: 'product',
+            entityName: 'B0TESTASIN',
+            metrics: {
+              cost: 170.25,
+              sales: 300.5,
+              orders: 3,
+              clicks: 88,
+              currency: 'USD',
+            },
+            timeline: {
+              activeDays: 12,
+              firstMetricDate: '2026-06-01',
+              lastMetricDate: '2026-06-12',
+              inferredStage: 'keyword_exploration',
+              recentDaily: [
+                { date: '2026-06-01', clicks: 12, cost: 22.5, orders: 0, sales: 0, acos: 0, cvr: 0, currency: 'USD' },
+                { date: '2026-06-12', clicks: 42, cost: 84.55, orders: 2, sales: 200.51, acos: 0.422, cvr: 0.048, currency: 'USD' },
+              ],
+            },
+          }],
+          diagnosis: {
+            source: 'ai',
+            lifecycleStage: 'keyword_exploration',
+            summary: 'Coupon 和 BD 背景显示该产品仍处于测词阶段。',
+          },
+          insights: [{
+            entityType: 'search_term',
+            entityName: '未绑定洞察词',
+            actionType: 'observe',
+            reason: '缺少可回查证据，未进入建议池。',
+          }],
+          formalRecommendationCount: 1,
+          success: true,
+          createdAt: '2026-06-12T11:00:00.000Z',
+        }, {
+          id: 702,
+          promptKey: 'ad_strategy_diagnosis',
+          promptVersion: 'ad_strategy_diagnosis_v1',
+          model: 'deepseek-chat',
+          scope: {
+            dateFrom: '2026-06-01',
+            dateTo: '2026-06-12',
+            storeName: 'FT-US-US',
+            marketplaceCode: 'US',
+            batchId: 'mock_batch_scope',
+          },
+          evidencePackSummary: { total: 5, metric: 1, timeline: 1, operationEvent: 1, productContext: 1, ruleCandidate: 1 },
+          evidencePackPreview: [],
+          diagnosis: {
+            source: 'rule',
+            lifecycleStage: 'unknown',
+            summary: 'AI 诊断不可用，当前使用规则引擎兜底。',
+            aiFallbackReason: 'AI 输出 schemaVersion 错误：legacy_strategy_v0',
+          },
+          insights: [],
+          formalRecommendationCount: 0,
+          success: false,
+          errorMessage: 'AI 输出 schemaVersion 错误：legacy_strategy_v0',
+          createdAt: '2026-06-12T10:30:00.000Z',
+        }];
+      },
       runAdStrategyDiagnosis: async (params) => {
         window.__businessUiActionLog = window.__businessUiActionLog || [];
         window.__businessUiActionLog.push({ type: 'runAdStrategyDiagnosis', params });
@@ -367,19 +573,24 @@ async function main() {
             summary: {
               source: 'rule',
               lifecycleStage: 'unknown',
-              summary: '未配置 AI Key，广告阶段诊断使用规则 fallback。',
+              lifecycleStageReason: '未配置 AI Key，不能执行 AI 阶段判断。',
+              lifecycleStageEvidenceRefs: [],
+              summary: '未配置 AI Key，广告阶段诊断使用规则兜底。',
               mainProblems: [],
               riskWarnings: ['AI unavailable'],
               thresholdSuggestions: {
-                targetAcos: { value: 0.25, reason: '当前规则配置 fallback。' },
-                highAcosThreshold: { value: 0.4, reason: '当前规则配置 fallback。' },
-                noOrderClickThreshold: { value: 30, reason: '当前规则配置 fallback。' },
-                minSpend: { value: 10, reason: '当前规则配置 fallback。' },
+                targetAcos: { value: 0.25, reason: '当前规则配置兜底。' },
+                highAcosThreshold: { value: 0.4, reason: '当前规则配置兜底。' },
+                noOrderClickThreshold: { value: 30, reason: '当前规则配置兜底。' },
+                minSpend: { value: 10, reason: '当前规则配置兜底。' },
               },
               aiCandidateCount: 0,
+              insightOnlyCandidateCount: 0,
+              aiInsights: [],
+              evidencePackSummary: { total: 0, metric: 0, timeline: 0, operationEvent: 0, productContext: 0, ruleCandidate: 0 },
               operationEventCount: operationEvents.length,
               productContextCount: 1,
-              fallbackReason: '未配置 AI Key，广告阶段诊断使用规则 fallback',
+              fallbackReason: '未配置 AI Key，广告阶段诊断使用规则兜底',
             },
           };
         }
@@ -392,16 +603,141 @@ async function main() {
           summary: {
             source: 'ai',
             lifecycleStage: 'keyword_exploration',
-            summary: 'Coupon and BD context keep this product in keyword exploration while tightening high ACOS waste.',
+            lifecycleStageReason: '搜索词花费和促销事件显示仍处于测词阶段。',
+            lifecycleStageEvidenceRefs: ['timeline:mock_batch_scope:product:B0TESTASIN'],
+            summary: 'Coupon 和 BD 背景显示该产品仍处于测词阶段，同时需要收紧高 ACOS 浪费对象。',
             mainProblems: ['high_acos', 'promotion_context'],
-            riskWarnings: ['Do not scale bids during promotion cooldown.'],
+            riskWarnings: ['促销冷却期不要直接放量加价。'],
             thresholdSuggestions: {
-              targetAcos: { value: 0.35, reason: '产品目标 ACOS 和探索阶段允许更高容忍度。' },
-              highAcosThreshold: { value: 0.55, reason: 'Coupon/BD 期间高风险线临时放宽。' },
-              noOrderClickThreshold: { value: 18, reason: '当前阶段需要更快处理无订单点击。' },
-              minSpend: { value: 15, reason: '提高最低花费避免小样本误判。' },
+              targetAcos: { value: 0.35, reason: '产品目标 ACOS 和探索阶段允许更高容忍度。', evidenceRefs: ['timeline:mock_batch_scope:product:B0TESTASIN', 'product:FT-US-US:US:B0TESTASIN'] },
+              highAcosThreshold: {
+                value: 0.55,
+                reason: 'Coupon/BD 期间高风险线临时放宽。',
+                evidenceRefs: ['event:1'],
+                requiresReview: true,
+                reviewReasons: ['AI 阈值建议缺少指标或对象时间线证据。'],
+              },
+              noOrderClickThreshold: { value: 18, reason: '当前阶段需要更快处理无订单点击。', evidenceRefs: ['timeline:mock_batch_scope:product:B0TESTASIN', 'metric:mock_batch_scope:search_term:2026-06-12:search_term:abc'] },
+              minSpend: { value: 15, reason: '提高最低花费避免小样本误判。', evidenceRefs: ['timeline:mock_batch_scope:product:B0TESTASIN', 'metric:mock_batch_scope:search_term:2026-06-12:search_term:abc'] },
             },
             aiCandidateCount: 1,
+            insightOnlyCandidateCount: 1,
+            aiInsights: [{
+              entityType: 'search_term',
+              entityName: '未绑定洞察词',
+              actionType: 'observe',
+              reason: 'AI 认为可能存在浪费，但没有绑定到当前真实广告对象。',
+              reasoningSteps: ['缺少可绑定的 metric evidence。'],
+              evidenceRefs: [],
+              invalidReasons: ['AI 候选动作无法绑定当前范围内的真实广告对象。'],
+              riskWarnings: ['未进入建议池。'],
+              confidence: 0.4,
+            }],
+            evidencePackSummary: { total: 5, metric: 1, timeline: 1, operationEvent: 1, productContext: 1, ruleCandidate: 1 },
+            evidencePackPreview: [{
+              evidenceId: 'metric:mock_batch_scope:search_term:2026-06-12:search_term:abc',
+              type: 'metric',
+              label: 'test search term / 2026-06-12',
+              dateRange: '2026-06-12~2026-06-12',
+              batchId: 'mock_batch_scope',
+              reportType: 'user_search_term',
+              sourceFile: 'C:/AmazonAIOps/storage/downloads/mock-batch/user_search_term.xlsx',
+              sourceRow: 9,
+              storeName: 'FT-US-US',
+              marketplaceCode: 'US',
+              asin: 'B0TESTASIN',
+              campaignName: 'D6-auto-test',
+              adGroupName: 'D6-ad-group',
+              entityType: 'search_term',
+              entityName: 'test search term',
+              metrics: {
+                impressions: 1000,
+                clicks: 88,
+                cost: 170.25,
+                orders: 3,
+                sales: 300.5,
+                acos: 0.566,
+                cpc: 1.93,
+                cvr: 0.034,
+                currency: 'USD',
+              },
+            }, {
+              evidenceId: 'timeline:mock_batch_scope:product:B0TESTASIN',
+              type: 'timeline',
+              label: 'product B0TESTASIN / keyword_exploration / 12 days',
+              dateRange: '2026-06-01~2026-06-12',
+              batchId: 'mock_batch_scope',
+              storeName: 'FT-US-US',
+              marketplaceCode: 'US',
+              asin: 'B0TESTASIN',
+              entityType: 'product',
+              entityName: 'B0TESTASIN',
+              metrics: {
+                impressions: 1000,
+                clicks: 88,
+                cost: 170.25,
+                orders: 3,
+                sales: 300.5,
+                acos: 0.566,
+                cpc: 1.93,
+                cvr: 0.034,
+                currency: 'USD',
+              },
+              product: {
+                productStage: 'keyword_exploration',
+                targetAcos: 0.35,
+                targetTacos: 0.12,
+                targetNetMargin: 0.22,
+                minPrice: 29.99,
+              },
+              timeline: {
+                activeDays: 12,
+                firstMetricDate: '2026-06-01',
+                lastMetricDate: '2026-06-12',
+                inferredStage: 'keyword_exploration',
+                stageReasons: ['广告对象已连续 12 天有花费，订单 3 单，ACOS 高于目标。'],
+                recentDaily: [
+                  { date: '2026-06-01', clicks: 12, cost: 22.5, orders: 0, sales: 0, acos: 0, cvr: 0, currency: 'USD' },
+                  { date: '2026-06-08', clicks: 34, cost: 63.2, orders: 1, sales: 99.99, acos: 0.632, cvr: 0.029, currency: 'USD' },
+                  { date: '2026-06-12', clicks: 42, cost: 84.55, orders: 2, sales: 200.51, acos: 0.422, cvr: 0.048, currency: 'USD' },
+                ],
+              },
+            }, {
+              evidenceId: 'event:1',
+              type: 'operation_event',
+              label: '10% Coupon started',
+              dateRange: '2026-06-08~2026-06-08',
+              storeName: 'FT-US-US',
+              marketplaceCode: 'US',
+              asin: 'B0TESTASIN',
+              campaignName: 'D6-auto-test',
+              adGroupName: 'D6-ad-group',
+              entityType: 'operation_event',
+              entityName: '10% Coupon started',
+              event: {
+                eventDate: '2026-06-08',
+                eventType: 'coupon',
+                title: '10% Coupon started',
+                impactExpectation: 'conversion_up',
+              },
+            }, {
+              evidenceId: 'product:FT-US-US:US:B0TESTASIN',
+              type: 'product_context',
+              label: 'B0TESTASIN / keyword_exploration',
+              dateRange: '2026-06-01~2026-06-12',
+              storeName: 'FT-US-US',
+              marketplaceCode: 'US',
+              asin: 'B0TESTASIN',
+              entityType: 'product',
+              entityName: 'B0TESTASIN',
+              product: {
+                productStage: 'keyword_exploration',
+                targetAcos: 0.35,
+                targetTacos: 0.12,
+                targetNetMargin: 0.22,
+                minPrice: 29.99,
+              },
+            }],
             operationEventCount: operationEvents.length,
             productContextCount: 1,
           },
@@ -411,7 +747,8 @@ async function main() {
         window.__businessUiActionLog = window.__businessUiActionLog || [];
         window.__businessUiActionLog.push({ type: 'getRecommendations', filter });
         const importedRows = pipeline.collection.fileAudit.importedRowCount || 0;
-        return importedRows > 0 ? [{
+        if (importedRows <= 0) return [];
+        const recommendation = {
           id: 9001,
           actionType: 'lower_bid',
           entityType: 'search_term',
@@ -426,7 +763,18 @@ async function main() {
           status: 'pending',
           confidence: 0.82,
           evidence: { batchId: 'mock_batch_scope', campaignName: 'D6-auto-test', adGroupName: 'D6-ad-group' },
-        }] : [];
+        };
+        if (filter?.status === 'pending') return [recommendation];
+        if (filter?.status === 'needs_review') {
+          return [{
+            ...recommendation,
+            id: 9002,
+            status: 'needs_review',
+            reason: 'mock dashboard review recommendation',
+            evidence: { ...recommendation.evidence, decisionRequiresReview: true },
+          }];
+        }
+        return [];
       },
       collectLingxingReports: async (dateRange) => {
         window.__businessUiActionLog = window.__businessUiActionLog || [];
@@ -438,11 +786,21 @@ async function main() {
         window.__businessUiActionLog = window.__businessUiActionLog || [];
         window.__businessUiActionLog.push({ type: 'retryLingxingReport', dateRange, reportType });
         const file = realReportFiles.find((item) => item.reportType === reportType);
-        return { batch: { ...mockBatch, id: `mock_batch_${reportType}` }, files: file ? [file] : [], metricsImport: { inserted: 0, parsedFiles: 0, errors: [] } };
+        pipeline = makePipeline({ hasRealFiles: true, importedRows: 12 });
+        return { batch: { ...mockBatch, id: `mock_batch_${reportType}` }, files: file ? [file] : [], metricsImport: { inserted: 12, parsedFiles: 1, errors: [] } };
       },
       downloadExistingLingxingReports: async (dateRange, reportTypes) => {
         window.__businessUiActionLog = window.__businessUiActionLog || [];
         window.__businessUiActionLog.push({ type: 'downloadExistingLingxingReports', dateRange, reportTypes });
+        if (window.__forceDownloadExistingNoNewFiles) {
+          pipeline = makePipeline({ hasRealFiles: true, importedRows: 0 });
+          return {
+            batch: { ...mockBatch, id: 'mock_existing_no_new_files_batch' },
+            files: [],
+            metricsImport: { inserted: 0, parsedFiles: 0, errors: [] },
+            pipeline,
+          };
+        }
         if (window.__forceDownloadExistingMissingError) {
           return {
             batch: {
@@ -501,6 +859,25 @@ async function main() {
           pipeline,
         };
       },
+      exportDataReconciliation: async (scope) => {
+        window.__businessUiActionLog = window.__businessUiActionLog || [];
+        window.__businessUiActionLog.push({ type: 'exportDataReconciliation', scope });
+        return {
+          success: true,
+          jsonPath: 'C:/AmazonAIOps/app-data/exports/data-reconciliation-mock.json',
+          markdownPath: 'C:/AmazonAIOps/app-data/exports/data-reconciliation-mock.md',
+          canonical: {
+            rows: 96,
+            spend: 170.25,
+            sales: 300.5,
+            orders: 3,
+            clicks: 88,
+            currency: 'USD',
+          },
+          canonicalSource: 'canonical_search_term',
+          blockers: [],
+        };
+      },
       openReportPath: async (targetPath) => {
         window.__businessUiActionLog.push({ type: 'openReportPath', targetPath });
         return { success: true };
@@ -548,6 +925,7 @@ async function main() {
   const routes = [
     ['仪表盘', 'dashboard'],
     ['数据采集', 'data-collection'],
+    ['数据导入与校验', 'data-import-validation'],
     ['运营事件', 'operation-events'],
     ['广告量化', 'ad-quant'],
   ];
@@ -576,15 +954,25 @@ async function main() {
   await expectVisible(page, '0/8');
   await expectVisible(page, '已导入指标');
   await expectVisible(page, '0 行');
-  await expectVisible(page, '待审批建议');
+  await expectVisible(page, '待处理建议');
   await expectVisible(page, '广告花费');
   await expectVisible(page, '广告销售 / 订单');
   await expectVisible(page, 'ACOS');
   await expectVisible(page, '运营摘要');
+  await expectVisible(page, '运营任务入口');
+  await expectVisible(page, '当前是否可分析');
+  await expectVisible(page, '不可分析：缺真实报表和入库指标');
+  await expectVisible(page, '下一步：先获取真实报表');
+  await expectInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。', 'dashboard four-stage task entry guidance before import');
+  await expectVisible(page, '数据流程四段闭环');
+  await expectVisible(page, '领星任务已创建');
+  await expectVisible(page, '真实报表已下载');
+  await expectVisible(page, '已导入 DB 日级指标');
+  await expectVisible(page, '可用于 AI+规则建议');
   await expectVisible(page, '数据门槛');
   await expectVisible(page, '运营后台状态');
-  await expectVisible(page, 'AI 可用');
-  await expectVisible(page, 'deepseek-chat 已测试通过；生成建议时参与阶段诊断和动态阈值。');
+  await expectVisible(page, 'AI 已产出建议');
+  await expectVisible(page, '最近一次 AI 诊断形成 1 条正式建议，另有 1 条洞察。继续到优化建议页查看证据和审批状态。');
   await expectVisible(page, '运营事件');
   await expectVisible(page, '建议/执行');
   await expectVisible(page, '等待建议');
@@ -600,6 +988,23 @@ async function main() {
   await expectNotInBody(page, '总花费');
   await expectNotInBody(page, '总销售');
   await expectVisible(page, '当前范围还没有可量化的真实广告数据');
+
+  await page.locator('.app-sidebar').getByRole('button', { name: /数据导入与校验/ }).click();
+  await expectVisible(page, '数据流程四段闭环');
+  await expectVisible(page, '领星任务已创建');
+  await expectVisible(page, '真实报表已下载');
+  await expectVisible(page, '已导入 DB 日级指标');
+  await expectVisible(page, '可用于 AI+规则建议');
+  await expectInBody(page, '导入页只负责把真实报表变成日级广告事实；审计证据不能替代广告数据。', 'data import four-stage summary');
+  await expectVisible(page, '数据链未闭合');
+  await expectVisible(page, '回数据采集');
+  await expectVisible(page, '未导入前不会生成 ACOS、建议或 AI 结论。');
+  await expectVisible(page, '广告数据现在在哪');
+  await expectVisible(page, '暂无真实报表目录');
+  await expectVisible(page, 'SQLite 日级指标');
+  await expectVisible(page, '0 行可用');
+  await expectVisible(page, '审计文件不参与计算');
+  await expectVisible(page, '回数据采集获取真实报表');
 
   await page.locator('.app-sidebar').getByRole('button', { name: /运营事件/ }).click();
   await expectVisible(page, 'AI 与规则如何使用这些事件');
@@ -631,16 +1036,26 @@ async function main() {
     '重新创建、下载并导入已选报表',
     '重新创建、下载并导入全部 8 类',
     '导入本地报表',
-    '只读取当前范围 ready 行；不会创建新任务；下载后自动入库',
-    '为当前勾选报表新建领星任务，生成后下载真实表格并自动入库',
-    '重新创建、下载并导入当前范围完整广告报表',
-    '已有领星 xlsx/xls/csv 时直接复制入库，不再经过下载中心',
-    '“下载并导入已创建”只读取当前范围已有 ready 行，不会创建新任务；“重新创建、下载并导入”会在领星生成新任务；“导入本地报表”适合你已经手动拿到领星 xlsx/xls/csv 的情况。',
+    '领星已经生成 ready 行时使用；不会创建新任务；下载后自动写入 DB',
+    '只补当前已选报表时使用；会创建当前勾选报表的新任务；生成完成后下载真实报表并自动写入 DB',
+    '缺少完整 8 类或需要刷新当前范围全量数据时使用；会创建完整 8 类报表的新任务；下载完整广告报表并自动写入 DB 日级广告指标',
+    '已经手动拿到领星 xlsx/xls/csv 时使用；不访问领星下载中心；复制本地文件并写入 DB 日级广告指标',
+    '动作区别：下载已创建只读取 ready 行且不会创建新任务；重新创建已选只为勾选报表创建任务；重新创建全部会刷新完整 8 类；导入本地报表不访问领星下载中心。',
   ]) {
     await expectInBody(page, text, 'data collection action copy');
   }
   await expectNotInBody(page, '尚未单独接入');
   await expectVisible(page, '真实原始报表文件');
+  await expectVisible(page, '当前范围数据账本');
+  await expectVisible(page, '没有真实广告报表');
+  await expectVisible(page, '下载或导入真实报表');
+  await expectVisible(page, '数据流程四段闭环');
+  await expectVisible(page, '领星任务已创建');
+  await expectVisible(page, '真实报表已下载');
+  await expectVisible(page, '已导入 DB 日级指标');
+  await expectVisible(page, '可用于 AI+规则建议');
+  await expectInBody(page, '系统只在四段都闭合后放行广告量化、AI 证据包和优化建议。', 'four-step data evidence gate');
+  await expectInBody(page, '批次号和审计文件只用于追溯；运营判断看这四段是否完成。', 'batch id is audit context not primary workflow');
   await expectVisible(page, '真实报表文件检查');
   await expectVisible(page, '文件位置与用途');
   await expectVisible(page, '选择要创建/下载的报表：已选 8/8');
@@ -663,12 +1078,12 @@ async function main() {
   await expectVisible(page, 'C:/AmazonAIOps/storage/downloads/mock-batch/manifest.json');
   await expectVisible(page, '这里应能看到 Lingxing 下载的 xlsx/xls/csv，后续广告量化只读取这些文件。');
   await expectVisible(page, '这里只放 JSON、截图、HTML 等证据；找广告数据请打开“真实广告表格”目录。');
-  await expectVisible(page, '打开真实表格目录');
+  await expectVisible(page, '打开真实报表目录');
   await expectVisible(page, '打开 Manifest');
   await expectVisible(page, '打开审计证据');
-  await expectVisible(page, '当前真实表格清单');
+  await expectVisible(page, '当前真实报表清单');
   await expectVisible(page, '暂无 xlsx/xls/csv 文件');
-  await expectVisible(page, '当前没有真实广告表格。请先下载并导入已创建报表，或重新创建、下载并导入 8 类报表；只有审计包时系统不能量化广告。');
+  await expectVisible(page, '当前没有真实广告报表。请先下载并导入已创建报表，或重新创建、下载并导入 8 类报表；只有审计包时系统不能量化广告。');
   await expectVisible(page, '0/8');
   await expectVisible(page, '本地真实报表已下载');
   await expectVisible(page, '审计/诊断文件');
@@ -686,7 +1101,7 @@ async function main() {
   await page.getByText('采集动作返回，但当前范围仍未满足量化门槛', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '下载并导入已创建报表未完成');
   await expectVisible(page, '批次：mock_existing_failed_batch');
-  await expectVisible(page, '当前范围真实表格 0');
+  await expectVisible(page, '当前范围覆盖 0/8 类');
   await expectVisible(page, '本次新增真实下载 0');
   await expectVisible(page, '失败 8');
   await expectVisible(page, '下一步：查看失败原因和本次 Manifest，确认领星 ready 行、页面模型、日期/店铺/站点后再重试。');
@@ -697,7 +1112,11 @@ async function main() {
     window.__forceDownloadExistingMissingError = false;
   });
   await page.getByRole('button', { name: /下载并导入已创建/ }).click();
-  await page.getByText('真实表格已下载，但自动导入未写入广告指标', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('真实报表已下载，但自动导入未写入广告指标', { exact: false }).waitFor({ timeout: 5000 });
+  await expectVisible(page, '动作结果摘要');
+  await expectVisible(page, '本次拿到了 8 个真实报表文件，但还没有写入 DB 指标。');
+  await expectVisible(page, '已下载，待导入');
+  await expectVisible(page, '点击“导入已下载表格”，把 xlsx/xls/csv 写入日级广告指标。');
   await expectVisible(page, '本次动作结果');
   await expectInBody(page, '已创建报表下载完成，自动导入未完成', 'download existing partial result title');
   await expectVisible(page, '最近动作进度');
@@ -706,7 +1125,7 @@ async function main() {
   await expectVisible(page, '3. 下载并校验表格');
   await expectVisible(page, '4. 自动导入广告指标');
   await expectVisible(page, '批次：mock_existing_batch');
-  await expectVisible(page, '当前范围真实表格 8');
+  await expectVisible(page, '当前范围覆盖 8/8 类');
   await expectVisible(page, '本次新增真实下载 8');
   await expectVisible(page, '本次真实下载表格');
   await expectVisible(page, '本次解析 0 表');
@@ -714,8 +1133,20 @@ async function main() {
   await expectVisible(page, '下一步：点击“导入已下载表格”，把本地表格写入广告指标。');
   await expectVisible(page, '打开本次下载目录');
   await expectVisible(page, '打开本次 Manifest');
+  await page.evaluate(() => {
+    window.__forceDownloadExistingNoNewFiles = true;
+  });
+  await page.getByRole('button', { name: /下载并导入已创建/ }).click();
+  await page.getByText('本次没有新增真实原始报表文件', { exact: false }).waitFor({ timeout: 5000 });
+  await expectVisible(page, '当前范围已有 8/8 类真实报表覆盖，但本次动作没有新增下载，且还没有写入 DB 指标。');
+  await expectVisible(page, '打开真实报表目录确认 xlsx/xls/csv 后，点击“导入已下载表格”。');
+  await expectVisible(page, '本次新增真实下载 0');
+  await expectVisible(page, '当前范围已有真实报表，但本次动作没有新增真实下载文件。请点击“打开当前真实报表目录”确认文件，或直接导入已下载报表。');
+  await page.evaluate(() => {
+    window.__forceDownloadExistingNoNewFiles = false;
+  });
   await page.getByRole('button', { name: /重新创建、下载并导入全部 8 类/ }).click();
-  await page.getByText('真实表格已下载，但自动导入未写入广告指标', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('真实报表已下载，但自动导入未写入广告指标', { exact: false }).waitFor({ timeout: 5000 });
   await expectInBody(page, '全部报表下载完成，自动导入未完成', 'recreate full partial result title');
   await page.evaluate(() => {
     window.__forceZeroImportResult = true;
@@ -730,15 +1161,18 @@ async function main() {
   });
   await page.getByRole('button', { name: '导入已下载表格' }).click();
     await page.getByText('导入完成：解析 8 个真实报表，写入 96 行广告指标，错误 0 个。', { exact: true }).waitFor({ timeout: 5000 });
+    await expectVisible(page, '真实报表已经入库，当前范围有 96 行日级广告指标。');
+    await expectVisible(page, '可进入量化');
+    await expectVisible(page, '进入广告量化，复核花费、订单、ACOS 和产品阶段。');
     await expectVisible(page, '真实报表导入完成');
-    await expectVisible(page, '当前范围真实表格 8');
+    await expectVisible(page, '当前范围覆盖 8/8 类');
     await expectVisible(page, '本次真实导入表格 8');
     await expectVisible(page, '本次真实导入表格');
     await expectVisible(page, '本次解析 8 表');
     await expectVisible(page, '本次写入 96 行');
     await expectVisible(page, '当前指标 96 行');
     await expectVisible(page, '下一步：进入广告量化，复核 ACOS、花费和订单口径。');
-    await expectVisible(page, '8 个文件，96 行已导入');
+    await expectVisible(page, '8/8 类，96 行已导入');
     await expectVisible(page, '打开当前真实报表目录');
     await expectVisible(page, 'campaign.xlsx');
     await expectVisible(page, 'C:/AmazonAIOps/storage/downloads/mock-batch/campaign.xlsx');
@@ -752,9 +1186,34 @@ async function main() {
     await expectVisible(page, '.xlsx');
     await expectVisible(page, '1 KB');
     await page.getByRole('button', { name: /重新创建、下载并导入已选报表/ }).click();
-    await page.getByText('采集动作已完成：当前范围已有 8 个真实原始报表文件，已自动导入 96 行广告指标。', { exact: true }).waitFor({ timeout: 5000 });
+    await page.getByText('采集动作已完成：本次新增', { exact: false }).waitFor({ timeout: 5000 });
+    await expectInBody(page, '已自动导入 96 行广告指标', 'retry selected auto-import notice');
     await expectVisible(page, '8/8');
     await expectVisible(page, '96');
+    await page.locator('.app-sidebar').getByRole('button', { name: /数据导入与校验/ }).click();
+    await expectVisible(page, '数据流程四段闭环');
+    await expectVisible(page, '数据链已闭合');
+    await expectVisible(page, '进入广告量化');
+    await expectVisible(page, '领星任务已创建');
+    await expectVisible(page, '真实报表已下载');
+    await expectVisible(page, '已导入 DB 日级指标');
+    await expectVisible(page, '可用于 AI+规则建议');
+    await expectVisible(page, '已放行');
+    await expectInBody(page, '下一步：进入广告量化，复核 ACOS、花费、订单和产品阶段。', 'data import next step after success');
+    await expectVisible(page, '广告数据现在在哪');
+    await expectVisible(page, '...\\storage\\downloads\\mock-batch');
+    await expectVisible(page, 'SQLite 日级指标');
+    await expectVisible(page, '96 行可用');
+    await expectVisible(page, '审计文件不参与计算');
+    await expectVisible(page, '下一步去广告量化');
+    await expectVisible(page, '导出数据对账');
+    await page.getByRole('button', { name: '导出数据对账' }).click();
+    await expectVisible(page, '数据对账已导出');
+    await expectVisible(page, 'C:/AmazonAIOps/app-data/exports/data-reconciliation-mock.json');
+    await expectVisible(page, 'C:/AmazonAIOps/app-data/exports/data-reconciliation-mock.md');
+    await expectVisible(page, '权威口径 canonical_search_term / 96 行 / $170.25 / 3 单');
+    await page.getByRole('button', { name: '打开对账 JSON' }).click();
+    await page.getByRole('button', { name: '打开对账 Markdown' }).click();
     const afterImportScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-after-import-${runId}.png`);
     await page.screenshot({ path: afterImportScreenshotPath, fullPage: true });
     evidence.pages.dataCollectionAfterImport = {
@@ -770,6 +1229,25 @@ async function main() {
   await expectVisible(page, '$300.50 / 3');
   await expectVisible(page, '56.6%');
   await expectVisible(page, '4. 审批与执行回读');
+  await expectVisible(page, '运营任务入口');
+  await expectVisible(page, '当前是否可分析');
+  await expectVisible(page, '可以分析：真实报表和日级指标已闭合');
+  await expectVisible(page, '下一步：复核广告量化');
+  await expectVisible(page, '交付状态矩阵');
+  await expectVisible(page, '当前可交付判断');
+  await expectVisible(page, '还差执行回读和最终交付证据');
+  await expectVisible(page, '真实数据闭环');
+  await expectVisible(page, 'AI 证据链');
+  await expectVisible(page, '运营上下文');
+  await expectVisible(page, 'Listing 草案');
+  await expectVisible(page, '执行回读');
+  await expectVisible(page, '最终交付包');
+  await expectVisible(page, '先完成审批、真实执行回读和最终交付包');
+  await expectVisible(page, '待处理建议');
+  await expectVisible(page, '2');
+  await expectVisible(page, '1 条待审批，1 条需复核。');
+  await expectVisible(page, '1 条待审批 / 1 条需复核');
+  await expectInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。', 'dashboard four-stage task entry guidance after import');
   await expectVisible(page, '建议生成后进入审批');
   await expectVisible(page, '去审批中心');
   await expectNotInBody(page, '尚未生成最终证据');
@@ -780,13 +1258,20 @@ async function main() {
   await expectVisible(page, '1 个对象超过 40.0% 且花费达到 $10.00。');
   await expectVisible(page, '生成优化建议');
   await expectVisible(page, '当前规则：目标 ACOS 25.0% / 风险 ACOS 40.0% / 无订单 30 点击 / 最低花费 $10.00。');
-  await expectVisible(page, '1 条待审批');
+  await expectVisible(page, '1 条待审批 / 1 条需复核');
   await expectVisible(page, '先审批，再进入执行回读；仪表盘不直接执行广告。');
   await expectVisible(page, '已具备量化条件');
-  await expectVisible(page, '8 个真实表格，96 行广告指标，其中 12 行可生成建议。');
+  await expectInBody(page, '8/8 类真实报表，96 行广告指标，其中 12 行可生成建议。', 'dashboard real-report coverage detail after import');
   await expectVisible(page, '首要风险对象');
   await expectVisible(page, 'test search term');
   await expectVisible(page, '高风险待复核');
+  await expectVisible(page, '产品广告历史账本');
+  await expectVisible(page, 'B0TESTASIN');
+  await expectVisible(page, '活跃 12 天');
+  await expectVisible(page, '阶段 测词');
+  await expectVisible(page, '日级趋势');
+  await expectVisible(page, '事件叠加');
+  await expectVisible(page, '10% Coupon started');
   await expectVisible(page, '总花费');
   await expectVisible(page, '总销售');
   const dashboardAfterImportScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-dashboard-after-import-${runId}.png`);
@@ -852,6 +1337,18 @@ async function main() {
   await expectVisible(page, '阈值与策略来源');
   await expectVisible(page, '规则量化');
   await expectVisible(page, '当前页先用确定性规则打底');
+  await expectVisible(page, '最近 AI 诊断记录');
+  await expectVisible(page, 'deepseek-chat');
+  await expectVisible(page, 'AI 调用成功');
+  await expectVisible(page, 'AI 调用失败');
+  await expectVisible(page, 'AI 输出 schemaVersion 错误：legacy_strategy_v0');
+  await expectVisible(page, '正式建议 1');
+  await expectVisible(page, '洞察 1');
+  await expectVisible(page, '证据包 5 条');
+  await expectVisible(page, '历史证据明细');
+  await expectInBody(page, 'historical test search term / 2026-06-12');
+  await expectInBody(page, '行 19');
+  await expectVisible(page, '2026-06-12T11:00:00.000Z');
   await expectVisible(page, 'AI 阶段诊断');
   await expectVisible(page, 'DeepSeek 会结合每日广告事实、运营事件、产品配置和规则结果，给出动态阈值和解释，不写入广告账户。');
   await expectVisible(page, '人工覆盖');
@@ -862,7 +1359,7 @@ async function main() {
   await expectVisible(page, '进入 AI+规则建议');
   await expectVisible(page, 'AI+规则建议输入检查');
   await expectVisible(page, '真实数据输入');
-  await expectVisible(page, '8 个表格 / 96 行指标');
+  await expectVisible(page, '8/8 类真实报表 / 96 行指标');
   await expectVisible(page, '只读取当前范围真实 xlsx/xls/csv 和 DB 指标，不使用审计 JSON 代替广告数据。');
   await expectVisible(page, '可行动对象');
   await expectVisible(page, '1 个诊断 / 12 行可建议');
@@ -890,6 +1387,15 @@ async function main() {
   await expectVisible(page, '去生成 AI+规则建议');
   await expectVisible(page, '批次：mock_batch_scope');
   await expectVisible(page, '产品/广告对象阶段时间线');
+  await expectVisible(page, '产品广告历史账本');
+  await expectVisible(page, 'B0TESTASIN');
+  await expectVisible(page, '活跃 12 天');
+  await expectInBody(page, '$170.25 / $300.50 / 3 单');
+  await expectVisible(page, '日级趋势');
+  await expectVisible(page, '2026-06-01');
+  await expectVisible(page, '2026-06-12');
+  await expectVisible(page, '事件叠加');
+  await expectVisible(page, '10% Coupon started');
   await expectVisible(page, '测词');
   await expectVisible(page, '浪费风险');
   await expectInBody(page, '趋势：花费上升 / 销售平稳');
@@ -903,32 +1409,60 @@ async function main() {
   await expectVisible(page, '复核队列只用于决定先看哪几行；真正的广告动作仍需进入优化建议、审批和执行回读。');
   await page.getByRole('button', { name: '运行 AI 阶段分析', exact: true }).click();
   await expectVisible(page, 'AI 动态阈值建议');
+  await expectVisible(page, 'AI 量化诊断摘要');
+  await expectVisible(page, 'AI 判断当前处于测词，可用于动态阈值复核。');
+  await expectVisible(page, '可以进入优化建议，但正式动作仍需审批和执行回读。');
   await expectVisible(page, '模型：deepseek-chat；输入 96 行广告指标、1 条规则候选、2 条运营事件、1 个产品配置。');
-  await expectVisible(page, 'Coupon and BD context keep this product in keyword exploration while tightening high ACOS waste.');
+  await expectInBody(page, '引用证据包：共 5 条，其中报表指标 1、对象时间线 1、运营事件 1、产品配置 1、规则候选 1。');
+  await expectVisible(page, 'Coupon 和 BD 背景显示该产品仍处于测词阶段，同时需要收紧高 ACOS 浪费对象。');
+  await expectInBody(page, 'AI 阶段判断：测词。为什么这么判断：搜索词花费和促销事件显示仍处于测词阶段。 引用证据 1 条。');
   await expectVisible(page, 'AI 已参与');
   await expectVisible(page, 'AI 候选 1');
+  await expectVisible(page, '洞察未采纳 1');
   await expectVisible(page, '产品配置 1');
+  await expectVisible(page, 'AI 判断依据');
+  await expectInBody(page, '阶段证据：对象时间线 / product B0TESTASIN / keyword_exploration / 12 days');
+  await expectInBody(page, '$170.25 / $300.50 / 3 单 / 88 点击');
+  await expectVisible(page, 'AI 证据明细');
+  await expectVisible(page, '报表指标');
+  await expectInBody(page, 'test search term / 2026-06-12');
+  await expectInBody(page, '$170.25 / $300.50 / 3 单 / 88 点击');
+  await expectVisible(page, '对象时间线');
+  await expectVisible(page, 'product B0TESTASIN / keyword_exploration / 12 days');
+  await expectVisible(page, '阶段 测词 / 活跃 12 天 / 2026-06-01 至 2026-06-12');
+  await expectInBody(page, '最近日级：2026-06-01 $22.50 / 0 单；2026-06-08 $63.20 / 1 单；2026-06-12 $84.55 / 2 单');
+  await expectVisible(page, '运营事件');
+  await expectVisible(page, '10% Coupon started');
+  await expectVisible(page, '产品配置');
+  await expectVisible(page, 'B0TESTASIN / keyword_exploration');
   await expectVisible(page, '目标 ACOS 对比');
   await expectVisible(page, '规则 25.0% / AI 35.0%');
-  await expectVisible(page, 'AI 更宽松 10.0%。AI 理由：产品目标 ACOS 和探索阶段允许更高容忍度。');
+  await expectInBody(page, 'AI 更宽松 10.0%。AI 理由：产品目标 ACOS 和探索阶段允许更高容忍度。 引用证据 2 条。');
   await expectVisible(page, '高风险 ACOS 对比');
   await expectVisible(page, '规则 40.0% / AI 55.0%');
+  await expectInBody(page, '复核原因：AI 阈值建议缺少指标或对象时间线证据。');
   await expectVisible(page, '无订单点击 对比');
   await expectVisible(page, '规则 30 点击 / AI 18 点击');
   await expectVisible(page, '最低花费 对比');
   await expectVisible(page, '规则 $10.00 / AI $15.00');
+  await expectVisible(page, 'AI 洞察但未采纳的候选动作');
+  await expectVisible(page, '未绑定洞察词');
+  await expectInBody(page, '未进入优化建议池');
   await expectVisible(page, '最终采用方式');
   await expectInBody(page, '规则阈值继续作为确定性安全边界；AI 阈值只作为当前范围的阶段诊断建议。');
   await page.evaluate(() => {
     window.__mockAdQuantAiFallback = true;
   });
   await page.getByRole('button', { name: '运行 AI 阶段分析', exact: true }).click();
-  await expectVisible(page, '规则 fallback 阈值建议');
+  await expectVisible(page, '规则兜底阈值建议');
   await expectVisible(page, '规则兜底');
   await expectVisible(page, 'AI 未连接：当前只使用规则量化。可在设置页测试 DeepSeek 后重新分析。');
   const adQuantActionLog = await page.evaluate(() => window.__businessUiActionLog || []);
   if (adQuantActionLog.filter((item) => item.type === 'runAdStrategyDiagnosis').length < 2) {
     fail('Ad quant smoke did not call AI strategy diagnosis for success and fallback states', JSON.stringify(adQuantActionLog));
+  }
+  if (!adQuantActionLog.some((item) => item.type === 'listAiDiagnosisRuns' && item.params?.limit === 5)) {
+    fail('Ad quant smoke did not request recent AI diagnosis runs', JSON.stringify(adQuantActionLog));
   }
   await expectVisible(page, '量化后动作');
   await expectVisible(page, '可以进入优化建议，但仍需人工审批和回读。');

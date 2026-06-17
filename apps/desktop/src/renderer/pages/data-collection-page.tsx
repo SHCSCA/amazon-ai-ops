@@ -1,12 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { buildCollectionActionSummary } from '../collection-action-summary';
+import { buildDataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath } from '../formatters';
 import { toUserFacingError } from '../user-facing-error';
 
 type CollectionActionMode = 'download-existing' | 'recreate-selected' | 'recreate-full' | 'import';
 
-interface LastActionResult {
+export interface CollectionActionGuide {
+  title: string;
+  whenToUse: string;
+  taskEffect: string;
+  result: string;
+}
+
+export interface LastActionResult {
   title: string;
   tone: 'default' | 'success' | 'warning' | 'blocked';
   mode: CollectionActionMode;
@@ -92,6 +101,24 @@ function collectionStatusLabel(status?: string): string {
   return labels[status || 'blocked'] || '缺少真实报表';
 }
 
+function readinessStageClass(status: string): string {
+  if (status === 'complete') return 'collection-progress-step collection-progress-ready';
+  if (status === 'partial') return 'collection-progress-step collection-progress-pending';
+  return 'collection-progress-step collection-progress-blocked';
+}
+
+function readinessStageTone(status: string): 'ready' | 'pending' | 'blocked' {
+  if (status === 'complete') return 'ready';
+  if (status === 'partial') return 'pending';
+  return 'blocked';
+}
+
+function readinessStageLabel(status: string): string {
+  if (status === 'complete') return '完成';
+  if (status === 'partial') return '部分完成';
+  return '阻断';
+}
+
 function actionTitle(mode: CollectionActionMode): string {
   const labels: Record<CollectionActionMode, string> = {
     'download-existing': '下载并导入已创建报表',
@@ -121,6 +148,36 @@ function actionModeLabel(mode: CollectionActionMode): string {
     import: '导入本地/已下载报表',
   };
   return labels[mode];
+}
+
+export function collectionActionGuide(mode: CollectionActionMode): CollectionActionGuide {
+  const guides: Record<CollectionActionMode, CollectionActionGuide> = {
+    'download-existing': {
+      title: '下载并导入已创建的已选报表',
+      whenToUse: '领星已经生成 ready 行时使用',
+      taskEffect: '不会创建新任务',
+      result: '下载后自动写入 DB；无新增文件时打开当前真实报表目录确认',
+    },
+    'recreate-selected': {
+      title: '重新创建、下载并导入已选报表',
+      whenToUse: '只补当前已选报表时使用',
+      taskEffect: '会创建当前勾选报表的新任务',
+      result: '生成完成后下载真实报表并自动写入 DB',
+    },
+    'recreate-full': {
+      title: '重新创建、下载并导入全部 8 类',
+      whenToUse: '缺少完整 8 类或需要刷新当前范围全量数据时使用',
+      taskEffect: '会创建完整 8 类报表的新任务',
+      result: '下载完整广告报表并自动写入 DB 日级广告指标',
+    },
+    import: {
+      title: '导入本地报表',
+      whenToUse: '已经手动拿到领星 xlsx/xls/csv 时使用',
+      taskEffect: '不访问领星下载中心',
+      result: '复制本地文件并写入 DB 日级广告指标',
+    },
+  };
+  return guides[mode];
 }
 
 function buildActionProgressSteps(mode: CollectionActionMode | null, result: LastActionResult | null): ActionProgressStep[] {
@@ -169,7 +226,7 @@ function rawErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || '');
 }
 
-function collectionActionError(mode: Exclude<CollectionActionMode, 'import'>, error: unknown): string {
+export function collectionActionError(mode: Exclude<CollectionActionMode, 'import'>, error: unknown): string {
   const raw = rawErrorMessage(error);
   if (!raw) return '采集未完成。';
 
@@ -187,10 +244,10 @@ function collectionActionError(mode: Exclude<CollectionActionMode, 'import'>, er
       : '重新创建报表前，需要先验证当前范围的下载中心页面。请点击“验证页面”，刷新截图、DOM 和页面模型证据后再创建。';
   }
 
-  if (/missing|not found/i.test(raw) && /report|file|path|batch/i.test(raw)) {
+  if (/(missing|not found|缺少|没有|未找到|不存在)/i.test(raw) && /(report|file|path|batch|报表|文件|路径|批次)/i.test(raw)) {
     return mode === 'download-existing'
-      ? '当前范围没有可直接下载的已创建报表。若你确认领星已经创建完成，请先点击“验证页面”刷新下载中心证据，并确认日期、店铺、站点一致；否则使用“重新创建、下载并导入”。'
-      : '重新创建后仍没有拿到真实表格。请确认领星 Ads 下载中心可访问、页面模型已验证、日期/店铺/站点正确，再重新创建。';
+      ? '当前范围没有可直接下载的已创建报表；本动作不会创建新任务。若你确认领星已经创建完成，请先点击“验证页面”刷新下载中心证据，并确认日期、店铺、站点一致；否则使用“重新创建、下载并导入”。'
+      : '重新创建后仍没有拿到可用的真实报表文件。请确认领星 Ads 下载中心可访问、页面模型已验证、日期/店铺/站点正确，再重新创建。';
   }
 
   if (/timeout|ready|wait/i.test(raw)) {
@@ -273,6 +330,30 @@ function buildLastActionResult(
   };
 }
 
+export function collectionCompletionNotice(result: LastActionResult): string {
+  if (result.mode === 'import') {
+    if (result.currentImportedRows > 0 || result.insertedRows > 0) {
+      return `导入完成：解析 ${result.parsedFiles} 个真实报表，写入 ${result.insertedRows} 行广告指标，当前范围共有 ${result.currentImportedRows} 行指标。`;
+    }
+    return '导入未完成：没有形成可量化的日级广告指标。请检查表头、日期、广告对象和金额/订单列。';
+  }
+
+  const actionRealFileCount = result.actionDownloadedFiles.length;
+  if (actionRealFileCount > 0 && result.currentImportedRows > 0) {
+    return `采集动作已完成：本次新增 ${actionRealFileCount} 个真实原始报表文件，当前范围覆盖 ${result.downloadedCount}/8 类真实报表，已自动导入 ${result.currentImportedRows} 行广告指标。`;
+  }
+  if (actionRealFileCount > 0) {
+    return `真实报表已下载，但自动导入未写入广告指标：本次新增 ${actionRealFileCount} 个真实原始报表文件，当前范围覆盖 ${result.downloadedCount}/8 类真实报表，导入指标 ${result.currentImportedRows} 行。请点击“导入已下载表格”，或检查解析错误。`;
+  }
+  if (result.downloadedCount > 0 && result.currentImportedRows > 0) {
+    return `当前范围已有 ${result.downloadedCount}/8 类真实报表和 ${result.currentImportedRows} 行广告指标，但本次没有新增真实原始报表文件。请打开真实报表目录确认数据来源；不要把本次动作当成新的领星下载。`;
+  }
+  if (result.downloadedCount > 0) {
+    return `当前范围已有 ${result.downloadedCount}/8 类真实报表，但本次没有新增真实原始报表文件，且还没有可量化指标。请点击“导入已下载表格”或重新下载缺失报表。`;
+  }
+  return `采集动作返回，但当前范围仍未满足量化门槛：真实报表覆盖 ${result.downloadedCount}/8 类，导入指标 ${result.currentImportedRows} 行。没有 xlsx/xls/csv 或解析入库失败时不能进行广告量化。`;
+}
+
 export function DataCollectionPage() {
   const { data, error, loading, scope } = useBusinessDataPipeline();
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
@@ -309,6 +390,34 @@ export function DataCollectionPage() {
   const actionProgressSteps = useMemo(
     () => buildActionProgressSteps(runningAction, lastActionResult),
     [lastActionResult, runningAction],
+  );
+  const lastActionSummary = useMemo(() => lastActionResult
+    ? buildCollectionActionSummary({
+      mode: lastActionResult.mode,
+      tone: lastActionResult.tone,
+      currentRealReportCount: lastActionResult.downloadedCount,
+      actionRealFileCount: lastActionResult.actionDownloadedFiles.length,
+      parsedFiles: lastActionResult.parsedFiles,
+      insertedRows: lastActionResult.insertedRows,
+      currentImportedRows: lastActionResult.currentImportedRows,
+      failedCount: lastActionResult.failedCount,
+      downloadDir: lastActionResult.downloadDir,
+      manifestPath: lastActionResult.manifestPath,
+    })
+    : null, [lastActionResult]);
+  const downloadExistingGuide = collectionActionGuide('download-existing');
+  const recreateSelectedGuide = collectionActionGuide('recreate-selected');
+  const recreateFullGuide = collectionActionGuide('recreate-full');
+  const importGuide = collectionActionGuide('import');
+  const dataLedger = useMemo(
+    () => buildDataReadinessLedger({
+      requiredReportCount: 8,
+      reportOptions,
+      realReportFileCount: realReportCount,
+      importedRowCount,
+      rejectedEvidenceFileCount: rejectedEvidenceCount,
+    }),
+    [importedRowCount, realReportCount, rejectedEvidenceCount, reportOptions],
   );
 
   useEffect(() => {
@@ -389,17 +498,12 @@ export function DataCollectionPage() {
       window.dispatchEvent(new Event('business-ui:data-updated'));
       const realFileCount = refreshed?.collection?.realReportFiles?.length ?? 0;
       const importedRows = refreshed?.collection?.fileAudit?.importedRowCount ?? refreshed?.quant?.importedRows ?? 0;
-      setLastActionResult(buildLastActionResult(mode, actionResults, realFileCount, importedRows, {
+      const actionResult = buildLastActionResult(mode, actionResults, realFileCount, importedRows, {
         downloadDir: refreshed?.collection?.fileAudit?.downloadDir,
         manifestPath: refreshed?.collection?.fileAudit?.manifestPath,
-      }));
-      if (realFileCount > 0 && importedRows > 0) {
-        setActionNotice(`采集动作已完成：当前范围已有 ${realFileCount} 个真实原始报表文件，已自动导入 ${importedRows} 行广告指标。`);
-      } else if (realFileCount > 0) {
-        setActionNotice(`真实表格已下载，但自动导入未写入广告指标：当前范围已有 ${realFileCount} 个真实原始报表文件，导入指标 ${importedRows} 行。请点击“导入已下载表格”，或检查解析错误。`);
-      } else {
-        setActionNotice(`采集动作返回，但当前范围仍未满足量化门槛：真实原始报表 ${realFileCount} 个，导入指标 ${importedRows} 行。没有 xlsx/xls/csv 或解析入库失败时不能进行广告量化。`);
-      }
+      });
+      setLastActionResult(actionResult);
+      setActionNotice(collectionCompletionNotice(actionResult));
     } catch (caught) {
       const message = collectionActionError(mode, caught);
       setActionError(message);
@@ -426,7 +530,7 @@ export function DataCollectionPage() {
       const inserted = result?.metricsImport?.inserted ?? 0;
       const parsedFiles = result?.metricsImport?.parsedFiles ?? 0;
       const errors = result?.metricsImport?.errors?.length ?? 0;
-      const realFileCount = result?.pipeline?.collection?.realReportFiles?.length ?? realReportCount;
+      const realFileCount = result?.pipeline?.collection?.fileAudit?.realReportFileCount ?? result?.pipeline?.collection?.realReportFiles?.length ?? realReportCount;
       const importedRows = result?.pipeline?.collection?.fileAudit?.importedRowCount ?? result?.pipeline?.quant?.importedRows ?? inserted;
       setLastActionResult(buildLastActionResult('import', [result], realFileCount, importedRows, {
         downloadDir: result?.pipeline?.collection?.fileAudit?.downloadDir,
@@ -524,6 +628,52 @@ export function DataCollectionPage() {
           </div>
         </Panel>
 
+        <Panel title="当前范围数据账本" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
+          <div className="business-split">
+            <div>
+              <div className="business-scope-line">{dataLedger.headline}</div>
+              <p className="muted-line">{dataLedger.detail}</p>
+            </div>
+            <div className="business-pill-row business-pill-row-right">
+              <StatusPill tone={dataLedger.status === 'ready' ? 'ready' : 'blocked'}>{dataLedger.nextAction}</StatusPill>
+            </div>
+          </div>
+          {dataLedger.gaps.length > 0 && (
+            <div className="evidence-card-grid">
+              {dataLedger.gaps.slice(0, 4).map((gap) => (
+                <div className="evidence-card" key={gap}>
+                  <span>待处理缺口</span>
+                  <strong>{gap}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="数据流程四段闭环" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
+          <div className="business-split">
+            <div>
+              <div className="business-scope-line">系统只在四段都闭合后放行广告量化、AI 证据包和优化建议。</div>
+              <p className="muted-line">批次号和审计文件只用于追溯；运营判断看这四段是否完成。</p>
+            </div>
+            <StatusPill tone={dataLedger.status === 'ready' ? 'ready' : dataLedger.status === 'partial' ? 'pending' : 'blocked'}>
+              {dataLedger.status === 'ready' ? '可进入建议' : '未放行建议'}
+            </StatusPill>
+          </div>
+          <div className="collection-progress-grid">
+            {dataLedger.stages.map((stage, index) => (
+              <div className={readinessStageClass(stage.status)} key={stage.key}>
+                <span>第 {index + 1} 步</span>
+                <strong>{stage.title}</strong>
+                <p>{stage.value}</p>
+                <p>{stage.detail}</p>
+                <StatusPill tone={readinessStageTone(stage.status)}>{readinessStageLabel(stage.status)}</StatusPill>
+              </div>
+            ))}
+          </div>
+          <p className="warning-line">审计 JSON、截图、DOM/HTML 和 Manifest 只证明流程，不是广告数据，不能参与花费、订单或 ACOS 计算。</p>
+        </Panel>
+
         <Panel title="真实报表文件检查" tone={realReportCount ? 'default' : 'blocked'}>
           <div className="business-grid business-grid-four">
             <div className="metric-tile">
@@ -607,7 +757,7 @@ export function DataCollectionPage() {
           </div>
           <div className="action-row">
             {primaryReportFolder && (
-              <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开真实表格目录</button>
+              <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开真实报表目录</button>
             )}
             {fileAudit?.manifestPath && (
               <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开 Manifest</button>
@@ -618,8 +768,8 @@ export function DataCollectionPage() {
           </div>
           <div className="real-file-summary">
             <div className="real-file-summary-header">
-              <strong>当前真实表格清单</strong>
-              <span>{realFiles.length ? `${realFiles.length} 个文件，${importedRowCount} 行已导入` : '暂无 xlsx/xls/csv 文件'}</span>
+              <strong>当前真实报表清单</strong>
+              <span>{realFiles.length ? `${realReportCount}/8 类，${importedRowCount} 行已导入` : '暂无 xlsx/xls/csv 文件'}</span>
             </div>
             {realFiles.length ? (
               <div className="real-file-chip-grid">
@@ -639,7 +789,7 @@ export function DataCollectionPage() {
                 )}
               </div>
             ) : (
-              <p className="blocked-line">当前没有真实广告表格。请先下载并导入已创建报表，或重新创建、下载并导入 8 类报表；只有审计包时系统不能量化广告。</p>
+              <p className="blocked-line">当前没有真实广告报表。请先下载并导入已创建报表，或重新创建、下载并导入 8 类报表；只有审计包时系统不能量化广告。</p>
             )}
           </div>
         </Panel>
@@ -686,8 +836,8 @@ export function DataCollectionPage() {
               onClick={() => runDownloadAction('download-existing')}
               type="button"
             >
-              <span>{runningAction === 'download-existing' ? '正在下载并导入...' : '下载并导入已创建的已选报表'}</span>
-              <small>只读取当前范围 ready 行；不会创建新任务；下载后自动入库</small>
+              <span>{runningAction === 'download-existing' ? '正在下载并导入...' : downloadExistingGuide.title}</span>
+              <small>{downloadExistingGuide.whenToUse}；{downloadExistingGuide.taskEffect}；{downloadExistingGuide.result}</small>
             </button>
             <button
               className="collection-action-button secondary-action"
@@ -695,8 +845,8 @@ export function DataCollectionPage() {
               onClick={() => runDownloadAction('recreate-selected')}
               type="button"
             >
-              <span>{runningAction === 'recreate-selected' ? '正在重新创建、下载并导入...' : '重新创建、下载并导入已选报表'}</span>
-              <small>为当前勾选报表新建领星任务，生成后下载真实表格并自动入库</small>
+              <span>{runningAction === 'recreate-selected' ? '正在重新创建、下载并导入...' : recreateSelectedGuide.title}</span>
+              <small>{recreateSelectedGuide.whenToUse}；{recreateSelectedGuide.taskEffect}；{recreateSelectedGuide.result}</small>
             </button>
             <button
               className="collection-action-button primary-action"
@@ -704,8 +854,8 @@ export function DataCollectionPage() {
               onClick={() => runDownloadAction('recreate-full')}
               type="button"
             >
-              <span>{runningAction === 'recreate-full' ? '正在重新创建、下载并导入全部 8 类...' : '重新创建、下载并导入全部 8 类'}</span>
-              <small>重新创建、下载并导入当前范围完整广告报表</small>
+              <span>{runningAction === 'recreate-full' ? '正在重新创建、下载并导入全部 8 类...' : recreateFullGuide.title}</span>
+              <small>{recreateFullGuide.whenToUse}；{recreateFullGuide.taskEffect}；{recreateFullGuide.result}</small>
             </button>
             <button
               className="collection-action-button secondary-action"
@@ -713,11 +863,11 @@ export function DataCollectionPage() {
               onClick={importLocalReports}
               type="button"
             >
-              <span>{runningAction === 'import' ? '正在选择并导入...' : '导入本地报表'}</span>
-              <small>已有领星 xlsx/xls/csv 时直接复制入库，不再经过下载中心</small>
+              <span>{runningAction === 'import' ? '正在选择并导入...' : importGuide.title}</span>
+              <small>{importGuide.whenToUse}；{importGuide.taskEffect}；{importGuide.result}</small>
             </button>
           </div>
-          <p className="muted-line">“下载并导入已创建”只读取当前范围已有 ready 行，不会创建新任务；“重新创建、下载并导入”会在领星生成新任务；“导入本地报表”适合你已经手动拿到领星 xlsx/xls/csv 的情况。</p>
+          <p className="muted-line">动作区别：下载已创建只读取 ready 行且不会创建新任务；重新创建已选只为勾选报表创建任务；重新创建全部会刷新完整 8 类；导入本地报表不访问领星下载中心。</p>
           {actionNotice && <p className="muted-line">{actionNotice}</p>}
           {actionError && <p className="blocked-line">采集错误：{actionError}</p>}
           {actionProgressSteps.length > 0 && (
@@ -740,6 +890,43 @@ export function DataCollectionPage() {
 
         {lastActionResult && (
           <Panel title="本次动作结果" tone={lastActionResult.tone}>
+            {lastActionSummary && (
+              <div className="evidence-check-panel">
+                <div className="business-split">
+                  <div>
+                    <h3>动作结果摘要</h3>
+                    <p className={lastActionSummary.tone === 'blocked' ? 'blocked-line' : 'muted-line'}>
+                      {lastActionSummary.headline}
+                    </p>
+                  </div>
+                  <StatusPill tone={lastActionSummary.tone}>{lastActionSummary.statusLabel}</StatusPill>
+                </div>
+                <div className="context-summary-grid">
+                  <div>
+                    <span>真实数据状态</span>
+                    <strong>{lastActionSummary.facts.slice(0, 2).join(' / ')}</strong>
+                    <p>{lastActionSummary.blockers.length ? lastActionSummary.blockers.join('；') : '真实报表和 DB 指标已闭合。'}</p>
+                  </div>
+                  <div>
+                    <span>导入状态</span>
+                    <strong>{lastActionSummary.facts.slice(2).join(' / ')}</strong>
+                    <p>{lastActionSummary.nextAction}</p>
+                  </div>
+                  <div>
+                    <span>证据位置</span>
+                    <strong>{lastActionSummary.primaryPathLabel}</strong>
+                    <p>{lastActionSummary.primaryPath || '暂无可打开路径，请查看失败原因。'}</p>
+                  </div>
+                </div>
+                {lastActionSummary.primaryPath && (
+                  <div className="action-row">
+                    <button className="secondary-button" onClick={() => openPath(lastActionSummary.primaryPath!)} type="button">
+                      打开动作证据位置
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="business-split">
               <div>
                 <div className="business-scope-line">{lastActionResult.title}</div>
@@ -751,7 +938,7 @@ export function DataCollectionPage() {
                 </p>
               </div>
               <div className="business-pill-row business-pill-row-right">
-                <StatusPill tone={lastActionResult.downloadedCount > 0 ? 'ready' : 'blocked'}>当前范围真实表格 {lastActionResult.downloadedCount}</StatusPill>
+                <StatusPill tone={lastActionResult.downloadedCount > 0 ? 'ready' : 'blocked'}>当前范围覆盖 {lastActionResult.downloadedCount}/8 类</StatusPill>
                 <StatusPill tone={lastActionResult.actionDownloadedFiles.length > 0 ? 'ready' : 'pending'}>
                   {lastActionResult.mode === 'import' ? '本次真实导入表格' : '本次新增真实下载'} {lastActionResult.actionDownloadedFiles.length}
                 </StatusPill>
@@ -796,10 +983,10 @@ export function DataCollectionPage() {
             {lastActionResult.actionDownloadedFiles.length === 0 && lastActionResult.failedFiles.length === 0 && (
               <p className={lastActionResult.downloadedCount > 0 ? 'warning-line' : 'blocked-line'}>
                 {lastActionResult.downloadedCount > 0
-                  ? '当前范围已有真实表格，但本次动作没有新增真实下载文件。请点击“打开当前真实报表目录”确认表格，或直接导入已下载表格。'
+                  ? '当前范围已有真实报表，但本次动作没有新增真实下载文件。请点击“打开当前真实报表目录”确认文件，或直接导入已下载报表。'
                   : lastActionResult.mode === 'import'
-                    ? '本次导入没有返回真实表格文件路径。请重新选择领星 xlsx/xls/csv 原始报表，不要选择审计包。'
-                    : '本次动作没有返回真实表格文件路径。请打开本次 Manifest 核对 files[].filePath，只有 xlsx/xls/csv 才能进入量化。'}
+                    ? '本次导入没有返回真实报表文件路径。请重新选择领星 xlsx/xls/csv 原始报表，不要选择审计包。'
+                    : '本次动作没有返回真实报表文件路径。请打开本次 Manifest 核对 files[].filePath，只有 xlsx/xls/csv 才能进入量化。'}
               </p>
             )}
             {lastActionResult.failedFiles.length > 0 && (

@@ -21,10 +21,10 @@ function taskLabel(name: string): string {
   return labels[name] || name;
 }
 
-function taskPurpose(name: string): string {
+export function taskPurpose(name: string): string {
   const labels: Record<string, string> = {
     daily_report_download: '从领星下载当前计划范围的广告报表，不负责审批或执行广告动作。',
-    daily_recommendation_generate: '基于已导入真实指标生成待审批建议，不会写入 Amazon Ads。',
+    daily_recommendation_generate: '基于已导入真实指标生成待处理建议池；需复核建议不会自动审批，也不会写入 Amazon Ads。',
     daily_report_generate: '生成本地运营汇总和证据材料，不改变业务数据。',
     data_cleanup: '清理本地临时文件和过期缓存，不删除交付证据包。',
   };
@@ -111,7 +111,7 @@ export function SchedulerPage() {
             <div>
               <span>允许自动做</span>
               <strong>下载、导入、生成本地建议</strong>
-              <p>任务只能处理真实报表、量化指标、本地报告和待审批建议。</p>
+              <p>任务只能处理真实报表、量化指标、本地报告和待处理建议池；需复核项不会自动批准。</p>
             </div>
             <div>
               <span>禁止自动做</span>

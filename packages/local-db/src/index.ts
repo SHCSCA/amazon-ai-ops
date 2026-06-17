@@ -8,4 +8,6 @@ export * from './sqlite/repositories/action-log-repo';
 export * from './sqlite/repositories/settings-repo';
 export * from './sqlite/repositories/operation-event-repo';
 export * from './sqlite/repositories/report-file-repo';
+export * from './sqlite/repositories/ai-call-log-repo';
+export * from './sqlite/repositories/ai-diagnosis-run-repo';
 export * from './duckdb/queries/ad-summary';

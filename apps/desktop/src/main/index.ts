@@ -7,7 +7,7 @@ import { LocalScheduler } from '@amazon-ai-ops/scheduler';
 import { AuditLogger, ScreenshotManager, TraceManager, CleanupManager } from '@amazon-ai-ops/audit-log';
 import { AdQuantifier, RecommendationGenerator, DEFAULT_RULE_CONFIG, mergeAdDecisions } from '@amazon-ai-ops/rules-engine';
 import { ReportParser, keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics, parseListingContent } from '@amazon-ai-ops/report-parser';
-import { AdActionReasonExplainer, AdStrategyDiagnoser, OpenAICompatibleProvider, DailyReportGenerator, type AdStrategyDiagnosisOutput, type ProductStrategyContext } from '@amazon-ai-ops/ai-adapter';
+import { AdActionReasonExplainer, AdStrategyDiagnoser, OpenAICompatibleProvider, DailyReportGenerator, assessAdEvidenceSufficiency, type AdStrategyDiagnosisOutput, type AiEvidenceItem, type AiReasonedDecision, type ProductStrategyContext } from '@amazon-ai-ops/ai-adapter';
 import { initSqlite, getSqliteDb } from '@amazon-ai-ops/local-db/src/sqlite/db';
 import {
   adMetricCanonicalWhere,
@@ -22,6 +22,8 @@ import { RecommendationRepository } from '@amazon-ai-ops/local-db/src/sqlite/rep
 import { SettingsRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/settings-repo';
 import { OperationEventRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/operation-event-repo';
 import { ReportFileRepository, type ReportFileRecord } from '@amazon-ai-ops/local-db/src/sqlite/repositories/report-file-repo';
+import { AiCallLogRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/ai-call-log-repo';
+import { AiDiagnosisRunRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/ai-diagnosis-run-repo';
 import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, downloadExistingLingxingReportBatch, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, runLingxingReportBatch, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, draftsToCsv, draftsToMarkdown, draftsToXlsxBuffer, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
@@ -29,6 +31,7 @@ import type { RuleConfig } from '@amazon-ai-ops/rules-engine';
 import type { TaskName } from '@amazon-ai-ops/scheduler';
 import type { ActionRecommendation, AdDailyMetrics, CreateOperationEventInput, DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingDraft, ListingSuggestion, OperationEventFilter, UpdateOperationEventInput } from '@amazon-ai-ops/shared-types';
 import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithinRealDirectory, isSafeManifestPath, readLingxingManifestForAudit, safeFileSegment } from './acceptance-audit-export';
+import { summarizeBusinessReportCoverage } from './business-report-coverage';
 import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-preflight-export';
 import { copyDiagnosticEvidenceFileToBundle, copyReportFailureEvidenceFilesToBundle, evaluateDownloadCenterDiagnosticEvidenceFiles } from './download-center-diagnostic-evidence-files';
 import { getLatestDownloadCenterDiagnosticRowForModel } from './download-center-diagnostic-store';
@@ -40,7 +43,24 @@ import { buildAdExecutionUnavailableResult, buildActionLogForExecution, getRecom
 import { assertRecommendationApprovalPolicy } from './recommendation-approval-policy';
 import { extractLingxingListingFromSnapshot, type ListingDomFieldSnapshot, type ListingExtractionResult, type ListingPageSnapshot } from './listing-lingxing-extractor';
 import { adReadbackEvidenceToMarkdown, buildAdReadbackEvidence, type AdReadbackEvidenceInput } from './ad-readback-evidence';
-import { annotateRecommendationsWithStrategy, buildAdStrategyDiagnosisInput, createAiOnlyRecommendationsFromDecisions } from './ad-recommendation-ai-context';
+import { verifyAdReadbackEvidenceFile, type VerifiedAdReadbackEvidence } from './ad-readback-evidence-verifier';
+import { fillAdReadbackSession, prepareAdReadbackSession, verifyAdReadbackSession, type FilledAdReadbackSession, type PreparedAdReadbackSession, type VerifiedAdReadbackSession } from './ad-readback-session';
+import { refreshFinalReadiness } from './final-readiness-refresh';
+import { getDeliveryEvidenceStatus } from './delivery-evidence-status';
+import { annotateRecommendationsWithStrategy, bindRecommendationsToScopeAsin, buildAdStrategyDiagnosisInput, createAiOnlyRecommendationsFromDecisions } from './ad-recommendation-ai-context';
+import { buildAdAiEvidencePack, summarizeAiEvidencePack } from './ad-ai-evidence-pack';
+import { validateAiDiagnosisEvidence } from './ad-ai-evidence-validator';
+import { buildAdProductHistoryLedger } from './ad-product-history-ledger';
+import { assertRecommendationMetricsLoaded, filterFormalRecommendationMetrics } from './recommendation-generation-gate';
+import { buildListingAiCallLogInput, buildListingRewritePrompt, parseAiDraftResponse } from './listing-ai-draft';
+import { buildAdActionReasonAiCallLogInput, type AdActionExplanationForLog } from './ad-action-ai-call-log';
+import { mergeAdActionExplanationEvidence } from './ad-action-explanation-merge';
+import {
+  normalizeAiSettingsForSaveInput,
+  normalizeAiSettingsForTestInput,
+  normalizeAiSettingsRecord,
+  sanitizeAiSettingsForRenderer as sanitizeAiSettingsForRendererRecord,
+} from './ai-settings-normalization';
 import {
   BUSINESS_REAL_REPORT_EXTENSIONS,
   BUSINESS_REJECTED_EVIDENCE_EXTENSIONS,
@@ -66,6 +86,8 @@ interface AppState {
   recommendationRepo: RecommendationRepository | null;
   operationEventRepo: OperationEventRepository | null;
   reportFileRepo: ReportFileRepository | null;
+  aiCallLogRepo: AiCallLogRepository | null;
+  aiDiagnosisRunRepo: AiDiagnosisRunRepository | null;
   ruleConfig: RuleConfig;
   isLoggedIn: boolean;
   currentStore: string;
@@ -82,6 +104,8 @@ const state: AppState = {
   recommendationRepo: null,
   operationEventRepo: null,
   reportFileRepo: null,
+  aiCallLogRepo: null,
+  aiDiagnosisRunRepo: null,
   ruleConfig: DEFAULT_RULE_CONFIG,
   isLoggedIn: false,
   currentStore: '',
@@ -107,6 +131,7 @@ const DOWNLOAD_CENTER_PAGE_MODEL_FILENAME = 'lingxing-download-center.json';
 const DOWNLOAD_CENTER_PAGE_MODEL_OVERRIDE_FILENAME = 'lingxing-download-center.override.json';
 const DB_PATH = path.join(USER_DATA_DIR, 'amazon-ai-ops.db');
 const APP_VERSION = '1.5.0';
+const RECOMMENDATION_METRIC_LOAD_LIMIT = 5000;
 const LINGXING_REPORT_TYPE_SET = new Set<string>(LINGXING_AD_REPORTS.map((report) => report.type));
 type KeywordImportDuplicateStrategy = 'overwrite' | 'merge' | 'skip';
 
@@ -255,6 +280,8 @@ async function initApp(): Promise<void> {
   state.recommendationRepo = new RecommendationRepository(state.db);
   state.operationEventRepo = new OperationEventRepository(state.db);
   state.reportFileRepo = new ReportFileRepository(state.db);
+  state.aiCallLogRepo = new AiCallLogRepository(state.db);
+  state.aiDiagnosisRunRepo = new AiDiagnosisRunRepository(state.db);
   console.log('[App] init:repositories-ready');
 
   // Init audit/trace/screenshot managers
@@ -1057,11 +1084,14 @@ function composeBusinessBatchForScope(scope: NormalizedBusinessUiScope): Busines
 
 function summarizeBusinessBatchOption(scope: NormalizedBusinessUiScope, batchResult: BusinessBatchResult): BusinessBatchOptionView {
   const realFiles = batchResult.files.filter((file) => isExistingRawBusinessReportFile(file, batchResult.batch));
-  const realTypes = new Set(realFiles.map((file) => file.reportType));
   const importedRowCount = realFiles.reduce((sum, file) => {
     if (!file.filePath) return sum;
     return sum + countImportedRowsForFile(scope, canonicalizeExistingPath(file.filePath), file.batchId || batchResult.batch.id);
   }, 0);
+  const coverage = summarizeBusinessReportCoverage({
+    expectedTypes: LINGXING_AD_REPORTS.map((report) => report.type),
+    realReportFiles: realFiles,
+  });
 
   return {
     id: batchResult.batch.id,
@@ -1075,10 +1105,10 @@ function summarizeBusinessBatchOption(scope: NormalizedBusinessUiScope, batchRes
     createdAt: batchResult.batch.createdAt,
     completedAt: batchResult.batch.completedAt,
     totalFileRecords: batchResult.files.length,
-    realReportFileCount: realFiles.length,
+    realReportFileCount: coverage.realReportFileCount,
     importedRowCount,
     missingReportLabels: LINGXING_AD_REPORTS
-      .filter((report) => !realTypes.has(report.type))
+      .filter((report) => coverage.missingReportTypes.includes(report.type))
       .map((report) => report.displayName),
   };
 }
@@ -1436,6 +1466,22 @@ function mapBusinessAdMetricRow(row: any): AdDailyMetrics {
   };
 }
 
+function countMetricsWithSourceRow(metrics: AdDailyMetrics[]): number {
+  return metrics.filter((metric) => Number.isFinite(Number(metric.sourceRow)) && Number(metric.sourceRow) > 0).length;
+}
+
+function countMetricsWithSourceFileAndRow(metrics: AdDailyMetrics[]): number {
+  return metrics.filter((metric) => (
+    String(metric.sourceFile || '').trim().length > 0
+    && Number.isFinite(Number(metric.sourceRow))
+    && Number(metric.sourceRow) > 0
+  )).length;
+}
+
+function countMetricsWithAsin(metrics: AdDailyMetrics[]): number {
+  return metrics.filter((metric) => String(metric.asin || '').trim().length > 0).length;
+}
+
 function getBusinessRecommendationGate(input: unknown): {
   scope: NormalizedBusinessUiScope;
   pipeline: ReturnType<typeof handleGetBusinessUiDataPipeline>;
@@ -1711,12 +1757,10 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
     ? { batchId: batchResult.batch.id, batchIds: realReportBatchIds, sourceFiles: realReportSourceFiles }
     : undefined;
 
-  const importedRowsByType = new Map<string, number>();
-  const realFileTypes = new Set<string>();
-  for (const file of realReportFiles) {
-    realFileTypes.add(file.reportType);
-    importedRowsByType.set(file.reportType, (importedRowsByType.get(file.reportType) || 0) + file.importedRows);
-  }
+  const reportCoverage = summarizeBusinessReportCoverage({
+    expectedTypes: LINGXING_AD_REPORTS.map((report) => report.type),
+    realReportFiles,
+  });
   const latestFileByType = new Map<string, LingxingReportFile>();
   for (const file of files) {
     if (!latestFileByType.has(file.reportType)) latestFileByType.set(file.reportType, file);
@@ -1728,8 +1772,8 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
       type: report.type,
       label: report.displayName,
       status: file?.status || 'missing',
-      realFileAvailable: realFileTypes.has(report.type),
-      importedRows: importedRowsByType.get(report.type) || 0,
+      realFileAvailable: !reportCoverage.missingReportTypes.includes(report.type),
+      importedRows: reportCoverage.importedRowsByType.get(report.type) || 0,
     };
   });
   const fileAuditRecords = files.map((file) => {
@@ -1755,7 +1799,7 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
     .filter((item) => !item.realFileAvailable)
     .map((item) => item.label);
 
-  const quant = loadBusinessQuantSummary(scope, realReportFiles.length, metricSource);
+  const quant = loadBusinessQuantSummary(scope, reportCoverage.realReportFileCount, metricSource);
   const operationEvents = state.operationEventRepo?.findByScope({
     dateFrom: scope.dateFrom,
     dateTo: scope.dateTo,
@@ -1765,10 +1809,26 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
     limit: 50,
   }) || [];
   const productContexts = loadProductStrategyContexts(scope);
+  const productHistoryMetrics = metricSource
+    ? loadBusinessRecommendationMetrics(scope, metricSource, 5000)
+    : [];
+  const productHistoryLedgers = buildAdProductHistoryLedger({
+    scope: {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: scope.asin,
+      batchId: scope.batchId || batchResult?.batch.id,
+    },
+    metrics: productHistoryMetrics,
+    operationEvents,
+    productContexts,
+  });
   const blockers = Array.from(new Set([
     ...(batchResult?.scopeMismatch?.length ? ['数据批次与当前运营范围不一致，已阻断文件和指标展示。', ...batchResult.scopeMismatch] : []),
     ...(!batchResult ? ['当前范围没有匹配的数据批次。'] : []),
-    ...(realReportFiles.length === 0 ? ['当前范围还没有可量化的真实广告数据'] : []),
+    ...(reportCoverage.realReportFileCount === 0 ? ['当前范围还没有可量化的真实广告数据'] : []),
     ...(quant.importedRows === 0 ? ['当前范围没有导入广告指标行，广告量化保持阻断。'] : []),
   ]));
 
@@ -1790,7 +1850,7 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
     },
     generatedAt: new Date().toISOString(),
     collection: {
-      status: realReportFiles.length === 8 && quant.importedRows > 0 ? 'ready' : realReportFiles.length > 0 ? 'partial' : 'blocked',
+      status: reportCoverage.statusWithImportedRows(quant.importedRows),
       latestBatch: batchResult?.batch ? {
         id: batchResult.batch.id,
         status: batchResult.batch.status,
@@ -1811,7 +1871,7 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
         totalFileRecords: files.length,
         downloadedFileRecords: fileAuditRecords.filter((file) => file.status === 'downloaded' && file.realReport).length,
         existingFileRecords: fileAuditRecords.filter((file) => file.exists).length,
-        realReportFileCount: realReportFiles.length,
+        realReportFileCount: reportCoverage.realReportFileCount,
         importedRowCount,
         rejectedEvidenceFileCount: fileAuditRecords.filter((file) => file.evidenceLike).length,
         missingReportLabels,
@@ -1848,6 +1908,14 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
       notes: [
         '产品配置用于给 AI 提供推广阶段、成本结构、最低价、目标净利率、目标 ACOS 和目标 TACOS。',
         '未配置产品时，AI 仍可分析广告数据，但动态阈值不会包含利润空间约束。',
+      ],
+    },
+    productHistory: {
+      ledgers: productHistoryLedgers,
+      ledgerCount: productHistoryLedgers.length,
+      notes: [
+        '产品广告历史账本按当前运营范围、真实报表批次和 source_file 生成，保留日级广告事实。',
+        'AI 阶段判断和动态阈值会优先参考这份按 ASIN 聚合的每日历史，而不是只看周期汇总。',
       ],
     },
   };
@@ -3653,16 +3721,9 @@ function handleAnalyzeListingCoverage(listing: ListingContent, keywords: string[
 
   if (state.db) {
     const save = state.db.transaction(() => {
-      state.db!.prepare(`
-        INSERT INTO listing_content (asin, title, bullets_json, a_plus, image_copy, backend_terms, updated_at)
-        VALUES (@asin, @title, @bulletsJson, @aPlus, @imageCopy, @backendTerms, datetime('now'))
-      `).run({
-        asin: listing.asin,
-        title: listing.title,
-        bulletsJson: JSON.stringify(listing.bullets),
-        aPlus: listing.aPlus ?? null,
-        imageCopy: listing.imageCopy ?? null,
-        backendTerms: listing.backendTerms ?? null,
+      persistListingContent(listing, {
+        storeName: readCurrentOperationScopeValue('storeName'),
+        marketplaceCode: readCurrentOperationScopeValue('marketplaceCode'),
       });
 
       const insertCoverage = state.db!.prepare(`
@@ -3697,7 +3758,23 @@ function handleImportListingContent(filePath: string): ListingContent {
   return listing;
 }
 
-async function handleExtractListingFromLingxing(options: { expectedAsin?: string; persist?: boolean } = {}) {
+interface ListingReadPersistContext {
+  storeName?: string;
+  marketplaceCode?: string;
+  sourceUrl?: string;
+  screenshotPath?: string;
+}
+
+interface ListingReadOptions {
+  expectedAsin?: string;
+  persist?: boolean;
+  scope?: {
+    storeName?: string;
+    marketplaceCode?: string;
+  };
+}
+
+async function handleExtractListingFromLingxing(options: ListingReadOptions = {}) {
   if (!state.browserController || !state.isLoggedIn) {
     throw new Error('请先通过本应用登录领星，并打开需要读取的 Listing 页面。');
   }
@@ -3919,25 +3996,45 @@ async function handleExtractListingFromLingxing(options: { expectedAsin?: string
   }
 
   if (result.ready && result.listing && options.persist !== false) {
-    persistListingContent(result.listing);
+    persistListingContent(result.listing, {
+      storeName: options.scope?.storeName || readCurrentOperationScopeValue('storeName'),
+      marketplaceCode: options.scope?.marketplaceCode || readCurrentOperationScopeValue('marketplaceCode'),
+      sourceUrl: result.evidence.pageUrl,
+      screenshotPath: result.evidence.screenshotPath,
+    });
   }
 
   return result;
 }
 
-function persistListingContent(listing: ListingContent): void {
+function persistListingContent(listing: ListingContent, context: ListingReadPersistContext = {}): void {
   if (!state.db) return;
   state.db.prepare(`
-    INSERT INTO listing_content (asin, title, bullets_json, a_plus, image_copy, backend_terms, updated_at)
-    VALUES (@asin, @title, @bulletsJson, @aPlus, @imageCopy, @backendTerms, datetime('now'))
+    INSERT INTO listing_content
+      (asin, store_name, marketplace_code, title, bullets_json, a_plus, image_copy, backend_terms, source_url, screenshot_path, updated_at)
+    VALUES
+      (@asin, @storeName, @marketplaceCode, @title, @bulletsJson, @aPlus, @imageCopy, @backendTerms, @sourceUrl, @screenshotPath, datetime('now'))
   `).run({
     asin: listing.asin,
+    storeName: context.storeName || null,
+    marketplaceCode: context.marketplaceCode || null,
     title: listing.title,
     bulletsJson: JSON.stringify(listing.bullets),
     aPlus: listing.aPlus ?? null,
     imageCopy: listing.imageCopy ?? null,
     backendTerms: listing.backendTerms ?? null,
+    sourceUrl: context.sourceUrl || null,
+    screenshotPath: context.screenshotPath || null,
   });
+}
+
+function readCurrentOperationScopeValue(key: 'storeName' | 'marketplaceCode'): string {
+  try {
+    const scope = handleGetOperationScope();
+    return typeof scope?.[key] === 'string' ? scope[key] : '';
+  } catch {
+    return '';
+  }
 }
 
 async function clickLingxingListingReadOnlyTab(
@@ -4060,6 +4157,17 @@ async function handleProbeLingxingListingDetailAndExtract(input?: unknown) {
     : typeof input === 'string'
       ? input.trim()
       : '';
+  const expectedAsin = input && typeof input === 'object' && typeof (input as { expectedAsin?: unknown }).expectedAsin === 'string'
+    ? (input as { expectedAsin: string }).expectedAsin.trim().toUpperCase()
+    : '';
+  const scope = input && typeof input === 'object' && (input as { scope?: unknown }).scope && typeof (input as { scope?: unknown }).scope === 'object'
+    ? (input as { scope: { storeName?: unknown; marketplaceCode?: unknown } }).scope
+    : undefined;
+  const persistContext = {
+    storeName: typeof scope?.storeName === 'string' && scope.storeName.trim() ? scope.storeName.trim() : readCurrentOperationScopeValue('storeName'),
+    marketplaceCode: typeof scope?.marketplaceCode === 'string' && scope.marketplaceCode.trim() ? scope.marketplaceCode.trim() : readCurrentOperationScopeValue('marketplaceCode'),
+  };
+  const shouldPersist = !(input && typeof input === 'object' && (input as { persist?: unknown }).persist === false);
   if (rawUrl) {
     const targetUrl = parseLingxingListingReadUrl(rawUrl);
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -4074,20 +4182,33 @@ async function handleProbeLingxingListingDetailAndExtract(input?: unknown) {
     fromUrl: current.evidence.pageUrl,
     finalUrl: current.evidence.pageUrl,
     candidateCount: current.evidence.detailCandidates?.length || 0,
-    asinMatched: Boolean(current.listing?.asin),
+    asinMatched: Boolean(current.listing?.asin && (!expectedAsin || current.listing.asin.toUpperCase() === expectedAsin)),
   };
 
-  if (current.fullContentReady) {
+  const currentAsin = current.listing?.asin?.toUpperCase();
+  const targetAsin = expectedAsin || currentAsin || '';
+  if (current.fullContentReady && (!targetAsin || currentAsin === targetAsin)) {
     current.evidence.detailProbe = { ...probe, status: 'already_full_content_ready' };
+    if (shouldPersist && current.listing) {
+      persistListingContent(current.listing, {
+        storeName: persistContext.storeName,
+        marketplaceCode: persistContext.marketplaceCode,
+        sourceUrl: current.evidence.pageUrl,
+        screenshotPath: current.evidence.screenshotPath,
+      });
+    }
     return current;
   }
-  const asin = current.listing?.asin?.toUpperCase();
-  if (!asin) {
-    current.evidence.detailProbe = { ...probe, status: 'no_asin', reason: '当前页面未读取到 ASIN，不能定位详情页候选。' };
+  if (!targetAsin) {
+    current.evidence.detailProbe = {
+      ...probe,
+      status: 'no_asin',
+      reason: '当前页面未读取到 ASIN，且当前操作范围没有目标 ASIN，不能定位详情页候选。',
+    };
     return current;
   }
 
-  const candidate = await findVisibleListingDetailCandidate(page, asin);
+  const candidate = await findVisibleListingDetailCandidate(page, targetAsin);
   if (candidate.status !== 'unique' || !candidate.token) {
     current.evidence.detailProbe = {
       ...probe,
@@ -4129,13 +4250,13 @@ async function handleProbeLingxingListingDetailAndExtract(input?: unknown) {
     return current;
   }
 
-  const basicRead = await handleExtractListingFromLingxing({ expectedAsin: asin, persist: false });
+  const basicRead = await handleExtractListingFromLingxing({ expectedAsin: targetAsin, persist: false, scope: persistContext });
   let probed = basicRead;
   if (!basicRead.fullContentReady) {
     const switchedToDescription = await clickLingxingListingReadOnlyTab(detailPage, ['描述', 'Description', '商品描述']);
     if (switchedToDescription) {
       await detailPage.waitForTimeout(2500);
-      const descriptionRead = await handleExtractListingFromLingxing({ expectedAsin: asin, persist: false });
+      const descriptionRead = await handleExtractListingFromLingxing({ expectedAsin: targetAsin, persist: false, scope: persistContext });
       probed = mergeListingExtractionResults(basicRead, descriptionRead);
     }
   }
@@ -4147,11 +4268,16 @@ async function handleProbeLingxingListingDetailAndExtract(input?: unknown) {
     candidateCount: candidate.candidateCount,
     candidateText: candidate.text,
     candidateHref: candidate.href,
-    asinMatched: Boolean(probed.listing?.asin && probed.listing.asin.toUpperCase() === asin),
+    asinMatched: Boolean(probed.listing?.asin && probed.listing.asin.toUpperCase() === targetAsin),
     reason: probed.fullContentReady ? undefined : '详情页已打开，但仍未读取到完整五点和后台词。',
   };
-  if (probed.fullContentReady && probed.listing) {
-    persistListingContent(probed.listing);
+  if (shouldPersist && probed.fullContentReady && probed.listing) {
+    persistListingContent(probed.listing, {
+      storeName: persistContext.storeName,
+      marketplaceCode: persistContext.marketplaceCode,
+      sourceUrl: probed.evidence.pageUrl,
+      screenshotPath: probed.evidence.screenshotPath,
+    });
   }
   return probed;
 }
@@ -4462,16 +4588,25 @@ async function handleGenerateListingDrafts(suggestions: ListingSuggestion[]): Pr
 async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<string, string>): Promise<ListingDraft[]> {
   const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
   const promptTemplate = readPromptTemplate('listing-rewrite.md');
+  const model = settings.aiModel || settings.ai_model || 'deepseek-v4-flash';
 
   const enhanced: ListingDraft[] = [];
   for (const draft of drafts) {
     let response;
     try {
-      response = await provider.complete(buildListingRewritePrompt(promptTemplate, draft), {
+      response = await provider.complete(buildListingRewritePrompt(promptTemplate, draft, settings), {
         temperature: 0.3,
-        maxTokens: 700,
+        maxTokens: parseIntegerSetting(settings.aiMaxTokens || settings.ai_max_tokens, 8192),
+        responseFormat: 'json_object',
       });
     } catch (error) {
+      recordListingAiCallLog({
+        draft,
+        model,
+        outputJson: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
+        success: false,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
       enhanced.push({
         ...draft,
         aiFallbackReason: `AI 调用异常：${error instanceof Error ? error.message : String(error)}，使用规则草案`,
@@ -4479,6 +4614,13 @@ async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<
       continue;
     }
     if (!response.success || !response.content) {
+      recordListingAiCallLog({
+        draft,
+        model,
+        outputJson: response.content || JSON.stringify({ error: response.error || 'empty_content' }),
+        success: false,
+        errorMessage: response.error || 'AI 未返回草案内容',
+      });
       enhanced.push({
         ...draft,
         aiFallbackReason: response.error ? `AI 生成失败：${response.error}` : 'AI 未返回草案内容，使用规则草案',
@@ -4487,12 +4629,19 @@ async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<
     }
 
     const parsed = parseAiDraftResponse(response.content);
+    recordListingAiCallLog({
+      draft,
+      model,
+      outputJson: response.content,
+      success: Boolean(parsed),
+      errorMessage: parsed ? undefined : 'AI 响应无法解析为 listing_rewrite_v1 JSON 或中文理由校验失败',
+    });
     enhanced.push(parsed
       ? {
           ...draft,
           draftedText: parsed.suggestedText,
           riskWarnings: Array.from(new Set([...draft.riskWarnings, ...parsed.riskWarnings])),
-          evidence: `${draft.evidence}\nAI reason: ${parsed.reason}`,
+          evidence: `${draft.evidence}\nAI 理由：${parsed.reason}`,
           source: 'ai',
           aiFallbackReason: undefined,
         }
@@ -4505,47 +4654,26 @@ async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<
   return enhanced;
 }
 
+function recordListingAiCallLog(input: {
+  draft: ListingDraft;
+  model: string;
+  outputJson: string;
+  success: boolean;
+  errorMessage?: string;
+}): void {
+  try {
+    state.aiCallLogRepo?.insert(buildListingAiCallLogInput(input));
+  } catch (error) {
+    console.warn('[AI] Failed to write Listing AI call log', error);
+  }
+}
+
 function stringSetting(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
 function normalizeAiSettings(settings: Record<string, unknown>): Record<string, string> {
-  const asStrings = Object.fromEntries(
-    Object.entries(settings).map(([key, value]) => [key, String(value ?? '')]),
-  );
-  const apiKey = stringSetting(settings.ai_api_key) || stringSetting(settings.aiApiKey);
-  const baseUrl = (stringSetting(settings.ai_base_url) || stringSetting(settings.aiBaseUrl) || 'https://api.deepseek.com').replace(/\/+$/, '');
-  const model = stringSetting(settings.ai_model) || stringSetting(settings.aiModel) || 'deepseek-v4-flash';
-  const temperature = stringSetting(settings.ai_temperature) || stringSetting(settings.aiTemperature) || '0.3';
-  const maxTokens = stringSetting(settings.ai_max_tokens) || stringSetting(settings.aiMaxTokens) || '700';
-  const lastTestStatus = stringSetting(settings.ai_last_test_status) || stringSetting(settings.aiLastTestStatus);
-  const lastTestAt = stringSetting(settings.ai_last_test_at) || stringSetting(settings.aiLastTestAt);
-  const lastTestBaseUrl = stringSetting(settings.ai_last_test_base_url) || stringSetting(settings.aiLastTestBaseUrl);
-  const lastTestModel = stringSetting(settings.ai_last_test_model) || stringSetting(settings.aiLastTestModel);
-  const lastTestMessage = stringSetting(settings.ai_last_test_message) || stringSetting(settings.aiLastTestMessage);
-  return {
-    ...asStrings,
-    aiApiKey: apiKey,
-    ai_api_key: apiKey,
-    aiBaseUrl: baseUrl,
-    ai_base_url: baseUrl,
-    aiModel: model,
-    ai_model: model,
-    aiTemperature: temperature,
-    ai_temperature: temperature,
-    aiMaxTokens: maxTokens,
-    ai_max_tokens: maxTokens,
-    aiLastTestStatus: lastTestStatus,
-    ai_last_test_status: lastTestStatus,
-    aiLastTestAt: lastTestAt,
-    ai_last_test_at: lastTestAt,
-    aiLastTestBaseUrl: lastTestBaseUrl,
-    ai_last_test_base_url: lastTestBaseUrl,
-    aiLastTestModel: lastTestModel,
-    ai_last_test_model: lastTestModel,
-    aiLastTestMessage: lastTestMessage,
-    ai_last_test_message: lastTestMessage,
-  };
+  return normalizeAiSettingsRecord(settings);
 }
 
 function buildAiProviderConfig(settings: Record<string, unknown>) {
@@ -4555,7 +4683,7 @@ function buildAiProviderConfig(settings: Record<string, unknown>) {
     baseUrl: normalized.aiBaseUrl,
     model: normalized.aiModel,
     temperature: parseNumberSetting(normalized.aiTemperature, 0.3),
-    maxTokens: parseIntegerSetting(normalized.aiMaxTokens, 700),
+    maxTokens: parseIntegerSetting(normalized.aiMaxTokens, 8192),
   };
 }
 
@@ -4574,6 +4702,10 @@ async function handleTestAiSettings(settings: Record<string, unknown>) {
       ai_temperature: String(config.temperature),
       aiMaxTokens: String(config.maxTokens),
       ai_max_tokens: String(config.maxTokens),
+      aiOutputLanguage: normalizeAiSettings(settings).aiOutputLanguage,
+      ai_output_language: normalizeAiSettings(settings).ai_output_language,
+      aiPersona: normalizeAiSettings(settings).aiPersona,
+      ai_persona: normalizeAiSettings(settings).ai_persona,
       aiLastTestStatus: status,
       ai_last_test_status: status,
       aiLastTestAt: testedAt,
@@ -4626,6 +4758,12 @@ async function handleTestAiSettings(settings: Record<string, unknown>) {
   };
 }
 
+function handleListAiCallLogs(request: any = {}) {
+  if (!state.aiCallLogRepo) return [];
+  const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(20, Number(request.limit))) : 5;
+  return state.aiCallLogRepo.findRecent(limit);
+}
+
 function parseNumberSetting(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -4654,17 +4792,21 @@ function persistListingDrafts(drafts: ListingDraft[]): ListingDraft[] {
   if (!state.db || drafts.length === 0) return drafts;
 
   const persisted: ListingDraft[] = [];
+  const storeName = readCurrentOperationScopeValue('storeName') || null;
+  const marketplaceCode = readCurrentOperationScopeValue('marketplaceCode') || null;
   const save = state.db.transaction(() => {
     const insert = state.db!.prepare(`
       INSERT INTO listing_drafts
-        (asin, section, current_text, drafted_text, keywords_json, evidence, risk_warnings_json, source, ai_fallback_reason, status, created_at)
+        (asin, store_name, marketplace_code, section, current_text, drafted_text, keywords_json, evidence, risk_warnings_json, source, ai_fallback_reason, status, created_at)
       VALUES
-        (@asin, @section, @currentText, @draftedText, @keywordsJson, @evidence, @riskWarningsJson, @source, @aiFallbackReason, @status, @createdAt)
+        (@asin, @storeName, @marketplaceCode, @section, @currentText, @draftedText, @keywordsJson, @evidence, @riskWarningsJson, @source, @aiFallbackReason, @status, @createdAt)
     `);
     for (const draft of drafts) {
       const createdAt = draft.createdAt ?? new Date().toISOString();
       const result = insert.run({
         ...draft,
+        storeName,
+        marketplaceCode,
         currentText: draft.currentText ?? null,
         keywordsJson: JSON.stringify(draft.keywords),
         riskWarningsJson: JSON.stringify(draft.riskWarnings),
@@ -4688,41 +4830,6 @@ function readPromptTemplate(filename: string): string {
     return '';
   }
   return fs.readFileSync(promptPath, 'utf8');
-}
-
-function buildListingRewritePrompt(promptTemplate: string, draft: ListingDraft): string {
-  return `${promptTemplate}
-
-当前模块：${draft.section}
-当前文案：
-${draft.currentText || ''}
-
-目标关键词：
-${draft.keywords.join(', ')}
-
-数据证据：
-${draft.evidence}
-
-当前规则草案：
-${draft.draftedText}
-`;
-}
-
-function parseAiDraftResponse(content: string): { suggestedText: string; reason: string; riskWarnings: string[] } | null {
-  const jsonText = content.match(/\{[\s\S]*\}/)?.[0] ?? content;
-  try {
-    const parsed = JSON.parse(jsonText) as { suggestedText?: unknown; reason?: unknown; riskWarnings?: unknown };
-    if (typeof parsed.suggestedText !== 'string' || !parsed.suggestedText.trim()) {
-      return null;
-    }
-    return {
-      suggestedText: parsed.suggestedText.trim(),
-      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
-      riskWarnings: Array.isArray(parsed.riskWarnings) ? parsed.riskWarnings.map((item) => String(item)) : [],
-    };
-  } catch {
-    return null;
-  }
 }
 
 async function handleExportListingSuggestions(suggestions: ListingSuggestion[], format: 'csv' | 'markdown' | 'xlsx'): Promise<string> {
@@ -4819,7 +4926,17 @@ interface DeliveryReadinessView {
   };
   missing: string[];
   actionItems: string[];
+  recommendationReviewReasons: string[];
+  reviewBlockers: string[];
+  deliveryReviewReasons: string[];
+  finalReadinessBlockers: string[];
   message?: string;
+}
+
+function readStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
 }
 
 function readJsonFile(filePath: string): any {
@@ -4866,6 +4983,10 @@ function missingReadinessView(message: string): DeliveryReadinessView {
     },
     missing: ['最终验收 manifest 尚未生成'],
     actionItems: ['运行最终验收，生成 output/codex-evidence/final-readiness-*.json。'],
+    recommendationReviewReasons: [],
+    reviewBlockers: [],
+    deliveryReviewReasons: [],
+    finalReadinessBlockers: [],
     message,
   };
 }
@@ -4884,11 +5005,11 @@ function normalizeDeliveryReadiness(finalReadiness: any, filePath: string): Deli
   const allGatesPass = gates.length > 0 && gates.every((gate: DeliveryReadinessGate) => gate.ok);
   const appReady = manifestDriven && Boolean(finalReadiness?.appReady) && allGatesPass && finalReadiness?.status === 'APP_READY';
   const failedGates = gates.filter((gate) => !gate.ok);
-  const missing = Array.isArray(finalReadiness?.missing)
-    ? finalReadiness.missing.map((item: unknown) => String(item)).filter(Boolean)
+  const missing = readStringList(finalReadiness?.missing).length
+    ? readStringList(finalReadiness?.missing)
     : failedGates.map((gate) => gate.message || `${gate.name} 未通过。`);
-  const actionItems = Array.isArray(finalReadiness?.actionItems)
-    ? finalReadiness.actionItems.map((item: unknown) => String(item)).filter(Boolean)
+  const actionItems = readStringList(finalReadiness?.actionItems).length
+    ? readStringList(finalReadiness?.actionItems)
     : failedGates.map((gate) => gate.message || `补齐 ${gate.name} 的验收证据后重新运行最终验收。`);
   return {
     available: true,
@@ -4909,93 +5030,23 @@ function normalizeDeliveryReadiness(finalReadiness: any, filePath: string): Deli
     },
     missing,
     actionItems,
+    recommendationReviewReasons: readStringList(finalReadiness?.recommendationReviewReasons),
+    reviewBlockers: readStringList(finalReadiness?.reviewBlockers),
+    deliveryReviewReasons: readStringList(finalReadiness?.deliveryReviewReasons),
+    finalReadinessBlockers: readStringList(finalReadiness?.finalReadinessBlockers),
   };
 }
 
 function sanitizeAiSettingsForRenderer(settings: Record<string, unknown>): Record<string, string | boolean> {
-  const normalized = normalizeAiSettings(settings);
-  return {
-    aiApiKey: '',
-    ai_api_key: '',
-    aiKeyConfigured: Boolean(normalized.aiApiKey.trim()),
-    ai_key_configured: Boolean(normalized.aiApiKey.trim()),
-    aiBaseUrl: normalized.aiBaseUrl,
-    ai_base_url: normalized.ai_base_url,
-    aiModel: normalized.aiModel,
-    ai_model: normalized.ai_model,
-    aiTemperature: normalized.aiTemperature,
-    ai_temperature: normalized.ai_temperature,
-    aiMaxTokens: normalized.aiMaxTokens,
-    ai_max_tokens: normalized.ai_max_tokens,
-    aiLastTestStatus: normalized.aiLastTestStatus || '',
-    ai_last_test_status: normalized.aiLastTestStatus || '',
-    aiLastTestAt: normalized.aiLastTestAt || '',
-    ai_last_test_at: normalized.aiLastTestAt || '',
-    aiLastTestBaseUrl: normalized.aiLastTestBaseUrl || '',
-    ai_last_test_base_url: normalized.aiLastTestBaseUrl || '',
-    aiLastTestModel: normalized.aiLastTestModel || '',
-    ai_last_test_model: normalized.aiLastTestModel || '',
-    aiLastTestMessage: normalized.aiLastTestMessage || '',
-    ai_last_test_message: normalized.aiLastTestMessage || '',
-  };
+  return sanitizeAiSettingsForRendererRecord(settings);
 }
 
 function normalizeAiSettingsForSave(incoming: Record<string, unknown>): Record<string, string> {
-  const saved = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
-  const normalized = normalizeAiSettings(incoming);
-  const incomingKey = stringSetting(incoming.ai_api_key) || stringSetting(incoming.aiApiKey);
-  const apiKey = incomingKey || saved.aiApiKey;
-  const incomingStatus = stringSetting(incoming.aiLastTestStatus) || stringSetting(incoming.ai_last_test_status);
-  const savedTestStillMatches =
-    !incomingStatus &&
-    !incomingKey &&
-    Boolean(saved.aiLastTestStatus) &&
-    saved.aiLastTestBaseUrl === normalized.aiBaseUrl &&
-    saved.aiLastTestModel === normalized.aiModel;
-  const lastTestStatus = incomingStatus || (savedTestStillMatches ? saved.aiLastTestStatus : '');
-  const lastTestAt =
-    stringSetting(incoming.aiLastTestAt) ||
-    stringSetting(incoming.ai_last_test_at) ||
-    (savedTestStillMatches ? saved.aiLastTestAt : '');
-  const lastTestBaseUrl =
-    stringSetting(incoming.aiLastTestBaseUrl) ||
-    stringSetting(incoming.ai_last_test_base_url) ||
-    (savedTestStillMatches ? saved.aiLastTestBaseUrl : '');
-  const lastTestModel =
-    stringSetting(incoming.aiLastTestModel) ||
-    stringSetting(incoming.ai_last_test_model) ||
-    (savedTestStillMatches ? saved.aiLastTestModel : '');
-  const lastTestMessage =
-    stringSetting(incoming.aiLastTestMessage) ||
-    stringSetting(incoming.ai_last_test_message) ||
-    (savedTestStillMatches ? saved.aiLastTestMessage : '');
-  return {
-    ...normalized,
-    aiApiKey: apiKey,
-    ai_api_key: apiKey,
-    aiLastTestStatus: lastTestStatus,
-    ai_last_test_status: lastTestStatus,
-    aiLastTestAt: lastTestAt,
-    ai_last_test_at: lastTestAt,
-    aiLastTestBaseUrl: lastTestBaseUrl,
-    ai_last_test_base_url: lastTestBaseUrl,
-    aiLastTestModel: lastTestModel,
-    ai_last_test_model: lastTestModel,
-    aiLastTestMessage: lastTestMessage,
-    ai_last_test_message: lastTestMessage,
-  };
+  return normalizeAiSettingsForSaveInput(incoming, state.settingsRepo?.getAll() ?? {});
 }
 
 function normalizeAiSettingsForTest(incoming: Record<string, unknown>): Record<string, string> {
-  const saved = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
-  const normalized = normalizeAiSettings(incoming);
-  const incomingKey = stringSetting(incoming.ai_api_key) || stringSetting(incoming.aiApiKey);
-  const apiKey = incomingKey || saved.aiApiKey;
-  return {
-    ...normalized,
-    aiApiKey: apiKey,
-    ai_api_key: apiKey,
-  };
+  return normalizeAiSettingsForTestInput(incoming, state.settingsRepo?.getAll() ?? {});
 }
 
 function handleGetDeliveryReadiness(): DeliveryReadinessView {
@@ -5028,6 +5079,16 @@ function handleGetStoragePaths() {
     deliveryDir: DELIVERY_BUNDLES_DIR,
     localDbPath: DB_PATH,
   };
+}
+
+function handleGetDeliveryEvidenceStatus(input?: unknown) {
+  const scope = normalizePersistedOperationScope(input || handleGetOperationScope() || {});
+  return getDeliveryEvidenceStatus({
+    db: state.db,
+    readbackDir: path.join(EXPORTS_DIR, 'ad-readback-evidence'),
+    releaseDir: path.join(REPO_ROOT_DIR, 'apps', 'desktop', 'release'),
+    scope,
+  });
 }
 
 function normalizePersistedOperationScope(input: unknown) {
@@ -5329,7 +5390,7 @@ function handleExportDataReconciliation(input: unknown) {
     dbPath: DB_PATH,
     collection: {
       status: pipeline.collection.status,
-      realReportFileCount: pipeline.collection.realReportFiles.length,
+      realReportFileCount: pipeline.collection.fileAudit.realReportFileCount,
       importedRowCount: pipeline.collection.fileAudit.importedRowCount,
       missingReportLabels: pipeline.collection.fileAudit.missingReportLabels,
       manifestPath: pipeline.collection.fileAudit.manifestPath,
@@ -5971,6 +6032,7 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   generated: number;
   metrics: number;
   skippedDuplicates: number;
+  refreshedDuplicates: number;
   recommendationCandidates: number;
   aiExplanation: {
     configured: boolean;
@@ -5980,14 +6042,12 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
     reason: string;
     model?: string;
     strategyDiagnosis?: AdStrategyGenerationSummary;
+    aiInsights?: AiInsightSummary[];
+    evidencePackSummary?: AiEvidencePackSummary;
   };
   scope: any;
   metricsBackfill?: ReturnType<typeof backfillAdMetricsFromLatestBatchIfNeeded>;
 }> {
-  if (!state.isLoggedIn) {
-    throw new Error('Not logged in');
-  }
-
   const operatorRequested = request && typeof request === 'object' && Object.keys(request).length > 0;
   const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(1000, Number(request.limit))) : 300;
   const scope = {
@@ -6009,45 +6069,39 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
 
   const gate = getBusinessRecommendationGate(scope);
   const metricsBackfill = undefined;
-  const metrics = loadBusinessRecommendationMetrics(gate.scope, gate.metricSource, limit);
-  if (metrics.length === 0) {
-    console.log('[Scheduler] No metrics to process');
-    const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
-    return {
-      generated: 0,
-      metrics: 0,
-      skippedDuplicates: 0,
-      recommendationCandidates: 0,
-      aiExplanation: {
-        configured: Boolean(settings.aiApiKey),
-        invoked: false,
-        aiCount: 0,
-        ruleCount: 0,
-        reason: '当前范围没有可处理的广告指标，AI 不会被调用。',
-        model: settings.aiModel,
-      },
-      scope: gate.scope,
-      metricsBackfill,
-    };
-  }
+  const metrics = filterFormalRecommendationMetrics(
+    loadBusinessRecommendationMetrics(gate.scope, gate.metricSource, Math.max(limit, RECOMMENDATION_METRIC_LOAD_LIMIT)),
+    gate.scope.asin,
+  );
+  assertRecommendationMetricsLoaded({
+    metricsLength: metrics.length,
+    realReportFileCount: gate.pipeline.collection.fileAudit.realReportFileCount,
+    requiredReportCount: LINGXING_AD_REPORTS.length,
+    sourceFileCount: gate.metricSource.sourceFiles.length,
+    sourceRowCount: countMetricsWithSourceRow(metrics),
+    sourceFileRowCount: countMetricsWithSourceFileAndRow(metrics),
+    asinBoundCount: countMetricsWithAsin(metrics),
+    scopeAsin: gate.scope.asin,
+    importedRows: gate.pipeline.collection.fileAudit.importedRowCount,
+  });
 
   // Generate recommendations
   const generator = new RecommendationGenerator(state.ruleConfig);
   const firstMetric = metrics[0];
   const taskId = `task_${Date.now()}`;
-  let recommendations = generator.generateBatch(metrics, {
+  let recommendations = generator.generateTimelineBatch(metrics, {
     storeName: scope.storeName || firstMetric?.storeName || state.currentStore || 'unknown',
     marketplaceCode: scope.marketplaceCode || firstMetric?.marketplaceCode || 'US',
     config: state.ruleConfig,
     taskId,
   });
+  recommendations = bindRecommendationsToScopeAsin(recommendations, gate.scope.asin);
   const recommendationCandidates = recommendations.length;
   recommendations = recommendations.map((rec) => ({
     ...rec,
     evidence: {
       ...rec.evidence,
       batchId: gate.scope.batchId,
-      sourceFiles: gate.metricSource.sourceFiles,
     },
   }));
   const strategyDiagnosisResult = await enrichAdRecommendationsWithStrategyDiagnosis(recommendations, metrics, gate.scope, {
@@ -6062,18 +6116,25 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   const aiFallbackReason = recommendations
     .map((rec) => rec.evidence?.aiFallbackReason)
     .find((reason): reason is string => typeof reason === 'string' && reason.length > 0);
+  const strategySource = strategyDiagnosisResult.summary?.source;
   const aiExplanation = {
     configured: Boolean(settings.aiApiKey),
     invoked: aiInvoked,
     aiCount,
     ruleCount: recommendations.length - aiCount,
     strategyDiagnosis: strategyDiagnosisResult.summary,
+    aiInsights: strategyDiagnosisResult.summary?.aiInsights || [],
+    evidencePackSummary: strategyDiagnosisResult.summary?.evidencePackSummary,
     reason: !settings.aiApiKey
       ? '未配置 AI Key，建议解释使用规则引擎 fallback。'
-      : aiInvoked && aiCount === 0
-        ? `已尝试调用 AI，但本次没有可用 AI 输出，建议已回落到规则引擎。${aiFallbackReason ? `原因：${aiFallbackReason}` : ''}`
       : recommendations.length === 0
-        ? 'AI 已运行广告阶段诊断，但没有找到可安全绑定到当前真实指标的可审批动作。'
+        ? strategySource === 'ai'
+          ? 'AI 已完成广告阶段诊断和动态阈值建议，但没有找到可安全绑定到当前真实指标的可审批动作。'
+          : '规则引擎没有找到可安全绑定到当前真实指标的可审批动作。'
+        : aiInvoked && aiCount === 0 && strategySource === 'ai'
+          ? 'AI 已完成广告阶段诊断和动态阈值建议；本次没有形成可绑定到具体广告对象的 AI 建议解释，动作仍按规则证据进入人工复核。'
+        : aiInvoked && aiCount === 0
+          ? `已尝试调用 AI，但本次没有可用 AI 输出，建议已回落到规则引擎。${aiFallbackReason ? `原因：${aiFallbackReason}` : ''}`
         : `AI 已参与广告阶段诊断、动态阈值建议和 ${aiCount}/${recommendations.length} 条建议解释；AI-only 动作仅进入人工审批。`,
     model: settings.aiModel,
   };
@@ -6081,30 +6142,42 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   // Save to database
   let inserted = 0;
   let skippedDuplicates = 0;
+  let refreshedDuplicates = 0;
   for (const rec of recommendations) {
     const result = state.recommendationRepo?.insertIfNoDuplicate
       ? state.recommendationRepo.insertIfNoDuplicate(rec)
       : { id: state.recommendationRepo?.insert(rec) || 0, inserted: true };
     if (result.inserted) {
       inserted++;
+    } else if (result.updated) {
+      refreshedDuplicates++;
     } else {
       skippedDuplicates++;
     }
   }
 
-  console.log(`[Scheduler] Generated ${inserted} recommendations; skipped ${skippedDuplicates} duplicate(s)`);
+  console.log(`[Scheduler] Generated ${inserted} recommendations; refreshed ${refreshedDuplicates} incomplete duplicate(s); skipped ${skippedDuplicates} duplicate(s)`);
   mainWindow?.webContents.send('recommendations:generated', inserted);
-  return { generated: inserted, metrics: metrics.length, skippedDuplicates, recommendationCandidates, aiExplanation, scope: gate.scope, metricsBackfill };
+  return { generated: inserted, metrics: metrics.length, skippedDuplicates, refreshedDuplicates, recommendationCandidates, aiExplanation, scope: gate.scope, metricsBackfill };
 }
 
 interface AdStrategyGenerationSummary {
   source: 'ai' | 'rule';
+  evidenceSufficiency: AdStrategyDiagnosisOutput['evidenceSufficiency'];
   lifecycleStage: string;
   summary: string;
   mainProblems: string[];
   riskWarnings: string[];
   thresholdSuggestions: AdStrategyDiagnosisOutput['thresholdSuggestions'];
+  lifecycleStageReason: string;
+  lifecycleStageEvidenceRefs: string[];
+  lifecycleStageRequiresReview?: boolean;
+  lifecycleStageInvalidReasons?: string[];
   aiCandidateCount: number;
+  insightOnlyCandidateCount: number;
+  aiInsights?: AiInsightSummary[];
+  evidencePackSummary?: AiEvidencePackSummary;
+  evidencePackPreview?: AiEvidenceItem[];
   operationEventCount: number;
   productContextCount: number;
   decisionCounts: {
@@ -6121,19 +6194,52 @@ interface AdStrategyGenerationSummary {
   fallbackReason?: string;
 }
 
+interface AiEvidencePackSummary {
+  total: number;
+  metric: number;
+  timeline: number;
+  operationEvent: number;
+  productContext: number;
+  ruleCandidate: number;
+}
+
+interface AiInsightSummary {
+  entityType: string;
+  entityName: string;
+  actionType: string;
+  reason: string;
+  reasoningSteps: string[];
+  evidenceRefs: string[];
+  invalidReasons: string[];
+  riskWarnings: string[];
+  confidence: number;
+}
+
 function summarizeStrategyDiagnosis(
   diagnosis: AdStrategyDiagnosisOutput,
   operationEventCount: number,
   productContextCount = 0,
+  aiInsights: AiInsightSummary[] = [],
+  evidencePackSummary?: AiEvidencePackSummary,
+  evidencePackPreview?: AiEvidenceItem[],
 ): AdStrategyGenerationSummary {
   return {
     source: diagnosis.source,
+    evidenceSufficiency: diagnosis.evidenceSufficiency,
     lifecycleStage: diagnosis.lifecycleStage,
     summary: diagnosis.summary,
     mainProblems: diagnosis.mainProblems,
     riskWarnings: diagnosis.riskWarnings,
     thresholdSuggestions: diagnosis.thresholdSuggestions,
+    lifecycleStageReason: diagnosis.lifecycleStageReason,
+    lifecycleStageEvidenceRefs: diagnosis.lifecycleStageEvidenceRefs,
+    lifecycleStageRequiresReview: diagnosis.lifecycleStageRequiresReview,
+    lifecycleStageInvalidReasons: diagnosis.lifecycleStageInvalidReasons,
     aiCandidateCount: diagnosis.aiCandidates.length,
+    insightOnlyCandidateCount: aiInsights.length,
+    aiInsights,
+    evidencePackSummary,
+    evidencePackPreview,
     operationEventCount,
     productContextCount,
     decisionCounts: {
@@ -6246,18 +6352,23 @@ async function enrichAdRecommendationsWithAiExplanations(
   const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
   const aiApiKey = settings.aiApiKey;
   if (!aiApiKey) {
-    return recommendations.map((rec) => ({
-      ...rec,
-      evidence: {
-        ...rec.evidence,
-        explanationSource: 'rule',
+    return recommendations.map((rec) => mergeAdActionExplanationEvidence({
+      recommendation: rec,
+      explanation: {
+        source: 'rule',
+        explanation: rec.reason,
+        riskWarnings: ['未配置 AI Key，广告建议解释使用规则引擎。'],
         aiFallbackReason: '未配置 AI Key，广告建议解释使用规则引擎',
       },
+      model: settings.aiModel,
     }));
   }
 
   const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
-  const explainer = new AdActionReasonExplainer(provider);
+  const explainer = new AdActionReasonExplainer(provider, {
+    persona: settings.aiPersona,
+    outputLanguage: settings.aiOutputLanguage,
+  });
   const enhanced: ActionRecommendation[] = [];
   for (const rec of recommendations) {
     try {
@@ -6274,28 +6385,34 @@ async function enrichAdRecommendationsWithAiExplanations(
         },
         recommendedAction: rec.recommendedValue || rec.actionType,
       });
-      enhanced.push({
-        ...rec,
-        reason: explanation.source === 'ai' && explanation.explanation ? explanation.explanation : rec.reason,
-        evidence: {
-          ...rec.evidence,
-          explanationSource: explanation.source,
-          aiExplanation: explanation.explanation,
-          aiRiskWarnings: explanation.riskWarnings,
-          aiAlternativeSuggestions: explanation.alternativeSuggestions,
-          aiFallbackReason: explanation.aiFallbackReason,
-          aiModel: settings.aiModel,
-        },
+      recordAdActionReasonAiCallLog({
+        recommendation: rec,
+        explanation,
+        model: settings.aiModel,
       });
+      enhanced.push(mergeAdActionExplanationEvidence({
+        recommendation: rec,
+        explanation,
+        model: settings.aiModel,
+      }));
     } catch (error) {
-      enhanced.push({
-        ...rec,
-        evidence: {
-          ...rec.evidence,
-          explanationSource: 'rule',
-          aiFallbackReason: `AI 广告解释异常：${error instanceof Error ? error.message : String(error)}，使用规则解释`,
-        },
+      const fallbackReason = `AI 广告解释异常：${error instanceof Error ? error.message : String(error)}，使用规则解释`;
+      const fallbackExplanation: AdActionExplanationForLog = {
+        source: 'rule',
+        explanation: rec.reason,
+        riskWarnings: ['AI 广告解释异常，使用规则解释。'],
+        aiFallbackReason: fallbackReason,
+      };
+      recordAdActionReasonAiCallLog({
+        recommendation: rec,
+        explanation: fallbackExplanation,
+        model: settings.aiModel,
       });
+      enhanced.push(mergeAdActionExplanationEvidence({
+        recommendation: rec,
+        explanation: fallbackExplanation,
+        model: settings.aiModel,
+      }));
     }
   }
   return enhanced;
@@ -6330,6 +6447,35 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     limit: 100,
   }) || [];
   const productContexts = loadProductStrategyContexts(scope);
+  const productHistoryLedgers = buildAdProductHistoryLedger({
+    scope: {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: scope.asin,
+      batchId: scope.batchId,
+    },
+    metrics,
+    operationEvents,
+    productContexts,
+  });
+  const evidencePack = buildAdAiEvidencePack({
+    scope: {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: scope.asin,
+      batchId: scope.batchId,
+    },
+    metrics,
+    operationEvents,
+    productContexts,
+    ruleRecommendations: recommendations,
+    productHistoryLedgers,
+  });
+  const evidencePackSummary = summarizeAiEvidencePack(evidencePack);
   const diagnosisInput = buildAdStrategyDiagnosisInput({
     scope: {
       dateFrom: scope.dateFrom,
@@ -6344,12 +6490,20 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     productContexts,
     ruleConfig: state.ruleConfig as RuleConfig & { minSpend?: number },
     recommendations,
+    evidencePack,
   });
   const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
   const diagnosis = settings.aiApiKey
-    ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings))).diagnose(diagnosisInput)
+    ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings)), {
+        persona: settings.aiPersona,
+        outputLanguage: settings.aiOutputLanguage,
+      }).diagnose(diagnosisInput)
     : {
+        schemaVersion: 'ad_strategy_diagnosis_v1' as const,
+        evidenceSufficiency: assessAdEvidenceSufficiency(diagnosisInput),
         lifecycleStage: 'unknown' as const,
+        lifecycleStageReason: '未配置 AI Key，不能执行 AI 阶段判断。',
+        lifecycleStageEvidenceRefs: [],
         summary: '未配置 AI Key，广告阶段诊断使用规则 fallback。',
         mainProblems: [],
         thresholdSuggestions: {
@@ -6371,10 +6525,29 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
           },
         },
         aiCandidates: [],
-        riskWarnings: ['AI unavailable'],
+        insightOnlyCandidates: [],
+        riskWarnings: ['AI 不可用，必须人工复核规则建议。'],
         source: 'rule' as const,
         aiFallbackReason: '未配置 AI Key，广告阶段诊断使用规则 fallback',
       };
+  recordAdStrategyAiCallLog(diagnosisInput, diagnosis, settings, evidencePackSummary);
+  const validation = validateAiDiagnosisEvidence({
+    diagnosis,
+    evidencePack,
+    scope: {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: scope.asin,
+      batchId: scope.batchId,
+    },
+  });
+  const aiInsights = buildAiInsightsFromValidation(diagnosis, validation.invalidReasons);
+  const mergeDiagnosis: AdStrategyDiagnosisOutput = {
+    ...diagnosis,
+    aiCandidates: diagnosis.aiCandidates.filter((_, index) => validation.validCandidateIndexes.includes(index)),
+  };
   const decisions = mergeAdDecisions({
     ruleCandidates: recommendations.map((recommendation) => ({
       entityType: recommendation.entityType,
@@ -6384,7 +6557,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
       reason: recommendation.reason,
       confidence: recommendation.confidence,
     })),
-    aiCandidates: diagnosis.aiCandidates.map((candidate) => ({
+    aiCandidates: mergeDiagnosis.aiCandidates.map((candidate) => ({
       entityType: candidate.entityType,
       entityName: candidate.entityName,
       actionType: candidate.actionType,
@@ -6396,14 +6569,15 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
 
   const annotated = annotateRecommendationsWithStrategy({
     recommendations,
-    diagnosis,
+    diagnosis: mergeDiagnosis,
     decisions,
     operationEventCount: operationEvents.length,
     productContexts,
+    evidencePack,
   });
   const aiOnlyRecommendations = createAiOnlyRecommendationsFromDecisions({
     decisions,
-    diagnosis,
+    diagnosis: mergeDiagnosis,
     metrics,
     scope: {
       dateFrom: scope.dateFrom,
@@ -6417,20 +6591,218 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     sourceFiles: options.sourceFiles,
     operationEventCount: operationEvents.length,
     productContexts,
+    evidencePack,
   });
   const decisionDiagnostics = summarizeMergedDecisionDiagnostics(
     decisions,
     aiOnlyRecommendations.length,
     annotated.length + aiOnlyRecommendations.length,
   );
+  const evidencePackPreview = selectStrategyEvidencePreview(mergeDiagnosis, aiInsights, evidencePack);
+  const summary = {
+    ...summarizeStrategyDiagnosis(mergeDiagnosis, operationEvents.length, productContexts.length, aiInsights, evidencePackSummary, evidencePackPreview),
+    ...decisionDiagnostics,
+  };
+  recordAdStrategyDiagnosisRun({
+    diagnosis: mergeDiagnosis,
+    settings,
+    scope: {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: scope.asin,
+      batchId: scope.batchId,
+    },
+    evidencePackSummary,
+    evidencePackPreview,
+    aiInsights,
+    formalRecommendationCount: annotated.length + aiOnlyRecommendations.length,
+  });
 
   return {
     recommendations: [...annotated, ...aiOnlyRecommendations],
-    summary: {
-      ...summarizeStrategyDiagnosis(diagnosis, operationEvents.length, productContexts.length),
-      ...decisionDiagnostics,
-    },
+    summary,
   };
+}
+
+function buildAiInsightsFromValidation(
+  diagnosis: AdStrategyDiagnosisOutput,
+  invalidReasons: Array<{ candidateIndex: number; reason: string; missingRefs: string[] }>,
+): AiInsightSummary[] {
+  const invalidReasonByIndex = new Map(invalidReasons.map((item) => [item.candidateIndex, item]));
+  const invalidCandidateInsights = diagnosis.aiCandidates
+    .map((candidate, index) => ({ candidate, invalid: invalidReasonByIndex.get(index) }))
+    .filter((item): item is { candidate: AiReasonedDecision; invalid: { candidateIndex: number; reason: string; missingRefs: string[] } } => Boolean(item.invalid))
+    .map(({ candidate, invalid }) => candidateToInsight(candidate, [invalid.reason]));
+
+  const explicitInsightCandidates = diagnosis.insightOnlyCandidates.map((candidate) => candidateToInsight(candidate, [
+    'AI 返回了判断，但缺少可回查证据引用，因此只作为洞察展示，未进入优化建议池。',
+  ]));
+
+  return [...invalidCandidateInsights, ...explicitInsightCandidates];
+}
+
+function candidateToInsight(candidate: AiReasonedDecision, invalidReasons: string[]): AiInsightSummary {
+  return {
+    entityType: candidate.entityType,
+    entityName: candidate.entityName,
+    actionType: candidate.actionType,
+    reason: candidate.reason,
+    reasoningSteps: candidate.reasoningSteps,
+    evidenceRefs: candidate.evidenceRefs,
+    invalidReasons,
+    riskWarnings: candidate.riskWarnings,
+    confidence: candidate.confidence,
+  };
+}
+
+function selectStrategyEvidencePreview(
+  diagnosis: AdStrategyDiagnosisOutput,
+  aiInsights: AiInsightSummary[],
+  evidencePack: AiEvidenceItem[],
+  maxItems = 12,
+): AiEvidenceItem[] {
+  const referencedIds = new Set<string>();
+  for (const ref of diagnosis.lifecycleStageEvidenceRefs || []) referencedIds.add(ref);
+  for (const suggestion of Object.values(diagnosis.thresholdSuggestions || {})) {
+    for (const ref of suggestion.evidenceRefs || []) referencedIds.add(ref);
+  }
+  for (const candidate of [...(diagnosis.aiCandidates || []), ...(diagnosis.insightOnlyCandidates || [])]) {
+    for (const ref of candidate.evidenceRefs || []) referencedIds.add(ref);
+  }
+  for (const insight of aiInsights) {
+    for (const ref of insight.evidenceRefs || []) referencedIds.add(ref);
+  }
+
+  const referenced = evidencePack.filter((item) => referencedIds.has(item.evidenceId));
+  if (referenced.length) return referenced.slice(0, maxItems);
+  return evidencePack.slice(0, Math.min(maxItems, 6));
+}
+
+function recordAdStrategyAiCallLog(
+  input: ReturnType<typeof buildAdStrategyDiagnosisInput>,
+  diagnosis: AdStrategyDiagnosisOutput,
+  settings: ReturnType<typeof normalizeAiSettings>,
+  evidencePackSummary?: AiEvidencePackSummary,
+): void {
+  try {
+    state.aiCallLogRepo?.insert({
+      promptKey: 'ad_strategy_diagnosis',
+      promptVersion: 'ad_strategy_diagnosis_v1',
+      model: settings.aiModel,
+      inputHash: hashAiDiagnosisInput(input, evidencePackSummary),
+      outputJson: JSON.stringify(diagnosis),
+      success: diagnosis.source === 'ai' && !diagnosis.aiFallbackReason,
+      errorMessage: diagnosis.aiFallbackReason,
+      schemaVersion: diagnosis.schemaVersion,
+      evidencePackSummary,
+    });
+  } catch (error) {
+    console.warn('[AI] Failed to write ad strategy diagnosis log', error);
+  }
+}
+
+function handleRefreshFinalReadiness(input?: { adReadbackPath?: string }): { success: boolean; evidenceManifestPath: string; finalReadinessPath: string; readiness: DeliveryReadinessView } {
+  const result = refreshFinalReadiness({
+    repoRootDir: REPO_ROOT_DIR,
+    evidenceDir: CODEX_EVIDENCE_DIR,
+    releaseDir: path.join(REPO_ROOT_DIR, 'apps', 'desktop', 'release'),
+    appVersion: APP_VERSION,
+    adReadbackPath: typeof input?.adReadbackPath === 'string' && input.adReadbackPath.trim() ? input.adReadbackPath : undefined,
+  });
+  return {
+    success: true,
+    evidenceManifestPath: result.evidenceManifestPath,
+    finalReadinessPath: result.finalReadinessPath,
+    readiness: normalizeDeliveryReadiness(readJsonFile(result.finalReadinessPath), result.finalReadinessPath),
+  };
+}
+
+function recordAdActionReasonAiCallLog(input: {
+  recommendation: ActionRecommendation;
+  explanation: AdActionExplanationForLog;
+  model: string;
+}): void {
+  try {
+    state.aiCallLogRepo?.insert(buildAdActionReasonAiCallLogInput(input));
+  } catch (error) {
+    console.warn('[AI] Failed to write ad action reason log', error);
+  }
+}
+
+function recordAdStrategyDiagnosisRun(input: {
+  diagnosis: AdStrategyDiagnosisOutput;
+  settings: ReturnType<typeof normalizeAiSettings>;
+  scope: Record<string, unknown>;
+  evidencePackSummary?: AiEvidencePackSummary;
+  evidencePackPreview?: AiEvidenceItem[];
+  aiInsights: AiInsightSummary[];
+  formalRecommendationCount: number;
+}): void {
+  try {
+    state.aiDiagnosisRunRepo?.insert({
+      promptKey: 'ad_strategy_diagnosis',
+      promptVersion: 'ad_strategy_diagnosis_v1',
+      model: input.settings.aiModel,
+      scope: input.scope,
+      evidencePackSummary: input.evidencePackSummary,
+      evidencePackPreview: input.evidencePackPreview,
+      diagnosis: {
+        schemaVersion: input.diagnosis.schemaVersion,
+        source: input.diagnosis.source,
+        lifecycleStage: input.diagnosis.lifecycleStage,
+        lifecycleStageReason: input.diagnosis.lifecycleStageReason,
+        lifecycleStageEvidenceRefs: input.diagnosis.lifecycleStageEvidenceRefs,
+        lifecycleStageRequiresReview: input.diagnosis.lifecycleStageRequiresReview,
+        lifecycleStageInvalidReasons: input.diagnosis.lifecycleStageInvalidReasons,
+        summary: input.diagnosis.summary,
+        mainProblems: input.diagnosis.mainProblems,
+        thresholdSuggestions: input.diagnosis.thresholdSuggestions,
+        aiCandidateCount: input.diagnosis.aiCandidates.length,
+        riskWarnings: input.diagnosis.riskWarnings,
+        aiFallbackReason: input.diagnosis.aiFallbackReason,
+      },
+      insights: input.aiInsights,
+      formalRecommendationCount: input.formalRecommendationCount,
+      success: input.diagnosis.source === 'ai' && !input.diagnosis.aiFallbackReason,
+      errorMessage: input.diagnosis.aiFallbackReason,
+    });
+  } catch (error) {
+    console.warn('[AI] Failed to write ad strategy diagnosis run', error);
+  }
+}
+
+function handleListAiDiagnosisRuns(request: any = {}) {
+  if (!state.aiDiagnosisRunRepo) return [];
+  const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(20, Number(request.limit))) : 5;
+  return state.aiDiagnosisRunRepo.findRecent({
+    dateFrom: typeof request.dateFrom === 'string' && request.dateFrom.trim() ? request.dateFrom.trim() : undefined,
+    dateTo: typeof request.dateTo === 'string' && request.dateTo.trim() ? request.dateTo.trim() : undefined,
+    storeName: typeof request.storeName === 'string' && request.storeName.trim() ? request.storeName.trim() : undefined,
+    marketplaceCode: typeof request.marketplaceCode === 'string' && request.marketplaceCode.trim() ? request.marketplaceCode.trim() : undefined,
+    asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
+    batchId: typeof request.batchId === 'string' && request.batchId.trim() ? request.batchId.trim() : undefined,
+    limit,
+  });
+}
+
+function hashAiDiagnosisInput(
+  input: ReturnType<typeof buildAdStrategyDiagnosisInput>,
+  evidencePackSummary?: AiEvidencePackSummary,
+): string {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify({
+      scope: input.scope,
+      currentRuleConfig: input.currentRuleConfig,
+      metricCount: input.metrics.length,
+      operationEventCount: input.operationEvents.length,
+      productContextCount: input.productContexts?.length || 0,
+      ruleCandidateCount: input.ruleCandidates.length,
+      evidencePackSummary,
+    }))
+    .digest('hex');
 }
 
 async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
@@ -6455,19 +6827,31 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
 
   const gate = getBusinessRecommendationGate(scope);
   const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(1000, Number(request.limit))) : 300;
-  const metrics = loadBusinessRecommendationMetrics(gate.scope, gate.metricSource, limit);
-  if (metrics.length === 0) {
-    throw new Error('AI 阶段诊断被阻断：当前范围没有可处理的 keyword/search term/target 广告指标。');
-  }
+  const metrics = filterFormalRecommendationMetrics(
+    loadBusinessRecommendationMetrics(gate.scope, gate.metricSource, Math.max(limit, RECOMMENDATION_METRIC_LOAD_LIMIT)),
+    gate.scope.asin,
+  );
+  assertRecommendationMetricsLoaded({
+    metricsLength: metrics.length,
+    realReportFileCount: gate.pipeline.collection.fileAudit.realReportFileCount,
+    requiredReportCount: LINGXING_AD_REPORTS.length,
+    requireFullReportCoverage: false,
+    sourceFileCount: gate.metricSource.sourceFiles.length,
+    sourceRowCount: countMetricsWithSourceRow(metrics),
+    sourceFileRowCount: countMetricsWithSourceFileAndRow(metrics),
+    asinBoundCount: countMetricsWithAsin(metrics),
+    scopeAsin: gate.scope.asin,
+    importedRows: gate.pipeline.collection.fileAudit.importedRowCount,
+  });
 
   const generator = new RecommendationGenerator(state.ruleConfig);
   const firstMetric = metrics[0];
-  const ruleCandidates = generator.generateBatch(metrics, {
+  const ruleCandidates = bindRecommendationsToScopeAsin(generator.generateTimelineBatch(metrics, {
     storeName: scope.storeName || firstMetric?.storeName || state.currentStore || 'unknown',
     marketplaceCode: scope.marketplaceCode || firstMetric?.marketplaceCode || 'US',
     config: state.ruleConfig,
     taskId: `strategy_${Date.now()}`,
-  });
+  }), gate.scope.asin);
   const operationEvents = state.operationEventRepo?.findByScope({
     dateFrom: scope.dateFrom,
     dateTo: scope.dateTo,
@@ -6477,6 +6861,28 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     limit: 100,
   }) || [];
   const productContexts = loadProductStrategyContexts(scope);
+  const productHistoryLedgers = buildAdProductHistoryLedger({
+    scope: gate.scope,
+    metrics,
+    operationEvents,
+    productContexts,
+  });
+  const evidencePack = buildAdAiEvidencePack({
+    scope: {
+      dateFrom: gate.scope.dateFrom,
+      dateTo: gate.scope.dateTo,
+      storeName: gate.scope.storeName,
+      marketplaceCode: gate.scope.marketplaceCode,
+      asin: gate.scope.asin,
+      batchId: gate.scope.batchId,
+    },
+    metrics,
+    operationEvents,
+    productContexts,
+    ruleRecommendations: ruleCandidates,
+    productHistoryLedgers,
+  });
+  const evidencePackSummary = summarizeAiEvidencePack(evidencePack);
   const diagnosisInput = buildAdStrategyDiagnosisInput({
     scope: gate.scope,
     metrics,
@@ -6484,10 +6890,15 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     productContexts,
     ruleConfig: state.ruleConfig as RuleConfig & { minSpend?: number },
     recommendations: ruleCandidates,
+    evidencePack,
   });
   const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
   const fallbackDiagnosis: AdStrategyDiagnosisOutput = {
+    schemaVersion: 'ad_strategy_diagnosis_v1',
+    evidenceSufficiency: assessAdEvidenceSufficiency(diagnosisInput),
     lifecycleStage: 'unknown',
+    lifecycleStageReason: '未配置 AI Key，不能执行 AI 阶段判断。',
+    lifecycleStageEvidenceRefs: [],
     summary: '未配置 AI Key，广告阶段诊断使用规则 fallback。',
     mainProblems: [],
     thresholdSuggestions: {
@@ -6509,13 +6920,38 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
       },
     },
     aiCandidates: [],
-    riskWarnings: ['AI unavailable'],
+    insightOnlyCandidates: [],
+    riskWarnings: ['AI 不可用，必须人工复核规则建议。'],
     source: 'rule',
     aiFallbackReason: '未配置 AI Key，广告阶段诊断使用规则 fallback',
   };
   const diagnosis = settings.aiApiKey
-    ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings))).diagnose(diagnosisInput)
+    ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings)), {
+        persona: settings.aiPersona,
+        outputLanguage: settings.aiOutputLanguage,
+      }).diagnose(diagnosisInput)
     : fallbackDiagnosis;
+  recordAdStrategyAiCallLog(diagnosisInput, diagnosis, settings, evidencePackSummary);
+  const validation = validateAiDiagnosisEvidence({
+    diagnosis,
+    evidencePack,
+    scope: gate.scope,
+  });
+  const aiInsights = buildAiInsightsFromValidation(diagnosis, validation.invalidReasons);
+  const mergeDiagnosis: AdStrategyDiagnosisOutput = {
+    ...diagnosis,
+    aiCandidates: diagnosis.aiCandidates.filter((_, index) => validation.validCandidateIndexes.includes(index)),
+  };
+  const evidencePackPreview = selectStrategyEvidencePreview(mergeDiagnosis, aiInsights, evidencePack);
+  recordAdStrategyDiagnosisRun({
+    diagnosis: mergeDiagnosis,
+    settings,
+    scope: gate.scope,
+    evidencePackSummary,
+    evidencePackPreview,
+    aiInsights,
+    formalRecommendationCount: 0,
+  });
 
   return {
     configured: Boolean(settings.aiApiKey),
@@ -6523,11 +6959,14 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     model: settings.aiModel,
     metrics: metrics.length,
     ruleCandidateCount: ruleCandidates.length,
-    summary: summarizeStrategyDiagnosis(diagnosis, operationEvents.length, productContexts.length),
+    summary: summarizeStrategyDiagnosis(mergeDiagnosis, operationEvents.length, productContexts.length, aiInsights, evidencePackSummary, evidencePackPreview),
   };
 }
 
-function assertRecommendationCurrentDataGate(recommendationId: number): ActionRecommendation {
+function assertRecommendationCurrentDataGate(recommendationId: number): {
+  recommendation: ActionRecommendation;
+  allowedSourceFiles: string[];
+} {
   const recommendation = state.recommendationRepo?.findById(recommendationId);
   if (!recommendation) {
     throw new Error('Recommendation not found');
@@ -6550,8 +6989,11 @@ function assertRecommendationCurrentDataGate(recommendationId: number): ActionRe
     asin: recommendation.asin,
     batchId,
   };
-  getBusinessRecommendationGate(scope);
-  return recommendation;
+  const gate = getBusinessRecommendationGate(scope);
+  return {
+    recommendation,
+    allowedSourceFiles: gate.metricSource.sourceFiles,
+  };
 }
 
 function normalizeRecommendationDecisionInput(input: any): { id: number; decision: Record<string, any> } {
@@ -6565,8 +7007,8 @@ function normalizeRecommendationDecisionInput(input: any): { id: number; decisio
 async function handleApproveRecommendation(input: any): Promise<void> {
   const { id, decision } = normalizeRecommendationDecisionInput(input);
   if (!id) throw new Error('批准建议失败：缺少 recommendation id。');
-  const recommendation = assertRecommendationCurrentDataGate(id);
-  assertRecommendationApprovalPolicy(recommendation);
+  const { recommendation, allowedSourceFiles } = assertRecommendationCurrentDataGate(id);
+  assertRecommendationApprovalPolicy(recommendation, { allowedSourceFiles });
   if (!String(decision.approvedBy || '').trim()) {
     throw new Error('审批被阻断：批准前必须填写审批人。');
   }
@@ -6657,6 +7099,25 @@ function handleExportAdReadbackEvidence(input: AdReadbackEvidenceInput): { jsonP
     status: evidence.status,
     readyForVerifier: evidence.status === 'PASS',
   };
+}
+
+function handlePrepareAdReadbackSession(input: { sourcePath?: string; outDir?: string }): PreparedAdReadbackSession {
+  return prepareAdReadbackSession({
+    sourcePath: String(input?.sourcePath || ''),
+    outDir: typeof input?.outDir === 'string' && input.outDir.trim() ? input.outDir : undefined,
+  });
+}
+
+function handleVerifyAdReadbackSession(input: { sessionDir?: string }): VerifiedAdReadbackSession {
+  return verifyAdReadbackSession(String(input?.sessionDir || ''));
+}
+
+function handleFillAdReadbackSession(input: { sessionDir?: string }): FilledAdReadbackSession {
+  return fillAdReadbackSession(String(input?.sessionDir || ''));
+}
+
+function handleVerifyAdReadbackEvidence(input: { evidencePath?: string }): VerifiedAdReadbackEvidence {
+  return verifyAdReadbackEvidenceFile(String(input?.evidencePath || ''));
 }
 
 async function handleExecuteRecommendation(recommendationId: number): Promise<void> {
@@ -6784,6 +7245,7 @@ function registerIpcHandlers(): void {
     mainWindow?.webContents.send('business-ui:data-updated');
     return result;
   });
+  ipcMain.handle('settings:ai-call-logs', (_, params) => handleListAiCallLogs(params));
   ipcMain.handle('settings:get-rule-config', () => state.ruleConfig);
   ipcMain.handle('settings:save-rule-config', (_, config: RuleConfig) => {
     state.settingsRepo?.saveRuleConfig(config);
@@ -6823,6 +7285,12 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle('v1_5:delivery:readiness', () =>
     handleGetDeliveryReadiness()
+  );
+  ipcMain.handle('v1_5:delivery:refresh-final-readiness', (_, input) =>
+    handleRefreshFinalReadiness(input)
+  );
+  ipcMain.handle('v1_5:delivery:evidence-status', (_, scope) =>
+    handleGetDeliveryEvidenceStatus(scope)
   );
   ipcMain.handle('v1_5:delivery:export-bundle', (_, scope) =>
     handleExportDeliveryBundle(scope)
@@ -6904,10 +7372,15 @@ function registerIpcHandlers(): void {
   ipcMain.handle('recommendations:get', (_, filter) => handleGetRecommendations(filter));
   ipcMain.handle('recommendations:generate', (_, filter) => runRecommendationGeneration(filter));
   ipcMain.handle('v1_5:business-ui:ad-strategy-diagnosis', (_, filter) => handleRunAdStrategyDiagnosis(filter));
+  ipcMain.handle('v1_5:business-ui:ai-diagnosis-runs', (_, filter) => handleListAiDiagnosisRuns(filter));
   ipcMain.handle('recommendations:approve', (_, id) => handleApproveRecommendation(id));
   ipcMain.handle('recommendations:reject', (_, id) => handleRejectRecommendation(id));
   ipcMain.handle('recommendations:execute', (_, id) => handleExecuteRecommendation(id));
   ipcMain.handle('recommendations:export-ad-readback-evidence', (_, input) => handleExportAdReadbackEvidence(input));
+  ipcMain.handle('recommendations:prepare-ad-readback-session', (_, input) => handlePrepareAdReadbackSession(input));
+  ipcMain.handle('recommendations:verify-ad-readback-session', (_, input) => handleVerifyAdReadbackSession(input));
+  ipcMain.handle('recommendations:fill-ad-readback-session', (_, input) => handleFillAdReadbackSession(input));
+  ipcMain.handle('recommendations:verify-ad-readback-evidence', (_, input) => handleVerifyAdReadbackEvidence(input));
 
   // Scheduler
   ipcMain.handle('scheduler:get-tasks', () => state.scheduler?.getTasks() || []);
@@ -7008,6 +7481,10 @@ function registerIpcHandlers(): void {
     handleExtractListingFromLingxing({
       expectedAsin: typeof input?.expectedAsin === 'string' ? input.expectedAsin : undefined,
       persist: input?.persist === false ? false : undefined,
+      scope: input?.scope && typeof input.scope === 'object' ? {
+        storeName: typeof input.scope.storeName === 'string' ? input.scope.storeName : undefined,
+        marketplaceCode: typeof input.scope.marketplaceCode === 'string' ? input.scope.marketplaceCode : undefined,
+      } : undefined,
     })
   );
   ipcMain.handle('v1_5:listing:open-and-extract-from-lingxing', (_, input) =>

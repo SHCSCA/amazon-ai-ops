@@ -1,5 +1,9 @@
 import type { ActionRecommendation } from '@amazon-ai-ops/shared-types';
 
+export interface RecommendationApprovalPolicyOptions {
+  allowedSourceFiles?: string[];
+}
+
 function normalizedRiskLevel(riskLevel: unknown): string {
   return String(riskLevel || '').trim().toLowerCase();
 }
@@ -9,11 +13,32 @@ function nonEmpty(value: unknown): boolean {
   return Boolean(text && text !== '-');
 }
 
+function positiveNumber(value: unknown): boolean {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0;
+}
+
+function parseExecutableNumber(value: unknown): number | undefined {
+  const text = String(value || '').trim();
+  if (!text || /[%％]/.test(text)) return undefined;
+  const parsed = Number(text.replace(/^\$/, '').replace(/\s*usd$/i, ''));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function recommendationObjectName(recommendation: ActionRecommendation): string {
   return recommendation.evidence?.searchTerm
     || recommendation.evidence?.targeting
     || recommendation.entityName
     || '';
+}
+
+function isRealReportSourceFile(filePath: unknown): boolean {
+  const normalized = String(filePath || '').trim().toLowerCase().split(/[?#]/)[0];
+  return /\.(xlsx|xls|csv)$/.test(normalized);
+}
+
+function normalizeSourceFile(filePath: unknown): string {
+  return String(filePath || '').trim().replace(/\\/g, '/').toLowerCase();
 }
 
 export function getRecommendationApprovalMissingFields(recommendation: ActionRecommendation): string[] {
@@ -24,6 +49,7 @@ export function getRecommendationApprovalMissingFields(recommendation: ActionRec
 
   requireField(recommendation.storeName, '店铺');
   requireField(recommendation.marketplaceCode, '站点');
+  requireField(recommendation.asin || recommendation.evidence?.asin, 'ASIN');
   requireField(recommendation.evidence?.batchId, '来源批次');
   requireField(recommendation.evidence?.date, '指标日期');
   requireField(recommendation.evidence?.campaignName, '广告活动');
@@ -33,21 +59,56 @@ export function getRecommendationApprovalMissingFields(recommendation: ActionRec
   requireField(recommendation.actionType, '动作');
   requireField(recommendation.currentValue, '当前值');
   requireField(recommendation.recommendedValue, '建议值');
-  if (!recommendation.evidence?.sourceFiles?.length) missing.push('来源文件');
+  const sourceFiles = recommendation.evidence?.sourceFiles || [];
+  if (!sourceFiles.length) missing.push('来源文件');
+  if (sourceFiles.length && !sourceFiles.every(isRealReportSourceFile)) missing.push('真实来源报表');
+  if (!positiveNumber(recommendation.evidence?.sourceRow)) missing.push('来源行号');
 
   return missing;
 }
 
-export function getRecommendationApprovalBlockers(recommendation: ActionRecommendation): string[] {
+export function getRecommendationApprovalBlockers(
+  recommendation: ActionRecommendation,
+  options: RecommendationApprovalPolicyOptions = {},
+): string[] {
   const agreement = recommendation.evidence?.decisionAgreement;
+  const aiActionParticipated = agreement === 'aligned' || agreement === 'ai_only';
   const riskLevel = normalizedRiskLevel(recommendation.riskLevel);
   const blockers: string[] = [];
   const missingFields = getRecommendationApprovalMissingFields(recommendation);
   if (missingFields.length > 0) blockers.push(`缺少审批字段：${missingFields.join('、')}`);
+  blockers.push(...getExecutableValueBlockers(recommendation));
   if (recommendation.status === 'needs_review') blockers.push('建议已进入复核队列');
   if (agreement === 'ai_only') blockers.push('AI-only 建议');
   if (agreement === 'conflict') blockers.push('AI/规则冲突');
+  if (recommendation.evidence?.aiInsightOnly === true) blockers.push('AI 洞察未进入正式建议池');
+  if (recommendation.evidence?.aiStrategySource === 'ai'
+    && aiActionParticipated
+    && (!Array.isArray(recommendation.evidence?.aiEvidenceRefs) || recommendation.evidence.aiEvidenceRefs.length === 0)
+  ) {
+    blockers.push('AI 建议缺少可回查证据引用');
+  }
+  if (recommendation.evidence?.aiStrategySource === 'ai'
+    && aiActionParticipated
+    && Array.isArray(recommendation.evidence?.aiEvidenceRefs)
+    && recommendation.evidence.aiEvidenceRefs.length > 0
+  ) {
+    const details = Array.isArray(recommendation.evidence?.aiEvidenceDetails)
+      ? recommendation.evidence.aiEvidenceDetails
+      : [];
+    const detailIds = new Set(details.map((detail) => String(detail?.evidenceId || '').trim()).filter(Boolean));
+    const allRefsResolved = recommendation.evidence.aiEvidenceRefs.every((ref) => detailIds.has(String(ref || '').trim()));
+    if (!details.length || !allRefsResolved) blockers.push('AI 建议缺少可展示的证据详情');
+  }
+  const sourceFiles = recommendation.evidence?.sourceFiles || [];
+  const allowedSourceFiles = options.allowedSourceFiles || [];
+  if (sourceFiles.length > 0 && allowedSourceFiles.length > 0) {
+    const allowed = new Set(allowedSourceFiles.map(normalizeSourceFile));
+    const allSourcesCurrent = sourceFiles.every((file) => allowed.has(normalizeSourceFile(file)));
+    if (!allSourcesCurrent) blockers.push('来源文件不属于当前数据批次真实报表');
+  }
   if (recommendation.evidence?.decisionRequiresReview === true) blockers.push('AI/规则合并标记需复核');
+  if (aiActionParticipated && recommendation.evidence?.aiLifecycleStageRequiresReview === true) blockers.push('AI 阶段判断需要人工复核');
   if (recommendation.evidence?.quantReviewRequired === true) blockers.push('规则量化要求人工复核');
   if (riskLevel === 'forbidden' || riskLevel === 'high' || riskLevel.includes('forbidden')) {
     blockers.push('高风险或禁止执行风险等级');
@@ -55,8 +116,34 @@ export function getRecommendationApprovalBlockers(recommendation: ActionRecommen
   return blockers;
 }
 
-export function assertRecommendationApprovalPolicy(recommendation: ActionRecommendation): void {
-  const blockers = getRecommendationApprovalBlockers(recommendation);
+function getExecutableValueBlockers(recommendation: ActionRecommendation): string[] {
+  const action = String(recommendation.actionType || '').trim();
+  const currentValue = parseExecutableNumber(recommendation.currentValue);
+  const recommendedValue = parseExecutableNumber(recommendation.recommendedValue);
+
+  if (action === 'lower_bid' || action === 'raise_bid') {
+    if (recommendedValue === undefined) return ['出价建议值必须是可执行的正数金额'];
+    if (currentValue === undefined) return ['当前出价必须是可回查的正数金额'];
+    if (action === 'lower_bid' && recommendedValue >= currentValue) {
+      return ['降价动作的建议出价必须低于当前出价'];
+    }
+    if (action === 'raise_bid' && recommendedValue <= currentValue) {
+      return ['提价动作的建议出价必须高于当前出价'];
+    }
+  }
+
+  if (action === 'adjust_campaign_budget') {
+    if (recommendedValue === undefined) return ['预算建议值必须是可执行的正数金额'];
+  }
+
+  return [];
+}
+
+export function assertRecommendationApprovalPolicy(
+  recommendation: ActionRecommendation,
+  options: RecommendationApprovalPolicyOptions = {},
+): void {
+  const blockers = getRecommendationApprovalBlockers(recommendation, options);
   if (blockers.length > 0) {
     throw new Error(`审批被阻断：${blockers.join('、')}，不能走普通批准；请先完成专门复核或重新生成规则确认后的建议。`);
   }

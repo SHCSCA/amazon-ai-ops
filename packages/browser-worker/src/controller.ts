@@ -17,11 +17,13 @@ export class BrowserController {
 
   async launch(): Promise<void> {
     try {
+      const executablePath = resolveChromiumExecutablePathForRuntime();
       // 使用 Chromium persistent profile
       this.context = await chromium.launchPersistentContext(this.userDataDir, {
         headless: this.config.headless ?? false,
         viewport: this.config.viewport || { width: 1400, height: 900 },
         acceptDownloads: true,
+        ...(executablePath ? { executablePath } : {}),
         args: ['--disable-blink-features=AutomationControlled'],
       });
       this.page = this.context.pages()[0] || await this.context.newPage();
@@ -152,6 +154,50 @@ export class BrowserController {
   }
 }
 
+export type ChromiumRuntimeResolutionInput = {
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  resourcesPath?: string;
+  electronVersion?: string;
+  listDir?: (dir: string) => string[];
+  fileExists?: (filePath: string) => boolean;
+};
+
+export function resolveChromiumExecutablePathForRuntime(input: ChromiumRuntimeResolutionInput = {}): string | undefined {
+  const env = input.env ?? process.env;
+  const resourcesPath = input.resourcesPath ?? process.resourcesPath;
+  const electronVersion = input.electronVersion ?? process.versions.electron;
+  const listDir = input.listDir ?? ((dir: string) => fs.existsSync(dir) ? fs.readdirSync(dir) : []);
+  const fileExists = input.fileExists ?? fs.existsSync;
+
+  if (!electronVersion || !isUnpackagedElectronResourcesPath(resourcesPath)) {
+    return undefined;
+  }
+
+  const localAppData = env.LOCALAPPDATA || env.LocalAppData || env.localappdata;
+  if (!localAppData) {
+    return undefined;
+  }
+
+  const browsersDir = path.join(localAppData, 'ms-playwright');
+  const chromiumDirs = listDir(browsersDir)
+    .filter((name) => /^chromium-\d+$/i.test(name))
+    .sort((left, right) => Number(right.replace(/\D/g, '')) - Number(left.replace(/\D/g, '')));
+
+  for (const dir of chromiumDirs) {
+    const chromePath = path.join(browsersDir, dir, 'chrome-win64', 'chrome.exe');
+    if (fileExists(chromePath)) {
+      return chromePath;
+    }
+  }
+
+  return undefined;
+}
+
+function isUnpackagedElectronResourcesPath(resourcesPath?: string): boolean {
+  const normalized = String(resourcesPath || '').replace(/\\/g, '/').toLowerCase();
+  return normalized.includes('/node_modules/') && normalized.includes('/electron/') && normalized.endsWith('/dist/resources');
+}
+
 export function toUserFacingBrowserLaunchError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
 
@@ -159,7 +205,7 @@ export function toUserFacingBrowserLaunchError(error: unknown): string {
     return '浏览器启动失败：领星自动化浏览器配置正在被另一个实例占用。请关闭上一个自动化浏览器窗口后重试。';
   }
 
-  if (/Executable doesn't exist|chrome-win64|chromium/i.test(message)) {
+  if (/Executable doesn't exist|chrome-win64[\\/]+chrome\.exe|playwright-browsers[\\/]+chrome-win64/i.test(message)) {
     return '浏览器启动失败：打包浏览器运行时不可用。请重新安装或重新构建桌面应用后重试。';
   }
 

@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+ipcRenderer.on('business-ui:data-updated', () => {
+  window.dispatchEvent(new Event('business-ui:data-updated'));
+});
+
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -11,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings: any) => ipcRenderer.invoke('settings:save', settings),
   testAiSettings: (settings: any) => ipcRenderer.invoke('settings:test-ai', settings),
+  listAiCallLogs: (params?: { limit?: number }) => ipcRenderer.invoke('settings:ai-call-logs', params),
   getRuleConfig: () => ipcRenderer.invoke('settings:get-rule-config'),
   saveRuleConfig: (config: any) => ipcRenderer.invoke('settings:save-rule-config', config),
   getOperationScope: () => ipcRenderer.invoke('settings:get-operation-scope'),
@@ -40,6 +45,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importLocalBusinessReportFiles: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
     ipcRenderer.invoke('v1_5:business-ui:import-local-report-files', scope),
   getDeliveryReadiness: () => ipcRenderer.invoke('v1_5:delivery:readiness'),
+  refreshFinalReadiness: (input?: { adReadbackPath?: string }) =>
+    ipcRenderer.invoke('v1_5:delivery:refresh-final-readiness', input),
+  getDeliveryEvidenceStatus: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+    ipcRenderer.invoke('v1_5:delivery:evidence-status', scope),
   exportDeliveryBundle: (scope?: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
     ipcRenderer.invoke('v1_5:delivery:export-bundle', scope),
   exportDataReconciliation: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
@@ -111,11 +120,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     batchId?: string;
     limit?: number;
   }) => ipcRenderer.invoke('v1_5:business-ui:ad-strategy-diagnosis', params),
+  listAiDiagnosisRuns: (params?: {
+    dateFrom?: string;
+    dateTo?: string;
+    storeName?: string;
+    marketplaceCode?: string;
+    asin?: string;
+    batchId?: string;
+    limit?: number;
+  }) => ipcRenderer.invoke('v1_5:business-ui:ai-diagnosis-runs', params),
   approveRecommendation: (input: number | { id: number; decision?: any }) => ipcRenderer.invoke('recommendations:approve', input),
   rejectRecommendation: (input: number | { id: number; decision?: any }) => ipcRenderer.invoke('recommendations:reject', input),
   executeRecommendation: (id: number) => ipcRenderer.invoke('recommendations:execute', id),
   exportAdReadbackEvidence: (input: any) =>
     ipcRenderer.invoke('recommendations:export-ad-readback-evidence', input),
+  prepareAdReadbackSession: (input: { sourcePath: string; outDir?: string }) =>
+    ipcRenderer.invoke('recommendations:prepare-ad-readback-session', input),
+  verifyAdReadbackSession: (input: { sessionDir: string }) =>
+    ipcRenderer.invoke('recommendations:verify-ad-readback-session', input),
+  fillAdReadbackSession: (input: { sessionDir: string }) =>
+    ipcRenderer.invoke('recommendations:fill-ad-readback-session', input),
+  verifyAdReadbackEvidence: (input: { evidencePath: string }) =>
+    ipcRenderer.invoke('recommendations:verify-ad-readback-evidence', input),
 
   // Scheduler
   getScheduledTasks: () => ipcRenderer.invoke('scheduler:get-tasks'),
@@ -147,12 +173,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:listing:analyze-coverage', { listing, keywords }),
   importListingContent: (filePath: string) =>
     ipcRenderer.invoke('v1_5:listing:import-content', { filePath }),
-  extractListingFromLingxing: (options?: { expectedAsin?: string; persist?: boolean }) =>
+  extractListingFromLingxing: (options?: { expectedAsin?: string; persist?: boolean; scope?: { storeName?: string; marketplaceCode?: string } }) =>
     ipcRenderer.invoke('v1_5:listing:extract-from-lingxing', options ?? {}),
   openLingxingListingAndExtract: (url: string) =>
     ipcRenderer.invoke('v1_5:listing:open-and-extract-from-lingxing', { url }),
-  probeLingxingListingDetailAndExtract: (url?: string) =>
-    ipcRenderer.invoke('v1_5:listing:probe-detail-and-extract', { url }),
+  probeLingxingListingDetailAndExtract: (input?: string | { url?: string; expectedAsin?: string; persist?: boolean; scope?: { storeName?: string; marketplaceCode?: string } }) =>
+    ipcRenderer.invoke('v1_5:listing:probe-detail-and-extract', typeof input === 'string' ? { url: input } : input ?? {}),
   buildListingSuggestions: (listing: any, opportunities: any[]) =>
     ipcRenderer.invoke('v1_5:listing:build-suggestions', { listing, opportunities }),
   updateListingSuggestionStatus: (id: number, status: 'pending' | 'accepted' | 'ignored') =>

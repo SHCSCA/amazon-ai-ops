@@ -281,7 +281,7 @@ async function main() {
     'USD',
     '批次模式',
     '当前批次',
-    '真实表格',
+    '报表覆盖',
     '已导入指标',
     '待生成验收',
   ]) {
@@ -348,6 +348,8 @@ async function main() {
         '任务职责',
         '允许自动做',
         '禁止自动做',
+        '待处理建议池',
+        '需复核项不会自动批准',
         '定时任务不会自动改 bid、否词、暂停投放或批量操作 Amazon Ads。',
       ]) {
         if (!bodyText.includes(text)) fail('Scheduler safety boundary text missing', text);

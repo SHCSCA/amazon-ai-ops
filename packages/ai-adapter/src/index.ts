@@ -1,16 +1,22 @@
 export { OpenAICompatibleProvider } from './openai-compatible';
 export { SearchTermRelevanceAnalyzer } from './search-term-relevance';
 export { AdActionReasonExplainer } from './ad-action-reason';
-export { AdStrategyDiagnoser } from './ad-strategy-diagnosis';
+export { AdStrategyDiagnoser, assessAdEvidenceSufficiency } from './ad-strategy-diagnosis';
 export { DailyReportGenerator } from './daily-report';
 export { BaseAIProvider } from './provider';
 export type { AIProvider, ChatMessage, ChatOptions, CompleteOptions } from './provider';
 export type {
   AdLifecycleStage,
+  AdProductHistoryLedgerContext,
   AdStrategyDiagnosisInput,
   AdStrategyDiagnosisOutput,
   AdStrategyMetric,
   AiAdCandidate,
+  AiEvidenceItem,
+  AiEvidenceSufficiency,
+  AiEvidenceSufficiencyLevel,
+  AiEvidenceType,
+  AiReasonedDecision,
   OperationEventContext,
   ProductStrategyContext,
   RuleCandidateContext,

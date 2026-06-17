@@ -33,6 +33,12 @@ function isEvidenceImagePath(value: unknown): boolean {
   return ['.png', '.jpg', '.jpeg', '.webp'].includes(ext) && fs.existsSync(resolved) && fs.statSync(resolved).isFile();
 }
 
+function evidenceImagePathsAreDistinct(...values: unknown[]): boolean {
+  if (!values.every(isEvidenceImagePath)) return false;
+  const resolved = values.map((value) => canonicalizeExistingPath(String(value)).toLowerCase());
+  return new Set(resolved).size === resolved.length;
+}
+
 function timestampMs(value: unknown): number {
   if (!hasOperatorText(value)) return Number.NaN;
   const ms = Date.parse(String(value));
@@ -48,8 +54,37 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
 }
 
+function isRealReportPath(value: unknown): boolean {
+  if (!hasOperatorText(value)) return false;
+  const resolved = path.resolve(String(value));
+  const ext = path.extname(resolved).toLowerCase();
+  return ['.xlsx', '.xls', '.csv'].includes(ext) && fs.existsSync(resolved) && fs.statSync(resolved).isFile();
+}
+
+function parseExecutableNumber(value: unknown): number {
+  const text = String(value ?? '').trim();
+  if (!text || /[%％]/.test(text)) return Number.NaN;
+  return Number(text.replace(/^\$/, '').replace(/\s*usd$/i, ''));
+}
+
+function valuesMatch(left: unknown, right: unknown): boolean {
+  const leftNumber = parseExecutableNumber(left);
+  const rightNumber = parseExecutableNumber(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return Math.abs(leftNumber - rightNumber) < 0.0001;
+  }
+  return String(left ?? '').trim() === String(right ?? '').trim();
+}
+
+function actionDirectionIsValid(actionType: unknown, beforeValue: unknown, afterValue: unknown): boolean {
+  if (String(actionType || '').trim() !== 'lower_bid') return true;
+  const beforeNumber = parseExecutableNumber(beforeValue);
+  const afterNumber = parseExecutableNumber(afterValue);
+  return Number.isFinite(beforeNumber) && Number.isFinite(afterNumber) && afterNumber < beforeNumber;
+}
+
 function numberOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function objectOrEmpty(value: unknown): Record<string, any> {
@@ -65,9 +100,12 @@ export function buildAdReadbackEvidence(input: AdReadbackEvidenceInput): Record<
   const execution = input.execution || {};
   const approval = input.approval || {};
   const risk = input.risk || {};
+  const source = input.source || {};
   const beforeValue = String(before.value ?? '');
   const afterValue = String(after.value ?? '');
   const actualValue = String(readback.actualValue ?? '');
+  const sourceRow = numberOrNull(source.sourceRow);
+  const sourceFiles = stringArray(source.sourceFiles);
   const complete = Boolean(
     approval.operatorConfirmed === true
       && input.approval?.realWriteApproved === true
@@ -81,18 +119,32 @@ export function buildAdReadbackEvidence(input: AdReadbackEvidenceInput): Record<
       && hasOperatorText(before.liveBidSourceNote)
       && hasOperatorText(target.storeName)
       && hasOperatorText(target.marketplaceCode)
+      && hasOperatorText(target.asin)
       && hasOperatorText(target.campaignName)
       && hasOperatorText(target.adGroupName)
       && hasOperatorText(target.entityType)
       && hasOperatorText(target.entityName)
       && hasOperatorText(target.actionType)
+      && hasOperatorText(source.batchId)
+      && hasOperatorText(source.metricDate)
+      && sourceFiles.length > 0
+      && sourceFiles.every(isRealReportPath)
+      && sourceRow !== null
+      && hasOperatorText(source.currentValue)
+      && hasOperatorText(source.recommendedValue)
       && hasOperatorText(beforeValue)
       && hasOperatorText(afterValue)
-      && beforeValue !== afterValue
-      && actualValue === afterValue
+      && !valuesMatch(beforeValue, afterValue)
+      && actionDirectionIsValid(target.actionType, beforeValue, afterValue)
+      && valuesMatch(actualValue, afterValue)
       && isEvidenceImagePath(before.screenshotPath)
       && isEvidenceImagePath(after.screenshotPath)
       && isEvidenceImagePath(readback.evidencePath || readback.screenshotPath)
+      && evidenceImagePathsAreDistinct(
+        before.screenshotPath,
+        after.screenshotPath,
+        readback.evidencePath || readback.screenshotPath,
+      )
       && hasOperatorText(execution.executionId)
       && timestampsAreOrdered(
         approval.confirmedAt,
@@ -166,38 +218,41 @@ export function buildAdReadbackEvidence(input: AdReadbackEvidenceInput): Record<
       appExecutorUsed: false,
     },
     source: {
-      recommendationId: String(input.source?.recommendationId || ''),
-      batchId: String(input.source?.batchId || ''),
-      metricDate: String(input.source?.metricDate || ''),
-      sourceFiles: stringArray(input.source?.sourceFiles),
-      explanationSource: String(input.source?.explanationSource || ''),
-      aiModel: String(input.source?.aiModel || ''),
-      evidencePath: String(input.source?.evidencePath || ''),
-      entityType: String(input.source?.entityType || ''),
-      currentValue: String(input.source?.currentValue || ''),
-      recommendedValue: String(input.source?.recommendedValue || ''),
-      decisionAgreement: String(input.source?.decisionAgreement || ''),
-      decisionSource: String(input.source?.decisionSource || ''),
-      decisionReasons: stringArray(input.source?.decisionReasons),
-      decisionRiskWarnings: stringArray(input.source?.decisionRiskWarnings),
-      aiStrategySource: String(input.source?.aiStrategySource || ''),
-      aiLifecycleStage: String(input.source?.aiLifecycleStage || ''),
-      aiStrategySummary: String(input.source?.aiStrategySummary || ''),
-      aiMainProblems: stringArray(input.source?.aiMainProblems),
-      aiThresholdSuggestions: objectOrEmpty(input.source?.aiThresholdSuggestions),
-      aiStrategyRiskWarnings: stringArray(input.source?.aiStrategyRiskWarnings),
-      quantStatus: String(input.source?.quantStatus || ''),
-      quantLifecycleStage: String(input.source?.quantLifecycleStage || ''),
-      quantReasons: stringArray(input.source?.quantReasons),
-      quantThresholds: objectOrEmpty(input.source?.quantThresholds),
-      quantReviewRequired: input.source?.quantReviewRequired === true,
-      operationEventCount: numberOrNull(input.source?.operationEventCount),
-      productContextCount: numberOrNull(input.source?.productContextCount),
-      productStage: String(input.source?.productStage || ''),
-      productTargetAcos: numberOrNull(input.source?.productTargetAcos),
-      productTargetTacos: numberOrNull(input.source?.productTargetTacos),
-      productTargetNetMargin: numberOrNull(input.source?.productTargetNetMargin),
-      productMinPrice: numberOrNull(input.source?.productMinPrice),
+      recommendationId: String(source.recommendationId || ''),
+      batchId: String(source.batchId || ''),
+      metricDate: String(source.metricDate || ''),
+      sourceFiles,
+      sourceRow,
+      explanationSource: String(source.explanationSource || ''),
+      aiModel: String(source.aiModel || ''),
+      evidencePath: String(source.evidencePath || ''),
+      entityType: String(source.entityType || ''),
+      currentValue: String(source.currentValue || ''),
+      recommendedValue: String(source.recommendedValue || ''),
+      decisionAgreement: String(source.decisionAgreement || ''),
+      decisionSource: String(source.decisionSource || ''),
+      decisionReasons: stringArray(source.decisionReasons),
+      decisionRiskWarnings: stringArray(source.decisionRiskWarnings),
+      aiStrategySource: String(source.aiStrategySource || ''),
+      aiLifecycleStage: String(source.aiLifecycleStage || ''),
+      aiStrategySummary: String(source.aiStrategySummary || ''),
+      aiStrategyFallbackReason: String(source.aiStrategyFallbackReason || ''),
+      aiActionFallbackReason: String(source.aiActionFallbackReason || ''),
+      aiMainProblems: stringArray(source.aiMainProblems),
+      aiThresholdSuggestions: objectOrEmpty(source.aiThresholdSuggestions),
+      aiStrategyRiskWarnings: stringArray(source.aiStrategyRiskWarnings),
+      quantStatus: String(source.quantStatus || ''),
+      quantLifecycleStage: String(source.quantLifecycleStage || ''),
+      quantReasons: stringArray(source.quantReasons),
+      quantThresholds: objectOrEmpty(source.quantThresholds),
+      quantReviewRequired: source.quantReviewRequired === true,
+      operationEventCount: numberOrNull(source.operationEventCount),
+      productContextCount: numberOrNull(source.productContextCount),
+      productStage: String(source.productStage || ''),
+      productTargetAcos: numberOrNull(source.productTargetAcos),
+      productTargetTacos: numberOrNull(source.productTargetTacos),
+      productTargetNetMargin: numberOrNull(source.productTargetNetMargin),
+      productMinPrice: numberOrNull(source.productMinPrice),
     },
     notes: [
       'Generated by the desktop readback evidence form. verify:ad-readback remains the authoritative acceptance gate.',
@@ -229,6 +284,7 @@ export function adReadbackEvidenceToMarkdown(evidence: Record<string, any>, json
     `- Source batch: ${evidence.source.batchId || ''}`,
     `- Source metric date: ${evidence.source.metricDate || ''}`,
     `- Source files: ${(evidence.source.sourceFiles || []).join(', ')}`,
+    `- Source row: ${evidence.source.sourceRow ?? ''}`,
     `- Source explanation: ${evidence.source.explanationSource || ''}${evidence.source.aiModel ? ` / ${evidence.source.aiModel}` : ''}`,
     `- Execution channel: ${evidence.execution.channel}; appExecutorUsed=${evidence.execution.appExecutorUsed}`,
     '',
@@ -241,6 +297,8 @@ export function adReadbackEvidenceToMarkdown(evidence: Record<string, any>, json
     `- Decision risks: ${(evidence.source.decisionRiskWarnings || []).join(' | ')}`,
     `- AI strategy: ${evidence.source.aiStrategySource || ''} / ${evidence.source.aiLifecycleStage || ''}`,
     `- AI summary: ${evidence.source.aiStrategySummary || ''}`,
+    `- AI strategy fallback: ${evidence.source.aiStrategyFallbackReason || ''}`,
+    `- AI action explanation fallback: ${evidence.source.aiActionFallbackReason || ''}`,
     `- Quant status: ${evidence.source.quantStatus || ''} / ${evidence.source.quantLifecycleStage || ''}`,
     `- Quant reasons: ${(evidence.source.quantReasons || []).join(' | ')}`,
     `- Quant thresholds: ${JSON.stringify(evidence.source.quantThresholds || {})}`,

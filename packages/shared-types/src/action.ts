@@ -34,6 +34,61 @@ export interface ActionRecommendation {
   updatedAt?: string;
 }
 
+export interface AiEvidenceDisplayItem {
+  evidenceId: string;
+  type: 'metric' | 'timeline' | 'operation_event' | 'product_context' | 'rule_candidate';
+  label: string;
+  dateRange?: string;
+  batchId?: string;
+  reportType?: string;
+  sourceFile?: string;
+  sourceRow?: number;
+  storeName?: string;
+  marketplaceCode?: string;
+  asin?: string;
+  portfolioName?: string;
+  campaignName?: string;
+  adGroupName?: string;
+  entityType?: string;
+  entityName?: string;
+  metrics?: {
+    impressions?: number;
+    clicks?: number;
+    cost?: number;
+    orders?: number;
+    sales?: number;
+    acos?: number;
+    cpc?: number;
+    cvr?: number;
+    currency: 'USD';
+  };
+  event?: {
+    eventDate?: string;
+    eventType?: string;
+    title?: string;
+    impactExpectation?: string;
+  };
+  product?: {
+    productStage?: string;
+    targetAcos?: number;
+    targetTacos?: number;
+    targetNetMargin?: number;
+    minPrice?: number;
+  };
+}
+
+export interface AiEvidenceSufficiency {
+  level: 'none' | 'low' | 'medium' | 'high';
+  metricEvidenceCount: number;
+  sampleDays: number;
+  totalClicks: number;
+  totalCost: number;
+  totalOrders: number;
+  canUseForFormalActions: boolean;
+  blockers: string[];
+  warnings: string[];
+}
+
 export interface ActionEvidence {
   impressions: number;
   clicks: number;
@@ -60,13 +115,27 @@ export interface ActionEvidence {
   aiRiskWarnings?: string[];
   aiAlternativeSuggestions?: string[];
   aiFallbackReason?: string;
+  aiStrategyFallbackReason?: string;
+  aiActionFallbackReason?: string;
   aiModel?: string;
   aiStrategySource?: 'ai' | 'rule';
+  aiEvidenceSufficiency?: AiEvidenceSufficiency;
   aiLifecycleStage?: string;
   aiStrategySummary?: string;
   aiMainProblems?: string[];
-  aiThresholdSuggestions?: Record<string, { value: number; reason: string }>;
+  aiThresholdSuggestions?: Record<string, { value: number; reason: string; evidenceRefs?: string[]; requiresReview?: boolean; reviewReasons?: string[] }>;
   aiStrategyRiskWarnings?: string[];
+  aiEvidenceRefs?: string[];
+  aiEvidenceDetails?: AiEvidenceDisplayItem[];
+  aiReasoningSteps?: string[];
+  aiInsightOnly?: boolean;
+  aiInsightInvalidReasons?: string[];
+  aiLifecycleStageReason?: string;
+  aiLifecycleStageEvidenceRefs?: string[];
+  aiLifecycleStageRequiresReview?: boolean;
+  aiLifecycleStageInvalidReasons?: string[];
+  aiLifecycleStageEvidenceDetails?: AiEvidenceDisplayItem[];
+  aiThresholdEvidenceRefs?: Record<string, string[]>;
   decisionAgreement?: 'aligned' | 'rule_only' | 'ai_only' | 'conflict';
   decisionSource?: 'rule' | 'ai' | 'rule_ai';
   decisionReasons?: string[];
@@ -88,6 +157,7 @@ export interface ActionEvidence {
   batchId?: string;
   sourceFiles?: string[];
   sourceRow?: number;
+  currency?: 'USD';
 }
 
 export interface ActionLog {

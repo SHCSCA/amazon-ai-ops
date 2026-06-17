@@ -1,14 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { aiCallEvidenceLabel, aiCallEvidenceTotal, aiCallKindLabel, aiCallOutputFormatLabel, buildAiCallDiagnostics } from '../ai-call-diagnostics';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
-import type { AiConnectionStatus, AiProviderSettings, SettingsRuleConfig, StoragePathsView } from '../types';
+import type { AiCallLogView, AiConnectionStatus, AiProviderSettings, SettingsRuleConfig, StoragePathsView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
+
+const DEFAULT_AI_PERSONA = [
+  '你是中文亚马逊广告运营顾问，擅长结合真实广告报表、产品阶段、成本结构和运营事件做量化分析。',
+  '请用运营能直接理解的中文解释阈值、风险和建议；只输出结构化 JSON，不执行广告动作。',
+].join('');
 
 const DEFAULT_AI_SETTINGS: AiProviderSettings = {
   aiApiKey: '',
   aiBaseUrl: 'https://api.deepseek.com',
   aiModel: 'deepseek-v4-flash',
   aiTemperature: '0.3',
-  aiMaxTokens: '700',
+  aiMaxTokens: '8192',
+  aiOutputLanguage: '简体中文',
+  aiPersona: DEFAULT_AI_PERSONA,
   aiLastTestStatus: '',
   aiLastTestAt: '',
   aiLastTestBaseUrl: '',
@@ -54,6 +62,10 @@ function readNumber(value: unknown, fallback: number): number {
 }
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'string') {
+    if (value.toLowerCase() === 'true') return true;
+    if (value.toLowerCase() === 'false') return false;
+  }
   return typeof value === 'boolean' ? value : fallback;
 }
 
@@ -76,6 +88,22 @@ function parseListInput(value: string): string[] {
   return Array.from(new Set(normalizeList(value)));
 }
 
+export function aiAuditIntroText(): string {
+  return '只显示最近调用的模型、标准 JSON 输出格式、证据包规模和成败状态；不保存 API Key，也不展示完整提示词。';
+}
+
+export function aiAuditPurposeText(): string {
+  return '用于排查 AI 是否成功返回标准 JSON、是否带输出格式版本、是否带证据包摘要。';
+}
+
+export function aiAuditLogFormatLine(log: Pick<AiCallLogView, 'schemaVersion' | 'promptVersion'>): string {
+  return `输出格式 ${aiCallOutputFormatLabel(log)}`;
+}
+
+export function aiAuditLogTitle(log: Pick<AiCallLogView, 'promptKey'>): string {
+  return aiCallKindLabel(log);
+}
+
 function normalizeAiSettings(settings: Record<string, unknown> | null | undefined): AiProviderSettings {
   return {
     aiApiKey: readString(settings?.aiApiKey ?? settings?.ai_api_key, DEFAULT_AI_SETTINGS.aiApiKey),
@@ -84,6 +112,8 @@ function normalizeAiSettings(settings: Record<string, unknown> | null | undefine
     aiModel: readString(settings?.aiModel ?? settings?.ai_model, DEFAULT_AI_SETTINGS.aiModel),
     aiTemperature: readString(settings?.aiTemperature ?? settings?.ai_temperature, DEFAULT_AI_SETTINGS.aiTemperature),
     aiMaxTokens: readString(settings?.aiMaxTokens ?? settings?.ai_max_tokens, DEFAULT_AI_SETTINGS.aiMaxTokens),
+    aiOutputLanguage: readString(settings?.aiOutputLanguage ?? settings?.ai_output_language, DEFAULT_AI_SETTINGS.aiOutputLanguage),
+    aiPersona: readString(settings?.aiPersona ?? settings?.ai_persona, DEFAULT_AI_SETTINGS.aiPersona),
     aiLastTestStatus: readString(settings?.aiLastTestStatus ?? settings?.ai_last_test_status, DEFAULT_AI_SETTINGS.aiLastTestStatus) as AiProviderSettings['aiLastTestStatus'],
     aiLastTestAt: readString(settings?.aiLastTestAt ?? settings?.ai_last_test_at, DEFAULT_AI_SETTINGS.aiLastTestAt),
     aiLastTestBaseUrl: readString(settings?.aiLastTestBaseUrl ?? settings?.ai_last_test_base_url, DEFAULT_AI_SETTINGS.aiLastTestBaseUrl),
@@ -189,6 +219,21 @@ function clearAiTestState(settings: AiProviderSettings): AiProviderSettings {
   };
 }
 
+type AiSettingsField = keyof AiProviderSettings;
+
+export function shouldResetAiTestForSettingsField(field: AiSettingsField): boolean {
+  return field === 'aiApiKey' || field === 'aiBaseUrl' || field === 'aiModel';
+}
+
+function updateAiSettingsField(
+  settings: AiProviderSettings,
+  field: AiSettingsField,
+  value: string | boolean,
+): AiProviderSettings {
+  const next = { ...settings, [field]: value } as AiProviderSettings;
+  return shouldResetAiTestForSettingsField(field) ? clearAiTestState(next) : next;
+}
+
 function api(): Record<string, any> {
   return ((window as any).electronAPI || {}) as Record<string, any>;
 }
@@ -203,6 +248,7 @@ export function SettingsPage() {
   const [savingRules, setSavingRules] = useState(false);
   const [copyNotice, setCopyNotice] = useState('');
   const [storagePaths, setStoragePaths] = useState<StoragePathsView>({});
+  const [aiCallLogs, setAiCallLogs] = useState<AiCallLogView[]>([]);
 
   const apiSurface = useMemo(() => api(), []);
   const canLoadSettings = typeof apiSurface.getSettings === 'function';
@@ -211,6 +257,7 @@ export function SettingsPage() {
   const canLoadRules = typeof apiSurface.getRuleConfig === 'function';
   const canSaveRules = typeof apiSurface.saveRuleConfig === 'function';
   const canLoadStoragePaths = typeof apiSurface.getStoragePaths === 'function';
+  const canLoadAiCallLogs = typeof apiSurface.listAiCallLogs === 'function';
   const keyPresent = Boolean(aiSettings.aiApiKey.trim() || aiSettings.aiKeyConfigured);
 
   async function refreshAiSettingsFromStore(): Promise<AiProviderSettings | null> {
@@ -250,6 +297,10 @@ export function SettingsPage() {
         } else {
           notes.push('getStoragePaths 未接入，路径显示为不可用。');
         }
+        if (canLoadAiCallLogs) {
+          const logs = await apiSurface.listAiCallLogs({ limit: 5 });
+          if (mounted) setAiCallLogs(Array.isArray(logs) ? logs : []);
+        }
       } catch (caught) {
         notes.push(toUserFacingError(caught, '读取设置失败。'));
       } finally {
@@ -263,7 +314,7 @@ export function SettingsPage() {
     return () => {
       mounted = false;
     };
-  }, [apiSurface, canLoadRules, canLoadSettings, canLoadStoragePaths]);
+  }, [apiSurface, canLoadAiCallLogs, canLoadRules, canLoadSettings, canLoadStoragePaths]);
 
   useEffect(() => {
     if (!keyPresent && aiStatus !== 'unconfigured') setAiStatus('unconfigured');
@@ -276,9 +327,14 @@ export function SettingsPage() {
       { label: 'Model', value: aiSettings.aiModel || '未配置' },
       { label: 'API Key', value: keyPresent ? '已配置（已隐藏）' : '未配置' },
       { label: 'Status', value: aiStatus === 'pending_test' ? '已配置，待测试' : statusLabel(aiStatus) },
+      { label: '输出语言', value: aiSettings.aiOutputLanguage || DEFAULT_AI_SETTINGS.aiOutputLanguage || '简体中文' },
       { label: '最近测试', value: aiSettings.aiLastTestAt ? `${aiSettings.aiLastTestStatus === 'available' ? '通过' : '失败'} / ${aiSettings.aiLastTestMessage || aiSettings.aiLastTestAt}` : '暂无记录' },
     ],
-    [aiSettings.aiBaseUrl, aiSettings.aiLastTestAt, aiSettings.aiLastTestMessage, aiSettings.aiLastTestStatus, aiSettings.aiModel, aiStatus, keyPresent],
+    [aiSettings.aiBaseUrl, aiSettings.aiLastTestAt, aiSettings.aiLastTestMessage, aiSettings.aiLastTestStatus, aiSettings.aiModel, aiSettings.aiOutputLanguage, aiStatus, keyPresent],
+  );
+  const aiCallDiagnostics = useMemo(
+    () => buildAiCallDiagnostics(aiCallLogs),
+    [aiCallLogs],
   );
 
   async function saveAiSettings() {
@@ -336,6 +392,47 @@ export function SettingsPage() {
     } catch (caught) {
       setAiStatus('failed');
       setMessage(`AI 连接测试失败：${toUserFacingError(caught, 'AI 连接测试失败。')}`);
+    }
+  }
+
+  async function clearLocalAiKey() {
+    if (!canSaveSettings) {
+      setMessage('saveSettings 未接入，无法清除本地 AI Key。');
+      return;
+    }
+    setSavingAi(true);
+    setMessage('');
+    try {
+      await apiSurface.saveSettings({
+        ...aiSettings,
+        aiApiKey: '',
+        ai_key: '',
+        clearAiKey: true,
+        aiLastTestStatus: '',
+        aiLastTestAt: '',
+        aiLastTestBaseUrl: '',
+        aiLastTestModel: '',
+        aiLastTestMessage: '',
+      });
+      const refreshed = await refreshAiSettingsFromStore();
+      if (!refreshed) {
+        setAiSettings({
+          ...aiSettings,
+          aiApiKey: '',
+          aiKeyConfigured: false,
+          aiLastTestStatus: '',
+          aiLastTestAt: '',
+          aiLastTestBaseUrl: '',
+          aiLastTestModel: '',
+          aiLastTestMessage: '',
+        });
+        setAiStatus('unconfigured');
+      }
+      setMessage('AI Key 已清除。需要重新填写并测试后，AI 才会参与建议生成。');
+    } catch (caught) {
+      setMessage(`AI Key 清除失败：${toUserFacingError(caught, 'AI Key 清除失败。')}`);
+    } finally {
+      setSavingAi(false);
     }
   }
 
@@ -404,7 +501,7 @@ export function SettingsPage() {
                 value={aiSettings.aiApiKey}
                 onChange={(event) => {
                   const nextKey = event.target.value;
-                  setAiSettings(clearAiTestState({ ...aiSettings, aiApiKey: nextKey }));
+                  setAiSettings(updateAiSettingsField(aiSettings, 'aiApiKey', nextKey));
                   setAiStatus(nextKey.trim() || aiSettings.aiKeyConfigured ? 'pending_test' : 'unconfigured');
                 }}
               />
@@ -414,7 +511,7 @@ export function SettingsPage() {
               <input
                 value={aiSettings.aiBaseUrl}
                 onChange={(event) => {
-                  setAiSettings(clearAiTestState({ ...aiSettings, aiBaseUrl: event.target.value }));
+                  setAiSettings(updateAiSettingsField(aiSettings, 'aiBaseUrl', event.target.value));
                   setAiStatus(keyPresent ? 'pending_test' : 'unconfigured');
                 }}
                 placeholder="https://api.deepseek.com"
@@ -425,7 +522,7 @@ export function SettingsPage() {
               <input
                 value={aiSettings.aiModel}
                 onChange={(event) => {
-                  setAiSettings(clearAiTestState({ ...aiSettings, aiModel: event.target.value }));
+                  setAiSettings(updateAiSettingsField(aiSettings, 'aiModel', event.target.value));
                   setAiStatus(keyPresent ? 'pending_test' : 'unconfigured');
                 }}
                 placeholder="deepseek-v4-flash"
@@ -437,7 +534,7 @@ export function SettingsPage() {
                 type="number"
                 step="0.1"
                 value={aiSettings.aiTemperature}
-                onChange={(event) => setAiSettings({ ...aiSettings, aiTemperature: event.target.value })}
+                onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiTemperature', event.target.value))}
               />
             </label>
             <label>
@@ -445,10 +542,28 @@ export function SettingsPage() {
               <input
                 type="number"
                 value={aiSettings.aiMaxTokens}
-                onChange={(event) => setAiSettings({ ...aiSettings, aiMaxTokens: event.target.value })}
+                onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiMaxTokens', event.target.value))}
+              />
+            </label>
+            <label>
+              输出语言
+              <input
+                value={aiSettings.aiOutputLanguage || ''}
+                onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiOutputLanguage', event.target.value))}
+                placeholder="简体中文"
+              />
+            </label>
+            <label className="form-grid-wide">
+              <span>AI 人设与输出约束</span>
+              <textarea
+                aria-label="AI 人设与输出约束"
+                value={aiSettings.aiPersona || ''}
+                onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiPersona', event.target.value))}
+                placeholder={DEFAULT_AI_PERSONA}
               />
             </label>
           </div>
+          <p className="muted-line">广告诊断、广告建议解释和 Listing 草案都会要求 AI 返回标准 JSON；界面只渲染可控字段，不直接执行广告动作。</p>
           <div className="action-row">
             <button className="primary-button" disabled={savingAi || !canSaveSettings} onClick={saveAiSettings} type="button">
               {savingAi ? '保存中...' : '保存 AI 设置'}
@@ -456,7 +571,49 @@ export function SettingsPage() {
             <button className="secondary-button" disabled={aiStatus === 'testing' || !canTestAi} onClick={testAiSettings} type="button">
               {aiStatus === 'testing' ? '测试中...' : '测试 AI 连接'}
             </button>
+            <button className="secondary-button" disabled={savingAi || !canSaveSettings || !keyPresent} onClick={clearLocalAiKey} type="button">
+              清除本地 AI Key
+            </button>
           </div>
+        </Panel>
+
+        <Panel title="AI 调用审计">
+          <p className="muted-line">{aiAuditIntroText()}</p>
+          <div className="context-summary-grid">
+            <div>
+              <span>最近 AI 是否参与</span>
+              <strong>{aiCallDiagnostics.headline}</strong>
+              <p>{aiCallDiagnostics.detail}</p>
+              <StatusPill tone={aiCallDiagnostics.status === 'ready' ? 'ready' : aiCallDiagnostics.status === 'blocked' ? 'blocked' : 'warning'}>
+                {aiCallDiagnostics.nextAction}
+              </StatusPill>
+            </div>
+            <div>
+              <span>日志数量</span>
+              <strong>{aiCallLogs.length} 条</strong>
+              <p>{aiAuditPurposeText()}</p>
+              <StatusPill tone={canLoadAiCallLogs ? 'ready' : 'blocked'}>{canLoadAiCallLogs ? '接口可用' : '接口缺失'}</StatusPill>
+            </div>
+          </div>
+          {!canLoadAiCallLogs && <p className="warning-line">当前环境未暴露 AI 调用审计接口。</p>}
+          {canLoadAiCallLogs && aiCallLogs.length === 0 && <p className="muted-line">暂无 AI 调用记录。</p>}
+          {aiCallLogs.length > 0 && (
+            <div className="context-summary-grid">
+              {aiCallLogs.map((log) => (
+                <div key={log.id}>
+                  <span>{aiAuditLogTitle(log)}</span>
+                  <strong>{log.model}</strong>
+                  <p className="muted-line">{log.createdAt}</p>
+                  <p className="muted-line">{aiAuditLogFormatLine(log)}</p>
+                  <div className="business-pill-row">
+                    <StatusPill tone={log.success ? 'ready' : 'blocked'}>{log.success ? '成功' : '失败'}</StatusPill>
+                    <StatusPill tone={aiCallEvidenceTotal(log) ? 'ready' : 'warning'}>{aiCallEvidenceLabel(log)}</StatusPill>
+                  </div>
+                  {log.errorMessage && <p className="warning-line">{log.errorMessage}</p>}
+                </div>
+              ))}
+            </div>
+          )}
         </Panel>
 
         <Panel title="广告量化阈值">

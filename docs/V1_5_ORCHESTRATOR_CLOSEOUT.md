@@ -17,9 +17,9 @@ This closeout followed the repository's `.codex/agents/agents-orchestrator.toml`
 
 Earlier delivery work also used orchestrator/product/UX/QA roles to reject premature READY claims until live Lingxing full-8 collection, Listing read, DeepSeek, Listing AI, ad AI explanation, and real ad readback evidence existed.
 
-## Current Readiness
+## Historical Readiness
 
-The current manifest-driven application state is `APP_READY`.
+This document records the 2026-06-10 closeout. That historical manifest-driven application state was `APP_READY`. The current worktree later added AI evidence-chain, UI, delivery-bundle, and readback-contract changes; the refreshed current delivery state is now recorded in `README.md` and `output\codex-evidence\final-readiness-2026-06-18.json`.
 
 Authoritative evidence:
 
@@ -63,9 +63,9 @@ Post-audit fix:
 
 The app is deliverable with the following explicit boundary:
 
-- Real ad execution readiness is proven by one user-approved, low-risk manual Ads UI sample on a paused target, with bid `1.20 -> 1.08`, before/after/reload screenshots, and `verify:ad-readback`.
+- Current real ad execution readiness is proven by one user-approved, low-risk manual Ads UI sample on a paused FT-US keyword row `door lock`, with live bid `1.30 -> 1.17`, before/after/reload screenshots, real spreadsheet source traceability, and `verify:ad-readback`. The historical paused target sample `1.20 -> 1.08` remains baseline only.
 - The app-side ad execution button remains fail-closed. It does not batch-write ads.
-- Future ad changes must each bind their own store, marketplace, portfolio, campaign, ad group, ASIN, entity type, entity name, action type, source recommendation, live before value, live after value, approval proof, screenshots, and readback evidence.
+- Future ad changes must each bind their own store, marketplace, portfolio, campaign, ad group, ASIN, entity type, entity name, action type, source recommendation, real source report file(s), original source row, live before value, live after value, approval proof, screenshots, and readback evidence.
 - The verified D6 paused-target sample must not be reused as proof for another product, ad group, target, or bid.
 
 ## Commit Boundary

@@ -46,6 +46,7 @@ export interface AdActionExplainInput {
 }
 
 export interface AdActionExplainOutput {
+  schemaVersion?: 'ad_action_reason_v1';
   explanation: string;
   riskWarnings: string[];
   alternativeSuggestions?: string[];

@@ -6,9 +6,9 @@ import type { BusinessBatchOption } from '../types';
 const AUTO_BATCH_VALUE = '__auto__';
 const MANUAL_BATCH_VALUE = '__manual__';
 
-function formatBatchOption(batch: BusinessBatchOption): string {
+export function formatBatchOption(batch: BusinessBatchOption): string {
   const imported = batch.importedRowCount > 0 ? `${batch.importedRowCount} 行已导入` : '未导入';
-  return `${batch.id} · ${batch.realReportFileCount}/8 真实表格 · ${imported}`;
+  return `${batch.id} · ${batch.realReportFileCount}/8 类真实报表 · ${imported}`;
 }
 
 export function ScopeBar() {
@@ -164,7 +164,7 @@ export function ScopeBar() {
   const manualBatchUnmatched = Boolean(scope.batchId && !selectedBatch);
   const activeBatch = selectedBatch || (!scope.batchId ? autoMatchedBatch : undefined);
   const batchDataLabel = activeBatch
-    ? `${activeBatch.realReportFileCount}/8 真实表格`
+    ? `${activeBatch.realReportFileCount}/8 类真实报表`
     : manualBatchUnmatched ? '手动批次待校验'
     : loadingBatches ? '正在读取批次...' : '暂无匹配批次';
   const importedLabel = selectedBatch
@@ -233,7 +233,7 @@ export function ScopeBar() {
           <strong>{activeBatch?.id || scope.batchId || '-'}</strong>
         </div>
         <div>
-          <span>真实表格</span>
+          <span>报表覆盖</span>
           <strong>{batchDataLabel}</strong>
         </div>
         <div>

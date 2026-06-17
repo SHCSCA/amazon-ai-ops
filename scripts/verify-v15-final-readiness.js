@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
@@ -49,6 +50,17 @@ function runNode(script, args = []) {
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function sha256(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').toUpperCase();
+}
+
+function containsObviousSecret(value) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value || {});
+  return /sk-[A-Za-z0-9_-]{16,}/.test(text)
+    || /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/i.test(text)
+    || /deepseek[_-]?api[_-]?key["']?\s*[:=]\s*["'][^"']+/i.test(text);
 }
 
 function resolveManifestEvidencePath(manifest, key) {
@@ -101,6 +113,15 @@ function checkAiLive(evidencePath) {
       ok: false,
       evidencePath,
       message: 'structural mock evidence has no APP_READY credit; real deepseek-live evidence is required',
+    };
+  }
+  if (containsObviousSecret(evidence)) {
+    return {
+      name: 'AI live provider',
+      status: 'needs_work',
+      ok: false,
+      evidencePath,
+      message: 'AI live evidence contains possible secret material; regenerate redacted evidence before final readiness.',
     };
   }
   const ok = evidence.status === 'PASS'
@@ -201,6 +222,94 @@ function checkAdExecutionReadback(evidencePath) {
   };
 }
 
+function latestReleasePackageFiles(releaseDir) {
+  if (!releaseDir || !fs.existsSync(releaseDir)) return [];
+  const files = fs.readdirSync(releaseDir)
+    .filter((name) => /^AmazonAIOpsAgent-.*\.exe$/i.test(name))
+    .map((name) => path.join(releaseDir, name))
+    .filter((filePath) => fs.existsSync(filePath) && fs.statSync(filePath).isFile())
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+
+  const portable = files.find((filePath) => /portable/i.test(path.basename(filePath)));
+  const installer = files.find((filePath) => !/portable/i.test(path.basename(filePath)));
+  return [
+    installer ? { kind: 'installer', filePath: installer } : null,
+    portable ? { kind: 'portable', filePath: portable } : null,
+  ].filter(Boolean);
+}
+
+function buildPackageIndex(releaseDir) {
+  const resolvedReleaseDir = path.resolve(releaseDir || path.join(root, 'apps', 'desktop', 'release'));
+  const packages = latestReleasePackageFiles(resolvedReleaseDir).map((entry) => {
+    const stat = fs.statSync(entry.filePath);
+    return {
+      kind: entry.kind,
+      sourcePath: path.resolve(entry.filePath),
+      fileName: path.basename(entry.filePath),
+      exists: true,
+      sizeBytes: stat.size,
+      sha256: sha256(entry.filePath),
+      modifiedAt: stat.mtime.toISOString(),
+    };
+  });
+  return {
+    generatedAt: new Date().toISOString(),
+    present: packages.length > 0,
+    count: packages.length,
+    existingCount: packages.filter((item) => item.exists).length,
+    missingCount: packages.filter((item) => !item.exists).length,
+    releaseDir: resolvedReleaseDir,
+    copyPolicy: 'Installer and portable EXE binaries are not copied into readiness evidence; this index records local paths, existence, size, and SHA-256.',
+    packages,
+  };
+}
+
+function checkReleasePackageHash(packageIndex) {
+  if (!packageIndex.present || packageIndex.count <= 0) {
+    return {
+      name: 'Release package hash',
+      status: 'missing',
+      ok: false,
+      evidencePath: packageIndex.releaseDir,
+      message: 'installer/package hash evidence is missing',
+    };
+  }
+  if (!packageIndex.packages.some((item) => item.kind === 'installer')) {
+    return {
+      name: 'Release package hash',
+      status: 'needs_work',
+      ok: false,
+      evidencePath: packageIndex.releaseDir,
+      message: 'installer package hash evidence is missing',
+    };
+  }
+  if (!packageIndex.packages.some((item) => item.kind === 'portable')) {
+    return {
+      name: 'Release package hash',
+      status: 'needs_work',
+      ok: false,
+      evidencePath: packageIndex.releaseDir,
+      message: 'portable no-install package hash evidence is missing',
+    };
+  }
+  if (packageIndex.missingCount > 0) {
+    return {
+      name: 'Release package hash',
+      status: 'needs_work',
+      ok: false,
+      evidencePath: packageIndex.releaseDir,
+      message: 'installer/package hash index contains missing files',
+    };
+  }
+  return {
+    name: 'Release package hash',
+    status: 'passed',
+    ok: true,
+    evidencePath: packageIndex.releaseDir,
+    message: `${packageIndex.count} release package artifacts indexed with SHA-256.`,
+  };
+}
+
 function printGate(gate) {
   const label = gate.ok ? 'PASS' : gate.status === 'missing' ? 'MISSING' : 'NEEDS_WORK';
   console.log(`[${label}] ${gate.name}`);
@@ -217,6 +326,7 @@ const aiLiveEvidence = resolveMaybe(args['ai-live'] || resolveManifestEvidencePa
 const adAiExplanationEvidence = resolveMaybe(args['ad-ai-explanation'] || resolveManifestEvidencePath(evidenceManifest, 'adAiExplanation') || latestEvidence(/^(installed-)?ad-ai-explanation-.*\.json$/i));
 const listingAiEvidence = resolveMaybe(args['listing-ai-draft'] || resolveManifestEvidencePath(evidenceManifest, 'listingAiDraft') || latestEvidence(/^(installed-listing-ai-draft|listing-ai-draft).*\.json$/i));
 const adReadbackEvidence = args['ad-readback'] ? path.resolve(args['ad-readback']) : resolveManifestEvidencePath(evidenceManifest, 'adReadback');
+const packageIndex = buildPackageIndex(args['release-dir'] || path.join(root, 'apps', 'desktop', 'release'));
 
 const gates = [
   checkWithVerifier('Report collection delivery', 'scripts/verify-v15-delivery-evidence.js', deliveryEvidence),
@@ -225,6 +335,7 @@ const gates = [
   checkAdAiExplanation(adAiExplanationEvidence),
   checkListingAiDraft(listingAiEvidence),
   checkAdExecutionReadback(adReadbackEvidence),
+  checkReleasePackageHash(packageIndex),
 ];
 
 for (const gate of gates) {
@@ -262,6 +373,7 @@ const summary = {
   allGatesPass,
   missing,
   actionItems,
+  packageIndex,
   gates: gates.map((gate) => ({
     name: gate.name,
     status: gate.status,

@@ -22,12 +22,43 @@ function value(args, key, fallback = '') {
   return args[key] || fallback;
 }
 
+function listValue(args, key) {
+  const raw = value(args, key, '');
+  return raw
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function numberValue(args, key) {
+  const raw = value(args, key, '');
+  const number = Number(raw);
+  return Number.isFinite(number) ? number : undefined;
+}
+
 function markdownEscape(text) {
   return String(text ?? '').replace(/\|/g, '\\|');
 }
 
+function psQuote(value) {
+  return `'${String(value ?? '').replace(/'/g, "''")}'`;
+}
+
+function passEvidencePath(jsonPath) {
+  return String(jsonPath).replace(/\.json$/i, '-pass.json');
+}
+
+function liveBidSourceNoteForTarget(target) {
+  const entityType = target?.entityType || 'ad object';
+  return `Read from Ads UI editable ${entityType} bid row before manual change.`;
+}
+
 function buildChecklist(evidence, jsonPath) {
   const target = evidence.target;
+  const readinessDate = String(evidence.createdAt || new Date().toISOString()).slice(0, 10);
+  const evidenceManifestPath = `output\\codex-evidence\\v15-final-readiness-evidence-manifest-${readinessDate}.json`;
+  const finalReadinessPath = `output\\codex-evidence\\final-readiness-${readinessDate}.json`;
+  const passPath = passEvidencePath(jsonPath);
   return `# Real Ad Execution Readback Approval Packet
 
 Status: NEEDS_WORK
@@ -51,10 +82,14 @@ This packet is for one explicitly approved low-risk Amazon Ads action. It is not
 | Action type | ${markdownEscape(target.actionType)} |
 | Before value | ${markdownEscape(evidence.before.value)} |
 | Proposed after value | ${markdownEscape(evidence.after.value)} |
+| Source report files | ${markdownEscape((evidence.source?.sourceFiles || []).join(', '))} |
+| Source report row | ${markdownEscape(evidence.source?.sourceRow || '')} |
 | Source evidence | ${markdownEscape(evidence.source?.evidencePath || '')} |
 | Source entity type | ${markdownEscape(evidence.source?.entityType || '')} |
 | Source current metric value | ${markdownEscape(evidence.source?.currentValue || '')} |
 | Source recommended value | ${markdownEscape(evidence.source?.recommendedValue || '')} |
+| AI strategy fallback | ${markdownEscape(evidence.source?.aiStrategyFallbackReason || '')} |
+| AI action explanation fallback | ${markdownEscape(evidence.source?.aiActionFallbackReason || '')} |
 | Approver | ${markdownEscape(evidence.approval?.approverName || '')} |
 | Approval artifact | ${markdownEscape(evidence.approval?.approvalArtifactPath || '')} |
 | Execution channel | ${markdownEscape(evidence.execution?.channel || '')} |
@@ -64,6 +99,8 @@ This packet is for one explicitly approved low-risk Amazon Ads action. It is not
 ## Approval Required Before Any Write
 
 - [ ] Operator confirms this exact scope and timestamp in \`approval\`.
+- [ ] Operator confirms \`source.sourceFiles\` points to the real Lingxing spreadsheet report(s), not audit JSON/PNG/HTML.
+- [ ] Operator confirms \`source.sourceRow\` is the original report row that produced the recommendation.
 - [ ] Operator fills \`approval.approverName\` and \`approval.approvalArtifactPath\` with the external approval owner and proof reference.
 - [ ] Operator confirms \`realWriteApproved=true\`.
 - [ ] Risk owner confirms \`risk.allowedByPolicy=true\` and documents why the action is low risk.
@@ -83,12 +120,20 @@ This packet is for one explicitly approved low-risk Amazon Ads action. It is not
 - [ ] Execution proof: operator name is copied into \`execution.performedBy\`, local action log id or Ads operation id is copied into \`execution.executionId\`, and \`execution.appExecutorUsed=false\` remains unchanged.
 - [ ] Timestamp order is preserved: approval <= before screenshot <= manual execution <= after screenshot <= readback evidence.
 
+## Fill Command After Capture
+
+Do not overwrite the candidate JSON. After the approved manual Ads UI action is captured, write the completed PASS-intended evidence to a separate output file and let the verifier decide.
+
+\`\`\`powershell
+pnpm run fill:ad-readback -- --source ${psQuote(jsonPath)} --out ${psQuote(passPath)} --approver-name "<approver>" --approval-artifact "<ticket-or-screenshot-path>" --approval-confirmed-at "<ISO time>" --before-value "<live before bid>" --before-captured-at "<ISO time>" --before-screenshot "<before screenshot path>" --live-bid-source-note "${markdownEscape(liveBidSourceNoteForTarget(target))}" --after-value "<live after bid>" --after-captured-at "<ISO time>" --after-screenshot "<after screenshot path>" --executed-at "<ISO time>" --executed-by "<operator>" --execution-id "<manual action id>" --readback-read-at "<ISO time>" --readback-evidence "<reload/readback screenshot path>" --readback-actual-value "<reload value, defaults to after value if omitted>" --risk-rationale "<why this one action is low risk and reversible>"
+\`\`\`
+
 ## Verification Commands
 
 \`\`\`powershell
-pnpm run verify:ad-readback -- ${jsonPath}
-pnpm run write:v15-evidence-manifest -- --ad-readback ${jsonPath} --out output\\codex-evidence\\v15-final-readiness-evidence-manifest-2026-06-10.json
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\\codex-evidence\\v15-final-readiness-evidence-manifest-2026-06-10.json --out output\\codex-evidence\\final-readiness-2026-06-10.json
+pnpm run verify:ad-readback -- ${passPath}
+pnpm run write:v15-evidence-manifest -- --ad-readback ${passPath} --out ${evidenceManifestPath}
+pnpm run verify:v15-final-readiness -- --evidence-manifest ${evidenceManifestPath} --out ${finalReadinessPath}
 \`\`\`
 `;
 }
@@ -161,10 +206,14 @@ function main() {
     },
     source: {
       recommendationId: value(args, 'recommendation-id', ''),
+      sourceFiles: listValue(args, 'source-files'),
+      sourceRow: numberValue(args, 'source-row'),
       evidencePath: value(args, 'source-evidence', ''),
       entityType: value(args, 'source-entity-type', ''),
       currentValue: value(args, 'source-current-value', ''),
       recommendedValue: value(args, 'source-recommended-value', ''),
+      aiStrategyFallbackReason: value(args, 'source-ai-strategy-fallback-reason', ''),
+      aiActionFallbackReason: value(args, 'source-ai-action-fallback-reason', ''),
     },
     notes: [
       'This template is intentionally NEEDS_WORK and must not pass verify:ad-readback until every FILL field is replaced with real evidence.',

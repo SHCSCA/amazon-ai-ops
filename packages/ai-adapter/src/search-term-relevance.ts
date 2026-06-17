@@ -37,6 +37,7 @@ export class SearchTermRelevanceAnalyzer {
     const response = await this.provider.chat(messages, {
       temperature: 0.3,
       maxTokens: 500,
+      responseFormat: 'json_object',
     });
 
     if (!response.success) {

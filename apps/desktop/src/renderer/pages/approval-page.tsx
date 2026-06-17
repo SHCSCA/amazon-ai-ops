@@ -1,15 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
-import type { RecommendationView } from '../types';
+import type { AiEvidenceDisplayItemView, RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 type ApprovalTab = 'pending' | 'needs_review' | 'approved' | 'rejected';
 
 const TAB_LABELS: Record<ApprovalTab, string> = {
   pending: '待审批',
-  needs_review: 'AI 复核',
+  needs_review: '复核队列',
   approved: '已批准待执行',
   rejected: '已拒绝',
 };
@@ -26,20 +27,56 @@ function sourceFiles(rec: RecommendationView): string {
   return rec.evidence?.sourceFiles?.length ? rec.evidence.sourceFiles.join(', ') : '-';
 }
 
-function approvalMissing(rec: RecommendationView | null, scope: { storeName: string; marketplaceCode: string }, currentBatchId?: string): string[] {
+function isRealReportSourceFile(filePath: unknown): boolean {
+  return /\.(xlsx|xls|csv)$/i.test(String(filePath || '').trim().split(/[?#]/)[0]);
+}
+
+function normalizeSourceFile(filePath: unknown): string {
+  return String(filePath || '').trim().replace(/\\/g, '/').toLowerCase();
+}
+
+function parseExecutableNumber(value: unknown): number | undefined {
+  const text = String(value || '').trim();
+  if (!text || /[%％]/.test(text)) return undefined;
+  const parsed = Number(text.replace(/^\$/, '').replace(/\s*usd$/i, ''));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+export function approvalMissing(
+  rec: RecommendationView | null,
+  scope: { storeName: string; marketplaceCode: string },
+  currentBatchId?: string,
+  allowedSourceFiles?: string[],
+): string[] {
   if (!rec) return [];
   const missing: string[] = [];
   const requireValue = (value: unknown, label: string) => {
     const text = String(value || '').trim();
     if (!text || text === '-') missing.push(label);
   };
+  const requirePositiveNumber = (value: unknown, label: string) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) missing.push(label);
+  };
   requireValue(scope.storeName, '店铺');
   requireValue(scope.marketplaceCode, '站点');
   requireValue(currentBatchId, '当前批次');
+  requireValue(rec.evidence?.asin, 'ASIN');
   requireValue(rec.evidence?.batchId, '来源批次');
   if (rec.evidence?.batchId && currentBatchId && rec.evidence.batchId !== currentBatchId) missing.push('来源批次不一致');
   requireValue(rec.evidence?.date, '指标日期');
-  if (!rec.evidence?.sourceFiles?.length) missing.push('来源文件');
+  const recommendationSourceFiles = rec.evidence?.sourceFiles || [];
+  if (!recommendationSourceFiles.length) missing.push('来源文件');
+  if (recommendationSourceFiles.length && !recommendationSourceFiles.every(isRealReportSourceFile)) missing.push('真实来源报表');
+  if (recommendationSourceFiles.length && Array.isArray(allowedSourceFiles) && allowedSourceFiles.length === 0) {
+    missing.push('当前批次真实报表文件未加载');
+  }
+  if (recommendationSourceFiles.length && Array.isArray(allowedSourceFiles) && allowedSourceFiles.length > 0) {
+    const allowed = new Set(allowedSourceFiles.map(normalizeSourceFile));
+    const allSourcesCurrent = recommendationSourceFiles.every((file) => allowed.has(normalizeSourceFile(file)));
+    if (!allSourcesCurrent) missing.push('来源文件不属于当前数据批次真实报表');
+  }
+  requirePositiveNumber(rec.evidence?.sourceRow, '来源行号');
   requireValue(rec.evidence?.campaignName, '广告活动');
   requireValue(rec.evidence?.adGroupName, '广告组');
   requireValue(rec.entityType || rec.evidence?.matchType, '对象类型');
@@ -55,17 +92,129 @@ function riskRequiresDedicatedReview(riskLevel?: string): boolean {
   return normalized === 'forbidden' || normalized === 'high' || normalized.includes('forbidden');
 }
 
-function approvalBlockers(rec: RecommendationView | null): string[] {
+export function approvalBlockers(rec: RecommendationView | null): string[] {
   if (!rec) return [];
   const blockers: string[] = [];
   const agreement = rec.evidence?.decisionAgreement;
-  if (rec.status === 'needs_review') blockers.push('建议已进入 AI 复核队列');
-  if (agreement === 'ai_only') blockers.push('AI-only 建议不能直接批准');
+  const aiActionParticipated = agreement === 'aligned' || agreement === 'ai_only';
+  blockers.push(...approvalValueBlockers(rec));
+  if (rec.status === 'needs_review') blockers.push('建议已进入复核队列');
+  if (agreement === 'ai_only') blockers.push('AI 独立洞察不能直接批准');
   if (agreement === 'conflict') blockers.push('AI 与规则冲突');
+  if (rec.evidence?.aiInsightOnly === true) blockers.push('该建议缺少 AI 可回查证据，仅作为洞察展示，不能审批');
+  if (rec.evidence?.aiStrategySource === 'ai' && aiActionParticipated && !rec.evidence?.aiEvidenceRefs?.length) blockers.push('AI 建议缺少可回查证据引用');
+  if (rec.evidence?.aiStrategySource === 'ai' && aiActionParticipated && rec.evidence?.aiEvidenceRefs?.length) {
+    const details = Array.isArray(rec.evidence.aiEvidenceDetails) ? rec.evidence.aiEvidenceDetails : [];
+    const detailIds = new Set(details.map((detail) => String(detail?.evidenceId || '').trim()).filter(Boolean));
+    const allRefsResolved = rec.evidence.aiEvidenceRefs.every((ref) => detailIds.has(String(ref || '').trim()));
+    if (!details.length || !allRefsResolved) blockers.push('AI 建议缺少可展示的证据详情');
+  }
   if (rec.evidence?.decisionRequiresReview === true) blockers.push('AI/规则合并标记需复核');
+  if (aiActionParticipated && rec.evidence?.aiLifecycleStageRequiresReview === true) {
+    blockers.push('AI 阶段判断需要人工复核');
+    blockers.push(...(rec.evidence.aiLifecycleStageInvalidReasons || []).filter(Boolean));
+  }
   if (rec.evidence?.quantReviewRequired === true) blockers.push('规则量化要求人工复核');
   if (riskRequiresDedicatedReview(rec.riskLevel)) blockers.push('高风险或禁止执行风险等级');
   return blockers;
+}
+
+export function approvalSubmitBlockers(
+  rec: RecommendationView | null,
+  scope: { storeName: string; marketplaceCode: string },
+  currentBatchId?: string,
+  allowedSourceFiles?: string[],
+): string[] {
+  if (!rec) return ['未选择建议'];
+  return Array.from(new Set([
+    ...approvalMissing(rec, scope, currentBatchId, allowedSourceFiles),
+    ...approvalBlockers(rec),
+  ]));
+}
+
+export function buildApprovalDecisionPayload(input: {
+  decision: 'approved' | 'rejected';
+  approverName: string;
+  approvalNote: string;
+  currentBatchId?: string;
+  selected: RecommendationView | null;
+  scope: {
+    dateFrom?: string;
+    dateTo?: string;
+    storeName?: string;
+    marketplaceCode?: string;
+    asin?: string;
+  };
+}) {
+  const { decision, selected, scope } = input;
+  return {
+    decision,
+    approvedBy: decision === 'approved' ? input.approverName.trim() : undefined,
+    rejectedBy: decision === 'rejected' ? input.approverName.trim() || undefined : undefined,
+    decidedAt: new Date().toISOString(),
+    note: input.approvalNote.trim(),
+    batchId: input.currentBatchId,
+    recommendationId: selected?.id,
+    actionType: selected?.actionType,
+    portfolioName: selected?.evidence?.portfolioName,
+    campaignName: selected?.evidence?.campaignName,
+    adGroupName: selected?.evidence?.adGroupName,
+    asin: selected?.evidence?.asin,
+    entityType: selected?.entityType || selected?.evidence?.matchType,
+    entityName: selected ? objectName(selected) : '',
+    currentValue: selected?.currentValue,
+    recommendedValue: selected?.recommendedValue,
+    sourceBatchId: selected?.evidence?.batchId,
+    metricDate: selected?.evidence?.date,
+    sourceRow: selected?.evidence?.sourceRow,
+    sourceFiles: selected?.evidence?.sourceFiles || [],
+    explanationSource: selected?.evidence?.explanationSource,
+    aiModel: selected?.evidence?.aiModel,
+    aiStrategySource: selected?.evidence?.aiStrategySource,
+    aiLifecycleStage: selected?.evidence?.aiLifecycleStage,
+    aiStrategySummary: selected?.evidence?.aiStrategySummary,
+    aiStrategyFallbackReason: selected?.evidence?.aiStrategyFallbackReason,
+    aiActionFallbackReason: selected?.evidence?.aiActionFallbackReason,
+    aiThresholdSuggestions: selected?.evidence?.aiThresholdSuggestions,
+    productContextCount: selected?.evidence?.productContextCount,
+    productStage: selected?.evidence?.productStage,
+    productTargetAcos: selected?.evidence?.productTargetAcos,
+    productTargetTacos: selected?.evidence?.productTargetTacos,
+    productTargetNetMargin: selected?.evidence?.productTargetNetMargin,
+    productMinPrice: selected?.evidence?.productMinPrice,
+    decisionAgreement: selected?.evidence?.decisionAgreement,
+    decisionSource: selected?.evidence?.decisionSource,
+    decisionReasons: selected?.evidence?.decisionReasons || [],
+    decisionRiskWarnings: selected?.evidence?.decisionRiskWarnings || [],
+    quantReasons: selected?.evidence?.quantReasons || [],
+    quantThresholds: selected?.evidence?.quantThresholds,
+    scope: {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      asin: scope.asin,
+    },
+  };
+}
+
+function approvalValueBlockers(rec: RecommendationView): string[] {
+  const action = String(rec.actionType || '').trim();
+  const currentValue = parseExecutableNumber(rec.currentValue);
+  const recommendedValue = parseExecutableNumber(rec.recommendedValue);
+
+  if (action === 'lower_bid' || action === 'raise_bid') {
+    if (recommendedValue === undefined) return ['出价建议值必须是可执行的正数金额'];
+    if (currentValue === undefined) return ['当前出价必须是可回查的正数金额'];
+    if (action === 'lower_bid' && recommendedValue >= currentValue) return ['降价动作的建议出价必须低于当前出价'];
+    if (action === 'raise_bid' && recommendedValue <= currentValue) return ['提价动作的建议出价必须高于当前出价'];
+  }
+
+  if (action === 'adjust_campaign_budget' && recommendedValue === undefined) {
+    return ['预算建议值必须是可执行的正数金额'];
+  }
+
+  return [];
 }
 
 function quantSummary(rec: RecommendationView): string {
@@ -85,9 +234,9 @@ function decisionLabel(rec: RecommendationView): string {
   return labels[String(rec.evidence?.decisionAgreement || 'rule_only')] || String(rec.evidence?.decisionAgreement || '规则独立建议');
 }
 
-function strategyLabel(rec: RecommendationView): string {
+export function strategyLabel(rec: RecommendationView): string {
   if (rec.evidence?.aiStrategySource === 'ai') return 'AI 阶段诊断';
-  if (rec.evidence?.aiStrategySource === 'rule') return '规则策略 fallback';
+  if (rec.evidence?.aiStrategySource === 'rule') return '规则策略兜底';
   return '未诊断';
 }
 
@@ -102,7 +251,14 @@ function thresholdSummary(rec: RecommendationView): string {
   ].join(' / ');
 }
 
-function aiThresholdSummary(rec: RecommendationView): string {
+function aiThresholdReviewSuffix(thresholds: NonNullable<RecommendationView['evidence']>['aiThresholdSuggestions']): string {
+  const reviewReasons = Object.values(thresholds || {})
+    .filter((item) => item?.requiresReview)
+    .flatMap((item) => item.reviewReasons?.length ? item.reviewReasons : ['AI 动态阈值需要人工复核。']);
+  return reviewReasons.length ? ` / 需复核：${Array.from(new Set(reviewReasons)).slice(0, 2).join('；')}` : '';
+}
+
+export function aiThresholdSummary(rec: RecommendationView): string {
   const thresholds = rec.evidence?.aiThresholdSuggestions;
   if (!thresholds) return '暂无 AI 动态阈值';
   const parts = [
@@ -111,7 +267,7 @@ function aiThresholdSummary(rec: RecommendationView): string {
     thresholds.noOrderClickThreshold ? `无订单 ${Number(thresholds.noOrderClickThreshold.value)} 点击` : '',
     thresholds.minSpend ? `最低花费 ${formatUsd(Number(thresholds.minSpend.value))}` : '',
   ].filter(Boolean);
-  return parts.length ? parts.join(' / ') : '暂无 AI 动态阈值';
+  return parts.length ? `${parts.join(' / ')}${aiThresholdReviewSuffix(thresholds)}` : '暂无 AI 动态阈值';
 }
 
 function compactList(values?: string[]): string {
@@ -126,6 +282,36 @@ function optionalPercent(value: unknown): string {
 function optionalMoney(value: unknown): string {
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? formatUsd(numeric) : '-';
+}
+
+function evidenceTypeLabel(type?: string): string {
+  const labels: Record<string, string> = {
+    metric: '报表指标',
+    timeline: '时间线',
+    operation_event: '运营事件',
+    product_context: '产品配置',
+    rule_candidate: '规则候选',
+  };
+  return labels[String(type || '')] || String(type || '未知证据');
+}
+
+function evidenceMetricLine(item: AiEvidenceDisplayItemView): string {
+  if (!item.metrics) return '无指标值';
+  return [
+    `${formatUsd(item.metrics.cost || 0)} / ${formatUsd(item.metrics.sales || 0)}`,
+    `${Number(item.metrics.orders || 0)} 单`,
+    `${Number(item.metrics.clicks || 0)} 点击`,
+    `ACOS ${formatPercent(Number(item.metrics.acos || 0) * 100)}`,
+  ].join(' / ');
+}
+
+function evidenceContextLine(item: AiEvidenceDisplayItemView): string {
+  return [
+    item.batchId ? `批次 ${item.batchId}` : '',
+    item.reportType ? `报表 ${item.reportType}` : '',
+    item.dateRange ? `日期 ${item.dateRange}` : '',
+    item.sourceRow ? `行 ${item.sourceRow}` : '',
+  ].filter(Boolean).join(' / ') || '无来源上下文';
 }
 
 function productStageLabel(stage?: string): string {
@@ -155,48 +341,31 @@ export function ApprovalPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
-  const selectedMissing = useMemo(() => approvalMissing(selected, scope, currentBatchId), [currentBatchId, scope.marketplaceCode, scope.storeName, selected]);
+  const currentRealReportSourceFiles = useMemo(
+    () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
+    [data?.collection.realReportFiles],
+  );
+  const selectedMissing = useMemo(
+    () => approvalMissing(selected, scope, currentBatchId, currentRealReportSourceFiles),
+    [currentBatchId, currentRealReportSourceFiles, scope.marketplaceCode, scope.storeName, selected],
+  );
   const selectedBlockers = useMemo(() => approvalBlockers(selected), [selected]);
+  const selectedSubmitBlockers = useMemo(
+    () => approvalSubmitBlockers(selected, scope, currentBatchId, currentRealReportSourceFiles),
+    [currentBatchId, currentRealReportSourceFiles, scope.marketplaceCode, scope.storeName, selected],
+  );
+  const selectedDecisionSummary = useMemo(
+    () => buildDecisionEvidenceSummary(selected?.evidence),
+    [selected],
+  );
 
   function decisionPayload(decision: 'approved' | 'rejected') {
-    return {
+    return buildApprovalDecisionPayload({
       decision,
-      approvedBy: decision === 'approved' ? approverName.trim() : undefined,
-      rejectedBy: decision === 'rejected' ? approverName.trim() || undefined : undefined,
-      decidedAt: new Date().toISOString(),
-      note: approvalNote.trim(),
-      batchId: currentBatchId,
-      recommendationId: selected?.id,
-      actionType: selected?.actionType,
-      portfolioName: selected?.evidence?.portfolioName,
-      campaignName: selected?.evidence?.campaignName,
-      adGroupName: selected?.evidence?.adGroupName,
-      asin: selected?.evidence?.asin,
-      entityType: selected?.entityType || selected?.evidence?.matchType,
-      entityName: selected ? objectName(selected) : '',
-      currentValue: selected?.currentValue,
-      recommendedValue: selected?.recommendedValue,
-      sourceBatchId: selected?.evidence?.batchId,
-      metricDate: selected?.evidence?.date,
-      sourceFiles: selected?.evidence?.sourceFiles || [],
-      explanationSource: selected?.evidence?.explanationSource,
-      aiModel: selected?.evidence?.aiModel,
-      aiStrategySource: selected?.evidence?.aiStrategySource,
-      aiLifecycleStage: selected?.evidence?.aiLifecycleStage,
-      aiStrategySummary: selected?.evidence?.aiStrategySummary,
-      aiThresholdSuggestions: selected?.evidence?.aiThresholdSuggestions,
-      productContextCount: selected?.evidence?.productContextCount,
-      productStage: selected?.evidence?.productStage,
-      productTargetAcos: selected?.evidence?.productTargetAcos,
-      productTargetTacos: selected?.evidence?.productTargetTacos,
-      productTargetNetMargin: selected?.evidence?.productTargetNetMargin,
-      productMinPrice: selected?.evidence?.productMinPrice,
-      decisionAgreement: selected?.evidence?.decisionAgreement,
-      decisionSource: selected?.evidence?.decisionSource,
-      decisionReasons: selected?.evidence?.decisionReasons || [],
-      decisionRiskWarnings: selected?.evidence?.decisionRiskWarnings || [],
-      quantReasons: selected?.evidence?.quantReasons || [],
-      quantThresholds: selected?.evidence?.quantThresholds,
+      approverName,
+      approvalNote,
+      currentBatchId,
+      selected,
       scope: {
         dateFrom: scope.dateFrom,
         dateTo: scope.dateTo,
@@ -204,7 +373,7 @@ export function ApprovalPage() {
         marketplaceCode: scope.marketplaceCode,
         asin: scope.asin,
       },
-    };
+    });
   }
 
   const filter = useMemo(() => ({
@@ -316,7 +485,7 @@ export function ApprovalPage() {
             <div>
               <span>本页职责</span>
               <strong>只做人工决策</strong>
-              <p>批准或拒绝规则确认后的建议；AI-only 和冲突建议先进入复核队列。</p>
+              <p>批准或拒绝规则确认后的建议；AI 独立洞察和冲突建议先进入复核队列。</p>
             </div>
             <div>
               <span>批准前确认</span>
@@ -411,6 +580,37 @@ export function ApprovalPage() {
 
         {selected && (
           <Panel title="审批决策">
+            <div className="evidence-check-panel">
+              <div className="business-split">
+                <div>
+                  <h3>AI/规则决策摘要</h3>
+                  <p className="muted-line">{selectedDecisionSummary.headline}</p>
+                </div>
+                <StatusPill tone={selectedDecisionSummary.tone}>{selectedDecisionSummary.statusLabel}</StatusPill>
+              </div>
+              {selectedDecisionSummary.reasons.length > 0 && (
+                <ul className="business-list">
+                  {selectedDecisionSummary.reasons.slice(0, 3).map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              )}
+              <div className="context-summary-grid">
+                <div>
+                  <span>引用证据</span>
+                  <strong>{selected.evidence?.aiEvidenceRefs?.length || 0} 条</strong>
+                  <p>{selectedDecisionSummary.evidenceSummary}</p>
+                </div>
+                <div>
+                  <span>审批动作</span>
+                  <strong>{selectedDecisionSummary.nextAction}</strong>
+                  <p>缺证据、AI 独立洞察或规则冲突时不能走普通批准。</p>
+                </div>
+              </div>
+              {selectedDecisionSummary.riskWarnings.length > 0 && (
+                <p className="blocked-line">风险：{selectedDecisionSummary.riskWarnings.join('；')}</p>
+              )}
+            </div>
             <div className="detail-grid">
               <div><span>建议 ID</span><strong>{selected.id}</strong></div>
               <div><span>审批范围</span><strong>{scope.storeName} / {scope.marketplaceCode}</strong></div>
@@ -448,6 +648,19 @@ export function ApprovalPage() {
               <div className="evidence-check-panel">
                 <h3>AI 策略诊断</h3>
                 <p className="muted-line">{selected.evidence.aiStrategySummary}</p>
+                {selected.evidence.aiLifecycleStageReason && (
+                  <p className={selected.evidence.aiLifecycleStageRequiresReview ? 'warning-line' : 'muted-line'}>
+                    阶段判断依据：{selected.evidence.aiLifecycleStageReason}
+                  </p>
+                )}
+                {Boolean(selected.evidence.aiLifecycleStageEvidenceRefs?.length) && (
+                  <p className="muted-line">阶段引用证据：{formatEvidenceRefSummary(selected.evidence.aiLifecycleStageEvidenceRefs, selected.evidence.aiLifecycleStageEvidenceDetails)}</p>
+                )}
+                {selected.evidence.aiLifecycleStageRequiresReview && (
+                  <p className="blocked-line">
+                    阶段判断需复核：{selected.evidence.aiLifecycleStageInvalidReasons?.join('；') || 'AI 阶段判断缺少有效可回查证据。'}
+                  </p>
+                )}
                 <p className="muted-line">AI 动态阈值：{aiThresholdSummary(selected)}</p>
                 <p className="muted-line">AI 主要问题：{compactList(selected.evidence.aiMainProblems)}</p>
                 <p className={selected.evidence.aiStrategyRiskWarnings?.length ? 'blocked-line' : 'muted-line'}>
@@ -455,6 +668,46 @@ export function ApprovalPage() {
                 </p>
               </div>
             )}
+            {(selected.evidence?.aiReasoningSteps?.length || selected.evidence?.aiEvidenceRefs?.length || selected.evidence?.aiInsightInvalidReasons?.length) ? (
+              <div className="evidence-check-panel">
+                <h3>AI 判断依据</h3>
+                {selected.evidence?.aiInsightOnly && (
+                  <p className="blocked-line">该建议缺少 AI 可回查证据，仅作为洞察展示，不能审批。</p>
+                )}
+                {Boolean(selected.evidence?.aiReasoningSteps?.length) && (
+                  <ul className="business-list">
+                    {selected.evidence?.aiReasoningSteps?.slice(0, 5).map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ul>
+                )}
+                <p className="muted-line">引用证据：{formatEvidenceRefSummary(selected.evidence?.aiEvidenceRefs, selected.evidence?.aiEvidenceDetails)}</p>
+                {Boolean(selected.evidence?.aiInsightInvalidReasons?.length) && (
+                  <p className="blocked-line">{selected.evidence.aiInsightInvalidReasons?.join('；')}</p>
+                )}
+                {Boolean(selected.evidence?.aiEvidenceDetails?.length || selected.evidence?.aiLifecycleStageEvidenceDetails?.length) && (
+                  <div className="evidence-check-panel">
+                    <h3>引用证据详情</h3>
+                    <div className="context-summary-grid">
+                      {[
+                        ...(selected.evidence?.aiEvidenceDetails || []),
+                        ...(selected.evidence?.aiLifecycleStageEvidenceDetails || []),
+                      ].filter((item, index, all) => all.findIndex((other) => other.evidenceId === item.evidenceId) === index).slice(0, 6).map((item) => (
+                        <div key={item.evidenceId}>
+                          <span>{evidenceTypeLabel(item.type)}</span>
+                          <strong>{item.label}</strong>
+                          <p>{evidenceContextLine(item)}</p>
+                          <p>{[item.campaignName || '-', item.adGroupName || '-', item.asin || '-', item.entityName || '-'].join(' / ')}</p>
+                          {item.metrics && <p>{evidenceMetricLine(item)}</p>}
+                          {item.event && <p>{[item.event.eventDate || '-', item.event.eventType || '-', item.event.impactExpectation || '-'].join(' / ')}</p>}
+                          {item.sourceFile && <code title={item.sourceFile}>{item.sourceFile}</code>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
             {(selected.evidence?.decisionReasons?.length || selected.evidence?.decisionRiskWarnings?.length) ? (
               <div className="evidence-check-panel">
                 <h3>AI/规则合并依据</h3>
@@ -470,7 +723,10 @@ export function ApprovalPage() {
               </div>
             ) : null}
             {selectedBlockers.length > 0 && (
-              <p className="blocked-line">这条建议不能走普通批准：{selectedBlockers.join('、')}。请在 AI 复核队列处理，或重新生成规则确认后的建议。</p>
+              <p className="blocked-line">这条建议不能走普通批准：{selectedBlockers.join('、')}。请在复核队列处理，或重新生成规则确认后的建议。</p>
+            )}
+            {selectedMissing.length > 0 && (
+              <p className="blocked-line">审批证据不完整：缺 {selectedMissing.join('、')}。补齐当前批次真实报表来源后才能批准。</p>
             )}
             <div className="form-grid">
               <label>
@@ -488,7 +744,7 @@ export function ApprovalPage() {
             </div>
             <p className="muted-line">审批人、备注、范围和数据批次会写入建议证据；真实 Ads UI 操作和审批凭证路径仍必须在“执行回读”页逐条补齐。</p>
             <div className="action-row">
-              <button className="primary-button" disabled={selectedBlockers.length > 0} onClick={approveSelected} type="button">批准并进入待执行</button>
+              <button className="primary-button" disabled={selectedSubmitBlockers.length > 0} onClick={approveSelected} type="button">批准并进入待执行</button>
               <button className="secondary-button danger-button" onClick={rejectSelected} type="button">拒绝</button>
             </div>
           </Panel>

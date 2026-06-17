@@ -51,7 +51,7 @@ export function OperationScopePage() {
             </div>
           </div>
           <div className="business-pill-row">
-            <StatusPill tone={realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}>真实表格 {realReportCount}/8</StatusPill>
+            <StatusPill tone={realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}>报表覆盖 {realReportCount}/8 类</StatusPill>
             <StatusPill tone={importedRows > 0 ? 'ready' : 'blocked'}>已导入 {importedRows} 行</StatusPill>
             <StatusPill tone="pending">金额展示 USD</StatusPill>
           </div>
@@ -89,8 +89,8 @@ export function OperationScopePage() {
           ) : realReportCount > 0 ? (
             <div className="judgment-panel">
               <div>
-                <span>已有真实表格，尚未入库</span>
-                <strong>{realReportCount} 个 xlsx/xls/csv 文件待导入</strong>
+                <span>已有真实报表，尚未入库</span>
+                <strong>{realReportCount}/8 类真实报表待导入</strong>
                 <p>下一步进入数据导入与校验页，把表格写入 SQLite 每日广告事实表。</p>
               </div>
               <button className="primary-button" onClick={() => navigate('data-import-validation')} type="button">去导入校验</button>

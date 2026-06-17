@@ -2,7 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { __test__ } from './openai-compatible';
 
 describe('OpenAICompatibleProvider request body', () => {
-  it('disables DeepSeek thinking so short structured prompts return visible content', () => {
+  it('disables DeepSeek thinking and requests JSON object output for structured prompts', () => {
+    const body = __test__.buildChatCompletionBody(
+      { apiKey: 'test-key', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash' },
+      'deepseek-v4-flash',
+      [{ role: 'user', content: '只回复 ok' }],
+      0,
+      32,
+      'json_object',
+    );
+
+    expect(body).toMatchObject({
+      model: 'deepseek-v4-flash',
+      max_tokens: 32,
+      thinking: { type: 'disabled' },
+      response_format: { type: 'json_object' },
+    });
+  });
+
+  it('does not request JSON object output for DeepSeek text health probes', () => {
     const body = __test__.buildChatCompletionBody(
       { apiKey: 'test-key', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash' },
       'deepseek-v4-flash',
@@ -13,9 +31,9 @@ describe('OpenAICompatibleProvider request body', () => {
 
     expect(body).toMatchObject({
       model: 'deepseek-v4-flash',
-      max_tokens: 32,
       thinking: { type: 'disabled' },
     });
+    expect(body).not.toHaveProperty('response_format');
   });
 
   it('does not add DeepSeek-specific fields to non-DeepSeek providers', () => {
@@ -28,5 +46,6 @@ describe('OpenAICompatibleProvider request body', () => {
     );
 
     expect(body).not.toHaveProperty('thinking');
+    expect(body).not.toHaveProperty('response_format');
   });
 });

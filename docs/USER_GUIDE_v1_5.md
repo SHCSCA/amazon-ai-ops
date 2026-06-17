@@ -256,12 +256,24 @@ Each v1.5 task page shows its primary task and proof boundary at the top. `交�
 
 ## Final Readiness Evidence
 
-Use `交付验收` to review the current delivery state. The current manifest-driven final-readiness evidence is `APP_READY`: report collection, Listing full read, DeepSeek live, ad recommendation AI explanation, Listing AI draft, and one real manual Ads UI readback all pass. The verified ad sample is a paused target bid decrease from `1.20` to `1.08`; future ad changes must not reuse that scope and must each provide their own target, approval, before/after screenshots, and readback evidence.
+Use `交付验收` to review the current delivery state. Current manifest-driven final-readiness evidence reached `APP_READY` at `output\codex-evidence\final-readiness-2026-06-18.json`. The verified current-contract ad sample was a paused FT-US keyword `door lock` bid decrease from live `1.30` to `1.17`; the source recommendation remained traceable as `1.63 -> 1.46`, but was not written because the live bid was already lower than the source recommendation. Future ad changes must not reuse that scope and must each provide their own target, source report files/row, approval, before/after screenshots, and readback evidence.
+
+The `交付验收` page also provides `刷新最终验收`. This is an in-app diagnostic refresh: it writes a new evidence-selection manifest and final readiness JSON, then shows the file paths and failed gate count. It does not override the final delivery rules. If a future ad readback gate is missing operator approval, before/after Ads UI screenshots, changed live value, or reload readback proof, the refresh must remain `APP_NEEDS_WORK`.
+
+When final readiness is blocked by ad readback, `交付验收` shows `广告回读补证`. Use `创建回读工作包` to generate the session folder from the failed candidate evidence path, then open the candidate evidence, session folder, operator checklist, Ads UI locator guide, `session-input-guide.md` filling guide, and `session-input.json` filling file from the same panel. `检查工作包` has two meanings: structure readiness and capture readiness. Structure readiness means the folder, checklist, locator guide, filling guide, `session-input.json`, fill script, and output path are safe. Capture readiness means `session-input.json` no longer has unresolved approval, before/after, execution, or readback fields. If the UI says `结构通过，现场证据待填写`, the session is only ready for operator capture and must not be treated as final readback evidence. Missing items are shown as Chinese grouped evidence labels, for example `审批/审批人`, `执行前/执行前 Ads UI live bid`, `执行后/执行后截图文件`, and `回读/刷新回读截图文件`. After the operator fills `session-input.json`, use `检查工作包`, `生成回读证据`, `校验回读证据`, and `用回读证据刷新最终验收` from the same panel. The generated work package is only a working area; it becomes final evidence only after the operator fills real approval, before/after/readback proof, produces the PASS-intended JSON, and the ad readback verifier passes.
+
+The current candidate packet has already been prepared at `output\codex-evidence\ad-readback-session-rec-4-current`. Open `ads-ui-locator.md` first to locate the exact Ads UI row, then open `operator-checklist.md` for the Chinese capture checklist and `session-input-guide.md` for the field-by-field filling guide. Fill `session-input.json` only after the real Ads UI approval, before screenshot, after screenshot, and reload/readback screenshot are captured. The CLI prints `SESSION_STRUCTURE_READY` for structure only; it prints `CAPTURE_READY` only after live evidence fields are filled. If the row in Ads UI does not match the locator guide, stop and do not execute the action.
 
 After refreshing report, Listing, AI, and ad-readback evidence, write an explicit evidence-selection manifest first:
 
 ```powershell
 pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-1.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-10.json
+```
+
+Build the current Windows installer and no-install portable executable before final readiness. The final readiness verifier records both package hashes and will not accept an APP_READY claim without them:
+
+```powershell
+pnpm --filter @amazon-ai-ops/desktop run build:win
 ```
 
 Then run final readiness against that manifest:
@@ -270,27 +282,37 @@ Then run final readiness against that manifest:
 pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-10.json --out output\codex-evidence\final-readiness-2026-06-10.json
 ```
 
-Finally export the bounded handoff bundle only after confirming final-readiness JSON was produced from the current evidence manifest and records `evidenceSelection.mode=manifest`:
+After final readiness passes, update the README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`. The delivery exporter refuses APP_READY bundles while the selected README still says IN_PROGRESS.
+
+Finally export the bounded handoff bundle only after confirming final-readiness JSON was produced from the current evidence manifest, records `evidenceSelection.mode=manifest`, and the README status has already been updated:
 
 ```powershell
 pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-2026-06-10.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-2026-06-15T17-00-08-661Z
 ```
 
-Do not treat structural mock AI evidence as final AI readiness. It is only a local schema/redaction proof. Real AI readiness requires `verify:ai-live`, a real ad recommendation AI explanation evidence file, a real Listing AI draft evidence file, and no-key fallback must be gone. Real ad execution readiness requires `verify:ad-readback` with operator approval, before/after screenshots, and verified readback for each action. The current `APP_READY` state includes one verified low-risk manual Ads UI sample; the in-app execution button remains fail-closed and does not batch-write ads.
+After the bundle is exported, run the READY safety gate:
+
+```powershell
+pnpm run verify:v15-ready-safety
+```
+
+The delivery bundle intentionally does not copy raw `.xlsx`, `.xls`, or `.csv` Lingxing report files. It writes `evidence/real-report-file-index.json` instead, with each source report's local path, existence flag, size, SHA-256, and evidence references. Use that index to locate the actual downloaded spreadsheets on the operator machine.
+
+Do not treat structural mock AI evidence as final AI readiness. It is only a local schema/redaction proof. Real AI readiness requires `verify:ai-live`, a real ad recommendation AI explanation evidence file, a real Listing AI draft evidence file, and no-key fallback must be gone. Real ad execution readiness requires `verify:ad-readback` with operator approval, real Lingxing spreadsheet source file(s), positive source row number, before/after screenshots, and verified readback for each action. Current `APP_READY` evidence includes one verified low-risk manual Ads UI sample under the current readback contract; the in-app execution button remains fail-closed and does not batch-write ads.
 
 Before any real ad write is attempted, generate the approval packet. The JSON remains `NEEDS_WORK` until real approval, screenshots, changed values, and readback are filled; the Markdown file is the human checklist for the operator:
 
 ```powershell
-pnpm run create:ad-readback-template -- --out output\codex-evidence\real-ad-execution-readback-manual.json --md-out output\codex-evidence\real-ad-execution-readback-manual.md
+pnpm run create:ad-readback-template -- --out output\codex-evidence\real-ad-execution-readback-manual.json --md-out output\codex-evidence\real-ad-execution-readback-manual.md --source-files C:\path\to\user-search-term.xlsx --source-row 18
 pnpm run create:ad-readback-candidate -- --source output\codex-evidence\installed-ad-ai-explanation-user-key-2026-06-10.json --recommendation-id 1 --source-entity-type search_term --source-current-value 2.40 --source-recommended-value 2.16 --out output\codex-evidence\real-ad-execution-readback-candidate-rec-1.json --md-out output\codex-evidence\real-ad-execution-readback-candidate-rec-1.md
 pnpm run verify:ad-readback -- output\codex-evidence\real-ad-execution-readback-manual.json
 ```
 
 For the current concrete candidate, read `docs\REAL_AD_READBACK_RUNBOOK.md` before touching Ads UI. It lists the exact candidate scope, no-go conditions, required before/after/readback fields, timestamp order, and final commands.
 
-The candidate command is only for an approval packet. `source-current-value` and `source-recommended-value` are report/recommendation inputs, not Ads UI before/after bid proof. The generated JSON must still fail `verify:ad-readback` until the operator fills real approval, screenshots, execution, and readback fields.
+The candidate command is only for an approval packet. `source-current-value` and `source-recommended-value` are report/recommendation inputs, not Ads UI before/after bid proof. The generated JSON must still fail `verify:ad-readback` until the operator fills real approval, screenshots, execution, and readback fields. `verify:ad-readback` also rejects audit JSON/PNG/HTML as source data; `source.sourceFiles` must point to real `.xlsx`, `.xls`, or `.csv` report file(s), and `source.sourceRow` must be a positive original report row.
 
-The `优化建议` page also includes a local readback evidence entry form. Use it after a separately approved low-risk Ads action to enter external approver/proof, manual Ads UI executor, before/after live bid values, before/after screenshot paths, independent readback screenshot/trace path, live bid row proof, execution id, explicit approval/before/execution/after/readback timestamps, and readback actual value. The local precheck only checks visible form completeness, value consistency, and timestamp ordering before export; file existence, independent proof quality, secret leakage, and final acceptance remain controlled by `verify:ad-readback`. The export button only writes local JSON/Markdown evidence under the app exports directory; it does not execute or save any ad change. A complete form is still only “ready for verifier”; `verify:ad-readback` remains authoritative and checks traceable approval proof, manual Ads UI execution, independent readback evidence, and timestamp order.
+The `优化建议` page also includes a local readback evidence entry form. Use it after a separately approved low-risk Ads action to enter external approver/proof, manual Ads UI executor, original report source file(s)/row, before/after live bid values, before/after screenshot paths, independent readback screenshot/trace path, live bid row proof, execution id, explicit approval/before/execution/after/readback timestamps, and readback actual value. The local precheck only checks visible form completeness, value consistency, and timestamp ordering before export; file existence, independent proof quality, secret leakage, source-file type, and final acceptance remain controlled by `verify:ad-readback`. The export button only writes local JSON/Markdown evidence under the app exports directory; it does not execute or save any ad change. A complete form is still only “ready for verifier”; `verify:ad-readback` remains authoritative and checks source report traceability, traceable approval proof, manual Ads UI execution, independent readback evidence, and timestamp order.
 
 ## Local Evidence
 

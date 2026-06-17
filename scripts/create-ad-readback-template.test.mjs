@@ -31,9 +31,13 @@ describe('ad readback evidence template', () => {
       '--entity', 'test target',
       '--recommendation-id', 'rec-1',
       '--source-evidence', 'output/codex-evidence/source.json',
+      '--source-files', 'C:/reports/user-search-term.xlsx',
+      '--source-row', '18',
       '--source-entity-type', 'search_term',
       '--source-current-value', '2.40',
       '--source-recommended-value', '2.16',
+      '--source-ai-strategy-fallback-reason', 'AI 策略诊断 schemaVersion 错误，已回退规则。',
+      '--source-ai-action-fallback-reason', 'AI 单条解释无法解析 JSON，使用规则解释。',
       '--approval-scope', 'FT-US-US / US / Test Campaign / Test Ad Group / test target / lower_bid',
       '--risk-rationale', 'Lowering a bid is bounded and reversible after readback.',
     ]);
@@ -50,9 +54,13 @@ describe('ad readback evidence template', () => {
     expect(evidence.before.value).toContain('FILL:');
     expect(evidence.after.value).toContain('FILL:');
     expect(evidence.source.recommendationId).toBe('rec-1');
+    expect(evidence.source.sourceFiles).toEqual(['C:/reports/user-search-term.xlsx']);
+    expect(evidence.source.sourceRow).toBe(18);
     expect(evidence.source.entityType).toBe('search_term');
     expect(evidence.source.currentValue).toBe('2.40');
     expect(evidence.source.recommendedValue).toBe('2.16');
+    expect(evidence.source.aiStrategyFallbackReason).toBe('AI 策略诊断 schemaVersion 错误，已回退规则。');
+    expect(evidence.source.aiActionFallbackReason).toBe('AI 单条解释无法解析 JSON，使用规则解释。');
     expect(evidence.approval.approverName).toContain('FILL:');
     expect(evidence.approval.approvalArtifactPath).toContain('FILL:');
     expect(evidence.approval.confirmedAt).toContain('FILL:');
@@ -70,12 +78,26 @@ describe('ad readback evidence template', () => {
     expect(checklist).toContain('Test Campaign');
     expect(checklist).toContain('B0TESTASIN');
     expect(checklist).toContain('Source recommended value');
+    expect(checklist).toContain('Source report files');
+    expect(checklist).toContain('Source report row');
+    expect(checklist).toContain('AI strategy fallback');
+    expect(checklist).toContain('AI action explanation fallback');
     expect(checklist).toContain('Execution channel');
     expect(checklist).toContain('before.liveBidSourceNote');
     expect(checklist).toContain('readback.evidencePath');
     expect(checklist).toContain('execution.appExecutorUsed=false');
+    expect(checklist).toContain('pnpm run fill:ad-readback --');
+    expect(checklist).toContain('--source');
+    expect(checklist).toContain('--out');
+    expect(checklist).toContain('template-pass.json');
+    expect(checklist).toContain('Do not overwrite the candidate JSON');
     expect(checklist).toContain('pnpm run verify:ad-readback');
     expect(checklist).toContain('must not be used to claim APP_READY');
+    const today = new Date().toISOString().slice(0, 10);
+    expect(checklist).toContain(`v15-final-readiness-evidence-manifest-${today}.json`);
+    expect(checklist).toContain(`final-readiness-${today}.json`);
+    expect(checklist).not.toContain('v15-final-readiness-evidence-manifest-2026-06-10.json');
+    expect(checklist).not.toContain('final-readiness-2026-06-10.json');
 
     const verify = runNode('scripts/verify-ad-readback-evidence.js', [out]);
     expect(verify.status).not.toBe(0);

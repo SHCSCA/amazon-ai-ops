@@ -67,6 +67,7 @@ export class DailyReportGenerator {
     const response = await this.provider.chat(messages, {
       temperature: 0.6,
       maxTokens: 1500,
+      responseFormat: 'json_object',
     });
 
     if (!response.success) {

@@ -53,14 +53,101 @@ function pickRecommendation(source, recommendationId) {
   return lowerBid || recommendations[0];
 }
 
-function entityTypeForWrite(rec) {
-  if (rec.actionType === 'lower_bid' && rec.entityType === 'search_term') return 'target';
-  return rec.entityType || 'target';
-}
-
 function sourceValue(args, rec, key, fallback = '') {
   const argKey = `source-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
   return args[argKey] || rec[key] || fallback;
+}
+
+function sourceEvidenceValue(args, rec, key, fallback = '') {
+  const argKey = `source-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
+  const evidence = rec.evidence || {};
+  return args[argKey] || evidence[key] || rec[key] || fallback;
+}
+
+function sourceFilesForRecommendation(args, rec) {
+  if (hasText(args['source-files'])) {
+    return String(args['source-files']).split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+  }
+  const evidence = rec.evidence || {};
+  if (Array.isArray(evidence.sourceFiles) && evidence.sourceFiles.length > 0) return evidence.sourceFiles;
+  if (Array.isArray(rec.sourceFiles) && rec.sourceFiles.length > 0) return rec.sourceFiles;
+  return [];
+}
+
+function sourceRowForRecommendation(args, rec) {
+  const raw = args['source-row'] ?? rec.evidence?.sourceRow ?? rec.sourceRow;
+  const number = Number(raw);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function reportTypeFromFilePath(filePath) {
+  const name = path.basename(String(filePath || '')).toLowerCase();
+  if (/auto[_-]?targeting/.test(name)) return 'auto_targeting';
+  if (/product[_-]?targeting/.test(name)) return 'product_targeting';
+  if (/search[_-]?term|user[_-]?search/.test(name)) return 'search_term';
+  if (/keyword/.test(name)) return 'keyword';
+  return '';
+}
+
+function resolveWritableEntity(rec, sourceFiles, sourceRow, context) {
+  if (rec.entityType && rec.entityType !== 'search_term') {
+    return { entityType: rec.entityType, entityName: context.entityName, sourceReportType: '' };
+  }
+
+  const sourceReportTypes = sourceFiles.map(reportTypeFromFilePath).filter(Boolean);
+  if (sourceReportTypes.includes('keyword')) {
+    return { entityType: 'keyword', entityName: context.entityName, sourceReportType: 'keyword' };
+  }
+  if (sourceReportTypes.includes('auto_targeting')) {
+    return { entityType: 'target', entityName: context.entityName, sourceReportType: 'auto_targeting' };
+  }
+  if (sourceReportTypes.includes('product_targeting')) {
+    return { entityType: 'target', entityName: context.entityName, sourceReportType: 'product_targeting' };
+  }
+
+  const reportTypes = sourceFiles.map((filePath) => `${reportTypeFromFilePath(filePath) || 'unknown'}:${path.basename(filePath)}`).join(', ');
+  throw new Error([
+    `Search-term lower_bid recommendation cannot be converted into an Ads UI write target from sourceRow ${sourceRow}.`,
+    'A formal readback candidate must bind to a writable keyword, auto-targeting, or product-targeting source report.',
+    reportTypes ? `Source report types: ${reportTypes}.` : 'No writable source report type was found.',
+  ].join(' '));
+}
+
+function isRealReportFile(filePath) {
+  if (!hasText(filePath)) return false;
+  const extension = path.extname(String(filePath).trim()).toLowerCase();
+  return ['.xlsx', '.xls', '.csv'].includes(extension) && fs.existsSync(filePath);
+}
+
+function requireTraceableSourceReport(sourceFiles, sourceRow) {
+  const hasRealSourceFiles = Array.isArray(sourceFiles)
+    && sourceFiles.length > 0
+    && sourceFiles.every(isRealReportFile);
+  const hasSourceRow = Number.isFinite(sourceRow) && sourceRow > 0;
+  if (hasRealSourceFiles && hasSourceRow) return;
+
+  const problems = [];
+  if (!hasRealSourceFiles) {
+    problems.push('real .xlsx/.xls/.csv source report file(s)');
+  }
+  if (!hasSourceRow) {
+    problems.push('positive original source row');
+  }
+  throw new Error([
+    `Recommendation evidence lacks traceable source report data: missing ${problems.join(' and ')}.`,
+    'Rerun recommendation generation with current imported Lingxing reports, or pass --source-files and --source-row from the original report row.',
+  ].join(' '));
+}
+
+function requireSourceRecommendationValues(currentValue, recommendedValue) {
+  const missing = [];
+  if (!hasText(currentValue)) missing.push('source current value');
+  if (!hasText(recommendedValue)) missing.push('source recommended value');
+  if (missing.length === 0) return;
+  throw new Error([
+    `Recommendation evidence lacks executable source recommendation values: missing ${missing.join(' and ')}.`,
+    'Rerun recommendation generation so currentValue/recommendedValue are persisted, or pass --source-current-value and --source-recommended-value from the approved recommendation.',
+  ].join(' '));
 }
 
 function contextFromEntityId(entityId) {
@@ -151,15 +238,24 @@ function main() {
     throw new Error('Recommendation evidence lacks campaign/ad group/entity context.');
   }
 
-  const writeEntityType = entityTypeForWrite(rec);
   const sourceEntityType = sourceValue(args, rec, 'entityType', rec.entityType || '');
   const sourceCurrentValue = sourceValue(args, rec, 'currentValue', rec.currentValue || '');
   const sourceRecommendedValue = sourceValue(args, rec, 'recommendedValue', rec.recommendedValue || '');
+  const sourceAiStrategyFallbackReason = sourceEvidenceValue(args, rec, 'aiStrategyFallbackReason');
+  const sourceAiActionFallbackReason = sourceEvidenceValue(args, rec, 'aiActionFallbackReason');
+  const sourceFiles = sourceFilesForRecommendation(args, rec);
+  const sourceRow = sourceRowForRecommendation(args, rec);
+  requireTraceableSourceReport(sourceFiles, sourceRow);
+  requireSourceRecommendationValues(sourceCurrentValue, sourceRecommendedValue);
+  const writableEntity = resolveWritableEntity(rec, sourceFiles, sourceRow, context);
+  const writeEntityType = writableEntity.entityType;
+  const writeEntityName = writableEntity.entityName || context.entityName;
   const riskRationale = [
-    `Candidate is only low risk if Ads UI exposes an editable ${writeEntityType}/auto-targeting bid row for ${context.entityName}.`,
-    'Lowering one target bid is bounded and reversible, does not increase budget or expand traffic,',
+    `Candidate is only low risk if Ads UI exposes an editable ${writeEntityType} bid row for ${writeEntityName}.`,
+    'Lowering one bid is bounded and reversible, does not increase budget or expand traffic,',
     'and still requires operator approval plus before/after readback.',
     `Source recommendation came from ${sourceEntityType || 'unknown'} evidence; source values are recommendation inputs, not proven live Ads bid values.`,
+    writableEntity.sourceReportType ? `Writable Ads UI object was bound from ${writableEntity.sourceReportType} source row ${sourceRow}.` : '',
     context.hasFallback
       ? 'Campaign/ad group/entity context was completed from entityId fallback and must be re-confirmed in the live Ads UI before approval.'
       : '',
@@ -172,7 +268,7 @@ function main() {
     campaignName: context.campaignName,
     adGroupName: context.adGroupName,
     entityType: writeEntityType,
-    entityName: context.entityName,
+    entityName: writeEntityName,
     actionType: rec.actionType,
   };
 
@@ -187,13 +283,17 @@ function main() {
   pushArg(templateArgs, '--campaign', context.campaignName, { required: true });
   pushArg(templateArgs, '--ad-group', context.adGroupName, { required: true });
   pushArg(templateArgs, '--entity-type', writeEntityType, { required: true });
-  pushArg(templateArgs, '--entity', context.entityName, { required: true });
+  pushArg(templateArgs, '--entity', writeEntityName, { required: true });
   pushArg(templateArgs, '--action', rec.actionType, { required: true });
   pushArg(templateArgs, '--recommendation-id', recommendationId, { required: true });
   pushArg(templateArgs, '--source-evidence', path.relative(root, sourcePath));
+  pushArg(templateArgs, '--source-files', sourceFiles.join(','));
+  pushArg(templateArgs, '--source-row', sourceRow);
   pushArg(templateArgs, '--source-entity-type', sourceEntityType);
   pushArg(templateArgs, '--source-current-value', sourceCurrentValue);
   pushArg(templateArgs, '--source-recommended-value', sourceRecommendedValue);
+  pushArg(templateArgs, '--source-ai-strategy-fallback-reason', sourceAiStrategyFallbackReason);
+  pushArg(templateArgs, '--source-ai-action-fallback-reason', sourceAiActionFallbackReason);
   pushArg(templateArgs, '--approval-scope', buildApprovalScope(target), { required: true });
   pushArg(templateArgs, '--risk-rationale', riskRationale, { required: true });
 

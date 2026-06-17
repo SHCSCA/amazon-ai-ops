@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
-import type { AiProviderSettings, RecommendationView, SettingsRuleConfig } from '../types';
+import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
+import { realReportCoverageCount } from '../report-coverage';
+import type { AiEvidenceDisplayItemView, AiEvidenceSufficiencyView, AiProviderSettings, RecommendationView, SettingsRuleConfig } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 function errorMessage(caught: unknown, fallback: string): string {
@@ -15,13 +18,14 @@ function recommendationObject(rec: RecommendationView): string {
 
 function sourceLabel(rec: RecommendationView): string {
   if (rec.evidence?.explanationSource === 'ai') return 'DeepSeek AI';
-  if (rec.evidence?.aiFallbackReason) return '规则 fallback';
+  if (rec.evidence?.explanationSource === 'rule' || rec.evidence?.aiActionFallbackReason) return '规则解释兜底';
+  if (rec.evidence?.aiFallbackReason) return '规则兜底';
   return '规则';
 }
 
 function strategyLabel(rec: RecommendationView): string {
   if (rec.evidence?.aiStrategySource === 'ai') return 'AI 策略诊断';
-  if (rec.evidence?.aiStrategySource === 'rule') return '规则策略 fallback';
+  if (rec.evidence?.aiStrategySource === 'rule' || rec.evidence?.aiStrategyFallbackReason) return '规则策略兜底';
   return '未诊断';
 }
 
@@ -75,7 +79,14 @@ function quantTone(status?: string): 'ready' | 'pending' | 'blocked' | 'warning'
   return 'pending';
 }
 
-function thresholdSuggestionSummary(rec: RecommendationView): string {
+function thresholdReviewSuffix(thresholds: NonNullable<RecommendationView['evidence']>['aiThresholdSuggestions']): string {
+  const reviewReasons = Object.values(thresholds || {})
+    .filter((item) => item?.requiresReview)
+    .flatMap((item) => item.reviewReasons?.length ? item.reviewReasons : ['AI 动态阈值需要人工复核。']);
+  return reviewReasons.length ? ` / 需复核：${Array.from(new Set(reviewReasons)).slice(0, 2).join('；')}` : '';
+}
+
+export function thresholdSuggestionSummary(rec: RecommendationView): string {
   const thresholds = rec.evidence?.aiThresholdSuggestions;
   if (!thresholds) return '暂无 AI 动态阈值';
   const parts = [
@@ -84,7 +95,7 @@ function thresholdSuggestionSummary(rec: RecommendationView): string {
     thresholds.noOrderClickThreshold ? `无订单 ${thresholds.noOrderClickThreshold.value} 点击` : '',
     thresholds.minSpend ? `最低花费 ${formatUsd(thresholds.minSpend.value)}` : '',
   ].filter(Boolean);
-  return parts.length ? parts.join(' / ') : '暂无 AI 动态阈值';
+  return parts.length ? `${parts.join(' / ')}${thresholdReviewSuffix(thresholds)}` : '暂无 AI 动态阈值';
 }
 
 function ruleQuantThresholdSummary(rec: RecommendationView): string {
@@ -106,6 +117,22 @@ function reviewReason(rec: RecommendationView): string {
   return '可进入普通审批';
 }
 
+export function recommendationFormalApprovalExplanationText(): string {
+  return '证据完整、绑定当前批次和广告对象，且不是 AI 独立洞察、冲突或显式复核标记。';
+}
+
+export function recommendationReviewExplanationText(): string {
+  return '规则与 AI 冲突、AI 独立洞察、样本复核或明确进入复核队列的动作先由运营判断。';
+}
+
+export function recommendationMergeSummaryText(counts: { aligned: number; conflict: number; aiOnly: number }): string {
+  return `${counts.aligned} 一致 / ${counts.conflict} 冲突 / ${counts.aiOnly} AI 独立洞察`;
+}
+
+export function recommendationMergeExplanationText(): string {
+  return '冲突和 AI 独立洞察建议必须人工复核，不会进入自动执行。';
+}
+
 function evidenceBatch(rec: RecommendationView, fallbackBatchId?: string): string {
   return rec.evidence?.batchId || fallbackBatchId || '-';
 }
@@ -114,19 +141,231 @@ function evidenceSourceFiles(rec: RecommendationView): string[] {
   return Array.from(new Set((rec.evidence?.sourceFiles || []).filter(Boolean)));
 }
 
-function recommendationEvidenceIssues(rec: RecommendationView, currentBatchId?: string): string[] {
+function evidenceTypeLabel(type?: string): string {
+  const labels: Record<string, string> = {
+    metric: '报表指标',
+    timeline: '时间线',
+    operation_event: '运营事件',
+    product_context: '产品配置',
+    rule_candidate: '规则候选',
+  };
+  return labels[String(type || '')] || String(type || '未知证据');
+}
+
+function evidenceMetricLine(item: AiEvidenceDisplayItemView): string {
+  if (!item.metrics) return '无指标值';
+  return [
+    `${formatUsd(item.metrics.cost || 0)} / ${formatUsd(item.metrics.sales || 0)}`,
+    `${Number(item.metrics.orders || 0)} 单`,
+    `${Number(item.metrics.clicks || 0)} 点击`,
+    `ACOS ${formatPercent(Number(item.metrics.acos || 0) * 100)}`,
+    `CPC ${formatUsd(item.metrics.cpc || 0)}`,
+  ].join(' / ');
+}
+
+function evidenceContextLine(item: AiEvidenceDisplayItemView): string {
+  return [
+    item.batchId ? `批次 ${item.batchId}` : '',
+    item.reportType ? `报表 ${item.reportType}` : '',
+    item.dateRange ? `日期 ${item.dateRange}` : '',
+    item.sourceRow ? `行 ${item.sourceRow}` : '',
+  ].filter(Boolean).join(' / ') || '无来源上下文';
+}
+
+function evidenceAdObjectLine(item: AiEvidenceDisplayItemView): string {
+  return [
+    item.campaignName || '-',
+    item.adGroupName || '-',
+    item.asin || '-',
+    item.entityType || '-',
+    item.entityName || '-',
+  ].join(' / ');
+}
+
+function evidenceEventLine(item: AiEvidenceDisplayItemView): string {
+  if (!item.event) return '';
+  return [
+    item.event.eventDate || '-',
+    item.event.eventType || '-',
+    item.event.impactExpectation || '-',
+  ].join(' / ');
+}
+
+function evidenceProductLine(item: AiEvidenceDisplayItemView): string {
+  if (!item.product) return '';
+  return [
+    item.product.productStage ? `阶段 ${lifecycleLabel(item.product.productStage)}` : '',
+    item.product.targetAcos ? `目标 ACOS ${formatPercent(item.product.targetAcos * 100)}` : '',
+    item.product.targetTacos ? `目标 TACOS ${formatPercent(item.product.targetTacos * 100)}` : '',
+    item.product.targetNetMargin ? `目标净利率 ${formatPercent(item.product.targetNetMargin * 100)}` : '',
+    item.product.minPrice ? `最低价 ${formatUsd(item.product.minPrice)}` : '',
+  ].filter(Boolean).join(' / ');
+}
+
+function evidenceTimelineLine(item: AiEvidenceDisplayItemView): string {
+  if (!item.timeline) return '';
+  return [
+    item.timeline.inferredStage ? `阶段 ${lifecycleLabel(item.timeline.inferredStage)}` : '',
+    typeof item.timeline.activeDays === 'number' ? `活跃 ${item.timeline.activeDays} 天` : '',
+    item.timeline.firstMetricDate && item.timeline.lastMetricDate ? `${item.timeline.firstMetricDate} 至 ${item.timeline.lastMetricDate}` : '',
+  ].filter(Boolean).join(' / ');
+}
+
+function evidenceTimelineDailyLine(item: AiEvidenceDisplayItemView): string {
+  const recent = item.timeline?.recentDaily || [];
+  if (!recent.length) return '';
+  return recent
+    .slice(-3)
+    .map((day) => `${day.date} ${formatUsd(day.cost || 0)} / ${day.orders || 0} 单`)
+    .join('；');
+}
+
+function evidenceSufficiencyLabel(level?: string): string {
+  if (level === 'high') return '证据充分';
+  if (level === 'medium') return '证据中等';
+  if (level === 'low') return '证据不足';
+  return '无指标证据';
+}
+
+function evidenceSufficiencyTone(level?: string): 'ready' | 'warning' | 'blocked' | 'pending' {
+  if (level === 'high') return 'ready';
+  if (level === 'medium') return 'warning';
+  if (level === 'low' || level === 'none') return 'blocked';
+  return 'pending';
+}
+
+function aiEvidenceDetailIssues(rec: RecommendationView): string[] {
+  if (rec.evidence?.aiStrategySource !== 'ai') return [];
+  const agreement = String(rec.evidence?.decisionAgreement || '');
+  const aiActionParticipated = agreement === 'aligned' || agreement === 'ai_only';
+  if (!aiActionParticipated) return [];
+  const refs = (rec.evidence?.aiEvidenceRefs || []).map((ref) => String(ref || '').trim()).filter(Boolean);
+  if (!refs.length) return ['缺 AI 可回查证据引用'];
+  const detailIds = new Set((rec.evidence?.aiEvidenceDetails || []).map((item) => String(item.evidenceId || '').trim()).filter(Boolean));
+  const missingRefs = refs.filter((ref) => !detailIds.has(ref));
+  return missingRefs.length ? [`AI 证据缺少可展示明细：${missingRefs.slice(0, 3).join('、')}`] : [];
+}
+
+function firstNonEmptyStrings(...values: Array<string[] | undefined>): string[] {
+  for (const value of values) {
+    if (value?.length) return value;
+  }
+  return [];
+}
+
+function normalizeReportSourcePath(filePath: unknown): string {
+  return String(filePath || '').trim().replace(/\\/g, '/').toLowerCase();
+}
+
+function isRealReportSourceFile(filePath: unknown): boolean {
+  return /\.(xlsx|xls|csv)$/i.test(String(filePath || '').trim().split(/[?#]/)[0]);
+}
+
+function hasPositiveSourceRow(value: unknown): boolean {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0;
+}
+
+function aiLifecycleReviewIssues(rec: RecommendationView): string[] {
+  if (rec.evidence?.aiLifecycleStageRequiresReview !== true) return [];
+  const agreement = String(rec.evidence?.decisionAgreement || '');
+  if (agreement !== 'aligned' && agreement !== 'ai_only') return [];
+  return firstNonEmptyStrings(
+    rec.evidence.aiLifecycleStageInvalidReasons,
+    ['AI 阶段判断需要人工复核'],
+  );
+}
+
+function recommendationEvidenceIssues(rec: RecommendationView, currentBatchId?: string, allowedSourceFiles?: string[]): string[] {
   const issues: string[] = [];
   const sourceBatchId = rec.evidence?.batchId;
+  const recSourceFiles = evidenceSourceFiles(rec);
   if (!sourceBatchId) issues.push('缺来源批次');
   if (sourceBatchId && currentBatchId && sourceBatchId !== currentBatchId) issues.push('来源批次不一致');
   if (!rec.evidence?.date) issues.push('缺指标日期');
   if (!rec.currentValue) issues.push('缺当前值');
   if (!rec.recommendedValue) issues.push('缺建议值');
-  if (!evidenceSourceFiles(rec).length) issues.push('缺来源文件');
+  if (!recSourceFiles.length) issues.push('缺来源文件');
+  if (recSourceFiles.length && !recSourceFiles.every(isRealReportSourceFile)) issues.push('来源文件不是真实广告报表');
+  if (!hasPositiveSourceRow(rec.evidence?.sourceRow)) issues.push('缺来源行号');
+  if (recSourceFiles.length && Array.isArray(allowedSourceFiles) && allowedSourceFiles.length === 0) {
+    issues.push('当前批次真实报表文件未加载');
+  }
+  if (recSourceFiles.length && Array.isArray(allowedSourceFiles) && allowedSourceFiles.length > 0) {
+    const allowed = new Set(allowedSourceFiles.map(normalizeReportSourcePath));
+    const allSourcesCurrent = recSourceFiles.every((file) => allowed.has(normalizeReportSourcePath(file)));
+    if (!allSourcesCurrent) issues.push('来源文件不属于当前数据批次真实报表');
+  }
   if (!rec.evidence?.campaignName) issues.push('缺广告活动');
   if (!rec.evidence?.adGroupName) issues.push('缺广告组');
   if (!recommendationObject(rec) || recommendationObject(rec) === '-') issues.push('缺关键词/搜索词/投放对象');
-  return issues;
+  return [...issues, ...aiEvidenceDetailIssues(rec), ...aiLifecycleReviewIssues(rec)];
+}
+
+export function recommendationHasEvidenceBlocker(rec: RecommendationView, currentBatchId?: string, allowedSourceFiles?: string[]): boolean {
+  if (rec.evidence?.aiInsightOnly) return true;
+  if (rec.evidence?.aiInsightInvalidReasons?.length) return true;
+  if (aiEvidenceDetailIssues(rec).length) return true;
+  if (aiLifecycleReviewIssues(rec).length) return true;
+  if (rec.evidence?.aiEvidenceSufficiency && rec.evidence.aiEvidenceSufficiency.canUseForFormalActions === false) return true;
+  return recommendationEvidenceIssues(rec, currentBatchId, allowedSourceFiles).length > 0;
+}
+
+function recommendationRequiresManualReview(rec: RecommendationView, currentBatchId?: string, allowedSourceFiles?: string[]): boolean {
+  if (recommendationHasEvidenceBlocker(rec, currentBatchId, allowedSourceFiles)) return false;
+  if (rec.status === 'needs_review') return true;
+  if (rec.evidence?.decisionRequiresReview || rec.evidence?.quantReviewRequired) return true;
+  if (rec.evidence?.decisionAgreement === 'conflict' || rec.evidence?.decisionAgreement === 'ai_only') return true;
+  return false;
+}
+
+export function recommendationCanEnterFormalApproval(rec: RecommendationView, currentBatchId?: string, allowedSourceFiles?: string[]): boolean {
+  if (rec.status !== 'pending') return false;
+  if (recommendationHasEvidenceBlocker(rec, currentBatchId, allowedSourceFiles)) return false;
+  if (recommendationRequiresManualReview(rec, currentBatchId, allowedSourceFiles)) return false;
+  return true;
+}
+
+export function recommendationNeedsOperatorResolution(rec: RecommendationView, currentBatchId?: string, allowedSourceFiles?: string[]): boolean {
+  return recommendationHasEvidenceBlocker(rec, currentBatchId, allowedSourceFiles) || recommendationRequiresManualReview(rec, currentBatchId, allowedSourceFiles);
+}
+
+export function recommendationWorkflowActionState(input: {
+  recommendationCount: number;
+  formalApprovalCount: number;
+  manualReviewCount: number;
+  evidenceBlockedCount: number;
+  approvedCount?: number;
+}): {
+  approvalDisabled: boolean;
+  readbackDisabled: boolean;
+  approvalLabel: string;
+  readbackLabel: string;
+} {
+  const formalApprovalCount = Math.max(0, Number(input.formalApprovalCount || 0));
+  const approvedCount = Math.max(0, Number(input.approvedCount || 0));
+  if (formalApprovalCount > 0) {
+    return {
+      approvalDisabled: false,
+      readbackDisabled: approvedCount <= 0,
+      approvalLabel: '去审批中心',
+      readbackLabel: approvedCount > 0 ? '去执行回读' : '审批后回读',
+    };
+  }
+  if (input.recommendationCount > 0 && (input.manualReviewCount > 0 || input.evidenceBlockedCount > 0)) {
+    return {
+      approvalDisabled: true,
+      readbackDisabled: true,
+      approvalLabel: '先处理复核/证据',
+      readbackLabel: '等待可审批建议',
+    };
+  }
+  return {
+    approvalDisabled: true,
+    readbackDisabled: true,
+    approvalLabel: '等待建议',
+    readbackLabel: '等待可审批建议',
+  };
 }
 
 function recommendationType(rec: RecommendationView): string {
@@ -208,7 +447,7 @@ function normalizeAiSettings(settings: Record<string, unknown> | null | undefine
     aiBaseUrl: readString(settings?.aiBaseUrl ?? settings?.ai_base_url) || 'https://api.deepseek.com',
     aiModel: readString(settings?.aiModel ?? settings?.ai_model) || 'deepseek-v4-flash',
     aiTemperature: readString(settings?.aiTemperature ?? settings?.ai_temperature) || '0.3',
-    aiMaxTokens: readString(settings?.aiMaxTokens ?? settings?.ai_max_tokens) || '700',
+    aiMaxTokens: readString(settings?.aiMaxTokens ?? settings?.ai_max_tokens) || '8192',
     aiLastTestStatus: readString(settings?.aiLastTestStatus ?? settings?.ai_last_test_status) as AiProviderSettings['aiLastTestStatus'],
     aiLastTestAt: readString(settings?.aiLastTestAt ?? settings?.ai_last_test_at),
     aiLastTestBaseUrl: readString(settings?.aiLastTestBaseUrl ?? settings?.ai_last_test_base_url),
@@ -276,6 +515,7 @@ interface GenerateAiSummary {
   metrics: number;
   candidates: number;
   skipped: number;
+  refreshed: number;
   configured: boolean;
   invoked: boolean;
   aiCount: number;
@@ -286,6 +526,7 @@ interface GenerateAiSummary {
   finalActionCount: number;
   strategy?: {
     source?: 'ai' | 'rule';
+    evidenceSufficiency?: AiEvidenceSufficiencyView;
     lifecycleStage?: string;
     summary?: string;
     mainProblems?: string[];
@@ -303,10 +544,25 @@ interface GenerateAiSummary {
       reviewRequired?: number;
     };
     finalCandidateCount?: number;
+    insightOnlyCandidateCount?: number;
+    aiInsights?: Array<{
+      entityType?: string;
+      entityName?: string;
+      actionType?: string;
+      reason?: string;
+      invalidReasons?: string[];
+      confidence?: number;
+    }>;
     filteredAiOnlyCandidateCount?: number;
     filterReasons?: string[];
     fallbackReason?: string;
   };
+}
+
+type RecommendationListStatus = 'pending' | 'needs_review';
+
+export function recommendationStatusFiltersForPage(): RecommendationListStatus[] {
+  return ['pending', 'needs_review'];
 }
 
 function generateAiTone(summary: GenerateAiSummary): 'success' | 'default' | 'blocked' | 'warning' {
@@ -316,11 +572,13 @@ function generateAiTone(summary: GenerateAiSummary): 'success' | 'default' | 'bl
   return 'warning';
 }
 
-function generateAiStatus(summary: GenerateAiSummary): string {
+export function generateAiStatus(summary: GenerateAiSummary): string {
   if (!summary.configured) return '未配置 AI Key';
   if (!summary.invoked) return 'AI 未调用';
   if (summary.aiCount > 0) return 'AI 已参与';
   if (summary.strategy?.source === 'ai') return 'AI 已参与诊断';
+  if (summary.strategy?.fallbackReason) return `AI 已转为规则兜底：${summary.strategy.fallbackReason}`;
+  if (summary.strategy?.aiInsights?.length) return 'AI 仅作洞察';
   return 'AI 无可用输出';
 }
 
@@ -336,13 +594,13 @@ function generateStrategyThresholdLine(summary: GenerateAiSummary): string {
   return parts.length ? parts.join(' / ') : '暂无动态阈值建议';
 }
 
-function generateDecisionDiagnosticLine(summary: GenerateAiSummary): string {
+export function generateDecisionDiagnosticLine(summary: GenerateAiSummary): string {
   const counts = summary.strategy?.decisionCounts;
   if (!counts) return '暂无 AI/规则合并诊断';
   return [
     `一致 ${Number(counts.aligned || 0)}`,
-    `规则-only ${Number(counts.ruleOnly || 0)}`,
-    `AI-only ${Number(counts.aiOnly || 0)}`,
+    `规则独立 ${Number(counts.ruleOnly || 0)}`,
+    `AI 独立洞察 ${Number(counts.aiOnly || 0)}`,
     `冲突 ${Number(counts.conflict || 0)}`,
     `需复核 ${Number(counts.reviewRequired || 0)}`,
   ].join(' / ');
@@ -383,7 +641,7 @@ function optionalMoney(value: unknown): string {
   return Number.isFinite(numberValue) && numberValue > 0 ? formatUsd(numberValue) : '-';
 }
 
-function emptyRecommendationReason(
+export function emptyRecommendationReason(
   quantReady: boolean,
   lastGenerateResult: GenerateAiSummary | null,
   aiReadiness: AiReadiness,
@@ -402,16 +660,24 @@ function emptyRecommendationReason(
   if (!lastGenerateResult) {
     return {
       title: '尚未生成当前范围建议',
-      detail: '当前列表只显示待审批建议。请先点击“生成优化建议”，系统会用规则和 AI 并行诊断当前范围。',
-      nextStep: aiReadiness.status === 'available' ? '点击生成优化建议。' : '建议先到设置页测试 AI；也可以先用规则 fallback 生成。',
+      detail: '当前列表显示待审批建议和需复核建议。请先点击“生成优化建议”，系统会用规则和 AI 并行诊断当前范围。',
+      nextStep: aiReadiness.status === 'available' ? '点击生成优化建议。' : '建议先到设置页测试 AI；也可以先用规则兜底生成。',
+      tone: 'default',
+    };
+  }
+  if (lastGenerateResult.generated === 0 && lastGenerateResult.refreshed > 0) {
+    return {
+      title: '已刷新历史不完整建议',
+      detail: `${lastGenerateResult.candidates} 条候选中有 ${lastGenerateResult.refreshed} 条旧建议已补齐为当前证据链版本。`,
+      nextStep: '刷新建议池，检查这些建议的来源报表、行号和建议值后再进入审批。',
       tone: 'default',
     };
   }
   if (lastGenerateResult.generated === 0 && lastGenerateResult.skipped > 0) {
     return {
       title: '没有新增建议，候选已存在',
-      detail: `${lastGenerateResult.candidates} 条候选中有 ${lastGenerateResult.skipped} 条重复建议已跳过，待审批列表可能已经被审批、拒绝或过滤。`,
-      nextStep: '刷新待审批列表，或到审批中心查看已处理建议。',
+      detail: `${lastGenerateResult.candidates} 条候选中有 ${lastGenerateResult.skipped} 条重复建议已跳过，建议池可能已经被审批、拒绝或过滤。`,
+      nextStep: '刷新建议池，或到审批中心查看已处理建议。',
       tone: 'warning',
     };
   }
@@ -419,9 +685,22 @@ function emptyRecommendationReason(
     const aiCandidateText = lastGenerateResult.aiCandidateCount > 0
       ? `AI 返回 ${lastGenerateResult.aiCandidateCount} 条候选，但未形成可绑定当前广告对象的待审批动作。`
       : 'AI 没有返回可审批动作候选。';
-    const filterReasons = lastGenerateResult.strategy?.filterReasons?.length
-      ? ` 过滤原因：${lastGenerateResult.strategy.filterReasons.join('；')}`
+    const insightReasons = (lastGenerateResult.strategy?.aiInsights || []).flatMap((item) => item.invalidReasons || []);
+    const filterReasonList = [
+      ...(lastGenerateResult.strategy?.filterReasons || []),
+      ...insightReasons,
+    ].filter(Boolean);
+    const filterReasons = filterReasonList.length
+      ? ` 未进入建议池原因：${Array.from(new Set(filterReasonList)).slice(0, 4).join('；')}`
       : '';
+    if ((lastGenerateResult.strategy?.aiInsights?.length || 0) > 0 || insightReasons.length > 0) {
+      return {
+        title: 'AI 仅生成洞察，未进入建议池',
+        detail: `${lastGenerateResult.reason || 'AI 已完成诊断，但没有形成可审批动作。'} ${aiCandidateText}${filterReasons}`,
+        nextStep: '先补齐证据和对象绑定：确认 source row、campaign/ad group/关键词或投放对象能回查到当前真实报表；必要时补充运营事件和产品配置后重新生成。',
+        tone: 'warning',
+      };
+    }
     return {
       title: '没有可安全绑定的广告动作',
       detail: `${lastGenerateResult.reason || '规则和 AI 完成诊断，但没有找到足够明确、可绑定 campaign/ad group/对象的动作。'} ${aiCandidateText}${filterReasons}`,
@@ -430,8 +709,8 @@ function emptyRecommendationReason(
     };
   }
   return {
-    title: '待审批列表为空',
-    detail: '本次生成可能已经完成但当前筛选状态没有 pending 建议，或建议已被处理。',
+    title: '建议池为空',
+    detail: '本次生成可能已经完成但当前筛选状态没有待审批或需复核建议，或建议已被处理。',
     nextStep: '刷新建议列表，或到审批中心查看已审批/已拒绝记录。',
     tone: 'default',
   };
@@ -447,10 +726,17 @@ export function RecommendationsPage() {
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [lastGenerateResult, setLastGenerateResult] = useState<GenerateAiSummary | null>(null);
-  const quantReady = Boolean(data?.collection.realReportFiles.length && data?.quant.hasImportedMetrics);
-  const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
+  const currentBatchId = resolveRecommendationBatchId({
+    scopeBatchId: scope.batchId,
+    latestBatchId: data?.collection.latestBatch?.id,
+    sourceBatchIds: data?.collection.sourceBatchIds,
+  });
   const importedRowCount = data?.collection.fileAudit?.importedRowCount ?? data?.quant.importedRows ?? 0;
-  const realReportCount = data?.collection.fileAudit?.realReportFileCount ?? data?.collection.realReportFiles.length ?? 0;
+  const realReportCount = realReportCoverageCount(data?.collection);
+  const currentRealReportSourceFiles = useMemo(
+    () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
+    [data?.collection.realReportFiles],
+  );
   const actionableMetricRows = data?.quant.actionableRows ?? 0;
   const diagnosticCount = data?.quant.diagnostics?.length ?? 0;
   const timelineCount = data?.quant.adObjectTimelines?.length ?? 0;
@@ -460,15 +746,19 @@ export function RecommendationsPage() {
       issues.add('正在读取当前业务范围的数据状态');
       return Array.from(issues);
     }
-    if (!data.collection.realReportFiles.length) issues.add('当前范围缺少真实 xlsx/xls/csv 原始报表文件');
-    if ((data.collection.fileAudit?.importedRowCount ?? data.quant.importedRows ?? 0) <= 0) issues.add('当前范围没有写入 DB 的广告指标行');
-    if (data.quant.importedRows > 0 && !data.quant.hasImportedMetrics) issues.add('当前范围没有 keyword/search term/target 等可执行口径指标');
-    for (const blocker of [...(data.collection.blockers || []), ...(data.quant.blockers || [])]) {
-      if (blocker) issues.add(blocker);
-    }
-    if (!currentBatchId) issues.add('当前范围没有可绑定的采集批次');
-    return Array.from(issues);
-  }, [currentBatchId, data]);
+    return buildRecommendationGateIssues({
+      requiredReportCount: 8,
+      realReportFileCount: realReportCount,
+      realReportFilesLength: data.collection.realReportFiles.length,
+      importedRowCount,
+      quantImportedRows: data.quant.importedRows,
+      hasImportedMetrics: data.quant.hasImportedMetrics,
+      currentBatchId,
+      collectionBlockers: data.collection.blockers || [],
+      quantBlockers: data.quant.blockers || [],
+    });
+  }, [currentBatchId, data, importedRowCount, realReportCount]);
+  const quantReady = Boolean(data && recommendationGateIssues.length === 0);
   const operationEvents = data?.operations?.events || [];
   const productContexts = data?.productContext?.products || [];
   const productContextCount = data?.productContext?.productCount ?? productContexts.length;
@@ -482,12 +772,48 @@ export function RecommendationsPage() {
   const alignedCount = recommendations.filter((item) => item.evidence?.decisionAgreement === 'aligned').length;
   const conflictCount = recommendations.filter((item) => item.evidence?.decisionAgreement === 'conflict').length;
   const aiOnlyCount = recommendations.filter((item) => item.evidence?.decisionAgreement === 'ai_only').length;
-  const reviewRequiredCount = recommendations.filter((item) => item.status === 'needs_review' || item.evidence?.decisionRequiresReview || item.evidence?.quantReviewRequired).length;
   const wasteCount = recommendations.filter((item) => item.evidence?.quantStatus === 'waste').length;
   const totalPendingSpend = recommendations.reduce((sum, item) => sum + Number(item.evidence?.cost ?? item.cost ?? 0), 0);
   const highRiskCount = recommendations.filter((item) => ['high', 'APPROVAL', 'HIGH'].includes(String(item.riskLevel))).length;
+  const formalApprovalCount = recommendations.filter((item) => recommendationCanEnterFormalApproval(item, currentBatchId, currentRealReportSourceFiles)).length;
+  const manualReviewCount = recommendations.filter((item) => recommendationRequiresManualReview(item, currentBatchId, currentRealReportSourceFiles)).length;
+  const evidenceBlockedCount = recommendations.filter((item) => recommendationHasEvidenceBlocker(item, currentBatchId, currentRealReportSourceFiles)).length;
+  const operatorResolutionCount = recommendations.filter((item) => recommendationNeedsOperatorResolution(item, currentBatchId, currentRealReportSourceFiles)).length;
+  const workflowActionState = recommendationWorkflowActionState({
+    recommendationCount: recommendations.length,
+    formalApprovalCount,
+    manualReviewCount,
+    evidenceBlockedCount,
+  });
+  const insightOnlyCount = Math.max(
+    recommendations.filter((item) => item.evidence?.aiInsightOnly).length,
+    Number(lastGenerateResult?.strategy?.insightOnlyCandidateCount || 0),
+    Number(lastGenerateResult?.strategy?.filteredAiOnlyCandidateCount || 0),
+    Array.isArray(lastGenerateResult?.strategy?.aiInsights) ? lastGenerateResult.strategy.aiInsights.length : 0,
+  );
+  const insightOnlyReasons = [
+    ...(lastGenerateResult?.strategy?.aiInsights || []).flatMap((item) => item.invalidReasons || []),
+    ...(lastGenerateResult?.strategy?.filterReasons || []),
+  ].filter(Boolean);
   const aiReadiness = aiReadinessFromSettings(aiSettings);
   const emptyReason = emptyRecommendationReason(quantReady, lastGenerateResult, aiReadiness, recommendationGateIssues);
+  const noFormalAiDiagnosis = useMemo(() => {
+    if (!quantReady || recommendations.length || !lastGenerateResult) return null;
+    const strategy = lastGenerateResult.strategy;
+    const aiWasUsed = lastGenerateResult.invoked || strategy?.source === 'ai';
+    if (!aiWasUsed || lastGenerateResult.finalActionCount > 0) return null;
+    const reasons = Array.from(new Set([
+      ...(strategy?.filterReasons || []),
+      ...(strategy?.aiInsights || []).flatMap((item) => item.invalidReasons || []),
+      !lastGenerateResult.aiCandidateCount ? 'AI 没有返回可审批动作候选。' : '',
+    ].filter(Boolean)));
+    return {
+      summary: strategy?.summary || lastGenerateResult.reason || 'AI 已完成诊断，但未返回可进入审批的广告动作。',
+      reasons: reasons.length ? reasons : ['规则和 AI 完成诊断，但没有找到足够明确、可绑定 campaign/ad group/对象的动作。'],
+      insights: strategy?.aiInsights || [],
+      nextStep: '回到广告量化页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。',
+    };
+  }, [lastGenerateResult, quantReady, recommendations.length]);
   const topRecommendation = [...recommendations].sort((a, b) => {
     const riskDelta = Number(['high', 'APPROVAL', 'HIGH'].includes(String(b.riskLevel))) - Number(['high', 'APPROVAL', 'HIGH'].includes(String(a.riskLevel)));
     if (riskDelta !== 0) return riskDelta;
@@ -496,6 +822,10 @@ export function RecommendationsPage() {
   const selectedOperationEvents = selected
     ? operationEvents.filter((event) => eventMatchesRecommendation(event, selected)).slice(0, 4)
     : [];
+  const selectedDecisionSummary = useMemo(
+    () => buildDecisionEvidenceSummary(selected?.evidence),
+    [selected],
+  );
 
   const filter = useMemo(() => ({
     dateFrom: scope.dateFrom,
@@ -504,7 +834,6 @@ export function RecommendationsPage() {
     marketplaceCode: scope.marketplaceCode,
     asin: scope.asin,
     batchId: currentBatchId,
-    status: 'pending',
     limit: 100,
   }), [currentBatchId, scope.asin, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
 
@@ -512,8 +841,17 @@ export function RecommendationsPage() {
     setLoading(true);
     setMessage(null);
     try {
-      const rows = await (window as any).electronAPI?.getRecommendations?.(filter);
-      const nextRows = Array.isArray(rows) ? rows : [];
+      const getRecommendations = (window as any).electronAPI?.getRecommendations;
+      const rowGroups = typeof getRecommendations === 'function'
+        ? await Promise.all(recommendationStatusFiltersForPage().map((status) => getRecommendations({ ...filter, status })))
+        : [];
+      const byId = new Map<number | string, RecommendationView>();
+      for (const rows of rowGroups) {
+        for (const row of Array.isArray(rows) ? rows : []) {
+          byId.set(row.id, row);
+        }
+      }
+      const nextRows = Array.from(byId.values());
       setRecommendations(nextRows);
       setSelected((current) => (current && nextRows.some((row) => row.id === current.id) ? current : null));
     } catch (caught) {
@@ -546,17 +884,20 @@ export function RecommendationsPage() {
       const metrics = Number(result?.metrics ?? 0);
       const candidates = Number(result?.recommendationCandidates ?? generated);
       const skipped = Number(result?.skippedDuplicates ?? 0);
+      const refreshed = Number(result?.refreshedDuplicates ?? 0);
       const aiExplanation = result?.aiExplanation || {};
       const strategyDiagnosis = aiExplanation.strategyDiagnosis && typeof aiExplanation.strategyDiagnosis === 'object'
         ? aiExplanation.strategyDiagnosis
         : undefined;
       const aiReason = aiExplanation.reason ? ` ${aiExplanation.reason}` : '';
       const duplicateNote = skipped > 0 ? ` 另有 ${skipped} 条重复建议已跳过。` : '';
+      const refreshNote = refreshed > 0 ? ` 已刷新 ${refreshed} 条历史不完整建议。` : '';
       setLastGenerateResult({
         generated,
         metrics,
         candidates,
         skipped,
+        refreshed,
         configured: Boolean(aiExplanation.configured),
         invoked: Boolean(aiExplanation.invoked),
         aiCount: Number(aiExplanation.aiCount || 0),
@@ -564,12 +905,12 @@ export function RecommendationsPage() {
         model: typeof aiExplanation.model === 'string' ? aiExplanation.model : undefined,
         reason: typeof aiExplanation.reason === 'string' ? aiExplanation.reason : '本次生成未返回 AI 参与说明。',
         aiCandidateCount: Number(strategyDiagnosis?.aiCandidateCount || 0),
-        finalActionCount: generated + skipped,
+        finalActionCount: generated + skipped + refreshed,
         strategy: strategyDiagnosis,
       });
       const aiCandidateCount = Number(strategyDiagnosis?.aiCandidateCount || 0);
-      const finalActionCount = generated + skipped;
-      setMessage(`已生成 ${generated} 条新建议，规则候选 ${candidates} 条，AI 候选 ${aiCandidateCount} 条，最终可审批动作 ${finalActionCount} 条，处理 ${metrics} 行广告指标。${duplicateNote}${aiReason}`);
+      const finalActionCount = generated + skipped + refreshed;
+      setMessage(`已生成 ${generated} 条新建议，规则候选 ${candidates} 条，AI 候选 ${aiCandidateCount} 条，最终可审批动作 ${finalActionCount} 条，处理 ${metrics} 行广告指标。${refreshNote}${duplicateNote}${aiReason}`);
     } catch (caught) {
       setMessage(errorMessage(caught, '生成优化建议失败'));
     } finally {
@@ -630,7 +971,7 @@ export function RecommendationsPage() {
             <div>
               <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
               <p className="muted-line">
-                真实报表 {data?.collection.realReportFiles.length ?? 0} 个，导入指标 {importedRowCount} 行。
+                真实报表 {realReportCount}/8 类，导入指标 {importedRowCount} 行。
               </p>
             </div>
             <StatusPill tone={quantReady ? 'ready' : 'blocked'}>
@@ -648,7 +989,7 @@ export function RecommendationsPage() {
           <div className="context-summary-grid">
             <div>
               <span>真实广告事实</span>
-              <strong>{realReportCount} 个表格 / {importedRowCount} 行 DB 指标</strong>
+              <strong>{realReportCount}/8 类真实报表 / {importedRowCount} 行 DB 指标</strong>
               <p>只使用当前范围真实 xlsx/xls/csv 导入后的每日广告事实。</p>
             </div>
             <div>
@@ -682,7 +1023,7 @@ export function RecommendationsPage() {
             </div>
             <div>
               <span>安全边界</span>
-              <strong>只生成待审批建议</strong>
+              <strong>生成建议池</strong>
               <p>本页不审批、不执行广告、不写入 Amazon；后续必须逐条审批和回读。</p>
             </div>
           </div>
@@ -723,14 +1064,14 @@ export function RecommendationsPage() {
               <div>
                 <span>生成结果</span>
                 <strong>{lastGenerateResult.generated} 新建议 / {lastGenerateResult.finalActionCount} 可审批动作</strong>
-                <p>规则候选 {lastGenerateResult.candidates} 条，AI 候选 {lastGenerateResult.aiCandidateCount} 条，跳过 {lastGenerateResult.skipped} 条重复建议。</p>
+                <p>规则候选 {lastGenerateResult.candidates} 条，AI 候选 {lastGenerateResult.aiCandidateCount} 条，刷新 {lastGenerateResult.refreshed} 条旧建议，跳过 {lastGenerateResult.skipped} 条重复建议。</p>
               </div>
               <div>
                 <span>解释来源</span>
                 <strong>{lastGenerateResult.aiCount} AI 建议解释 / {lastGenerateResult.ruleCount} 规则解释</strong>
                 <p>
                   {lastGenerateResult.strategy?.source === 'ai'
-                    ? 'AI 已参与产品阶段诊断和动态阈值；AI-only 和冲突建议只进入人工复核。'
+                    ? 'AI 已参与产品阶段诊断和动态阈值；AI 独立洞察和冲突建议只进入人工复核。'
                     : '这里统计建议文本解释来源；AI 不可用时回落到规则解释。'}
                 </p>
               </div>
@@ -750,7 +1091,7 @@ export function RecommendationsPage() {
               </div>
               <div>
                 <span>广告阶段诊断</span>
-                <strong>{lifecycleLabel(lastGenerateResult.strategy?.lifecycleStage)} / {lastGenerateResult.strategy?.source === 'ai' ? 'AI' : '规则 fallback'}</strong>
+                <strong>{lifecycleLabel(lastGenerateResult.strategy?.lifecycleStage)} / {lastGenerateResult.strategy?.source === 'ai' ? 'AI' : '规则兜底'}</strong>
                 <p>{lastGenerateResult.strategy?.summary || '本次没有返回阶段诊断摘要。'}</p>
               </div>
               <div>
@@ -775,21 +1116,60 @@ export function RecommendationsPage() {
           <div className="workflow-strip">
             <button className="workflow-step" onClick={() => generateRecommendations()} disabled={!quantReady || generating || pipelineLoading} type="button">
               <span>1. 生成解释</span>
-              <strong>{recommendations.length ? `${recommendations.length} 条待审批` : '等待生成建议'}</strong>
+              <strong>{recommendations.length ? `${recommendations.length} 条待处理` : '等待生成建议'}</strong>
               <StatusPill tone={quantReady ? 'pending' : 'blocked'}>{quantReady ? '本页完成' : '缺真实数据'}</StatusPill>
             </button>
-            <button className="workflow-step" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'approval' }))} disabled={!recommendations.length} type="button">
+            <button className="workflow-step" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'approval' }))} disabled={workflowActionState.approvalDisabled} type="button">
               <span>2. 审批决策</span>
               <strong>人工批准或拒绝</strong>
-              <StatusPill tone={recommendations.length ? 'pending' : 'blocked'}>去审批中心</StatusPill>
+              <StatusPill tone={workflowActionState.approvalDisabled ? 'blocked' : 'pending'}>{workflowActionState.approvalLabel}</StatusPill>
             </button>
-            <button className="workflow-step" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'readback' }))} disabled={!recommendations.length} type="button">
+            <button className="workflow-step" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'readback' }))} disabled={workflowActionState.readbackDisabled} type="button">
               <span>3. 执行回读</span>
               <strong>记录 before/after/readback</strong>
-              <StatusPill tone={recommendations.length ? 'warning' : 'blocked'}>独立证据页</StatusPill>
+              <StatusPill tone={workflowActionState.readbackDisabled ? 'blocked' : 'warning'}>{workflowActionState.readbackLabel}</StatusPill>
             </button>
           </div>
           <p className="blocked-line">本页不审批、不执行广告、不写入 Amazon；真实动作必须在审批后逐条记录截图和回读证据。</p>
+        </Panel>
+
+        <Panel title="建议决策总览" tone={evidenceBlockedCount > 0 ? 'warning' : 'default'}>
+          <div className="business-split">
+            <div>
+              <div className="business-scope-line">只把证据完整、可绑定当前广告对象的动作送入审批中心。</div>
+              <p className="muted-line">
+                AI 洞察、证据缺失、对象无法绑定、规则与 AI 冲突的动作不会混进普通审批列表；需要先补数据或人工复核。
+              </p>
+            </div>
+            <StatusPill tone={formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending'}>
+              {formalApprovalCount > 0 ? '有正式建议' : recommendations.length ? '需复核' : '暂无建议'}
+            </StatusPill>
+          </div>
+          <div className="context-summary-grid">
+            <div>
+              <span>正式可审批</span>
+              <strong>正式可审批 {formalApprovalCount}</strong>
+              <p>{recommendationFormalApprovalExplanationText()}</p>
+            </div>
+            <div>
+              <span>人工复核</span>
+              <strong>人工复核 {manualReviewCount}</strong>
+              <p>{recommendationReviewExplanationText()}</p>
+            </div>
+            <div>
+              <span>AI 洞察未采纳</span>
+              <strong>AI 洞察未采纳 {insightOnlyCount}</strong>
+              <p>AI 有判断但缺少可回查证据、无法绑定当前广告对象或被合并层过滤时，只作为洞察展示。</p>
+            </div>
+            <div>
+              <span>证据不足阻断</span>
+              <strong>证据不足阻断 {evidenceBlockedCount}</strong>
+              <p>缺批次、指标日期、来源文件、当前/建议值、广告活动、广告组或 AI 可用证据时，不允许审批。</p>
+            </div>
+          </div>
+          {insightOnlyReasons.length > 0 && (
+            <p className="warning-line">未进入建议池原因：{Array.from(new Set(insightOnlyReasons)).slice(0, 3).join('；')}</p>
+          )}
         </Panel>
 
         <Panel title="建议上下文检查">
@@ -800,19 +1180,19 @@ export function RecommendationsPage() {
               <p>建议必须绑定当前真实报表批次；审批时会重新校验。</p>
             </div>
             <div>
-              <span>待审批建议</span>
+              <span>待处理建议</span>
               <strong>{recommendations.length}</strong>
-              <p>{aiStrategyCount} 条 AI 策略诊断，{aiTextCount} 条 AI 文本解释，{ruleOnlyCount} 条纯规则 fallback。</p>
+              <p>{aiStrategyCount} 条 AI 策略诊断，{aiTextCount} 条 AI 文本解释，{ruleOnlyCount} 条纯规则兜底。</p>
             </div>
             <div>
               <span>AI/规则合并</span>
-              <strong>{alignedCount} 一致 / {conflictCount} 冲突 / {aiOnlyCount} AI-only</strong>
-              <p>冲突和 AI-only 建议必须人工复核，不会进入自动执行。</p>
+              <strong>{recommendationMergeSummaryText({ aligned: alignedCount, conflict: conflictCount, aiOnly: aiOnlyCount })}</strong>
+              <p>{recommendationMergeExplanationText()}</p>
             </div>
             <div>
               <span>规则量化</span>
-              <strong>{wasteCount} 浪费 / {reviewRequiredCount} 需复核</strong>
-              <p>复核来源包括规则样本不足、白名单、AI 冲突和高风险动作。</p>
+              <strong>{wasteCount} 浪费 / {operatorResolutionCount} 需处理</strong>
+              <p>需处理包括人工复核 {manualReviewCount} 条和证据阻断 {evidenceBlockedCount} 条；证据不闭合时不会进入普通审批。</p>
             </div>
             <div>
               <span>运营事件</span>
@@ -857,11 +1237,82 @@ export function RecommendationsPage() {
                     <StatusPill tone={lastGenerateResult.candidates > 0 ? 'pending' : 'warning'}>规则候选 {lastGenerateResult.candidates}</StatusPill>
                     <StatusPill tone={lastGenerateResult.aiCandidateCount > 0 ? 'pending' : 'warning'}>AI候选 {lastGenerateResult.aiCandidateCount}</StatusPill>
                     <StatusPill tone={lastGenerateResult.finalActionCount > 0 ? 'ready' : 'warning'}>可审批 {lastGenerateResult.finalActionCount}</StatusPill>
+                    <StatusPill tone={lastGenerateResult.refreshed > 0 ? 'ready' : 'pending'}>刷新 {lastGenerateResult.refreshed}</StatusPill>
                     <StatusPill tone={lastGenerateResult.skipped > 0 ? 'warning' : 'pending'}>跳过 {lastGenerateResult.skipped}</StatusPill>
                   </>
                 )}
               </div>
             </div>
+            {noFormalAiDiagnosis && (
+              <div className="evidence-check-panel">
+                <h3>AI 诊断已完成，但未形成正式建议</h3>
+                <div className="business-scope-line">0 建议原因分布</div>
+                <div className="context-summary-grid compact-summary">
+                  <div>
+                    <span>规则候选</span>
+                    <strong>规则候选 {lastGenerateResult?.candidates ?? 0}</strong>
+                    <p>{(lastGenerateResult?.candidates ?? 0) > 0 ? '规则产生了候选，但后续合并或去重未形成新增建议。' : '规则阈值没有产生可执行广告动作。'}</p>
+                  </div>
+                  <div>
+                    <span>AI 候选</span>
+                    <strong>AI 候选 {lastGenerateResult?.aiCandidateCount ?? 0}</strong>
+                    <p>{(lastGenerateResult?.aiCandidateCount ?? 0) > 0 ? 'AI 返回了候选，但需要确认能绑定当前真实广告对象。' : 'AI 没有返回可审批动作候选。'}</p>
+                  </div>
+                  <div>
+                    <span>洞察未采纳</span>
+                    <strong>洞察未采纳 {insightOnlyCount}</strong>
+                    <p>AI 判断缺少可回查证据或对象绑定时，只作为洞察展示。</p>
+                  </div>
+                  <div>
+                    <span>最终可审批</span>
+                    <strong>最终可审批 {lastGenerateResult?.finalActionCount ?? 0}</strong>
+                    <p>只有证据完整、可绑定当前 campaign/ad group/对象的动作进入审批。</p>
+                  </div>
+                </div>
+                <div className="business-scope-line">下一步处理顺序</div>
+                <ul className="business-list">
+                  <li>先回广告量化页查看风险对象和样本量</li>
+                  <li>补充运营事件或产品配置后重新生成</li>
+                  <li>确认 campaign、ad group、关键词/搜索词/投放对象能绑定真实报表行</li>
+                </ul>
+                <div className="context-summary-grid">
+                  <div>
+                    <span>AI 诊断摘要</span>
+                    <strong>{lifecycleLabel(lastGenerateResult?.strategy?.lifecycleStage)} / {lastGenerateResult?.strategy?.source === 'ai' ? 'AI' : '规则'}</strong>
+                    <p>{noFormalAiDiagnosis.summary}</p>
+                  </div>
+                  <div>
+                    <span>未进入建议池的原因</span>
+                    <strong>{noFormalAiDiagnosis.reasons.length} 条阻断说明</strong>
+                    {noFormalAiDiagnosis.reasons.slice(0, 3).map((reason) => (
+                      <p key={reason}>{reason}</p>
+                    ))}
+                  </div>
+                  <div>
+                    <span>下一步补证据</span>
+                    <strong>复核量化输入</strong>
+                    <p>{noFormalAiDiagnosis.nextStep}</p>
+                  </div>
+                </div>
+                {noFormalAiDiagnosis.insights.length > 0 && (
+                  <>
+                    <div className="business-scope-line">AI 洞察但未采纳</div>
+                    <div className="context-summary-grid compact-summary">
+                      {noFormalAiDiagnosis.insights.slice(0, 4).map((insight, index) => (
+                        <div key={`${insight.entityName || 'insight'}-${index}`}>
+                          <span>{insight.entityType || '对象'} / {insight.actionType || '观察'}</span>
+                          <strong>{insight.entityName || '未绑定对象'}</strong>
+                          <p>{insight.reason || 'AI 返回了洞察，但没有形成可审批动作。'}</p>
+                          {(insight.invalidReasons || []).map((reason) => (
+                            <p key={reason}>未采纳：{reason}</p>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <div className="action-row">
               <button className="primary-button" disabled={!quantReady || generating || pipelineLoading} onClick={generateRecommendations} type="button">
                 {generating ? '生成中...' : '重新生成优化建议'}
@@ -887,8 +1338,8 @@ export function RecommendationsPage() {
             </div>
             <div>
               <span>合并层</span>
-              <strong>{alignedCount} 一致 / {conflictCount} 冲突 / {aiOnlyCount} AI-only</strong>
-              <p>规则和 AI 一致才进入普通审批；冲突、AI-only 和样本不足进入人工复核。</p>
+              <strong>{recommendationMergeSummaryText({ aligned: alignedCount, conflict: conflictCount, aiOnly: aiOnlyCount })}</strong>
+              <p>规则和 AI 一致才进入普通审批；冲突、AI 独立洞察和样本不足进入人工复核。</p>
             </div>
             <div>
               <span>量化输入</span>
@@ -907,7 +1358,7 @@ export function RecommendationsPage() {
           <div className="business-split">
             <div>
               <div className="business-scope-line">
-                {topRecommendation ? `${topRecommendation.actionType} / ${recommendationObject(topRecommendation)}` : '当前范围暂无待审批建议'}
+                {topRecommendation ? `${topRecommendation.actionType} / ${recommendationObject(topRecommendation)}` : '当前范围暂无待处理建议'}
               </div>
               <p className="muted-line">
                 {topRecommendation
@@ -919,7 +1370,7 @@ export function RecommendationsPage() {
             <div className="business-pill-row business-pill-row-right">
               <StatusPill tone={highRiskCount > 0 ? 'warning' : 'pending'}>高风险 {highRiskCount}</StatusPill>
               <StatusPill tone={conflictCount > 0 ? 'blocked' : alignedCount > 0 ? 'ready' : 'pending'}>AI/规则一致 {alignedCount}</StatusPill>
-              <StatusPill tone={reviewRequiredCount > 0 ? 'warning' : 'pending'}>需复核 {reviewRequiredCount}</StatusPill>
+              <StatusPill tone={operatorResolutionCount > 0 ? 'warning' : 'pending'}>需处理 {operatorResolutionCount}</StatusPill>
               <StatusPill tone={aiParticipatedCount > 0 ? 'ready' : 'pending'}>AI参与 {aiParticipatedCount}</StatusPill>
               <StatusPill tone={aiTextCount > 0 ? 'ready' : 'pending'}>AI解释 {aiTextCount}</StatusPill>
               <StatusPill tone={recommendations.length > 0 ? 'ready' : 'pending'}>待处理 {recommendations.length}</StatusPill>
@@ -929,13 +1380,13 @@ export function RecommendationsPage() {
             <button className="secondary-button" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'settings' }))} type="button">
               调整规则阈值
             </button>
-            <button className="secondary-button" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'approval' }))} disabled={!recommendations.length} type="button">
-              去审批中心
+            <button className="secondary-button" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'approval' }))} disabled={workflowActionState.approvalDisabled} type="button">
+              {workflowActionState.approvalLabel}
             </button>
           </div>
         </Panel>
 
-        <Panel title="待审批建议">
+        <Panel title="待处理建议">
           <div className="table-wrap">
             <table className="business-table recommendation-table">
               <thead>
@@ -999,7 +1450,7 @@ export function RecommendationsPage() {
                 ))}
                 {!recommendations.length && (
                   <tr>
-                    <td colSpan={16}>{quantReady ? '当前范围还没有待审批建议。' : '缺少真实数据，本页不生成建议。'}</td>
+                    <td colSpan={16}>{quantReady ? '当前范围还没有待审批或需复核建议。' : '缺少真实数据，本页不生成建议。'}</td>
                   </tr>
                 )}
               </tbody>
@@ -1010,7 +1461,7 @@ export function RecommendationsPage() {
         {selected && (
           <Panel title="建议详情">
             {(() => {
-              const issues = recommendationEvidenceIssues(selected, currentBatchId);
+              const issues = recommendationEvidenceIssues(selected, currentBatchId, currentRealReportSourceFiles);
               const sourceBatchId = selected.evidence?.batchId || '-';
               const batchMatched = Boolean(selected.evidence?.batchId && currentBatchId && selected.evidence.batchId === currentBatchId);
               return (
@@ -1049,6 +1500,37 @@ export function RecommendationsPage() {
                 </div>
               );
             })()}
+            <div className="evidence-check-panel">
+              <div className="business-split">
+                <div>
+                  <h3>AI/规则决策摘要</h3>
+                  <p className="muted-line">{selectedDecisionSummary.headline}</p>
+                </div>
+                <StatusPill tone={selectedDecisionSummary.tone}>{selectedDecisionSummary.statusLabel}</StatusPill>
+              </div>
+              {selectedDecisionSummary.reasons.length > 0 && (
+                <ul className="business-list">
+                  {selectedDecisionSummary.reasons.slice(0, 3).map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              )}
+              <div className="context-summary-grid">
+                <div>
+                  <span>引用证据</span>
+                  <strong>{selected.evidence?.aiEvidenceRefs?.length || 0} 条</strong>
+                  <p>{selectedDecisionSummary.evidenceSummary}</p>
+                </div>
+                <div>
+                  <span>下一步</span>
+                  <strong>{selectedDecisionSummary.nextAction}</strong>
+                  <p>正式动作仍需要人工审批、真实 Ads UI 操作和执行回读。</p>
+                </div>
+              </div>
+              {selectedDecisionSummary.riskWarnings.length > 0 && (
+                <p className="blocked-line">风险：{selectedDecisionSummary.riskWarnings.join('；')}</p>
+              )}
+            </div>
             <div className="detail-grid">
               <div><span>数据范围</span><strong><ScopeText scope={data?.scope || scope} /></strong></div>
               <div><span>数据批次</span><strong>{evidenceBatch(selected, currentBatchId)}</strong></div>
@@ -1067,6 +1549,7 @@ export function RecommendationsPage() {
               <div><span>推荐动作</span><strong>{selected.actionType} {selected.currentValue || '-'} {'→'} {selected.recommendedValue || '-'}</strong></div>
               <div><span>解释来源</span><strong>{sourceLabel(selected)}{selected.evidence?.aiModel ? ` / ${selected.evidence.aiModel}` : ''}</strong></div>
               <div><span>策略诊断</span><strong>{strategyLabel(selected)} / {lifecycleLabel(selected.evidence?.aiLifecycleStage)}</strong></div>
+              <div><span>AI 证据充分性</span><strong>{evidenceSufficiencyLabel(selected.evidence?.aiEvidenceSufficiency?.level)}</strong></div>
               <div><span>AI 动态阈值</span><strong>{thresholdSuggestionSummary(selected)}</strong></div>
               <div><span>规则量化</span><strong>{quantLabel(selected.evidence?.quantStatus)} / {lifecycleLabel(selected.evidence?.quantLifecycleStage)}</strong></div>
               <div><span>规则阈值</span><strong>{ruleQuantThresholdSummary(selected)}</strong></div>
@@ -1084,7 +1567,27 @@ export function RecommendationsPage() {
               <div className="evidence-check-panel">
                 <h3>AI 策略诊断</h3>
                 <p className="muted-line">{selected.evidence.aiStrategySummary}</p>
+                {selected.evidence.aiStrategyFallbackReason && (
+                  <p className="blocked-line">策略诊断兜底：{selected.evidence.aiStrategyFallbackReason}</p>
+                )}
+                {selected.evidence.aiLifecycleStageReason && (
+                  <p className="muted-line">
+                    阶段判断：{lifecycleLabel(selected.evidence.aiLifecycleStage)}。{selected.evidence.aiLifecycleStageReason}
+                  </p>
+                )}
                 <p className="muted-line">动态阈值：{thresholdSuggestionSummary(selected)}</p>
+                {selected.evidence.aiEvidenceSufficiency && (
+                  <div className="business-pill-row">
+                    <StatusPill tone={evidenceSufficiencyTone(selected.evidence.aiEvidenceSufficiency.level)}>{evidenceSufficiencyLabel(selected.evidence.aiEvidenceSufficiency.level)}</StatusPill>
+                    <StatusPill tone={selected.evidence.aiEvidenceSufficiency.canUseForFormalActions ? 'ready' : 'blocked'}>{selected.evidence.aiEvidenceSufficiency.canUseForFormalActions ? '允许正式建议' : '仅洞察'}</StatusPill>
+                    <StatusPill tone="pending">{selected.evidence.aiEvidenceSufficiency.sampleDays} 天</StatusPill>
+                    <StatusPill tone="pending">{selected.evidence.aiEvidenceSufficiency.totalClicks} 点击</StatusPill>
+                    <StatusPill tone="pending">{formatUsd(selected.evidence.aiEvidenceSufficiency.totalCost)}</StatusPill>
+                  </div>
+                )}
+                {Boolean(selected.evidence.aiEvidenceSufficiency?.blockers?.length) && (
+                  <p className="blocked-line">{selected.evidence.aiEvidenceSufficiency?.blockers.join('；')}</p>
+                )}
                 {Boolean(selected.evidence.aiMainProblems?.length) && (
                   <div className="business-pill-row">
                     {selected.evidence.aiMainProblems?.map((problem) => (
@@ -1094,6 +1597,59 @@ export function RecommendationsPage() {
                 )}
               </div>
             )}
+            {(selected.evidence?.aiReasoningSteps?.length || selected.evidence?.aiEvidenceRefs?.length || selected.evidence?.aiLifecycleStageEvidenceRefs?.length) ? (
+              <div className="evidence-check-panel">
+                <h3>AI 判断依据</h3>
+                {Boolean(selected.evidence?.aiReasoningSteps?.length) && (
+                  <ul className="business-list">
+                    {selected.evidence?.aiReasoningSteps?.slice(0, 5).map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ul>
+                )}
+                <div className="context-summary-grid">
+                  <div>
+                    <span>动作引用证据</span>
+                    <strong>{selected.evidence?.aiEvidenceRefs?.length || 0} 条</strong>
+                    <p>{formatEvidenceRefSummary(selected.evidence?.aiEvidenceRefs, selected.evidence?.aiEvidenceDetails)}</p>
+                  </div>
+                  <div>
+                    <span>阶段引用证据</span>
+                    <strong>{selected.evidence?.aiLifecycleStageEvidenceRefs?.length || 0} 条</strong>
+                    <p>{formatEvidenceRefSummary(selected.evidence?.aiLifecycleStageEvidenceRefs, selected.evidence?.aiLifecycleStageEvidenceDetails)}</p>
+                  </div>
+                  <div>
+                    <span>证据来源</span>
+                    <strong>报表 + 运营事件 + 产品配置</strong>
+                    <p>报表文件、来源行、campaign、ad group 和对象指标见上方明细；运营事件和产品目标见下方关联区。</p>
+                  </div>
+                </div>
+                {Boolean(selected.evidence?.aiEvidenceDetails?.length || selected.evidence?.aiLifecycleStageEvidenceDetails?.length) && (
+                  <div className="evidence-check-panel">
+                    <h3>引用证据详情</h3>
+                    <div className="context-summary-grid">
+                      {[
+                        ...(selected.evidence?.aiEvidenceDetails || []),
+                        ...(selected.evidence?.aiLifecycleStageEvidenceDetails || []),
+                      ].filter((item, index, all) => all.findIndex((other) => other.evidenceId === item.evidenceId) === index).slice(0, 6).map((item) => (
+                        <div key={item.evidenceId}>
+                          <span>{evidenceTypeLabel(item.type)}</span>
+                          <strong>{item.label}</strong>
+                          <p>{evidenceContextLine(item)}</p>
+                          <p>{evidenceAdObjectLine(item)}</p>
+                          {item.metrics && <p>{evidenceMetricLine(item)}</p>}
+                          {item.event && <p>{evidenceEventLine(item)}</p>}
+                          {item.product && <p>{evidenceProductLine(item)}</p>}
+                          {item.timeline && <p>{evidenceTimelineLine(item)}</p>}
+                          {item.timeline?.recentDaily?.length ? <p className="muted-line">最近日级：{evidenceTimelineDailyLine(item)}</p> : null}
+                          {item.sourceFile && <code title={item.sourceFile}>{item.sourceFile}</code>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
             <div className="evidence-check-panel">
               <h3>关联运营事件</h3>
               {selectedOperationEvents.length > 0 ? (
@@ -1124,7 +1680,7 @@ export function RecommendationsPage() {
               </div>
             )}
             <p className="muted-line">{selected.evidence?.aiExplanation || selected.reason}</p>
-            {selected.evidence?.aiFallbackReason && <p className="blocked-line">{selected.evidence.aiFallbackReason}</p>}
+            {selected.evidence?.aiActionFallbackReason && <p className="blocked-line">单条解释兜底：{selected.evidence.aiActionFallbackReason}</p>}
             {Boolean(selected.evidence?.decisionReasons?.length) && (
               <ul className="business-list">
                 {selected.evidence?.decisionReasons?.map((reason) => <li key={reason}>{reason}</li>)}

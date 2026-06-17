@@ -27,6 +27,7 @@ export interface ChatOptions {
   temperature?: number;
   maxTokens?: number;
   stop?: string[];
+  responseFormat?: 'json_object' | 'text';
 }
 
 export interface CompleteOptions {
@@ -34,6 +35,7 @@ export interface CompleteOptions {
   temperature?: number;
   maxTokens?: number;
   stop?: string[];
+  responseFormat?: 'json_object' | 'text';
 }
 
 export abstract class BaseAIProvider implements AIProvider {

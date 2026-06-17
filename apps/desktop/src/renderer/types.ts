@@ -212,6 +212,102 @@ export interface BusinessQuantSummary {
 export interface AdStrategyThresholdSuggestionView {
   value: number;
   reason: string;
+  evidenceRefs?: string[];
+  requiresReview?: boolean;
+  reviewReasons?: string[];
+}
+
+export interface AiInsightView {
+  entityType: string;
+  entityName: string;
+  actionType: string;
+  reason: string;
+  reasoningSteps: string[];
+  evidenceRefs: string[];
+  invalidReasons: string[];
+  riskWarnings: string[];
+  confidence: number;
+}
+
+export interface AiEvidencePackSummaryView {
+  total: number;
+  metric: number;
+  timeline: number;
+  operationEvent: number;
+  productContext: number;
+  ruleCandidate: number;
+}
+
+export interface AiEvidenceDisplayItemView {
+  evidenceId: string;
+  type: 'metric' | 'timeline' | 'operation_event' | 'product_context' | 'rule_candidate';
+  label: string;
+  dateRange?: string;
+  batchId?: string;
+  reportType?: string;
+  sourceFile?: string;
+  sourceRow?: number;
+  storeName?: string;
+  marketplaceCode?: string;
+  asin?: string;
+  portfolioName?: string;
+  campaignName?: string;
+  adGroupName?: string;
+  entityType?: string;
+  entityName?: string;
+  metrics?: {
+    impressions?: number;
+    clicks?: number;
+    cost?: number;
+    orders?: number;
+    sales?: number;
+    acos?: number;
+    cpc?: number;
+    cvr?: number;
+    currency: 'USD';
+  };
+  event?: {
+    eventDate?: string;
+    eventType?: string;
+    title?: string;
+    impactExpectation?: string;
+  };
+  product?: {
+    productStage?: string;
+    targetAcos?: number;
+    targetTacos?: number;
+    targetNetMargin?: number;
+    minPrice?: number;
+  };
+  timeline?: {
+    activeDays?: number;
+    firstMetricDate?: string;
+    lastMetricDate?: string;
+    inferredStage?: string;
+    stageReasons?: string[];
+    recentDaily?: Array<{
+      date: string;
+      clicks?: number;
+      cost?: number;
+      orders?: number;
+      sales?: number;
+      acos?: number;
+      cvr?: number;
+      currency: 'USD';
+    }>;
+  };
+}
+
+export interface AiEvidenceSufficiencyView {
+  level: 'none' | 'low' | 'medium' | 'high';
+  metricEvidenceCount: number;
+  sampleDays: number;
+  totalClicks: number;
+  totalCost: number;
+  totalOrders: number;
+  canUseForFormalActions: boolean;
+  blockers: string[];
+  warnings: string[];
 }
 
 export interface AdStrategyDiagnosisView {
@@ -222,8 +318,13 @@ export interface AdStrategyDiagnosisView {
   ruleCandidateCount: number;
   summary: {
     source: 'ai' | 'rule';
+    evidenceSufficiency?: AiEvidenceSufficiencyView;
     lifecycleStage: string;
     summary: string;
+    lifecycleStageReason: string;
+    lifecycleStageEvidenceRefs: string[];
+    lifecycleStageRequiresReview?: boolean;
+    lifecycleStageInvalidReasons?: string[];
     mainProblems: string[];
     riskWarnings: string[];
     thresholdSuggestions: {
@@ -233,10 +334,40 @@ export interface AdStrategyDiagnosisView {
       minSpend: AdStrategyThresholdSuggestionView;
     };
     aiCandidateCount: number;
+    insightOnlyCandidateCount?: number;
+    aiInsights?: AiInsightView[];
+    evidencePackSummary?: AiEvidencePackSummaryView;
+    evidencePackPreview?: AiEvidenceDisplayItemView[];
     operationEventCount: number;
     productContextCount: number;
     fallbackReason?: string;
   };
+}
+
+export interface AiDiagnosisRunView {
+  id: number;
+  promptKey: string;
+  promptVersion: string;
+  model: string;
+  scope: Partial<OperationScope>;
+  evidencePackSummary?: AiEvidencePackSummaryView | null;
+  evidencePackPreview?: AiEvidenceDisplayItemView[];
+  diagnosis?: {
+    source?: 'ai' | 'rule';
+    evidenceSufficiency?: AiEvidenceSufficiencyView;
+    lifecycleStage?: string;
+    lifecycleStageReason?: string;
+    lifecycleStageEvidenceRefs?: string[];
+    lifecycleStageRequiresReview?: boolean;
+    lifecycleStageInvalidReasons?: string[];
+    summary?: string;
+    aiFallbackReason?: string;
+  } | null;
+  insights: AiInsightView[];
+  formalRecommendationCount: number;
+  success?: boolean;
+  errorMessage?: string;
+  createdAt: string;
 }
 
 export interface ProductStrategyContextView {
@@ -261,6 +392,52 @@ export interface ProductStrategyContextView {
   };
 }
 
+export interface ProductHistoryDailyView {
+  date: string;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  orders: number;
+  sales: number;
+  acos: number;
+  cpc: number;
+  cvr: number;
+  currency: 'USD';
+}
+
+export interface ProductHistoryLedgerView {
+  asin: string;
+  storeName: string;
+  marketplaceCode: string;
+  dateFrom: string;
+  dateTo: string;
+  activeDays: number;
+  firstMetricDate?: string;
+  lastMetricDate?: string;
+  inferredStage: string;
+  stageReasons: string[];
+  daily: ProductHistoryDailyView[];
+  totals: {
+    impressions: number;
+    clicks: number;
+    cost: number;
+    orders: number;
+    sales: number;
+    acos: number;
+    cpc: number;
+    cvr: number;
+    currency: 'USD';
+  };
+  events: OperationEventView[];
+  product?: {
+    productStage?: string;
+    targetAcos?: number;
+    targetTacos?: number;
+    targetNetMargin?: number;
+    minPrice?: number;
+  };
+}
+
 export interface BusinessDataPipeline {
   scope: OperationScope;
   generatedAt: string;
@@ -274,6 +451,11 @@ export interface BusinessDataPipeline {
   productContext?: {
     products: ProductStrategyContextView[];
     productCount: number;
+    notes: string[];
+  };
+  productHistory?: {
+    ledgers: ProductHistoryLedgerView[];
+    ledgerCount: number;
     notes: string[];
   };
 }
@@ -320,7 +502,38 @@ export interface DeliveryReadinessView {
   };
   missing?: string[];
   actionItems?: string[];
+  recommendationReviewReasons?: string[];
+  reviewBlockers?: string[];
+  deliveryReviewReasons?: string[];
+  finalReadinessBlockers?: string[];
   message?: string;
+}
+
+export interface DeliveryEvidenceStatusView {
+  listing: {
+    readReady: boolean;
+    draftReady: boolean;
+    contentCount: number;
+    fullContentCount: number;
+    draftCount: number;
+    aiDraftCount: number;
+    ruleFallbackDraftCount: number;
+    latestAsin?: string;
+    latestUpdatedAt?: string;
+  };
+  readback: {
+    verifiedCount: number;
+    latestStatus?: string;
+    latestJsonPath?: string;
+    latestUpdatedAt?: string;
+  };
+  package?: {
+    installerAvailable: boolean;
+    installerPath?: string;
+    portablePath?: string;
+    sha256?: string;
+    latestBuiltAt?: string;
+  };
 }
 
 export interface StoragePathsView {
@@ -347,12 +560,26 @@ export interface RecommendationEvidence {
   aiRiskWarnings?: string[];
   aiAlternativeSuggestions?: string[];
   aiFallbackReason?: string;
+  aiStrategyFallbackReason?: string;
+  aiActionFallbackReason?: string;
   aiModel?: string;
   aiStrategySource?: 'ai' | 'rule';
+  aiEvidenceSufficiency?: AiEvidenceSufficiencyView;
   aiLifecycleStage?: string;
+  aiLifecycleStageReason?: string;
+  aiLifecycleStageEvidenceRefs?: string[];
+  aiLifecycleStageRequiresReview?: boolean;
+  aiLifecycleStageInvalidReasons?: string[];
+  aiLifecycleStageEvidenceDetails?: AiEvidenceDisplayItemView[];
   aiStrategySummary?: string;
   aiMainProblems?: string[];
-  aiThresholdSuggestions?: Record<string, { value: number; reason: string }>;
+  aiThresholdSuggestions?: Record<string, { value: number; reason: string; evidenceRefs?: string[]; requiresReview?: boolean; reviewReasons?: string[] }>;
+  aiThresholdEvidenceRefs?: Record<string, string[]>;
+  aiEvidenceRefs?: string[];
+  aiEvidenceDetails?: AiEvidenceDisplayItemView[];
+  aiReasoningSteps?: string[];
+  aiInsightOnly?: boolean;
+  aiInsightInvalidReasons?: string[];
   aiStrategyRiskWarnings?: string[];
   decisionAgreement?: 'aligned' | 'rule_only' | 'ai_only' | 'conflict';
   decisionSource?: 'rule' | 'ai' | 'rule_ai';
@@ -375,6 +602,7 @@ export interface RecommendationEvidence {
   batchId?: string;
   sourceFiles?: string[];
   sourceRow?: number;
+  currency?: 'USD';
   approvalDecision?: {
     decision?: 'approved' | 'rejected';
     approvedBy?: string;
@@ -383,6 +611,9 @@ export interface RecommendationEvidence {
     note?: string;
     batchId?: string;
     sourceBatchId?: string;
+    metricDate?: string;
+    sourceRow?: number;
+    sourceFiles?: string[];
     scope?: {
       dateFrom?: string;
       dateTo?: string;
@@ -504,11 +735,27 @@ export interface AiProviderSettings {
   aiModel: string;
   aiTemperature: string;
   aiMaxTokens: string;
+  aiOutputLanguage?: string;
+  aiPersona?: string;
   aiLastTestStatus?: 'available' | 'failed' | '';
   aiLastTestAt?: string;
   aiLastTestBaseUrl?: string;
   aiLastTestModel?: string;
   aiLastTestMessage?: string;
+}
+
+export interface AiCallLogView {
+  id: number;
+  promptKey: string;
+  promptVersion: string;
+  model: string;
+  inputHash: string;
+  outputJson: string;
+  success: boolean;
+  errorMessage?: string;
+  schemaVersion?: string;
+  evidencePackSummary?: AiEvidencePackSummaryView | Record<string, unknown> | null;
+  createdAt: string;
 }
 
 export interface SettingsRuleConfig {

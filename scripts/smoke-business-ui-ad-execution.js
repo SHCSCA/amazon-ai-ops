@@ -105,6 +105,28 @@ async function main() {
     });
 
   await page.addInitScript(() => {
+    const fullReportFiles = [
+      ['campaign', '广告活动报告', 'campaign.xlsx'],
+      ['ad_group', '广告组报告', 'ad_group.xlsx'],
+      ['placement', '广告位报告', 'placement.xlsx'],
+      ['advertised_product', '广告（推广的商品）报告', 'advertised_product.xlsx'],
+      ['auto_targeting', '自动投放报告', 'auto_targeting.xlsx'],
+      ['keyword', '关键词报告', 'keyword.xlsx'],
+      ['product_targeting', '商品投放报告', 'product_targeting.xlsx'],
+      ['user_search_term', '用户搜索词报告', 'source_user_search_term.xlsx'],
+    ].map(([reportType, displayName, fileName], index) => ({
+      id: `f${index + 1}`,
+      reportType,
+      displayName,
+      status: 'downloaded',
+      filePath: `C:/reports/${fileName}`,
+      folderPath: 'C:/reports',
+      fileName,
+      fileSizeBytes: 2048 + index,
+      importedRows: 3,
+      updatedAt: '2026-06-12T10:00:00.000Z',
+    }));
+
     const recommendationBase = {
       id: 101,
       actionType: 'lower_bid',
@@ -112,7 +134,7 @@ async function main() {
       entityName: 'tight match target',
       currentValue: '1.20',
       recommendedValue: '1.08',
-      reason: 'High ACOS with spend and no efficient orders.',
+      reason: '高 ACOS 且已有花费，当前订单效率不足。',
       acos: 0.72,
       clicks: 32,
       cost: 42.18,
@@ -127,23 +149,107 @@ async function main() {
         asin: 'B0TESTASIN',
         targeting: 'tight match target',
         explanationSource: 'ai',
-        aiExplanation: 'DeepSeek explanation with scope and risk notes.',
-        aiRiskWarnings: ['Keep approval and readback before any live operation.'],
+        aiExplanation: 'DeepSeek 已结合当前范围和风险边界给出解释。',
+        aiRiskWarnings: ['任何真实广告动作前都要保留审批和回读证据。'],
         aiModel: 'deepseek-chat',
         aiStrategySource: 'ai',
         aiLifecycleStage: 'keyword_exploration',
-        aiStrategySummary: 'Coupon context keeps this product in keyword exploration while tightening no-order spend.',
+        aiLifecycleStageReason: '搜索词花费与 Coupon 事件显示仍处于探索期。',
+        aiLifecycleStageEvidenceRefs: ['metric:batch_mock_ready:search_term:2026-06-12:target:abc'],
+        aiLifecycleStageEvidenceDetails: [{
+          evidenceId: 'metric:batch_mock_ready:search_term:2026-06-12:target:abc',
+          type: 'metric',
+          label: 'tight match target / 2026-06-12',
+          dateRange: '2026-06-12~2026-06-12',
+          batchId: 'batch_mock_ready',
+          reportType: 'user_search_term',
+          sourceFile: 'C:/reports/source_user_search_term.xlsx',
+          sourceRow: 12,
+          storeName: 'FT-US-US',
+          marketplaceCode: 'US',
+          asin: 'B0TESTASIN',
+          campaignName: 'D6-auto-test',
+          adGroupName: 'D6-ad-group',
+          entityType: 'target',
+          entityName: 'tight match target',
+          metrics: {
+            impressions: 1200,
+            clicks: 32,
+            cost: 42.18,
+            orders: 1,
+            sales: 58.58,
+            acos: 0.72,
+            cpc: 1.32,
+            cvr: 0.031,
+            currency: 'USD',
+          },
+        }],
+        aiStrategySummary: 'Coupon 背景显示该产品仍处于测词阶段，同时需要收紧无订单花费。',
         aiMainProblems: ['no_order_spend', 'high_acos'],
         aiThresholdSuggestions: {
-          targetAcos: { value: 0.35, reason: 'Exploration tolerance.' },
-          highAcosThreshold: { value: 0.55, reason: 'Coupon context.' },
-          noOrderClickThreshold: { value: 18, reason: 'Enough click data.' },
-          minSpend: { value: 15, reason: 'Avoid small samples.' },
+          targetAcos: { value: 0.35, reason: '测词期允许更高容忍度。' },
+          highAcosThreshold: { value: 0.55, reason: 'Coupon 期间临时放宽高 ACOS 边界。' },
+          noOrderClickThreshold: { value: 18, reason: '当前点击样本已经足够。' },
+          minSpend: { value: 15, reason: '避免基于过小样本动作。' },
         },
-        aiStrategyRiskWarnings: ['Do not negate core terms blindly.'],
+        aiStrategyRiskWarnings: ['不要盲目否定核心词。'],
+        aiEvidenceRefs: [
+          'metric:batch_mock_ready:search_term:2026-06-12:target:abc',
+          'event:301',
+        ],
+        aiReasoningSteps: [
+          '报表指标显示 tight match target 在当前范围 ACOS 72.0%。',
+          'Coupon 事件说明当前仍处于促销探索窗口。',
+        ],
+        aiEvidenceDetails: [{
+          evidenceId: 'metric:batch_mock_ready:search_term:2026-06-12:target:abc',
+          type: 'metric',
+          label: 'tight match target / 2026-06-12',
+          dateRange: '2026-06-12~2026-06-12',
+          batchId: 'batch_mock_ready',
+          reportType: 'user_search_term',
+          sourceFile: 'C:/reports/source_user_search_term.xlsx',
+          sourceRow: 12,
+          storeName: 'FT-US-US',
+          marketplaceCode: 'US',
+          asin: 'B0TESTASIN',
+          campaignName: 'D6-auto-test',
+          adGroupName: 'D6-ad-group',
+          entityType: 'target',
+          entityName: 'tight match target',
+          metrics: {
+            impressions: 1200,
+            clicks: 32,
+            cost: 42.18,
+            orders: 1,
+            sales: 58.58,
+            acos: 0.72,
+            cpc: 1.32,
+            cvr: 0.031,
+            currency: 'USD',
+          },
+        }, {
+          evidenceId: 'event:301',
+          type: 'operation_event',
+          label: '10% Coupon started',
+          dateRange: '2026-06-10~2026-06-10',
+          storeName: 'FT-US-US',
+          marketplaceCode: 'US',
+          asin: 'B0TESTASIN',
+          campaignName: 'D6-auto-test',
+          adGroupName: 'D6-ad-group',
+          entityType: 'operation_event',
+          entityName: '10% Coupon started',
+          event: {
+            eventDate: '2026-06-10',
+            eventType: 'coupon',
+            title: '10% Coupon started',
+            impactExpectation: 'conversion_up',
+          },
+        }],
         decisionAgreement: 'aligned',
         decisionSource: 'rule_ai',
-        decisionReasons: ['Rule: High ACOS with spend.', 'AI: Coupon did not convert enough traffic.'],
+        decisionReasons: ['规则：高 ACOS 且已有花费。', 'AI：Coupon 未带来足够转化。'],
         decisionRiskWarnings: [],
         decisionRequiresReview: false,
         operationEventCount: 1,
@@ -180,7 +286,7 @@ async function main() {
       ...recommendationBase,
       id: 102,
       status: 'needs_review',
-      reason: 'AI-only recommendation requires strategy review.',
+      reason: 'AI 独立洞察需要策略复核。',
       evidence: {
         ...recommendationBase.evidence,
         decisionAgreement: 'ai_only',
@@ -188,6 +294,41 @@ async function main() {
         decisionRequiresReview: true,
         quantReviewRequired: true,
         quantReasons: ['规则量化要求人工复核，不能直接进入执行。'],
+      },
+    };
+    const aiNoEvidenceRecommendation = {
+      ...recommendationBase,
+      id: 103,
+      status: 'pending',
+      reason: '缺少可回查证据引用的 AI 建议不能进入审批。',
+      evidence: {
+        ...recommendationBase.evidence,
+        aiEvidenceRefs: [],
+        aiEvidenceDetails: [],
+        aiInsightInvalidReasons: ['AI 动作缺少可回查证据引用'],
+        decisionAgreement: 'aligned',
+        decisionSource: 'rule_ai',
+        decisionRequiresReview: false,
+        quantReviewRequired: false,
+      },
+    };
+    const aiExplanationOnlyRecommendation = {
+      ...recommendationBase,
+      id: 104,
+      status: 'pending',
+      reason: '规则建议在证据完整时可审批，AI 只提供解释。',
+      evidence: {
+        ...recommendationBase.evidence,
+        targeting: 'ai explanation only target',
+        aiStrategySource: 'rule',
+        explanationSource: 'ai',
+        aiEvidenceRefs: [],
+        aiEvidenceDetails: [],
+        aiInsightInvalidReasons: [],
+        decisionAgreement: 'rule_only',
+        decisionSource: 'rule',
+        decisionRequiresReview: false,
+        quantReviewRequired: false,
       },
     };
     const readyPipeline = {
@@ -212,13 +353,19 @@ async function main() {
           storeName: 'FT-US-US',
           marketplaceCode: 'US',
           downloadDir: 'C:/reports',
-          totalFileRecords: 1,
-          realReportFileCount: 1,
+          totalFileRecords: 8,
+          realReportFileCount: 8,
           importedRowCount: 24,
           missingReportLabels: [],
         }],
-        reportOptions: [],
-        realReportFiles: [{ id: 'f1', displayName: '关键词报告', filePath: 'C:/reports/keyword.xlsx' }],
+        reportOptions: fullReportFiles.map((file) => ({
+          type: file.reportType,
+          label: file.displayName,
+          status: 'ready',
+          realFileAvailable: true,
+          importedRows: file.importedRows,
+        })),
+        realReportFiles: fullReportFiles,
         evidencePaths: [],
         blockers: [],
         audit: { databaseReady: true, acceptedExtensions: ['.xlsx'], rejectedEvidenceExtensions: ['.json'], notes: [] },
@@ -277,7 +424,7 @@ async function main() {
       },
       operations: {
         eventCount: 1,
-        notes: ['Coupon context should enter AI diagnosis.'],
+        notes: ['Coupon 背景应进入 AI 诊断。'],
         events: [{
           id: 301,
           eventDate: '2026-06-10',
@@ -396,10 +543,27 @@ async function main() {
           }];
         }
         if (filter?.status === 'rejected') return [];
+        if (window.__mockAiNoEvidenceRecommendation) {
+          return [{
+            ...aiNoEvidenceRecommendation,
+            status: 'pending',
+            evidence: { ...aiNoEvidenceRecommendation.evidence, batchId: filter?.batchId || aiNoEvidenceRecommendation.evidence.batchId },
+          }];
+        }
+        if (window.__mockAiExplanationOnlyRecommendation) {
+          return [{
+            ...aiExplanationOnlyRecommendation,
+            status: 'pending',
+            evidence: { ...aiExplanationOnlyRecommendation.evidence, batchId: filter?.batchId || aiExplanationOnlyRecommendation.evidence.batchId },
+          }];
+        }
         return [{ ...scopedRecommendation, status: 'pending' }];
       },
       generateRecommendations: async (params) => {
         window.__businessUiActionLog.push({ type: 'generateRecommendations', params });
+        if (window.__mockScopedMetricsMissing) {
+          throw new Error('生成优化建议被阻断：当前范围缺少可绑定的日级广告指标。请回到数据导入与校验页，确认真实报表 source_file、批次、店铺、站点和日期范围与 DB 指标一致。');
+        }
         if (window.__mockNoRecommendationCandidates) {
           return {
             generated: 0,
@@ -416,14 +580,14 @@ async function main() {
               strategyDiagnosis: {
                 source: 'ai',
                 lifecycleStage: 'stable_conversion',
-                summary: 'Current performance is stable; no immediate bid or negative keyword action is safe.',
+                summary: '当前表现相对稳定，暂时没有足够证据支持调整出价或新增否定词。',
                 mainProblems: [],
-                riskWarnings: ['No safe action candidate.'],
+                riskWarnings: ['当前没有可安全执行的广告动作候选。'],
                 thresholdSuggestions: {
-                  targetAcos: { value: 0.25, reason: 'Keep current target.' },
-                  highAcosThreshold: { value: 0.5, reason: 'Keep current risk boundary.' },
-                  noOrderClickThreshold: { value: 30, reason: 'Keep current click threshold.' },
-                  minSpend: { value: 10, reason: 'Keep current minimum spend.' },
+                  targetAcos: { value: 0.25, reason: '保持当前目标 ACOS，等待更多稳定样本。' },
+                  highAcosThreshold: { value: 0.5, reason: '保持当前风险边界，避免过早调整。' },
+                  noOrderClickThreshold: { value: 30, reason: '保持当前点击阈值，继续观察无订单样本。' },
+                  minSpend: { value: 10, reason: '保持当前最低花费门槛。' },
                 },
                 aiCandidateCount: 0,
                 operationEventCount: 1,
@@ -432,6 +596,15 @@ async function main() {
                 finalCandidateCount: 0,
                 filteredAiOnlyCandidateCount: 0,
                 filterReasons: ['规则和 AI 都没有返回可合并的候选动作。'],
+                insightOnlyCandidateCount: 1,
+                aiInsights: [{
+                  entityType: 'search_term',
+                  entityName: 'unbound no-candidate insight',
+                  actionType: 'observe',
+                  reason: 'AI 认为当前对象应继续观察，但缺少可执行动作和可绑定广告对象。',
+                  invalidReasons: ['没有可绑定到当前真实指标的 campaign/ad group/对象。'],
+                  confidence: 0.68,
+                }],
               },
             },
           };
@@ -447,19 +620,19 @@ async function main() {
               invoked: false,
               aiCount: 0,
               ruleCount: 1,
-              reason: '未配置 AI Key，建议解释使用规则引擎 fallback。',
+              reason: '未配置 AI Key，建议解释使用规则引擎兜底。',
               model: 'deepseek-chat',
               strategyDiagnosis: {
                 source: 'rule',
                 lifecycleStage: 'unknown',
-                summary: '未配置 AI Key，广告阶段诊断使用规则 fallback。',
+                summary: '未配置 AI Key，广告阶段诊断使用规则兜底。',
                 mainProblems: [],
                 riskWarnings: ['AI unavailable'],
                 thresholdSuggestions: {
-                  targetAcos: { value: 0.25, reason: 'Current rule configuration fallback.' },
-                  highAcosThreshold: { value: 0.5, reason: 'Current rule configuration fallback.' },
-                  noOrderClickThreshold: { value: 30, reason: 'Current rule configuration fallback.' },
-                  minSpend: { value: 10, reason: 'Current rule configuration fallback.' },
+                  targetAcos: { value: 0.25, reason: '当前规则配置兜底。' },
+                  highAcosThreshold: { value: 0.5, reason: '当前规则配置兜底。' },
+                  noOrderClickThreshold: { value: 30, reason: '当前规则配置兜底。' },
+                  minSpend: { value: 10, reason: '当前规则配置兜底。' },
                 },
                 aiCandidateCount: 0,
                 operationEventCount: 1,
@@ -467,8 +640,8 @@ async function main() {
                 decisionCounts: { total: 1, aligned: 0, ruleOnly: 1, aiOnly: 0, conflict: 0, reviewRequired: 0 },
                 finalCandidateCount: 1,
                 filteredAiOnlyCandidateCount: 0,
-                filterReasons: ['1 条规则-only 建议缺少 AI 确认，仍需按证据完整性审批。'],
-                fallbackReason: '未配置 AI Key，广告阶段诊断使用规则 fallback',
+                filterReasons: ['1 条规则独立建议缺少 AI 确认，仍需按证据完整性审批。'],
+                fallbackReason: '未配置 AI Key，广告阶段诊断使用规则兜底',
               },
             },
           };
@@ -484,19 +657,19 @@ async function main() {
               invoked: true,
               aiCount: 0,
               ruleCount: 1,
-              reason: '已尝试调用 AI，但本次没有可用 AI 输出，建议已回落到规则引擎。原因：AI provider timeout',
+              reason: '已尝试调用 AI，但本次没有可用 AI 输出，建议已回落到规则引擎。原因：AI 服务超时',
               model: 'deepseek-chat',
               strategyDiagnosis: {
                 source: 'rule',
                 lifecycleStage: 'unknown',
-                summary: 'AI diagnosis unavailable; using deterministic rules only.',
+                summary: 'AI 诊断不可用，当前只使用确定性规则。',
                 mainProblems: [],
-                riskWarnings: ['AI provider timeout'],
+                riskWarnings: ['AI 服务超时'],
                 thresholdSuggestions: {
-                  targetAcos: { value: 0.25, reason: 'Current rule configuration fallback.' },
-                  highAcosThreshold: { value: 0.5, reason: 'Current rule configuration fallback.' },
-                  noOrderClickThreshold: { value: 30, reason: 'Current rule configuration fallback.' },
-                  minSpend: { value: 10, reason: 'Current rule configuration fallback.' },
+                  targetAcos: { value: 0.25, reason: '当前规则配置兜底。' },
+                  highAcosThreshold: { value: 0.5, reason: '当前规则配置兜底。' },
+                  noOrderClickThreshold: { value: 30, reason: '当前规则配置兜底。' },
+                  minSpend: { value: 10, reason: '当前规则配置兜底。' },
                 },
                 aiCandidateCount: 0,
                 operationEventCount: 1,
@@ -504,8 +677,8 @@ async function main() {
                 decisionCounts: { total: 1, aligned: 0, ruleOnly: 1, aiOnly: 0, conflict: 0, reviewRequired: 0 },
                 finalCandidateCount: 1,
                 filteredAiOnlyCandidateCount: 0,
-                filterReasons: ['1 条规则-only 建议缺少 AI 确认，仍需按证据完整性审批。'],
-                fallbackReason: 'AI provider timeout',
+                filterReasons: ['1 条规则独立建议缺少 AI 确认，仍需按证据完整性审批。'],
+                fallbackReason: 'AI 服务超时',
               },
             },
           };
@@ -525,14 +698,14 @@ async function main() {
             strategyDiagnosis: {
               source: 'ai',
               lifecycleStage: 'keyword_exploration',
-              summary: 'Coupon context keeps this product in keyword exploration while tightening no-order spend.',
+              summary: 'Coupon 背景显示该产品仍处于测词阶段，同时需要收紧无订单花费。',
               mainProblems: ['no_order_spend', 'high_acos'],
-              riskWarnings: ['Keep approval and readback before any live operation.'],
+              riskWarnings: ['任何真实广告动作前都要保留审批和回读证据。'],
               thresholdSuggestions: {
-                targetAcos: { value: 0.35, reason: 'Exploration tolerance.' },
-                highAcosThreshold: { value: 0.55, reason: 'Coupon context.' },
-                noOrderClickThreshold: { value: 18, reason: 'Enough click data.' },
-                minSpend: { value: 15, reason: 'Avoid small samples.' },
+                targetAcos: { value: 0.35, reason: '测词期允许更高容忍度。' },
+                highAcosThreshold: { value: 0.55, reason: 'Coupon 期间临时放宽高 ACOS 边界。' },
+                noOrderClickThreshold: { value: 18, reason: '当前点击样本已经足够。' },
+                minSpend: { value: 15, reason: '避免基于过小样本动作。' },
               },
               aiCandidateCount: 1,
               operationEventCount: 1,
@@ -579,7 +752,72 @@ async function main() {
           readyForVerifier,
         };
       },
-      openReportPath: async () => ({ success: true }),
+      prepareAdReadbackSession: async (input) => {
+        window.__businessUiActionLog.push({ type: 'prepareAdReadbackSession', input });
+        return {
+          sessionDir: 'C:/evidence/readback-session',
+          sourceCandidatePath: input?.sourcePath,
+          passEvidencePath: 'C:/evidence/readback-session/real-ad-execution-readback-pass.json',
+          approvalsDir: 'C:/evidence/readback-session/approvals',
+          beforeScreenshotsDir: 'C:/evidence/readback-session/screenshots/before',
+          afterScreenshotsDir: 'C:/evidence/readback-session/screenshots/after',
+          readbackScreenshotsDir: 'C:/evidence/readback-session/screenshots/readback',
+          checklistPath: 'C:/evidence/readback-session/operator-checklist.md',
+          sessionInputPath: 'C:/evidence/readback-session/session-input.json',
+          sessionInputGuidePath: 'C:/evidence/readback-session/session-input-guide.md',
+          fillScriptPath: 'C:/evidence/readback-session/fill-ad-readback.ps1',
+          sourceReportsCopied: false,
+        };
+      },
+      verifyAdReadbackSession: async (input) => {
+        window.__businessUiActionLog.push({ type: 'verifyAdReadbackSession', input });
+        return {
+          sessionDir: input?.sessionDir,
+          ready: true,
+          captureReady: false,
+          checks: [
+            { label: 'source candidate is NEEDS_WORK', passed: true },
+            { label: 'raw report files are not copied into session', passed: true },
+          ],
+          issues: [],
+          unresolvedFields: ['approverName', 'beforeValue', 'afterValue', 'readbackEvidencePath'],
+          captureMissingFields: [
+            { field: 'approverName', label: '审批人', group: '审批' },
+            { field: 'beforeValue', label: '执行前 Ads UI live bid', group: '执行前' },
+            { field: 'afterValue', label: '执行后 Ads UI live bid', group: '执行后' },
+            { field: 'readbackEvidencePath', label: '刷新回读截图文件', group: '回读' },
+          ],
+          captureIssues: ['session-input.json 仍有未填写项：审批/审批人、执行前/执行前 Ads UI live bid、执行后/执行后 Ads UI live bid、回读/刷新回读截图文件'],
+        };
+      },
+      fillAdReadbackSession: async (input) => {
+        window.__businessUiActionLog.push({ type: 'fillAdReadbackSession', input });
+        return {
+          sessionDir: input?.sessionDir,
+          jsonPath: 'C:/evidence/readback-session/real-ad-execution-readback-pass.json',
+          markdownPath: 'C:/evidence/readback-session/real-ad-execution-readback-pass.md',
+          status: 'PASS',
+          readyForVerifier: true,
+          issues: [],
+        };
+      },
+      verifyAdReadbackEvidence: async (input) => {
+        window.__businessUiActionLog.push({ type: 'verifyAdReadbackEvidence', input });
+        return {
+          evidencePath: input?.evidencePath,
+          ready: true,
+          status: 'PASS',
+          checks: [
+            { label: 'execution result is successful, verified, and scoped to manual Ads UI operation', passed: true },
+            { label: 'source report traceability includes real spreadsheet file(s) and row number', passed: true },
+          ],
+          issues: [],
+        };
+      },
+      openReportPath: async (targetPath) => {
+        window.__businessUiActionLog.push({ type: 'openReportPath', targetPath });
+        return { success: true };
+      },
     };
   });
 
@@ -618,11 +856,17 @@ async function main() {
   await expectVisible(page, '3. 执行回读');
   await expectVisible(page, '本页不审批、不执行广告、不写入 Amazon；真实动作必须在审批后逐条记录截图和回读证据。');
   await expectVisible(page, '建议上下文检查');
+  await expectVisible(page, '建议决策总览');
+  await expectVisible(page, '正式可审批');
+  await expectVisible(page, '人工复核');
+  await expectVisible(page, 'AI 洞察未采纳');
+  await expectVisible(page, '证据不足阻断');
+  await expectInBody(page, '只把证据完整、可绑定当前广告对象的动作送入审批中心。', 'recommendation decision routing summary');
   await expectVisible(page, 'AI 可用');
   await expectVisible(page, 'deepseek-chat');
   await expectInBody(page, '生成建议时会调用 AI 参与产品阶段诊断、动态阈值建议和动作解释。', 'recommendation ai readiness');
   await expectVisible(page, '真实广告事实');
-  await expectVisible(page, '1 个表格 / 24 行 DB 指标');
+  await expectVisible(page, '8/8 类真实报表 / 24 行 DB 指标');
   await expectVisible(page, '只使用当前范围真实 xlsx/xls/csv 导入后的每日广告事实。');
   await expectVisible(page, '可执行口径');
   await expectVisible(page, '0 行 / 0 个诊断对象');
@@ -637,12 +881,12 @@ async function main() {
   await expectVisible(page, '1 个产品 / 1 个有目标阈值');
   await expectInBody(page, '目标 ACOS 35.0%', 'recommendation product target ACOS');
   await expectVisible(page, '安全边界');
-  await expectVisible(page, '只生成待审批建议');
+  await expectVisible(page, '生成建议池');
   for (const text of [
     'AI + 规则并行决策模型',
     '硬阈值与安全边界',
     'AI 可用',
-    '规则和 AI 一致才进入普通审批；冲突、AI-only 和样本不足进入人工复核。',
+    '规则和 AI 一致才进入普通审批；冲突、AI 独立洞察和样本不足进入人工复核。',
     '建议只基于当前范围真实报表、产品配置和运营事件；没有导入指标时不调用 AI 生成建议。',
   ]) {
     await expectInBody(page, text, 'recommendation ai-rule decision model');
@@ -655,10 +899,10 @@ async function main() {
   await expectVisible(page, '产品目标');
   await expectInBody(page, 'TACOS 12.0%', 'recommendation product target TACOS');
   await expectVisible(page, '2026-06-10 / 10% Coupon started');
-  await expectInBody(page, '1 条 AI 策略诊断，1 条 AI 文本解释，0 条纯规则 fallback。', 'ai strategy/text split');
-  await expectVisible(page, 'AI参与 1');
-  await expectVisible(page, 'AI解释 1');
-  await expectVisible(page, '1 浪费 / 0 需复核');
+  await expectInBody(page, '2 条 AI 策略诊断，2 条 AI 文本解释，0 条纯规则兜底。', 'ai strategy/text split');
+  await expectVisible(page, 'AI参与 2');
+  await expectVisible(page, 'AI解释 2');
+  await expectVisible(page, '2 浪费 / 1 需处理');
   await expectVisible(page, 'manual_ad_execution_batch');
   await expectVisible(page, '对象类型');
   await expectVisible(page, '批次/来源');
@@ -678,7 +922,11 @@ async function main() {
   await expectVisible(page, '本次生成 AI 参与状态');
   await expectVisible(page, 'AI 已参与');
   await expectVisible(page, '1 新建议 / 1 可审批动作');
-  await expectInBody(page, '规则候选 1 条，AI 候选 1 条，跳过 0 条重复建议。', 'candidate source split');
+  await expectInBody(page, '正式可审批 1', 'formal recommendation count');
+  await expectInBody(page, '人工复核 1', 'manual review recommendation count');
+  await expectInBody(page, 'AI 洞察未采纳 0', 'insight only recommendation count');
+  await expectInBody(page, '证据不足阻断 0', 'blocked evidence recommendation count');
+  await expectInBody(page, '规则候选 1 条，AI 候选 1 条，刷新 0 条旧建议，跳过 0 条重复建议。', 'candidate source split');
   await expectVisible(page, '1 AI 建议解释 / 0 规则解释');
   await expectVisible(page, '事件上下文');
   await expectVisible(page, '1 条运营事件');
@@ -692,28 +940,38 @@ async function main() {
   await expectInBody(page, 'AI 候选 1 条，', 'strategy diagnosis AI candidate count');
   await expectInBody(page, '产品配置 1 个进入诊断上下文。', 'strategy diagnosis product context count');
   await expectVisible(page, 'AI/规则合并诊断');
-  await expectVisible(page, '一致 1 / 规则-only 0 / AI-only 0 / 冲突 0 / 需复核 0');
+  await expectVisible(page, '一致 1 / 规则独立 0 / AI 独立洞察 0 / 冲突 0 / 需复核 0');
   await expectVisible(page, '本次没有返回额外过滤原因。');
   await expectVisible(page, '来自当前保存的 DeepSeek/OpenAI Compatible 设置。');
   await page.evaluate(() => {
     window.__mockAiConfigured = false;
   });
   await page.getByRole('button', { name: '生成优化建议', exact: true }).click();
-  await page.getByText('未配置 AI Key，建议解释使用规则引擎 fallback。', { exact: false }).first().waitFor({ timeout: 5000 });
+  await page.getByText('未配置 AI Key，建议解释使用规则引擎兜底。', { exact: false }).first().waitFor({ timeout: 5000 });
   await expectVisible(page, '未配置 AI Key');
   await expectVisible(page, '0 AI 建议解释 / 1 规则解释');
   await expectVisible(page, '未配置 Key 时不会伪装成 AI 策略。');
-  await expectVisible(page, '一致 0 / 规则-only 1 / AI-only 0 / 冲突 0 / 需复核 0');
-  await expectVisible(page, '1 条规则-only 建议缺少 AI 确认，仍需按证据完整性审批。');
+  await expectVisible(page, '一致 0 / 规则独立 1 / AI 独立洞察 0 / 冲突 0 / 需复核 0');
+  await expectVisible(page, '1 条规则独立建议缺少 AI 确认，仍需按证据完整性审批。');
   await page.evaluate(() => {
     window.__mockAiConfigured = true;
     window.__mockAiNoOutput = true;
   });
   await page.getByRole('button', { name: '生成优化建议', exact: true }).click();
-  await page.getByText('已尝试调用 AI，但本次没有可用 AI 输出，建议已回落到规则引擎。原因：AI provider timeout', { exact: false }).first().waitFor({ timeout: 5000 });
-  await expectVisible(page, 'AI 无可用输出');
+  await page.getByText('已尝试调用 AI，但本次没有可用 AI 输出，建议已回落到规则引擎。原因：AI 服务超时', { exact: false }).first().waitFor({ timeout: 5000 });
+  await expectVisible(page, 'AI 已转为规则兜底：AI 服务超时');
   await expectVisible(page, '0 AI 建议解释 / 1 规则解释');
-  await expectVisible(page, '一致 0 / 规则-only 1 / AI-only 0 / 冲突 0 / 需复核 0');
+  await expectVisible(page, '一致 0 / 规则独立 1 / AI 独立洞察 0 / 冲突 0 / 需复核 0');
+  await page.evaluate(() => {
+    window.__mockAiNoOutput = false;
+    window.__mockScopedMetricsMissing = true;
+  });
+  await page.getByRole('button', { name: '生成优化建议', exact: true }).click();
+  await expectInBody(page, '当前范围缺少可绑定的日级广告指标', 'scoped metrics binding gate error');
+  await expectInBody(page, '真实报表 source_file、批次、店铺、站点和日期范围与 DB 指标一致', 'scoped metrics binding recovery guidance');
+  await page.evaluate(() => {
+    window.__mockScopedMetricsMissing = false;
+  });
   await expectVisible(page, '查看详情');
   await expectVisible(page, 'DeepSeek AI');
   await page.getByRole('button', { name: '查看详情' }).first().click();
@@ -741,9 +999,20 @@ async function main() {
   await expectVisible(page, '目标 ACOS 35.0% / 高 ACOS 55.0% / 无订单 18 点击 / 最低花费 $15.00');
   await expectVisible(page, '1 条进入诊断上下文');
   await expectVisible(page, 'AI 策略诊断');
-  await expectVisible(page, 'Coupon context keeps this product in keyword exploration while tightening no-order spend.');
-  await expectVisible(page, 'Rule: High ACOS with spend.');
-  await expectVisible(page, 'AI: Coupon did not convert enough traffic.');
+  await expectVisible(page, 'Coupon 背景显示该产品仍处于测词阶段，同时需要收紧无订单花费。');
+  await expectVisible(page, 'AI/规则决策摘要');
+  await expectVisible(page, '规则与 AI 一致，且已绑定可回查证据。');
+  await expectVisible(page, '可进入审批，但仍需人工确认和执行回读。');
+  await expectVisible(page, 'AI 判断依据');
+  await expectVisible(page, '引用证据详情');
+  await expectVisible(page, '报表指标');
+  await expectVisible(page, '运营事件');
+  await expectVisible(page, 'tight match target / 2026-06-12');
+  await expectInBody(page, '报表 user_search_term');
+  await expectInBody(page, '$42.18 / $58.58 / 1 单 / 32 点击');
+  await expectInBody(page, '2026-06-10 / coupon / conversion_up');
+  await expectVisible(page, '规则：高 ACOS 且已有花费。');
+  await expectVisible(page, 'AI：Coupon 未带来足够转化。');
   await expectVisible(page, '来源文件');
   await expectVisible(page, '来源文件 1');
   await expectVisible(page, '来源行号');
@@ -756,10 +1025,10 @@ async function main() {
     window.__hideRecommendations = true;
   });
   await page.getByRole('button', { name: '刷新建议' }).click();
-  await page.getByText('当前范围还没有待审批建议。', { exact: true }).waitFor({ timeout: 5000 });
+  await page.getByText('当前范围还没有待审批或需复核建议。', { exact: true }).waitFor({ timeout: 5000 });
   await expectVisible(page, '为什么现在没有建议');
-  await expectVisible(page, '待审批列表为空');
-  await expectVisible(page, '本次生成可能已经完成但当前筛选状态没有 pending 建议，或建议已被处理。');
+  await expectVisible(page, '建议池为空');
+  await expectVisible(page, '本次生成可能已经完成但当前筛选状态没有待审批或需复核建议，或建议已被处理。');
   await expectNotInBody(page, 'C:/reports/source_user_search_term.xlsx');
   await page.evaluate(() => {
     window.__mockNoRecommendationCandidates = true;
@@ -768,11 +1037,31 @@ async function main() {
   await page.getByText('已生成 0 条新建议，规则候选 0 条，AI 候选 0 条，最终可审批动作 0 条，处理 24 行广告指标。', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, 'AI 已参与诊断');
   await expectVisible(page, '0 新建议 / 0 可审批动作');
-  await expectVisible(page, '一致 0 / 规则-only 0 / AI-only 0 / 冲突 0 / 需复核 0');
+  await expectVisible(page, '一致 0 / 规则独立 0 / AI 独立洞察 0 / 冲突 0 / 需复核 0');
   await expectVisible(page, '规则和 AI 都没有返回可合并的候选动作。');
-  await expectVisible(page, '没有可安全绑定的广告动作');
+  await expectVisible(page, 'AI 仅生成洞察，未进入建议池');
   await expectVisible(page, 'AI 已运行广告阶段诊断，但没有找到可安全绑定到当前真实指标的可审批动作。');
+  await expectInBody(page, '未进入建议池原因：规则和 AI 都没有返回可合并的候选动作。', 'no-candidate blocked reason');
+  await expectInBody(page, '先补齐证据和对象绑定：确认 source row、campaign/ad group/关键词或投放对象能回查到当前真实报表', 'no-candidate next action');
   await expectInBody(page, 'AI 没有返回可审批动作候选。', 'no-candidate AI action explanation');
+  await expectVisible(page, 'AI 诊断已完成，但未形成正式建议');
+  await expectVisible(page, '0 建议原因分布');
+  await expectVisible(page, '规则候选 0');
+  await expectVisible(page, 'AI 候选 0');
+  await expectVisible(page, '洞察未采纳 1');
+  await expectVisible(page, '最终可审批 0');
+  await expectVisible(page, '下一步处理顺序');
+  await expectVisible(page, '先回广告量化页查看风险对象和样本量');
+  await expectVisible(page, '补充运营事件或产品配置后重新生成');
+  await expectVisible(page, '确认 campaign、ad group、关键词/搜索词/投放对象能绑定真实报表行');
+  await expectVisible(page, 'AI 诊断摘要');
+  await expectVisible(page, '当前表现相对稳定，暂时没有足够证据支持调整出价或新增否定词。');
+  await expectVisible(page, '未进入建议池的原因');
+  await expectVisible(page, '下一步补证据');
+  await expectVisible(page, '回到广告量化页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。');
+  await expectVisible(page, 'AI 洞察但未采纳');
+  await expectVisible(page, 'unbound no-candidate insight');
+  await expectVisible(page, '没有可绑定到当前真实指标的 campaign/ad group/对象。');
   await expectVisible(page, '查看广告量化');
   await expectVisible(page, '稳定转化 / AI');
   await page.evaluate(() => {
@@ -806,8 +1095,8 @@ async function main() {
   await expectVisible(page, '审批处理要求');
   await expectVisible(page, '批准后下一步');
   await expectVisible(page, '在执行回读页补录审批凭证、before/after 截图、回读值和现场行证明。');
-  await page.getByRole('button', { name: 'AI 复核' }).click();
-  await expectInBody(page, 'AI-only 建议不能直接批准');
+  await page.getByRole('button', { name: '复核队列' }).click();
+  await expectInBody(page, 'AI 独立洞察不能直接批准');
   await expectInBody(page, '规则量化要求人工复核');
   await page.getByRole('button', { name: '处理' }).first().click();
   await expectInBody(page, '这条建议不能走普通批准');
@@ -815,12 +1104,50 @@ async function main() {
     if (!node.disabled) throw new Error('Blocked review recommendation approve button was not disabled');
   });
   await page.getByRole('button', { name: '待审批' }).click();
+  await page.evaluate(() => {
+    window.__mockAiNoEvidenceRecommendation = true;
+    window.dispatchEvent(new Event('business-ui:data-updated'));
+  });
+  await page.getByRole('button', { name: '复核队列' }).click();
+  await expectInBody(page, 'AI 独立洞察不能直接批准');
+  await page.getByRole('button', { name: '待审批' }).click();
+  await page.waitForFunction(() => window.__businessUiActionLog?.some((item) => item.type === 'getRecommendations' && item.filter?.status === 'pending'));
+  await page.getByRole('button', { name: '处理' }).first().click();
+  await expectInBody(page, 'AI 建议缺少可回查证据引用');
+  await page.getByRole('button', { name: '批准并进入待执行' }).evaluate((node) => {
+    if (!node.disabled) throw new Error('AI recommendation without evidence refs approve button was not disabled');
+  });
+  await page.evaluate(() => {
+    window.__mockAiNoEvidenceRecommendation = false;
+    window.__mockAiExplanationOnlyRecommendation = true;
+    window.dispatchEvent(new Event('business-ui:data-updated'));
+  });
+  await page.getByRole('button', { name: '复核队列' }).click();
+  await expectInBody(page, 'AI 独立洞察不能直接批准');
+  await page.getByRole('button', { name: '待审批' }).click();
+  await expectInBody(page, 'ai explanation only target');
+  await page.getByRole('button', { name: '处理' }).first().click();
+  await expectNotInBody(page, 'AI 建议缺少可回查证据引用');
+  await page.getByRole('button', { name: '批准并进入待执行' }).evaluate((node) => {
+    if (node.disabled) throw new Error('Rule recommendation with AI explanation only should remain approvable');
+  });
+  await page.evaluate(() => {
+    window.__mockAiNoEvidenceRecommendation = false;
+    window.__mockAiExplanationOnlyRecommendation = false;
+    window.dispatchEvent(new Event('business-ui:data-updated'));
+  });
+  await page.getByRole('button', { name: '复核队列' }).click();
+  await expectInBody(page, 'AI 独立洞察不能直接批准');
+  await page.getByRole('button', { name: '待审批' }).click();
   await expectVisible(page, '广告组合');
   await expectVisible(page, 'ASIN');
   await expectVisible(page, 'D6 Portfolio');
   await expectVisible(page, 'B0TESTASIN');
   await page.getByRole('button', { name: '处理' }).first().click();
   await expectVisible(page, '审批人、备注、范围和数据批次会写入建议证据；真实 Ads UI 操作和审批凭证路径仍必须在“执行回读”页逐条补齐。');
+  await expectVisible(page, 'AI/规则决策摘要');
+  await expectVisible(page, '规则与 AI 一致，且已绑定可回查证据。');
+  await expectVisible(page, '可进入审批，但仍需人工确认和执行回读。');
   await expectVisible(page, '当前值/建议值');
   await expectVisible(page, '来源文件');
   await expectVisible(page, '当前批次');
@@ -841,9 +1168,14 @@ async function main() {
   await expectVisible(page, '目标净利率 / 最低价');
   await expectInBody(page, '35.0% / 12.0%', 'approval product target thresholds');
   await expectVisible(page, 'AI/规则合并依据');
-  await expectVisible(page, 'Rule: High ACOS with spend.');
-  await expectVisible(page, 'AI: Coupon did not convert enough traffic.');
+  await expectVisible(page, '规则：高 ACOS 且已有花费。');
+  await expectVisible(page, 'AI：Coupon 未带来足够转化。');
   await expectVisible(page, 'AI 主要问题：no_order_spend；high_acos');
+  await expectVisible(page, 'AI 判断依据');
+  await expectVisible(page, '引用证据详情');
+  await expectVisible(page, '报表指标');
+  await expectInBody(page, 'tight match target / 2026-06-12');
+  await expectInBody(page, '$42.18 / $58.58 / 1 单 / 32 点击');
   await page.getByRole('button', { name: '拒绝', exact: true }).click();
   await page.getByText('拒绝前必须填写处理人。', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByPlaceholder('负责人姓名').fill('QA Rejector');
@@ -875,13 +1207,14 @@ async function main() {
   await page.getByRole('button', { name: '载入' }).first().click();
   await expectVisible(page, '来源批次');
   await expectVisible(page, '指标日期');
+  await expectVisible(page, '来源行号');
   await expectVisible(page, '当前有效批次：manual_ad_execution_batch');
   await expectVisible(page, '来源批次匹配');
-  await expectVisible(page, '来源批次、指标日期、来源文件、来源当前值和建议值是回读证据的一部分；缺失或串批次时只能导出缺口草稿。');
+  await expectVisible(page, '来源批次、指标日期、来源行号、来源文件、来源当前值和建议值是回读证据的一部分；缺失或串批次时只能导出缺口草稿。');
   await expectVisible(page, '产品阶段');
   await expectVisible(page, 'keyword_exploration');
   await expectVisible(page, 'AI 与规则关系');
-  await expectVisible(page, 'aligned / rule_ai');
+  await expectVisible(page, '规则+AI 一致 / 规则+AI 合并');
   await expectVisible(page, '量化阈值');
   await expectVisible(page, 'ACOS 25.0% / 高 ACOS 50.0%');
   await page.getByRole('textbox', { name: '审批人', exact: true }).evaluate((node) => {
@@ -898,6 +1231,9 @@ async function main() {
   });
   await page.getByRole('textbox', { name: '指标日期', exact: true }).evaluate((node) => {
     if (node.value !== '2026-06-12') throw new Error(`Unexpected metric date: ${node.value}`);
+  });
+  await page.getByRole('textbox', { name: '来源行号', exact: true }).evaluate((node) => {
+    if (node.value !== '12') throw new Error(`Unexpected source row: ${node.value}`);
   });
   await page.getByRole('textbox', { name: '推荐来源文件', exact: true }).evaluate((node) => {
     if (!node.value.includes('C:/reports/source_user_search_term.xlsx')) throw new Error(`Unexpected source files: ${node.value}`);
@@ -927,13 +1263,54 @@ async function main() {
   for (const label of ['审批人确认范围', '外部审批允许', '低风险策略允许', '执行成功确认', '执行已核验', '回读已核验']) {
   await page.getByLabel(label).check();
   }
-  await expectVisible(page, '字段完整时导出的 JSON/Markdown 可交给最终验收 verifier 复核。');
+  await expectVisible(page, '字段已填写，待导出校验');
+  await expectVisible(page, '字段已填写时仍需导出 JSON/Markdown，并由后端校验截图、真实报表和回读证据文件是否存在。');
   await page.getByRole('button', { name: '导出读回证据' }).click();
   await page.getByText('导出状态', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('可进入最终验收', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('C:/evidence/readback.json', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('C:/evidence/readback.md', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('该导出只写入本地证据文件，不会提交 Amazon。', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('5. 回读工作包', { exact: true }).scrollIntoViewIfNeeded();
+  await expectVisible(page, '5. 回读工作包');
+  await expectVisible(page, '工作包目录：C:/evidence/readback-session');
+  await expectVisible(page, '填写 session-input.json 后运行 fill session，生成可进入最终验收的 readback JSON。');
+  await expectVisible(page, '检查工作包只证明目录和文件结构安全，不等于最终验收通过；最终仍以生成后的回读证据校验和 manifest 聚合为准。');
+  await expectVisible(page, '创建回读工作包');
+  await page.getByRole('button', { name: '创建回读工作包', exact: true }).click();
+  await page.getByText('回读工作包已创建。', { exact: true }).first().waitFor({ timeout: 5000 });
+  await expectVisible(page, 'Session 目录');
+  await expectVisible(page, 'C:/evidence/readback-session/session-input.json');
+  await expectVisible(page, 'C:/evidence/readback-session/session-input-guide.md');
+  await expectVisible(page, 'C:/evidence/readback-session/operator-checklist.md');
+  await expectVisible(page, 'C:/evidence/readback-session/real-ad-execution-readback-pass.json');
+  await expectVisible(page, '检查工作包');
+  await page.getByRole('button', { name: '打开填写文件', exact: true }).click();
+  await page.getByRole('button', { name: '打开填写说明', exact: true }).click();
+  await page.getByRole('button', { name: '检查工作包', exact: true }).click();
+  await page.getByText('工作包结构检查通过，现场证据仍待填写。', { exact: true }).first().waitFor({ timeout: 5000 });
+  await expectVisible(page, '工作包结构通过，现场证据待填写');
+  await expectVisible(page, '还需填写：审批/审批人、执行前/执行前 Ads UI live bid、执行后/执行后 Ads UI live bid、回读/刷新回读截图文件');
+  await expectVisible(page, '检查工作包只证明目录和文件结构安全；还必须填写 session-input.json 并生成 PASS JSON 后，才可能进入最终验收。');
+  await expectVisible(page, '生成回读证据');
+  await page.getByRole('button', { name: '生成回读证据', exact: true }).click();
+  await page.getByText('回读证据已生成，等待最终 verifier。', { exact: true }).first().waitFor({ timeout: 5000 });
+  await expectVisible(page, '回读证据已生成，待最终校验');
+  await expectInBody(page, '最终 READY 仍必须通过 verify:ad-readback 和 manifest 聚合。');
+  await expectVisible(page, 'C:/evidence/readback-session/real-ad-execution-readback-pass.json');
+  await expectVisible(page, '校验回读证据');
+  await page.getByRole('button', { name: '校验回读证据', exact: true }).click();
+  await page.getByText('回读证据 verifier 通过。', { exact: true }).first().waitFor({ timeout: 5000 });
+  await expectVisible(page, '回读证据 verifier 已通过');
+  await expectVisible(page, '这份 JSON 已通过本地回读证据校验；最终 READY 仍需进入 evidence manifest 聚合。');
+  await expectVisible(page, '复制创建命令');
+  await expectVisible(page, '复制检查命令');
+  await expectVisible(page, '复制生成命令');
+  await page.getByText('技术验收说明', { exact: true }).click();
+  await expectVisible(page, '复制 prepare session 命令');
+  await expectVisible(page, '复制 verify session 命令');
+  await expectVisible(page, '复制 fill session 命令');
+  await expectVisible(page, '复制长参数 fill 命令');
   const afterExportScreenshotPath = path.join(evidenceDir, `business-ui-ad-execution-readback-after-export-${runId}.png`);
   await page.screenshot({ path: afterExportScreenshotPath, fullPage: true });
   evidence.pages.readbackAfterExport = {
@@ -948,14 +1325,29 @@ async function main() {
   const actionLog = await page.evaluate(() => window.__businessUiActionLog || []);
   evidence.actionLog = actionLog;
   const pendingRecommendationCalls = actionLog.filter((item) => item.type === 'getRecommendations' && item.filter?.status === 'pending');
+  const reviewRecommendationCalls = actionLog.filter((item) => item.type === 'getRecommendations' && item.filter?.status === 'needs_review');
   if (!pendingRecommendationCalls.length) {
     fail('Pending recommendations IPC mock was not called', JSON.stringify(actionLog));
   }
+  if (!reviewRecommendationCalls.length) {
+    fail('Needs-review recommendations IPC mock was not called', JSON.stringify(actionLog));
+  }
+  if (!actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/evidence/readback-session/session-input.json')) {
+    fail('Open readback session input did not call openReportPath', JSON.stringify(actionLog));
+  }
+  if (!actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/evidence/readback-session/session-input-guide.md')) {
+    fail('Open readback session input guide did not call openReportPath', JSON.stringify(actionLog));
+  }
   const scopedPendingRecommendationCalls = pendingRecommendationCalls.filter((call) => call.filter?.batchId === 'manual_ad_execution_batch');
+  const scopedReviewRecommendationCalls = reviewRecommendationCalls.filter((call) => call.filter?.batchId === 'manual_ad_execution_batch');
   if (!scopedPendingRecommendationCalls.length) {
     fail('No pending recommendations IPC call used the manual execution batch scope', JSON.stringify(pendingRecommendationCalls));
   }
+  if (!scopedReviewRecommendationCalls.length) {
+    fail('No needs-review recommendations IPC call used the manual execution batch scope', JSON.stringify(reviewRecommendationCalls));
+  }
   for (const call of scopedPendingRecommendationCalls) assertScopeParams(call.filter, 'getRecommendations');
+  for (const call of scopedReviewRecommendationCalls) assertScopeParams(call.filter, 'getRecommendations needs_review');
   const generateCall = actionLog.find((item) => item.type === 'generateRecommendations');
   if (!generateCall) {
     fail('Generate recommendations IPC mock was not called', JSON.stringify(actionLog));
@@ -971,6 +1363,7 @@ async function main() {
     || approvalCall.input?.decision?.batchId !== 'manual_ad_execution_batch'
     || approvalCall.input?.decision?.sourceBatchId !== 'manual_ad_execution_batch'
     || approvalCall.input?.decision?.metricDate !== '2026-06-12'
+    || approvalCall.input?.decision?.sourceRow !== 12
     || approvalCall.input?.decision?.portfolioName !== 'D6 Portfolio'
     || approvalCall.input?.decision?.campaignName !== 'D6-auto-test'
     || approvalCall.input?.decision?.adGroupName !== 'D6-ad-group'
@@ -982,7 +1375,7 @@ async function main() {
     || approvalCall.input?.decision?.aiModel !== 'deepseek-chat'
     || approvalCall.input?.decision?.aiStrategySource !== 'ai'
     || approvalCall.input?.decision?.decisionAgreement !== 'aligned'
-    || !approvalCall.input?.decision?.decisionReasons?.includes('AI: Coupon did not convert enough traffic.')
+    || !approvalCall.input?.decision?.decisionReasons?.includes('AI：Coupon 未带来足够转化。')
     || approvalCall.input?.decision?.aiThresholdSuggestions?.targetAcos?.value !== 0.35
     || approvalCall.input?.decision?.productStage !== 'keyword_exploration'
     || approvalCall.input?.decision?.productTargetAcos !== 0.35
@@ -1006,13 +1399,30 @@ async function main() {
   if (!readbackExport) {
     fail('Readback export IPC mock was not called', JSON.stringify(actionLog));
   }
+  const readbackSession = actionLog.find((item) => item.type === 'prepareAdReadbackSession');
+  if (!readbackSession || readbackSession.input?.sourcePath !== 'C:/evidence/readback.json') {
+    fail('Readback session IPC mock was not called with exported JSON path', JSON.stringify(actionLog));
+  }
+  const readbackSessionVerify = actionLog.find((item) => item.type === 'verifyAdReadbackSession');
+  if (!readbackSessionVerify || readbackSessionVerify.input?.sessionDir !== 'C:/evidence/readback-session') {
+    fail('Readback session verify IPC mock was not called with session directory', JSON.stringify(actionLog));
+  }
+  const readbackSessionFill = actionLog.find((item) => item.type === 'fillAdReadbackSession');
+  if (!readbackSessionFill || readbackSessionFill.input?.sessionDir !== 'C:/evidence/readback-session') {
+    fail('Readback session fill IPC mock was not called with session directory', JSON.stringify(actionLog));
+  }
+  const readbackEvidenceVerify = actionLog.find((item) => item.type === 'verifyAdReadbackEvidence');
+  if (!readbackEvidenceVerify || readbackEvidenceVerify.input?.evidencePath !== 'C:/evidence/readback-session/real-ad-execution-readback-pass.json') {
+    fail('Readback evidence verifier IPC mock was not called with pass evidence path', JSON.stringify(actionLog));
+  }
   if (readbackExport.input?.source?.batchId !== 'manual_ad_execution_batch'
     || readbackExport.input?.source?.metricDate !== '2026-06-12'
+    || readbackExport.input?.source?.sourceRow !== 12
     || readbackExport.input?.source?.entityType !== 'target'
     || readbackExport.input?.source?.aiModel !== 'deepseek-chat'
     || readbackExport.input?.source?.decisionAgreement !== 'aligned'
     || readbackExport.input?.source?.decisionSource !== 'rule_ai'
-    || !readbackExport.input?.source?.decisionReasons?.includes('AI: Coupon did not convert enough traffic.')
+    || !readbackExport.input?.source?.decisionReasons?.includes('AI：Coupon 未带来足够转化。')
     || readbackExport.input?.source?.aiStrategySource !== 'ai'
     || readbackExport.input?.source?.aiLifecycleStage !== 'keyword_exploration'
     || readbackExport.input?.source?.aiThresholdSuggestions?.targetAcos?.value !== 0.35

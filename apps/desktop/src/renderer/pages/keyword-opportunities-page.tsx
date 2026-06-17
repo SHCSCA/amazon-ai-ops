@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { formatPercent, formatUsd } from '../formatters';
+import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
 import { useScopeStore } from '../scope-store';
 import type { KeywordOpportunityView, ListingHandoffPayload } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -26,7 +27,7 @@ export function KeywordOpportunitiesPage() {
     minSpend: '',
     opportunityLevel: '',
   });
-  const quantReady = Boolean(data?.collection.realReportFiles.length && data?.quant.hasImportedMetrics);
+  const quantReady = Boolean(hasRealReportCoverage(data?.collection) && data?.quant.hasImportedMetrics);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const batchId = currentBatchId || '-';
   const requestScope = { ...scope, batchId: currentBatchId };
@@ -81,7 +82,7 @@ export function KeywordOpportunitiesPage() {
   const highOpportunityCount = visibleRows.filter((row) => row.opportunityLevel === 'high').length;
   const convertingCount = visibleRows.filter((row) => row.orders > 0 || row.sales > 0).length;
   const noOrderSpend = visibleRows.filter((row) => row.spend > 0 && row.orders === 0).reduce((sum, row) => sum + row.spend, 0);
-  const sourceReportCount = data?.collection.realReportFiles.length || 0;
+  const sourceReportCount = realReportCoverageCount(data?.collection);
   const importedMetricRows = data?.collection.fileAudit?.importedRowCount ?? data?.quant.importedRows ?? 0;
   const asinCount = new Set(visibleRows.map((row) => row.asin).filter(Boolean)).size;
   const campaignCount = new Set(visibleRows.map((row) => row.campaignName).filter(Boolean)).size;
@@ -97,10 +98,12 @@ export function KeywordOpportunitiesPage() {
   ].join('|');
 
   function sourceImportRows(row: KeywordOpportunityView): number | null {
-    if (!row.sourceFile || !data?.collection.realReportFiles.length) return null;
+    if (!row.sourceFile || !hasRealReportCoverage(data?.collection)) return null;
+    const collection = data?.collection;
+    if (!collection) return null;
     const normalized = row.sourceFile.replace(/\\/g, '/').toLowerCase();
     const sourceFileName = normalized.split('/').filter(Boolean).pop();
-    const matched = data.collection.realReportFiles.find((file) => {
+    const matched = collection.realReportFiles.find((file) => {
       const normalizedFilePath = file.filePath.replace(/\\/g, '/').toLowerCase();
       const normalizedFileName = (file.fileName || normalizedFilePath.split('/').filter(Boolean).pop() || '').toLowerCase();
       return normalizedFilePath === normalized || (Boolean(sourceFileName) && normalizedFileName === sourceFileName);
@@ -178,7 +181,7 @@ export function KeywordOpportunitiesPage() {
           <div className="context-summary-grid">
             <div>
               <span>真实广告报表</span>
-              <strong>{sourceReportCount} 个文件</strong>
+              <strong>{sourceReportCount}/8 类真实报表</strong>
               <p>只接收当前范围下载目录中的 xlsx/xls/csv；审计 JSON、截图和 DOM 证据不算广告数据。</p>
             </div>
             <div>

@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { buildAdQuantDiagnosisSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
-import type { AdStrategyDiagnosisView, AppRoute, BusinessQuantDiagnostic, BusinessQuantTimeline, SettingsRuleConfig } from '../types';
+import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
+import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
+import type { AdStrategyDiagnosisView, AiDiagnosisRunView, AiEvidenceDisplayItemView, AppRoute, BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, SettingsRuleConfig } from '../types';
 
 const DEFAULT_QUANT_RULE_CONFIG: Pick<SettingsRuleConfig, 'targetAcos' | 'highAcosThreshold' | 'noOrderClickThreshold' | 'minSpend'> = {
   targetAcos: 0.25,
@@ -42,6 +45,14 @@ function quantSourceDescription(source?: string): string {
   return '当前范围缺少真实原始报表或导入指标，不能计算广告表现。';
 }
 
+export function strategyDiagnosisSourceLabel(source?: string): string {
+  return source === 'ai' ? 'AI 已分析' : '规则兜底';
+}
+
+export function strategyThresholdTitle(source?: string): string {
+  return source === 'ai' ? 'AI 动态阈值建议' : '规则兜底阈值建议';
+}
+
 function lifecycleLabel(stage?: string): string {
   const labels: Record<string, string> = {
     cold_start: '冷启动',
@@ -76,6 +87,10 @@ function trendLabel(value?: string): string {
   return labels[value || 'insufficient'] || '样本不足';
 }
 
+function maxDailyCost(daily: Array<{ cost: number }>): number {
+  return Math.max(1, ...daily.map((item) => Number(item.cost || 0)));
+}
+
 function timelineTone(timeline: BusinessQuantTimeline): 'ready' | 'warning' | 'blocked' | 'pending' {
   if (timeline.quantStatus === 'waste') return 'blocked';
   if (timeline.quantStatus === 'scale') return 'ready';
@@ -96,14 +111,21 @@ function thresholdSourceLine(): string {
   return '来源：当前规则配置；AI 动态阈值在“优化建议”生成时结合运营事件、产品阶段和每日趋势复核。';
 }
 
-function recommendationReadinessLabel(canDiagnose: boolean, diagnosticCount: number): string {
-  if (!canDiagnose) return '缺真实数据，AI 不会被调用';
+function recommendationReadinessLabel(hasQuantData: boolean, canGenerateFormalRecommendations: boolean, diagnosticCount: number): string {
+  if (!hasQuantData) return '缺真实数据，AI 不会被调用';
+  if (!canGenerateFormalRecommendations) return '只可量化，正式建议锁定';
   if (diagnosticCount === 0) return '缺少可执行对象，先复核报表口径';
   return '可以进入 AI+规则建议';
 }
 
-function recommendationReadinessDetail(canDiagnose: boolean, diagnosticCount: number): string {
-  if (!canDiagnose) return '先回到数据采集页确认真实 xlsx/xls/csv 和 DB 指标行。';
+function recommendationReadinessDetail(
+  hasQuantData: boolean,
+  canGenerateFormalRecommendations: boolean,
+  diagnosticCount: number,
+  gateIssues: string[],
+): string {
+  if (!hasQuantData) return '先回到数据采集页确认真实 xlsx/xls/csv 和 DB 指标行。';
+  if (!canGenerateFormalRecommendations) return gateIssues.slice(0, 2).join('；') || '正式建议需要先补齐当前范围 8 类真实报表和 DB 指标。';
   if (diagnosticCount === 0) return '已有指标但没有 keyword/search term/target 等可执行诊断对象，建议先检查报表类型和粒度。';
   return '下一步进入优化建议页生成 AI+规则建议；审批和执行仍在后续页面。';
 }
@@ -179,26 +201,202 @@ function aiFallbackMessage(diagnosis: AdStrategyDiagnosisView | null): string {
   return 'AI 未参与：当前只使用规则量化。';
 }
 
+export function buildAiDiagnosisRunsRequest(input: {
+  scope: OperationScope;
+  latestBatchId?: string;
+}) {
+  return {
+    dateFrom: input.scope.dateFrom,
+    dateTo: input.scope.dateTo,
+    storeName: input.scope.storeName,
+    marketplaceCode: input.scope.marketplaceCode,
+    asin: input.scope.asin,
+    batchId: input.scope.batchId || input.latestBatchId,
+    limit: 5,
+  };
+}
+
+function diagnosisRunEvidenceTotal(run: AiDiagnosisRunView): number {
+  return Number(run.evidencePackSummary?.total || 0);
+}
+
+export function diagnosisRunEvidenceLabel(run: AiDiagnosisRunView): string {
+  return `证据包 ${diagnosisRunEvidenceTotal(run)} 条`;
+}
+
+export function diagnosisRunSummaryText(run: AiDiagnosisRunView): string {
+  const summary = run.diagnosis?.summary?.trim();
+  if (summary) return summary;
+
+  const fallbackReason = run.diagnosis?.aiFallbackReason?.trim();
+  if (fallbackReason) return fallbackReason;
+
+  const insightCount = run.insights?.length || 0;
+  if (insightCount > 0 && !run.formalRecommendationCount) {
+    return `AI 已完成诊断，产生 ${insightCount} 条洞察，但未形成可审批建议。先补齐证据引用、source row 和广告对象绑定后再重新生成。`;
+  }
+
+  if (insightCount > 0) {
+    return `AI 已完成诊断，产生 ${insightCount} 条洞察，并形成 ${run.formalRecommendationCount} 条正式建议。`;
+  }
+
+  if (run.success === false) return run.errorMessage || 'AI 诊断失败，当前没有可展示摘要。';
+  return '本次诊断没有形成摘要；请检查 AI 调用日志、证据包和当前范围数据。';
+}
+
+export function diagnosisRunInsightPreview(run: AiDiagnosisRunView): string[] {
+  return (run.insights || []).slice(0, 3).map((insight) => {
+    const reason = insight.invalidReasons?.filter(Boolean).join('；')
+      || insight.reason
+      || '未进入建议池';
+    return `${insight.entityType || '对象'} / ${insight.actionType || '动作'} / ${insight.entityName || '-'}：${reason}`;
+  });
+}
+
+export function thresholdEvidenceReviewLine(input: {
+  item: AdStrategyDiagnosisView['summary']['thresholdSuggestions'][keyof AdStrategyDiagnosisView['summary']['thresholdSuggestions']];
+  evidencePackPreview?: AiEvidenceDisplayItemView[];
+}): { tone: 'muted' | 'warning'; text: string } {
+  const evidenceSummary = formatEvidenceRefSummary(input.item.evidenceRefs, input.evidencePackPreview);
+  const missingDetail = evidenceSummary.includes('缺少证据明细：');
+  const reviewReasons = [
+    ...(input.item.reviewReasons || []),
+    ...(missingDetail ? [evidenceSummary] : []),
+  ];
+  const needsReview = input.item.requiresReview === true || missingDetail;
+  const reviewText = needsReview
+    ? `；需要人工复核后才能覆盖规则阈值${reviewReasons.length ? `。复核原因：${reviewReasons.join('；')}` : '。'}`
+    : '';
+  return {
+    tone: needsReview ? 'warning' : 'muted',
+    text: `引用证据：${evidenceSummary}${reviewText}`,
+  };
+}
+
+function evidenceTypeLabel(type: AiEvidenceDisplayItemView['type']): string {
+  const labels: Record<AiEvidenceDisplayItemView['type'], string> = {
+    metric: '报表指标',
+    timeline: '对象时间线',
+    operation_event: '运营事件',
+    product_context: '产品配置',
+    rule_candidate: '规则候选',
+  };
+  return labels[type] || type;
+}
+
+function evidenceMetricLine(item: AiEvidenceDisplayItemView): string {
+  if (!item.metrics) return '';
+  return [
+    `${formatUsd(item.metrics.cost || 0)} / ${formatUsd(item.metrics.sales || 0)}`,
+    `${Number(item.metrics.orders || 0)} 单`,
+    `${Number(item.metrics.clicks || 0)} 点击`,
+  ].join(' / ');
+}
+
+function evidenceContextLine(item: AiEvidenceDisplayItemView): string {
+  return [item.campaignName, item.adGroupName, item.entityName].filter(Boolean).join(' / ');
+}
+
+function evidenceSourceLine(item: AiEvidenceDisplayItemView): string {
+  const parts = [
+    item.dateRange,
+    item.batchId ? `批次 ${item.batchId}` : '',
+    item.reportType ? `报表 ${item.reportType}` : '',
+    item.sourceRow ? `行 ${item.sourceRow}` : '',
+  ].filter(Boolean);
+  return parts.join(' / ');
+}
+
+function evidenceEventLine(item: AiEvidenceDisplayItemView): string {
+  if (!item.event) return '';
+  return [item.event.eventDate, item.event.eventType, item.event.impactExpectation].filter(Boolean).join(' / ');
+}
+
+function evidenceProductLine(item: AiEvidenceDisplayItemView): string {
+  if (!item.product) return '';
+  return [
+    item.product.productStage ? `阶段 ${lifecycleLabel(item.product.productStage)}` : '',
+    typeof item.product.targetAcos === 'number' ? `目标 ACOS ${formatPercent(item.product.targetAcos * 100)}` : '',
+    typeof item.product.targetTacos === 'number' ? `目标 TACOS ${formatPercent(item.product.targetTacos * 100)}` : '',
+    typeof item.product.minPrice === 'number' ? `最低价 ${formatUsd(item.product.minPrice)}` : '',
+  ].filter(Boolean).join(' / ');
+}
+
+function evidenceTimelineLine(item: AiEvidenceDisplayItemView): string {
+  if (!item.timeline) return '';
+  return [
+    item.timeline.inferredStage ? `阶段 ${lifecycleLabel(item.timeline.inferredStage)}` : '',
+    typeof item.timeline.activeDays === 'number' ? `活跃 ${item.timeline.activeDays} 天` : '',
+    item.timeline.firstMetricDate && item.timeline.lastMetricDate ? `${item.timeline.firstMetricDate} 至 ${item.timeline.lastMetricDate}` : '',
+  ].filter(Boolean).join(' / ');
+}
+
+function evidenceTimelineDailyLine(item: AiEvidenceDisplayItemView): string {
+  const recent = item.timeline?.recentDaily || [];
+  if (!recent.length) return '';
+  return recent
+    .slice(-3)
+    .map((day) => `${day.date} ${formatUsd(day.cost || 0)} / ${day.orders || 0} 单`)
+    .join('；');
+}
+
+function evidenceSufficiencyLabel(level?: string): string {
+  if (level === 'high') return '证据充分';
+  if (level === 'medium') return '证据中等';
+  if (level === 'low') return '证据不足';
+  return '无指标证据';
+}
+
+function evidenceSufficiencyTone(level?: string): 'ready' | 'warning' | 'blocked' | 'pending' {
+  if (level === 'high') return 'ready';
+  if (level === 'medium') return 'warning';
+  if (level === 'low' || level === 'none') return 'blocked';
+  return 'pending';
+}
+
 export function AdQuantPage() {
   const { data, error, loading, scope } = useBusinessDataPipeline();
   const [ruleConfig, setRuleConfig] = useState(() => normalizeRuleConfig(null));
   const [strategyDiagnosis, setStrategyDiagnosis] = useState<AdStrategyDiagnosisView | null>(null);
   const [strategyLoading, setStrategyLoading] = useState(false);
   const [strategyError, setStrategyError] = useState('');
+  const [diagnosisRuns, setDiagnosisRuns] = useState<AiDiagnosisRunView[]>([]);
+  const [diagnosisRunsError, setDiagnosisRunsError] = useState('');
   const quant = data?.quant;
   const collection = data?.collection;
   const operationEvents = data?.operations?.events || [];
-  const canDiagnose = Boolean(collection?.realReportFiles.length && quant?.hasImportedMetrics);
+  const sourceBatchIds = collection?.sourceBatchIds || (collection?.latestBatch?.id ? [collection.latestBatch.id] : []);
+  const currentBatchId = resolveRecommendationBatchId({
+    scopeBatchId: scope.batchId,
+    latestBatchId: collection?.latestBatch?.id,
+    sourceBatchIds,
+  });
+  const realReportCount = realReportCoverageCount(collection);
+  const importedRowCount = collection?.fileAudit?.importedRowCount ?? quant?.importedRows ?? 0;
+  const recommendationGateIssues = data
+    ? buildRecommendationGateIssues({
+      requiredReportCount: 8,
+      realReportFileCount: realReportCount,
+      realReportFilesLength: collection?.realReportFiles.length ?? 0,
+      importedRowCount,
+      quantImportedRows: quant?.importedRows ?? 0,
+      hasImportedMetrics: Boolean(quant?.hasImportedMetrics),
+      currentBatchId,
+      collectionBlockers: collection?.blockers || [],
+      quantBlockers: quant?.blockers || [],
+    })
+    : ['正在读取当前业务范围的数据状态'];
+  const canDiagnose = Boolean(hasRealReportCoverage(collection) && quant?.hasImportedMetrics);
+  const canGenerateFormalRecommendations = Boolean(data && recommendationGateIssues.length === 0);
   const visibleQuant = canDiagnose ? quant : undefined;
   const visibleDiagnostics = canDiagnose ? quant?.diagnostics || [] : [];
   const visibleTimelines = canDiagnose ? quant?.adObjectTimelines || [] : [];
-  const sourceBatchIds = collection?.sourceBatchIds || (collection?.latestBatch?.id ? [collection.latestBatch.id] : []);
+  const productHistoryLedgers = canDiagnose ? data?.productHistory?.ledgers || [] : [];
+  const quantDiagnosisSummary = buildAdQuantDiagnosisSummary(strategyDiagnosis?.summary);
   const productContextCount = data?.productContext?.productCount ?? data?.productContext?.products?.length ?? 0;
   const productWithTargets = (data?.productContext?.products || []).filter((product) =>
     product.cost?.targetAcos || product.cost?.targetTacos || product.cost?.targetNetMargin || product.cost?.minPrice
   ).length;
-  const realReportCount = collection?.fileAudit?.realReportFileCount ?? collection?.realReportFiles.length ?? 0;
-  const importedRowCount = collection?.fileAudit?.importedRowCount ?? quant?.importedRows ?? 0;
   const canonicalRows = quant?.canonicalRows ?? 0;
   const actionableRows = quant?.actionableRows ?? 0;
   const breakdownRows = quant?.breakdownRows ?? 0;
@@ -229,6 +427,25 @@ export function AdQuantPage() {
     };
   }, []);
 
+  async function loadDiagnosisRuns() {
+    const api = (window as any).electronAPI;
+    if (!api?.listAiDiagnosisRuns) return;
+    try {
+      const runs = await api.listAiDiagnosisRuns(buildAiDiagnosisRunsRequest({
+        scope,
+        latestBatchId: collection?.latestBatch?.id,
+      }));
+      setDiagnosisRuns(Array.isArray(runs) ? runs : []);
+      setDiagnosisRunsError('');
+    } catch (caught) {
+      setDiagnosisRunsError(caught instanceof Error ? caught.message : String(caught || '读取 AI 诊断记录失败。'));
+    }
+  }
+
+  useEffect(() => {
+    loadDiagnosisRuns();
+  }, [scope.asin, scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode, scope.batchId, collection?.latestBatch?.id]);
+
   async function runStrategyDiagnosis() {
     const api = (window as any).electronAPI;
     setStrategyLoading(true);
@@ -247,6 +464,7 @@ export function AdQuantPage() {
         limit: 300,
       });
       setStrategyDiagnosis(result);
+      await loadDiagnosisRuns();
     } catch (caught) {
       setStrategyError(caught instanceof Error ? caught.message : String(caught || 'AI 阶段诊断失败。'));
     } finally {
@@ -348,7 +566,7 @@ export function AdQuantPage() {
             </div>
             <div>
               <span>AI 阶段诊断</span>
-              <strong>{strategyDiagnosis ? `${strategyDiagnosis.summary.source === 'ai' ? 'AI 已分析' : '规则 fallback'} / ${lifecycleLabel(strategyDiagnosis.summary.lifecycleStage)}` : '可在本页运行'}</strong>
+              <strong>{strategyDiagnosis ? `${strategyDiagnosisSourceLabel(strategyDiagnosis.summary.source)} / ${lifecycleLabel(strategyDiagnosis.summary.lifecycleStage)}` : '可在本页运行'}</strong>
               <p>DeepSeek 会结合每日广告事实、运营事件、产品配置和规则结果，给出动态阈值和解释，不写入广告账户。</p>
             </div>
             <div>
@@ -373,31 +591,130 @@ export function AdQuantPage() {
             <button className="secondary-button" disabled={!canDiagnose || strategyLoading} onClick={runStrategyDiagnosis} type="button">
               {strategyLoading ? 'AI 分析中...' : '运行 AI 阶段分析'}
             </button>
-            <button className="primary-button" disabled={!canDiagnose || diagnosticCount === 0} onClick={() => navigate('recommendations')} type="button">
+            <button className="primary-button" disabled={!canGenerateFormalRecommendations || diagnosticCount === 0} onClick={() => navigate('recommendations')} type="button">
               进入 AI+规则建议
             </button>
           </div>
           {strategyError && <p className="blocked-line">AI 阶段分析失败：{strategyError}</p>}
           {strategyDiagnosis && (
             <div className="strategy-diagnosis-panel">
+              <div className="evidence-check-panel">
+                <div className="business-split">
+                  <div>
+                    <h3>AI 量化诊断摘要</h3>
+                    <p className="muted-line">{quantDiagnosisSummary.headline}</p>
+                  </div>
+                  <StatusPill tone={quantDiagnosisSummary.tone}>{quantDiagnosisSummary.statusLabel}</StatusPill>
+                </div>
+                {quantDiagnosisSummary.reasons.length > 0 && (
+                  <ul className="business-list">
+                    {quantDiagnosisSummary.reasons.slice(0, 3).map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                )}
+                <div className="context-summary-grid">
+                  <div>
+                    <span>阶段引用证据</span>
+                    <strong>{strategyDiagnosis.summary.lifecycleStageEvidenceRefs?.length || 0} 条</strong>
+                    <p>{quantDiagnosisSummary.evidenceSummary}</p>
+                  </div>
+                  <div>
+                    <span>样本强度</span>
+                    <strong>{evidenceSufficiencyLabel(strategyDiagnosis.summary.evidenceSufficiency?.level)}</strong>
+                    <p>{quantDiagnosisSummary.evidenceStats}</p>
+                  </div>
+                  <div>
+                    <span>下一步</span>
+                    <strong>{quantDiagnosisSummary.nextAction}</strong>
+                    <p>AI 阈值只用于复核；正式广告动作仍从优化建议、审批和执行回读流转。</p>
+                  </div>
+                </div>
+                {quantDiagnosisSummary.riskWarnings.length > 0 && (
+                  <p className="warning-line">复核提示：{quantDiagnosisSummary.riskWarnings.join('；')}</p>
+                )}
+              </div>
               <div className="business-split">
                 <div>
                   <div className="business-scope-line">
-                    {strategyDiagnosis.summary.source === 'ai' ? 'AI 动态阈值建议' : '规则 fallback 阈值建议'}
+                    {strategyThresholdTitle(strategyDiagnosis.summary.source)}
                   </div>
                   <p className="muted-line">
                     模型：{strategyDiagnosis.model}；输入 {strategyDiagnosis.metrics} 行广告指标、{strategyDiagnosis.ruleCandidateCount} 条规则候选、{strategyDiagnosis.summary.operationEventCount} 条运营事件、{strategyDiagnosis.summary.productContextCount} 个产品配置。
                   </p>
+                  {strategyDiagnosis.summary.evidencePackSummary && (
+                    <p className="muted-line">
+                      引用证据包：共 {strategyDiagnosis.summary.evidencePackSummary.total} 条，其中报表指标 {strategyDiagnosis.summary.evidencePackSummary.metric}、对象时间线 {strategyDiagnosis.summary.evidencePackSummary.timeline}、运营事件 {strategyDiagnosis.summary.evidencePackSummary.operationEvent}、产品配置 {strategyDiagnosis.summary.evidencePackSummary.productContext}、规则候选 {strategyDiagnosis.summary.evidencePackSummary.ruleCandidate}。
+                    </p>
+                  )}
                   <p>{strategyDiagnosis.summary.summary}</p>
+                  {strategyDiagnosis.summary.lifecycleStageReason && (
+                    <p className={strategyDiagnosis.summary.lifecycleStageRequiresReview ? 'warning-line' : 'muted-line'}>
+                      AI 阶段判断：{lifecycleLabel(strategyDiagnosis.summary.lifecycleStage)}。为什么这么判断：{strategyDiagnosis.summary.lifecycleStageReason}
+                      {strategyDiagnosis.summary.lifecycleStageEvidenceRefs?.length ? ` 引用证据 ${strategyDiagnosis.summary.lifecycleStageEvidenceRefs.length} 条。` : ''}
+                    </p>
+                  )}
+                  {strategyDiagnosis.summary.lifecycleStageRequiresReview && (
+                    <p className="warning-line">
+                      阶段判断需复核：{strategyDiagnosis.summary.lifecycleStageInvalidReasons?.join('；') || 'AI 阶段判断缺少有效可回查证据。'}
+                    </p>
+                  )}
                   {strategyDiagnosis.summary.fallbackReason && <p className="warning-line">{strategyDiagnosis.summary.fallbackReason}</p>}
                   {aiFallbackMessage(strategyDiagnosis) && <p className="blocked-line">{aiFallbackMessage(strategyDiagnosis)}</p>}
                 </div>
                 <div className="business-pill-row business-pill-row-right">
                   <StatusPill tone={strategyDiagnosis.summary.source === 'ai' ? 'ready' : 'warning'}>{strategyDiagnosis.summary.source === 'ai' ? 'AI 已参与' : '规则兜底'}</StatusPill>
                   <StatusPill tone="pending">{lifecycleLabel(strategyDiagnosis.summary.lifecycleStage)}</StatusPill>
+                  <StatusPill tone={evidenceSufficiencyTone(strategyDiagnosis.summary.evidenceSufficiency?.level)}>{evidenceSufficiencyLabel(strategyDiagnosis.summary.evidenceSufficiency?.level)}</StatusPill>
                   <StatusPill tone={strategyDiagnosis.summary.aiCandidateCount > 0 ? 'ready' : 'pending'}>AI 候选 {strategyDiagnosis.summary.aiCandidateCount}</StatusPill>
+                  <StatusPill tone={strategyDiagnosis.summary.insightOnlyCandidateCount ? 'warning' : 'ready'}>洞察未采纳 {strategyDiagnosis.summary.insightOnlyCandidateCount || 0}</StatusPill>
                   <StatusPill tone={strategyDiagnosis.summary.productContextCount > 0 ? 'ready' : 'warning'}>产品配置 {strategyDiagnosis.summary.productContextCount}</StatusPill>
                 </div>
+              </div>
+              <div className="evidence-check-panel">
+                <h3>AI 判断依据</h3>
+                {strategyDiagnosis.summary.evidenceSufficiency && (
+                  <div className="context-summary-grid">
+                    <div>
+                      <span>证据充分性</span>
+                      <strong>{evidenceSufficiencyLabel(strategyDiagnosis.summary.evidenceSufficiency.level)}</strong>
+                      <p>{strategyDiagnosis.summary.evidenceSufficiency.sampleDays} 天样本 / {strategyDiagnosis.summary.evidenceSufficiency.totalClicks} 点击 / {formatUsd(strategyDiagnosis.summary.evidenceSufficiency.totalCost)} 花费 / {strategyDiagnosis.summary.evidenceSufficiency.totalOrders} 单</p>
+                    </div>
+                    <div>
+                      <span>正式动作门槛</span>
+                      <strong>{strategyDiagnosis.summary.evidenceSufficiency.canUseForFormalActions ? '允许进入建议池' : '只作为洞察展示'}</strong>
+                      <p>{strategyDiagnosis.summary.evidenceSufficiency.blockers.length ? strategyDiagnosis.summary.evidenceSufficiency.blockers.join('；') : '当前样本满足系统侧证据门槛。'}</p>
+                    </div>
+                  </div>
+                )}
+                <p className="muted-line">
+                  阶段证据：{formatEvidenceRefSummary(strategyDiagnosis.summary.lifecycleStageEvidenceRefs, strategyDiagnosis.summary.evidencePackPreview)}
+                </p>
+                {strategyDiagnosis.summary.lifecycleStageRequiresReview && (
+                  <p className="warning-line">
+                    阶段判断不会自动覆盖运营阶段：{strategyDiagnosis.summary.lifecycleStageInvalidReasons?.join('；') || '缺少有效证据。'}
+                  </p>
+                )}
+                {Boolean(strategyDiagnosis.summary.evidencePackPreview?.length) && (
+                  <>
+                    <h3>AI 证据明细</h3>
+                    <div className="context-summary-grid">
+                      {strategyDiagnosis.summary.evidencePackPreview?.map((item) => (
+                        <div key={item.evidenceId}>
+                          <span>{evidenceTypeLabel(item.type)}</span>
+                          <strong>{item.label}</strong>
+                          {evidenceMetricLine(item) && <p>{evidenceMetricLine(item)}</p>}
+                          {evidenceEventLine(item) && <p>{evidenceEventLine(item)}</p>}
+                          {evidenceProductLine(item) && <p>{evidenceProductLine(item)}</p>}
+                          {evidenceTimelineLine(item) && <p>{evidenceTimelineLine(item)}</p>}
+                          {evidenceTimelineDailyLine(item) && <p className="muted-line">最近日级：{evidenceTimelineDailyLine(item)}</p>}
+                          {evidenceContextLine(item) && <p className="muted-line">{evidenceContextLine(item)}</p>}
+                          {evidenceSourceLine(item) && <p className="muted-line">{evidenceSourceLine(item)}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
               <div className="context-summary-grid">
                 {(Object.keys(strategyDiagnosis.summary.thresholdSuggestions) as Array<keyof AdStrategyDiagnosisView['summary']['thresholdSuggestions']>).map((key) => {
@@ -407,7 +724,10 @@ export function AdQuantPage() {
                     <div key={`compare-${key}`}>
                       <span>{aiThresholdLabel(key)} 对比</span>
                       <strong>规则 {aiThresholdValueLabel(key, ruleValue)} / AI {aiThresholdValueLabel(key, aiItem.value)}</strong>
-                      <p>{thresholdDeltaLabel(key, ruleValue, aiItem.value)}。AI 理由：{aiItem.reason}</p>
+                      <p>
+                        {thresholdDeltaLabel(key, ruleValue, aiItem.value)}。AI 理由：{aiItem.reason}
+                        {aiItem.evidenceRefs?.length ? ` 引用证据 ${aiItem.evidenceRefs.length} 条。` : ' 缺少阈值证据，需人工复核。'}
+                      </p>
                     </div>
                   );
                 })}
@@ -422,15 +742,37 @@ export function AdQuantPage() {
               <div className="context-summary-grid">
                 {(Object.keys(strategyDiagnosis.summary.thresholdSuggestions) as Array<keyof AdStrategyDiagnosisView['summary']['thresholdSuggestions']>).map((key) => {
                   const item = strategyDiagnosis.summary.thresholdSuggestions[key];
+                  const reviewLine = thresholdEvidenceReviewLine({
+                    item,
+                    evidencePackPreview: strategyDiagnosis.summary.evidencePackPreview,
+                  });
                   return (
                     <div key={key}>
                       <span>{aiThresholdLabel(key)}</span>
                       <strong>{aiThresholdValueLabel(key, item.value)}</strong>
                       <p>{item.reason}</p>
+                      <p className={reviewLine.tone === 'warning' ? 'warning-line' : 'muted-line'}>{reviewLine.text}</p>
                     </div>
                   );
                 })}
               </div>
+              {Boolean(strategyDiagnosis.summary.aiInsights?.length) && (
+                <div className="evidence-check-panel">
+                  <h3>AI 洞察但未采纳的候选动作</h3>
+                  <p className="warning-line">AI 返回了判断，但缺少可回查证据引用或无法绑定当前广告对象，因此只作为洞察展示，未进入优化建议池。</p>
+                  <div className="context-summary-grid">
+                    {strategyDiagnosis.summary.aiInsights?.slice(0, 4).map((insight, index) => (
+                      <div key={`${insight.entityType}-${insight.entityName}-${index}`}>
+                        <span>{insight.entityType} / {insight.actionType}</span>
+                        <strong>{insight.entityName}</strong>
+                        <p>{insight.reason}</p>
+                        <p className="muted-line">引用证据：{formatEvidenceRefSummary(insight.evidenceRefs, strategyDiagnosis.summary.evidencePackPreview)}</p>
+                        <p className="warning-line">{insight.invalidReasons.join('；') || '未进入建议池'}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {(strategyDiagnosis.summary.mainProblems.length > 0 || strategyDiagnosis.summary.riskWarnings.length > 0) && (
                 <ul className="business-list">
                   {strategyDiagnosis.summary.mainProblems.map((item) => <li key={`problem-${item}`}>问题：{item}</li>)}
@@ -441,11 +783,78 @@ export function AdQuantPage() {
           )}
         </Panel>
 
-        <Panel title="AI+规则建议输入检查" tone={canDiagnose && diagnosticCount > 0 ? 'success' : 'warning'}>
+        <Panel title="最近 AI 诊断记录" tone={diagnosisRuns.length ? 'success' : 'warning'}>
+          {diagnosisRunsError && <p className="blocked-line">读取 AI 诊断记录失败：{diagnosisRunsError}</p>}
+          {!diagnosisRunsError && diagnosisRuns.length === 0 && (
+            <p className="muted-line">当前范围还没有 AI 诊断记录。运行 AI 阶段分析后，本页会保留最近记录用于复盘。</p>
+          )}
+          {diagnosisRuns.length > 0 && (
+            <div className="business-card-list">
+              {diagnosisRuns.map((run) => (
+                <div className="business-card" key={run.id}>
+                  <div className="business-split">
+                    <div>
+                      <strong>{run.model}</strong>
+                      <p className="muted-line">{run.createdAt}</p>
+                      <p>{diagnosisRunSummaryText(run)}</p>
+                    </div>
+                    <div className="business-pill-row business-pill-row-right">
+                      <StatusPill tone={run.success === false ? 'blocked' : 'ready'}>
+                        {run.success === false ? 'AI 调用失败' : 'AI 调用成功'}
+                      </StatusPill>
+                      <StatusPill tone={run.diagnosis?.source === 'ai' ? 'ready' : 'warning'}>
+                        {run.diagnosis?.source === 'ai' ? 'AI' : '规则兜底'}
+                      </StatusPill>
+                      <StatusPill tone="pending">{lifecycleLabel(run.diagnosis?.lifecycleStage)}</StatusPill>
+                    </div>
+                  </div>
+                  {run.success === false && (
+                    <p className="blocked-line">{run.errorMessage || run.diagnosis?.aiFallbackReason || 'AI 诊断已回退到规则。'}</p>
+                  )}
+                  <div className="business-pill-row">
+                    <StatusPill tone="ready">正式建议 {run.formalRecommendationCount}</StatusPill>
+                    <StatusPill tone={run.insights?.length ? 'warning' : 'ready'}>洞察 {run.insights?.length || 0}</StatusPill>
+                    <StatusPill tone={diagnosisRunEvidenceTotal(run) ? 'ready' : 'warning'}>{diagnosisRunEvidenceLabel(run)}</StatusPill>
+                  </div>
+                  {diagnosisRunInsightPreview(run).length > 0 && (
+                    <div className="evidence-check-panel">
+                      <h3>洞察未入池原因</h3>
+                      <ul className="business-list">
+                        {diagnosisRunInsightPreview(run).map((line) => <li key={`${run.id}-${line}`}>{line}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {Boolean(run.evidencePackPreview?.length) && (
+                    <div className="evidence-check-panel">
+                      <h3>历史证据明细</h3>
+                      <div className="context-summary-grid">
+                        {run.evidencePackPreview?.slice(0, 3).map((item) => (
+                          <div key={`${run.id}-${item.evidenceId}`}>
+                            <span>{evidenceTypeLabel(item.type)}</span>
+                            <strong>{item.label}</strong>
+                            {evidenceMetricLine(item) && <p>{evidenceMetricLine(item)}</p>}
+                            {evidenceEventLine(item) && <p>{evidenceEventLine(item)}</p>}
+                            {evidenceProductLine(item) && <p>{evidenceProductLine(item)}</p>}
+                            {evidenceTimelineLine(item) && <p>{evidenceTimelineLine(item)}</p>}
+                            {evidenceTimelineDailyLine(item) && <p className="muted-line">最近日级：{evidenceTimelineDailyLine(item)}</p>}
+                            {evidenceContextLine(item) && <p className="muted-line">{evidenceContextLine(item)}</p>}
+                            {evidenceSourceLine(item) && <p className="muted-line">{evidenceSourceLine(item)}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="AI+规则建议输入检查" tone={canGenerateFormalRecommendations && diagnosticCount > 0 ? 'success' : 'warning'}>
           <div className="context-summary-grid">
             <div>
               <span>真实数据输入</span>
-              <strong>{realReportCount} 个表格 / {importedRowCount} 行指标</strong>
+              <strong>{realReportCount}/8 类真实报表 / {importedRowCount} 行指标</strong>
               <p>只读取当前范围真实 xlsx/xls/csv 和 DB 指标，不使用审计 JSON 代替广告数据。</p>
             </div>
             <div>
@@ -475,8 +884,8 @@ export function AdQuantPage() {
             </div>
             <div>
               <span>建议入口</span>
-              <strong>{recommendationReadinessLabel(canDiagnose, diagnosticCount)}</strong>
-              <p>{recommendationReadinessDetail(canDiagnose, diagnosticCount)}</p>
+              <strong>{recommendationReadinessLabel(canDiagnose, canGenerateFormalRecommendations, diagnosticCount)}</strong>
+              <p>{recommendationReadinessDetail(canDiagnose, canGenerateFormalRecommendations, diagnosticCount, recommendationGateIssues)}</p>
             </div>
           </div>
           <div className="business-split">
@@ -486,6 +895,7 @@ export function AdQuantPage() {
               <StatusPill tone={importedRowCount > 0 ? 'ready' : 'blocked'}>DB 指标 {importedRowCount}</StatusPill>
               <StatusPill tone={operationEvents.length ? 'ready' : 'warning'}>运营事件 {operationEvents.length}</StatusPill>
               <StatusPill tone={actionableRows > 0 ? 'ready' : 'blocked'}>可建议对象 {actionableRows}</StatusPill>
+              <StatusPill tone={canGenerateFormalRecommendations ? 'ready' : 'blocked'}>正式建议 {canGenerateFormalRecommendations ? '放行' : '锁定'}</StatusPill>
             </div>
             <div className="action-row">
               <button className="secondary-button" onClick={() => navigate('operation-events')} type="button">
@@ -494,7 +904,7 @@ export function AdQuantPage() {
               <button className="secondary-button" onClick={() => navigate('data-collection')} type="button">
                 返回数据采集
               </button>
-              <button className="primary-button" disabled={!canDiagnose || diagnosticCount === 0} onClick={() => navigate('recommendations')} type="button">
+              <button className="primary-button" disabled={!canGenerateFormalRecommendations || diagnosticCount === 0} onClick={() => navigate('recommendations')} type="button">
                 去生成 AI+规则建议
               </button>
             </div>
@@ -528,6 +938,83 @@ export function AdQuantPage() {
                   </div>
                 ))}
               </div>
+            )}
+          </Panel>
+        )}
+
+        {canDiagnose && (
+          <Panel title="产品广告历史账本" tone={productHistoryLedgers.length ? 'success' : 'warning'}>
+            {productHistoryLedgers.length ? (
+              <div className="business-card-list">
+                {productHistoryLedgers.slice(0, 4).map((ledger) => (
+                  <div className="timeline-card" key={ledger.asin}>
+                    <div className="timeline-card-header">
+                      <div>
+                        <span>{ledger.dateFrom} 至 {ledger.dateTo}</span>
+                        <strong>{ledger.asin}</strong>
+                        <p>阶段 {lifecycleLabel(ledger.inferredStage)} / 活跃 {ledger.activeDays} 天 / 事件 {ledger.events?.length || 0} 条</p>
+                      </div>
+                      <div className="business-pill-row business-pill-row-right">
+                        <StatusPill tone="ready">阶段 {lifecycleLabel(ledger.inferredStage)}</StatusPill>
+                        <StatusPill tone="pending">活跃 {ledger.activeDays} 天</StatusPill>
+                      </div>
+                    </div>
+                    <div className="timeline-metrics">
+                      <div><span>花费</span><strong>{formatUsd(ledger.totals.cost)}</strong></div>
+                      <div><span>销售</span><strong>{formatUsd(ledger.totals.sales)}</strong></div>
+                      <div><span>订单</span><strong>{ledger.totals.orders}</strong></div>
+                      <div><span>ACOS</span><strong>{formatPercent(ledger.totals.acos * 100)}</strong></div>
+                      <div><span>CVR</span><strong>{formatPercent(ledger.totals.cvr * 100)}</strong></div>
+                      <div><span>日级记录</span><strong>{ledger.daily.length}</strong></div>
+                    </div>
+                    <p className="muted-line">
+                      {formatUsd(ledger.totals.cost)} / {formatUsd(ledger.totals.sales)} / {ledger.totals.orders} 单；首日 {ledger.firstMetricDate || '-'}，最近 {ledger.lastMetricDate || '-'}。
+                    </p>
+                    {ledger.stageReasons?.[0] && <p className="muted-line">阶段依据：{ledger.stageReasons[0]}</p>}
+                    {ledger.product && (
+                      <p className="muted-line">
+                        产品目标：目标 ACOS {ledger.product.targetAcos === undefined ? '-' : formatPercent(ledger.product.targetAcos * 100)}
+                        {' / '}目标 TACOS {ledger.product.targetTacos === undefined ? '-' : formatPercent(ledger.product.targetTacos * 100)}
+                        {' / '}最低价 {ledger.product.minPrice === undefined ? '-' : formatUsd(ledger.product.minPrice)}
+                      </p>
+                    )}
+                    <div className="product-history-preview-grid">
+                      <div>
+                        <h3>日级趋势</h3>
+                        <div className="product-trend-list">
+                          {ledger.daily.slice(-7).map((day) => (
+                            <div className="product-trend-row product-trend-row-wide" key={`${ledger.asin}-${day.date}`}>
+                              <span>{day.date}</span>
+                              <div className="product-trend-bar" aria-label={`${day.date} ${formatUsd(day.cost)} 花费`}>
+                                <i style={{ width: `${Math.max(8, Math.min(100, (Number(day.cost || 0) / maxDailyCost(ledger.daily.slice(-7))) * 100))}%` }} />
+                              </div>
+                              <strong>{formatUsd(day.cost)} / {formatUsd(day.sales)} / {day.orders} 单 / ACOS {formatPercent(day.acos * 100)}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <h3>事件叠加</h3>
+                        {ledger.events?.length ? (
+                          <div className="product-event-stack">
+                            {ledger.events.slice(0, 4).map((event) => (
+                              <div className="product-event-chip" key={`${ledger.asin}-${event.eventDate}-${event.title}`}>
+                                <span>{event.eventDate} / {event.eventType}</span>
+                                <strong>{event.title}</strong>
+                                <p>{event.impactExpectation || '影响待观察'}</p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="muted-line">当前范围没有运营事件，AI 只能基于广告数据判断阶段。</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-line">当前范围已有量化指标，但还没有形成按 ASIN 聚合的产品广告历史账本。请检查指标是否包含 ASIN 或当前范围是否过窄。</p>
             )}
           </Panel>
         )}
@@ -696,7 +1183,7 @@ export function AdQuantPage() {
               {(quant?.blockers.length ? quant.blockers : ['没有真实报表文件和导入指标，本页不生成建议。']).map((item) => (
                 <li key={item}>{item}</li>
               ))}
-              {!collection?.realReportFiles.length && <li>当前范围还没有可量化的真实广告数据</li>}
+              {!hasRealReportCoverage(collection) && <li>当前范围还没有可量化的真实广告数据</li>}
             </ul>
             <div className="action-row">
               <button className="primary-button" onClick={() => navigate('data-collection')} type="button">

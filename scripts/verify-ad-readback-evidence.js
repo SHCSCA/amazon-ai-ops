@@ -96,6 +96,98 @@ function checkOwnedEvidenceFile(filePath, label) {
   pass(`${label} evidence file exists`);
 }
 
+function checkDistinctEvidenceFiles(files) {
+  const usableFiles = files.filter((item) => hasRealText(item.filePath));
+  if (usableFiles.length !== files.length) return;
+  const resolvedFiles = usableFiles.map((item) => ({
+    label: item.label,
+    path: path.resolve(String(item.filePath).trim()).toLowerCase(),
+  }));
+  const uniquePaths = new Set(resolvedFiles.map((item) => item.path));
+  if (uniquePaths.size === resolvedFiles.length) {
+    pass('before, after, and readback evidence files are distinct');
+  } else {
+    fail('before, after, and readback evidence files must be distinct');
+  }
+}
+
+function isPositiveNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0;
+}
+
+function parseExecutableNumber(value) {
+  const text = String(value ?? '').trim();
+  if (!text || /[%％]/.test(text)) return Number.NaN;
+  return Number(text.replace(/^\$/, '').replace(/\s*usd$/i, ''));
+}
+
+function checkActionValueDirection(actionType, beforeValue, afterValue) {
+  if (actionType !== 'lower_bid') return;
+  const beforeNumber = parseExecutableNumber(beforeValue);
+  const afterNumber = parseExecutableNumber(afterValue);
+  if (!Number.isFinite(beforeNumber) || !Number.isFinite(afterNumber)) {
+    fail('lower_bid action values are not executable numeric bids');
+    return;
+  }
+  if (afterNumber < beforeNumber) {
+    pass('lower_bid action lowered the bid value');
+  } else {
+    fail('lower_bid action did not lower the bid value');
+  }
+}
+
+function valuesMatch(left, right) {
+  const leftNumber = parseExecutableNumber(left);
+  const rightNumber = parseExecutableNumber(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return Math.abs(leftNumber - rightNumber) < 0.0001;
+  }
+  return String(left ?? '').trim() === String(right ?? '').trim();
+}
+
+function checkSourceValueConsistency(source, beforeValue, afterValue) {
+  if (!hasRealText(String(source?.currentValue ?? ''))) {
+    fail('source current value is missing');
+  } else {
+    pass('source current value is present');
+  }
+
+  if (!hasRealText(String(source?.recommendedValue ?? ''))) {
+    fail('source recommended value is missing');
+  } else {
+    pass('source recommended value is present');
+  }
+
+  if (
+    hasRealText(String(source?.currentValue ?? ''))
+    && hasRealText(String(source?.recommendedValue ?? ''))
+  ) {
+    pass('source recommendation values are present and kept separate from live Ads before/after values');
+  }
+}
+
+function isRealReportFile(filePath) {
+  if (!hasRealText(filePath)) return false;
+  const resolved = path.resolve(String(filePath).trim());
+  const ext = path.extname(resolved).toLowerCase();
+  if (!new Set(['.xlsx', '.xls', '.csv']).has(ext)) return false;
+  return fs.existsSync(resolved) && fs.statSync(resolved).isFile();
+}
+
+function checkSourceReportTraceability(source) {
+  const sourceFiles = Array.isArray(source?.sourceFiles) ? source.sourceFiles : [];
+  if (
+    sourceFiles.length > 0
+    && sourceFiles.every(isRealReportFile)
+    && isPositiveNumber(source?.sourceRow)
+  ) {
+    pass('source report traceability includes real spreadsheet file(s) and row number');
+  } else {
+    fail('source report traceability is incomplete');
+  }
+}
+
 function assertNoSecretLeak(serialized) {
   const suspicious = [
     /sk-[A-Za-z0-9_-]{16,}/,
@@ -158,6 +250,8 @@ if (
   fail('target context is incomplete');
 }
 
+checkSourceReportTraceability(evidence.source || {});
+
 if (LOW_RISK_ACTIONS.has(target.actionType) && evidence.risk?.level === 'low' && evidence.risk?.allowedByPolicy === true && hasRealText(evidence.risk?.rationale)) {
   pass('action is low-risk and policy-allowed');
 } else {
@@ -171,13 +265,15 @@ if (
   && after.value !== undefined
   && hasRealText(String(before.value))
   && hasRealText(String(after.value))
-  && String(before.value) !== String(after.value)
+  && !valuesMatch(before.value, after.value)
   && hasRealText(before.liveBidSourceNote)
 ) {
   pass('before/after values are present, live-sourced, and changed');
 } else {
   fail('before/after values do not prove a live Ads UI change');
 }
+checkActionValueDirection(target.actionType, before.value, after.value);
+checkSourceValueConsistency(evidence.source || {}, before.value, after.value);
 
 if (isIsoDate(before.capturedAt) && isIsoDate(after.capturedAt)) {
   pass('before/after capture timestamps are present');
@@ -197,13 +293,18 @@ if (
   && isIsoDate(readback.readAt)
   && hasRealText(readback.method)
   && readback.actualValue !== undefined
-  && String(readback.actualValue) === String(after.value)
+  && valuesMatch(readback.actualValue, after.value)
 ) {
   pass('readback verified the after value');
 } else {
   fail('readback verification is incomplete');
 }
 checkOwnedEvidenceFile(readback.evidencePath || readback.screenshotPath, 'readback evidence');
+checkDistinctEvidenceFiles([
+  { label: 'before screenshot', filePath: before.screenshotPath },
+  { label: 'after screenshot', filePath: after.screenshotPath },
+  { label: 'readback evidence', filePath: readback.evidencePath || readback.screenshotPath },
+]);
 
 const execution = evidence.execution || {};
 if (

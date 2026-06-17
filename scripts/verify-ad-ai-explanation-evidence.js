@@ -20,9 +20,23 @@ function hasText(value) {
 
 function assertNoSecret(value, location) {
   const text = JSON.stringify(value || '');
-  if (/sk-[A-Za-z0-9_-]{16,}/.test(text) || /deepseek-[A-Za-z0-9_-]{12,}/i.test(text)) {
+  if (
+    /sk-[A-Za-z0-9_-]{16,}/.test(text)
+    || /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/i.test(text)
+    || /deepseek[_-]?api[_-]?key["']?\s*[:=]\s*["'][^"']+/i.test(text)
+    || /deepseek-[A-Za-z0-9_-]{12,}/i.test(text)
+  ) {
     fail(`${location} appears to contain an API key`);
   }
+}
+
+function isRealReportSourceFile(filePath) {
+  return /\.(xlsx|xls|csv)$/i.test(String(filePath || '').trim().split(/[?#]/)[0]);
+}
+
+function positiveNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0;
 }
 
 function assertEquals(actual, expected, label) {
@@ -84,6 +98,8 @@ assertEquals(ai.testSuccess, true, 'AI connection test succeeded before recommen
 
 if (evidence.adAiExplanation?.settingsRestored === true) {
   pass('AI settings were restored after evidence run');
+} else if (evidence.aiSettingsChanged === false && ai.storedKeyAccepted === true) {
+  pass('AI settings were not modified during evidence run');
 } else {
   fail('AI settings restore proof is missing or failed');
 }
@@ -127,6 +143,23 @@ for (const [index, rec] of recommendations.entries()) {
   }
   if (!hasText(rec.metricDate)) {
     fail(`${prefix} is missing metric date`);
+  }
+  if (!hasText(rec.currentValue)) {
+    fail(`${prefix} is missing current value`);
+  }
+  if (!hasText(rec.recommendedValue)) {
+    fail(`${prefix} is missing executable recommended value`);
+  }
+  const sourceFiles = Array.isArray(rec.sourceFiles) ? rec.sourceFiles : [];
+  if (sourceFiles.length > 0 && sourceFiles.every(isRealReportSourceFile)) {
+    pass(`${prefix} has real report source file`);
+  } else {
+    fail(`${prefix} is missing real report source file`);
+  }
+  if (positiveNumber(rec.sourceRow)) {
+    pass(`${prefix} has original report source row`);
+  } else {
+    fail(`${prefix} is missing original report source row`);
   }
   assertNoSecret(rec, prefix);
 }

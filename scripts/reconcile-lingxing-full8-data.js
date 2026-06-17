@@ -72,6 +72,8 @@ function summarizeFile(file) {
     clicks: findColumn(header, ['点击', '点击量', 'Clicks']),
     impressions: findColumn(header, ['曝光量', '展现量', 'Impressions']),
   };
+  const requiredMetricColumns = ['spend', 'orders', 'sales'];
+  const missingRequiredMetricColumns = requiredMetricColumns.filter((key) => indexes[key] < 0);
 
   const totals = { spend: 0, orders: 0, sales: 0, clicks: 0, impressions: 0 };
   for (const row of rows.slice(1)) {
@@ -88,6 +90,7 @@ function summarizeFile(file) {
     filePath: file.filePath,
     fileSizeBytes: file.fileSizeBytes,
     columns: Object.fromEntries(Object.entries(indexes).map(([key, index]) => [key, index >= 0 ? header[index] : null])),
+    missingRequiredMetricColumns,
     totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, Number(value.toFixed(2))])),
   };
 }
@@ -274,6 +277,9 @@ function reconcile(evidencePath, options = {}) {
     manifestFileCount: (manifest.files || []).length,
     realReportFileCount: files.length,
     summaries,
+    blockers: summaries
+      .filter((summary) => summary.missingRequiredMetricColumns.length > 0)
+      .map((summary) => `${summary.reportType} report is missing required metric columns: ${summary.missingRequiredMetricColumns.join(', ')}.`),
     totals: {
       canonicalTotal: canonical?.totals || null,
       accountSummaryDuplicateReports: Object.fromEntries(duplicateSummaryRows.map((summary) => [summary.reportType, summary.totals])),
@@ -313,6 +319,7 @@ if (require.main === module) {
     dbCanonicalTotal: result.db?.totals?.canonical,
     dbCanonicalDelta: result.db?.canonicalDelta,
     dbBlockers: result.db?.blockers,
+    blockers: result.blockers,
     targetingBreakdownTotal: result.totals.targetingBreakdownTotal,
     executableRowsNaiveSum: result.totals.executableRowsNaiveSum,
     nonAdditiveReports: result.interpretation.nonAdditiveReports,
