@@ -314,6 +314,7 @@ const DEFAULT_PERSONA = [
 ].join('');
 const FORMAL_AD_ACTION_SCHEMA = 'lower_bid | raise_bid | pause_target | resume_target | add_negative_exact | add_negative_phrase | add_negative_broad | adjust_campaign_budget | create_campaign | archive_campaign';
 const MIN_FORMAL_AI_CONFIDENCE = 0.6;
+const AI_JSON_FORMAT_FALLBACK_REASON = 'AI 输出格式未通过校验，当前使用规则引擎兜底。';
 
 const VALID_STAGES = new Set<AdLifecycleStage>([
   'cold_start',
@@ -355,12 +356,60 @@ export class AdStrategyDiagnoser {
       );
 
       if (!response.success) {
-        return this.fallback(input, response.error || 'AI provider returned an unsuccessful response');
+        return this.fallback(input, response.error ? `AI 服务调用失败：${response.error}` : 'AI 服务调用失败，当前使用规则引擎兜底。');
       }
 
-      return this.normalizeOutput(parseJsonObject(response.content || ''), input);
+      return this.normalizeOutput(await this.parseOrRepairJson(response.content || '', input), input);
     } catch (error) {
+      if (isJsonParseFailure(error)) {
+        return this.fallback(input, AI_JSON_FORMAT_FALLBACK_REASON);
+      }
       return this.fallback(input, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async parseOrRepairJson(content: string, input: AdStrategyDiagnosisInput): Promise<unknown> {
+    try {
+      return parseJsonObject(content);
+    } catch (error) {
+      if (!isJsonParseFailure(error)) throw error;
+      const repairResponse = await this.provider.chat(
+        [
+          {
+            role: 'system',
+            content: [
+              this.persona(),
+              `所有自然语言字段必须使用${this.outputLanguage()}。`,
+              '你是 JSON 修复器。不要重新分析业务，不要添加新证据，不要编造字段。',
+              '把用户提供的内容修复为一个合法 JSON 对象。',
+              '只返回 JSON 对象，不要 Markdown、解释段落或代码块。',
+              'schemaVersion 必须是 ad_strategy_diagnosis_v1。',
+            ].join('\n'),
+          },
+          {
+            role: 'user',
+            content: [
+              '请把以下 AI 输出修复为一个合法 JSON 对象。',
+              '必须保留原有业务含义；缺失字段按空数组或当前规则兜底结构补齐。',
+              '目标 schema：',
+              JSON.stringify(this.requiredOutputSkeleton(input), null, 2),
+              '待修复内容：',
+              content,
+            ].join('\n\n'),
+          },
+        ],
+        { temperature: 0, responseFormat: 'json_object' },
+      );
+
+      if (!repairResponse.success) {
+        throw new AiJsonParseError(AI_JSON_FORMAT_FALLBACK_REASON);
+      }
+
+      try {
+        return parseJsonObject(repairResponse.content || '');
+      } catch {
+        throw new AiJsonParseError(AI_JSON_FORMAT_FALLBACK_REASON);
+      }
     }
   }
 
@@ -378,48 +427,7 @@ export class AdStrategyDiagnoser {
       operationEvents: input.operationEvents,
       ruleCandidates: input.ruleCandidates.slice(0, 80),
       evidencePack: (input.evidencePack || []).slice(0, 160),
-      requiredOutput: {
-        schemaVersion: 'ad_strategy_diagnosis_v1',
-        lifecycleStage:
-          'cold_start | keyword_exploration | stable_conversion | scaling | profit_harvesting | clearance | declining_repair | unknown',
-        lifecycleStageReason: `${this.outputLanguage()}阶段判断原因，必须引用 evidenceRefs`,
-        lifecycleStageEvidenceRefs: ['evidenceId from evidencePack'],
-        summary: `${this.outputLanguage()}业务诊断摘要`,
-        mainProblems: ['stable problem codes, e.g. INSUFFICIENT_DATA, HIGH_ACOS'],
-        thresholdSuggestions: {
-          targetAcos: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
-          highAcosThreshold: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
-          noOrderClickThreshold: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
-          minSpend: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
-        },
-        aiCandidates: [
-          {
-            entityType: 'keyword | search_term | target | campaign | ad_group | product',
-            entityName: 'business entity name',
-            actionType: FORMAL_AD_ACTION_SCHEMA,
-            recommendedValue: 'required executable absolute value for bid/budget actions, e.g. 1.26 for lower_bid; percentages like -10% are not allowed in aiCandidates',
-            reason: `${this.outputLanguage()}证据原因`,
-            reasoningSteps: [`${this.outputLanguage()}推理步骤，必须引用 evidenceRefs`],
-            evidenceRefs: ['evidenceId from evidencePack'],
-            riskWarnings: [`${this.outputLanguage()}候选动作风险`],
-            confidence: '0..1',
-          },
-        ],
-        insightOnlyCandidates: [
-          {
-            entityType: 'keyword | search_term | target | campaign | ad_group | product',
-            entityName: 'business entity name',
-            actionType: `${FORMAL_AD_ACTION_SCHEMA} | observe | harvest | analysis_only`,
-            recommendedValue: 'optional value; use this section when only a relative percentage is available',
-            reason: `${this.outputLanguage()}洞察原因；缺少证据时放这里`,
-            reasoningSteps: [`${this.outputLanguage()}推理步骤`],
-            evidenceRefs: ['empty or partial evidence refs'],
-            riskWarnings: [`${this.outputLanguage()}不能进入审批的原因`],
-            confidence: '0..1',
-          },
-        ],
-        riskWarnings: [`${this.outputLanguage()}人工复核风险`],
-      },
+      requiredOutput: this.requiredOutputSkeleton(input),
     };
 
     return [
@@ -450,9 +458,54 @@ export class AdStrategyDiagnoser {
     ].join('\n\n');
   }
 
+  private requiredOutputSkeleton(_input: AdStrategyDiagnosisInput) {
+    return {
+      schemaVersion: 'ad_strategy_diagnosis_v1',
+      lifecycleStage:
+        'cold_start | keyword_exploration | stable_conversion | scaling | profit_harvesting | clearance | declining_repair | unknown',
+      lifecycleStageReason: `${this.outputLanguage()}阶段判断原因，必须引用 evidenceRefs`,
+      lifecycleStageEvidenceRefs: ['evidenceId from evidencePack'],
+      summary: `${this.outputLanguage()}业务诊断摘要`,
+      mainProblems: ['stable problem codes, e.g. INSUFFICIENT_DATA, HIGH_ACOS'],
+      thresholdSuggestions: {
+        targetAcos: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
+        highAcosThreshold: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
+        noOrderClickThreshold: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
+        minSpend: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
+      },
+      aiCandidates: [
+        {
+          entityType: 'keyword | search_term | target | campaign | ad_group | product',
+          entityName: 'business entity name',
+          actionType: FORMAL_AD_ACTION_SCHEMA,
+          recommendedValue: 'required executable absolute value for bid/budget actions, e.g. 1.26 for lower_bid; percentages like -10% are not allowed in aiCandidates',
+          reason: `${this.outputLanguage()}证据原因`,
+          reasoningSteps: [`${this.outputLanguage()}推理步骤，必须引用 evidenceRefs`],
+          evidenceRefs: ['evidenceId from evidencePack'],
+          riskWarnings: [`${this.outputLanguage()}候选动作风险`],
+          confidence: '0..1',
+        },
+      ],
+      insightOnlyCandidates: [
+        {
+          entityType: 'keyword | search_term | target | campaign | ad_group | product',
+          entityName: 'business entity name',
+          actionType: `${FORMAL_AD_ACTION_SCHEMA} | observe | harvest | analysis_only`,
+          recommendedValue: 'optional value; use this section when only a relative percentage is available',
+          reason: `${this.outputLanguage()}洞察原因；缺少证据时放这里`,
+          reasoningSteps: [`${this.outputLanguage()}推理步骤`],
+          evidenceRefs: ['empty or partial evidence refs'],
+          riskWarnings: [`${this.outputLanguage()}不能进入审批的原因`],
+          confidence: '0..1',
+        },
+      ],
+      riskWarnings: [`${this.outputLanguage()}人工复核风险`],
+    };
+  }
+
   private normalizeOutput(raw: unknown, input: AdStrategyDiagnosisInput): AdStrategyDiagnosisOutput {
     if (!isRecord(raw)) {
-      return this.fallback(input, 'AI response was not a JSON object');
+      return this.fallback(input, 'AI 输出不是可识别的结构化 JSON 对象。');
     }
     if (raw.schemaVersion !== 'ad_strategy_diagnosis_v1') {
       return this.fallback(input, `AI 输出 schemaVersion 错误：${String(raw.schemaVersion || 'missing')}`);
@@ -537,6 +590,13 @@ export class AdStrategyDiagnoser {
   }
 }
 
+class AiJsonParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AiJsonParseError';
+  }
+}
+
 function parseJsonObject(content: string): unknown {
   const trimmed = content.trim();
   const withoutFence = trimmed
@@ -545,11 +605,23 @@ function parseJsonObject(content: string): unknown {
     .trim();
   try {
     return JSON.parse(withoutFence);
-  } catch {
+  } catch (error) {
     const extracted = withoutFence.match(/\{[\s\S]*\}/)?.[0];
-    if (!extracted) throw new Error('AI response was not valid JSON');
-    return JSON.parse(extracted);
+    if (!extracted) {
+      throw new AiJsonParseError(error instanceof Error ? error.message : 'AI response was not valid JSON');
+    }
+    try {
+      return JSON.parse(extracted);
+    } catch (innerError) {
+      throw new AiJsonParseError(innerError instanceof Error ? innerError.message : 'AI response was not valid JSON');
+    }
   }
+}
+
+function isJsonParseFailure(error: unknown): boolean {
+  return error instanceof AiJsonParseError
+    || error instanceof SyntaxError
+    || (error instanceof Error && /JSON|Unexpected|position|token|unterminated|Expected/i.test(error.message));
 }
 
 function normalizeThreshold(value: unknown, fallbackValue: number): ThresholdSuggestion {

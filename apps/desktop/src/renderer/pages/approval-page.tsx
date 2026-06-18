@@ -522,8 +522,10 @@ export function ApprovalPage() {
               </button>
             ))}
           </div>
-          <div className="table-wrap">
-            <table className="business-table approval-table">
+          <details className="evidence-disclosure">
+            <summary>展开审批队列（{rows.length} 条）</summary>
+            <div className="table-wrap">
+              <table className="business-table approval-table">
               <thead>
                 <tr>
                   <th>动作</th>
@@ -574,8 +576,9 @@ export function ApprovalPage() {
                   </tr>
                 )}
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+          </details>
         </Panel>
 
         {selected && (

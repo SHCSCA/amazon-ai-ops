@@ -1,7 +1,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { chromium } = require('playwright');
+const { chromium } = require('./playwright-loader');
 
 const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
@@ -882,7 +882,7 @@ async function main() {
     '真实数据闭环',
     'AI 证据链',
     '运营上下文',
-    'Listing 草案',
+    'Listing 草案证据',
     '建议与审批',
     '执行回读',
     '最终交付包',

@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { Sidebar } from './components/app-shell';
 import { ScopeBar } from './components/scope-bar';
-import { StatusPill } from './components/ui';
 import { AdQuantPage } from './pages/ad-quant-page';
 import { ApprovalPage } from './pages/approval-page';
 import { DashboardPage } from './pages/dashboard-page';
@@ -280,9 +279,6 @@ export default function App() {
         <Sidebar activeRoute={activeTab} onNavigate={setActiveTab} />
         <main ref={contentRef} className="app-content">
           <ScopeBar />
-          <div style={{ marginBottom: 12 }}>
-            <StatusPill tone="warning">真实报表优先</StatusPill>
-          </div>
           <BusinessRoutePage route={activeTab} />
         </main>
       </div>

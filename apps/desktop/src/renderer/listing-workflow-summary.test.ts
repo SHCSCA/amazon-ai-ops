@@ -26,7 +26,7 @@ describe('buildListingWorkflowSummary', () => {
     expect(summary.nextAction).toBe('去关键词机会页带入当前范围关键词，或在本页粘贴关键词。');
   });
 
-  it('keeps a probed but incomplete Lingxing Listing from drafting', () => {
+  it('keeps incomplete Listing content from drafting', () => {
     const summary = buildListingWorkflowSummary({
       keywordCount: 3,
       listingReadAttempted: true,
@@ -40,9 +40,9 @@ describe('buildListingWorkflowSummary', () => {
 
     expect(summary.statusLabel).toBe('Listing 待核对');
     expect(summary.tone).toBe('warning');
-    expect(summary.headline).toBe('关键词已就绪，但 Listing 读取未达到生成草案门槛。');
+    expect(summary.headline).toBe('关键词已就绪，但 Listing 内容未达到生成草案门槛。');
     expect(summary.blockers).toContain('Listing 未完整读取或 ASIN 未核对通过');
-    expect(summary.nextAction).toBe('切换到正确的领星 Listing 详情页，重新读取并核对 ASIN、标题、五点和后台词。');
+    expect(summary.nextAction).toBe('手工录入并核对 ASIN、标题、五点和后台词；领星读取只作为辅助填充。');
   });
 
   it('marks finished drafts as local export only and never publish-ready', () => {
@@ -144,7 +144,7 @@ describe('buildListingReadinessIssues', () => {
 });
 
 describe('buildListingSourceStatus', () => {
-  it('keeps not-read wording only before the user attempts a Lingxing read', () => {
+  it('keeps not-entered wording before the user provides Listing content', () => {
     const status = buildListingSourceStatus({
       listingReadAttempted: false,
       hasListing: false,
@@ -157,7 +157,7 @@ describe('buildListingSourceStatus', () => {
     });
 
     expect(status.label).toBe('未读取');
-    expect(status.headline).toBe('尚未读取当前领星 Listing 页面');
+    expect(status.headline).toBe('尚未录入或读取当前 Listing 内容');
     expect(status.missingFieldLabel).toBe('未读取');
   });
 
@@ -208,7 +208,7 @@ describe('buildListingSourceStatus', () => {
     });
 
     expect(status.label).toBe('完整读取');
-    expect(status.headline).toBe('当前领星 Listing 内容已完整读取并通过核对');
+    expect(status.headline).toBe('当前 Listing 内容已完整录入并通过核对');
     expect(status.missingFieldLabel).toBe('缺失');
   });
 });

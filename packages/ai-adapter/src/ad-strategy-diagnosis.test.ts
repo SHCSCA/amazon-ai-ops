@@ -5,18 +5,28 @@ import type { AIResponse } from './types';
 
 class FakeProvider implements AIProvider {
   public messages: ChatMessage[] = [];
+  public messageBatches: ChatMessage[][] = [];
+  public chatCount = 0;
   public options?: ChatOptions;
+  public optionsHistory: Array<ChatOptions | undefined> = [];
 
-  constructor(private response: AIResponse) {}
+  private responses: AIResponse[];
+
+  constructor(response: AIResponse | AIResponse[]) {
+    this.responses = Array.isArray(response) ? [...response] : [response];
+  }
 
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<AIResponse> {
     this.messages = messages;
+    this.messageBatches.push(messages);
     this.options = options;
-    return this.response;
+    this.optionsHistory.push(options);
+    this.chatCount += 1;
+    return this.responses.shift() || this.responses[this.responses.length - 1] || { success: false, error: 'missing fake response' };
   }
 
   async complete(_prompt: string, _options?: CompleteOptions): Promise<AIResponse> {
-    return this.response;
+    return this.responses[0] || { success: false, error: 'missing fake response' };
   }
 
   async healthCheck(): Promise<boolean> {
@@ -326,7 +336,7 @@ describe('AdStrategyDiagnoser', () => {
       schemaVersion: 'ad_strategy_diagnosis_v1',
       source: 'rule',
       lifecycleStage: 'unknown',
-      aiFallbackReason: '401 unauthorized',
+      aiFallbackReason: 'AI 服务调用失败：401 unauthorized',
       aiCandidates: [],
     });
     expect(result.evidenceSufficiency).toMatchObject({
@@ -367,6 +377,98 @@ describe('AdStrategyDiagnoser', () => {
 
     expect(result.source).toBe('ai');
     expect(result.summary).toBe('已解析');
+  });
+
+  it('repairs malformed JSON once and parses the repaired structured diagnosis', async () => {
+    const provider = new FakeProvider([
+      {
+        success: true,
+        content: '{"schemaVersion":"ad_strategy_diagnosis_v1","lifecycleStage":"keyword_exploration","summary":"坏 JSON","mainProblems":["HIGH_ACOS",],"thresholdSuggestions":{},"aiCandidates":[],"insightOnlyCandidates":[],"riskWarnings":[]}',
+      },
+      {
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 'ad_strategy_diagnosis_v1',
+          lifecycleStage: 'keyword_exploration',
+          lifecycleStageReason: '修复后可解析，阶段仍需结合证据复核。',
+          lifecycleStageEvidenceRefs: [],
+          summary: 'AI 输出已修复为标准 JSON，当前只展示可控字段。',
+          mainProblems: ['HIGH_ACOS'],
+          thresholdSuggestions: {},
+          aiCandidates: [],
+          insightOnlyCandidates: [],
+          riskWarnings: ['修复后的结果仍需人工复核。'],
+        }),
+      },
+    ]);
+    const diagnoser = new AdStrategyDiagnoser(provider);
+
+    const result = await diagnoser.diagnose({
+      scope: {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        currency: 'USD',
+      },
+      metrics: [],
+      adObjectTimelines: [],
+      operationEvents: [],
+      currentRuleConfig: {
+        targetAcos: 0.25,
+        highAcosThreshold: 0.4,
+        noOrderClickThreshold: 30,
+        minSpend: 10,
+      },
+      ruleCandidates: [],
+    });
+
+    expect(provider.chatCount).toBe(2);
+    expect(provider.messageBatches[1].map((message) => message.content).join('\n')).toContain('修复为一个合法 JSON 对象');
+    expect(result.source).toBe('ai');
+    expect(result.summary).toBe('AI 输出已修复为标准 JSON，当前只展示可控字段。');
+    expect(result.aiFallbackReason).toBeUndefined();
+  });
+
+  it('falls back with a Chinese user-facing reason when malformed JSON repair fails', async () => {
+    const provider = new FakeProvider([
+      {
+        success: true,
+        content: '{"schemaVersion":"ad_strategy_diagnosis_v1","mainProblems":["HIGH_ACOS",],"summary":"坏 JSON"}',
+      },
+      {
+        success: true,
+        content: '仍然不是 JSON',
+      },
+    ]);
+    const diagnoser = new AdStrategyDiagnoser(provider);
+
+    const result = await diagnoser.diagnose({
+      scope: {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        currency: 'USD',
+      },
+      metrics: [],
+      adObjectTimelines: [],
+      operationEvents: [],
+      currentRuleConfig: {
+        targetAcos: 0.25,
+        highAcosThreshold: 0.4,
+        noOrderClickThreshold: 30,
+        minSpend: 10,
+      },
+      ruleCandidates: [],
+    });
+
+    expect(provider.chatCount).toBe(2);
+    expect(result.source).toBe('rule');
+    expect(result.aiFallbackReason).toBe('AI 输出格式未通过校验，当前使用规则引擎兜底。');
+    expect(result.summary).toContain('AI 诊断不可用');
+    expect(JSON.stringify(result)).not.toContain("Expected ',' or ']'");
+    expect(JSON.stringify(result)).not.toContain('position');
   });
 
   it('falls back when AI returns the wrong schemaVersion', async () => {

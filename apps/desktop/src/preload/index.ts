@@ -173,6 +173,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:listing:analyze-coverage', { listing, keywords }),
   importListingContent: (filePath: string) =>
     ipcRenderer.invoke('v1_5:listing:import-content', { filePath }),
+  saveManualListingContent: (listing: any, scope?: { storeName?: string; marketplaceCode?: string }) =>
+    ipcRenderer.invoke('v1_5:listing:save-manual-content', { listing, scope }),
+  listListingContentVersions: (input: { asin: string; storeName?: string; marketplaceCode?: string; limit?: number }) =>
+    ipcRenderer.invoke('v1_5:listing:list-content-versions', input),
   extractListingFromLingxing: (options?: { expectedAsin?: string; persist?: boolean; scope?: { storeName?: string; marketplaceCode?: string } }) =>
     ipcRenderer.invoke('v1_5:listing:extract-from-lingxing', options ?? {}),
   openLingxingListingAndExtract: (url: string) =>

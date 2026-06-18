@@ -180,10 +180,24 @@ export interface ListingContent {
   asin: string;
   title: string;
   bullets: string[];
+  description?: string;
   aPlus?: string;
   imageCopy?: string;
   backendTerms?: string;
+  source?: 'manual' | 'lingxing_readonly' | 'imported_file' | 'lingxing';
+  sourceUrl?: string;
+  screenshotPath?: string;
+  versionLabel?: string;
+  changeSummary?: string;
   updatedAt?: string;
+  createdAt?: string;
+}
+
+export interface ListingContentVersion extends ListingContent {
+  versionId: number;
+  listingContentId?: number;
+  storeName?: string;
+  marketplaceCode?: string;
 }
 
 export interface KeywordOpportunity {

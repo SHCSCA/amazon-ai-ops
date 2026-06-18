@@ -8,7 +8,7 @@ import {
   isListingReadyForDraft,
 } from '../listing-workflow-summary';
 import { hasRealReportCoverage } from '../report-coverage';
-import type { ListingContentView, ListingDraftView, ListingHandoffPayload, ListingSection, ListingSuggestionView } from '../types';
+import type { ListingContentVersionView, ListingContentView, ListingDraftView, ListingHandoffPayload, ListingSection, ListingSuggestionView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 interface ListingReadEvidence {
@@ -115,6 +115,12 @@ function readBoolean(value: unknown): boolean {
   return typeof value === 'boolean' ? value : false;
 }
 
+function ensureFiveBullets(input?: string[]): string[] {
+  const bullets = Array.isArray(input) ? input.slice(0, 5) : [];
+  while (bullets.length < 5) bullets.push('');
+  return bullets;
+}
+
 function normalizeBaseUrl(value: unknown): string {
   return readString(value).replace(/\/+$/, '');
 }
@@ -167,7 +173,18 @@ function listingAiStatusFromSettings(settings: Record<string, unknown> | null | 
 
 export function ListingOptimizationPage() {
   const { data, loading: pipelineLoading, scope } = useBusinessDataPipeline();
+  const [manualListing, setManualListing] = useState<ListingContentView>(() => ({
+    asin: scope.asin || '',
+    title: '',
+    bullets: ensureFiveBullets(),
+    description: '',
+    aPlus: '',
+    imageCopy: '',
+    backendTerms: '',
+    source: 'manual',
+  }));
   const [listing, setListing] = useState<ListingContentView | null>(null);
+  const [listingVersions, setListingVersions] = useState<ListingContentVersionView[]>([]);
   const [readEvidence, setReadEvidence] = useState<ListingReadEvidence | null>(null);
   const [drafts, setDrafts] = useState<ListingDraftView[]>([]);
   const [keywordsText, setKeywordsText] = useState('');
@@ -326,7 +343,7 @@ export function ListingOptimizationPage() {
   const workflowBlocker = !keywords.length
     ? '先从关键词机会带入或粘贴关键词'
     : !listingReady
-      ? '先读取并核对当前领星 Listing'
+      ? '先手工录入并保存当前 Listing'
       : !draftReady
         ? '下一步生成本地草案'
         : '可导出草案给运营复核';
@@ -335,6 +352,84 @@ export function ListingOptimizationPage() {
     ? `${handoffScope.dateFrom || '-'} 至 ${handoffScope.dateTo || '-'} / ${handoffScope.storeName || '-'} / ${handoffScope.marketplaceCode || '-'} / ${handoffScope.batchId || '-'}`
     : '未从关键词机会带入';
   const handoffContext = handoffPayload?.context;
+
+  useEffect(() => {
+    setManualListing((current) => {
+      if (current.asin?.trim()) return current;
+      return { ...current, asin: expectedAsin || scope.asin || '' };
+    });
+  }, [expectedAsin, scope.asin]);
+
+  async function loadListingVersions(asin: string) {
+    const api = (window as any).electronAPI;
+    if (!api?.listListingContentVersions || !asin.trim()) return;
+    const versions = await api.listListingContentVersions({
+      asin: asin.trim().toUpperCase(),
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+      limit: 10,
+    });
+    setListingVersions(Array.isArray(versions) ? versions : []);
+  }
+
+  function updateManualListing(patch: Partial<ListingContentView>) {
+    setManualListing((current) => ({ ...current, ...patch }));
+  }
+
+  function updateManualBullet(index: number, value: string) {
+    setManualListing((current) => {
+      const bullets = ensureFiveBullets(current.bullets);
+      bullets[index] = value;
+      return { ...current, bullets };
+    });
+  }
+
+  async function saveManualListing() {
+    setLoading('save-manual');
+    setMessage(null);
+    try {
+      const api = (window as any).electronAPI;
+      if (!api?.saveManualListingContent) {
+        throw new Error('手工 Listing 保存接口未暴露');
+      }
+      const saved = await api.saveManualListingContent({
+        ...manualListing,
+        source: 'manual',
+        bullets: ensureFiveBullets(manualListing.bullets).map((item) => item.trim()).filter(Boolean),
+      }, {
+        storeName: scope.storeName,
+        marketplaceCode: scope.marketplaceCode,
+      });
+      const nextListing: ListingContentView = {
+        ...saved,
+        bullets: ensureFiveBullets(saved?.bullets),
+        source: 'manual',
+      };
+      setListing(nextListing);
+      setManualListing(nextListing);
+      setReadEvidence({
+        scope: {
+          storeName: scope.storeName,
+          marketplaceCode: scope.marketplaceCode,
+        },
+        partialReady: true,
+        fullContentReady: Boolean(nextListing.title && nextListing.bullets?.some((bullet) => bullet.trim()) && nextListing.backendTerms),
+        completeness: {
+          asin: Boolean(nextListing.asin),
+          title: Boolean(nextListing.title),
+          bullets: Boolean(nextListing.bullets?.some((bullet) => bullet.trim())),
+          backendTerms: Boolean(nextListing.backendTerms),
+        },
+      });
+      setDrafts([]);
+      await loadListingVersions(nextListing.asin || '');
+      setMessage(`已保存为 Listing 版本${saved?.versionId ? ` #${saved.versionId}` : ''}。草案只保存在本地，不会自动提交 Amazon。`);
+    } catch (caught) {
+      setMessage(errorMessage(caught, '保存手工 Listing 失败'));
+    } finally {
+      setLoading(null);
+    }
+  }
 
   async function readFromLingxing() {
     setLoading('read');
@@ -362,10 +457,11 @@ export function ListingOptimizationPage() {
         asin: content?.asin,
         title: content?.title,
         bullets: Array.isArray(content?.bullets) ? content.bullets : [],
+        description: content?.description,
         aPlus: content?.aPlus,
         imageCopy: content?.imageCopy,
         backendTerms: content?.backendTerms,
-        source: content?.source || 'lingxing',
+        source: content?.source || 'lingxing_readonly',
       };
       const evidence = result?.evidence || {};
       const blocker = getListingContentBlocker(nextListing);
@@ -394,11 +490,19 @@ export function ListingOptimizationPage() {
         }
         throw new Error(blocker);
       }
-      setListing({
+      const hydratedListing = {
         ...nextListing,
         pageUrl: evidence?.pageUrl || result?.pageUrl || result?.url,
         screenshotPath: evidence?.screenshotPath,
         updatedAt: content?.updatedAt,
+      };
+      setListing(hydratedListing);
+      setManualListing({
+        ...hydratedListing,
+        source: 'manual',
+        bullets: ensureFiveBullets(hydratedListing.bullets),
+        versionLabel: hydratedListing.versionLabel || '领星辅助读取后手工确认',
+        changeSummary: hydratedListing.changeSummary || '从领星辅助读取并等待人工核对保存',
       });
       setReadEvidence({
         pageUrl: evidence?.pageUrl || result?.pageUrl || result?.url,
@@ -491,9 +595,9 @@ export function ListingOptimizationPage() {
       <PageHeader
         eyebrow="关键词与 Listing"
         title="Listing 优化"
-        description="读取 Lingxing Listing，结合关键词机会检查覆盖并生成 AI/规则标记的本地草案。不会自动提交 Amazon。"
+        description="手工录入当前 Listing，结合关键词机会检查覆盖并生成 AI/规则标记的本地草案。领星读取只作为辅助填充。不会自动提交 Amazon。"
         primaryTask="生成可导出的 Listing 草案"
-        nextAction={listing ? '生成草案并导出' : '先读取 Listing'}
+        nextAction={listing ? '生成草案并导出' : '先录入并保存 Listing'}
       />
 
       <div className="business-stack">
@@ -532,9 +636,9 @@ export function ListingOptimizationPage() {
               <StatusPill tone={keywords.length ? 'ready' : 'pending'}>{keywords.length ? '已就绪' : '待输入'}</StatusPill>
             </div>
             <div className="workflow-step workflow-step-static">
-              <span>2 领星 Listing 读取</span>
+              <span>2 Listing 内容录入/读取</span>
               <strong>{listingSourceStatus.headline}</strong>
-              <p>{listing ? `页面 ASIN：${listing.asin || '-'}，目标 ASIN：${expectedAsin || '-'}` : listingProbeAttempted ? '已保留页面 URL、截图和探测状态；需要切换到正确详情页或等待字段加载后重试。' : '必须在真实领星 Listing 页面读取标题、五点或后台词。'}</p>
+              <p>{listing ? `当前 ASIN：${listing.asin || '-'}，目标 ASIN：${expectedAsin || '-'}` : listingProbeAttempted ? '已保留页面 URL、截图和探测状态；可继续手工补齐字段后保存版本。' : '先手工录入当前 Listing；领星读取只作为辅助填充。'}</p>
               <StatusPill tone={listingSourceStatus.tone}>{listingSourceStatus.label}</StatusPill>
             </div>
             <div className="workflow-step workflow-step-static">
@@ -553,18 +657,77 @@ export function ListingOptimizationPage() {
           <p className="muted-line">当前下一步：{workflowBlocker}。本页负责 Listing 草案闭环，不承载广告审批或真实广告执行。</p>
         </Panel>
 
-        <Panel title="Listing 来源" tone={listing ? (listingReady ? 'success' : 'warning') : listingProbeAttempted ? 'warning' : 'blocked'}>
+        <Panel title="手工录入当前 Listing" tone={listing ? (listingReady ? 'success' : 'warning') : 'warning'}>
           <div className="business-split">
             <div>
               <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
-              <p className="muted-line">读取后必须核对 ASIN 是否匹配、标题、五点、后台词和页面 URL。</p>
-              <p className="blocked-line">草案只保存在本地，不会自动提交 Amazon。</p>
+              <p className="muted-line">请录入当前线上 Listing 的标题、五点、详情/A+ 和后台搜索词。每次保存都会写入版本历史，后续可对比修改。</p>
+              <p className="blocked-line">本功能只保存本地版本，不会自动提交 Amazon，也不会改写 Lingxing。</p>
+            </div>
+            <StatusPill tone="ready">主流程</StatusPill>
+          </div>
+          <div className="settings-form-grid">
+            <label>
+              ASIN
+              <input value={manualListing.asin || ''} onChange={(event) => updateManualListing({ asin: event.target.value })} placeholder="例如 B0..." />
+            </label>
+            <label>
+              版本名称
+              <input value={manualListing.versionLabel || ''} onChange={(event) => updateManualListing({ versionLabel: event.target.value })} placeholder="例如 2026-06-18 标题五点调整" />
+            </label>
+            <label>
+              修改说明
+              <input value={manualListing.changeSummary || ''} onChange={(event) => updateManualListing({ changeSummary: event.target.value })} placeholder="例如 补充核心词和场景词" />
+            </label>
+            <label>
+              标题
+              <textarea value={manualListing.title || ''} onChange={(event) => updateManualListing({ title: event.target.value })} placeholder="当前 Listing 标题" />
+            </label>
+          </div>
+          <div className="settings-form-grid">
+            {ensureFiveBullets(manualListing.bullets).map((bullet, index) => (
+              <label key={`manual-bullet-${index + 1}`}>
+                五点 {index + 1}
+                <textarea value={bullet} onChange={(event) => updateManualBullet(index, event.target.value)} placeholder={`Bullet ${index + 1}`} />
+              </label>
+            ))}
+          </div>
+          <div className="settings-form-grid">
+            <label>
+              详情 / A+ 内容
+              <textarea value={manualListing.description || manualListing.aPlus || ''} onChange={(event) => updateManualListing({ description: event.target.value, aPlus: event.target.value })} placeholder="详情描述或 A+ 文案" />
+            </label>
+            <label>
+              后台搜索词
+              <textarea value={manualListing.backendTerms || ''} onChange={(event) => updateManualListing({ backendTerms: event.target.value })} placeholder="Search Terms / 后台关键词" />
+            </label>
+            <label>
+              图片文案
+              <textarea value={manualListing.imageCopy || ''} onChange={(event) => updateManualListing({ imageCopy: event.target.value })} placeholder="可选：主图/副图文案备注" />
+            </label>
+          </div>
+          <div className="action-row">
+            <button className="primary-button" disabled={loading === 'save-manual'} onClick={saveManualListing} type="button">
+              {loading === 'save-manual' ? '保存中...' : '保存为新版本'}
+            </button>
+            <button className="secondary-button" disabled={!manualListing.asin?.trim()} onClick={() => loadListingVersions(manualListing.asin || '')} type="button">
+              刷新版本历史
+            </button>
+          </div>
+        </Panel>
+
+        <Panel title="从领星辅助读取" tone={listing ? (listingReady ? 'success' : 'warning') : listingProbeAttempted ? 'warning' : 'default'}>
+          <div className="business-split">
+            <div>
+              <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
+              <p className="muted-line">领星字段读取不完整时，不再阻断流程。读取成功后只填入上方手工表单，仍需人工保存为版本。</p>
+              <p className="blocked-line">辅助读取不会自动提交 Amazon，也不会直接覆盖已保存版本。</p>
             </div>
             <StatusPill tone={listingSourceStatus.tone}>{listingSourceStatus.label}</StatusPill>
           </div>
           <div className="action-row">
-            <button className="primary-button" disabled={loading === 'read'} onClick={readFromLingxing} type="button">
-              {loading === 'read' ? '读取中...' : '从当前领星页面读取'}
+            <button className="secondary-button" disabled={loading === 'read'} onClick={readFromLingxing} type="button">
+              {loading === 'read' ? '读取中...' : '尝试从当前领星页面填入表单'}
             </button>
           </div>
           <div className="evidence-grid">
@@ -648,7 +811,9 @@ export function ListingOptimizationPage() {
             <div><span>页面匹配</span><strong>{listing ? (pageMatched ? '通过' : '阻断：ASIN 不一致') : '未读取'}</strong></div>
             <div><span>来源</span><strong>{listing?.source || '-'}</strong></div>
             <div><span>页面 URL</span><strong>{listing?.pageUrl || '-'}</strong></div>
+            <div><span>版本</span><strong>{listing?.versionLabel || listing?.versionId || '-'}</strong></div>
             <div><span>后台词</span><strong>{listing?.backendTerms || '-'}</strong></div>
+            <div><span>详情</span><strong>{listing?.description || '-'}</strong></div>
             <div><span>A+</span><strong>{listing?.aPlus || '-'}</strong></div>
             <div><span>图片文案</span><strong>{listing?.imageCopy || '-'}</strong></div>
           </div>
@@ -660,6 +825,33 @@ export function ListingOptimizationPage() {
               <p key={`${index}-${item}`}>{index + 1}. {item}</p>
             ))}
           </div>
+        </Panel>
+
+        <Panel title="Listing 版本历史" tone={listingVersions.length ? 'success' : 'default'}>
+          {listingVersions.length ? (
+            <div className="business-card-list">
+              {listingVersions.map((version) => (
+                <div className="business-card" key={version.versionId}>
+                  <div className="business-split">
+                    <div>
+                      <strong>{version.versionLabel || `版本 #${version.versionId}`}</strong>
+                      <p className="muted-line">{version.createdAt || '-'} / {version.source || 'manual'} / {version.storeName || scope.storeName || '-'} / {version.marketplaceCode || scope.marketplaceCode || '-'}</p>
+                      <p>{version.changeSummary || '未填写修改说明'}</p>
+                    </div>
+                    <StatusPill tone="ready">#{version.versionId}</StatusPill>
+                  </div>
+                  <div className="detail-grid">
+                    <div><span>标题</span><strong>{version.title || '-'}</strong></div>
+                    <div><span>五点</span><strong>{version.bullets?.filter(Boolean).length || 0}</strong></div>
+                    <div><span>后台词</span><strong>{version.backendTerms || '-'}</strong></div>
+                    <div><span>详情/A+</span><strong>{version.description || version.aPlus || '-'}</strong></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-line">当前 ASIN 还没有版本历史。保存手工 Listing 后会在这里显示每次修改记录。</p>
+          )}
         </Panel>
 
         <Panel title="关键词覆盖">

@@ -55,14 +55,16 @@ describe('buildAiCallDiagnostics', () => {
         id: 2,
         success: false,
         createdAt: '2026-06-12T10:01:00.000Z',
-        errorMessage: '后一次 AI JSON 解析失败',
+        errorMessage: "Expected ',' or ']' after array element in JSON at position 5052 (line 161 column 6)",
         evidencePackSummary: { total: 5 },
       }),
     ]);
 
     expect(diagnostics.status).toBe('blocked');
     expect(diagnostics.headline).toBe('最近 AI 调用失败');
-    expect(diagnostics.detail).toContain('后一次 AI JSON 解析失败');
+    expect(diagnostics.detail).toContain('AI 输出格式未通过校验');
+    expect(diagnostics.detail).not.toContain('position');
+    expect(diagnostics.detail).not.toContain('line 161');
   });
 
   it('explains that no records means AI has not participated yet', () => {

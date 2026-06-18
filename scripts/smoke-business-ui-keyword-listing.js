@@ -1,7 +1,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { chromium } = require('playwright');
+const { chromium } = require('./playwright-loader');
 
 const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
@@ -442,23 +442,24 @@ async function main() {
     null,
     { timeout: 5000 },
   );
-  for (const text of ['Listing 来源', '关键词交接与草案边界', '关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用', '本页只生成本地草案和导出文件，不提交 Amazon，不修改 Lingxing Listing。', '当前 Listing 内容', '关键词覆盖', '本地修改建议与草案导出', '草案可信度', '可引用当前广告数据', '草案只保存在本地，不会自动提交 Amazon。']) {
+  for (const text of ['手工录入当前 Listing', '从领星辅助读取', '关键词交接与草案边界', '关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用', '当前 Listing 内容', 'Listing 版本历史', '关键词覆盖', '本地修改建议与草案导出', '草案可信度', '可引用当前广告数据', '草案只保存在本地，不会自动提交 Amazon。']) {
     await expectVisible(page, text);
   }
   await expectInBody(page, 'deepseek-v4-flash 已测试通过', 'listing ai readiness detail');
-  for (const text of ['Listing 工作流状态', '1 关键词机会', '2 领星 Listing 读取', '3 AI / 规则草案', '4 导出与发布边界']) {
+  await expectInBody(page, '不会自动提交 Amazon，也不会改写 Lingxing', 'listing publish boundary');
+  for (const text of ['Listing 工作流状态', '1 关键词机会', '2 Listing 内容录入/读取', '3 AI / 规则草案', '4 导出与发布边界']) {
     await expectInBody(page, text, 'listing workflow status');
   }
   await expectVisible(page, '当前主任务');
-  await expectVisible(page, '关键词已就绪，但 Listing 读取未达到生成草案门槛。');
-  await expectVisible(page, '尚未读取领星 Listing 页面');
+  await expectVisible(page, '关键词已就绪，但 Listing 内容未达到生成草案门槛。');
+  await expectVisible(page, '尚未录入或读取当前 Listing 内容');
   for (const text of ['广告组合', 'D6 Portfolio', '广告活动', 'D6-auto-test', '广告组', 'D6-ad-group', '对象类型', 'user_search_term', '触发关键词', 'motion sensor wall light', '点击/订单', '36 / 4', '花费/销售 USD', '25.5 / 98.25', '来源文件', 'C:/reports/keyword.xlsx']) {
     await expectVisible(page, text);
   }
   await page.evaluate(() => {
     window.__mockEvidenceOnlyListingRead = true;
   });
-  await page.getByRole('button', { name: '从当前领星页面读取' }).click();
+  await page.getByRole('button', { name: '尝试从当前领星页面填入表单' }).click();
   await expectVisible(page, '已探测页面，但没有解析到可用 Listing 内容');
   await expectVisible(page, '已探测未解析');
   await expectInBody(page, 'no_asin', 'listing evidence-only detail probe status');
@@ -474,7 +475,7 @@ async function main() {
   await page.evaluate(() => {
     window.__mockPartialListingRead = true;
   });
-  await page.getByRole('button', { name: '从当前领星页面读取' }).click();
+  await page.getByRole('button', { name: '尝试从当前领星页面填入表单' }).click();
   await expectVisible(page, '已读取 Listing 部分内容，生成草案前需补齐缺失字段');
   await expectVisible(page, '已读取部分内容');
   await expectVisible(page, 'Bullets read');
@@ -489,7 +490,7 @@ async function main() {
   await page.evaluate(() => {
     window.__mockPartialListingRead = false;
   });
-  await page.getByRole('button', { name: '从当前领星页面读取' }).click();
+  await page.getByRole('button', { name: '尝试从当前领星页面填入表单' }).click();
   await expectVisible(page, 'ASIN matched/status');
   await expectVisible(page, 'Title read');
   await expectVisible(page, 'Bullets read');

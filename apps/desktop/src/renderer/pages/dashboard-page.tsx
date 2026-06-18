@@ -4,6 +4,7 @@ import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput } from '../delivery-readiness-matrix';
 import { compactPath, formatPercent, formatUsd } from '../formatters';
+import { operatorFacingAiError } from '../ai-call-diagnostics';
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
 import type { AiDiagnosisRunView, AppRoute, DeliveryEvidenceStatusView, DeliveryReadinessView, RecommendationView, SettingsRuleConfig } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -276,7 +277,7 @@ export function dashboardAiWorkStatus(baseStatus: DashboardStatusCard, runs: AiD
   if (latest.success === false) {
     return {
       label: 'AI 最近诊断失败',
-      detail: latest.errorMessage || latest.diagnosis?.aiFallbackReason || '最近一次 AI 诊断失败，建议到广告量化页查看调用记录并复测 AI 设置。',
+      detail: operatorFacingAiError(latest.errorMessage || latest.diagnosis?.aiFallbackReason || '最近一次 AI 诊断失败，建议到广告量化页查看调用记录并复测 AI 设置。'),
       tone: 'blocked',
       route: 'ad-quant',
       actionLabel: '查看 AI 诊断',

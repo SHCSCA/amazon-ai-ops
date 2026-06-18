@@ -29,7 +29,7 @@ import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, draftsToCsv, draftsToMarkdown, draftsToXlsxBuffer, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
 import type { RuleConfig } from '@amazon-ai-ops/rules-engine';
 import type { TaskName } from '@amazon-ai-ops/scheduler';
-import type { ActionRecommendation, AdDailyMetrics, CreateOperationEventInput, DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingDraft, ListingSuggestion, OperationEventFilter, UpdateOperationEventInput } from '@amazon-ai-ops/shared-types';
+import type { ActionRecommendation, AdDailyMetrics, CreateOperationEventInput, DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingContentVersion, ListingDraft, ListingSuggestion, OperationEventFilter, UpdateOperationEventInput } from '@amazon-ai-ops/shared-types';
 import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithinRealDirectory, isSafeManifestPath, readLingxingManifestForAudit, safeFileSegment } from './acceptance-audit-export';
 import { summarizeBusinessReportCoverage } from './business-report-coverage';
 import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-preflight-export';
@@ -53,6 +53,7 @@ import { validateAiDiagnosisEvidence } from './ad-ai-evidence-validator';
 import { buildAdProductHistoryLedger } from './ad-product-history-ledger';
 import { assertRecommendationMetricsLoaded, filterFormalRecommendationMetrics } from './recommendation-generation-gate';
 import { buildListingAiCallLogInput, buildListingRewritePrompt, parseAiDraftResponse } from './listing-ai-draft';
+import { normalizeManualListingContent } from './listing-manual-content';
 import { buildAdActionReasonAiCallLogInput, type AdActionExplanationForLog } from './ad-action-ai-call-log';
 import { mergeAdActionExplanationEvidence } from './ad-action-explanation-merge';
 import {
@@ -3763,6 +3764,9 @@ interface ListingReadPersistContext {
   marketplaceCode?: string;
   sourceUrl?: string;
   screenshotPath?: string;
+  source?: ListingContent['source'];
+  versionLabel?: string;
+  changeSummary?: string;
 }
 
 interface ListingReadOptions {
@@ -4001,31 +4005,160 @@ async function handleExtractListingFromLingxing(options: ListingReadOptions = {}
       marketplaceCode: options.scope?.marketplaceCode || readCurrentOperationScopeValue('marketplaceCode'),
       sourceUrl: result.evidence.pageUrl,
       screenshotPath: result.evidence.screenshotPath,
+      source: 'lingxing_readonly',
+      versionLabel: '领星只读读取',
+      changeSummary: '从当前领星页面辅助读取 Listing 内容',
     });
   }
 
   return result;
 }
 
-function persistListingContent(listing: ListingContent, context: ListingReadPersistContext = {}): void {
-  if (!state.db) return;
-  state.db.prepare(`
-    INSERT INTO listing_content
-      (asin, store_name, marketplace_code, title, bullets_json, a_plus, image_copy, backend_terms, source_url, screenshot_path, updated_at)
-    VALUES
-      (@asin, @storeName, @marketplaceCode, @title, @bulletsJson, @aPlus, @imageCopy, @backendTerms, @sourceUrl, @screenshotPath, datetime('now'))
-  `).run({
-    asin: listing.asin,
+function persistListingContent(listing: ListingContent, context: ListingReadPersistContext = {}): { id: number; versionId: number; savedAt: string } | null {
+  if (!state.db) return null;
+  const normalized = {
+    ...listing,
+    asin: String(listing.asin || '').trim().toUpperCase(),
+    title: String(listing.title || '').trim(),
+    bullets: Array.isArray(listing.bullets) ? listing.bullets.map((item) => String(item || '').trim()).filter(Boolean) : [],
+  };
+  const savedAt = new Date().toISOString();
+  const payload = {
+    asin: normalized.asin,
     storeName: context.storeName || null,
     marketplaceCode: context.marketplaceCode || null,
-    title: listing.title,
-    bulletsJson: JSON.stringify(listing.bullets),
-    aPlus: listing.aPlus ?? null,
-    imageCopy: listing.imageCopy ?? null,
-    backendTerms: listing.backendTerms ?? null,
-    sourceUrl: context.sourceUrl || null,
-    screenshotPath: context.screenshotPath || null,
+    title: normalized.title,
+    bulletsJson: JSON.stringify(normalized.bullets),
+    description: normalized.description ?? null,
+    aPlus: normalized.aPlus ?? null,
+    imageCopy: normalized.imageCopy ?? null,
+    backendTerms: normalized.backendTerms ?? null,
+    source: context.source || normalized.source || 'manual',
+    sourceUrl: context.sourceUrl || normalized.sourceUrl || null,
+    screenshotPath: context.screenshotPath || normalized.screenshotPath || null,
+    versionLabel: context.versionLabel || normalized.versionLabel || null,
+    changeSummary: context.changeSummary || normalized.changeSummary || null,
+    savedAt,
+  };
+  const transaction = state.db.transaction(() => {
+    const existing = state.db!.prepare(`
+      SELECT id FROM listing_content
+      WHERE asin = @asin
+        AND COALESCE(store_name, '') = COALESCE(@storeName, '')
+        AND COALESCE(marketplace_code, '') = COALESCE(@marketplaceCode, '')
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(payload) as { id: number } | undefined;
+
+    let listingContentId = existing?.id;
+    if (listingContentId) {
+      state.db!.prepare(`
+        UPDATE listing_content
+        SET title = @title,
+            bullets_json = @bulletsJson,
+            description = @description,
+            a_plus = @aPlus,
+            image_copy = @imageCopy,
+            backend_terms = @backendTerms,
+            source = @source,
+            source_url = @sourceUrl,
+            screenshot_path = @screenshotPath,
+            version_label = @versionLabel,
+            change_summary = @changeSummary,
+            updated_at = @savedAt
+        WHERE id = @id
+      `).run({ ...payload, id: listingContentId });
+    } else {
+      const info = state.db!.prepare(`
+        INSERT INTO listing_content
+          (asin, store_name, marketplace_code, title, bullets_json, description, a_plus, image_copy, backend_terms, source, source_url, screenshot_path, version_label, change_summary, created_at, updated_at)
+        VALUES
+          (@asin, @storeName, @marketplaceCode, @title, @bulletsJson, @description, @aPlus, @imageCopy, @backendTerms, @source, @sourceUrl, @screenshotPath, @versionLabel, @changeSummary, @savedAt, @savedAt)
+      `).run(payload);
+      listingContentId = Number(info.lastInsertRowid);
+    }
+
+    const versionInfo = state.db!.prepare(`
+      INSERT INTO listing_content_versions
+        (listing_content_id, asin, store_name, marketplace_code, title, bullets_json, description, a_plus, image_copy, backend_terms, source, source_url, screenshot_path, version_label, change_summary, created_at)
+      VALUES
+        (@listingContentId, @asin, @storeName, @marketplaceCode, @title, @bulletsJson, @description, @aPlus, @imageCopy, @backendTerms, @source, @sourceUrl, @screenshotPath, @versionLabel, @changeSummary, @savedAt)
+    `).run({ ...payload, listingContentId });
+    return { id: Number(listingContentId), versionId: Number(versionInfo.lastInsertRowid), savedAt };
   });
+  return transaction();
+}
+
+function handleSaveManualListingContent(input: unknown): ListingContent & { versionId?: number } {
+  const body = input && typeof input === 'object' ? input as any : {};
+  const listing = normalizeManualListingContent(body.listing || body);
+  const scope = body.scope && typeof body.scope === 'object' ? body.scope : {};
+  const persisted = persistListingContent(listing, {
+    storeName: typeof scope.storeName === 'string' ? scope.storeName : readCurrentOperationScopeValue('storeName'),
+    marketplaceCode: typeof scope.marketplaceCode === 'string' ? scope.marketplaceCode : readCurrentOperationScopeValue('marketplaceCode'),
+    source: 'manual',
+    sourceUrl: listing.sourceUrl,
+    screenshotPath: listing.screenshotPath,
+    versionLabel: listing.versionLabel || '手工录入',
+    changeSummary: listing.changeSummary || '运营手工保存 Listing 内容',
+  });
+  return {
+    ...listing,
+    id: persisted?.id,
+    versionId: persisted?.versionId,
+    updatedAt: persisted?.savedAt || listing.updatedAt,
+  } as ListingContent & { versionId?: number };
+}
+
+function handleListListingContentVersions(input: unknown): ListingContentVersion[] {
+  if (!state.db) return [];
+  const body = input && typeof input === 'object' ? input as any : {};
+  const asin = String(body.asin || '').trim().toUpperCase();
+  if (!asin) return [];
+  const rows = state.db.prepare(`
+    SELECT *
+    FROM listing_content_versions
+    WHERE asin = @asin
+      AND (@storeName = '' OR COALESCE(store_name, '') = @storeName)
+      AND (@marketplaceCode = '' OR COALESCE(marketplace_code, '') = @marketplaceCode)
+    ORDER BY id DESC
+    LIMIT @limit
+  `).all({
+    asin,
+    storeName: String(body.storeName || '').trim(),
+    marketplaceCode: String(body.marketplaceCode || '').trim(),
+    limit: Math.min(50, Math.max(1, Number(body.limit || 20))),
+  }) as any[];
+  return rows.map((row) => ({
+    versionId: Number(row.id),
+    listingContentId: row.listing_content_id === null || row.listing_content_id === undefined ? undefined : Number(row.listing_content_id),
+    id: row.listing_content_id === null || row.listing_content_id === undefined ? undefined : Number(row.listing_content_id),
+    asin: String(row.asin || ''),
+    storeName: row.store_name || undefined,
+    marketplaceCode: row.marketplace_code || undefined,
+    title: String(row.title || ''),
+    bullets: parseListingStringArray(row.bullets_json),
+    description: row.description || undefined,
+    aPlus: row.a_plus || undefined,
+    imageCopy: row.image_copy || undefined,
+    backendTerms: row.backend_terms || undefined,
+    source: row.source || 'manual',
+    sourceUrl: row.source_url || undefined,
+    screenshotPath: row.screenshot_path || undefined,
+    versionLabel: row.version_label || undefined,
+    changeSummary: row.change_summary || undefined,
+    createdAt: row.created_at || undefined,
+    updatedAt: row.created_at || undefined,
+  }));
+}
+
+function parseListingStringArray(value: unknown): string[] {
+  try {
+    const parsed = JSON.parse(String(value || '[]'));
+    return Array.isArray(parsed) ? parsed.map((item) => String(item || '')).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
 }
 
 function readCurrentOperationScopeValue(key: 'storeName' | 'marketplaceCode'): string {
@@ -7476,6 +7609,12 @@ function registerIpcHandlers(): void {
   );
   ipcMain.handle('v1_5:listing:import-content', (_, { filePath }) =>
     handleImportListingContent(filePath)
+  );
+  ipcMain.handle('v1_5:listing:save-manual-content', (_, input) =>
+    handleSaveManualListingContent(input)
+  );
+  ipcMain.handle('v1_5:listing:list-content-versions', (_, input) =>
+    handleListListingContentVersions(input)
   );
   ipcMain.handle('v1_5:listing:extract-from-lingxing', (_, input) =>
     handleExtractListingFromLingxing({

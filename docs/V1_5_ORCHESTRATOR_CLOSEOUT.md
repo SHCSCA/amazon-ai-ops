@@ -19,14 +19,15 @@ Earlier delivery work also used orchestrator/product/UX/QA roles to reject prema
 
 ## Historical Readiness
 
-This document records the 2026-06-10 closeout. That historical manifest-driven application state was `APP_READY`. The current worktree later added AI evidence-chain, UI, delivery-bundle, and readback-contract changes; the refreshed current delivery state is now recorded in `README.md` and `output\codex-evidence\final-readiness-2026-06-18.json`.
+This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui closeout. The current worktree later added AI evidence-chain, UI, delivery-bundle, readback-contract, product-scoped quantification, AI JSON fallback, and manual Listing versioning changes. The current delivery state is recorded in `README.md`; as of the latest 2026-06-18 source validation it is `APP_READY` with manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-product-ui.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready`, and `verify:v15-ready-safety` passed against the refreshed installer/portable package hashes.
 
 Authoritative evidence:
 
 | Gate | Evidence |
 | --- | --- |
-| Final readiness | `output\codex-evidence\final-readiness-2026-06-10.json` |
-| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-10.json` |
+| Final readiness | `output\codex-evidence\final-readiness-2026-06-18-product-ui.json` |
+| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18-product-ui.json` |
+| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready` |
 | Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z\delivery-bundle-manifest.json` |
 | Product UI smoke | `output\codex-evidence\v15-product-readiness-ui-smoke-1781072779324.json` |
 | Installer | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |

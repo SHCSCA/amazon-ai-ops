@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { buildAdQuantProductGroups, filterAdQuantByProduct } from '../ad-quant-product-groups';
 import { buildAdQuantDiagnosisSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
+import { operatorFacingAiError } from '../ai-call-diagnostics';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
 import type { AdStrategyDiagnosisView, AiDiagnosisRunView, AiEvidenceDisplayItemView, AppRoute, BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, SettingsRuleConfig } from '../types';
@@ -389,9 +391,27 @@ export function AdQuantPage() {
   const canDiagnose = Boolean(hasRealReportCoverage(collection) && quant?.hasImportedMetrics);
   const canGenerateFormalRecommendations = Boolean(data && recommendationGateIssues.length === 0);
   const visibleQuant = canDiagnose ? quant : undefined;
-  const visibleDiagnostics = canDiagnose ? quant?.diagnostics || [] : [];
-  const visibleTimelines = canDiagnose ? quant?.adObjectTimelines || [] : [];
-  const productHistoryLedgers = canDiagnose ? data?.productHistory?.ledgers || [] : [];
+  const allDiagnostics = canDiagnose ? quant?.diagnostics || [] : [];
+  const allTimelines = canDiagnose ? quant?.adObjectTimelines || [] : [];
+  const allProductHistoryLedgers = canDiagnose ? data?.productHistory?.ledgers || [] : [];
+  const productGrouping = useMemo(() => buildAdQuantProductGroups({
+    scopeAsin: scope.asin,
+    diagnostics: allDiagnostics,
+    timelines: allTimelines,
+    ledgers: allProductHistoryLedgers,
+  }), [scope.asin, allDiagnostics, allTimelines, allProductHistoryLedgers]);
+  const [selectedProductKey, setSelectedProductKey] = useState('');
+  const selectedProduct = selectedProductKey || productGrouping.selectedProductKey;
+  const selectedProductGroup = productGrouping.groups.find((group) => group.productKey === selectedProduct);
+  const productFiltered = filterAdQuantByProduct({
+    productKey: selectedProduct,
+    diagnostics: allDiagnostics,
+    timelines: allTimelines,
+    ledgers: allProductHistoryLedgers,
+  });
+  const visibleDiagnostics = productFiltered.diagnostics;
+  const visibleTimelines = productFiltered.timelines;
+  const productHistoryLedgers = productFiltered.ledgers;
   const quantDiagnosisSummary = buildAdQuantDiagnosisSummary(strategyDiagnosis?.summary);
   const productContextCount = data?.productContext?.productCount ?? data?.productContext?.products?.length ?? 0;
   const productWithTargets = (data?.productContext?.products || []).filter((product) =>
@@ -409,6 +429,17 @@ export function AdQuantPage() {
   const reviewQueue = [...visibleDiagnostics]
     .sort((a, b) => priorityScore(b, ruleConfig) - priorityScore(a, ruleConfig))
     .slice(0, 3);
+  const selectedSpend = selectedProductGroup?.cost ?? visibleQuant?.totalSpend ?? 0;
+  const selectedSales = selectedProductGroup?.sales ?? visibleQuant?.totalSales ?? 0;
+  const selectedOrders = selectedProductGroup?.orders ?? visibleQuant?.totalOrders ?? 0;
+  const selectedAcos = selectedProductGroup ? selectedProductGroup.acos : (visibleQuant?.acos ?? 0);
+
+  useEffect(() => {
+    setSelectedProductKey((current) => {
+      if (current && productGrouping.groups.some((group) => group.productKey === current)) return current;
+      return productGrouping.selectedProductKey;
+    });
+  }, [productGrouping]);
 
   useEffect(() => {
     let cancelled = false;
@@ -556,6 +587,43 @@ export function AdQuantPage() {
             <StatusPill tone="pending">最低花费 {formatUsd(ruleConfig.minSpend)}</StatusPill>
           </div>
         </Panel>
+
+        {canDiagnose && (
+          <Panel title="按产品查看" tone={productGrouping.groups.length ? 'success' : 'warning'}>
+            <div className="business-split">
+              <div>
+                <div className="business-scope-line">
+                  当前只展示一个 ASIN 的广告量化
+                </div>
+                <p className="muted-line">
+                  先选择产品，再看阶段、阈值、风险和建议，避免把多个产品的广告表现混在一起判断。
+                </p>
+              </div>
+              <StatusPill tone={selectedProductGroup?.asin ? 'ready' : 'warning'}>
+                {selectedProductGroup?.label || '暂无可选产品'}
+              </StatusPill>
+            </div>
+            {productGrouping.groups.length ? (
+              <div className="product-selector-grid">
+                {productGrouping.groups.map((group) => (
+                  <button
+                    type="button"
+                    key={group.productKey}
+                    className={`product-option-card ${selectedProduct === group.productKey ? 'product-option-card-active' : ''}`}
+                    onClick={() => setSelectedProductKey(group.productKey)}
+                  >
+                    <strong>{group.label}</strong>
+                    <span>花费 {formatUsd(group.cost)} / 销售 {formatUsd(group.sales)} / 订单 {group.orders}</span>
+                    <span>ACOS {formatPercent(group.acos * 100)} / 诊断 {group.diagnosticCount} / 风险 {group.highRiskCount}</span>
+                    <span>{group.stage ? `阶段 ${lifecycleLabel(group.stage)}` : '阶段待判定'}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-line">当前范围没有可按 ASIN 聚合的广告数据；请先确认报表中包含产品 ASIN 或在全局范围指定 ASIN。</p>
+            )}
+          </Panel>
+        )}
 
         <Panel title="阈值与策略来源" tone={canDiagnose ? 'success' : 'warning'}>
           <div className="context-summary-grid">
@@ -784,13 +852,15 @@ export function AdQuantPage() {
         </Panel>
 
         <Panel title="最近 AI 诊断记录" tone={diagnosisRuns.length ? 'success' : 'warning'}>
-          {diagnosisRunsError && <p className="blocked-line">读取 AI 诊断记录失败：{diagnosisRunsError}</p>}
-          {!diagnosisRunsError && diagnosisRuns.length === 0 && (
-            <p className="muted-line">当前范围还没有 AI 诊断记录。运行 AI 阶段分析后，本页会保留最近记录用于复盘。</p>
-          )}
-          {diagnosisRuns.length > 0 && (
-            <div className="business-card-list">
-              {diagnosisRuns.map((run) => (
+          <details className="evidence-disclosure">
+            <summary>展开最近 AI 诊断记录（{diagnosisRuns.length} 条）</summary>
+            {diagnosisRunsError && <p className="blocked-line">读取 AI 诊断记录失败：{diagnosisRunsError}</p>}
+            {!diagnosisRunsError && diagnosisRuns.length === 0 && (
+              <p className="muted-line">当前范围还没有 AI 诊断记录。运行 AI 阶段分析后，本页会保留最近记录用于复盘。</p>
+            )}
+            {diagnosisRuns.length > 0 && (
+              <div className="business-card-list">
+                {diagnosisRuns.map((run) => (
                 <div className="business-card" key={run.id}>
                   <div className="business-split">
                     <div>
@@ -809,7 +879,7 @@ export function AdQuantPage() {
                     </div>
                   </div>
                   {run.success === false && (
-                    <p className="blocked-line">{run.errorMessage || run.diagnosis?.aiFallbackReason || 'AI 诊断已回退到规则。'}</p>
+                    <p className="blocked-line">{operatorFacingAiError(run.errorMessage || run.diagnosis?.aiFallbackReason || 'AI 诊断已回退到规则。')}</p>
                   )}
                   <div className="business-pill-row">
                     <StatusPill tone="ready">正式建议 {run.formalRecommendationCount}</StatusPill>
@@ -845,9 +915,10 @@ export function AdQuantPage() {
                     </div>
                   )}
                 </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </details>
         </Panel>
 
         <Panel title="AI+规则建议输入检查" tone={canGenerateFormalRecommendations && diagnosticCount > 0 ? 'success' : 'warning'}>
@@ -944,9 +1015,11 @@ export function AdQuantPage() {
 
         {canDiagnose && (
           <Panel title="产品广告历史账本" tone={productHistoryLedgers.length ? 'success' : 'warning'}>
-            {productHistoryLedgers.length ? (
-              <div className="business-card-list">
-                {productHistoryLedgers.slice(0, 4).map((ledger) => (
+            <details className="evidence-disclosure">
+              <summary>展开当前产品广告历史账本（{productHistoryLedgers.length} 个）</summary>
+              {productHistoryLedgers.length ? (
+                <div className="business-card-list">
+                  {productHistoryLedgers.slice(0, 4).map((ledger) => (
                   <div className="timeline-card" key={ledger.asin}>
                     <div className="timeline-card-header">
                       <div>
@@ -1011,19 +1084,22 @@ export function AdQuantPage() {
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="muted-line">当前范围已有量化指标，但还没有形成按 ASIN 聚合的产品广告历史账本。请检查指标是否包含 ASIN 或当前范围是否过窄。</p>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <p className="muted-line">当前范围已有量化指标，但还没有形成按 ASIN 聚合的产品广告历史账本。请检查指标是否包含 ASIN 或当前范围是否过窄。</p>
+              )}
+            </details>
           </Panel>
         )}
 
         {canDiagnose && (
           <Panel title="产品/广告对象阶段时间线" tone={visibleTimelines.length ? 'success' : 'warning'}>
-            {visibleTimelines.length ? (
-              <div className="business-card-list">
-                {visibleTimelines.slice(0, 8).map((timeline) => (
+            <details className="evidence-disclosure">
+              <summary>展开当前产品对象时间线（{visibleTimelines.length} 条）</summary>
+              {visibleTimelines.length ? (
+                <div className="business-card-list">
+                  {visibleTimelines.slice(0, 8).map((timeline) => (
                   <div className="timeline-card" key={timeline.objectKey}>
                     <div className="timeline-card-header">
                       <div>
@@ -1056,11 +1132,12 @@ export function AdQuantPage() {
                       </p>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="muted-line">当前范围已有指标，但没有形成可展示的广告对象时间线。</p>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <p className="muted-line">当前范围已有指标，但没有形成可展示的广告对象时间线。</p>
+              )}
+            </details>
           </Panel>
         )}
 
@@ -1068,9 +1145,9 @@ export function AdQuantPage() {
           <Panel title="主要问题摘要" tone="warning">
             <div className="issue-summary-grid">
               <div className="issue-card">
-                <span>总盘结论</span>
-                <strong>{(visibleQuant?.acos ?? 0) >= ruleConfig.highAcosThreshold ? 'ACOS 偏高' : '效率待复核'}</strong>
-                <p>{formatUsd(visibleQuant?.totalSpend)} 花费 / {visibleQuant?.totalOrders ?? 0} 单 / ACOS {formatPercent((visibleQuant?.acos ?? 0) * 100)}</p>
+                <span>当前产品结论</span>
+                <strong>{selectedAcos >= ruleConfig.highAcosThreshold ? 'ACOS 偏高' : '效率待复核'}</strong>
+                <p>{selectedProductGroup?.label || '当前范围'} / {formatUsd(selectedSpend)} 花费 / {selectedOrders} 单 / ACOS {formatPercent(selectedAcos * 100)}</p>
               </div>
               <div className="issue-card">
                 <span>高 ACOS 实体</span>
@@ -1143,20 +1220,20 @@ export function AdQuantPage() {
         {canDiagnose && (
           <div className="business-grid business-grid-four">
             <div className="metric-tile">
-              <span>总花费</span>
-              <strong>{formatUsd(visibleQuant?.totalSpend)}</strong>
+              <span>当前产品花费</span>
+              <strong>{formatUsd(selectedSpend)}</strong>
             </div>
             <div className="metric-tile">
-              <span>总销售</span>
-              <strong>{formatUsd(visibleQuant?.totalSales)}</strong>
+              <span>当前产品销售</span>
+              <strong>{formatUsd(selectedSales)}</strong>
             </div>
             <div className="metric-tile">
-              <span>总订单</span>
-              <strong>{visibleQuant?.totalOrders ?? 0}</strong>
+              <span>当前产品订单</span>
+              <strong>{selectedOrders}</strong>
             </div>
             <div className="metric-tile">
               <span>ACOS</span>
-              <strong>{formatPercent((visibleQuant?.acos ?? 0) * 100)}</strong>
+              <strong>{formatPercent(selectedAcos * 100)}</strong>
             </div>
             <div className="metric-tile">
               <span>CVR</span>
@@ -1194,55 +1271,58 @@ export function AdQuantPage() {
         )}
 
         <Panel title="实体诊断">
-          <div className="table-wrap">
-            <table className="business-table diagnostic-table">
-              <thead>
-                <tr>
-                  <th>广告组合</th>
-                  <th>广告活动</th>
-                  <th>广告组</th>
-                  <th>产品/ASIN</th>
-                  <th>对象类型</th>
-                  <th>关键词/搜索词/投放对象</th>
-                  <th>花费</th>
-                  <th>销售</th>
-                  <th>订单</th>
-                  <th>点击</th>
-                  <th>ACOS</th>
-                  <th>CVR</th>
-                  <th>CPC</th>
-                  <th>诊断</th>
-                  <th>建议方向</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleDiagnostics.map((row, index) => (
-                  <tr key={`${row.campaignName || '-'}-${row.objectName || '-'}-${index}`}>
-                    <td>{row.portfolioName || '-'}</td>
-                    <td>{row.campaignName || '-'}</td>
-                    <td>{row.adGroupName || '-'}</td>
-                    <td>{row.asin || '-'}</td>
-                    <td>{row.objectType || '-'}</td>
-                    <td>{row.objectName || '-'}</td>
-                    <td>{formatUsd(row.spend)}</td>
-                    <td>{formatUsd(row.sales)}</td>
-                    <td>{row.orders}</td>
-                    <td>{row.clicks}</td>
-                    <td>{formatPercent(row.acos * 100)}</td>
-                    <td>{formatPercent(row.cvr * 100)}</td>
-                    <td>{formatUsd(row.cpc)}</td>
-                    <td>{row.diagnosis}</td>
-                    <td>{row.suggestedDirection}</td>
-                  </tr>
-                ))}
-                {!visibleDiagnostics.length && (
+          <details className="evidence-disclosure">
+            <summary>展开当前产品实体诊断表（{visibleDiagnostics.length} 行）</summary>
+            <div className="table-wrap">
+              <table className="business-table diagnostic-table">
+                <thead>
                   <tr>
-                    <td colSpan={15}>没有真实报表文件和导入指标，本页不生成建议。</td>
+                    <th>广告组合</th>
+                    <th>广告活动</th>
+                    <th>广告组</th>
+                    <th>产品/ASIN</th>
+                    <th>对象类型</th>
+                    <th>关键词/搜索词/投放对象</th>
+                    <th>花费</th>
+                    <th>销售</th>
+                    <th>订单</th>
+                    <th>点击</th>
+                    <th>ACOS</th>
+                    <th>CVR</th>
+                    <th>CPC</th>
+                    <th>诊断</th>
+                    <th>建议方向</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {visibleDiagnostics.map((row, index) => (
+                    <tr key={`${row.campaignName || '-'}-${row.objectName || '-'}-${index}`}>
+                      <td>{row.portfolioName || '-'}</td>
+                      <td>{row.campaignName || '-'}</td>
+                      <td>{row.adGroupName || '-'}</td>
+                      <td>{row.asin || '-'}</td>
+                      <td>{row.objectType || '-'}</td>
+                      <td>{row.objectName || '-'}</td>
+                      <td>{formatUsd(row.spend)}</td>
+                      <td>{formatUsd(row.sales)}</td>
+                      <td>{row.orders}</td>
+                      <td>{row.clicks}</td>
+                      <td>{formatPercent(row.acos * 100)}</td>
+                      <td>{formatPercent(row.cvr * 100)}</td>
+                      <td>{formatUsd(row.cpc)}</td>
+                      <td>{row.diagnosis}</td>
+                      <td>{row.suggestedDirection}</td>
+                    </tr>
+                  ))}
+                  {!visibleDiagnostics.length && (
+                    <tr>
+                      <td colSpan={15}>没有真实报表文件和导入指标，本页不生成建议。</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </details>
         </Panel>
       </div>
     </div>

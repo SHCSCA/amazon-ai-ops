@@ -4,17 +4,17 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 
 ## 当前状态
 
-**DELIVERY: APP_READY.** 当前代码已完成最终节点的全量 typecheck、全量测试、Windows 安装包/portable 免安装包打包、包 SHA-256 记录、packaged-app 广告 AI 解释证据验证，以及一次当前合同下的真实 Ads UI 人工执行 readback。最终 manifest 聚合 `output\codex-evidence\final-readiness-2026-06-18.json` 为 `APP_READY`，所有门禁通过。应用内广告执行仍保持 fail-closed，不做批量自动写入；后续每个广告动作必须绑定自己的店铺、站点、广告组合、campaign、ad group、ASIN、对象和动作，并独立审批、截图和回读。
+**DELIVERY: APP_READY.** 当前工作树已完成 UI 密度、广告量化按产品拆分、AI 结构化输出兜底和 Listing 手工版本化收尾，并已重新通过全量测试、全量类型检查、当前业务 UI smoke、Windows installer/portable 打包和 manifest-driven final-readiness。当前 final-readiness 为 `output\codex-evidence\final-readiness-2026-06-18-product-ui.json`，状态 `APP_READY`。应用内广告执行仍保持 fail-closed，不做批量自动写入；后续每个广告动作必须绑定自己的店铺、站点、广告组合、campaign、ad group、ASIN、对象和动作，并独立审批、截图和回读。
 
 | 项目 | 状态 | 证据/位置 |
 |---|---:|---|
 | v1.5 基线合并 | 已完成 | v1.5 业务后台重构和最终验收已合入 `master` |
-| 本轮收尾改动 | 已完成，APP_READY | AI 证据引用、AI 输出准入、动态阈值/运营事件上下文、UI 解释链、日级时间线规则建议、packaged AI 解释和应用内回读证据生成/verifier 均已接入；真实广告人工执行和回读证据已补齐并进入最终 manifest |
-| 本地测试 | 通过 | `pnpm test` 通过：90 个测试文件，554 passed，2 skipped |
+| 本轮收尾改动 | 已完成，APP_READY | UI 密度、长页面、广告按产品查看、AI JSON 兜底和 Listing 手工版本历史已接入；当前 final-readiness 已通过 |
+| 本地测试 | 通过 | `pnpm test` 通过：100 个测试文件，594 passed，2 skipped |
 | 类型检查 | 通过 | `pnpm -r run typecheck` 通过 |
 | 桌面构建 | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:win` 通过 |
-| 打包应用冒烟 | 通过广告 AI 证据复验 | `output\codex-evidence\installed-ad-ai-explanation-packaged-final-20260617.json` 由 packaged app 生成并通过 verifier |
-| 最终安装包证据 | 已刷新 | 安装包 `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe`，portable 免安装包 `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe`，大小和 SHA-256 已写入 final readiness |
+| 当前业务 UI 冒烟 | 通过 | `pnpm run smoke:business-ui-current` 通过，汇总证据 `output\codex-evidence\current-business-ui-smoke-1781754371137.json` |
+| 最终安装包证据 | 已刷新并进入 final-readiness | installer `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe`，大小 `686429199`，SHA-256 `1126A53675E942E636A4481AD78044ED370D273FD716B09B8D341A5E673257B1`；portable `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe`，大小 `686263447`，SHA-256 `E6DF30DC6CC615CA92ADBF2EA94D53C2CD327C4EF9C501B2955221B4400A6538` |
 | 当前安装版启动复验 | 通过 | 已清理 2026-06-03 旧安装目录并用当前 installer 覆盖；从系统应用入口打开进入登录页，不再出现主进程 JavaScript error |
 | 关键词/Listing v1.5 工作流 | 结构完成，真实详情读取和 AI 草案已验证 | 左侧菜单已按后台业务域拆成 `运营总览`、`数据与量化`、`广告执行`、`关键词与 Listing`、`系统与交付`。`数据采集`、`数据导入与校验`、`广告量化`、`优化建议`、`审批中心`、`执行回读`、`关键词机会`、`Listing 优化` 各自独立承载业务流程，`交付验收` 只汇总证据，不承载日常操作。Listing 页已接入读取、建议、采纳、草案和导出流程；真实详情页读取和 Listing AI 草案均有最终 READY 证据 |
 | 领星下载中心采集 | full-8 真实 E2E 通过 | 当前安装版完成 ERP -> Ads 会话确认、启用后诊断 id `27` 通过；full-8 批次 `batch_20260609045655853_ft8uda` 下载 8/8、失败 0，DB/manifest/文件系统/验收审计均通过 `pnpm run verify:v15-delivery -- output\codex-evidence\desktop-live-full-8-e2e-2026-06-09.json` |
@@ -27,9 +27,9 @@ Amazon AI Ops Agent 是一个本地优先的 Electron 桌面应用，用于亚�
 | AI 结构证据 | 结构通过，不给 READY credit | `pnpm run run:ai-structural-mock` 最新生成并通过 verifier：`output\codex-evidence\structural-ai-openai-compatible-mock-1781703077556.json`；该结构证据使用 `/chat/completions` 和 `response_format: json_object`，只证明 OpenAI-compatible 请求/响应形状、Listing AI JSON 映射和脱敏策略，明确 `NO_FINAL_READINESS_CREDIT`，不能替代真实 DeepSeek Key |
 | Lingxing Listing 页面读取 | 真实详情页证据通过 | 主进程 IPC、preload、UI 按钮、指定 URL 读取、字段完整性证据已接入；读取区分 `partialReady` 和 `fullContentReady`，并支持显式 `只读探测详情页`：只从当前 ASIN 行点击唯一安全详情/查看/编辑候选，校验同域和同 ASIN，不点击保存/发布；`output\codex-evidence\source-listing-read-detail-probe-2026-06-09-merged-detail.json` 通过 `pnpm run verify:listing-read`，证明源代码版通过 ERP 登录态进入 `https://erp.lingxing.com/erp/editListing`，同 ASIN `B0GTTJFQTM`，读取标题、10 条五点和后台词，`fullContentReady=true` |
 | Listing AI 草案证据 | 通过 | `output\codex-evidence\installed-listing-ai-draft-user-key-2026-06-10.json` 通过 `pnpm run verify:listing-ai-draft -- <evidence>`；证据证明本地 Listing 草案模式无广告写入/无 full-8 报表，AI 连接成功，基于 accepted suggestion 生成 `source=ai` 草案，无 fallback，含 `AI reason`，并恢复 AI 设置 |
-| 最终就绪聚合门 | APP_READY | `output\codex-evidence\final-readiness-2026-06-18.json` 使用 manifest 聚合，报表采集、Listing 读取、AI live、广告 AI 解释、Listing AI 草案、真实广告 readback 和 release package hash 全部通过 |
-| READY 安全门 | 通过 | `pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-2026-06-18.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-2026-06-18-final-ready\delivery-bundle-manifest.json` 已通过，确认 bundle README、final readiness、真实 readback、真实报表索引和安装包 hash 一致 |
-| 交付证据包 | 已导出 READY 包 | 当前 READY 包位于 `output\delivery-bundles\v15-delivery-bundle-2026-06-18-final-ready`，来源为 `output\codex-evidence\final-readiness-2026-06-18.json`。交付包不复制 raw `.xlsx/.xls/.csv` 报表，但会生成 `evidence/real-report-file-index.json`，记录真实报表本地路径、存在性、大小和 SHA-256，便于回查“数据在哪” |
+| 最终就绪聚合门 | APP_READY | `output\codex-evidence\final-readiness-2026-06-18-product-ui.json` 使用 manifest 聚合，报表采集、Listing 读取、AI live、广告 AI 解释、Listing AI 草案、真实广告 readback 和 release package hash 全部通过 |
+| READY 安全门 | 通过 | `pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-2026-06-18-product-ui.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready\delivery-bundle-manifest.json` 通过 |
+| 交付证据包 | 已导出，APP_READY | `output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready`；交付包不复制 raw `.xlsx/.xls/.csv` 报表，只生成真实报表文件索引，当前索引 `16/16` 存在、缺失 `0` |
 | 交付证据脚本 | 增量通过 | 当前应用内执行回读 smoke 覆盖 session 创建、结构检查和中文现场证据未填写提示、打开 `session-input.json` 填写文件、打开 `session-input-guide.md` 填写说明、回读证据生成、回读证据 verifier 和路径展示：`output\codex-evidence\business-ui-ad-execution-smoke-1781722257389.json`；`交付验收` 页新增 `刷新最终验收` 和 `广告回读补证`，可从失败 readback gate 直接创建工作包、检查工作包、显示 `结构通过，现场证据待填写` 和中文缺失字段、生成回读证据、校验回读证据、用该证据刷新最终验收，并打开候选证据/工作包/操作清单/Ads UI 定位单/填写文件/填写说明，settings/delivery smoke 已覆盖：`output\codex-evidence\business-ui-settings-delivery-smoke-1781722241760.json`；最终节点仍必须重新运行全量 verifier/smoke |
 
 ## 核心目标
@@ -193,12 +193,12 @@ pnpm run run:v15-installed-live -- --mode listing-ai-draft --source-app
 pnpm run verify:listing-ai-draft -- output\codex-evidence\<listing-ai-draft-file>.json
 pnpm run verify:ai-settings-ux
 pnpm run smoke:listing-draft-renderer
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18.json
+pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18-product-ui.json
 pnpm run verify:v15-delivery
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18.json --out output\codex-evidence\final-readiness-2026-06-18.json
+pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18-product-ui.json --out output\codex-evidence\final-readiness-2026-06-18-product-ui.json
 # 先把 README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`，再导出交付包；导出器会拒绝 IN_PROGRESS README。
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-2026-06-18.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-2026-06-18-final-ready
-pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-2026-06-18.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-2026-06-18-final-ready\delivery-bundle-manifest.json
+pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-2026-06-18-product-ui.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready
+pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-2026-06-18-product-ui.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready\delivery-bundle-manifest.json
 ```
 
 `run:v15-installed-live` 支持安装版只读诊断、显式指定的单报表 canary，以及 `--mode full8` 的完整 8 报表采集；三种模式都不会执行广告写操作。登录账号和密码必须通过环境变量 `LINGXING_USERNAME` / `LINGXING_PASSWORD` 提供，仓库不保存凭据。
@@ -215,4 +215,4 @@ pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\fina
 
 ## 交付边界
 
-当前报表采集交付边界是“真实 Ads 下载中心定位完成 + 启用后 page model 诊断通过 + 8/8 canary 通过 + full-8 真实下载 + manifest/DB/文件/验收审计一致”；Listing 读取边界是“真实 ERP Listing 列表页进入同 ASIN 编辑页 + 标题/五点/后台词完整读取 + verifier 通过”；AI 边界是“DeepSeek live、广告建议 AI 解释、Listing AI 草案三份证据均通过 verifier 且不泄露密钥，并且 AI 证据引用、输出 schema、正式动作准入和洞察分流均通过当前代码验证”；广告执行边界是“每个低风险人工 Ads UI 动作都有独立 approval、真实报表 sourceFiles/sourceRow、before、after、reload readback 和 `verify:ad-readback` PASS”。最终聚合必须先 `build:win` 生成当前代码的 installer 和 portable/no-install EXE，再用 `write:v15-evidence-manifest` 固定证据选择并运行 `verify:v15-final-readiness -- --evidence-manifest <manifest>`；只有输出包含 `evidenceSelection.mode=manifest` 且通过 `Release package hash` 的 final readiness JSON 才能用于交付包。导出 READY 交付包前，必须先把 README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`，这样包内文档和外部 READY safety 校验不会脱节；导出后再运行 `verify:v15-ready-safety`。应用内批量广告写入仍 fail-closed；当前工作树已经完成最终节点的全量测试、全量 typecheck、Windows 打包、安装包 hash、packaged AI 证据验证和当前合同下的真实广告人工执行 readback，最终 READY 交付包需基于 `final-readiness-2026-06-18.json` 导出。
+当前报表采集交付边界是“真实 Ads 下载中心定位完成 + 启用后 page model 诊断通过 + 8/8 canary 通过 + full-8 真实下载 + manifest/DB/文件/验收审计一致”；Listing 内容边界现在是“手工录入/辅助读取后保存为本地版本，草案和覆盖分析只读取本地版本，不自动提交 Amazon”；AI 边界是“DeepSeek live、广告建议 AI 解释、Listing AI 草案三份证据均通过 verifier 且不泄露密钥，并且 AI 证据引用、输出 schema、正式动作准入和洞察分流均通过当前代码验证”；广告执行边界是“每个低风险人工 Ads UI 动作都有独立 approval、真实报表 sourceFiles/sourceRow、before、after、reload readback 和 `verify:ad-readback` PASS”。最终聚合必须先 `build:win` 生成当前代码的 installer 和 portable/no-install EXE，再用 `write:v15-evidence-manifest` 固定证据选择并运行 `verify:v15-final-readiness -- --evidence-manifest <manifest>`；只有输出包含 `evidenceSelection.mode=manifest` 且通过 `Release package hash` 的 final readiness JSON 才能用于交付包。导出 READY 交付包前，必须先把 README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`，这样包内文档和外部 READY safety 校验不会脱节；导出后再运行 `verify:v15-ready-safety`。应用内批量广告写入仍 fail-closed；当前工作树已经完成全量测试、全量 typecheck、当前业务 UI smoke、Windows 打包、安装包 hash 记录、`output\codex-evidence\final-readiness-2026-06-18-product-ui.json` final-readiness 聚合、`output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready` READY 交付包导出，以及 READY safety 验证。

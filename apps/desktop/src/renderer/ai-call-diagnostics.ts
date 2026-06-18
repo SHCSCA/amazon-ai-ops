@@ -36,14 +36,25 @@ export function buildAiCallDiagnostics(logs: AiCallLogView[]): AiCallDiagnostics
   };
 }
 
-function operatorFacingAiError(message?: string): string {
+export function operatorFacingAiError(message?: string): string {
   const text = String(message || '').trim();
   if (!text) return '未记录失败原因';
+  if (isJsonParserDetail(text)) {
+    return 'AI 输出格式未通过校验，当前使用规则引擎兜底';
+  }
   return text
     .replace(/schemaVersion/gi, '输出格式')
     .replace(/JSON schema/gi, '标准 JSON 输出格式')
     .replace(/\bschema\b/gi, '输出格式')
     .replace(/AI 输出\s+输出格式\s+错误/g, 'AI 输出格式错误');
+}
+
+function isJsonParserDetail(text: string): boolean {
+  return /Expected ['"`].+JSON at position/i.test(text)
+    || /Unexpected token.+JSON at position/i.test(text)
+    || /Unexpected end of JSON input/i.test(text)
+    || /after array element in JSON/i.test(text)
+    || /line \d+ column \d+/i.test(text);
 }
 
 function latestAiCallLog(logs: AiCallLogView[]): AiCallLogView | undefined {

@@ -182,10 +182,11 @@ export function ScopeBar() {
         <div>
           <span>当前操作范围</span>
           <strong>{scope.dateFrom} 至 {scope.dateTo} / {scope.storeName || '未选店铺'} / {scope.marketplaceCode || '未选站点'} / USD</strong>
-          <p>这是全局范围。数据采集、导入校验、广告量化、优化建议、审批回读、关键词机会和 Listing 草案都会按这里读取。</p>
-          <p className="scope-helper">
-            {scopeHelperText}
-          </p>
+          <details className="scope-details">
+            <summary>范围说明与批次作用</summary>
+            <p>这是全局范围。数据采集、导入校验、广告量化、优化建议、审批回读、关键词机会和 Listing 草案都会按这里读取。</p>
+            <p className="scope-helper">{scopeHelperText}</p>
+          </details>
         </div>
         <div className="scope-title-actions">
           <select

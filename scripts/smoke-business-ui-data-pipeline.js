@@ -1,7 +1,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { chromium } = require('playwright');
+const { chromium } = require('./playwright-loader');
 
 const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
@@ -57,7 +57,12 @@ async function bodyText(page) {
 }
 
 async function expectVisible(page, text) {
-  await page.getByText(text, { exact: true }).first().waitFor({ timeout: 5000 });
+  try {
+    await page.waitForFunction((expected) => document.body.innerText.includes(expected), text, { timeout: 5000 });
+  } catch (error) {
+    const textContent = await bodyText(page).catch(() => '');
+    fail(`Expected visible text not found: ${text}`, textContent.slice(0, 3000));
+  }
 }
 
 async function expectNotInBody(page, text) {
@@ -1312,6 +1317,7 @@ async function main() {
     }
 
     await page.locator('.app-sidebar').getByRole('button', { name: /广告量化/ }).click();
+  await page.getByText('展开当前产品实体诊断表', { exact: false }).click();
   await expectVisible(page, '广告组合');
   await expectVisible(page, '广告活动');
   await expectVisible(page, '广告组');
@@ -1338,10 +1344,11 @@ async function main() {
   await expectVisible(page, '规则量化');
   await expectVisible(page, '当前页先用确定性规则打底');
   await expectVisible(page, '最近 AI 诊断记录');
+  await page.getByText('展开最近 AI 诊断记录', { exact: false }).click();
   await expectVisible(page, 'deepseek-chat');
   await expectVisible(page, 'AI 调用成功');
   await expectVisible(page, 'AI 调用失败');
-  await expectVisible(page, 'AI 输出 schemaVersion 错误：legacy_strategy_v0');
+  await expectVisible(page, 'AI 输出格式错误：legacy_strategy_v0');
   await expectVisible(page, '正式建议 1');
   await expectVisible(page, '洞察 1');
   await expectVisible(page, '证据包 5 条');
@@ -1388,6 +1395,8 @@ async function main() {
   await expectVisible(page, '批次：mock_batch_scope');
   await expectVisible(page, '产品/广告对象阶段时间线');
   await expectVisible(page, '产品广告历史账本');
+  await page.getByText('展开当前产品广告历史账本', { exact: false }).click();
+  await page.getByText('展开当前产品对象时间线', { exact: false }).click();
   await expectVisible(page, 'B0TESTASIN');
   await expectVisible(page, '活跃 12 天');
   await expectInBody(page, '$170.25 / $300.50 / 3 单');

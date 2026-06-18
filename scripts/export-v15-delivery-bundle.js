@@ -125,9 +125,18 @@ function safeBasename(filePath) {
   return path.basename(filePath).replace(/[^a-zA-Z0-9._-]+/g, '-');
 }
 
+function canonicalPath(inputPath) {
+  const resolved = path.resolve(inputPath);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 function isInside(childPath, parentPath) {
   if (!childPath || !parentPath) return false;
-  const relative = path.relative(path.resolve(parentPath), path.resolve(childPath));
+  const relative = path.relative(canonicalPath(parentPath), canonicalPath(childPath));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
@@ -143,7 +152,7 @@ function uniqueDestinationPath(destinationDir, basename) {
 }
 
 function assertAllowedSource(sourcePath, label) {
-  const resolved = path.resolve(sourcePath);
+  const resolved = canonicalPath(sourcePath);
   const ext = path.extname(resolved).toLowerCase();
   const isRepoDocOrScript = isInside(resolved, root)
     && (

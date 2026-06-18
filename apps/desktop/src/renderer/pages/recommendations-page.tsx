@@ -1387,8 +1387,10 @@ export function RecommendationsPage() {
         </Panel>
 
         <Panel title="待处理建议">
-          <div className="table-wrap">
-            <table className="business-table recommendation-table">
+          <details className="evidence-disclosure">
+            <summary>展开待处理建议表（{recommendations.length} 条）</summary>
+            <div className="table-wrap">
+              <table className="business-table recommendation-table">
               <thead>
                 <tr>
                   <th>建议动作</th>
@@ -1454,8 +1456,9 @@ export function RecommendationsPage() {
                   </tr>
                 )}
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+          </details>
         </Panel>
 
         {selected && (

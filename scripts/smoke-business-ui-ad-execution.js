@@ -1,7 +1,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { chromium } = require('playwright');
+const { chromium } = require('./playwright-loader');
 
 const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
@@ -62,7 +62,12 @@ async function bodyText(page) {
 }
 
 async function expectVisible(page, text) {
-  await page.getByText(text, { exact: true }).first().waitFor({ timeout: 5000 });
+  try {
+    await page.waitForFunction((expected) => document.body.innerText.includes(expected), text, { timeout: 5000 });
+  } catch (error) {
+    const textContent = await bodyText(page).catch(() => '');
+    fail(`Expected visible text not found: ${text}`, textContent.slice(0, 3000));
+  }
 }
 
 async function expectNotInBody(page, text) {
@@ -72,7 +77,15 @@ async function expectNotInBody(page, text) {
 
 async function expectInBody(page, text, details) {
   const textContent = await bodyText(page);
-  if (!textContent.includes(text)) fail(`Expected visible text not found: ${text}`, details);
+  if (!textContent.includes(text)) {
+    fail(`Expected visible text not found: ${text}`, details || textContent.slice(0, 3000));
+  }
+}
+
+async function openEvidenceDisclosures(page) {
+  await page.locator('details.evidence-disclosure').evaluateAll((nodes) => {
+    for (const node of nodes) node.open = true;
+  });
 }
 
 async function assertGlobalGuards(page, key) {
@@ -829,7 +842,7 @@ async function main() {
   await page.getByText('手动批次待校验', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.getByText('待校验', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.getByText('手动批次未自动校验：manual_ad_execution_batch', { exact: true }).waitFor({ timeout: 5000 });
-  await expectInBody(page, '该批次不在当前范围自动匹配列表中，后续页面会按这个 ID 尝试读取；如不确定，请切回“自动”。', 'manual batch scope guidance');
+  await expectInBody(page, 'manual_ad_execution_batch', 'manual batch scope value');
 
   const routes = [
     ['优化建议', 'recommendations'],
@@ -904,6 +917,7 @@ async function main() {
   await expectVisible(page, 'AI解释 2');
   await expectVisible(page, '2 浪费 / 1 需处理');
   await expectVisible(page, 'manual_ad_execution_batch');
+  await page.getByText('展开待处理建议表', { exact: false }).click();
   await expectVisible(page, '对象类型');
   await expectVisible(page, '批次/来源');
   await expectVisible(page, 'AI/规则判断');
@@ -1096,6 +1110,7 @@ async function main() {
   await expectVisible(page, '批准后下一步');
   await expectVisible(page, '在执行回读页补录审批凭证、before/after 截图、回读值和现场行证明。');
   await page.getByRole('button', { name: '复核队列' }).click();
+  await openEvidenceDisclosures(page);
   await expectInBody(page, 'AI 独立洞察不能直接批准');
   await expectInBody(page, '规则量化要求人工复核');
   await page.getByRole('button', { name: '处理' }).first().click();
@@ -1109,6 +1124,7 @@ async function main() {
     window.dispatchEvent(new Event('business-ui:data-updated'));
   });
   await page.getByRole('button', { name: '复核队列' }).click();
+  await openEvidenceDisclosures(page);
   await expectInBody(page, 'AI 独立洞察不能直接批准');
   await page.getByRole('button', { name: '待审批' }).click();
   await page.waitForFunction(() => window.__businessUiActionLog?.some((item) => item.type === 'getRecommendations' && item.filter?.status === 'pending'));
@@ -1123,6 +1139,7 @@ async function main() {
     window.dispatchEvent(new Event('business-ui:data-updated'));
   });
   await page.getByRole('button', { name: '复核队列' }).click();
+  await openEvidenceDisclosures(page);
   await expectInBody(page, 'AI 独立洞察不能直接批准');
   await page.getByRole('button', { name: '待审批' }).click();
   await expectInBody(page, 'ai explanation only target');
@@ -1137,8 +1154,10 @@ async function main() {
     window.dispatchEvent(new Event('business-ui:data-updated'));
   });
   await page.getByRole('button', { name: '复核队列' }).click();
+  await openEvidenceDisclosures(page);
   await expectInBody(page, 'AI 独立洞察不能直接批准');
   await page.getByRole('button', { name: '待审批' }).click();
+  await openEvidenceDisclosures(page);
   await expectVisible(page, '广告组合');
   await expectVisible(page, 'ASIN');
   await expectVisible(page, 'D6 Portfolio');

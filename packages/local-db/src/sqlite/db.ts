@@ -394,9 +394,36 @@ function runMigrations(database: Database.Database): void {
       a_plus TEXT,
       image_copy TEXT,
       backend_terms TEXT,
+      description TEXT,
+      source TEXT DEFAULT 'manual',
       source_url TEXT,
       screenshot_path TEXT,
+      version_label TEXT,
+      change_summary TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS listing_content_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      listing_content_id INTEGER,
+      asin TEXT NOT NULL,
+      store_name TEXT,
+      marketplace_code TEXT,
+      title TEXT DEFAULT '',
+      bullets_json TEXT DEFAULT '[]',
+      description TEXT,
+      a_plus TEXT,
+      image_copy TEXT,
+      backend_terms TEXT,
+      source TEXT DEFAULT 'manual',
+      source_url TEXT,
+      screenshot_path TEXT,
+      version_label TEXT,
+      change_summary TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
     )
   `);
 
@@ -480,10 +507,15 @@ function runMigrations(database: Database.Database): void {
   ensureColumn(database, 'listing_content', 'a_plus', 'TEXT');
   ensureColumn(database, 'listing_content', 'image_copy', 'TEXT');
   ensureColumn(database, 'listing_content', 'backend_terms', 'TEXT');
+  ensureColumn(database, 'listing_content', 'description', 'TEXT');
+  ensureColumn(database, 'listing_content', 'source', "TEXT DEFAULT 'manual'");
   ensureColumn(database, 'listing_content', 'store_name', 'TEXT');
   ensureColumn(database, 'listing_content', 'marketplace_code', 'TEXT');
   ensureColumn(database, 'listing_content', 'source_url', 'TEXT');
   ensureColumn(database, 'listing_content', 'screenshot_path', 'TEXT');
+  ensureColumn(database, 'listing_content', 'version_label', 'TEXT');
+  ensureColumn(database, 'listing_content', 'change_summary', 'TEXT');
+  ensureColumn(database, 'listing_content', 'created_at', "TEXT DEFAULT (datetime('now'))");
   ensureColumn(database, 'listing_content', 'updated_at', "TEXT DEFAULT (datetime('now'))");
   ensureColumn(database, 'listing_drafts', 'store_name', 'TEXT');
   ensureColumn(database, 'listing_drafts', 'marketplace_code', 'TEXT');

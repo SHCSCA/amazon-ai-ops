@@ -66,8 +66,8 @@ export interface ListingSourceStatus {
 }
 
 export function buildListingReadinessIssues(input: ListingReadinessIssueInput): string[] {
-  if (!input.listingReadAttempted) return ['尚未读取领星 Listing 页面'];
-  if (!input.hasListing) return ['页面已探测但未读取到可用 Listing 内容'];
+  if (!input.listingReadAttempted) return ['尚未录入或读取 Listing 内容'];
+  if (!input.hasListing) return ['已探测页面但未形成可用 Listing 内容'];
 
   const issues: string[] = [];
   const expectedAsin = input.expectedAsin?.trim().toUpperCase();
@@ -92,7 +92,7 @@ export function buildListingSourceStatus(input: ListingSourceStatusInput): Listi
     return {
       label: '未读取',
       tone: 'blocked',
-      headline: '尚未读取当前领星 Listing 页面',
+      headline: '尚未录入或读取当前 Listing 内容',
       missingFieldLabel: '未读取',
     };
   }
@@ -110,7 +110,7 @@ export function buildListingSourceStatus(input: ListingSourceStatusInput): Listi
     return {
       label: '完整读取',
       tone: 'ready',
-      headline: '当前领星 Listing 内容已完整读取并通过核对',
+      headline: '当前 Listing 内容已完整录入并通过核对',
       missingFieldLabel: '缺失',
     };
   }
@@ -158,7 +158,7 @@ export function buildListingWorkflowSummary(input: ListingWorkflowSummaryInput):
   const boundary = '只生成本地草案，不提交 Amazon，不修改 Lingxing Listing。';
   const facts = [
     `关键词 ${input.keywordCount} 个`,
-    input.listingReady ? 'Listing 已核对' : input.listingReadAttempted ? 'Listing 已探测但未完整' : 'Listing 未读取',
+    input.listingReady ? 'Listing 已核对' : input.listingReadAttempted ? 'Listing 已录入但未完整' : 'Listing 未录入',
     input.quantReady ? '当前范围有真实广告数据' : '缺真实广告数据，仅规则兜底',
     input.draftCount > 0
       ? `AI 草案 ${input.aiDraftCount} 条 / 规则草案 ${input.ruleDraftCount} 条`
@@ -185,10 +185,10 @@ export function buildListingWorkflowSummary(input: ListingWorkflowSummaryInput):
     return {
       statusLabel: 'Listing 待核对',
       tone: input.listingReadAttempted ? 'warning' : 'pending',
-      headline: '关键词已就绪，但 Listing 读取未达到生成草案门槛。',
+      headline: '关键词已就绪，但 Listing 内容未达到生成草案门槛。',
       facts,
       blockers,
-      nextAction: '切换到正确的领星 Listing 详情页，重新读取并核对 ASIN、标题、五点和后台词。',
+      nextAction: '手工录入并核对 ASIN、标题、五点和后台词；领星读取只作为辅助填充。',
       boundary,
     };
   }

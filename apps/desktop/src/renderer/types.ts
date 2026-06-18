@@ -668,16 +668,29 @@ export interface KeywordOpportunityView {
 export type ListingSection = 'title' | 'bullet' | 'a_plus' | 'image_copy' | 'backend_terms';
 
 export interface ListingContentView {
+  id?: number;
   asin?: string;
   title?: string;
   bullets?: string[];
+  description?: string;
   aPlus?: string;
   imageCopy?: string;
   backendTerms?: string;
   source?: string;
   pageUrl?: string;
   screenshotPath?: string;
+  versionLabel?: string;
+  changeSummary?: string;
+  createdAt?: string;
   updatedAt?: string;
+  versionId?: number;
+  storeName?: string;
+  marketplaceCode?: string;
+}
+
+export interface ListingContentVersionView extends ListingContentView {
+  versionId: number;
+  listingContentId?: number;
 }
 
 export interface ListingSuggestionView {

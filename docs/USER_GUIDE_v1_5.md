@@ -25,10 +25,10 @@ The app remains local-first. It does not connect to Amazon SP-API or Amazon Ads 
    - `广告执行` -> `审批中心`: operator approval/rejection with approver, reason, scope, batch, target context, source values, and source files.
    - `广告执行` -> `执行回读`: manual Ads UI before/after/readback evidence export for each specific future action.
    - `关键词与 Listing` -> `关键词机会`: Search Term / SQP / keyword imports, ad-context-split opportunity analysis, filters, and evidence columns.
-   - `关键词与 Listing` -> `Listing 优化`: Lingxing Listing read-only extraction, local Listing form, suggestions, accepted-only drafts, and exports.
+   - `关键词与 Listing` -> `Listing 优化`: manual Listing entry and version history as the primary source, optional Lingxing read-only fill, suggestions, accepted-only drafts, and exports.
    - `系统与交付` -> `定时任务`, `设置`, `交付验收`: scheduling, AI settings, and final evidence summary. `交付验收` is a proof page, not a daily operation workbench.
 
-Current 2026-06-16 no-install executable for validation: `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe`, SHA-256 `71E82D4752EC2BE14C60CF34A405BB844929EFAB106BB68A38CEB412B6CBA913`.
+Current 2026-06-18 no-install executable for validation: `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe`, SHA-256 `E6DF30DC6CC615CA92ADBF2EA94D53C2CD327C4EF9C501B2955221B4400A6538`.
 
 ## Lingxing Report Collection
 
@@ -154,7 +154,7 @@ When parse warnings or recoverable row errors are present, use `导出诊断` to
 
 Open `Listing 优化` from the left menu.
 
-You can either type Listing content manually or import it from Excel.
+Manual Listing entry is the primary path. Fill the current ASIN, title, five bullets, description/A+ content, image copy, and backend search terms, then click `保存为新版本`. Each save records a local version snapshot for later comparison. Excel import and Lingxing read-only fill are auxiliary paths; neither submits changes to Amazon.
 
 Supported Listing import fields:
 
@@ -174,10 +174,10 @@ To import:
 To read from Lingxing without submitting changes:
 
 1. Log in through the desktop app so the same ERP browser session is active.
-2. Enter a Lingxing Listing/Product URL and click `打开 URL 并读取`, or manually open the page in the app-controlled browser and click `从当前领星页面读取`.
-3. Check the evidence panel. `列表页/当前页部分读取成功` means only ASIN/title were proven. `详情页完整读取成功` requires ASIN, title, bullets, and backend terms.
-4. If the list page only produced partial evidence, click `只读探测详情页`. The app only clicks one visible safe detail/view/edit candidate inside the current ASIN row, rejects ambiguous candidates, validates the final Lingxing URL, rejects ASIN mismatch, reads basic information, switches read-only to the description tab, and persists only after title, bullets, and backend terms are complete.
-5. Use `打开读取截图` to inspect the local screenshot evidence.
+2. Use `尝试从当前领星页面填入表单` only as an auxiliary fill action when the Listing page is already visible.
+3. Review the filled ASIN/title/bullets/backend terms before saving. If any field is missing or the ASIN does not match the current scope, correct it manually.
+4. Click `保存为新版本` to make the current local Listing content available to coverage analysis and draft generation.
+5. Use `打开读取截图` when Lingxing read-only fill produced screenshot evidence that needs review.
 
 The Listing reader is read-only. It does not click save, publish, submit, sync, delete, or Amazon Listing modification actions.
 
@@ -252,11 +252,11 @@ v1.5 is presented as an upgrade of the existing backend, not as a nested all-in-
 - `关键词与 Listing`: import keyword/search-term data, generate keyword opportunities, read Listing content, generate suggestions, and export drafts.
 - `系统与交付`: review final delivery readiness, manage scheduled tasks, and configure AI settings.
 
-Each v1.5 task page shows its primary task and proof boundary at the top. `交付验收` is for final status and evidence review only; daily report collection and Listing work should be done from their own pages. On `Listing 优化`, follow the visible flow from `读取 Listing` to `导出交付`; real AI draft readiness still requires `source=ai` evidence from a real provider run.
+Each v1.5 task page shows its primary task and proof boundary at the top. `交付验收` is for final status and evidence review only; daily report collection and Listing work should be done from their own pages. On `Listing 优化`, follow the visible flow from manual `保存为新版本` to suggestions/drafts/export; real AI draft readiness still requires `source=ai` evidence from a real provider run.
 
 ## Final Readiness Evidence
 
-Use `交付验收` to review the current delivery state. Current manifest-driven final-readiness evidence reached `APP_READY` at `output\codex-evidence\final-readiness-2026-06-18.json`. The verified current-contract ad sample was a paused FT-US keyword `door lock` bid decrease from live `1.30` to `1.17`; the source recommendation remained traceable as `1.63 -> 1.46`, but was not written because the live bid was already lower than the source recommendation. Future ad changes must not reuse that scope and must each provide their own target, source report files/row, approval, before/after screenshots, and readback evidence.
+Use `交付验收` to review the current delivery state. The current manifest-driven final-readiness evidence reached `APP_READY` at `output\codex-evidence\final-readiness-2026-06-18-product-ui.json`, and the READY delivery bundle is `output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready`. The verified current-contract ad sample was a paused FT-US keyword `door lock` bid decrease from live `1.30` to `1.17`; the source recommendation remained traceable as `1.63 -> 1.46`, but was not written because the live bid was already lower than the source recommendation. Future ad changes must not reuse that scope and must each provide their own target, source report files/row, approval, before/after screenshots, and readback evidence.
 
 The `交付验收` page also provides `刷新最终验收`. This is an in-app diagnostic refresh: it writes a new evidence-selection manifest and final readiness JSON, then shows the file paths and failed gate count. It does not override the final delivery rules. If a future ad readback gate is missing operator approval, before/after Ads UI screenshots, changed live value, or reload readback proof, the refresh must remain `APP_NEEDS_WORK`.
 
@@ -267,7 +267,7 @@ The current candidate packet has already been prepared at `output\codex-evidence
 After refreshing report, Listing, AI, and ad-readback evidence, write an explicit evidence-selection manifest first:
 
 ```powershell
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-1.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-10.json
+pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18-product-ui.json
 ```
 
 Build the current Windows installer and no-install portable executable before final readiness. The final readiness verifier records both package hashes and will not accept an APP_READY claim without them:
@@ -279,7 +279,7 @@ pnpm --filter @amazon-ai-ops/desktop run build:win
 Then run final readiness against that manifest:
 
 ```powershell
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-10.json --out output\codex-evidence\final-readiness-2026-06-10.json
+pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18-product-ui.json --out output\codex-evidence\final-readiness-2026-06-18-product-ui.json
 ```
 
 After final readiness passes, update the README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`. The delivery exporter refuses APP_READY bundles while the selected README still says IN_PROGRESS.
@@ -287,18 +287,18 @@ After final readiness passes, update the README 顶部 DELIVERY 行切到当前�
 Finally export the bounded handoff bundle only after confirming final-readiness JSON was produced from the current evidence manifest, records `evidenceSelection.mode=manifest`, and the README status has already been updated:
 
 ```powershell
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-2026-06-10.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-2026-06-15T17-00-08-661Z
+pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-2026-06-18-product-ui.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready
 ```
 
 After the bundle is exported, run the READY safety gate:
 
 ```powershell
-pnpm run verify:v15-ready-safety
+pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-2026-06-18-product-ui.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready\delivery-bundle-manifest.json
 ```
 
 The delivery bundle intentionally does not copy raw `.xlsx`, `.xls`, or `.csv` Lingxing report files. It writes `evidence/real-report-file-index.json` instead, with each source report's local path, existence flag, size, SHA-256, and evidence references. Use that index to locate the actual downloaded spreadsheets on the operator machine.
 
-Do not treat structural mock AI evidence as final AI readiness. It is only a local schema/redaction proof. Real AI readiness requires `verify:ai-live`, a real ad recommendation AI explanation evidence file, a real Listing AI draft evidence file, and no-key fallback must be gone. Real ad execution readiness requires `verify:ad-readback` with operator approval, real Lingxing spreadsheet source file(s), positive source row number, before/after screenshots, and verified readback for each action. Current `APP_READY` evidence includes one verified low-risk manual Ads UI sample under the current readback contract; the in-app execution button remains fail-closed and does not batch-write ads.
+Do not treat structural mock AI evidence as final AI readiness. It is only a local schema/redaction proof. Real AI readiness requires `verify:ai-live`, a real ad recommendation AI explanation evidence file, a real Listing AI draft evidence file, and no-key fallback must be gone. Real ad execution readiness requires `verify:ad-readback` with operator approval, real Lingxing spreadsheet source file(s), positive source row number, before/after screenshots, and verified readback for each action. The current `APP_READY` evidence includes one verified low-risk manual Ads UI sample under the current readback contract plus current package hashes and READY safety. The in-app execution button remains fail-closed and does not batch-write ads.
 
 Before any real ad write is attempted, generate the approval packet. The JSON remains `NEEDS_WORK` until real approval, screenshots, changed values, and readback are filled; the Markdown file is the human checklist for the operator:
 

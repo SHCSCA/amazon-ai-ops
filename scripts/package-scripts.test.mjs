@@ -50,10 +50,17 @@ describe('root package smoke scripts', () => {
     for (const doc of [readme, userGuide]) {
       expect(doc).toContain('pnpm --filter @amazon-ai-ops/desktop run build:win');
       expect(doc).toContain(readmeReadyMarker);
-      expect(doc.indexOf('pnpm --filter @amazon-ai-ops/desktop run build:win')).toBeLessThan(doc.indexOf('pnpm run verify:v15-final-readiness'));
-      expect(doc.indexOf('pnpm run verify:v15-final-readiness')).toBeLessThan(doc.indexOf(readmeReadyMarker));
-      expect(doc.indexOf(readmeReadyMarker)).toBeLessThan(doc.indexOf('pnpm run export:v15-delivery-bundle'));
-      expect(doc.indexOf('pnpm run export:v15-delivery-bundle')).toBeLessThan(doc.indexOf('pnpm run verify:v15-ready-safety'));
+      const buildIndex = doc.indexOf('pnpm --filter @amazon-ai-ops/desktop run build:win');
+      const finalReadinessIndex = doc.indexOf('pnpm run verify:v15-final-readiness', buildIndex);
+      const readmeMarkerIndex = doc.indexOf(readmeReadyMarker, finalReadinessIndex);
+      const exportIndex = doc.indexOf('pnpm run export:v15-delivery-bundle', readmeMarkerIndex);
+      const readySafetyIndex = doc.indexOf('pnpm run verify:v15-ready-safety', exportIndex);
+
+      expect(buildIndex).toBeGreaterThanOrEqual(0);
+      expect(finalReadinessIndex).toBeGreaterThan(buildIndex);
+      expect(readmeMarkerIndex).toBeGreaterThan(finalReadinessIndex);
+      expect(exportIndex).toBeGreaterThan(readmeMarkerIndex);
+      expect(readySafetyIndex).toBeGreaterThan(exportIndex);
     }
   });
 });
