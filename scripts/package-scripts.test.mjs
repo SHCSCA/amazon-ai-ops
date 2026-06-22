@@ -11,6 +11,7 @@ describe('root package smoke scripts', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
     expect(packageJson.scripts['smoke:business-ui-current']).toBe('node scripts/smoke-current-business-ui.js');
+    expect(packageJson.scripts['smoke:package-launch']).toBe('node scripts/smoke-package-launch.js');
     expect(packageJson.scripts['smoke:v15-product-readiness-ui']).toBe('pnpm run smoke:business-ui-current');
     expect(packageJson.scripts['smoke:v15-product-readiness-ui']).not.toContain('smoke-v15-product-readiness-ui.js');
   });

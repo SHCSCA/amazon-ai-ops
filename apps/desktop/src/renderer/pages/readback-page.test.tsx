@@ -10,8 +10,10 @@ import {
   formFromRecommendation,
   groupMissing,
   readbackPrecheckCopy,
+  readbackSessionSummary,
   readbackSessionWorkflow,
   requiredMissing,
+  sessionCheckCopy,
 } from './readback-page';
 
 function completeForm(sourceRow = '12') {
@@ -93,14 +95,14 @@ describe('requiredMissing', () => {
     const form = completeForm();
     form.currentValue = '1.30';
 
-    expect(requiredMissing(form, 'batch_1')).not.toContain('来源当前值必须等于 before 值');
+    expect(requiredMissing(form, 'batch_1')).not.toContain('来源当前值必须等于执行前值');
   });
 
   it('allows the source recommended value to differ from the after live value', () => {
     const form = completeForm();
     form.recommendedValue = '1.10';
 
-    expect(requiredMissing(form, 'batch_1')).not.toContain('来源建议值必须等于 after 值');
+    expect(requiredMissing(form, 'batch_1')).not.toContain('来源建议值必须等于执行后值');
   });
 
   it('accepts readback values that numerically match the after value with USD formatting', () => {
@@ -109,7 +111,7 @@ describe('requiredMissing', () => {
     form.readbackActualValue = '$1.08';
     form.recommendedValue = '1.08';
 
-    expect(requiredMissing(form, 'batch_1')).not.toContain('回读值必须等于 after 值');
+    expect(requiredMissing(form, 'batch_1')).not.toContain('回读值必须等于执行后值');
   });
 
   it('rejects unchanged before and after values even when their USD formatting differs', () => {
@@ -120,7 +122,7 @@ describe('requiredMissing', () => {
     form.recommendedValue = '1.08';
     form.readbackActualValue = '1.08';
 
-    expect(requiredMissing(form, 'batch_1')).toContain('before/after 值不能相同');
+    expect(requiredMissing(form, 'batch_1')).toContain('执行前值和执行后值不能相同');
   });
 
   it('requires lower bid actions to prove the after value is below the before value', () => {
@@ -129,22 +131,22 @@ describe('requiredMissing', () => {
     form.readbackActualValue = '1.30';
     form.recommendedValue = '1.30';
 
-    expect(requiredMissing(form, 'batch_1')).toContain('降价动作必须证明 after 值低于 before 值');
+    expect(requiredMissing(form, 'batch_1')).toContain('降价动作必须证明执行后值低于执行前值');
   });
 
   it('requires before, after, and readback evidence paths to be distinct', () => {
     const form = completeForm();
     form.readbackEvidencePath = form.afterScreenshotPath;
 
-    expect(requiredMissing(form, 'batch_1')).toContain('before/after/readback 证据文件不能复用');
+    expect(requiredMissing(form, 'batch_1')).toContain('执行前、执行后和回读证据文件不能复用');
   });
 });
 
 describe('groupMissing', () => {
   it('groups every readback verifier-aligned blocker so operators can see the recovery area', () => {
     const blockers = [
-      '降价动作必须证明 after 值低于 before 值',
-      'before/after/readback 证据文件不能复用',
+      '降价动作必须证明执行后值低于执行前值',
+      '执行前、执行后和回读证据文件不能复用',
     ];
 
     const groupedItems = groupMissing(blockers).flatMap((group) => group.items);
@@ -157,10 +159,26 @@ describe('readbackPrecheckCopy', () => {
   it('does not claim final field completeness before backend file-existence verification', () => {
     expect(readbackPrecheckCopy([])).toEqual({
       statusLabel: '字段已填写，待导出校验',
-      chipLabel: 'before/after/readback 值已填写；导出时会校验本地文件存在。',
-      exportButtonLabel: '导出读回证据',
-      helperText: '字段已填写时仍需导出 JSON/Markdown，并由后端校验截图、真实报表和回读证据文件是否存在。',
+      chipLabel: '执行前、执行后和回读值已填写；导出时会校验本地文件存在。',
+      exportButtonLabel: '导出回读证据',
+      helperText: '字段已填写时仍需导出证据文件和说明文件，并由后端校验截图、真实报表和回读证据文件是否存在。',
     });
+  });
+});
+
+describe('sessionCheckCopy', () => {
+  it('translates backend capture field labels before showing them to operators', () => {
+    const copy = sessionCheckCopy({
+      ready: true,
+      captureReady: false,
+      captureMissingFields: [
+        { group: '执行前', label: '执行前 Ads UI live bid' },
+        { group: '执行后', label: '执行后 Ads UI live bid' },
+      ],
+    });
+
+    expect(copy.detail).toBe('还需填写：执行前/现场出价、执行后/现场出价');
+    expect(copy.detail).not.toContain('Ads UI');
   });
 });
 
@@ -213,21 +231,30 @@ describe('ad readback session command builders', () => {
 });
 
 describe('readbackSessionWorkflow', () => {
+  it('summarizes the work package without exposing command names as the primary flow', () => {
+    expect(readbackSessionSummary('C:/evidence/readback.json')).toBe('创建工作包后，按清单补审批、执行前、执行后和回读截图。');
+    expect(readbackSessionSummary()).toBe('先导出回读证据，再创建工作包。');
+  });
+
   it('explains the operator session packet without claiming final readiness', () => {
     const workflow = readbackSessionWorkflow('C:/evidence/readback.json');
 
     expect(workflow.sessionDir).toBe('C:/evidence/readback-session');
-    expect(workflow.steps.join(' ')).toContain('session-input.json');
-    expect(workflow.steps.join(' ')).toContain('screenshots/before');
-    expect(workflow.steps.join(' ')).toContain('screenshots/after');
-    expect(workflow.steps.join(' ')).toContain('screenshots/readback');
+    expect(workflow.steps.join(' ')).toContain('填写文件');
+    expect(workflow.steps.join(' ')).toContain('执行前截图目录');
+    expect(workflow.steps.join(' ')).toContain('执行后截图目录');
+    expect(workflow.steps.join(' ')).toContain('回读截图目录');
     expect(workflow.warning).toContain('不等于最终验收通过');
-    expect(workflow.warning).toContain('manifest 聚合');
+    expect(workflow.warning).toContain('最终验收汇总');
+    expect(workflow.steps.join(' ')).not.toContain('session-input.json');
+    expect(workflow.steps.join(' ')).not.toContain('fill session');
+    expect(workflow.steps.join(' ')).not.toContain('readback JSON');
+    expect(workflow.warning).not.toContain('manifest');
     expect(workflow.warning).not.toContain('verify:ad-readback');
   });
 
   it('does not expose a fake session directory before a readback JSON is exported', () => {
-    expect(readbackSessionWorkflow().sessionDir).toBe('导出读回证据 JSON 后自动生成');
+    expect(readbackSessionWorkflow().sessionDir).toBe('导出回读证据后自动生成');
   });
 });
 

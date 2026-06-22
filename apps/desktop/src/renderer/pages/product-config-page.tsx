@@ -30,6 +30,23 @@ const DEFAULT_COST = {
   targetTacos: 0.12,
 };
 
+type ProductCostInput = typeof DEFAULT_COST;
+
+export function productCostInputHint(cost: ProductCostInput): string {
+  const hasRealCostOrPrice = [
+    cost.purchaseCost,
+    cost.firstLegCost,
+    cost.fbaFee,
+    cost.storageFee,
+    cost.otherCost,
+    cost.minPrice,
+  ].some((value) => Number(value || 0) > 0);
+  if (!hasRealCostOrPrice) {
+    return '当前成本和最低售价仍像默认值；保存前请替换为真实采购、物流、FBA、售价和利润目标，避免 AI 阈值被模板数字误导。';
+  }
+  return '已填写成本或最低售价；保存前请确认这些数字来自当前产品。';
+}
+
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
@@ -71,6 +88,7 @@ export function ProductConfigPage() {
     ? (cost.minPrice - grossCost - cost.minPrice * cost.referralFeeRate) / cost.minPrice
     : 0;
   const importedRows = data?.collection.fileAudit?.importedRowCount ?? data?.quant.importedRows ?? 0;
+  const costHint = productCostInputHint(cost);
 
   async function loadProducts() {
     setLoading(true);
@@ -208,6 +226,9 @@ export function ProductConfigPage() {
         </Panel>
 
         <Panel title="利润与广告目标">
+          <p className={cost.purchaseCost || cost.firstLegCost || cost.fbaFee || cost.minPrice ? 'muted-line' : 'warning-line'}>
+            {costHint}
+          </p>
           <div className="form-grid form-grid-four">
             <label>采购成本<input type="number" step="0.01" value={cost.purchaseCost} onChange={(event) => updateCost('purchaseCost', event.target.value)} /></label>
             <label>头程费用<input type="number" step="0.01" value={cost.firstLegCost} onChange={(event) => updateCost('firstLegCost', event.target.value)} /></label>

@@ -615,7 +615,7 @@ async function main() {
                   entityName: 'unbound no-candidate insight',
                   actionType: 'observe',
                   reason: 'AI 认为当前对象应继续观察，但缺少可执行动作和可绑定广告对象。',
-                  invalidReasons: ['没有可绑定到当前真实指标的 campaign/ad group/对象。'],
+                  invalidReasons: ['没有可绑定到当前真实指标的广告活动/广告组/对象。'],
                   confidence: 0.68,
                 }],
               },
@@ -796,11 +796,11 @@ async function main() {
           unresolvedFields: ['approverName', 'beforeValue', 'afterValue', 'readbackEvidencePath'],
           captureMissingFields: [
             { field: 'approverName', label: '审批人', group: '审批' },
-            { field: 'beforeValue', label: '执行前 Ads UI live bid', group: '执行前' },
-            { field: 'afterValue', label: '执行后 Ads UI live bid', group: '执行后' },
+            { field: 'beforeValue', label: '现场出价', group: '执行前' },
+            { field: 'afterValue', label: '现场出价', group: '执行后' },
             { field: 'readbackEvidencePath', label: '刷新回读截图文件', group: '回读' },
           ],
-          captureIssues: ['session-input.json 仍有未填写项：审批/审批人、执行前/执行前 Ads UI live bid、执行后/执行后 Ads UI live bid、回读/刷新回读截图文件'],
+          captureIssues: ['填写文件仍有未填写项：审批/审批人、执行前/现场出价、执行后/现场出价、回读/刷新回读截图文件'],
         };
       },
       fillAdReadbackSession: async (input) => {
@@ -821,7 +821,7 @@ async function main() {
           ready: true,
           status: 'PASS',
           checks: [
-            { label: 'execution result is successful, verified, and scoped to manual Ads UI operation', passed: true },
+            { label: '执行结果已成功、已核验，并限定为人工广告后台操作', passed: true },
             { label: 'source report traceability includes real spreadsheet file(s) and row number', passed: true },
           ],
           issues: [],
@@ -839,8 +839,8 @@ async function main() {
   await page.getByRole('textbox', { name: '数据批次', exact: true }).fill('manual_ad_execution_batch');
   await page.getByRole('button', { name: '保存范围' }).click();
   await page.waitForFunction(() => document.body.innerText.includes('manual_ad_execution_batch'), null, { timeout: 5000 });
-  await page.getByText('手动批次待校验', { exact: true }).first().waitFor({ timeout: 5000 });
-  await page.getByText('待校验', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.getByText('批次', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.getByText('报表', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.getByText('手动批次未自动校验：manual_ad_execution_batch', { exact: true }).waitFor({ timeout: 5000 });
   await expectInBody(page, 'manual_ad_execution_batch', 'manual batch scope value');
 
@@ -1056,7 +1056,7 @@ async function main() {
   await expectVisible(page, 'AI 仅生成洞察，未进入建议池');
   await expectVisible(page, 'AI 已运行广告阶段诊断，但没有找到可安全绑定到当前真实指标的可审批动作。');
   await expectInBody(page, '未进入建议池原因：规则和 AI 都没有返回可合并的候选动作。', 'no-candidate blocked reason');
-  await expectInBody(page, '先补齐证据和对象绑定：确认 source row、campaign/ad group/关键词或投放对象能回查到当前真实报表', 'no-candidate next action');
+  await expectInBody(page, '先补齐证据和对象绑定：确认来源行、广告活动/广告组/关键词或投放对象能回查到当前真实报表', 'no-candidate next action');
   await expectInBody(page, 'AI 没有返回可审批动作候选。', 'no-candidate AI action explanation');
   await expectVisible(page, 'AI 诊断已完成，但未形成正式建议');
   await expectVisible(page, '0 建议原因分布');
@@ -1067,7 +1067,7 @@ async function main() {
   await expectVisible(page, '下一步处理顺序');
   await expectVisible(page, '先回广告量化页查看风险对象和样本量');
   await expectVisible(page, '补充运营事件或产品配置后重新生成');
-  await expectVisible(page, '确认 campaign、ad group、关键词/搜索词/投放对象能绑定真实报表行');
+  await expectVisible(page, '确认广告活动、广告组、关键词/搜索词/投放对象能绑定真实报表行');
   await expectVisible(page, 'AI 诊断摘要');
   await expectVisible(page, '当前表现相对稳定，暂时没有足够证据支持调整出价或新增否定词。');
   await expectVisible(page, '未进入建议池的原因');
@@ -1075,7 +1075,7 @@ async function main() {
   await expectVisible(page, '回到广告量化页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。');
   await expectVisible(page, 'AI 洞察但未采纳');
   await expectVisible(page, 'unbound no-candidate insight');
-  await expectVisible(page, '没有可绑定到当前真实指标的 campaign/ad group/对象。');
+  await expectVisible(page, '没有可绑定到当前真实指标的广告活动/广告组/对象。');
   await expectVisible(page, '查看广告量化');
   await expectVisible(page, '稳定转化 / AI');
   await page.evaluate(() => {
@@ -1108,7 +1108,7 @@ async function main() {
   await expectVisible(page, '仅审批，不执行');
   await expectVisible(page, '审批处理要求');
   await expectVisible(page, '批准后下一步');
-  await expectVisible(page, '在执行回读页补录审批凭证、before/after 截图、回读值和现场行证明。');
+  await expectVisible(page, '在执行回读页补录审批凭证、执行前/执行后截图、回读值和现场行证明。');
   await page.getByRole('button', { name: '复核队列' }).click();
   await openEvidenceDisclosures(page);
   await expectInBody(page, 'AI 独立洞察不能直接批准');
@@ -1163,7 +1163,7 @@ async function main() {
   await expectVisible(page, 'D6 Portfolio');
   await expectVisible(page, 'B0TESTASIN');
   await page.getByRole('button', { name: '处理' }).first().click();
-  await expectVisible(page, '审批人、备注、范围和数据批次会写入建议证据；真实 Ads UI 操作和审批凭证路径仍必须在“执行回读”页逐条补齐。');
+  await expectVisible(page, '审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“执行回读”页逐条补齐。');
   await expectVisible(page, 'AI/规则决策摘要');
   await expectVisible(page, '规则与 AI 一致，且已绑定可回查证据。');
   await expectVisible(page, '可进入审批，但仍需人工确认和执行回读。');
@@ -1269,22 +1269,22 @@ async function main() {
   await page.getByRole('textbox', { name: '执行人', exact: true }).fill('QA Operator');
   await page.getByRole('textbox', { name: '执行编号', exact: true }).fill('manual-smoke-001');
   await page.getByRole('textbox', { name: '执行时间', exact: true }).fill('2026-06-12T10:05:00.000Z');
-  await page.getByRole('textbox', { name: 'Before 值', exact: true }).fill('1.20');
-  await page.getByRole('textbox', { name: 'Before 截图', exact: true }).fill('C:/evidence/before.png');
-  await page.getByRole('textbox', { name: 'Before 时间', exact: true }).fill('2026-06-12T10:03:00.000Z');
-  await page.getByRole('textbox', { name: 'After 值', exact: true }).fill('1.08');
-  await page.getByRole('textbox', { name: 'After 截图', exact: true }).fill('C:/evidence/after.png');
-  await page.getByRole('textbox', { name: 'After 时间', exact: true }).fill('2026-06-12T10:06:00.000Z');
+  await page.getByRole('textbox', { name: '执行前值', exact: true }).fill('1.20');
+  await page.getByRole('textbox', { name: '执行前截图', exact: true }).fill('C:/evidence/before.png');
+  await page.getByRole('textbox', { name: '执行前时间', exact: true }).fill('2026-06-12T10:03:00.000Z');
+  await page.getByRole('textbox', { name: '执行后值', exact: true }).fill('1.08');
+  await page.getByRole('textbox', { name: '执行后截图', exact: true }).fill('C:/evidence/after.png');
+  await page.getByRole('textbox', { name: '执行后时间', exact: true }).fill('2026-06-12T10:06:00.000Z');
   await page.getByRole('textbox', { name: '回读值', exact: true }).fill('1.08');
   await page.getByRole('textbox', { name: '回读证据', exact: true }).fill('C:/evidence/readback.png');
   await page.getByRole('textbox', { name: '回读时间', exact: true }).fill('2026-06-12T10:10:00.000Z');
-  await page.getByRole('textbox', { name: '现场行证明', exact: true }).fill('Ads UI row reloaded and target bid stayed at 1.08.');
+  await page.getByRole('textbox', { name: '现场行证明', exact: true }).fill('广告后台行已刷新，目标出价保持在 1.08。');
   for (const label of ['审批人确认范围', '外部审批允许', '低风险策略允许', '执行成功确认', '执行已核验', '回读已核验']) {
   await page.getByLabel(label).check();
   }
   await expectVisible(page, '字段已填写，待导出校验');
-  await expectVisible(page, '字段已填写时仍需导出 JSON/Markdown，并由后端校验截图、真实报表和回读证据文件是否存在。');
-  await page.getByRole('button', { name: '导出读回证据' }).click();
+  await expectVisible(page, '字段已填写时仍需导出证据文件和说明文件，并由后端校验截图、真实报表和回读证据文件是否存在。');
+  await page.getByRole('button', { name: '导出回读证据' }).click();
   await page.getByText('导出状态', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('可进入最终验收', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('C:/evidence/readback.json', { exact: true }).waitFor({ timeout: 5000 });
@@ -1292,13 +1292,16 @@ async function main() {
   await page.getByText('该导出只写入本地证据文件，不会提交 Amazon。', { exact: false }).waitFor({ timeout: 5000 });
   await page.getByText('5. 回读工作包', { exact: true }).scrollIntoViewIfNeeded();
   await expectVisible(page, '5. 回读工作包');
+  await expectVisible(page, '工作包状态：创建工作包后，按清单补审批、执行前、执行后和回读截图。');
+  await page.getByText('工作包内要做什么', { exact: true }).click();
   await expectVisible(page, '工作包目录：C:/evidence/readback-session');
-  await expectVisible(page, '填写 session-input.json 后运行 fill session，生成可进入最终验收的 readback JSON。');
-  await expectVisible(page, '检查工作包只证明目录和文件结构安全，不等于最终验收通过；最终仍以生成后的回读证据校验和 manifest 聚合为准。');
+  await expectVisible(page, '填写现场信息后生成可进入最终验收的回读证据。');
+  await expectVisible(page, '检查工作包只证明目录和文件结构安全，不等于最终验收通过；最终仍以生成后的回读证据校验和最终验收汇总为准。');
   await expectVisible(page, '创建回读工作包');
   await page.getByRole('button', { name: '创建回读工作包', exact: true }).click();
   await page.getByText('回读工作包已创建。', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expectVisible(page, 'Session 目录');
+  await page.getByText('查看工作包路径', { exact: true }).click();
+  await expectVisible(page, '工作包目录');
   await expectVisible(page, 'C:/evidence/readback-session/session-input.json');
   await expectVisible(page, 'C:/evidence/readback-session/session-input-guide.md');
   await expectVisible(page, 'C:/evidence/readback-session/operator-checklist.md');
@@ -1309,27 +1312,28 @@ async function main() {
   await page.getByRole('button', { name: '检查工作包', exact: true }).click();
   await page.getByText('工作包结构检查通过，现场证据仍待填写。', { exact: true }).first().waitFor({ timeout: 5000 });
   await expectVisible(page, '工作包结构通过，现场证据待填写');
-  await expectVisible(page, '还需填写：审批/审批人、执行前/执行前 Ads UI live bid、执行后/执行后 Ads UI live bid、回读/刷新回读截图文件');
-  await expectVisible(page, '检查工作包只证明目录和文件结构安全；还必须填写 session-input.json 并生成 PASS JSON 后，才可能进入最终验收。');
+  await expectVisible(page, '还需填写：审批/审批人、执行前/现场出价、执行后/现场出价、回读/刷新回读截图文件');
+  await expectVisible(page, '检查工作包只证明目录和文件结构安全；还必须填写现场信息并生成最终证据后，才可能进入最终验收。');
   await expectVisible(page, '生成回读证据');
   await page.getByRole('button', { name: '生成回读证据', exact: true }).click();
-  await page.getByText('回读证据已生成，等待最终 verifier。', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.getByText('回读证据已生成，等待最终校验。', { exact: true }).first().waitFor({ timeout: 5000 });
   await expectVisible(page, '回读证据已生成，待最终校验');
-  await expectInBody(page, '最终 READY 仍必须通过 verify:ad-readback 和 manifest 聚合。');
+  await expectInBody(page, '最终可交付仍必须通过本地回读证据校验和最终验收汇总。');
   await expectVisible(page, 'C:/evidence/readback-session/real-ad-execution-readback-pass.json');
   await expectVisible(page, '校验回读证据');
   await page.getByRole('button', { name: '校验回读证据', exact: true }).click();
-  await page.getByText('回读证据 verifier 通过。', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expectVisible(page, '回读证据 verifier 已通过');
-  await expectVisible(page, '这份 JSON 已通过本地回读证据校验；最终 READY 仍需进入 evidence manifest 聚合。');
+  await page.getByText('回读证据校验通过。', { exact: true }).first().waitFor({ timeout: 5000 });
+  await expectVisible(page, '回读证据校验已通过');
+  await expectVisible(page, '这份证据已通过本地回读证据校验；最终可交付仍需进入最终验收汇总。');
+  await page.getByText('命令备用入口', { exact: true }).click();
   await expectVisible(page, '复制创建命令');
   await expectVisible(page, '复制检查命令');
   await expectVisible(page, '复制生成命令');
   await page.getByText('技术验收说明', { exact: true }).click();
-  await expectVisible(page, '复制 prepare session 命令');
-  await expectVisible(page, '复制 verify session 命令');
-  await expectVisible(page, '复制 fill session 命令');
-  await expectVisible(page, '复制长参数 fill 命令');
+  await expectVisible(page, '复制创建工作包命令');
+  await expectVisible(page, '复制检查工作包命令');
+  await expectVisible(page, '复制生成回读证据命令');
+  await expectVisible(page, '复制长参数生成命令');
   const afterExportScreenshotPath = path.join(evidenceDir, `business-ui-ad-execution-readback-after-export-${runId}.png`);
   await page.screenshot({ path: afterExportScreenshotPath, fullPage: true });
   evidence.pages.readbackAfterExport = {
@@ -1337,7 +1341,7 @@ async function main() {
     screenshotPath: afterExportScreenshotPath,
     bodyTextSample: (await bodyText(page)).slice(0, 1800),
   };
-  await page.getByRole('textbox', { name: 'After 值', exact: true }).fill('1.07');
+  await page.getByRole('textbox', { name: '执行后值', exact: true }).fill('1.07');
   await expectNotInBody(page, 'C:/evidence/readback.json');
   await expectNotInBody(page, 'C:/evidence/readback.md');
 
@@ -1432,7 +1436,7 @@ async function main() {
   }
   const readbackEvidenceVerify = actionLog.find((item) => item.type === 'verifyAdReadbackEvidence');
   if (!readbackEvidenceVerify || readbackEvidenceVerify.input?.evidencePath !== 'C:/evidence/readback-session/real-ad-execution-readback-pass.json') {
-    fail('Readback evidence verifier IPC mock was not called with pass evidence path', JSON.stringify(actionLog));
+    fail('Readback evidence verification IPC mock was not called with pass evidence path', JSON.stringify(actionLog));
   }
   if (readbackExport.input?.source?.batchId !== 'manual_ad_execution_batch'
     || readbackExport.input?.source?.metricDate !== '2026-06-12'

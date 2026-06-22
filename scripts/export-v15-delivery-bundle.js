@@ -158,6 +158,7 @@ function assertAllowedSource(sourcePath, label) {
     && (
       isInside(resolved, path.join(root, 'docs'))
       || isInside(resolved, path.join(root, 'scripts'))
+      || path.basename(resolved) === 'AGENTS.md'
       || path.basename(resolved) === 'README.md'
       || path.basename(resolved) === 'package.json'
       || isInside(resolved, evidenceDir)
@@ -527,6 +528,15 @@ function collectEvidencePaths(finalReadiness, options = {}) {
         }
       }
     }
+    const packageLaunchSmoke = latestEvidence(/^package-launch-smoke-.*\.json$/i);
+    if (packageLaunchSmoke) {
+      paths.add(packageLaunchSmoke);
+      const smokeJson = readJson(packageLaunchSmoke);
+      for (const check of smokeJson.checks || []) {
+        if (check.stdoutPath) paths.add(check.stdoutPath);
+        if (check.stderrPath) paths.add(check.stderrPath);
+      }
+    }
   }
 
   const delivery = (finalReadiness.gates || []).find((gate) => gate.name === 'Report collection delivery')?.evidencePath;
@@ -679,6 +689,7 @@ function main() {
   const docsDir = path.join(bundleDir, 'docs');
   copyFile(readmePath, docsDir, 'README.md', manifest);
   for (const relativePath of [
+    'AGENTS.md',
     'package.json',
     'docs/V1_5_PROGRESS_REPORT.md',
     'docs/V1_5_ACCEPTANCE_MATRIX.md',

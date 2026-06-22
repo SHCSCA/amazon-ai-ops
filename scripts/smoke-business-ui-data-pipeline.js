@@ -192,7 +192,7 @@ async function main() {
         realReportFiles: nextRealFiles,
         evidencePaths: [
           { label: '下载文件夹', path: 'C:/AmazonAIOps/storage/downloads/mock-batch', kind: 'folder' },
-          { label: '采集 Manifest', path: 'C:/AmazonAIOps/storage/downloads/mock-batch/manifest.json', kind: 'audit' },
+          { label: '采集清单', path: 'C:/AmazonAIOps/storage/downloads/mock-batch/manifest.json', kind: 'audit' },
         ],
         fileAudit: {
           totalFileRecords: 8,
@@ -955,44 +955,28 @@ async function main() {
 
   await page.locator('.app-sidebar').getByRole('button', { name: /仪表盘/ }).click();
   await expectVisible(page, '数据健康');
-  await expectVisible(page, '真实报表');
-  await expectVisible(page, '0/8');
-  await expectVisible(page, '已导入指标');
-  await expectVisible(page, '0 行');
-  await expectVisible(page, '待处理建议');
-  await expectVisible(page, '广告花费');
-  await expectVisible(page, '广告销售 / 订单');
-  await expectVisible(page, 'ACOS');
-  await expectVisible(page, '运营摘要');
-  await expectVisible(page, '运营任务入口');
-  await expectVisible(page, '当前是否可分析');
+  await expectVisible(page, '数据门槛');
+  await expectVisible(page, '0/8 类 · 0 行');
+  await expectVisible(page, 'AI / 建议');
+  await expectVisible(page, '广告表现');
+  await expectVisible(page, '今天先做什么');
+  await expectVisible(page, '当前主线');
   await expectVisible(page, '不可分析：缺真实报表和入库指标');
   await expectVisible(page, '下一步：先获取真实报表');
-  await expectInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。', 'dashboard four-stage task entry guidance before import');
-  await expectVisible(page, '数据流程四段闭环');
-  await expectVisible(page, '领星任务已创建');
-  await expectVisible(page, '真实报表已下载');
-  await expectVisible(page, '已导入 DB 日级指标');
-  await expectVisible(page, '可用于 AI+规则建议');
-  await expectVisible(page, '数据门槛');
-  await expectVisible(page, '运营后台状态');
+  await expectVisible(page, '1. 获取真实报表');
+  await expectVisible(page, '2. 广告量化');
+  await expectVisible(page, '3. 生成建议');
+  await expectVisible(page, '4. 审批与执行回读');
   await expectVisible(page, 'AI 已产出建议');
-  await expectVisible(page, '最近一次 AI 诊断形成 1 条正式建议，另有 1 条洞察。继续到优化建议页查看证据和审批状态。');
-  await expectVisible(page, '运营事件');
-  await expectVisible(page, '建议/执行');
-  await expectVisible(page, '等待建议');
   await expectVisible(page, '缺真实广告表格');
-  await expectVisible(page, '还没有 xlsx/xls/csv 原始广告表格，不能计算 ACOS 或生成建议。');
+  await expectVisible(page, '补齐真实报表');
   await expectVisible(page, '首要风险对象');
   await expectVisible(page, '缺少真实广告表格和导入指标，无法给出风险对象。');
-  await expectVisible(page, '今日运营判断');
-  await expectVisible(page, '当前范围');
-  await expectVisible(page, '真实数据可用性');
-  await expectVisible(page, '待导入指标');
-  await expectVisible(page, '待量化');
+  await expectVisible(page, '产品广告历史账本');
+  await expectVisible(page, '最近证据/文件路径入口');
   await expectNotInBody(page, '总花费');
   await expectNotInBody(page, '总销售');
-  await expectVisible(page, '当前范围还没有可量化的真实广告数据');
+  await expectNotInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。');
 
   await page.locator('.app-sidebar').getByRole('button', { name: /数据导入与校验/ }).click();
   await expectVisible(page, '数据流程四段闭环');
@@ -1077,14 +1061,14 @@ async function main() {
   await page.getByRole('button', { name: '全选 8 类' }).click();
   await expectVisible(page, '选择要创建/下载的报表：已选 8/8');
   await expectVisible(page, '真实广告表格');
-  await expectVisible(page, '采集 Manifest');
+  await expectVisible(page, '采集清单');
   await expectVisible(page, '验收/诊断证据');
   await expectVisible(page, 'C:/AmazonAIOps/storage/downloads/mock-batch');
   await expectVisible(page, 'C:/AmazonAIOps/storage/downloads/mock-batch/manifest.json');
   await expectVisible(page, '这里应能看到 Lingxing 下载的 xlsx/xls/csv，后续广告量化只读取这些文件。');
-  await expectVisible(page, '这里只放 JSON、截图、HTML 等证据；找广告数据请打开“真实广告表格”目录。');
+  await expectVisible(page, '这里只放审计文件、截图、HTML 等证据；找广告数据请打开“真实广告表格”目录。');
   await expectVisible(page, '打开真实报表目录');
-  await expectVisible(page, '打开 Manifest');
+  await expectVisible(page, '打开采集清单');
   await expectVisible(page, '打开审计证据');
   await expectVisible(page, '当前真实报表清单');
   await expectVisible(page, '暂无 xlsx/xls/csv 文件');
@@ -1093,9 +1077,9 @@ async function main() {
   await expectVisible(page, '本地真实报表已下载');
   await expectVisible(page, '审计/诊断文件');
   await expectVisible(page, '当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能进行广告量化。');
-  await expectVisible(page, '审计 JSON、截图、DOM/HTML 和 Manifest 只用于证明流程，不是广告数据，不能进入广告量化。');
+  await expectVisible(page, '审计文件、截图、DOM/HTML 和采集清单只用于证明流程，不是广告数据，不能进入广告量化。');
   await expectVisible(page, '打开真实报表目录');
-  await expectVisible(page, '打开采集 Manifest');
+  await expectVisible(page, '打开采集清单');
   await expectVisible(page, '当前范围还没有可量化的真实广告数据');
   await page.getByRole('button', { name: /导入本地报表/ }).first().click();
   await page.getByText('已取消本地报表选择。', { exact: true }).waitFor({ timeout: 5000 });
@@ -1109,10 +1093,10 @@ async function main() {
   await expectVisible(page, '当前范围覆盖 0/8 类');
   await expectVisible(page, '本次新增真实下载 0');
   await expectVisible(page, '失败 8');
-  await expectVisible(page, '下一步：查看失败原因和本次 Manifest，确认领星 ready 行、页面模型、日期/店铺/站点后再重试。');
+  await expectVisible(page, '下一步：查看失败原因和本次采集清单，确认领星 ready 行、页面模型、日期/店铺/站点后再重试。');
   await expectInBody(page, '未找到当前范围已创建/ready/可下载的领星报表行', 'download-existing failed report reason');
   await expectVisible(page, '打开本次下载目录');
-  await expectVisible(page, '打开本次 Manifest');
+  await expectVisible(page, '打开本次采集清单');
   await page.evaluate(() => {
     window.__forceDownloadExistingMissingError = false;
   });
@@ -1137,7 +1121,7 @@ async function main() {
   await expectVisible(page, '本次写入 0 行');
   await expectVisible(page, '下一步：点击“导入已下载表格”，把本地表格写入广告指标。');
   await expectVisible(page, '打开本次下载目录');
-  await expectVisible(page, '打开本次 Manifest');
+  await expectVisible(page, '打开本次采集清单');
   await page.evaluate(() => {
     window.__forceDownloadExistingNoNewFiles = true;
   });
@@ -1216,9 +1200,9 @@ async function main() {
     await expectVisible(page, '数据对账已导出');
     await expectVisible(page, 'C:/AmazonAIOps/app-data/exports/data-reconciliation-mock.json');
     await expectVisible(page, 'C:/AmazonAIOps/app-data/exports/data-reconciliation-mock.md');
-    await expectVisible(page, '权威口径 canonical_search_term / 96 行 / $170.25 / 3 单');
-    await page.getByRole('button', { name: '打开对账 JSON' }).click();
-    await page.getByRole('button', { name: '打开对账 Markdown' }).click();
+    await expectVisible(page, '权威口径 搜索词总盘口径 / 96 行 / $170.25 / 3 单');
+    await page.getByRole('button', { name: '打开对账数据文件' }).click();
+    await page.getByRole('button', { name: '打开对账说明文件' }).click();
     const afterImportScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-after-import-${runId}.png`);
     await page.screenshot({ path: afterImportScreenshotPath, fullPage: true });
     evidence.pages.dataCollectionAfterImport = {
@@ -1234,25 +1218,20 @@ async function main() {
   await expectVisible(page, '$300.50 / 3');
   await expectVisible(page, '56.6%');
   await expectVisible(page, '4. 审批与执行回读');
-  await expectVisible(page, '运营任务入口');
-  await expectVisible(page, '当前是否可分析');
+  await expectVisible(page, '今天先做什么');
+  await expectVisible(page, '当前主线');
   await expectVisible(page, '可以分析：真实报表和日级指标已闭合');
   await expectVisible(page, '下一步：复核广告量化');
   await expectVisible(page, '交付状态矩阵');
   await expectVisible(page, '当前可交付判断');
   await expectVisible(page, '还差执行回读和最终交付证据');
-  await expectVisible(page, '真实数据闭环');
   await expectVisible(page, 'AI 证据链');
-  await expectVisible(page, '运营上下文');
-  await expectVisible(page, 'Listing 草案');
   await expectVisible(page, '执行回读');
   await expectVisible(page, '最终交付包');
+  await expectVisible(page, '其余 4 项证据明细已收起');
   await expectVisible(page, '先完成审批、真实执行回读和最终交付包');
-  await expectVisible(page, '待处理建议');
-  await expectVisible(page, '2');
+  await expectVisible(page, 'AI / 建议');
   await expectVisible(page, '1 条待审批，1 条需复核。');
-  await expectVisible(page, '1 条待审批 / 1 条需复核');
-  await expectInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。', 'dashboard four-stage task entry guidance after import');
   await expectVisible(page, '建议生成后进入审批');
   await expectVisible(page, '去审批中心');
   await expectNotInBody(page, '尚未生成最终证据');
@@ -1263,22 +1242,15 @@ async function main() {
   await expectVisible(page, '1 个对象超过 40.0% 且花费达到 $10.00。');
   await expectVisible(page, '生成优化建议');
   await expectVisible(page, '当前规则：目标 ACOS 25.0% / 风险 ACOS 40.0% / 无订单 30 点击 / 最低花费 $10.00。');
-  await expectVisible(page, '1 条待审批 / 1 条需复核');
-  await expectVisible(page, '先审批，再进入执行回读；仪表盘不直接执行广告。');
   await expectVisible(page, '已具备量化条件');
-  await expectInBody(page, '8/8 类真实报表，96 行广告指标，其中 12 行可生成建议。', 'dashboard real-report coverage detail after import');
+  await expectNotInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。');
   await expectVisible(page, '首要风险对象');
   await expectVisible(page, 'test search term');
   await expectVisible(page, '高风险待复核');
   await expectVisible(page, '产品广告历史账本');
-  await expectVisible(page, 'B0TESTASIN');
-  await expectVisible(page, '活跃 12 天');
-  await expectVisible(page, '阶段 测词');
-  await expectVisible(page, '日级趋势');
-  await expectVisible(page, '事件叠加');
-  await expectVisible(page, '10% Coupon started');
-  await expectVisible(page, '总花费');
-  await expectVisible(page, '总销售');
+  await expectVisible(page, 'B0TESTASIN · 阶段 测词 · 活跃 12 天');
+  await expectNotInBody(page, '日级趋势');
+  await expectNotInBody(page, '事件叠加');
   const dashboardAfterImportScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-dashboard-after-import-${runId}.png`);
   await page.screenshot({ path: dashboardAfterImportScreenshotPath, fullPage: true });
   evidence.pages.dashboardAfterImport = {
@@ -1367,7 +1339,7 @@ async function main() {
   await expectVisible(page, 'AI+规则建议输入检查');
   await expectVisible(page, '真实数据输入');
   await expectVisible(page, '8/8 类真实报表 / 96 行指标');
-  await expectVisible(page, '只读取当前范围真实 xlsx/xls/csv 和 DB 指标，不使用审计 JSON 代替广告数据。');
+  await expectVisible(page, '只读取当前范围真实 xlsx/xls/csv 和 DB 指标，不使用审计文件代替广告数据。');
   await expectVisible(page, '可行动对象');
   await expectVisible(page, '1 个诊断 / 12 行可建议');
   await expectVisible(page, '只有 keyword、search term、target 等可执行口径会进入建议生成。');
@@ -1476,7 +1448,7 @@ async function main() {
   await expectVisible(page, '量化后动作');
   await expectVisible(page, '可以进入优化建议，但仍需人工审批和回读。');
   await expectVisible(page, '去生成优化建议');
-  await page.getByText('总盘使用搜索词报表汇总，避免 campaign/ad group/placement 等报表重复累加。', { exact: false }).first().waitFor({ timeout: 5000 });
+  await page.getByText('总盘使用搜索词报表汇总，避免广告活动/广告组/投放位置等报表重复累加。', { exact: false }).first().waitFor({ timeout: 5000 });
   await expectVisible(page, 'test search term');
   const adQuantAfterImportScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-ad-quant-after-import-${runId}.png`);
     await page.screenshot({ path: adQuantAfterImportScreenshotPath, fullPage: true });

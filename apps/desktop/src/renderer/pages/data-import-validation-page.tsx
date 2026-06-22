@@ -50,6 +50,12 @@ function readinessStageLabel(status: string): string {
   return '阻断';
 }
 
+function reconciliationSourceLabel(source?: string): string {
+  if (source === 'canonical_user_search_term') return '用户搜索词权威口径';
+  if (source === 'canonical_search_term') return '搜索词总盘口径';
+  return source || '-';
+}
+
 export function DataImportValidationPage() {
   const { data, error, loading, scope, reload } = useBusinessDataPipeline();
   const [runningImport, setRunningImport] = useState<ImportMode | null>(null);
@@ -173,7 +179,7 @@ export function DataImportValidationPage() {
       <PageHeader
         eyebrow="数据与量化"
         title="数据导入与校验"
-        description="只处理真实 Lingxing xlsx/xls/csv 表格入库和口径校验。审计 JSON、截图、HTML 和 Manifest 不会被当作广告数据。"
+        description="只处理真实 Lingxing xlsx/xls/csv 表格入库和口径校验。审计文件、截图、HTML 和采集清单不会被当作广告数据。"
         primaryTask="把真实报表写入每日广告数据库"
         nextAction={hasImportedMetrics ? '进入广告量化' : hasRealFiles ? '导入已下载表格' : '先到数据采集获取报表'}
       />
@@ -199,7 +205,7 @@ export function DataImportValidationPage() {
             <div>
               <span>主分析口径</span>
               <strong>keyword / search term / target</strong>
-              <p>不把 campaign、ad group、placement 与明细粒度重复相加。</p>
+              <p>不把广告活动、广告组、投放位置与明细粒度重复相加。</p>
             </div>
           </div>
           <div className="business-pill-row">
@@ -265,7 +271,7 @@ export function DataImportValidationPage() {
             <div>
               <span>审计文件不参与计算</span>
               <strong>{rejectedEvidenceCount} 个流程证据</strong>
-              <p>Manifest、JSON、截图和 HTML 只证明采集流程，不参与花费、订单、销售或 ACOS 计算。</p>
+              <p>采集清单、审计文件、截图和 HTML 只证明采集流程，不参与花费、订单、销售或 ACOS 计算。</p>
             </div>
             <div>
               <span>下一步</span>
@@ -282,7 +288,7 @@ export function DataImportValidationPage() {
             <div className="evidence-check-panel">
               <h3>数据对账已导出</h3>
               <p className="muted-line">
-                权威口径 {reconciliation.canonicalSource || '-'} / {reconciliation.canonical?.rows ?? 0} 行 / {formatUsd(reconciliation.canonical?.spend)} / {reconciliation.canonical?.orders ?? 0} 单
+                权威口径 {reconciliationSourceLabel(reconciliation.canonicalSource)} / {reconciliation.canonical?.rows ?? 0} 行 / {formatUsd(reconciliation.canonical?.spend)} / {reconciliation.canonical?.orders ?? 0} 单
               </p>
               {reconciliation.blockers?.length ? (
                 <p className="warning-line">对账阻断：{reconciliation.blockers.slice(0, 3).join('；')}</p>
@@ -291,14 +297,14 @@ export function DataImportValidationPage() {
               )}
               <div className="path-list">
                 <div className="path-row">
-                  <span>JSON</span>
+                  <span>对账数据文件</span>
                   <code>{reconciliation.jsonPath || '-'}</code>
-                  <button className="secondary-button compact-button" disabled={!reconciliation.jsonPath} onClick={() => openPath(reconciliation.jsonPath)} type="button">打开对账 JSON</button>
+                  <button className="secondary-button compact-button" disabled={!reconciliation.jsonPath} onClick={() => openPath(reconciliation.jsonPath)} type="button">打开对账数据文件</button>
                 </div>
                 <div className="path-row">
-                  <span>Markdown</span>
+                  <span>对账说明文件</span>
                   <code>{reconciliation.markdownPath || '-'}</code>
-                  <button className="secondary-button compact-button" disabled={!reconciliation.markdownPath} onClick={() => openPath(reconciliation.markdownPath)} type="button">打开对账 Markdown</button>
+                  <button className="secondary-button compact-button" disabled={!reconciliation.markdownPath} onClick={() => openPath(reconciliation.markdownPath)} type="button">打开对账说明文件</button>
                 </div>
               </div>
             </div>
@@ -393,12 +399,12 @@ export function DataImportValidationPage() {
               <button className="secondary-button compact-button" disabled={!fileAudit?.downloadDir} onClick={() => openPath(fileAudit?.downloadDir)} type="button">打开</button>
             </div>
             <div className="path-row">
-              <span>Manifest</span>
+              <span>采集清单</span>
               <code>{fileAudit?.manifestPath ? compactPath(fileAudit.manifestPath) : '暂无'}</code>
               <button className="secondary-button compact-button" disabled={!fileAudit?.manifestPath} onClick={() => openPath(fileAudit?.manifestPath)} type="button">打开</button>
             </div>
           </div>
-          <p className="warning-line">Manifest 和审计证据只用于追溯流程；广告量化只读取上方真实报表和 SQLite 指标。</p>
+          <p className="warning-line">采集清单和审计证据只用于追溯流程；广告量化只读取上方真实报表和 SQLite 指标。</p>
           {pathNotice && <p className={pathNotice.startsWith('打开失败') ? 'blocked-line' : 'muted-line'}>{pathNotice}</p>}
         </Panel>
       </div>

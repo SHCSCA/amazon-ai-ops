@@ -269,7 +269,7 @@ export function OperationEventsPage() {
               <div>
                 <span>执行边界</span>
                 <strong>只影响建议，不自动执行</strong>
-                <p>事件不会直接改广告。所有降价、否词、暂停或放量仍必须走建议、审批、执行和 readback。</p>
+                <p>事件不会直接改广告。所有降价、否词、暂停或放量仍必须走建议、审批、执行和回读。</p>
               </div>
             </div>
           </Panel>
@@ -355,7 +355,7 @@ export function OperationEventsPage() {
             <label>
               广告组
               <input
-                placeholder="可选；用于绑定具体 ad group"
+                placeholder="可选；用于绑定具体广告组"
                 value={draft.adGroupName}
                 onChange={(event) => setDraft({ ...draft, adGroupName: event.target.value })}
               />

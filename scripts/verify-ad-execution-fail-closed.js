@@ -36,7 +36,10 @@ function mustNotContain(source, pattern, message) {
 
 const mainIndex = read('apps/desktop/src/main/index.ts');
 const policy = read('apps/desktop/src/main/recommendation-execution-policy.ts');
-const renderer = read('apps/desktop/src/renderer/App.tsx');
+const rendererApp = read('apps/desktop/src/renderer/App.tsx');
+const recommendationsPage = read('apps/desktop/src/renderer/pages/recommendations-page.tsx');
+const readbackPage = read('apps/desktop/src/renderer/pages/readback-page.tsx');
+const renderer = [rendererApp, recommendationsPage, readbackPage].join('\n');
 const adActions = read('packages/action-executor/src/ad-actions.ts');
 const recommendationRepo = read('packages/local-db/src/sqlite/repositories/recommendation-repo.ts');
 
@@ -77,7 +80,7 @@ mustContain(
 );
 mustContain(
   mainIndex,
-  'findForRecommendations(scope)',
+  'loadBusinessRecommendationMetrics(gate.scope',
   'recommendation generation uses scoped ad metrics when filters are provided',
 );
 mustContain(
@@ -125,15 +128,15 @@ mustContain(adActions, 'if (!toast)', 'negative keyword executor fails closed wh
 mustContain(adActions, 'success: verified', 'bid/toggle executors tie success to readback verification');
 mustContain(adActions, '回读校验失败', 'executor exposes readback failure reason');
 
-mustContain(renderer, 'AD_READBACK_ACCEPTANCE_COMMANDS', 'renderer exposes ad readback acceptance commands');
-mustContain(renderer, '广告执行 readback 验收证据', 'recommendations page shows ad readback evidence panel');
-mustContain(renderer, '复制广告 readback 验收命令', 'recommendations page provides copy command affordance');
-mustContain(renderer, '建议筛选与生成', 'recommendations page exposes filter/generate controls');
-mustContain(renderer, '生成优化建议', 'recommendations page exposes generation action');
-mustContain(renderer, 'generateRecommendations({', 'renderer sends recommendation generation scope to main process');
-mustContain(renderer, '生成优化建议前请先填写开始日期、结束日期、店铺和站点', 'renderer requires explicit scope before generating recommendations');
-mustContain(renderer, '不能用阻断审计冒充成功', 'recommendations workflow warns against treating blocked audit as success');
-mustContain(renderer, 'verify:ad-readback', 'recommendations page references the readback verifier');
+mustContain(readbackPage, 'buildFillAdReadbackCommand', 'renderer exposes ad readback acceptance commands');
+mustContain(readbackPage, 'title="执行回读"', 'readback page shows ad readback evidence panel');
+mustContain(readbackPage, '复制长参数生成命令', 'readback page provides copy command affordance');
+mustContain(recommendationsPage, '建议生成范围', 'recommendations page exposes filter/generate controls');
+mustContain(recommendationsPage, '生成优化建议', 'recommendations page exposes generation action');
+mustContain(recommendationsPage, 'generateRecommendations?.({', 'renderer sends recommendation generation scope to main process');
+mustContain(recommendationsPage, 'disabled={!quantReady || generating || pipelineLoading}', 'renderer requires explicit scope before generating recommendations');
+mustContain(renderer, '不能声称执行完成', 'recommendations workflow warns against treating blocked audit as success');
+mustContain(readbackPage, 'verifyAdReadbackEvidence', 'readback page references the readback verifier');
 mustNotContain(renderer, 'setActionMessage(\'广告执行已通过可验证回读。', 'renderer no longer displays success/readback copy for fail-closed execution');
 
 mustContain(

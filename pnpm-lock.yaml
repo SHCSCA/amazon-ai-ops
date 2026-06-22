@@ -32,6 +32,9 @@ importers:
       playwright:
         specifier: ^1.40.0
         version: 1.60.0
+      playwright-core:
+        specifier: ^1.60.0
+        version: 1.60.0
     devDependencies:
       '@amazon-ai-ops/action-executor':
         specifier: workspace:*

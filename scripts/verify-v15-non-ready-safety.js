@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const bundleRoot = path.join(root, 'output', 'delivery-bundles');
 const finalReadinessPattern = /^final-readiness-(?:\d{4}-\d{2}-\d{2}|\d{10,})\.json$/i;
+const packageLaunchSmokePattern = /^package-launch-smoke-\d+\.json$/i;
 
 function latestEvidence(pattern) {
   if (!fs.existsSync(evidenceDir)) return null;
@@ -126,11 +127,41 @@ function hasCurrentPackageHashEvidence(finalReadiness) {
   });
 }
 
+function hasValidPackageLaunchSmoke(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return false;
+  try {
+    const smoke = readJson(filePath);
+    const unpacked = smoke.artifacts?.unpacked;
+    const portable = smoke.artifacts?.portable;
+    const checks = Array.isArray(smoke.checks) ? smoke.checks : [];
+    const hasCheck = (kind) => checks.some((item) => item?.kind === kind && item.ok === true);
+    const hasValidArtifact = (artifact) => {
+      if (!artifact?.path || !fs.existsSync(artifact.path) || !fs.statSync(artifact.path).isFile()) return false;
+      if (Number(artifact.sizeBytes || 0) <= 0) return false;
+      if (fs.statSync(artifact.path).size !== Number(artifact.sizeBytes || 0)) return false;
+      return /^[A-F0-9]{64}$/.test(String(artifact.sha256 || ''))
+        && sha256(artifact.path) === String(artifact.sha256 || '').toUpperCase();
+    };
+
+    return smoke.kind === 'package-launch-smoke'
+      && smoke.passed === true
+      && hasValidArtifact(unpacked)
+      && hasValidArtifact(portable)
+      && hasCheck('win-unpacked')
+      && hasCheck('portable');
+  } catch {
+    return false;
+  }
+}
+
 function main() {
   const args = parseArgs(process.argv);
   const finalReadinessPath = path.resolve(args['final-readiness'] || latestEvidence(finalReadinessPattern) || path.join(evidenceDir, 'final-readiness-2026-06-09.json'));
   const bundleManifestPath = path.resolve(args['bundle-manifest'] || latestBundleManifest() || path.join(bundleRoot, 'v15-delivery-bundle-2026-06-09', 'delivery-bundle-manifest.json'));
-  const readmePath = path.join(root, 'README.md');
+  const packageLaunchSmokePath = args['package-launch-smoke']
+    ? path.resolve(args['package-launch-smoke'])
+    : latestEvidence(packageLaunchSmokePattern);
+  const readmePath = path.resolve(args.readme || path.join(root, 'README.md'));
   const failures = [];
 
   requireFile(finalReadinessPath, 'final readiness');
@@ -147,6 +178,8 @@ function main() {
   const readmeNonReady = readmeStatesNonReady(readme);
   const historicalReadyFinalReadiness = readmeNonReady && finalReadiness.status === 'APP_READY' && finalReadiness.appReady === true;
   const historicalReadyBundle = readmeNonReady && manifest.status === 'APP_READY' && manifest.appReady === true;
+  const currentPackageHashEvidence = hasCurrentPackageHashEvidence(finalReadiness);
+  const currentPackageLaunchSmoke = hasValidPackageLaunchSmoke(packageLaunchSmokePath);
 
   check(finalReadiness.evidenceSelection?.mode === 'manifest', 'final readiness uses manifest evidence selection', failures);
   check(
@@ -156,7 +189,11 @@ function main() {
   );
   if (historicalReadyFinalReadiness) {
     check(true, 'historical APP_READY final readiness is baseline only because README is non-ready', failures);
-    check(hasCurrentPackageHashEvidence(finalReadiness), 'historical APP_READY baseline has current package hash evidence', failures);
+    check(
+      currentPackageHashEvidence || currentPackageLaunchSmoke,
+      'historical APP_READY baseline has current package hash or launch smoke evidence',
+      failures,
+    );
   } else {
     check(finalReadiness.status === 'APP_NEEDS_WORK', 'final readiness status remains APP_NEEDS_WORK', failures);
     check(finalReadiness.appReady === false, 'final readiness appReady is false', failures);

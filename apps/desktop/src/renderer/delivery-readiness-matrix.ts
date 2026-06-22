@@ -188,8 +188,8 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
       statusLabel: readbackReady ? '通过' : '阻断',
       tone: readbackReady ? 'ready' : 'blocked',
       detail: readbackReady
-        ? `${readbackVerifiedCount} 条真实广告动作已完成 before/after/readback 验证。`
-        : '还没有真实广告动作的 before、after 和 readback 闭环证据。',
+        ? `${readbackVerifiedCount} 条真实广告动作已完成执行前/执行后/回读验证。`
+        : '还没有真实广告动作的执行前、执行后和回读闭环证据。',
       nextAction: readbackReady ? '查看执行回读' : '完成审批和回读',
       route: readbackReady ? 'readback' : recommendationsReady ? 'approval' : 'recommendations',
     },
@@ -199,8 +199,8 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
       statusLabel: packageReady ? '通过' : '阻断',
       tone: packageReady ? 'ready' : 'blocked',
       detail: packageReady
-        ? '最终 manifest 和安装包证据均已具备。'
-        : '最终 manifest 或免安装 exe/hash 证据还没有闭合。',
+        ? '最终验收汇总和安装包证据均已具备。'
+        : '最终验收汇总或免安装包/校验码证据还没有闭合。',
       nextAction: packageReady ? '查看交付证据' : '进入交付验收',
       route: 'delivery',
     },
@@ -213,7 +213,7 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
     return {
       status: 'ready',
       headline: '可交付证据闭环已完成',
-      primaryNextAction: '导出交付包并记录安装包 hash',
+      primaryNextAction: '导出交付包并记录安装包校验码',
       readyCount,
       totalCount,
       items,

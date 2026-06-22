@@ -5,6 +5,7 @@ const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
+const packageLaunchSmokePattern = /^package-launch-smoke-\d+\.json$/i;
 
 function parseArgs(argv) {
   const args = {};
@@ -310,6 +311,110 @@ function checkReleasePackageHash(packageIndex) {
   };
 }
 
+function validatePackageLaunchSmoke(filePath, packageIndex) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return {
+      gate: {
+        name: 'Package launch smoke',
+        status: 'missing',
+        ok: false,
+        evidencePath: filePath || null,
+        message: 'package launch smoke evidence is missing',
+      },
+      summary: {
+        present: false,
+        evidencePath: filePath || null,
+        passed: false,
+        artifacts: null,
+        checks: [],
+      },
+    };
+  }
+
+  try {
+    const smoke = readJson(filePath);
+    const checks = Array.isArray(smoke.checks) ? smoke.checks : [];
+    const unpacked = smoke.artifacts?.unpacked;
+    const portable = smoke.artifacts?.portable;
+    const portablePackage = (packageIndex.packages || []).find((item) => item.kind === 'portable');
+    const checkOk = (kind) => checks.some((item) => item?.kind === kind && item.ok === true);
+    const validArtifact = (artifact) => {
+      if (!artifact?.path || !fs.existsSync(artifact.path) || !fs.statSync(artifact.path).isFile()) return false;
+      if (Number(artifact.sizeBytes || 0) <= 0) return false;
+      if (fs.statSync(artifact.path).size !== Number(artifact.sizeBytes || 0)) return false;
+      return /^[A-F0-9]{64}$/.test(String(artifact.sha256 || ''))
+        && sha256(artifact.path) === String(artifact.sha256 || '').toUpperCase();
+    };
+    const portableMatchesPackage = Boolean(
+      portablePackage
+      && portable
+      && path.resolve(portable.path) === path.resolve(portablePackage.sourcePath)
+      && Number(portable.sizeBytes || 0) === Number(portablePackage.sizeBytes || 0)
+      && String(portable.sha256 || '').toUpperCase() === String(portablePackage.sha256 || '').toUpperCase(),
+    );
+    const ok = smoke.kind === 'package-launch-smoke'
+      && smoke.passed === true
+      && validArtifact(unpacked)
+      && validArtifact(portable)
+      && checkOk('win-unpacked')
+      && checkOk('portable')
+      && portableMatchesPackage;
+
+    return {
+      gate: {
+        name: 'Package launch smoke',
+        status: ok ? 'passed' : 'needs_work',
+        ok,
+        evidencePath: filePath,
+        message: ok
+          ? 'win-unpacked and no-install portable launch smoke passed with current portable hash.'
+          : 'package launch smoke is stale, incomplete, or does not match the current portable package hash',
+      },
+      summary: {
+        present: true,
+        evidencePath: filePath,
+        generatedAt: smoke.generatedAt,
+        passed: smoke.passed === true,
+        artifacts: {
+          unpacked: unpacked ? {
+            path: unpacked.path,
+            sizeBytes: unpacked.sizeBytes,
+            sha256: unpacked.sha256,
+          } : null,
+          portable: portable ? {
+            path: portable.path,
+            sizeBytes: portable.sizeBytes,
+            sha256: portable.sha256,
+          } : null,
+        },
+        checks: checks.map((item) => ({
+          kind: item.kind,
+          ok: item.ok,
+          marker: item.marker,
+          appChildCount: item.appChildCount,
+        })),
+      },
+    };
+  } catch (error) {
+    return {
+      gate: {
+        name: 'Package launch smoke',
+        status: 'needs_work',
+        ok: false,
+        evidencePath: filePath,
+        message: `package launch smoke could not be read: ${error.message}`,
+      },
+      summary: {
+        present: true,
+        evidencePath: filePath,
+        passed: false,
+        artifacts: null,
+        checks: [],
+      },
+    };
+  }
+}
+
 function printGate(gate) {
   const label = gate.ok ? 'PASS' : gate.status === 'missing' ? 'MISSING' : 'NEEDS_WORK';
   console.log(`[${label}] ${gate.name}`);
@@ -327,6 +432,10 @@ const adAiExplanationEvidence = resolveMaybe(args['ad-ai-explanation'] || resolv
 const listingAiEvidence = resolveMaybe(args['listing-ai-draft'] || resolveManifestEvidencePath(evidenceManifest, 'listingAiDraft') || latestEvidence(/^(installed-listing-ai-draft|listing-ai-draft).*\.json$/i));
 const adReadbackEvidence = args['ad-readback'] ? path.resolve(args['ad-readback']) : resolveManifestEvidencePath(evidenceManifest, 'adReadback');
 const packageIndex = buildPackageIndex(args['release-dir'] || path.join(root, 'apps', 'desktop', 'release'));
+const packageLaunchSmoke = validatePackageLaunchSmoke(
+  args['package-launch-smoke'] ? path.resolve(args['package-launch-smoke']) : latestEvidence(packageLaunchSmokePattern),
+  packageIndex,
+);
 
 const gates = [
   checkWithVerifier('Report collection delivery', 'scripts/verify-v15-delivery-evidence.js', deliveryEvidence),
@@ -336,6 +445,7 @@ const gates = [
   checkListingAiDraft(listingAiEvidence),
   checkAdExecutionReadback(adReadbackEvidence),
   checkReleasePackageHash(packageIndex),
+  packageLaunchSmoke.gate,
 ];
 
 for (const gate of gates) {
@@ -374,6 +484,7 @@ const summary = {
   missing,
   actionItems,
   packageIndex,
+  packageLaunchSmoke: packageLaunchSmoke.summary,
   gates: gates.map((gate) => ({
     name: gate.name,
     status: gate.status,

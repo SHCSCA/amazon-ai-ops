@@ -7,6 +7,7 @@ import { formatPercent, formatUsd } from '../formatters';
 import { operatorFacingAiError } from '../ai-call-diagnostics';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
+import { countProductsWithTargets, normalizeProductContexts } from '../product-context';
 import type { AdStrategyDiagnosisView, AiDiagnosisRunView, AiEvidenceDisplayItemView, AppRoute, BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, SettingsRuleConfig } from '../types';
 
 const DEFAULT_QUANT_RULE_CONFIG: Pick<SettingsRuleConfig, 'targetAcos' | 'highAcosThreshold' | 'noOrderClickThreshold' | 'minSpend'> = {
@@ -41,8 +42,8 @@ function quantSourceLabel(source?: string): string {
 }
 
 function quantSourceDescription(source?: string): string {
-  if (source === 'canonical_user_search_term') return '总盘使用用户搜索词报表汇总，避免 campaign/ad group/placement 等报表重复累加。';
-  if (source === 'canonical_search_term') return '总盘使用搜索词报表汇总，避免 campaign/ad group/placement 等报表重复累加。';
+  if (source === 'canonical_user_search_term') return '总盘使用用户搜索词报表汇总，避免广告活动/广告组/投放位置等报表重复累加。';
+  if (source === 'canonical_search_term') return '总盘使用搜索词报表汇总，避免广告活动/广告组/投放位置等报表重复累加。';
   if (source === 'actionable_fallback') return '未找到搜索词权威总表，暂用关键词、商品投放和自动投放等可行动报表近似汇总。';
   return '当前范围缺少真实原始报表或导入指标，不能计算广告表现。';
 }
@@ -235,7 +236,7 @@ export function diagnosisRunSummaryText(run: AiDiagnosisRunView): string {
 
   const insightCount = run.insights?.length || 0;
   if (insightCount > 0 && !run.formalRecommendationCount) {
-    return `AI 已完成诊断，产生 ${insightCount} 条洞察，但未形成可审批建议。先补齐证据引用、source row 和广告对象绑定后再重新生成。`;
+    return `AI 已完成诊断，产生 ${insightCount} 条洞察，但未形成可审批建议。先补齐证据引用、来源行和广告对象绑定后再重新生成。`;
   }
 
   if (insightCount > 0) {
@@ -413,10 +414,9 @@ export function AdQuantPage() {
   const visibleTimelines = productFiltered.timelines;
   const productHistoryLedgers = productFiltered.ledgers;
   const quantDiagnosisSummary = buildAdQuantDiagnosisSummary(strategyDiagnosis?.summary);
-  const productContextCount = data?.productContext?.productCount ?? data?.productContext?.products?.length ?? 0;
-  const productWithTargets = (data?.productContext?.products || []).filter((product) =>
-    product.cost?.targetAcos || product.cost?.targetTacos || product.cost?.targetNetMargin || product.cost?.minPrice
-  ).length;
+  const productContexts = normalizeProductContexts(data?.productContext?.products);
+  const productContextCount = data?.productContext?.productCount ?? productContexts.length;
+  const productWithTargets = countProductsWithTargets(productContexts);
   const canonicalRows = quant?.canonicalRows ?? 0;
   const actionableRows = quant?.actionableRows ?? 0;
   const breakdownRows = quant?.breakdownRows ?? 0;
@@ -645,7 +645,7 @@ export function AdQuantPage() {
             <div>
               <span>执行边界</span>
               <strong>量化不直接改广告</strong>
-              <p>本页只排序风险和机会；真实广告动作仍需优化建议、审批、截图和 readback。</p>
+              <p>本页只排序风险和机会；真实广告动作仍需优化建议、审批、截图和回读。</p>
             </div>
           </div>
           <p className="muted-line">{thresholdSourceLine()}</p>
@@ -926,7 +926,7 @@ export function AdQuantPage() {
             <div>
               <span>真实数据输入</span>
               <strong>{realReportCount}/8 类真实报表 / {importedRowCount} 行指标</strong>
-              <p>只读取当前范围真实 xlsx/xls/csv 和 DB 指标，不使用审计 JSON 代替广告数据。</p>
+              <p>只读取当前范围真实 xlsx/xls/csv 和 DB 指标，不使用审计文件代替广告数据。</p>
             </div>
             <div>
               <span>可行动对象</span>
@@ -1202,7 +1202,7 @@ export function AdQuantPage() {
                   {diagnosticCount > 0 ? '可以进入优化建议，但仍需人工审批和回读。' : '已有指标，但暂无可复核实体诊断。'}
                 </div>
                 <p className="muted-line">
-                  优化建议会继续绑定当前范围、真实批次和来源文件；广告调整不会自动批量写入，必须经过审批、截图和 readback。
+                  优化建议会继续绑定当前范围、真实批次和来源文件；广告调整不会自动批量写入，必须经过审批、截图和回读。
                 </p>
               </div>
               <div className="action-row">

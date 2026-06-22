@@ -42,15 +42,15 @@ const DEFAULT_RULE_CONFIG: SettingsRuleConfig = {
 const SAFETY_POLICIES = [
   '不允许无边界批量写入广告账户。',
   '任意真实写入前必须有人工审批。',
-  '每次执行必须保留 before / after / readback 证据。',
-  '执行对象必须与店铺、站点、campaign、ad group、ASIN 和投放对象范围完全匹配。',
+  '每次执行必须保留执行前、执行后和回读证据。',
+  '执行对象必须与店铺、站点、广告活动、广告组、ASIN 和投放对象范围完全匹配。',
 ];
 
 const DIAGNOSTIC_CHECKS = [
   'AI 连接：确认 Provider、Base URL、模型和脱敏 Key 状态。',
   '广告建议解释：确认建议来自当前范围真实广告指标，并标记 AI 或规则来源。',
   'Listing 草案：确认 Listing 读取、关键词机会和草案来源，不自动提交 Amazon。',
-  '最终交付：确认真实报表、量化、AI、审批、readback 和安装包证据是否闭环。',
+  '最终交付：确认真实报表、量化、AI、审批、回读和安装包证据是否闭环。',
 ];
 
 function readString(value: unknown, fallback = ''): string {
@@ -102,6 +102,13 @@ export function aiAuditLogFormatLine(log: Pick<AiCallLogView, 'schemaVersion' | 
 
 export function aiAuditLogTitle(log: Pick<AiCallLogView, 'promptKey'>): string {
   return aiCallKindLabel(log);
+}
+
+export function aiSettingsActionHint(input: { canSaveSettings: boolean; keyPresent: boolean; canTestAi: boolean }): string {
+  if (!input.canSaveSettings) return '当前环境未接入设置保存接口，无法保存或清除 API Key。';
+  if (!input.keyPresent) return '填写 API Key 后才能测试连接。';
+  if (!input.canTestAi) return '当前环境未接入 AI 连接测试接口。';
+  return '';
 }
 
 function normalizeAiSettings(settings: Record<string, unknown> | null | undefined): AiProviderSettings {
@@ -259,6 +266,12 @@ export function SettingsPage() {
   const canLoadStoragePaths = typeof apiSurface.getStoragePaths === 'function';
   const canLoadAiCallLogs = typeof apiSurface.listAiCallLogs === 'function';
   const keyPresent = Boolean(aiSettings.aiApiKey.trim() || aiSettings.aiKeyConfigured);
+  const canRunAiTest = canTestAi && keyPresent;
+  const aiActionHint = aiSettingsActionHint({
+    canSaveSettings,
+    keyPresent,
+    canTestAi: canRunAiTest,
+  });
 
   async function refreshAiSettingsFromStore(): Promise<AiProviderSettings | null> {
     if (!canLoadSettings) return null;
@@ -568,13 +581,14 @@ export function SettingsPage() {
             <button className="primary-button" disabled={savingAi || !canSaveSettings} onClick={saveAiSettings} type="button">
               {savingAi ? '保存中...' : '保存 AI 设置'}
             </button>
-            <button className="secondary-button" disabled={aiStatus === 'testing' || !canTestAi} onClick={testAiSettings} type="button">
+            <button className="secondary-button" disabled={aiStatus === 'testing' || !canRunAiTest} onClick={testAiSettings} type="button">
               {aiStatus === 'testing' ? '测试中...' : '测试 AI 连接'}
             </button>
             <button className="secondary-button" disabled={savingAi || !canSaveSettings || !keyPresent} onClick={clearLocalAiKey} type="button">
               清除本地 AI Key
             </button>
           </div>
+          {aiActionHint && <p className="muted-line">{aiActionHint}</p>}
         </Panel>
 
         <Panel title="AI 调用审计">
@@ -804,7 +818,7 @@ export function SettingsPage() {
 
         <Panel title="诊断工具">
           <div className="settings-diagnostic-row">
-            <p>用于验证 AI 连接、广告解释、Listing 草案和最终交付状态；不会改变广告账户，也不会绕过审批、before / after / readback 或范围匹配要求。</p>
+            <p>用于验证 AI 连接、广告解释、Listing 草案和最终交付状态；不会改变广告账户，也不会绕过审批、执行前/执行后/回读或范围匹配要求。</p>
             <button className="secondary-button" onClick={copyDiagnostics} type="button">复制诊断检查清单</button>
           </div>
           <details className="details-panel inline-details">

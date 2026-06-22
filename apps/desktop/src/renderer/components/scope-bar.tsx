@@ -5,10 +5,55 @@ import type { BusinessBatchOption } from '../types';
 
 const AUTO_BATCH_VALUE = '__auto__';
 const MANUAL_BATCH_VALUE = '__manual__';
+const REQUIRED_REPORT_COUNT = 8;
+
+function cleanCount(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.trunc(value));
+}
+
+function formatReportCoverage(batch: Partial<BusinessBatchOption>): string {
+  const coverage = cleanCount(batch.realReportFileCount);
+  if (coverage === null) return '报表覆盖待校验';
+  const cappedCoverage = Math.min(REQUIRED_REPORT_COUNT, coverage);
+  const fileCount = cleanCount(batch.totalFileRecords);
+  const fileSuffix = fileCount !== null && fileCount > cappedCoverage ? ` · ${fileCount} 个文件` : '';
+  return `${cappedCoverage}/${REQUIRED_REPORT_COUNT} 类真实报表${fileSuffix}`;
+}
+
+function formatImportedRows(value: unknown, importedSuffix = ' 行已导入'): string {
+  const rows = cleanCount(value);
+  if (rows === null) return '指标待校验';
+  return rows > 0 ? `${rows}${importedSuffix}` : '未导入';
+}
 
 export function formatBatchOption(batch: BusinessBatchOption): string {
-  const imported = batch.importedRowCount > 0 ? `${batch.importedRowCount} 行已导入` : '未导入';
-  return `${batch.id} · ${batch.realReportFileCount}/8 类真实报表 · ${imported}`;
+  return `${batch.id} · ${formatReportCoverage(batch)} · ${formatImportedRows(batch.importedRowCount)}`;
+}
+
+type ScopeSummaryFact = {
+  label: string;
+  value: string;
+  title?: string;
+};
+
+export function buildScopeSummaryFacts(input: {
+  batchId?: string;
+  batchModeLabel: string;
+  reportCoverage: string;
+  importedRows: string;
+  asin?: string;
+}): ScopeSummaryFact[] {
+  return [
+    {
+      label: '批次',
+      value: input.batchId || '自动匹配',
+      title: input.batchModeLabel,
+    },
+    { label: '报表', value: input.reportCoverage },
+    { label: '指标', value: input.importedRows },
+    { label: 'ASIN', value: input.asin?.trim() || '全部产品' },
+  ];
 }
 
 export function ScopeBar() {
@@ -164,17 +209,24 @@ export function ScopeBar() {
   const manualBatchUnmatched = Boolean(scope.batchId && !selectedBatch);
   const activeBatch = selectedBatch || (!scope.batchId ? autoMatchedBatch : undefined);
   const batchDataLabel = activeBatch
-    ? `${activeBatch.realReportFileCount}/8 类真实报表`
+    ? formatReportCoverage(activeBatch)
     : manualBatchUnmatched ? '手动批次待校验'
     : loadingBatches ? '正在读取批次...' : '暂无匹配批次';
   const importedLabel = selectedBatch
-    ? `${selectedBatch.importedRowCount} 行`
-    : activeBatch ? `${activeBatch.importedRowCount} 行` : manualBatchUnmatched ? '待校验' : '0 行';
+    ? formatImportedRows(selectedBatch.importedRowCount, ' 行')
+    : activeBatch ? formatImportedRows(activeBatch.importedRowCount, ' 行') : manualBatchUnmatched ? '待校验' : '0 行';
   const scopeHelperText = activeBatch
     ? `当前数据批次：${activeBatch.id}。批次只决定读取哪批真实报表和入库指标，不会自动重新下载。`
     : manualBatchUnmatched
       ? `当前使用手动批次：${scope.batchId}。该批次不在当前范围自动匹配列表中，后续页面会按这个 ID 尝试读取；如不确定，请切回“自动”。`
       : '当前未匹配到数据批次；需要先在数据采集页下载并导入真实广告表格。';
+  const summaryFacts = buildScopeSummaryFacts({
+    batchId: activeBatch?.id || scope.batchId,
+    batchModeLabel,
+    reportCoverage: batchDataLabel,
+    importedRows: importedLabel,
+    asin: scope.asin,
+  });
 
   return (
     <section className="scope-bar" aria-label="当前运营范围">
@@ -220,27 +272,13 @@ export function ScopeBar() {
           </button>
         </div>
       </div>
-      <div className="scope-summary">
-        <div>
-          <span>币种</span>
-          <strong>{scope.currency}</strong>
-        </div>
-        <div>
-          <span>批次模式</span>
-          <strong>{batchModeLabel}</strong>
-        </div>
-        <div>
-          <span>当前批次</span>
-          <strong>{activeBatch?.id || scope.batchId || '-'}</strong>
-        </div>
-        <div>
-          <span>报表覆盖</span>
-          <strong>{batchDataLabel}</strong>
-        </div>
-        <div>
-          <span>已导入指标</span>
-          <strong>{importedLabel}</strong>
-        </div>
+      <div className="scope-compact-facts">
+        {summaryFacts.map((fact) => (
+          <span className="scope-fact" key={fact.label} title={fact.title}>
+            <b>{fact.label}</b>
+            {fact.value}
+          </span>
+        ))}
       </div>
       {(scope.batchId || batchOptionsError) && (
         <div className="scope-batch-note">

@@ -5,6 +5,7 @@ import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evide
 import { formatPercent, formatUsd } from '../formatters';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
 import { realReportCoverageCount } from '../report-coverage';
+import { countProductsWithTargets, normalizeProductContexts, pickPrimaryProductContext } from '../product-context';
 import type { AiEvidenceDisplayItemView, AiEvidenceSufficiencyView, AiProviderSettings, RecommendationView, SettingsRuleConfig } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
@@ -697,14 +698,14 @@ export function emptyRecommendationReason(
       return {
         title: 'AI 仅生成洞察，未进入建议池',
         detail: `${lastGenerateResult.reason || 'AI 已完成诊断，但没有形成可审批动作。'} ${aiCandidateText}${filterReasons}`,
-        nextStep: '先补齐证据和对象绑定：确认 source row、campaign/ad group/关键词或投放对象能回查到当前真实报表；必要时补充运营事件和产品配置后重新生成。',
+        nextStep: '先补齐证据和对象绑定：确认来源行、广告活动/广告组/关键词或投放对象能回查到当前真实报表；必要时补充运营事件和产品配置后重新生成。',
         tone: 'warning',
       };
     }
     return {
       title: '没有可安全绑定的广告动作',
-      detail: `${lastGenerateResult.reason || '规则和 AI 完成诊断，但没有找到足够明确、可绑定 campaign/ad group/对象的动作。'} ${aiCandidateText}${filterReasons}`,
-      nextStep: '查看广告量化页的风险对象；必要时补充运营事件或调整阈值后重新生成。若 AI 候选被过滤，说明它缺少可匹配的 campaign/ad group/关键词/投放对象。',
+      detail: `${lastGenerateResult.reason || '规则和 AI 完成诊断，但没有找到足够明确、可绑定广告活动/广告组/对象的动作。'} ${aiCandidateText}${filterReasons}`,
+      nextStep: '查看广告量化页的风险对象；必要时补充运营事件或调整阈值后重新生成。若 AI 候选被过滤，说明它缺少可匹配的广告活动/广告组/关键词/投放对象。',
       tone: 'warning',
     };
   }
@@ -760,10 +761,10 @@ export function RecommendationsPage() {
   }, [currentBatchId, data, importedRowCount, realReportCount]);
   const quantReady = Boolean(data && recommendationGateIssues.length === 0);
   const operationEvents = data?.operations?.events || [];
-  const productContexts = data?.productContext?.products || [];
+  const productContexts = normalizeProductContexts(data?.productContext?.products);
   const productContextCount = data?.productContext?.productCount ?? productContexts.length;
-  const productWithTargetCount = productContexts.filter((item) => Number(item.cost?.targetAcos || 0) > 0 || Number(item.cost?.targetTacos || 0) > 0).length;
-  const primaryProductContext = productContexts.find((item) => scope.asin && item.asin.toUpperCase() === scope.asin.toUpperCase()) || productContexts[0];
+  const productWithTargetCount = countProductsWithTargets(productContexts);
+  const primaryProductContext = pickPrimaryProductContext(productContexts, scope.asin);
   const latestOperationEvent = [...operationEvents].sort((a, b) => String(b.eventDate || '').localeCompare(String(a.eventDate || '')))[0];
   const aiTextCount = recommendations.filter((item) => item.evidence?.explanationSource === 'ai').length;
   const aiStrategyCount = recommendations.filter((item) => item.evidence?.aiStrategySource === 'ai').length;
@@ -809,7 +810,7 @@ export function RecommendationsPage() {
     ].filter(Boolean)));
     return {
       summary: strategy?.summary || lastGenerateResult.reason || 'AI 已完成诊断，但未返回可进入审批的广告动作。',
-      reasons: reasons.length ? reasons : ['规则和 AI 完成诊断，但没有找到足够明确、可绑定 campaign/ad group/对象的动作。'],
+      reasons: reasons.length ? reasons : ['规则和 AI 完成诊断，但没有找到足够明确、可绑定广告活动/广告组/对象的动作。'],
       insights: strategy?.aiInsights || [],
       nextStep: '回到广告量化页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。',
     };
@@ -1126,7 +1127,7 @@ export function RecommendationsPage() {
             </button>
             <button className="workflow-step" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'readback' }))} disabled={workflowActionState.readbackDisabled} type="button">
               <span>3. 执行回读</span>
-              <strong>记录 before/after/readback</strong>
+              <strong>记录执行前/执行后/回读</strong>
               <StatusPill tone={workflowActionState.readbackDisabled ? 'blocked' : 'warning'}>{workflowActionState.readbackLabel}</StatusPill>
             </button>
           </div>
@@ -1266,14 +1267,14 @@ export function RecommendationsPage() {
                   <div>
                     <span>最终可审批</span>
                     <strong>最终可审批 {lastGenerateResult?.finalActionCount ?? 0}</strong>
-                    <p>只有证据完整、可绑定当前 campaign/ad group/对象的动作进入审批。</p>
+                    <p>只有证据完整、可绑定当前广告活动/广告组/对象的动作进入审批。</p>
                   </div>
                 </div>
                 <div className="business-scope-line">下一步处理顺序</div>
                 <ul className="business-list">
                   <li>先回广告量化页查看风险对象和样本量</li>
                   <li>补充运营事件或产品配置后重新生成</li>
-                  <li>确认 campaign、ad group、关键词/搜索词/投放对象能绑定真实报表行</li>
+                  <li>确认广告活动、广告组、关键词/搜索词/投放对象能绑定真实报表行</li>
                 </ul>
                 <div className="context-summary-grid">
                   <div>
@@ -1527,7 +1528,7 @@ export function RecommendationsPage() {
                 <div>
                   <span>下一步</span>
                   <strong>{selectedDecisionSummary.nextAction}</strong>
-                  <p>正式动作仍需要人工审批、真实 Ads UI 操作和执行回读。</p>
+                  <p>正式动作仍需要人工审批、真实广告后台操作和执行回读。</p>
                 </div>
               </div>
               {selectedDecisionSummary.riskWarnings.length > 0 && (
@@ -1624,7 +1625,7 @@ export function RecommendationsPage() {
                   <div>
                     <span>证据来源</span>
                     <strong>报表 + 运营事件 + 产品配置</strong>
-                    <p>报表文件、来源行、campaign、ad group 和对象指标见上方明细；运营事件和产品目标见下方关联区。</p>
+                    <p>报表文件、来源行、广告活动、广告组和对象指标见上方明细；运营事件和产品目标见下方关联区。</p>
                   </div>
                 </div>
                 {Boolean(selected.evidence?.aiEvidenceDetails?.length || selected.evidence?.aiLifecycleStageEvidenceDetails?.length) && (

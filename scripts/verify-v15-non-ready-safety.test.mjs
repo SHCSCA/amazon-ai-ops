@@ -23,6 +23,12 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function writeReadme(filePath, status = 'IN_PROGRESS') {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `# Fixture\n\n**DELIVERY: ${status}.** Fixture README for non-ready safety tests.\n`, 'utf8');
+  return filePath;
+}
+
 function writePng(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
@@ -68,6 +74,36 @@ function finalPackageIndex(dir) {
         sizeBytes: Buffer.byteLength(portableContent, 'utf8'),
         sha256: sha256Text(portableContent),
       },
+    ],
+  };
+}
+
+function validPackageLaunchSmoke(dir) {
+  const unpackedContent = 'unpacked exe fixture\n';
+  const portableContent = 'portable exe fixture\n';
+  const unpackedPath = path.join(dir, 'win-unpacked', 'AmazonAIOpsAgent.exe');
+  const portablePath = path.join(dir, 'AmazonAIOpsAgent-1.5.0-portable.exe');
+  fs.mkdirSync(path.dirname(unpackedPath), { recursive: true });
+  fs.writeFileSync(unpackedPath, unpackedContent, 'utf8');
+  fs.writeFileSync(portablePath, portableContent, 'utf8');
+  return {
+    kind: 'package-launch-smoke',
+    passed: true,
+    artifacts: {
+      unpacked: {
+        path: unpackedPath,
+        sizeBytes: Buffer.byteLength(unpackedContent, 'utf8'),
+        sha256: sha256Text(unpackedContent),
+      },
+      portable: {
+        path: portablePath,
+        sizeBytes: Buffer.byteLength(portableContent, 'utf8'),
+        sha256: sha256Text(portableContent),
+      },
+    },
+    checks: [
+      { kind: 'win-unpacked', ok: true, marker: '[App] ipc-ready' },
+      { kind: 'portable', ok: true, appChildCount: 1 },
     ],
   };
 }
@@ -150,6 +186,7 @@ describe('verify v15 non-ready safety', () => {
     const evidenceManifest = path.join(dir, 'evidence-manifest.json');
     const finalReadiness = path.join(dir, 'final-readiness.json');
     const bundleManifest = path.join(dir, 'delivery-bundle-manifest.json');
+    const readme = writeReadme(path.join(dir, 'README.md'));
 
     writeJson(evidenceManifest, { kind: 'v15-final-readiness-evidence-manifest', evidence: {} });
     writeJson(finalReadiness, {
@@ -177,6 +214,7 @@ describe('verify v15 non-ready safety', () => {
     const result = runNode('scripts/verify-v15-non-ready-safety.js', [
       '--final-readiness', finalReadiness,
       '--bundle-manifest', bundleManifest,
+      '--readme', readme,
     ]);
 
     expect(result.status).toBe(0);
@@ -191,8 +229,10 @@ describe('verify v15 non-ready safety', () => {
     const smokeReadiness = path.join(evidenceDir, `final-readiness-smoke-${runId}.json`);
     const bundleDir = path.join(bundleRoot, `v15-non-ready-safety-smoke-${runId}`);
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
+    const readme = path.join(bundleDir, 'README.md');
 
     try {
+      writeReadme(readme);
       writeJson(evidenceManifest, { kind: 'v15-final-readiness-evidence-manifest', evidence: {} });
       writeJson(finalReadiness, {
         status: 'APP_NEEDS_WORK',
@@ -222,7 +262,7 @@ describe('verify v15 non-ready safety', () => {
         warning: 'Do not present this bundle as final READY until every gate passes.',
       });
 
-      const result = runNode('scripts/verify-v15-non-ready-safety.js');
+      const result = runNode('scripts/verify-v15-non-ready-safety.js', ['--readme', readme]);
 
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('NON_READY_SAFETY verified');
@@ -241,8 +281,10 @@ describe('verify v15 non-ready safety', () => {
     const smokeReadiness = path.join(evidenceDir, `final-readiness-smoke-${runId}.json`);
     const bundleDir = path.join(bundleRoot, `v15-non-ready-safety-timestamp-default-${runId}`);
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
+    const readme = path.join(bundleDir, 'README.md');
 
     try {
+      writeReadme(readme);
       writeJson(evidenceManifest, { kind: 'v15-final-readiness-evidence-manifest', evidence: {} });
       writeJson(finalReadiness, {
         status: 'APP_NEEDS_WORK',
@@ -272,7 +314,7 @@ describe('verify v15 non-ready safety', () => {
         warning: 'Do not present this bundle as final READY until every gate passes.',
       });
 
-      const result = runNode('scripts/verify-v15-non-ready-safety.js');
+      const result = runNode('scripts/verify-v15-non-ready-safety.js', ['--readme', readme]);
 
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('final readiness status remains APP_NEEDS_WORK');
@@ -292,9 +334,11 @@ describe('verify v15 non-ready safety', () => {
     const adReadback = path.join(evidenceDir, `real-ad-execution-readback-historical-ready-${runId}.json`);
     const bundleDir = path.join(bundleRoot, `v15-non-ready-safety-historical-ready-${runId}`);
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
+    const readme = path.join(bundleDir, 'README.md');
     const packageIndex = finalPackageIndex(path.dirname(finalReadiness));
 
     try {
+      writeReadme(readme);
       writeJson(adReadback, validReadbackEvidence(path.dirname(adReadback)));
       writeJson(evidenceManifest, {
         kind: 'v15-final-readiness-evidence-manifest',
@@ -329,7 +373,7 @@ describe('verify v15 non-ready safety', () => {
         warning: 'APP_READY evidence bundle.',
       });
 
-      const result = runNode('scripts/verify-v15-non-ready-safety.js');
+      const result = runNode('scripts/verify-v15-non-ready-safety.js', ['--readme', readme]);
 
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('historical APP_READY final readiness is baseline only');
@@ -350,8 +394,10 @@ describe('verify v15 non-ready safety', () => {
     const adReadback = path.join(evidenceDir, `real-ad-execution-readback-historical-no-package-${runId}.json`);
     const bundleDir = path.join(bundleRoot, `v15-non-ready-safety-historical-no-package-${runId}`);
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
+    const readme = path.join(bundleDir, 'README.md');
 
     try {
+      writeReadme(readme);
       writeJson(adReadback, validReadbackEvidence(path.dirname(adReadback)));
       writeJson(evidenceManifest, {
         kind: 'v15-final-readiness-evidence-manifest',
@@ -384,16 +430,97 @@ describe('verify v15 non-ready safety', () => {
         warning: 'APP_READY evidence bundle.',
       });
 
-      const result = runNode('scripts/verify-v15-non-ready-safety.js');
+      const result = runNode('scripts/verify-v15-non-ready-safety.js', [
+        '--final-readiness', finalReadiness,
+        '--bundle-manifest', bundleManifest,
+        '--package-launch-smoke', path.join(path.dirname(finalReadiness), 'missing-package-launch-smoke.json'),
+        '--readme', readme,
+      ]);
 
       expect(result.status).not.toBe(0);
-      expect(`${result.stdout}${result.stderr}`).toContain('historical APP_READY baseline has current package hash evidence');
+      expect(`${result.stdout}${result.stderr}`).toContain('historical APP_READY baseline has current package hash or launch smoke evidence');
       expect(`${result.stdout}${result.stderr}`).toContain('NEEDS_WORK');
     } finally {
       for (const filePath of [evidenceManifest, finalReadiness, adReadback]) {
         if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
       }
       if (fs.existsSync(bundleDir)) fs.rmSync(bundleDir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a historical APP_READY baseline when current package launch smoke supersedes stale package hashes', () => {
+    const runId = Date.now();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-safety-package-smoke-'));
+    const evidenceManifest = path.join(dir, `v15-final-readiness-evidence-manifest-package-smoke-${runId}.json`);
+    const finalReadiness = path.join(dir, 'final-readiness.json');
+    const packageSmoke = path.join(dir, 'package-launch-smoke.json');
+    const adReadback = path.join(dir, `real-ad-execution-readback-package-smoke-${runId}.json`);
+    const bundleManifest = path.join(dir, 'delivery-bundle-manifest.json');
+    const readme = writeReadme(path.join(dir, 'README.md'));
+
+    try {
+      writeJson(adReadback, validReadbackEvidence(path.dirname(adReadback)));
+      writeJson(packageSmoke, validPackageLaunchSmoke(path.join(dir, 'release')));
+      writeJson(evidenceManifest, {
+        kind: 'v15-final-readiness-evidence-manifest',
+        evidence: {
+          adReadback: {
+            exists: true,
+            absolutePath: adReadback,
+          },
+        },
+      });
+      writeJson(finalReadiness, {
+        status: 'APP_READY',
+        appReady: true,
+        reportCollectionReady: true,
+        listingReadReady: true,
+        evidenceSelection: {
+          mode: 'manifest',
+          manifestPath: evidenceManifest,
+        },
+        gates: [
+          { name: 'AI live provider', ok: true, status: 'passed' },
+          { name: 'Ad recommendation AI explanation', ok: true, status: 'passed' },
+          { name: 'Listing AI draft', ok: true, status: 'passed' },
+          { name: 'Real ad execution readback', ok: true, status: 'passed', evidencePath: adReadback },
+          { name: 'Release package hash', ok: true, status: 'passed' },
+        ],
+        packageIndex: {
+          present: true,
+          count: 1,
+          existingCount: 1,
+          missingCount: 0,
+          packages: [
+            {
+              kind: 'installer',
+              sourcePath: path.join(dir, 'old-installer.exe'),
+              fileName: 'old-installer.exe',
+              exists: true,
+              sizeBytes: 123,
+              sha256: '0'.repeat(64),
+            },
+          ],
+        },
+      });
+      writeJson(bundleManifest, {
+        status: 'APP_READY',
+        appReady: true,
+        warning: 'APP_READY evidence bundle.',
+      });
+
+      const result = runNode('scripts/verify-v15-non-ready-safety.js', [
+        '--final-readiness', finalReadiness,
+        '--bundle-manifest', bundleManifest,
+        '--package-launch-smoke', packageSmoke,
+        '--readme', readme,
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('historical APP_READY baseline has current package hash or launch smoke evidence');
+      expect(result.stdout).toContain('NON_READY_SAFETY verified');
+    } finally {
+      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -404,9 +531,11 @@ describe('verify v15 non-ready safety', () => {
     const adReadback = path.join(evidenceDir, `real-ad-execution-readback-legacy-${runId}.json`);
     const bundleDir = path.join(bundleRoot, `v15-non-ready-safety-legacy-readback-${runId}`);
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
+    const readme = path.join(bundleDir, 'README.md');
     const packageIndex = finalPackageIndex(path.dirname(finalReadiness));
 
     try {
+      writeReadme(readme);
       const legacyReadback = validReadbackEvidence(path.dirname(adReadback));
       delete legacyReadback.source.sourceFiles;
       delete legacyReadback.source.sourceRow;
@@ -444,7 +573,7 @@ describe('verify v15 non-ready safety', () => {
         warning: 'APP_READY evidence bundle.',
       });
 
-      const result = runNode('scripts/verify-v15-non-ready-safety.js');
+      const result = runNode('scripts/verify-v15-non-ready-safety.js', ['--readme', readme]);
 
       expect(result.status).not.toBe(0);
       expect(`${result.stdout}${result.stderr}`).toContain('NEEDS_WORK');
@@ -464,9 +593,11 @@ describe('verify v15 non-ready safety', () => {
     const adReadback = path.join(evidenceDir, `real-ad-execution-readback-bad-historical-ready-${runId}.json`);
     const bundleDir = path.join(bundleRoot, `v15-non-ready-safety-bad-historical-ready-${runId}`);
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
+    const readme = path.join(bundleDir, 'README.md');
     const packageIndex = finalPackageIndex(path.dirname(finalReadiness));
 
     try {
+      writeReadme(readme);
       writeJson(adReadback, { kind: 'real-ad-execution-readback', status: 'PASS', readback: { verified: true } });
       writeJson(evidenceManifest, {
         kind: 'v15-final-readiness-evidence-manifest',
@@ -501,7 +632,7 @@ describe('verify v15 non-ready safety', () => {
         warning: 'APP_READY evidence bundle.',
       });
 
-      const result = runNode('scripts/verify-v15-non-ready-safety.js');
+      const result = runNode('scripts/verify-v15-non-ready-safety.js', ['--readme', readme]);
 
       expect(result.status).not.toBe(0);
       expect(`${result.stdout}${result.stderr}`).toContain('historical real ad readback baseline passes verify:ad-readback');

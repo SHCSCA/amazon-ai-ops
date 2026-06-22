@@ -129,6 +129,30 @@ function completeBundlePackageIndex(index, bundleManifestPath, finalIndex) {
   return packagesMatch(packages, finalIndex?.packages || []);
 }
 
+function completePackageLaunchSmoke(smoke, finalIndex) {
+  if (smoke?.present !== true || smoke.passed !== true) return false;
+  if (!smoke.evidencePath || !fs.existsSync(smoke.evidencePath) || !fs.statSync(smoke.evidencePath).isFile()) return false;
+  const portablePackage = (finalIndex?.packages || []).find((item) => item.kind === 'portable');
+  const checks = Array.isArray(smoke.checks) ? smoke.checks : [];
+  const hasCheck = (kind) => checks.some((item) => item?.kind === kind && item.ok === true);
+  const validArtifact = (artifact) => {
+    if (!artifact?.path || !fs.existsSync(artifact.path) || !fs.statSync(artifact.path).isFile()) return false;
+    if (Number(artifact.sizeBytes || 0) <= 0) return false;
+    if (fs.statSync(artifact.path).size !== Number(artifact.sizeBytes || 0)) return false;
+    return /^[A-F0-9]{64}$/.test(String(artifact.sha256 || ''))
+      && sha256(artifact.path) === String(artifact.sha256 || '').toUpperCase();
+  };
+  const portable = smoke.artifacts?.portable;
+  return validArtifact(smoke.artifacts?.unpacked)
+    && validArtifact(portable)
+    && hasCheck('win-unpacked')
+    && hasCheck('portable')
+    && Boolean(portablePackage)
+    && path.resolve(portable.path) === path.resolve(portablePackage.sourcePath)
+    && Number(portable.sizeBytes || 0) === Number(portablePackage.sizeBytes || 0)
+    && String(portable.sha256 || '').toUpperCase() === String(portablePackage.sha256 || '').toUpperCase();
+}
+
 const failures = [];
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 1) {
@@ -176,6 +200,8 @@ check(Array.isArray(finalReadiness.gates) && finalReadiness.gates.every((gate) =
 check(finalReadiness.gates?.some((gate) => gate.name === 'Real ad execution readback' && gate.ok === true), 'real ad readback gate passes', failures);
 check(finalReadiness.gates?.some((gate) => gate.name === 'Release package hash' && gate.ok === true), 'release package hash gate passes', failures);
 check(completeFinalPackageIndex(finalReadiness.packageIndex), 'final readiness records package hash evidence', failures);
+check(finalReadiness.gates?.some((gate) => gate.name === 'Package launch smoke' && gate.ok === true), 'package launch smoke gate passes', failures);
+check(completePackageLaunchSmoke(finalReadiness.packageLaunchSmoke, finalReadiness.packageIndex), 'final readiness records valid package launch smoke evidence', failures);
 check(Boolean(finalReadiness.evidenceSelection?.manifestPath && fs.existsSync(finalReadiness.evidenceSelection.manifestPath)), 'selected evidence manifest exists', failures);
 
 const manifest = finalReadiness.evidenceSelection?.manifestPath && fs.existsSync(finalReadiness.evidenceSelection.manifestPath)

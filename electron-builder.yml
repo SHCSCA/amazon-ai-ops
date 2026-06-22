@@ -8,7 +8,9 @@ directories:
   buildResources: build
 
 files:
-  - dist/**/*
+  - dist/main/**/*
+  - dist/preload/**/*
+  - dist/renderer/**/*
   - package.json
 
 extraResources:
@@ -56,4 +58,4 @@ publish: null
 
 asar: false
 
-npmRebuild: true
+npmRebuild: false

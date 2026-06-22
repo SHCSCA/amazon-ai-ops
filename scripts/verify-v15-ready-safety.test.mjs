@@ -86,6 +86,38 @@ function bundlePackageIndex(bundleManifestPath, finalIndex) {
   };
 }
 
+function packageLaunchSmokeFromIndex(dir, finalIndex) {
+  const unpackedContent = 'unpacked app fixture\n';
+  const unpackedPath = path.join(dir, 'win-unpacked', 'AmazonAIOpsAgent.exe');
+  const evidencePath = path.join(dir, 'package-launch-smoke.json');
+  fs.mkdirSync(path.dirname(unpackedPath), { recursive: true });
+  fs.writeFileSync(unpackedPath, unpackedContent, 'utf8');
+  const portable = finalIndex.packages.find((item) => item.kind === 'portable');
+  const smoke = {
+    present: true,
+    evidencePath,
+    passed: true,
+    artifacts: {
+      unpacked: {
+        path: unpackedPath,
+        sizeBytes: Buffer.byteLength(unpackedContent, 'utf8'),
+        sha256: sha256Text(unpackedContent),
+      },
+      portable: portable ? {
+        path: portable.sourcePath,
+        sizeBytes: portable.sizeBytes,
+        sha256: portable.sha256,
+      } : null,
+    },
+    checks: [
+      { kind: 'win-unpacked', ok: true, marker: '[App] ipc-ready' },
+      { kind: 'portable', ok: true, appChildCount: 1 },
+    ],
+  };
+  writeJson(evidencePath, { kind: 'package-launch-smoke', ...smoke });
+  return smoke;
+}
+
 function writeBundleReadme(bundleManifestPath, status = 'APP_READY') {
   const readmePath = path.join(path.dirname(bundleManifestPath), 'docs', 'README.md');
   fs.mkdirSync(path.dirname(readmePath), { recursive: true });
@@ -198,8 +230,10 @@ describe('verify v15 ready safety', () => {
         { name: 'AI live provider', ok: true },
         { name: 'Real ad execution readback', ok: true },
         { name: 'Release package hash', ok: true, status: 'passed' },
+        { name: 'Package launch smoke', ok: true, status: 'passed' },
       ],
       packageIndex,
+      packageLaunchSmoke: packageLaunchSmokeFromIndex(dir, packageIndex),
     });
     writeJson(smoke, {
       kind: 'current-business-ui-smoke-summary',
@@ -281,8 +315,10 @@ describe('verify v15 ready safety', () => {
         { name: 'AI live provider', ok: true },
         { name: 'Real ad execution readback', ok: true },
         { name: 'Release package hash', ok: true, status: 'passed' },
+        { name: 'Package launch smoke', ok: true, status: 'passed' },
       ],
       packageIndex,
+      packageLaunchSmoke: packageLaunchSmokeFromIndex(dir, packageIndex),
     });
     writeJson(smoke, {
       kind: 'current-business-ui-smoke-summary',
@@ -362,8 +398,10 @@ describe('verify v15 ready safety', () => {
         { name: 'AI live provider', ok: true },
         { name: 'Real ad execution readback', ok: true },
         { name: 'Release package hash', ok: true, status: 'passed' },
+        { name: 'Package launch smoke', ok: true, status: 'passed' },
       ],
       packageIndex,
+      packageLaunchSmoke: packageLaunchSmokeFromIndex(dir, packageIndex),
     });
     writeJson(smoke, {
       kind: 'current-business-ui-smoke-summary',
@@ -443,8 +481,10 @@ describe('verify v15 ready safety', () => {
         { name: 'AI live provider', ok: true },
         { name: 'Real ad execution readback', ok: true },
         { name: 'Release package hash', ok: true, status: 'passed' },
+        { name: 'Package launch smoke', ok: true, status: 'passed' },
       ],
       packageIndex,
+      packageLaunchSmoke: packageLaunchSmokeFromIndex(dir, packageIndex),
     });
     writeJson(smoke, {
       kind: 'current-business-ui-smoke-summary',
@@ -523,6 +563,7 @@ describe('verify v15 ready safety', () => {
         { name: 'AI live provider', ok: true },
         { name: 'Real ad execution readback', ok: true },
         { name: 'Release package hash', ok: true, status: 'passed' },
+        { name: 'Package launch smoke', ok: true, status: 'passed' },
       ],
     });
     writeJson(smoke, {
@@ -603,8 +644,10 @@ describe('verify v15 ready safety', () => {
         { name: 'AI live provider', ok: true },
         { name: 'Real ad execution readback', ok: true },
         { name: 'Release package hash', ok: true, status: 'passed' },
+        { name: 'Package launch smoke', ok: true, status: 'passed' },
       ],
       packageIndex,
+      packageLaunchSmoke: packageLaunchSmokeFromIndex(dir, packageIndex),
     });
     writeJson(smoke, {
       kind: 'current-business-ui-smoke-summary',
@@ -691,8 +734,10 @@ describe('verify v15 ready safety', () => {
         { name: 'AI live provider', ok: true },
         { name: 'Real ad execution readback', ok: true },
         { name: 'Release package hash', ok: true, status: 'passed' },
+        { name: 'Package launch smoke', ok: true, status: 'passed' },
       ],
       packageIndex,
+      packageLaunchSmoke: packageLaunchSmokeFromIndex(dir, packageIndex),
     });
     writeJson(smoke, {
       kind: 'current-business-ui-smoke-summary',

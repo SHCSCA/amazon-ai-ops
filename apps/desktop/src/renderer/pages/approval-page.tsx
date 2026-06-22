@@ -474,7 +474,7 @@ export function ApprovalPage() {
           <div className="business-split">
             <div>
               <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
-              <p className="muted-line">不会批量自动写入。每个动作必须绑定店铺、站点、campaign、ad group、对象和动作，并保留审批与回读证据。</p>
+              <p className="muted-line">不会批量自动写入。每个动作必须绑定店铺、站点、广告活动、广告组、对象和动作，并保留审批与回读证据。</p>
             </div>
             <StatusPill tone="pending">仅审批，不执行</StatusPill>
           </div>
@@ -495,7 +495,7 @@ export function ApprovalPage() {
             <div>
               <span>批准后下一步</span>
               <strong>进入执行回读</strong>
-              <p>在执行回读页补录审批凭证、before/after 截图、回读值和现场行证明。</p>
+              <p>在执行回读页补录审批凭证、执行前/执行后截图、回读值和现场行证明。</p>
             </div>
             <div>
               <span>当前队列</span>
@@ -745,7 +745,7 @@ export function ApprovalPage() {
                 <textarea value={approvalNote} onChange={(event) => setApprovalNote(event.target.value)} placeholder="记录审批范围、外部审批凭证或拒绝原因" />
               </label>
             </div>
-            <p className="muted-line">审批人、备注、范围和数据批次会写入建议证据；真实 Ads UI 操作和审批凭证路径仍必须在“执行回读”页逐条补齐。</p>
+            <p className="muted-line">审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“执行回读”页逐条补齐。</p>
             <div className="action-row">
               <button className="primary-button" disabled={selectedSubmitBlockers.length > 0} onClick={approveSelected} type="button">批准并进入待执行</button>
               <button className="secondary-button danger-button" onClick={rejectSelected} type="button">拒绝</button>

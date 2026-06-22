@@ -63,7 +63,7 @@ export function OperationScopePage() {
           <div className="workflow-strip">
             {[
               ['数据采集', '只创建/下载这个范围的领星 8 类报表。', 'data-collection'],
-              ['数据导入与校验', '只导入这个范围的 xlsx/xls/csv，不读取审计 JSON。', 'data-import-validation'],
+              ['数据导入与校验', '只导入这个范围的 xlsx/xls/csv，不读取审计文件。', 'data-import-validation'],
               ['广告量化', '只计算这个范围已入库的每日广告指标。', 'ad-quant'],
               ['优化建议', '只生成这个范围可绑定广告对象的建议。', 'recommendations'],
             ].map(([title, description, route]) => (

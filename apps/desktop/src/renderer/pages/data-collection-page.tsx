@@ -191,8 +191,8 @@ function buildActionProgressSteps(mode: CollectionActionMode | null, result: Las
   const baseStatus = completed ? 'ready' : 'pending';
   if (currentMode === 'import') {
     return [
-      { label: '1. 确认真实文件', description: '只读取当前范围的 xlsx/xls/csv，不读取审计 JSON。', status: baseStatus },
-      { label: '2. 解析表格', description: '识别报表类型、日期、campaign/ad group、关键词/投放对象和金额列。', status: completed ? (blocked ? 'blocked' : 'ready') : 'pending' },
+      { label: '1. 确认真实文件', description: '只读取当前范围的 xlsx/xls/csv，不读取审计文件。', status: baseStatus },
+      { label: '2. 解析表格', description: '识别报表类型、日期、广告活动/广告组、关键词/投放对象和金额列。', status: completed ? (blocked ? 'blocked' : 'ready') : 'pending' },
       { label: '3. 写入数据库', description: '形成每日广告事实，后续量化和 AI 只从数据库读取。', status: completed ? (blocked ? 'blocked' : 'ready') : 'pending' },
     ];
   }
@@ -211,7 +211,7 @@ function buildActionProgressSteps(mode: CollectionActionMode | null, result: Las
     },
     {
       label: '3. 下载并校验表格',
-      description: '必须落盘为 xlsx/xls/csv，大小大于 0，并登记 Manifest/hash。',
+      description: '必须落盘为 xlsx/xls/csv，大小大于 0，并登记采集清单/校验码。',
       status: completed ? (blocked ? 'blocked' : 'ready') : 'pending',
     },
     {
@@ -298,7 +298,7 @@ function buildLastActionResult(
   const failedCount = failedFiles.length;
   const firstBatch = results.find((result) => result?.batch)?.batch;
   const nextStep = failedFiles.length > 0 && actionDownloadedFiles.length === 0
-    ? '下一步：查看失败原因和本次 Manifest，确认领星 ready 行、页面模型、日期/店铺/站点后再重试。'
+    ? '下一步：查看失败原因和本次采集清单，确认领星 ready 行、页面模型、日期/店铺/站点后再重试。'
     : importedRows > 0
       ? '下一步：进入广告量化，复核 ACOS、花费和订单口径。'
       : realFileCount > 0
@@ -540,7 +540,7 @@ export function DataCollectionPage() {
         const reason = errors > 0
           ? `有 ${errors} 个报表解析失败`
           : '没有写入任何广告指标行';
-        setActionError(`真实报表导入未形成可量化广告数据：${reason}。请检查表头、日期、campaign/ad group/关键词/投放对象和花费/订单/销售列。`);
+        setActionError(`真实报表导入未形成可量化广告数据：${reason}。请检查表头、日期、广告活动/广告组/关键词/投放对象和花费/订单/销售列。`);
         setActionNotice(`导入未完成：解析 ${parsedFiles} 个真实报表，写入 ${inserted} 行广告指标，错误 ${errors} 个。`);
         return;
       }
@@ -602,7 +602,7 @@ export function DataCollectionPage() {
       <PageHeader
         eyebrow="数据与量化"
         title="数据采集"
-        description="展示当前采集状态、8 类领星广告报表进度、真实原始文件和导入行数。审计 JSON、截图和 HTML 不计为真实报表文件。"
+        description="展示当前采集状态、8 类领星广告报表进度、真实原始文件和导入行数。审计文件、截图和页面存档不计为真实报表文件。"
         primaryTask="拿到真实原始报表"
         nextAction="确认文件存在后再导入量化"
       />
@@ -671,7 +671,7 @@ export function DataCollectionPage() {
               </div>
             ))}
           </div>
-          <p className="warning-line">审计 JSON、截图、DOM/HTML 和 Manifest 只证明流程，不是广告数据，不能参与花费、订单或 ACOS 计算。</p>
+          <p className="warning-line">审计文件、截图、DOM/HTML 和采集清单只证明流程，不是广告数据，不能参与花费、订单或 ACOS 计算。</p>
         </Panel>
 
         <Panel title="真实报表文件检查" tone={realReportCount ? 'default' : 'blocked'}>
@@ -700,7 +700,7 @@ export function DataCollectionPage() {
           {hasOnlyDiagnosticFiles && (
             <p className="blocked-line">当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能进行广告量化。</p>
           )}
-          <p className="warning-line">审计 JSON、截图、DOM/HTML 和 Manifest 只用于证明流程，不是广告数据，不能进入广告量化。</p>
+          <p className="warning-line">审计文件、截图、DOM/HTML 和采集清单只用于证明流程，不是广告数据，不能进入广告量化。</p>
           {(fileAudit?.missingReportLabels?.length || 0) > 0 && (
             <p className="muted-line">
               缺少真实报表：{fileAudit?.missingReportLabels.slice(0, 8).join('、')}
@@ -711,7 +711,7 @@ export function DataCollectionPage() {
               <button className="secondary-button" onClick={() => openPath(fileAudit.downloadDir!)} type="button">打开真实报表目录</button>
             )}
             {fileAudit?.manifestPath && (
-              <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开采集 Manifest</button>
+              <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开采集清单</button>
             )}
             <button
               className="primary-button"
@@ -740,14 +740,14 @@ export function DataCollectionPage() {
               <p>这里应能看到 Lingxing 下载的 xlsx/xls/csv，后续广告量化只读取这些文件。</p>
             </div>
             <div>
-              <span>采集 Manifest</span>
-              <strong>{fileAudit?.manifestPath || '暂无 Manifest'}</strong>
+              <span>采集清单</span>
+              <strong>{fileAudit?.manifestPath || '暂无采集清单'}</strong>
               <p>记录批次、文件名、状态和下载结果，用来追溯，不是广告数据表。</p>
             </div>
             <div>
               <span>验收/诊断证据</span>
               <strong>{primaryAuditPath || `${rejectedEvidenceCount} 个证据文件`}</strong>
-              <p>这里只放 JSON、截图、HTML 等证据；找广告数据请打开“真实广告表格”目录。</p>
+              <p>这里只放审计文件、截图、HTML 等证据；找广告数据请打开“真实广告表格”目录。</p>
             </div>
             <div>
               <span>量化入口</span>
@@ -760,7 +760,7 @@ export function DataCollectionPage() {
               <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开真实报表目录</button>
             )}
             {fileAudit?.manifestPath && (
-              <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开 Manifest</button>
+              <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开采集清单</button>
             )}
             {primaryAuditPath && (
               <button className="secondary-button" onClick={() => openPath(primaryAuditPath)} type="button">打开审计证据</button>
@@ -956,7 +956,7 @@ export function DataCollectionPage() {
                   </button>
                 )}
                 {lastActionResult.manifestPath && (
-                  <button className="secondary-button" onClick={() => openPath(lastActionResult.manifestPath!)} type="button">打开本次 Manifest</button>
+                  <button className="secondary-button" onClick={() => openPath(lastActionResult.manifestPath!)} type="button">打开本次采集清单</button>
                 )}
                 {primaryReportFolder && (
                   <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开当前真实报表目录</button>
@@ -986,7 +986,7 @@ export function DataCollectionPage() {
                   ? '当前范围已有真实报表，但本次动作没有新增真实下载文件。请点击“打开当前真实报表目录”确认文件，或直接导入已下载报表。'
                   : lastActionResult.mode === 'import'
                     ? '本次导入没有返回真实报表文件路径。请重新选择领星 xlsx/xls/csv 原始报表，不要选择审计包。'
-                    : '本次动作没有返回真实报表文件路径。请打开本次 Manifest 核对 files[].filePath，只有 xlsx/xls/csv 才能进入量化。'}
+                    : '本次动作没有返回真实报表文件路径。请打开本次采集清单核对文件路径，只有 xlsx/xls/csv 才能进入量化。'}
               </p>
             )}
             {lastActionResult.failedFiles.length > 0 && (

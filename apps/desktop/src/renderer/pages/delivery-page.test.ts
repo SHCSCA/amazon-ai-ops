@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { buildDeliveryItems, buildManifestActions, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary } from './delivery-page';
+import { buildDeliveryItems, buildDeliveryOverviewFacts, buildManifestActions, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
+
+describe('buildDeliveryOverviewFacts', () => {
+  it('keeps the delivery first screen to short operator facts instead of long manifest paths', () => {
+    const facts = buildDeliveryOverviewFacts({
+      scopeSummary: 'FT-US-US / US / 2026-06-01 - 2026-06-12 / USD',
+      realFileCount: 8,
+      importedRows: 96,
+      readinessStatusText: '未就绪',
+      gateSummaryText: '5/7 通过',
+      packageSummaryText: 'C:/release/AmazonAIOpsAgent-1.5.0-portable.exe / SHA-256 ABCDEF123456...',
+    });
+
+    expect(facts).toEqual([
+      { label: '运营范围', value: 'FT-US-US / US / 2026-06-01 - 2026-06-12 / USD' },
+      { label: '真实数据', value: '8 个文件 / 96 行' },
+      { label: '最终验收', value: '未就绪 / 5/7 通过' },
+      { label: '安装包', value: '已记录' },
+    ]);
+    expect(facts.map((item) => item.value).join(' ')).not.toContain('C:/release');
+  });
+});
 
 describe('buildManifestActions', () => {
   it('surfaces final readiness review and blocker reasons instead of only generic action items', () => {
@@ -32,6 +53,44 @@ describe('buildManifestActions', () => {
     expect(actions).toContain('当前范围指标证据缺少真实广告报表 sourceFile/sourceRow。');
     expect(actions).toContain('交付包缺少最终复核说明。');
     expect(actions.filter((item) => item === 'AI 候选动作无法绑定当前范围内的真实广告对象。')).toHaveLength(1);
+  });
+});
+
+describe('deliveryTextForDisplay', () => {
+  it('translates final readiness and evidence terms before showing them in delivery UI', () => {
+    const text = deliveryTextForDisplay('APP_READY final readiness gate needs session-input.json before/after readback verifier and manifest hash.');
+
+    expect(text).toContain('可交付状态');
+    expect(text).toContain('最终验收项');
+    expect(text).toContain('填写文件');
+    expect(text).toContain('执行前/执行后回读');
+    expect(text).toContain('本地校验');
+    expect(text).toContain('最终验收汇总');
+    expect(text).toContain('校验码');
+    expect(text).not.toMatch(/final readiness|session-input|before\/after|verifier|manifest|hash/i);
+  });
+});
+
+describe('readbackSessionStatusCopy', () => {
+  it('translates readback work package check details to operator wording', () => {
+    const copy = readbackSessionStatusCopy({
+      ready: true,
+      captureReady: false,
+      captureMissingFields: [
+        { group: '执行前', label: '执行前 Ads UI live bid' },
+        { group: '执行后', label: '执行后 Ads UI live bid' },
+      ],
+    });
+
+    expect(copy.detail).toBe('还需填写：执行前/现场出价、执行后/现场出价');
+    expect(copy.detail).not.toContain('Ads UI');
+  });
+
+  it('does not expose session-input or verifier when capture is ready', () => {
+    const copy = readbackSessionStatusCopy({ ready: true, captureReady: true });
+
+    expect(copy.detail).toBe('填写文件已补齐，可生成回读证据并进入本地校验。');
+    expect(copy.detail).not.toMatch(/session-input|verifier/i);
   });
 });
 
@@ -74,7 +133,7 @@ describe('readback blocker helpers', () => {
     } as any);
 
     expect(gate?.name).toBe('Real ad execution readback');
-    expect(readbackBlockerSummary(gate)).toContain('Current candidate is missing before/after/reload readback proof.');
+    expect(readbackBlockerSummary(gate)).toContain('当前候选动作缺少执行前、执行后和刷新回读证明。');
     expect(readbackBlockerSummary(gate)).toContain('real-ad-execution-readback-candidate-rec-4-current.json');
   });
 
@@ -118,7 +177,7 @@ describe('buildDeliveryItems', () => {
     const withoutPackage = buildDeliveryItems(null, readiness, null);
     const blockedPackage = withoutPackage.find((item) => item.title === '安装包');
     expect(blockedPackage?.tone).toBe('pending');
-    expect(blockedPackage?.summary).toContain('安装包/hash 还未记录');
+    expect(blockedPackage?.summary).toContain('安装包/校验码还未记录');
 
     const withPackage = buildDeliveryItems(null, readiness, {
       package: {
@@ -132,7 +191,7 @@ describe('buildDeliveryItems', () => {
     const readyPackage = withPackage.find((item) => item.title === '安装包');
 
     expect(readyPackage?.tone).toBe('ready');
-    expect(readyPackage?.summary).toContain('安装包/hash 已记录');
+    expect(readyPackage?.summary).toContain('安装包/校验码已记录');
     expect(readyPackage?.evidence).toContain('安装包：C:/release/AmazonAIOpsAgent-1.5.0.exe');
     expect(readyPackage?.evidence).toContain('免安装版：C:/release/AmazonAIOpsAgent-1.5.0-portable.exe');
     expect(readyPackage?.evidence).toContain('SHA-256：ABCDEF123456');

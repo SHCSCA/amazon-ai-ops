@@ -4,6 +4,7 @@ import {
   aiAuditLogFormatLine,
   aiAuditLogTitle,
   aiAuditPurposeText,
+  aiSettingsActionHint,
   shouldResetAiTestForSettingsField,
 } from './settings-page';
 
@@ -35,5 +36,14 @@ describe('settings AI connection status invalidation', () => {
     expect(shouldResetAiTestForSettingsField('aiMaxTokens')).toBe(false);
     expect(shouldResetAiTestForSettingsField('aiOutputLanguage')).toBe(false);
     expect(shouldResetAiTestForSettingsField('aiPersona')).toBe(false);
+  });
+});
+
+describe('aiSettingsActionHint', () => {
+  it('explains why AI settings actions are disabled', () => {
+    expect(aiSettingsActionHint({ canSaveSettings: false, keyPresent: false, canTestAi: false })).toBe('当前环境未接入设置保存接口，无法保存或清除 API Key。');
+    expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: false, canTestAi: false })).toBe('填写 API Key 后才能测试连接。');
+    expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: true, canTestAi: false })).toBe('当前环境未接入 AI 连接测试接口。');
+    expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: true, canTestAi: true })).toBe('');
   });
 });

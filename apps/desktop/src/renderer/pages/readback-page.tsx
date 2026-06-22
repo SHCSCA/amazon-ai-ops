@@ -11,14 +11,25 @@ function formatCaptureMissing(sessionCheck: Record<string, any>): string {
   if (Array.isArray(missingFields) && missingFields.length > 0) {
     return missingFields
       .slice(0, 8)
-      .map((item) => [item.group, item.label || item.field].filter(Boolean).join('/'))
+      .map((item) => [item.group, captureFieldLabelForDisplay(item.label || item.field)].filter(Boolean).join('/'))
       .filter(Boolean)
       .join('、');
   }
-  return Array.isArray(sessionCheck.unresolvedFields) ? sessionCheck.unresolvedFields.slice(0, 8).join('、') : '';
+  return Array.isArray(sessionCheck.unresolvedFields)
+    ? sessionCheck.unresolvedFields.slice(0, 8).map(captureFieldLabelForDisplay).join('、')
+    : '';
 }
 
-function sessionCheckCopy(sessionCheck: Record<string, any> | null): { className: string; title: string; detail: string } {
+function captureFieldLabelForDisplay(value: unknown): string {
+  return String(value || '')
+    .replace(/执行前\s*Ads UI live bid/gi, '现场出价')
+    .replace(/执行后\s*Ads UI live bid/gi, '现场出价')
+    .replace(/Ads UI live bid/gi, '现场出价')
+    .replace(/session-input\.json/gi, '填写文件')
+    .replace(/\breadback\b/gi, '回读');
+}
+
+export function sessionCheckCopy(sessionCheck: Record<string, any> | null): { className: string; title: string; detail: string } {
   if (!sessionCheck) {
     return {
       className: 'readback-session-check-blocked',
@@ -30,7 +41,7 @@ function sessionCheckCopy(sessionCheck: Record<string, any> | null): { className
     return {
       className: 'readback-session-check-blocked',
       title: '工作包结构检查未通过',
-      detail: '先修复目录、清单、定位单或输出路径问题，再进行真实 Ads UI 采集。',
+      detail: '先修复目录、清单、定位单或输出路径问题，再进行真实广告后台采集。',
     };
   }
   if (!sessionCheck.captureReady) {
@@ -38,13 +49,13 @@ function sessionCheckCopy(sessionCheck: Record<string, any> | null): { className
     return {
       className: 'readback-session-check-blocked',
       title: '工作包结构通过，现场证据待填写',
-      detail: missing ? `还需填写：${missing}` : 'session-input.json 尚未完成现场审批、before/after、执行和 readback 字段。',
+      detail: missing ? `还需填写：${missing}` : '填写文件尚未完成现场审批、执行前、执行后、执行和回读字段。',
     };
   }
   return {
     className: 'readback-session-check-ready',
     title: '工作包结构和现场证据均已通过',
-    detail: '可以生成回读证据；最终 READY 仍以 verifier 和 manifest 聚合为准。',
+    detail: '可以生成回读证据；最终可交付仍以本地校验和最终验收汇总为准。',
   };
 }
 
@@ -338,14 +349,14 @@ export function requiredMissing(form: ReadbackFormState, currentBatchId?: string
   requireText(form.executedBy, '执行人');
   requireText(form.executionId, '执行编号');
   requireText(form.executionExecutedAt, '执行时间');
-  requireText(form.beforeValue, 'before 值');
-  requireText(form.beforeCapturedAt, 'before 时间');
-  requireText(form.afterValue, 'after 值');
-  requireText(form.afterCapturedAt, 'after 时间');
+  requireText(form.beforeValue, '执行前值');
+  requireText(form.beforeCapturedAt, '执行前时间');
+  requireText(form.afterValue, '执行后值');
+  requireText(form.afterCapturedAt, '执行后时间');
   requireText(form.readbackActualValue, '回读值');
   requireText(form.readbackReadAt, '回读时间');
-  requireText(form.beforeScreenshotPath, 'before 截图');
-  requireText(form.afterScreenshotPath, 'after 截图');
+  requireText(form.beforeScreenshotPath, '执行前截图');
+  requireText(form.afterScreenshotPath, '执行后截图');
   requireText(form.readbackEvidencePath, '回读证据');
   requireText(form.liveBidSourceNote, '现场行证明');
   requireFlag(form.operatorConfirmed, '审批人确认范围');
@@ -354,26 +365,26 @@ export function requiredMissing(form: ReadbackFormState, currentBatchId?: string
   requireFlag(form.executionSuccess, '执行成功确认');
   requireFlag(form.executionVerified, '执行核验');
   requireFlag(form.readbackVerified, '回读核验');
-  if (form.beforeValue && form.afterValue && valuesMatch(form.beforeValue, form.afterValue)) missing.push('before/after 值不能相同');
-  if (form.afterValue && form.readbackActualValue && !valuesMatch(form.afterValue, form.readbackActualValue)) missing.push('回读值必须等于 after 值');
+  if (form.beforeValue && form.afterValue && valuesMatch(form.beforeValue, form.afterValue)) missing.push('执行前值和执行后值不能相同');
+  if (form.afterValue && form.readbackActualValue && !valuesMatch(form.afterValue, form.readbackActualValue)) missing.push('回读值必须等于执行后值');
   if (form.actionType === 'lower_bid' && form.beforeValue && form.afterValue) {
     const beforeNumber = executableNumber(form.beforeValue);
     const afterNumber = executableNumber(form.afterValue);
     if (beforeNumber === null || afterNumber === null || afterNumber >= beforeNumber) {
-      missing.push('降价动作必须证明 after 值低于 before 值');
+      missing.push('降价动作必须证明执行后值低于执行前值');
     }
   }
   const evidencePaths = [form.beforeScreenshotPath, form.afterScreenshotPath, form.readbackEvidencePath]
     .filter((value) => value.trim())
     .map(normalizePathForCompare);
   if (evidencePaths.length === 3 && new Set(evidencePaths).size !== 3) {
-    missing.push('before/after/readback 证据文件不能复用');
+    missing.push('执行前、执行后和回读证据文件不能复用');
   }
   const timestamps = [
     ['审批时间', form.approvalConfirmedAt],
-    ['before 时间', form.beforeCapturedAt],
+    ['执行前时间', form.beforeCapturedAt],
     ['执行时间', form.executionExecutedAt],
-    ['after 时间', form.afterCapturedAt],
+    ['执行后时间', form.afterCapturedAt],
     ['回读时间', form.readbackReadAt],
   ] as const;
   const parsedTimestamps = timestamps.map(([label, value]) => ({ label, value, ms: Date.parse(value) }));
@@ -383,7 +394,7 @@ export function requiredMissing(form: ReadbackFormState, currentBatchId?: string
   if (parsedTimestamps.every((item) => item.value.trim() && Number.isFinite(item.ms))) {
     for (let index = 1; index < parsedTimestamps.length; index += 1) {
       if (parsedTimestamps[index].ms < parsedTimestamps[index - 1].ms) {
-        missing.push('时间顺序必须为审批≤before≤执行≤after≤回读');
+        missing.push('时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读');
         break;
       }
     }
@@ -397,8 +408,8 @@ export function requiredMissing(form: ReadbackFormState, currentBatchId?: string
 export function groupMissing(items: string[]) {
   const target = ['店铺', '站点', 'ASIN', '广告活动', '广告组', '对象类型', '对象名称', '动作类型'];
   const source = ['来源当前值', '来源建议值', '来源批次', '指标日期', '来源行号', '推荐来源文件', '推荐来源文件必须是真实报表', '推荐来源文件必须全部是真实报表', '来源批次必须等于当前批次'];
-  const proof = ['审批人', '审批凭证', '审批时间', '执行人', '执行编号', '执行时间', 'before 值', 'before 时间', 'after 值', 'after 时间', '回读值', '回读时间', 'before 截图', 'after 截图', '回读证据', '现场行证明', '降价动作必须证明 after 值低于 before 值', 'before/after/readback 证据文件不能复用'];
-  const confirmation = ['审批人确认范围', '外部审批允许', '低风险策略允许', '执行成功确认', '执行核验', '回读核验', 'before/after 值不能相同', '回读值必须等于 after 值', '审批时间不是可解析时间', 'before 时间不是可解析时间', '执行时间不是可解析时间', 'after 时间不是可解析时间', '回读时间不是可解析时间', '时间顺序必须为审批≤before≤执行≤after≤回读'];
+  const proof = ['审批人', '审批凭证', '审批时间', '执行人', '执行编号', '执行时间', '执行前值', '执行前时间', '执行后值', '执行后时间', '回读值', '回读时间', '执行前截图', '执行后截图', '回读证据', '现场行证明', '降价动作必须证明执行后值低于执行前值', '执行前、执行后和回读证据文件不能复用'];
+  const confirmation = ['审批人确认范围', '外部审批允许', '低风险策略允许', '执行成功确认', '执行核验', '回读核验', '执行前值和执行后值不能相同', '回读值必须等于执行后值', '审批时间不是可解析时间', '执行前时间不是可解析时间', '执行时间不是可解析时间', '执行后时间不是可解析时间', '回读时间不是可解析时间', '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读'];
   return [
     { title: '执行对象', items: items.filter((item) => target.includes(item)) },
     { title: '建议来源', items: items.filter((item) => source.includes(item)) },
@@ -418,9 +429,9 @@ export function readbackPrecheckCopy(missing: string[]) {
   }
   return {
     statusLabel: '字段已填写，待导出校验',
-    chipLabel: 'before/after/readback 值已填写；导出时会校验本地文件存在。',
-    exportButtonLabel: '导出读回证据',
-    helperText: '字段已填写时仍需导出 JSON/Markdown，并由后端校验截图、真实报表和回读证据文件是否存在。',
+    chipLabel: '执行前、执行后和回读值已填写；导出时会校验本地文件存在。',
+      exportButtonLabel: '导出回读证据',
+      helperText: '字段已填写时仍需导出证据文件和说明文件，并由后端校验截图、真实报表和回读证据文件是否存在。',
   };
 }
 
@@ -476,19 +487,24 @@ export function buildFillAdReadbackSessionCommand(sourcePath: string, sessionDir
 }
 
 export function readbackSessionWorkflow(sourcePath?: string) {
-  const sessionDir = sourcePath ? defaultSessionDir(sourcePath) : '导出读回证据 JSON 后自动生成';
+  const sessionDir = sourcePath ? defaultSessionDir(sourcePath) : '导出回读证据后自动生成';
   return {
     sessionDir,
     steps: [
-      '创建单动作 session 工作包，得到 operator-checklist.md、session-input.json 和截图目录。',
-      '按 checklist 在 Ads UI 确认同一店铺、站点、campaign、ad group、ASIN、对象和动作。',
-      '把审批凭证放入 approvals，把执行前截图放入 screenshots/before。',
-      '人工完成一次低风险动作后，把执行后截图放入 screenshots/after。',
-      '刷新 Ads UI 回读真实值，把回读截图放入 screenshots/readback。',
-      '填写 session-input.json 后运行 fill session，生成可进入最终验收的 readback JSON。',
+      '创建单动作工作包，得到操作清单、填写文件和截图目录。',
+      '按操作清单在广告后台确认同一店铺、站点、广告活动、广告组、ASIN、对象和动作。',
+      '把审批凭证放入审批目录，把执行前截图放入执行前截图目录。',
+      '人工完成一次低风险动作后，把执行后截图放入执行后截图目录。',
+      '刷新广告后台回读真实值，把回读截图放入回读截图目录。',
+      '填写现场信息后生成可进入最终验收的回读证据。',
     ],
-    warning: '检查工作包只证明目录和文件结构安全，不等于最终验收通过；最终仍以生成后的回读证据校验和 manifest 聚合为准。',
+    warning: '检查工作包只证明目录和文件结构安全，不等于最终验收通过；最终仍以生成后的回读证据校验和最终验收汇总为准。',
   };
+}
+
+export function readbackSessionSummary(sourcePath?: string): string {
+  if (!sourcePath?.trim()) return '先导出回读证据，再创建工作包。';
+  return '创建工作包后，按清单补审批、执行前、执行后和回读截图。';
 }
 
 function checklistStatus(missing: string[], labels: string[]): 'ready' | 'blocked' {
@@ -531,13 +547,13 @@ export function ReadbackPage() {
     },
     {
       title: '执行前后',
-      status: checklistStatus(missing, ['执行人', '执行编号', '执行时间', 'before 值', 'before 时间', 'after 值', 'after 时间', 'before 截图', 'after 截图', 'before/after 值不能相同', '降价动作必须证明 after 值低于 before 值', 'before/after/readback 证据文件不能复用', 'before 时间不是可解析时间', '执行时间不是可解析时间', 'after 时间不是可解析时间', '时间顺序必须为审批≤before≤执行≤after≤回读']),
-      detail: checklistText(missing, ['执行人', '执行编号', '执行时间', 'before 值', 'before 时间', 'after 值', 'after 时间', 'before 截图', 'after 截图', 'before/after 值不能相同', '降价动作必须证明 after 值低于 before 值', 'before/after/readback 证据文件不能复用', 'before 时间不是可解析时间', '执行时间不是可解析时间', 'after 时间不是可解析时间', '时间顺序必须为审批≤before≤执行≤after≤回读']),
+      status: checklistStatus(missing, ['执行人', '执行编号', '执行时间', '执行前值', '执行前时间', '执行后值', '执行后时间', '执行前截图', '执行后截图', '执行前值和执行后值不能相同', '降价动作必须证明执行后值低于执行前值', '执行前、执行后和回读证据文件不能复用', '执行前时间不是可解析时间', '执行时间不是可解析时间', '执行后时间不是可解析时间', '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读']),
+      detail: checklistText(missing, ['执行人', '执行编号', '执行时间', '执行前值', '执行前时间', '执行后值', '执行后时间', '执行前截图', '执行后截图', '执行前值和执行后值不能相同', '降价动作必须证明执行后值低于执行前值', '执行前、执行后和回读证据文件不能复用', '执行前时间不是可解析时间', '执行时间不是可解析时间', '执行后时间不是可解析时间', '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读']),
     },
     {
       title: '回读确认',
-      status: checklistStatus(missing, ['回读值', '回读时间', '回读证据', '现场行证明', '执行成功确认', '执行核验', '回读核验', '回读值必须等于 after 值', '回读时间不是可解析时间', '时间顺序必须为审批≤before≤执行≤after≤回读']),
-      detail: checklistText(missing, ['回读值', '回读时间', '回读证据', '现场行证明', '执行成功确认', '执行核验', '回读核验', '回读值必须等于 after 值', '回读时间不是可解析时间', '时间顺序必须为审批≤before≤执行≤after≤回读']),
+      status: checklistStatus(missing, ['回读值', '回读时间', '回读证据', '现场行证明', '执行成功确认', '执行核验', '回读核验', '回读值必须等于执行后值', '回读时间不是可解析时间', '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读']),
+      detail: checklistText(missing, ['回读值', '回读时间', '回读证据', '现场行证明', '执行成功确认', '执行核验', '回读核验', '回读值必须等于执行后值', '回读时间不是可解析时间', '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读']),
     },
   ], [missing]);
 
@@ -679,9 +695,9 @@ export function ReadbackPage() {
       setSessionCheck(null);
       setSessionFillResult(null);
       setSessionVerifyResult(null);
-      setMessage(result?.readyForVerifier ? '读回证据已导出，字段完整，等待最终验收。' : '读回证据已导出，但仍存在缺失项，不能作为最终就绪证据。');
+      setMessage(result?.readyForVerifier ? '回读证据已导出，字段完整，等待最终验收。' : '回读证据已导出，但仍存在缺失项，不能作为最终就绪证据。');
     } catch (caught) {
-      setMessage(errorMessage(caught, '导出读回证据失败'));
+      setMessage(errorMessage(caught, '导出回读证据失败'));
     }
   }
 
@@ -694,7 +710,7 @@ export function ReadbackPage() {
   async function prepareSessionPacket() {
     const sourcePath = exportResult?.jsonPath;
     if (!sourcePath) {
-      setCopyNotice('请先导出读回证据 JSON，再创建回读工作包。');
+      setCopyNotice('请先导出回读证据，再创建回读工作包。');
       return;
     }
     try {
@@ -758,7 +774,7 @@ export function ReadbackPage() {
       const result = await (window as any).electronAPI?.fillAdReadbackSession?.({ sessionDir });
       setSessionFillResult(result || null);
       setSessionVerifyResult(null);
-      setCopyNotice(result?.readyForVerifier ? '回读证据已生成，等待最终 verifier。' : '回读证据仍未就绪。');
+      setCopyNotice(result?.readyForVerifier ? '回读证据已生成，等待最终校验。' : '回读证据仍未就绪。');
     } catch (caught) {
       setCopyNotice(toUserFacingError(caught, '生成回读证据失败。'));
     }
@@ -773,7 +789,7 @@ export function ReadbackPage() {
     try {
       const result = await (window as any).electronAPI?.verifyAdReadbackEvidence?.({ evidencePath });
       setSessionVerifyResult(result || null);
-      setCopyNotice(result?.ready ? '回读证据 verifier 通过。' : '回读证据 verifier 未通过。');
+      setCopyNotice(result?.ready ? '回读证据校验通过。' : '回读证据校验未通过。');
     } catch (caught) {
       setCopyNotice(toUserFacingError(caught, '校验回读证据失败。'));
     }
@@ -782,21 +798,21 @@ export function ReadbackPage() {
   async function copyFillCommand() {
     const sourcePath = exportResult?.jsonPath;
     if (!sourcePath) {
-      setCopyNotice('请先导出读回证据 JSON，再复制填充命令。');
+      setCopyNotice('请先导出回读证据，再复制备用命令。');
       return;
     }
     try {
       await navigator.clipboard.writeText(buildFillAdReadbackCommand(form, sourcePath));
-      setCopyNotice('fill:ad-readback 命令已复制。');
+      setCopyNotice('长参数生成命令已复制。');
     } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, '复制 fill 命令失败。'));
+      setCopyNotice(toUserFacingError(caught, '复制生成命令失败。'));
     }
   }
 
   async function copySessionCommand(kind: 'prepare' | 'verify' | 'fill') {
     const sourcePath = exportResult?.jsonPath;
     if (!sourcePath) {
-      setCopyNotice('请先导出读回证据 JSON，再复制 session 命令。');
+      setCopyNotice('请先导出回读证据，再复制工作包命令。');
       return;
     }
     const builders = {
@@ -805,15 +821,15 @@ export function ReadbackPage() {
       fill: buildFillAdReadbackSessionCommand,
     };
     const labels = {
-      prepare: 'prepare:ad-readback-session 命令已复制。',
-      verify: 'verify:ad-readback-session 命令已复制。',
-      fill: 'fill:ad-readback-session 命令已复制。',
+      prepare: '创建工作包命令已复制。',
+      verify: '检查工作包命令已复制。',
+      fill: '生成回读证据命令已复制。',
     };
     try {
       await navigator.clipboard.writeText(builders[kind](sourcePath));
       setCopyNotice(labels[kind]);
     } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, '复制 session 命令失败。'));
+      setCopyNotice(toUserFacingError(caught, '复制工作包命令失败。'));
     }
   }
 
@@ -850,7 +866,7 @@ export function ReadbackPage() {
       <PageHeader
         eyebrow="广告执行"
         title="执行回读"
-        description="记录已批准动作的人工执行结果、before/after 和回读证据。本页不做批量自动写入，也不把技术命令作为主流程。"
+        description="记录已批准动作的人工执行结果、执行前/执行后截图和回读证据。本页不做批量自动写入；默认只展示业务步骤。"
         primaryTask="证明执行结果可回读"
         nextAction={form.recommendationId ? '补齐证据并导出' : '选择已批准动作'}
       />
@@ -860,7 +876,7 @@ export function ReadbackPage() {
           <div className="business-split">
             <div>
               <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
-              <p className="muted-line">每个广告动作都必须重新绑定自己的店铺、站点、campaign、ad group、对象、动作和现场值。</p>
+              <p className="muted-line">每个广告动作都必须重新绑定自己的店铺、站点、广告活动、广告组、对象、动作和现场值。</p>
             </div>
             <StatusPill tone="pending">人工执行证据，不批量写入</StatusPill>
           </div>
@@ -959,7 +975,7 @@ export function ReadbackPage() {
             <label>AI 模型<input value={form.sourceAiModel} onChange={(event) => update({ sourceAiModel: event.target.value })} /></label>
             <label className="form-grid-wide">推荐来源文件<textarea value={form.sourceFiles} onChange={(event) => update({ sourceFiles: event.target.value })} /></label>
           </div>
-          <p className="muted-line">来源批次、指标日期、来源行号、来源文件、来源当前值和建议值会写入 readback 证据，用于证明本次执行来自当前范围的哪条推荐。</p>
+          <p className="muted-line">来源批次、指标日期、来源行号、来源文件、来源当前值和建议值会写入回读证据，用于证明本次执行来自当前范围的哪条推荐。</p>
           {(form.productStage || form.decisionAgreement || form.aiLifecycleStage || form.quantLifecycleStage) && (
             <div className="readback-context-grid">
               <div>
@@ -996,12 +1012,12 @@ export function ReadbackPage() {
             <label>执行人<input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></label>
             <label>执行编号<input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></label>
             <label>执行时间<input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></label>
-            <label>Before 值<input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></label>
-            <label>Before 截图<input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></label>
-            <label>Before 时间<input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
-            <label>After 值<input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></label>
-            <label>After 截图<input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></label>
-            <label>After 时间<input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
+            <label>执行前值<input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></label>
+            <label>执行前截图<input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></label>
+            <label>执行前时间<input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
+            <label>执行后值<input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></label>
+            <label>执行后截图<input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></label>
+            <label>执行后时间<input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
             <label>回读值<input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></label>
             <label>回读证据<input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></label>
             <label>回读时间<input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></label>
@@ -1059,11 +1075,11 @@ export function ReadbackPage() {
                 <strong>{[form.storeName, form.marketplaceCode, form.campaignName, form.adGroupName, form.entityName].filter(Boolean).join(' / ') || '未完整填写'}</strong>
               </div>
               <div>
-                <span>JSON</span>
+                <span>证据文件</span>
                 <code>{exportResult.jsonPath || '-'}</code>
               </div>
               <div>
-                <span>Markdown</span>
+                <span>说明文件</span>
                 <code>{exportResult.markdownPath || '-'}</code>
               </div>
               <p>该导出只写入本地证据文件，不会提交 Amazon。下一步：补齐缺失项后重新导出，或到“交付验收”查看最终缺口。</p>
@@ -1075,22 +1091,26 @@ export function ReadbackPage() {
         <Panel title="5. 回读工作包" tone={exportResult?.jsonPath ? 'warning' : 'blocked'}>
           <div className="business-split">
             <div>
-              <div className="business-scope-line">工作包目录：{sessionWorkflow.sessionDir}</div>
-              <p className="muted-line">真实广告动作只按单个已批准建议处理；工作包用于把审批、before、after 和刷新回读证据分目录收齐。</p>
+              <div className="business-scope-line">工作包状态：{readbackSessionSummary(exportResult?.jsonPath)}</div>
+              <p className="muted-line">真实广告动作只按单个已批准建议处理；工作包用于把审批、执行前、执行后和刷新回读证据分目录收齐。</p>
             </div>
             <StatusPill tone={exportResult?.jsonPath ? 'pending' : 'blocked'}>
-              {exportResult?.jsonPath ? '可创建 session' : '先导出读回证据'}
+              {exportResult?.jsonPath ? '可创建工作包' : '先导出回读证据'}
             </StatusPill>
           </div>
-          <ol className="readback-session-list">
-            {sessionWorkflow.steps.map((step, index) => (
-              <li key={step}>
-                <span>{index + 1}</span>
-                <p>{step}</p>
-              </li>
-            ))}
-          </ol>
-          <p className="muted-line">{sessionWorkflow.warning}</p>
+          <details className="dashboard-details">
+            <summary>工作包内要做什么</summary>
+            <div className="business-scope-line">工作包目录：{sessionWorkflow.sessionDir}</div>
+            <ol className="readback-session-list">
+              {sessionWorkflow.steps.map((step, index) => (
+                <li key={step}>
+                  <span>{index + 1}</span>
+                  <p>{step}</p>
+                </li>
+              ))}
+            </ol>
+            <p className="muted-line">{sessionWorkflow.warning}</p>
+          </details>
           <div className="action-row">
             <button className="primary-button" disabled={!exportResult?.jsonPath} onClick={prepareSessionPacket} type="button">
               创建回读工作包
@@ -1113,46 +1133,54 @@ export function ReadbackPage() {
             <button className="primary-button" disabled={!sessionFillResult?.jsonPath} onClick={verifyReadbackEvidence} type="button">
               校验回读证据
             </button>
-            <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('prepare')} type="button">
-              复制创建命令
-            </button>
-            <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('verify')} type="button">
-              复制检查命令
-            </button>
-            <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('fill')} type="button">
-              复制生成命令
-            </button>
           </div>
-          {sessionResult && (
-            <div className="readback-session-result">
-              <div>
-                <span>Session 目录</span>
-                <code>{sessionResult.sessionDir || '-'}</code>
-              </div>
-              <div>
-                <span>填写文件</span>
-                <code>{sessionResult.sessionInputPath || '-'}</code>
-              </div>
-              <div>
-                <span>填写说明</span>
-                <code>{sessionResult.sessionInputGuidePath || '-'}</code>
-              </div>
-              <div>
-                <span>操作清单</span>
-                <code>{sessionResult.checklistPath || '-'}</code>
-              </div>
-              <div>
-                <span>PASS 输出</span>
-                <code>{sessionResult.passEvidencePath || '-'}</code>
-              </div>
+          <details className="dashboard-details">
+            <summary>命令备用入口</summary>
+            <div className="action-row">
+              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('prepare')} type="button">
+                复制创建命令
+              </button>
+              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('verify')} type="button">
+                复制检查命令
+              </button>
+              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('fill')} type="button">
+                复制生成命令
+              </button>
             </div>
+          </details>
+          {sessionResult && (
+            <details className="dashboard-details">
+              <summary>查看工作包路径</summary>
+              <div className="readback-session-result">
+                <div>
+                  <span>工作包目录</span>
+                  <code>{sessionResult.sessionDir || '-'}</code>
+                </div>
+                <div>
+                  <span>填写文件</span>
+                  <code>{sessionResult.sessionInputPath || '-'}</code>
+                </div>
+                <div>
+                  <span>填写说明</span>
+                  <code>{sessionResult.sessionInputGuidePath || '-'}</code>
+                </div>
+                <div>
+                  <span>操作清单</span>
+                  <code>{sessionResult.checklistPath || '-'}</code>
+                </div>
+                <div>
+                  <span>最终证据输出</span>
+                  <code>{sessionResult.passEvidencePath || '-'}</code>
+                </div>
+              </div>
+            </details>
           )}
           {sessionCheck && (
             <div className={`readback-session-check ${sessionCheckCopy(sessionCheck).className}`}>
               <strong>{sessionCheckCopy(sessionCheck).title}</strong>
               <span>{sessionCheckCopy(sessionCheck).detail}</span>
               {sessionCheck.ready && !sessionCheck.captureReady && (
-                <p className="muted-line">检查工作包只证明目录和文件结构安全；还必须填写 session-input.json 并生成 PASS JSON 后，才可能进入最终验收。</p>
+                <p className="muted-line">检查工作包只证明目录和文件结构安全；还必须填写现场信息并生成最终证据后，才可能进入最终验收。</p>
               )}
               {!sessionCheck.ready && Array.isArray(sessionCheck.issues) && (
                 <ul>
@@ -1164,14 +1192,14 @@ export function ReadbackPage() {
           {sessionFillResult && (
             <div className={`readback-session-check ${sessionFillResult.readyForVerifier ? 'readback-session-check-ready' : 'readback-session-check-blocked'}`}>
               <strong>{sessionFillResult.readyForVerifier ? '回读证据已生成，待最终校验' : '回读证据仍未就绪'}</strong>
-              <span>{sessionFillResult.readyForVerifier ? '已根据 session-input.json 生成 JSON/Markdown；最终 READY 仍必须通过 verify:ad-readback 和 manifest 聚合。' : 'session-input 或证据文件仍有缺口，不能进入最终验收。'}</span>
+              <span>{sessionFillResult.readyForVerifier ? '已根据填写文件生成证据文件；最终可交付仍必须通过本地回读证据校验和最终验收汇总。' : '填写文件或证据文件仍有缺口，不能进入最终验收。'}</span>
               <div className="readback-session-result readback-session-result-embedded">
                 <div>
-                  <span>JSON</span>
+                  <span>证据文件</span>
                   <code>{sessionFillResult.jsonPath || '-'}</code>
                 </div>
                 <div>
-                  <span>Markdown</span>
+                  <span>说明文件</span>
                   <code>{sessionFillResult.markdownPath || '-'}</code>
                 </div>
               </div>
@@ -1184,8 +1212,8 @@ export function ReadbackPage() {
           )}
           {sessionVerifyResult && (
             <div className={`readback-session-check ${sessionVerifyResult.ready ? 'readback-session-check-ready' : 'readback-session-check-blocked'}`}>
-              <strong>{sessionVerifyResult.ready ? '回读证据 verifier 已通过' : '回读证据 verifier 未通过'}</strong>
-              <span>{sessionVerifyResult.ready ? '这份 JSON 已通过本地回读证据校验；最终 READY 仍需进入 evidence manifest 聚合。' : '这份 JSON 还不能进入最终 manifest，请按下列缺口补证据后重新生成或重新校验。'}</span>
+              <strong>{sessionVerifyResult.ready ? '回读证据校验已通过' : '回读证据校验未通过'}</strong>
+              <span>{sessionVerifyResult.ready ? '这份证据已通过本地回读证据校验；最终可交付仍需进入最终验收汇总。' : '这份证据还不能进入最终验收汇总，请按下列缺口补证据后重新生成或重新校验。'}</span>
               <div className="readback-session-result readback-session-result-embedded">
                 <div>
                   <span>校验文件</span>
@@ -1193,7 +1221,7 @@ export function ReadbackPage() {
                 </div>
                 <div>
                   <span>状态</span>
-                  <strong>{sessionVerifyResult.status || (sessionVerifyResult.ready ? 'PASS' : 'NEEDS_WORK')}</strong>
+                  <strong>{sessionVerifyResult.ready ? '通过' : '需补证据'}</strong>
                 </div>
               </div>
               {!sessionVerifyResult.ready && Array.isArray(sessionVerifyResult.issues) && sessionVerifyResult.issues.length > 0 && (
@@ -1209,20 +1237,20 @@ export function ReadbackPage() {
         <details className="details-panel">
           <summary>技术验收说明</summary>
           <div className="details-content">
-            <p>最终验收仍以本地证据文件、截图路径、时间顺序和 manifest 聚合为准；业务页不展示长命令块。</p>
-            <p>真实执行路径保持 fail-closed：没有审批、before、after、回读证据时不能声称执行完成。</p>
+            <p>最终验收仍以本地证据文件、截图路径、时间顺序和最终验收汇总为准；业务页不展示长命令块。</p>
+            <p>真实执行路径保持 fail-closed：没有审批、执行前、执行后、回读证据时不能声称执行完成。</p>
             <div className="action-row">
               <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('prepare')} type="button">
-                复制 prepare session 命令
+                复制创建工作包命令
               </button>
               <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('verify')} type="button">
-                复制 verify session 命令
+                复制检查工作包命令
               </button>
               <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('fill')} type="button">
-                复制 fill session 命令
+                复制生成回读证据命令
               </button>
               <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={copyFillCommand} type="button">
-                复制长参数 fill 命令
+                复制长参数生成命令
               </button>
             </div>
             {copyNotice && <p className="muted-line">{copyNotice}</p>}

@@ -29,6 +29,36 @@ function sha256Text(content) {
   return crypto.createHash('sha256').update(Buffer.from(content, 'utf8')).digest('hex').toUpperCase();
 }
 
+function writePackageLaunchSmoke(filePath, releaseDir, portablePath, portableContent, overrides = {}) {
+  const unpackedContent = 'unpacked app fixture\n';
+  const unpackedPath = path.join(releaseDir, 'win-unpacked', 'AmazonAIOpsAgent.exe');
+  fs.mkdirSync(path.dirname(unpackedPath), { recursive: true });
+  fs.writeFileSync(unpackedPath, unpackedContent, 'utf8');
+  const smoke = {
+    kind: 'package-launch-smoke',
+    generatedAt: '2026-06-18T00:00:00.000Z',
+    passed: true,
+    artifacts: {
+      unpacked: {
+        path: unpackedPath,
+        sizeBytes: Buffer.byteLength(unpackedContent, 'utf8'),
+        sha256: sha256Text(unpackedContent),
+      },
+      portable: {
+        path: portablePath,
+        sizeBytes: Buffer.byteLength(portableContent, 'utf8'),
+        sha256: sha256Text(portableContent),
+      },
+    },
+    checks: [
+      { kind: 'win-unpacked', ok: true, marker: '[App] ipc-ready' },
+      { kind: 'portable', ok: true, appChildCount: 1 },
+    ],
+    ...overrides,
+  };
+  writeJson(filePath, smoke);
+}
+
 describe('verify v15 final readiness', () => {
   it('does not pass AI live provider evidence that leaks an API key shaped secret', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-final-readiness-ai-live-secret-'));
@@ -178,5 +208,81 @@ describe('verify v15 final readiness', () => {
       status: 'needs_work',
     });
     expect(packageGate.message).toContain('portable no-install package hash evidence is missing');
+  });
+
+  it('passes package launch smoke when it matches the current portable package hash', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-final-readiness-package-launch-'));
+    const manifestPath = path.join(dir, 'evidence-manifest.json');
+    const releaseDir = path.join(dir, 'release');
+    const outPath = path.join(dir, 'final-readiness.json');
+    const smokePath = path.join(dir, 'package-launch-smoke.json');
+    const installerContent = 'installer verifier fixture\n';
+    const portableContent = 'portable verifier fixture\n';
+    const installerPath = path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0.exe');
+    const portablePath = path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0-portable.exe');
+    fs.mkdirSync(releaseDir, { recursive: true });
+    fs.writeFileSync(installerPath, installerContent, 'utf8');
+    fs.writeFileSync(portablePath, portableContent, 'utf8');
+    writePackageLaunchSmoke(smokePath, releaseDir, portablePath, portableContent);
+    writeJson(manifestPath, {
+      kind: 'v15-final-readiness-evidence-manifest',
+      evidence: {},
+    });
+
+    const result = runNode('scripts/verify-v15-final-readiness.js', [
+      '--evidence-manifest', manifestPath,
+      '--release-dir', releaseDir,
+      '--package-launch-smoke', smokePath,
+      '--out', outPath,
+    ]);
+
+    expect(result.status).not.toBe(0);
+    const summary = readJson(outPath);
+    const launchGate = summary.gates.find((gate) => gate.name === 'Package launch smoke');
+    expect(launchGate).toMatchObject({
+      ok: true,
+      status: 'passed',
+    });
+    expect(summary.packageLaunchSmoke).toMatchObject({
+      present: true,
+      passed: true,
+      evidencePath: smokePath,
+    });
+  });
+
+  it('fails package launch smoke when it does not match the current portable package hash', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-final-readiness-stale-package-launch-'));
+    const manifestPath = path.join(dir, 'evidence-manifest.json');
+    const releaseDir = path.join(dir, 'release');
+    const outPath = path.join(dir, 'final-readiness.json');
+    const smokePath = path.join(dir, 'package-launch-smoke.json');
+    const installerContent = 'installer verifier fixture\n';
+    const portableContent = 'portable verifier fixture\n';
+    const installerPath = path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0.exe');
+    const portablePath = path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0-portable.exe');
+    fs.mkdirSync(releaseDir, { recursive: true });
+    fs.writeFileSync(installerPath, installerContent, 'utf8');
+    fs.writeFileSync(portablePath, portableContent, 'utf8');
+    writePackageLaunchSmoke(smokePath, releaseDir, portablePath, 'stale portable fixture\n');
+    writeJson(manifestPath, {
+      kind: 'v15-final-readiness-evidence-manifest',
+      evidence: {},
+    });
+
+    const result = runNode('scripts/verify-v15-final-readiness.js', [
+      '--evidence-manifest', manifestPath,
+      '--release-dir', releaseDir,
+      '--package-launch-smoke', smokePath,
+      '--out', outPath,
+    ]);
+
+    expect(result.status).not.toBe(0);
+    const summary = readJson(outPath);
+    const launchGate = summary.gates.find((gate) => gate.name === 'Package launch smoke');
+    expect(launchGate).toMatchObject({
+      ok: false,
+      status: 'needs_work',
+    });
+    expect(launchGate.message).toContain('stale');
   });
 });

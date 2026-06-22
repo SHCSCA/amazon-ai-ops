@@ -100,7 +100,7 @@ describe('emptyRecommendationReason', () => {
           entityName: 'smart lock',
           invalidReasons: ['AI 候选动作缺少可回查证据引用。'],
         }],
-        filterReasons: ['AI 候选无法绑定当前 campaign/ad group/关键词。'],
+        filterReasons: ['AI 候选无法绑定当前广告活动/广告组/关键词。'],
       },
     }) as any, {
       status: 'available',
@@ -114,9 +114,10 @@ describe('emptyRecommendationReason', () => {
     expect(reason.title).toBe('AI 仅生成洞察，未进入建议池');
     expect(reason.detail).toContain('AI 返回 2 条候选');
     expect(reason.detail).toContain('AI 候选动作缺少可回查证据引用');
-    expect(reason.detail).toContain('AI 候选无法绑定当前 campaign/ad group/关键词');
+    expect(reason.detail).toContain('AI 候选无法绑定当前广告活动/广告组/关键词');
     expect(reason.nextStep).toContain('补齐证据');
-    expect(reason.nextStep).toContain('campaign/ad group/关键词');
+    expect(reason.nextStep).toContain('广告活动/广告组/关键词');
+    expect(`${reason.detail} ${reason.nextStep}`).not.toContain('campaign/ad group');
   });
 });
 

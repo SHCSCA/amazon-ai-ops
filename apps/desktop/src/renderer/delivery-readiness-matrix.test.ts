@@ -24,9 +24,37 @@ describe('buildDeliveryReadinessMatrix', () => {
     expect(matrix.status).toBe('ready');
     expect(matrix.headline).toContain('可交付证据闭环已完成');
     expect(matrix.readyCount).toBe(matrix.totalCount);
-    expect(matrix.primaryNextAction).toBe('导出交付包并记录安装包 hash');
+    expect(matrix.primaryNextAction).toBe('导出交付包并记录安装包校验码');
     expect(matrix.items.find((item) => item.key === 'data')?.tone).toBe('ready');
     expect(matrix.items.find((item) => item.key === 'aiEvidence')?.detail).toContain('AI 成功 3 次');
+  });
+
+  it('uses operator-facing wording for readback and package proof details', () => {
+    const matrix = buildDeliveryReadinessMatrix({
+      realReportCount: 8,
+      importedRows: 2416,
+      actionableRows: 180,
+      aiAvailable: true,
+      aiSuccessCount: 3,
+      operationEventCount: 2,
+      productContextCount: 1,
+      listingReadReady: true,
+      listingDraftReady: true,
+      pendingRecommendationCount: 4,
+      approvedRecommendationCount: 2,
+      readbackVerifiedCount: 1,
+      installerAvailable: false,
+      deliveryManifestReady: false,
+    });
+
+    const readback = matrix.items.find((item) => item.key === 'readback');
+    const packageItem = matrix.items.find((item) => item.key === 'package');
+
+    expect(readback?.detail).toContain('执行前/执行后/回读验证');
+    expect(readback?.detail).not.toMatch(/before|after|readback/);
+    expect(packageItem?.detail).toContain('最终验收汇总');
+    expect(packageItem?.detail).toContain('免安装包/校验码');
+    expect(packageItem?.detail).not.toMatch(/manifest|exe|hash/i);
   });
 
   it('blocks formal delivery when real reports or imported daily metrics are missing', () => {

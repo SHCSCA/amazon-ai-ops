@@ -100,7 +100,7 @@ function readNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function readbackSessionStatusCopy(result: ReadbackSessionCheckResult | null): { className: string; title: string; detail: string } {
+export function readbackSessionStatusCopy(result: ReadbackSessionCheckResult | null): { className: string; title: string; detail: string } {
   if (!result) {
     return {
       className: 'readback-session-check-blocked',
@@ -120,14 +120,21 @@ function readbackSessionStatusCopy(result: ReadbackSessionCheckResult | null): {
     return {
       className: 'readback-session-check-blocked',
       title: '结构通过，现场证据待填写',
-      detail: missing ? `还需填写：${missing}` : ((result.captureIssues || []).slice(0, 2).join('；') || 'session-input.json 尚未完成现场证据填写。'),
+      detail: missing ? `还需填写：${missing}` : deliveryTextForDisplay((result.captureIssues || []).slice(0, 2).join('；') || 'session-input.json 尚未完成现场证据填写。'),
     };
   }
   return {
     className: 'readback-session-check-ready',
     title: '结构与现场证据均已通过',
-    detail: 'session-input.json 已补齐，可生成回读证据并进入 verifier。',
+    detail: '填写文件已补齐，可生成回读证据并进入本地校验。',
   };
+}
+
+function deliveryCaptureFieldLabelForDisplay(value: unknown): string {
+  return deliveryTextForDisplay(String(value || ''))
+    .replace(/执行前\s*Ads UI live bid/gi, '现场出价')
+    .replace(/执行后\s*Ads UI live bid/gi, '现场出价')
+    .replace(/Ads UI live bid/gi, '现场出价');
 }
 
 function formatCaptureMissing(
@@ -137,11 +144,11 @@ function formatCaptureMissing(
   if (Array.isArray(missingFields) && missingFields.length > 0) {
     return missingFields
       .slice(0, 8)
-      .map((item) => [item.group, item.label || item.field].filter(Boolean).join('/'))
+      .map((item) => [item.group, deliveryCaptureFieldLabelForDisplay(item.label || item.field)].filter(Boolean).join('/'))
       .filter(Boolean)
       .join('、');
   }
-  return (fallbackFields || []).slice(0, 8).join('、');
+  return (fallbackFields || []).slice(0, 8).map(deliveryCaptureFieldLabelForDisplay).join('、');
 }
 
 function readString(value: unknown): string {
@@ -203,8 +210,23 @@ function evidenceFolder(data: BusinessDataPipeline | null): string {
   return paths.find((item) => item.kind === 'folder')?.path || data?.collection?.latestBatch?.downloadDir || DELIVERY_BUNDLE_PATH;
 }
 
-function deliveryTextForDisplay(text: string): string {
+export function deliveryTextForDisplay(text: string): string {
   return text
+    .replace(/appReady=false，不能声明可交付。/gi, '最终验收未通过，不能声明可交付。')
+    .replace(/manifestDriven=false，不能声明可交付。/gi, '最终验收汇总不是本次验收来源，不能声明可交付。')
+    .replace(/Current candidate is missing before\/after\/reload readback proof\./gi, '当前候选动作缺少执行前、执行后和刷新回读证明。')
+    .replace(/最终就绪\s+manifest/gi, '最终验收汇总')
+    .replace(/READY\s+交付包/g, '可交付包')
+    .replace(/before\s*\/\s*after\s*\/\s*readback/gi, '执行前/执行后/回读')
+    .replace(/before\s*\/\s*after\s+readback/gi, '执行前/执行后回读')
+    .replace(/before\s*\/\s*after/gi, '执行前/执行后')
+    .replace(/\bsession-input\.json\b/gi, '填写文件')
+    .replace(/\bfinal readiness gate\b/gi, '最终验收项')
+    .replace(/\bfinal readiness\b/gi, '最终验收')
+    .replace(/\bverifier\b/gi, '本地校验')
+    .replace(/\bmanifest\b/gi, '最终验收汇总')
+    .replace(/\bhash\b/gi, '校验码')
+    .replace(/\breadback\b/gi, '回读')
     .replace(/APP_READY/g, '可交付状态')
     .replace(/APP_NEEDS_WORK/g, '未就绪状态')
     .replace(/\bREADY\b/g, '可交付');
@@ -225,6 +247,34 @@ export function packageEvidenceSummary(packageEvidence: DeliveryEvidenceStatusVi
   return `${filePath}${hash}`;
 }
 
+function reconciliationSourceLabel(source?: string): string {
+  if (source === 'canonical_user_search_term') return '用户搜索词权威口径';
+  if (source === 'canonical_search_term') return '搜索词总盘口径';
+  return source || '未记录';
+}
+
+type DeliveryOverviewFact = {
+  label: string;
+  value: string;
+};
+
+export function buildDeliveryOverviewFacts(input: {
+  scopeSummary: string;
+  realFileCount: number;
+  importedRows: number;
+  readinessStatusText: string;
+  gateSummaryText: string;
+  packageSummaryText: string;
+}): DeliveryOverviewFact[] {
+  const packageRecorded = input.packageSummaryText && !input.packageSummaryText.includes('未记录') && !input.packageSummaryText.includes('不可用');
+  return [
+    { label: '运营范围', value: input.scopeSummary },
+    { label: '真实数据', value: `${input.realFileCount} 个文件 / ${input.importedRows} 行` },
+    { label: '最终验收', value: `${input.readinessStatusText} / ${input.gateSummaryText}` },
+    { label: '安装包', value: packageRecorded ? '已记录' : '未记录' },
+  ];
+}
+
 export function readinessBlockerTexts(readiness: DeliveryReadinessView | null): string[] {
   if (!readiness) return [];
   const failedGateMessages = (readiness.gates || [])
@@ -242,16 +292,16 @@ export function readinessBlockerTexts(readiness: DeliveryReadinessView | null): 
 }
 
 export function buildManifestActions(readiness: DeliveryReadinessView | null): string[] {
-  if (!readiness?.available) return [deliveryTextForDisplay(readiness?.message || '最终验收 manifest 尚未生成')];
-  if (!readiness.manifestDriven) return ['重新生成 evidence manifest，并用该 manifest 运行最终验收。'];
+  if (!readiness?.available) return [deliveryTextForDisplay(readiness?.message || '最终验收汇总尚未生成')];
+  if (!readiness.manifestDriven) return [deliveryTextForDisplay('重新生成最终验收汇总，并用该汇总运行最终验收。')];
   if (readiness.appReady) {
     const passedMessages = readiness.gates
       .filter((gate) => gate.ok && gate.message)
       .map((gate) => deliveryTextForDisplay(gate.message as string));
-    return ['最终就绪 manifest 已通过；仍需保留证据包和安装包 hash。', ...passedMessages];
+    return [deliveryTextForDisplay('最终验收汇总已通过；仍需保留证据包和安装包校验码。'), ...passedMessages];
   }
   const blockers = readinessBlockerTexts(readiness);
-  return blockers.length > 0 ? blockers : ['补齐未通过的 final readiness gate 后重新验收。'];
+  return blockers.length > 0 ? blockers : [deliveryTextForDisplay('补齐未通过的 final readiness gate 后重新验收。')];
 }
 
 function gateStatusLabel(gate: DeliveryReadinessGate): string {
@@ -275,7 +325,7 @@ export function findReadbackBlockerGate(readiness: DeliveryReadinessView | null)
 
 export function readbackBlockerSummary(gate: DeliveryReadinessGate | null): string {
   if (!gate) return '当前没有检测到广告回读 gate 阻断。';
-  const message = deliveryTextForDisplay(gate.message || '真实广告 readback 证据未通过。');
+  const message = deliveryTextForDisplay(gate.message || '真实广告回读证据未通过。');
   const evidence = gate.evidencePath ? `候选证据：${gate.evidencePath}` : '候选证据路径未绑定。';
   return `${message} ${evidence}`;
 }
@@ -335,44 +385,44 @@ export function buildDeliveryItems(
     {
       title: 'AI 业务证据',
       tone: finalReady ? 'ready' : 'blocked',
-      summary: finalReady ? '最终 manifest 已接受 AI 相关证据。' : '最终 manifest 尚未证明真实 AI 连接、广告 AI 解释和 Listing AI 草案。',
+      summary: finalReady ? '最终验收汇总已接受 AI 相关证据。' : '最终验收汇总尚未证明真实 AI 连接、广告 AI 解释和 Listing AI 草案。',
       actions: finalReady ? ['保留脱敏 AI 证据路径。'] : ['保存脱敏 Provider 配置，完成连接测试，并附加广告解释与 Listing 草案证据。'],
     },
     {
       title: '优化建议证据',
       tone: finalReady ? 'ready' : hasMetrics ? 'pending' : 'blocked',
-      summary: finalReady ? '最终 manifest 已接受优化建议证据。' : hasMetrics ? '已有指标，但仍需绑定当前来源文件的建议证据。' : '缺少真实指标时不能生成交付级建议。',
+      summary: finalReady ? '最终验收汇总已接受优化建议证据。' : hasMetrics ? '已有指标，但仍需绑定当前来源文件的建议证据。' : '缺少真实指标时不能生成交付级建议。',
       actions: ['只从当前范围数据批次生成建议，并保留来源文件证据。'],
     },
     {
       title: '审批与回读',
       tone: finalReady ? 'ready' : 'blocked',
-      summary: finalReady ? '最终 manifest 已接受审批和回读证据。' : '仍需真实广告动作的审批、before/after 和 readback 证明。',
-      actions: ['记录审批人、范围、before 值、after 值、截图和回读值。'],
+      summary: finalReady ? '最终验收汇总已接受审批和回读证据。' : '仍需真实广告动作的审批、执行前/执行后和回读证明。',
+      actions: ['记录审批人、范围、执行前值、执行后值、截图和回读值。'],
     },
     {
       title: '关键词机会',
       tone: finalReady ? 'ready' : hasMetrics ? 'pending' : 'blocked',
-      summary: finalReady ? '最终 manifest 已接受关键词机会证据。' : hasMetrics ? '可生成关键词机会，但交付证据尚未聚合。' : '关键词机会需要已导入广告指标。',
-      actions: ['按 ASIN、campaign、ad group、对象类型和关键词去重生成机会。'],
+      summary: finalReady ? '最终验收汇总已接受关键词机会证据。' : hasMetrics ? '可生成关键词机会，但交付证据尚未聚合。' : '关键词机会需要已导入广告指标。',
+      actions: ['按 ASIN、广告活动、广告组、对象类型和关键词去重生成机会。'],
     },
     {
       title: 'Listing 草案证据',
       tone: finalReady ? 'ready' : 'blocked',
-      summary: finalReady ? '最终 manifest 已接受 Listing AI 草案证据。' : '当前最终就绪状态缺少 Listing AI 草案证据。',
+      summary: finalReady ? '最终验收汇总已接受 Listing AI 草案证据。' : '当前最终就绪状态缺少 Listing AI 草案证据。',
       actions: ['从领星读取 Listing，生成本地 AI 草案，并保留导出路径。'],
     },
     {
       title: '安装包',
       tone: packageReady ? 'ready' : finalReady ? 'pending' : 'blocked',
       summary: packageReady
-        ? '最终 manifest 已通过，安装包/hash 已记录。'
+        ? '最终验收汇总已通过，安装包/校验码已记录。'
         : finalReady
-          ? '最终 manifest 已通过，但安装包/hash 还未记录。'
-          : '最终 manifest 未通过前不能声明安装包可交付。',
+          ? '最终验收汇总已通过，但安装包/校验码还未记录。'
+          : '最终验收汇总未通过前不能声明安装包可交付。',
       actions: packageReady
-        ? ['复核安装包路径、免安装 exe 和 SHA-256 是否与本次交付一致。']
-        : ['最终节点生成 no-install exe，并记录路径和 SHA-256。'],
+        ? ['复核安装包路径、免安装包和 SHA-256 校验码是否与本次交付一致。']
+        : ['最终节点生成免安装包，并记录路径和 SHA-256 校验码。'],
       evidence: packageReady
         ? [
             packageEvidence?.installerPath ? `安装包：${packageEvidence.installerPath}` : '',
@@ -385,7 +435,7 @@ export function buildDeliveryItems(
     {
       title: '当前阻塞项',
       tone: finalReady ? 'ready' : 'blocked',
-      summary: finalReady ? '最终 manifest gate 已通过。' : '当前范围仍有需要处理的交付阻塞项。',
+      summary: finalReady ? '最终验收项已通过。' : '当前范围仍有需要处理的交付阻塞项。',
       actions: [
         ...readinessBlockers,
         ...deliveryTextsForDisplay(collectionBlockers),
@@ -428,11 +478,20 @@ export function DeliveryPage() {
   const tone = readinessTone(readiness);
   const manifestReady = readiness?.appReady && readiness?.manifestDriven;
   const packageSummary = packageEvidenceSummary(deliveryEvidenceStatus?.package);
+  const gateSummaryText = readiness?.gatesSummary ? `${readiness.gatesSummary.passed}/${readiness.gatesSummary.total} 通过` : '未生成';
+  const deliveryOverviewFacts = buildDeliveryOverviewFacts({
+    scopeSummary: summarizeScope(data, scope),
+    realFileCount: realFiles.length,
+    importedRows,
+    readinessStatusText: status,
+    gateSummaryText,
+    packageSummaryText: packageSummary,
+  });
   const readbackBlockerGate = useMemo(() => findReadbackBlockerGate(readiness), [readiness]);
   const readbackCandidatePath = readbackBlockerGate?.evidencePath || '';
   const manifestScopeNote = manifestReady
-    ? '可交付只代表最终 manifest 选中的证据已通过；如果切换了日期、店铺、站点或批次，需要重新生成当前范围证据。'
-    : '当前还不能声明可交付；先按下方缺口补齐证据，再重新生成最终 manifest。';
+    ? '可交付只代表最终验收汇总选中的证据已通过；如果切换了日期、店铺、站点或批次，需要重新生成当前范围证据。'
+    : '当前还不能声明可交付；先按下方缺口补齐证据，再重新生成最终验收汇总。';
   const deliveryMatrix = useMemo(() => buildDeliveryReadinessMatrix(buildDeliveryReadinessMatrixInput({
     data,
     readiness,
@@ -456,13 +515,13 @@ export function DeliveryPage() {
           loadedData = nextData || null;
           if (mounted) setData(nextData);
         } else {
-          notes.push('数据管道 API 未接入，交付页只显示 manifest 状态。');
+          notes.push('数据管道能力未连接，交付页只显示最终验收状态。');
         }
         if (typeof apiSurface.getDeliveryReadiness === 'function') {
           const nextReadiness = await apiSurface.getDeliveryReadiness();
           if (mounted) setReadiness(nextReadiness);
         } else {
-          notes.push('最终就绪 manifest API 未接入。');
+          notes.push('最终验收能力未连接。');
           if (mounted) {
             setReadiness({
               available: false,
@@ -473,9 +532,9 @@ export function DeliveryPage() {
               manifestDriven: false,
               gates: [],
               gatesSummary: { total: 0, passed: 0, failed: 0 },
-              missing: ['最终验收 manifest API 未接入'],
-              actionItems: ['接入 getDeliveryReadiness API 后重新读取最终验收 manifest。'],
-              message: '最终验收 manifest API 未接入。',
+              missing: ['最终验收能力未连接'],
+              actionItems: ['接入 getDeliveryReadiness API 后重新读取最终验收汇总。'],
+              message: '最终验收能力未连接。',
             });
           }
         }
@@ -555,7 +614,7 @@ export function DeliveryPage() {
 
   async function openPath(targetPath: string, label: string) {
     if (!targetPath) {
-      setMessage(`${label}不可用：最终验收 manifest 尚未生成。`);
+      setMessage(`${label}不可用：最终验收汇总尚未生成。`);
       return;
     }
     if (!canOpenPath) {
@@ -572,7 +631,7 @@ export function DeliveryPage() {
 
   async function exportBundle() {
     if (typeof apiSurface.exportDeliveryBundle !== 'function') {
-      setMessage('导出交付包 API 未接入。请先生成最终就绪 manifest，再运行交付包导出。');
+      setMessage('导出交付包能力未连接。请先生成最终验收汇总，再运行交付包导出。');
       return;
     }
     try {
@@ -595,7 +654,7 @@ export function DeliveryPage() {
 
   async function refreshFinalReadinessManifest() {
     if (typeof apiSurface.refreshFinalReadiness !== 'function') {
-      setMessage('刷新最终验收 API 未接入。');
+      setMessage('刷新最终验收能力未连接。');
       return;
     }
     try {
@@ -614,11 +673,11 @@ export function DeliveryPage() {
 
   async function createReadbackWorkPackage() {
     if (!readbackCandidatePath) {
-      setMessage('无法创建回读工作包：当前 final readiness 没有绑定广告 readback 候选证据路径。');
+      setMessage('无法创建回读工作包：当前最终验收没有绑定广告回读候选证据路径。');
       return;
     }
     if (typeof apiSurface.prepareAdReadbackSession !== 'function') {
-      setMessage('无法创建回读工作包：prepareAdReadbackSession API 未接入。');
+      setMessage('无法创建回读工作包：本地回读准备能力未连接。');
       return;
     }
     try {
@@ -640,7 +699,7 @@ export function DeliveryPage() {
       return;
     }
     if (typeof apiSurface.verifyAdReadbackSession !== 'function') {
-      setMessage('无法检查回读工作包：verifyAdReadbackSession API 未接入。');
+      setMessage('无法检查回读工作包：本地工作包检查能力未连接。');
       return;
     }
     try {
@@ -665,7 +724,7 @@ export function DeliveryPage() {
       return;
     }
     if (typeof apiSurface.fillAdReadbackSession !== 'function') {
-      setMessage('无法生成回读证据：fillAdReadbackSession API 未接入。');
+      setMessage('无法生成回读证据：本地证据生成能力未连接。');
       return;
     }
     try {
@@ -686,7 +745,7 @@ export function DeliveryPage() {
       return;
     }
     if (typeof apiSurface.verifyAdReadbackEvidence !== 'function') {
-      setMessage('无法校验回读证据：verifyAdReadbackEvidence API 未接入。');
+      setMessage('无法校验回读证据：本地回读校验能力未连接。');
       return;
     }
     try {
@@ -708,7 +767,7 @@ export function DeliveryPage() {
       return;
     }
     if (typeof apiSurface.refreshFinalReadiness !== 'function') {
-      setMessage('刷新最终验收 API 未接入。');
+      setMessage('刷新最终验收能力未连接。');
       return;
     }
     try {
@@ -727,7 +786,7 @@ export function DeliveryPage() {
 
   async function exportDataReconciliation() {
     if (typeof apiSurface.exportDataReconciliation !== 'function') {
-      setMessage('数据口径核对导出 API 未接入。');
+      setMessage('数据口径核对导出能力未连接。');
       return;
     }
     try {
@@ -747,13 +806,13 @@ export function DeliveryPage() {
     const summary = [
       `交付状态：${status}`,
       `范围：${summarizeScope(data, scope)}`,
-      '最终就绪 manifest 是交付状态的唯一来源。',
+      '最终验收汇总是交付状态的唯一来源。',
       `真实报表文件：${realFiles.length}`,
       `真实报表目录：${reportDownloadDir || '不可用'}`,
       `真实报表清单：${collectionManifestPath || '不可用'}`,
       ...realFiles.slice(0, 8).map((file) => `原始文件：${file.displayName || file.reportType} / ${file.filePath || file.fileName || '-'}`),
       `导入指标行数：${importedRows}`,
-      `最终 manifest：${finalManifestPath || '最终验收 manifest 尚未生成'}`,
+      `最终验收汇总：${finalManifestPath || '最终验收汇总尚未生成'}`,
       `安装包：${packageSummary}`,
     ].join('\n');
     try {
@@ -769,9 +828,9 @@ export function DeliveryPage() {
       <PageHeader
         eyebrow="系统与交付"
         title="交付验收"
-        description="交付页把最终验收 manifest 翻译成业务可交付状态；截图、局部检查和数据管道只能作为旁证。"
+        description="交付页把最终验收汇总翻译成业务可交付状态；截图、局部检查和数据管道只能作为旁证。"
         primaryTask="补齐交付证据"
-        nextAction={readiness?.appReady ? '导出交付包并记录安装包 hash' : '补齐未通过的验收项'}
+        nextAction={readiness?.appReady ? '导出交付包并记录安装包校验码' : '补齐未通过的验收项'}
       />
 
       <div className="business-stack">
@@ -779,7 +838,7 @@ export function DeliveryPage() {
           <div className="delivery-readiness-row">
             <div>
               <StatusPill tone={tone}>{status}</StatusPill>
-              <p className="delivery-readiness-copy">最终验收 manifest 是交付状态的唯一来源。只有 manifest 驱动且所有验收项通过时，本页才会显示可交付状态。</p>
+              <p className="delivery-readiness-copy">最终验收汇总是交付状态的唯一来源。只有最终验收汇总驱动且所有验收项通过时，本页才会显示可交付状态。</p>
               <p className={manifestReady ? 'muted-line' : 'blocked-line'}>{manifestScopeNote}</p>
             </div>
             <div className="delivery-action-row">
@@ -789,57 +848,62 @@ export function DeliveryPage() {
               <button className="secondary-button" onClick={exportBundle} type="button">
                 导出交付包
               </button>
+              <button className="primary-button" onClick={copySummary} type="button">
+                复制摘要
+              </button>
+            </div>
+          </div>
+          <div className="delivery-overview-grid">
+            {deliveryOverviewFacts.map((fact) => (
+              <div key={fact.label}>
+                <span>{fact.label}</span>
+                <strong>{fact.value}</strong>
+              </div>
+            ))}
+          </div>
+          <details className="dashboard-details delivery-technical-details">
+            <summary>文件与技术入口</summary>
+            <div className="delivery-action-row">
               <button className="secondary-button" onClick={exportDataReconciliation} type="button">
                 导出数据口径核对
               </button>
               <button className="secondary-button" onClick={() => openPath(reportFolder, '打开证据目录')} type="button">
                 打开证据目录
               </button>
-              <button className="secondary-button" onClick={() => openPath(finalManifestPath, '打开最终 manifest')} type="button">
-                打开最终 manifest
-              </button>
-              <button className="primary-button" onClick={copySummary} type="button">
-                复制摘要
+              <button className="secondary-button" onClick={() => openPath(finalManifestPath, '打开最终验收汇总')} type="button">
+                打开最终验收汇总
               </button>
             </div>
-          </div>
-          <div className="delivery-meta-grid">
-            <div>
-              <span>运营范围</span>
-              <strong>{summarizeScope(data, scope)}</strong>
+            <div className="delivery-meta-grid">
+              <div>
+                <span>真实文件目录</span>
+                <strong>{reportDownloadDir || '目录不可用'}</strong>
+              </div>
+              <div>
+                <span>采集清单</span>
+                <strong>{collectionManifestPath || '不可用'}</strong>
+              </div>
+              <div>
+                <span>最终验收汇总</span>
+              <strong>{finalManifestPath || deliveryTextForDisplay(readiness?.message || '') || '最终验收汇总尚未生成'}</strong>
+              </div>
+              <div>
+                <span>安装包路径与校验码</span>
+                <strong>{packageSummary}</strong>
+              </div>
             </div>
-            <div>
-              <span>真实文件</span>
-              <strong>{realFiles.length} 个 / {reportDownloadDir || '目录不可用'}</strong>
-            </div>
-            <div>
-              <span>导入行数</span>
-              <strong>{importedRows}</strong>
-            </div>
-            <div>
-              <span>采集 Manifest</span>
-              <strong>{collectionManifestPath || '不可用'}</strong>
-            </div>
-            <div>
-              <span>最终 manifest</span>
-              <strong>{finalManifestPath || readiness?.message || '最终验收 manifest 尚未生成'}</strong>
-            </div>
-            <div>
-              <span>安装包</span>
-              <strong>{packageSummary}</strong>
-            </div>
-          </div>
+          </details>
         </Panel>
 
         {finalReadinessRefresh && (
           <Panel title="最终验收刷新结果" tone={finalReadinessRefresh.readiness?.appReady ? 'success' : 'warning'}>
             <div className="delivery-meta-grid">
               <div>
-                <span>Evidence manifest</span>
+                <span>证据汇总</span>
                 <strong>{finalReadinessRefresh.evidenceManifestPath || '-'}</strong>
               </div>
               <div>
-                <span>Final readiness</span>
+                <span>最终验收</span>
                 <strong>{finalReadinessRefresh.finalReadinessPath || '-'}</strong>
               </div>
               <div>
@@ -847,14 +911,14 @@ export function DeliveryPage() {
                 <strong>{readinessStatus(finalReadinessRefresh.readiness || null)}</strong>
               </div>
               <div>
-                <span>Gate</span>
+                <span>验收项</span>
                 <strong>{finalReadinessRefresh.readiness?.gatesSummary ? `${finalReadinessRefresh.readiness.gatesSummary.passed}/${finalReadinessRefresh.readiness.gatesSummary.total} 通过` : '-'}</strong>
               </div>
             </div>
             <p className={finalReadinessRefresh.readiness?.appReady ? 'muted-line' : 'blocked-line'}>
               {finalReadinessRefresh.readiness?.appReady
-                ? '最终验收已通过；导出 READY 包前仍需确认 README delivery 状态和安装包 hash。'
-                : '最终验收已生成诊断文件，但仍有 gate 未通过，不能声明可交付。'}
+                ? '最终验收已通过；导出可交付包前仍需确认 README 交付状态和安装包校验码。'
+                : '最终验收已生成诊断文件，但仍有验收项未通过，不能声明可交付。'}
             </p>
           </Panel>
         )}
@@ -864,14 +928,14 @@ export function DeliveryPage() {
             <div className="delivery-readiness-row">
               <div>
                 <StatusPill tone="blocked">阻断</StatusPill>
-                <p className="delivery-readiness-copy">最终验收当前卡在真实广告 readback。需要先为这个候选动作创建工作包，再补审批、before/after 截图和刷新回读证据。</p>
+                <p className="delivery-readiness-copy">最终验收当前卡在真实广告回读。需要先为这个候选动作创建工作包，再补审批、执行前/执行后截图和刷新回读证据。</p>
                 <p className="blocked-line">{readbackBlockerSummary(readbackBlockerGate)}</p>
               </div>
               <div className="delivery-action-row">
                 <button className="primary-button" onClick={createReadbackWorkPackage} type="button">
                   创建回读工作包
                 </button>
-                <button className="secondary-button" disabled={!readbackCandidatePath} onClick={() => openPath(readbackCandidatePath, '打开 readback 候选证据')} type="button">
+                <button className="secondary-button" disabled={!readbackCandidatePath} onClick={() => openPath(readbackCandidatePath, '打开回读候选证据')} type="button">
                   打开候选证据
                 </button>
                 <button className="secondary-button" onClick={() => navigate('readback')} type="button">
@@ -898,11 +962,11 @@ export function DeliveryPage() {
                   <strong>{readbackSession.checklistPath || '-'}</strong>
                 </div>
                 <div>
-                  <span>Ads UI 定位单</span>
+                  <span>广告后台定位单</span>
                   <strong>{readbackSession.locatorGuidePath || '-'}</strong>
                 </div>
                 <div>
-                  <span>PASS 输出</span>
+                  <span>最终证据输出</span>
                   <strong>{readbackSession.passEvidencePath || '-'}</strong>
                 </div>
               </div>
@@ -910,18 +974,18 @@ export function DeliveryPage() {
             {readbackSession?.sessionDir && (
               <div className="delivery-action-row">
                 <button className="secondary-button" onClick={() => openPath(readbackSession.sessionDir || '', '打开回读工作包')} type="button">
-                  打开工作包目录
+                  打开回读工作包
                 </button>
                 <button className="secondary-button" onClick={() => openPath(readbackSession.checklistPath || '', '打开操作清单')} type="button">
                   打开操作清单
                 </button>
-                <button className="secondary-button" onClick={() => openPath(readbackSession.locatorGuidePath || '', '打开 Ads UI 定位单')} type="button">
-                  打开定位单
+                <button className="secondary-button" onClick={() => openPath(readbackSession.locatorGuidePath || '', '打开广告后台定位单')} type="button">
+                  打开广告后台定位单
                 </button>
-                <button className="secondary-button" onClick={() => openPath(readbackSession.sessionInputPath || '', '打开待填写 session-input.json')} type="button">
-                  打开填写文件
+                <button className="secondary-button" onClick={() => openPath(readbackSession.sessionInputPath || '', '打开待填写文件')} type="button">
+                  打开待填写文件
                 </button>
-                <button className="secondary-button" onClick={() => openPath(readbackSession.sessionInputGuidePath || '', '打开 session-input 填写说明')} type="button">
+                <button className="secondary-button" onClick={() => openPath(readbackSession.sessionInputGuidePath || '', '打开填写说明')} type="button">
                   打开填写说明
                 </button>
                 <button className="secondary-button" onClick={verifyReadbackWorkPackage} type="button">
@@ -943,7 +1007,7 @@ export function DeliveryPage() {
                 <strong>工作包检查：{readbackSessionStatusCopy(readbackSessionCheck).title}</strong>
                 <span>{readbackSessionStatusCopy(readbackSessionCheck).detail}</span>
                 {readbackSessionCheck.ready && !readbackSessionCheck.captureReady && (
-                  <p className="muted-line">这只证明目录、清单、定位单和输出路径可用；最终仍必须填写现场审批、before/after、执行和 readback 字段。</p>
+                  <p className="muted-line">这只证明目录、清单、定位单和输出路径可用；最终仍必须填写现场审批、执行前/执行后、执行和回读字段。</p>
                 )}
               </div>
             )}
@@ -969,7 +1033,7 @@ export function DeliveryPage() {
                 {deliveryMatrix.status === 'ready' ? '证据闭环' : deliveryMatrix.status === 'blocked' ? '当前范围阻断' : '仍需补齐'}
               </StatusPill>
               <p className="delivery-readiness-copy">{deliveryMatrix.headline}</p>
-              <p className="muted-line">矩阵只说明当前日期、店铺、站点和批次的业务环节；最终是否可交付仍以 final readiness manifest 为准。</p>
+              <p className="muted-line">矩阵只说明当前日期、店铺、站点和批次的业务环节；最终是否可交付仍以最终验收汇总为准。</p>
             </div>
             <div className="delivery-action-row">
               <button className="primary-button" onClick={() => navigate(deliveryMatrix.status === 'blocked' ? 'data-collection' : 'delivery')} type="button">
@@ -993,8 +1057,8 @@ export function DeliveryPage() {
           <Panel title="数据口径核对报告" tone={dataReconciliation.blockers?.length ? 'warning' : 'success'}>
             <div className="delivery-meta-grid">
               <div>
-                <span>canonical 口径</span>
-                <strong>{dataReconciliation.canonicalSource || 'none'}</strong>
+                <span>权威口径</span>
+                <strong>{reconciliationSourceLabel(dataReconciliation.canonicalSource)}</strong>
               </div>
               <div>
                 <span>DB 汇总</span>
@@ -1003,11 +1067,11 @@ export function DeliveryPage() {
                 </strong>
               </div>
               <div>
-                <span>报告 JSON</span>
+                <span>报告数据文件</span>
                 <strong>{dataReconciliation.jsonPath || '-'}</strong>
               </div>
               <div>
-                <span>报告 Markdown</span>
+                <span>报告说明文件</span>
                 <strong>{dataReconciliation.markdownPath || '-'}</strong>
               </div>
             </div>
@@ -1019,18 +1083,18 @@ export function DeliveryPage() {
               </ul>
             )}
             <div className="delivery-action-row">
-              <button className="secondary-button" disabled={!dataReconciliation.markdownPath} onClick={() => openPath(dataReconciliation.markdownPath || '', '打开数据口径核对 Markdown')} type="button">
-                打开 Markdown
+              <button className="secondary-button" disabled={!dataReconciliation.markdownPath} onClick={() => openPath(dataReconciliation.markdownPath || '', '打开数据口径核对说明文件')} type="button">
+                打开说明文件
               </button>
-              <button className="secondary-button" disabled={!dataReconciliation.jsonPath} onClick={() => openPath(dataReconciliation.jsonPath || '', '打开数据口径核对 JSON')} type="button">
-                打开 JSON
+              <button className="secondary-button" disabled={!dataReconciliation.jsonPath} onClick={() => openPath(dataReconciliation.jsonPath || '', '打开数据口径核对数据文件')} type="button">
+                打开数据文件
               </button>
             </div>
           </Panel>
         )}
 
         <Panel title="最终证据清单" tone={manifestReady ? 'success' : 'warning'}>
-          <p className="muted-line">这里列出 final readiness manifest 采用的证据文件。当前范围的数据卡片只说明本地数据状态，不能替代这些 gate。</p>
+          <p className="muted-line">这里列出最终验收汇总采用的证据文件。当前范围的数据卡片只说明本地数据状态，不能替代这些验收项。</p>
           {readiness?.gates?.length ? (
             <div className="delivery-gate-list">
               {readiness.gates.map((gate) => (
@@ -1045,7 +1109,7 @@ export function DeliveryPage() {
               ))}
             </div>
           ) : (
-            <p className="blocked-line">尚未读取到 final readiness gate。需要先生成最终验收 manifest。</p>
+            <p className="blocked-line">尚未读取到最终验收项。需要先生成最终验收汇总。</p>
           )}
         </Panel>
 

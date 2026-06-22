@@ -31,6 +31,20 @@ export function taskPurpose(name: string): string {
   return labels[name] || '本地计划任务。执行结果必须继续满足真实数据、审批和回读门槛。';
 }
 
+export function formatCronForOperator(cron?: string): string {
+  const value = String(cron || '').trim();
+  if (!value) return '-';
+  const parts = value.split(/\s+/);
+  if (parts.length === 5 && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
+    const minute = Number(parts[0]);
+    const hour = Number(parts[1]);
+    if (Number.isInteger(minute) && minute >= 0 && minute <= 59 && Number.isInteger(hour) && hour >= 0 && hour <= 23) {
+      return `每天 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    }
+  }
+  return `高级计划：${value}`;
+}
+
 function formatDate(value?: string): string {
   if (!value) return '-';
   const date = new Date(value);
@@ -120,8 +134,8 @@ export function SchedulerPage() {
             </div>
             <div>
               <span>真实执行要求</span>
-              <strong>审批 + 截图 + readback</strong>
-              <p>任何广告动作仍需绑定目标、人工审批、before/after 和回读证据。</p>
+              <strong>审批 + 截图 + 回读</strong>
+              <p>任何广告动作仍需绑定目标、人工审批、执行前/执行后和回读证据。</p>
             </div>
             <div>
               <span>失败处理</span>
@@ -184,7 +198,7 @@ export function SchedulerPage() {
               <thead>
                 <tr>
                   <th>任务</th>
-                  <th>Cron</th>
+                  <th>计划</th>
                   <th>状态</th>
                   <th>下次执行</th>
                   <th>上次执行</th>
@@ -199,7 +213,10 @@ export function SchedulerPage() {
                       <strong>{taskLabel(task.name)}</strong>
                       <div className="muted-cell">{taskPurpose(task.name)}</div>
                     </td>
-                    <td>{task.cron || '-'}</td>
+                    <td>
+                      <strong>{formatCronForOperator(task.cron)}</strong>
+                      {task.cron && <div className="muted-cell">Cron：{task.cron}</div>}
+                    </td>
                     <td><StatusPill tone={task.enabled ? 'ready' : 'pending'}>{task.enabled ? '已启用' : '已停用'}</StatusPill></td>
                     <td>{formatDate(task.nextRun)}</td>
                     <td>{formatDate(task.lastRun)}</td>

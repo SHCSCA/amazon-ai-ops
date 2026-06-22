@@ -207,9 +207,9 @@ async function main() {
         manifestDriven: false,
         gates: [],
         gatesSummary: { total: 0, passed: 0, failed: 0 },
-        missing: ['最终验收 manifest 尚未生成'],
+        missing: ['最终验收汇总尚未生成'],
         actionItems: ['运行最终验收。'],
-        message: '最终验收 manifest 尚未生成',
+        message: '最终验收汇总尚未生成',
       }),
       getProducts: async () => [
         {
@@ -277,16 +277,16 @@ async function main() {
     '关键词与 Listing',
     '系统与交付',
     '当前操作范围',
-    '币种',
-    'USD',
-    '批次模式',
-    '当前批次',
-    '报表覆盖',
-    '已导入指标',
+    '批次',
+    '报表',
+    '指标',
+    'ASIN',
     '待生成验收',
   ]) {
     await expectVisible(page, text);
   }
+  const initialBodyText = await page.locator('body').innerText();
+  if (!initialBodyText.includes('/ USD')) fail('Scope currency marker is missing from the compact range line');
 
   await expectNotInBody(page, 'v1.5 工作台');
   await expectNotInBody(page, 'APP_READY');

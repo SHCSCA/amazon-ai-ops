@@ -476,6 +476,14 @@ describe('export v15 delivery bundle', () => {
     }
     const bundledReadme = fs.readFileSync(path.join(outDir, 'docs', 'README.md'), 'utf8');
     expect(bundledReadme).toContain('**DELIVERY: APP_READY.');
+    expect(manifest.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'AGENTS.md',
+        bundlePath: path.join('docs', 'AGENTS.md'),
+      }),
+    ]));
+    const bundledAgents = fs.readFileSync(path.join(outDir, 'docs', 'AGENTS.md'), 'utf8');
+    expect(bundledAgents).toContain('Amazon AI Ops Agent - Agent Instructions');
   });
 
   it('does not treat basename text or UI smoke mock source files as real report index entries', () => {

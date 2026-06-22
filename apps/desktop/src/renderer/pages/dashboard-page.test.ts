@@ -6,6 +6,7 @@ import {
   dashboardDataActionQueueBlocker,
   dashboardDataGateDetail,
   dashboardDataGateLabel,
+  dashboardVisibleDeliveryItems,
   dashboardRecommendationStatusFilters,
   dashboardTaskEntryStatus,
   dashboardWorkflowQuantNext,
@@ -145,5 +146,25 @@ describe('dashboardAiWorkStatus', () => {
     expect(status.tone).toBe('warning');
     expect(status.route).toBe('ad-quant');
     expect(status.actionLabel).toBe('查看 AI 诊断');
+  });
+});
+
+describe('dashboardVisibleDeliveryItems', () => {
+  it('keeps the dashboard focused on the first three unfinished delivery gaps', () => {
+    const items = [
+      { key: 'data', tone: 'ready', label: '真实数据闭环' },
+      { key: 'aiEvidence', tone: 'blocked', label: 'AI 证据链' },
+      { key: 'businessContext', tone: 'warning', label: '运营上下文' },
+      { key: 'listing', tone: 'warning', label: 'Listing 草案' },
+      { key: 'recommendations', tone: 'ready', label: '建议与审批' },
+      { key: 'readback', tone: 'blocked', label: '执行回读' },
+      { key: 'package', tone: 'blocked', label: '最终交付包' },
+    ] as any;
+
+    expect(dashboardVisibleDeliveryItems(items).map((item) => item.key)).toEqual([
+      'aiEvidence',
+      'businessContext',
+      'listing',
+    ]);
   });
 });

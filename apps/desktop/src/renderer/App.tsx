@@ -103,15 +103,25 @@ const loginStyles: Record<string, React.CSSProperties> = {
   },
 };
 
-function describeLoginSession(session?: LoginSessionInfo | null): string {
+export function describeLoginSession(session?: LoginSessionInfo | null): string {
   if (!session) return 'ERP/Ads 会话：待确认';
   const erp = session.erpSessionReused ? 'ERP 已复用登录态' : 'ERP 已完成登录';
   const ads = session.adsTitle || session.adsUrl ? `Ads 已进入：${session.adsTitle || session.adsUrl}` : 'Ads 会话待确认';
   return `${erp}；${ads}`;
 }
 
-function headerReadinessLabel(readiness: DeliveryReadinessView | null): string {
-  if (readiness?.appReady && readiness?.manifestDriven) return '最终验收通过';
+export function headerSessionStatusLabel(session?: LoginSessionInfo | null): string {
+  if (!session) return '会话待确认';
+  const erpReady = Boolean(session.erpSessionReused);
+  const adsReady = Boolean(session.adsTitle || session.adsUrl || session.adsEntryMode);
+  if (erpReady && adsReady) return 'ERP/Ads 已连接';
+  if (adsReady) return 'Ads 已连接';
+  if (erpReady) return 'ERP 已连接';
+  return '会话确认中';
+}
+
+export function headerReadinessLabel(readiness: DeliveryReadinessView | null): string {
+  if (readiness?.appReady && readiness?.manifestDriven) return '应用包验收通过';
   if (readiness?.available === false) return '待生成验收';
   return '等待最终验收';
 }
@@ -170,7 +180,7 @@ function LoginPage() {
             type="password"
             value={password}
           />
-          <div style={loginStyles.hint}>登录流程：ERP 登录 {'->'} ERP 广告入口 {'->'} Ads 会话确认。不会从 Ads URL 直接开始。</div>
+          <div style={loginStyles.hint}>登录流程：ERP 登录 {'->'} ERP 广告入口 {'->'} Ads 会话确认。密码仅用于本次浏览器登录，不会在页面展示。</div>
           {error && <div style={loginStyles.error}>{error}</div>}
           <button disabled={loading} onClick={handleLogin} style={loginStyles.button} type="button">
             {loading ? '正在确认 ERP 和 Ads 会话...' : '登录并进入 Ads'}
@@ -271,7 +281,7 @@ export default function App() {
         </div>
         <div className="topbar-right">
           <strong>{currentStore}</strong>
-          <span className="session-line">{describeLoginSession(loginSession)}</span>
+          <span className="session-line" title={describeLoginSession(loginSession)}>{headerSessionStatusLabel(loginSession)}</span>
           <button className="logout-button" onClick={handleLogout} type="button">退出登录</button>
         </div>
       </header>

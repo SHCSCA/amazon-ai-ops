@@ -247,7 +247,7 @@ async function main() {
             suggestedDirection: '进入人工审批和只读回读链路。',
           },
         ],
-        blockers: ['缺少真实广告 readback 聚合证据。'],
+        blockers: ['缺少真实广告回读聚合证据。'],
       },
     };
 
@@ -261,11 +261,11 @@ async function main() {
       generatedAt: '2026-06-12T10:10:00.000Z',
       checkedAt: '2026-06-12T10:11:00.000Z',
       gatesSummary: { total: 2, passed: 1, failed: 1 },
-      missing: ['缺少真实广告 readback 聚合证据。'],
-      actionItems: ['补齐真实广告 readback 后重新运行最终验收。'],
+      missing: ['缺少真实广告回读聚合证据。'],
+      actionItems: ['补齐真实广告回读后重新运行最终验收。'],
       gates: [
         { name: 'report_collection', ok: true, status: 'passed', message: '报表已进入候选证据。', evidencePath: 'C:/evidence/reports/campaign.xlsx' },
-        { name: 'ad_readback', ok: false, status: 'blocked', message: '缺少真实广告 readback 聚合证据。', evidencePath: 'C:/final/readback-missing.json' },
+        { name: 'ad_readback', ok: false, status: 'blocked', message: '缺少真实广告回读聚合证据。', evidencePath: 'C:/final/readback-missing.json' },
       ],
     };
     const missingReadiness = {
@@ -278,10 +278,10 @@ async function main() {
       generatedAt: undefined,
       checkedAt: undefined,
       gatesSummary: { total: 0, passed: 0, failed: 0 },
-      missing: ['最终验收 manifest 尚未生成'],
+      missing: ['最终验收汇总尚未生成'],
       actionItems: ['运行最终验收，生成 output/codex-evidence/final-readiness-*.json。'],
       gates: [],
-      message: '最终验收 manifest 尚未生成',
+      message: '最终验收汇总尚未生成',
     };
     const fakeReadyReadiness = {
       available: true,
@@ -293,10 +293,10 @@ async function main() {
       generatedAt: '2026-06-12T10:13:00.000Z',
       checkedAt: '2026-06-12T10:14:00.000Z',
       gatesSummary: { total: 1, passed: 1, failed: 0 },
-      missing: ['appReady=false，不能声明可交付。'],
+      missing: ['最终验收未通过，不能声明可交付。'],
       actionItems: ['重新运行最终验收，确认 appReady=true。'],
       gates: [
-        { name: 'status_consistency', ok: true, status: 'passed', message: '状态字段被故意设置为 APP_READY，但 appReady=false。' },
+        { name: 'status_consistency', ok: true, status: 'passed', message: '状态字段被故意设置为可交付，但最终验收未通过。' },
       ],
     };
     const nonManifestReadyReadiness = {
@@ -309,10 +309,10 @@ async function main() {
       generatedAt: '2026-06-12T10:14:30.000Z',
       checkedAt: '2026-06-12T10:14:45.000Z',
       gatesSummary: { total: 1, passed: 1, failed: 0 },
-      missing: ['manifestDriven=false，不能声明可交付。'],
-      actionItems: ['重新生成 evidence manifest，并用该 manifest 运行最终验收。'],
+      missing: ['最终验收汇总不是本次验收来源，不能声明可交付。'],
+      actionItems: ['重新生成最终验收汇总，并用该汇总运行最终验收。'],
       gates: [
-        { name: 'manifest_mode', ok: false, status: 'blocked', message: 'manifestDriven=false，不能声明可交付。' },
+        { name: 'manifest_mode', ok: false, status: 'blocked', message: '最终验收汇总不是本次验收来源，不能声明可交付。' },
       ],
     };
     const passedReadiness = {
@@ -329,7 +329,7 @@ async function main() {
       actionItems: [],
       gates: [
         { name: 'report_collection', ok: true, status: 'passed', message: '真实报表验收通过。', evidencePath: 'C:/evidence/reports/campaign.xlsx' },
-        { name: 'ad_readback', ok: true, status: 'passed', message: '真实广告 readback 验收通过。', evidencePath: 'C:/final/readback-pass.json' },
+        { name: 'ad_readback', ok: true, status: 'passed', message: '真实广告回读验收通过。', evidencePath: 'C:/final/readback-pass.json' },
       ],
     };
 
@@ -627,11 +627,11 @@ async function main() {
           unresolvedFields: ['approverName', 'beforeValue', 'afterValue', 'readbackEvidencePath'],
           captureMissingFields: [
             { field: 'approverName', label: '审批人', group: '审批' },
-            { field: 'beforeValue', label: '执行前 Ads UI live bid', group: '执行前' },
-            { field: 'afterValue', label: '执行后 Ads UI live bid', group: '执行后' },
+            { field: 'beforeValue', label: '现场出价', group: '执行前' },
+            { field: 'afterValue', label: '现场出价', group: '执行后' },
             { field: 'readbackEvidencePath', label: '刷新回读截图文件', group: '回读' },
           ],
-          captureIssues: ['session-input.json 仍有未填写项：审批/审批人、执行前/执行前 Ads UI live bid、执行后/执行后 Ads UI live bid、回读/刷新回读截图文件'],
+          captureIssues: ['填写文件仍有未填写项：审批/审批人、执行前/现场出价、执行后/现场出价、回读/刷新回读截图文件'],
         };
         window.__businessUiActionLog.push({ type: 'verifyAdReadbackSession', input, result });
         return result;
@@ -682,7 +682,7 @@ async function main() {
               blockers: [],
             },
           }
-          : { success: false, status: 'APP_NEEDS_WORK', message: '最终就绪 manifest 未通过，不能导出 READY 交付包。' };
+          : { success: false, status: 'APP_NEEDS_WORK', message: '最终验收汇总未通过，不能导出可交付包。' };
         window.__businessUiActionLog.push({ type: 'exportDeliveryBundle', scope, result });
         return result;
       },
@@ -784,7 +784,7 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /仪表盘/ }).click();
   await page.getByRole('heading', { name: '仪表盘', level: 2 }).waitFor();
   await expectVisible(page, 'AI 已产出建议');
-  await expectVisible(page, '最近一次 AI 诊断形成 1 条正式建议，另有 1 条洞察。继续到优化建议页查看证据和审批状态。');
+  await expectVisible(page, '1 条待审批，1 条需复核。');
   await page.locator('.app-sidebar').getByRole('button', { name: /优化建议/ }).click();
   await page.getByRole('heading', { name: '优化建议', level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
@@ -843,7 +843,7 @@ async function main() {
   );
 
   await page.getByLabel('数据批次来源').selectOption('mock_delivery_batch');
-  await page.getByText('手动指定已校验批次', { exact: true }).waitFor({ timeout: 5000 });
+  await page.waitForFunction(() => document.body.innerText.includes('mock_delivery_batch'), null, { timeout: 5000 });
   await page.getByRole('button', { name: '编辑范围' }).click();
   await page.getByLabel('开始日期').fill('2026-06-14');
   await page.getByRole('button', { name: '保存范围' }).click();
@@ -859,6 +859,7 @@ async function main() {
 
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByText('文件与技术入口', { exact: true }).click();
   for (const text of [
     '应用就绪状态',
     '当前范围交付矩阵',
@@ -876,8 +877,8 @@ async function main() {
   }
   for (const text of [
     '未就绪',
-    '最终验收 manifest 是交付状态的唯一来源。',
-    '矩阵只说明当前日期、店铺、站点和批次的业务环节；最终是否可交付仍以 final readiness manifest 为准。',
+    '最终验收汇总是交付状态的唯一来源。',
+    '矩阵只说明当前日期、店铺、站点和批次的业务环节；最终是否可交付仍以最终验收汇总为准。',
     '真实数据闭环未完成，不能进入正式交付',
     '真实数据闭环',
     'AI 证据链',
@@ -886,24 +887,24 @@ async function main() {
     '建议与审批',
     '执行回读',
     '最终交付包',
-    '最终 manifest 尚未证明真实 AI 连接、广告 AI 解释和 Listing AI 草案。',
+    '最终验收汇总尚未证明真实 AI 连接、广告 AI 解释和 Listing AI 草案。',
     '1 条待审批，1 条已批准，1 条复核中；后续必须进入执行回读。',
     '先完成真实报表下载和 DB 日级指标导入',
     '最终证据清单',
-    '这里列出 final readiness manifest 采用的证据文件。',
+    '这里列出最终验收汇总采用的证据文件。',
     'FT-US-TEST / CA / 2026-06-02 - 2026-06-13 / USD',
-    '导入行数',
-    '采集 Manifest',
+    '真实数据',
+    '采集清单',
     'C:/wrong/lingxing-batch-manifest.json',
     'C:/evidence/reports/campaign.xlsx',
     '当前范围已有 18 行广告指标。',
     '缺少关键词报告和用户搜索词报告。',
-    '缺少真实广告 readback 聚合证据。',
+    '缺少真实广告回读聚合证据。',
     '广告回读补证',
     '创建回读工作包',
     '打开候选证据',
     '打开证据目录',
-    '打开最终 manifest',
+    '打开最终验收汇总',
     '刷新最终验收',
     '导出数据口径核对',
     '复制摘要',
@@ -925,7 +926,7 @@ async function main() {
   await expectVisible(page, '最终验收刷新结果');
   await expectVisible(page, 'C:/final/v15-final-readiness-evidence-manifest-refreshed.json');
   await expectVisible(page, 'C:/final/final-readiness-refreshed.json');
-  await expectVisible(page, '最终验收已生成诊断文件，但仍有 gate 未通过，不能声明可交付。');
+  await expectVisible(page, '最终验收已生成诊断文件，但仍有验收项未通过，不能声明可交付。');
   await page.getByRole('button', { name: '创建回读工作包' }).click();
   await page.getByText('回读工作包已创建', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, 'C:/final/readback-missing-session');
@@ -934,15 +935,15 @@ async function main() {
   await expectVisible(page, 'C:/final/readback-missing-session/operator-checklist.md');
   await expectVisible(page, 'C:/final/readback-missing-session/ads-ui-locator.md');
   await page.getByRole('button', { name: '打开候选证据' }).click();
-  await page.getByRole('button', { name: '打开工作包目录' }).click();
+  await page.getByRole('button', { name: '打开回读工作包' }).click();
   await page.getByRole('button', { name: '打开操作清单' }).click();
-  await page.getByRole('button', { name: '打开定位单' }).click();
-  await page.getByRole('button', { name: '打开填写文件' }).click();
+  await page.getByRole('button', { name: '打开广告后台定位单' }).click();
+  await page.getByRole('button', { name: '打开待填写文件' }).click();
   await page.getByRole('button', { name: '打开填写说明' }).click();
   await page.getByRole('button', { name: '检查工作包' }).click();
   await page.getByText('回读工作包结构已通过，但现场证据仍待填写', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '工作包检查：结构通过，现场证据待填写');
-  await expectVisible(page, '还需填写：审批/审批人、执行前/执行前 Ads UI live bid、执行后/执行后 Ads UI live bid、回读/刷新回读截图文件');
+  await expectVisible(page, '还需填写：审批/审批人、执行前/现场出价、执行后/现场出价、回读/刷新回读截图文件');
   await page.getByRole('button', { name: '生成回读证据' }).click();
   await page.getByText('回读证据已生成，可进入校验', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '回读证据生成：可校验');
@@ -950,26 +951,26 @@ async function main() {
   await page.getByText('回读证据校验通过', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '回读证据校验：通过');
   await page.getByRole('button', { name: '导出交付包' }).click();
-  await page.getByText('最终就绪 manifest 未通过', { exact: false }).waitFor({ timeout: 5000 });
+  await expectInBody(page, '最终验收汇总未通过，不能导出可交付包。', 'delivery export blocked message');
   await assertAbsent(page, 'APP_NEEDS_WORK', 'delivery-export-message');
   await assertAbsent(page, 'READY 交付包', 'delivery-export-message');
   await page.getByRole('button', { name: '导出数据口径核对' }).click();
   await page.getByText('数据口径核对报告已导出', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '数据口径核对报告');
-  await expectVisible(page, 'canonical 口径');
-  await expectVisible(page, 'canonical_user_search_term');
+  await expectVisible(page, '权威口径');
+  await expectVisible(page, '用户搜索词权威口径');
   await expectVisible(page, 'DB 汇总');
   await expectVisible(page, '18 行 / 170.25 USD / 3 单');
-  await expectVisible(page, '报告 JSON');
+  await expectVisible(page, '报告数据文件');
   await expectVisible(page, 'C:/exports/data-reconciliation/mock-delivery.json');
-  await expectVisible(page, '报告 Markdown');
+  await expectVisible(page, '报告说明文件');
   await expectVisible(page, 'C:/exports/data-reconciliation/mock-delivery.md');
-  await expectVisible(page, '打开 Markdown');
-  await expectVisible(page, '打开 JSON');
+  await expectVisible(page, '打开说明文件');
+  await expectVisible(page, '打开数据文件');
   await page.getByRole('button', { name: '打开证据目录' }).click();
-  await page.getByRole('button', { name: '打开最终 manifest' }).click();
-  await page.getByRole('button', { name: '打开 Markdown' }).click();
-  await page.getByRole('button', { name: '打开 JSON' }).click();
+  await page.getByRole('button', { name: '打开最终验收汇总' }).click();
+  await page.getByRole('button', { name: '打开说明文件' }).click();
+  await page.getByRole('button', { name: '打开数据文件' }).click();
   await page.getByRole('button', { name: '复制摘要' }).click();
   await page.getByRole('button', { name: '用回读证据刷新最终验收' }).click();
   await page.getByText('已使用回读证据刷新并通过最终验收', { exact: false }).waitFor({ timeout: 5000 });
@@ -1075,9 +1076,10 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
-  await page.getByText('最终验收 manifest 尚未生成', { exact: false }).first().waitFor({ timeout: 5000 });
-  await page.getByRole('button', { name: '打开最终 manifest' }).click();
-  await page.getByText('最终验收 manifest 尚未生成。', { exact: false }).first().waitFor({ timeout: 5000 });
+  await page.getByText('文件与技术入口', { exact: true }).click();
+  await page.getByText('最终验收汇总尚未生成', { exact: false }).first().waitFor({ timeout: 5000 });
+  await page.getByRole('button', { name: '打开最终验收汇总' }).click();
+  await page.getByText('最终验收汇总尚未生成。', { exact: false }).first().waitFor({ timeout: 5000 });
   await assertGlobalGuards(page, 'delivery-missing');
 
   await page.evaluate(() => {
@@ -1086,7 +1088,7 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
-  await page.getByText('appReady=false，不能声明可交付。', { exact: true }).waitFor({ timeout: 5000 });
+  await page.getByText('最终验收未通过，不能声明可交付。', { exact: true }).waitFor({ timeout: 5000 });
   await assertGlobalGuards(page, 'delivery-fake-ready');
 
   await page.evaluate(() => {
@@ -1096,15 +1098,15 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
   await page.locator('main').getByText('未就绪', { exact: true }).first().waitFor({ timeout: 5000 });
-  await page.getByText('manifestDriven=false，不能声明可交付。', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.getByText('最终验收汇总不是本次验收来源，不能声明可交付。', { exact: true }).first().waitFor({ timeout: 5000 });
   for (const text of [
-    '最终 manifest 已接受 AI 相关证据。',
-    '最终 manifest 已接受优化建议证据。',
-    '最终 manifest 已接受审批和回读证据。',
-    '最终 manifest 已接受关键词机会证据。',
-    '最终 manifest 已接受 Listing AI 草案证据。',
-    '最终 manifest gate 已通过。',
-    '可以进入安装包/hash 交付步骤。',
+    '最终验收汇总已接受 AI 相关证据。',
+    '最终验收汇总已接受优化建议证据。',
+    '最终验收汇总已接受审批和回读证据。',
+    '最终验收汇总已接受关键词机会证据。',
+    '最终验收汇总已接受 Listing AI 草案证据。',
+    '最终验收项已通过。',
+    '可以进入安装包/校验码交付步骤。',
   ]) {
     await assertAbsent(page, text, 'delivery-non-manifest-ready');
   }
@@ -1117,14 +1119,14 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
   await page.getByText('可交付', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('可交付只代表最终 manifest 选中的证据已通过', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('可交付只代表最终验收汇总选中的证据已通过', { exact: false }).waitFor({ timeout: 5000 });
   await page.getByText('C:/final/readback-pass.json', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('真实广告 readback 验收通过。', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.getByText('真实广告回读验收通过。', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: '导出交付包' }).click();
   await page.getByText('交付包已导出', { exact: false }).waitFor({ timeout: 5000 });
   await page.getByText('已包含当前范围数据口径核对', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '数据口径核对报告');
-  await expectVisible(page, 'canonical_user_search_term');
+  await expectVisible(page, '用户搜索词权威口径');
   await expectVisible(page, '18 行 / 170.25 USD / 3 单');
   await expectVisible(page, 'C:/exports/delivery/v15-ready-bundle/data-reconciliation.json');
   await expectVisible(page, 'C:/exports/delivery/v15-ready-bundle/data-reconciliation.md');

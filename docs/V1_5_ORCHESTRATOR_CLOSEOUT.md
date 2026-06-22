@@ -19,16 +19,17 @@ Earlier delivery work also used orchestrator/product/UX/QA roles to reject prema
 
 ## Historical Readiness
 
-This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui closeout. The current worktree later added AI evidence-chain, UI, delivery-bundle, readback-contract, product-scoped quantification, AI JSON fallback, and manual Listing versioning changes. The current delivery state is recorded in `README.md`; as of the latest 2026-06-18 source validation it is `APP_READY` with manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-product-ui.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready`, and `verify:v15-ready-safety` passed against the refreshed installer/portable package hashes.
+This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui, portable-fix, and packaged-launch closeout. The current worktree later added AI evidence-chain, UI, delivery-bundle, readback-contract, product-scoped quantification, AI JSON fallback, manual Listing versioning changes, and another Windows packaged-launch continuation. The current delivery state is recorded in `README.md`; as of the latest 2026-06-18 package rebuild it is `APP_READY` for the refreshed manifest-driven final-readiness `output\codex-evidence\final-readiness-20260618170712.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1781772408989.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-20260618170712-ready`, and matching `verify:v15-ready-safety` result. The historical manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain baseline evidence only.
 
 Authoritative evidence:
 
 | Gate | Evidence |
 | --- | --- |
-| Final readiness | `output\codex-evidence\final-readiness-2026-06-18-product-ui.json` |
-| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18-product-ui.json` |
-| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-18-product-ui-ready` |
-| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z\delivery-bundle-manifest.json` |
+| Final readiness | `output\codex-evidence\final-readiness-20260618170712.json` |
+| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json` |
+| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260618170712-ready` |
+| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1781772408989.json` |
+| Historical 2026-06-10 bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z\delivery-bundle-manifest.json` |
 | Product UI smoke | `output\codex-evidence\v15-product-readiness-ui-smoke-1781072779324.json` |
 | Installer | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
 
@@ -36,9 +37,9 @@ Final installer:
 
 | Field | Value |
 | --- | --- |
-| SHA-256 | `96648ADD7F51C2CFAC8289CD61F5449FE2453C556127C049668F6FB3613FEBC1` |
-| Size | `89678328` bytes |
-| Last write | `2026-06-10 14:48:01` |
+| SHA-256 | `E6890C9043BE8140900ACCF146898DD45B841C33FF5F4B3D4301CF5A1BFC94A2` |
+| Size | `83042664` bytes |
+| Last write | `2026-06-18 16:46:39` |
 
 ## Verification Snapshot
 

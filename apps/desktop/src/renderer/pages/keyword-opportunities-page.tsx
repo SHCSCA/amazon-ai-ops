@@ -182,7 +182,7 @@ export function KeywordOpportunitiesPage() {
             <div>
               <span>真实广告报表</span>
               <strong>{sourceReportCount}/8 类真实报表</strong>
-              <p>只接收当前范围下载目录中的 xlsx/xls/csv；审计 JSON、截图和 DOM 证据不算广告数据。</p>
+              <p>只接收当前范围下载目录中的 xlsx/xls/csv；审计文件、截图和 DOM 证据不算广告数据。</p>
             </div>
             <div>
               <span>导入指标行</span>
@@ -245,7 +245,7 @@ export function KeywordOpportunitiesPage() {
             <div>
               <span>广告上下文</span>
               <strong>{campaignCount} 个活动 / {adGroupCount} 个广告组</strong>
-              <p>同一关键词在不同 campaign/ad group 会拆成独立行。</p>
+              <p>同一关键词在不同广告活动/广告组会拆成独立行。</p>
             </div>
             <div>
               <span>数据批次</span>
