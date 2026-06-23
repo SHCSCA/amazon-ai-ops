@@ -1,6 +1,6 @@
 import React from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import type { AppRoute } from '../types';
 
 function navigate(route: AppRoute) {
@@ -20,36 +20,42 @@ export function OperationScopePage() {
     <div>
       <PageHeader
         eyebrow="数据与量化"
-        title="工作范围"
-        description="统一管理日期、店铺、站点、币种和数据批次。后续采集、导入、量化、建议、审批和 Listing 都按这个范围读取。"
+        title="全局范围"
+        description="日期、店铺、站点、币种和批次。后续页面统一按这个范围读取。"
         primaryTask="确认全局范围"
         nextAction={canQuantify ? '进入广告量化' : realReportCount > 0 ? '导入已下载表格' : '获取真实报表'}
       />
 
       <div className="business-stack">
         <Panel title="当前操作范围" tone={canQuantify ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}>
-          <div className="context-summary-grid">
-            <div>
-              <span>日期</span>
-              <strong>{scope.dateFrom} 至 {scope.dateTo}</strong>
-              <p>领星报表、数据库查询和 AI 分析都会使用这个日期范围。</p>
-            </div>
-            <div>
-              <span>店铺/站点</span>
-              <strong>{scope.storeName || '-'} / {scope.marketplaceCode || '-'}</strong>
-              <p>跨境业务默认使用站点币种，当前固定为 USD。</p>
-            </div>
-            <div>
-              <span>币种</span>
-              <strong>USD</strong>
-              <p>广告花费、销售额、CPC 和阈值展示均使用美元。</p>
-            </div>
-            <div>
-              <span>数据批次</span>
-              <strong>{activeBatch || '自动匹配最新完整批次'}</strong>
-              <p>{scope.batchId ? '当前为手动指定批次；请确认它属于当前日期、店铺和站点。' : '未手动指定时，系统自动选择当前范围最新完整批次。'}</p>
-            </div>
-          </div>
+          <StateLightGrid
+            items={[
+              {
+                label: '日期',
+                value: `${scope.dateFrom} 至 ${scope.dateTo}`,
+                detail: '领星报表、数据库查询和 AI 分析共用。',
+                tone: 'pending',
+              },
+              {
+                label: '店铺 / 站点',
+                value: `${scope.storeName || '-'} / ${scope.marketplaceCode || '-'}`,
+                detail: '跨境业务默认使用站点币种。',
+                tone: 'pending',
+              },
+              {
+                label: '币种',
+                value: 'USD',
+                detail: '花费、销售额、CPC 和阈值统一展示。',
+                tone: 'pending',
+              },
+              {
+                label: '数据批次',
+                value: activeBatch || '自动匹配最新完整批次',
+                detail: scope.batchId ? '手动指定批次，请确认日期、店铺和站点一致。' : '未指定时自动选择当前范围最新完整批次。',
+                tone: canQuantify ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked',
+              },
+            ]}
+          />
           <div className="business-pill-row">
             <StatusPill tone={realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}>报表覆盖 {realReportCount}/8 类</StatusPill>
             <StatusPill tone={importedRows > 0 ? 'ready' : 'blocked'}>已导入 {importedRows} 行</StatusPill>

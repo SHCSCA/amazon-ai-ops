@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { PageHeader, Panel, SafetyGateLine, StatusPill } from '../components/ui';
 import { firstIncompleteReadbackStep, readbackWizardSteps, type ReadbackWizardStepId } from '../readback-wizard';
 import type { RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -872,8 +872,8 @@ export function ReadbackPage() {
     <div>
       <PageHeader
         eyebrow="广告执行"
-        title="执行回读"
-        description="记录已批准动作的人工执行结果、执行前/执行后截图和回读证据。本页不做批量自动写入；默认只展示业务步骤。"
+        title="回读向导"
+        description="按步骤保存人工执行、截图和回读证据，不自动写广告后台。"
         primaryTask="证明执行结果可回读"
         nextAction={form.recommendationId ? '补齐证据并导出' : '选择已批准动作'}
       />
@@ -891,6 +891,9 @@ export function ReadbackPage() {
             <span className="chip chip-warning">执行前、执行后、回读截图不能复用</span>
             <span className="chip chip-warning">回读值必须等于执行后值</span>
           </div>
+          <SafetyGateLine>
+            {'存证顺序：审批时间 <= 执行前时间 <= 线下动作执行时间 <= 真实回读时间；回读值必须等于执行后值。'}
+          </SafetyGateLine>
         </OperatorTaskPanel>
 
         <div className="readback-step-grid readback-step-tabs" role="tablist" aria-label="执行回读步骤">

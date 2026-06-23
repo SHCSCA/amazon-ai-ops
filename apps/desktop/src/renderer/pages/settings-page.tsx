@@ -3,7 +3,7 @@ import { aiCallEvidenceLabel, aiCallEvidenceTotal, aiCallKindLabel, aiCallOutput
 import { aiContractPrimaryCopy, aiOutputContracts, aiOutputContractTags } from '../ai-output-contracts';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup, type TagMetricItem } from '../components/tag-metric-group';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import type { AiCallLogView, AiConnectionStatus, AiProviderSettings, SettingsRuleConfig, StoragePathsView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
@@ -514,8 +514,8 @@ export function SettingsPage() {
     <div>
       <PageHeader
         eyebrow="系统与交付"
-        title="设置"
-        description="集中配置 AI Provider、广告量化阈值、安全策略、本地存储和诊断入口。页面只展示脱敏状态，不展示完整 API Key。"
+        title="AI 设置"
+        description="配置模型连接、JSON 输出合同、阈值和本地诊断。API Key 全程脱敏。"
         primaryTask="配置 AI 与规则阈值"
         nextAction={keyPresent ? '测试 AI 连接' : '填写 API Key'}
       />
@@ -534,9 +534,8 @@ export function SettingsPage() {
               </div>
             ))}
           </div>
-          <div className="settings-form-grid">
-            <label>
-              API Key
+          <FormTable>
+            <FormTableRow label="API Key" required hint="仅保存脱敏状态，页面不展示完整 Key。">
               <input
                 autoComplete="off"
                 placeholder="DeepSeek 或 OpenAI Compatible API Key"
@@ -548,9 +547,8 @@ export function SettingsPage() {
                   setAiStatus(nextKey.trim() || aiSettings.aiKeyConfigured ? 'pending_test' : 'unconfigured');
                 }}
               />
-            </label>
-            <label>
-              Base URL
+            </FormTableRow>
+            <FormTableRow label="Base URL" required hint="兼容 OpenAI Chat Completions 的服务地址。">
               <input
                 value={aiSettings.aiBaseUrl}
                 onChange={(event) => {
@@ -559,9 +557,8 @@ export function SettingsPage() {
                 }}
                 placeholder="https://api.deepseek.com"
               />
-            </label>
-            <label>
-              Model
+            </FormTableRow>
+            <FormTableRow label="Model" required hint="诊断、建议和 Listing 草案共用同一模型配置。">
               <input
                 value={aiSettings.aiModel}
                 onChange={(event) => {
@@ -570,8 +567,8 @@ export function SettingsPage() {
                 }}
                 placeholder="deepseek-v4-flash"
               />
-            </label>
-          </div>
+            </FormTableRow>
+          </FormTable>
           <p className="muted-line">{settingsAiContractPrimaryCopy()}</p>
           <TagMetricGroup items={settingsAiContractTags()} />
           <div className="action-row">
@@ -662,102 +659,85 @@ export function SettingsPage() {
               <p>单次建议不超过 {percentLabel(ruleConfig.maxBidDecrement)}，且受 CPC 下限保护。</p>
             </div>
           </div>
-          <div className="settings-form-grid">
-            <label>
-              目标 ACOS
+          <FormTable>
+            <FormTableRow label="目标 ACOS" required hint="低于目标线的词和投放对象优先保留、观察或扩量复核。">
               <input
                 type="number"
                 step="0.01"
                 value={ruleConfig.targetAcos}
                 onChange={(event) => setRuleConfig({ ...ruleConfig, targetAcos: Number(event.target.value) })}
               />
-            </label>
-            <label>
-              高 ACOS 阈值
+            </FormTableRow>
+            <FormTableRow label="高 ACOS 阈值" required hint="超过风险线且花费达到最低门槛时，进入降价或否词建议。">
               <input
                 type="number"
                 step="0.01"
                 value={ruleConfig.highAcosThreshold}
                 onChange={(event) => setRuleConfig({ ...ruleConfig, highAcosThreshold: Number(event.target.value) })}
               />
-            </label>
-            <label>
-              无订单点击阈值
+            </FormTableRow>
+            <FormTableRow label="无订单点击阈值" required hint="达到点击阈值仍无订单时，标记为浪费风险。">
               <input
                 type="number"
                 value={ruleConfig.noOrderClickThreshold}
                 onChange={(event) => setRuleConfig({ ...ruleConfig, noOrderClickThreshold: Number(event.target.value) })}
               />
-            </label>
-            <label>
-              最低花费
+            </FormTableRow>
+            <FormTableRow label="最低花费" required hint="单位 USD；花费低于该值时只提示观察，不生成强动作。">
               <input
                 type="number"
                 step="0.01"
                 value={ruleConfig.minSpend}
                 onChange={(event) => setRuleConfig({ ...ruleConfig, minSpend: Number(event.target.value) })}
               />
-            </label>
-            <label>
-              降价比例
+            </FormTableRow>
+            <FormTableRow label="降价比例" required hint="只生成建议，不自动写入 Ads；执行仍走审批和回读。">
               <input
                 type="number"
                 step="0.01"
                 value={ruleConfig.bidAdjustPercent}
                 onChange={(event) => setRuleConfig({ ...ruleConfig, bidAdjustPercent: Number(event.target.value) })}
               />
-            </label>
-            <label>
-              最大降价比例
+            </FormTableRow>
+            <FormTableRow label="最大降价比例" required hint="单次建议不超过该比例，且受 CPC 下限保护。">
               <input
                 type="number"
                 step="0.01"
                 value={ruleConfig.maxBidDecrement}
                 onChange={(event) => setRuleConfig({ ...ruleConfig, maxBidDecrement: Number(event.target.value) })}
               />
-            </label>
-            <label>
-              最高 CPC
+            </FormTableRow>
+            <FormTableRow label="最高 CPC" hint="单位 USD；用于识别异常高出价和建议上限。">
               <input
                 type="number"
                 step="0.01"
                 value={ruleConfig.maxCpc}
                 onChange={(event) => setRuleConfig({ ...ruleConfig, maxCpc: Number(event.target.value) })}
               />
-            </label>
-            <label>
-              最低 CPC
+            </FormTableRow>
+            <FormTableRow label="最低 CPC" hint="单位 USD；降价建议不会低于该下限。">
               <input
                 type="number"
                 step="0.01"
                 value={ruleConfig.minCpc}
                 onChange={(event) => setRuleConfig({ ...ruleConfig, minCpc: Number(event.target.value) })}
               />
-            </label>
-            <label className="settings-toggle-card">
+            </FormTableRow>
+            <FormTableRow label="降价建议" hint="只生成建议，不自动写入 Ads；执行仍走审批和回读。">
               <input
                 checked={ruleConfig.enableAutoLowerBid}
                 type="checkbox"
                 onChange={(event) => setRuleConfig({ ...ruleConfig, enableAutoLowerBid: event.target.checked })}
               />
-              <span>
-                自动生成降价建议
-                <small>只生成建议，不自动写入 Ads；执行仍走审批和回读。</small>
-              </span>
-            </label>
-            <label className="settings-toggle-card">
+            </FormTableRow>
+            <FormTableRow label="否词建议" hint="只进入建议池，白名单词会阻断。">
               <input
                 checked={ruleConfig.enableAutoAddNegative}
                 type="checkbox"
                 onChange={(event) => setRuleConfig({ ...ruleConfig, enableAutoAddNegative: event.target.checked })}
               />
-              <span>
-                自动生成否词建议
-                <small>只进入建议池，白名单词会阻断。</small>
-              </span>
-            </label>
-            <label className="form-grid-wide">
-              <span>品牌词白名单</span>
+            </FormTableRow>
+            <FormTableRow label="品牌词白名单" hint="品牌词用逗号或换行分隔，命中后阻断否词建议。">
               <textarea
                 aria-label="品牌词白名单"
                 value={listToText(ruleConfig.brandWordWhitelist)}
@@ -766,9 +746,8 @@ export function SettingsPage() {
                 }}
                 placeholder="品牌词，用逗号或换行分隔"
               />
-            </label>
-            <label className="form-grid-wide">
-              <span>核心词白名单</span>
+            </FormTableRow>
+            <FormTableRow label="核心词白名单" hint="核心业务词用逗号或换行分隔，命中后进入人工复核。">
               <textarea
                 aria-label="核心词白名单"
                 value={listToText(ruleConfig.coreWordWhitelist)}
@@ -777,8 +756,8 @@ export function SettingsPage() {
                 }}
                 placeholder="核心业务词，用逗号或换行分隔"
               />
-            </label>
-          </div>
+            </FormTableRow>
+          </FormTable>
           <div className="action-row">
             <button className="primary-button" disabled={savingRules || !canSaveRules} onClick={saveRuleConfig} type="button">
               {savingRules ? '保存中...' : '保存广告阈值'}

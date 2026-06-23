@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput, type DeliveryMatrixItem, type DeliveryMatrixStatus } from '../delivery-readiness-matrix';
 import { compactPath, formatPercent, formatUsd } from '../formatters';
 import { operatorFacingAiError } from '../ai-call-diagnostics';
@@ -1281,8 +1281,8 @@ export function DashboardPage() {
     <div>
       <PageHeader
         eyebrow="运营总览"
-        title="仪表盘"
-        description="当前范围、真实数据和下一步。"
+        title="今日看板"
+        description="看数据就绪、安全门禁和下一步。"
       />
 
       <OperatorTaskPanel
@@ -1306,28 +1306,34 @@ export function DashboardPage() {
 
       <div className="business-stack dashboard-stack-after-task">
         <Panel title="数据健康" tone={isQuantifiable ? 'success' : 'blocked'}>
-          <div className="context-summary-grid dashboard-health-grid">
-            <div>
-              <span>当前范围</span>
-              <strong>{dataGateLabel}</strong>
-              <p>{scope.dateFrom} 至 {scope.dateTo} / {scope.storeName || '-'} / {scope.marketplaceCode || '-'}</p>
-            </div>
-            <div>
-              <span>数据门槛</span>
-              <strong>{realReportCount}/8 类 · {importedRows} 行</strong>
-              <p>{metricStatusCopy.dataGateDetail}</p>
-            </div>
-            <div>
-              <span>{isQuantifiable ? 'AI / 建议' : 'AI / 数据门槛'}</span>
-              <strong>{recommendationHealthSummary.label}</strong>
-              <p>{recommendationHealthSummary.detail}</p>
-            </div>
-            <div>
-              <span>广告表现</span>
-              <strong>{isQuantifiable ? `${formatUsd(quant?.totalSpend)} / ACOS ${formatPercent(acosPercent)}` : '-'}</strong>
-              <p>{metricStatusCopy.performanceDetail}</p>
-            </div>
-          </div>
+          <StateLightGrid
+            items={[
+              {
+                label: '当前范围',
+                value: dataGateLabel,
+                detail: `${scope.dateFrom} 至 ${scope.dateTo} / ${scope.storeName || '-'} / ${scope.marketplaceCode || '-'}`,
+                tone: isQuantifiable ? 'ready' : hasRealFiles ? 'warning' : 'blocked',
+              },
+              {
+                label: '数据门槛',
+                value: `${realReportCount}/8 类 · ${importedRows} 行`,
+                detail: metricStatusCopy.dataGateDetail,
+                tone: isQuantifiable ? 'ready' : hasRealFiles ? 'warning' : 'blocked',
+              },
+              {
+                label: isQuantifiable ? 'AI / 建议' : 'AI / 数据门槛',
+                value: recommendationHealthSummary.label,
+                detail: recommendationHealthSummary.detail,
+                tone: pendingRecommendationCount > 0 ? 'warning' : reviewRecommendationCount > 0 ? 'pending' : isQuantifiable ? 'ready' : 'blocked',
+              },
+              {
+                label: '广告表现',
+                value: isQuantifiable ? `${formatUsd(quant?.totalSpend)} / ACOS ${formatPercent(acosPercent)}` : '-',
+                detail: metricStatusCopy.performanceDetail,
+                tone: isQuantifiable ? 'ready' : 'pending',
+              },
+            ]}
+          />
           {loading && <p className="muted-line">正在读取数据状态...</p>}
           {error && <p className="blocked-line">读取接口异常：{error}</p>}
         </Panel>

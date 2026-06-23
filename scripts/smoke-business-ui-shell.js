@@ -7,6 +7,22 @@ const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
 const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
+const NAV_RE = {
+  adQuant: /量化诊断中心|广告量化/,
+  approval: /审批历史中心|审批中心/,
+  dashboard: /今日看板|仪表盘/,
+  dataCollection: /批量数据采集|数据采集/,
+  dataImport: /指标核验入库|数据导入与校验/,
+  delivery: /最终验收就绪门|交付验收/,
+  keyword: /关键词机会矩阵|关键词机会/,
+  listing: /Listing 结构重写|Listing 优化/,
+  operationEvents: /运营事件/,
+  productConfig: /产品 ACOS 配置|产品配置/,
+  readback: /渐进执行回读|执行回读/,
+  recommendations: /优化建议草案|优化建议/,
+  scheduler: /本地定时调度|定时任务/,
+  settings: /AI 适配与诊断|设置/,
+};
 
 function fail(message, details) {
   throw new Error(details ? `${message}: ${details}` : message);
@@ -307,25 +323,26 @@ async function main() {
   await expectNotInBody(page, '套用已验证范围');
 
   const routes = [
-    ['仪表盘', 'dashboard'],
-    ['工作范围', 'operation-scope'],
-    ['数据采集', 'data-collection'],
-    ['数据导入与校验', 'data-import-validation'],
-    ['广告量化', 'ad-quant'],
-    ['优化建议', 'recommendations'],
-    ['审批中心', 'approval'],
-    ['执行回读', 'readback'],
-    ['关键词机会', 'keyword-opportunities'],
-    ['Listing 优化', 'listing-optimization'],
-    ['产品配置', 'product-config'],
-    ['定时任务', 'scheduler'],
-    ['设置', 'settings'],
-    ['交付验收', 'delivery'],
+    { nav: NAV_RE.dashboard, heading: /今日看板|仪表盘/, label: '今日看板', key: 'dashboard' },
+    { nav: /工作范围/, heading: /全局范围|工作范围/, label: '工作范围', key: 'operation-scope' },
+    { nav: NAV_RE.dataCollection, heading: /数据采集/, label: '数据采集', key: 'data-collection' },
+    { nav: NAV_RE.dataImport, heading: /数据导入与校验/, label: '数据导入与校验', key: 'data-import-validation' },
+    { nav: NAV_RE.operationEvents, heading: /运营事件/, label: '运营事件', key: 'operation-events' },
+    { nav: NAV_RE.adQuant, heading: /广告量化/, label: '广告量化', key: 'ad-quant' },
+    { nav: NAV_RE.recommendations, heading: /优化建议/, label: '优化建议', key: 'recommendations' },
+    { nav: NAV_RE.approval, heading: /审批中心/, label: '审批中心', key: 'approval' },
+    { nav: NAV_RE.readback, heading: /回读向导|执行回读/, label: '执行回读', key: 'readback' },
+    { nav: NAV_RE.keyword, heading: /关键词机会/, label: '关键词机会', key: 'keyword-opportunities' },
+    { nav: NAV_RE.listing, heading: /Listing 优化/, label: 'Listing 优化', key: 'listing-optimization' },
+    { nav: NAV_RE.productConfig, heading: /产品配置/, label: '产品配置', key: 'product-config' },
+    { nav: NAV_RE.scheduler, heading: /定时任务/, label: '定时任务', key: 'scheduler' },
+    { nav: NAV_RE.settings, heading: /AI 设置|设置/, label: '设置', key: 'settings' },
+    { nav: NAV_RE.delivery, heading: /交付验收/, label: '交付验收', key: 'delivery' },
   ];
 
-  for (const [label, key] of routes) {
-    await page.locator('.app-sidebar').getByRole('button', { name: new RegExp(label) }).click();
-    await page.getByRole('heading', { name: label, level: 2 }).waitFor();
+  for (const { nav, heading, label, key } of routes) {
+    await page.locator('.app-sidebar').getByRole('button', { name: nav }).click();
+    await page.getByRole('heading', { name: heading, level: 2 }).waitFor();
     const screenshotPath = path.join(evidenceDir, `business-ui-shell-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     const bodyText = await page.locator('body').innerText();

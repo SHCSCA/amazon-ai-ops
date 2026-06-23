@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { MicroStepper, PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildCollectionActionSummary } from '../collection-action-summary';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath } from '../formatters';
@@ -92,6 +92,13 @@ function reportStatusLabel(status: string): string {
     failed: '失败',
   };
   return labels[status] || status;
+}
+
+function reportOptionTone(item: { realFileAvailable?: boolean; importedRows?: number; status?: string }): 'ready' | 'pending' | 'blocked' | 'warning' {
+  if ((item.importedRows || 0) > 0) return 'ready';
+  if (item.realFileAvailable) return 'warning';
+  if (['failed', 'import_failed', 'blocked', 'missing'].includes(item.status || '')) return 'blocked';
+  return 'pending';
 }
 
 function collectionStatusLabel(status?: string): string {
@@ -909,6 +916,16 @@ export function DataCollectionPage() {
               </button>
             </div>
           </div>
+          <MicroStepper
+            items={reportOptions.map((item) => ({
+              label: item.label,
+              meta: item.importedRows > 0 ? `${item.importedRows} 行` : item.realFileAvailable ? '待入库' : reportStatusLabel(item.status),
+              detail: item.realFileAvailable
+                ? '原始 xlsx/xls/csv 已留存；后续量化只读取这些真实表格。'
+                : '等待领星下载中心生成，或通过本地导入补齐。',
+              tone: reportOptionTone(item),
+            }))}
+          />
           <div className="report-option-grid">
             {reportOptions.map((item) => (
               <label className={`report-option ${item.realFileAvailable ? 'report-option-ready' : ''}`} key={item.type}>
@@ -982,14 +999,14 @@ export function DataCollectionPage() {
                 <strong>{runningAction ? `正在执行：${actionModeLabel(runningAction)}` : '最近动作进度'}</strong>
                 <span>{lastActionResult ? lastActionResult.nextStep : '请保持领星页面和当前范围一致，动作完成前不要切换日期、店铺或站点。'}</span>
               </div>
-              <div className="collection-progress-grid">
-                {actionProgressSteps.map((step) => (
-                  <div className={`collection-progress-step collection-progress-${step.status}`} key={step.label}>
-                    <strong>{step.label}</strong>
-                    <p>{step.description}</p>
-                  </div>
-                ))}
-              </div>
+              <MicroStepper
+                items={actionProgressSteps.map((step) => ({
+                  label: step.label,
+                  meta: step.status === 'ready' ? '已完成' : step.status === 'blocked' ? '阻断' : '进行中',
+                  detail: step.description,
+                  tone: step.status,
+                }))}
+              />
             </div>
           )}
         </Panel>

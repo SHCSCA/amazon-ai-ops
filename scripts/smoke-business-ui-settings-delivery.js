@@ -7,6 +7,16 @@ const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
 const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
+const NAV_RE = {
+  dashboard: /今日看板|仪表盘/,
+  delivery: /最终验收就绪门|交付验收/,
+  recommendations: /优化建议草案|优化建议/,
+  settings: /AI 适配与诊断|设置/,
+};
+const HEADING_RE = {
+  dashboard: /今日看板|仪表盘/,
+  settings: /AI 设置|设置/,
+};
 
 function fail(message, details) {
   throw new Error(details ? `${message}: ${details}` : message);
@@ -784,8 +794,8 @@ async function main() {
   await page.goto(server.url, { waitUntil: 'networkidle' });
   await assertGlobalGuards(page, 'initial');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
-  await page.getByRole('heading', { name: '设置', level: 2 }).waitFor();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
+  await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
   await expectVisible(page, '待测试');
   await expectVisible(page, '已配置（已隐藏）');
   await expectVisible(page, '已配置，待测试');
@@ -854,25 +864,25 @@ async function main() {
   await page.getByRole('button', { name: '测试 AI 连接' }).click();
   await page.waitForFunction(() => document.body.innerText.includes('AI 连接测试通过'), null, { timeout: 5000 });
   await expectVisible(page, 'AI 可用');
-  await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
-  await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
-  await page.getByRole('heading', { name: '设置', level: 2 }).waitFor();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
+  await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
   await expandDetails(page, '高级 AI 参数');
   await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
-  await page.locator('.app-sidebar').getByRole('button', { name: /仪表盘/ }).click();
-  await page.getByRole('heading', { name: '仪表盘', level: 2 }).waitFor();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dashboard }).click();
+  await page.getByRole('heading', { name: HEADING_RE.dashboard, level: 2 }).waitFor();
   await expectVisible(page, 'AI / 数据门槛');
   await expectVisible(page, '等待数据门槛');
-  await page.locator('.app-sidebar').getByRole('button', { name: /优化建议/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.recommendations }).click();
   await page.getByRole('heading', { name: '优化建议', level: 2 }).waitFor();
   await expandDetails(page, '生成范围、AI 配置和规则阈值');
   await expectVisible(page, 'AI 可用');
   await expectVisible(page, 'deepseek-v4-flash');
   await expectInBody(page, '生成建议时会调用 AI 参与产品阶段诊断、动态阈值建议和动作解释。', 'cross-page AI readiness after settings test');
-  await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
-  await page.getByRole('heading', { name: '设置', level: 2 }).waitFor();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
+  await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
   await expandDetails(page, '高级 AI 参数');
   await expectVisible(page, 'ad_strategy_diagnosis_v1');
@@ -882,10 +892,10 @@ async function main() {
   await page.getByRole('button', { name: '保存 AI 设置' }).click();
   await page.getByText('AI 设置已保存', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, 'AI 可用');
-  await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
-  await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
-  await page.getByRole('heading', { name: '设置', level: 2 }).waitFor();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
+  await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
   await expandDetails(page, '高级 AI 参数');
   await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
@@ -910,7 +920,7 @@ async function main() {
   for (const text of ['设置路径', '证据目录', '下载目录', '导出目录', '交付包目录', '本地数据库', '品牌词白名单', '核心词白名单']) {
     await expectVisible(page, text);
   }
-  for (const text of ['目标利润线', '风险线', '无订单浪费', '动作边界', '最高 CPC', '最低 CPC', '自动生成降价建议', '自动生成否词建议']) {
+  for (const text of ['目标利润线', '风险线', '无订单浪费', '动作边界', '最高 CPC', '最低 CPC', '降价建议', '否词建议']) {
     await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
   }
   await page.getByLabel('高 ACOS 阈值').fill('0.10');
@@ -945,7 +955,7 @@ async function main() {
   await page.getByRole('button', { name: '保存范围' }).click();
   await page.getByText('2026-06-02 至 2026-06-13 / FT-US-TEST / CA / USD', { exact: true }).waitFor({ timeout: 5000 });
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
   for (const text of [
     '交付摘要',
@@ -1200,8 +1210,8 @@ async function main() {
   await page.evaluate(() => {
     window.__deliveryReadinessMode = 'missing';
   });
-  await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
-  await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
   await expandDetails(page, '文件与技术入口');
   await page.getByText('最终验收汇总尚未生成', { exact: false }).first().waitFor({ timeout: 5000 });
@@ -1212,8 +1222,8 @@ async function main() {
   await page.evaluate(() => {
     window.__deliveryReadinessMode = 'fake-ready';
   });
-  await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
-  await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
   await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await expandDetails(page, '完整业务证据项');
@@ -1223,8 +1233,8 @@ async function main() {
   await page.evaluate(() => {
     window.__deliveryReadinessMode = 'non-manifest-ready';
   });
-  await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
-  await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
   await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await expandDetails(page, '完整业务证据项');
@@ -1246,8 +1256,8 @@ async function main() {
   await page.evaluate(() => {
     window.__deliveryReadinessMode = 'pass';
   });
-  await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
-  await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
   await page.getByText('可以交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.getByText('交付包摘要', { exact: false }).waitFor({ timeout: 5000 });

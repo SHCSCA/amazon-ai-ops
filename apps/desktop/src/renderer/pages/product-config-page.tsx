@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
 import type { AppRoute } from '../types';
@@ -180,45 +180,38 @@ export function ProductConfigPage() {
         </Panel>
 
         <Panel title="产品基础信息">
-          <div className="form-grid form-grid-four">
-            <label>
-              ASIN
+          <FormTable>
+            <FormTableRow label="ASIN" required hint="当前产品配置的主键；保存后进入 AI 阶段判断和动态阈值。">
               <input value={draft.asin} onChange={(event) => setDraft({ ...draft, asin: event.target.value })} placeholder="例如 B0..." />
-            </label>
-            <label>
-              Parent ASIN
+            </FormTableRow>
+            <FormTableRow label="Parent ASIN" hint="可选；用于后续父子体汇总。">
               <input value={draft.parentAsin} onChange={(event) => setDraft({ ...draft, parentAsin: event.target.value })} />
-            </label>
-            <label>
-              MSKU
+            </FormTableRow>
+            <FormTableRow label="MSKU" hint="可选；便于运营识别本地 SKU。">
               <input value={draft.msku} onChange={(event) => setDraft({ ...draft, msku: event.target.value })} />
-            </label>
-            <label>
-              SKU
+            </FormTableRow>
+            <FormTableRow label="SKU" hint="可选；与 ERP 或 Amazon 后台 SKU 对齐。">
               <input value={draft.sku} onChange={(event) => setDraft({ ...draft, sku: event.target.value })} />
-            </label>
-            <label className="form-span-two">
-              标题
+            </FormTableRow>
+            <FormTableRow label="标题" hint="产品标题只用于运营识别，不自动改写 Listing。">
               <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="产品标题，便于运营识别" />
-            </label>
-            <label>
-              产品阶段
+            </FormTableRow>
+            <FormTableRow label="产品阶段" required hint={selectedStage?.description || '不同阶段会影响 AI 对目标 ACOS、放量和降价的解释。'}>
               <select value={draft.productStage} onChange={(event) => setDraft({ ...draft, productStage: event.target.value as ProductStage })}>
                 {STAGE_OPTIONS.map((item) => (
                   <option key={item.value} value={item.value}>{item.label}</option>
                 ))}
               </select>
-            </label>
-            <label>
-              状态
+            </FormTableRow>
+            <FormTableRow label="状态" required hint="状态用于提示规则引擎是否应保守处理扩量、清货或暂停产品。">
               <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
                 <option value="active">正常运营</option>
                 <option value="paused">暂停推广</option>
                 <option value="clearance">清货</option>
                 <option value="watch">观察</option>
               </select>
-            </label>
-          </div>
+            </FormTableRow>
+          </FormTable>
           <div className="operation-hint">
             <strong>{stageLabel(draft.productStage)}</strong>
             <p>{selectedStage?.description}</p>
@@ -229,18 +222,38 @@ export function ProductConfigPage() {
           <p className={cost.purchaseCost || cost.firstLegCost || cost.fbaFee || cost.minPrice ? 'muted-line' : 'warning-line'}>
             {costHint}
           </p>
-          <div className="form-grid form-grid-four">
-            <label>采购成本<input type="number" step="0.01" value={cost.purchaseCost} onChange={(event) => updateCost('purchaseCost', event.target.value)} /></label>
-            <label>头程费用<input type="number" step="0.01" value={cost.firstLegCost} onChange={(event) => updateCost('firstLegCost', event.target.value)} /></label>
-            <label>FBA 费用<input type="number" step="0.01" value={cost.fbaFee} onChange={(event) => updateCost('fbaFee', event.target.value)} /></label>
-            <label>推荐费率<input type="number" step="0.01" value={cost.referralFeeRate} onChange={(event) => updateCost('referralFeeRate', event.target.value)} /></label>
-            <label>仓储费<input type="number" step="0.01" value={cost.storageFee} onChange={(event) => updateCost('storageFee', event.target.value)} /></label>
-            <label>其他成本<input type="number" step="0.01" value={cost.otherCost} onChange={(event) => updateCost('otherCost', event.target.value)} /></label>
-            <label>最低售价<input type="number" step="0.01" value={cost.minPrice} onChange={(event) => updateCost('minPrice', event.target.value)} /></label>
-            <label>目标净利率<input type="number" step="0.01" value={cost.targetNetMargin} onChange={(event) => updateCost('targetNetMargin', event.target.value)} /></label>
-            <label>目标 ACOS<input type="number" step="0.01" value={cost.targetAcos} onChange={(event) => updateCost('targetAcos', event.target.value)} /></label>
-            <label>目标 TACOS<input type="number" step="0.01" value={cost.targetTacos} onChange={(event) => updateCost('targetTacos', event.target.value)} /></label>
-          </div>
+          <FormTable>
+            <FormTableRow label="采购成本" hint="单位 USD；商品采购成本。">
+              <input type="number" step="0.01" value={cost.purchaseCost} onChange={(event) => updateCost('purchaseCost', event.target.value)} />
+            </FormTableRow>
+            <FormTableRow label="头程费用" hint="单位 USD；头程、清关或入仓前费用。">
+              <input type="number" step="0.01" value={cost.firstLegCost} onChange={(event) => updateCost('firstLegCost', event.target.value)} />
+            </FormTableRow>
+            <FormTableRow label="FBA 费用" hint="单位 USD；亚马逊履约费用。">
+              <input type="number" step="0.01" value={cost.fbaFee} onChange={(event) => updateCost('fbaFee', event.target.value)} />
+            </FormTableRow>
+            <FormTableRow label="推荐费率" hint="小数格式，例如 0.15 表示 15%。">
+              <input type="number" step="0.01" value={cost.referralFeeRate} onChange={(event) => updateCost('referralFeeRate', event.target.value)} />
+            </FormTableRow>
+            <FormTableRow label="仓储费" hint="单位 USD；可按单件或估算值维护。">
+              <input type="number" step="0.01" value={cost.storageFee} onChange={(event) => updateCost('storageFee', event.target.value)} />
+            </FormTableRow>
+            <FormTableRow label="其他成本" hint="单位 USD；包装、售后或额外成本。">
+              <input type="number" step="0.01" value={cost.otherCost} onChange={(event) => updateCost('otherCost', event.target.value)} />
+            </FormTableRow>
+            <FormTableRow label="最低售价" hint="单位 USD；用于估算最低毛利空间。">
+              <input type="number" step="0.01" value={cost.minPrice} onChange={(event) => updateCost('minPrice', event.target.value)} />
+            </FormTableRow>
+            <FormTableRow label="目标净利率" hint="小数格式，例如 0.15 表示 15%。">
+              <input type="number" step="0.01" value={cost.targetNetMargin} onChange={(event) => updateCost('targetNetMargin', event.target.value)} />
+            </FormTableRow>
+            <FormTableRow label="目标 ACOS" hint="小数格式；AI 动态阈值会把它作为产品级广告目标。">
+              <input type="number" step="0.01" value={cost.targetAcos} onChange={(event) => updateCost('targetAcos', event.target.value)} />
+            </FormTableRow>
+            <FormTableRow label="目标 TACOS" hint="小数格式；后续接入总销售后用于整体预算约束。">
+              <input type="number" step="0.01" value={cost.targetTacos} onChange={(event) => updateCost('targetTacos', event.target.value)} />
+            </FormTableRow>
+          </FormTable>
           <div className="context-summary-grid">
             <div>
               <span>估算固定成本</span>

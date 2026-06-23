@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup } from '../components/tag-metric-group';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
@@ -435,6 +436,12 @@ export function AdQuantPage() {
   const selectedSales = selectedProductGroup?.sales ?? visibleQuant?.totalSales ?? 0;
   const selectedOrders = selectedProductGroup?.orders ?? visibleQuant?.totalOrders ?? 0;
   const selectedAcos = selectedProductGroup ? selectedProductGroup.acos : (visibleQuant?.acos ?? 0);
+  const quantTaskTitle = canDiagnose
+    ? 'AI 量化引擎已完成统计'
+    : '真实数据未闭合，量化诊断锁定';
+  const quantTaskDetail = canDiagnose
+    ? `发现 ${diagnosticCount} 个诊断对象，其中 ${actionableRows} 行可进入建议生成；先运行 AI 阶段诊断，再去优化建议。`
+    : '先补齐真实广告报表和导入指标，系统不会用审计文件或空数据生成广告判断。';
 
   useEffect(() => {
     setSelectedProductKey((current) => {
@@ -516,6 +523,33 @@ export function AdQuantPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow="量化诊断中心"
+          title={quantTaskTitle}
+          detail={quantTaskDetail}
+          primaryAction={{
+            label: strategyLoading ? 'AI 分析中...' : '运行大模型深度诊断',
+            disabled: !canDiagnose || strategyLoading,
+            onClick: runStrategyDiagnosis,
+          }}
+          secondaryActions={[
+            {
+              label: canGenerateFormalRecommendations && diagnosticCount > 0 ? '进入优化建议' : '返回数据采集',
+              onClick: () => navigate(canGenerateFormalRecommendations && diagnosticCount > 0 ? 'recommendations' : 'data-collection'),
+            },
+          ]}
+        >
+          <TagMetricGroup
+            items={[
+              { label: '真实报表', value: `${realReportCount}/8`, tone: realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked' },
+              { label: '历史入库', value: `${importedRowCount} 行`, tone: importedRowCount > 0 ? 'ready' : 'blocked' },
+              { label: '浪费超支', value: formatUsd(noOrderSpend), tone: noOrderSpend > 0 ? 'blocked' : 'ready' },
+              { label: '出单词', value: selectedOrders, tone: selectedOrders > 0 ? 'ready' : 'warning' },
+              { label: '异常 ASIN', value: highAcosRows.length, tone: highAcosRows.length > 0 ? 'warning' : 'ready' },
+            ]}
+          />
+        </OperatorTaskPanel>
+
         <Panel title="当前范围" tone={canDiagnose ? 'success' : 'blocked'}>
           <div className="business-split">
             <div className="business-scope-line">

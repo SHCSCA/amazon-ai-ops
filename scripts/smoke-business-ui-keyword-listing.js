@@ -7,6 +7,10 @@ const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
 const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
+const NAV_RE = {
+  keyword: /关键词机会矩阵|关键词机会/,
+  listing: /Listing 结构重写|Listing 优化/,
+};
 
 function fail(message, details) {
   throw new Error(details ? `${message}: ${details}` : message);
@@ -369,7 +373,7 @@ async function main() {
       },
     }));
   });
-  await page.locator('.app-sidebar').getByRole('button', { name: /Listing 优化/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.listing }).click();
   await page.getByRole('heading', { name: 'Listing 优化', level: 2 }).waitFor();
   await expectInBody(page, '已忽略过期关键词机会带入：数据批次不一致', 'stale handoff should be rejected in auto batch mode');
   await expectNotInBody(page, 'stale keyword should not appear');
@@ -389,7 +393,7 @@ async function main() {
   await expectNotInBody(page, 'v1.5 工作台');
   await expectNotInBody(page, 'pnpm run verify:ad-readback');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /关键词机会/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.keyword }).click();
   await page.getByRole('heading', { name: '关键词机会', level: 2 }).waitFor();
   await expectVisible(page, '机会来源');
   await expectVisible(page, '关键词机会来源与覆盖关系');
@@ -435,7 +439,7 @@ async function main() {
   await expectVisible(page, 'C:/reports/keyword.xlsx');
   await page.getByRole('button', { name: '带入 Listing' }).first().click();
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /Listing 优化/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.listing }).click();
   await page.getByRole('heading', { name: 'Listing 优化', level: 2 }).waitFor();
   await page.waitForFunction(
     () => Array.from(document.querySelectorAll('textarea')).some((item) => item.value.includes('motion sensor wall light')),

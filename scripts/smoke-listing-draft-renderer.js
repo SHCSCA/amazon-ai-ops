@@ -7,6 +7,10 @@ const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
 const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
+const NAV_RE = {
+  keyword: /关键词机会矩阵|关键词机会/,
+  listing: /Listing 结构重写|Listing 优化/,
+};
 
 function fail(message, details) {
   const error = details ? `${message}: ${details}` : message;
@@ -40,9 +44,23 @@ async function main() {
     const calls = [];
     const opportunities = [{
       asin: 'B001',
+      keyword: 'insulated travel mug',
       normalizedKeyword: 'insulated travel mug',
       opportunityLevel: 'high',
       score: 91,
+      portfolioName: 'D6 Portfolio',
+      campaignName: 'D6 Listing Campaign',
+      adGroupName: 'D6 Listing Ad Group',
+      entityType: 'user_search_term',
+      coverageStatus: '待 Listing 覆盖核对',
+      recommendedPlacement: '优先进入标题/五点或精准词库',
+      risk: '需结合 Listing 相关性复核',
+      sourceFile: 'C:/mock/search-term.xlsx',
+      clicks: 42,
+      orders: 3,
+      spend: 170.25,
+      sales: 238.5,
+      acos: 0.714,
       evidence: 'clicks=42,orders=3,impressions=900,cost=170.25,sales=238.5,acos=71.4%,cvr=7.1%,source=search_term,source_file=C:/mock/search-term.xlsx,source_row=12',
       riskFlags: [],
       recommendedSections: ['title', 'bullet'],
@@ -82,9 +100,84 @@ async function main() {
 
     window.__smokeCalls = calls;
     window.__clipboardText = '';
+    const reportTypes = ['campaign', 'ad_group', 'placement', 'advertised_product', 'auto_targeting', 'keyword', 'product_targeting', 'user_search_term'];
+    const readyPipeline = {
+      scope: {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        currency: 'USD',
+        batchId: 'listing_draft_smoke_batch',
+      },
+      generatedAt: '2026-06-12T10:00:00.000Z',
+      collection: {
+        status: 'ready',
+        latestBatch: { id: 'listing_draft_smoke_batch', status: 'completed' },
+        sourceBatchIds: ['listing_draft_smoke_batch'],
+        availableBatches: [],
+        reportOptions: reportTypes.map((type) => ({ type, label: type, status: 'downloaded', realFileAvailable: true, importedRows: 12 })),
+        realReportFiles: reportTypes.map((type, index) => ({
+          id: `file_${type}`,
+          reportType: type,
+          displayName: type,
+          status: 'downloaded',
+          filePath: `C:/mock/${type}.xlsx`,
+          folderPath: 'C:/mock',
+          fileName: `${type}.xlsx`,
+          fileSizeBytes: 2048 + index,
+          importedRows: 12,
+        })),
+        evidencePaths: [],
+        fileAudit: {
+          totalFileRecords: 8,
+          downloadedFileRecords: 8,
+          existingFileRecords: 8,
+          realReportFileCount: 8,
+          importedRowCount: 96,
+          rejectedEvidenceFileCount: 0,
+          missingReportLabels: [],
+        },
+        blockers: [],
+        audit: { databaseReady: true, acceptedExtensions: ['.xlsx', '.xls', '.csv'], rejectedEvidenceExtensions: ['.json', '.png', '.html'], notes: [] },
+      },
+      quant: {
+        hasImportedMetrics: true,
+        importedRows: 96,
+        summarySource: 'mock',
+        totalSpend: 170.25,
+        totalSales: 238.5,
+        totalOrders: 3,
+        totalClicks: 42,
+        totalImpressions: 900,
+        acos: 0.714,
+        cvr: 0.071,
+        cpc: 4.05,
+        wastedSpend: 0,
+        highRiskCount: 0,
+        adObjectTimelines: [],
+        diagnostics: [],
+        blockers: [],
+      },
+      operations: { events: [], eventCount: 0, notes: [] },
+      productContext: { products: [], productCount: 0, notes: [] },
+    };
     window.electronAPI = {
       getVersion: async () => '1.5.0',
       getState: async () => ({ isLoggedIn: true, currentStore: 'SHC001', loginSession: { erpSessionReused: true, adsTitle: '仪表盘' } }),
+      getBusinessUiDataPipeline: async () => readyPipeline,
+      listOperationEvents: async () => [],
+      getSettings: async () => ({
+        aiApiKey: '',
+        aiKeyConfigured: false,
+        aiBaseUrl: 'https://api.deepseek.com',
+        aiModel: 'deepseek-v4-flash',
+        aiLastTestStatus: '',
+        aiLastTestBaseUrl: '',
+        aiLastTestModel: '',
+        aiLastTestMessage: '',
+      }),
+      getBusinessKeywordOpportunities: async () => opportunities,
       getDownloadCenterPageModel: async () => ({
         source: 'mock',
         path: 'mock-page-model.json',
@@ -111,6 +204,13 @@ async function main() {
       buildKeywordOpportunities: async () => opportunities,
       buildListingSuggestions: async () => suggestions,
       updateListingSuggestionStatus: async () => ({ success: true }),
+      saveManualListingContent: async (listing) => ({
+        ...listing,
+        versionId: 1,
+        source: 'manual',
+        updatedAt: '2026-06-12T10:05:00.000Z',
+      }),
+      listListingContentVersions: async () => [],
       generateListingDrafts: async (items) => {
         calls.push({ method: 'generateListingDrafts', statuses: items.map((item) => item.status) });
         return drafts;
@@ -128,7 +228,7 @@ async function main() {
 
   await page.goto(server.url, { waitUntil: 'networkidle' });
   await page.waitForTimeout(500);
-  if (!(await page.getByRole('button', { name: '关键词机会' }).count())) {
+  if (!(await page.getByRole('button', { name: NAV_RE.keyword }).count())) {
     const debugScreenshot = path.join(evidenceDir, `listing-draft-renderer-debug-${Date.now()}.png`);
     await page.screenshot({ path: debugScreenshot, fullPage: true });
     const bodyText = await page.locator('body').innerText().catch(() => '');
@@ -136,28 +236,29 @@ async function main() {
     server.close();
     fail('Renderer did not show the authenticated app shell', `${debugScreenshot}\n${bodyText.slice(0, 1000)}`);
   }
-  await page.getByRole('button', { name: '关键词机会' }).click();
+  await page.getByRole('button', { name: NAV_RE.keyword }).click();
 
-  await page.getByText('选择报表').click();
-  await page.getByText('导入并生成机会').click();
-  await page.getByRole('button', { name: 'Listing 优化' }).click();
-  await page.getByPlaceholder('ASIN').fill('B001');
-  await page.getByPlaceholder('标题').fill('Old title');
-  await page.getByText('生成建议').click();
-  await page.getByText('标记采纳').click();
-  await page.getByText('用已采纳建议生成草案').click();
+  await page.getByRole('button', { name: '刷新机会' }).click();
+  await page.getByText('insulated travel mug').first().waitFor();
+  await page.getByRole('button', { name: '带入 Listing' }).first().click();
+  await page.getByRole('button', { name: NAV_RE.listing }).click();
+  await page.getByLabel('ASIN').fill('B001');
+  await page.getByLabel('标题').fill('Old title');
+  await page.getByLabel('五点 1').fill('Keeps drinks hot');
+  await page.getByLabel('后台搜索词').fill('travel mug');
+  await page.getByRole('button', { name: '保存为新版本' }).click();
+  await page.getByText('已保存为 Listing 版本', { exact: false }).waitFor();
+  await page.getByRole('button', { name: '生成本地草案' }).click();
 
-  await page.getByText('当前原文', { exact: true }).waitFor();
+  await page.getByText('当前文本', { exact: true }).waitFor();
   if ((await page.getByText('Old title').count()) < 1) fail('Current text was not visible');
-  await page.getByText('修改草案', { exact: true }).waitFor();
+  await page.getByText('草案文本', { exact: true }).waitFor();
   if ((await page.getByText('New insulated travel mug title').count()) < 1) fail('Drafted text was not visible');
   if ((await page.getByText('orders=3, spend=170.25, row=12').count()) < 1) fail('Draft evidence was not visible');
-  await page.getByText('AI 回退：未配置 AI Key，使用规则草案').waitFor();
+  await page.getByText('规则兜底 / 未配置 AI Key，使用规则草案').waitFor();
 
-  await page.getByText('导出草案 CSV').click();
-  await page.getByText('最近草案导出：').waitFor();
-  await page.getByText('打开最近草案导出').click();
-  await page.getByText('复制草案').click();
+  await page.getByRole('button', { name: '导出草案' }).click();
+  await page.getByText('已导出 Listing 草案', { exact: false }).waitFor();
 
   evidence.calls = await page.evaluate(() => window.__smokeCalls || []);
   evidence.clipboardText = await page.evaluate(() => window.__clipboardText || '');
@@ -168,17 +269,11 @@ async function main() {
 
   const generateCall = evidence.calls.find((call) => call.method === 'generateListingDrafts');
   if (!generateCall) fail('generateListingDrafts was not called');
-  if (!generateCall.statuses.every((status) => status === 'accepted')) {
-    fail('Draft generation received non-accepted suggestions', JSON.stringify(generateCall.statuses));
+  if (!generateCall.statuses.every((status) => status === 'pending')) {
+    fail('Draft generation received unexpected suggestion statuses', JSON.stringify(generateCall.statuses));
   }
-  if (!evidence.calls.some((call) => call.method === 'exportListingDrafts' && call.format === 'csv' && call.draftCount === 1)) {
-    fail('Draft CSV export was not called with one draft');
-  }
-  if (!evidence.calls.some((call) => call.method === 'openReportPath' && /listing_drafts_smoke\.csv$/.test(call.targetPath))) {
-    fail('Latest draft export was not opened');
-  }
-  if (!/New insulated travel mug title/.test(evidence.clipboardText)) {
-    fail('Copied draft text did not contain drafted Listing text');
+  if (!evidence.calls.some((call) => call.method === 'exportListingDrafts' && call.format === 'xlsx' && call.draftCount === 1)) {
+    fail('Draft XLSX export was not called with one draft');
   }
 
   const evidencePath = path.join(evidenceDir, `listing-draft-renderer-smoke-${Date.now()}.json`);

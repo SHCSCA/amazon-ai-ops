@@ -7,6 +7,16 @@ const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
 const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
+const NAV_RE = {
+  approval: /审批历史中心|审批中心/,
+  readback: /渐进执行回读|执行回读/,
+  recommendations: /优化建议草案|优化建议/,
+};
+const HEADING_RE = {
+  approval: /审批中心/,
+  readback: /回读向导|执行回读/,
+  recommendations: /优化建议/,
+};
 
 function fail(message, details) {
   throw new Error(details ? `${message}: ${details}` : message);
@@ -858,13 +868,13 @@ async function main() {
   await expectInBody(page, 'manual_ad_execution_batch', 'manual batch scope value');
 
   const routes = [
-    ['优化建议', 'recommendations'],
-    ['审批中心', 'approval'],
-    ['执行回读', 'readback'],
+    { nav: NAV_RE.recommendations, heading: HEADING_RE.recommendations, label: '优化建议', key: 'recommendations' },
+    { nav: NAV_RE.approval, heading: HEADING_RE.approval, label: '审批中心', key: 'approval' },
+    { nav: NAV_RE.readback, heading: HEADING_RE.readback, label: '执行回读', key: 'readback' },
   ];
-  for (const [label, key] of routes) {
-    await page.locator('.app-sidebar').getByRole('button', { name: new RegExp(label) }).click();
-    await page.getByRole('heading', { name: label, level: 2 }).waitFor();
+  for (const { nav, heading, label, key } of routes) {
+    await page.locator('.app-sidebar').getByRole('button', { name: nav }).click();
+    await page.getByRole('heading', { name: heading, level: 2 }).waitFor();
     await assertGlobalGuards(page, key);
     const screenshotPath = path.join(evidenceDir, `business-ui-ad-execution-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -875,7 +885,7 @@ async function main() {
     };
   }
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /优化建议/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.recommendations }).click();
   await expectVisible(page, '建议池');
   await expectInBody(page, '可审批 1', 'recommendation task formal approval count');
   await expectInBody(page, '需复核 1', 'recommendation task review count');
@@ -1126,7 +1136,7 @@ async function main() {
   await page.getByRole('button', { name: '刷新建议' }).click();
   await expectVisible(page, '查看详情');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /审批中心/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.approval }).click();
   await expectVisible(page, '选择一条建议');
   await expectVisible(page, '查看审批队列');
   await openEvidenceDisclosures(page);
@@ -1242,7 +1252,7 @@ async function main() {
   await page.getByPlaceholder('记录审批范围、外部审批凭证或拒绝原因').fill('Approved for smoke scope only.');
   await page.getByRole('button', { name: '批准并进入待执行' }).click();
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /执行回读/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.readback }).click();
   await expectVisible(page, '1. 确认动作和来源');
   await expectVisible(page, '2. 填写审批允许');
   await expectVisible(page, '3. 补执行前后和回读');

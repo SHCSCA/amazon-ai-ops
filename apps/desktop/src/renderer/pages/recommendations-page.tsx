@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
@@ -1077,18 +1077,33 @@ export function RecommendationsPage() {
             onClick: runPrimaryTaskAction,
           }}
         >
-          <div className="dashboard-task-metrics" aria-label="建议池摘要">
-            <StatusPill tone={formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending'}>
-              可审批 {formalApprovalCount}
-            </StatusPill>
-            <StatusPill tone={manualReviewCount > 0 ? 'warning' : 'pending'}>
-              需复核 {manualReviewCount}
-            </StatusPill>
-            <StatusPill tone={evidenceBlockedCount > 0 ? 'blocked' : 'pending'}>
-              缺证据 {evidenceBlockedCount}
-            </StatusPill>
-            <span>{recommendations.length} 条建议</span>
-            <span>{realReportCount}/8 类报表</span>
+          <StateLightGrid
+            items={[
+              {
+                label: '高风险强阻断',
+                value: `缺证据 ${evidenceBlockedCount}`,
+                detail: '缺批次、来源或可回查证据',
+                tone: evidenceBlockedCount > 0 ? 'blocked' : 'ready',
+              },
+              {
+                label: '需人工复核',
+                value: `需复核 ${manualReviewCount}`,
+                detail: 'AI 独立洞察或规则冲突',
+                tone: manualReviewCount > 0 ? 'warning' : 'pending',
+              },
+              {
+                label: '已就绪可批准',
+                value: `可审批 ${formalApprovalCount}`,
+                detail: `${recommendations.length} 条建议 / ${realReportCount}/8 类报表`,
+                tone: formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending',
+              },
+            ]}
+          />
+          <div className="business-pill-row" aria-label="建议池分类计数">
+            <StatusPill tone={formalApprovalCount > 0 ? 'ready' : 'pending'}>正式可审批 {formalApprovalCount}</StatusPill>
+            <StatusPill tone={manualReviewCount > 0 ? 'warning' : 'pending'}>人工复核 {manualReviewCount}</StatusPill>
+            <StatusPill tone={insightOnlyCount > 0 ? 'warning' : 'ready'}>AI 洞察未采纳 {insightOnlyCount}</StatusPill>
+            <StatusPill tone={evidenceBlockedCount > 0 ? 'blocked' : 'ready'}>证据不足阻断 {evidenceBlockedCount}</StatusPill>
           </div>
         </OperatorTaskPanel>
 
@@ -1276,28 +1291,34 @@ export function RecommendationsPage() {
               {formalApprovalCount > 0 ? '有正式建议' : recommendations.length ? '需复核' : '暂无建议'}
             </StatusPill>
           </div>
-          <div className="context-summary-grid">
-            <div>
-              <span>正式可审批</span>
-              <strong>正式可审批 {formalApprovalCount}</strong>
-              <p>{recommendationFormalApprovalExplanationText()}</p>
-            </div>
-            <div>
-              <span>人工复核</span>
-              <strong>人工复核 {manualReviewCount}</strong>
-              <p>{recommendationReviewExplanationText()}</p>
-            </div>
-            <div>
-              <span>AI 洞察未采纳</span>
-              <strong>AI 洞察未采纳 {insightOnlyCount}</strong>
-              <p>AI 有判断但缺少可回查证据、无法绑定当前广告对象或被合并层过滤时，只作为洞察展示。</p>
-            </div>
-            <div>
-              <span>证据不足阻断</span>
-              <strong>证据不足阻断 {evidenceBlockedCount}</strong>
-              <p>缺批次、指标日期、来源文件、当前/建议值、广告活动、广告组或 AI 可用证据时，不允许审批。</p>
-            </div>
-          </div>
+          <StateLightGrid
+            items={[
+              {
+                label: '正式可审批',
+                value: `正式可审批 ${formalApprovalCount}`,
+                detail: recommendationFormalApprovalExplanationText(),
+                tone: formalApprovalCount > 0 ? 'ready' : 'pending',
+              },
+              {
+                label: '人工复核',
+                value: `人工复核 ${manualReviewCount}`,
+                detail: recommendationReviewExplanationText(),
+                tone: manualReviewCount > 0 ? 'warning' : 'pending',
+              },
+              {
+                label: 'AI 洞察未采纳',
+                value: `AI 洞察未采纳 ${insightOnlyCount}`,
+                detail: '缺证据、无法绑定对象或被合并层过滤',
+                tone: insightOnlyCount > 0 ? 'warning' : 'ready',
+              },
+              {
+                label: '证据不足阻断',
+                value: `证据不足阻断 ${evidenceBlockedCount}`,
+                detail: '缺批次、来源文件、当前/建议值或 AI 证据',
+                tone: evidenceBlockedCount > 0 ? 'blocked' : 'ready',
+              },
+            ]}
+          />
           {insightOnlyReasons.length > 0 && (
             <p className="warning-line">未进入建议池原因：{Array.from(new Set(insightOnlyReasons)).slice(0, 3).join('；')}</p>
           )}

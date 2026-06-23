@@ -7,6 +7,12 @@ const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
 const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
+const NAV_RE = {
+  dashboard: /今日看板|仪表盘/,
+  dataCollection: /批量数据采集|数据采集/,
+  dataImport: /指标核验入库|数据导入与校验/,
+  adQuant: /量化诊断中心|广告量化/,
+};
 
 function fail(message, details) {
   throw new Error(details ? `${message}: ${details}` : message);
@@ -977,16 +983,16 @@ async function main() {
     await expectNotInBody(page, 'pnpm run verify:ad-readback');
 
   const routes = [
-    ['仪表盘', 'dashboard'],
-    ['数据采集', 'data-collection'],
-    ['数据导入与校验', 'data-import-validation'],
-    ['运营事件', 'operation-events'],
-    ['广告量化', 'ad-quant'],
+    { nav: NAV_RE.dashboard, heading: /今日看板|仪表盘/, label: '今日看板', key: 'dashboard' },
+    { nav: NAV_RE.dataCollection, heading: /数据采集/, label: '数据采集', key: 'data-collection' },
+    { nav: NAV_RE.dataImport, heading: /数据导入与校验/, label: '数据导入与校验', key: 'data-import-validation' },
+    { nav: /运营事件/, heading: /运营事件/, label: '运营事件', key: 'operation-events' },
+    { nav: NAV_RE.adQuant, heading: /广告量化/, label: '广告量化', key: 'ad-quant' },
   ];
 
-    for (const [label, key] of routes) {
-    await page.locator('.app-sidebar').getByRole('button', { name: new RegExp(label) }).click();
-    await page.getByRole('heading', { name: label, level: 2 }).waitFor();
+    for (const { nav, heading, label, key } of routes) {
+    await page.locator('.app-sidebar').getByRole('button', { name: nav }).click();
+    await page.getByRole('heading', { name: heading, level: 2 }).waitFor();
     await assertGlobalGuards(page, key);
     const screenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -1002,7 +1008,7 @@ async function main() {
   await expectNotInBody(page, '总花费');
   await expectNotInBody(page, '总销售');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /仪表盘/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dashboard }).click();
   await expectVisible(page, '数据健康');
   await expectVisible(page, '数据门槛');
   await expectVisible(page, '0/8 类 · 0 行');
@@ -1025,7 +1031,7 @@ async function main() {
   await expectNotInBody(page, '总销售');
   await expectNotInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /数据导入与校验/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dataImport }).click();
   await expectVisible(page, '数据流程四段闭环');
   await expectVisible(page, '真实报表 0/8，已导入 0 行');
   await expectVisible(page, '去数据采集');
@@ -1263,7 +1269,7 @@ async function main() {
     await expectInBody(page, '已自动导入 96 行广告指标', 'retry selected auto-import notice');
     await expectVisible(page, '8/8');
     await expectVisible(page, '96');
-    await page.locator('.app-sidebar').getByRole('button', { name: /数据导入与校验/ }).click();
+    await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dataImport }).click();
     await expectVisible(page, '数据流程四段闭环');
     await expectVisible(page, '真实报表 8/8，已导入 96 行');
     await expectVisible(page, '打开报表目录');
@@ -1299,7 +1305,7 @@ async function main() {
       screenshotPath: afterImportScreenshotPath,
       bodyTextSample: (await bodyText(page)).slice(0, 1800),
     };
-  await page.locator('.app-sidebar').getByRole('button', { name: /仪表盘/ }).click();
+  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dashboard }).click();
   await expectVisible(page, '数据健康');
   await expectVisible(page, '8/8');
   await expectVisible(page, '96 行');
@@ -1367,7 +1373,7 @@ async function main() {
       fail('Selected retry smoke should call retry for all selected report types without losing full-8 state', JSON.stringify(actionLog));
     }
 
-    await page.locator('.app-sidebar').getByRole('button', { name: /广告量化/ }).click();
+    await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.adQuant }).click();
   await page.getByText('展开当前产品实体诊断表', { exact: false }).click();
   await expectVisible(page, '广告组合');
   await expectVisible(page, '广告活动');

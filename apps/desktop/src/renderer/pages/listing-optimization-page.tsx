@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
+import { FormTable, FormTableRow, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import {
   buildListingReadinessIssues,
   buildListingSourceStatus,
@@ -473,13 +474,18 @@ export function ListingOptimizationPage() {
     })();
 
     return (
-      <div className="listing-editor-row" key={field.key}>
-        <div className="listing-editor-label">{field.label}</div>
-        <div className="listing-editor-control">{control}</div>
-        <span className={`listing-editor-status listing-editor-status-${field.status === '必填' ? 'required' : field.status === '可选' ? 'optional' : 'recommended'}`}>
+      <FormTableRow
+        hint={(
+          <span className={`listing-editor-status listing-editor-status-${field.status === '必填' ? 'required' : field.status === '可选' ? 'optional' : 'recommended'}`}>
           {field.status}
-        </span>
-      </div>
+          </span>
+        )}
+        key={field.key}
+        label={field.label}
+        required={field.status === '必填'}
+      >
+        {control}
+      </FormTableRow>
     );
   }
 
@@ -700,6 +706,46 @@ export function ListingOptimizationPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow="Listing 本地沙箱"
+          title={draftReady ? '本地草案已生成，可导出复核' : workflowSummary.headline}
+          detail={`${workflowSummary.nextAction.replace(/[。.!！]+$/, '')}。${workflowSummary.boundary}`}
+          primaryAction={{
+            label: loading === 'draft' ? '生成中...' : 'AI 改写本地草案',
+            disabled: !listingReady || loading === 'draft',
+            onClick: generateDrafts,
+          }}
+        >
+          <StateLightGrid
+            items={[
+              {
+                label: '目标 ASIN',
+                value: expectedAsin || '-',
+                detail: listing ? (pageMatched ? '页面 ASIN 已匹配' : '页面 ASIN 待核对') : '尚未保存 Listing',
+                tone: listing && pageMatched ? 'ready' : 'warning',
+              },
+              {
+                label: '关键词输入',
+                value: keywords.length,
+                detail: handoffPayload ? '来自关键词机会矩阵' : '手工输入或待带入',
+                tone: keywords.length ? 'ready' : 'pending',
+              },
+              {
+                label: 'Listing 字段',
+                value: listingReady ? '可生成' : '待补齐',
+                detail: listingReadinessIssues.slice(0, 2).join('、') || '标题、五点、后台词已闭合',
+                tone: listingReady ? 'ready' : 'blocked',
+              },
+              {
+                label: '草案边界',
+                value: draftReady ? `${drafts.length} 条` : '本地保存',
+                detail: '不提交 Amazon，不覆盖 Lingxing',
+                tone: draftReady ? 'ready' : 'pending',
+              },
+            ]}
+          />
+        </OperatorTaskPanel>
+
         <Panel title="Listing 工作流状态" tone={draftReady ? 'success' : keywords.length && listingReady ? 'warning' : 'default'}>
           <div className="evidence-check-panel">
             <div className="business-split">
@@ -769,7 +815,9 @@ export function ListingOptimizationPage() {
             {listingManualFieldGroups().map((group) => (
               <section className="listing-editor-section" key={group.title}>
                 <strong>{group.title}</strong>
-                {group.fields.map(renderManualListingField)}
+                <FormTable>
+                  {group.fields.map(renderManualListingField)}
+                </FormTable>
               </section>
             ))}
           </div>

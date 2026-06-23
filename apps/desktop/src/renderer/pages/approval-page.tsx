@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { DecisionActionStrip, FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
 import type { AiEvidenceDisplayItemView, RecommendationView } from '../types';
@@ -748,6 +748,29 @@ export function ApprovalPage() {
                   <p>{selectedApprovalDecision.canApprove ? '普通批准可用。' : '普通批准不可用，请查看下方详情。'}</p>
                 </div>
               </div>
+              <DecisionActionStrip
+                items={[
+                  {
+                    label: '可以批准并推进',
+                    detail: selectedApprovalDecision.canApprove ? '写入待执行队列' : '证据或复核未通过',
+                    tone: selectedApprovalDecision.canApprove ? 'ready' : 'pending',
+                    disabled: selectedSubmitBlockers.length > 0,
+                    onClick: approveSelected,
+                  },
+                  {
+                    label: '无法常规批准',
+                    detail: `缺证据 ${selectedMissing.length} / 复核项 ${selectedBlockers.length}`,
+                    tone: selectedApprovalDecision.tone === 'ready' ? 'pending' : selectedApprovalDecision.tone,
+                    onClick: showSelectedDecisionTarget,
+                  },
+                  {
+                    label: '强行拦截并拒绝',
+                    detail: '记录拒绝结果，不进入执行',
+                    tone: 'blocked',
+                    onClick: rejectSelected,
+                  },
+                ]}
+              />
             </div>
             <div id="approval-decision-details">
             <ProgressiveDetails title="审批预检、AI/规则关系、阈值和引用证据" defaultOpen={false}>
@@ -901,19 +924,18 @@ export function ApprovalPage() {
             )}
             </ProgressiveDetails>
             </div>
-            <div className="form-grid" id="approval-form">
-              <label>
-                审批/处理人
+            <div id="approval-form">
+              <FormTable>
+                <FormTableRow label="审批/处理人" required>
                 <input value={approverName} onChange={(event) => setApproverName(event.target.value)} placeholder="负责人姓名" />
-              </label>
-              <label>
-                审批时间
+                </FormTableRow>
+                <FormTableRow label="审批时间">
                 <input readOnly value={new Date().toISOString()} />
-              </label>
-              <label className="form-grid-wide">
-                审批备注/拒绝原因
+                </FormTableRow>
+                <FormTableRow label="审批备注/拒绝原因">
                 <textarea value={approvalNote} onChange={(event) => setApprovalNote(event.target.value)} placeholder="记录审批范围、外部审批凭证或拒绝原因" />
-              </label>
+                </FormTableRow>
+              </FormTable>
             </div>
             <p className="muted-line">审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“执行回读”页逐条补齐。</p>
             <div className="action-row">

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { toUserFacingError } from '../user-facing-error';
 
 interface ScheduledTaskView {
@@ -109,6 +109,14 @@ export function SchedulerPage() {
     return () => window.clearInterval(interval);
   }, []);
 
+  const enabledTaskCount = tasks.filter((task) => task.enabled).length;
+  const nextTask = [...tasks]
+    .filter((task) => task.nextRun)
+    .sort((left, right) => Date.parse(left.nextRun || '') - Date.parse(right.nextRun || ''))[0];
+  const lastTask = [...tasks]
+    .filter((task) => task.lastRun)
+    .sort((left, right) => Date.parse(right.lastRun || '') - Date.parse(left.lastRun || ''))[0];
+
   return (
     <div>
       <PageHeader
@@ -120,6 +128,42 @@ export function SchedulerPage() {
       />
 
       <div className="business-stack">
+        <Panel title="本地调度控制器" tone={enabledTaskCount ? 'success' : 'warning'}>
+          <StateLightGrid
+            items={[
+              {
+                label: '启用任务',
+                value: `${enabledTaskCount}/${tasks.length}`,
+                detail: enabledTaskCount ? '按本地计划排队' : '全部停用',
+                tone: enabledTaskCount ? 'ready' : 'warning',
+              },
+              {
+                label: '下次唤起',
+                value: nextTask ? formatDate(nextTask.nextRun) : '-',
+                detail: nextTask ? taskLabel(nextTask.name) : '暂无可见计划',
+                tone: nextTask ? 'ready' : 'pending',
+              },
+              {
+                label: '最近执行',
+                value: lastTask ? taskLabel(lastTask.name) : '-',
+                detail: lastTask ? formatDate(lastTask.lastRun) : '尚无执行记录',
+                tone: lastTask?.lastResult?.includes('失败') ? 'blocked' : lastTask ? 'ready' : 'pending',
+              },
+              {
+                label: '当前动作',
+                value: pendingRunTask ? taskLabel(pendingRunTask.name) : '等待操作',
+                detail: pendingRunTask ? '需要确认后才会触发' : '表格中控制开关或立即执行',
+                tone: pendingRunTask ? 'warning' : 'pending',
+              },
+            ]}
+          />
+          <div className="action-row">
+            <button className="primary-button" disabled={loading} onClick={() => loadTasks()} type="button">
+              {loading ? '正在刷新' : '刷新调度状态'}
+            </button>
+          </div>
+        </Panel>
+
         <Panel title="自动化安全边界" tone="warning">
           <div className="context-summary-grid">
             <div>

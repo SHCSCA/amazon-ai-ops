@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
+import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { formatPercent, formatUsd } from '../formatters';
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
 import { useScopeStore } from '../scope-store';
@@ -159,6 +160,48 @@ export function KeywordOpportunitiesPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow="关键词机会矩阵"
+          title={quantReady ? '多源关键词机会已按当前范围归一化' : '关键词机会被真实数据门拦截'}
+          detail={quantReady
+            ? `当前展示 ${visibleRows.length}/${visibleRowCount} 个机会，优先处理高等级、已转化、Listing 未覆盖的词。`
+            : '先完成真实报表下载和指标入库，系统不会用审计文件或空数据生成机会词。'}
+          primaryAction={{
+            label: loading ? '识别中...' : '运行机会识别',
+            disabled: loading || !quantReady,
+            onClick: loadRows,
+          }}
+        >
+          <StateLightGrid
+            items={[
+              {
+                label: '真实广告事实',
+                value: `${sourceReportCount}/8 类`,
+                detail: `${importedMetricRows} 行指标`,
+                tone: quantReady ? 'ready' : 'blocked',
+              },
+              {
+                label: '商机等级 A',
+                value: highOpportunityCount,
+                detail: `${convertingCount} 个已有订单或销售`,
+                tone: highOpportunityCount > 0 ? 'ready' : 'pending',
+              },
+              {
+                label: 'Listing 未覆盖池',
+                value: visibleRows.length,
+                detail: `${asinCount} 个 ASIN / ${campaignCount} 个活动`,
+                tone: visibleRows.length ? 'warning' : 'pending',
+              },
+              {
+                label: '风险先控',
+                value: formatUsd(noOrderSpend),
+                detail: '有花费无订单先复核投放',
+                tone: noOrderSpend > 0 ? 'blocked' : 'ready',
+              },
+            ]}
+          />
+        </OperatorTaskPanel>
+
         <Panel title="机会来源" tone={quantReady ? 'success' : 'blocked'}>
           <div className="business-split">
             <div>
