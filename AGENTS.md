@@ -21,15 +21,16 @@
 
 ## Current Delivery State
 
-- Current top-level state is `APP_READY` for the evidence set fixed on 2026-06-18.
+- Current packaged baseline is `APP_READY` for the evidence set fixed on 2026-06-22.
 - Authoritative final readiness: `output\codex-evidence\final-readiness-20260618170712.json`.
 - Evidence manifest: `output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json`.
-- Package launch smoke: `output\codex-evidence\package-launch-smoke-1781772408989.json`.
+- Package launch smoke: `output\codex-evidence\package-launch-smoke-1782118074963.json`.
 - READY bundle: `output\delivery-bundles\v15-delivery-bundle-20260618170712-ready`.
-- Installer SHA-256: `E6890C9043BE8140900ACCF146898DD45B841C33FF5F4B3D4301CF5A1BFC94A2`.
-- Portable/no-install SHA-256: `D9C181C09B32A1FBC5095281E1DBB788C1C8B9FAE36FA81F31B70E5BF319D1D2`.
+- Installer SHA-256: `E8738F8BA4818A0F8F0BE0FFC282CEFAFE52D40B46364F2F183AE1E3F61572BE`.
+- Portable/no-install SHA-256: `B0A3DB8D2EE8789FAC9C60859B358F3167F6EACE26599DB40F1E0A78885C8A3D`.
+- Current staged post-baseline UX polish on this branch adds AI output contract tags, compact metric tags, and a table-like Listing editor. Focused renderer tests, `build:renderer`, settings/delivery smoke, data-pipeline smoke, keyword/listing smoke, and `verify:ad-execution` passed, but `build:win`, `smoke:package-launch`, final-readiness, READY bundle export, and READY safety have not been rerun for these staged source changes.
 
-Any code, package, scope, or ad-action change invalidates the current APP_READY claim until the final gates are rerun.
+Any code, package, scope, or ad-action change invalidates applying the packaged-baseline `APP_READY` claim to that modified state until the final gates are rerun.
 
 ## Required Safety Boundaries
 
@@ -38,6 +39,8 @@ Any code, package, scope, or ad-action change invalidates the current APP_READY 
 - Structural/mock AI evidence never gives final readiness credit. Real readiness requires live provider evidence and the real ad/Listings verifier chain.
 - Operator-facing UI should stay concise: avoid raw `APP_*` status codes, long command walls, or dense evidence text in primary views. Put technical details behind secondary panels.
 - Main window text overload was a known UX problem; prefer task-first copy, compact summaries, and clear next action labels.
+- AI output schemas are system-owned contracts. Settings may show contract tags and allow persona/expression tuning, but user-edited persona text must not control `schemaVersion`, fixed fields, or formal action eligibility.
+- Dense readiness summaries should prefer compact tags/chips in primary views, with detailed evidence and explanations behind progressive disclosure.
 
 ## Verification Commands
 
@@ -56,7 +59,7 @@ Final delivery refresh:
 
 ```powershell
 pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1781772408989.json --out output\codex-evidence\final-readiness-20260618170712.json
+pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782118074963.json --out output\codex-evidence\final-readiness-20260618170712.json
 pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260618170712.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260618170712-ready
 pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260618170712.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260618170712-ready\delivery-bundle-manifest.json
 ```

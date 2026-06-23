@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
+import { ProgressiveDetails } from '../components/progressive-details';
+import { TagMetricGroup } from '../components/tag-metric-group';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildAdQuantProductGroups, filterAdQuantByProduct } from '../ad-quant-product-groups';
 import { buildAdQuantDiagnosisSummary, formatEvidenceRefSummary } from '../evidence-display';
@@ -922,43 +924,55 @@ export function AdQuantPage() {
         </Panel>
 
         <Panel title="AI+规则建议输入检查" tone={canGenerateFormalRecommendations && diagnosticCount > 0 ? 'success' : 'warning'}>
-          <div className="context-summary-grid">
-            <div>
-              <span>真实数据输入</span>
-              <strong>{realReportCount}/8 类真实报表 / {importedRowCount} 行指标</strong>
-              <p>只读取当前范围真实 xlsx/xls/csv 和 DB 指标，不使用审计文件代替广告数据。</p>
+          <TagMetricGroup
+            items={[
+              { label: '真实报表', value: `${realReportCount}/8`, tone: realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked', detail: `${importedRowCount} 行指标` },
+              { label: '指标', value: `${importedRowCount} 行`, tone: importedRowCount > 0 ? 'ready' : 'blocked' },
+              { label: '可建议对象', value: actionableRows, tone: actionableRows > 0 ? 'ready' : 'blocked', detail: `${diagnosticCount} 个诊断` },
+              { label: '诊断', value: diagnosticCount, tone: diagnosticCount > 0 ? 'ready' : 'warning' },
+              { label: '对象时间线', value: visibleTimelines.length, tone: visibleTimelines.length > 0 ? 'ready' : 'warning', detail: `${productContextCount} 个产品配置` },
+              { label: '产品目标', value: productWithTargets, tone: productWithTargets > 0 ? 'ready' : 'warning' },
+              { label: '运营事件', value: operationEvents.length, tone: operationEvents.length > 0 ? 'ready' : 'warning' },
+              { label: '规则阈值', value: '已配置', tone: 'neutral', detail: ruleThresholdSummary(ruleConfig) },
+            ]}
+          />
+          <p className="muted-line">
+            建议入口：{recommendationReadinessLabel(canDiagnose, canGenerateFormalRecommendations, diagnosticCount)}。{recommendationReadinessDetail(canDiagnose, canGenerateFormalRecommendations, diagnosticCount, recommendationGateIssues)}
+          </p>
+          <ProgressiveDetails title="输入明细和判断依据">
+            <div className="context-summary-grid compact-summary">
+              <div>
+                <span>真实数据输入</span>
+                <strong>{realReportCount}/8 类真实报表 / {importedRowCount} 行指标</strong>
+                <p>只读取当前范围真实 xlsx/xls/csv 和 DB 指标，不使用审计文件代替广告数据。</p>
+              </div>
+              <div>
+                <span>可行动对象</span>
+                <strong>{diagnosticCount} 个诊断 / {actionableRows} 行可建议</strong>
+                <p>只有 keyword、search term、target 等可执行口径会进入建议生成。</p>
+              </div>
+              <div>
+                <span>产品阶段线索</span>
+                <strong>{visibleTimelines.length} 条对象时间线 / {productContextCount} 个产品配置</strong>
+                <p>AI 会结合对象生命周期、产品阶段、成本目标和趋势判断当前推广阶段。</p>
+              </div>
+              <div>
+                <span>运营事件</span>
+                <strong>{operationEvents.length} 条事件</strong>
+                <p>Coupon、BD、调价、库存和 Listing 事件会进入 AI 上下文。</p>
+              </div>
+              <div>
+                <span>规则阈值</span>
+                <strong>{ruleThresholdSummary(ruleConfig)}</strong>
+                <p>规则先给出可复现候选，AI 再复核阶段、动态阈值和异常解释。</p>
+              </div>
+              <div>
+                <span>产品目标</span>
+                <strong>{productWithTargets} 个产品有目标阈值</strong>
+                <p>{productWithTargets ? '目标 ACOS、TACOS、净利率和最低价会约束 AI 阈值建议。' : '未维护产品目标时，AI 只能按广告表现估算阈值。'}</p>
+              </div>
             </div>
-            <div>
-              <span>可行动对象</span>
-              <strong>{diagnosticCount} 个诊断 / {actionableRows} 行可建议</strong>
-              <p>只有 keyword、search term、target 等可执行口径会进入建议生成。</p>
-            </div>
-            <div>
-              <span>产品阶段线索</span>
-              <strong>{visibleTimelines.length} 条对象时间线 / {productContextCount} 个产品配置</strong>
-              <p>AI 会结合对象生命周期、产品阶段、成本目标和趋势判断当前推广阶段。</p>
-            </div>
-            <div>
-              <span>运营事件</span>
-              <strong>{operationEvents.length} 条事件</strong>
-              <p>Coupon、BD、调价、库存和 Listing 事件会进入 AI 上下文。</p>
-            </div>
-            <div>
-              <span>规则阈值</span>
-              <strong>{ruleThresholdSummary(ruleConfig)}</strong>
-              <p>规则先给出可复现候选，AI 再复核阶段、动态阈值和异常解释。</p>
-            </div>
-            <div>
-              <span>产品目标</span>
-              <strong>{productWithTargets} 个产品有目标阈值</strong>
-              <p>{productWithTargets ? '目标 ACOS、TACOS、净利率和最低价会约束 AI 阈值建议。' : '未维护产品目标时，AI 只能按广告表现估算阈值。'}</p>
-            </div>
-            <div>
-              <span>建议入口</span>
-              <strong>{recommendationReadinessLabel(canDiagnose, canGenerateFormalRecommendations, diagnosticCount)}</strong>
-              <p>{recommendationReadinessDetail(canDiagnose, canGenerateFormalRecommendations, diagnosticCount, recommendationGateIssues)}</p>
-            </div>
-          </div>
+          </ProgressiveDetails>
           <div className="business-split">
             <div className="business-pill-row">
               <StatusPill tone={sourceBatchIds.length ? 'ready' : 'blocked'}>批次 {sourceBatchIds.length || 0}</StatusPill>

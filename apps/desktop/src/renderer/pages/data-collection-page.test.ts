@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { collectionActionError, collectionActionGuide, collectionCompletionNotice } from './data-collection-page';
+import {
+  buildDataCollectionTaskState,
+  collectionActionButtonLabel,
+  collectionActionError,
+  collectionActionGuide,
+  collectionCompletionNotice,
+  dataCollectionFirstViewportReportFolder,
+} from './data-collection-page';
+import { buildDataImportTaskState, dataImportFirstViewportReportFolder } from './data-import-validation-page';
 
 describe('collectionCompletionNotice', () => {
   it('does not claim a download action completed when no real file was produced by this action', () => {
@@ -75,5 +83,61 @@ describe('collectionActionGuide', () => {
 
     expect(importLocal.taskEffect).toBe('不访问领星下载中心');
     expect(importLocal.result).toContain('写入 DB 日级广告指标');
+  });
+});
+
+describe('task-first data page helpers', () => {
+  it('uses the full 8-report refresh as the data collection primary action until rows are imported', () => {
+    const firstViewportFolder = dataCollectionFirstViewportReportFolder({
+      realReportCount: 0,
+      realFiles: [],
+      evidenceFolder: 'C:/AmazonAIOps/storage/downloads/mock-batch',
+      auditDownloadDir: 'C:/AmazonAIOps/storage/downloads/mock-batch',
+    });
+    const task = buildDataCollectionTaskState({
+      realReportCount: 0,
+      importedRowCount: 0,
+      primaryReportFolder: firstViewportFolder,
+      runningAction: null,
+    });
+
+    expect(firstViewportFolder).toBeUndefined();
+    expect(task.title).toBe('真实报表 0/8，已导入 0 行');
+    expect(task.primaryActionLabel).toBe('重新获取完整 8 类报表');
+    expect(task.secondaryActionLabel).toBe('导入本地报表');
+  });
+
+  it('moves data collection to ad quantification after full reports and imported rows exist', () => {
+    const task = buildDataCollectionTaskState({
+      realReportCount: 8,
+      importedRowCount: 96,
+      primaryReportFolder: 'C:/AmazonAIOps/storage/downloads/mock-batch',
+      runningAction: null,
+    });
+
+    expect(task.title).toBe('真实报表 8/8，已导入 96 行');
+    expect(task.primaryActionLabel).toBe('进入广告量化');
+    expect(task.secondaryActionLabel).toBe('打开报表目录');
+  });
+
+  it('shortens 8-report chooser action labels without changing action modes', () => {
+    expect(collectionActionButtonLabel('download-existing')).toBe('下载已创建');
+    expect(collectionActionButtonLabel('recreate-selected')).toBe('重建已选');
+    expect(collectionActionButtonLabel('recreate-full')).toBe('重建全部 8 类');
+    expect(collectionActionButtonLabel('import')).toBe('导入本地');
+  });
+
+  it('aligns data import primary actions to report and row readiness', () => {
+    const firstViewportFolder = dataImportFirstViewportReportFolder({
+      realReportCount: 0,
+      realFiles: [],
+      auditDownloadDir: 'C:/reports',
+    });
+
+    expect(firstViewportFolder).toBeUndefined();
+    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder }).primaryActionLabel).toBe('去数据采集');
+    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder }).secondaryActionLabel).toBe('导入本地报表');
+    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 0, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('导入广告指标');
+    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 96, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('进入广告量化');
   });
 });

@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
+import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
 import { realReportCoverageCount } from '../report-coverage';
 import { countProductsWithTargets, normalizeProductContexts, pickPrimaryProductContext } from '../product-context';
-import type { AiEvidenceDisplayItemView, AiEvidenceSufficiencyView, AiProviderSettings, RecommendationView, SettingsRuleConfig } from '../types';
+import type { AiEvidenceDisplayItemView, AiEvidenceSufficiencyView, AiProviderSettings, AppRoute, RecommendationView, SettingsRuleConfig } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 function errorMessage(caught: unknown, fallback: string): string {
@@ -366,6 +368,80 @@ export function recommendationWorkflowActionState(input: {
     readbackDisabled: true,
     approvalLabel: '等待建议',
     readbackLabel: '等待可审批建议',
+  };
+}
+
+export function recommendationPrimaryTaskActionState(input: {
+  quantReady: boolean;
+  recommendationCount: number;
+  formalApprovalCount: number;
+  manualReviewCount: number;
+  evidenceBlockedCount: number;
+  realReportCount: number;
+  importedRowCount: number;
+  actionableMetricRows: number;
+  generating?: boolean;
+  pipelineLoading?: boolean;
+}): {
+  label: '生成优化建议' | '去审批中心' | '补齐证据或复核';
+  action: 'generate' | 'navigate';
+  route?: AppRoute;
+  title: string;
+  detail: string;
+  disabled: boolean;
+} {
+  const recommendationCount = Math.max(0, Number(input.recommendationCount || 0));
+  const formalApprovalCount = Math.max(0, Number(input.formalApprovalCount || 0));
+  const manualReviewCount = Math.max(0, Number(input.manualReviewCount || 0));
+  const evidenceBlockedCount = Math.max(0, Number(input.evidenceBlockedCount || 0));
+  const realReportCount = Math.max(0, Number(input.realReportCount || 0));
+  const importedRowCount = Math.max(0, Number(input.importedRowCount || 0));
+  const actionableMetricRows = Math.max(0, Number(input.actionableMetricRows || 0));
+
+  if (!input.quantReady) {
+    const route: AppRoute = realReportCount < 8
+      ? 'data-collection'
+      : importedRowCount <= 0
+        ? 'data-import-validation'
+        : 'ad-quant';
+    return {
+      label: '补齐证据或复核',
+      action: 'navigate',
+      route,
+      title: `建议池未开放：可审批 0，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
+      detail: `当前真实报表 ${realReportCount}/8 类，导入指标 ${importedRowCount} 行，可行动指标 ${actionableMetricRows} 行。下一步：补齐证据或复核。`,
+      disabled: false,
+    };
+  }
+
+  if (formalApprovalCount > 0) {
+    return {
+      label: '去审批中心',
+      action: 'navigate',
+      route: 'approval',
+      title: `建议池：可审批 ${formalApprovalCount}，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
+      detail: `当前共有 ${recommendationCount} 条待处理建议。下一步：去审批中心逐条批准或拒绝；真实执行和回读仍在后续页面完成。`,
+      disabled: false,
+    };
+  }
+
+  if (recommendationCount > 0 && (manualReviewCount > 0 || evidenceBlockedCount > 0)) {
+    return {
+      label: '补齐证据或复核',
+      action: 'navigate',
+      route: 'ad-quant',
+      title: `建议池：可审批 0，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
+      detail: `当前共有 ${recommendationCount} 条建议，但没有可进入普通审批的动作。下一步：补齐证据或复核量化输入。`,
+      disabled: false,
+    };
+  }
+
+  return {
+    label: '生成优化建议',
+    action: 'generate',
+    title: `建议池：可审批 ${formalApprovalCount}，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
+    detail: `真实报表 ${realReportCount}/8 类，导入指标 ${importedRowCount} 行，可行动指标 ${actionableMetricRows} 行。下一步：生成优化建议。`,
+    disabled: Boolean(input.generating || input.pipelineLoading),
   };
 }
 
@@ -786,6 +862,18 @@ export function RecommendationsPage() {
     manualReviewCount,
     evidenceBlockedCount,
   });
+  const primaryTaskAction = recommendationPrimaryTaskActionState({
+    quantReady,
+    recommendationCount: recommendations.length,
+    formalApprovalCount,
+    manualReviewCount,
+    evidenceBlockedCount,
+    realReportCount,
+    importedRowCount,
+    actionableMetricRows,
+    generating,
+    pipelineLoading,
+  });
   const insightOnlyCount = Math.max(
     recommendations.filter((item) => item.evidence?.aiInsightOnly).length,
     Number(lastGenerateResult?.strategy?.insightOnlyCandidateCount || 0),
@@ -919,6 +1007,18 @@ export function RecommendationsPage() {
     }
   }
 
+  function navigate(route: AppRoute) {
+    window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: route }));
+  }
+
+  function runPrimaryTaskAction() {
+    if (primaryTaskAction.action === 'generate') {
+      generateRecommendations();
+      return;
+    }
+    if (primaryTaskAction.route) navigate(primaryTaskAction.route);
+  }
+
   useEffect(() => {
     let cancelled = false;
     async function loadConfig() {
@@ -967,6 +1067,34 @@ export function RecommendationsPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow="建议池"
+          title={primaryTaskAction.title}
+          detail={primaryTaskAction.detail}
+          primaryAction={{
+            label: primaryTaskAction.label,
+            disabled: primaryTaskAction.disabled,
+            onClick: runPrimaryTaskAction,
+          }}
+        >
+          <div className="dashboard-task-metrics" aria-label="建议池摘要">
+            <StatusPill tone={formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending'}>
+              可审批 {formalApprovalCount}
+            </StatusPill>
+            <StatusPill tone={manualReviewCount > 0 ? 'warning' : 'pending'}>
+              需复核 {manualReviewCount}
+            </StatusPill>
+            <StatusPill tone={evidenceBlockedCount > 0 ? 'blocked' : 'pending'}>
+              缺证据 {evidenceBlockedCount}
+            </StatusPill>
+            <span>{recommendations.length} 条建议</span>
+            <span>{realReportCount}/8 类报表</span>
+          </div>
+        </OperatorTaskPanel>
+
+        {message && <p className={message.includes('失败') || message.includes('不能') ? 'blocked-line' : 'muted-line'}>{message}</p>}
+
+        <ProgressiveDetails title="生成范围、AI 配置和规则阈值">
         <Panel title="建议生成范围" tone={quantReady ? 'success' : 'blocked'}>
           <div className="business-split">
             <div>
@@ -1042,14 +1170,12 @@ export function RecommendationsPage() {
             <button className="secondary-button" disabled={loading} onClick={loadRecommendations} type="button">
               {loading ? '刷新中...' : '刷新建议'}
             </button>
-            <button className="primary-button" disabled={!quantReady || generating || pipelineLoading} onClick={generateRecommendations} type="button">
-              {generating ? '生成中...' : '生成优化建议'}
-            </button>
           </div>
-          {message && <p className={message.includes('失败') || message.includes('不能') ? 'blocked-line' : 'muted-line'}>{message}</p>}
         </Panel>
+        </ProgressiveDetails>
 
         {lastGenerateResult && (
+          <ProgressiveDetails title="本次生成 AI 参与状态">
           <Panel title="本次生成 AI 参与状态" tone={generateAiTone(lastGenerateResult)}>
             <div className="context-summary-grid">
               <div>
@@ -1111,8 +1237,10 @@ export function RecommendationsPage() {
               </div>
             </div>
           </Panel>
+          </ProgressiveDetails>
         )}
 
+        <ProgressiveDetails title="完整处理路径与安全边界">
         <Panel title="建议处理路径">
           <div className="workflow-strip">
             <button className="workflow-step" onClick={() => generateRecommendations()} disabled={!quantReady || generating || pipelineLoading} type="button">
@@ -1133,7 +1261,9 @@ export function RecommendationsPage() {
           </div>
           <p className="blocked-line">本页不审批、不执行广告、不写入 Amazon；真实动作必须在审批后逐条记录截图和回读证据。</p>
         </Panel>
+        </ProgressiveDetails>
 
+        <ProgressiveDetails title="建议池分类解释">
         <Panel title="建议决策总览" tone={evidenceBlockedCount > 0 ? 'warning' : 'default'}>
           <div className="business-split">
             <div>
@@ -1172,7 +1302,9 @@ export function RecommendationsPage() {
             <p className="warning-line">未进入建议池原因：{Array.from(new Set(insightOnlyReasons)).slice(0, 3).join('；')}</p>
           )}
         </Panel>
+        </ProgressiveDetails>
 
+        <ProgressiveDetails title="建议上下文检查">
         <Panel title="建议上下文检查">
           <div className="context-summary-grid">
             <div>
@@ -1221,6 +1353,7 @@ export function RecommendationsPage() {
             </div>
           </div>
         </Panel>
+        </ProgressiveDetails>
 
         {!recommendations.length && (
           <Panel title="为什么现在没有建议" tone={emptyReason.tone}>
@@ -1315,8 +1448,8 @@ export function RecommendationsPage() {
               </div>
             )}
             <div className="action-row">
-              <button className="primary-button" disabled={!quantReady || generating || pipelineLoading} onClick={generateRecommendations} type="button">
-                {generating ? '生成中...' : '重新生成优化建议'}
+              <button className="secondary-button" disabled={!quantReady || generating || pipelineLoading} onClick={generateRecommendations} type="button">
+                {generating ? '生成中...' : '生成优化建议'}
               </button>
               <button className="secondary-button" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: quantReady ? 'ad-quant' : 'data-collection' }))} type="button">
                 {quantReady ? '查看广告量化' : '去数据采集'}
@@ -1325,6 +1458,7 @@ export function RecommendationsPage() {
           </Panel>
         )}
 
+        <ProgressiveDetails title="AI + 规则并行决策模型">
         <Panel title="AI + 规则并行决策模型" tone={quantReady ? 'default' : 'blocked'}>
           <div className="context-summary-grid">
             <div>
@@ -1354,7 +1488,9 @@ export function RecommendationsPage() {
             </div>
           </div>
         </Panel>
+        </ProgressiveDetails>
 
+        <ProgressiveDetails title="判断标准、阈值和优先级">
         <Panel title="建议优先级与判断标准" tone={recommendations.length ? 'warning' : 'default'}>
           <div className="business-split">
             <div>
@@ -1386,6 +1522,7 @@ export function RecommendationsPage() {
             </button>
           </div>
         </Panel>
+        </ProgressiveDetails>
 
         <Panel title="待处理建议">
           <details className="evidence-disclosure">
@@ -1504,6 +1641,7 @@ export function RecommendationsPage() {
                 </div>
               );
             })()}
+            <ProgressiveDetails title="AI/规则、阈值、来源行和引用证据">
             <div className="evidence-check-panel">
               <div className="business-split">
                 <div>
@@ -1708,6 +1846,7 @@ export function RecommendationsPage() {
                 {selected.evidence?.aiRiskWarnings?.map((warning) => <li key={warning}>{warning}</li>)}
               </ul>
             )}
+            </ProgressiveDetails>
           </Panel>
         )}
       </div>

@@ -15,6 +15,7 @@ import {
   requiredMissing,
   sessionCheckCopy,
 } from './readback-page';
+import { firstIncompleteReadbackStep } from '../readback-wizard';
 
 function completeForm(sourceRow = '12') {
   return {
@@ -163,6 +164,25 @@ describe('readbackPrecheckCopy', () => {
       exportButtonLabel: '导出回读证据',
       helperText: '字段已填写时仍需导出证据文件和说明文件，并由后端校验截图、真实报表和回读证据文件是否存在。',
     });
+  });
+});
+
+describe('readback wizard integration', () => {
+  it('uses requiredMissing output to select the first incomplete readback step', () => {
+    const form = completeForm();
+    form.approvalArtifactPath = '';
+
+    expect(firstIncompleteReadbackStep(requiredMissing(form, 'batch_1'))).toBe('approval');
+  });
+
+  it('keeps the evidence edit transition explicit for the smoke no-tab-theft regression', () => {
+    const form = completeForm();
+    form.afterValue = '';
+
+    expect(firstIncompleteReadbackStep(requiredMissing(form, 'batch_1'))).toBe('evidence');
+
+    form.afterValue = '1.07';
+    expect(firstIncompleteReadbackStep(requiredMissing(form, 'batch_1'))).toBe('verify-export');
   });
 });
 

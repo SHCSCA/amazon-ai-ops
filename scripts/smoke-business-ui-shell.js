@@ -62,6 +62,16 @@ async function expectNotInBody(page, text) {
   }
 }
 
+async function expandDetails(page, summaryText) {
+  await page.getByText(summaryText, { exact: false }).first().waitFor({ timeout: 5000 });
+  await page.evaluate((text) => {
+    for (const details of document.querySelectorAll('details')) {
+      const summary = details.querySelector('summary');
+      if (summary?.textContent?.includes(text)) details.open = true;
+    }
+  }, summaryText);
+}
+
 async function main() {
   if (!fs.existsSync(rendererIndex)) {
     fail('Renderer build not found. Run pnpm --filter @amazon-ai-ops/desktop run build:renderer first', rendererIndex);
@@ -334,12 +344,14 @@ async function main() {
       fail('Readback command wall is visible in primary UI');
     }
     if (key === 'recommendations') {
+      await expandDetails(page, '生成范围、AI 配置和规则阈值');
+      const expandedBodyText = await page.locator('body').innerText();
       for (const text of [
         '产品配置',
         '目标 ACOS',
-        '产品目标',
+        'TACOS',
       ]) {
-        if (!bodyText.includes(text)) fail('Recommendation product context text missing', text);
+        if (!expandedBodyText.includes(text)) fail('Recommendation product context text missing', text);
       }
     }
     if (key === 'scheduler') {

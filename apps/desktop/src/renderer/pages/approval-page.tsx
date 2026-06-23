@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
+import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
@@ -130,6 +132,83 @@ export function approvalSubmitBlockers(
     ...approvalMissing(rec, scope, currentBatchId, allowedSourceFiles),
     ...approvalBlockers(rec),
   ]));
+}
+
+export function approvalDecisionState(input: {
+  selected: RecommendationView | null;
+  missing: string[];
+  blockers: string[];
+}): {
+  statusLabel: '可以批准' | '不能普通批准' | '需要复核';
+  tone: 'ready' | 'blocked' | 'warning';
+  title: string;
+  detail: string;
+  primaryActionLabel: string;
+  canApprove: boolean;
+} {
+  const missing = Array.from(new Set(input.missing.filter(Boolean)));
+  const blockers = Array.from(new Set(input.blockers.filter(Boolean)));
+  const selected = input.selected;
+
+  if (!selected) {
+    return {
+      statusLabel: '需要复核',
+      tone: 'warning',
+      title: '选择一条建议',
+      detail: '先从审批队列选择一条建议，再做批准或拒绝。',
+      primaryActionLabel: '查看审批队列',
+      canApprove: false,
+    };
+  }
+
+  if (missing.length > 0) {
+    return {
+      statusLabel: '不能普通批准',
+      tone: 'blocked',
+      title: `不能普通批准：缺 ${missing.length} 项证据`,
+      detail: `缺 ${missing.slice(0, 3).join('、')}${missing.length > 3 ? ' 等证据' : ''}。先补齐当前批次真实来源，再重新审批。`,
+      primaryActionLabel: '查看缺失证据',
+      canApprove: false,
+    };
+  }
+
+  const requiresReview = selected.status === 'needs_review'
+    || selected.evidence?.decisionAgreement === 'conflict'
+    || selected.evidence?.decisionAgreement === 'ai_only'
+    || selected.evidence?.decisionRequiresReview === true
+    || selected.evidence?.quantReviewRequired === true
+    || riskRequiresDedicatedReview(selected.riskLevel);
+
+  if (blockers.length > 0 && requiresReview) {
+    return {
+      statusLabel: '需要复核',
+      tone: 'warning',
+      title: '需要复核',
+      detail: `${blockers.slice(0, 3).join('、')}。不能把这条建议当作普通批准。`,
+      primaryActionLabel: '查看复核要求',
+      canApprove: false,
+    };
+  }
+
+  if (blockers.length > 0) {
+    return {
+      statusLabel: '不能普通批准',
+      tone: 'blocked',
+      title: '不能普通批准',
+      detail: `${blockers.slice(0, 3).join('、')}。修正动作值或重新生成规则确认后的建议。`,
+      primaryActionLabel: '查看阻断详情',
+      canApprove: false,
+    };
+  }
+
+  return {
+    statusLabel: '可以批准',
+    tone: 'ready',
+    title: '可以批准',
+    detail: '审批预检通过。填写审批人和备注后可批准；真实执行和回读仍在后续页面逐条完成。',
+    primaryActionLabel: '填写审批表单',
+    canApprove: true,
+  };
 }
 
 export function buildApprovalDecisionPayload(input: {
@@ -358,6 +437,14 @@ export function ApprovalPage() {
     () => buildDecisionEvidenceSummary(selected?.evidence),
     [selected],
   );
+  const selectedApprovalDecision = useMemo(
+    () => approvalDecisionState({
+      selected,
+      missing: selectedMissing,
+      blockers: selectedBlockers,
+    }),
+    [selected, selectedBlockers, selectedMissing],
+  );
 
   function decisionPayload(decision: 'approved' | 'rejected') {
     return buildApprovalDecisionPayload({
@@ -450,6 +537,21 @@ export function ApprovalPage() {
     }
   }
 
+  function showApprovalQueue() {
+    const details = document.getElementById('approval-queue-details') as HTMLDetailsElement | null;
+    if (details) details.open = true;
+    document.getElementById('approval-queue-panel')?.scrollIntoView({ block: 'start' });
+  }
+
+  function showSelectedDecisionTarget() {
+    const decisionDetails = document.getElementById('approval-decision-details');
+    if (!selectedApprovalDecision.canApprove) {
+      const details = decisionDetails?.querySelector('details') as HTMLDetailsElement | null;
+      if (details) details.open = true;
+    }
+    document.getElementById(selectedApprovalDecision.canApprove ? 'approval-form' : 'approval-decision-details')?.scrollIntoView({ block: 'start' });
+  }
+
   useEffect(() => {
     if (!currentBatchId) {
       setRows([]);
@@ -470,6 +572,39 @@ export function ApprovalPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow={selected ? '审批决策' : '审批任务'}
+          title={selected ? selectedApprovalDecision.title : '选择一条建议'}
+          detail={selected
+            ? selectedApprovalDecision.detail
+            : `当前${TAB_LABELS[tab]}队列 ${rows.length} 条。先选择一条建议，再做批准或拒绝。`}
+          primaryAction={{
+            label: selected ? selectedApprovalDecision.primaryActionLabel : '查看审批队列',
+            disabled: loading && !selected,
+            onClick: selected ? showSelectedDecisionTarget : showApprovalQueue,
+          }}
+        >
+          <div className="dashboard-task-metrics" aria-label="审批任务摘要">
+            {selected ? (
+              <>
+                <StatusPill tone={selectedApprovalDecision.tone}>{selectedApprovalDecision.statusLabel}</StatusPill>
+                <span>{selected.actionType}</span>
+                <span>{objectName(selected)}</span>
+                <span>缺证据 {selectedMissing.length}</span>
+                <span>复核项 {selectedBlockers.length}</span>
+              </>
+            ) : (
+              <>
+                <StatusPill tone={rows.length ? 'pending' : 'blocked'}>{TAB_LABELS[tab]} {rows.length}</StatusPill>
+                <span>{scope.storeName || '-'}</span>
+                <span>{scope.marketplaceCode || '-'}</span>
+                <span>只审批，不执行</span>
+              </>
+            )}
+          </div>
+        </OperatorTaskPanel>
+
+        <ProgressiveDetails title="审批边界和处理要求">
         <Panel title="审批安全边界" tone="warning">
           <div className="business-split">
             <div>
@@ -504,7 +639,9 @@ export function ApprovalPage() {
             </div>
           </div>
         </Panel>
+        </ProgressiveDetails>
 
+        <div id="approval-queue-panel">
         <Panel title="审批队列">
           <div className="tab-row">
             {(Object.keys(TAB_LABELS) as ApprovalTab[]).map((item) => (
@@ -522,7 +659,7 @@ export function ApprovalPage() {
               </button>
             ))}
           </div>
-          <details className="evidence-disclosure">
+          <details className="evidence-disclosure" id="approval-queue-details">
             <summary>展开审批队列（{rows.length} 条）</summary>
             <div className="table-wrap">
               <table className="business-table approval-table">
@@ -580,9 +717,40 @@ export function ApprovalPage() {
             </div>
           </details>
         </Panel>
+        </div>
 
         {selected && (
           <Panel title="审批决策">
+            <div className="evidence-check-panel">
+              <div className="business-split">
+                <div>
+                  <h3>{selectedApprovalDecision.statusLabel}</h3>
+                  <p className={selectedApprovalDecision.canApprove ? 'muted-line' : selectedApprovalDecision.tone === 'blocked' ? 'blocked-line' : 'warning-line'}>
+                    {selectedApprovalDecision.detail}
+                  </p>
+                </div>
+                <StatusPill tone={selectedApprovalDecision.tone}>{selectedApprovalDecision.statusLabel}</StatusPill>
+              </div>
+              <div className="context-summary-grid compact-summary">
+                <div>
+                  <span>建议对象</span>
+                  <strong>{objectName(selected)}</strong>
+                  <p>{selected.actionType} / {selected.currentValue || '-'} {'→'} {selected.recommendedValue || '-'}</p>
+                </div>
+                <div>
+                  <span>审批范围</span>
+                  <strong>{scope.storeName || '-'} / {scope.marketplaceCode || '-'}</strong>
+                  <p>只记录人工审批；真实执行和回读在后续页面完成。</p>
+                </div>
+                <div>
+                  <span>阻断概况</span>
+                  <strong>缺证据 {selectedMissing.length} / 复核项 {selectedBlockers.length}</strong>
+                  <p>{selectedApprovalDecision.canApprove ? '普通批准可用。' : '普通批准不可用，请查看下方详情。'}</p>
+                </div>
+              </div>
+            </div>
+            <div id="approval-decision-details">
+            <ProgressiveDetails title="审批预检、AI/规则关系、阈值和引用证据" defaultOpen={false}>
             <div className="evidence-check-panel">
               <div className="business-split">
                 <div>
@@ -731,7 +899,9 @@ export function ApprovalPage() {
             {selectedMissing.length > 0 && (
               <p className="blocked-line">审批证据不完整：缺 {selectedMissing.join('、')}。补齐当前批次真实报表来源后才能批准。</p>
             )}
-            <div className="form-grid">
+            </ProgressiveDetails>
+            </div>
+            <div className="form-grid" id="approval-form">
               <label>
                 审批/处理人
                 <input value={approverName} onChange={(event) => setApproverName(event.target.value)} placeholder="负责人姓名" />
@@ -747,7 +917,14 @@ export function ApprovalPage() {
             </div>
             <p className="muted-line">审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“执行回读”页逐条补齐。</p>
             <div className="action-row">
-              <button className="primary-button" disabled={selectedSubmitBlockers.length > 0} onClick={approveSelected} type="button">批准并进入待执行</button>
+              <button
+                className={selectedSubmitBlockers.length > 0 ? 'secondary-button' : 'primary-button'}
+                disabled={selectedSubmitBlockers.length > 0}
+                onClick={approveSelected}
+                type="button"
+              >
+                {selectedSubmitBlockers.length > 0 ? '普通批准不可用' : '批准并进入待执行'}
+              </button>
               <button className="secondary-button danger-button" onClick={rejectSelected} type="button">拒绝</button>
             </div>
           </Panel>

@@ -442,7 +442,7 @@ async function main() {
     null,
     { timeout: 5000 },
   );
-  for (const text of ['手工录入当前 Listing', '从领星辅助读取', '关键词交接与草案边界', '关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用', '当前 Listing 内容', 'Listing 版本历史', '关键词覆盖', '本地修改建议与草案导出', '草案可信度', '可引用当前广告数据', '草案只保存在本地，不会自动提交 Amazon。']) {
+  for (const text of ['手工录入当前 Listing', '基础信息', '标题', '五点', '五点 5', '详情与搜索词', '保存为新版本', '从领星辅助读取', '关键词交接与草案边界', '关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用', '当前 Listing 内容', 'Listing 版本历史', '关键词覆盖', '本地修改建议与草案导出', '草案可信度', '可引用当前广告数据', '草案只保存在本地，不会自动提交 Amazon。']) {
     await expectVisible(page, text);
   }
   await expectInBody(page, 'deepseek-v4-flash 已测试通过', 'listing ai readiness detail');

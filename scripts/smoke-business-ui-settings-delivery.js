@@ -71,6 +71,63 @@ async function expectInBody(page, text, key) {
   if (!textContent.includes(text)) fail(`Expected body text missing: ${text}`, key);
 }
 
+async function deliveryMessageText(page) {
+  return page.evaluate(() => {
+    const panels = Array.from(document.querySelectorAll('.ui-panel'));
+    const panel = panels.find((element) => element.querySelector('h3')?.textContent?.includes('交付消息'));
+    return panel?.textContent || '';
+  });
+}
+
+async function assertDeliveryMessageHasNoLongPath(page, key) {
+  const textContent = await deliveryMessageText(page);
+  if (/[A-Za-z]:[\\/]|output[\\/]/i.test(textContent)) {
+    fail('Delivery message should not expose long paths outside collapsed details', JSON.stringify({ key, textContent }, null, 2));
+  }
+}
+
+async function expandDetails(page, summaryText) {
+  await page.getByText(summaryText, { exact: false }).first().waitFor({ timeout: 5000 });
+  await page.evaluate((text) => {
+    for (const details of document.querySelectorAll('details')) {
+      const summary = details.querySelector('summary');
+      if (summary?.textContent?.includes(text)) {
+        details.open = true;
+      }
+    }
+  }, summaryText);
+}
+
+async function assertSettingsMainSectionOrder(page) {
+  const sectionTitles = await page.evaluate(() => {
+    const stack = document.querySelector('.business-stack');
+    if (!stack) return [];
+    return Array.from(stack.children).flatMap((element) => {
+      if (element.classList.contains('ui-panel')) {
+        const heading = element.querySelector(':scope > .panel-title-row > h3');
+        return heading?.textContent?.trim() ? [heading.textContent.trim()] : [];
+      }
+      if (element.classList.contains('progressive-details')) {
+        const summary = element.querySelector(':scope > summary');
+        return summary?.textContent?.trim() ? [summary.textContent.trim()] : [];
+      }
+      return Array.from(element.querySelectorAll(':scope > .progressive-details > summary'))
+        .map((summary) => summary.textContent?.trim() || '')
+        .filter(Boolean);
+    });
+  });
+  const expectedPrefix = ['DeepSeek / OpenAI Compatible', '广告量化阈值'];
+  if (sectionTitles[0] !== expectedPrefix[0] || sectionTitles[1] !== expectedPrefix[1]) {
+    fail('Settings page should show normal AI settings first and ad thresholds second', JSON.stringify({ sectionTitles }, null, 2));
+  }
+  for (const advancedTitle of ['AI 调用审计', '安全策略', '本地存储路径', '诊断工具']) {
+    const index = sectionTitles.indexOf(advancedTitle);
+    if (index !== -1 && index < expectedPrefix.length) {
+      fail('Settings advanced sections should follow the normal settings sections', JSON.stringify({ advancedTitle, sectionTitles }, null, 2));
+    }
+  }
+}
+
 async function screenshotScrollableContent(page, screenshotPath) {
   await page.evaluate(() => {
     const shell = document.querySelector('.app-shell');
@@ -398,6 +455,17 @@ async function main() {
               latestJsonPath: 'C:/final/readback-missing.json',
               latestUpdatedAt: '2026-06-12T10:11:00.000Z',
             },
+          package: window.__deliveryReadinessMode === 'pass'
+            ? {
+              installerAvailable: true,
+              installerPath: 'C:/release/AmazonAIOpsAgent-1.5.0.exe',
+              portablePath: 'C:/release/AmazonAIOpsAgent-1.5.0-portable.exe',
+              sha256: 'D9C181C09B32A1FBC5095281E1DBB788C1C8B9FAE36FA81F31B70E5BF319D1D2',
+              latestBuiltAt: '2026-06-18T10:16:00.000Z',
+            }
+            : {
+              installerAvailable: false,
+            },
         };
       },
       getSettings: async () => ({ ...window.__mockSettings, aiApiKey: '' }),
@@ -721,26 +789,19 @@ async function main() {
   await expectVisible(page, '待测试');
   await expectVisible(page, '已配置（已隐藏）');
   await expectVisible(page, '已配置，待测试');
-  for (const text of ['DeepSeek / OpenAI Compatible', '广告量化阈值', '安全策略', '本地存储路径', '诊断工具']) {
+  await expectVisible(page, 'AI 输出合同由系统固定，页面只读取已校验字段；人设只影响表达风格，不改变字段结构。');
+  for (const text of ['广告诊断 v1', '广告解释 v1', 'Listing 草案 v1', '异常回退规则']) {
     await expectVisible(page, text);
   }
-  await expectVisible(page, 'AI 调用审计');
-  await expectVisible(page, '最近 AI 是否参与');
-  await expectVisible(page, '最近 AI 调用失败');
-  await expectVisible(page, '检查模型、Base URL、标准 JSON 输出格式和证据包');
-  await expectVisible(page, 'AI response was not valid JSON');
-  await expectVisible(page, '日志数量');
-  await expectVisible(page, '广告策略诊断');
-  await expectVisible(page, 'Listing 草案');
-  await expectVisible(page, '输出格式 广告策略诊断 v1');
-  await expectVisible(page, '输出格式 Listing 草案 v1');
-  await assertAbsent(page, 'ad_strategy_diagnosis', 'settings-ai-audit');
-  await assertAbsent(page, 'listing_rewrite', 'settings-ai-audit');
-  await assertAbsent(page, 'schema ad_strategy_diagnosis_v1', 'settings-ai-audit');
-  await expectVisible(page, '证据包 4 条');
-  await expectVisible(page, '草案证据 1 条');
-  await expectVisible(page, '成功');
-  await expectVisible(page, '失败');
+  await assertAbsent(page, '广告诊断、广告建议解释和 Listing 草案都会要求 AI 返回标准 JSON', 'settings-primary-ai-contract-copy');
+  for (const text of ['DeepSeek / OpenAI Compatible', '广告量化阈值', 'AI 调用审计', '安全策略', '本地存储路径', '诊断工具']) {
+    await expectVisible(page, text);
+  }
+  await assertSettingsMainSectionOrder(page);
+  await assertAbsent(page, '最近 AI 是否参与', 'settings-ai-audit-collapsed');
+  await assertAbsent(page, 'AI response was not valid JSON', 'settings-ai-audit-collapsed');
+  await assertAbsent(page, '设置路径', 'settings-storage-collapsed');
+  await assertAbsent(page, 'AI 连接：确认 Provider、Base URL、模型和脱敏 Key 状态。', 'settings-diagnostics-collapsed');
   await assertAbsent(page, 'sk-1234567890abcdef', 'settings-ai-audit');
   const auditCalls = await page.evaluate(() => (window.__businessUiActionLog || []).filter((item) => item.type === 'listAiCallLogs'));
   if (!auditCalls.some((item) => item.params?.limit === 5)) {
@@ -758,6 +819,24 @@ async function main() {
     screenshotPath: settingsScreenshotPath,
     bodyTextSample: (await bodyText(page)).slice(0, 2200),
   };
+  await expandDetails(page, 'AI 调用审计');
+  await expectVisible(page, '最近 AI 是否参与');
+  await expectVisible(page, '最近 AI 调用失败');
+  await expectVisible(page, '检查模型、Base URL、标准 JSON 输出格式和证据包');
+  await expectVisible(page, 'AI response was not valid JSON');
+  await expectVisible(page, '日志数量');
+  await expectVisible(page, '广告策略诊断');
+  await expectInBody(page, 'Listing 草案', 'settings-ai-audit');
+  await expectVisible(page, '输出格式 广告策略诊断 v1');
+  await expectVisible(page, '输出格式 Listing 草案 v1');
+  await assertAbsent(page, 'ad_strategy_diagnosis', 'settings-ai-audit');
+  await assertAbsent(page, 'listing_rewrite', 'settings-ai-audit');
+  await assertAbsent(page, 'schema ad_strategy_diagnosis_v1', 'settings-ai-audit');
+  await expectVisible(page, '证据包 4 条');
+  await expectVisible(page, '草案证据 1 条');
+  await expectVisible(page, '成功');
+  await expectVisible(page, '失败');
+  await expandDetails(page, '诊断工具');
   await page.getByText('查看诊断覆盖项', { exact: true }).click();
   await page.getByText('AI 连接：确认 Provider、Base URL、模型和脱敏 Key 状态。', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByPlaceholder('DeepSeek 或 OpenAI Compatible API Key').fill('test-redacted-smoke-key');
@@ -773,27 +852,33 @@ async function main() {
   });
   await expectVisible(page, '已配置（已隐藏）');
   await page.getByRole('button', { name: '测试 AI 连接' }).click();
-  await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
+  await page.waitForFunction(() => document.body.innerText.includes('AI 连接测试通过'), null, { timeout: 5000 });
   await expectVisible(page, 'AI 可用');
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
   await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
   await page.getByRole('heading', { name: '设置', level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
+  await expandDetails(page, '高级 AI 参数');
   await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
   await page.locator('.app-sidebar').getByRole('button', { name: /仪表盘/ }).click();
   await page.getByRole('heading', { name: '仪表盘', level: 2 }).waitFor();
-  await expectVisible(page, 'AI 已产出建议');
-  await expectVisible(page, '1 条待审批，1 条需复核。');
+  await expectVisible(page, 'AI / 数据门槛');
+  await expectVisible(page, '等待数据门槛');
   await page.locator('.app-sidebar').getByRole('button', { name: /优化建议/ }).click();
   await page.getByRole('heading', { name: '优化建议', level: 2 }).waitFor();
+  await expandDetails(page, '生成范围、AI 配置和规则阈值');
   await expectVisible(page, 'AI 可用');
   await expectVisible(page, 'deepseek-v4-flash');
   await expectInBody(page, '生成建议时会调用 AI 参与产品阶段诊断、动态阈值建议和动作解释。', 'cross-page AI readiness after settings test');
   await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
   await page.getByRole('heading', { name: '设置', level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
-  await page.getByLabel('AI 人设与输出约束').fill('你是中文亚马逊广告量化运营顾问。必须输出简体中文 JSON，并引用证据说明判断。');
+  await expandDetails(page, '高级 AI 参数');
+  await expectVisible(page, 'ad_strategy_diagnosis_v1');
+  await expectVisible(page, 'ad_action_reason_v1');
+  await expectVisible(page, 'listing_rewrite_v1');
+  await page.getByLabel('AI 人设与表达风格').fill('你是中文亚马逊广告量化运营顾问。必须输出简体中文 JSON，并引用证据说明判断。');
   await page.getByRole('button', { name: '保存 AI 设置' }).click();
   await page.getByText('AI 设置已保存', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, 'AI 可用');
@@ -802,6 +887,7 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
   await page.getByRole('heading', { name: '设置', level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
+  await expandDetails(page, '高级 AI 参数');
   await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
   const savedAiSettingsCalls = await page.evaluate(() => (window.__businessUiActionLog || []).filter((item) => item.type === 'saveSettings'));
   const latestAiSave = savedAiSettingsCalls[savedAiSettingsCalls.length - 1];
@@ -811,6 +897,7 @@ async function main() {
   if (latestAiSave?.settings?.aiLastTestStatus !== 'available') {
     fail('Saving AI persona after a successful test should preserve available status', JSON.stringify(latestAiSave));
   }
+  await expandDetails(page, '高级 AI 参数');
   await page.getByRole('button', { name: '清除本地 AI Key' }).click();
   await page.getByText('AI Key 已清除', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '未配置');
@@ -819,6 +906,7 @@ async function main() {
   if (!clearKeySave) {
     fail('Clearing AI key should save with clearAiKey=true', JSON.stringify(await page.evaluate(() => window.__businessUiActionLog || [])));
   }
+  await expandDetails(page, '本地存储路径');
   for (const text of ['设置路径', '证据目录', '下载目录', '导出目录', '交付包目录', '本地数据库', '品牌词白名单', '核心词白名单']) {
     await expectVisible(page, text);
   }
@@ -826,7 +914,7 @@ async function main() {
     await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
   }
   await page.getByLabel('高 ACOS 阈值').fill('0.10');
-  await page.getByRole('button', { name: '保存阈值' }).click();
+  await page.getByRole('button', { name: '保存广告阈值' }).click();
   await page.getByText('阈值保存已阻断：高 ACOS 阈值不能低于目标 ACOS。', { exact: false }).waitFor({ timeout: 5000 });
   const saveCountBeforeValid = await page.evaluate(() => (window.__businessUiActionLog || []).filter((item) => item.type === 'saveRuleConfig').length);
   if (saveCountBeforeValid !== 0) {
@@ -835,7 +923,7 @@ async function main() {
   await page.getByLabel('高 ACOS 阈值').fill('0.40');
   await page.getByLabel('品牌词白名单').fill('brand one,brand two');
   await page.getByLabel('核心词白名单').fill('core one\ncore two');
-  await page.getByRole('button', { name: '保存阈值' }).click();
+  await page.getByRole('button', { name: '保存广告阈值' }).click();
   await page.waitForFunction(
     () => (window.__businessUiActionLog || []).some((item) => item.type === 'saveRuleConfig'),
     null,
@@ -859,10 +947,31 @@ async function main() {
 
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
-  await page.getByText('文件与技术入口', { exact: true }).click();
   for (const text of [
-    '应用就绪状态',
-    '当前范围交付矩阵',
+    '交付摘要',
+    '还不能交付',
+    '去数据采集',
+    '刷新最终验收',
+    '复制摘要',
+    '最终验收',
+    '还不能交付 / 1/2 通过',
+    '真实数据',
+    '1 个文件 / 18 行',
+    '安装包',
+    '未记录',
+    '真实数据闭环：1/8 类真实广告报表',
+  ]) {
+    await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
+  }
+  await expandDetails(page, '文件与技术入口');
+  await expandDetails(page, '广告回读补证');
+  await expandDetails(page, '完整矩阵');
+  await expandDetails(page, '最终证据清单');
+  await expandDetails(page, '完整业务证据项');
+  await expandDetails(page, '技术细节');
+  for (const text of [
+    '完整矩阵：已闭合 2/7',
+    '完整业务证据项',
     '原始广告报表',
     '广告指标入库',
     '广告量化',
@@ -876,8 +985,6 @@ async function main() {
     await expectVisible(page, text);
   }
   for (const text of [
-    '未就绪',
-    '最终验收汇总是交付状态的唯一来源。',
     '矩阵只说明当前日期、店铺、站点和批次的业务环节；最终是否可交付仍以最终验收汇总为准。',
     '真实数据闭环未完成，不能进入正式交付',
     '真实数据闭环',
@@ -903,11 +1010,11 @@ async function main() {
     '广告回读补证',
     '创建回读工作包',
     '打开候选证据',
+    '打开交付包',
     '打开证据目录',
+    '打开安装包目录',
     '打开最终验收汇总',
-    '刷新最终验收',
     '导出数据口径核对',
-    '复制摘要',
     '技术细节',
   ]) {
     await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
@@ -923,12 +1030,16 @@ async function main() {
 
   await page.getByRole('button', { name: '刷新最终验收' }).click();
   await page.getByText('最终验收已刷新，仍未就绪', { exact: false }).waitFor({ timeout: 5000 });
+  await assertDeliveryMessageHasNoLongPath(page, 'delivery-refresh-final-readiness');
   await expectVisible(page, '最终验收刷新结果');
+  await expandDetails(page, '最终验收刷新结果');
   await expectVisible(page, 'C:/final/v15-final-readiness-evidence-manifest-refreshed.json');
   await expectVisible(page, 'C:/final/final-readiness-refreshed.json');
   await expectVisible(page, '最终验收已生成诊断文件，但仍有验收项未通过，不能声明可交付。');
   await page.getByRole('button', { name: '创建回读工作包' }).click();
   await page.getByText('回读工作包已创建', { exact: false }).waitFor({ timeout: 5000 });
+  await assertDeliveryMessageHasNoLongPath(page, 'delivery-create-readback-work-package');
+  await expandDetails(page, '回读工作包路径');
   await expectVisible(page, 'C:/final/readback-missing-session');
   await expectVisible(page, 'C:/final/readback-missing-session/session-input.json');
   await expectVisible(page, 'C:/final/readback-missing-session/session-input-guide.md');
@@ -942,21 +1053,27 @@ async function main() {
   await page.getByRole('button', { name: '打开填写说明' }).click();
   await page.getByRole('button', { name: '检查工作包' }).click();
   await page.getByText('回读工作包结构已通过，但现场证据仍待填写', { exact: false }).waitFor({ timeout: 5000 });
+  await assertDeliveryMessageHasNoLongPath(page, 'delivery-check-readback-work-package');
   await expectVisible(page, '工作包检查：结构通过，现场证据待填写');
   await expectVisible(page, '还需填写：审批/审批人、执行前/现场出价、执行后/现场出价、回读/刷新回读截图文件');
   await page.getByRole('button', { name: '生成回读证据' }).click();
   await page.getByText('回读证据已生成，可进入校验', { exact: false }).waitFor({ timeout: 5000 });
+  await assertDeliveryMessageHasNoLongPath(page, 'delivery-fill-readback-work-package');
   await expectVisible(page, '回读证据生成：可校验');
   await page.getByRole('button', { name: '校验回读证据' }).click();
   await page.getByText('回读证据校验通过', { exact: false }).waitFor({ timeout: 5000 });
+  await assertDeliveryMessageHasNoLongPath(page, 'delivery-verify-readback-evidence');
   await expectVisible(page, '回读证据校验：通过');
   await page.getByRole('button', { name: '导出交付包' }).click();
   await expectInBody(page, '最终验收汇总未通过，不能导出可交付包。', 'delivery export blocked message');
+  await assertDeliveryMessageHasNoLongPath(page, 'delivery-export-blocked');
   await assertAbsent(page, 'APP_NEEDS_WORK', 'delivery-export-message');
   await assertAbsent(page, 'READY 交付包', 'delivery-export-message');
   await page.getByRole('button', { name: '导出数据口径核对' }).click();
   await page.getByText('数据口径核对报告已导出', { exact: false }).waitFor({ timeout: 5000 });
-  await expectVisible(page, '数据口径核对报告');
+  await assertDeliveryMessageHasNoLongPath(page, 'delivery-export-data-reconciliation');
+  await expectVisible(page, '数据口径导出结果');
+  await expandDetails(page, '数据口径导出结果');
   await expectVisible(page, '权威口径');
   await expectVisible(page, '用户搜索词权威口径');
   await expectVisible(page, 'DB 汇总');
@@ -974,6 +1091,8 @@ async function main() {
   await page.getByRole('button', { name: '复制摘要' }).click();
   await page.getByRole('button', { name: '用回读证据刷新最终验收' }).click();
   await page.getByText('已使用回读证据刷新并通过最终验收', { exact: false }).waitFor({ timeout: 5000 });
+  await assertDeliveryMessageHasNoLongPath(page, 'delivery-refresh-with-readback');
+  await expandDetails(page, '最终验收刷新结果');
   await expectVisible(page, 'C:/final/v15-final-readiness-evidence-manifest-with-readback-pass.json');
   await expectVisible(page, 'C:/final/final-readiness-with-readback-pass.json');
   evidence.actionLog = await page.evaluate(() => window.__businessUiActionLog || []);
@@ -1032,8 +1151,16 @@ async function main() {
   if (evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '').includes('lingxing-batch-manifest'))) {
     fail('Open final manifest fell back to Lingxing batch manifest');
   }
-  if (!evidence.actionLog.some((item) => item.type === 'clipboard' && String(item.text || '').includes('交付状态：未就绪'))) {
+  if (!evidence.actionLog.some((item) => item.type === 'clipboard' && String(item.text || '').includes('交付状态：还不能交付'))) {
     fail('Copy summary did not write business-readable not-ready summary');
+  }
+  if (!evidence.actionLog.some((item) => item.type === 'clipboard'
+    && String(item.text || '').includes('最终验收通过且安装包证据已记录时，才可声明可以交付。'))) {
+    fail('Copy summary did not explain package-aware delivery criteria');
+  }
+  if (evidence.actionLog.some((item) => item.type === 'clipboard'
+    && String(item.text || '').includes('最终验收汇总是交付状态的唯一来源'))) {
+    fail('Copy summary still uses stale final-readiness-only delivery criteria');
   }
   if (!evidence.actionLog.some((item) => item.type === 'clipboard'
     && String(item.text || '').includes('真实报表目录：C:/evidence/reports')
@@ -1076,7 +1203,7 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
-  await page.getByText('文件与技术入口', { exact: true }).click();
+  await expandDetails(page, '文件与技术入口');
   await page.getByText('最终验收汇总尚未生成', { exact: false }).first().waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: '打开最终验收汇总' }).click();
   await page.getByText('最终验收汇总尚未生成。', { exact: false }).first().waitFor({ timeout: 5000 });
@@ -1088,6 +1215,8 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
+  await expandDetails(page, '完整业务证据项');
   await page.getByText('最终验收未通过，不能声明可交付。', { exact: true }).waitFor({ timeout: 5000 });
   await assertGlobalGuards(page, 'delivery-fake-ready');
 
@@ -1097,7 +1226,9 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
-  await page.locator('main').getByText('未就绪', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
+  await expandDetails(page, '完整业务证据项');
+  await expandDetails(page, '最终证据清单');
   await page.getByText('最终验收汇总不是本次验收来源，不能声明可交付。', { exact: true }).first().waitFor({ timeout: 5000 });
   for (const text of [
     '最终验收汇总已接受 AI 相关证据。',
@@ -1118,14 +1249,18 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: /设置/ }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: /交付验收/ }).click();
   await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
-  await page.getByText('可交付', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('可交付只代表最终验收汇总选中的证据已通过', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('可以交付', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.getByText('交付包摘要', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('AmazonAIOpsAgent-1.5.0-portable.exe / SHA-256 D9C181C09B32...', { exact: false }).first().waitFor({ timeout: 5000 });
+  await expandDetails(page, '最终证据清单');
   await page.getByText('C:/final/readback-pass.json', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('真实广告回读验收通过。', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: '导出交付包' }).click();
   await page.getByText('交付包已导出', { exact: false }).waitFor({ timeout: 5000 });
   await page.getByText('已包含当前范围数据口径核对', { exact: false }).waitFor({ timeout: 5000 });
-  await expectVisible(page, '数据口径核对报告');
+  await assertDeliveryMessageHasNoLongPath(page, 'delivery-pass-export-bundle');
+  await expectVisible(page, '数据口径导出结果');
+  await expandDetails(page, '数据口径导出结果');
   await expectVisible(page, '用户搜索词权威口径');
   await expectVisible(page, '18 行 / 170.25 USD / 3 单');
   await expectVisible(page, 'C:/exports/delivery/v15-ready-bundle/data-reconciliation.json');

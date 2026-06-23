@@ -29,6 +29,39 @@ describe('buildDeliveryReadinessMatrix', () => {
     expect(matrix.items.find((item) => item.key === 'aiEvidence')?.detail).toContain('AI 成功 3 次');
   });
 
+  it('keeps the ready headline and primary matrix copy business-facing', () => {
+    const matrix = buildDeliveryReadinessMatrix({
+      realReportCount: 8,
+      importedRows: 2416,
+      actionableRows: 180,
+      aiAvailable: true,
+      aiSuccessCount: 3,
+      aiInsightOnlyCount: 1,
+      operationEventCount: 2,
+      productContextCount: 1,
+      listingReadReady: true,
+      listingDraftReady: true,
+      pendingRecommendationCount: 4,
+      approvedRecommendationCount: 2,
+      readbackVerifiedCount: 1,
+      installerAvailable: true,
+      deliveryManifestReady: true,
+    });
+    const displayCopy = [
+      matrix.headline,
+      matrix.primaryNextAction,
+      ...matrix.items.flatMap((item) => [
+        item.label,
+        item.statusLabel,
+        item.detail,
+        item.nextAction,
+      ]),
+    ].join('\n');
+
+    expect(matrix.headline).toBe('可交付证据闭环已完成');
+    expect(displayCopy).not.toMatch(/APP_|READY|manifest|gate/i);
+  });
+
   it('uses operator-facing wording for readback and package proof details', () => {
     const matrix = buildDeliveryReadinessMatrix({
       realReportCount: 8,

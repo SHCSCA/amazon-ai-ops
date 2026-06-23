@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { aiCallEvidenceLabel, aiCallEvidenceTotal, aiCallKindLabel, aiCallOutputFormatLabel, buildAiCallDiagnostics } from '../ai-call-diagnostics';
+import { aiContractPrimaryCopy, aiOutputContracts, aiOutputContractTags } from '../ai-output-contracts';
+import { ProgressiveDetails } from '../components/progressive-details';
+import { TagMetricGroup, type TagMetricItem } from '../components/tag-metric-group';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import type { AiCallLogView, AiConnectionStatus, AiProviderSettings, SettingsRuleConfig, StoragePathsView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 const DEFAULT_AI_PERSONA = [
   '你是中文亚马逊广告运营顾问，擅长结合真实广告报表、产品阶段、成本结构和运营事件做量化分析。',
-  '请用运营能直接理解的中文解释阈值、风险和建议；只输出结构化 JSON，不执行广告动作。',
+  '请用运营能直接理解的中文解释阈值、风险和建议；字段结构由系统固定输出合同约束，人设只影响表达风格，不执行广告动作。',
 ].join('');
 
 const DEFAULT_AI_SETTINGS: AiProviderSettings = {
@@ -111,6 +114,27 @@ export function aiSettingsActionHint(input: { canSaveSettings: boolean; keyPrese
   return '';
 }
 
+export function settingsAiContractPrimaryCopy(): string {
+  return aiContractPrimaryCopy();
+}
+
+export function settingsAiContractTags(): TagMetricItem[] {
+  return aiOutputContractTags().map((tag) => ({
+    label: tag.label,
+    detail: tag.detail,
+    tone: tag.tone,
+  }));
+}
+
+export function settingsAiContractVersionItems(): TagMetricItem[] {
+  return aiOutputContracts.map((contract) => ({
+    label: contract.label,
+    value: contract.version,
+    detail: `${contract.usedBy}：${contract.consumedAs}`,
+    tone: 'neutral',
+  }));
+}
+
 function normalizeAiSettings(settings: Record<string, unknown> | null | undefined): AiProviderSettings {
   return {
     aiApiKey: readString(settings?.aiApiKey ?? settings?.ai_api_key, DEFAULT_AI_SETTINGS.aiApiKey),
@@ -182,6 +206,19 @@ function displayAiStatusLabel(status: AiConnectionStatus, keyPresent: boolean): 
 function displayAiStatusTone(status: AiConnectionStatus, keyPresent: boolean): 'ready' | 'pending' | 'blocked' | 'warning' {
   if (status === 'pending_test' && keyPresent) return 'pending';
   return statusTone(status);
+}
+
+export function settingsPrimaryAiStatusItems(
+  settings: Pick<AiProviderSettings, 'aiBaseUrl' | 'aiModel'>,
+  status: AiConnectionStatus,
+  keyPresent: boolean,
+) {
+  return [
+    { label: 'API Key', value: keyPresent ? '已配置（已隐藏）' : '未配置' },
+    { label: 'Base URL', value: settings.aiBaseUrl || '未配置' },
+    { label: 'Model', value: settings.aiModel || '未配置' },
+    { label: '连接状态', value: status === 'pending_test' ? '已配置，待测试' : statusLabel(status) },
+  ];
 }
 
 function percentLabel(value: number): string {
@@ -335,15 +372,8 @@ export function SettingsPage() {
   }, [aiStatus, keyPresent]);
 
   const aiStatusItems = useMemo(
-    () => [
-      { label: 'Base URL', value: aiSettings.aiBaseUrl || '未配置' },
-      { label: 'Model', value: aiSettings.aiModel || '未配置' },
-      { label: 'API Key', value: keyPresent ? '已配置（已隐藏）' : '未配置' },
-      { label: 'Status', value: aiStatus === 'pending_test' ? '已配置，待测试' : statusLabel(aiStatus) },
-      { label: '输出语言', value: aiSettings.aiOutputLanguage || DEFAULT_AI_SETTINGS.aiOutputLanguage || '简体中文' },
-      { label: '最近测试', value: aiSettings.aiLastTestAt ? `${aiSettings.aiLastTestStatus === 'available' ? '通过' : '失败'} / ${aiSettings.aiLastTestMessage || aiSettings.aiLastTestAt}` : '暂无记录' },
-    ],
-    [aiSettings.aiBaseUrl, aiSettings.aiLastTestAt, aiSettings.aiLastTestMessage, aiSettings.aiLastTestStatus, aiSettings.aiModel, aiSettings.aiOutputLanguage, aiStatus, keyPresent],
+    () => settingsPrimaryAiStatusItems(aiSettings, aiStatus, keyPresent),
+    [aiSettings, aiStatus, keyPresent],
   );
   const aiCallDiagnostics = useMemo(
     () => buildAiCallDiagnostics(aiCallLogs),
@@ -541,42 +571,9 @@ export function SettingsPage() {
                 placeholder="deepseek-v4-flash"
               />
             </label>
-            <label>
-              Temperature
-              <input
-                type="number"
-                step="0.1"
-                value={aiSettings.aiTemperature}
-                onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiTemperature', event.target.value))}
-              />
-            </label>
-            <label>
-              Max Tokens
-              <input
-                type="number"
-                value={aiSettings.aiMaxTokens}
-                onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiMaxTokens', event.target.value))}
-              />
-            </label>
-            <label>
-              输出语言
-              <input
-                value={aiSettings.aiOutputLanguage || ''}
-                onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiOutputLanguage', event.target.value))}
-                placeholder="简体中文"
-              />
-            </label>
-            <label className="form-grid-wide">
-              <span>AI 人设与输出约束</span>
-              <textarea
-                aria-label="AI 人设与输出约束"
-                value={aiSettings.aiPersona || ''}
-                onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiPersona', event.target.value))}
-                placeholder={DEFAULT_AI_PERSONA}
-              />
-            </label>
           </div>
-          <p className="muted-line">广告诊断、广告建议解释和 Listing 草案都会要求 AI 返回标准 JSON；界面只渲染可控字段，不直接执行广告动作。</p>
+          <p className="muted-line">{settingsAiContractPrimaryCopy()}</p>
+          <TagMetricGroup items={settingsAiContractTags()} />
           <div className="action-row">
             <button className="primary-button" disabled={savingAi || !canSaveSettings} onClick={saveAiSettings} type="button">
               {savingAi ? '保存中...' : '保存 AI 设置'}
@@ -584,50 +581,62 @@ export function SettingsPage() {
             <button className="secondary-button" disabled={aiStatus === 'testing' || !canRunAiTest} onClick={testAiSettings} type="button">
               {aiStatus === 'testing' ? '测试中...' : '测试 AI 连接'}
             </button>
-            <button className="secondary-button" disabled={savingAi || !canSaveSettings || !keyPresent} onClick={clearLocalAiKey} type="button">
-              清除本地 AI Key
-            </button>
           </div>
           {aiActionHint && <p className="muted-line">{aiActionHint}</p>}
-        </Panel>
-
-        <Panel title="AI 调用审计">
-          <p className="muted-line">{aiAuditIntroText()}</p>
-          <div className="context-summary-grid">
-            <div>
-              <span>最近 AI 是否参与</span>
-              <strong>{aiCallDiagnostics.headline}</strong>
-              <p>{aiCallDiagnostics.detail}</p>
-              <StatusPill tone={aiCallDiagnostics.status === 'ready' ? 'ready' : aiCallDiagnostics.status === 'blocked' ? 'blocked' : 'warning'}>
-                {aiCallDiagnostics.nextAction}
-              </StatusPill>
+          <ProgressiveDetails title="高级 AI 参数">
+            <div className="settings-status-grid">
+              <div>
+                <span>输出语言</span>
+                <strong>{aiSettings.aiOutputLanguage || DEFAULT_AI_SETTINGS.aiOutputLanguage || '简体中文'}</strong>
+              </div>
+              <div>
+                <span>最近测试</span>
+                <strong>{aiSettings.aiLastTestAt ? `${aiSettings.aiLastTestStatus === 'available' ? '通过' : '失败'} / ${aiSettings.aiLastTestMessage || aiSettings.aiLastTestAt}` : '暂无记录'}</strong>
+              </div>
             </div>
-            <div>
-              <span>日志数量</span>
-              <strong>{aiCallLogs.length} 条</strong>
-              <p>{aiAuditPurposeText()}</p>
-              <StatusPill tone={canLoadAiCallLogs ? 'ready' : 'blocked'}>{canLoadAiCallLogs ? '接口可用' : '接口缺失'}</StatusPill>
+            <TagMetricGroup items={settingsAiContractVersionItems()} />
+            <div className="settings-form-grid">
+              <label>
+                Temperature
+                <input
+                  type="number"
+                  step="0.1"
+                  value={aiSettings.aiTemperature}
+                  onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiTemperature', event.target.value))}
+                />
+              </label>
+              <label>
+                Max Tokens
+                <input
+                  type="number"
+                  value={aiSettings.aiMaxTokens}
+                  onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiMaxTokens', event.target.value))}
+                />
+              </label>
+              <label>
+                输出语言
+                <input
+                  value={aiSettings.aiOutputLanguage || ''}
+                  onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiOutputLanguage', event.target.value))}
+                  placeholder="简体中文"
+                />
+              </label>
+              <label className="form-grid-wide">
+                <span>AI 人设与表达风格</span>
+                <textarea
+                  aria-label="AI 人设与表达风格"
+                  value={aiSettings.aiPersona || ''}
+                  onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiPersona', event.target.value))}
+                  placeholder={DEFAULT_AI_PERSONA}
+                />
+              </label>
             </div>
-          </div>
-          {!canLoadAiCallLogs && <p className="warning-line">当前环境未暴露 AI 调用审计接口。</p>}
-          {canLoadAiCallLogs && aiCallLogs.length === 0 && <p className="muted-line">暂无 AI 调用记录。</p>}
-          {aiCallLogs.length > 0 && (
-            <div className="context-summary-grid">
-              {aiCallLogs.map((log) => (
-                <div key={log.id}>
-                  <span>{aiAuditLogTitle(log)}</span>
-                  <strong>{log.model}</strong>
-                  <p className="muted-line">{log.createdAt}</p>
-                  <p className="muted-line">{aiAuditLogFormatLine(log)}</p>
-                  <div className="business-pill-row">
-                    <StatusPill tone={log.success ? 'ready' : 'blocked'}>{log.success ? '成功' : '失败'}</StatusPill>
-                    <StatusPill tone={aiCallEvidenceTotal(log) ? 'ready' : 'warning'}>{aiCallEvidenceLabel(log)}</StatusPill>
-                  </div>
-                  {log.errorMessage && <p className="warning-line">{log.errorMessage}</p>}
-                </div>
-              ))}
+            <div className="action-row">
+              <button className="secondary-button" disabled={savingAi || !canSaveSettings || !keyPresent} onClick={clearLocalAiKey} type="button">
+                清除本地 AI Key
+              </button>
             </div>
-          )}
+          </ProgressiveDetails>
         </Panel>
 
         <Panel title="广告量化阈值">
@@ -772,21 +781,60 @@ export function SettingsPage() {
           </div>
           <div className="action-row">
             <button className="primary-button" disabled={savingRules || !canSaveRules} onClick={saveRuleConfig} type="button">
-              {savingRules ? '保存中...' : '保存阈值'}
+              {savingRules ? '保存中...' : '保存广告阈值'}
             </button>
           </div>
         </Panel>
 
+        <ProgressiveDetails title="AI 调用审计">
+          <p className="muted-line">{aiAuditIntroText()}</p>
+          <div className="context-summary-grid">
+            <div>
+              <span>最近 AI 是否参与</span>
+              <strong>{aiCallDiagnostics.headline}</strong>
+              <p>{aiCallDiagnostics.detail}</p>
+              <StatusPill tone={aiCallDiagnostics.status === 'ready' ? 'ready' : aiCallDiagnostics.status === 'blocked' ? 'blocked' : 'warning'}>
+                {aiCallDiagnostics.nextAction}
+              </StatusPill>
+            </div>
+            <div>
+              <span>日志数量</span>
+              <strong>{aiCallLogs.length} 条</strong>
+              <p>{aiAuditPurposeText()}</p>
+              <StatusPill tone={canLoadAiCallLogs ? 'ready' : 'blocked'}>{canLoadAiCallLogs ? '接口可用' : '接口缺失'}</StatusPill>
+            </div>
+          </div>
+          {!canLoadAiCallLogs && <p className="warning-line">当前环境未暴露 AI 调用审计接口。</p>}
+          {canLoadAiCallLogs && aiCallLogs.length === 0 && <p className="muted-line">暂无 AI 调用记录。</p>}
+          {aiCallLogs.length > 0 && (
+            <div className="context-summary-grid">
+              {aiCallLogs.map((log) => (
+                <div key={log.id}>
+                  <span>{aiAuditLogTitle(log)}</span>
+                  <strong>{log.model}</strong>
+                  <p className="muted-line">{log.createdAt}</p>
+                  <p className="muted-line">{aiAuditLogFormatLine(log)}</p>
+                  <div className="business-pill-row">
+                    <StatusPill tone={log.success ? 'ready' : 'blocked'}>{log.success ? '成功' : '失败'}</StatusPill>
+                    <StatusPill tone={aiCallEvidenceTotal(log) ? 'ready' : 'warning'}>{aiCallEvidenceLabel(log)}</StatusPill>
+                  </div>
+                  {log.errorMessage && <p className="warning-line">{log.errorMessage}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </ProgressiveDetails>
+
         <div className="business-grid">
-          <Panel title="安全策略" tone="warning">
+          <ProgressiveDetails title="安全策略">
             <ul className="business-list">
               {SAFETY_POLICIES.map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
-          </Panel>
+          </ProgressiveDetails>
 
-          <Panel title="本地存储路径">
+          <ProgressiveDetails title="本地存储路径">
             <dl className="business-definition-list">
               <div>
                 <dt>设置路径</dt>
@@ -813,10 +861,10 @@ export function SettingsPage() {
                 <dd>{storagePaths.localDbPath || '不可用：getStoragePaths 未返回 localDbPath'}</dd>
               </div>
             </dl>
-          </Panel>
+          </ProgressiveDetails>
         </div>
 
-        <Panel title="诊断工具">
+        <ProgressiveDetails title="诊断工具">
           <div className="settings-diagnostic-row">
             <p>用于验证 AI 连接、广告解释、Listing 草案和最终交付状态；不会改变广告账户，也不会绕过审批、执行前/执行后/回读或范围匹配要求。</p>
             <button className="secondary-button" onClick={copyDiagnostics} type="button">复制诊断检查清单</button>
@@ -832,7 +880,7 @@ export function SettingsPage() {
             </div>
           </details>
           {copyNotice && <p className="muted-line">{copyNotice}</p>}
-        </Panel>
+        </ProgressiveDetails>
 
         {message && <Panel title="状态">{message}</Panel>}
       </div>

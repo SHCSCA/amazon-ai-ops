@@ -99,7 +99,7 @@ expectContains(settingsPage, 'listAiCallLogs', 'settings page loads AI call logs
 expectContains(settingsPage, '不保存 API Key，也不展示完整提示词', 'settings page states redaction boundary');
 expectContains(settingsPage, '广告量化阈值', 'settings page exposes operator threshold configuration');
 expectContains(settingsPage, 'USD', 'settings page uses USD for cross-border ad spend thresholds');
-expectContains(settingsPage, 'before / after / readback', 'settings page keeps real write safety policy visible');
+expectContains(settingsPage, '执行前、执行后和回读证据', 'settings page keeps real write safety policy visible');
 expectContains(aiCallDiagnostics, '标准 JSON 输出格式', 'AI diagnostics translate schema issues into operator-facing JSON format language');
 expectContains(aiCallDiagnostics, '证据包', 'AI diagnostics surfaces evidence pack state');
 expectContains(recommendationsPage, 'AI 判断依据', 'recommendations page displays AI reasoning section');

@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
+import { useBusinessDataPipeline } from '../components/business-data';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
+import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildCollectionActionSummary } from '../collection-action-summary';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
@@ -148,6 +150,65 @@ function actionModeLabel(mode: CollectionActionMode): string {
     import: '导入本地/已下载报表',
   };
   return labels[mode];
+}
+
+export interface DataCollectionTaskState {
+  title: string;
+  detail: string;
+  primaryActionLabel: string;
+  secondaryActionLabel: string;
+  isComplete: boolean;
+}
+
+export function dataCollectionFirstViewportReportFolder(input: {
+  realReportCount: number;
+  realFiles: Array<{ folderPath?: string }>;
+  evidenceFolder?: string;
+  auditDownloadDir?: string;
+}): string | undefined {
+  if ((Number(input.realReportCount) || 0) <= 0) return undefined;
+  return input.realFiles.find((file) => Boolean(file.folderPath))?.folderPath;
+}
+
+export function collectionActionButtonLabel(mode: CollectionActionMode): string {
+  const labels: Record<CollectionActionMode, string> = {
+    'download-existing': '下载已创建',
+    'recreate-selected': '重建已选',
+    'recreate-full': '重建全部 8 类',
+    import: '导入本地',
+  };
+  return labels[mode];
+}
+
+export function buildDataCollectionTaskState({
+  realReportCount,
+  importedRowCount,
+  primaryReportFolder,
+  runningAction,
+}: {
+  realReportCount: number;
+  importedRowCount: number;
+  primaryReportFolder?: string;
+  runningAction: CollectionActionMode | null;
+}): DataCollectionTaskState {
+  const reportCount = Math.max(0, Math.min(8, Number(realReportCount) || 0));
+  const rowCount = Math.max(0, Number(importedRowCount) || 0);
+  const isComplete = reportCount >= 8 && rowCount > 0;
+  return {
+    title: `真实报表 ${reportCount}/8，已导入 ${rowCount} 行`,
+    detail: isComplete
+      ? '真实报表和日级指标已闭合，可以进入广告量化。'
+      : reportCount > 0
+        ? '先补齐完整 8 类报表；已有本地表格时可从目录确认或导入。'
+        : '当前范围缺少真实报表，先获取完整 8 类或导入本地表格。',
+    primaryActionLabel: isComplete
+      ? '进入广告量化'
+      : runningAction === 'recreate-full'
+        ? '正在重新获取完整 8 类报表...'
+        : '重新获取完整 8 类报表',
+    secondaryActionLabel: primaryReportFolder ? '打开报表目录' : '导入本地报表',
+    isComplete,
+  };
 }
 
 export function collectionActionGuide(mode: CollectionActionMode): CollectionActionGuide {
@@ -374,7 +435,12 @@ export function DataCollectionPage() {
   const availableBatchCount = collection?.availableBatches?.length || collection?.sourceBatchIds?.length || 0;
   const auditEvidencePaths = (collection?.evidencePaths || []).filter((item) => item.kind === 'audit');
   const folderEvidencePaths = (collection?.evidencePaths || []).filter((item) => item.kind === 'folder');
-  const primaryReportFolder = realFiles[0]?.folderPath || folderEvidencePaths[0]?.path || fileAudit?.downloadDir;
+  const primaryReportFolder = dataCollectionFirstViewportReportFolder({
+    realReportCount,
+    realFiles,
+    evidenceFolder: folderEvidencePaths[0]?.path,
+    auditDownloadDir: fileAudit?.downloadDir,
+  });
   const primaryAuditPath = auditEvidencePaths[0]?.path;
   const visibleRealFiles = realFiles.slice(0, 8);
   const hiddenRealFileCount = Math.max(0, realFiles.length - visibleRealFiles.length);
@@ -419,6 +485,12 @@ export function DataCollectionPage() {
     }),
     [importedRowCount, realReportCount, rejectedEvidenceCount, reportOptions],
   );
+  const taskState = buildDataCollectionTaskState({
+    realReportCount,
+    importedRowCount,
+    primaryReportFolder,
+    runningAction,
+  });
 
   useEffect(() => {
     const validTypes = new Set(reportOptions.map((item) => item.type));
@@ -434,12 +506,6 @@ export function DataCollectionPage() {
       setSelectedTypes([]);
     }
   }, [reportOptions.length]);
-
-  const progressText = useMemo(() => {
-    const realCount = reportOptions.filter((item) => item.realFileAvailable).length;
-    const importedRows = fileAudit?.importedRowCount ?? reportOptions.reduce((sum, item) => sum + item.importedRows, 0);
-    return `${realCount}/8 已有真实原始文件，${importedRows} 行已导入`;
-  }, [fileAudit?.importedRowCount, reportOptions]);
 
   function toggleReport(type: string) {
     setSelectedTypes((current) => (
@@ -458,6 +524,10 @@ export function DataCollectionPage() {
       setActionError(toUserFacingError(caught, '打开路径失败。'));
       setActionNotice('打开路径失败。');
     }
+  }
+
+  function navigateToAdQuant() {
+    window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'ad-quant' }));
   }
 
   async function runDownloadAction(mode: 'download-existing' | 'recreate-selected' | 'recreate-full') {
@@ -608,191 +678,215 @@ export function DataCollectionPage() {
       />
 
       <div className="business-stack">
-        <Panel title="当前采集状态" tone={realFiles.length ? 'success' : 'blocked'}>
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line">
-                <ScopeText scope={data?.scope || scope} />
-              </div>
-              <p className="muted-line">{progressText}</p>
-              {loading && <p className="muted-line">正在读取采集状态...</p>}
-              {error && <p className="blocked-line">读取接口异常：{error}</p>}
-              {!realFiles.length && (
-                <p className="blocked-line">当前范围还没有可量化的真实广告数据</p>
-              )}
-            </div>
-            <div className="business-pill-row business-pill-row-right">
-              <StatusPill tone={realFiles.length ? 'ready' : 'blocked'}>{collectionStatusLabel(collection?.status)}</StatusPill>
-              <StatusPill tone="pending">原始文件仅限 .xlsx/.xls/.csv</StatusPill>
-            </div>
-          </div>
-        </Panel>
+        <OperatorTaskPanel
+          eyebrow="当前任务"
+          title={taskState.title}
+          detail={taskState.detail}
+          primaryAction={{
+            label: taskState.primaryActionLabel,
+            disabled: Boolean(runningAction),
+            onClick: taskState.isComplete ? navigateToAdQuant : () => runDownloadAction('recreate-full'),
+          }}
+          secondaryActions={[
+            {
+              label: taskState.secondaryActionLabel,
+              disabled: Boolean(runningAction),
+              onClick: primaryReportFolder ? () => openPath(primaryReportFolder) : importLocalReports,
+            },
+          ]}
+        >
+          {loading && <p className="muted-line">正在读取采集状态...</p>}
+          {error && <p className="blocked-line">读取接口异常：{error}</p>}
+        </OperatorTaskPanel>
 
-        <Panel title="当前范围数据账本" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line">{dataLedger.headline}</div>
-              <p className="muted-line">{dataLedger.detail}</p>
+        {primaryReportFolder && (
+          <Panel title="真实报表目录" tone="success">
+            <div className="business-split">
+              <div>
+                <div className="business-scope-line">{compactPath(primaryReportFolder)}</div>
+                <p className="muted-line">这里只放当前范围可用于后续量化的 Lingxing xlsx/xls/csv 原始报表。</p>
+              </div>
+              <div className="business-pill-row business-pill-row-right">
+                <StatusPill tone="ready">{collectionStatusLabel(collection?.status)}</StatusPill>
+                <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开报表目录</button>
+              </div>
             </div>
-            <div className="business-pill-row business-pill-row-right">
-              <StatusPill tone={dataLedger.status === 'ready' ? 'ready' : 'blocked'}>{dataLedger.nextAction}</StatusPill>
+          </Panel>
+        )}
+
+        <ProgressiveDetails title="当前范围数据账本">
+          <Panel title="当前范围数据账本" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
+            <div className="business-split">
+              <div>
+                <div className="business-scope-line">{dataLedger.headline}</div>
+                <p className="muted-line">{dataLedger.detail}</p>
+              </div>
+              <div className="business-pill-row business-pill-row-right">
+                <StatusPill tone={dataLedger.status === 'ready' ? 'ready' : 'blocked'}>{dataLedger.nextAction}</StatusPill>
+              </div>
             </div>
-          </div>
-          {dataLedger.gaps.length > 0 && (
-            <div className="evidence-card-grid">
-              {dataLedger.gaps.slice(0, 4).map((gap) => (
-                <div className="evidence-card" key={gap}>
-                  <span>待处理缺口</span>
-                  <strong>{gap}</strong>
+            {dataLedger.gaps.length > 0 && (
+              <div className="evidence-card-grid">
+                {dataLedger.gaps.slice(0, 4).map((gap) => (
+                  <div className="evidence-card" key={gap}>
+                    <span>待处理缺口</span>
+                    <strong>{gap}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+        </ProgressiveDetails>
+
+        <ProgressiveDetails title="数据流程四段闭环">
+          <Panel title="数据流程四段闭环" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
+            <div className="business-split">
+              <div>
+                <div className="business-scope-line">系统只在四段都闭合后放行广告量化、AI 证据包和优化建议。</div>
+                <p className="muted-line">批次号和审计文件只用于追溯；运营判断看这四段是否完成。</p>
+              </div>
+              <StatusPill tone={dataLedger.status === 'ready' ? 'ready' : dataLedger.status === 'partial' ? 'pending' : 'blocked'}>
+                {dataLedger.status === 'ready' ? '可进入建议' : '未放行建议'}
+              </StatusPill>
+            </div>
+            <div className="collection-progress-grid">
+              {dataLedger.stages.map((stage, index) => (
+                <div className={readinessStageClass(stage.status)} key={stage.key}>
+                  <span>第 {index + 1} 步</span>
+                  <strong>{stage.title}</strong>
+                  <p>{stage.value}</p>
+                  <p>{stage.detail}</p>
+                  <StatusPill tone={readinessStageTone(stage.status)}>{readinessStageLabel(stage.status)}</StatusPill>
                 </div>
               ))}
             </div>
-          )}
-        </Panel>
+            <p className="warning-line">审计文件、截图、DOM/HTML 和采集清单只证明流程，不是广告数据，不能参与花费、订单或 ACOS 计算。</p>
+          </Panel>
+        </ProgressiveDetails>
 
-        <Panel title="数据流程四段闭环" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line">系统只在四段都闭合后放行广告量化、AI 证据包和优化建议。</div>
-              <p className="muted-line">批次号和审计文件只用于追溯；运营判断看这四段是否完成。</p>
-            </div>
-            <StatusPill tone={dataLedger.status === 'ready' ? 'ready' : dataLedger.status === 'partial' ? 'pending' : 'blocked'}>
-              {dataLedger.status === 'ready' ? '可进入建议' : '未放行建议'}
-            </StatusPill>
-          </div>
-          <div className="collection-progress-grid">
-            {dataLedger.stages.map((stage, index) => (
-              <div className={readinessStageClass(stage.status)} key={stage.key}>
-                <span>第 {index + 1} 步</span>
-                <strong>{stage.title}</strong>
-                <p>{stage.value}</p>
-                <p>{stage.detail}</p>
-                <StatusPill tone={readinessStageTone(stage.status)}>{readinessStageLabel(stage.status)}</StatusPill>
+        <ProgressiveDetails title="真实报表文件检查">
+          <Panel title="真实报表文件检查" tone={realReportCount ? 'default' : 'blocked'}>
+            <div className="business-grid business-grid-four">
+              <div className="metric-tile">
+                <span>数据批次</span>
+                <strong>{availableBatchCount > 0 ? `${availableBatchCount} 个匹配批次` : collection?.latestBatch ? '已匹配批次' : '未匹配'}</strong>
+                <small>{collection?.latestBatch ? reportStatusLabel(latestBatchStatus) : '按当前范围自动匹配'}</small>
               </div>
-            ))}
-          </div>
-          <p className="warning-line">审计文件、截图、DOM/HTML 和采集清单只证明流程，不是广告数据，不能参与花费、订单或 ACOS 计算。</p>
-        </Panel>
-
-        <Panel title="真实报表文件检查" tone={realReportCount ? 'default' : 'blocked'}>
-          <div className="business-grid business-grid-four">
-            <div className="metric-tile">
-              <span>数据批次</span>
-              <strong>{availableBatchCount > 0 ? `${availableBatchCount} 个匹配批次` : collection?.latestBatch ? '已匹配批次' : '未匹配'}</strong>
-              <small>{collection?.latestBatch ? reportStatusLabel(latestBatchStatus) : '按当前范围自动匹配'}</small>
-            </div>
-            <div className="metric-tile">
-              <span>本地真实报表已下载</span>
-              <strong>{realReportCount}/8</strong>
-              <small>仅 .xlsx/.xls/.csv</small>
-            </div>
-            <div className="metric-tile">
-              <span>已导入广告指标</span>
-              <strong>{importedRowCount}</strong>
-              <small>行</small>
-            </div>
-            <div className="metric-tile">
-              <span>审计/诊断文件</span>
-              <strong>{rejectedEvidenceCount}</strong>
-              <small>不计入报表</small>
-            </div>
-          </div>
-          {hasOnlyDiagnosticFiles && (
-            <p className="blocked-line">当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能进行广告量化。</p>
-          )}
-          <p className="warning-line">审计文件、截图、DOM/HTML 和采集清单只用于证明流程，不是广告数据，不能进入广告量化。</p>
-          {(fileAudit?.missingReportLabels?.length || 0) > 0 && (
-            <p className="muted-line">
-              缺少真实报表：{fileAudit?.missingReportLabels.slice(0, 8).join('、')}
-            </p>
-          )}
-          <div className="action-row">
-            {fileAudit?.downloadDir && (
-              <button className="secondary-button" onClick={() => openPath(fileAudit.downloadDir!)} type="button">打开真实报表目录</button>
-            )}
-            {fileAudit?.manifestPath && (
-              <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开采集清单</button>
-            )}
-            <button
-              className="primary-button"
-              disabled={realReportCount === 0 || Boolean(runningAction)}
-              onClick={importCurrentReports}
-              type="button"
-            >
-              {runningAction === 'import' ? '正在导入...' : '导入已下载表格'}
-            </button>
-            <button
-              className="secondary-button"
-              disabled={Boolean(runningAction)}
-              onClick={importLocalReports}
-              type="button"
-            >
-              导入本地报表
-            </button>
-          </div>
-        </Panel>
-
-        <Panel title="文件位置与用途" tone={realReportCount ? 'success' : 'warning'}>
-          <div className="context-summary-grid">
-            <div>
-              <span>真实广告表格</span>
-              <strong>{primaryReportFolder || '暂无目录'}</strong>
-              <p>这里应能看到 Lingxing 下载的 xlsx/xls/csv，后续广告量化只读取这些文件。</p>
-            </div>
-            <div>
-              <span>采集清单</span>
-              <strong>{fileAudit?.manifestPath || '暂无采集清单'}</strong>
-              <p>记录批次、文件名、状态和下载结果，用来追溯，不是广告数据表。</p>
-            </div>
-            <div>
-              <span>验收/诊断证据</span>
-              <strong>{primaryAuditPath || `${rejectedEvidenceCount} 个证据文件`}</strong>
-              <p>这里只放审计文件、截图、HTML 等证据；找广告数据请打开“真实广告表格”目录。</p>
-            </div>
-            <div>
-              <span>量化入口</span>
-              <strong>{importedRowCount > 0 ? `${importedRowCount} 行可用` : '未导入'}</strong>
-              <p>{realReportCount > 0 ? '先确认表格存在；若没有入库指标，再点击“导入已下载表格”。' : '先下载并导入已创建报表、重新创建下载并导入，或导入本地报表。'}</p>
-            </div>
-          </div>
-          <div className="action-row">
-            {primaryReportFolder && (
-              <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开真实报表目录</button>
-            )}
-            {fileAudit?.manifestPath && (
-              <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开采集清单</button>
-            )}
-            {primaryAuditPath && (
-              <button className="secondary-button" onClick={() => openPath(primaryAuditPath)} type="button">打开审计证据</button>
-            )}
-          </div>
-          <div className="real-file-summary">
-            <div className="real-file-summary-header">
-              <strong>当前真实报表清单</strong>
-              <span>{realFiles.length ? `${realReportCount}/8 类，${importedRowCount} 行已导入` : '暂无 xlsx/xls/csv 文件'}</span>
-            </div>
-            {realFiles.length ? (
-              <div className="real-file-chip-grid">
-                {visibleRealFiles.map((file) => (
-                  <button className="real-file-chip" key={file.id} onClick={() => openPath(file.filePath)} type="button">
-                    <span>{file.displayName}</span>
-                    <strong>{file.fileName}</strong>
-                    <small>{getFileExtension(file.fileName, file.filePath)} / {file.importedRows} 行</small>
-                  </button>
-                ))}
-                {hiddenRealFileCount > 0 && (
-                  <div className="real-file-chip real-file-chip-muted">
-                    <span>更多文件</span>
-                    <strong>+{hiddenRealFileCount}</strong>
-                    <small>底部完整表格可查看全部路径</small>
-                  </div>
-                )}
+              <div className="metric-tile">
+                <span>本地真实报表已下载</span>
+                <strong>{realReportCount}/8</strong>
+                <small>仅 .xlsx/.xls/.csv</small>
               </div>
-            ) : (
-              <p className="blocked-line">当前没有真实广告报表。请先下载并导入已创建报表，或重新创建、下载并导入 8 类报表；只有审计包时系统不能量化广告。</p>
+              <div className="metric-tile">
+                <span>已导入广告指标</span>
+                <strong>{importedRowCount}</strong>
+                <small>行</small>
+              </div>
+              <div className="metric-tile">
+                <span>审计/诊断文件</span>
+                <strong>{rejectedEvidenceCount}</strong>
+                <small>不计入报表</small>
+              </div>
+            </div>
+            {hasOnlyDiagnosticFiles && (
+              <p className="blocked-line">当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能进行广告量化。</p>
             )}
-          </div>
-        </Panel>
+            <p className="warning-line">审计文件、截图、DOM/HTML 和采集清单只用于证明流程，不是广告数据，不能进入广告量化。</p>
+            {(fileAudit?.missingReportLabels?.length || 0) > 0 && (
+              <p className="muted-line">
+                缺少真实报表：{fileAudit?.missingReportLabels.slice(0, 8).join('、')}
+              </p>
+            )}
+            <div className="action-row">
+              {fileAudit?.downloadDir && (
+                <button className="secondary-button" onClick={() => openPath(fileAudit.downloadDir!)} type="button">打开真实报表目录</button>
+              )}
+              {fileAudit?.manifestPath && (
+                <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开采集清单</button>
+              )}
+              <button
+                className="primary-button"
+                disabled={realReportCount === 0 || Boolean(runningAction)}
+                onClick={importCurrentReports}
+                type="button"
+              >
+                {runningAction === 'import' ? '正在导入...' : '导入已下载表格'}
+              </button>
+              <button
+                className="secondary-button"
+                disabled={Boolean(runningAction)}
+                onClick={importLocalReports}
+                type="button"
+              >
+                导入本地报表
+              </button>
+            </div>
+          </Panel>
+        </ProgressiveDetails>
+
+        <ProgressiveDetails title="文件位置与用途">
+          <Panel title="文件位置与用途" tone={realReportCount ? 'success' : 'warning'}>
+            <div className="context-summary-grid">
+              <div>
+                <span>真实广告表格</span>
+                <strong>{primaryReportFolder || '暂无目录'}</strong>
+                <p>这里应能看到 Lingxing 下载的 xlsx/xls/csv，后续广告量化只读取这些文件。</p>
+              </div>
+              <div>
+                <span>采集清单</span>
+                <strong>{fileAudit?.manifestPath || '暂无采集清单'}</strong>
+                <p>记录批次、文件名、状态和下载结果，用来追溯，不是广告数据表。</p>
+              </div>
+              <div>
+                <span>验收/诊断证据</span>
+                <strong>{primaryAuditPath || `${rejectedEvidenceCount} 个证据文件`}</strong>
+                <p>这里只放审计文件、截图、HTML 等证据；找广告数据请打开“真实广告表格”目录。</p>
+              </div>
+              <div>
+                <span>量化入口</span>
+                <strong>{importedRowCount > 0 ? `${importedRowCount} 行可用` : '未导入'}</strong>
+                <p>{realReportCount > 0 ? '先确认表格存在；若没有入库指标，再点击“导入已下载表格”。' : '先下载并导入已创建报表、重新创建下载并导入，或导入本地报表。'}</p>
+              </div>
+            </div>
+            <div className="action-row">
+              {primaryReportFolder && (
+                <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开真实报表目录</button>
+              )}
+              {fileAudit?.manifestPath && (
+                <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开采集清单</button>
+              )}
+              {primaryAuditPath && (
+                <button className="secondary-button" onClick={() => openPath(primaryAuditPath)} type="button">打开审计证据</button>
+              )}
+            </div>
+            <div className="real-file-summary">
+              <div className="real-file-summary-header">
+                <strong>当前真实报表清单</strong>
+                <span>{realFiles.length ? `${realReportCount}/8 类，${importedRowCount} 行已导入` : '暂无 xlsx/xls/csv 文件'}</span>
+              </div>
+              {realFiles.length ? (
+                <div className="real-file-chip-grid">
+                  {visibleRealFiles.map((file) => (
+                    <button className="real-file-chip" key={file.id} onClick={() => openPath(file.filePath)} type="button">
+                      <span>{file.displayName}</span>
+                      <strong>{file.fileName}</strong>
+                      <small>{getFileExtension(file.fileName, file.filePath)} / {file.importedRows} 行</small>
+                    </button>
+                  ))}
+                  {hiddenRealFileCount > 0 && (
+                    <div className="real-file-chip real-file-chip-muted">
+                      <span>更多文件</span>
+                      <strong>+{hiddenRealFileCount}</strong>
+                      <small>底部完整表格可查看全部路径</small>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="blocked-line">当前没有真实广告报表。请先下载并导入已创建报表，或重新创建、下载并导入 8 类报表；只有审计包时系统不能量化广告。</p>
+              )}
+            </div>
+          </Panel>
+        </ProgressiveDetails>
 
         <Panel title="8 类报表选择与进度">
           <div className="selection-toolbar">
@@ -836,8 +930,7 @@ export function DataCollectionPage() {
               onClick={() => runDownloadAction('download-existing')}
               type="button"
             >
-              <span>{runningAction === 'download-existing' ? '正在下载并导入...' : downloadExistingGuide.title}</span>
-              <small>{downloadExistingGuide.whenToUse}；{downloadExistingGuide.taskEffect}；{downloadExistingGuide.result}</small>
+              <span>{runningAction === 'download-existing' ? '正在下载...' : collectionActionButtonLabel('download-existing')}</span>
             </button>
             <button
               className="collection-action-button secondary-action"
@@ -845,8 +938,7 @@ export function DataCollectionPage() {
               onClick={() => runDownloadAction('recreate-selected')}
               type="button"
             >
-              <span>{runningAction === 'recreate-selected' ? '正在重新创建、下载并导入...' : recreateSelectedGuide.title}</span>
-              <small>{recreateSelectedGuide.whenToUse}；{recreateSelectedGuide.taskEffect}；{recreateSelectedGuide.result}</small>
+              <span>{runningAction === 'recreate-selected' ? '正在重建...' : collectionActionButtonLabel('recreate-selected')}</span>
             </button>
             <button
               className="collection-action-button primary-action"
@@ -854,8 +946,7 @@ export function DataCollectionPage() {
               onClick={() => runDownloadAction('recreate-full')}
               type="button"
             >
-              <span>{runningAction === 'recreate-full' ? '正在重新创建、下载并导入全部 8 类...' : recreateFullGuide.title}</span>
-              <small>{recreateFullGuide.whenToUse}；{recreateFullGuide.taskEffect}；{recreateFullGuide.result}</small>
+              <span>{runningAction === 'recreate-full' ? '正在重建全部 8 类...' : collectionActionButtonLabel('recreate-full')}</span>
             </button>
             <button
               className="collection-action-button secondary-action"
@@ -863,11 +954,26 @@ export function DataCollectionPage() {
               onClick={importLocalReports}
               type="button"
             >
-              <span>{runningAction === 'import' ? '正在选择并导入...' : importGuide.title}</span>
-              <small>{importGuide.whenToUse}；{importGuide.taskEffect}；{importGuide.result}</small>
+              <span>{runningAction === 'import' ? '正在导入...' : collectionActionButtonLabel('import')}</span>
             </button>
           </div>
-          <p className="muted-line">动作区别：下载已创建只读取 ready 行且不会创建新任务；重新创建已选只为勾选报表创建任务；重新创建全部会刷新完整 8 类；导入本地报表不访问领星下载中心。</p>
+          <ProgressiveDetails title="报表动作说明">
+            <div className="context-summary-grid">
+              {[
+                { mode: 'download-existing' as const, guide: downloadExistingGuide },
+                { mode: 'recreate-selected' as const, guide: recreateSelectedGuide },
+                { mode: 'recreate-full' as const, guide: recreateFullGuide },
+                { mode: 'import' as const, guide: importGuide },
+              ].map((item) => (
+                <div key={item.mode}>
+                  <span>{collectionActionButtonLabel(item.mode)}</span>
+                  <strong>{item.guide.whenToUse}</strong>
+                  <p>{item.guide.taskEffect}；{item.guide.result}</p>
+                </div>
+              ))}
+            </div>
+            <p className="muted-line">动作区别：下载已创建只读取 ready 行且不会创建新任务；重建已选只为勾选报表创建任务；重建全部 8 类会刷新完整报表；导入本地不访问领星下载中心。</p>
+          </ProgressiveDetails>
           {actionNotice && <p className="muted-line">{actionNotice}</p>}
           {actionError && <p className="blocked-line">采集错误：{actionError}</p>}
           {actionProgressSteps.length > 0 && (
@@ -999,59 +1105,60 @@ export function DataCollectionPage() {
           </Panel>
         )}
 
-        <Panel title="真实原始报表文件" tone={realFiles.length ? 'default' : 'blocked'}>
-          <div className="table-wrap">
-            <table className="business-table">
-              <thead>
-                <tr>
-                  <th>报表类型</th>
-                  <th>文件路径</th>
-                  <th>扩展名</th>
-                  <th>文件大小</th>
-                  <th>文件指纹</th>
-                  <th>入库状态</th>
-                  <th>DB 指标行数</th>
-                  <th>最近入库</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {realFiles.map((file) => (
-                  <tr key={file.id}>
-                    <td>{file.displayName}</td>
-                    <td><code>{file.filePath}</code></td>
-                    <td><code>{getFileExtension(file.fileName, file.filePath)}</code></td>
-                    <td>{formatFileSize(file.fileSizeBytes)}</td>
-                    <td><code>{shortHash(file.fileHash)}</code></td>
-                    <td>
-                      <span>{file.importedRows > 0 ? '已入库' : file.importError ? '导入失败' : '未入库'}</span>
-                      {file.importError && <div className="blocked-line table-subtext">{file.importError}</div>}
-                    </td>
-                    <td>{file.importedRows}</td>
-                    <td>{formatUpdatedAt(file.lastImportedAt || file.updatedAt)}</td>
-                    <td>{reportStatusLabel(file.status)}</td>
-                    <td>
-                      <div className="table-action-row">
-                        <button className="secondary-button compact-button" onClick={() => openPath(file.filePath)} type="button">打开文件</button>
-                        <button className="secondary-button compact-button" onClick={() => openPath(file.folderPath)} type="button">打开文件夹</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {!realFiles.length && (
+        <ProgressiveDetails title="真实原始报表文件">
+          <Panel title="真实原始报表文件" tone={realFiles.length ? 'default' : 'blocked'}>
+            <div className="table-wrap">
+              <table className="business-table">
+                <thead>
                   <tr>
-                    <td colSpan={10}>{hasOnlyDiagnosticFiles ? '当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能进行广告量化。' : '当前范围还没有可量化的真实广告数据'}</td>
+                    <th>报表类型</th>
+                    <th>文件路径</th>
+                    <th>扩展名</th>
+                    <th>文件大小</th>
+                    <th>文件指纹</th>
+                    <th>入库状态</th>
+                    <th>DB 指标行数</th>
+                    <th>最近入库</th>
+                    <th>状态</th>
+                    <th>操作</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+                </thead>
+                <tbody>
+                  {realFiles.map((file) => (
+                    <tr key={file.id}>
+                      <td>{file.displayName}</td>
+                      <td><code>{file.filePath}</code></td>
+                      <td><code>{getFileExtension(file.fileName, file.filePath)}</code></td>
+                      <td>{formatFileSize(file.fileSizeBytes)}</td>
+                      <td><code>{shortHash(file.fileHash)}</code></td>
+                      <td>
+                        <span>{file.importedRows > 0 ? '已入库' : file.importError ? '导入失败' : '未入库'}</span>
+                        {file.importError && <div className="blocked-line table-subtext">{file.importError}</div>}
+                      </td>
+                      <td>{file.importedRows}</td>
+                      <td>{formatUpdatedAt(file.lastImportedAt || file.updatedAt)}</td>
+                      <td>{reportStatusLabel(file.status)}</td>
+                      <td>
+                        <div className="table-action-row">
+                          <button className="secondary-button compact-button" onClick={() => openPath(file.filePath)} type="button">打开文件</button>
+                          <button className="secondary-button compact-button" onClick={() => openPath(file.folderPath)} type="button">打开文件夹</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {!realFiles.length && (
+                    <tr>
+                      <td colSpan={10}>{hasOnlyDiagnosticFiles ? '当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能进行广告量化。' : '当前范围还没有可量化的真实广告数据'}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        </ProgressiveDetails>
 
-        <details className="details-panel">
-          <summary>验收审计/技术细节</summary>
-          <div className="details-content">
+        <ProgressiveDetails title="验收审计/技术细节">
+          <div>
             <p>数据库可读：{collection?.audit.databaseReady ? '是' : '否'}</p>
             <p>计为真实报表：{collection?.audit.acceptedExtensions.join(', ') || '.xlsx, .xls, .csv'}</p>
             <p>不计为真实报表：{collection?.audit.rejectedEvidenceExtensions.join(', ') || '.json, .png, .html'}</p>
@@ -1064,7 +1171,7 @@ export function DataCollectionPage() {
               ))}
             </ul>
           </div>
-        </details>
+        </ProgressiveDetails>
       </div>
     </div>
   );

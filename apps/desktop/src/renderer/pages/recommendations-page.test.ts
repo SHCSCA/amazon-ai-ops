@@ -8,6 +8,7 @@ import {
   recommendationHasEvidenceBlocker,
   recommendationNeedsOperatorResolution,
   recommendationMergeSummaryText,
+  recommendationPrimaryTaskActionState,
   recommendationReviewExplanationText,
   recommendationWorkflowActionState,
   thresholdSuggestionSummary,
@@ -380,6 +381,79 @@ describe('recommendationWorkflowActionState', () => {
       readbackDisabled: true,
       approvalLabel: '去审批中心',
       readbackLabel: '审批后回读',
+    });
+  });
+});
+
+describe('recommendationPrimaryTaskActionState', () => {
+  it('uses generation as the only primary action before a recommendation pool exists', () => {
+    expect(recommendationPrimaryTaskActionState({
+      quantReady: true,
+      recommendationCount: 0,
+      formalApprovalCount: 0,
+      manualReviewCount: 0,
+      evidenceBlockedCount: 0,
+      realReportCount: 8,
+      importedRowCount: 24,
+      actionableMetricRows: 3,
+    })).toMatchObject({
+      label: '生成优化建议',
+      action: 'generate',
+      disabled: false,
+    });
+  });
+
+  it('routes to approval center when formal recommendations exist', () => {
+    expect(recommendationPrimaryTaskActionState({
+      quantReady: true,
+      recommendationCount: 3,
+      formalApprovalCount: 1,
+      manualReviewCount: 1,
+      evidenceBlockedCount: 1,
+      realReportCount: 8,
+      importedRowCount: 24,
+      actionableMetricRows: 3,
+    })).toMatchObject({
+      label: '去审批中心',
+      action: 'navigate',
+      route: 'approval',
+      disabled: false,
+    });
+  });
+
+  it('routes operators to evidence or review work when no recommendation can enter approval', () => {
+    expect(recommendationPrimaryTaskActionState({
+      quantReady: true,
+      recommendationCount: 2,
+      formalApprovalCount: 0,
+      manualReviewCount: 1,
+      evidenceBlockedCount: 1,
+      realReportCount: 8,
+      importedRowCount: 24,
+      actionableMetricRows: 3,
+    })).toMatchObject({
+      label: '补齐证据或复核',
+      action: 'navigate',
+      route: 'ad-quant',
+      disabled: false,
+    });
+  });
+
+  it('keeps the same blocker label while routing missing real reports back to collection', () => {
+    expect(recommendationPrimaryTaskActionState({
+      quantReady: false,
+      recommendationCount: 0,
+      formalApprovalCount: 0,
+      manualReviewCount: 0,
+      evidenceBlockedCount: 0,
+      realReportCount: 2,
+      importedRowCount: 0,
+      actionableMetricRows: 0,
+    })).toMatchObject({
+      label: '补齐证据或复核',
+      action: 'navigate',
+      route: 'data-collection',
+      disabled: false,
     });
   });
 });

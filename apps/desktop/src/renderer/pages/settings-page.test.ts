@@ -5,6 +5,9 @@ import {
   aiAuditLogTitle,
   aiAuditPurposeText,
   aiSettingsActionHint,
+  settingsAiContractPrimaryCopy,
+  settingsAiContractTags,
+  settingsPrimaryAiStatusItems,
   shouldResetAiTestForSettingsField,
 } from './settings-page';
 
@@ -27,6 +30,29 @@ describe('settings AI audit copy', () => {
 });
 
 describe('settings AI connection status invalidation', () => {
+  it('keeps AI output contract copy concrete and non-JSON primary', () => {
+    expect(settingsAiContractPrimaryCopy()).toBe('AI 输出合同由系统固定，页面只读取已校验字段；人设只影响表达风格，不改变字段结构。');
+    expect(settingsAiContractPrimaryCopy()).not.toMatch(/\bJSON\b|schemaVersion/i);
+    expect(settingsAiContractTags().map((item) => item.label)).toEqual([
+      '广告诊断 v1',
+      '广告解释 v1',
+      'Listing 草案 v1',
+      '异常回退规则',
+    ]);
+  });
+
+  it('keeps the normal settings viewport focused on connection fields', () => {
+    expect(settingsPrimaryAiStatusItems({
+      aiBaseUrl: 'https://api.deepseek.com',
+      aiModel: 'deepseek-v4-flash',
+    }, 'pending_test', true)).toEqual([
+      { label: 'API Key', value: '已配置（已隐藏）' },
+      { label: 'Base URL', value: 'https://api.deepseek.com' },
+      { label: 'Model', value: 'deepseek-v4-flash' },
+      { label: '连接状态', value: '已配置，待测试' },
+    ]);
+  });
+
   it('only resets connection test status when connection fields change', () => {
     expect(shouldResetAiTestForSettingsField('aiApiKey')).toBe(true);
     expect(shouldResetAiTestForSettingsField('aiBaseUrl')).toBe(true);

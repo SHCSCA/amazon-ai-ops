@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import type { BusinessBatchOption } from '../types';
+import { ProgressiveDetails } from './progressive-details';
 
 const AUTO_BATCH_VALUE = '__auto__';
 const MANUAL_BATCH_VALUE = '__manual__';
@@ -54,6 +55,16 @@ export function buildScopeSummaryFacts(input: {
     { label: '指标', value: input.importedRows },
     { label: 'ASIN', value: input.asin?.trim() || '全部产品' },
   ];
+}
+
+export function buildScopeWarningSummary(input: {
+  batchOptionsError?: string | null;
+  scopePersistError?: string | null;
+}): string | null {
+  if (input.batchOptionsError?.trim() || input.scopePersistError?.trim()) {
+    return '范围或批次需要处理，展开查看详情。';
+  }
+  return null;
 }
 
 export function ScopeBar() {
@@ -227,18 +238,14 @@ export function ScopeBar() {
     importedRows: importedLabel,
     asin: scope.asin,
   });
+  const warningSummary = buildScopeWarningSummary({ batchOptionsError, scopePersistError });
 
   return (
     <section className="scope-bar" aria-label="当前运营范围">
       <div className="scope-title-row">
-        <div>
+        <div className="scope-title-main">
           <span>当前操作范围</span>
           <strong>{scope.dateFrom} 至 {scope.dateTo} / {scope.storeName || '未选店铺'} / {scope.marketplaceCode || '未选站点'} / USD</strong>
-          <details className="scope-details">
-            <summary>范围说明与批次作用</summary>
-            <p>这是全局范围。数据采集、导入校验、广告量化、优化建议、审批回读、关键词机会和 Listing 草案都会按这里读取。</p>
-            <p className="scope-helper">{scopeHelperText}</p>
-          </details>
         </div>
         <div className="scope-title-actions">
           <select
@@ -280,24 +287,30 @@ export function ScopeBar() {
           </span>
         ))}
       </div>
-      {(scope.batchId || batchOptionsError) && (
-        <div className="scope-batch-note">
-          {scope.batchId && (
-            <span>{manualBatchUnmatched ? `手动批次未自动校验：${scope.batchId}` : `当前批次：${scope.batchId}`}</span>
-          )}
-          {batchOptionsError && (
-            <span className="blocked-line">批次列表读取失败：{batchOptionsError}</span>
-          )}
-          {scopePersistError && (
-            <span className="blocked-line">范围保存失败：{scopePersistError}</span>
-          )}
+      {warningSummary && (
+        <div className="scope-visible-warning" role="status">
+          {warningSummary}
         </div>
       )}
-      {!scope.batchId && scopePersistError && (
-        <div className="scope-batch-note">
-          <span className="blocked-line">范围保存失败：{scopePersistError}</span>
-        </div>
-      )}
+      <div className="scope-details-panel">
+        <ProgressiveDetails title="范围与批次说明">
+          <p>这是全局范围。数据采集、导入校验、广告量化、优化建议、审批回读、关键词机会和 Listing 草案都会按这里读取。</p>
+          <p className="scope-helper">{scopeHelperText}</p>
+          {(scope.batchId || batchOptionsError || scopePersistError) && (
+            <div className="scope-batch-note" aria-label="范围与批次详情">
+              {scope.batchId && (
+                <span>{manualBatchUnmatched ? `手动批次未自动校验：${scope.batchId}` : `当前批次：${scope.batchId}`}</span>
+              )}
+              {batchOptionsError && (
+                <span className="blocked-line">批次列表读取失败：{batchOptionsError}</span>
+              )}
+              {scopePersistError && (
+                <span className="blocked-line">范围保存失败：{scopePersistError}</span>
+              )}
+            </div>
+          )}
+        </ProgressiveDetails>
+      </div>
       {editing && (
         <div className="scope-editor">
           <label>

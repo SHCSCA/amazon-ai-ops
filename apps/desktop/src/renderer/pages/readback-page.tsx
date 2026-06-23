@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
+import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { firstIncompleteReadbackStep, readbackWizardSteps, type ReadbackWizardStepId } from '../readback-wizard';
 import type { RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
@@ -507,15 +510,6 @@ export function readbackSessionSummary(sourcePath?: string): string {
   return '创建工作包后，按清单补审批、执行前、执行后和回读截图。';
 }
 
-function checklistStatus(missing: string[], labels: string[]): 'ready' | 'blocked' {
-  return labels.some((label) => missing.includes(label)) ? 'blocked' : 'ready';
-}
-
-function checklistText(missing: string[], labels: string[]): string {
-  const count = labels.filter((label) => missing.includes(label)).length;
-  return count ? `缺 ${count} 项` : '已满足';
-}
-
 export function ReadbackPage() {
   const { data, scope } = useBusinessDataPipeline();
   const [approvedRows, setApprovedRows] = useState<RecommendationView[]>([]);
@@ -528,34 +522,45 @@ export function ReadbackPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  const [activeStep, setActiveStep] = useState<ReadbackWizardStepId>('target-source');
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const missing = useMemo(() => requiredMissing(form, currentBatchId), [currentBatchId, form]);
   const sourceBatchMatches = Boolean(form.sourceBatchId && currentBatchId && form.sourceBatchId === currentBatchId);
   const missingGroups = useMemo(() => groupMissing(missing), [missing]);
   const precheckCopy = useMemo(() => readbackPrecheckCopy(missing), [missing]);
   const sessionWorkflow = useMemo(() => readbackSessionWorkflow(exportResult?.jsonPath), [exportResult?.jsonPath]);
-  const readbackSteps = useMemo(() => [
-    {
-      title: '对象绑定',
-      status: checklistStatus(missing, ['店铺', '站点', '广告活动', '广告组', '对象类型', '对象名称', '动作类型']),
-      detail: checklistText(missing, ['店铺', '站点', '广告活动', '广告组', '对象类型', '对象名称', '动作类型']),
-    },
-    {
-      title: '审批允许',
-      status: checklistStatus(missing, ['审批人', '审批凭证', '审批时间', '审批时间不是可解析时间', '审批人确认范围', '外部审批允许', '低风险策略允许']),
-      detail: checklistText(missing, ['审批人', '审批凭证', '审批时间', '审批时间不是可解析时间', '审批人确认范围', '外部审批允许', '低风险策略允许']),
-    },
-    {
-      title: '执行前后',
-      status: checklistStatus(missing, ['执行人', '执行编号', '执行时间', '执行前值', '执行前时间', '执行后值', '执行后时间', '执行前截图', '执行后截图', '执行前值和执行后值不能相同', '降价动作必须证明执行后值低于执行前值', '执行前、执行后和回读证据文件不能复用', '执行前时间不是可解析时间', '执行时间不是可解析时间', '执行后时间不是可解析时间', '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读']),
-      detail: checklistText(missing, ['执行人', '执行编号', '执行时间', '执行前值', '执行前时间', '执行后值', '执行后时间', '执行前截图', '执行后截图', '执行前值和执行后值不能相同', '降价动作必须证明执行后值低于执行前值', '执行前、执行后和回读证据文件不能复用', '执行前时间不是可解析时间', '执行时间不是可解析时间', '执行后时间不是可解析时间', '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读']),
-    },
-    {
-      title: '回读确认',
-      status: checklistStatus(missing, ['回读值', '回读时间', '回读证据', '现场行证明', '执行成功确认', '执行核验', '回读核验', '回读值必须等于执行后值', '回读时间不是可解析时间', '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读']),
-      detail: checklistText(missing, ['回读值', '回读时间', '回读证据', '现场行证明', '执行成功确认', '执行核验', '回读核验', '回读值必须等于执行后值', '回读时间不是可解析时间', '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读']),
-    },
-  ], [missing]);
+  const readbackStepSummaries = useMemo(() => {
+    const missingSet = new Set(missing);
+    return readbackWizardSteps.map((step) => {
+      const missingCount = step.fields.filter((field) => missingSet.has(field)).length;
+      return {
+        ...step,
+        missingCount,
+        status: missingCount ? 'blocked' : 'ready',
+        detail: missingCount ? `缺 ${missingCount} 项` : '已满足',
+      };
+    });
+  }, [missing]);
+  const activeStepSummary = readbackStepSummaries.find((step) => step.id === activeStep) || readbackStepSummaries[0];
+  const activeStepIndex = Math.max(0, readbackWizardSteps.findIndex((step) => step.id === activeStep));
+  const activeMissingCount = activeStepSummary?.missingCount || 0;
+  const activeStepDetail = activeMissingCount
+    ? `当前步骤还有 ${activeMissingCount} 项待补；所有安全缺口仍由本地校验决定。`
+    : '当前步骤已满足；进入下一步前仍保留最终导出校验。';
+  const readbackPrimaryAction = (() => {
+    if (activeStep === 'target-source') {
+      return form.recommendationId
+        ? { label: '继续填写审批允许', onClick: () => setActiveStep('approval') }
+        : { label: '刷新已批准动作', onClick: () => { void loadApprovedRows(); } };
+    }
+    if (activeStep === 'approval') {
+      return { label: '继续补执行证据', onClick: () => setActiveStep('evidence') };
+    }
+    if (activeStep === 'evidence') {
+      return { label: '进入校验并导出', onClick: () => setActiveStep('verify-export') };
+    }
+    return { label: precheckCopy.exportButtonLabel, onClick: () => { void exportEvidence(); } };
+  })();
 
   function update(patch: Partial<ReadbackFormState>) {
     setForm((current) => ({ ...current, ...patch }));
@@ -842,6 +847,7 @@ export function ReadbackPage() {
       setSessionCheck(null);
       setSessionFillResult(null);
       setSessionVerifyResult(null);
+      setActiveStep('target-source');
       return;
     }
     loadApprovedRows();
@@ -857,6 +863,7 @@ export function ReadbackPage() {
       setSessionCheck(null);
       setSessionFillResult(null);
       setSessionVerifyResult(null);
+      setActiveStep('target-source');
       setMessage('已清空执行回读表单：当前范围不再包含该已批准动作。');
     }
   }, [approvedRows, form.recommendationId]);
@@ -872,390 +879,399 @@ export function ReadbackPage() {
       />
 
       <div className="business-stack">
-        <Panel title="当前回读范围" tone="warning">
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
-              <p className="muted-line">每个广告动作都必须重新绑定自己的店铺、站点、广告活动、广告组、对象、动作和现场值。</p>
-            </div>
-            <StatusPill tone="pending">人工执行证据，不批量写入</StatusPill>
+        <OperatorTaskPanel
+          eyebrow={`步骤 ${activeStepIndex + 1}/4`}
+          title={activeStepSummary.title}
+          detail={activeStepDetail}
+          primaryAction={readbackPrimaryAction}
+        >
+          <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
+          <div className="chip-row readback-safety-row">
+            <span className="chip chip-warning">人工执行证据，不批量写入</span>
+            <span className="chip chip-warning">执行前、执行后、回读截图不能复用</span>
+            <span className="chip chip-warning">回读值必须等于执行后值</span>
           </div>
-        </Panel>
+        </OperatorTaskPanel>
 
-        <Panel title="回读进度概览" tone={missing.length ? 'blocked' : 'success'}>
-          <div className="readback-step-grid">
-            {readbackSteps.map((step, index) => (
-              <div className={`readback-step readback-step-${step.status}`} key={step.title}>
-                <span>{index + 1}</span>
-                <strong>{step.title}</strong>
-                <small>{step.detail}</small>
-              </div>
-            ))}
-          </div>
-          <p className="muted-line">先看这里判断能否导出最终证据；下方表单只用于补齐对应缺口。</p>
-        </Panel>
+        <div className="readback-step-grid readback-step-tabs" role="tablist" aria-label="执行回读步骤">
+          {readbackStepSummaries.map((step, index) => (
+            <button
+              aria-selected={activeStep === step.id}
+              className={`readback-step readback-step-${step.status}${activeStep === step.id ? ' readback-step-active' : ''}`}
+              key={step.id}
+              onClick={() => setActiveStep(step.id)}
+              role="tab"
+              type="button"
+            >
+              <span>{index + 1}</span>
+              <strong>{step.title}</strong>
+              <small>{step.detail}</small>
+            </button>
+          ))}
+        </div>
 
-        <Panel title="1. 选择已批准动作">
-          <div className="table-wrap">
-            <table className="business-table approval-table">
-              <thead>
-                <tr>
-                  <th>动作</th>
-                  <th>广告组合</th>
-                  <th>广告活动</th>
-                  <th>广告组</th>
-                  <th>ASIN</th>
-                  <th>对象类型</th>
-                  <th>对象</th>
-                  <th>当前/建议</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {approvedRows.map((row) => (
-                  <tr key={row.id}>
-                    <td>{row.actionType}</td>
-                    <td>{row.evidence?.portfolioName || '-'}</td>
-                    <td>{row.evidence?.campaignName || '-'}</td>
-                    <td>{row.evidence?.adGroupName || '-'}</td>
-                    <td>{row.evidence?.asin || '-'}</td>
-                    <td>{row.entityType || row.evidence?.matchType || '-'}</td>
-                    <td>{objectName(row) || '-'}</td>
-                    <td>{row.currentValue || '-'} {'→'} {row.recommendedValue || '-'}</td>
-                    <td>
-                      <button
-                        className="secondary-button compact-button"
-                        onClick={() => {
-                          setForm(formFromRecommendation(row, scope, currentBatchId));
-                          setExportResult(null);
-                        }}
-                        type="button"
-                      >
-                        载入
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!approvedRows.length && (
-                  <tr>
-                    <td colSpan={9}>{loading ? '加载中...' : '当前范围没有已批准待执行动作。'}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-
-        <Panel title="2. 执行目标与来源">
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line">当前有效批次：{currentBatchId || '暂无'}</div>
-              <p className="muted-line">来源批次、指标日期、来源行号、来源文件、来源当前值和建议值是回读证据的一部分；缺失或串批次时只能导出缺口草稿。</p>
-            </div>
-            <StatusPill tone={sourceBatchMatches ? 'ready' : form.sourceBatchId ? 'blocked' : 'pending'}>
-              {sourceBatchMatches ? '来源批次匹配' : form.sourceBatchId ? '来源批次不一致' : '待载入来源'}
-            </StatusPill>
-          </div>
-          <div className="form-grid">
-            <label>店铺<input value={form.storeName} onChange={(event) => update({ storeName: event.target.value })} /></label>
-            <label>站点<input value={form.marketplaceCode} onChange={(event) => update({ marketplaceCode: event.target.value })} /></label>
-            <label>广告组合<input value={form.portfolioName} onChange={(event) => update({ portfolioName: event.target.value })} /></label>
-            <label>ASIN<input value={form.asin} onChange={(event) => update({ asin: event.target.value })} /></label>
-            <label>广告活动<input value={form.campaignName} onChange={(event) => update({ campaignName: event.target.value })} /></label>
-            <label>广告组<input value={form.adGroupName} onChange={(event) => update({ adGroupName: event.target.value })} /></label>
-            <label>对象类型<input value={form.entityType} onChange={(event) => update({ entityType: event.target.value })} /></label>
-            <label>对象名称<input value={form.entityName} onChange={(event) => update({ entityName: event.target.value })} /></label>
-            <label>动作类型<input value={form.actionType} onChange={(event) => update({ actionType: event.target.value })} /></label>
-            <label>来源当前值<input value={form.currentValue} onChange={(event) => update({ currentValue: event.target.value })} /></label>
-            <label>来源建议值<input value={form.recommendedValue} onChange={(event) => update({ recommendedValue: event.target.value })} /></label>
-            <label>来源批次<input value={form.sourceBatchId} onChange={(event) => update({ sourceBatchId: event.target.value })} /></label>
-            <label>指标日期<input value={form.sourceMetricDate} onChange={(event) => update({ sourceMetricDate: event.target.value })} /></label>
-            <label>来源行号<input value={form.sourceRow} onChange={(event) => update({ sourceRow: event.target.value })} /></label>
-            <label>解释来源<input value={form.sourceExplanationSource} onChange={(event) => update({ sourceExplanationSource: event.target.value })} /></label>
-            <label>AI 模型<input value={form.sourceAiModel} onChange={(event) => update({ sourceAiModel: event.target.value })} /></label>
-            <label className="form-grid-wide">推荐来源文件<textarea value={form.sourceFiles} onChange={(event) => update({ sourceFiles: event.target.value })} /></label>
-          </div>
-          <p className="muted-line">来源批次、指标日期、来源行号、来源文件、来源当前值和建议值会写入回读证据，用于证明本次执行来自当前范围的哪条推荐。</p>
-          {(form.productStage || form.decisionAgreement || form.aiLifecycleStage || form.quantLifecycleStage) && (
-            <div className="readback-context-grid">
+        {activeStep === 'target-source' && (
+          <Panel title="1. 确认动作和来源" tone={activeMissingCount ? 'blocked' : 'success'}>
+            <div className="business-split">
               <div>
-                <span>产品阶段</span>
-                <strong>{form.productStage || form.aiLifecycleStage || form.quantLifecycleStage || '-'}</strong>
-                <small>
-                  目标 ACOS {form.productTargetAcos || '-'} / TACOS {form.productTargetTacos || '-'} / 净利率 {form.productTargetNetMargin || '-'} / 最低价 ${form.productMinPrice || '-'}
-                </small>
+                <div className="business-scope-line">当前有效批次：{currentBatchId || '暂无'}</div>
+                <p className="muted-line">来源批次、指标日期、来源行号、来源文件、来源当前值和建议值是回读证据的一部分；缺失或串批次时只能导出缺口草稿。</p>
               </div>
-              <div>
-                <span>AI 与规则关系</span>
-                <strong>{decisionAgreementLabel(form.decisionAgreement)} / {decisionSourceLabel(form.decisionSource)}</strong>
-                <small>{form.decisionReasons.slice(0, 2).join('；') || form.aiStrategySummary || '无来源说明'}</small>
-              </div>
-              <div>
-                <span>量化阈值</span>
-                <strong>
-                  ACOS {form.quantThresholds.targetAcos != null ? `${(form.quantThresholds.targetAcos * 100).toFixed(1)}%` : '-'}
-                  {' / '}
-                  高 ACOS {form.quantThresholds.highAcosThreshold != null ? `${(form.quantThresholds.highAcosThreshold * 100).toFixed(1)}%` : '-'}
-                </strong>
-                <small>{form.quantReasons.slice(0, 2).join('；') || '无规则量化说明'}</small>
-              </div>
-            </div>
-          )}
-        </Panel>
-
-        <Panel title="3. 审批、执行与回读证据">
-          <div className="form-grid">
-            <label>审批人<input value={form.approverName} onChange={(event) => update({ approverName: event.target.value })} /></label>
-            <label>审批备注<input value={form.approvalNote} onChange={(event) => update({ approvalNote: event.target.value })} /></label>
-            <label>审批凭证<input value={form.approvalArtifactPath} onChange={(event) => update({ approvalArtifactPath: event.target.value })} /></label>
-            <label>审批时间<input value={form.approvalConfirmedAt} onChange={(event) => update({ approvalConfirmedAt: event.target.value })} placeholder="ISO 时间" /></label>
-            <label>执行人<input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></label>
-            <label>执行编号<input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></label>
-            <label>执行时间<input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></label>
-            <label>执行前值<input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></label>
-            <label>执行前截图<input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></label>
-            <label>执行前时间<input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
-            <label>执行后值<input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></label>
-            <label>执行后截图<input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></label>
-            <label>执行后时间<input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
-            <label>回读值<input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></label>
-            <label>回读证据<input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></label>
-            <label>回读时间<input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></label>
-            <label className="form-grid-wide">现场行证明<textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></label>
-          </div>
-          <div className="checkbox-grid">
-            <label><input checked={form.operatorConfirmed} onChange={(event) => update({ operatorConfirmed: event.target.checked })} type="checkbox" /> 审批人确认范围</label>
-            <label><input checked={form.realWriteApproved} onChange={(event) => update({ realWriteApproved: event.target.checked })} type="checkbox" /> 外部审批允许</label>
-            <label><input checked={form.allowedByPolicy} onChange={(event) => update({ allowedByPolicy: event.target.checked })} type="checkbox" /> 低风险策略允许</label>
-            <label><input checked={form.executionSuccess} onChange={(event) => update({ executionSuccess: event.target.checked })} type="checkbox" /> 执行成功确认</label>
-            <label><input checked={form.executionVerified} onChange={(event) => update({ executionVerified: event.target.checked })} type="checkbox" /> 执行已核验</label>
-            <label><input checked={form.readbackVerified} onChange={(event) => update({ readbackVerified: event.target.checked })} type="checkbox" /> 回读已核验</label>
-          </div>
-        </Panel>
-
-        <Panel title="4. 回读预检与导出" tone={missing.length ? 'blocked' : 'success'}>
-          <div className="business-split">
-            <div>
-              <StatusPill tone={missing.length ? 'blocked' : 'ready'}>
-                {precheckCopy.statusLabel}
+              <StatusPill tone={sourceBatchMatches ? 'ready' : form.sourceBatchId ? 'blocked' : 'pending'}>
+                {sourceBatchMatches ? '来源批次匹配' : form.sourceBatchId ? '来源批次不一致' : '待载入来源'}
               </StatusPill>
-              {missing.length ? (
-                <div className="missing-group-grid">
-                  {missingGroups.map((group) => (
-                    <div className="missing-group" key={group.title}>
-                      <strong>{group.title}</strong>
-                      <span>{group.items.join('、')}</span>
-                    </div>
+            </div>
+            <div className="table-wrap">
+              <table className="business-table approval-table">
+                <thead>
+                  <tr>
+                    <th>动作</th>
+                    <th>广告组合</th>
+                    <th>广告活动</th>
+                    <th>广告组</th>
+                    <th>ASIN</th>
+                    <th>对象类型</th>
+                    <th>对象</th>
+                    <th>当前/建议</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {approvedRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.actionType}</td>
+                      <td>{row.evidence?.portfolioName || '-'}</td>
+                      <td>{row.evidence?.campaignName || '-'}</td>
+                      <td>{row.evidence?.adGroupName || '-'}</td>
+                      <td>{row.evidence?.asin || '-'}</td>
+                      <td>{row.entityType || row.evidence?.matchType || '-'}</td>
+                      <td>{objectName(row) || '-'}</td>
+                      <td>{row.currentValue || '-'} {'→'} {row.recommendedValue || '-'}</td>
+                      <td>
+                        <button
+                          className="secondary-button compact-button"
+                          onClick={() => {
+                            const nextForm = formFromRecommendation(row, scope, currentBatchId);
+                            setForm(nextForm);
+                            setExportResult(null);
+                            setActiveStep(firstIncompleteReadbackStep(requiredMissing(nextForm, currentBatchId)));
+                          }}
+                          type="button"
+                        >
+                          载入
+                        </button>
+                      </td>
+                    </tr>
                   ))}
+                  {!approvedRows.length && (
+                    <tr>
+                      <td colSpan={9}>{loading ? '加载中...' : '当前范围没有已批准待执行动作。'}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="form-grid">
+              <label>店铺<input value={form.storeName} onChange={(event) => update({ storeName: event.target.value })} /></label>
+              <label>站点<input value={form.marketplaceCode} onChange={(event) => update({ marketplaceCode: event.target.value })} /></label>
+              <label>广告组合<input value={form.portfolioName} onChange={(event) => update({ portfolioName: event.target.value })} /></label>
+              <label>ASIN<input value={form.asin} onChange={(event) => update({ asin: event.target.value })} /></label>
+              <label>广告活动<input value={form.campaignName} onChange={(event) => update({ campaignName: event.target.value })} /></label>
+              <label>广告组<input value={form.adGroupName} onChange={(event) => update({ adGroupName: event.target.value })} /></label>
+              <label>对象类型<input value={form.entityType} onChange={(event) => update({ entityType: event.target.value })} /></label>
+              <label>对象名称<input value={form.entityName} onChange={(event) => update({ entityName: event.target.value })} /></label>
+              <label>动作类型<input value={form.actionType} onChange={(event) => update({ actionType: event.target.value })} /></label>
+              <label>来源当前值<input value={form.currentValue} onChange={(event) => update({ currentValue: event.target.value })} /></label>
+              <label>来源建议值<input value={form.recommendedValue} onChange={(event) => update({ recommendedValue: event.target.value })} /></label>
+              <label>来源批次<input value={form.sourceBatchId} onChange={(event) => update({ sourceBatchId: event.target.value })} /></label>
+              <label>指标日期<input value={form.sourceMetricDate} onChange={(event) => update({ sourceMetricDate: event.target.value })} /></label>
+              <label>来源行号<input value={form.sourceRow} onChange={(event) => update({ sourceRow: event.target.value })} /></label>
+              <label>解释来源<input value={form.sourceExplanationSource} onChange={(event) => update({ sourceExplanationSource: event.target.value })} /></label>
+              <label>AI 模型<input value={form.sourceAiModel} onChange={(event) => update({ sourceAiModel: event.target.value })} /></label>
+              <label className="form-grid-wide">推荐来源文件<textarea value={form.sourceFiles} onChange={(event) => update({ sourceFiles: event.target.value })} /></label>
+            </div>
+            <p className="muted-line">每个广告动作都必须重新绑定自己的店铺、站点、广告活动、广告组、对象、动作和现场值。</p>
+            {(form.productStage || form.decisionAgreement || form.aiLifecycleStage || form.quantLifecycleStage) && (
+              <div className="readback-context-grid">
+                <div>
+                  <span>产品阶段</span>
+                  <strong>{form.productStage || form.aiLifecycleStage || form.quantLifecycleStage || '-'}</strong>
+                  <small>
+                    目标 ACOS {form.productTargetAcos || '-'} / TACOS {form.productTargetTacos || '-'} / 净利率 {form.productTargetNetMargin || '-'} / 最低价 ${form.productMinPrice || '-'}
+                  </small>
+                </div>
+                <div>
+                  <span>AI 与规则关系</span>
+                  <strong>{decisionAgreementLabel(form.decisionAgreement)} / {decisionSourceLabel(form.decisionSource)}</strong>
+                  <small>{form.decisionReasons.slice(0, 2).join('；') || form.aiStrategySummary || '无来源说明'}</small>
+                </div>
+                <div>
+                  <span>量化阈值</span>
+                  <strong>
+                    ACOS {form.quantThresholds.targetAcos != null ? `${(form.quantThresholds.targetAcos * 100).toFixed(1)}%` : '-'}
+                    {' / '}
+                    高 ACOS {form.quantThresholds.highAcosThreshold != null ? `${(form.quantThresholds.highAcosThreshold * 100).toFixed(1)}%` : '-'}
+                  </strong>
+                  <small>{form.quantReasons.slice(0, 2).join('；') || '无规则量化说明'}</small>
+                </div>
+              </div>
+            )}
+          </Panel>
+        )}
+
+        {activeStep === 'approval' && (
+          <Panel title="2. 填写审批允许" tone={activeMissingCount ? 'blocked' : 'success'}>
+            <div className="form-grid">
+              <label>审批人<input value={form.approverName} onChange={(event) => update({ approverName: event.target.value })} /></label>
+              <label>审批备注<input value={form.approvalNote} onChange={(event) => update({ approvalNote: event.target.value })} /></label>
+              <label>审批凭证<input value={form.approvalArtifactPath} onChange={(event) => update({ approvalArtifactPath: event.target.value })} /></label>
+              <label>审批时间<input value={form.approvalConfirmedAt} onChange={(event) => update({ approvalConfirmedAt: event.target.value })} placeholder="ISO 时间" /></label>
+            </div>
+            <div className="checkbox-grid">
+              <label><input checked={form.operatorConfirmed} onChange={(event) => update({ operatorConfirmed: event.target.checked })} type="checkbox" /> 审批人确认范围</label>
+              <label><input checked={form.realWriteApproved} onChange={(event) => update({ realWriteApproved: event.target.checked })} type="checkbox" /> 外部审批允许</label>
+              <label><input checked={form.allowedByPolicy} onChange={(event) => update({ allowedByPolicy: event.target.checked })} type="checkbox" /> 低风险策略允许</label>
+            </div>
+            <p className="muted-line">审批允许只开放人工已批准的低风险动作；没有审批凭证、审批时间和明确允许时不能声称执行完成。</p>
+          </Panel>
+        )}
+
+        {activeStep === 'evidence' && (
+          <Panel title="3. 补执行前后和回读" tone={activeMissingCount ? 'blocked' : 'success'}>
+            <p className="muted-line">执行前、执行后、回读截图不能复用；回读值必须等于执行后值。</p>
+            <div className="form-grid">
+              <label>执行人<input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></label>
+              <label>执行编号<input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></label>
+              <label>执行时间<input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></label>
+              <label>执行前值<input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></label>
+              <label>执行前截图<input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></label>
+              <label>执行前时间<input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
+              <label>执行后值<input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></label>
+              <label>执行后截图<input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></label>
+              <label>执行后时间<input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
+              <label>回读值<input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></label>
+              <label>回读证据<input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></label>
+              <label>回读时间<input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></label>
+              <label className="form-grid-wide">现场行证明<textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></label>
+            </div>
+          </Panel>
+        )}
+
+        {activeStep === 'verify-export' && (
+          <>
+            <Panel title="4. 校验并导出证据" tone={missing.length ? 'blocked' : 'success'}>
+              <div className="checkbox-grid">
+                <label><input checked={form.executionSuccess} onChange={(event) => update({ executionSuccess: event.target.checked })} type="checkbox" /> 执行成功确认</label>
+                <label><input checked={form.executionVerified} onChange={(event) => update({ executionVerified: event.target.checked })} type="checkbox" /> 执行已核验</label>
+                <label><input checked={form.readbackVerified} onChange={(event) => update({ readbackVerified: event.target.checked })} type="checkbox" /> 回读已核验</label>
+              </div>
+              <div className="business-split">
+                <div>
+                  <StatusPill tone={missing.length ? 'blocked' : 'ready'}>
+                    {precheckCopy.statusLabel}
+                  </StatusPill>
+                  {missing.length ? (
+                    <div className="missing-group-grid">
+                      {missingGroups.map((group) => (
+                        <div className="missing-group" key={group.title}>
+                          <strong>{group.title}</strong>
+                          <span>{group.items.join('、')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="chip-row">
+                      <span className="chip chip-ready">{precheckCopy.chipLabel}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="action-row">
+                  <button className="secondary-button" disabled={!exportResult} onClick={openExport} type="button">打开导出文件</button>
+                </div>
+              </div>
+              <p className="muted-line">
+                {precheckCopy.helperText}
+              </p>
+              {message && <p className={message.includes('失败') ? 'blocked-line' : 'muted-line'}>{message}</p>}
+            </Panel>
+
+            <ProgressiveDetails title="导出结果和证据路径">
+              {exportResult ? (
+                <div className="export-result-card">
+                  <div>
+                    <span>导出状态</span>
+                    <strong>{exportResult.readyForVerifier ? '可进入最终验收' : '已导出但仍需补证据'}</strong>
+                  </div>
+                  <div>
+                    <span>执行范围</span>
+                    <strong>{[form.storeName, form.marketplaceCode, form.campaignName, form.adGroupName, form.entityName].filter(Boolean).join(' / ') || '未完整填写'}</strong>
+                  </div>
+                  <div>
+                    <span>证据文件</span>
+                    <code>{exportResult.jsonPath || '-'}</code>
+                  </div>
+                  <div>
+                    <span>说明文件</span>
+                    <code>{exportResult.markdownPath || '-'}</code>
+                  </div>
+                  <p>该导出只写入本地证据文件，不会提交 Amazon。下一步：补齐缺失项后重新导出，或到“交付验收”查看最终缺口。</p>
                 </div>
               ) : (
-                <div className="chip-row">
-                  <span className="chip chip-ready">{precheckCopy.chipLabel}</span>
-                </div>
+                <p className="muted-line">导出后这里显示本地证据文件和说明文件路径。</p>
               )}
-            </div>
-            <div className="action-row">
-              <button className="primary-button" onClick={exportEvidence} type="button">
-                {precheckCopy.exportButtonLabel}
-              </button>
-              <button className="secondary-button" disabled={!exportResult} onClick={openExport} type="button">打开导出文件</button>
-            </div>
-          </div>
-          <p className="muted-line">
-            {precheckCopy.helperText}
-          </p>
-          {exportResult && (
-            <div className="export-result-card">
-              <div>
-                <span>导出状态</span>
-                <strong>{exportResult.readyForVerifier ? '可进入最终验收' : '已导出但仍需补证据'}</strong>
-              </div>
-              <div>
-                <span>执行范围</span>
-                <strong>{[form.storeName, form.marketplaceCode, form.campaignName, form.adGroupName, form.entityName].filter(Boolean).join(' / ') || '未完整填写'}</strong>
-              </div>
-              <div>
-                <span>证据文件</span>
-                <code>{exportResult.jsonPath || '-'}</code>
-              </div>
-              <div>
-                <span>说明文件</span>
-                <code>{exportResult.markdownPath || '-'}</code>
-              </div>
-              <p>该导出只写入本地证据文件，不会提交 Amazon。下一步：补齐缺失项后重新导出，或到“交付验收”查看最终缺口。</p>
-            </div>
-          )}
-          {message && <p className={message.includes('失败') ? 'blocked-line' : 'muted-line'}>{message}</p>}
-        </Panel>
+            </ProgressiveDetails>
 
-        <Panel title="5. 回读工作包" tone={exportResult?.jsonPath ? 'warning' : 'blocked'}>
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line">工作包状态：{readbackSessionSummary(exportResult?.jsonPath)}</div>
-              <p className="muted-line">真实广告动作只按单个已批准建议处理；工作包用于把审批、执行前、执行后和刷新回读证据分目录收齐。</p>
-            </div>
-            <StatusPill tone={exportResult?.jsonPath ? 'pending' : 'blocked'}>
-              {exportResult?.jsonPath ? '可创建工作包' : '先导出回读证据'}
-            </StatusPill>
-          </div>
-          <details className="dashboard-details">
-            <summary>工作包内要做什么</summary>
-            <div className="business-scope-line">工作包目录：{sessionWorkflow.sessionDir}</div>
-            <ol className="readback-session-list">
-              {sessionWorkflow.steps.map((step, index) => (
-                <li key={step}>
-                  <span>{index + 1}</span>
-                  <p>{step}</p>
-                </li>
-              ))}
-            </ol>
-            <p className="muted-line">{sessionWorkflow.warning}</p>
-          </details>
-          <div className="action-row">
-            <button className="primary-button" disabled={!exportResult?.jsonPath} onClick={prepareSessionPacket} type="button">
-              创建回读工作包
-            </button>
-            <button className="secondary-button" disabled={!sessionResult?.sessionDir} onClick={openSessionPacket} type="button">
-              打开工作包
-            </button>
-            <button className="secondary-button" disabled={!sessionResult?.sessionInputPath} onClick={openSessionInputFile} type="button">
-              打开填写文件
-            </button>
-            <button className="secondary-button" disabled={!sessionResult?.sessionInputGuidePath} onClick={openSessionInputGuide} type="button">
-              打开填写说明
-            </button>
-            <button className="secondary-button" disabled={!sessionResult?.sessionDir} onClick={verifySessionPacket} type="button">
-              检查工作包
-            </button>
-            <button className="primary-button" disabled={!sessionResult?.sessionDir} onClick={fillSessionPacket} type="button">
-              生成回读证据
-            </button>
-            <button className="primary-button" disabled={!sessionFillResult?.jsonPath} onClick={verifyReadbackEvidence} type="button">
-              校验回读证据
-            </button>
-          </div>
-          <details className="dashboard-details">
-            <summary>命令备用入口</summary>
-            <div className="action-row">
-              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('prepare')} type="button">
-                复制创建命令
-              </button>
-              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('verify')} type="button">
-                复制检查命令
-              </button>
-              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('fill')} type="button">
-                复制生成命令
-              </button>
-            </div>
-          </details>
-          {sessionResult && (
-            <details className="dashboard-details">
-              <summary>查看工作包路径</summary>
-              <div className="readback-session-result">
+            <ProgressiveDetails title="回读工作包流程">
+              <div className="business-split">
                 <div>
-                  <span>工作包目录</span>
-                  <code>{sessionResult.sessionDir || '-'}</code>
+                  <div className="business-scope-line">工作包状态：{readbackSessionSummary(exportResult?.jsonPath)}</div>
+                  <p className="muted-line">真实广告动作只按单个已批准建议处理；工作包用于把审批、执行前、执行后和刷新回读证据分目录收齐。</p>
                 </div>
-                <div>
-                  <span>填写文件</span>
-                  <code>{sessionResult.sessionInputPath || '-'}</code>
-                </div>
-                <div>
-                  <span>填写说明</span>
-                  <code>{sessionResult.sessionInputGuidePath || '-'}</code>
-                </div>
-                <div>
-                  <span>操作清单</span>
-                  <code>{sessionResult.checklistPath || '-'}</code>
-                </div>
-                <div>
-                  <span>最终证据输出</span>
-                  <code>{sessionResult.passEvidencePath || '-'}</code>
-                </div>
+                <StatusPill tone={exportResult?.jsonPath ? 'pending' : 'blocked'}>
+                  {exportResult?.jsonPath ? '可创建工作包' : '先导出回读证据'}
+                </StatusPill>
               </div>
-            </details>
-          )}
-          {sessionCheck && (
-            <div className={`readback-session-check ${sessionCheckCopy(sessionCheck).className}`}>
-              <strong>{sessionCheckCopy(sessionCheck).title}</strong>
-              <span>{sessionCheckCopy(sessionCheck).detail}</span>
-              {sessionCheck.ready && !sessionCheck.captureReady && (
-                <p className="muted-line">检查工作包只证明目录和文件结构安全；还必须填写现场信息并生成最终证据后，才可能进入最终验收。</p>
-              )}
-              {!sessionCheck.ready && Array.isArray(sessionCheck.issues) && (
-                <ul>
-                  {sessionCheck.issues.map((issue: string) => <li key={issue}>{issue}</li>)}
-              </ul>
-              )}
-            </div>
-          )}
-          {sessionFillResult && (
-            <div className={`readback-session-check ${sessionFillResult.readyForVerifier ? 'readback-session-check-ready' : 'readback-session-check-blocked'}`}>
-              <strong>{sessionFillResult.readyForVerifier ? '回读证据已生成，待最终校验' : '回读证据仍未就绪'}</strong>
-              <span>{sessionFillResult.readyForVerifier ? '已根据填写文件生成证据文件；最终可交付仍必须通过本地回读证据校验和最终验收汇总。' : '填写文件或证据文件仍有缺口，不能进入最终验收。'}</span>
-              <div className="readback-session-result readback-session-result-embedded">
-                <div>
-                  <span>证据文件</span>
-                  <code>{sessionFillResult.jsonPath || '-'}</code>
-                </div>
-                <div>
-                  <span>说明文件</span>
-                  <code>{sessionFillResult.markdownPath || '-'}</code>
-                </div>
+              <div className="action-row">
+                <button className="primary-button" disabled={!exportResult?.jsonPath} onClick={prepareSessionPacket} type="button">
+                  创建回读工作包
+                </button>
+                <button className="secondary-button" disabled={!sessionResult?.sessionDir} onClick={openSessionPacket} type="button">
+                  打开工作包
+                </button>
+                <button className="secondary-button" disabled={!sessionResult?.sessionInputPath} onClick={openSessionInputFile} type="button">
+                  打开填写文件
+                </button>
+                <button className="secondary-button" disabled={!sessionResult?.sessionInputGuidePath} onClick={openSessionInputGuide} type="button">
+                  打开填写说明
+                </button>
+                <button className="secondary-button" disabled={!sessionResult?.sessionDir} onClick={verifySessionPacket} type="button">
+                  检查工作包
+                </button>
+                <button className="primary-button" disabled={!sessionResult?.sessionDir} onClick={fillSessionPacket} type="button">
+                  生成回读证据
+                </button>
+                <button className="primary-button" disabled={!sessionFillResult?.jsonPath} onClick={verifyReadbackEvidence} type="button">
+                  校验回读证据
+                </button>
               </div>
-              {Array.isArray(sessionFillResult.issues) && sessionFillResult.issues.length > 0 && (
-                <ul>
-                  {sessionFillResult.issues.map((issue: string) => <li key={issue}>{issue}</li>)}
-                </ul>
+              <ProgressiveDetails title="工作包内要做什么">
+                <div className="business-scope-line">工作包目录：{sessionWorkflow.sessionDir}</div>
+                <ol className="readback-session-list">
+                  {sessionWorkflow.steps.map((step, index) => (
+                    <li key={step}>
+                      <span>{index + 1}</span>
+                      <p>{step}</p>
+                    </li>
+                  ))}
+                </ol>
+                <p className="muted-line">{sessionWorkflow.warning}</p>
+              </ProgressiveDetails>
+              {sessionResult && (
+                <ProgressiveDetails title="查看工作包路径">
+                  <div className="readback-session-result">
+                    <div>
+                      <span>工作包目录</span>
+                      <code>{sessionResult.sessionDir || '-'}</code>
+                    </div>
+                    <div>
+                      <span>填写文件</span>
+                      <code>{sessionResult.sessionInputPath || '-'}</code>
+                    </div>
+                    <div>
+                      <span>填写说明</span>
+                      <code>{sessionResult.sessionInputGuidePath || '-'}</code>
+                    </div>
+                    <div>
+                      <span>操作清单</span>
+                      <code>{sessionResult.checklistPath || '-'}</code>
+                    </div>
+                    <div>
+                      <span>最终证据输出</span>
+                      <code>{sessionResult.passEvidencePath || '-'}</code>
+                    </div>
+                  </div>
+                </ProgressiveDetails>
               )}
-            </div>
-          )}
-          {sessionVerifyResult && (
-            <div className={`readback-session-check ${sessionVerifyResult.ready ? 'readback-session-check-ready' : 'readback-session-check-blocked'}`}>
-              <strong>{sessionVerifyResult.ready ? '回读证据校验已通过' : '回读证据校验未通过'}</strong>
-              <span>{sessionVerifyResult.ready ? '这份证据已通过本地回读证据校验；最终可交付仍需进入最终验收汇总。' : '这份证据还不能进入最终验收汇总，请按下列缺口补证据后重新生成或重新校验。'}</span>
-              <div className="readback-session-result readback-session-result-embedded">
-                <div>
-                  <span>校验文件</span>
-                  <code>{sessionVerifyResult.evidencePath || '-'}</code>
+              {sessionCheck && (
+                <div className={`readback-session-check ${sessionCheckCopy(sessionCheck).className}`}>
+                  <strong>{sessionCheckCopy(sessionCheck).title}</strong>
+                  <span>{sessionCheckCopy(sessionCheck).detail}</span>
+                  {sessionCheck.ready && !sessionCheck.captureReady && (
+                    <p className="muted-line">检查工作包只证明目录和文件结构安全；还必须填写现场信息并生成最终证据后，才可能进入最终验收。</p>
+                  )}
+                  {!sessionCheck.ready && Array.isArray(sessionCheck.issues) && (
+                    <ul>
+                      {sessionCheck.issues.map((issue: string) => <li key={issue}>{issue}</li>)}
+                    </ul>
+                  )}
                 </div>
-                <div>
-                  <span>状态</span>
-                  <strong>{sessionVerifyResult.ready ? '通过' : '需补证据'}</strong>
-                </div>
-              </div>
-              {!sessionVerifyResult.ready && Array.isArray(sessionVerifyResult.issues) && sessionVerifyResult.issues.length > 0 && (
-                <ul>
-                  {sessionVerifyResult.issues.map((issue: string) => <li key={issue}>{issue}</li>)}
-                </ul>
               )}
-            </div>
-          )}
-          {copyNotice && <p className="muted-line">{copyNotice}</p>}
-        </Panel>
+              {sessionFillResult && (
+                <div className={`readback-session-check ${sessionFillResult.readyForVerifier ? 'readback-session-check-ready' : 'readback-session-check-blocked'}`}>
+                  <strong>{sessionFillResult.readyForVerifier ? '回读证据已生成，待最终校验' : '回读证据仍未就绪'}</strong>
+                  <span>{sessionFillResult.readyForVerifier ? '已根据填写文件生成证据文件；最终可交付仍必须通过本地回读证据校验和最终验收汇总。' : '填写文件或证据文件仍有缺口，不能进入最终验收。'}</span>
+                  <div className="readback-session-result readback-session-result-embedded">
+                    <div>
+                      <span>证据文件</span>
+                      <code>{sessionFillResult.jsonPath || '-'}</code>
+                    </div>
+                    <div>
+                      <span>说明文件</span>
+                      <code>{sessionFillResult.markdownPath || '-'}</code>
+                    </div>
+                  </div>
+                  {Array.isArray(sessionFillResult.issues) && sessionFillResult.issues.length > 0 && (
+                    <ul>
+                      {sessionFillResult.issues.map((issue: string) => <li key={issue}>{issue}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {sessionVerifyResult && (
+                <div className={`readback-session-check ${sessionVerifyResult.ready ? 'readback-session-check-ready' : 'readback-session-check-blocked'}`}>
+                  <strong>{sessionVerifyResult.ready ? '回读证据校验已通过' : '回读证据校验未通过'}</strong>
+                  <span>{sessionVerifyResult.ready ? '这份证据已通过本地回读证据校验；最终可交付仍需进入最终验收汇总。' : '这份证据还不能进入最终验收汇总，请按下列缺口补证据后重新生成或重新校验。'}</span>
+                  <div className="readback-session-result readback-session-result-embedded">
+                    <div>
+                      <span>校验文件</span>
+                      <code>{sessionVerifyResult.evidencePath || '-'}</code>
+                    </div>
+                    <div>
+                      <span>状态</span>
+                      <strong>{sessionVerifyResult.ready ? '通过' : '需补证据'}</strong>
+                    </div>
+                  </div>
+                  {!sessionVerifyResult.ready && Array.isArray(sessionVerifyResult.issues) && sessionVerifyResult.issues.length > 0 && (
+                    <ul>
+                      {sessionVerifyResult.issues.map((issue: string) => <li key={issue}>{issue}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {copyNotice && <p className="muted-line">{copyNotice}</p>}
+            </ProgressiveDetails>
 
-        <details className="details-panel">
-          <summary>技术验收说明</summary>
-          <div className="details-content">
-            <p>最终验收仍以本地证据文件、截图路径、时间顺序和最终验收汇总为准；业务页不展示长命令块。</p>
-            <p>真实执行路径保持 fail-closed：没有审批、执行前、执行后、回读证据时不能声称执行完成。</p>
-            <div className="action-row">
-              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('prepare')} type="button">
-                复制创建工作包命令
-              </button>
-              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('verify')} type="button">
-                复制检查工作包命令
-              </button>
-              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('fill')} type="button">
-                复制生成回读证据命令
-              </button>
-              <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={copyFillCommand} type="button">
-                复制长参数生成命令
-              </button>
-            </div>
-            {copyNotice && <p className="muted-line">{copyNotice}</p>}
-          </div>
-        </details>
+            <ProgressiveDetails title="命令备用入口和技术验收说明">
+              <p>最终验收仍以本地证据文件、截图路径、时间顺序和最终验收汇总为准；业务页不展示长命令块。</p>
+              <p>真实执行路径保持 fail-closed：没有审批、执行前、执行后、回读证据时不能声称执行完成。</p>
+              <div className="action-row">
+                <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('prepare')} type="button">
+                  复制创建工作包命令
+                </button>
+                <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('verify')} type="button">
+                  复制检查工作包命令
+                </button>
+                <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('fill')} type="button">
+                  复制生成回读证据命令
+                </button>
+                <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={copyFillCommand} type="button">
+                  复制长参数生成命令
+                </button>
+              </div>
+              {copyNotice && <p className="muted-line">{copyNotice}</p>}
+            </ProgressiveDetails>
+          </>
+        )}
       </div>
     </div>
   );

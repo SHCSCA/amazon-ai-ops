@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecommendationView } from '../types';
-import { aiThresholdSummary, approvalBlockers, approvalMissing, approvalSubmitBlockers, buildApprovalDecisionPayload, strategyLabel } from './approval-page';
+import { aiThresholdSummary, approvalBlockers, approvalDecisionState, approvalMissing, approvalSubmitBlockers, buildApprovalDecisionPayload, strategyLabel } from './approval-page';
 
 function recommendation(sourceRow: number | undefined = 12, sourceFiles = ['C:/reports/user-search-term.xlsx']): RecommendationView {
   return {
@@ -250,6 +250,59 @@ describe('approvalSubmitBlockers', () => {
       'batch_1',
       ['C:/reports/user-search-term.xlsx'],
     )).toEqual([]);
+  });
+});
+
+describe('approvalDecisionState', () => {
+  it('uses the compact approvable state when no evidence or policy blocker exists', () => {
+    expect(approvalDecisionState({
+      selected: recommendation(),
+      missing: [],
+      blockers: [],
+    })).toMatchObject({
+      statusLabel: '可以批准',
+      canApprove: true,
+      tone: 'ready',
+    });
+  });
+
+  it('uses the cannot-normal-approve state when required approval evidence is missing', () => {
+    const selected = recommendation(-1);
+    expect(approvalDecisionState({
+      selected,
+      missing: approvalMissing(selected, {
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+      }, 'batch_1'),
+      blockers: approvalBlockers(selected),
+    })).toMatchObject({
+      statusLabel: '不能普通批准',
+      canApprove: false,
+      tone: 'blocked',
+    });
+  });
+
+  it('uses the review state for AI and rule conflicts', () => {
+    const selected = {
+      ...recommendation(),
+      evidence: {
+        ...recommendation().evidence,
+        decisionAgreement: 'conflict' as const,
+      },
+    };
+
+    expect(approvalDecisionState({
+      selected,
+      missing: approvalMissing(selected, {
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+      }, 'batch_1'),
+      blockers: approvalBlockers(selected),
+    })).toMatchObject({
+      statusLabel: '需要复核',
+      canApprove: false,
+      tone: 'warning',
+    });
   });
 });
 

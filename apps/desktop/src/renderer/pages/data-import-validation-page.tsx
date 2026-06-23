@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
+import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath, formatUsd } from '../formatters';
@@ -56,6 +58,47 @@ function reconciliationSourceLabel(source?: string): string {
   return source || '-';
 }
 
+export interface DataImportTaskState {
+  title: string;
+  detail: string;
+  primaryActionLabel: string;
+  secondaryActionLabel: string;
+}
+
+export function dataImportFirstViewportReportFolder(input: {
+  realReportCount: number;
+  realFiles: Array<{ folderPath?: string }>;
+  auditDownloadDir?: string;
+}): string | undefined {
+  if ((Number(input.realReportCount) || 0) <= 0) return undefined;
+  return input.realFiles.find((file) => Boolean(file.folderPath))?.folderPath;
+}
+
+export function buildDataImportTaskState({
+  realReportCount,
+  importedRows,
+  reportFolder,
+}: {
+  realReportCount: number;
+  importedRows: number;
+  reportFolder?: string;
+}): DataImportTaskState {
+  const reportCount = Math.max(0, Math.min(8, Number(realReportCount) || 0));
+  const rowCount = Math.max(0, Number(importedRows) || 0);
+  const hasRealReports = reportCount > 0;
+  const hasRows = rowCount > 0;
+  return {
+    title: `真实报表 ${reportCount}/8，已导入 ${rowCount} 行`,
+    detail: hasRows
+      ? '日级广告指标已入库，可以进入广告量化。'
+      : hasRealReports
+        ? '真实报表已存在，下一步把广告指标写入 SQLite。'
+        : '当前范围缺少真实报表，先回数据采集获取或导入本地表格。',
+    primaryActionLabel: hasRows ? '进入广告量化' : hasRealReports ? '导入广告指标' : '去数据采集',
+    secondaryActionLabel: reportFolder ? '打开报表目录' : '导入本地报表',
+  };
+}
+
 export function DataImportValidationPage() {
   const { data, error, loading, scope, reload } = useBusinessDataPipeline();
   const [runningImport, setRunningImport] = useState<ImportMode | null>(null);
@@ -80,6 +123,11 @@ export function DataImportValidationPage() {
   const rejectedEvidenceCount = fileAudit?.rejectedEvidenceFileCount ?? 0;
   const hasRealFiles = realReportCount > 0;
   const hasImportedMetrics = importedRows > 0;
+  const reportFolder = dataImportFirstViewportReportFolder({
+    realReportCount,
+    realFiles,
+    auditDownloadDir: fileAudit?.downloadDir,
+  });
   const totalSpend = quant?.totalSpend ?? 0;
   const totalSales = quant?.totalSales ?? 0;
   const totalOrders = quant?.totalOrders ?? 0;
@@ -104,6 +152,11 @@ export function DataImportValidationPage() {
       status: firstFile?.importError ? 'import_failed' : importedForType > 0 ? 'imported' : firstFile?.status || option.status,
     };
   }), [realFiles, reportOptions]);
+  const taskState = buildDataImportTaskState({
+    realReportCount,
+    importedRows,
+    reportFolder,
+  });
 
   async function openPath(targetPath?: string) {
     if (!targetPath) return;
@@ -113,6 +166,10 @@ export function DataImportValidationPage() {
     } catch (caught) {
       setPathNotice(`打开失败：${toUserFacingError(caught, '打开路径失败。')}`);
     }
+  }
+
+  function navigateTo(page: 'ad-quant' | 'data-collection') {
+    window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: page }));
   }
 
   async function exportReconciliation() {
@@ -185,79 +242,79 @@ export function DataImportValidationPage() {
       />
 
       <div className="business-stack">
-        <Panel title="当前范围数据状态" tone={hasImportedMetrics ? 'success' : hasRealFiles ? 'warning' : 'blocked'}>
-          <div className="context-summary-grid">
-            <div>
-              <span>当前范围</span>
-              <strong>{scope.dateFrom} 至 {scope.dateTo} / {scope.storeName} / {scope.marketplaceCode} / USD</strong>
-              <p>{scope.batchId ? `手动批次：${scope.batchId}` : '自动使用当前范围最新完整批次。'}</p>
-            </div>
-            <div>
-              <span>真实报表</span>
-              <strong>{realReportCount}/8</strong>
-              <p>只统计 .xlsx/.xls/.csv 原始广告报表。</p>
-            </div>
-            <div>
-              <span>已导入广告指标</span>
-              <strong>{importedRows} 行</strong>
-              <p>{hasImportedMetrics ? '广告量化和 AI 分析会从 SQLite 读取这些每日指标。' : '未导入前不会生成 ACOS、建议或 AI 结论。'}</p>
-            </div>
-            <div>
-              <span>主分析口径</span>
-              <strong>keyword / search term / target</strong>
-              <p>不把广告活动、广告组、投放位置与明细粒度重复相加。</p>
-            </div>
-          </div>
-          <div className="business-pill-row">
-            <StatusPill tone={hasRealFiles ? 'ready' : 'blocked'}>真实文件 {realReportCount}/8</StatusPill>
-            <StatusPill tone={hasImportedMetrics ? 'ready' : 'blocked'}>DB 指标 {importedRows} 行</StatusPill>
-            <StatusPill tone={rejectedEvidenceCount > 0 ? 'warning' : 'pending'}>审计/诊断 {rejectedEvidenceCount} 个，不参与量化</StatusPill>
-          </div>
+        <OperatorTaskPanel
+          eyebrow="当前任务"
+          title={taskState.title}
+          detail={taskState.detail}
+          primaryAction={{
+            label: taskState.primaryActionLabel,
+            disabled: Boolean(runningImport),
+            onClick: hasImportedMetrics
+              ? () => navigateTo('ad-quant')
+              : hasRealFiles
+                ? () => runImport('current')
+                : () => navigateTo('data-collection'),
+          }}
+          secondaryActions={[
+            {
+              label: taskState.secondaryActionLabel,
+              disabled: Boolean(runningImport),
+              onClick: reportFolder ? () => openPath(reportFolder) : () => runImport('local'),
+            },
+          ]}
+        >
           {loading && <p className="muted-line">正在读取当前范围文件和数据库状态...</p>}
           {error && <p className="blocked-line">读取异常：{error}</p>}
-        </Panel>
+        </OperatorTaskPanel>
 
-        <Panel title="数据流程四段闭环" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
-          <div className="judgment-panel">
-            <div>
-              <span>{hasRealFiles && hasImportedMetrics ? '数据链已闭合' : '数据链未闭合'}</span>
-              <strong>{hasRealFiles && hasImportedMetrics ? '可以进入广告量化' : hasRealFiles ? '先完成指标入库' : '先获取真实广告报表'}</strong>
-              <p>导入页只负责把真实报表变成日级广告事实；审计证据不能替代广告数据。</p>
-            </div>
-            <div className="table-action-row">
-              {hasRealFiles && hasImportedMetrics ? (
-                <button className="primary-button" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'ad-quant' }))} type="button">
-                  进入广告量化
-                </button>
-              ) : (
-                <button className="secondary-button" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'data-collection' }))} type="button">
-                  回数据采集
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="collection-progress-grid">
-            {dataLedger.stages.map((stage, index) => (
-              <div className={readinessStageClass(stage.status)} key={stage.key}>
-                <span>第 {index + 1} 步</span>
-                <strong>{stage.title}</strong>
-                <p>{stage.value}</p>
-                <p>{stage.detail}</p>
-                <StatusPill tone={readinessStageTone(stage.status)}>{readinessStageLabel(stage.status)}</StatusPill>
+        {reportFolder && (
+          <Panel title="真实报表目录" tone="success">
+            <div className="business-split">
+              <div>
+                <div className="business-scope-line">{compactPath(reportFolder)}</div>
+                <p className="muted-line">这里只放当前范围可导入的 Lingxing xlsx/xls/csv 原始广告报表。</p>
               </div>
-            ))}
-          </div>
-          <p className={hasImportedMetrics ? 'muted-line' : 'warning-line'}>
-            {hasImportedMetrics
-              ? '下一步：进入广告量化，复核 ACOS、花费、订单和产品阶段。'
-              : hasRealFiles
-                ? '下一步：点击“导入已下载表格”，把真实报表写入 SQLite 日级指标。'
-                : '下一步：回到数据采集页下载已创建报表、重新创建下载，或导入本地报表。'}
-          </p>
-        </Panel>
+              <div className="business-pill-row business-pill-row-right">
+                <StatusPill tone="ready">真实报表 {realReportCount}/8</StatusPill>
+                <button className="secondary-button" onClick={() => openPath(reportFolder)} type="button">打开报表目录</button>
+              </div>
+            </div>
+          </Panel>
+        )}
 
-        <Panel title="广告数据现在在哪" tone={hasImportedMetrics ? 'success' : hasRealFiles ? 'warning' : 'blocked'}>
-          <div className="context-summary-grid">
+        <ProgressiveDetails title="数据流程四段闭环">
+          <Panel title="数据流程四段闭环" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
+            <div className="judgment-panel">
+              <div>
+                <span>{hasRealFiles && hasImportedMetrics ? '数据链已闭合' : '数据链未闭合'}</span>
+                <strong>{hasRealFiles && hasImportedMetrics ? '可以进入广告量化' : hasRealFiles ? '先完成指标入库' : '先获取真实广告报表'}</strong>
+                <p>导入页只负责把真实报表变成日级广告事实；审计证据不能替代广告数据。</p>
+              </div>
+            </div>
+            <div className="collection-progress-grid">
+              {dataLedger.stages.map((stage, index) => (
+                <div className={readinessStageClass(stage.status)} key={stage.key}>
+                  <span>第 {index + 1} 步</span>
+                  <strong>{stage.title}</strong>
+                  <p>{stage.value}</p>
+                  <p>{stage.detail}</p>
+                  <StatusPill tone={readinessStageTone(stage.status)}>{readinessStageLabel(stage.status)}</StatusPill>
+                </div>
+              ))}
+            </div>
+            <p className={hasImportedMetrics ? 'muted-line' : 'warning-line'}>
+              {hasImportedMetrics
+                ? '下一步：进入广告量化，复核 ACOS、花费、订单和产品阶段。'
+                : hasRealFiles
+                  ? '下一步：点击“导入已下载表格”，把真实报表写入 SQLite 日级指标。'
+                  : '下一步：回到数据采集页下载已创建报表、重新创建下载，或导入本地报表。'}
+            </p>
+          </Panel>
+        </ProgressiveDetails>
+
+        <ProgressiveDetails title="文件位置与用途">
+          <Panel title="广告数据现在在哪" tone={hasImportedMetrics ? 'success' : hasRealFiles ? 'warning' : 'blocked'}>
+            <div className="context-summary-grid">
             <div>
               <span>原始表格目录</span>
               <strong>{hasRealFiles && fileAudit?.downloadDir ? compactPath(fileAudit.downloadDir) : '暂无真实报表目录'}</strong>
@@ -278,64 +335,67 @@ export function DataImportValidationPage() {
               <strong>{hasImportedMetrics ? '下一步去广告量化' : hasRealFiles ? '导入已下载表格' : '回数据采集获取真实报表'}</strong>
               <p>{hasImportedMetrics ? '复核 ACOS、花费、订单、产品阶段和 AI 证据链。' : hasRealFiles ? '把真实报表解析并写入 SQLite 后才能生成建议。' : '先下载已创建报表、重新创建下载，或导入本地真实报表。'}</p>
             </div>
-          </div>
-          <div className="action-row">
-            <button className="secondary-button" disabled={!hasRealFiles || !fileAudit?.downloadDir} onClick={() => openPath(fileAudit?.downloadDir)} type="button">打开原始表格目录</button>
-            <button className="secondary-button" disabled={!hasImportedMetrics || exportingReconciliation} onClick={exportReconciliation} type="button">{exportingReconciliation ? '正在导出...' : '导出数据对账'}</button>
-            <button className="primary-button" disabled={!hasImportedMetrics} onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'ad-quant' }))} type="button">进入广告量化</button>
-          </div>
-          {reconciliation && (
-            <div className="evidence-check-panel">
-              <h3>数据对账已导出</h3>
-              <p className="muted-line">
-                权威口径 {reconciliationSourceLabel(reconciliation.canonicalSource)} / {reconciliation.canonical?.rows ?? 0} 行 / {formatUsd(reconciliation.canonical?.spend)} / {reconciliation.canonical?.orders ?? 0} 单
-              </p>
-              {reconciliation.blockers?.length ? (
-                <p className="warning-line">对账阻断：{reconciliation.blockers.slice(0, 3).join('；')}</p>
-              ) : (
-                <p className="muted-line">对账未发现阻断项。</p>
-              )}
-              <div className="path-list">
-                <div className="path-row">
-                  <span>对账数据文件</span>
-                  <code>{reconciliation.jsonPath || '-'}</code>
-                  <button className="secondary-button compact-button" disabled={!reconciliation.jsonPath} onClick={() => openPath(reconciliation.jsonPath)} type="button">打开对账数据文件</button>
-                </div>
-                <div className="path-row">
-                  <span>对账说明文件</span>
-                  <code>{reconciliation.markdownPath || '-'}</code>
-                  <button className="secondary-button compact-button" disabled={!reconciliation.markdownPath} onClick={() => openPath(reconciliation.markdownPath)} type="button">打开对账说明文件</button>
+            </div>
+            <div className="action-row">
+              <button className="secondary-button" disabled={!hasRealFiles || !fileAudit?.downloadDir} onClick={() => openPath(fileAudit?.downloadDir)} type="button">打开原始表格目录</button>
+              <button className="secondary-button" disabled={!hasImportedMetrics || exportingReconciliation} onClick={exportReconciliation} type="button">{exportingReconciliation ? '正在导出...' : '导出数据对账'}</button>
+              <button className="secondary-button" disabled={!hasImportedMetrics} onClick={() => navigateTo('ad-quant')} type="button">进入广告量化</button>
+            </div>
+            {reconciliation && (
+              <div className="evidence-check-panel">
+                <h3>数据对账已导出</h3>
+                <p className="muted-line">
+                  权威口径 {reconciliationSourceLabel(reconciliation.canonicalSource)} / {reconciliation.canonical?.rows ?? 0} 行 / {formatUsd(reconciliation.canonical?.spend)} / {reconciliation.canonical?.orders ?? 0} 单
+                </p>
+                {reconciliation.blockers?.length ? (
+                  <p className="warning-line">对账阻断：{reconciliation.blockers.slice(0, 3).join('；')}</p>
+                ) : (
+                  <p className="muted-line">对账未发现阻断项。</p>
+                )}
+                <div className="path-list">
+                  <div className="path-row">
+                    <span>对账数据文件</span>
+                    <code>{reconciliation.jsonPath || '-'}</code>
+                    <button className="secondary-button compact-button" disabled={!reconciliation.jsonPath} onClick={() => openPath(reconciliation.jsonPath)} type="button">打开对账数据文件</button>
+                  </div>
+                  <div className="path-row">
+                    <span>对账说明文件</span>
+                    <code>{reconciliation.markdownPath || '-'}</code>
+                    <button className="secondary-button compact-button" disabled={!reconciliation.markdownPath} onClick={() => openPath(reconciliation.markdownPath)} type="button">打开对账说明文件</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-        </Panel>
+            )}
+          </Panel>
+        </ProgressiveDetails>
 
-        <Panel title="导入动作" tone={hasRealFiles ? 'warning' : 'blocked'}>
-          <div className="judgment-panel">
-            <div>
-              <span>下一步</span>
-              <strong>{hasImportedMetrics ? '当前范围已经有入库指标' : hasRealFiles ? '导入已下载表格' : '先获取真实报表'}</strong>
-              <p>
-                {hasImportedMetrics
-                  ? `当前 DB 已有 ${importedRows} 行指标；如果重新下载过表格，可再次导入刷新。`
-                  : hasRealFiles
-                    ? '把当前范围下载目录中的真实报表解析并写入 SQLite，每天的广告数据会沉淀到数据库。'
-                    : '当前没有真实报表，不能导入。请先到数据采集页下载或重新创建报表。'}
-              </p>
+        <ProgressiveDetails title="导入动作">
+          <Panel title="导入动作" tone={hasRealFiles ? 'warning' : 'blocked'}>
+            <div className="judgment-panel">
+              <div>
+                <span>下一步</span>
+                <strong>{hasImportedMetrics ? '当前范围已经有入库指标' : hasRealFiles ? '导入已下载表格' : '先获取真实报表'}</strong>
+                <p>
+                  {hasImportedMetrics
+                    ? `当前 DB 已有 ${importedRows} 行指标；如果重新下载过表格，可再次导入刷新。`
+                    : hasRealFiles
+                      ? '把当前范围下载目录中的真实报表解析并写入 SQLite，每天的广告数据会沉淀到数据库。'
+                      : '当前没有真实报表，不能导入。请先到数据采集页下载或重新创建报表。'}
+                </p>
+              </div>
+              <div className="table-action-row">
+                <button className="secondary-button" disabled={!hasRealFiles || Boolean(runningImport)} onClick={() => runImport('current')} type="button">
+                  {runningImport === 'current' ? '正在导入...' : '导入已下载表格'}
+                </button>
+                <button className="secondary-button" disabled={Boolean(runningImport)} onClick={() => runImport('local')} type="button">
+                  {runningImport === 'local' ? '正在选择...' : '导入本地报表'}
+                </button>
+              </div>
             </div>
-            <div className="table-action-row">
-              <button className="primary-button" disabled={!hasRealFiles || Boolean(runningImport)} onClick={() => runImport('current')} type="button">
-                {runningImport === 'current' ? '正在导入...' : '导入已下载表格'}
-              </button>
-              <button className="secondary-button" disabled={Boolean(runningImport)} onClick={() => runImport('local')} type="button">
-                {runningImport === 'local' ? '正在选择...' : '导入本地报表'}
-              </button>
-            </div>
-          </div>
-          {notice && <p className="muted-line">{notice}</p>}
-          {importError && <p className="blocked-line">{importError}</p>}
-        </Panel>
+            {notice && <p className="muted-line">{notice}</p>}
+            {importError && <p className="blocked-line">{importError}</p>}
+          </Panel>
+        </ProgressiveDetails>
 
         {hasImportedMetrics && (
           <Panel title="量化前口径快照" tone="success">
@@ -348,9 +408,10 @@ export function DataImportValidationPage() {
           </Panel>
         )}
 
-        <Panel title="8 类报表入库明细" tone={hasRealFiles ? 'default' : 'blocked'}>
-          <div className="table-wrap">
-            <table className="business-table">
+        <ProgressiveDetails title="8 类报表入库明细">
+          <Panel title="8 类报表入库明细" tone={hasRealFiles ? 'default' : 'blocked'}>
+            <div className="table-wrap">
+              <table className="business-table">
               <thead>
                 <tr>
                   <th>报表</th>
@@ -387,12 +448,14 @@ export function DataImportValidationPage() {
                   </tr>
                 )}
               </tbody>
-            </table>
-          </div>
-        </Panel>
+              </table>
+            </div>
+          </Panel>
+        </ProgressiveDetails>
 
-        <Panel title="文件位置" tone={hasRealFiles ? 'default' : 'blocked'}>
-          <div className="path-list">
+        <ProgressiveDetails title="文件位置">
+          <Panel title="文件位置" tone={hasRealFiles ? 'default' : 'blocked'}>
+            <div className="path-list">
             <div className="path-row">
               <span>真实广告表格目录</span>
               <code>{fileAudit?.downloadDir ? compactPath(fileAudit.downloadDir) : '暂无'}</code>
@@ -403,10 +466,11 @@ export function DataImportValidationPage() {
               <code>{fileAudit?.manifestPath ? compactPath(fileAudit.manifestPath) : '暂无'}</code>
               <button className="secondary-button compact-button" disabled={!fileAudit?.manifestPath} onClick={() => openPath(fileAudit?.manifestPath)} type="button">打开</button>
             </div>
-          </div>
-          <p className="warning-line">采集清单和审计证据只用于追溯流程；广告量化只读取上方真实报表和 SQLite 指标。</p>
-          {pathNotice && <p className={pathNotice.startsWith('打开失败') ? 'blocked-line' : 'muted-line'}>{pathNotice}</p>}
-        </Panel>
+            </div>
+            <p className="warning-line">采集清单和审计证据只用于追溯流程；广告量化只读取上方真实报表和 SQLite 指标。</p>
+            {pathNotice && <p className={pathNotice.startsWith('打开失败') ? 'blocked-line' : 'muted-line'}>{pathNotice}</p>}
+          </Panel>
+        </ProgressiveDetails>
       </div>
     </div>
   );

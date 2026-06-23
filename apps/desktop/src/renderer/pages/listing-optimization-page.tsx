@@ -79,6 +79,48 @@ export function listingDraftGenerationMessage(quantReady: boolean, drafts: Array
   return `已生成 ${parts}。${reason}草案只保存在本地，不会自动提交 Amazon。`;
 }
 
+export interface ListingManualField {
+  key: string;
+  label: string;
+  status: '必填' | '建议填写' | '可选';
+}
+
+export interface ListingManualFieldGroup {
+  title: string;
+  fields: ListingManualField[];
+}
+
+export function listingManualFieldGroups(): ListingManualFieldGroup[] {
+  return [
+    {
+      title: '基础信息',
+      fields: [
+        { key: 'asin', label: 'ASIN', status: '必填' },
+        { key: 'versionLabel', label: '版本名称', status: '建议填写' },
+        { key: 'changeSummary', label: '修改说明', status: '建议填写' },
+      ],
+    },
+    {
+      title: '标题',
+      fields: [
+        { key: 'title', label: '标题', status: '必填' },
+      ],
+    },
+    {
+      title: '五点',
+      fields: [1, 2, 3, 4, 5].map((index) => ({ key: `bullet-${index}`, label: `五点 ${index}`, status: '建议填写' })),
+    },
+    {
+      title: '详情与搜索词',
+      fields: [
+        { key: 'description', label: '详情 / A+ 内容', status: '建议填写' },
+        { key: 'backendTerms', label: '后台搜索词', status: '必填' },
+        { key: 'imageCopy', label: '图片文案', status: '可选' },
+      ],
+    },
+  ];
+}
+
 function buildSuggestedText(keyword: string, section: ListingSection, currentText: string): string {
   if (!currentText.trim()) return keyword;
   if (currentText.toLowerCase().includes(keyword.toLowerCase())) return currentText;
@@ -384,6 +426,63 @@ export function ListingOptimizationPage() {
     });
   }
 
+  function renderManualListingField(field: ListingManualField) {
+    const bullets = ensureFiveBullets(manualListing.bullets);
+    const bulletMatch = /^bullet-(\d+)$/.exec(field.key);
+    const control = (() => {
+      if (bulletMatch) {
+        const bulletIndex = Number(bulletMatch[1]) - 1;
+        return (
+          <textarea
+            aria-label={field.label}
+            value={bullets[bulletIndex] || ''}
+            onChange={(event) => updateManualBullet(bulletIndex, event.target.value)}
+            placeholder={`Bullet ${bulletIndex + 1}`}
+          />
+        );
+      }
+      if (field.key === 'asin') {
+        return <input aria-label={field.label} value={manualListing.asin || ''} onChange={(event) => updateManualListing({ asin: event.target.value })} placeholder="例如 B0..." />;
+      }
+      if (field.key === 'versionLabel') {
+        return <input aria-label={field.label} value={manualListing.versionLabel || ''} onChange={(event) => updateManualListing({ versionLabel: event.target.value })} placeholder="例如 2026-06-18 标题五点调整" />;
+      }
+      if (field.key === 'changeSummary') {
+        return <input aria-label={field.label} value={manualListing.changeSummary || ''} onChange={(event) => updateManualListing({ changeSummary: event.target.value })} placeholder="例如 补充核心词和场景词" />;
+      }
+      if (field.key === 'title') {
+        return <textarea aria-label={field.label} value={manualListing.title || ''} onChange={(event) => updateManualListing({ title: event.target.value })} placeholder="当前 Listing 标题" />;
+      }
+      if (field.key === 'description') {
+        return (
+          <textarea
+            aria-label={field.label}
+            value={manualListing.description || manualListing.aPlus || ''}
+            onChange={(event) => updateManualListing({ description: event.target.value, aPlus: event.target.value })}
+            placeholder="详情描述或 A+ 文案"
+          />
+        );
+      }
+      if (field.key === 'backendTerms') {
+        return <textarea aria-label={field.label} value={manualListing.backendTerms || ''} onChange={(event) => updateManualListing({ backendTerms: event.target.value })} placeholder="Search Terms / 后台关键词" />;
+      }
+      if (field.key === 'imageCopy') {
+        return <textarea aria-label={field.label} value={manualListing.imageCopy || ''} onChange={(event) => updateManualListing({ imageCopy: event.target.value })} placeholder="可选：主图/副图文案备注" />;
+      }
+      return null;
+    })();
+
+    return (
+      <div className="listing-editor-row" key={field.key}>
+        <div className="listing-editor-label">{field.label}</div>
+        <div className="listing-editor-control">{control}</div>
+        <span className={`listing-editor-status listing-editor-status-${field.status === '必填' ? 'required' : field.status === '可选' ? 'optional' : 'recommended'}`}>
+          {field.status}
+        </span>
+      </div>
+    );
+  }
+
   async function saveManualListing() {
     setLoading('save-manual');
     setMessage(null);
@@ -666,45 +765,13 @@ export function ListingOptimizationPage() {
             </div>
             <StatusPill tone="ready">主流程</StatusPill>
           </div>
-          <div className="settings-form-grid">
-            <label>
-              ASIN
-              <input value={manualListing.asin || ''} onChange={(event) => updateManualListing({ asin: event.target.value })} placeholder="例如 B0..." />
-            </label>
-            <label>
-              版本名称
-              <input value={manualListing.versionLabel || ''} onChange={(event) => updateManualListing({ versionLabel: event.target.value })} placeholder="例如 2026-06-18 标题五点调整" />
-            </label>
-            <label>
-              修改说明
-              <input value={manualListing.changeSummary || ''} onChange={(event) => updateManualListing({ changeSummary: event.target.value })} placeholder="例如 补充核心词和场景词" />
-            </label>
-            <label>
-              标题
-              <textarea value={manualListing.title || ''} onChange={(event) => updateManualListing({ title: event.target.value })} placeholder="当前 Listing 标题" />
-            </label>
-          </div>
-          <div className="settings-form-grid">
-            {ensureFiveBullets(manualListing.bullets).map((bullet, index) => (
-              <label key={`manual-bullet-${index + 1}`}>
-                五点 {index + 1}
-                <textarea value={bullet} onChange={(event) => updateManualBullet(index, event.target.value)} placeholder={`Bullet ${index + 1}`} />
-              </label>
+          <div className="listing-editor-table">
+            {listingManualFieldGroups().map((group) => (
+              <section className="listing-editor-section" key={group.title}>
+                <strong>{group.title}</strong>
+                {group.fields.map(renderManualListingField)}
+              </section>
             ))}
-          </div>
-          <div className="settings-form-grid">
-            <label>
-              详情 / A+ 内容
-              <textarea value={manualListing.description || manualListing.aPlus || ''} onChange={(event) => updateManualListing({ description: event.target.value, aPlus: event.target.value })} placeholder="详情描述或 A+ 文案" />
-            </label>
-            <label>
-              后台搜索词
-              <textarea value={manualListing.backendTerms || ''} onChange={(event) => updateManualListing({ backendTerms: event.target.value })} placeholder="Search Terms / 后台关键词" />
-            </label>
-            <label>
-              图片文案
-              <textarea value={manualListing.imageCopy || ''} onChange={(event) => updateManualListing({ imageCopy: event.target.value })} placeholder="可选：主图/副图文案备注" />
-            </label>
           </div>
           <div className="action-row">
             <button className="primary-button" disabled={loading === 'save-manual'} onClick={saveManualListing} type="button">
