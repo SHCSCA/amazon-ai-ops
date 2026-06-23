@@ -21,16 +21,16 @@
 
 ## Current Delivery State
 
-- Current packaged baseline is `APP_READY` for the evidence set fixed on 2026-06-22.
-- Authoritative final readiness: `output\codex-evidence\final-readiness-20260618170712.json`.
-- Evidence manifest: `output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json`.
-- Package launch smoke: `output\codex-evidence\package-launch-smoke-1782118074963.json`.
-- READY bundle: `output\delivery-bundles\v15-delivery-bundle-20260618170712-ready`.
-- Installer SHA-256: `E8738F8BA4818A0F8F0BE0FFC282CEFAFE52D40B46364F2F183AE1E3F61572BE`.
-- Portable/no-install SHA-256: `B0A3DB8D2EE8789FAC9C60859B358F3167F6EACE26599DB40F1E0A78885C8A3D`.
-- Current staged post-baseline UX polish on this branch adds AI output contract tags, compact metric tags, and a table-like Listing editor. Focused renderer tests, `build:renderer`, settings/delivery smoke, data-pipeline smoke, keyword/listing smoke, and `verify:ad-execution` passed, but `build:win`, `smoke:package-launch`, final-readiness, READY bundle export, and READY safety have not been rerun for these staged source changes.
+- Current packaged state is `APP_READY` for the high-fidelity Windows desktop UI rebuild verified on 2026-06-23.
+- Authoritative final readiness: `output\codex-evidence\final-readiness-20260623173135.json`.
+- Evidence manifest: `output\codex-evidence\v15-final-readiness-evidence-manifest-20260623173135.json`.
+- Package launch smoke: `output\codex-evidence\package-launch-smoke-1782206620951.json`.
+- READY bundle: `output\delivery-bundles\v15-delivery-bundle-20260623173135-ready`.
+- Installer SHA-256: `2955BB05ADAD62B5DF7F891B4FAE352EC30801F5C87716E8D89CA62D6853C5A8`.
+- Portable/no-install SHA-256: `9437D669A2C1AA0973FC588569396A5BB38A6CD75F18C61A18C57A1A896D6071`.
+- The 2026-06-23 high-fidelity UI rebuild adds business-domain navigation, compact status/tag surfaces, AI output contract tags, and a table-like Listing editor. Focused renderer tests, `build:renderer`, desktop typecheck, `build:win`, current business UI smoke, `smoke:package-launch`, `verify:ad-execution`, manifest-driven final-readiness, READY bundle export, and READY safety have been rerun for this source state.
 
-Any code, package, scope, or ad-action change invalidates applying the packaged-baseline `APP_READY` claim to that modified state until the final gates are rerun.
+Any future code, package, scope, or ad-action change invalidates applying this `APP_READY` claim to that modified state until the final gates are rerun.
 
 ## Required Safety Boundaries
 
@@ -58,10 +58,10 @@ pnpm exec vitest run scripts\verify-v15-final-readiness.test.mjs scripts\verify-
 Final delivery refresh:
 
 ```powershell
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782118074963.json --out output\codex-evidence\final-readiness-20260618170712.json
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260618170712.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260618170712-ready
-pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260618170712.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260618170712-ready\delivery-bundle-manifest.json
+pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260623173135.json
+pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260623173135.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782206620951.json --out output\codex-evidence\final-readiness-20260623173135.json
+pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260623173135.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260623173135-ready
+pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260623173135.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260623173135-ready\delivery-bundle-manifest.json
 ```
 
 ## Docs To Keep In Sync

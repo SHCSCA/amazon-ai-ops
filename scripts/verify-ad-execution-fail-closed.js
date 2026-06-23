@@ -129,7 +129,8 @@ mustContain(adActions, 'success: verified', 'bid/toggle executors tie success to
 mustContain(adActions, '回读校验失败', 'executor exposes readback failure reason');
 
 mustContain(readbackPage, 'buildFillAdReadbackCommand', 'renderer exposes ad readback acceptance commands');
-mustContain(readbackPage, 'title="执行回读"', 'readback page shows ad readback evidence panel');
+mustContain(readbackPage, 'aria-label="执行回读步骤"', 'readback page shows execution readback wizard');
+mustContain(readbackPage, 'title="4. 校验并导出证据"', 'readback page shows ad readback evidence panel');
 mustContain(readbackPage, '复制长参数生成命令', 'readback page provides copy command affordance');
 mustContain(recommendationsPage, '建议生成范围', 'recommendations page exposes filter/generate controls');
 mustContain(recommendationsPage, '生成优化建议', 'recommendations page exposes generation action');

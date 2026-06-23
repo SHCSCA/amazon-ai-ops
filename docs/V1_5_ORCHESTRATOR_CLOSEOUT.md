@@ -19,16 +19,16 @@ Earlier delivery work also used orchestrator/product/UX/QA roles to reject prema
 
 ## Historical Readiness
 
-This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui, portable-fix, and packaged-launch closeout. The current worktree later added AI evidence-chain, UI, delivery-bundle, readback-contract, product-scoped quantification, AI JSON fallback, manual Listing versioning changes, and another Windows packaged-launch continuation. The baseline delivery state is recorded in `README.md`; as of the 2026-06-22 UX package rebuild the packaged baseline is `APP_READY` for the refreshed manifest-driven final-readiness `output\codex-evidence\final-readiness-20260618170712.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1782118074963.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-20260618170712-ready`, and matching `verify:v15-ready-safety` result. On 2026-06-23 this branch added post-baseline renderer UX polish for AI output contract tags, compact metric tags, and Listing table editing; that polish has focused renderer/test/smoke evidence but is not covered by the 2026-06-22 APP_READY package until final packaging and READY gates are rerun. The historical manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain baseline evidence only.
+This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui, portable-fix, packaged-launch, and 2026-06-23 high-fidelity UI closeout. The current delivery state is recorded in `README.md`; as of the 2026-06-23 high-fidelity Windows UI rebuild the packaged state is `APP_READY` for the refreshed manifest-driven final-readiness `output\codex-evidence\final-readiness-20260623173135.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1782206620951.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-20260623173135-ready`, and matching `verify:v15-ready-safety` result. This includes the 2026-06-23 renderer UX polish for AI output contract tags, compact metric tags, business-domain navigation, and Listing table editing. The historical manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain baseline evidence only.
 
 Authoritative evidence:
 
 | Gate | Evidence |
 | --- | --- |
-| Final readiness | `output\codex-evidence\final-readiness-20260618170712.json` |
-| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json` |
-| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260618170712-ready` |
-| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1782118074963.json` |
+| Final readiness | `output\codex-evidence\final-readiness-20260623173135.json` |
+| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260623173135.json` |
+| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260623173135-ready` |
+| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1782206620951.json` |
 | Historical 2026-06-10 bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z\delivery-bundle-manifest.json` |
 | Product UI smoke | `output\codex-evidence\v15-product-readiness-ui-smoke-1781072779324.json` |
 | Installer | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
@@ -37,9 +37,9 @@ Final installer:
 
 | Field | Value |
 | --- | --- |
-| SHA-256 | `E8738F8BA4818A0F8F0BE0FFC282CEFAFE52D40B46364F2F183AE1E3F61572BE` |
-| Size | `89942987` bytes |
-| Last write | `2026-06-22 16:44:51` |
+| SHA-256 | `2955BB05ADAD62B5DF7F891B4FAE352EC30801F5C87716E8D89CA62D6853C5A8` |
+| Size | `89948964` bytes |
+| Last write | `2026-06-23 17:23:07` |
 
 ## Verification Snapshot
 
