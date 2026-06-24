@@ -141,7 +141,6 @@ function ledger(patch: Partial<ProductHistoryLedgerView> & { asin: string; cost?
       currency: 'USD',
     },
     events: [],
-    ...patch,
   };
 }
 
