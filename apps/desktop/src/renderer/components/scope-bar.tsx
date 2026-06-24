@@ -38,12 +38,22 @@ type ScopeSummaryFact = {
   title?: string;
 };
 
+type ProductLabelRow = {
+  asin?: string;
+  title?: string;
+  store_name?: string;
+  marketplace_code?: string;
+  storeName?: string;
+  marketplaceCode?: string;
+};
+
 export function buildScopeSummaryFacts(input: {
   batchId?: string;
   batchModeLabel: string;
   reportCoverage: string;
   importedRows: string;
   asin?: string;
+  productLabel?: string;
 }): ScopeSummaryFact[] {
   return [
     {
@@ -53,7 +63,7 @@ export function buildScopeSummaryFacts(input: {
     },
     { label: '报表', value: input.reportCoverage },
     { label: '指标', value: input.importedRows },
-    { label: 'ASIN', value: input.asin?.trim() || '全部产品' },
+    { label: '产品', value: input.productLabel || input.asin?.trim() || '全部产品' },
   ];
 }
 
@@ -78,6 +88,7 @@ export function ScopeBar() {
   const [editError, setEditError] = useState('');
   const [scopeHydrated, setScopeHydrated] = useState(false);
   const [scopePersistError, setScopePersistError] = useState('');
+  const [products, setProducts] = useState<ProductLabelRow[]>([]);
 
   const selectedBatch = useMemo(
     () => batchOptions.find((batch) => batch.id === scope.batchId),
@@ -183,6 +194,24 @@ export function ScopeBar() {
 
   useEffect(() => {
     let cancelled = false;
+    async function loadProducts() {
+      try {
+        const rows = await (window as any).electronAPI?.getProducts?.();
+        if (!cancelled) setProducts(Array.isArray(rows) ? rows : []);
+      } catch {
+        if (!cancelled) setProducts([]);
+      }
+    }
+    loadProducts();
+    window.addEventListener('business-ui:data-updated', loadProducts);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('business-ui:data-updated', loadProducts);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     async function loadBatchOptions() {
       setLoadingBatches(true);
       setBatchOptionsError(null);
@@ -231,12 +260,21 @@ export function ScopeBar() {
     : manualBatchUnmatched
       ? `当前使用手动批次：${scope.batchId}。该批次不在当前范围自动匹配列表中，后续页面会按这个 ID 尝试读取；如不确定，请切回“自动”。`
       : '当前未匹配到数据批次；需要先在数据采集页下载并导入真实广告表格。';
+  const activeProduct = products.find((product) =>
+    String(product.asin || '').trim().toUpperCase() === String(scope.asin || '').trim().toUpperCase()
+    && (!(product.store_name || product.storeName) || (product.store_name || product.storeName) === scope.storeName)
+    && (!(product.marketplace_code || product.marketplaceCode) || (product.marketplace_code || product.marketplaceCode) === scope.marketplaceCode)
+  );
+  const productLabel = scope.asin
+    ? [activeProduct?.title, scope.asin].filter(Boolean).join(' / ') || scope.asin
+    : '全部产品';
   const summaryFacts = buildScopeSummaryFacts({
     batchId: activeBatch?.id || scope.batchId,
     batchModeLabel,
     reportCoverage: batchDataLabel,
     importedRows: importedLabel,
     asin: scope.asin,
+    productLabel,
   });
   const warningSummary = buildScopeWarningSummary({ batchOptionsError, scopePersistError });
 
