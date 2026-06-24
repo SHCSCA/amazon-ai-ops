@@ -106,6 +106,10 @@ function navigate(route: AppRoute) {
 
 export type OperationEventViewMode = 'product' | 'global' | 'all';
 
+export function defaultOperationEventViewMode(scopeAsin?: string): OperationEventViewMode {
+  return normalizeAsin(scopeAsin) ? 'product' : 'all';
+}
+
 export function filterOperationEventsForView(
   events: OperationEventView[],
   mode: OperationEventViewMode,
@@ -175,8 +179,8 @@ function formatEventScope(event: OperationEventView): string {
 export function OperationEventsPage() {
   const { scope } = useScopeStore();
   const [events, setEvents] = useState<OperationEventView[]>([]);
-  const [viewMode, setViewMode] = useState<OperationEventViewMode>(scope.asin ? 'product' : 'global');
-  const [draft, setDraft] = useState(() => buildOperationEventDraftForScope(scope, scope.asin ? 'product' : 'global'));
+  const [viewMode, setViewMode] = useState<OperationEventViewMode>(defaultOperationEventViewMode(scope.asin));
+  const [draft, setDraft] = useState(() => buildOperationEventDraftForScope(scope, defaultOperationEventViewMode(scope.asin)));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -230,7 +234,7 @@ export function OperationEventsPage() {
   }
 
   useEffect(() => {
-    const nextViewMode = scope.asin ? 'product' : 'global';
+    const nextViewMode = defaultOperationEventViewMode(scope.asin);
     setViewMode(nextViewMode);
     setDraft(buildOperationEventDraftForScope(scope, nextViewMode));
     loadEvents();

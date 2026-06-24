@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildOperationEventDraftForScope,
+  defaultOperationEventViewMode,
   filterOperationEventsForView,
   operationEventScopeLabel,
 } from './operation-events-page';
@@ -33,6 +34,11 @@ describe('operation events page product/global views', () => {
     ], 'product', scope.asin);
 
     expect(rows.map((item) => item.title)).toEqual(['Prime event', 'Product coupon']);
+  });
+
+  it('defaults to all events when no product is selected', () => {
+    expect(defaultOperationEventViewMode('B001')).toBe('product');
+    expect(defaultOperationEventViewMode(undefined)).toBe('all');
   });
 
   it('defaults new event drafts to current product scope when ASIN is selected', () => {
