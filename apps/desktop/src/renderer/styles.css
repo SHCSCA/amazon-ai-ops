@@ -3153,6 +3153,57 @@ code {
   box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.14);
 }
 
+.product-management-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.product-management-option {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--text);
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.product-management-option:hover {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
+.product-management-option-active {
+  border-color: var(--primary);
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.14);
+}
+
+.product-management-option strong,
+.product-management-option span {
+  overflow-wrap: anywhere;
+}
+
+.product-management-option strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.product-management-option span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.product-management-event {
+  min-height: 0;
+}
+
 .evidence-disclosure {
   border-top: 1px solid var(--line);
   margin-top: 12px;

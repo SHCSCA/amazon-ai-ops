@@ -104,7 +104,8 @@ export function useBusinessDataPipeline() {
         const nextData = await api.getBusinessUiDataPipeline(scope);
         let operationEvents: OperationEventView[] | null = null;
         let operationNotes = nextData?.operations?.notes || [];
-        if (api.listOperationEvents) {
+        // Product-scoped pipeline events already include global events; ASIN list queries do not.
+        if (api.listOperationEvents && !scope.asin) {
           try {
             const rows = await api.listOperationEvents({ ...scope, limit: 300 });
             operationEvents = Array.isArray(rows) ? rows : [];
