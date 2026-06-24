@@ -143,6 +143,11 @@ export function filterAdQuantByProduct<
   };
 }
 
+export function productGroupScopePatch(productKey: string): { asin?: string; currency: 'USD' } {
+  if (!productKey || productKey === UNBOUND_PRODUCT_KEY) return { asin: undefined, currency: 'USD' };
+  return { asin: productKey, currency: 'USD' };
+}
+
 function productMatches(asin: string | undefined, productKey: string): boolean {
   if (!productKey) return true;
   if (productKey === UNBOUND_PRODUCT_KEY) return !normalizeAsin(asin);

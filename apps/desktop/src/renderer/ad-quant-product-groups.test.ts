@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAdQuantProductGroups, filterAdQuantByProduct, UNBOUND_PRODUCT_KEY } from './ad-quant-product-groups';
+import { buildAdQuantProductGroups, filterAdQuantByProduct, productGroupScopePatch, UNBOUND_PRODUCT_KEY } from './ad-quant-product-groups';
 
 describe('ad quant product groups', () => {
   it('groups diagnostics by ASIN and selects scoped ASIN first', () => {
@@ -74,5 +74,11 @@ describe('ad quant product groups', () => {
     expect(filtered.diagnostics).toHaveLength(1);
     expect(filtered.timelines).toHaveLength(1);
     expect(filtered.ledgers).toHaveLength(1);
+  });
+
+  it('creates a scope patch when selecting a product group', () => {
+    expect(productGroupScopePatch('B001')).toEqual({ asin: 'B001', currency: 'USD' });
+    expect(productGroupScopePatch(UNBOUND_PRODUCT_KEY)).toEqual({ asin: undefined, currency: 'USD' });
+    expect(productGroupScopePatch('')).toEqual({ asin: undefined, currency: 'USD' });
   });
 });

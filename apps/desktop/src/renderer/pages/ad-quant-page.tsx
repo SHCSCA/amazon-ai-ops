@@ -4,13 +4,14 @@ import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup } from '../components/tag-metric-group';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
-import { buildAdQuantProductGroups, filterAdQuantByProduct } from '../ad-quant-product-groups';
+import { buildAdQuantProductGroups, filterAdQuantByProduct, productGroupScopePatch } from '../ad-quant-product-groups';
 import { buildAdQuantDiagnosisSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
 import { operatorFacingAiError } from '../ai-call-diagnostics';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
 import { countProductsWithTargets, normalizeProductContexts } from '../product-context';
+import { useScopeStore } from '../scope-store';
 import type { AdStrategyDiagnosisView, AiDiagnosisRunView, AiEvidenceDisplayItemView, AppRoute, BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, SettingsRuleConfig } from '../types';
 
 const DEFAULT_QUANT_RULE_CONFIG: Pick<SettingsRuleConfig, 'targetAcos' | 'highAcosThreshold' | 'noOrderClickThreshold' | 'minSpend'> = {
@@ -362,6 +363,7 @@ function evidenceSufficiencyTone(level?: string): 'ready' | 'warning' | 'blocked
 
 export function AdQuantPage() {
   const { data, error, loading, scope } = useBusinessDataPipeline();
+  const setScope = useScopeStore((state) => state.setScope);
   const [ruleConfig, setRuleConfig] = useState(() => normalizeRuleConfig(null));
   const [strategyDiagnosis, setStrategyDiagnosis] = useState<AdStrategyDiagnosisView | null>(null);
   const [strategyLoading, setStrategyLoading] = useState(false);
@@ -646,7 +648,10 @@ export function AdQuantPage() {
                     type="button"
                     key={group.productKey}
                     className={`product-option-card ${selectedProduct === group.productKey ? 'product-option-card-active' : ''}`}
-                    onClick={() => setSelectedProductKey(group.productKey)}
+                    onClick={() => {
+                      setSelectedProductKey(group.productKey);
+                      setScope(productGroupScopePatch(group.productKey));
+                    }}
                   >
                     <strong>{group.label}</strong>
                     <span>花费 {formatUsd(group.cost)} / 销售 {formatUsd(group.sales)} / 订单 {group.orders}</span>
@@ -658,6 +663,18 @@ export function AdQuantPage() {
             ) : (
               <p className="muted-line">当前范围没有可按 ASIN 聚合的广告数据；请先确认报表中包含产品 ASIN 或在全局范围指定 ASIN。</p>
             )}
+            <div className="action-row">
+              <button
+                className="secondary-button compact-button"
+                onClick={() => {
+                  setSelectedProductKey('');
+                  setScope(productGroupScopePatch(''));
+                }}
+                type="button"
+              >
+                查看全部产品
+              </button>
+            </div>
           </Panel>
         )}
 
