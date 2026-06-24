@@ -43,4 +43,24 @@ describe('toUserFacingError', () => {
     expect(message).toBe('页面控件定位失败：请重新验证页面并导出诊断证据包，用高级诊断修正页面模型。');
     expect(message).not.toContain('.JS-download-report');
   });
+
+  it('turns recommendation data blockers into product-scope next actions', () => {
+    const message = toUserFacingError(
+      new Error("Error invoking remote method 'v1_5:business-ui:ad-strategy-diagnosis': Error: 生成优化建议被阻断：当前范围没有由真实报表导入的广告指标行。"),
+      'AI 阶段分析失败',
+    );
+
+    expect(message).toBe('当前产品范围缺少已导入的日级广告指标：请先在数据采集页重新获取完整 8 类报表，并在数据导入与校验页导入当前批次后再运行 AI。');
+    expect(message).not.toContain('Error invoking remote method');
+  });
+
+  it('turns scoped metric binding blockers into product and import actions', () => {
+    const message = toUserFacingError(
+      new Error('生成优化建议被阻断：当前范围缺少可绑定的日级广告指标。请回到数据导入与校验页，确认真实报表 source_file、批次、店铺、站点和日期范围与 DB 指标一致。'),
+      '生成优化建议失败',
+    );
+
+    expect(message).toBe('当前产品范围缺少可回查的日级广告指标：请先在产品管理选择 ASIN，并在数据导入与校验页重新导入当前批次真实报表后再运行 AI。');
+    expect(message).not.toContain('source_file');
+  });
 });

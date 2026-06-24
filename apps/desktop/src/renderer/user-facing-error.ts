@@ -11,6 +11,21 @@ export function toUserFacingError(error: unknown, fallback: string): string {
   if (/not implemented|not exposed|未暴露/i.test(message)) {
     return '功能入口尚未连接到桌面端接口：请重新打开最新安装版；如果仍出现，请导出诊断证据。';
   }
+  if (/生成优化建议被阻断/.test(message)) {
+    if (/缺少可绑定的日级广告指标/.test(message)) {
+      return '当前产品范围缺少可回查的日级广告指标：请先在产品管理选择 ASIN，并在数据导入与校验页重新导入当前批次真实报表后再运行 AI。';
+    }
+    if (/没有由真实报表导入的广告指标行|缺少导入后的日级广告指标|没有真实报表文件和导入指标/.test(message)) {
+      return '当前产品范围缺少已导入的日级广告指标：请先在数据采集页重新获取完整 8 类报表，并在数据导入与校验页导入当前批次后再运行 AI。';
+    }
+    if (/没有真实 \.xlsx\/\.xls\/\.csv 原始报表文件|缺少真实广告报表文件|只找到 \d+\/\d+ 类真实广告报表/.test(message)) {
+      return '当前产品范围缺少完整真实广告报表：请先回到数据采集页重新获取完整 8 类报表，再导入当前批次。';
+    }
+    if (/缺少可绑定产品 ASIN/.test(message)) {
+      return '当前广告指标缺少可绑定产品 ASIN：请先在产品管理选择 ASIN，或重新导入包含 ASIN 的真实报表。';
+    }
+    return '当前产品范围的数据证据不足，AI 不会生成正式建议：请先补齐真实报表、导入指标和产品 ASIN 后重试。';
+  }
   if (/missing|not found/i.test(message) && /report|file|path|batch/i.test(message)) {
     return '当前范围缺少可用文件或数据批次：请先在数据采集页确认真实报表文件存在并完成导入。';
   }

@@ -16,6 +16,10 @@ describe('ProductManagementPage model', () => {
     expect(model.selectedProduct?.title).toBe('D6 Smart Lock');
     expect(model.selectedProduct?.asin).toBe('B001');
     expect(model.selectedProduct?.cost).toBe(80);
+    expect(model.selectedDailyRows).toEqual([
+      expect.objectContaining({ date: '2026-06-10', cost: 20, orders: 1 }),
+      expect.objectContaining({ date: '2026-06-11', cost: 60, orders: 3 }),
+    ]);
     expect(model.timeline.map((item) => productTimelineScopeLabel(item.scope))).toEqual(['全局', '产品']);
     expect(model.emptyReason).toBe('');
   });
@@ -43,6 +47,7 @@ describe('ProductManagementPage model', () => {
       keywordOpportunities: 'keyword-opportunities',
       listingOptimization: 'listing-optimization',
       operationEvents: 'operation-events',
+      productConfig: 'product-config',
     });
   });
 });
@@ -111,7 +116,32 @@ function pipeline(): BusinessDataPipeline {
         activeDays: 2,
         inferredStage: 'keyword_exploration',
         stageReasons: [],
-        daily: [],
+        daily: [
+          {
+            date: '2026-06-10',
+            impressions: 200,
+            clicks: 10,
+            cost: 20,
+            orders: 1,
+            sales: 40,
+            acos: 0.5,
+            cpc: 2,
+            cvr: 0.1,
+            currency: 'USD',
+          },
+          {
+            date: '2026-06-11',
+            impressions: 800,
+            clicks: 30,
+            cost: 60,
+            orders: 3,
+            sales: 120,
+            acos: 0.5,
+            cpc: 2,
+            cvr: 0.1,
+            currency: 'USD',
+          },
+        ],
         totals: {
           impressions: 1000,
           clicks: 40,

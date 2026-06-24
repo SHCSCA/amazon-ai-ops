@@ -298,6 +298,18 @@ describe('initSqlite v1.5 schema', () => {
         firstLegCost: 1.2,
         targetAcos: 0.35,
       }));
+
+      const withCosts = productRepo.findAllWithCosts('FT-US-US');
+      expect(withCosts).toEqual([
+        expect.objectContaining({
+          asin: 'B001',
+          title: 'Updated product',
+          cost: expect.objectContaining({
+            purchaseCost: 13.5,
+            targetAcos: 0.35,
+          }),
+        }),
+      ]);
     } finally {
       upgradedDb.close();
     }

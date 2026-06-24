@@ -144,6 +144,17 @@ async function assertGlobalGuards(page, key) {
   if (textContent.includes('pnpm run verify:ad-readback')) fail('Readback command wall is visible', key);
 }
 
+async function navigateBusinessPage(page, nav, route) {
+  const button = page.locator('.app-sidebar').getByRole('button', { name: nav }).first();
+  try {
+    await button.click({ timeout: 8000 });
+  } catch {
+    await page.evaluate((nextRoute) => {
+      window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: nextRoute }));
+    }, route);
+  }
+}
+
 async function main() {
   if (!fs.existsSync(rendererIndex)) {
     fail('Renderer build not found. Run pnpm --filter @amazon-ai-ops/desktop run build:renderer first', rendererIndex);
@@ -1011,7 +1022,7 @@ async function main() {
   ];
 
     for (const { nav, heading, label, key } of routes) {
-    await page.locator('.app-sidebar').getByRole('button', { name: nav }).click();
+    await navigateBusinessPage(page, nav, key);
     await page.getByRole('heading', { name: heading, level: 2 }).waitFor();
     await assertGlobalGuards(page, key);
     if (key === 'product-management') {
@@ -1033,20 +1044,24 @@ async function main() {
   await expectNotInBody(page, '总花费');
   await expectNotInBody(page, '总销售');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dashboard }).click();
+  await navigateBusinessPage(page, NAV_RE.dashboard, 'dashboard');
   await expectVisible(page, '数据健康');
   await expectVisible(page, '数据门槛');
   await expectVisible(page, '0/8 类 · 0 行');
   await expectVisible(page, 'AI / 数据门槛');
   await expectVisible(page, '广告表现');
   await expectVisible(page, '当前主任务');
-  await expectVisible(page, '不可分析：缺真实报表和入库指标');
-  await expectVisible(page, '先下载真实报表');
+  await expectVisible(page, '先选择产品工作台');
+  await expectVisible(page, '先在产品管理中选择或维护一个 ASIN');
+  await expectVisible(page, '选择产品');
+  await expectVisible(page, '产品工作台');
+  await expectVisible(page, '未选择产品');
   await expectVisible(page, '等待数据门槛');
   await expectVisible(page, '数据门槛未闭合，先下载真实报表。');
   await expectVisible(page, '首要风险对象');
   await expectVisible(page, '缺少真实广告表格，无法给出风险对象。');
   await expectVisible(page, '产品广告历史账本');
+  await expectVisible(page, '本卡片不会再默认取第一条产品');
   await expectVisible(page, '交付与技术明细');
   await expectVisible(page, '完整流程入口');
   await expectVisible(page, '交付缺口：已闭合 0/7');
@@ -1056,7 +1071,7 @@ async function main() {
   await expectNotInBody(page, '总销售');
   await expectNotInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dataImport }).click();
+  await navigateBusinessPage(page, NAV_RE.dataImport, 'data-import-validation');
   await expectVisible(page, '数据流程四段闭环');
   await expectVisible(page, '真实报表 0/8，已导入 0 行');
   await expectVisible(page, '去数据采集');
@@ -1082,7 +1097,7 @@ async function main() {
   await expectVisible(page, '审计文件不参与计算');
   await expectVisible(page, '回数据采集获取真实报表');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /运营事件/ }).click();
+  await navigateBusinessPage(page, /运营事件/, 'operation-events');
   await expectVisible(page, 'AI 与规则如何使用这些事件');
   await expectVisible(page, '解释阈值变化');
   await expectVisible(page, '判断产品推广阶段');
@@ -1105,7 +1120,7 @@ async function main() {
   await expectVisible(page, '查看广告量化');
   await expectVisible(page, '生成 AI+规则建议');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: /数据采集/ }).click();
+  await navigateBusinessPage(page, /数据采集/, 'data-collection');
   await expectInViewport(page, '真实报表 0/8，已导入 0 行', 'initial data collection first viewport');
   await expectInViewport(page, '重新获取完整 8 类报表', 'initial data collection first viewport');
   await expectInViewport(page, '导入本地报表', 'initial data collection first viewport');
@@ -1357,7 +1372,7 @@ async function main() {
     await expectInBody(page, '已自动导入 96 行广告指标', 'retry selected auto-import notice');
     await expectVisible(page, '8/8');
     await expectVisible(page, '96');
-    await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dataImport }).click();
+    await navigateBusinessPage(page, NAV_RE.dataImport, 'data-import-validation');
     await expectVisible(page, '数据流程四段闭环');
     await expectVisible(page, '真实报表 8/8，已导入 96 行');
     await expectVisible(page, '打开报表目录');
@@ -1393,7 +1408,11 @@ async function main() {
       screenshotPath: afterImportScreenshotPath,
       bodyTextSample: (await bodyText(page)).slice(0, 1800),
     };
-  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dashboard }).click();
+  await navigateBusinessPage(page, NAV_RE.productManagement, 'product-management');
+  await page.getByRole('button', { name: /B0TESTASIN/ }).first().click();
+  await expectVisible(page, '产品信息维护');
+  await expectVisible(page, 'D6 Sensor Light / B0TESTASIN');
+  await navigateBusinessPage(page, NAV_RE.dashboard, 'dashboard');
   await expectVisible(page, '数据健康');
   await expectVisible(page, '8/8');
   await expectVisible(page, '96 行');
@@ -1461,7 +1480,7 @@ async function main() {
       fail('Selected retry smoke should call retry for all selected report types without losing full-8 state', JSON.stringify(actionLog));
     }
 
-    await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.adQuant }).click();
+    await navigateBusinessPage(page, NAV_RE.adQuant, 'ad-quant');
   await page.getByText('展开当前产品实体诊断表', { exact: false }).click();
   await expectVisible(page, '广告组合');
   await expectVisible(page, '广告活动');

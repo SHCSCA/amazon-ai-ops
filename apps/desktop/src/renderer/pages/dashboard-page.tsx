@@ -7,7 +7,7 @@ import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput, type D
 import { compactPath, formatPercent, formatUsd } from '../formatters';
 import { operatorFacingAiError } from '../ai-call-diagnostics';
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
-import type { AiDiagnosisRunView, AppRoute, DeliveryEvidenceStatusView, DeliveryReadinessView, RecommendationView, SettingsRuleConfig } from '../types';
+import type { AiDiagnosisRunView, AppRoute, DeliveryEvidenceStatusView, DeliveryReadinessView, ProductHistoryLedgerView, RecommendationView, SettingsRuleConfig } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 type DashboardRecommendationStatus = 'pending' | 'needs_review';
@@ -487,6 +487,8 @@ export function dashboardWorkflowRecommendationRoute(input: {
   return input.canGenerateFormalRecommendations ? 'recommendations' : input.fallbackRoute;
 }
 
+type DashboardPrimaryTaskAction = { route: AppRoute; label: string; title: string };
+
 export function dashboardPrimaryTaskAction(input: {
   canGenerateFormalRecommendations: boolean;
   hasRealFiles: boolean;
@@ -496,7 +498,7 @@ export function dashboardPrimaryTaskAction(input: {
   actionableRows: number;
   pendingRecommendationCount: number;
   reviewRecommendationCount: number;
-}): { route: AppRoute; label: string; title: string } {
+}): DashboardPrimaryTaskAction {
   const formalGatePassed = input.canGenerateFormalRecommendations
     && input.realReportCount >= 8
     && input.importedRows > 0
@@ -530,6 +532,20 @@ export function dashboardPrimaryTaskAction(input: {
     label: '复核广告量化',
     title: '可以分析：真实报表和日级指标已闭合',
   };
+}
+
+export function dashboardProductWorkbenchAction(input: {
+  scopeAsin?: string;
+  baseAction: DashboardPrimaryTaskAction;
+}): DashboardPrimaryTaskAction {
+  if (!String(input.scopeAsin || '').trim()) {
+    return {
+      route: 'product-management',
+      label: '选择产品',
+      title: '先选择产品工作台',
+    };
+  }
+  return input.baseAction;
 }
 
 type DashboardActionQueueItem = {
@@ -617,6 +633,15 @@ function productStageLabel(stage?: string): string {
     unknown: '阶段待判定',
   };
   return labels[stage || 'unknown'] || stage || '阶段待判定';
+}
+
+export function dashboardSelectProductHistory(
+  ledgers: ProductHistoryLedgerView[],
+  scopeAsin?: string,
+): ProductHistoryLedgerView | undefined {
+  const requestedAsin = String(scopeAsin || '').trim().toUpperCase();
+  if (!requestedAsin) return undefined;
+  return ledgers.find((ledger) => ledger.asin.toUpperCase() === requestedAsin);
 }
 
 function readString(value: unknown): string {
@@ -997,6 +1022,9 @@ export function DashboardPage() {
   })), [actionableRows, hasRealFiles, importedRows, isQuantifiable, realReportCount, visibleDeliveryItems]);
   const hiddenDeliveryItemCount = Math.max(0, deliveryMatrix.items.length - visibleDeliveryItems.length);
   const productHistoryLedgers = data?.productHistory?.ledgers || [];
+  const selectedScopeAsin = String(scope.asin || '').trim().toUpperCase();
+  const selectedProductContext = (data?.productContext?.products || []).find((product) => product.asin.toUpperCase() === selectedScopeAsin);
+  const hasProductScope = Boolean(selectedScopeAsin);
   const aiWorkStatus = dashboardAiWorkStatus(aiStatus, aiDiagnosisRuns);
   const currentDataGateAction = dashboardDataGateAction({
     canGenerateFormalRecommendations: isQuantifiable,
@@ -1023,7 +1051,7 @@ export function DashboardPage() {
     pendingRecommendationCount,
     reviewRecommendationCount,
   });
-  const primaryProductHistory = productHistoryLedgers[0];
+  const primaryProductHistory = dashboardSelectProductHistory(productHistoryLedgers, selectedScopeAsin);
   const primaryProductTrendDays = primaryProductHistory?.daily.slice(-4) || [];
   const primaryProductMaxDailyCost = Math.max(1, ...primaryProductTrendDays.map((item) => Number(item.cost || 0)));
   const topDiagnostic = quant?.diagnostics?.[0];
@@ -1148,7 +1176,7 @@ export function DashboardPage() {
     },
     ...postQuantWorkflowSteps,
   ];
-  const primaryTaskAction = dashboardPrimaryTaskAction({
+  const basePrimaryTaskAction = dashboardPrimaryTaskAction({
     canGenerateFormalRecommendations: isQuantifiable,
     hasRealFiles,
     hasMetrics,
@@ -1158,13 +1186,19 @@ export function DashboardPage() {
     pendingRecommendationCount,
     reviewRecommendationCount,
   });
-  const primaryTaskDetail = dashboardDataGateDetail({
-    isQuantifiable,
-    hasRealFiles,
-    realReportCount,
-    importedRows,
-    actionableRows,
+  const primaryTaskAction = dashboardProductWorkbenchAction({
+    scopeAsin: selectedScopeAsin,
+    baseAction: basePrimaryTaskAction,
   });
+  const primaryTaskDetail = hasProductScope
+    ? dashboardDataGateDetail({
+        isQuantifiable,
+        hasRealFiles,
+        realReportCount,
+        importedRows,
+        actionableRows,
+      })
+    : '先在产品管理中选择或维护一个 ASIN；后续广告量化、优化建议、运营事件、关键词机会和 Listing 都按该产品读取数据库。';
   const primaryTaskSecondaryActions = deliveryMatrix.status === 'ready'
     ? []
     : [{
@@ -1296,6 +1330,7 @@ export function DashboardPage() {
         secondaryActions={primaryTaskSecondaryActions}
       >
         <div className="dashboard-task-metrics" aria-label="数据健康摘要">
+          <StatusPill tone={hasProductScope ? 'ready' : 'warning'}>{hasProductScope ? `产品 ${selectedScopeAsin}` : '未选产品'}</StatusPill>
           <StatusPill tone={isQuantifiable ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>{dataGateLabel}</StatusPill>
           <span>{realReportCount}/8 类报表</span>
           <span>{importedRows} 行指标</span>
@@ -1305,13 +1340,38 @@ export function DashboardPage() {
       </OperatorTaskPanel>
 
       <div className="business-stack dashboard-stack-after-task">
+        <Panel title="产品工作台" tone={hasProductScope ? primaryProductHistory ? 'success' : 'warning' : 'warning'}>
+          <div className="judgment-panel">
+            <div>
+              <span>当前产品</span>
+              <strong>
+                {hasProductScope
+                  ? [selectedProductContext?.title, selectedScopeAsin].filter(Boolean).join(' / ')
+                  : '未选择产品'}
+              </strong>
+              <p>
+                {hasProductScope
+                  ? '当前看板、AI 量化、运营事件、关键词机会和 Listing 优化都沿用这个 ASIN。'
+                  : '先选择或维护产品，避免不同产品的数据、事件和建议混在同一个工作流里。'}
+              </p>
+            </div>
+            <button
+              className={hasProductScope ? 'secondary-button' : 'primary-button'}
+              onClick={() => navigate('product-management')}
+              type="button"
+            >
+              {hasProductScope ? '查看产品管理' : '选择产品'}
+            </button>
+          </div>
+        </Panel>
+
         <Panel title="数据健康" tone={isQuantifiable ? 'success' : 'blocked'}>
           <StateLightGrid
             items={[
               {
                 label: '当前范围',
-                value: dataGateLabel,
-                detail: `${scope.dateFrom} 至 ${scope.dateTo} / ${scope.storeName || '-'} / ${scope.marketplaceCode || '-'}`,
+                value: hasProductScope ? `产品 ${selectedScopeAsin}` : '未选产品',
+                detail: `${dataGateLabel} / ${scope.dateFrom} 至 ${scope.dateTo} / ${scope.storeName || '-'} / ${scope.marketplaceCode || '-'}`,
                 tone: isQuantifiable ? 'ready' : hasRealFiles ? 'warning' : 'blocked',
               },
               {
@@ -1361,7 +1421,7 @@ export function DashboardPage() {
           </div>
         </Panel>
 
-        <Panel title="产品广告历史账本" tone={primaryProductHistory ? 'success' : isQuantifiable ? 'warning' : 'blocked'}>
+        <Panel title="产品广告历史账本" tone={hasProductScope ? primaryProductHistory ? 'success' : isQuantifiable ? 'warning' : 'blocked' : 'warning'}>
           {primaryProductHistory ? (
             <details className="dashboard-details">
               <summary>
@@ -1416,13 +1476,20 @@ export function DashboardPage() {
               </div>
             </details>
           ) : (
-            <p className={isQuantifiable ? 'muted-line' : 'blocked-line'}>
-              {isQuantifiable ? '当前范围已有指标，但还没有形成按 ASIN 汇总的产品广告历史。' : '完成真实报表导入后，这里会展示产品从首日投放到当前范围的日级广告历史。'}
+            <p className={hasProductScope && !isQuantifiable ? 'blocked-line' : 'muted-line'}>
+              {!hasProductScope
+                ? '先在产品管理中选择产品；本卡片不会再默认取第一条产品，避免看错 ASIN 的历史。'
+                : isQuantifiable ? '当前产品范围已有指标，但还没有形成按 ASIN 汇总的产品广告历史。' : '完成真实报表导入后，这里会展示该产品从首日投放到当前范围的日级广告历史。'}
             </p>
           )}
           <div className="action-row">
-            <button className="secondary-button" disabled={!primaryProductHistory} onClick={() => navigate('ad-quant')} type="button">
-              查看产品历史明细
+            <button
+              className="secondary-button"
+              disabled={hasProductScope && !primaryProductHistory}
+              onClick={() => navigate(hasProductScope ? 'ad-quant' : 'product-management')}
+              type="button"
+            >
+              {hasProductScope ? '查看产品历史明细' : '选择产品'}
             </button>
           </div>
         </Panel>

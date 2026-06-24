@@ -16,6 +16,10 @@ export interface Product {
   updated_at: string;
 }
 
+export interface ProductWithCost extends Product {
+  cost?: ProductCost;
+}
+
 export class ProductRepository {
   constructor(private db: Database) {}
 
@@ -48,6 +52,13 @@ export class ProductRepository {
       return this.db.prepare('SELECT * FROM products WHERE store_name = ?').all(storeName) as Product[];
     }
     return this.db.prepare('SELECT * FROM products').all() as Product[];
+  }
+
+  findAllWithCosts(storeName?: string): ProductWithCost[] {
+    return this.findAll(storeName).map((product) => ({
+      ...product,
+      cost: this.getCost(product.id),
+    }));
   }
 
   updateCost(productId: number, cost: Partial<ProductCost>): void {

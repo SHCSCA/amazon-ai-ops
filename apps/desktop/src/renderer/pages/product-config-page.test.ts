@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { productCostInputHint } from './product-config-page';
+import { buildCostInputFromProduct, productCostInputHint } from './product-config-page';
 
 describe('productCostInputHint', () => {
   it('warns when cost fields still look like the default template', () => {
@@ -30,5 +30,20 @@ describe('productCostInputHint', () => {
       targetAcos: 0.35,
       targetTacos: 0.12,
     })).toBe('已填写成本或最低售价；保存前请确认这些数字来自当前产品。');
+  });
+
+  it('hydrates editable cost fields from loaded product rows', () => {
+    expect(buildCostInputFromProduct({
+      cost: {
+        purchaseCost: 12,
+        targetAcos: 0.28,
+        minPrice: 39.99,
+      },
+    })).toEqual(expect.objectContaining({
+      purchaseCost: 12,
+      targetAcos: 0.28,
+      minPrice: 39.99,
+      referralFeeRate: 0.15,
+    }));
   });
 });

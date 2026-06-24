@@ -12,6 +12,7 @@ import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
 import { countProductsWithTargets, normalizeProductContexts } from '../product-context';
 import { useScopeStore } from '../scope-store';
+import { toUserFacingError } from '../user-facing-error';
 import type { AdStrategyDiagnosisView, AiDiagnosisRunView, AiEvidenceDisplayItemView, AppRoute, BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, SettingsRuleConfig } from '../types';
 
 const DEFAULT_QUANT_RULE_CONFIG: Pick<SettingsRuleConfig, 'targetAcos' | 'highAcosThreshold' | 'noOrderClickThreshold' | 'minSpend'> = {
@@ -634,7 +635,7 @@ export function AdQuantPage() {
       setStrategyDiagnosis(result);
       await loadDiagnosisRuns();
     } catch (caught) {
-      setStrategyError(caught instanceof Error ? caught.message : String(caught || 'AI 阶段诊断失败。'));
+      setStrategyError(toUserFacingError(caught, 'AI 阶段诊断失败。'));
     } finally {
       setStrategyLoading(false);
     }

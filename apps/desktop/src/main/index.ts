@@ -7533,7 +7533,7 @@ function registerIpcHandlers(): void {
   });
 
   // Products
-  ipcMain.handle('products:get', () => state.productRepo?.findAll() || []);
+  ipcMain.handle('products:get', () => state.productRepo?.findAllWithCosts() || []);
   ipcMain.handle('products:add', (_, product) => {
     state.productRepo?.insert(product);
   });

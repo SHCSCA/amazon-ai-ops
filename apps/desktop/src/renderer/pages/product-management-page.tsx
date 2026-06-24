@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScopeText, useBusinessDataPipeline } from '../components/business-data';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
+import { buildCostInputFromProduct, DEFAULT_COST, productCostInputHint } from './product-config-page';
 import {
   buildProductManagementSummaries,
   buildProductTimeline,
   type ProductTimelineItem,
 } from '../product-management';
 import type { AppRoute, BusinessDataPipeline } from '../types';
+import { toUserFacingError } from '../user-facing-error';
 
 type ProductManagementRoutes = {
   adQuant: AppRoute;
@@ -16,6 +18,7 @@ type ProductManagementRoutes = {
   keywordOpportunities: AppRoute;
   listingOptimization: AppRoute;
   operationEvents: AppRoute;
+  productConfig: AppRoute;
 };
 
 export function productManagementActionRoutes(): ProductManagementRoutes {
@@ -25,7 +28,36 @@ export function productManagementActionRoutes(): ProductManagementRoutes {
     keywordOpportunities: 'keyword-opportunities',
     listingOptimization: 'listing-optimization',
     operationEvents: 'operation-events',
+    productConfig: 'product-config',
   };
+}
+
+type ProductStage = 'cold_start' | 'keyword_exploration' | 'stable_conversion' | 'scaling' | 'profit_harvesting' | 'declining_repair';
+
+const STAGE_OPTIONS: Array<{ value: ProductStage; label: string }> = [
+  { value: 'cold_start', label: '冷启动' },
+  { value: 'keyword_exploration', label: '测词期' },
+  { value: 'stable_conversion', label: '稳定转化' },
+  { value: 'scaling', label: '放量期' },
+  { value: 'profit_harvesting', label: '利润收割' },
+  { value: 'declining_repair', label: '异常修复' },
+];
+
+function buildDraftFromProduct(product: any, scopeAsin?: string) {
+  return {
+    asin: product?.asin || scopeAsin || '',
+    parentAsin: product?.parentAsin || product?.parent_asin || '',
+    msku: product?.msku || '',
+    sku: product?.sku || '',
+    title: product?.title || '',
+    productStage: (product?.productStage || product?.product_stage || 'keyword_exploration') as ProductStage,
+    status: product?.status || 'active',
+  };
+}
+
+function toNumber(value: string | number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export function productTimelineScopeLabel(scope: ProductTimelineItem['scope']): string {
@@ -55,10 +87,14 @@ export function buildProductManagementPageModel(input: {
   const timeline = selectedProduct
     ? buildProductTimeline({ selectedAsin: selectedProduct.asin, events: input.data?.operations?.events || [] })
     : [];
+  const selectedLedger = selectedProduct
+    ? (input.data?.productHistory?.ledgers || []).find((ledger) => ledger.asin.toUpperCase() === selectedProduct.asin.toUpperCase())
+    : undefined;
 
   return {
     products,
     selectedProduct,
+    selectedDailyRows: selectedLedger?.daily || [],
     timeline,
     emptyReason: products.length ? '' : '当前范围还没有产品配置或可识别 ASIN 的广告数据。',
   };
@@ -91,10 +127,25 @@ export function ProductManagementPage() {
   );
   const routes = productManagementActionRoutes();
   const selected = model.selectedProduct;
+  const selectedContext = useMemo(() => (
+    (data?.productContext?.products || []).find((product) => selected?.asin && product.asin.toUpperCase() === selected.asin.toUpperCase())
+  ), [data?.productContext?.products, selected?.asin]);
+  const [draft, setDraft] = useState(() => buildDraftFromProduct(selectedContext || selected, scope.asin));
+  const [cost, setCost] = useState(DEFAULT_COST);
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     if (!selectedAsin && scope.asin) setSelectedAsin(scope.asin);
   }, [scope.asin, selectedAsin]);
+
+  useEffect(() => {
+    setDraft(buildDraftFromProduct(selectedContext || selected, selected?.asin || scope.asin));
+    setCost(buildCostInputFromProduct(selectedContext || {}));
+    setSaveMessage('');
+    setSaveError('');
+  }, [scope.asin, selected, selectedContext]);
 
   function selectProduct(asin: string) {
     setSelectedAsin(asin);
@@ -104,6 +155,38 @@ export function ProductManagementPage() {
   function clearProduct() {
     setSelectedAsin('');
     setScope({ asin: undefined, currency: 'USD' });
+  }
+
+  function updateCost(key: keyof typeof cost, value: string) {
+    setCost((current) => ({ ...current, [key]: toNumber(value) }));
+  }
+
+  async function saveProduct() {
+    setSaving(true);
+    setSaveMessage('');
+    setSaveError('');
+    try {
+      if (!draft.asin.trim()) throw new Error('请填写 ASIN。');
+      const result = await (window as any).electronAPI?.saveProductConfig?.({
+        product: {
+          ...draft,
+          asin: draft.asin.trim().toUpperCase(),
+          storeName: scope.storeName,
+          marketplaceCode: scope.marketplaceCode,
+        },
+        cost,
+      });
+      if (!result?.success) throw new Error('保存接口没有返回成功状态。');
+      const nextAsin = draft.asin.trim().toUpperCase();
+      setSelectedAsin(nextAsin);
+      setScope({ asin: nextAsin, currency: 'USD' });
+      setSaveMessage('产品信息已保存，当前工作台已切换到该产品。');
+      window.dispatchEvent(new Event('business-ui:data-updated'));
+    } catch (caught) {
+      setSaveError(toUserFacingError(caught, '保存产品信息失败。'));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -164,6 +247,58 @@ export function ProductManagementPage() {
           )}
         </Panel>
 
+        <Panel title="产品信息维护" tone={draft.asin ? 'default' : 'warning'}>
+          <FormTable>
+            <FormTableRow label="ASIN" required hint="全局产品上下文的主键；保存后广告量化、优化建议、运营事件、关键词和 Listing 都会沿用该 ASIN。">
+              <input value={draft.asin} onChange={(event) => setDraft({ ...draft, asin: event.target.value })} placeholder="例如 B0..." />
+            </FormTableRow>
+            <FormTableRow label="标题" hint="用于运营识别，不自动提交到 Amazon 或领星。">
+              <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="产品标题" />
+            </FormTableRow>
+            <FormTableRow label="MSKU / SKU" hint="本地识别字段，可与 ERP 或 Amazon 后台对齐。">
+              <div className="inline-input-grid">
+                <input value={draft.msku} onChange={(event) => setDraft({ ...draft, msku: event.target.value })} placeholder="MSKU" />
+                <input value={draft.sku} onChange={(event) => setDraft({ ...draft, sku: event.target.value })} placeholder="SKU" />
+              </div>
+            </FormTableRow>
+            <FormTableRow label="阶段 / 状态" required hint="阶段和状态会参与 AI 阶段判断、动态阈值和建议风险解释。">
+              <div className="inline-input-grid">
+                <select value={draft.productStage} onChange={(event) => setDraft({ ...draft, productStage: event.target.value as ProductStage })}>
+                  {STAGE_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+                <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
+                  <option value="active">正常运营</option>
+                  <option value="paused">暂停推广</option>
+                  <option value="clearance">清货</option>
+                  <option value="watch">观察</option>
+                </select>
+              </div>
+            </FormTableRow>
+            <FormTableRow label="成本 / 最低价" hint={productCostInputHint(cost)}>
+              <div className="inline-input-grid inline-input-grid-3">
+                <input type="number" step="0.01" value={cost.purchaseCost} onChange={(event) => updateCost('purchaseCost', event.target.value)} placeholder="采购成本" />
+                <input type="number" step="0.01" value={cost.fbaFee} onChange={(event) => updateCost('fbaFee', event.target.value)} placeholder="FBA" />
+                <input type="number" step="0.01" value={cost.minPrice} onChange={(event) => updateCost('minPrice', event.target.value)} placeholder="最低售价" />
+              </div>
+            </FormTableRow>
+            <FormTableRow label="目标" hint="目标 ACOS/TACOS 和净利率会作为产品级阈值约束。">
+              <div className="inline-input-grid inline-input-grid-3">
+                <input type="number" step="0.01" value={cost.targetAcos} onChange={(event) => updateCost('targetAcos', event.target.value)} placeholder="目标 ACOS" />
+                <input type="number" step="0.01" value={cost.targetTacos} onChange={(event) => updateCost('targetTacos', event.target.value)} placeholder="目标 TACOS" />
+                <input type="number" step="0.01" value={cost.targetNetMargin} onChange={(event) => updateCost('targetNetMargin', event.target.value)} placeholder="目标净利率" />
+              </div>
+            </FormTableRow>
+          </FormTable>
+          <div className="action-row">
+            <button className="primary-button" disabled={saving || !draft.asin.trim()} onClick={saveProduct} type="button">
+              {saving ? '保存中...' : '保存产品信息'}
+            </button>
+            <button className="secondary-button" onClick={() => navigate(routes.productConfig)} type="button">打开完整配置</button>
+          </div>
+          {saveMessage && <p className="ready-line">{saveMessage}</p>}
+          {saveError && <p className="blocked-line">{saveError}</p>}
+        </Panel>
+
         {selected && (
           <>
             <Panel title="产品详情" tone="success">
@@ -187,6 +322,43 @@ export function ProductManagementPage() {
                 <button className="secondary-button" onClick={() => navigate(routes.listingOptimization)} type="button">Listing 优化</button>
                 <button className="primary-button" onClick={() => navigate(routes.adQuant)} type="button">进入 AI 量化</button>
               </div>
+            </Panel>
+
+            <Panel title="按天广告数据" tone={model.selectedDailyRows.length ? 'success' : 'warning'}>
+              {model.selectedDailyRows.length ? (
+                <div className="table-wrap">
+                  <table className="business-table">
+                    <thead>
+                      <tr>
+                        <th>日期</th>
+                        <th>花费</th>
+                        <th>销售</th>
+                        <th>订单</th>
+                        <th>点击</th>
+                        <th>ACOS</th>
+                        <th>CVR</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {model.selectedDailyRows.map((row) => (
+                        <tr key={row.date}>
+                          <td>{row.date}</td>
+                          <td>{formatUsd(row.cost)}</td>
+                          <td>{formatUsd(row.sales)}</td>
+                          <td>{row.orders}</td>
+                          <td>{row.clicks}</td>
+                          <td>{formatPercent(row.acos * 100)}</td>
+                          <td>{formatPercent(row.cvr * 100)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="muted-line">
+                  当前产品范围还没有可回查的日级广告指标。请先完成完整 8 类报表采集并导入 DB，再运行 AI 量化和优化建议。
+                </p>
+              )}
             </Panel>
 
             <Panel title="产品运营时间线" tone={model.timeline.length ? 'success' : 'warning'}>

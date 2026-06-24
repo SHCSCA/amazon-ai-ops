@@ -17,7 +17,7 @@ const STAGE_OPTIONS: Array<{ value: ProductStage; label: string; description: st
   { value: 'declining_repair', label: '异常修复', description: '转化或 ACOS 异常，优先排查价格、库存、Listing 和流量质量。' },
 ];
 
-const DEFAULT_COST = {
+export const DEFAULT_COST = {
   purchaseCost: 0,
   firstLegCost: 0,
   fbaFee: 0,
@@ -31,6 +31,26 @@ const DEFAULT_COST = {
 };
 
 type ProductCostInput = typeof DEFAULT_COST;
+
+export function buildCostInputFromProduct(product: any): ProductCostInput {
+  const source = product?.cost || {};
+  const numberOrDefault = (key: keyof ProductCostInput) => {
+    const value = Number(source[key]);
+    return Number.isFinite(value) ? value : DEFAULT_COST[key];
+  };
+  return {
+    purchaseCost: numberOrDefault('purchaseCost'),
+    firstLegCost: numberOrDefault('firstLegCost'),
+    fbaFee: numberOrDefault('fbaFee'),
+    referralFeeRate: numberOrDefault('referralFeeRate'),
+    storageFee: numberOrDefault('storageFee'),
+    otherCost: numberOrDefault('otherCost'),
+    minPrice: numberOrDefault('minPrice'),
+    targetNetMargin: numberOrDefault('targetNetMargin'),
+    targetAcos: numberOrDefault('targetAcos'),
+    targetTacos: numberOrDefault('targetTacos'),
+  };
+}
 
 export function productCostInputHint(cost: ProductCostInput): string {
   const hasRealCostOrPrice = [
@@ -121,6 +141,7 @@ export function ProductConfigPage() {
       productStage: product.product_stage || 'keyword_exploration',
       status: product.status || 'active',
     });
+    setCost(buildCostInputFromProduct(product));
     setMessage(`已载入 ${product.asin}，成本配置如需复用请重新确认后保存。`);
   }
 

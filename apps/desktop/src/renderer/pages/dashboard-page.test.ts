@@ -13,6 +13,8 @@ import {
   dashboardMetricStatusCopy,
   dashboardNormalizeDeliveryItem,
   dashboardPrimaryTaskAction,
+  dashboardProductWorkbenchAction,
+  dashboardSelectProductHistory,
   dashboardRecommendationHealthCopy,
   dashboardRecommendationHealthSummary,
   dashboardRecommendationStatusFilters,
@@ -29,11 +31,61 @@ import {
   dashboardWorkflowQuantNext,
   dashboardWorkflowQuantStatus,
 } from './dashboard-page';
-import type { AiDiagnosisRunView } from '../types';
+import type { AiDiagnosisRunView, ProductHistoryLedgerView } from '../types';
 
 describe('dashboardRecommendationStatusFilters', () => {
   it('loads both approvable and review-only recommendations for the dashboard queue', () => {
     expect(dashboardRecommendationStatusFilters()).toEqual(['pending', 'needs_review']);
+  });
+});
+
+describe('dashboard product workbench', () => {
+  const ledgers = [
+    {
+      asin: 'B001',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-02',
+      activeDays: 1,
+      inferredStage: 'keyword_exploration',
+      stageReasons: [],
+      daily: [],
+      totals: { impressions: 0, clicks: 0, cost: 0, orders: 0, sales: 0, acos: 0, cpc: 0, cvr: 0, currency: 'USD' },
+      events: [],
+    },
+    {
+      asin: 'B002',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-02',
+      activeDays: 1,
+      inferredStage: 'keyword_exploration',
+      stageReasons: [],
+      daily: [],
+      totals: { impressions: 0, clicks: 0, cost: 0, orders: 0, sales: 0, acos: 0, cpc: 0, cvr: 0, currency: 'USD' },
+      events: [],
+    },
+  ] satisfies ProductHistoryLedgerView[];
+
+  it('does not silently use the first product when no global ASIN is selected', () => {
+    expect(dashboardSelectProductHistory(ledgers, '')).toBeUndefined();
+  });
+
+  it('uses the selected global ASIN for the product history ledger', () => {
+    expect(dashboardSelectProductHistory(ledgers, 'b002')?.asin).toBe('B002');
+  });
+
+  it('routes the dashboard primary task to product management before product-scoped work', () => {
+    expect(dashboardProductWorkbenchAction({
+      scopeAsin: '',
+      baseAction: { route: 'ad-quant', label: '复核广告量化', title: '可以分析：真实报表和日级指标已闭合' },
+    })).toEqual({
+      route: 'product-management',
+      label: '选择产品',
+      title: '先选择产品工作台',
+    });
   });
 });
 

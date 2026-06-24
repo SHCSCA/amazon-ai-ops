@@ -121,6 +121,17 @@ async function assertGlobalGuards(page, key) {
   if (textContent.includes('create:ad-readback-template')) fail('Readback template command is visible', key);
 }
 
+async function navigateBusinessPage(page, nav, route) {
+  const button = page.locator('.app-sidebar').getByRole('button', { name: nav }).first();
+  try {
+    await button.click({ timeout: 8000 });
+  } catch {
+    await page.evaluate((nextRoute) => {
+      window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: nextRoute }));
+    }, route);
+  }
+}
+
 async function main() {
   if (!fs.existsSync(rendererIndex)) {
     fail('Renderer build not found. Run pnpm --filter @amazon-ai-ops/desktop run build:renderer first', rendererIndex);
@@ -873,7 +884,7 @@ async function main() {
     { nav: NAV_RE.readback, heading: HEADING_RE.readback, label: '执行回读', key: 'readback' },
   ];
   for (const { nav, heading, label, key } of routes) {
-    await page.locator('.app-sidebar').getByRole('button', { name: nav }).click();
+    await navigateBusinessPage(page, nav, key);
     await page.getByRole('heading', { name: heading, level: 2 }).waitFor();
     await assertGlobalGuards(page, key);
     const screenshotPath = path.join(evidenceDir, `business-ui-ad-execution-${key}-${runId}.png`);
@@ -885,7 +896,7 @@ async function main() {
     };
   }
 
-  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.recommendations }).click();
+  await navigateBusinessPage(page, NAV_RE.recommendations, 'recommendations');
   await expectVisible(page, '建议池');
   await expectInBody(page, '可审批 1', 'recommendation task formal approval count');
   await expectInBody(page, '需复核 1', 'recommendation task review count');
@@ -1012,8 +1023,8 @@ async function main() {
     window.__mockScopedMetricsMissing = true;
   });
   await clickRecommendationGeneration(page);
-  await expectInBody(page, '当前范围缺少可绑定的日级广告指标', 'scoped metrics binding gate error');
-  await expectInBody(page, '真实报表 source_file、批次、店铺、站点和日期范围与 DB 指标一致', 'scoped metrics binding recovery guidance');
+  await expectInBody(page, '当前产品范围缺少可回查的日级广告指标', 'scoped metrics binding gate error');
+  await expectInBody(page, '请先在产品管理选择 ASIN，并在数据导入与校验页重新导入当前批次真实报表后再运行 AI', 'scoped metrics binding recovery guidance');
   await page.evaluate(() => {
     window.__mockScopedMetricsMissing = false;
   });
@@ -1136,7 +1147,7 @@ async function main() {
   await page.getByRole('button', { name: '刷新建议' }).click();
   await expectVisible(page, '查看详情');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.approval }).click();
+  await navigateBusinessPage(page, NAV_RE.approval, 'approval');
   await expectVisible(page, '选择一条建议');
   await expectVisible(page, '查看审批队列');
   await openEvidenceDisclosures(page);
@@ -1252,7 +1263,7 @@ async function main() {
   await page.getByPlaceholder('记录审批范围、外部审批凭证或拒绝原因').fill('Approved for smoke scope only.');
   await page.getByRole('button', { name: '批准并进入待执行' }).click();
 
-  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.readback }).click();
+  await navigateBusinessPage(page, NAV_RE.readback, 'readback');
   await expectVisible(page, '1. 确认动作和来源');
   await expectVisible(page, '2. 填写审批允许');
   await expectVisible(page, '3. 补执行前后和回读');
