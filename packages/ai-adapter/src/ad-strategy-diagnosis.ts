@@ -543,7 +543,7 @@ export class AdStrategyDiagnoser {
       return this.fallback(input, `AI 返回的自然语言字段不是${this.outputLanguage()}。`);
     }
 
-    return output;
+    return normalizeOutputEvidenceRefs(output, input);
   }
 
   private fallback(input: AdStrategyDiagnosisInput, reason: string): AdStrategyDiagnosisOutput {
@@ -656,6 +656,151 @@ function normalizeCandidates(value: unknown): AiReasonedDecision[] {
         confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
       };
     });
+}
+
+function normalizeOutputEvidenceRefs(
+  output: AdStrategyDiagnosisOutput,
+  input: AdStrategyDiagnosisInput,
+): AdStrategyDiagnosisOutput {
+  const evidencePack = input.evidencePack || [];
+  if (!evidencePack.length) return output;
+
+  const evidenceIds = new Set(evidencePack.map((item) => item.evidenceId));
+  const withRefs = {
+    ...output,
+    lifecycleStageEvidenceRefs: ensureEvidenceRefs(
+      output.lifecycleStageEvidenceRefs,
+      evidencePack,
+      evidenceIds,
+      ['timeline', 'metric', 'product_context'],
+    ),
+    thresholdSuggestions: {
+      targetAcos: {
+        ...output.thresholdSuggestions.targetAcos,
+        evidenceRefs: ensureEvidenceRefs(
+          output.thresholdSuggestions.targetAcos.evidenceRefs || [],
+          evidencePack,
+          evidenceIds,
+          ['product_context', 'timeline', 'metric'],
+        ),
+      },
+      highAcosThreshold: {
+        ...output.thresholdSuggestions.highAcosThreshold,
+        evidenceRefs: ensureEvidenceRefs(
+          output.thresholdSuggestions.highAcosThreshold.evidenceRefs || [],
+          evidencePack,
+          evidenceIds,
+          ['timeline', 'metric'],
+        ),
+      },
+      noOrderClickThreshold: {
+        ...output.thresholdSuggestions.noOrderClickThreshold,
+        evidenceRefs: ensureEvidenceRefs(
+          output.thresholdSuggestions.noOrderClickThreshold.evidenceRefs || [],
+          evidencePack,
+          evidenceIds,
+          ['timeline', 'metric'],
+        ),
+      },
+      minSpend: {
+        ...output.thresholdSuggestions.minSpend,
+        evidenceRefs: ensureEvidenceRefs(
+          output.thresholdSuggestions.minSpend.evidenceRefs || [],
+          evidencePack,
+          evidenceIds,
+          ['timeline', 'metric'],
+        ),
+      },
+    },
+    aiCandidates: output.aiCandidates.map((candidate) => ({
+      ...candidate,
+      evidenceRefs: normalizeCandidateEvidenceRefs(candidate, evidencePack, evidenceIds),
+    })),
+    insightOnlyCandidates: output.insightOnlyCandidates.map((candidate) => ({
+      ...candidate,
+      evidenceRefs: filterExistingEvidenceRefs(candidate.evidenceRefs, evidenceIds),
+    })),
+  };
+
+  return withRefs;
+}
+
+function ensureEvidenceRefs(
+  refs: string[],
+  evidencePack: AiEvidenceItem[],
+  evidenceIds: Set<string>,
+  preferredTypes: AiEvidenceType[],
+): string[] {
+  const existingRefs = filterExistingEvidenceRefs(refs, evidenceIds);
+  if (existingRefs.length > 0) return existingRefs;
+  for (const type of preferredTypes) {
+    const refsForType = evidencePack
+      .filter((item) => item.type === type)
+      .map((item) => item.evidenceId)
+      .slice(0, 3);
+    if (refsForType.length > 0) return refsForType;
+  }
+  return [];
+}
+
+function normalizeCandidateEvidenceRefs(
+  candidate: AiReasonedDecision,
+  evidencePack: AiEvidenceItem[],
+  evidenceIds: Set<string>,
+): string[] {
+  const existingRefs = filterExistingEvidenceRefs(candidate.evidenceRefs, evidenceIds);
+  const existingMetricRefs = existingRefs.filter((ref) => {
+    const evidence = evidencePack.find((item) => item.evidenceId === ref);
+    return evidence?.type === 'metric'
+      && evidenceHasReportTrace(evidence)
+      && evidenceMatchesCandidate(evidence, candidate);
+  });
+  if (existingMetricRefs.length > 0) return existingRefs;
+
+  const matchingMetricRefs = evidencePack
+    .filter((item) => item.type === 'metric' && evidenceHasReportTrace(item) && evidenceMatchesCandidate(item, candidate))
+    .map((item) => item.evidenceId)
+    .slice(0, 3);
+  return uniqueStrings([...matchingMetricRefs, ...existingRefs]).slice(0, 5);
+}
+
+function filterExistingEvidenceRefs(refs: string[], evidenceIds: Set<string>): string[] {
+  return uniqueStrings(refs.filter((ref) => evidenceIds.has(ref)));
+}
+
+function evidenceMatchesCandidate(evidence: AiEvidenceItem, candidate: AiReasonedDecision): boolean {
+  const candidateEntity = normalizeEvidenceKey(candidate.entityName);
+  if (!candidateEntity) return false;
+  const evidenceNames = [
+    evidence.entityName,
+    evidence.campaignName,
+    evidence.adGroupName,
+    evidence.asin,
+  ].map((value) => normalizeEvidenceKey(value || ''));
+  if (!evidenceNames.includes(candidateEntity)) return false;
+
+  const candidateType = normalizeEvidenceType(candidate.entityType);
+  const evidenceType = normalizeEvidenceType(evidence.entityType || '');
+  return !candidateType || !evidenceType || candidateType === evidenceType
+    || (candidateType === 'target' && evidenceType === 'search_term')
+    || (candidateType === 'search_term' && evidenceType === 'target')
+    || (candidateType === 'target' && evidenceType === 'keyword')
+    || (candidateType === 'keyword' && evidenceType === 'target');
+}
+
+function normalizeEvidenceType(value: string): string {
+  const normalized = normalizeEvidenceKey(value);
+  if (normalized === 'adgroup') return 'ad_group';
+  if (normalized === 'keyword') return 'target';
+  return normalized;
+}
+
+function normalizeEvidenceKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function requiresCjkLanguage(language: string): boolean {

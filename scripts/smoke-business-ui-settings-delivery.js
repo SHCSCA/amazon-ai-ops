@@ -832,7 +832,8 @@ async function main() {
   await expandDetails(page, 'AI 调用审计');
   await expectVisible(page, '最近 AI 是否参与');
   await expectVisible(page, '最近 AI 调用失败');
-  await expectVisible(page, '检查模型、Base URL、标准 JSON 输出格式和证据包');
+  await expectVisible(page, '检查模型、Base URL、固定输出格式和证据包');
+  await assertAbsent(page, '标准 JSON 输出格式', 'settings-ai-audit-operator-copy');
   await expectVisible(page, 'AI response was not valid JSON');
   await expectVisible(page, '日志数量');
   await expectVisible(page, '广告策略诊断');
@@ -885,10 +886,12 @@ async function main() {
   await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
   await expandDetails(page, '高级 AI 参数');
-  await expectVisible(page, 'ad_strategy_diagnosis_v1');
-  await expectVisible(page, 'ad_action_reason_v1');
-  await expectVisible(page, 'listing_rewrite_v1');
-  await page.getByLabel('AI 人设与表达风格').fill('你是中文亚马逊广告量化运营顾问。必须输出简体中文 JSON，并引用证据说明判断。');
+  await expectVisible(page, '广告诊断 v1');
+  await expectVisible(page, '系统固定');
+  await assertAbsent(page, 'ad_strategy_diagnosis_v1', 'settings-advanced-contract-tags');
+  await assertAbsent(page, 'ad_action_reason_v1', 'settings-advanced-contract-tags');
+  await assertAbsent(page, 'listing_rewrite_v1', 'settings-advanced-contract-tags');
+  await page.getByLabel('AI 人设与表达风格').fill('你是中文亚马逊广告量化运营顾问。必须输出简体中文，并引用证据说明判断。');
   await page.getByRole('button', { name: '保存 AI 设置' }).click();
   await page.getByText('AI 设置已保存', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, 'AI 可用');

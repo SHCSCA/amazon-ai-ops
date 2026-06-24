@@ -40,7 +40,7 @@ describe('buildAiCallDiagnostics', () => {
     expect(diagnostics.detail).toContain('输出格式错误');
     expect(diagnostics.detail).not.toContain('ad_strategy_diagnosis');
     expect(diagnostics.detail).not.toContain('schemaVersion');
-    expect(diagnostics.nextAction).toBe('检查模型、Base URL、标准 JSON 输出格式和证据包');
+    expect(diagnostics.nextAction).toBe('检查模型、Base URL、固定输出格式和证据包');
   });
 
   it('uses createdAt and id to find the latest call instead of trusting input order', () => {

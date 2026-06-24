@@ -26,6 +26,8 @@ export interface NormalizedAiSettings {
   ai_last_test_message: string;
 }
 
+export const STRUCTURED_AI_OUTPUT_TOKEN_FLOOR = 8192;
+
 export function normalizeAiSettingsRecord(settings: Record<string, unknown> = {}): NormalizedAiSettings {
   const asStrings = Object.fromEntries(
     Object.entries(settings).map(([key, value]) => [key, String(value ?? '')]),
@@ -34,12 +36,12 @@ export function normalizeAiSettingsRecord(settings: Record<string, unknown> = {}
   const baseUrl = (stringSetting(settings.ai_base_url) || stringSetting(settings.aiBaseUrl) || 'https://api.deepseek.com').replace(/\/+$/, '');
   const model = stringSetting(settings.ai_model) || stringSetting(settings.aiModel) || 'deepseek-v4-flash';
   const temperature = stringSetting(settings.ai_temperature) || stringSetting(settings.aiTemperature) || '0.3';
-  const maxTokens = stringSetting(settings.ai_max_tokens) || stringSetting(settings.aiMaxTokens) || '8192';
+  const maxTokens = normalizeStructuredAiMaxTokens(settings.ai_max_tokens || settings.aiMaxTokens);
   const outputLanguage =
     stringSetting(settings.ai_output_language) || stringSetting(settings.aiOutputLanguage) || '简体中文';
   const persona = stringSetting(settings.ai_persona) || stringSetting(settings.aiPersona) || [
     '你是中文亚马逊广告运营顾问，擅长结合真实广告报表、产品阶段、成本结构和运营事件做量化分析。',
-    '请用运营能直接理解的中文解释阈值、风险和建议；只输出结构化 JSON，不执行广告动作。',
+    '请用运营能直接理解的中文解释阈值、风险和建议；字段结构由系统固定输出合同约束，不执行广告动作。',
   ].join('');
   const lastTestStatus = stringSetting(settings.ai_last_test_status) || stringSetting(settings.aiLastTestStatus);
   const lastTestAt = stringSetting(settings.ai_last_test_at) || stringSetting(settings.aiLastTestAt);
@@ -73,6 +75,12 @@ export function normalizeAiSettingsRecord(settings: Record<string, unknown> = {}
     aiLastTestMessage: lastTestMessage,
     ai_last_test_message: lastTestMessage,
   };
+}
+
+export function normalizeStructuredAiMaxTokens(value: unknown): string {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return String(STRUCTURED_AI_OUTPUT_TOKEN_FLOOR);
+  return String(Math.max(STRUCTURED_AI_OUTPUT_TOKEN_FLOOR, Math.trunc(parsed)));
 }
 
 export function sanitizeAiSettingsForRenderer(settings: Record<string, unknown> = {}): Record<string, string | boolean> {

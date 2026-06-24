@@ -26,6 +26,7 @@ const DEFAULT_AI_SETTINGS: AiProviderSettings = {
   aiLastTestModel: '',
   aiLastTestMessage: '',
 };
+const STRUCTURED_AI_OUTPUT_TOKEN_FLOOR = 8192;
 
 const DEFAULT_RULE_CONFIG: SettingsRuleConfig = {
   targetAcos: 0.25,
@@ -92,11 +93,11 @@ function parseListInput(value: string): string[] {
 }
 
 export function aiAuditIntroText(): string {
-  return '只显示最近调用的模型、标准 JSON 输出格式、证据包规模和成败状态；不保存 API Key，也不展示完整提示词。';
+  return '只显示最近调用的模型、固定输出格式、证据包规模和成败状态；不保存 API Key，也不展示完整提示词。';
 }
 
 export function aiAuditPurposeText(): string {
-  return '用于排查 AI 是否成功返回标准 JSON、是否带输出格式版本、是否带证据包摘要。';
+  return '用于排查 AI 是否成功返回固定字段、是否带输出格式版本、是否带证据包摘要。';
 }
 
 export function aiAuditLogFormatLine(log: Pick<AiCallLogView, 'schemaVersion' | 'promptVersion'>): string {
@@ -128,11 +129,17 @@ export function settingsAiContractTags(): TagMetricItem[] {
 
 export function settingsAiContractVersionItems(): TagMetricItem[] {
   return aiOutputContracts.map((contract) => ({
-    label: contract.label,
-    value: contract.version,
+    label: `${contract.label} v1`,
+    value: '系统固定',
     detail: `${contract.usedBy}：${contract.consumedAs}`,
     tone: 'neutral',
   }));
+}
+
+function clampStructuredAiMaxTokens(value: string): string {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return String(STRUCTURED_AI_OUTPUT_TOKEN_FLOOR);
+  return String(Math.max(STRUCTURED_AI_OUTPUT_TOKEN_FLOOR, Math.trunc(parsed)));
 }
 
 function normalizeAiSettings(settings: Record<string, unknown> | null | undefined): AiProviderSettings {
@@ -515,7 +522,7 @@ export function SettingsPage() {
       <PageHeader
         eyebrow="系统与交付"
         title="AI 设置"
-        description="配置模型连接、JSON 输出合同、阈值和本地诊断。API Key 全程脱敏。"
+        description="配置模型连接、固定输出合同、阈值和本地诊断。API Key 全程脱敏。"
         primaryTask="配置 AI 与规则阈值"
         nextAction={keyPresent ? '测试 AI 连接' : '填写 API Key'}
       />
@@ -603,11 +610,13 @@ export function SettingsPage() {
                 />
               </label>
               <label>
-                Max Tokens
+                结构输出预算
                 <input
                   type="number"
+                  min={STRUCTURED_AI_OUTPUT_TOKEN_FLOOR}
                   value={aiSettings.aiMaxTokens}
                   onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiMaxTokens', event.target.value))}
+                  onBlur={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiMaxTokens', clampStructuredAiMaxTokens(event.target.value)))}
                 />
               </label>
               <label>

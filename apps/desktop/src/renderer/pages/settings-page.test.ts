@@ -23,6 +23,7 @@ describe('settings AI audit copy', () => {
     expect(copy).toContain('输出格式 广告策略诊断 v1');
     expect(copy).toContain('广告策略诊断');
     expect(copy).toContain('完整提示词');
+    expect(copy).not.toContain('JSON');
     expect(copy).not.toContain('ad_strategy_diagnosis');
     expect(copy).not.toContain('schema');
     expect(copy).not.toContain('prompt');

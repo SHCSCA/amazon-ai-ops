@@ -24,7 +24,7 @@ export function buildAiCallDiagnostics(logs: AiCallLogView[]): AiCallDiagnostics
       status: 'blocked',
       headline: '最近 AI 调用失败',
       detail: `${aiCallKindLabel(latest)} / ${latest.model} / ${operatorFacingAiError(latest.errorMessage)} / ${evidenceLabel}。`,
-      nextAction: '检查模型、Base URL、标准 JSON 输出格式和证据包',
+      nextAction: '检查模型、Base URL、固定输出格式和证据包',
     };
   }
 
@@ -44,7 +44,7 @@ export function operatorFacingAiError(message?: string): string {
   }
   return text
     .replace(/schemaVersion/gi, '输出格式')
-    .replace(/JSON schema/gi, '标准 JSON 输出格式')
+    .replace(/JSON schema/gi, '固定输出格式')
     .replace(/\bschema\b/gi, '输出格式')
     .replace(/AI 输出\s+输出格式\s+错误/g, 'AI 输出格式错误');
 }
@@ -95,5 +95,5 @@ export function aiCallOutputFormatLabel(log: Pick<AiCallLogView, 'schemaVersion'
   if (/ad_strategy_diagnosis/i.test(raw)) return `广告策略诊断${suffix}`;
   if (/ad_action_reason/i.test(raw)) return `广告建议解释${suffix}`;
   if (/listing_rewrite/i.test(raw)) return `Listing 草案${suffix}`;
-  return version ? `标准 JSON v${version}` : '标准 JSON 已记录';
+  return version ? `固定输出格式 v${version}` : '固定输出格式已记录';
 }

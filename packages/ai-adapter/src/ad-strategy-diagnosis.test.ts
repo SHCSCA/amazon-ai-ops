@@ -263,13 +263,15 @@ describe('AdStrategyDiagnoser', () => {
     });
     expect(result.lifecycleStageEvidenceRefs).toEqual(['metric_1']);
     expect(result.thresholdSuggestions.targetAcos.value).toBe(0.35);
-    expect(result.thresholdSuggestions.targetAcos.evidenceRefs).toEqual(['product_1']);
+    expect(result.thresholdSuggestions.targetAcos.evidenceRefs).toEqual(['metric_1']);
+    expect(result.thresholdSuggestions.highAcosThreshold.evidenceRefs).toEqual(['metric_1']);
     expect(result.aiCandidates[0]).toMatchObject({
       entityType: 'search_term',
       entityName: 'smart lock outdoor',
       actionType: 'lower_bid',
-      evidenceRefs: ['metric_1', 'event_1'],
+      evidenceRefs: ['metric_1'],
     });
+    expect(result.aiCandidates[0].evidenceRefs).not.toContain('event_1');
     const prompt = provider.messages.map((message) => message.content).join('\n');
     expect(prompt).toContain('productContexts');
     expect(prompt).toContain('productHistoryLedgers');
@@ -346,6 +348,109 @@ describe('AdStrategyDiagnoser', () => {
     expect(result.summary).toContain('AI 诊断不可用');
     expect(result.riskWarnings[0]).toContain('AI 不可用');
     expect(result.summary).toMatch(/[一-龥]/);
+  });
+
+  it('repairs missing or invented evidence references with traceable evidence from the current pack', async () => {
+    const provider = new FakeProvider({
+      success: true,
+      content: JSON.stringify({
+        schemaVersion: 'ad_strategy_diagnosis_v1',
+        lifecycleStage: 'keyword_exploration',
+        lifecycleStageReason: '阶段判断引用了当前时间线与指标证据。',
+        lifecycleStageEvidenceRefs: ['timeline_not_real'],
+        summary: '当前搜索词花费达到门槛，可以形成可复核的降价建议。',
+        mainProblems: ['NO_ORDER_SPEND'],
+        thresholdSuggestions: {
+          targetAcos: { value: 0.32, reason: '使用当前阶段阈值。', evidenceRefs: ['product_not_real'] },
+          highAcosThreshold: { value: 0.48, reason: '使用当前时间线阈值。', evidenceRefs: [] },
+          noOrderClickThreshold: { value: 24, reason: '点击已达到样本。', evidenceRefs: [] },
+          minSpend: { value: 12, reason: '花费已达到样本。', evidenceRefs: [] },
+        },
+        aiCandidates: [{
+          entityType: 'search_term',
+          entityName: 'smart lock outdoor',
+          actionType: 'lower_bid',
+          recommendedValue: '1.10',
+          reason: '无订单花费达到门槛，建议小幅降价。',
+          reasoningSteps: ['当前指标证据显示点击和花费都已达到门槛。'],
+          evidenceRefs: [],
+          riskWarnings: ['执行前仍需人工审批。'],
+          confidence: 0.81,
+        }],
+        insightOnlyCandidates: [],
+        riskWarnings: ['执行前必须复核广告后台当前值。'],
+      }),
+    });
+    const diagnoser = new AdStrategyDiagnoser(provider);
+
+    const result = await diagnoser.diagnose({
+      scope: {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        asin: 'B001',
+        currency: 'USD',
+      },
+      metrics: [],
+      adObjectTimelines: [],
+      operationEvents: [],
+      currentRuleConfig: {
+        targetAcos: 0.25,
+        highAcosThreshold: 0.4,
+        noOrderClickThreshold: 30,
+        minSpend: 10,
+      },
+      ruleCandidates: [],
+      evidencePack: [
+        {
+          evidenceId: 'timeline_1',
+          type: 'timeline',
+          label: 'smart lock outdoor 时间线',
+          dateRange: '2026-06-01~2026-06-12',
+          storeName: 'FT-US-US',
+          marketplaceCode: 'US',
+          asin: 'B001',
+          entityType: 'search_term',
+          entityName: 'smart lock outdoor',
+          timeline: {
+            activeDays: 12,
+            inferredStage: 'keyword_exploration',
+          },
+        },
+        {
+          evidenceId: 'metric_1',
+          type: 'metric',
+          label: 'smart lock outdoor / 2026-06-10',
+          dateRange: '2026-06-10~2026-06-10',
+          batchId: 'batch_1',
+          reportType: 'search_term',
+          sourceFile: 'C:/reports/search-term.xlsx',
+          sourceRow: 18,
+          storeName: 'FT-US-US',
+          marketplaceCode: 'US',
+          asin: 'B001',
+          campaignName: 'SP exact',
+          adGroupName: 'Main',
+          entityType: 'search_term',
+          entityName: 'smart lock outdoor',
+          metrics: {
+            clicks: 34,
+            cost: 42,
+            orders: 0,
+            sales: 0,
+            currency: 'USD',
+          },
+        },
+      ],
+    });
+
+    expect(result.source).toBe('ai');
+    expect(result.lifecycleStageEvidenceRefs).toEqual(['timeline_1']);
+    expect(result.thresholdSuggestions.targetAcos.evidenceRefs).toEqual(['timeline_1']);
+    expect(result.thresholdSuggestions.highAcosThreshold.evidenceRefs).toEqual(['timeline_1']);
+    expect(result.aiCandidates[0].evidenceRefs).toEqual(['metric_1']);
+    expect(JSON.stringify(result)).not.toContain('not_real');
   });
 
   it('parses JSON returned inside a markdown fence', async () => {

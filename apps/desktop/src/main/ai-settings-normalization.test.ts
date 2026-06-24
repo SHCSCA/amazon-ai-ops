@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeAiSettingsForSaveInput,
+  normalizeAiSettingsRecord,
   normalizeAiSettingsForTestInput,
   sanitizeAiSettingsForRenderer,
 } from './ai-settings-normalization';
@@ -81,6 +82,29 @@ describe('ai settings normalization', () => {
   it('defaults max tokens high enough for structured evidence-chain JSON output', () => {
     const result = sanitizeAiSettingsForRenderer({});
 
+    expect(result.aiMaxTokens).toBe('8192');
+    expect(result.ai_max_tokens).toBe('8192');
+  });
+
+  it('upgrades legacy low max tokens so structured AI output cannot be truncated by old settings', () => {
+    const result = normalizeAiSettingsRecord({
+      aiMaxTokens: '700',
+    });
+
+    expect(result.aiMaxTokens).toBe('8192');
+    expect(result.ai_max_tokens).toBe('8192');
+  });
+
+  it('persists the structured output token floor when saving from an old renderer state', () => {
+    const result = normalizeAiSettingsForSaveInput({
+      aiApiKey: '',
+      aiKeyConfigured: true,
+      aiBaseUrl: 'https://api.deepseek.com',
+      aiModel: 'deepseek-v4-flash',
+      aiMaxTokens: '700',
+    }, savedSettings);
+
+    expect(result.aiApiKey).toBe('sk-saved-live-key-123456');
     expect(result.aiMaxTokens).toBe('8192');
     expect(result.ai_max_tokens).toBe('8192');
   });
