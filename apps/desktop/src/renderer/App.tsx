@@ -13,6 +13,7 @@ import { ListingOptimizationPage } from './pages/listing-optimization-page';
 import { OperationEventsPage } from './pages/operation-events-page';
 import { OperationScopePage } from './pages/operation-scope-page';
 import { ProductConfigPage } from './pages/product-config-page';
+import { ProductManagementPage } from './pages/product-management-page';
 import { ReadbackPage } from './pages/readback-page';
 import { RecommendationsPage } from './pages/recommendations-page';
 import { SchedulerPage } from './pages/scheduler-page';
@@ -193,6 +194,7 @@ function LoginPage() {
 
 function BusinessRoutePage({ route }: { route: AppRoute }) {
   if (route === 'dashboard') return <DashboardPage />;
+  if (route === 'product-management') return <ProductManagementPage />;
   if (route === 'operation-scope') return <OperationScopePage />;
   if (route === 'data-collection') return <DataCollectionPage />;
   if (route === 'data-import-validation') return <DataImportValidationPage />;

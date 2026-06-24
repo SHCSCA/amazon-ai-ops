@@ -1,5 +1,6 @@
 export type AppRoute =
   | 'dashboard'
+  | 'product-management'
   | 'operation-scope'
   | 'data-collection'
   | 'data-import-validation'

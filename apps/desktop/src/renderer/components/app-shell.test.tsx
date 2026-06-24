@@ -22,12 +22,22 @@ describe('Sidebar navigation', () => {
   it('uses group-local absolute numbering instead of global accumulated numbers', () => {
     expect(navItemOrdinal(0)).toBe('01');
     expect(navGroups.map((group) => group.items.map((_, index) => navItemOrdinal(index)))).toEqual([
-      ['01'],
-      ['01', '02', '03', '04', '05', '06'],
+      ['01', '02'],
+      ['01', '02', '03', '04', '05'],
       ['01', '02', '03'],
       ['01', '02'],
       ['01', '02', '03'],
     ]);
+  });
+
+  it('renders product management as a top-level operations entry', () => {
+    const tree = Sidebar({ activeRoute: 'product-management', onNavigate: () => undefined }) as ReactElement;
+    const navText = collectText(tree);
+
+    expect(navText).toContain('今日看板');
+    expect(navText).toContain('产品管理');
+    expect(navText).not.toContain('产品 ACOS 配置');
+    expect(navGroups[0].items.map((item) => item.id)).toEqual(['dashboard', 'product-management']);
   });
 
   it('renders the v1.5 high-fidelity business-domain labels', () => {

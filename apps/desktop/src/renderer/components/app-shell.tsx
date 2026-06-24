@@ -2,7 +2,13 @@ import React from 'react';
 import type { AppRoute, NavGroup } from '../types';
 
 export const navGroups: NavGroup[] = [
-  { label: '运营总览', items: [{ id: 'dashboard', label: '今日看板' }] },
+  {
+    label: '运营总览',
+    items: [
+      { id: 'dashboard', label: '今日看板' },
+      { id: 'product-management', label: '产品管理' },
+    ],
+  },
   {
     label: '数据与量化',
     items: [
@@ -10,7 +16,6 @@ export const navGroups: NavGroup[] = [
       { id: 'data-collection', label: '批量数据采集' },
       { id: 'data-import-validation', label: '指标核验入库' },
       { id: 'operation-events', label: '运营事件' },
-      { id: 'product-config', label: '产品 ACOS 配置' },
       { id: 'ad-quant', label: '量化诊断中心' },
     ],
   },
