@@ -51,6 +51,7 @@ import { annotateRecommendationsWithStrategy, bindRecommendationsToScopeAsin, bu
 import { buildAdAiEvidencePack, summarizeAiEvidencePack } from './ad-ai-evidence-pack';
 import { validateAiDiagnosisEvidence } from './ad-ai-evidence-validator';
 import { buildAdProductHistoryLedger } from './ad-product-history-ledger';
+import { filterBusinessPipelineOperationEvents } from './operation-event-scope';
 import { assertRecommendationMetricsLoaded, filterFormalRecommendationMetrics } from './recommendation-generation-gate';
 import { buildListingAiCallLogInput, buildListingRewritePrompt, parseAiDraftResponse } from './listing-ai-draft';
 import { normalizeManualListingContent } from './listing-manual-content';
@@ -1801,14 +1802,17 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
     .map((item) => item.label);
 
   const quant = loadBusinessQuantSummary(scope, reportCoverage.realReportFileCount, metricSource);
-  const operationEvents = state.operationEventRepo?.findByScope({
+  const operationEventsInRange = state.operationEventRepo?.findByScope({
     dateFrom: scope.dateFrom,
     dateTo: scope.dateTo,
     storeName: scope.storeName,
     marketplaceCode: scope.marketplaceCode,
-    asin: scope.asin,
-    limit: 50,
+    limit: 300,
   }) || [];
+  const operationEvents = filterBusinessPipelineOperationEvents({
+    scopeAsin: scope.asin,
+    events: operationEventsInRange,
+  });
   const productContexts = loadProductStrategyContexts(scope);
   const productHistoryMetrics = metricSource
     ? loadBusinessRecommendationMetrics(scope, metricSource, 5000)
