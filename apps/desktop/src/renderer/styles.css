@@ -664,6 +664,12 @@ button:active:not(:disabled) {
   background: #f8fbff;
 }
 
+.button-active {
+  border-color: var(--primary);
+  background: #eff6ff;
+  color: var(--primary);
+}
+
 .primary-button:disabled,
 .secondary-button:disabled,
 .primary-button:disabled:hover,

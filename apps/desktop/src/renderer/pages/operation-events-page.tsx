@@ -104,12 +104,33 @@ function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
 
-function emptyDraft(scope: ReturnType<typeof useScopeStore.getState>['scope']) {
+export type OperationEventViewMode = 'product' | 'global' | 'all';
+
+export function filterOperationEventsForView(
+  events: OperationEventView[],
+  mode: OperationEventViewMode,
+  selectedAsin?: string,
+): OperationEventView[] {
+  const asin = normalizeAsin(selectedAsin);
+  return (events || []).filter((event) => {
+    const eventAsin = normalizeAsin(event.asin);
+    const hasAdObject = Boolean(event.campaignName || event.adGroupName);
+    const isGlobal = !eventAsin && !hasAdObject;
+    if (mode === 'global') return isGlobal;
+    if (mode === 'product') return isGlobal || Boolean(asin && eventAsin === asin);
+    return true;
+  });
+}
+
+export function buildOperationEventDraftForScope(
+  scope: ReturnType<typeof useScopeStore.getState>['scope'],
+  mode: OperationEventViewMode,
+) {
   return {
     eventDate: scope.dateTo || scope.dateFrom,
     storeName: scope.storeName,
     marketplaceCode: scope.marketplaceCode,
-    asin: scope.asin || '',
+    asin: mode === 'product' ? scope.asin || '' : '',
     campaignName: '',
     adGroupName: '',
     eventType: 'coupon',
@@ -118,6 +139,19 @@ function emptyDraft(scope: ReturnType<typeof useScopeStore.getState>['scope']) {
     notes: '',
     evidencePath: '',
   };
+}
+
+export function operationEventScopeLabel(event: OperationEventView, selectedAsin?: string): string {
+  const eventAsin = normalizeAsin(event.asin);
+  const hasAdObject = Boolean(event.campaignName || event.adGroupName);
+  if (!eventAsin && !hasAdObject) return '全局';
+  if (hasAdObject) return '广告对象';
+  if (eventAsin && eventAsin === normalizeAsin(selectedAsin)) return '产品';
+  return '其他产品';
+}
+
+function normalizeAsin(value?: string): string {
+  return String(value || '').trim().toUpperCase();
 }
 
 function formatEventType(type: string): string {
@@ -141,24 +175,30 @@ function formatEventScope(event: OperationEventView): string {
 export function OperationEventsPage() {
   const { scope } = useScopeStore();
   const [events, setEvents] = useState<OperationEventView[]>([]);
-  const [draft, setDraft] = useState(() => emptyDraft(scope));
+  const [viewMode, setViewMode] = useState<OperationEventViewMode>(scope.asin ? 'product' : 'global');
+  const [draft, setDraft] = useState(() => buildOperationEventDraftForScope(scope, scope.asin ? 'product' : 'global'));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
+  const visibleEvents = useMemo(
+    () => filterOperationEventsForView(events, viewMode, scope.asin),
+    [events, scope.asin, viewMode],
+  );
+
   const eventsByDate = useMemo(() => {
     const groups = new Map<string, OperationEventView[]>();
-    for (const event of events) {
+    for (const event of visibleEvents) {
       const rows = groups.get(event.eventDate) || [];
       rows.push(event);
       groups.set(event.eventDate, rows);
     }
     return Array.from(groups.entries()).sort(([a], [b]) => b.localeCompare(a));
-  }, [events]);
+  }, [visibleEvents]);
 
   const selectedTypeHint = EVENT_USAGE_HINTS[draft.eventType] || EVENT_USAGE_HINTS.manual_note;
-  const specificEventCount = events.filter((event) => event.asin || event.campaignName || event.adGroupName).length;
+  const specificEventCount = visibleEvents.filter((event) => event.asin || event.campaignName || event.adGroupName).length;
 
   function applyPreset(preset: (typeof EVENT_PRESETS)[number]) {
     setDraft({
@@ -175,7 +215,10 @@ export function OperationEventsPage() {
     setError('');
     try {
       const rows = await (window as any).electronAPI.listOperationEvents({
-        ...scope,
+        dateFrom: scope.dateFrom,
+        dateTo: scope.dateTo,
+        storeName: scope.storeName,
+        marketplaceCode: scope.marketplaceCode,
         limit: 300,
       });
       setEvents(Array.isArray(rows) ? rows : []);
@@ -187,7 +230,9 @@ export function OperationEventsPage() {
   }
 
   useEffect(() => {
-    setDraft(emptyDraft(scope));
+    const nextViewMode = scope.asin ? 'product' : 'global';
+    setViewMode(nextViewMode);
+    setDraft(buildOperationEventDraftForScope(scope, nextViewMode));
     loadEvents();
   }, [scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode, scope.asin]);
 
@@ -204,7 +249,7 @@ export function OperationEventsPage() {
         notes: draft.notes || undefined,
         evidencePath: draft.evidencePath || undefined,
       });
-      setDraft(emptyDraft(scope));
+      setDraft(buildOperationEventDraftForScope(scope, viewMode));
       setMessage('运营事件已记录，会进入广告量化和 AI 诊断上下文。');
       await loadEvents();
     } catch (caught) {
@@ -278,7 +323,7 @@ export function OperationEventsPage() {
             <div className="operation-summary-grid">
               <div>
                 <span>总事件</span>
-                <strong>{events.length}</strong>
+                <strong>{visibleEvents.length}</strong>
               </div>
               <div>
                 <span>绑定对象</span>
@@ -286,8 +331,38 @@ export function OperationEventsPage() {
               </div>
               <div>
                 <span>全范围事件</span>
-                <strong>{Math.max(0, events.length - specificEventCount)}</strong>
+                <strong>{Math.max(0, visibleEvents.length - specificEventCount)}</strong>
               </div>
+            </div>
+            <div className="business-pill-row">
+              <button
+                className={`secondary-button compact-button ${viewMode === 'product' ? 'button-active' : ''}`}
+                disabled={!scope.asin}
+                onClick={() => {
+                  setViewMode('product');
+                  setDraft(buildOperationEventDraftForScope(scope, 'product'));
+                }}
+                type="button"
+              >
+                当前产品
+              </button>
+              <button
+                className={`secondary-button compact-button ${viewMode === 'global' ? 'button-active' : ''}`}
+                onClick={() => {
+                  setViewMode('global');
+                  setDraft(buildOperationEventDraftForScope(scope, 'global'));
+                }}
+                type="button"
+              >
+                全局事件
+              </button>
+              <button
+                className={`secondary-button compact-button ${viewMode === 'all' ? 'button-active' : ''}`}
+                onClick={() => setViewMode('all')}
+                type="button"
+              >
+                全部事件
+              </button>
             </div>
             <div className="action-row">
               <button className="secondary-button" onClick={() => navigate('ad-quant')} type="button">
@@ -415,7 +490,7 @@ export function OperationEventsPage() {
           {error && <p className="blocked-line">{error}</p>}
         </Panel>
 
-        <Panel title="事件时间线" tone={events.length ? 'default' : 'warning'}>
+        <Panel title="事件时间线" tone={visibleEvents.length ? 'default' : 'warning'}>
           {loading && <p className="muted-line">正在读取运营事件...</p>}
           {!loading && eventsByDate.length === 0 && (
             <p className="muted-line">当前范围还没有运营事件。若近期做过折扣、BD、价格、Listing 或库存动作，应先记录，否则 AI 只能看广告表格。</p>
@@ -430,6 +505,9 @@ export function OperationEventsPage() {
                       <div className="event-card-title">
                         <strong>{event.title}</strong>
                         <StatusPill tone="pending">{formatEventType(event.eventType)}</StatusPill>
+                        <StatusPill tone={operationEventScopeLabel(event, scope.asin) === '全局' ? 'pending' : 'ready'}>
+                          {operationEventScopeLabel(event, scope.asin)}
+                        </StatusPill>
                       </div>
                       <p>{formatImpact(event.impactExpectation)} / {formatEventScope(event)}</p>
                       {event.notes && <p className="muted-line">{event.notes}</p>}
