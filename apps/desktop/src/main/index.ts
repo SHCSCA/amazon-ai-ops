@@ -35,6 +35,7 @@ import { summarizeBusinessReportCoverage } from './business-report-coverage';
 import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-preflight-export';
 import { copyDiagnosticEvidenceFileToBundle, copyReportFailureEvidenceFilesToBundle, evaluateDownloadCenterDiagnosticEvidenceFiles } from './download-center-diagnostic-evidence-files';
 import { getLatestDownloadCenterDiagnosticRowForModel } from './download-center-diagnostic-store';
+import { fillAndCommitLingxingDateRange } from './download-center-date-range';
 import { writeDownloadCenterPageModelEnablementAuditBundle } from './page-model-enablement-audit-export';
 import { selectorUsesDateScope, selectorUsesReportScope, validateDownloadCenterPageModel } from './download-center-page-model-validation';
 import { backupExistingDownloadCenterPageModelOverride, getDownloadCenterPageModelOverrideMetadataPath, saveDownloadCenterPageModelOverride } from './download-center-page-model-override-store';
@@ -2337,7 +2338,6 @@ function createDownloadCenterAutomation(
         context,
         dateRange,
       );
-      await page.locator(dateStartInput).fill(dateRange.start);
       const dateEndInput = await assertUsableDownloadCenterActionSelector(
         page,
         'dateEndInput',
@@ -2345,7 +2345,11 @@ function createDownloadCenterAutomation(
         context,
         dateRange,
       );
-      await page.locator(dateEndInput).fill(dateRange.end);
+      await fillAndCommitLingxingDateRange(page, {
+        startInputSelector: dateStartInput,
+        endInputSelector: dateEndInput,
+        dateRange,
+      });
 
       const dailyDetailRadio = renderDownloadCenterSelector(
         selectors.dailyDetailRadio || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.dailyDetailRadio,

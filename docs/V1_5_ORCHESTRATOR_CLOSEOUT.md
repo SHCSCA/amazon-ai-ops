@@ -19,16 +19,16 @@ Earlier delivery work also used orchestrator/product/UX/QA roles to reject prema
 
 ## Historical Readiness
 
-This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui, portable-fix, packaged-launch, 2026-06-23 high-fidelity UI closeout, and 2026-06-24 AI output-contract/package refresh. The current delivery state is recorded in `README.md`; as of the 2026-06-24 refresh the packaged state is `APP_READY` for the refreshed manifest-driven final-readiness `output\codex-evidence\final-readiness-20260624164741.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1782290813493.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-20260624164741-ready`, and matching `verify:v15-ready-safety` result. This includes the renderer UX polish for AI output contract tags, compact metric tags, business-domain navigation, Listing table editing, structured output token floor, and strategy diagnosis evidence-ref normalization. Product-centered context is now the intended operator entry for ASIN-specific analysis: select the product in `产品管理`, let it populate `scope.asin`, then continue into ad quantification, recommendations, operation events, keywords, and Listing from that context. The historical manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain baseline evidence only.
+This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui, portable-fix, packaged-launch, 2026-06-23 high-fidelity UI closeout, and 2026-06-24 AI output-contract/package refresh plus Lingxing report date-picker fix. The current delivery state is recorded in `README.md`; as of the 2026-06-24 refresh the packaged state is `APP_READY` for the refreshed manifest-driven final-readiness `output\codex-evidence\final-readiness-20260624171809.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1782292625053.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-20260624171809-ready`, and matching `verify:v15-ready-safety` result. This includes the renderer UX polish for AI output contract tags, compact metric tags, business-domain navigation, Listing table editing, structured output token floor, strategy diagnosis evidence-ref normalization, and automatic commit/close behavior for the Lingxing date range picker during report creation. Product-centered context is now the intended operator entry for ASIN-specific analysis: select the product in `产品管理`, let it populate `scope.asin`, then continue into ad quantification, recommendations, operation events, keywords, and Listing from that context. The historical manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain baseline evidence only.
 
 Authoritative evidence:
 
 | Gate | Evidence |
 | --- | --- |
-| Final readiness | `output\codex-evidence\final-readiness-20260624164741.json` |
-| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260624164741.json` |
-| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260624164741-ready` |
-| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1782290813493.json` |
+| Final readiness | `output\codex-evidence\final-readiness-20260624171809.json` |
+| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260624171809.json` |
+| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260624171809-ready` |
+| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1782292625053.json` |
 | Historical 2026-06-10 bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z\delivery-bundle-manifest.json` |
 | Product UI smoke | `output\codex-evidence\v15-product-readiness-ui-smoke-1781072779324.json` |
 | Installer | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
@@ -37,9 +37,9 @@ Final installer:
 
 | Field | Value |
 | --- | --- |
-| SHA-256 | `610CBC69D9D101F65CA3F080CDEAA92B83E00E323AABE033C968016AF9D08C35` |
-| Size | `83058908` bytes |
-| Last write | `2026-06-24 16:46:35` |
+| SHA-256 | `00846FFC0AA5ABCB078E919A8B0B8E9D883D76F58AF5ECA9E9B3790602FB9CD6` |
+| Size | `83060060` bytes |
+| Last write | `2026-06-24 17:14:49` |
 
 ## Verification Snapshot
 
