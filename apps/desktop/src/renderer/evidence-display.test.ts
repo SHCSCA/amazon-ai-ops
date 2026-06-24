@@ -199,11 +199,25 @@ describe('formatEvidenceRefSummary', () => {
       evidencePackPreview: [],
     }));
 
-    expect(summary.statusLabel).toBe('证据缺失');
+    expect(summary.statusLabel).toBe('AI 未采纳');
     expect(summary.tone).toBe('blocked');
-    expect(summary.headline).toContain('AI 阶段判断缺少可展示的证据详情');
+    expect(summary.headline).toContain('AI 未采纳');
     expect(summary.reasons).toContain('缺少证据明细：metric_missing');
-    expect(summary.nextAction).toBe('重新运行 AI 阶段分析或补齐证据详情后再进入优化建议。');
+    expect(summary.nextAction).toBe('可先生成规则建议；需要 AI 参与时重新运行阶段分析。');
+  });
+
+  it('uses operator-facing Chinese copy for rule fallback warnings', () => {
+    const summary = buildAdQuantDiagnosisSummary(adDiagnosis({
+      source: 'rule',
+      lifecycleStage: 'unknown',
+      fallbackReason: 'AI 阶段判断缺少 evidenceRefs。',
+      riskWarnings: ['AI unavailable'],
+    }));
+
+    expect(summary.statusLabel).toBe('AI 未采纳');
+    expect(summary.reasons).toContain('AI 阶段判断没有正确引用当前证据。');
+    expect(summary.riskWarnings).toContain('AI 当前不可用');
+    expect(summary.reasons.join('\n')).not.toContain('evidenceRefs');
   });
 
   it('marks an ad quant diagnosis as review-required when lifecycle evidence is weak', () => {
@@ -234,11 +248,11 @@ describe('formatEvidenceRefSummary', () => {
       ],
     }));
 
-    expect(summary.statusLabel).toBe('阶段需复核');
+    expect(summary.statusLabel).toBe('AI 需复核');
     expect(summary.tone).toBe('warning');
     expect(summary.headline).toContain('稳定转化');
     expect(summary.reasons).toContain('阶段判断不能只引用运营事件。');
-    expect(summary.nextAction).toBe('先补齐真实报表指标或产品配置，再重新运行 AI 阶段分析。');
+    expect(summary.nextAction).toBe('可先生成规则建议；补齐证据后再让 AI 参与。');
   });
 
   it('prioritizes evidence sufficiency blockers over generic lifecycle text when formal actions are blocked', () => {
@@ -271,8 +285,8 @@ describe('formatEvidenceRefSummary', () => {
       ],
     }));
 
-    expect(summary.statusLabel).toBe('阶段需复核');
-    expect(summary.reasons).toContain('当前范围指标证据缺少真实广告报表 sourceFile/sourceRow，不能用于正式 AI 动作。');
+    expect(summary.statusLabel).toBe('AI 需复核');
+    expect(summary.reasons).toContain('当前范围指标证据缺少真实广告报表 报表来源文件和行号，不能用于正式 AI 动作。');
     expect(summary.reasons).toContain('当前范围指标证据缺少产品 ASIN，不能用于正式 AI 动作。');
     expect(summary.reasons).not.toEqual(['AI 认为当前仍处于测词阶段。']);
   });

@@ -19,16 +19,16 @@ Earlier delivery work also used orchestrator/product/UX/QA roles to reject prema
 
 ## Historical Readiness
 
-This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui, portable-fix, packaged-launch, 2026-06-23 high-fidelity UI closeout, and 2026-06-24 AI output-contract/package refresh. The current delivery state is recorded in `README.md`; as of the 2026-06-24 refresh the packaged state is `APP_READY` for the refreshed manifest-driven final-readiness `output\codex-evidence\final-readiness-20260624090830.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1782263264718.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-20260624090830-ready`, and matching `verify:v15-ready-safety` result. This includes the renderer UX polish for AI output contract tags, compact metric tags, business-domain navigation, Listing table editing, structured output token floor, and strategy diagnosis evidence-ref normalization. The historical manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain baseline evidence only.
+This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui, portable-fix, packaged-launch, 2026-06-23 high-fidelity UI closeout, and 2026-06-24 AI output-contract/package refresh. The current delivery state is recorded in `README.md`; as of the 2026-06-24 refresh the packaged state is `APP_READY` for the refreshed manifest-driven final-readiness `output\codex-evidence\final-readiness-20260624134317.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1782279808362.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-20260624134317-ready`, and matching `verify:v15-ready-safety` result. This includes the renderer UX polish for AI output contract tags, compact metric tags, business-domain navigation, Listing table editing, structured output token floor, and strategy diagnosis evidence-ref normalization. Product-centered context is now the intended operator entry for ASIN-specific analysis: select the product in `产品管理`, let it populate `scope.asin`, then continue into ad quantification, recommendations, operation events, keywords, and Listing from that context. The historical manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain baseline evidence only.
 
 Authoritative evidence:
 
 | Gate | Evidence |
 | --- | --- |
-| Final readiness | `output\codex-evidence\final-readiness-20260624090830.json` |
-| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260624090830.json` |
-| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260624090830-ready` |
-| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1782263264718.json` |
+| Final readiness | `output\codex-evidence\final-readiness-20260624134317.json` |
+| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260624134317.json` |
+| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260624134317-ready` |
+| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1782279808362.json` |
 | Historical 2026-06-10 bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z\delivery-bundle-manifest.json` |
 | Product UI smoke | `output\codex-evidence\v15-product-readiness-ui-smoke-1781072779324.json` |
 | Installer | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
@@ -37,9 +37,9 @@ Final installer:
 
 | Field | Value |
 | --- | --- |
-| SHA-256 | `7F91C2A3C2812DDDFDE76FB09E5E508D2B6F6FAFDF94F719C30D293779EBF788` |
-| Size | `83054292` bytes |
-| Last write | `2026-06-24 09:07:37` |
+| SHA-256 | `F02712BD9B7473D7255AE5D97D84BF0D6F8DB481D1436AC9971CBC22B6B861BE` |
+| Size | `83056247` bytes |
+| Last write | `2026-06-24 13:43:16` |
 
 ## Verification Snapshot
 

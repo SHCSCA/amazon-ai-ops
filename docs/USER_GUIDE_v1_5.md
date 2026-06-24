@@ -18,6 +18,7 @@ The app remains local-first. It does not connect to Amazon SP-API or Amazon Ads 
 2. Log in to Lingxing ERP through the visible browser session. The desktop app validates ERP first and then enters the Ads system through the ERP `广告` entry; it should not start by directly opening an Ads URL. After login, the header shows the ERP/Ads session status, including the Ads page title or URL when available. The verified Ads home after ERP entry is `https://ads.lingxing.com/home`, and the verified Ads download center is `https://ads.lingxing.com/ak_download/download_center/download_report_log/index`.
 3. Use the split left menu for the upgraded v1.5 workflow:
    - `运营总览` -> `仪表盘`: current range data health, report coverage, imported row count, AI state, pending recommendation count, USD spend/sales/orders, and ACOS.
+   - `运营总览` -> `产品管理`: select the product first, sync the current `scope.asin`, review product/global/ad-object events, and enter AI quantification, recommendations, keywords, or Listing from that product context.
    - `数据与量化` -> `数据采集`: Lingxing Ads report diagnostics, canary verification, full 8-report collection, manifests, and acceptance audit.
    - `数据与量化` -> `运营事件`: local notes for events such as discounts, BD, promotions, deals, coupons, or other external factors that affect daily advertising interpretation.
    - `数据与量化` -> `广告量化`: daily DB-backed advertising metrics, rules thresholds, and AI threshold/strategy interpretation.
@@ -28,7 +29,17 @@ The app remains local-first. It does not connect to Amazon SP-API or Amazon Ads 
    - `关键词与 Listing` -> `Listing 优化`: manual Listing entry and version history as the primary source, optional Lingxing read-only fill, suggestions, accepted-only drafts, and exports.
    - `系统与交付` -> `定时任务`, `设置`, `交付验收`: scheduling, AI settings, and final evidence summary. `交付验收` is a proof page, not a daily operation workbench.
 
-Current 2026-06-24 no-install executable for validation: `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe`, SHA-256 `C8531FB7744551E5A57615AE8FE58E90904E9D0F0D918E2CEB15F2A15EC3218C`. Launch smoke evidence: `output\codex-evidence\package-launch-smoke-1782263264718.json`.
+Current 2026-06-24 no-install executable for validation: `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe`, SHA-256 `587BA7065F4FAD9AA9280496E5443ED6AB1A214A82B0ED7E046809C48DBF5126`. Launch smoke evidence: `output\codex-evidence\package-launch-smoke-1782279808362.json`.
+
+## 产品管理
+
+Open `运营总览` -> `产品管理` when the work is about a specific ASIN. The page turns product selection into the shared operation scope, so downstream pages do not have to infer the product from a naked ASIN.
+
+1. Review `产品列表` and select the product you want to work on. The selected product writes its ASIN into the current `scope.asin`.
+2. Check `当前产品范围`. When a product is selected, `广告量化`, `优化建议`, `运营事件`, `关键词机会`, and `Listing 优化` all use that ASIN context.
+3. Use the product summary to compare ad spend, sales, orders, risk count, product stage, and event count before deciding the next page.
+4. Use `产品运营时间线` to read product events, ad-object events, and global events together. Global events such as BD, Coupon, stock, pricing, or Listing changes remain visible in product analysis, but events from other ASINs are excluded.
+5. Use the action buttons to maintain operation events, open keyword opportunities, open Listing optimization, or enter AI quantification for the selected product. These actions navigate only; they do not approve or execute ad changes.
 
 ## Lingxing Report Collection
 
@@ -38,7 +49,7 @@ Open `数据与量化` -> `数据采集` from the left menu.
 2. Enter the target store and marketplace/site for this collection.
 3. Click `采集预检` to see whether the active page model, latest matching diagnostic evidence, and browser session are sufficient to start collection.
 4. Use `导出预检` when you need a local evidence folder with the preflight result, active page model, machine-readable bundle index, review checklist, diagnostic evidence-file index, and safe copied diagnostic screenshot/DOM evidence when a matching diagnostic exists.
-5. Click `验证页面` to run a read-only download center page-model diagnostic for the selected date range, store, and marketplace/site.
+5. Click `验证页面` to run a read-only download center page-model diagnostic for the selected date range, store, and marketplace/site. In the simplified `数据采集` page, clicking `重新获取完整 8 类报表` also handles this automatically when the current range is missing matching diagnostic evidence: it first validates the download center page, then continues to create and download the 8 report tasks after the diagnostic passes.
 6. Review whether the page model matched expected entry hints, report names, and selectors.
 7. It is recommended to click `导出证据包` after a diagnostic run to create a local verification bundle under the app export directory. The bundle is loaded from the persisted diagnostic ID and contains the diagnostic JSON, active page model, readiness result, selector candidates, action selector checks, screenshot/DOM evidence copies, and a manual verification checklist.
 8. Click `生成模型草稿` after a diagnostic run when you want a safe local page-model draft. The draft is filled into the editor and exported with selector candidates and solidification notes, but it deliberately keeps `requiresManualVerification: true`.
@@ -59,7 +70,7 @@ Open `数据与量化` -> `数据采集` from the left menu.
 15. Use `导出验收审计` after a collection batch to create a local audit folder with `acceptance-audit.json`, `acceptance-audit.md`, `filename-date-range-analysis.json`, `downloaded-report-files.json`, the batch result, diagnostic evidence when available, diagnostic screenshot/DOM evidence copies, diagnostic evidence file readiness, failed-report screenshot/DOM/Trace evidence copies, and a manifest copy. The audit can only pass when all 8 expected reports are downloaded, files exist inside the batch download folder, recorded file sizes still match the current files on disk, filenames include the expected report keyword and selected date range, the persisted batch and manifest both carry matching version and store/site scope evidence, a batch snapshot whose version, store/site scope, timestamps, download folder, and manifest path match the persisted batch, file rows whose identity, display name, status, path, size, retry/error/evidence metadata, and timestamps match the persisted file rows, and a parseable generation timestamp after the batch creation/completion timestamps but not later than the audit execution time, and matching diagnostic evidence plus readiness provenance and its local screenshot/DOM evidence files are present. `downloaded-report-files.json` lists each successful report file's path safety, actual size, expected filename keyword, report-type filename match, filename date analysis, `readyForAcceptance`, and `acceptanceBlockers`; size mismatches are included as blockers. If a batch fails, inspect `downloaded-report-files.json`, `report-failure-evidence-files.json`, and the `report-failure-evidence` folder in the audit export.
 16. If one report row fails, use the row-level `重试` button to create a new single-report retry batch for that report type and date range. After retry, the batch table switches to that new retry batch instead of rewriting the original 8-report batch.
 
-Current report-collection status: the Lingxing Ads download center page model has live enabled evidence for the documented `2026-05-01` to `2026-05-25` / `FT-US-US` / `US` scope, including 8/8 canaries and a full 8-report batch. For a new date range, store, site, account, or changed Lingxing page model, repeat the diagnostic, canary, and preflight steps instead of assuming old evidence applies.
+Current report-collection status: the Lingxing Ads download center page model has live enabled evidence for the documented `2026-05-01` to `2026-05-25` / `FT-US-US` / `US` scope, including 8/8 canaries and a full 8-report batch. For a new date range, store, site, account, or changed Lingxing page model, the app must refresh diagnostic evidence for that exact scope before creating or downloading reports. The primary refresh action now performs that diagnostic automatically when the backend reports missing same-scope evidence.
 
 The legacy single-report download IPC/scheduler path is intentionally disabled because it pointed at an outdated Lingxing page model. Use only the v1.5 report collection workflow for live Lingxing report collection.
 
@@ -256,7 +267,7 @@ Each v1.5 task page shows its primary task and proof boundary at the top. `交�
 
 ## Final Readiness Evidence
 
-Use `交付验收` to review the delivery state. As of the 2026-06-24 high-fidelity Windows UI and AI output-contract refresh, the packaged state is `APP_READY` for the evidence set fixed by `output\codex-evidence\v15-final-readiness-evidence-manifest-20260624090830.json`, `output\codex-evidence\final-readiness-20260624090830.json`, `output\codex-evidence\package-launch-smoke-1782263264718.json`, and `output\delivery-bundles\v15-delivery-bundle-20260624090830-ready`. This state includes the AI contract tags, compact metric/tag views, business-domain navigation, table-like Listing editor, structured output-token floor, and strategy-diagnosis evidence-ref normalization. Historical evidence `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain useful as baseline proof only. The verified current-contract ad sample was a paused FT-US keyword `door lock` bid decrease from live `1.30` to `1.17`; the source recommendation remained traceable as `1.63 -> 1.46`, but was not written because the live bid was already lower than the source recommendation. Future ad changes must not reuse that scope and must each provide their own target, source report files/row, approval, before/after screenshots, and readback evidence.
+Use `交付验收` to review the delivery state. As of the 2026-06-24 high-fidelity Windows UI and AI output-contract refresh, the packaged state is `APP_READY` for the evidence set fixed by `output\codex-evidence\v15-final-readiness-evidence-manifest-20260624134317.json`, `output\codex-evidence\final-readiness-20260624134317.json`, `output\codex-evidence\package-launch-smoke-1782279808362.json`, and `output\delivery-bundles\v15-delivery-bundle-20260624134317-ready`. This state includes the AI contract tags, compact metric/tag views, business-domain navigation, table-like Listing editor, structured output-token floor, and strategy-diagnosis evidence-ref normalization. Historical evidence `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain useful as baseline proof only. The verified current-contract ad sample was a paused FT-US keyword `door lock` bid decrease from live `1.30` to `1.17`; the source recommendation remained traceable as `1.63 -> 1.46`, but was not written because the live bid was already lower than the source recommendation. Future ad changes must not reuse that scope and must each provide their own target, source report files/row, approval, before/after screenshots, and readback evidence.
 
 The `交付验收` page also provides `刷新最终验收`. This is an in-app diagnostic refresh: it writes a new evidence-selection manifest and final readiness JSON, then shows the file paths and failed gate count. It does not override the final delivery rules. If a future ad readback gate is missing operator approval, before/after Ads UI screenshots, changed live value, or reload readback proof, the refresh must remain `APP_NEEDS_WORK`.
 
@@ -267,7 +278,7 @@ The current candidate packet has already been prepared at `output\codex-evidence
 After refreshing report, Listing, AI, and ad-readback evidence, write an explicit evidence-selection manifest first:
 
 ```powershell
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260624090830.json
+pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260624134317.json
 ```
 
 Build the current Windows installer and no-install portable executable before final readiness. The final readiness verifier records both package hashes and will not accept an APP_READY claim without them:
@@ -280,7 +291,7 @@ pnpm run smoke:package-launch
 Then run final readiness against that manifest and the current packaged launch smoke:
 
 ```powershell
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260624090830.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782263264718.json --out output\codex-evidence\final-readiness-20260624090830.json
+pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260624134317.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782279808362.json --out output\codex-evidence\final-readiness-20260624134317.json
 ```
 
 After final readiness passes, update the README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`. The delivery exporter refuses APP_READY bundles while the selected README still says IN_PROGRESS.
@@ -288,13 +299,13 @@ After final readiness passes, update the README 顶部 DELIVERY 行切到当前�
 Finally export the bounded handoff bundle only after confirming final-readiness JSON was produced from the current evidence manifest, records `evidenceSelection.mode=manifest`, and the README status has already been updated:
 
 ```powershell
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260624090830.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260624090830-ready
+pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260624134317.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260624134317-ready
 ```
 
 After the bundle is exported, run the READY safety gate:
 
 ```powershell
-pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260624090830.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260624090830-ready\delivery-bundle-manifest.json
+pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260624134317.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260624134317-ready\delivery-bundle-manifest.json
 ```
 
 The delivery bundle intentionally does not copy raw `.xlsx`, `.xls`, or `.csv` Lingxing report files. It writes `evidence/real-report-file-index.json` instead, with each source report's local path, existence flag, size, SHA-256, and evidence references. Use that index to locate the actual downloaded spreadsheets on the operator machine.

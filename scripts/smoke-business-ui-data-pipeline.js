@@ -9,6 +9,7 @@ const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const NAV_RE = {
   dashboard: /今日看板|仪表盘/,
+  productManagement: /产品管理/,
   dataCollection: /批量数据采集|数据采集/,
   dataImport: /指标核验入库|数据导入与校验/,
   adQuant: /量化诊断中心|广告量化/,
@@ -839,8 +840,26 @@ async function main() {
       collectLingxingReports: async (dateRange) => {
         window.__businessUiActionLog = window.__businessUiActionLog || [];
         window.__businessUiActionLog.push({ type: 'collectLingxingReports', dateRange });
+        if (window.__forceRecreateNeedsDiagnostic) {
+          throw new Error('no matching download-center diagnostic exists for this page model, date range, store, and marketplace');
+        }
         pipeline = makePipeline({ hasRealFiles: true, importedRows: 0 });
         return { batch: { ...mockBatch, id: 'mock_recreate_full_batch' }, files: realReportFiles, metricsImport: { inserted: 0, parsedFiles: 0, errors: [] } };
+      },
+      diagnoseLingxingDownloadCenter: async (dateRange) => {
+        window.__businessUiActionLog = window.__businessUiActionLog || [];
+        window.__businessUiActionLog.push({ type: 'diagnoseLingxingDownloadCenter', dateRange });
+        return {
+          id: 7788,
+          ready: true,
+          pageModel: 'lingxing-download-center',
+          dateStart: dateRange?.start,
+          dateEnd: dateRange?.end,
+          storeName: dateRange?.storeName,
+          marketplaceCode: dateRange?.marketplaceCode,
+          screenshotPath: 'C:/AmazonAIOps/evidence/download-center-diagnostic.png',
+          domSnapshotPath: 'C:/AmazonAIOps/evidence/download-center-diagnostic.html',
+        };
       },
       retryLingxingReport: async (dateRange, reportType) => {
         window.__businessUiActionLog = window.__businessUiActionLog || [];
@@ -984,6 +1003,7 @@ async function main() {
 
   const routes = [
     { nav: NAV_RE.dashboard, heading: /今日看板|仪表盘/, label: '今日看板', key: 'dashboard' },
+    { nav: NAV_RE.productManagement, heading: /产品管理/, label: '产品管理', key: 'product-management' },
     { nav: NAV_RE.dataCollection, heading: /数据采集/, label: '数据采集', key: 'data-collection' },
     { nav: NAV_RE.dataImport, heading: /数据导入与校验/, label: '数据导入与校验', key: 'data-import-validation' },
     { nav: /运营事件/, heading: /运营事件/, label: '运营事件', key: 'operation-events' },
@@ -994,6 +1014,11 @@ async function main() {
     await page.locator('.app-sidebar').getByRole('button', { name: nav }).click();
     await page.getByRole('heading', { name: heading, level: 2 }).waitFor();
     await assertGlobalGuards(page, key);
+    if (key === 'product-management') {
+      await expectVisible(page, '先选择产品，再关联广告数据、运营事件、AI 量化、关键词和 Listing。');
+      await expectVisible(page, '当前产品范围');
+      await expectVisible(page, '产品列表');
+    }
     const screenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     evidence.pages[key] = {
@@ -1095,10 +1120,58 @@ async function main() {
     '重建已选',
     '重建全部 8 类',
     '导入本地',
+    '只处理已生成的 ready 报表',
+    '只重建当前勾选报表',
+    '创建、下载并导入完整 8 类',
+    '选择本地 xlsx/xls/csv',
     '报表动作说明',
   ]) {
     await expectInBody(page, text, 'data collection action copy');
   }
+  {
+    const actionButtonsScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-actions-${runId}.png`);
+    const actionButtonsText = await page.locator('.collection-action-grid').innerText({ timeout: 5000 });
+    await page.locator('.collection-action-grid').screenshot({ path: actionButtonsScreenshotPath });
+    evidence.pages.dataCollectionActions = {
+      label: '数据采集动作按钮',
+      screenshotPath: actionButtonsScreenshotPath,
+      bodyTextSample: actionButtonsText,
+    };
+  }
+  await page.evaluate(() => {
+    window.__forceRecreateNeedsDiagnostic = true;
+  });
+  await page.getByRole('button', { name: '重新获取完整 8 类报表', exact: true }).click();
+  await expectVisible(page, '动作未完成');
+  await expectVisible(page, '重新创建报表前，需要先验证当前范围的下载中心页面');
+  await expectVisible(page, '验证页面');
+  await expectVisible(page, '重试获取 8 类');
+  {
+    const needsVerifyScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-needs-verify-${runId}.png`);
+    const needsVerifyText = await page.locator('.collection-action-feedback').innerText({ timeout: 5000 });
+    await page.locator('.collection-action-feedback').screenshot({ path: needsVerifyScreenshotPath });
+    evidence.pages.dataCollectionNeedsVerify = {
+      label: '数据采集需要页面验证',
+      screenshotPath: needsVerifyScreenshotPath,
+      bodyTextSample: needsVerifyText,
+    };
+  }
+  await page.getByRole('button', { name: '验证页面', exact: true }).click();
+  await expectVisible(page, '页面验证通过');
+  await expectVisible(page, '可以重新获取完整 8 类报表');
+  {
+    const verifyFeedbackScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-verify-feedback-${runId}.png`);
+    const verifyFeedbackText = await page.locator('.collection-action-feedback').innerText({ timeout: 5000 });
+    await page.locator('.collection-action-feedback').screenshot({ path: verifyFeedbackScreenshotPath });
+    evidence.pages.dataCollectionVerifyFeedback = {
+      label: '数据采集页面验证反馈',
+      screenshotPath: verifyFeedbackScreenshotPath,
+      bodyTextSample: verifyFeedbackText,
+    };
+  }
+  await page.evaluate(() => {
+    window.__forceRecreateNeedsDiagnostic = false;
+  });
   await page.locator('summary').filter({ hasText: '报表动作说明' }).click();
   for (const text of [
     '领星已经生成 ready 行时使用',
@@ -1225,6 +1298,21 @@ async function main() {
   });
   await page.getByRole('button', { name: /重建全部 8 类/ }).click();
   await page.getByText('真实报表已下载，但自动导入未写入广告指标', { exact: false }).waitFor({ timeout: 5000 });
+  const recreateFullFeedback = await page.locator('.collection-action-feedback').innerText({ timeout: 5000 });
+  for (const text of ['最近动作', '已返回', '真实报表已下载，但自动导入未写入广告指标']) {
+    if (!recreateFullFeedback.includes(text)) {
+      fail(`Top collection feedback is missing text after recreate-full: ${text}`, recreateFullFeedback);
+    }
+  }
+  {
+    const feedbackScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-recreate-feedback-${runId}.png`);
+    await page.locator('.collection-action-feedback').screenshot({ path: feedbackScreenshotPath });
+    evidence.pages.dataCollectionRecreateFeedback = {
+      label: '数据采集动作反馈',
+      screenshotPath: feedbackScreenshotPath,
+      bodyTextSample: recreateFullFeedback,
+    };
+  }
   await expectInBody(page, '全部报表下载完成，自动导入未完成', 'recreate full partial result title');
   await page.evaluate(() => {
     window.__forceZeroImportResult = true;
@@ -1420,8 +1508,8 @@ async function main() {
   await expectVisible(page, '量化不直接改广告');
   await expectVisible(page, '调整规则阈值');
   await expectVisible(page, '记录运营事件');
-  await expectVisible(page, '进入 AI+规则建议');
-  await expectVisible(page, 'AI+规则建议输入检查');
+  await expectVisible(page, '生成规则建议');
+  await expectVisible(page, '建议输入检查');
   await expectVisible(page, '真实报表');
   await expectVisible(page, '8/8');
   await expectVisible(page, '指标');
@@ -1432,7 +1520,7 @@ async function main() {
   await expectVisible(page, '产品目标');
   await expectVisible(page, '运营事件');
   await expectVisible(page, '规则阈值');
-  await expectVisible(page, '建议入口：可以进入 AI+规则建议。下一步进入优化建议页生成 AI+规则建议；审批和执行仍在后续页面。');
+  await expectVisible(page, '建议入口：可生成规则建议。按钮不会执行广告动作，只进入建议页等待审批。');
   await expectVisible(page, '输入明细和判断依据');
   await page.locator('summary').filter({ hasText: '输入明细和判断依据' }).click();
   await expectVisible(page, '真实数据输入');
@@ -1458,7 +1546,7 @@ async function main() {
   await expectInBody(page, '运营事件 2');
   await expectVisible(page, '可建议对象 12');
   await expectVisible(page, '补充运营事件');
-  await expectVisible(page, '去生成 AI+规则建议');
+  await expectVisible(page, '生成规则建议');
   await expectVisible(page, '批次：mock_batch_scope');
   await expectVisible(page, '产品/广告对象阶段时间线');
   await expectVisible(page, '产品广告历史账本');
@@ -1485,8 +1573,9 @@ async function main() {
   await expectVisible(page, '复核队列只用于决定先看哪几行；真正的广告动作仍需进入优化建议、审批和执行回读。');
   await page.getByRole('button', { name: '运行 AI 阶段分析', exact: true }).click();
   await expectVisible(page, 'AI 动态阈值建议');
-  await expectVisible(page, 'AI 量化诊断摘要');
+  await expectVisible(page, 'AI 与规则诊断状态');
   await expectVisible(page, 'AI 判断当前处于测词，可用于动态阈值复核。');
+  await expectVisible(page, '可生成 AI+规则建议');
   await expectVisible(page, '可以进入优化建议，但正式动作仍需审批和执行回读。');
   await expectVisible(page, '模型：deepseek-chat；输入 96 行广告指标、1 条规则候选、2 条运营事件、1 个产品配置。');
   await expectInBody(page, '引用证据包：共 5 条，其中报表指标 1、对象时间线 1、运营事件 1、产品配置 1、规则候选 1。');
@@ -1500,6 +1589,8 @@ async function main() {
   await expectInBody(page, '阶段证据：对象时间线 / product B0TESTASIN / keyword_exploration / 12 days');
   await expectInBody(page, '$170.25 / $300.50 / 3 单 / 88 点击');
   await expectVisible(page, 'AI 证据明细');
+  await expectVisible(page, '引用状态');
+  await expectVisible(page, '已被 AI 引用');
   await expectVisible(page, '报表指标');
   await expectInBody(page, 'test search term / 2026-06-12');
   await expectInBody(page, '$170.25 / $300.50 / 3 单 / 88 点击');

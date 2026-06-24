@@ -17,7 +17,7 @@ const NAV_RE = {
   keyword: /关键词机会矩阵|关键词机会/,
   listing: /Listing 结构重写|Listing 优化/,
   operationEvents: /运营事件/,
-  productConfig: /产品 ACOS 配置|产品配置/,
+  productManagement: /产品管理/,
   readback: /渐进执行回读|执行回读/,
   recommendations: /优化建议草案|优化建议/,
   scheduler: /本地定时调度|定时任务/,
@@ -306,7 +306,7 @@ async function main() {
     '批次',
     '报表',
     '指标',
-    'ASIN',
+    '产品',
     '待生成验收',
   ]) {
     await expectVisible(page, text);
@@ -324,6 +324,7 @@ async function main() {
 
   const routes = [
     { nav: NAV_RE.dashboard, heading: /今日看板|仪表盘/, label: '今日看板', key: 'dashboard' },
+    { nav: NAV_RE.productManagement, heading: /产品管理/, label: '产品管理', key: 'product-management' },
     { nav: /工作范围/, heading: /全局范围|工作范围/, label: '工作范围', key: 'operation-scope' },
     { nav: NAV_RE.dataCollection, heading: /数据采集/, label: '数据采集', key: 'data-collection' },
     { nav: NAV_RE.dataImport, heading: /数据导入与校验/, label: '数据导入与校验', key: 'data-import-validation' },
@@ -334,7 +335,6 @@ async function main() {
     { nav: NAV_RE.readback, heading: /回读向导|执行回读/, label: '执行回读', key: 'readback' },
     { nav: NAV_RE.keyword, heading: /关键词机会/, label: '关键词机会', key: 'keyword-opportunities' },
     { nav: NAV_RE.listing, heading: /Listing 优化/, label: 'Listing 优化', key: 'listing-optimization' },
-    { nav: NAV_RE.productConfig, heading: /产品配置/, label: '产品配置', key: 'product-config' },
     { nav: NAV_RE.scheduler, heading: /定时任务/, label: '定时任务', key: 'scheduler' },
     { nav: NAV_RE.settings, heading: /AI 设置|设置/, label: '设置', key: 'settings' },
     { nav: NAV_RE.delivery, heading: /交付验收/, label: '交付验收', key: 'delivery' },

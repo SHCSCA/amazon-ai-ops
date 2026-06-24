@@ -22,12 +22,12 @@
 ## Current Delivery State
 
 - Current packaged state is `APP_READY` for the high-fidelity Windows desktop UI and AI output-contract refresh verified on 2026-06-24.
-- Authoritative final readiness: `output\codex-evidence\final-readiness-20260624090830.json`.
-- Evidence manifest: `output\codex-evidence\v15-final-readiness-evidence-manifest-20260624090830.json`.
-- Package launch smoke: `output\codex-evidence\package-launch-smoke-1782263264718.json`.
-- READY bundle: `output\delivery-bundles\v15-delivery-bundle-20260624090830-ready`.
-- Installer SHA-256: `7F91C2A3C2812DDDFDE76FB09E5E508D2B6F6FAFDF94F719C30D293779EBF788`.
-- Portable/no-install SHA-256: `C8531FB7744551E5A57615AE8FE58E90904E9D0F0D918E2CEB15F2A15EC3218C`.
+- Authoritative final readiness: `output\codex-evidence\final-readiness-20260624134317.json`.
+- Evidence manifest: `output\codex-evidence\v15-final-readiness-evidence-manifest-20260624134317.json`.
+- Package launch smoke: `output\codex-evidence\package-launch-smoke-1782279808362.json`.
+- READY bundle: `output\delivery-bundles\v15-delivery-bundle-20260624134317-ready`.
+- Installer SHA-256: `F02712BD9B7473D7255AE5D97D84BF0D6F8DB481D1436AC9971CBC22B6B861BE`.
+- Portable/no-install SHA-256: `587BA7065F4FAD9AA9280496E5443ED6AB1A214A82B0ED7E046809C48DBF5126`.
 - The 2026-06-24 refresh keeps the high-fidelity business-domain navigation, compact status/tag surfaces, AI output contract tags, and table-like Listing editor, and additionally hardens structured AI output by enforcing the token floor and normalizing strategy-diagnosis evidence refs to real `evidencePack` IDs. Focused renderer/AI tests, `build:renderer`, desktop typecheck, `build:win`, current business UI smoke, `smoke:package-launch`, `verify:ad-execution`, manifest-driven final-readiness, READY bundle export, and READY safety have been rerun for this source state.
 
 Any future code, package, scope, or ad-action change invalidates applying this `APP_READY` claim to that modified state until the final gates are rerun.
@@ -58,10 +58,10 @@ pnpm exec vitest run scripts\verify-v15-final-readiness.test.mjs scripts\verify-
 Final delivery refresh:
 
 ```powershell
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260624090830.json
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260624090830.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782263264718.json --out output\codex-evidence\final-readiness-20260624090830.json
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260624090830.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260624090830-ready
-pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260624090830.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260624090830-ready\delivery-bundle-manifest.json
+pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260624134317.json
+pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260624134317.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782279808362.json --out output\codex-evidence\final-readiness-20260624134317.json
+pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260624134317.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260624134317-ready
+pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260624134317.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260624134317-ready\delivery-bundle-manifest.json
 ```
 
 ## Docs To Keep In Sync

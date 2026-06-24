@@ -9,6 +9,8 @@ import { compactPath } from '../formatters';
 import { toUserFacingError } from '../user-facing-error';
 
 type CollectionActionMode = 'download-existing' | 'recreate-selected' | 'recreate-full' | 'import';
+type DownloadCollectionActionMode = Exclude<CollectionActionMode, 'import'>;
+type RunningCollectionActionMode = CollectionActionMode | 'verify-page';
 
 export interface CollectionActionGuide {
   title: string;
@@ -149,12 +151,13 @@ function actionResultTitle(mode: CollectionActionMode, tone: LastActionResult['t
   return tone === 'success' ? `${base}完成` : `${base}未完成`;
 }
 
-function actionModeLabel(mode: CollectionActionMode): string {
-  const labels: Record<CollectionActionMode, string> = {
+function actionModeLabel(mode: RunningCollectionActionMode): string {
+  const labels: Record<RunningCollectionActionMode, string> = {
     'download-existing': '下载并导入已创建报表',
     'recreate-selected': '重新创建、下载并导入已选报表',
     'recreate-full': '重新创建、下载并导入全部 8 类',
     import: '导入本地/已下载报表',
+    'verify-page': '验证下载中心页面',
   };
   return labels[mode];
 }
@@ -187,6 +190,16 @@ export function collectionActionButtonLabel(mode: CollectionActionMode): string 
   return labels[mode];
 }
 
+export function collectionActionButtonDetail(mode: CollectionActionMode): string {
+  const labels: Record<CollectionActionMode, string> = {
+    'download-existing': '只处理已生成的 ready 报表',
+    'recreate-selected': '只重建当前勾选报表',
+    'recreate-full': '创建、下载并导入完整 8 类',
+    import: '选择本地 xlsx/xls/csv',
+  };
+  return labels[mode];
+}
+
 export function buildDataCollectionTaskState({
   realReportCount,
   importedRowCount,
@@ -196,7 +209,7 @@ export function buildDataCollectionTaskState({
   realReportCount: number;
   importedRowCount: number;
   primaryReportFolder?: string;
-  runningAction: CollectionActionMode | null;
+  runningAction: RunningCollectionActionMode | null;
 }): DataCollectionTaskState {
   const reportCount = Math.max(0, Math.min(8, Number(realReportCount) || 0));
   const rowCount = Math.max(0, Number(importedRowCount) || 0);
@@ -210,6 +223,8 @@ export function buildDataCollectionTaskState({
         : '当前范围缺少真实报表，先获取完整 8 类或导入本地表格。',
     primaryActionLabel: isComplete
       ? '进入广告量化'
+      : runningAction === 'verify-page'
+        ? '正在验证下载中心页面...'
       : runningAction === 'recreate-full'
         ? '正在重新获取完整 8 类报表...'
         : '重新获取完整 8 类报表',
@@ -327,6 +342,99 @@ export function collectionActionError(mode: Exclude<CollectionActionMode, 'impor
   return toUserFacingError(error, '采集未完成。');
 }
 
+export function shouldOfferDownloadCenterVerification(message?: string | null): boolean {
+  if (!message) return false;
+  return /(验证页面|下载中心页面|页面模型|诊断证据|diagnostic evidence|download-center diagnostic|ready 行|报表范围)/i.test(message);
+}
+
+function shouldAutoVerifyBeforeCollection(message?: string | null): boolean {
+  if (!message) return false;
+  return /(需要先验证当前范围的下载中心页面|页面模型仍未放行|诊断证据|diagnostic evidence|download-center diagnostic|no matching download-center diagnostic|下载中心页面模型缺少)/i.test(message);
+}
+
+type CollectionDownloadApi = {
+  diagnoseLingxingDownloadCenter?: (dateRange: CollectionDateRange) => Promise<any>;
+  downloadExistingLingxingReports?: (dateRange: CollectionDateRange, reportTypes: string[]) => Promise<any>;
+  collectLingxingReports?: (dateRange: CollectionDateRange) => Promise<any>;
+  retryLingxingReport?: (dateRange: CollectionDateRange, reportType: string) => Promise<any>;
+};
+
+type CollectionDateRange = {
+  start: string;
+  end: string;
+  storeName?: string;
+  marketplaceCode?: string;
+};
+
+async function invokeCollectionDownloadAction(input: {
+  api: CollectionDownloadApi;
+  mode: DownloadCollectionActionMode;
+  dateRange: CollectionDateRange;
+  targetTypes: string[];
+}): Promise<any[]> {
+  const { api, mode, dateRange, targetTypes } = input;
+  if (mode === 'download-existing') {
+    if (!api.downloadExistingLingxingReports) {
+      throw new Error('领星已创建报表下载接口未暴露，请检查 preload IPC。');
+    }
+    return [await api.downloadExistingLingxingReports(dateRange, targetTypes)];
+  }
+  if (mode === 'recreate-full') {
+    if (!api.collectLingxingReports) {
+      throw new Error('领星完整报表采集接口未暴露，请检查 preload IPC。');
+    }
+    return [await api.collectLingxingReports(dateRange)];
+  }
+  if (!api.retryLingxingReport) {
+    throw new Error('领星单报表重建接口未暴露，请检查 preload IPC。');
+  }
+  const results: any[] = [];
+  for (const reportType of targetTypes) {
+    results.push(await api.retryLingxingReport(dateRange, reportType));
+  }
+  return results;
+}
+
+export async function runCollectionDownloadAction(input: {
+  api: CollectionDownloadApi;
+  mode: DownloadCollectionActionMode;
+  dateRange: CollectionDateRange;
+  targetTypes: string[];
+  onAutoVerifyStart?: () => void;
+  onDiagnostic?: (diagnostic: any) => void;
+  onAutoVerifyReady?: (diagnostic: any) => void;
+}): Promise<{ actionResults: any[]; diagnostic?: any; autoVerified: boolean }> {
+  try {
+    return {
+      actionResults: await invokeCollectionDownloadAction(input),
+      autoVerified: false,
+    };
+  } catch (caught) {
+    const message = collectionActionError(input.mode, caught);
+    if (!shouldAutoVerifyBeforeCollection(message) || !input.api.diagnoseLingxingDownloadCenter) {
+      throw caught;
+    }
+
+    input.onAutoVerifyStart?.();
+    const diagnostic = await input.api.diagnoseLingxingDownloadCenter(input.dateRange);
+    input.onDiagnostic?.(diagnostic);
+    if (!diagnostic?.ready) {
+      const reason = diagnostic?.errorMessage
+        || (Array.isArray(diagnostic?.missingRequiredSelectors) && diagnostic.missingRequiredSelectors.length
+          ? `缺少关键控件：${diagnostic.missingRequiredSelectors.join('、')}`
+          : '页面模型还未匹配当前下载中心');
+      throw new Error(`页面验证未通过：${reason}`);
+    }
+
+    input.onAutoVerifyReady?.(diagnostic);
+    return {
+      actionResults: await invokeCollectionDownloadAction(input),
+      diagnostic,
+      autoVerified: true,
+    };
+  }
+}
+
 function buildLastActionResult(
   mode: CollectionActionMode,
   results: any[],
@@ -427,8 +535,9 @@ export function DataCollectionPage() {
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [runningAction, setRunningAction] = useState<CollectionActionMode | null>(null);
+  const [runningAction, setRunningAction] = useState<RunningCollectionActionMode | null>(null);
   const [lastActionResult, setLastActionResult] = useState<LastActionResult | null>(null);
+  const [lastDiagnostic, setLastDiagnostic] = useState<any | null>(null);
   const collection = data?.collection;
   const reportOptions = collection?.reportOptions || [];
   const realFiles = collection?.realReportFiles || [];
@@ -461,9 +570,10 @@ export function DataCollectionPage() {
     [reportOptions],
   );
   const actionProgressSteps = useMemo(
-    () => buildActionProgressSteps(runningAction, lastActionResult),
+    () => buildActionProgressSteps(runningAction === 'verify-page' ? null : runningAction, lastActionResult),
     [lastActionResult, runningAction],
   );
+  const shouldShowVerifyAction = shouldOfferDownloadCenterVerification(actionError);
   const lastActionSummary = useMemo(() => lastActionResult
     ? buildCollectionActionSummary({
       mode: lastActionResult.mode,
@@ -537,6 +647,45 @@ export function DataCollectionPage() {
     window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'ad-quant' }));
   }
 
+  async function runVerifyDownloadCenter() {
+    const api = (window as any).electronAPI;
+    const dateRange = {
+      start: scope.dateFrom,
+      end: scope.dateTo,
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+    };
+    setActionError(null);
+    setLastActionResult(null);
+    setRunningAction('verify-page');
+    setActionNotice('正在验证当前范围的领星下载中心页面，系统会刷新截图、DOM 和页面模型证据。');
+    try {
+      if (!api?.diagnoseLingxingDownloadCenter) {
+        throw new Error('领星下载中心验证接口未暴露，请检查 preload IPC。');
+      }
+      const diagnostic = await api.diagnoseLingxingDownloadCenter(dateRange);
+      setLastDiagnostic(diagnostic);
+      const evidencePath = diagnostic?.screenshotPath || diagnostic?.domSnapshotPath;
+      const evidenceText = evidencePath ? ` 证据：${compactPath(evidencePath)}` : '';
+      if (diagnostic?.ready) {
+        setActionNotice(`页面验证通过：当前范围、页面和关键控件已刷新，可以重新获取完整 8 类报表。${evidenceText}`);
+        return;
+      }
+      const reason = diagnostic?.errorMessage
+        || (Array.isArray(diagnostic?.missingRequiredSelectors) && diagnostic.missingRequiredSelectors.length
+          ? `缺少关键控件：${diagnostic.missingRequiredSelectors.join('、')}`
+          : '页面模型还未匹配当前下载中心');
+      setActionNotice('页面验证已返回，但当前页面仍不能安全创建报表。');
+      setActionError(`页面验证未通过：${reason}。请确认已从 ERP 广告入口进入下载中心，并且日期、店铺、站点与当前范围一致。${evidenceText}`);
+    } catch (caught) {
+      setLastDiagnostic(null);
+      setActionError(toUserFacingError(caught, '验证页面未完成。'));
+      setActionNotice('验证页面未完成。');
+    } finally {
+      setRunningAction(null);
+    }
+  }
+
   async function runDownloadAction(mode: 'download-existing' | 'recreate-selected' | 'recreate-full') {
     const api = (window as any).electronAPI;
     const targetTypes = mode === 'recreate-full' ? reportOptions.map((item) => item.type) : selectedTypes;
@@ -551,6 +700,7 @@ export function DataCollectionPage() {
     };
     setActionError(null);
     setLastActionResult(null);
+    setLastDiagnostic(null);
     setRunningAction(mode);
     if (mode === 'download-existing') {
       setActionNotice(`正在下载并自动导入领星下载中心已创建完成的已选报表，不会创建新任务：${selectedLabels.join('、')}`);
@@ -558,19 +708,25 @@ export function DataCollectionPage() {
       setActionNotice(`${mode === 'recreate-full' ? '正在重新创建全部 8 类报表、下载并自动导入' : '正在重新创建已选报表、下载并自动导入'}：${selectedLabels.join('、')}`);
     }
     try {
-      if (!api?.retryLingxingReport || !api?.collectLingxingReports || !api?.downloadExistingLingxingReports) {
-        throw new Error('领星采集接口未暴露，请检查 preload IPC。');
-      }
-      const actionResults: any[] = [];
-      if (mode === 'download-existing') {
-        actionResults.push(await api.downloadExistingLingxingReports(dateRange, targetTypes));
-      } else if (mode === 'recreate-full') {
-        actionResults.push(await api.collectLingxingReports(dateRange));
-      } else {
-        for (const reportType of targetTypes) {
-          actionResults.push(await api.retryLingxingReport(dateRange, reportType));
-        }
-      }
+      const { actionResults } = await runCollectionDownloadAction({
+        api,
+        mode,
+        dateRange,
+        targetTypes,
+        onAutoVerifyStart: () => {
+          setRunningAction('verify-page');
+          setActionNotice('当前范围缺少下载中心验证证据，正在自动验证页面，验证通过后会继续创建并下载报表。');
+        },
+        onDiagnostic: (diagnostic) => {
+          setLastDiagnostic(diagnostic);
+        },
+        onAutoVerifyReady: () => {
+          setRunningAction(mode);
+          setActionNotice(mode === 'download-existing'
+            ? `页面验证通过，继续下载并自动导入已创建报表：${selectedLabels.join('、')}`
+            : `${mode === 'recreate-full' ? '页面验证通过，继续重新创建全部 8 类报表、下载并自动导入' : '页面验证通过，继续重新创建已选报表、下载并自动导入'}：${selectedLabels.join('、')}`);
+        },
+      });
       const refreshed = await api.getBusinessUiDataPipeline?.(scope);
       window.dispatchEvent(new Event('business-ui:data-updated'));
       const realFileCount = refreshed?.collection?.realReportFiles?.length ?? 0;
@@ -596,6 +752,7 @@ export function DataCollectionPage() {
     const api = (window as any).electronAPI;
     setActionError(null);
     setLastActionResult(null);
+    setLastDiagnostic(null);
     setRunningAction('import');
     setActionNotice('正在导入当前范围已下载的真实原始报表...');
     try {
@@ -635,6 +792,7 @@ export function DataCollectionPage() {
     const api = (window as any).electronAPI;
     setActionError(null);
     setLastActionResult(null);
+    setLastDiagnostic(null);
     setRunningAction('import');
     setActionNotice('请选择本地已有的领星原始广告表格，系统会复制到当前范围批次目录并导入。');
     try {
@@ -705,6 +863,36 @@ export function DataCollectionPage() {
           {loading && <p className="muted-line">正在读取采集状态...</p>}
           {error && <p className="blocked-line">读取接口异常：{error}</p>}
         </OperatorTaskPanel>
+
+        {(runningAction || actionNotice || actionError) && (
+          <div
+            className={`collection-action-feedback ${actionError ? 'collection-action-feedback-blocked' : runningAction ? 'collection-action-feedback-running' : 'collection-action-feedback-ready'}`}
+            aria-live="polite"
+          >
+            <div>
+              <span>{runningAction ? '动作已触发' : actionError ? '动作未完成' : '最近动作'}</span>
+              <strong>{runningAction ? actionModeLabel(runningAction) : actionNotice || '采集动作已返回'}</strong>
+              {runningAction && <p>系统正在处理当前范围，请不要切换日期、店铺、站点或批次。</p>}
+              {!runningAction && actionError && <p>{actionError}</p>}
+            </div>
+            <div className="collection-action-feedback-side">
+              {runningAction && <StatusPill tone="pending">处理中</StatusPill>}
+              {!runningAction && actionError && <StatusPill tone="blocked">需处理</StatusPill>}
+              {!runningAction && !actionError && <StatusPill tone="ready">已返回</StatusPill>}
+              {!runningAction && shouldShowVerifyAction && (
+                <div className="collection-action-feedback-actions">
+                  <button className="primary-button" onClick={runVerifyDownloadCenter} type="button">验证页面</button>
+                  <button className="secondary-button" onClick={() => runDownloadAction('recreate-full')} type="button">重试获取 8 类</button>
+                </div>
+              )}
+              {!runningAction && !actionError && lastDiagnostic?.ready && (
+                <div className="collection-action-feedback-actions">
+                  <button className="primary-button" onClick={() => runDownloadAction('recreate-full')} type="button">重新获取完整 8 类报表</button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {primaryReportFolder && (
           <Panel title="真实报表目录" tone="success">
@@ -948,6 +1136,7 @@ export function DataCollectionPage() {
               type="button"
             >
               <span>{runningAction === 'download-existing' ? '正在下载...' : collectionActionButtonLabel('download-existing')}</span>
+              <small>{collectionActionButtonDetail('download-existing')}</small>
             </button>
             <button
               className="collection-action-button secondary-action"
@@ -956,6 +1145,7 @@ export function DataCollectionPage() {
               type="button"
             >
               <span>{runningAction === 'recreate-selected' ? '正在重建...' : collectionActionButtonLabel('recreate-selected')}</span>
+              <small>{collectionActionButtonDetail('recreate-selected')}</small>
             </button>
             <button
               className="collection-action-button primary-action"
@@ -964,6 +1154,7 @@ export function DataCollectionPage() {
               type="button"
             >
               <span>{runningAction === 'recreate-full' ? '正在重建全部 8 类...' : collectionActionButtonLabel('recreate-full')}</span>
+              <small>{collectionActionButtonDetail('recreate-full')}</small>
             </button>
             <button
               className="collection-action-button secondary-action"
@@ -972,6 +1163,7 @@ export function DataCollectionPage() {
               type="button"
             >
               <span>{runningAction === 'import' ? '正在导入...' : collectionActionButtonLabel('import')}</span>
+              <small>{collectionActionButtonDetail('import')}</small>
             </button>
           </div>
           <ProgressiveDetails title="报表动作说明">
@@ -991,8 +1183,6 @@ export function DataCollectionPage() {
             </div>
             <p className="muted-line">动作区别：下载已创建只读取 ready 行且不会创建新任务；重建已选只为勾选报表创建任务；重建全部 8 类会刷新完整报表；导入本地不访问领星下载中心。</p>
           </ProgressiveDetails>
-          {actionNotice && <p className="muted-line">{actionNotice}</p>}
-          {actionError && <p className="blocked-line">采集错误：{actionError}</p>}
           {actionProgressSteps.length > 0 && (
             <div className="collection-progress-panel" aria-label="采集动作进度">
               <div className="collection-progress-header">

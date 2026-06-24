@@ -24,6 +24,19 @@ export interface AdQuantDiagnosisSummary {
   nextAction: string;
 }
 
+export function operatorFacingAdQuantReason(value: string): string {
+  return String(value || '')
+    .replace(/AI unavailable/gi, 'AI 当前不可用')
+    .replace(/AI 输出格式未通过校验/g, 'AI 返回内容未满足固定输出格式')
+    .replace(/AI 候选动作缺少 evidenceRefs/g, 'AI 候选动作没有正确引用当前证据')
+    .replace(/AI 阶段判断缺少 evidenceRefs/g, 'AI 阶段判断没有正确引用当前证据')
+    .replace(/AI 阈值建议缺少 evidenceRefs/g, 'AI 阈值建议没有正确引用当前证据')
+    .replace(/evidenceRefs/g, '证据引用')
+    .replace(/sourceFile\/sourceRow/g, '报表来源文件和行号')
+    .replace(/sourceFile/g, '报表来源文件')
+    .replace(/sourceRow/g, '报表来源行');
+}
+
 export function formatEvidenceRefSummary(
   refs: string[] | undefined,
   evidenceItems: AiEvidenceDisplayItemView[] | undefined,
@@ -215,50 +228,50 @@ export function buildAdQuantDiagnosisSummary(
 
   if (diagnosis.source === 'ai' && missingLifecycleEvidenceDetails.length > 0) {
     return {
-      statusLabel: '证据缺失',
+      statusLabel: 'AI 未采纳',
       tone: 'blocked',
-      headline: 'AI 阶段判断缺少可展示的证据详情，不能用于正式量化。',
-      reasons: missingLifecycleEvidenceDetails,
+      headline: 'AI 未采纳：证据引用不完整，当前仍以规则量化为准。',
+      reasons: operatorFacingReasons(missingLifecycleEvidenceDetails),
       evidenceSummary,
       evidenceStats: evidenceSufficiencyStats(sufficiency),
-      riskWarnings,
-      nextAction: '重新运行 AI 阶段分析或补齐证据详情后再进入优化建议。',
+      riskWarnings: operatorFacingReasons(riskWarnings),
+      nextAction: '可先生成规则建议；需要 AI 参与时重新运行阶段分析。',
     };
   }
 
   if (diagnosis.source !== 'ai') {
     return {
-      statusLabel: '规则兜底',
+      statusLabel: 'AI 未采纳',
       tone: 'warning',
-      headline: 'AI 阶段诊断不可用，当前只展示规则量化结果。',
-      reasons: firstNonEmptyArray(
+      headline: 'AI 未采纳，当前使用规则量化兜底。',
+      reasons: operatorFacingReasons(firstNonEmptyArray(
         diagnosis.fallbackReason ? [diagnosis.fallbackReason] : undefined,
         diagnosis.mainProblems,
         ['AI 未参与当前广告阶段和动态阈值判断。'],
-      ),
+      )),
       evidenceSummary,
       evidenceStats: evidenceSufficiencyStats(sufficiency),
-      riskWarnings,
-      nextAction: '先检查 AI 设置和真实数据，再重新运行阶段分析。',
+      riskWarnings: operatorFacingReasons(riskWarnings),
+      nextAction: '规则量化可继续；修复 AI 设置后再重新分析。',
     };
   }
 
   if (diagnosis.lifecycleStageRequiresReview || sufficiency?.canUseForFormalActions === false) {
     const formalActionBlockedReasons = sufficiency?.canUseForFormalActions === false ? sufficiency.blockers : undefined;
     return {
-      statusLabel: '阶段需复核',
+      statusLabel: 'AI 需复核',
       tone: 'warning',
-      headline: `AI 判断当前处于${lifecycleLabel}，但证据不足，需要人工复核。`,
-      reasons: firstNonEmptyArray(
+      headline: `AI 已返回${lifecycleLabel}判断，但证据不足，暂不进入正式建议。`,
+      reasons: operatorFacingReasons(firstNonEmptyArray(
         diagnosis.lifecycleStageInvalidReasons,
         formalActionBlockedReasons,
         diagnosis.lifecycleStageReason ? [diagnosis.lifecycleStageReason] : undefined,
         ['阶段判断缺少足够的真实指标证据。'],
-      ),
+      )),
       evidenceSummary,
       evidenceStats: evidenceSufficiencyStats(sufficiency),
-      riskWarnings,
-      nextAction: '先补齐真实报表指标或产品配置，再重新运行 AI 阶段分析。',
+      riskWarnings: operatorFacingReasons(riskWarnings),
+      nextAction: '可先生成规则建议；补齐证据后再让 AI 参与。',
     };
   }
 
@@ -266,14 +279,14 @@ export function buildAdQuantDiagnosisSummary(
     statusLabel: 'AI 阶段诊断',
     tone: 'ready',
     headline: `AI 判断当前处于${lifecycleLabel}，可用于动态阈值复核。`,
-    reasons: firstNonEmptyArray(
+    reasons: operatorFacingReasons(firstNonEmptyArray(
       diagnosis.lifecycleStageReason ? [diagnosis.lifecycleStageReason] : undefined,
       diagnosis.mainProblems,
       ['AI 已完成阶段诊断。'],
-    ),
+    )),
     evidenceSummary,
     evidenceStats: evidenceSufficiencyStats(sufficiency),
-    riskWarnings,
+    riskWarnings: operatorFacingReasons(riskWarnings),
     nextAction: '可以进入优化建议，但正式动作仍需审批和执行回读。',
   };
 }
@@ -335,4 +348,8 @@ function firstNonEmptyArray<T>(...values: Array<T[] | undefined>): T[] {
     if (value?.length) return value;
   }
   return [];
+}
+
+function operatorFacingReasons(values: string[]): string[] {
+  return values.map(operatorFacingAdQuantReason).filter(Boolean);
 }

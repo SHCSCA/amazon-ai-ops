@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildDataCollectionTaskState,
+  collectionActionButtonDetail,
   collectionActionButtonLabel,
   collectionActionError,
   collectionActionGuide,
   collectionCompletionNotice,
   dataCollectionFirstViewportReportFolder,
+  runCollectionDownloadAction,
+  shouldOfferDownloadCenterVerification,
 } from './data-collection-page';
 import { buildDataImportTaskState, dataImportFirstViewportReportFolder } from './data-import-validation-page';
 
@@ -62,6 +65,16 @@ describe('collectionActionError', () => {
     expect(recreateError).toContain('重新创建后仍没有拿到可用的真实报表文件');
     expect(recreateError).not.toBe(downloadError);
   });
+
+  it('marks page-model and diagnostic failures as directly verifiable', () => {
+    expect(shouldOfferDownloadCenterVerification(
+      collectionActionError('recreate-full', new Error('no matching download-center diagnostic exists for this page model')),
+    )).toBe(true);
+    expect(shouldOfferDownloadCenterVerification(
+      collectionActionError('download-existing', new Error('当前范围缺少可下载报表批次')),
+    )).toBe(true);
+    expect(shouldOfferDownloadCenterVerification('领星浏览器会话未就绪：请先登录。')).toBe(false);
+  });
 });
 
 describe('collectionActionGuide', () => {
@@ -83,6 +96,51 @@ describe('collectionActionGuide', () => {
 
     expect(importLocal.taskEffect).toBe('不访问领星下载中心');
     expect(importLocal.result).toContain('写入 DB 日级广告指标');
+  });
+});
+
+describe('runCollectionDownloadAction', () => {
+  it('auto-verifies the current download center scope before retrying full report recreation', async () => {
+    const calls: string[] = [];
+    const api = {
+      collectLingxingReports: vi.fn()
+        .mockImplementationOnce(async () => {
+          calls.push('collect:first');
+          throw new Error('下载中心页面模型缺少同模型、同日期范围、同店铺/站点的近期诊断证据，无法创建或下载');
+        })
+        .mockImplementationOnce(async () => {
+          calls.push('collect:second');
+          return { batch: { id: 'batch_1' }, files: [] };
+        }),
+      diagnoseLingxingDownloadCenter: vi.fn(async () => {
+        calls.push('diagnose');
+        return { ready: true, screenshotPath: 'C:/evidence/download-center.png' };
+      }),
+      downloadExistingLingxingReports: vi.fn(),
+      retryLingxingReport: vi.fn(),
+    };
+
+    const result = await runCollectionDownloadAction({
+      api,
+      mode: 'recreate-full',
+      dateRange: {
+        start: '2026-05-21',
+        end: '2026-06-23',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+      },
+      targetTypes: ['campaign', 'keyword'],
+    });
+
+    expect(calls).toEqual(['collect:first', 'diagnose', 'collect:second']);
+    expect(api.diagnoseLingxingDownloadCenter).toHaveBeenCalledWith({
+      start: '2026-05-21',
+      end: '2026-06-23',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+    });
+    expect(result.autoVerified).toBe(true);
+    expect(result.actionResults).toHaveLength(1);
   });
 });
 
@@ -125,6 +183,8 @@ describe('task-first data page helpers', () => {
     expect(collectionActionButtonLabel('recreate-selected')).toBe('重建已选');
     expect(collectionActionButtonLabel('recreate-full')).toBe('重建全部 8 类');
     expect(collectionActionButtonLabel('import')).toBe('导入本地');
+    expect(collectionActionButtonDetail('recreate-full')).toBe('创建、下载并导入完整 8 类');
+    expect(collectionActionButtonDetail('import')).toBe('选择本地 xlsx/xls/csv');
   });
 
   it('aligns data import primary actions to report and row readiness', () => {
