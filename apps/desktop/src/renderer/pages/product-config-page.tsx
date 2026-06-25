@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
@@ -31,6 +32,21 @@ export const DEFAULT_COST = {
 };
 
 type ProductCostInput = typeof DEFAULT_COST;
+type ProductCostKey = keyof ProductCostInput;
+type InlineSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
+const PRODUCT_COST_FIELD_LABELS: Record<ProductCostKey, string> = {
+  purchaseCost: '采购成本',
+  firstLegCost: '头程费用',
+  fbaFee: 'FBA 费用',
+  referralFeeRate: '推荐费率',
+  storageFee: '仓储费',
+  otherCost: '其他成本',
+  minPrice: '最低售价',
+  targetNetMargin: '目标净利率',
+  targetAcos: '目标 ACOS',
+  targetTacos: '目标 TACOS',
+};
 
 export function buildCostInputFromProduct(product: any): ProductCostInput {
   const source = product?.cost || {};
@@ -67,6 +83,39 @@ export function productCostInputHint(cost: ProductCostInput): string {
   return '已填写成本或最低售价；保存前请确认这些数字来自当前产品。';
 }
 
+export function isProductConfigAutoSaveField(key: string): key is ProductCostKey {
+  return Object.prototype.hasOwnProperty.call(PRODUCT_COST_FIELD_LABELS, key);
+}
+
+export function productConfigInlineSaveLabel(key: string, status: InlineSaveStatus): string {
+  if (!isProductConfigAutoSaveField(key) || status === 'idle') return '';
+  const label = PRODUCT_COST_FIELD_LABELS[key];
+  if (status === 'saving') return `${label} 保存中...`;
+  if (status === 'saved') return `${label} 已保存`;
+  return `${label} 保存失败`;
+}
+
+export function buildProductConfigTaskState(input: {
+  asin?: string;
+  configuredProducts: number;
+  importedRows: number;
+  saving: boolean;
+}) {
+  const asin = String(input.asin || '').trim().toUpperCase();
+  const hasAsin = Boolean(asin);
+  return {
+    title: hasAsin ? `维护 ${asin} 的产品目标` : '先填写 ASIN，再维护产品目标',
+    detail: hasAsin
+      ? `当前范围已有 ${input.importedRows} 行广告指标，${input.configuredProducts} 个产品配置；成本、最低价、目标 ACOS/TACOS 会进入 AI 阈值判断。`
+      : '产品目标必须先绑定 ASIN，否则广告量化只能按全局默认阈值解释 ACOS 和花费。',
+    primaryActionLabel: input.saving ? '保存中...' : hasAsin ? '保存目标配置' : '先填写 ASIN',
+    primaryActionBusy: input.saving,
+    primaryActionBusyLabel: '保存中...',
+    primaryActionDisabled: input.saving || !hasAsin,
+    secondaryActionLabel: '进入广告量化',
+  };
+}
+
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
@@ -88,6 +137,8 @@ export function ProductConfigPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [dirtyCostFields, setDirtyCostFields] = useState<Partial<Record<ProductCostKey, boolean>>>({});
+  const [inlineSave, setInlineSave] = useState<{ field?: ProductCostKey; status: InlineSaveStatus }>({ status: 'idle' });
   const [draft, setDraft] = useState({
     asin: scope.asin || '',
     parentAsin: '',
@@ -109,6 +160,12 @@ export function ProductConfigPage() {
     : 0;
   const importedRows = data?.collection.fileAudit?.importedRowCount ?? data?.quant.importedRows ?? 0;
   const costHint = productCostInputHint(cost);
+  const taskState = buildProductConfigTaskState({
+    asin: draft.asin,
+    configuredProducts: currentScopeProducts.length,
+    importedRows,
+    saving,
+  });
 
   async function loadProducts() {
     setLoading(true);
@@ -142,12 +199,19 @@ export function ProductConfigPage() {
       status: product.status || 'active',
     });
     setCost(buildCostInputFromProduct(product));
+    setDirtyCostFields({});
+    setInlineSave({ status: 'idle' });
     setMessage(`已载入 ${product.asin}，成本配置如需复用请重新确认后保存。`);
   }
 
-  async function save() {
+  async function saveProductConfig(options: { source?: 'manual' | 'inline'; field?: ProductCostKey } = {}) {
     setSaving(true);
-    setMessage('');
+    if (options.source === 'inline' && options.field) {
+      setInlineSave({ field: options.field, status: 'saving' });
+    } else {
+      setMessage('');
+      setInlineSave({ status: 'idle' });
+    }
     setError('');
     try {
       if (!draft.asin.trim()) throw new Error('请填写 ASIN。');
@@ -161,18 +225,66 @@ export function ProductConfigPage() {
         cost,
       });
       if (!result?.success) throw new Error('保存接口没有返回成功状态。');
-      setMessage('产品配置已保存。后续 AI 阶段诊断和动态阈值会优先参考产品阶段、目标 ACOS、毛利和成本边界。');
+      if (options.source === 'inline' && options.field) {
+        setDirtyCostFields((current) => ({ ...current, [options.field as ProductCostKey]: false }));
+        setInlineSave({ field: options.field, status: 'saved' });
+        setMessage(`${PRODUCT_COST_FIELD_LABELS[options.field]} 已保存，AI 阈值会读取新的产品边界。`);
+        window.setTimeout(() => setInlineSave((current) => (
+          current.field === options.field && current.status === 'saved' ? { status: 'idle' } : current
+        )), 900);
+      } else {
+        setDirtyCostFields({});
+        setMessage('产品配置已保存。后续 AI 阶段诊断和动态阈值会优先参考产品阶段、目标 ACOS、毛利和成本边界。');
+      }
       window.dispatchEvent(new Event('business-ui:data-updated'));
       await loadProducts();
     } catch (caught) {
+      if (options.source === 'inline' && options.field) {
+        setInlineSave({ field: options.field, status: 'error' });
+      }
       setError(toUserFacingError(caught, '保存产品配置失败。'));
     } finally {
       setSaving(false);
     }
   }
 
-  function updateCost(key: keyof typeof cost, value: string) {
+  async function save() {
+    await saveProductConfig({ source: 'manual' });
+  }
+
+  function updateCost(key: ProductCostKey, value: string) {
     setCost((current) => ({ ...current, [key]: toNumber(value) }));
+    setDirtyCostFields((current) => ({ ...current, [key]: true }));
+    if (inlineSave.field === key && inlineSave.status !== 'saving') setInlineSave({ status: 'idle' });
+  }
+
+  async function commitCostField(key: ProductCostKey) {
+    if (saving || !dirtyCostFields[key]) return;
+    await saveProductConfig({ source: 'inline', field: key });
+  }
+
+  function renderCostInput(key: ProductCostKey, step = '0.01') {
+    const status = inlineSave.field === key ? inlineSave.status : 'idle';
+    const label = productConfigInlineSaveLabel(key, status);
+    return (
+      <div className={`inline-save-field ${status !== 'idle' ? `inline-save-field-${status}` : ''}`}>
+        <input
+          aria-label={PRODUCT_COST_FIELD_LABELS[key]}
+          type="number"
+          step={step}
+          value={cost[key]}
+          onBlur={() => { void commitCostField(key); }}
+          onChange={(event) => updateCost(key, event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              void commitCostField(key);
+            }
+          }}
+        />
+        <span className="inline-save-status" aria-live="polite">{label}</span>
+      </div>
+    );
   }
 
   return (
@@ -186,6 +298,36 @@ export function ProductConfigPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow="当前任务"
+          title={taskState.title}
+          detail={taskState.detail}
+          primaryAction={{
+            label: taskState.primaryActionLabel,
+            busy: taskState.primaryActionBusy,
+            busyLabel: taskState.primaryActionBusyLabel,
+            disabled: taskState.primaryActionDisabled,
+            onClick: save,
+          }}
+          secondaryActions={[
+            {
+              label: taskState.secondaryActionLabel,
+              onClick: () => navigate('ad-quant'),
+            },
+            {
+              label: '补充运营事件',
+              onClick: () => navigate('operation-events'),
+            },
+          ]}
+        >
+          <div className="dashboard-task-metrics" aria-label="产品配置任务摘要">
+            <StatusPill tone={currentScopeProducts.length ? 'ready' : 'pending'}>配置 {currentScopeProducts.length}</StatusPill>
+            <span>指标 {importedRows} 行</span>
+            <span>目标 ACOS {formatPercent(cost.targetAcos * 100)}</span>
+            <span>失焦或回车即时保存</span>
+          </div>
+        </OperatorTaskPanel>
+
         <Panel title="当前范围产品配置" tone="warning">
           <div className="business-split">
             <div>
@@ -245,34 +387,34 @@ export function ProductConfigPage() {
           </p>
           <FormTable>
             <FormTableRow label="采购成本" hint="单位 USD；商品采购成本。">
-              <input type="number" step="0.01" value={cost.purchaseCost} onChange={(event) => updateCost('purchaseCost', event.target.value)} />
+              {renderCostInput('purchaseCost')}
             </FormTableRow>
             <FormTableRow label="头程费用" hint="单位 USD；头程、清关或入仓前费用。">
-              <input type="number" step="0.01" value={cost.firstLegCost} onChange={(event) => updateCost('firstLegCost', event.target.value)} />
+              {renderCostInput('firstLegCost')}
             </FormTableRow>
             <FormTableRow label="FBA 费用" hint="单位 USD；亚马逊履约费用。">
-              <input type="number" step="0.01" value={cost.fbaFee} onChange={(event) => updateCost('fbaFee', event.target.value)} />
+              {renderCostInput('fbaFee')}
             </FormTableRow>
             <FormTableRow label="推荐费率" hint="小数格式，例如 0.15 表示 15%。">
-              <input type="number" step="0.01" value={cost.referralFeeRate} onChange={(event) => updateCost('referralFeeRate', event.target.value)} />
+              {renderCostInput('referralFeeRate')}
             </FormTableRow>
             <FormTableRow label="仓储费" hint="单位 USD；可按单件或估算值维护。">
-              <input type="number" step="0.01" value={cost.storageFee} onChange={(event) => updateCost('storageFee', event.target.value)} />
+              {renderCostInput('storageFee')}
             </FormTableRow>
             <FormTableRow label="其他成本" hint="单位 USD；包装、售后或额外成本。">
-              <input type="number" step="0.01" value={cost.otherCost} onChange={(event) => updateCost('otherCost', event.target.value)} />
+              {renderCostInput('otherCost')}
             </FormTableRow>
             <FormTableRow label="最低售价" hint="单位 USD；用于估算最低毛利空间。">
-              <input type="number" step="0.01" value={cost.minPrice} onChange={(event) => updateCost('minPrice', event.target.value)} />
+              {renderCostInput('minPrice')}
             </FormTableRow>
             <FormTableRow label="目标净利率" hint="小数格式，例如 0.15 表示 15%。">
-              <input type="number" step="0.01" value={cost.targetNetMargin} onChange={(event) => updateCost('targetNetMargin', event.target.value)} />
+              {renderCostInput('targetNetMargin')}
             </FormTableRow>
             <FormTableRow label="目标 ACOS" hint="小数格式；AI 动态阈值会把它作为产品级广告目标。">
-              <input type="number" step="0.01" value={cost.targetAcos} onChange={(event) => updateCost('targetAcos', event.target.value)} />
+              {renderCostInput('targetAcos')}
             </FormTableRow>
             <FormTableRow label="目标 TACOS" hint="小数格式；后续接入总销售后用于整体预算约束。">
-              <input type="number" step="0.01" value={cost.targetTacos} onChange={(event) => updateCost('targetTacos', event.target.value)} />
+              {renderCostInput('targetTacos')}
             </FormTableRow>
           </FormTable>
           <div className="context-summary-grid">
@@ -299,7 +441,7 @@ export function ProductConfigPage() {
           </div>
           <div className="action-row">
             <button className="primary-button" disabled={saving || !draft.asin.trim()} onClick={save} type="button">
-              {saving ? '保存中...' : '保存产品配置'}
+              {saving ? '保存中...' : '保存完整产品配置'}
             </button>
             <button className="secondary-button" onClick={() => navigate('operation-events')} type="button">补充运营事件</button>
             <button className="secondary-button" onClick={() => navigate('ad-quant')} type="button">进入广告量化</button>

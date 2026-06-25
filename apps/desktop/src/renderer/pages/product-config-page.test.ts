@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildCostInputFromProduct, productCostInputHint } from './product-config-page';
+import {
+  buildCostInputFromProduct,
+  buildProductConfigTaskState,
+  isProductConfigAutoSaveField,
+  productConfigInlineSaveLabel,
+  productCostInputHint,
+} from './product-config-page';
 
 describe('productCostInputHint', () => {
   it('warns when cost fields still look like the default template', () => {
@@ -45,5 +51,49 @@ describe('productCostInputHint', () => {
       minPrice: 39.99,
       referralFeeRate: 0.15,
     }));
+  });
+});
+
+describe('product config task and inline save feedback', () => {
+  it('builds a first-screen task around product target maintenance', () => {
+    const task = buildProductConfigTaskState({
+      asin: 'B001',
+      configuredProducts: 2,
+      importedRows: 2416,
+      saving: false,
+    });
+
+    expect(task.title).toContain('B001');
+    expect(task.detail).toContain('2416');
+    expect(task.primaryActionLabel).toBe('保存目标配置');
+    expect(task.primaryActionDisabled).toBe(false);
+    expect(task.secondaryActionLabel).toBe('进入广告量化');
+  });
+
+  it('keeps the task action disabled until ASIN is present', () => {
+    const task = buildProductConfigTaskState({
+      asin: '',
+      configuredProducts: 0,
+      importedRows: 0,
+      saving: false,
+    });
+
+    expect(task.title).toContain('先填写 ASIN');
+    expect(task.primaryActionDisabled).toBe(true);
+    expect(task.primaryActionLabel).toBe('先填写 ASIN');
+  });
+
+  it('identifies cost and target fields that autosave on blur or Enter', () => {
+    expect(isProductConfigAutoSaveField('targetAcos')).toBe(true);
+    expect(isProductConfigAutoSaveField('targetTacos')).toBe(true);
+    expect(isProductConfigAutoSaveField('minPrice')).toBe(true);
+    expect(isProductConfigAutoSaveField('notAField')).toBe(false);
+  });
+
+  it('formats inline save feedback for target fields', () => {
+    expect(productConfigInlineSaveLabel('targetAcos', 'saving')).toBe('目标 ACOS 保存中...');
+    expect(productConfigInlineSaveLabel('targetAcos', 'saved')).toBe('目标 ACOS 已保存');
+    expect(productConfigInlineSaveLabel('targetAcos', 'error')).toBe('目标 ACOS 保存失败');
+    expect(productConfigInlineSaveLabel('targetAcos', 'idle')).toBe('');
   });
 });
