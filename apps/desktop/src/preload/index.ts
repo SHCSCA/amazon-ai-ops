@@ -143,6 +143,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('recommendations:fill-ad-readback-session', input),
   verifyAdReadbackEvidence: (input: { evidencePath: string }) =>
     ipcRenderer.invoke('recommendations:verify-ad-readback-evidence', input),
+  saveReadbackCapture: (input: { slot: 'approval' | 'before' | 'after' | 'readback'; dataUrl: string; fileName?: string; sessionDir?: string }) =>
+    ipcRenderer.invoke('recommendations:save-readback-capture', input),
 
   // Scheduler
   getScheduledTasks: () => ipcRenderer.invoke('scheduler:get-tasks'),

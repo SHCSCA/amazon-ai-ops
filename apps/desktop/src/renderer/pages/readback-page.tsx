@@ -8,6 +8,14 @@ import type { RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 type AiThresholdSuggestions = NonNullable<NonNullable<RecommendationView['evidence']>['aiThresholdSuggestions']>;
+export type ReadbackCaptureSlot = 'approval' | 'before' | 'after' | 'readback';
+
+const CAPTURE_SLOT_LABELS: Record<ReadbackCaptureSlot, { title: string; detail: string }> = {
+  approval: { title: '审批凭证', detail: '粘贴审批截图、工单或聊天凭证' },
+  before: { title: '执行前截图', detail: '粘贴修改前 Ads UI 行截图' },
+  after: { title: '执行后截图', detail: '粘贴修改完成后的 Ads UI 行截图' },
+  readback: { title: '回读截图', detail: '粘贴刷新/重新打开后的回读截图' },
+};
 
 function formatCaptureMissing(sessionCheck: Record<string, any>): string {
   const missingFields = sessionCheck.captureMissingFields;
@@ -221,6 +229,49 @@ export function decisionSourceLabel(value?: string): string {
 
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
+}
+
+export function captureSlotPatch(slot: ReadbackCaptureSlot, filePath: string, savedAt: string): Partial<ReadbackFormState> {
+  if (slot === 'approval') {
+    return { approvalArtifactPath: filePath, approvalConfirmedAt: savedAt };
+  }
+  if (slot === 'before') {
+    return { beforeScreenshotPath: filePath, beforeCapturedAt: savedAt };
+  }
+  if (slot === 'after') {
+    return { afterScreenshotPath: filePath, afterCapturedAt: savedAt };
+  }
+  return { readbackEvidencePath: filePath, readbackReadAt: savedAt };
+}
+
+export function nextEvidenceCaptureSlot(form: ReadbackFormState): Exclude<ReadbackCaptureSlot, 'approval'> {
+  if (!form.beforeScreenshotPath.trim()) return 'before';
+  if (!form.afterScreenshotPath.trim()) return 'after';
+  return 'readback';
+}
+
+function captureFileList(source?: DataTransfer | null): File[] {
+  if (!source) return [];
+  const files = Array.from(source.files || []);
+  const itemFiles = Array.from(source.items || [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((item): item is File => Boolean(item));
+  return [...files, ...itemFiles].filter((file, index, all) =>
+    all.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size) === index);
+}
+
+function firstImageFile(files: File[]): File | null {
+  return files.find((file) => file.type.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(file.name)) || null;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('读取截图失败'));
+    reader.readAsDataURL(file);
+  });
 }
 
 function objectName(rec: RecommendationView): string {
@@ -510,6 +561,45 @@ export function readbackSessionSummary(sourcePath?: string): string {
   return '创建工作包后，按清单补审批、执行前、执行后和回读截图。';
 }
 
+function ReadbackCaptureTarget({
+  slot,
+  value,
+  saving,
+  onCapture,
+}: {
+  slot: ReadbackCaptureSlot;
+  value?: string;
+  saving?: boolean;
+  onCapture: (slot: ReadbackCaptureSlot, files: File[]) => void;
+}) {
+  const copy = CAPTURE_SLOT_LABELS[slot];
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    onCapture(slot, captureFileList(event.dataTransfer));
+  };
+  const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    const files = captureFileList(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    onCapture(slot, files);
+  };
+  return (
+    <div
+      aria-label={`${copy.title}拖拽或粘贴存证`}
+      className={`readback-capture-target${value ? ' readback-capture-filled' : ''}${saving ? ' readback-capture-saving' : ''}`}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+      onPaste={handlePaste}
+      role="button"
+      tabIndex={0}
+    >
+      <strong>{saving ? '正在存证...' : copy.title}</strong>
+      <span>{copy.detail}</span>
+      <small>{value ? value : '点击此区域后 Ctrl+V，或拖入图片文件'}</small>
+    </div>
+  );
+}
+
 export function ReadbackPage() {
   const { data, scope } = useBusinessDataPipeline();
   const [approvedRows, setApprovedRows] = useState<RecommendationView[]>([]);
@@ -523,6 +613,7 @@ export function ReadbackPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<ReadbackWizardStepId>('target-source');
+  const [captureSavingSlot, setCaptureSavingSlot] = useState<ReadbackCaptureSlot | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const missing = useMemo(() => requiredMissing(form, currentBatchId), [currentBatchId, form]);
   const sourceBatchMatches = Boolean(form.sourceBatchId && currentBatchId && form.sourceBatchId === currentBatchId);
@@ -562,13 +653,48 @@ export function ReadbackPage() {
     return { label: precheckCopy.exportButtonLabel, onClick: () => { void exportEvidence(); } };
   })();
 
-  function update(patch: Partial<ReadbackFormState>) {
+  function update(patch: Partial<ReadbackFormState>, options: { preserveSession?: boolean } = {}) {
     setForm((current) => ({ ...current, ...patch }));
     setExportResult(null);
-    setSessionResult(null);
-    setSessionCheck(null);
-    setSessionFillResult(null);
-    setSessionVerifyResult(null);
+    if (!options.preserveSession) {
+      setSessionResult(null);
+      setSessionCheck(null);
+      setSessionFillResult(null);
+      setSessionVerifyResult(null);
+    }
+  }
+
+  async function captureEvidence(slot: ReadbackCaptureSlot, files: File[]) {
+    const file = firstImageFile(files);
+    if (!file) {
+      setCopyNotice('请粘贴或拖入 PNG/JPG/WebP 截图。');
+      return;
+    }
+    const api = (window as any).electronAPI;
+    if (!api?.saveReadbackCapture) {
+      setCopyNotice('当前运行环境不支持截图存证。');
+      return;
+    }
+    setCaptureSavingSlot(slot);
+    setCopyNotice(`${CAPTURE_SLOT_LABELS[slot].title}正在存证...`);
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const result = await api.saveReadbackCapture({
+        slot,
+        dataUrl,
+        fileName: file.name,
+        sessionDir: sessionResult?.sessionDir,
+      });
+      update(captureSlotPatch(slot, result.filePath, result.savedAt), { preserveSession: true });
+      setSessionCheck(null);
+      setSessionFillResult(null);
+      setSessionVerifyResult(null);
+      setCopyNotice(`${CAPTURE_SLOT_LABELS[slot].title}已保存到本地证据目录。`);
+    } catch (caught) {
+      setCopyNotice(toUserFacingError(caught, `${CAPTURE_SLOT_LABELS[slot].title}存证失败。`));
+    } finally {
+      setCaptureSavingSlot(null);
+    }
   }
 
   async function loadApprovedRows() {
@@ -868,6 +994,21 @@ export function ReadbackPage() {
     }
   }, [approvedRows, form.recommendationId]);
 
+  useEffect(() => {
+    if (activeStep !== 'evidence') return undefined;
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') return;
+      const files = captureFileList(event.clipboardData);
+      if (!files.length) return;
+      event.preventDefault();
+      void captureEvidence(nextEvidenceCaptureSlot(form), files);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [activeStep, form, sessionResult?.sessionDir]);
+
   return (
     <div>
       <PageHeader
@@ -1030,6 +1171,14 @@ export function ReadbackPage() {
               <label>审批凭证<input value={form.approvalArtifactPath} onChange={(event) => update({ approvalArtifactPath: event.target.value })} /></label>
               <label>审批时间<input value={form.approvalConfirmedAt} onChange={(event) => update({ approvalConfirmedAt: event.target.value })} placeholder="ISO 时间" /></label>
             </div>
+            <div className="readback-capture-grid readback-capture-grid-single">
+              <ReadbackCaptureTarget
+                onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                saving={captureSavingSlot === 'approval'}
+                slot="approval"
+                value={form.approvalArtifactPath}
+              />
+            </div>
             <div className="checkbox-grid">
               <label><input checked={form.operatorConfirmed} onChange={(event) => update({ operatorConfirmed: event.target.checked })} type="checkbox" /> 审批人确认范围</label>
               <label><input checked={form.realWriteApproved} onChange={(event) => update({ realWriteApproved: event.target.checked })} type="checkbox" /> 外部审批允许</label>
@@ -1056,6 +1205,26 @@ export function ReadbackPage() {
               <label>回读证据<input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></label>
               <label>回读时间<input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></label>
               <label className="form-grid-wide">现场行证明<textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></label>
+            </div>
+            <div className="readback-capture-grid">
+              <ReadbackCaptureTarget
+                onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                saving={captureSavingSlot === 'before'}
+                slot="before"
+                value={form.beforeScreenshotPath}
+              />
+              <ReadbackCaptureTarget
+                onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                saving={captureSavingSlot === 'after'}
+                slot="after"
+                value={form.afterScreenshotPath}
+              />
+              <ReadbackCaptureTarget
+                onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                saving={captureSavingSlot === 'readback'}
+                slot="readback"
+                value={form.readbackEvidencePath}
+              />
             </div>
           </Panel>
         )}

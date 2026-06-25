@@ -1,6 +1,6 @@
 # Real Ad Readback Runbook
 
-历史 READY 阻断曾由一次低风险真实广告动作的前后回读证据关闭。当前工作树已经补强 AI 证据链、UI 和 readback 合同，并在 2026-06-18 使用当前合同重新完成一次真实 Ads UI 人工执行与刷新回读。本文保留为后续人工验收手册，不授权任何自动广告写入。
+历史 READY 阻断曾由一次低风险真实广告动作的前后回读证据关闭。当前工作树已经补强 AI 证据链、UI 和 readback 合同，并在 2026-06-18 使用当前合同重新完成一次真实 Ads UI 人工执行与刷新回读。2026-06-25 后的桌面包还支持在 `执行回读` 页把审批、执行前、执行后和刷新回读截图直接拖入或 Ctrl+V 粘贴到回读工作包，由应用写入对应证据目录并回填路径/时间。本文保留为后续人工验收手册，不授权任何自动广告写入。
 
 ## Current Candidate
 
@@ -88,6 +88,8 @@ node scripts\create-ad-readback-candidate-from-recommendation.js --source <insta
 Without existing real spreadsheet source file(s) and a positive source row, the helper exits before writing candidate JSON/Markdown.
 
 Before operating in Ads UI, create a per-action working folder. In the desktop app, go to `执行回读`, export the readback JSON, then use `回读工作包 -> 创建回读工作包`. The app will display the session directory, `session-input.json`, operator checklist, and PASS output path. Use `检查工作包` before live capture; it only verifies that the session folder structure is safe, that the source candidate is still `NEEDS_WORK`, and that raw Lingxing spreadsheet reports were not copied into the session folder. The folder contains screenshot folders, an operator checklist, a `session-paths.json` file, and an editable `fill-ad-readback.ps1` command. It does not copy raw Lingxing spreadsheet reports.
+
+When the work package exists, use the visible paste/drop targets on `执行回读` for the approval proof, before screenshot, after screenshot, and reload/readback screenshot. Pasted PNG/JPG/WebP files are written into the session folder declared by `session-paths.json`, and the app updates the corresponding `session-input.json` path/time fields. This is only a convenience for capturing evidence; the operator still must verify the Ads UI row, values, approval, timestamps, distinct files, and final `verify:ad-readback` result.
 
 The CLI fallback is:
 

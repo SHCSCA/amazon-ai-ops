@@ -46,6 +46,7 @@ import { extractLingxingListingFromSnapshot, type ListingDomFieldSnapshot, type 
 import { adReadbackEvidenceToMarkdown, buildAdReadbackEvidence, type AdReadbackEvidenceInput } from './ad-readback-evidence';
 import { verifyAdReadbackEvidenceFile, type VerifiedAdReadbackEvidence } from './ad-readback-evidence-verifier';
 import { fillAdReadbackSession, prepareAdReadbackSession, verifyAdReadbackSession, type FilledAdReadbackSession, type PreparedAdReadbackSession, type VerifiedAdReadbackSession } from './ad-readback-session';
+import { saveReadbackCaptureFile, type ReadbackCaptureSlot, type SavedReadbackCapture } from './ad-readback-capture';
 import { refreshFinalReadiness } from './final-readiness-refresh';
 import { getDeliveryEvidenceStatus } from './delivery-evidence-status';
 import { annotateRecommendationsWithStrategy, bindRecommendationsToScopeAsin, buildAdStrategyDiagnosisInput, createAiOnlyRecommendationsFromDecisions } from './ad-recommendation-ai-context';
@@ -7422,6 +7423,25 @@ function handleVerifyAdReadbackEvidence(input: { evidencePath?: string }): Verif
   return verifyAdReadbackEvidenceFile(String(input?.evidencePath || ''));
 }
 
+function handleSaveReadbackCapture(input: {
+  slot?: ReadbackCaptureSlot;
+  dataUrl?: string;
+  fileName?: string;
+  sessionDir?: string;
+}): SavedReadbackCapture {
+  const slot = input?.slot;
+  if (!slot || !['approval', 'before', 'after', 'readback'].includes(slot)) {
+    throw new Error(`Unsupported readback capture slot: ${slot || '<missing>'}`);
+  }
+  return saveReadbackCaptureFile({
+    slot,
+    dataUrl: String(input?.dataUrl || ''),
+    fileName: typeof input?.fileName === 'string' ? input.fileName : undefined,
+    sessionDir: typeof input?.sessionDir === 'string' && input.sessionDir.trim() ? input.sessionDir : undefined,
+    fallbackRootDir: path.join(EXPORTS_DIR, 'ad-readback-captures'),
+  });
+}
+
 async function handleExecuteRecommendation(recommendationId: number): Promise<void> {
   const recommendation = state.recommendationRepo?.findById(recommendationId);
   if (!recommendation) {
@@ -7684,6 +7704,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('recommendations:verify-ad-readback-session', (_, input) => handleVerifyAdReadbackSession(input));
   ipcMain.handle('recommendations:fill-ad-readback-session', (_, input) => handleFillAdReadbackSession(input));
   ipcMain.handle('recommendations:verify-ad-readback-evidence', (_, input) => handleVerifyAdReadbackEvidence(input));
+  ipcMain.handle('recommendations:save-readback-capture', (_, input) => handleSaveReadbackCapture(input));
 
   // Scheduler
   ipcMain.handle('scheduler:get-tasks', () => state.scheduler?.getTasks() || []);

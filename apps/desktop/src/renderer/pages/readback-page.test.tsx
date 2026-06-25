@@ -5,10 +5,12 @@ import {
   buildFillAdReadbackSessionCommand,
   buildPrepareAdReadbackSessionCommand,
   buildVerifyAdReadbackSessionCommand,
+  captureSlotPatch,
   decisionAgreementLabel,
   decisionSourceLabel,
   formFromRecommendation,
   groupMissing,
+  nextEvidenceCaptureSlot,
   readbackPrecheckCopy,
   readbackSessionSummary,
   readbackSessionWorkflow,
@@ -183,6 +185,37 @@ describe('readback wizard integration', () => {
 
     form.afterValue = '1.07';
     expect(firstIncompleteReadbackStep(requiredMissing(form, 'batch_1'))).toBe('verify-export');
+  });
+});
+
+describe('readback capture helpers', () => {
+  it('maps pasted screenshot paths to the matching evidence field and timestamp', () => {
+    expect(captureSlotPatch('before', 'C:/session/screenshots/before/before.png', '2026-06-25T12:00:00.000Z')).toEqual({
+      beforeScreenshotPath: 'C:/session/screenshots/before/before.png',
+      beforeCapturedAt: '2026-06-25T12:00:00.000Z',
+    });
+    expect(captureSlotPatch('readback', 'C:/session/screenshots/readback/readback.png', '2026-06-25T12:10:00.000Z')).toEqual({
+      readbackEvidencePath: 'C:/session/screenshots/readback/readback.png',
+      readbackReadAt: '2026-06-25T12:10:00.000Z',
+    });
+  });
+
+  it('selects the next missing screenshot slot for global paste capture', () => {
+    const form = completeForm();
+    form.beforeScreenshotPath = '';
+    form.afterScreenshotPath = '';
+    form.readbackEvidencePath = '';
+
+    expect(nextEvidenceCaptureSlot(form)).toBe('before');
+
+    form.beforeScreenshotPath = 'C:/session/before.png';
+    expect(nextEvidenceCaptureSlot(form)).toBe('after');
+
+    form.afterScreenshotPath = 'C:/session/after.png';
+    expect(nextEvidenceCaptureSlot(form)).toBe('readback');
+
+    form.readbackEvidencePath = 'C:/session/readback.png';
+    expect(nextEvidenceCaptureSlot(form)).toBe('readback');
   });
 });
 

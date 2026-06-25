@@ -21,14 +21,14 @@
 
 ## Current Delivery State
 
-- Current packaged state is `APP_READY` for the high-fidelity Windows desktop UI, AI output-contract refresh, real ad strategy diagnosis JSON-contract fix, Lingxing report date-picker commit fix, product-level workbench/product maintenance refresh, encrypted login credential saving, visible AI/import feedback, and canonical daily metric explanations verified on 2026-06-25.
-- Authoritative final readiness: `output\codex-evidence\final-readiness-20260625114200.json`.
-- Evidence manifest: `output\codex-evidence\v15-final-readiness-evidence-manifest-20260625114200.json`.
-- Package launch smoke: `output\codex-evidence\package-launch-smoke-1782358787389.json`.
-- READY bundle: `output\delivery-bundles\v15-delivery-bundle-20260625114200-ready`.
-- Installer SHA-256: `25585396F1D105CA722B51D268FC8A641DC389399D3807ABBF2B28F6458AEE91`.
-- Portable/no-install SHA-256: `5759C0E029113CF3EB3F398EF683C475C7081E6DC739E99ADDB182FE385AE344`.
-- The 2026-06-25 refresh keeps the high-fidelity business-domain navigation, compact status/tag surfaces, AI output contract tags, table-like Listing editor, structured AI token floor, strategy-diagnosis evidence-ref normalization, Lingxing date-range picker commit behavior, and product-first dashboard gate. It additionally fixes the real AI strategy diagnosis format-fallback root cause by making the OpenAI-compatible provider honor saved temperature/maxTokens, forcing diagnosis and JSON repair calls to the 8192 token floor, and replacing placeholder schema text with concrete evidence-driven JSON examples. Live DeepSeek evidence `output\codex-evidence\ad-strategy-live-1782358641101.json` returned `source=ai` with no fallback for the current scope. It also stores remembered Lingxing login credentials locally through Electron `safeStorage`, makes AI strategy diagnosis and import actions show first-viewport running/success/failure feedback, labels downloaded reports as `已下载待入库` until SQLite rows exist, and explains that daily totals use the selected batch/source files plus canonical report priority rather than cross-batch or cross-grain summing. Focused renderer/product/import/AI tests, desktop typecheck, `smoke:business-ui-current`, `build:win`, `smoke:package-launch`, manifest-driven final-readiness, READY bundle export, and READY safety have been rerun for this source state.
+- Current packaged state is `APP_READY` for the high-fidelity Windows desktop UI, AI output-contract refresh, real ad strategy diagnosis JSON-contract fix, Lingxing report date-picker commit fix, product-level workbench/product maintenance refresh, encrypted login credential saving, visible AI/import feedback, ad readback screenshot paste/drop capture, and canonical daily metric explanations verified on 2026-06-25.
+- Authoritative final readiness: `output\codex-evidence\final-readiness-20260625125848.json`.
+- Evidence manifest: `output\codex-evidence\v15-final-readiness-evidence-manifest-20260625125848.json`.
+- Package launch smoke: `output\codex-evidence\package-launch-smoke-1782363450155.json`.
+- READY bundle: `output\delivery-bundles\v15-delivery-bundle-20260625125848-ready`.
+- Installer SHA-256: `4FD065644445D3BC56713245813E7F658264A0206625CECAFFD6E0AC37F82A52`.
+- Portable/no-install SHA-256: `70B88B594EB15D5CDAB2D07E94A3D6CEB0F6E03D0A0D94A0C08C44ABB7A1B817`.
+- The 2026-06-25 refresh keeps the high-fidelity business-domain navigation, compact status/tag surfaces, AI output contract tags, table-like Listing editor, structured AI token floor, strategy-diagnosis evidence-ref normalization, Lingxing date-range picker commit behavior, and product-first dashboard gate. It additionally fixes the real AI strategy diagnosis format-fallback root cause by making the OpenAI-compatible provider honor saved temperature/maxTokens, forcing diagnosis and JSON repair calls to the 8192 token floor, and replacing placeholder schema text with concrete evidence-driven JSON examples. Live DeepSeek evidence `output\codex-evidence\ad-strategy-live-1782358641101.json` returned `source=ai` with no fallback for the current scope. It also stores remembered Lingxing login credentials locally through Electron `safeStorage`, makes AI strategy diagnosis and import actions show first-viewport running/success/failure feedback, labels downloaded reports as `已下载待入库` until SQLite rows exist, explains that daily totals use the selected batch/source files plus canonical report priority rather than cross-batch or cross-grain summing, and lets the `执行回读` page save approval/before/after/readback screenshots by drag/drop or Ctrl+V into the current readback session folder while backfilling evidence paths and timestamps. Focused renderer/product/import/AI/readback-capture tests, desktop typecheck, `smoke:business-ui-current`, `build:win`, `smoke:package-launch`, manifest-driven final-readiness, READY bundle export, and READY safety have been rerun for this source state.
 
 Any future code, package, scope, or ad-action change invalidates applying this `APP_READY` claim to that modified state until the final gates are rerun.
 
@@ -59,10 +59,10 @@ pnpm exec vitest run scripts\verify-v15-final-readiness.test.mjs scripts\verify-
 Final delivery refresh:
 
 ```powershell
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260625114200.json
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260625114200.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782358787389.json --out output\codex-evidence\final-readiness-20260625114200.json
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260625114200.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260625114200-ready
-pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260625114200.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260625114200-ready\delivery-bundle-manifest.json
+pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260625125848.json
+pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260625125848.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782363450155.json --out output\codex-evidence\final-readiness-20260625125848.json
+pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260625125848.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260625125848-ready
+pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260625125848.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260625125848-ready\delivery-bundle-manifest.json
 ```
 
 ## Docs To Keep In Sync
