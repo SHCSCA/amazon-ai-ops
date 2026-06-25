@@ -453,6 +453,54 @@ describe('AdStrategyDiagnoser', () => {
     expect(JSON.stringify(result)).not.toContain('not_real');
   });
 
+  it('uses concrete JSON value examples instead of type-placeholder strings in the output contract', async () => {
+    const provider = new FakeProvider({
+      success: true,
+      content: JSON.stringify({
+        schemaVersion: 'ad_strategy_diagnosis_v1',
+        lifecycleStage: 'unknown',
+        lifecycleStageReason: '当前证据不足，阶段需要人工复核。',
+        lifecycleStageEvidenceRefs: [],
+        summary: '当前证据不足，只输出洞察。',
+        mainProblems: ['INSUFFICIENT_DATA'],
+        thresholdSuggestions: {},
+        aiCandidates: [],
+        insightOnlyCandidates: [],
+        riskWarnings: ['需要人工复核。'],
+      }),
+    });
+    const diagnoser = new AdStrategyDiagnoser(provider);
+
+    await diagnoser.diagnose({
+      scope: {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        currency: 'USD',
+      },
+      metrics: [],
+      adObjectTimelines: [],
+      operationEvents: [],
+      currentRuleConfig: {
+        targetAcos: 0.25,
+        highAcosThreshold: 0.4,
+        noOrderClickThreshold: 30,
+        minSpend: 10,
+      },
+      ruleCandidates: [],
+    });
+
+    const prompt = provider.messages.map((message) => message.content).join('\n');
+    expect(prompt).toContain('"schemaVersion": "ad_strategy_diagnosis_v1"');
+    expect(prompt).toContain('"lifecycleStage": "unknown"');
+    expect(prompt).toContain('"value": 0.25');
+    expect(prompt).toContain('"confidence": 0.72');
+    expect(prompt).not.toContain('"value": "number"');
+    expect(prompt).not.toContain('"confidence": "0..1"');
+    expect(prompt).not.toContain('"lifecycleStage": "cold_start | keyword_exploration');
+  });
+
   it('parses JSON returned inside a markdown fence', async () => {
     const provider = new FakeProvider({
       success: true,
@@ -533,6 +581,63 @@ describe('AdStrategyDiagnoser', () => {
     expect(result.source).toBe('ai');
     expect(result.summary).toBe('AI 输出已修复为标准 JSON，当前只展示可控字段。');
     expect(result.aiFallbackReason).toBeUndefined();
+  });
+
+  it('passes the structured-output token floor to diagnosis and JSON repair calls', async () => {
+    const provider = new FakeProvider([
+      {
+        success: true,
+        content: '{"schemaVersion":"ad_strategy_diagnosis_v1","summary":"坏 JSON","mainProblems":["HIGH_ACOS",]}',
+      },
+      {
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 'ad_strategy_diagnosis_v1',
+          lifecycleStage: 'unknown',
+          lifecycleStageReason: '修复后可解析。',
+          lifecycleStageEvidenceRefs: [],
+          summary: '修复后的结构化诊断。',
+          mainProblems: ['HIGH_ACOS'],
+          thresholdSuggestions: {},
+          aiCandidates: [],
+          insightOnlyCandidates: [],
+          riskWarnings: ['仍需人工复核。'],
+        }),
+      },
+    ]);
+    const diagnoser = new AdStrategyDiagnoser(provider, { maxTokens: 8192 });
+
+    await diagnoser.diagnose({
+      scope: {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        currency: 'USD',
+      },
+      metrics: [],
+      adObjectTimelines: [],
+      operationEvents: [],
+      currentRuleConfig: {
+        targetAcos: 0.25,
+        highAcosThreshold: 0.4,
+        noOrderClickThreshold: 30,
+        minSpend: 10,
+      },
+      ruleCandidates: [],
+    });
+
+    expect(provider.chatCount).toBe(2);
+    expect(provider.optionsHistory[0]).toMatchObject({
+      temperature: 0.2,
+      responseFormat: 'json_object',
+      maxTokens: 8192,
+    });
+    expect(provider.optionsHistory[1]).toMatchObject({
+      temperature: 0,
+      responseFormat: 'json_object',
+      maxTokens: 8192,
+    });
   });
 
   it('falls back with a Chinese user-facing reason when malformed JSON repair fails', async () => {

@@ -49,8 +49,8 @@ export class OpenAICompatibleProvider extends BaseAIProvider {
   ): Promise<AIResponse> {
     const url = this.buildUrl('/chat/completions');
     const model = options?.model || this.defaultModel;
-    const temperature = options?.temperature ?? 0.7;
-    const maxTokens = options?.maxTokens || 2000;
+    const temperature = options?.temperature ?? this.config.temperature ?? 0.7;
+    const maxTokens = options?.maxTokens ?? this.config.maxTokens ?? 2000;
 
     try {
       const response = await fetch(url, {

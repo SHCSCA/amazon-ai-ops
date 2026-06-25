@@ -19,16 +19,17 @@ Earlier delivery work also used orchestrator/product/UX/QA roles to reject prema
 
 ## Historical Readiness
 
-This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui, portable-fix, packaged-launch, 2026-06-23 high-fidelity UI closeout, and 2026-06-24 AI output-contract/package refresh plus the 2026-06-25 credential, AI/import feedback, canonical metric, Lingxing date-picker, and product-level workbench refresh. The current delivery state is recorded in `README.md`; as of the 2026-06-25 refresh the packaged state is `APP_READY` for the refreshed manifest-driven final-readiness `output\codex-evidence\final-readiness-20260625104500.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1782355194148.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-20260625104500-ready`, and matching `verify:v15-ready-safety` result. This includes the renderer UX polish for AI output contract tags, compact metric tags, business-domain navigation, Listing table editing, structured output token floor, strategy diagnosis evidence-ref normalization, automatic commit/close behavior for the Lingxing date range picker during report creation, inline product maintenance, per-product daily ad metrics, encrypted local remember-account/password support, first-viewport AI/import feedback, canonical daily metric accounting, and the dashboard product-selection gate. Product-centered context is now the intended operator entry for ASIN-specific analysis: select the product in `产品管理`, let it populate `scope.asin`, then continue into ad quantification, recommendations, operation events, keywords, and Listing from that context. The historical manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain baseline evidence only.
+This document records the 2026-06-10 closeout and the later 2026-06-18 product-ui, portable-fix, packaged-launch, 2026-06-23 high-fidelity UI closeout, and 2026-06-24 AI output-contract/package refresh plus the 2026-06-25 credential, AI/import feedback, canonical metric, Lingxing date-picker, product-level workbench refresh, and live AI strategy JSON-contract fix. The current delivery state is recorded in `README.md`; as of the 2026-06-25 refresh the packaged state is `APP_READY` for the refreshed manifest-driven final-readiness `output\codex-evidence\final-readiness-20260625114200.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1782358787389.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-20260625114200-ready`, and matching `verify:v15-ready-safety` result. This includes the renderer UX polish for AI output contract tags, compact metric tags, business-domain navigation, Listing table editing, structured output token floor, OpenAI-compatible saved temperature/maxTokens usage, strategy diagnosis evidence-ref normalization, concrete JSON output examples, automatic commit/close behavior for the Lingxing date range picker during report creation, inline product maintenance, per-product daily ad metrics, encrypted local remember-account/password support, first-viewport AI/import feedback, canonical daily metric accounting, and the dashboard product-selection gate. Live strategy evidence `output\codex-evidence\ad-strategy-live-1782358641101.json` returned `source=ai` with no fallback on the current DB scope. Product-centered context is now the intended operator entry for ASIN-specific analysis: select the product in `产品管理`, let it populate `scope.asin`, then continue into ad quantification, recommendations, operation events, keywords, and Listing from that context. The historical manifest-driven final-readiness `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain baseline evidence only.
 
 Authoritative evidence:
 
 | Gate | Evidence |
 | --- | --- |
-| Final readiness | `output\codex-evidence\final-readiness-20260625104500.json` |
-| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260625104500.json` |
-| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260625104500-ready` |
-| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1782355194148.json` |
+| Final readiness | `output\codex-evidence\final-readiness-20260625114200.json` |
+| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260625114200.json` |
+| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260625114200-ready` |
+| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1782358787389.json` |
+| Live ad strategy diagnosis | `output\codex-evidence\ad-strategy-live-1782358641101.json` |
 | Historical 2026-06-10 bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z\delivery-bundle-manifest.json` |
 | Product UI smoke | `output\codex-evidence\v15-product-readiness-ui-smoke-1781072779324.json` |
 | Installer | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
@@ -37,9 +38,9 @@ Final installer:
 
 | Field | Value |
 | --- | --- |
-| SHA-256 | `F68AF054BA01B8114951D8F1E98EB419824A10B8E07969C359A31F0E86361403` |
-| Size | `83069249` bytes |
-| Last write | `2026-06-25 10:39:41` |
+| SHA-256 | `25585396F1D105CA722B51D268FC8A641DC389399D3807ABBF2B28F6458AEE91` |
+| Size | `83069848` bytes |
+| Last write | `2026-06-25 11:39:25` |
 
 ## Verification Snapshot
 

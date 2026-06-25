@@ -305,6 +305,7 @@ export interface AdStrategyDiagnosisOutput {
 export interface AdStrategyDiagnoserOptions {
   persona?: string;
   outputLanguage?: string;
+  maxTokens?: number;
 }
 
 const DEFAULT_OUTPUT_LANGUAGE = '简体中文';
@@ -314,6 +315,7 @@ const DEFAULT_PERSONA = [
 ].join('');
 const FORMAL_AD_ACTION_SCHEMA = 'lower_bid | raise_bid | pause_target | resume_target | add_negative_exact | add_negative_phrase | add_negative_broad | adjust_campaign_budget | create_campaign | archive_campaign';
 const MIN_FORMAL_AI_CONFIDENCE = 0.6;
+const STRUCTURED_DIAGNOSIS_TOKEN_FLOOR = 8192;
 const AI_JSON_FORMAT_FALLBACK_REASON = 'AI 输出格式未通过校验，当前使用规则引擎兜底。';
 
 const VALID_STAGES = new Set<AdLifecycleStage>([
@@ -352,7 +354,7 @@ export class AdStrategyDiagnoser {
             content: this.buildPrompt(input),
           },
         ],
-        { temperature: 0.2, responseFormat: 'json_object' },
+        { temperature: 0.2, responseFormat: 'json_object', maxTokens: this.maxTokens() },
       );
 
       if (!response.success) {
@@ -398,7 +400,7 @@ export class AdStrategyDiagnoser {
             ].join('\n\n'),
           },
         ],
-        { temperature: 0, responseFormat: 'json_object' },
+        { temperature: 0, responseFormat: 'json_object', maxTokens: this.maxTokens() },
       );
 
       if (!repairResponse.success) {
@@ -458,48 +460,66 @@ export class AdStrategyDiagnoser {
     ].join('\n\n');
   }
 
-  private requiredOutputSkeleton(_input: AdStrategyDiagnosisInput) {
+  private requiredOutputSkeleton(input: AdStrategyDiagnosisInput) {
+    const evidenceIds = (input.evidencePack || []).map((item) => item.evidenceId).filter(Boolean);
+    const lifecycleRefs = evidenceIds.slice(0, 2);
+    const candidateRefs = evidenceIds.slice(0, 3);
     return {
       schemaVersion: 'ad_strategy_diagnosis_v1',
-      lifecycleStage:
-        'cold_start | keyword_exploration | stable_conversion | scaling | profit_harvesting | clearance | declining_repair | unknown',
-      lifecycleStageReason: `${this.outputLanguage()}阶段判断原因，必须引用 evidenceRefs`,
-      lifecycleStageEvidenceRefs: ['evidenceId from evidencePack'],
-      summary: `${this.outputLanguage()}业务诊断摘要`,
-      mainProblems: ['stable problem codes, e.g. INSUFFICIENT_DATA, HIGH_ACOS'],
+      lifecycleStage: 'unknown',
+      lifecycleStageReason: '当前证据不足时用 unknown，并说明需要人工复核；有证据时写清阶段判断原因。',
+      lifecycleStageEvidenceRefs: lifecycleRefs,
+      summary: '用简体中文输出当前范围的广告诊断摘要。',
+      mainProblems: ['INSUFFICIENT_DATA'],
       thresholdSuggestions: {
-        targetAcos: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
-        highAcosThreshold: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
-        noOrderClickThreshold: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
-        minSpend: { value: 'number', reason: `${this.outputLanguage()}原因`, evidenceRefs: ['evidenceId from evidencePack'] },
+        targetAcos: {
+          value: input.currentRuleConfig.targetAcos,
+          reason: '结合产品阶段、利润目标和当前真实广告表现解释目标 ACOS。',
+          evidenceRefs: lifecycleRefs,
+        },
+        highAcosThreshold: {
+          value: input.currentRuleConfig.highAcosThreshold,
+          reason: '解释高风险 ACOS 阈值为什么适合当前产品阶段。',
+          evidenceRefs: lifecycleRefs,
+        },
+        noOrderClickThreshold: {
+          value: input.currentRuleConfig.noOrderClickThreshold,
+          reason: '解释无订单点击门槛如何匹配当前样本量。',
+          evidenceRefs: lifecycleRefs,
+        },
+        minSpend: {
+          value: input.currentRuleConfig.minSpend,
+          reason: '解释最低花费门槛如何避免小样本误判。',
+          evidenceRefs: lifecycleRefs,
+        },
       },
       aiCandidates: [
         {
-          entityType: 'keyword | search_term | target | campaign | ad_group | product',
-          entityName: 'business entity name',
-          actionType: FORMAL_AD_ACTION_SCHEMA,
-          recommendedValue: 'required executable absolute value for bid/budget actions, e.g. 1.26 for lower_bid; percentages like -10% are not allowed in aiCandidates',
-          reason: `${this.outputLanguage()}证据原因`,
-          reasoningSteps: [`${this.outputLanguage()}推理步骤，必须引用 evidenceRefs`],
-          evidenceRefs: ['evidenceId from evidencePack'],
-          riskWarnings: [`${this.outputLanguage()}候选动作风险`],
-          confidence: '0..1',
+          entityType: 'search_term',
+          entityName: '示例搜索词，必须替换为当前 evidencePack 中的真实对象名称',
+          actionType: 'lower_bid',
+          recommendedValue: '1.26',
+          reason: '用简体中文说明为什么这个正式动作可进入审批。',
+          reasoningSteps: ['引用真实指标证据说明点击、花费、订单和 ACOS 关系。'],
+          evidenceRefs: candidateRefs,
+          riskWarnings: ['执行前仍需人工审批和 ERP 回读。'],
+          confidence: 0.72,
         },
       ],
       insightOnlyCandidates: [
         {
-          entityType: 'keyword | search_term | target | campaign | ad_group | product',
-          entityName: 'business entity name',
-          actionType: `${FORMAL_AD_ACTION_SCHEMA} | observe | harvest | analysis_only`,
-          recommendedValue: 'optional value; use this section when only a relative percentage is available',
-          reason: `${this.outputLanguage()}洞察原因；缺少证据时放这里`,
-          reasoningSteps: [`${this.outputLanguage()}推理步骤`],
-          evidenceRefs: ['empty or partial evidence refs'],
-          riskWarnings: [`${this.outputLanguage()}不能进入审批的原因`],
-          confidence: '0..1',
+          entityType: 'search_term',
+          entityName: '示例搜索词，证据不足或只有方向判断时放这里',
+          actionType: 'analysis_only',
+          recommendedValue: '',
+          reason: '用简体中文说明为什么当前只能作为洞察，不能进入正式动作。',
+          reasoningSteps: ['说明缺少哪些 evidenceRefs、sourceFile/sourceRow 或绝对数值。'],
+          evidenceRefs: lifecycleRefs,
+          riskWarnings: ['证据不足，不能自动进入审批。'],
+          confidence: 0.52,
         },
       ],
-      riskWarnings: [`${this.outputLanguage()}人工复核风险`],
+      riskWarnings: ['列出当前诊断需要人工复核的风险。'],
     };
   }
 
@@ -587,6 +607,12 @@ export class AdStrategyDiagnoser {
 
   private outputLanguage(): string {
     return this.options.outputLanguage?.trim() || DEFAULT_OUTPUT_LANGUAGE;
+  }
+
+  private maxTokens(): number {
+    const parsed = Number(this.options.maxTokens);
+    if (!Number.isFinite(parsed)) return STRUCTURED_DIAGNOSIS_TOKEN_FLOOR;
+    return Math.max(STRUCTURED_DIAGNOSIS_TOKEN_FLOOR, Math.trunc(parsed));
   }
 }
 

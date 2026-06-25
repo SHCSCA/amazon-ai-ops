@@ -44,6 +44,13 @@ export interface StrategyRunFeedback {
   statusLabel: string;
   tone: StatusTone;
   className: string;
+  primaryAction?: StrategyRunFeedbackAction;
+  secondaryAction?: StrategyRunFeedbackAction;
+}
+
+export interface StrategyRunFeedbackAction {
+  label: string;
+  target: 'run-ai' | 'settings' | 'data-collection' | 'recommendations';
 }
 
 function readNumber(value: unknown, fallback: number): number {
@@ -99,6 +106,10 @@ function feedbackClassName(tone: StatusTone): string {
   return 'collection-action-feedback';
 }
 
+function isAiOutputContractFallback(reason: string): boolean {
+  return /JSON|格式|schemaVersion|输出契约|固定输出|解析|校验/i.test(reason);
+}
+
 export function buildStrategyRunFeedback(input: {
   canDiagnose: boolean;
   loading: boolean;
@@ -114,6 +125,7 @@ export function buildStrategyRunFeedback(input: {
       statusLabel: '待数据',
       tone: 'blocked',
       className: feedbackClassName('blocked'),
+      primaryAction: { label: '去数据采集', target: 'data-collection' },
     };
   }
   if (input.loading) {
@@ -134,6 +146,8 @@ export function buildStrategyRunFeedback(input: {
       statusLabel: '需处理',
       tone: 'blocked',
       className: feedbackClassName('blocked'),
+      primaryAction: { label: '重新运行 AI', target: 'run-ai' },
+      secondaryAction: { label: '检查 AI 设置', target: 'settings' },
     };
   }
   if (!input.diagnosis) {
@@ -144,6 +158,8 @@ export function buildStrategyRunFeedback(input: {
       statusLabel: '未运行',
       tone: 'pending',
       className: feedbackClassName('pending'),
+      primaryAction: { label: '运行 AI 诊断', target: 'run-ai' },
+      secondaryAction: { label: '检查 AI 设置', target: 'settings' },
     };
   }
 
@@ -160,16 +176,33 @@ export function buildStrategyRunFeedback(input: {
       statusLabel: 'AI 已完成',
       tone: 'ready',
       className: feedbackClassName('ready'),
+      primaryAction: { label: '进入优化建议', target: 'recommendations' },
+    };
+  }
+
+  const fallbackReason = input.diagnosis.summary.fallbackReason || 'AI 输出没有通过证据校验。';
+  if (isAiOutputContractFallback(fallbackReason)) {
+    return {
+      visible: true,
+      title: '上次 AI 输出契约失败，等待重新运行',
+      detail: `上次模型返回未通过结构化 JSON 校验，已保留规则量化结果。当前版本会按 8192 token 下限和 JSON 示例契约重新调用 ${input.diagnosis.model || 'AI 模型'}；点击重新运行验证${runTime}。`,
+      statusLabel: '待复测',
+      tone: 'warning',
+      className: feedbackClassName('warning'),
+      primaryAction: { label: '重新运行 AI', target: 'run-ai' },
+      secondaryAction: { label: '检查 AI 设置', target: 'settings' },
     };
   }
 
   return {
     visible: true,
     title: 'AI 阶段分析已完成，当前使用规则兜底',
-    detail: `${operatorFacingAdQuantReason(input.diagnosis.summary.fallbackReason || 'AI 输出没有通过证据校验。')} 当前仍保留规则量化结果和人工复核入口${runTime}。`,
+    detail: `${operatorFacingAdQuantReason(fallbackReason)} 当前仍保留规则量化结果和人工复核入口${runTime}。`,
     statusLabel: '规则兜底',
     tone: 'warning',
     className: feedbackClassName('warning'),
+    primaryAction: { label: '生成规则建议', target: 'recommendations' },
+    secondaryAction: { label: '重新运行 AI', target: 'run-ai' },
   };
 }
 
@@ -766,6 +799,22 @@ export function AdQuantPage() {
     }
   }
 
+  function handleStrategyFeedbackAction(action?: StrategyRunFeedbackAction) {
+    if (!action) return;
+    if (action.target === 'run-ai') {
+      void runStrategyDiagnosis();
+      return;
+    }
+    navigate(action.target);
+  }
+
+  function strategyFeedbackActionDisabled(action?: StrategyRunFeedbackAction): boolean {
+    if (!action) return true;
+    if (action.target === 'run-ai') return !canDiagnose || strategyLoading;
+    if (action.target === 'recommendations') return diagnosticCount === 0;
+    return false;
+  }
+
   return (
     <div>
       <PageHeader
@@ -813,6 +862,30 @@ export function AdQuantPage() {
             </div>
             <div className="collection-action-feedback-side">
               <StatusPill tone={strategyRunFeedback.tone}>{strategyRunFeedback.statusLabel}</StatusPill>
+              {(strategyRunFeedback.primaryAction || strategyRunFeedback.secondaryAction) && (
+                <div className="collection-action-feedback-actions">
+                  {strategyRunFeedback.primaryAction && (
+                    <button
+                      className="secondary-button compact-button"
+                      disabled={strategyFeedbackActionDisabled(strategyRunFeedback.primaryAction)}
+                      onClick={() => handleStrategyFeedbackAction(strategyRunFeedback.primaryAction)}
+                      type="button"
+                    >
+                      {strategyRunFeedback.primaryAction.label}
+                    </button>
+                  )}
+                  {strategyRunFeedback.secondaryAction && (
+                    <button
+                      className="secondary-button compact-button"
+                      disabled={strategyFeedbackActionDisabled(strategyRunFeedback.secondaryAction)}
+                      onClick={() => handleStrategyFeedbackAction(strategyRunFeedback.secondaryAction)}
+                      type="button"
+                    >
+                      {strategyRunFeedback.secondaryAction.label}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -188,6 +188,48 @@ describe('buildStrategyRunFeedback', () => {
     expect(feedback.detail).toContain('没有正确引用当前证据');
     expect(feedback.detail).toContain('2026-06-25 10:30');
   });
+
+  it('turns JSON contract fallback into a retryable AI feedback state', () => {
+    const feedback = buildStrategyRunFeedback({
+      canDiagnose: true,
+      loading: false,
+      lastRunAt: '2026-06-25T10:30:00.000Z',
+      diagnosis: {
+        configured: true,
+        invoked: true,
+        model: 'deepseek-v4-flash',
+        metrics: 129,
+        ruleCandidateCount: 3,
+        summary: {
+          source: 'rule',
+          lifecycleStage: 'unknown',
+          summary: '',
+          lifecycleStageReason: '',
+          lifecycleStageEvidenceRefs: [],
+          mainProblems: [],
+          riskWarnings: [],
+          thresholdSuggestions: {
+            targetAcos: { value: 0.25, reason: '', evidenceRefs: [] },
+            highAcosThreshold: { value: 0.4, reason: '', evidenceRefs: [] },
+            noOrderClickThreshold: { value: 30, reason: '', evidenceRefs: [] },
+            minSpend: { value: 10, reason: '', evidenceRefs: [] },
+          },
+          aiCandidateCount: 0,
+          operationEventCount: 0,
+          productContextCount: 0,
+          fallbackReason: 'AI 输出格式未通过校验，当前使用规则引擎兜底。',
+          evidencePackSummary: { total: 126, metric: 120, timeline: 1, operationEvent: 0, productContext: 1, ruleCandidate: 4 },
+        },
+      },
+    });
+
+    expect(feedback.title).toBe('上次 AI 输出契约失败，等待重新运行');
+    expect(feedback.statusLabel).toBe('待复测');
+    expect(feedback.detail).toContain('8192');
+    expect(feedback.detail).toContain('JSON 示例契约');
+    expect(feedback.primaryAction?.label).toBe('重新运行 AI');
+    expect(feedback.secondaryAction?.label).toBe('检查 AI 设置');
+  });
 });
 
 describe('buildQuantAccountingLine', () => {

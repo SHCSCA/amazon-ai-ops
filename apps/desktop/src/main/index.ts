@@ -6797,6 +6797,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings)), {
         persona: settings.aiPersona,
         outputLanguage: settings.aiOutputLanguage,
+        maxTokens: parseIntegerSetting(settings.aiMaxTokens || settings.ai_max_tokens, 8192),
       }).diagnose(diagnosisInput)
     : {
         schemaVersion: 'ad_strategy_diagnosis_v1' as const,
@@ -7229,6 +7230,7 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings)), {
         persona: settings.aiPersona,
         outputLanguage: settings.aiOutputLanguage,
+        maxTokens: parseIntegerSetting(settings.aiMaxTokens || settings.ai_max_tokens, 8192),
       }).diagnose(diagnosisInput)
     : fallbackDiagnosis;
   recordAdStrategyAiCallLog(diagnosisInput, diagnosis, settings, evidencePackSummary);
