@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PRODUCT_QUICK_COST_FIELDS,
   PRODUCT_QUICK_TARGET_FIELDS,
+  buildCredentialSandboxSummary,
   buildProductManagementPageModel,
   buildProductManagementTaskState,
   productManagementActionRoutes,
@@ -226,6 +227,24 @@ describe('ProductManagementPage model', () => {
   it('names quick product cost and target fields explicitly', () => {
     expect(PRODUCT_QUICK_COST_FIELDS.map((field) => field.label)).toEqual(['采购成本', 'FBA 费用', '最低售价']);
     expect(PRODUCT_QUICK_TARGET_FIELDS.map((field) => field.label)).toEqual(['目标 ACOS', '目标 TACOS', '目标净利率']);
+  });
+
+  it('builds a non-secret Main credential sandbox hover summary', () => {
+    const summary = buildCredentialSandboxSummary({
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-23',
+      storeName: 'operator@example.com',
+      marketplaceCode: 'US',
+    });
+
+    expect(summary).toMatchObject({
+      label: '凭证映射通过',
+      status: 'Main 托管',
+      sandboxId: '#FL-US-2026-06',
+    });
+    expect(summary.detail).toContain('login-credentials 已托管至 Main 物理加密区');
+    expect(summary.detail).toContain('不保存账号或密码明文');
+    expect(JSON.stringify(summary)).not.toContain('operator@example.com');
   });
 });
 

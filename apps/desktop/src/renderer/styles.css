@@ -796,6 +796,99 @@ button:active:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.dashboard-task-metrics > .credential-sandbox-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: visible;
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+  cursor: help;
+  outline: none;
+  transition: border-color 90ms ease, box-shadow 90ms ease, transform 80ms ease;
+}
+
+.credential-sandbox-chip:hover,
+.credential-sandbox-chip:focus-visible {
+  border-color: #86d9a4;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.12), 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.credential-sandbox-chip:active {
+  transform: scale(0.98);
+}
+
+.credential-sandbox-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
+}
+
+.credential-sandbox-chip strong {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.credential-sandbox-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 45;
+  display: grid;
+  width: max-content;
+  max-width: 340px;
+  gap: 5px;
+  border: 1px solid #b7d8c2;
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
+  color: var(--text);
+  padding: 10px 12px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 80ms ease, transform 80ms ease;
+}
+
+.credential-sandbox-chip:hover .credential-sandbox-popover,
+.credential-sandbox-chip:focus-visible .credential-sandbox-popover,
+.credential-sandbox-chip:focus-within .credential-sandbox-popover {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.credential-sandbox-popover::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 18px;
+  width: 8px;
+  height: 8px;
+  border-top: 1px solid #b7d8c2;
+  border-left: 1px solid #b7d8c2;
+  background: #fff;
+  transform: rotate(45deg);
+}
+
+.credential-sandbox-popover > strong {
+  color: #0f5132;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.credential-sandbox-popover > span,
+.credential-sandbox-popover > small {
+  color: #40546b;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
 .scope-task-feedback {
   display: inline-flex;
   min-height: 28px;

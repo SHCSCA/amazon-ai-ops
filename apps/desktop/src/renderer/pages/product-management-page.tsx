@@ -10,7 +10,7 @@ import {
   buildProductTimeline,
   type ProductTimelineItem,
 } from '../product-management';
-import type { AppRoute, BusinessDataPipeline } from '../types';
+import type { AppRoute, BusinessDataPipeline, OperationScope } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 type ProductManagementRoutes = {
@@ -127,6 +127,20 @@ export function buildProductManagementPageModel(input: {
 
 type ProductManagementPageModel = ReturnType<typeof buildProductManagementPageModel>;
 type ProductManagementTaskFeedbackTone = 'ready' | 'pending' | 'warning' | 'blocked';
+
+export function buildCredentialSandboxSummary(scope: Pick<OperationScope, 'dateFrom' | 'dateTo' | 'storeName' | 'marketplaceCode'>) {
+  const period = String(scope.dateTo || scope.dateFrom || 'local').slice(0, 7) || 'local';
+  const marketplace = String(scope.marketplaceCode || 'LOCAL').trim().toUpperCase() || 'LOCAL';
+  const sandboxId = `#FL-${marketplace}-${period}`;
+
+  return {
+    label: '凭证映射通过',
+    status: 'Main 托管',
+    sandboxId,
+    scopeLine: `${marketplace} / ${period} / UI 不作明文留存`,
+    detail: 'login-credentials 已托管至 Main 物理加密区；Renderer 只接收状态和通道 ID，不保存账号或密码明文。',
+  };
+}
 
 export function buildProductManagementTaskState(input: {
   model: ProductManagementPageModel;
@@ -275,6 +289,10 @@ export function ProductManagementPage() {
   const [saveError, setSaveError] = useState('');
   const importedRows = data?.quant?.importedRows ?? 0;
   const hasImportedMetrics = Boolean(data?.quant?.hasImportedMetrics && importedRows > 0);
+  const credentialSandbox = useMemo(
+    () => buildCredentialSandboxSummary(scope),
+    [scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName],
+  );
   const taskState = useMemo(
     () => buildProductManagementTaskState({
       model,
@@ -377,7 +395,25 @@ export function ProductManagementPage() {
             <span>{selected ? `${selected.title} / ${selected.asin}` : '未锁定 ASIN'}</span>
             <span>指标 {importedRows} 行</span>
             <span>日级 {model.selectedDailyRows.length} 天</span>
-            <span>凭证沙箱 Main 托管</span>
+            <span
+              aria-describedby="product-management-credential-sandbox-popover"
+              aria-label={`${credentialSandbox.label}，${credentialSandbox.status}，${credentialSandbox.detail}`}
+              className="credential-sandbox-chip"
+              tabIndex={0}
+            >
+              <span aria-hidden="true" className="credential-sandbox-chip-dot" />
+              <span>{credentialSandbox.label}</span>
+              <strong>{credentialSandbox.status}</strong>
+              <span
+                className="credential-sandbox-popover"
+                id="product-management-credential-sandbox-popover"
+                role="tooltip"
+              >
+                <strong>Main Sandboxed ID: {credentialSandbox.sandboxId}</strong>
+                <span>{credentialSandbox.detail}</span>
+                <small>{credentialSandbox.scopeLine}</small>
+              </span>
+            </span>
           </div>
           <div
             aria-live="polite"
