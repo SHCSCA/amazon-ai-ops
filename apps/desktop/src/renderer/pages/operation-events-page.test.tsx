@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildOperationEventTaskState,
   buildOperationEventDraftForScope,
   defaultOperationEventViewMode,
   filterOperationEventsForView,
+  operationEventCardClassName,
+  operationEventInlineSaveLabel,
   operationEventScopeLabel,
 } from './operation-events-page';
 import type { OperationEventView, OperationScope } from '../types';
@@ -58,6 +61,35 @@ describe('operation events page product/global views', () => {
     expect(operationEventScopeLabel(event({ asin: undefined }), 'B001')).toBe('全局');
     expect(operationEventScopeLabel(event({ asin: 'B001' }), 'B001')).toBe('产品');
     expect(operationEventScopeLabel(event({ asin: 'B001', campaignName: 'SP exact' }), 'B001')).toBe('广告对象');
+  });
+
+  it('builds a first-screen operator task for recording operation events', () => {
+    const task = buildOperationEventTaskState({
+      visibleEventCount: 0,
+      totalEventCount: 0,
+      specificEventCount: 0,
+      viewMode: 'product',
+      selectedAsin: 'B001',
+      canSave: true,
+      saving: false,
+    });
+
+    expect(task.title).toContain('当前产品');
+    expect(task.detail).toContain('B001');
+    expect(task.primaryActionLabel).toBe('记录事件');
+    expect(task.primaryActionDisabled).toBe(false);
+    expect(task.primaryActionBusy).toBe(false);
+    expect(task.secondaryActionLabel).toBe('进入广告量化');
+  });
+
+  it('marks the newest saved event card for transient feedback', () => {
+    expect(operationEventCardClassName(42, 42)).toContain('event-card-just-saved');
+    expect(operationEventCardClassName(41, 42)).toBe('event-card');
+  });
+
+  it('keeps the inline save button distinct from the first-screen primary action', () => {
+    expect(operationEventInlineSaveLabel(false)).toBe('保存到上下文');
+    expect(operationEventInlineSaveLabel(true)).toBe('正在保存...');
   });
 });
 

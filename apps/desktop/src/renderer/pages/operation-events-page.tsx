@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import type { AppRoute, OperationEventView } from '../types';
 
@@ -154,6 +155,43 @@ export function operationEventScopeLabel(event: OperationEventView, selectedAsin
   return '其他产品';
 }
 
+export function operationEventCardClassName(eventId: number, recentSavedEventId?: number | null): string {
+  return eventId === recentSavedEventId ? 'event-card event-card-just-saved' : 'event-card';
+}
+
+export function operationEventInlineSaveLabel(saving: boolean): string {
+  return saving ? '正在保存...' : '保存到上下文';
+}
+
+export function buildOperationEventTaskState(input: {
+  visibleEventCount: number;
+  totalEventCount: number;
+  specificEventCount: number;
+  viewMode: OperationEventViewMode;
+  selectedAsin?: string;
+  canSave: boolean;
+  saving: boolean;
+}) {
+  const scopeText = input.viewMode === 'product' && normalizeAsin(input.selectedAsin)
+    ? `当前产品 ${normalizeAsin(input.selectedAsin)}`
+    : input.viewMode === 'global'
+      ? '全店/全范围'
+      : '全部事件';
+  return {
+    title: input.visibleEventCount
+      ? `${scopeText}已有 ${input.visibleEventCount} 条运营事件`
+      : `${scopeText}还缺运营事件上下文`,
+    detail: input.visibleEventCount
+      ? `其中 ${input.specificEventCount} 条绑定产品或广告对象；AI 会在广告量化和建议解释时读取这些事件。`
+      : `先为${scopeText}记录 Coupon、BD、调价、库存或 Listing 变化，避免 AI 只看广告表格误判波动原因。`,
+    primaryActionLabel: input.saving ? '正在保存...' : '记录事件',
+    primaryActionBusy: input.saving,
+    primaryActionBusyLabel: '正在保存...',
+    primaryActionDisabled: input.saving || !input.canSave,
+    secondaryActionLabel: '进入广告量化',
+  };
+}
+
 function normalizeAsin(value?: string): string {
   return String(value || '').trim().toUpperCase();
 }
@@ -185,6 +223,7 @@ export function OperationEventsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [recentSavedEventId, setRecentSavedEventId] = useState<number | null>(null);
 
   const visibleEvents = useMemo(
     () => filterOperationEventsForView(events, viewMode, scope.asin),
@@ -203,6 +242,16 @@ export function OperationEventsPage() {
 
   const selectedTypeHint = EVENT_USAGE_HINTS[draft.eventType] || EVENT_USAGE_HINTS.manual_note;
   const specificEventCount = visibleEvents.filter((event) => event.asin || event.campaignName || event.adGroupName).length;
+  const canSaveEvent = Boolean(draft.eventDate && draft.storeName && draft.marketplaceCode && draft.title);
+  const taskState = buildOperationEventTaskState({
+    visibleEventCount: visibleEvents.length,
+    totalEventCount: events.length,
+    specificEventCount,
+    viewMode,
+    selectedAsin: scope.asin,
+    canSave: canSaveEvent,
+    saving,
+  });
 
   function applyPreset(preset: (typeof EVENT_PRESETS)[number]) {
     setDraft({
@@ -240,12 +289,18 @@ export function OperationEventsPage() {
     loadEvents();
   }, [scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode, scope.asin]);
 
+  useEffect(() => {
+    if (!recentSavedEventId) return undefined;
+    const timeout = window.setTimeout(() => setRecentSavedEventId(null), 450);
+    return () => window.clearTimeout(timeout);
+  }, [recentSavedEventId]);
+
   async function saveEvent() {
     setSaving(true);
     setError('');
     setMessage('');
     try {
-      await (window as any).electronAPI.createOperationEvent({
+      const created = await (window as any).electronAPI.createOperationEvent({
         ...draft,
         asin: draft.asin || undefined,
         campaignName: draft.campaignName || undefined,
@@ -256,6 +311,8 @@ export function OperationEventsPage() {
       setDraft(buildOperationEventDraftForScope(scope, viewMode));
       setMessage('运营事件已记录，会进入广告量化和 AI 诊断上下文。');
       await loadEvents();
+      const createdId = Number(created?.id);
+      if (Number.isInteger(createdId) && createdId > 0) setRecentSavedEventId(createdId);
     } catch (caught) {
       setError(toUserFacingError(caught, '保存运营事件失败'));
     } finally {
@@ -286,6 +343,32 @@ export function OperationEventsPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow="当前任务"
+          title={taskState.title}
+          detail={taskState.detail}
+          primaryAction={{
+            label: taskState.primaryActionLabel,
+            busy: taskState.primaryActionBusy,
+            busyLabel: taskState.primaryActionBusyLabel,
+            disabled: taskState.primaryActionDisabled,
+            onClick: saveEvent,
+          }}
+          secondaryActions={[
+            {
+              label: taskState.secondaryActionLabel,
+              onClick: () => navigate('ad-quant'),
+            },
+          ]}
+        >
+          <div className="dashboard-task-metrics" aria-label="运营事件任务摘要">
+            <StatusPill tone={visibleEvents.length ? 'ready' : 'pending'}>当前视图 {visibleEvents.length}</StatusPill>
+            <span>{viewMode === 'product' && scope.asin ? `产品 ${scope.asin}` : viewMode === 'global' ? '全局事件' : '全部事件'}</span>
+            <span>绑定对象 {specificEventCount}</span>
+            <span>只补上下文，不执行广告</span>
+          </div>
+        </OperatorTaskPanel>
+
         <Panel title="当前范围与作用" tone="success">
           <div className="business-split">
             <div>
@@ -482,11 +565,11 @@ export function OperationEventsPage() {
           <div className="action-row">
             <button
               className="primary-button"
-              disabled={saving || !draft.eventDate || !draft.storeName || !draft.marketplaceCode || !draft.title}
+              disabled={saving || !canSaveEvent}
               onClick={saveEvent}
               type="button"
             >
-              {saving ? '正在保存...' : '记录事件'}
+              {operationEventInlineSaveLabel(saving)}
             </button>
             <button className="secondary-button" onClick={loadEvents} type="button">刷新</button>
           </div>
@@ -505,7 +588,7 @@ export function OperationEventsPage() {
                 <div className="event-day-date">{date}</div>
                 <div className="event-cards">
                   {rows.map((event) => (
-                    <article className="event-card" key={event.id}>
+                    <article className={operationEventCardClassName(event.id, recentSavedEventId)} key={event.id}>
                       <div className="event-card-title">
                         <strong>{event.title}</strong>
                         <StatusPill tone="pending">{formatEventType(event.eventType)}</StatusPill>
