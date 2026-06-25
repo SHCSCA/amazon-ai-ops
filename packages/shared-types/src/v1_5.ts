@@ -54,6 +54,8 @@ export interface DownloadCenterActionSelectors {
   dailyDetailRadio?: string;
   createReportButton: string;
   confirmCreateButton?: string;
+  listRefreshButton?: string;
+  createTimeSortHeader?: string;
   readyReportSelector: string;
   statusTextSelector?: string;
   downloadButton: string;

@@ -98,12 +98,13 @@ describe('ad metric report grain helpers', () => {
     }
   });
 
-  it('chooses one canonical report type for authoritative totals before using approximate fallback', () => {
-    expect(chooseCanonicalAdMetricReportTypes(['campaign', 'keyword', 'user_search_term'])).toEqual({
-      reportTypes: ['user_search_term'],
-      summarySource: 'canonical_user_search_term',
+  it('chooses one ERP-comparable canonical report type before using approximate fallback', () => {
+    expect(chooseCanonicalAdMetricReportTypes(['campaign', 'keyword', 'user_search_term', 'advertised_product'])).toEqual({
+      reportTypes: ['advertised_product'],
+      summarySource: 'canonical_advertised_product',
       isApproximate: false,
     });
+    expect(chooseCanonicalAdMetricReportTypes(['campaign', 'keyword', 'user_search_term']).reportTypes).toEqual(['user_search_term']);
     expect(chooseCanonicalAdMetricReportTypes(['campaign', 'keyword', 'search_term']).reportTypes).toEqual(['search_term']);
     expect(chooseCanonicalAdMetricReportTypes(['campaign', 'keyword', 'product_targeting'])).toMatchObject({
       reportTypes: ['keyword', 'product_targeting'],
@@ -111,8 +112,8 @@ describe('ad metric report grain helpers', () => {
       isApproximate: true,
     });
     expect(chooseCanonicalAdMetricReportTypes(['campaign', 'ad_group'])).toMatchObject({
-      reportTypes: [],
-      summarySource: 'none',
+      reportTypes: ['ad_group'],
+      summarySource: 'canonical_ad_group',
       isApproximate: false,
     });
   });
@@ -135,10 +136,10 @@ describe('ad metric report grain helpers', () => {
   it('builds canonical where clauses from available report types without mixing breakdown grains', () => {
     const db = createReportTypeDb();
     try {
-      const canonical = adMetricCanonicalWhere(['campaign', 'ad_group', 'keyword', 'user_search_term']);
+      const canonical = adMetricCanonicalWhere(['campaign', 'ad_group', 'keyword', 'user_search_term', 'advertised_product']);
       expect(canonical.selection).toEqual({
-        reportTypes: ['user_search_term'],
-        summarySource: 'canonical_user_search_term',
+        reportTypes: ['advertised_product'],
+        summarySource: 'canonical_advertised_product',
         isApproximate: false,
       });
 
@@ -149,7 +150,7 @@ describe('ad metric report grain helpers', () => {
         ORDER BY value
       `).all() as Array<{ value: string }>;
 
-      expect(rows.map((row) => row.value)).toEqual(['user_search_term']);
+      expect(rows.map((row) => row.value)).toEqual(['advertised_product']);
     } finally {
       db.close();
     }

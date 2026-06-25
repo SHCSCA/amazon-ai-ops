@@ -1,6 +1,8 @@
 export type AdMetricReportGrain = 'actionable' | 'breakdown' | 'all';
 
 export type CanonicalAdMetricSummarySource =
+  | 'canonical_advertised_product'
+  | 'canonical_ad_group'
   | 'canonical_user_search_term'
   | 'canonical_search_term'
   | 'actionable_fallback'
@@ -29,6 +31,8 @@ export const BREAKDOWN_REPORT_TYPES = [
 ] as const;
 
 export const CANONICAL_REPORT_TYPE_PRIORITY = [
+  'advertised_product',
+  'ad_group',
   'user_search_term',
   'search_term',
 ] as const;
@@ -164,6 +168,22 @@ export function chooseCanonicalAdMetricReportTypes(availableReportTypes: Iterabl
       .filter(Boolean),
   );
 
+  if (available.has('advertised_product')) {
+    return {
+      reportTypes: ['advertised_product'],
+      summarySource: 'canonical_advertised_product',
+      isApproximate: false,
+    };
+  }
+
+  if (available.has('ad_group')) {
+    return {
+      reportTypes: ['ad_group'],
+      summarySource: 'canonical_ad_group',
+      isApproximate: false,
+    };
+  }
+
   if (available.has('user_search_term')) {
     return {
       reportTypes: ['user_search_term'],
@@ -186,7 +206,7 @@ export function chooseCanonicalAdMetricReportTypes(availableReportTypes: Iterabl
       reportTypes: fallbackTypes,
       summarySource: 'actionable_fallback',
       isApproximate: true,
-      warning: '当前范围没有搜索词权威总表，汇总使用关键词、商品投放和自动投放的可行动报表近似计算；不要再与广告活动、广告组或广告位报表相加。',
+      warning: '当前范围没有推广商品、广告组或搜索词权威总表，汇总使用关键词、商品投放和自动投放的可行动报表近似计算；不要再与广告活动、广告组或广告位报表相加。',
     };
   }
 

@@ -290,6 +290,8 @@ function compactDeliveryMessage(text: string): string {
 }
 
 function reconciliationSourceLabel(source?: string): string {
+  if (source === 'canonical_advertised_product') return '推广商品报表口径';
+  if (source === 'canonical_ad_group') return '广告组报表口径';
   if (source === 'canonical_user_search_term') return '用户搜索词权威口径';
   if (source === 'canonical_search_term') return '搜索词总盘口径';
   return source || '未记录';

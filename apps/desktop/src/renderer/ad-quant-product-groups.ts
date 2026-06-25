@@ -33,6 +33,14 @@ type LedgerLike = {
   };
 };
 
+type CanonicalSummaryLike = {
+  asin?: string;
+  cost?: number;
+  sales?: number;
+  orders?: number;
+  clicks?: number;
+};
+
 export interface AdQuantProductGroup {
   productKey: string;
   asin?: string;
@@ -51,6 +59,7 @@ export interface AdQuantProductGroup {
 
 export function buildAdQuantProductGroups(input: {
   scopeAsin?: string;
+  canonicalSummary?: CanonicalSummaryLike;
   diagnostics: MetricLike[];
   timelines: TimelineLike[];
   ledgers: LedgerLike[];
@@ -104,6 +113,15 @@ export function buildAdQuantProductGroups(input: {
     group.sales = Math.max(group.sales, numberValue(row.totalSales ?? row.totals?.sales));
     group.orders = Math.max(group.orders, numberValue(row.totalOrders ?? row.totals?.orders));
     group.clicks = Math.max(group.clicks, numberValue(row.totalClicks ?? row.totals?.clicks));
+  }
+
+  const canonicalSummary = input.canonicalSummary;
+  if (canonicalSummary) {
+    const group = ensureGroup(canonicalSummary.asin || input.scopeAsin);
+    group.cost = numberValue(canonicalSummary.cost);
+    group.sales = numberValue(canonicalSummary.sales);
+    group.orders = numberValue(canonicalSummary.orders);
+    group.clicks = numberValue(canonicalSummary.clicks);
   }
 
   const scopedAsin = normalizeAsin(input.scopeAsin);

@@ -9,4 +9,11 @@ describe('preload business update bridge', () => {
     expect(source).toContain("ipcRenderer.on('business-ui:data-updated'");
     expect(source).toContain("window.dispatchEvent(new Event('business-ui:data-updated'))");
   });
+
+  it('exposes remembered login credential IPC calls', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain("getSavedLoginCredentials: () => ipcRenderer.invoke('browser:get-saved-credentials')");
+    expect(source).toContain('rememberPassword');
+  });
 });

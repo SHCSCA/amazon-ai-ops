@@ -37,6 +37,15 @@ export interface AdQuantDecisionStatus {
   primaryActionLabel: string;
 }
 
+export interface StrategyRunFeedback {
+  visible: boolean;
+  title: string;
+  detail: string;
+  statusLabel: string;
+  tone: StatusTone;
+  className: string;
+}
+
 function readNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -55,6 +64,8 @@ function navigate(route: AppRoute) {
 }
 
 function quantSourceLabel(source?: string): string {
+  if (source === 'canonical_advertised_product') return '推广商品报表口径';
+  if (source === 'canonical_ad_group') return '广告组报表口径';
   if (source === 'canonical_user_search_term') return '用户搜索词权威口径';
   if (source === 'canonical_search_term') return '搜索词总盘口径';
   if (source === 'actionable_fallback') return '可行动报表近似口径';
@@ -62,10 +73,104 @@ function quantSourceLabel(source?: string): string {
 }
 
 function quantSourceDescription(source?: string): string {
+  if (source === 'canonical_advertised_product') return '总盘使用推广商品报表汇总，优先对齐领星 ERP 广告效果的 ASIN 级花费、销售、订单和点击。';
+  if (source === 'canonical_ad_group') return '总盘使用广告组报表汇总，优先对齐领星 ERP 广告效果的花费、销售、订单和点击。';
   if (source === 'canonical_user_search_term') return '总盘使用用户搜索词报表汇总，避免广告活动/广告组/投放位置等报表重复累加。';
   if (source === 'canonical_search_term') return '总盘使用搜索词报表汇总，避免广告活动/广告组/投放位置等报表重复累加。';
-  if (source === 'actionable_fallback') return '未找到搜索词权威总表，暂用关键词、商品投放和自动投放等可行动报表近似汇总。';
+  if (source === 'actionable_fallback') return '未找到推广商品、广告组或搜索词权威总表，暂用关键词、商品投放和自动投放等可行动报表近似汇总。';
   return '当前范围缺少真实原始报表或导入指标，不能计算广告表现。';
+}
+
+export function buildQuantAccountingLine(input: {
+  summarySource?: string;
+  batchIds?: string[];
+  asin?: string;
+  canonicalRows?: number;
+}): string {
+  const batchText = input.batchIds?.length ? input.batchIds.join('、') : '当前匹配批次';
+  const asinText = input.asin ? `，只筛选 ASIN ${input.asin}` : '';
+  const rowText = Number(input.canonicalRows || 0) > 0 ? `，可加总 ${input.canonicalRows} 行` : '';
+  return `当前总盘只读取 ${batchText} 的 ${quantSourceLabel(input.summarySource)}${asinText}${rowText}；重复采集按批次隔离，不跨批次、不跨报表层级重复相加。`;
+}
+
+function feedbackClassName(tone: StatusTone): string {
+  if (tone === 'ready') return 'collection-action-feedback collection-action-feedback-ready';
+  if (tone === 'blocked' || tone === 'warning') return 'collection-action-feedback collection-action-feedback-blocked';
+  return 'collection-action-feedback';
+}
+
+export function buildStrategyRunFeedback(input: {
+  canDiagnose: boolean;
+  loading: boolean;
+  error?: string;
+  diagnosis?: AdStrategyDiagnosisView | null;
+  lastRunAt?: string;
+}): StrategyRunFeedback {
+  if (!input.canDiagnose) {
+    return {
+      visible: true,
+      title: 'AI 暂不可运行',
+      detail: '先补齐真实报表和 DB 日级指标；系统不会用空数据或审计文件调用 AI。',
+      statusLabel: '待数据',
+      tone: 'blocked',
+      className: feedbackClassName('blocked'),
+    };
+  }
+  if (input.loading) {
+    return {
+      visible: true,
+      title: 'AI 阶段分析运行中',
+      detail: '正在调用模型、校验证据引用并生成阶段判断；完成或失败都会在这里显示。',
+      statusLabel: '运行中',
+      tone: 'pending',
+      className: feedbackClassName('pending'),
+    };
+  }
+  if (input.error) {
+    return {
+      visible: true,
+      title: 'AI 阶段分析失败',
+      detail: input.error,
+      statusLabel: '需处理',
+      tone: 'blocked',
+      className: feedbackClassName('blocked'),
+    };
+  }
+  if (!input.diagnosis) {
+    return {
+      visible: true,
+      title: 'AI 尚未运行',
+      detail: '点击“运行大模型深度诊断”后，本页会显示运行中、完成结果、失败原因和下一步动作。',
+      statusLabel: '未运行',
+      tone: 'pending',
+      className: feedbackClassName('pending'),
+    };
+  }
+
+  const source = input.diagnosis.summary.source;
+  const aiCandidateCount = Number(input.diagnosis.summary.aiCandidateCount || 0);
+  const insightOnlyCount = Number(input.diagnosis.summary.insightOnlyCandidateCount || 0);
+  const evidenceCount = Number(input.diagnosis.summary.evidencePackSummary?.total || 0);
+  const runTime = input.lastRunAt ? `；最近完成 ${input.lastRunAt.replace('T', ' ').slice(0, 16)}` : '';
+  if (source === 'ai') {
+    return {
+      visible: true,
+      title: 'AI 阶段分析已完成',
+      detail: `模型 ${input.diagnosis.model} 已返回 ${aiCandidateCount} 条 AI 候选、${insightOnlyCount} 条仅洞察，引用 ${evidenceCount} 条证据${runTime}。结果已显示在本页下方。`,
+      statusLabel: 'AI 已完成',
+      tone: 'ready',
+      className: feedbackClassName('ready'),
+    };
+  }
+
+  return {
+    visible: true,
+    title: 'AI 阶段分析已完成，当前使用规则兜底',
+    detail: `${operatorFacingAdQuantReason(input.diagnosis.summary.fallbackReason || 'AI 输出没有通过证据校验。')} 当前仍保留规则量化结果和人工复核入口${runTime}。`,
+    statusLabel: '规则兜底',
+    tone: 'warning',
+    className: feedbackClassName('warning'),
+  };
 }
 
 export function strategyDiagnosisSourceLabel(source?: string): string {
@@ -488,6 +593,7 @@ export function AdQuantPage() {
   const [strategyDiagnosis, setStrategyDiagnosis] = useState<AdStrategyDiagnosisView | null>(null);
   const [strategyLoading, setStrategyLoading] = useState(false);
   const [strategyError, setStrategyError] = useState('');
+  const [strategyLastRunAt, setStrategyLastRunAt] = useState('');
   const [diagnosisRuns, setDiagnosisRuns] = useState<AiDiagnosisRunView[]>([]);
   const [diagnosisRunsError, setDiagnosisRunsError] = useState('');
   const quant = data?.quant;
@@ -522,10 +628,19 @@ export function AdQuantPage() {
   const allProductHistoryLedgers = canDiagnose ? data?.productHistory?.ledgers || [] : [];
   const productGrouping = useMemo(() => buildAdQuantProductGroups({
     scopeAsin: scope.asin,
+    canonicalSummary: visibleQuant && scope.asin
+      ? {
+          asin: scope.asin,
+          cost: visibleQuant.totalSpend,
+          sales: visibleQuant.totalSales,
+          orders: visibleQuant.totalOrders,
+          clicks: visibleQuant.totalClicks,
+        }
+      : undefined,
     diagnostics: allDiagnostics,
     timelines: allTimelines,
     ledgers: allProductHistoryLedgers,
-  }), [scope.asin, allDiagnostics, allTimelines, allProductHistoryLedgers]);
+  }), [scope.asin, visibleQuant, allDiagnostics, allTimelines, allProductHistoryLedgers]);
   const [selectedProductKey, setSelectedProductKey] = useState('');
   const selectedProduct = selectedProductKey || productGrouping.selectedProductKey;
   const selectedProductGroup = productGrouping.groups.find((group) => group.productKey === selectedProduct);
@@ -544,6 +659,13 @@ export function AdQuantPage() {
     canGenerateFormalRecommendations,
     diagnosticCount: visibleDiagnostics.length,
     diagnosis: strategyDiagnosis?.summary,
+  });
+  const strategyRunFeedback = buildStrategyRunFeedback({
+    canDiagnose,
+    loading: strategyLoading,
+    error: strategyError,
+    diagnosis: strategyDiagnosis,
+    lastRunAt: strategyLastRunAt,
   });
   const strategyReferencedEvidenceIds = strategyDiagnosis ? referencedEvidenceIds(strategyDiagnosis.summary) : new Set<string>();
   const productContexts = normalizeProductContexts(data?.productContext?.products);
@@ -619,6 +741,7 @@ export function AdQuantPage() {
     const api = (window as any).electronAPI;
     setStrategyLoading(true);
     setStrategyError('');
+    setStrategyLastRunAt('');
     try {
       if (!api?.runAdStrategyDiagnosis) {
         throw new Error('AI 阶段诊断接口未暴露。');
@@ -633,9 +756,11 @@ export function AdQuantPage() {
         limit: 300,
       });
       setStrategyDiagnosis(result);
+      setStrategyLastRunAt(new Date().toISOString());
       await loadDiagnosisRuns();
     } catch (caught) {
       setStrategyError(toUserFacingError(caught, 'AI 阶段诊断失败。'));
+      setStrategyLastRunAt(new Date().toISOString());
     } finally {
       setStrategyLoading(false);
     }
@@ -679,6 +804,19 @@ export function AdQuantPage() {
           />
         </OperatorTaskPanel>
 
+        {strategyRunFeedback.visible && (
+          <div className={strategyRunFeedback.className} id="ai-strategy-run-feedback">
+            <div>
+              <span>AI 运行反馈</span>
+              <strong>{strategyRunFeedback.title}</strong>
+              <p>{strategyRunFeedback.detail}</p>
+            </div>
+            <div className="collection-action-feedback-side">
+              <StatusPill tone={strategyRunFeedback.tone}>{strategyRunFeedback.statusLabel}</StatusPill>
+            </div>
+          </div>
+        )}
+
         <Panel title="当前范围" tone={canDiagnose ? 'success' : 'blocked'}>
           <div className="business-split">
             <div className="business-scope-line">
@@ -691,6 +829,16 @@ export function AdQuantPage() {
           {canDiagnose && (
             <p className="muted-line">
               总盘口径：{quantSourceDescription(quant?.summarySource)}
+            </p>
+          )}
+          {canDiagnose && (
+            <p className="muted-line">
+              {buildQuantAccountingLine({
+                summarySource: quant?.summarySource,
+                batchIds: sourceBatchIds,
+                asin: scope.asin,
+                canonicalRows,
+              })}
             </p>
           )}
           {quant?.summaryWarning && <p className="warning-line">{quant.summaryWarning}</p>}

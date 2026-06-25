@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
@@ -58,6 +58,7 @@ import { buildListingAiCallLogInput, buildListingRewritePrompt, parseAiDraftResp
 import { normalizeManualListingContent } from './listing-manual-content';
 import { buildAdActionReasonAiCallLogInput, type AdActionExplanationForLog } from './ad-action-ai-call-log';
 import { mergeAdActionExplanationEvidence } from './ad-action-explanation-merge';
+import { readSavedLoginCredentials, saveLoginCredentials, type LoginCredentialCipher } from './login-credentials';
 import {
   normalizeAiSettingsForSaveInput,
   normalizeAiSettingsForTestInput,
@@ -364,6 +365,27 @@ type AdsSessionResult = {
   adsTitle: string;
 };
 
+const electronLoginCredentialCipher: LoginCredentialCipher = {
+  isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+  encrypt: (value: string) => `safe:${safeStorage.encryptString(value).toString('base64')}`,
+  decrypt: (value: string) => {
+    const payload = value.startsWith('safe:') ? value.slice(5) : value;
+    return safeStorage.decryptString(Buffer.from(payload, 'base64'));
+  },
+};
+
+function handleGetSavedLoginCredentials() {
+  if (!state.settingsRepo) {
+    return {
+      username: '',
+      password: '',
+      rememberPassword: false,
+      passwordAvailable: false,
+    };
+  }
+  return readSavedLoginCredentials(state.settingsRepo, electronLoginCredentialCipher);
+}
+
 async function readLingxingPageState(page: NonNullable<ReturnType<BrowserController['getPage']>>) {
   return page.evaluate(() => ({
     url: window.location.href,
@@ -381,7 +403,7 @@ function adsSessionResultFromPageState(pageState: { url: string; title?: string 
   };
 }
 
-async function handleBrowserLogin(username: string, password: string): Promise<BrowserLoginResult> {
+async function handleBrowserLogin(username: string, password: string, rememberPassword = false): Promise<BrowserLoginResult> {
   if (state.browserController) {
     await state.browserController.close().catch(() => undefined);
     state.browserController = null;
@@ -431,8 +453,9 @@ async function handleBrowserLogin(username: string, password: string): Promise<B
     state.isLoggedIn = true;
     state.currentStore = username;
 
-    // Store only the username; password stays with the user's manual ERP session.
-    state.settingsRepo?.saveCredentials({ username });
+    if (state.settingsRepo) {
+      saveLoginCredentials(state.settingsRepo, { username, password, rememberPassword }, electronLoginCredentialCipher);
+    }
 
     return {
       ok: true,
@@ -1438,6 +1461,24 @@ function loadBusinessRecommendationMetrics(scope: NormalizedBusinessUiScope, sou
   return rows.map(mapBusinessAdMetricRow);
 }
 
+function loadBusinessCanonicalMetrics(scope: NormalizedBusinessUiScope, source: BusinessMetricSource, limit: number): AdDailyMetrics[] {
+  if (!state.db) return [];
+  const allMetrics = businessMetricsWhere(scope, source, 'all');
+  const canonical = adMetricCanonicalWhere(
+    loadAvailableBusinessMetricReportTypes(allMetrics.sql, allMetrics.params),
+  );
+  if (canonical.selection.reportTypes.length === 0) return [];
+  const rows = state.db.prepare(`
+    SELECT *
+    FROM ad_daily_metrics
+    WHERE ${allMetrics.sql}
+      AND ${canonical.whereSql}
+    ORDER BY date ASC, created_at DESC
+    LIMIT ?
+  `).all(...allMetrics.params, limit) as any[];
+  return rows.map(mapBusinessAdMetricRow);
+}
+
 function mapBusinessAdMetricRow(row: any): AdDailyMetrics {
   return {
     id: row.id,
@@ -1816,7 +1857,7 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
   });
   const productContexts = loadProductStrategyContexts(scope);
   const productHistoryMetrics = metricSource
-    ? loadBusinessRecommendationMetrics(scope, metricSource, 5000)
+    ? loadBusinessCanonicalMetrics(scope, metricSource, 5000)
     : [];
   const productHistoryLedgers = buildAdProductHistoryLedger({
     scope: {
@@ -2188,7 +2229,11 @@ const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS = {
   dateEndInput: 'input[placeholder="结束日期"].el-range-input',
   dailyDetailRadio: 'label.el-radio:has-text("每日明细")',
   confirmCreateButton: 'button:has-text("生成报告")',
+  listRefreshButton: 'button:has-text("查询"), button:has-text("搜索"), button:has-text("刷新"), a:has-text("刷新")',
+  createTimeSortHeader: 'th:has-text("创建时间"), [role="columnheader"]:has-text("创建时间"), .el-table__header-wrapper th:has-text("创建时间")',
 } as const;
+
+const DOWNLOAD_CENTER_LIST_RECOVERY_INTERVAL_MS = 6000;
 
 function reportContextKey(report: { type: LingxingReportType }, dateRange: { start: string; end: string }): string {
   return `${report.type}:${dateRange.start}:${dateRange.end}`;
@@ -2242,6 +2287,82 @@ async function waitForCreateReportPage(page: NonNullable<ReturnType<BrowserContr
   const container = page.locator('.create-report-container').first();
   if (await container.isVisible({ timeout: 5000 }).catch(() => false)) return;
   await page.getByText('创建报告', { exact: false }).first().waitFor({ state: 'visible', timeout: 30000 });
+}
+
+async function refreshDownloadCenterReportList(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  selectors: DownloadCenterActionSelectors,
+): Promise<void> {
+  await page.keyboard.press('Escape').catch(() => undefined);
+  let acted = false;
+
+  const refreshSelector = selectors.listRefreshButton || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.listRefreshButton;
+  const refreshButton = page.locator(refreshSelector).first();
+  if (await refreshButton.isVisible({ timeout: 1500 }).catch(() => false)) {
+    await refreshButton.click({ timeout: 5000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => undefined);
+    acted = true;
+  }
+
+  const sorted = await ensureDownloadCenterCreateTimeLatestFirst(
+    page,
+    selectors.createTimeSortHeader || DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS.createTimeSortHeader,
+  );
+  acted = acted || sorted;
+
+  if (!acted) {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
+  }
+  await page.waitForTimeout(500);
+}
+
+async function ensureDownloadCenterCreateTimeLatestFirst(
+  page: NonNullable<ReturnType<BrowserController['getPage']>>,
+  selector: string,
+): Promise<boolean> {
+  const header = page.locator(selector).first();
+  if (!await header.isVisible({ timeout: 1500 }).catch(() => false)) {
+    return false;
+  }
+
+  let clicked = false;
+  let state = await readDownloadCenterSortState(header);
+  if (state === 'descending') {
+    await header.click({ timeout: 5000 }).catch(() => undefined);
+    await page.waitForTimeout(350);
+    clicked = true;
+  }
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    state = await readDownloadCenterSortState(header);
+    if (state === 'descending' && clicked) {
+      return true;
+    }
+    await header.click({ timeout: 5000 }).catch(() => undefined);
+    await page.waitForTimeout(500);
+    clicked = true;
+    if (state === 'unknown' && attempt >= 1) {
+      return true;
+    }
+  }
+  return clicked;
+}
+
+async function readDownloadCenterSortState(
+  locator: ReturnType<NonNullable<ReturnType<BrowserController['getPage']>>['locator']>,
+): Promise<'ascending' | 'descending' | 'unknown'> {
+  return locator.evaluate((element) => {
+    const target = (element.closest('th,[role="columnheader"],.el-table__cell') || element) as HTMLElement;
+    const text = [
+      target.className?.toString() || '',
+      target.getAttribute('aria-sort') || '',
+      target.getAttribute('class') || '',
+      target.querySelector('[class*="sort"]')?.getAttribute('class') || '',
+    ].join(' ').toLowerCase();
+    if (/desc|descending|降序/.test(text)) return 'descending';
+    if (/asc|ascending|升序/.test(text)) return 'ascending';
+    return 'unknown';
+  }).catch(() => 'unknown' as const);
 }
 
 function createDownloadCenterAutomation(
@@ -2382,20 +2503,50 @@ function createDownloadCenterAutomation(
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
       const context = reportContext(report, dateRange);
+      let lastRecoveryAt = 0;
+      const recoverListIfNeeded = async (attempt: number) => {
+        const now = Date.now();
+        if (attempt > 1 && now - lastRecoveryAt < DOWNLOAD_CENTER_LIST_RECOVERY_INTERVAL_MS) {
+          return;
+        }
+        lastRecoveryAt = now;
+        await refreshDownloadCenterReportList(page, selectors);
+      };
+      await recoverListIfNeeded(0);
+
       if (selectors.statusTextSelector) {
         await pollReportGenerationStatus(async () => {
-          const statusTextSelector = await assertUsableDownloadCenterActionSelector(page, 'statusTextSelector', selectors.statusTextSelector!, context, dateRange);
-          await page.locator(statusTextSelector).waitFor({ state: 'visible', timeout: 10000 });
-          return page.locator(statusTextSelector).innerText();
+          const statusTextSelector = renderDownloadCenterSelector(selectors.statusTextSelector!, context, dateRange);
+          const statusLocator = page.locator(statusTextSelector).first();
+          if (!await statusLocator.isVisible({ timeout: 2000 }).catch(() => false)) {
+            return '';
+          }
+          return statusLocator.innerText();
         }, {
           intervalMs: 2000,
           timeoutMs: selectors.readyTimeoutMs ?? 300000,
+          onPendingSnapshot: async (snapshot) => {
+            if (snapshot.status === 'unknown' || snapshot.attempt % 3 === 0) {
+              await recoverListIfNeeded(snapshot.attempt);
+            }
+          },
         });
       } else {
         const readyReportSelector = renderDownloadCenterSelector(selectors.readyReportSelector, context, dateRange);
-        await page
-          .locator(readyReportSelector)
-          .waitFor({ state: 'visible', timeout: selectors.readyTimeoutMs ?? 300000 });
+        await pollReportGenerationStatus(async () => {
+          const readyRow = page.locator(readyReportSelector).first();
+          return await readyRow.isVisible({ timeout: 2000 }).catch(() => false)
+            ? '生成成功，可下载'
+            : '生成中';
+        }, {
+          intervalMs: 2000,
+          timeoutMs: selectors.readyTimeoutMs ?? 300000,
+          onPendingSnapshot: async (snapshot) => {
+            if (snapshot.attempt % 3 === 0) {
+              await recoverListIfNeeded(snapshot.attempt);
+            }
+          },
+        });
       }
       await assertUsableDownloadCenterActionSelector(page, 'readyReportSelector', selectors.readyReportSelector, context, dateRange);
     },
@@ -3178,7 +3329,13 @@ function getDownloadCenterActionSelectorKind(name: string): DownloadCenterAction
   if (name === 'statusTextSelector') {
     return 'status';
   }
-  if (name === 'createReportButton' || name === 'confirmCreateButton' || name === 'downloadButton') {
+  if (
+    name === 'createReportButton'
+    || name === 'confirmCreateButton'
+    || name === 'downloadButton'
+    || name === 'listRefreshButton'
+    || name === 'createTimeSortHeader'
+  ) {
     return 'click';
   }
   return 'optional';
@@ -3313,6 +3470,8 @@ async function collectDownloadCenterDiagnosticActionSelectorChecks(
 ): Promise<DownloadCenterActionSelectorCheck[]> {
   const listPageSelectorNames = new Set([
     'createReportButton',
+    'listRefreshButton',
+    'createTimeSortHeader',
     'readyReportSelector',
     'statusTextSelector',
     'downloadButton',
@@ -7397,8 +7556,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle('settings:get-storage-paths', () => handleGetStoragePaths());
 
   // Browser
-  ipcMain.handle('browser:login', (_, { username, password }) =>
-    handleBrowserLogin(username, password)
+  ipcMain.handle('browser:get-saved-credentials', () => handleGetSavedLoginCredentials());
+  ipcMain.handle('browser:login', (_, { username, password, rememberPassword }) =>
+    handleBrowserLogin(username, password, Boolean(rememberPassword))
   );
   ipcMain.handle('browser:logout', () => handleBrowserLogout());
   ipcMain.handle('browser:screenshot', (_, label) => handleScreenshot(label));

@@ -105,11 +105,17 @@ function addTotals(items) {
 
 function chooseCanonicalSummary(summaries) {
   const byType = new Map(summaries.map((summary) => [summary.reportType, summary]));
-  return byType.get('user_search_term') || byType.get('search_term') || null;
+  return byType.get('advertised_product')
+    || byType.get('ad_group')
+    || byType.get('user_search_term')
+    || byType.get('search_term')
+    || null;
 }
 
 function chooseDbCanonicalReportTypes(reportTypes) {
   const available = new Set(reportTypes.filter(Boolean));
+  if (available.has('advertised_product')) return { reportTypes: ['advertised_product'], summarySource: 'canonical_advertised_product', approximate: false };
+  if (available.has('ad_group')) return { reportTypes: ['ad_group'], summarySource: 'canonical_ad_group', approximate: false };
   if (available.has('user_search_term')) return { reportTypes: ['user_search_term'], summarySource: 'canonical_user_search_term', approximate: false };
   if (available.has('search_term')) return { reportTypes: ['search_term'], summarySource: 'canonical_search_term', approximate: false };
   const fallback = ['keyword', 'product_targeting', 'auto_targeting'].filter((type) => available.has(type));
@@ -223,7 +229,7 @@ function reconcileDb(dbPath, batch, scope, rawCanonical) {
         }
       : null;
     const blockers = [];
-    if (canonical.summarySource === 'none') blockers.push('DB 中没有 user_search_term/search_term 或可行动 fallback 报表行，无法形成广告总盘口径。');
+    if (canonical.summarySource === 'none') blockers.push('DB 中没有 advertised_product/ad_group/user_search_term/search_term 或可行动 fallback 报表行，无法形成广告总盘口径。');
     if (canonicalTotals.rows === 0) blockers.push('DB 当前范围 canonical 汇总行数为 0。');
     if (reportFiles.length === 0) blockers.push('DB report_files 没有当前批次真实文件索引。');
     if (rawCanonicalTotals && canonicalDelta && Object.values(canonicalDelta).some((value) => Math.abs(Number(value)) > 0.01)) {

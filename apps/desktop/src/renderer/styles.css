@@ -3456,6 +3456,19 @@ code {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.inline-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.inline-field-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
 .form-table input:not([type="checkbox"]),
 .form-table select,
 .form-table textarea {

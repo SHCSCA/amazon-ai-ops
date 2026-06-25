@@ -84,6 +84,35 @@ const loginStyles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     lineHeight: 1.45,
   },
+  rememberRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    color: '#29496b',
+    fontSize: 13,
+    fontWeight: 700,
+  },
+  rememberLabel: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    cursor: 'pointer',
+  },
+  securityTag: {
+    border: '1px solid #cfe7d6',
+    borderRadius: 999,
+    background: '#eefaf2',
+    color: '#12723d',
+    padding: '3px 8px',
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  notice: {
+    color: '#60758a',
+    fontSize: 12,
+    lineHeight: 1.4,
+  },
   error: {
     border: '1px solid #ffd0d0',
     borderRadius: 8,
@@ -136,9 +165,38 @@ function headerReadinessClass(readiness: DeliveryReadinessView | null): string {
 function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberPassword, setRememberPassword] = useState(false);
+  const [credentialNotice, setCredentialNotice] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const setLoginState = useStore((state) => state.setLoginState);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSavedCredentials() {
+      const api = (window as any).electronAPI;
+      if (!api?.getSavedLoginCredentials) return;
+      try {
+        const saved = await api.getSavedLoginCredentials();
+        if (cancelled || !saved) return;
+        setUsername(typeof saved.username === 'string' ? saved.username : '');
+        setRememberPassword(Boolean(saved.rememberPassword));
+        if (saved.passwordAvailable && typeof saved.password === 'string') {
+          setPassword(saved.password);
+          setCredentialNotice('');
+        } else if (saved.rememberPassword) {
+          setCredentialNotice('已加载账号，密码需重新输入。');
+        }
+      } catch {
+        if (!cancelled) setCredentialNotice('');
+      }
+    }
+
+    loadSavedCredentials();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleLogin() {
     if (!username || !password) {
@@ -148,7 +206,7 @@ function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      const session = await (window as any).electronAPI.browserLogin(username, password);
+      const session = await (window as any).electronAPI.browserLogin(username, password, rememberPassword);
       setLoginState(true, username, session);
     } catch (caught) {
       setError(toUserFacingError(caught, '登录失败'));
@@ -181,7 +239,19 @@ function LoginPage() {
             type="password"
             value={password}
           />
-          <div style={loginStyles.hint}>登录流程：ERP 登录 {'->'} ERP 广告入口 {'->'} Ads 会话确认。密码仅用于本次浏览器登录，不会在页面展示。</div>
+          <div style={loginStyles.rememberRow}>
+            <label style={loginStyles.rememberLabel}>
+              <input
+                checked={rememberPassword}
+                onChange={(event) => setRememberPassword(event.target.checked)}
+                type="checkbox"
+              />
+              <span>记住账号密码</span>
+            </label>
+            <span style={loginStyles.securityTag}>本机加密</span>
+          </div>
+          {credentialNotice && <div style={loginStyles.notice}>{credentialNotice}</div>}
+          <div style={loginStyles.hint}>登录流程：ERP 登录 {'->'} ERP 广告入口 {'->'} Ads 会话确认。</div>
           {error && <div style={loginStyles.error}>{error}</div>}
           <button disabled={loading} onClick={handleLogin} style={loginStyles.button} type="button">
             {loading ? '正在确认 ERP 和 Ads 会话...' : '登录并进入 Ads'}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AiDiagnosisRunView } from '../types';
-import { buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
+import { buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
 
 describe('strategyDiagnosisSourceLabel', () => {
   it('uses Chinese fallback copy for rule-based strategy diagnosis', () => {
@@ -135,6 +135,75 @@ describe('thresholdEvidenceReviewLine', () => {
 
     expect(result.text).toContain('AI 阈值建议没有正确引用当前证据');
     expect(result.text).not.toContain('evidenceRefs');
+  });
+});
+
+describe('buildStrategyRunFeedback', () => {
+  it('shows an explicit running state while AI diagnosis is pending', () => {
+    const feedback = buildStrategyRunFeedback({
+      canDiagnose: true,
+      loading: true,
+    });
+
+    expect(feedback.title).toBe('AI 阶段分析运行中');
+    expect(feedback.statusLabel).toBe('运行中');
+    expect(feedback.detail).toContain('完成或失败都会在这里显示');
+  });
+
+  it('shows rule fallback as a completed AI run with a clear reason', () => {
+    const feedback = buildStrategyRunFeedback({
+      canDiagnose: true,
+      loading: false,
+      lastRunAt: '2026-06-25T10:30:00.000Z',
+      diagnosis: {
+        configured: true,
+        invoked: true,
+        model: 'deepseek-v4-flash',
+        metrics: 100,
+        ruleCandidateCount: 2,
+        summary: {
+          source: 'rule',
+          lifecycleStage: 'unknown',
+          summary: '',
+          lifecycleStageReason: '',
+          lifecycleStageEvidenceRefs: [],
+          mainProblems: [],
+          riskWarnings: [],
+          thresholdSuggestions: {
+            targetAcos: { value: 0.25, reason: '', evidenceRefs: [] },
+            highAcosThreshold: { value: 0.4, reason: '', evidenceRefs: [] },
+            noOrderClickThreshold: { value: 30, reason: '', evidenceRefs: [] },
+            minSpend: { value: 10, reason: '', evidenceRefs: [] },
+          },
+          aiCandidateCount: 0,
+          operationEventCount: 0,
+          productContextCount: 0,
+          fallbackReason: 'AI 阶段判断缺少 evidenceRefs。',
+        },
+      },
+    });
+
+    expect(feedback.title).toContain('规则兜底');
+    expect(feedback.statusLabel).toBe('规则兜底');
+    expect(feedback.detail).toContain('没有正确引用当前证据');
+    expect(feedback.detail).toContain('2026-06-25 10:30');
+  });
+});
+
+describe('buildQuantAccountingLine', () => {
+  it('explains active batch, ASIN scope, and duplicate collection isolation', () => {
+    const line = buildQuantAccountingLine({
+      summarySource: 'canonical_advertised_product',
+      batchIds: ['batch_1'],
+      asin: 'B0TEST',
+      canonicalRows: 34,
+    });
+
+    expect(line).toContain('batch_1');
+    expect(line).toContain('ASIN B0TEST');
+    expect(line).toContain('推广商品报表口径');
+    expect(line).toContain('不跨批次');
+    expect(line).toContain('不跨报表层级重复相加');
   });
 });
 

@@ -33,6 +33,8 @@ export function buildDownloadCenterPageModelDraft(
       dateEndInput: sourceModel.actionSelectors?.dateEndInput ?? '',
       createReportButton: sourceModel.actionSelectors?.createReportButton ?? '',
       confirmCreateButton: sourceModel.actionSelectors?.confirmCreateButton ?? '',
+      listRefreshButton: sourceModel.actionSelectors?.listRefreshButton ?? '',
+      createTimeSortHeader: sourceModel.actionSelectors?.createTimeSortHeader ?? '',
       readyReportSelector: sourceModel.actionSelectors?.readyReportSelector ?? '',
       statusTextSelector: sourceModel.actionSelectors?.statusTextSelector ?? '',
       downloadButton: sourceModel.actionSelectors?.downloadButton ?? '',
@@ -48,6 +50,7 @@ export function buildDownloadCenterPageModelDraft(
       'This draft is intentionally manual-verification-only.',
       'Copy only selectors proven by screenshot, DOM evidence, and action selector checks.',
       'Before enabling automation, dateStartInput, dateEndInput, createReportButton, readyReportSelector, and downloadButton must each match one visible target.',
+      'listRefreshButton and createTimeSortHeader should be checked when the download-center table does not auto-refresh after report creation.',
       'readyReportSelector, statusTextSelector, and downloadButton must stay scoped by both report identity and selected date range.',
     ],
   };

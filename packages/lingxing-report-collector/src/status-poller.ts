@@ -46,6 +46,7 @@ export interface ReportStatusClassification {
 export interface PollReportGenerationStatusOptions {
   intervalMs?: number;
   timeoutMs?: number;
+  onPendingSnapshot?: (snapshot: ReportStatusSnapshot) => Promise<void> | void;
 }
 
 export class ReportGenerationTerminalError extends Error {
@@ -191,6 +192,7 @@ export async function pollReportGenerationStatus(
       throw new ReportGenerationTerminalError(`报告生成状态终止：${classification.state}（${text || '空状态'}）`, snapshot);
     }
 
+    await options.onPendingSnapshot?.(snapshot);
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 

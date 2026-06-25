@@ -22,8 +22,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveOperationScope: (scope: any) => ipcRenderer.invoke('settings:save-operation-scope', scope),
 
   // Browser
-  browserLogin: (username: string, password: string) =>
-    ipcRenderer.invoke('browser:login', { username, password }),
+  getSavedLoginCredentials: () => ipcRenderer.invoke('browser:get-saved-credentials'),
+  browserLogin: (username: string, password: string, rememberPassword = false) =>
+    ipcRenderer.invoke('browser:login', { username, password, rememberPassword }),
   browserLogout: () => ipcRenderer.invoke('browser:logout'),
   browserScreenshot: (label: 'before' | 'after' | 'error') =>
     ipcRenderer.invoke('browser:screenshot', label),

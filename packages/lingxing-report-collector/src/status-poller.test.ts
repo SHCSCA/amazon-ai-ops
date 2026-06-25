@@ -67,6 +67,22 @@ describe('report generation status poller', () => {
     expect(result.attempt).toBe(2);
   });
 
+  it('runs a recovery callback while a report is still non-terminal', async () => {
+    const statuses = ['生成中', '生成成功，可下载'];
+    const recoveryAttempts: number[] = [];
+
+    const result = await pollReportGenerationStatus(async () => statuses.shift() ?? '', {
+      intervalMs: 1,
+      timeoutMs: 5000,
+      onPendingSnapshot: async (snapshot) => {
+        recoveryAttempts.push(snapshot.attempt);
+      },
+    });
+
+    expect(result.status).toBe('ready');
+    expect(recoveryAttempts).toEqual([1]);
+  });
+
   it('fails fast when a report reaches failed or expired state', async () => {
     await expect(pollReportGenerationStatus(async () => '生成失败', {
       intervalMs: 1,

@@ -34,11 +34,20 @@ export interface ProductTimelineItem {
   scope: Exclude<ProductEventScope, 'other_product'>;
 }
 
+export interface ProductCanonicalSummary {
+  asin?: string;
+  cost?: number;
+  sales?: number;
+  orders?: number;
+  clicks?: number;
+}
+
 export function buildProductManagementSummaries(input: {
   products: ProductStrategyContextView[];
   diagnostics: BusinessQuantDiagnostic[];
   ledgers: ProductHistoryLedgerView[];
   events: OperationEventView[];
+  canonicalSummary?: ProductCanonicalSummary;
 }): ProductManagementSummary[] {
   const summaries = new Map<string, ProductManagementSummary>();
   const globalEventCount = countGlobalEvents(input.events);
@@ -106,6 +115,17 @@ export function buildProductManagementSummaries(input: {
     summary.orders = Math.max(summary.orders, numberValue(ledger.totals.orders));
     summary.clicks = Math.max(summary.clicks, numberValue(ledger.totals.clicks));
     summary.stage = summary.stage || ledger.inferredStage;
+  }
+
+  if (input.canonicalSummary) {
+    const asin = normalizeAsin(input.canonicalSummary.asin);
+    if (asin) {
+      const summary = ensure(asin);
+      summary.cost = numberValue(input.canonicalSummary.cost);
+      summary.sales = numberValue(input.canonicalSummary.sales);
+      summary.orders = numberValue(input.canonicalSummary.orders);
+      summary.clicks = numberValue(input.canonicalSummary.clicks);
+    }
   }
 
   for (const event of input.events || []) {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PRODUCT_QUICK_COST_FIELDS,
+  PRODUCT_QUICK_TARGET_FIELDS,
   buildProductManagementPageModel,
   productManagementActionRoutes,
   productTimelineScopeLabel,
@@ -22,6 +24,72 @@ describe('ProductManagementPage model', () => {
     ]);
     expect(model.timeline.map((item) => productTimelineScopeLabel(item.scope))).toEqual(['全局', '产品']);
     expect(model.emptyReason).toBe('');
+  });
+
+  it('uses canonical product totals instead of summing diagnostic detail rows', () => {
+    const data = {
+      ...pipeline(),
+      productHistory: { ledgers: [], ledgerCount: 0, notes: [] },
+      quant: {
+        ...pipeline().quant,
+        totalSpend: 784.31,
+        totalSales: 1289.68,
+        totalOrders: 25,
+        totalClicks: 495,
+        diagnostics: [
+          {
+            asin: 'B001',
+            spend: 478.48,
+            sales: 769.81,
+            orders: 17,
+            clicks: 296,
+            acos: 0.62,
+            cvr: 0.057,
+            cpc: 1.62,
+            severity: 'medium',
+            diagnosis: '复核',
+            suggestedDirection: '观察',
+          },
+          {
+            asin: 'B001',
+            spend: 456.77,
+            sales: 689.83,
+            orders: 16,
+            clicks: 279,
+            acos: 0.66,
+            cvr: 0.057,
+            cpc: 1.64,
+            severity: 'medium',
+            diagnosis: '复核',
+            suggestedDirection: '观察',
+          },
+          {
+            asin: 'B001',
+            spend: 225.79,
+            sales: 399.9,
+            orders: 6,
+            clicks: 146,
+            acos: 0.56,
+            cvr: 0.041,
+            cpc: 1.55,
+            severity: 'high',
+            diagnosis: '高风险',
+            suggestedDirection: '复核',
+          },
+        ],
+      },
+    } as BusinessDataPipeline;
+
+    const model = buildProductManagementPageModel({ data, scopeAsin: 'B001' });
+
+    expect(model.selectedProduct).toMatchObject({
+      asin: 'B001',
+      cost: 784.31,
+      sales: 1289.68,
+      orders: 25,
+      clicks: 495,
+      highRiskCount: 1,
+    });
   });
 
   it('uses clear empty copy when no products or ASIN metrics exist', () => {
@@ -49,6 +117,11 @@ describe('ProductManagementPage model', () => {
       operationEvents: 'operation-events',
       productConfig: 'product-config',
     });
+  });
+
+  it('names quick product cost and target fields explicitly', () => {
+    expect(PRODUCT_QUICK_COST_FIELDS.map((field) => field.label)).toEqual(['采购成本', 'FBA 费用', '最低售价']);
+    expect(PRODUCT_QUICK_TARGET_FIELDS.map((field) => field.label)).toEqual(['目标 ACOS', '目标 TACOS', '目标净利率']);
   });
 });
 

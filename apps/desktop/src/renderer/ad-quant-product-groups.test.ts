@@ -63,6 +63,29 @@ describe('ad quant product groups', () => {
     });
   });
 
+  it('uses canonical product summary for primary KPI totals instead of diagnostics detail sums', () => {
+    const result = buildAdQuantProductGroups({
+      scopeAsin: 'B001',
+      canonicalSummary: { asin: 'B001', cost: 784.31, sales: 1289.68, orders: 25, clicks: 495 },
+      diagnostics: [
+        { asin: 'B001', spend: 478.48, sales: 769.81, orders: 17, clicks: 296, riskLevel: 'medium' },
+        { asin: 'B001', spend: 456.77, sales: 689.83, orders: 16, clicks: 279, riskLevel: 'medium' },
+        { asin: 'B001', spend: 225.79, sales: 399.9, orders: 6, clicks: 146, riskLevel: 'high' },
+      ],
+      timelines: [],
+      ledgers: [],
+    });
+
+    expect(result.groups[0]).toMatchObject({
+      productKey: 'B001',
+      cost: 784.31,
+      sales: 1289.68,
+      orders: 25,
+      clicks: 495,
+      highRiskCount: 1,
+    });
+  });
+
   it('filters diagnostics, timelines, and ledgers by selected product', () => {
     const filtered = filterAdQuantByProduct({
       productKey: 'B001',

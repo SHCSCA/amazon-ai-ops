@@ -37,6 +37,8 @@
     "dailyDetailRadio": "label.el-radio:has-text(\"每日明细\")",
     "createReportButton": "a:has-text(\"创建报告\")",
     "confirmCreateButton": "button:has-text(\"生成报告\")",
+    "listRefreshButton": "button:has-text(\"查询\"), button:has-text(\"搜索\"), button:has-text(\"刷新\"), a:has-text(\"刷新\")",
+    "createTimeSortHeader": "th:has-text(\"创建时间\"), [role=\"columnheader\"]:has-text(\"创建时间\"), .el-table__header-wrapper th:has-text(\"创建时间\")",
     "readyReportSelector": "tr:has-text(\"{generatedReportName}\"):has-text(\"{dateStart} - {dateEnd}\"):has-text(\"生成成功\")",
     "statusTextSelector": "",
     "downloadButton": "tr:has-text(\"{generatedReportName}\"):has-text(\"{dateStart} - {dateEnd}\") a.JS-download-report",

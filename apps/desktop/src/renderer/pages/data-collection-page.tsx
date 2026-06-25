@@ -88,7 +88,7 @@ function reportStatusLabel(status: string): string {
     generating: '生成中',
     ready: '可下载',
     downloading: '下载中',
-    downloaded: '本地已下载',
+    downloaded: '已下载待入库',
     imported: '已入库',
     import_failed: '导入失败',
     failed: '失败',

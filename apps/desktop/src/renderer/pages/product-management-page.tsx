@@ -43,6 +43,18 @@ const STAGE_OPTIONS: Array<{ value: ProductStage; label: string }> = [
   { value: 'declining_repair', label: '异常修复' },
 ];
 
+export const PRODUCT_QUICK_COST_FIELDS = [
+  { key: 'purchaseCost', label: '采购成本', placeholder: '例如 103.00' },
+  { key: 'fbaFee', label: 'FBA 费用', placeholder: '例如 6.00' },
+  { key: 'minPrice', label: '最低售价', placeholder: '例如 39.99' },
+] as const;
+
+export const PRODUCT_QUICK_TARGET_FIELDS = [
+  { key: 'targetAcos', label: '目标 ACOS', placeholder: '例如 0.35' },
+  { key: 'targetTacos', label: '目标 TACOS', placeholder: '例如 0.12' },
+  { key: 'targetNetMargin', label: '目标净利率', placeholder: '例如 0.15' },
+] as const;
+
 function buildDraftFromProduct(product: any, scopeAsin?: string) {
   return {
     asin: product?.asin || scopeAsin || '',
@@ -76,13 +88,23 @@ export function buildProductManagementPageModel(input: {
   data: BusinessDataPipeline | null | undefined;
   scopeAsin?: string;
 }) {
+  const canonicalAsin = String(input.scopeAsin || '').trim().toUpperCase();
+  const requestedAsin = canonicalAsin || String(input.data?.scope?.asin || '').trim().toUpperCase();
   const products = buildProductManagementSummaries({
     products: input.data?.productContext?.products || [],
     diagnostics: input.data?.quant?.diagnostics || [],
     ledgers: input.data?.productHistory?.ledgers || [],
     events: input.data?.operations?.events || [],
+    canonicalSummary: input.data?.quant && canonicalAsin
+      ? {
+          asin: canonicalAsin,
+          cost: input.data.quant.totalSpend,
+          sales: input.data.quant.totalSales,
+          orders: input.data.quant.totalOrders,
+          clicks: input.data.quant.totalClicks,
+        }
+      : undefined,
   });
-  const requestedAsin = String(input.scopeAsin || input.data?.scope?.asin || '').trim().toUpperCase();
   const selectedProduct = products.find((item) => item.asin === requestedAsin) || products[0];
   const timeline = selectedProduct
     ? buildProductTimeline({ selectedAsin: selectedProduct.asin, events: input.data?.operations?.events || [] })
@@ -274,18 +296,38 @@ export function ProductManagementPage() {
                 </select>
               </div>
             </FormTableRow>
-            <FormTableRow label="成本 / 最低价" hint={productCostInputHint(cost)}>
+            <FormTableRow label="成本与售价" hint={productCostInputHint(cost)}>
               <div className="inline-input-grid inline-input-grid-3">
-                <input type="number" step="0.01" value={cost.purchaseCost} onChange={(event) => updateCost('purchaseCost', event.target.value)} placeholder="采购成本" />
-                <input type="number" step="0.01" value={cost.fbaFee} onChange={(event) => updateCost('fbaFee', event.target.value)} placeholder="FBA" />
-                <input type="number" step="0.01" value={cost.minPrice} onChange={(event) => updateCost('minPrice', event.target.value)} placeholder="最低售价" />
+                {PRODUCT_QUICK_COST_FIELDS.map((field) => (
+                  <span className="inline-field" key={field.key}>
+                    <span className="inline-field-label">{field.label}</span>
+                    <input
+                      aria-label={field.label}
+                      type="number"
+                      step="0.01"
+                      value={cost[field.key]}
+                      onChange={(event) => updateCost(field.key, event.target.value)}
+                      placeholder={field.placeholder}
+                    />
+                  </span>
+                ))}
               </div>
             </FormTableRow>
-            <FormTableRow label="目标" hint="目标 ACOS/TACOS 和净利率会作为产品级阈值约束。">
+            <FormTableRow label="广告目标" hint="目标 ACOS/TACOS 和净利率会作为产品级阈值约束。">
               <div className="inline-input-grid inline-input-grid-3">
-                <input type="number" step="0.01" value={cost.targetAcos} onChange={(event) => updateCost('targetAcos', event.target.value)} placeholder="目标 ACOS" />
-                <input type="number" step="0.01" value={cost.targetTacos} onChange={(event) => updateCost('targetTacos', event.target.value)} placeholder="目标 TACOS" />
-                <input type="number" step="0.01" value={cost.targetNetMargin} onChange={(event) => updateCost('targetNetMargin', event.target.value)} placeholder="目标净利率" />
+                {PRODUCT_QUICK_TARGET_FIELDS.map((field) => (
+                  <span className="inline-field" key={field.key}>
+                    <span className="inline-field-label">{field.label}</span>
+                    <input
+                      aria-label={field.label}
+                      type="number"
+                      step="0.01"
+                      value={cost[field.key]}
+                      onChange={(event) => updateCost(field.key, event.target.value)}
+                      placeholder={field.placeholder}
+                    />
+                  </span>
+                ))}
               </div>
             </FormTableRow>
           </FormTable>

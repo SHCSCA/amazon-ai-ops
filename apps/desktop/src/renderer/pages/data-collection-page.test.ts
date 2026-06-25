@@ -10,7 +10,7 @@ import {
   runCollectionDownloadAction,
   shouldOfferDownloadCenterVerification,
 } from './data-collection-page';
-import { buildDataImportTaskState, dataImportFirstViewportReportFolder } from './data-import-validation-page';
+import { buildDataImportFeedback, buildDataImportTaskState, buildReportImportStatusDisplay, dataImportFirstViewportReportFolder } from './data-import-validation-page';
 
 describe('collectionCompletionNotice', () => {
   it('does not claim a download action completed when no real file was produced by this action', () => {
@@ -197,7 +197,35 @@ describe('task-first data page helpers', () => {
     expect(firstViewportFolder).toBeUndefined();
     expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder }).primaryActionLabel).toBe('去数据采集');
     expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder }).secondaryActionLabel).toBe('导入本地报表');
-    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 0, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('导入广告指标');
+    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 0, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('导入已下载表格');
     expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 96, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('进入广告量化');
+  });
+
+  it('makes downloaded report files explicitly wait for DB import', () => {
+    const status = buildReportImportStatusDisplay({
+      status: 'downloaded',
+      importedRows: 0,
+      filePath: 'C:/reports/campaign.xlsx',
+    });
+
+    expect(status.label).toBe('已下载待入库');
+    expect(status.detail).toContain('导入已下载表格');
+    expect(status.tone).toBe('warning');
+  });
+
+  it('shows first-viewport import feedback instead of hiding progress in details', () => {
+    expect(buildDataImportFeedback({
+      realReportCount: 8,
+      importedRows: 0,
+      runningImport: 'current',
+    }).title).toBe('正在写入 SQLite');
+
+    const ready = buildDataImportFeedback({
+      realReportCount: 8,
+      importedRows: 96,
+      runningImport: null,
+    });
+    expect(ready.statusLabel).toBe('已入库');
+    expect(ready.detail).toContain('96 行日级广告指标');
   });
 });
