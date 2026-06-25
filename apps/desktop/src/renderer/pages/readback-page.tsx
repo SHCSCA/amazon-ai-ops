@@ -642,7 +642,7 @@ export function ReadbackPage() {
     if (activeStep === 'target-source') {
       return form.recommendationId
         ? { label: '继续填写审批允许', onClick: () => setActiveStep('approval') }
-        : { label: '刷新已批准动作', onClick: () => { void loadApprovedRows(); } };
+        : { label: loading ? '加载中...' : '刷新已批准动作', busy: loading, busyLabel: '加载中...', onClick: () => { void loadApprovedRows(); } };
     }
     if (activeStep === 'approval') {
       return { label: '继续补执行证据', onClick: () => setActiveStep('evidence') };

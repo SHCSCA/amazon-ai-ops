@@ -214,6 +214,8 @@ export function KeywordOpportunitiesPage() {
             : '先完成真实报表下载和指标入库，系统不会用审计文件或空数据生成机会词。'}
           primaryAction={{
             label: loading ? '识别中...' : '运行机会识别',
+            busy: loading,
+            busyLabel: '识别中...',
             disabled: loading || !quantReady,
             onClick: loadRows,
           }}

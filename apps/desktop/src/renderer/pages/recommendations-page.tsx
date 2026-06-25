@@ -1073,6 +1073,8 @@ export function RecommendationsPage() {
           detail={primaryTaskAction.detail}
           primaryAction={{
             label: primaryTaskAction.label,
+            busy: generating,
+            busyLabel: '生成中...',
             disabled: primaryTaskAction.disabled,
             onClick: runPrimaryTaskAction,
           }}

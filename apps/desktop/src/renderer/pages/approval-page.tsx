@@ -580,6 +580,8 @@ export function ApprovalPage() {
             : `当前${TAB_LABELS[tab]}队列 ${rows.length} 条。先选择一条建议，再做批准或拒绝。`}
           primaryAction={{
             label: selected ? selectedApprovalDecision.primaryActionLabel : '查看审批队列',
+            busy: loading && !selected,
+            busyLabel: '加载中...',
             disabled: loading && !selected,
             onClick: selected ? showSelectedDecisionTarget : showApprovalQueue,
           }}

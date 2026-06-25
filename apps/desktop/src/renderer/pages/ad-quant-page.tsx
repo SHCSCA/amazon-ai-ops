@@ -832,6 +832,8 @@ export function AdQuantPage() {
           detail={quantTaskDetail}
           primaryAction={{
             label: strategyLoading ? 'AI 分析中...' : '运行大模型深度诊断',
+            busy: strategyLoading,
+            busyLabel: 'AI 分析中...',
             disabled: !canDiagnose || strategyLoading,
             onClick: runStrategyDiagnosis,
           }}

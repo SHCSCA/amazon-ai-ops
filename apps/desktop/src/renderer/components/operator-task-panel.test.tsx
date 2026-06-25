@@ -22,6 +22,14 @@ function collectElements(node: ReactNode, predicate: (element: ReactElement) => 
   return matches.concat(collectElements(node.props.children, predicate));
 }
 
+function textContent(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map((child) => textContent(child)).join('');
+  if (!React.isValidElement(node)) return '';
+  return textContent(node.props.children);
+}
+
 function clickButton(button: ReactElement) {
   if (!button.props.disabled) {
     button.props.onClick();
@@ -101,6 +109,32 @@ describe('OperatorTaskPanel', () => {
     expect(primary).not.toHaveBeenCalled();
   });
 
+  it('locks busy actions with a spinner and immediate processing copy', () => {
+    const primary = vi.fn();
+    const tree = OperatorTaskPanel({
+      title: 'Run long report import',
+      primaryAction: { label: 'Start import', onClick: primary, busy: true },
+      secondaryActions: [
+        { label: 'Refresh', onClick: vi.fn(), busy: true },
+      ],
+    }) as ReactElement;
+
+    const primaryButton = collectElements(tree, (element) => element.type === 'button' && hasClass(element, 'primary-button'))[0];
+    const secondaryButton = collectElements(tree, (element) => element.type === 'button' && hasClass(element, 'secondary-button'))[0];
+    const spinners = collectElements(tree, (element) => hasClass(element, 'button-spinner'));
+
+    clickButton(primaryButton);
+
+    expect(primaryButton.props.disabled).toBe(true);
+    expect(primaryButton.props['aria-busy']).toBe(true);
+    expect(hasClass(primaryButton, 'button-loading')).toBe(true);
+    expect(textContent(primaryButton.props.children)).toContain('处理中...');
+    expect(secondaryButton.props.disabled).toBe(true);
+    expect(secondaryButton.props['aria-busy']).toBe(true);
+    expect(spinners).toHaveLength(2);
+    expect(primary).not.toHaveBeenCalled();
+  });
+
   it('keeps the actions column width controlled for narrow desktop panels', () => {
     const css = rendererCss();
     const panelRule = cssRuleBody(css, '.operator-task-panel');
@@ -112,5 +146,17 @@ describe('OperatorTaskPanel', () => {
     expect(actionsRule).toMatch(/min-width\s*:\s*0\s*;/);
     expect(actionsRule).toMatch(/max-width\s*:/);
     expect(actionButtonRule).toMatch(/white-space\s*:\s*normal\s*;/);
+  });
+
+  it('defines the shared loading button micro-interaction styles', () => {
+    const css = rendererCss();
+    const loadingRule = cssRuleBody(css, '.button-loading');
+    const contentRule = cssRuleBody(css, '.button-content');
+    const spinnerRule = cssRuleBody(css, '.button-spinner');
+
+    expect(loadingRule).toMatch(/cursor\s*:\s*not-allowed\s*;/);
+    expect(contentRule).toMatch(/inline-flex/);
+    expect(spinnerRule).toMatch(/border-right-color\s*:\s*transparent\s*;/);
+    expect(css).toMatch(/@keyframes\s+button-spin/);
   });
 });

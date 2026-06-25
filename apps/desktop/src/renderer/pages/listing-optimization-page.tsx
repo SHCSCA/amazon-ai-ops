@@ -930,6 +930,8 @@ export function ListingOptimizationPage() {
           detail={`${workflowSummary.nextAction.replace(/[。.!！]+$/, '')}。${workflowSummary.boundary}`}
           primaryAction={{
             label: loading === 'draft' ? '生成中...' : 'AI 改写本地草案',
+            busy: loading === 'draft',
+            busyLabel: '生成中...',
             disabled: !listingReady || loading === 'draft',
             onClick: generateDrafts,
           }}

@@ -1012,12 +1012,16 @@ export function DataCollectionPage() {
           detail={taskState.detail}
           primaryAction={{
             label: taskState.primaryActionLabel,
+            busy: Boolean(runningAction),
+            busyLabel: runningAction ? actionModeLabel(runningAction) : undefined,
             disabled: Boolean(runningAction),
             onClick: taskState.isComplete ? navigateToAdQuant : () => runDownloadAction('recreate-full'),
           }}
           secondaryActions={[
             {
               label: taskState.secondaryActionLabel,
+              busy: Boolean(runningAction),
+              busyLabel: runningAction ? actionModeLabel(runningAction) : undefined,
               disabled: Boolean(runningAction),
               onClick: primaryReportFolder ? () => openPath(primaryReportFolder) : importLocalReports,
             },

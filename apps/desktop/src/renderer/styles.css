@@ -692,6 +692,33 @@ button:active:not(:disabled) {
   transform: none;
 }
 
+.button-loading {
+  cursor: not-allowed;
+}
+
+.button-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.button-spinner {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: button-spin 700ms linear infinite;
+}
+
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .operator-task-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(176px, 240px);

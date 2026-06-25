@@ -425,6 +425,8 @@ export function DataImportValidationPage() {
           detail={taskState.detail}
           primaryAction={{
             label: taskState.primaryActionLabel,
+            busy: Boolean(runningImport),
+            busyLabel: runningImport === 'current' ? '正在导入...' : runningImport === 'local' ? '正在选择...' : undefined,
             disabled: Boolean(runningImport),
             onClick: hasImportedMetrics
               ? () => navigateTo('ad-quant')
@@ -435,6 +437,8 @@ export function DataImportValidationPage() {
           secondaryActions={[
             {
               label: taskState.secondaryActionLabel,
+              busy: Boolean(runningImport),
+              busyLabel: runningImport === 'current' ? '正在导入...' : runningImport === 'local' ? '正在选择...' : undefined,
               disabled: Boolean(runningImport),
               onClick: reportFolder ? () => openPath(reportFolder) : () => runImport('local'),
             },
