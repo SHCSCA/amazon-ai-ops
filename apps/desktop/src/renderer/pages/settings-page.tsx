@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { aiCallEvidenceLabel, aiCallEvidenceTotal, aiCallKindLabel, aiCallOutputFormatLabel, buildAiCallDiagnostics } from '../ai-call-diagnostics';
 import { aiContractPrimaryCopy, aiOutputContracts, aiOutputContractTags } from '../ai-output-contracts';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup, type TagMetricItem } from '../components/tag-metric-group';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
@@ -228,6 +229,86 @@ export function settingsPrimaryAiStatusItems(
   ];
 }
 
+export function settingsAiTaskTitle(input: { status: AiConnectionStatus; keyPresent: boolean }): string {
+  if (!input.keyPresent || input.status === 'unconfigured') return '先填写 API Key 并保存';
+  if (input.status === 'testing') return '正在测试当前 AI 连接';
+  if (input.status === 'available') return 'AI 连接已可用';
+  if (input.status === 'failed') return 'AI 连接需要处理';
+  return '测试当前 AI 连接';
+}
+
+export function settingsAiConnectionFeedback(input: {
+  status: AiConnectionStatus;
+  keyPresent: boolean;
+  saving: boolean;
+  message?: string;
+}): { label: string; detail: string; tone: 'ready' | 'pending' | 'blocked' | 'warning' } {
+  const message = String(input.message || '').trim();
+  if (input.saving) {
+    return {
+      label: '正在保存 AI 设置',
+      detail: 'API Key 会交给主进程本地安全存储，页面不会回显明文。',
+      tone: 'pending',
+    };
+  }
+  if (/^AI 设置保存失败|^AI Key 清除失败/.test(message)) {
+    return {
+      label: 'AI 设置处理失败',
+      detail: message,
+      tone: 'blocked',
+    };
+  }
+  if (/^AI 设置已保存|^AI Key 已清除/.test(message)) {
+    return {
+      label: '设置保存完成',
+      detail: message,
+      tone: 'ready',
+    };
+  }
+  if (!input.keyPresent || input.status === 'unconfigured') {
+    return {
+      label: '等待 API Key',
+      detail: '填写并保存 Key 后，再测试当前 Base URL 和模型是否可用。',
+      tone: 'warning',
+    };
+  }
+  if (input.status === 'testing') {
+    return {
+      label: '正在测试 AI 连接',
+      detail: '主进程正在用当前 Base URL、模型和脱敏 Key 做握手验证。',
+      tone: 'pending',
+    };
+  }
+  if (input.status === 'available') {
+    return {
+      label: 'AI 连接测试通过',
+      detail: message || '测试通过，当前模型可用于广告诊断、建议解释和 Listing 草案。',
+      tone: 'ready',
+    };
+  }
+  if (input.status === 'failed') {
+    return {
+      label: 'AI 连接测试失败',
+      detail: message || '请检查 Base URL、模型名称、API Key 或服务端额度后重新测试。',
+      tone: 'blocked',
+    };
+  }
+  return {
+    label: '等待连接测试',
+    detail: '当前连接字段已有配置变化，需要重新测试后再让 AI 参与建议生成。',
+    tone: 'pending',
+  };
+}
+
+export function settingsSecondaryStatusMessage(message: string): string {
+  const text = message.trim();
+  if (!text) return '';
+  if (/^(AI 设置|AI Key|AI 连接|正在测试 AI 连接|请先填写 API Key|saveSettings 未接入|testAiSettings 未接入)/.test(text)) {
+    return '';
+  }
+  return text;
+}
+
 function percentLabel(value: number): string {
   return `${(value * 100).toFixed(0)}%`;
 }
@@ -382,6 +463,19 @@ export function SettingsPage() {
     () => settingsPrimaryAiStatusItems(aiSettings, aiStatus, keyPresent),
     [aiSettings, aiStatus, keyPresent],
   );
+  const aiConnectionFeedback = useMemo(
+    () => settingsAiConnectionFeedback({
+      status: aiStatus,
+      keyPresent,
+      saving: savingAi,
+      message,
+    }),
+    [aiStatus, keyPresent, message, savingAi],
+  );
+  const secondaryStatusMessage = useMemo(
+    () => settingsSecondaryStatusMessage(message),
+    [message],
+  );
   const aiCallDiagnostics = useMemo(
     () => buildAiCallDiagnostics(aiCallLogs),
     [aiCallLogs],
@@ -528,6 +622,39 @@ export function SettingsPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow="AI 适配与诊断"
+          title={settingsAiTaskTitle({ status: aiStatus, keyPresent })}
+          detail="先确认模型连接和本地凭证，再让 AI 参与广告诊断、建议解释和 Listing 草案。"
+          primaryAction={{
+            label: aiStatus === 'available' ? '重新测试 AI 连接' : keyPresent ? '测试 AI 连接' : '填写 API Key',
+            onClick: testAiSettings,
+            disabled: !canRunAiTest,
+            busy: aiStatus === 'testing',
+            busyLabel: '测试中...',
+          }}
+          secondaryActions={[
+            {
+              label: '保存 AI 设置',
+              onClick: saveAiSettings,
+              disabled: !canSaveSettings,
+              busy: savingAi,
+              busyLabel: '保存中...',
+            },
+          ]}
+        >
+          <div className="dashboard-task-metrics settings-task-metrics" aria-label="AI 设置任务摘要">
+            <StatusPill tone={displayAiStatusTone(aiStatus, keyPresent)}>{displayAiStatusLabel(aiStatus, keyPresent)}</StatusPill>
+            <span>{aiSettings.aiModel || '未配置模型'}</span>
+            <span>{aiSettings.aiBaseUrl || '未配置 Base URL'}</span>
+            <span>{keyPresent ? 'Key 已脱敏' : 'Key 未配置'}</span>
+          </div>
+          <div className={`settings-ai-feedback settings-ai-feedback-${aiConnectionFeedback.tone}`} aria-live="polite" role="status">
+            <span>{aiConnectionFeedback.label}</span>
+            <strong>{aiConnectionFeedback.detail}</strong>
+          </div>
+        </OperatorTaskPanel>
+
         <Panel title="DeepSeek / OpenAI Compatible">
           <div className="settings-section-header">
             <StatusPill tone={displayAiStatusTone(aiStatus, keyPresent)}>{displayAiStatusLabel(aiStatus, keyPresent)}</StatusPill>
@@ -578,14 +705,6 @@ export function SettingsPage() {
           </FormTable>
           <p className="muted-line">{settingsAiContractPrimaryCopy()}</p>
           <TagMetricGroup items={settingsAiContractTags()} />
-          <div className="action-row">
-            <button className="primary-button" disabled={savingAi || !canSaveSettings} onClick={saveAiSettings} type="button">
-              {savingAi ? '保存中...' : '保存 AI 设置'}
-            </button>
-            <button className="secondary-button" disabled={aiStatus === 'testing' || !canRunAiTest} onClick={testAiSettings} type="button">
-              {aiStatus === 'testing' ? '测试中...' : '测试 AI 连接'}
-            </button>
-          </div>
           {aiActionHint && <p className="muted-line">{aiActionHint}</p>}
           <ProgressiveDetails title="高级 AI 参数">
             <div className="settings-status-grid">
@@ -870,7 +989,7 @@ export function SettingsPage() {
           {copyNotice && <p className="muted-line">{copyNotice}</p>}
         </ProgressiveDetails>
 
-        {message && <Panel title="状态">{message}</Panel>}
+        {secondaryStatusMessage && <Panel title="状态">{secondaryStatusMessage}</Panel>}
       </div>
     </div>
   );

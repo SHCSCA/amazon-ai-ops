@@ -3722,6 +3722,77 @@ code {
   overflow-wrap: anywhere;
 }
 
+.settings-task-metrics {
+  margin-top: 2px;
+}
+
+.settings-task-metrics span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-ai-feedback {
+  display: grid;
+  min-height: 54px;
+  gap: 4px;
+  align-content: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 11px;
+  background: #f8fafc;
+}
+
+.settings-ai-feedback span {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.settings-ai-feedback strong {
+  color: #30445f;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.settings-ai-feedback-ready {
+  border-color: #b8e6c9;
+  background: #f1fbf5;
+}
+
+.settings-ai-feedback-ready span {
+  color: #087443;
+}
+
+.settings-ai-feedback-pending {
+  border-color: #c8d8ea;
+  background: #f8fafc;
+}
+
+.settings-ai-feedback-pending span {
+  color: #30445f;
+}
+
+.settings-ai-feedback-warning {
+  border-color: #f1d08b;
+  background: #fff9eb;
+}
+
+.settings-ai-feedback-warning span {
+  color: #7a4b00;
+}
+
+.settings-ai-feedback-blocked {
+  border-color: #f0b9bf;
+  background: #fff7f8;
+}
+
+.settings-ai-feedback-blocked span {
+  color: #9f1239;
+}
+
 .settings-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));

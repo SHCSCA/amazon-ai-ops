@@ -5,8 +5,11 @@ import {
   aiAuditLogTitle,
   aiAuditPurposeText,
   aiSettingsActionHint,
+  settingsAiConnectionFeedback,
   settingsAiContractPrimaryCopy,
   settingsAiContractTags,
+  settingsSecondaryStatusMessage,
+  settingsAiTaskTitle,
   settingsPrimaryAiStatusItems,
   shouldResetAiTestForSettingsField,
 } from './settings-page';
@@ -72,5 +75,57 @@ describe('aiSettingsActionHint', () => {
     expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: false, canTestAi: false })).toBe('填写 API Key 后才能测试连接。');
     expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: true, canTestAi: false })).toBe('当前环境未接入 AI 连接测试接口。');
     expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: true, canTestAi: true })).toBe('');
+  });
+});
+
+describe('settings AI task feedback', () => {
+  it('keeps the first-screen AI task focused on the next connection action', () => {
+    expect(settingsAiTaskTitle({ status: 'unconfigured', keyPresent: false })).toBe('先填写 API Key 并保存');
+    expect(settingsAiTaskTitle({ status: 'pending_test', keyPresent: true })).toBe('测试当前 AI 连接');
+    expect(settingsAiTaskTitle({ status: 'available', keyPresent: true })).toBe('AI 连接已可用');
+    expect(settingsAiTaskTitle({ status: 'failed', keyPresent: true })).toBe('AI 连接需要处理');
+  });
+
+  it('returns a stable live feedback bubble for testing and result states', () => {
+    expect(settingsAiConnectionFeedback({
+      status: 'testing',
+      keyPresent: true,
+      saving: false,
+      message: '',
+    })).toEqual({
+      label: '正在测试 AI 连接',
+      detail: '主进程正在用当前 Base URL、模型和脱敏 Key 做握手验证。',
+      tone: 'pending',
+    });
+
+    expect(settingsAiConnectionFeedback({
+      status: 'available',
+      keyPresent: true,
+      saving: false,
+      message: '测试通过：DeepSeek-V3 握手成功，延迟 85ms。',
+    })).toEqual({
+      label: 'AI 连接测试通过',
+      detail: '测试通过：DeepSeek-V3 握手成功，延迟 85ms。',
+      tone: 'ready',
+    });
+
+    expect(settingsAiConnectionFeedback({
+      status: 'failed',
+      keyPresent: true,
+      saving: false,
+      message: 'AI 连接测试失败：401 Unauthorized',
+    })).toEqual({
+      label: 'AI 连接测试失败',
+      detail: 'AI 连接测试失败：401 Unauthorized',
+      tone: 'blocked',
+    });
+  });
+});
+
+describe('settings secondary status message', () => {
+  it('keeps AI task feedback out of the duplicate bottom status panel', () => {
+    expect(settingsSecondaryStatusMessage('AI 设置已保存。API Key 仅显示为已配置状态，不在页面展示明文。')).toBe('');
+    expect(settingsSecondaryStatusMessage('AI 连接测试失败：401 Unauthorized')).toBe('');
+    expect(settingsSecondaryStatusMessage('阈值保存失败：目标 ACOS 必须大于 0。')).toBe('阈值保存失败：目标 ACOS 必须大于 0。');
   });
 });
