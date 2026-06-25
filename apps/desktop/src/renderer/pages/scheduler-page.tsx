@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import type { AppRoute } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 interface ScheduledTaskView {
@@ -49,6 +51,95 @@ function formatDate(value?: string): string {
   if (!value) return '-';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+type SchedulerTaskPanelTone = 'ready' | 'pending' | 'warning' | 'blocked';
+
+export function buildSchedulerTaskPanelState(input: {
+  tasks: ScheduledTaskView[];
+  loading: boolean;
+  message?: string;
+  pendingRunTask?: ScheduledTaskView | null;
+  runningTaskName?: string;
+}) {
+  const enabledTaskCount = input.tasks.filter((task) => task.enabled).length;
+  const nextTask = [...input.tasks]
+    .filter((task) => task.nextRun)
+    .sort((left, right) => Date.parse(left.nextRun || '') - Date.parse(right.nextRun || ''))[0];
+  const pending = input.pendingRunTask || null;
+  const running = Boolean(input.runningTaskName);
+  const failed = Boolean(input.message && input.message.includes('失败'));
+
+  let title = enabledTaskCount ? '本地调度已开启' : '先检查本地调度状态';
+  let detail = enabledTaskCount
+    ? `当前有 ${enabledTaskCount} 个本地任务启用；自动化只负责下载、导入、生成本地材料，不会批准或写入 Amazon Ads。`
+    : '定时任务默认不代表广告执行权限；先刷新状态，再按任务职责决定是否启用或手动触发。';
+  let primaryActionLabel = '刷新调度状态';
+  let primaryBusyLabel = '正在刷新...';
+  let primaryActionBusy = input.loading;
+  let primaryActionDisabled = false;
+  let mode: 'refresh' | 'confirm-run' = 'refresh';
+  let feedbackLabel = enabledTaskCount ? '等待下一次本地唤起' : '全部任务可控';
+  let feedbackDetail = nextTask
+    ? `${taskLabel(nextTask.name)} / ${formatDate(nextTask.nextRun)}`
+    : '暂无可见下次运行时间；可按需启用任务。';
+  let feedbackTone: SchedulerTaskPanelTone = enabledTaskCount ? 'ready' : 'pending';
+  const secondaryActions: Array<{ label: string; route?: AppRoute; kind?: 'cancel-run'; disabled?: boolean }> = [
+    { label: '查看交付验收', route: 'delivery' },
+    { label: 'AI 设置', route: 'settings' },
+  ];
+
+  if (input.loading) {
+    title = '正在读取本地调度状态';
+    detail = '正在从主进程读取本地任务、下次运行时间和最近结果，按钮已锁定防止重复刷新。';
+    feedbackLabel = '刷新中';
+    feedbackDetail = '读取完成后会更新任务表和安全边界摘要。';
+    feedbackTone = 'pending';
+  }
+
+  if (pending) {
+    title = `确认触发：${taskLabel(pending.name)}`;
+    detail = `${taskPurpose(pending.name)} 本次只触发本地任务，仍不能绕过真实报表、人工审批和执行回读。`;
+    primaryActionLabel = '执行本地任务';
+    primaryBusyLabel = '正在执行...';
+    primaryActionBusy = running;
+    primaryActionDisabled = running;
+    mode = 'confirm-run';
+    feedbackLabel = running ? '正在执行本地任务' : '等待人工确认';
+    feedbackDetail = running
+      ? `${taskLabel(pending.name)} 已进入主进程执行。`
+      : '第一次点击只打开确认，不会立即运行；确认后也不会批准建议或写入广告账户。';
+    feedbackTone = running ? 'pending' : 'warning';
+    secondaryActions.splice(0, secondaryActions.length, { label: '返回任务列表', kind: 'cancel-run', disabled: running });
+  }
+
+  if (failed) {
+    feedbackLabel = '调度动作失败';
+    feedbackDetail = input.message || '请检查主进程任务状态。';
+    feedbackTone = 'blocked';
+  } else if (input.message && !pending) {
+    feedbackLabel = '调度动作已记录';
+    feedbackDetail = input.message;
+    feedbackTone = 'ready';
+  }
+
+  return {
+    title,
+    detail,
+    primaryActionLabel,
+    primaryBusyLabel,
+    primaryActionBusy,
+    primaryActionDisabled,
+    mode,
+    feedbackLabel,
+    feedbackDetail,
+    feedbackTone,
+    secondaryActions,
+  };
+}
+
+function navigate(route: AppRoute) {
+  window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
 
 export function SchedulerPage() {
@@ -116,6 +207,13 @@ export function SchedulerPage() {
   const lastTask = [...tasks]
     .filter((task) => task.lastRun)
     .sort((left, right) => Date.parse(right.lastRun || '') - Date.parse(left.lastRun || ''))[0];
+  const taskPanelState = buildSchedulerTaskPanelState({
+    tasks,
+    loading,
+    message,
+    pendingRunTask,
+    runningTaskName,
+  });
 
   return (
     <div>
@@ -128,6 +226,43 @@ export function SchedulerPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow="本地调度"
+          title={taskPanelState.title}
+          detail={taskPanelState.detail}
+          primaryAction={{
+            label: taskPanelState.primaryActionLabel,
+            busy: taskPanelState.primaryActionBusy,
+            busyLabel: taskPanelState.primaryBusyLabel,
+            disabled: taskPanelState.primaryActionDisabled,
+            onClick: taskPanelState.mode === 'confirm-run' ? confirmRunNow : () => loadTasks(),
+          }}
+          secondaryActions={taskPanelState.secondaryActions.map((action) => ({
+            label: action.label,
+            disabled: action.disabled,
+            onClick: action.kind === 'cancel-run'
+              ? () => setPendingRunTask(null)
+              : () => action.route && navigate(action.route),
+          }))}
+        >
+          <div className="dashboard-task-metrics" aria-label="定时任务摘要">
+            <StatusPill tone={enabledTaskCount ? 'ready' : 'pending'}>
+              启用 {enabledTaskCount}/{tasks.length}
+            </StatusPill>
+            <span>{nextTask ? `下次 ${taskLabel(nextTask.name)}` : '暂无下次运行'}</span>
+            <span>{lastTask ? `最近 ${taskLabel(lastTask.name)}` : '尚无执行记录'}</span>
+            <span>禁止自动写广告</span>
+          </div>
+          <div
+            aria-live="polite"
+            className={`scheduler-task-feedback scheduler-task-feedback-${taskPanelState.feedbackTone}`}
+            role="status"
+          >
+            <span>{taskPanelState.feedbackLabel}</span>
+            <strong>{taskPanelState.feedbackDetail}</strong>
+          </div>
+        </OperatorTaskPanel>
+
         <Panel title="本地调度控制器" tone={enabledTaskCount ? 'success' : 'warning'}>
           <StateLightGrid
             items={[

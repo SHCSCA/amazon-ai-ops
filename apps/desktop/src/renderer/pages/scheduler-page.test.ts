@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCronForOperator, taskPurpose } from './scheduler-page';
+import { buildSchedulerTaskPanelState, formatCronForOperator, taskPurpose } from './scheduler-page';
 
 describe('taskPurpose', () => {
   it('describes recommendation generation as a review queue rather than only pending approval', () => {
@@ -22,3 +22,74 @@ describe('formatCronForOperator', () => {
     expect(formatCronForOperator('')).toBe('-');
   });
 });
+
+describe('buildSchedulerTaskPanelState', () => {
+  it('uses refresh as the default first-screen task', () => {
+    const state = buildSchedulerTaskPanelState({
+      tasks: [task({ enabled: true, nextRun: '2026-06-25T08:30:00.000Z' })],
+      loading: false,
+    });
+
+    expect(state).toMatchObject({
+      title: '本地调度已开启',
+      primaryActionLabel: '刷新调度状态',
+      mode: 'refresh',
+      feedbackLabel: '等待下一次本地唤起',
+      feedbackTone: 'ready',
+    });
+    expect(state.detail).toContain('不会批准或写入 Amazon Ads');
+    expect(state.feedbackDetail).toContain('每日广告报表下载');
+  });
+
+  it('turns a pending run-now task into the primary confirmation action', () => {
+    const pending = task({ name: 'daily_recommendation_generate', enabled: true });
+    const state = buildSchedulerTaskPanelState({
+      tasks: [pending],
+      loading: false,
+      pendingRunTask: pending,
+    });
+
+    expect(state).toMatchObject({
+      title: '确认触发：每日优化建议生成',
+      primaryActionLabel: '执行本地任务',
+      mode: 'confirm-run',
+      feedbackLabel: '等待人工确认',
+      feedbackTone: 'warning',
+    });
+    expect(state.detail).toContain('待处理建议池');
+    expect(state.feedbackDetail).toContain('不会立即运行');
+    expect(state.secondaryActions).toEqual([expect.objectContaining({ label: '返回任务列表', kind: 'cancel-run' })]);
+  });
+
+  it('keeps task failures visible in the first-screen feedback line', () => {
+    const state = buildSchedulerTaskPanelState({
+      tasks: [task({ enabled: true })],
+      loading: false,
+      message: '立即执行失败：浏览器未登录。',
+    });
+
+    expect(state).toMatchObject({
+      feedbackLabel: '调度动作失败',
+      feedbackDetail: '立即执行失败：浏览器未登录。',
+      feedbackTone: 'blocked',
+    });
+  });
+});
+
+function task(patch: Partial<{
+  name: string;
+  cron: string;
+  enabled: boolean;
+  nextRun: string;
+  lastRun: string;
+  lastResult: string;
+}> = {}) {
+  return {
+    name: patch.name || 'daily_report_download',
+    cron: patch.cron || '30 8 * * *',
+    enabled: patch.enabled ?? false,
+    nextRun: patch.nextRun,
+    lastRun: patch.lastRun,
+    lastResult: patch.lastResult,
+  };
+}

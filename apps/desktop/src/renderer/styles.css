@@ -838,6 +838,58 @@ button:active:not(:disabled) {
   color: var(--red);
 }
 
+.scheduler-task-feedback {
+  display: inline-flex;
+  min-height: 28px;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--tone-pending-bg);
+  padding: 4px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.scheduler-task-feedback span {
+  flex: 0 0 auto;
+}
+
+.scheduler-task-feedback strong {
+  color: inherit;
+  font-size: 12px;
+}
+
+.scheduler-task-feedback-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+  animation: event-card-flash 450ms ease-out;
+}
+
+.scheduler-task-feedback-pending {
+  border-color: var(--line-soft);
+  background: var(--tone-pending-bg);
+  color: var(--text-muted);
+}
+
+.scheduler-task-feedback-warning {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+  color: var(--amber);
+}
+
+.scheduler-task-feedback-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+  color: var(--red);
+}
+
 .progressive-details {
   border: 1px solid var(--line);
   border-radius: var(--radius);
