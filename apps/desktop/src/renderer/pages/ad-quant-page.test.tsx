@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AiDiagnosisRunView } from '../types';
-import { buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
+import type { AiDiagnosisRunView, BusinessQuantDiagnostic, BusinessQuantTimeline } from '../types';
+import { adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
 
 describe('strategyDiagnosisSourceLabel', () => {
   it('uses Chinese fallback copy for rule-based strategy diagnosis', () => {
@@ -246,6 +246,102 @@ describe('buildQuantAccountingLine', () => {
     expect(line).toContain('推广商品报表口径');
     expect(line).toContain('不跨批次');
     expect(line).toContain('不跨报表层级重复相加');
+  });
+});
+
+describe('ad quant metric focus filters', () => {
+  const ruleConfig = {
+    highAcosThreshold: 0.4,
+    noOrderClickThreshold: 30,
+    minSpend: 10,
+  };
+
+  function diagnostic(overrides: Partial<BusinessQuantDiagnostic>): BusinessQuantDiagnostic {
+    return {
+      portfolioName: '',
+      campaignName: 'campaign',
+      adGroupName: 'ad group',
+      asin: 'B0TEST',
+      objectType: 'search_term',
+      objectName: 'door lock',
+      spend: 0,
+      sales: 0,
+      orders: 0,
+      clicks: 0,
+      acos: 0,
+      cvr: 0,
+      cpc: 0,
+      diagnosis: '',
+      suggestedDirection: '',
+      ...overrides,
+    };
+  }
+
+  function timeline(overrides: Partial<BusinessQuantTimeline>): BusinessQuantTimeline {
+    return {
+      objectKey: 'search_term:door lock',
+      objectType: 'search_term',
+      objectName: 'door lock',
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-12',
+      daysActive: 12,
+      lifecycleStage: 'keyword_exploration',
+      quantStatus: 'healthy',
+      trend: { spend: 'flat', sales: 'flat' },
+      totals: {
+        impressions: 0,
+        clicks: 0,
+        cost: 0,
+        orders: 0,
+        sales: 0,
+        acos: 0,
+        cpc: 0,
+        cvr: 0,
+        currency: 'USD',
+      },
+      thresholds: {},
+      reasons: [],
+      reviewRequired: false,
+      ...overrides,
+    };
+  }
+
+  it('keeps each metric bucket tied to a concrete diagnostic business meaning', () => {
+    const rows = [
+      diagnostic({ objectName: 'high-acos', spend: 50, orders: 1, acos: 0.65 }),
+      diagnostic({ objectName: 'waste', spend: 20, orders: 0, clicks: 5, quantStatus: 'waste' }),
+      diagnostic({ objectName: 'orders', spend: 8, orders: 2, acos: 0.2 }),
+      diagnostic({ objectName: 'scale', spend: 15, orders: 5, acos: 0.15, quantStatus: 'scale' }),
+      diagnostic({ objectName: 'review', spend: 4, orders: 0, quantStatus: 'watch' }),
+    ];
+
+    expect(rows.filter((row) => adQuantDiagnosticMatchesFocus(row, 'all', ruleConfig)).map((row) => row.objectName)).toEqual([
+      'high-acos',
+      'waste',
+      'orders',
+      'scale',
+      'review',
+    ]);
+    expect(rows.filter((row) => adQuantDiagnosticMatchesFocus(row, 'high_acos', ruleConfig)).map((row) => row.objectName)).toEqual(['high-acos']);
+    expect(rows.filter((row) => adQuantDiagnosticMatchesFocus(row, 'waste', ruleConfig)).map((row) => row.objectName)).toEqual(['waste']);
+    expect(rows.filter((row) => adQuantDiagnosticMatchesFocus(row, 'orders', ruleConfig)).map((row) => row.objectName)).toEqual(['high-acos', 'orders', 'scale']);
+    expect(rows.filter((row) => adQuantDiagnosticMatchesFocus(row, 'scale', ruleConfig)).map((row) => row.objectName)).toEqual(['scale']);
+    expect(rows.filter((row) => adQuantDiagnosticMatchesFocus(row, 'review', ruleConfig)).map((row) => row.objectName)).toEqual(['review']);
+  });
+
+  it('filters object timelines with the same metric focus contract', () => {
+    const rows = [
+      timeline({ objectName: 'timeline-high', totals: { ...timeline({}).totals, cost: 30, orders: 1, acos: 0.5 } }),
+      timeline({ objectName: 'timeline-waste', quantStatus: 'waste', totals: { ...timeline({}).totals, cost: 12, orders: 0 } }),
+      timeline({ objectName: 'timeline-scale', quantStatus: 'scale', totals: { ...timeline({}).totals, cost: 20, orders: 4 } }),
+      timeline({ objectName: 'timeline-review', quantStatus: 'watch', reviewRequired: true }),
+    ];
+
+    expect(rows.filter((row) => adQuantTimelineMatchesFocus(row, 'high_acos', ruleConfig)).map((row) => row.objectName)).toEqual(['timeline-high']);
+    expect(rows.filter((row) => adQuantTimelineMatchesFocus(row, 'waste', ruleConfig)).map((row) => row.objectName)).toEqual(['timeline-waste']);
+    expect(rows.filter((row) => adQuantTimelineMatchesFocus(row, 'scale', ruleConfig)).map((row) => row.objectName)).toEqual(['timeline-scale']);
+    expect(rows.filter((row) => adQuantTimelineMatchesFocus(row, 'review', ruleConfig)).map((row) => row.objectName)).toEqual(['timeline-review']);
+    expect(adQuantFocusLabel('waste')).toBe('无订单浪费对象');
   });
 });
 

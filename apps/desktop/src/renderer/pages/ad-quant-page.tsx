@@ -22,6 +22,8 @@ const DEFAULT_QUANT_RULE_CONFIG: Pick<SettingsRuleConfig, 'targetAcos' | 'highAc
   minSpend: 10,
 };
 
+export type AdQuantMetricFocus = 'all' | 'high_acos' | 'waste' | 'orders' | 'scale' | 'review';
+
 type StatusTone = 'ready' | 'pending' | 'blocked' | 'warning';
 
 export interface AdQuantDecisionStatus {
@@ -64,6 +66,46 @@ function normalizeRuleConfig(config: Partial<SettingsRuleConfig> | null | undefi
     noOrderClickThreshold: readNumber(config?.noOrderClickThreshold, DEFAULT_QUANT_RULE_CONFIG.noOrderClickThreshold),
     minSpend: readNumber(config?.minSpend, DEFAULT_QUANT_RULE_CONFIG.minSpend),
   };
+}
+
+export function adQuantFocusLabel(focus: AdQuantMetricFocus): string {
+  const labels: Record<AdQuantMetricFocus, string> = {
+    all: '全部诊断对象',
+    high_acos: '高 ACOS 对象',
+    waste: '无订单浪费对象',
+    orders: '已出单对象',
+    scale: '可扩量对象',
+    review: '待复核对象',
+  };
+  return labels[focus];
+}
+
+export function adQuantDiagnosticMatchesFocus(
+  row: BusinessQuantDiagnostic,
+  focus: AdQuantMetricFocus,
+  config: Pick<SettingsRuleConfig, 'highAcosThreshold' | 'noOrderClickThreshold' | 'minSpend'>,
+): boolean {
+  if (focus === 'all') return true;
+  if (focus === 'high_acos') return row.acos >= config.highAcosThreshold && row.spend >= config.minSpend;
+  if (focus === 'waste') return row.quantStatus === 'waste' || (row.orders === 0 && (row.spend >= config.minSpend || row.clicks >= config.noOrderClickThreshold));
+  if (focus === 'orders') return row.orders > 0;
+  if (focus === 'scale') return row.quantStatus === 'scale';
+  if (focus === 'review') return row.quantStatus === 'watch' || row.quantStatus === 'blocked' || row.severity === 'medium' || row.severity === 'high';
+  return true;
+}
+
+export function adQuantTimelineMatchesFocus(
+  timeline: BusinessQuantTimeline,
+  focus: AdQuantMetricFocus,
+  config: Pick<SettingsRuleConfig, 'highAcosThreshold' | 'noOrderClickThreshold' | 'minSpend'>,
+): boolean {
+  if (focus === 'all') return true;
+  if (focus === 'high_acos') return timeline.totals.acos >= config.highAcosThreshold && timeline.totals.cost >= config.minSpend;
+  if (focus === 'waste') return timeline.quantStatus === 'waste' || (timeline.totals.orders === 0 && (timeline.totals.cost >= config.minSpend || timeline.totals.clicks >= config.noOrderClickThreshold));
+  if (focus === 'orders') return timeline.totals.orders > 0;
+  if (focus === 'scale') return timeline.quantStatus === 'scale';
+  if (focus === 'review') return timeline.reviewRequired || timeline.quantStatus === 'watch' || timeline.quantStatus === 'blocked';
+  return true;
 }
 
 function navigate(route: AppRoute) {
@@ -629,6 +671,7 @@ export function AdQuantPage() {
   const [strategyLastRunAt, setStrategyLastRunAt] = useState('');
   const [diagnosisRuns, setDiagnosisRuns] = useState<AiDiagnosisRunView[]>([]);
   const [diagnosisRunsError, setDiagnosisRunsError] = useState('');
+  const [metricFocus, setMetricFocus] = useState<AdQuantMetricFocus>('all');
   const quant = data?.quant;
   const collection = data?.collection;
   const operationEvents = data?.operations?.events || [];
@@ -683,8 +726,16 @@ export function AdQuantPage() {
     timelines: allTimelines,
     ledgers: allProductHistoryLedgers,
   });
-  const visibleDiagnostics = productFiltered.diagnostics;
-  const visibleTimelines = productFiltered.timelines;
+  const productDiagnostics = productFiltered.diagnostics;
+  const productTimelines = productFiltered.timelines;
+  const visibleDiagnostics = useMemo(
+    () => productDiagnostics.filter((row) => adQuantDiagnosticMatchesFocus(row, metricFocus, ruleConfig)),
+    [productDiagnostics, metricFocus, ruleConfig],
+  );
+  const visibleTimelines = useMemo(
+    () => productTimelines.filter((timeline) => adQuantTimelineMatchesFocus(timeline, metricFocus, ruleConfig)),
+    [productTimelines, metricFocus, ruleConfig],
+  );
   const productHistoryLedgers = productFiltered.ledgers;
   const quantDiagnosisSummary = buildAdQuantDiagnosisSummary(strategyDiagnosis?.summary);
   const decisionStatus = buildAdQuantDecisionStatus({
@@ -708,6 +759,12 @@ export function AdQuantPage() {
   const actionableRows = quant?.actionableRows ?? 0;
   const breakdownRows = quant?.breakdownRows ?? 0;
   const diagnosticCount = visibleDiagnostics.length;
+  const productHighAcosRows = productDiagnostics.filter((row) => adQuantDiagnosticMatchesFocus(row, 'high_acos', ruleConfig));
+  const productNoOrderRows = productDiagnostics.filter((row) => adQuantDiagnosticMatchesFocus(row, 'waste', ruleConfig));
+  const productOrderRows = productDiagnostics.filter((row) => adQuantDiagnosticMatchesFocus(row, 'orders', ruleConfig));
+  const productScaleRows = productDiagnostics.filter((row) => adQuantDiagnosticMatchesFocus(row, 'scale', ruleConfig));
+  const productReviewRows = productDiagnostics.filter((row) => adQuantDiagnosticMatchesFocus(row, 'review', ruleConfig));
+  const productNoOrderSpend = productNoOrderRows.reduce((sum, row) => sum + row.spend, 0);
   const highAcosRows = visibleDiagnostics.filter((row) => row.acos >= ruleConfig.highAcosThreshold && row.spend >= ruleConfig.minSpend);
   const noOrderSpend = visibleDiagnostics
     .filter((row) => row.orders === 0 && (row.spend >= ruleConfig.minSpend || row.clicks >= ruleConfig.noOrderClickThreshold))
@@ -724,7 +781,7 @@ export function AdQuantPage() {
     ? 'AI 量化引擎已完成统计'
     : '真实数据未闭合，量化诊断锁定';
   const quantTaskDetail = canDiagnose
-    ? `发现 ${diagnosticCount} 个诊断对象，其中 ${actionableRows} 行可进入建议生成；先运行 AI 阶段诊断，再去优化建议。`
+    ? `当前聚焦 ${adQuantFocusLabel(metricFocus)}，显示 ${diagnosticCount}/${productDiagnostics.length} 个诊断对象；先运行 AI 阶段诊断，再去优化建议。`
     : '先补齐真实广告报表和导入指标，系统不会用审计文件或空数据生成广告判断。';
 
   useEffect(() => {
@@ -845,14 +902,21 @@ export function AdQuantPage() {
           ]}
         >
           <TagMetricGroup
+            activeKey={metricFocus}
+            ariaLabel="广告量化维度快速聚焦"
             items={[
-              { label: '真实报表', value: `${realReportCount}/8`, tone: realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked' },
-              { label: '历史入库', value: `${importedRowCount} 行`, tone: importedRowCount > 0 ? 'ready' : 'blocked' },
-              { label: '浪费超支', value: formatUsd(noOrderSpend), tone: noOrderSpend > 0 ? 'blocked' : 'ready' },
-              { label: '出单词', value: selectedOrders, tone: selectedOrders > 0 ? 'ready' : 'warning' },
-              { label: '异常 ASIN', value: highAcosRows.length, tone: highAcosRows.length > 0 ? 'warning' : 'ready' },
+              { key: 'all', label: '全部对象', value: productDiagnostics.length, tone: productDiagnostics.length > 0 ? 'ready' : 'blocked', detail: `${realReportCount}/8 类真实报表，${importedRowCount} 行指标` },
+              { key: 'waste', label: '浪费超支', value: formatUsd(productNoOrderSpend), tone: productNoOrderSpend > 0 ? 'blocked' : 'ready' },
+              { key: 'high_acos', label: '高 ACOS', value: productHighAcosRows.length, tone: productHighAcosRows.length > 0 ? 'warning' : 'ready' },
+              { key: 'orders', label: '出单对象', value: productOrderRows.length, tone: productOrderRows.length > 0 ? 'ready' : 'warning' },
+              { key: 'scale', label: '可扩量', value: productScaleRows.length, tone: productScaleRows.length > 0 ? 'ready' : 'neutral' },
+              { key: 'review', label: '待复核', value: productReviewRows.length, tone: productReviewRows.length > 0 ? 'warning' : 'ready' },
             ]}
+            onSelect={(item) => setMetricFocus((item.key || 'all') as AdQuantMetricFocus)}
           />
+          <p className="ad-quant-focus-line" aria-live="polite">
+            当前聚焦：{adQuantFocusLabel(metricFocus)}，下方诊断表、时间线和复核队列显示 {diagnosticCount}/{productDiagnostics.length} 个对象；聚焦只改变本页视图，不写入广告账户。
+          </p>
         </OperatorTaskPanel>
 
         {strategyRunFeedback.visible && (
@@ -1538,9 +1602,9 @@ export function AdQuantPage() {
         )}
 
         {canDiagnose && (
-          <Panel title="产品/广告对象阶段时间线" tone={visibleTimelines.length ? 'success' : 'warning'}>
-            <details className="evidence-disclosure">
-              <summary>展开当前产品对象时间线（{visibleTimelines.length} 条）</summary>
+        <Panel title="产品/广告对象阶段时间线" tone={visibleTimelines.length ? 'success' : 'warning'}>
+          <details className="evidence-disclosure">
+              <summary>展开当前产品对象时间线（{visibleTimelines.length}/{productTimelines.length} 条）</summary>
               {visibleTimelines.length ? (
                 <div className="business-card-list">
                   {visibleTimelines.slice(0, 8).map((timeline) => (
@@ -1579,7 +1643,9 @@ export function AdQuantPage() {
                   ))}
                 </div>
               ) : (
-                <p className="muted-line">当前范围已有指标，但没有形成可展示的广告对象时间线。</p>
+                <p className="muted-line">
+                  {metricFocus === 'all' ? '当前范围已有指标，但没有形成可展示的广告对象时间线。' : `当前聚焦“${adQuantFocusLabel(metricFocus)}”没有匹配的广告对象时间线。`}
+                </p>
               )}
             </details>
           </Panel>
@@ -1716,7 +1782,7 @@ export function AdQuantPage() {
 
         <Panel title="实体诊断">
           <details className="evidence-disclosure">
-            <summary>展开当前产品实体诊断表（{visibleDiagnostics.length} 行）</summary>
+            <summary>展开当前产品实体诊断表（{visibleDiagnostics.length}/{productDiagnostics.length} 行）</summary>
             <div className="table-wrap">
               <table className="business-table diagnostic-table">
                 <thead>
@@ -1760,7 +1826,9 @@ export function AdQuantPage() {
                   ))}
                   {!visibleDiagnostics.length && (
                     <tr>
-                      <td colSpan={15}>没有真实报表文件和导入指标，本页不生成建议。</td>
+                      <td colSpan={15}>
+                        {metricFocus === 'all' ? '没有真实报表文件和导入指标，本页不生成建议。' : `当前聚焦“${adQuantFocusLabel(metricFocus)}”没有匹配的实体诊断。`}
+                      </td>
                     </tr>
                   )}
                 </tbody>

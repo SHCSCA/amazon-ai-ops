@@ -2272,6 +2272,7 @@ code {
 }
 
 .tag-metric {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2285,6 +2286,8 @@ code {
   font-size: 12px;
   font-weight: 700;
   line-height: 1.25;
+  text-align: left;
+  transition: border-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease, transform 120ms ease;
 }
 
 .tag-metric > span,
@@ -2312,6 +2315,44 @@ code {
 .tag-metric-blocked {
   border-color: #f0b9bf;
   background: #fff7f8;
+}
+
+.tag-metric-action {
+  cursor: pointer;
+}
+
+.tag-metric-action:hover {
+  border-color: #94a3b8;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.tag-metric-action:active {
+  transform: scale(0.98);
+}
+
+.tag-metric-action:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+}
+
+.tag-metric-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
+.tag-metric-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.13), 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.ad-quant-focus-line {
+  margin: 2px 0 0;
+  color: #33465c;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .dashboard-details {

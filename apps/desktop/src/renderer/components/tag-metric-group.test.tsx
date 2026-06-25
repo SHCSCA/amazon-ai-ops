@@ -1,5 +1,5 @@
 import React, { type ReactElement, type ReactNode } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TagMetricGroup } from './tag-metric-group';
 
 function collectText(node: ReactNode): string {
@@ -29,5 +29,26 @@ describe('TagMetricGroup', () => {
     expect(collectText(tree)).toContain('真实报表');
     expect(collectText(tree)).toContain('2416 行');
     expect(collectElements(tree, 'strong')).toHaveLength(2);
+  });
+
+  it('turns keyed chips into controlled filter buttons when onSelect is provided', () => {
+    const onSelect = vi.fn();
+    const tree = TagMetricGroup({
+      activeKey: 'waste',
+      ariaLabel: '量化维度',
+      items: [
+        { key: 'all', label: '全部对象', value: 12, tone: 'ready' },
+        { key: 'waste', label: '浪费超支', value: '$30.00', tone: 'blocked' },
+      ],
+      onSelect,
+    }) as ReactElement;
+
+    const buttons = collectElements(tree, 'button');
+    expect(buttons).toHaveLength(2);
+    expect(buttons[1].props['aria-pressed']).toBe(true);
+    expect(buttons[1].props.className).toContain('tag-metric-active');
+
+    buttons[0].props.onClick();
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ key: 'all', label: '全部对象' }));
   });
 });
