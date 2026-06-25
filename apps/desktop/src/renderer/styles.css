@@ -3672,6 +3672,104 @@ code {
   color: var(--amber);
 }
 
+.readback-contract-panel {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  border: 1px solid #cfe0f4;
+  border-radius: var(--radius);
+  background: #fbfdff;
+  padding: 12px;
+}
+
+.readback-contract-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.readback-contract-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.readback-contract-heading strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.readback-contract-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.readback-contract-card {
+  display: grid;
+  gap: 5px;
+  min-height: 92px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 10px;
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast);
+}
+
+.readback-contract-card span {
+  width: fit-content;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.readback-contract-card strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.readback-contract-card small {
+  color: #52647d;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.readback-contract-ready {
+  border-color: #b9d8c5;
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+.readback-contract-ready span {
+  border-color: #b9d8c5;
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.readback-contract-pending {
+  border-color: #d7e0eb;
+  box-shadow: inset 3px 0 0 #94a3b8;
+}
+
+.readback-contract-pending span {
+  border-color: #d7e0eb;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.readback-contract-blocked {
+  border-color: #f0b9bf;
+  box-shadow: inset 3px 0 0 var(--red);
+}
+
+.readback-contract-blocked span {
+  border-color: #f0b9bf;
+  background: var(--red-soft);
+  color: var(--red);
+}
+
 .readback-context-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

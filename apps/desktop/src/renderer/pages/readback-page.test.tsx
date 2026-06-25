@@ -11,6 +11,7 @@ import {
   formFromRecommendation,
   groupMissing,
   nextEvidenceCaptureSlot,
+  readbackContractChecks,
   readbackPrecheckCopy,
   readbackSessionSummary,
   readbackSessionWorkflow,
@@ -155,6 +156,55 @@ describe('groupMissing', () => {
     const groupedItems = groupMissing(blockers).flatMap((group) => group.items);
 
     expect(groupedItems).toEqual(expect.arrayContaining(blockers));
+  });
+});
+
+describe('readbackContractChecks', () => {
+  function contractByKey(form: ReturnType<typeof completeForm>, key: ReturnType<typeof readbackContractChecks>[number]['key']) {
+    return readbackContractChecks(form).find((check) => check.key === key);
+  }
+
+  it('marks every time and value contract check ready for a complete draft', () => {
+    expect(readbackContractChecks(completeForm()).map((check) => check.status)).toEqual([
+      'ready',
+      'ready',
+      'ready',
+      'ready',
+      'ready',
+    ]);
+  });
+
+  it('blocks when execution time is earlier than the before screenshot time', () => {
+    const form = completeForm();
+    form.executionExecutedAt = '2026-06-12T10:02:00.000Z';
+
+    expect(contractByKey(form, 'time-order')).toMatchObject({
+      status: 'blocked',
+      detail: expect.stringContaining('必须满足审批≤执行前≤执行动作≤执行后≤回读'),
+    });
+  });
+
+  it('blocks unchanged values, readback mismatch, and reused screenshot paths as separate visible checks', () => {
+    const form = completeForm();
+    form.afterValue = form.beforeValue;
+    form.readbackActualValue = '1.10';
+    form.readbackEvidencePath = form.afterScreenshotPath;
+
+    expect(contractByKey(form, 'value-change')).toMatchObject({ status: 'blocked' });
+    expect(contractByKey(form, 'readback-match')).toMatchObject({ status: 'blocked' });
+    expect(contractByKey(form, 'lower-bid-direction')).toMatchObject({ status: 'blocked' });
+    expect(contractByKey(form, 'evidence-distinct')).toMatchObject({ status: 'blocked' });
+  });
+
+  it('shows pending states before the operator has filled live evidence values', () => {
+    const form = completeForm();
+    form.beforeValue = '';
+    form.afterValue = '';
+    form.readbackActualValue = '';
+
+    expect(contractByKey(form, 'value-change')).toMatchObject({ status: 'pending' });
+    expect(contractByKey(form, 'readback-match')).toMatchObject({ status: 'pending' });
+    expect(contractByKey(form, 'lower-bid-direction')).toMatchObject({ status: 'pending' });
   });
 });
 

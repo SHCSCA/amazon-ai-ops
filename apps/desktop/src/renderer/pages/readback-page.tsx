@@ -9,6 +9,13 @@ import { toUserFacingError } from '../user-facing-error';
 
 type AiThresholdSuggestions = NonNullable<NonNullable<RecommendationView['evidence']>['aiThresholdSuggestions']>;
 export type ReadbackCaptureSlot = 'approval' | 'before' | 'after' | 'readback';
+export type ReadbackContractStatus = 'ready' | 'pending' | 'blocked';
+export interface ReadbackContractCheck {
+  key: 'time-order' | 'value-change' | 'readback-match' | 'lower-bid-direction' | 'evidence-distinct';
+  title: string;
+  status: ReadbackContractStatus;
+  detail: string;
+}
 
 const CAPTURE_SLOT_LABELS: Record<ReadbackCaptureSlot, { title: string; detail: string }> = {
   approval: { title: '审批凭证', detail: '粘贴审批截图、工单或聊天凭证' },
@@ -489,6 +496,136 @@ export function readbackPrecheckCopy(missing: string[]) {
   };
 }
 
+export function readbackContractChecks(form: ReadbackFormState): ReadbackContractCheck[] {
+  const timeFields = [
+    { label: '审批时间', value: form.approvalConfirmedAt },
+    { label: '执行前时间', value: form.beforeCapturedAt },
+    { label: '执行动作时间', value: form.executionExecutedAt },
+    { label: '执行后时间', value: form.afterCapturedAt },
+    { label: '回读时间', value: form.readbackReadAt },
+  ];
+  const missingTimes = timeFields.filter((field) => !field.value.trim()).map((field) => field.label);
+  const invalidTimes = timeFields
+    .filter((field) => field.value.trim() && Number.isNaN(Date.parse(field.value)))
+    .map((field) => field.label);
+  let timeStatus: ReadbackContractStatus = 'ready';
+  let timeDetail = '审批、执行前、执行动作、执行后和回读时间顺序已满足。';
+  if (missingTimes.length > 0) {
+    timeStatus = 'pending';
+    timeDetail = `待填写：${missingTimes.join('、')}。`;
+  } else if (invalidTimes.length > 0) {
+    timeStatus = 'blocked';
+    timeDetail = `${invalidTimes.join('、')}不是可解析 ISO 时间。`;
+  } else {
+    const parsed = timeFields.map((field) => ({ ...field, ms: Date.parse(field.value) }));
+    const brokenIndex = parsed.findIndex((field, index) => index > 0 && field.ms < parsed[index - 1].ms);
+    if (brokenIndex > 0) {
+      timeStatus = 'blocked';
+      timeDetail = `${parsed[brokenIndex - 1].label}晚于${parsed[brokenIndex].label}；必须满足审批≤执行前≤执行动作≤执行后≤回读。`;
+    }
+  }
+
+  let valueChangeStatus: ReadbackContractStatus = 'ready';
+  let valueChangeDetail = '执行前值和执行后值已变化，可证明现场发生了真实修改。';
+  if (!form.beforeValue.trim() || !form.afterValue.trim()) {
+    valueChangeStatus = 'pending';
+    valueChangeDetail = '待填写执行前值和执行后值。';
+  } else if (valuesMatch(form.beforeValue, form.afterValue)) {
+    valueChangeStatus = 'blocked';
+    valueChangeDetail = '执行前值和执行后值相同，不能证明真实修改。';
+  }
+
+  let readbackMatchStatus: ReadbackContractStatus = 'ready';
+  let readbackMatchDetail = '回读值与执行后值一致。';
+  if (!form.afterValue.trim() || !form.readbackActualValue.trim()) {
+    readbackMatchStatus = 'pending';
+    readbackMatchDetail = '待填写执行后值和真实 ERP 回读值。';
+  } else if (!valuesMatch(form.afterValue, form.readbackActualValue)) {
+    readbackMatchStatus = 'blocked';
+    readbackMatchDetail = '真实 ERP 回读值必须等于执行后值。';
+  }
+
+  let directionStatus: ReadbackContractStatus = 'ready';
+  let directionDetail = form.actionType === 'lower_bid'
+    ? '降价动作已证明执行后值低于执行前值。'
+    : '当前动作不适用降价方向校验；仍需满足值变化和回读一致。';
+  if (form.actionType === 'lower_bid') {
+    const beforeNumber = executableNumber(form.beforeValue);
+    const afterNumber = executableNumber(form.afterValue);
+    if (!form.beforeValue.trim() || !form.afterValue.trim()) {
+      directionStatus = 'pending';
+      directionDetail = '待填写执行前值和执行后值后校验降价方向。';
+    } else if (beforeNumber === null || afterNumber === null) {
+      directionStatus = 'blocked';
+      directionDetail = '降价动作的执行前值和执行后值必须能解析为数字。';
+    } else if (afterNumber >= beforeNumber) {
+      directionStatus = 'blocked';
+      directionDetail = '降价动作必须证明执行后值低于执行前值。';
+    }
+  }
+
+  const evidenceFields = [
+    { label: '执行前截图', value: form.beforeScreenshotPath },
+    { label: '执行后截图', value: form.afterScreenshotPath },
+    { label: '回读证据', value: form.readbackEvidencePath },
+  ];
+  const missingEvidence = evidenceFields.filter((field) => !field.value.trim()).map((field) => field.label);
+  let evidenceStatus: ReadbackContractStatus = 'ready';
+  let evidenceDetail = '执行前、执行后和回读证据路径互不复用。';
+  if (missingEvidence.length > 0) {
+    evidenceStatus = 'pending';
+    evidenceDetail = `待补：${missingEvidence.join('、')}。`;
+  } else {
+    const normalized = evidenceFields.map((field) => normalizePathForCompare(field.value));
+    if (new Set(normalized).size !== normalized.length) {
+      evidenceStatus = 'blocked';
+      evidenceDetail = '执行前、执行后和回读证据文件不能复用。';
+    }
+  }
+
+  return [
+    { key: 'time-order', title: '时间顺序', status: timeStatus, detail: timeDetail },
+    { key: 'value-change', title: '前后值变化', status: valueChangeStatus, detail: valueChangeDetail },
+    { key: 'readback-match', title: '回读值一致', status: readbackMatchStatus, detail: readbackMatchDetail },
+    { key: 'lower-bid-direction', title: '动作方向', status: directionStatus, detail: directionDetail },
+    { key: 'evidence-distinct', title: '截图不复用', status: evidenceStatus, detail: evidenceDetail },
+  ];
+}
+
+function readbackContractStatusLabel(status: ReadbackContractStatus): string {
+  if (status === 'ready') return '通过';
+  if (status === 'blocked') return '阻断';
+  return '待填写';
+}
+
+function ReadbackContractStrip({ checks }: { checks: ReadbackContractCheck[] }) {
+  const blockedCount = checks.filter((check) => check.status === 'blocked').length;
+  const pendingCount = checks.filter((check) => check.status === 'pending').length;
+  const summary = blockedCount > 0
+    ? `阻断 ${blockedCount} 项`
+    : pendingCount > 0
+      ? `待填写 ${pendingCount} 项`
+      : '合同通过';
+
+  return (
+    <div className="readback-contract-panel" role="status" aria-live="polite">
+      <div className="readback-contract-heading">
+        <span>时间和值安全合同</span>
+        <strong>{summary}</strong>
+      </div>
+      <div className="readback-contract-grid">
+        {checks.map((check) => (
+          <div className={`readback-contract-card readback-contract-${check.status}`} key={check.key}>
+            <span>{readbackContractStatusLabel(check.status)}</span>
+            <strong>{check.title}</strong>
+            <small>{check.detail}</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function psQuote(value: string): string {
   return `'${String(value || '').replace(/'/g, "''")}'`;
 }
@@ -619,6 +756,7 @@ export function ReadbackPage() {
   const sourceBatchMatches = Boolean(form.sourceBatchId && currentBatchId && form.sourceBatchId === currentBatchId);
   const missingGroups = useMemo(() => groupMissing(missing), [missing]);
   const precheckCopy = useMemo(() => readbackPrecheckCopy(missing), [missing]);
+  const contractChecks = useMemo(() => readbackContractChecks(form), [form]);
   const sessionWorkflow = useMemo(() => readbackSessionWorkflow(exportResult?.jsonPath), [exportResult?.jsonPath]);
   const readbackStepSummaries = useMemo(() => {
     const missingSet = new Set(missing);
@@ -1191,6 +1329,7 @@ export function ReadbackPage() {
         {activeStep === 'evidence' && (
           <Panel title="3. 补执行前后和回读" tone={activeMissingCount ? 'blocked' : 'success'}>
             <p className="muted-line">执行前、执行后、回读截图不能复用；回读值必须等于执行后值。</p>
+            <ReadbackContractStrip checks={contractChecks} />
             <div className="form-grid">
               <label>执行人<input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></label>
               <label>执行编号<input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></label>
