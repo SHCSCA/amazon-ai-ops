@@ -335,6 +335,21 @@ export function recommendationNeedsOperatorResolution(rec: RecommendationView, c
   return recommendationHasEvidenceBlocker(rec, currentBatchId, allowedSourceFiles) || recommendationRequiresManualReview(rec, currentBatchId, allowedSourceFiles);
 }
 
+export type RecommendationBucketFilter = 'all' | 'blocked' | 'review' | 'ready';
+
+export function recommendationMatchesBucketFilter(
+  rec: RecommendationView,
+  filter: RecommendationBucketFilter,
+  currentBatchId?: string,
+  allowedSourceFiles?: string[],
+): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'blocked') return recommendationHasEvidenceBlocker(rec, currentBatchId, allowedSourceFiles);
+  if (filter === 'review') return recommendationRequiresManualReview(rec, currentBatchId, allowedSourceFiles);
+  if (filter === 'ready') return recommendationCanEnterFormalApproval(rec, currentBatchId, allowedSourceFiles);
+  return true;
+}
+
 export function recommendationWorkflowActionState(input: {
   recommendationCount: number;
   formalApprovalCount: number;
@@ -841,6 +856,7 @@ export function RecommendationsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [lastGenerateResult, setLastGenerateResult] = useState<GenerateAiSummary | null>(null);
   const [selectedRecommendationIds, setSelectedRecommendationIds] = useState<Set<string>>(() => new Set());
+  const [bucketFilter, setBucketFilter] = useState<RecommendationBucketFilter>('all');
   const currentBatchId = resolveRecommendationBatchId({
     scopeBatchId: scope.batchId,
     latestBatchId: data?.collection.latestBatch?.id,
@@ -941,22 +957,68 @@ export function RecommendationsPage() {
       nextStep: '回到广告量化页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。',
     };
   }, [lastGenerateResult, quantReady, recommendations.length]);
-  const formalApprovalRecommendations = useMemo(
-    () => recommendations.filter((item) => recommendationCanEnterFormalApproval(item, currentBatchId, currentRealReportSourceFiles)),
-    [currentBatchId, currentRealReportSourceFiles, recommendations],
+  const visibleRecommendations = useMemo(
+    () => recommendations.filter((item) => recommendationMatchesBucketFilter(item, bucketFilter, currentBatchId, currentRealReportSourceFiles)),
+    [bucketFilter, currentBatchId, currentRealReportSourceFiles, recommendations],
   );
-  const formalApprovalIdSet = useMemo(
-    () => new Set(formalApprovalRecommendations.map((item) => String(item.id))),
-    [formalApprovalRecommendations],
+  const visibleFormalApprovalRecommendations = useMemo(
+    () => visibleRecommendations.filter((item) => recommendationCanEnterFormalApproval(item, currentBatchId, currentRealReportSourceFiles)),
+    [currentBatchId, currentRealReportSourceFiles, visibleRecommendations],
   );
-  const selectedFormalRecommendations = useMemo(
-    () => formalApprovalRecommendations.filter((item) => selectedRecommendationIds.has(String(item.id))),
-    [formalApprovalRecommendations, selectedRecommendationIds],
+  const visibleFormalApprovalIdSet = useMemo(
+    () => new Set(visibleFormalApprovalRecommendations.map((item) => String(item.id))),
+    [visibleFormalApprovalRecommendations],
+  );
+  const selectedVisibleFormalRecommendations = useMemo(
+    () => visibleFormalApprovalRecommendations.filter((item) => selectedRecommendationIds.has(String(item.id))),
+    [selectedRecommendationIds, visibleFormalApprovalRecommendations],
   );
   const batchSelectionState = recommendationBatchSelectionState({
-    selectableCount: formalApprovalRecommendations.length,
-    selectedCount: selectedFormalRecommendations.length,
+    selectableCount: visibleFormalApprovalRecommendations.length,
+    selectedCount: selectedVisibleFormalRecommendations.length,
   });
+  const activeBucketLabel: Record<RecommendationBucketFilter, string> = {
+    all: '全部建议',
+    blocked: '高风险强阻断',
+    review: '需人工复核',
+    ready: '已就绪可批准',
+  };
+  const bucketItems: Array<{
+    filter: RecommendationBucketFilter;
+    label: string;
+    value: string;
+    detail: string;
+    tone: 'ready' | 'pending' | 'blocked' | 'warning';
+  }> = [
+    {
+      filter: 'all',
+      label: '全部建议',
+      value: `${recommendations.length} 条`,
+      detail: '清除快速筛选，回到完整建议池',
+      tone: recommendations.length > 0 ? 'pending' : 'blocked',
+    },
+    {
+      filter: 'blocked',
+      label: '高风险强阻断',
+      value: `缺证据 ${evidenceBlockedCount}`,
+      detail: '缺批次、来源或可回查证据',
+      tone: evidenceBlockedCount > 0 ? 'blocked' : 'ready',
+    },
+    {
+      filter: 'review',
+      label: '需人工复核',
+      value: `需复核 ${manualReviewCount}`,
+      detail: 'AI 独立洞察或规则冲突',
+      tone: manualReviewCount > 0 ? 'warning' : 'pending',
+    },
+    {
+      filter: 'ready',
+      label: '已就绪可批准',
+      value: `可审批 ${formalApprovalCount}`,
+      detail: `${recommendations.length} 条建议 / ${realReportCount}/8 类报表`,
+      tone: formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending',
+    },
+  ];
   const topRecommendation = [...recommendations].sort((a, b) => {
     const riskDelta = Number(['high', 'APPROVAL', 'HIGH'].includes(String(b.riskLevel))) - Number(['high', 'APPROVAL', 'HIGH'].includes(String(a.riskLevel)));
     if (riskDelta !== 0) return riskDelta;
@@ -1075,7 +1137,7 @@ export function RecommendationsPage() {
 
   function toggleRecommendationSelection(rec: RecommendationView) {
     const id = String(rec.id);
-    if (!formalApprovalIdSet.has(id)) {
+    if (!visibleFormalApprovalIdSet.has(id)) {
       setSelected(rec);
       setMessage('这条建议还不能进入普通审批；请先查看详情里的送审前证据检查。');
       return;
@@ -1090,18 +1152,18 @@ export function RecommendationsPage() {
 
   function toggleAllFormalSelection() {
     setSelectedRecommendationIds((current) => {
-      const allIds = formalApprovalRecommendations.map((item) => String(item.id));
+      const allIds = visibleFormalApprovalRecommendations.map((item) => String(item.id));
       const allSelected = allIds.length > 0 && allIds.every((id) => current.has(id));
       return new Set(allSelected ? [] : allIds);
     });
   }
 
   function submitSelectedToApproval() {
-    if (!selectedFormalRecommendations.length) {
+    if (!selectedVisibleFormalRecommendations.length) {
       setMessage('请先勾选至少 1 条可审批建议。');
       return;
     }
-    const ids = selectedFormalRecommendations.map((item) => String(item.id));
+    const ids = selectedVisibleFormalRecommendations.map((item) => String(item.id));
     try {
       window.sessionStorage?.setItem(APPROVAL_SELECTION_STORAGE_KEY, JSON.stringify({
         ids,
@@ -1121,6 +1183,12 @@ export function RecommendationsPage() {
     }
     setMessage(`已选择 ${ids.length} 条建议，正在进入审批中心逐条确认。`);
     navigate('approval');
+  }
+
+  function applyBucketFilter(nextFilter: RecommendationBucketFilter) {
+    setBucketFilter(nextFilter);
+    setSelected(null);
+    setSelectedRecommendationIds(new Set());
   }
 
   function runPrimaryTaskAction() {
@@ -1191,28 +1259,24 @@ export function RecommendationsPage() {
             onClick: runPrimaryTaskAction,
           }}
         >
-          <StateLightGrid
-            items={[
-              {
-                label: '高风险强阻断',
-                value: `缺证据 ${evidenceBlockedCount}`,
-                detail: '缺批次、来源或可回查证据',
-                tone: evidenceBlockedCount > 0 ? 'blocked' : 'ready',
-              },
-              {
-                label: '需人工复核',
-                value: `需复核 ${manualReviewCount}`,
-                detail: 'AI 独立洞察或规则冲突',
-                tone: manualReviewCount > 0 ? 'warning' : 'pending',
-              },
-              {
-                label: '已就绪可批准',
-                value: `可审批 ${formalApprovalCount}`,
-                detail: `${recommendations.length} 条建议 / ${realReportCount}/8 类报表`,
-                tone: formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending',
-              },
-            ]}
-          />
+          <div className="recommendation-bucket-grid" role="group" aria-label="建议池快速筛选">
+            {bucketItems.map((item) => (
+              <button
+                aria-pressed={bucketFilter === item.filter}
+                className={`recommendation-bucket-card recommendation-bucket-${item.tone}${bucketFilter === item.filter ? ' recommendation-bucket-active' : ''}`}
+                key={item.filter}
+                onClick={() => applyBucketFilter(item.filter)}
+                type="button"
+              >
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <p>{item.detail}</p>
+              </button>
+            ))}
+          </div>
+          <p className="recommendation-filter-line" aria-live="polite">
+            当前视图：{activeBucketLabel[bucketFilter]}，显示 {visibleRecommendations.length}/{recommendations.length} 条；切换视图会清空当前勾选，避免隐藏行被批量提交。
+          </p>
           <div className="business-pill-row" aria-label="建议池分类计数">
             <StatusPill tone={formalApprovalCount > 0 ? 'ready' : 'pending'}>正式可审批 {formalApprovalCount}</StatusPill>
             <StatusPill tone={manualReviewCount > 0 ? 'warning' : 'pending'}>人工复核 {manualReviewCount}</StatusPill>
@@ -1663,17 +1727,17 @@ export function RecommendationsPage() {
           <div className={`recommendation-selection-toolbar recommendation-selection-toolbar-${batchSelectionState.tone}`}>
             <div>
               <span>批量审批准备</span>
-              <strong>{selectedFormalRecommendations.length}/{formalApprovalRecommendations.length} 项已选择</strong>
+              <strong>{selectedVisibleFormalRecommendations.length}/{visibleFormalApprovalRecommendations.length} 项已选择</strong>
               <p>{batchSelectionState.helperText}</p>
             </div>
             <div className="action-row">
               <button
                 className="secondary-button"
-                disabled={!formalApprovalRecommendations.length}
+                disabled={!visibleFormalApprovalRecommendations.length}
                 onClick={toggleAllFormalSelection}
                 type="button"
               >
-                {formalApprovalRecommendations.length > 0 && selectedFormalRecommendations.length === formalApprovalRecommendations.length ? '取消全选' : `全选可审批 ${formalApprovalRecommendations.length}`}
+                {visibleFormalApprovalRecommendations.length > 0 && selectedVisibleFormalRecommendations.length === visibleFormalApprovalRecommendations.length ? '取消全选' : `全选可审批 ${visibleFormalApprovalRecommendations.length}`}
               </button>
               <button
                 className={batchSelectionState.disabled ? 'secondary-button' : 'primary-button'}
@@ -1686,7 +1750,7 @@ export function RecommendationsPage() {
             </div>
           </div>
           <details className="evidence-disclosure">
-            <summary>展开待处理建议表（{recommendations.length} 条）</summary>
+            <summary>展开待处理建议表（{visibleRecommendations.length}/{recommendations.length} 条）</summary>
             <div className="table-wrap">
               <table className="business-table recommendation-table">
               <thead>
@@ -1694,8 +1758,8 @@ export function RecommendationsPage() {
                   <th>
                     <input
                       aria-label="全选可审批建议"
-                      checked={formalApprovalRecommendations.length > 0 && selectedFormalRecommendations.length === formalApprovalRecommendations.length}
-                      disabled={!formalApprovalRecommendations.length}
+                      checked={visibleFormalApprovalRecommendations.length > 0 && selectedVisibleFormalRecommendations.length === visibleFormalApprovalRecommendations.length}
+                      disabled={!visibleFormalApprovalRecommendations.length}
                       onChange={toggleAllFormalSelection}
                       type="checkbox"
                     />
@@ -1719,8 +1783,8 @@ export function RecommendationsPage() {
                 </tr>
               </thead>
               <tbody>
-                {recommendations.map((rec) => {
-                  const isFormalApproval = formalApprovalIdSet.has(String(rec.id));
+                {visibleRecommendations.map((rec) => {
+                  const isFormalApproval = visibleFormalApprovalIdSet.has(String(rec.id));
                   const isSelectedForApproval = selectedRecommendationIds.has(String(rec.id));
                   return (
                   <tr className={isSelectedForApproval ? 'recommendation-row-selected' : ''} key={rec.id}>
@@ -1770,9 +1834,9 @@ export function RecommendationsPage() {
                   </tr>
                   );
                 })}
-                {!recommendations.length && (
+                {!visibleRecommendations.length && (
                   <tr>
-                    <td colSpan={17}>{quantReady ? '当前范围还没有待审批或需复核建议。' : '缺少真实数据，本页不生成建议。'}</td>
+                    <td colSpan={17}>{recommendations.length ? `当前视图“${activeBucketLabel[bucketFilter]}”没有建议。` : quantReady ? '当前范围还没有待审批或需复核建议。' : '缺少真实数据，本页不生成建议。'}</td>
                   </tr>
                 )}
               </tbody>

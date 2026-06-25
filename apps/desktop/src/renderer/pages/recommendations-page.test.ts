@@ -6,6 +6,7 @@ import {
   recommendationStatusFiltersForPage,
   recommendationCanEnterFormalApproval,
   recommendationHasEvidenceBlocker,
+  recommendationMatchesBucketFilter,
   recommendationNeedsOperatorResolution,
   recommendationMergeSummaryText,
   recommendationBatchSelectionState,
@@ -353,6 +354,69 @@ describe('recommendation evidence gate', () => {
 
     expect([aiOnly, evidenceBlocked, formalRule].filter((item) => recommendationNeedsOperatorResolution(item, 'batch_1'))).toHaveLength(2);
     expect(recommendationCanEnterFormalApproval(formalRule, 'batch_1')).toBe(true);
+  });
+});
+
+describe('recommendationMatchesBucketFilter', () => {
+  function recommendation(overrides: Record<string, unknown> = {}) {
+    return {
+      id: String(overrides.id || 'rec_1'),
+      status: 'pending',
+      entityName: 'smart lock',
+      currentValue: '1.20',
+      recommendedValue: '1.08',
+      evidence: {
+        batchId: 'batch_1',
+        date: '2026-06-12',
+        sourceFiles: ['C:/reports/user_search_term.xlsx'],
+        sourceRow: 12,
+        campaignName: 'SP exact',
+        adGroupName: 'Main',
+        searchTerm: 'smart lock',
+        decisionAgreement: 'rule_only',
+      },
+      ...overrides,
+    } as any;
+  }
+
+  it('keeps all recommendations visible in the all bucket', () => {
+    expect([
+      recommendation({ id: 'ready' }),
+      recommendation({ id: 'review', evidence: { ...recommendation().evidence, decisionAgreement: 'ai_only' } }),
+      recommendation({ id: 'blocked', evidence: { ...recommendation().evidence, sourceFiles: [] } }),
+    ].filter((item) => recommendationMatchesBucketFilter(item, 'all', 'batch_1')).map((item) => item.id)).toEqual([
+      'ready',
+      'review',
+      'blocked',
+    ]);
+  });
+
+  it('separates evidence blockers from manual-review rows', () => {
+    const ready = recommendation({ id: 'ready' });
+    const review = recommendation({
+      id: 'review',
+      evidence: { ...recommendation().evidence, decisionAgreement: 'ai_only' },
+    });
+    const blocked = recommendation({
+      id: 'blocked',
+      evidence: { ...recommendation().evidence, sourceFiles: [] },
+    });
+    const rows = [ready, review, blocked];
+
+    expect(rows.filter((item) => recommendationMatchesBucketFilter(item, 'blocked', 'batch_1')).map((item) => item.id)).toEqual(['blocked']);
+    expect(rows.filter((item) => recommendationMatchesBucketFilter(item, 'review', 'batch_1')).map((item) => item.id)).toEqual(['review']);
+    expect(rows.filter((item) => recommendationMatchesBucketFilter(item, 'ready', 'batch_1')).map((item) => item.id)).toEqual(['ready']);
+  });
+
+  it('uses current source-file membership for ready bucket filtering', () => {
+    const ready = recommendation({ id: 'ready' });
+    const stale = recommendation({ id: 'stale' });
+
+    expect([ready, stale].filter((item) => recommendationMatchesBucketFilter(item, 'ready', 'batch_1', ['C:/reports/user_search_term.xlsx'])).map((item) => item.id)).toEqual([
+      'ready',
+      'stale',
+    ]);
+    expect([ready, stale].filter((item) => recommendationMatchesBucketFilter(item, 'ready', 'batch_1', ['C:/reports/other.xlsx']))).toHaveLength(0);
   });
 });
 
