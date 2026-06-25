@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecommendationView } from '../types';
-import { aiThresholdSummary, approvalBlockers, approvalDecisionState, approvalMissing, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, strategyLabel } from './approval-page';
+import { aiThresholdSummary, approvalBlockers, approvalDecisionState, approvalMissing, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, parseApprovalSelectionIntent, strategyLabel } from './approval-page';
 
 function recommendation(sourceRow: number | undefined = 12, sourceFiles = ['C:/reports/user-search-term.xlsx']): RecommendationView {
   return {
@@ -358,6 +358,26 @@ describe('buildApprovalStampFeedback', () => {
       detail: '批准前必须填写审批人。',
       tone: 'blocked',
     });
+  });
+});
+
+describe('parseApprovalSelectionIntent', () => {
+  it('normalizes batch handoff ids from recommendation selection', () => {
+    expect(parseApprovalSelectionIntent({
+      ids: [101, '102', '102', '', null],
+      count: 4,
+      batchId: 'batch_1',
+    })).toEqual({
+      ids: ['101', '102'],
+      count: 4,
+      batchId: 'batch_1',
+    });
+  });
+
+  it('rejects empty or malformed handoff payloads', () => {
+    expect(parseApprovalSelectionIntent(null)).toBeNull();
+    expect(parseApprovalSelectionIntent({ ids: [] })).toBeNull();
+    expect(parseApprovalSelectionIntent({ ids: [''] })).toBeNull();
   });
 });
 

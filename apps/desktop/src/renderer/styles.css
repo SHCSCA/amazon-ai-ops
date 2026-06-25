@@ -2517,11 +2517,101 @@ code {
 }
 
 .recommendation-table {
-  min-width: 1400px;
+  min-width: 1460px;
 }
 
 .approval-table {
   min-width: 1200px;
+}
+
+.recommendation-selection-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--tone-pending-bg);
+  padding: 10px 12px;
+}
+
+.recommendation-selection-toolbar > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.recommendation-selection-toolbar span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.recommendation-selection-toolbar strong {
+  color: var(--text-main);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.recommendation-selection-toolbar p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.recommendation-selection-toolbar-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+}
+
+.recommendation-selection-toolbar-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+}
+
+.recommendation-row-selected td {
+  background: var(--tone-ready-bg);
+}
+
+.table-checkbox-cell {
+  width: 42px;
+  text-align: center;
+}
+
+.business-table th input[type="checkbox"],
+.business-table td input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.business-table th input[type="checkbox"]:disabled,
+.business-table td input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.approval-batch-handoff {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--tone-ready-border);
+  border-radius: var(--radius);
+  background: var(--tone-ready-bg);
+  padding: 8px 10px;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.approval-batch-handoff span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .detail-grid,

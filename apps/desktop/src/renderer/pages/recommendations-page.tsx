@@ -11,6 +11,8 @@ import { countProductsWithTargets, normalizeProductContexts, pickPrimaryProductC
 import type { AiEvidenceDisplayItemView, AiEvidenceSufficiencyView, AiProviderSettings, AppRoute, RecommendationView, SettingsRuleConfig } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
+const APPROVAL_SELECTION_STORAGE_KEY = 'amazon-ai-ops:approval-selection';
+
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
 }
@@ -445,6 +447,41 @@ export function recommendationPrimaryTaskActionState(input: {
   };
 }
 
+export function recommendationBatchSelectionState(input: {
+  selectableCount: number;
+  selectedCount: number;
+}): {
+  actionLabel: string;
+  helperText: string;
+  disabled: boolean;
+  tone: 'ready' | 'pending' | 'blocked';
+} {
+  const selectableCount = Math.max(0, Number(input.selectableCount || 0));
+  const selectedCount = Math.max(0, Number(input.selectedCount || 0));
+  if (selectableCount <= 0) {
+    return {
+      actionLabel: '等待可审批建议',
+      helperText: '当前建议池没有证据完整、可进入普通审批的动作。',
+      disabled: true,
+      tone: 'blocked',
+    };
+  }
+  if (selectedCount <= 0) {
+    return {
+      actionLabel: `批量提交 0/${selectableCount} 项到审批中心`,
+      helperText: '勾选可审批建议后，再批量带入审批中心逐条盖章。',
+      disabled: true,
+      tone: 'pending',
+    };
+  }
+  return {
+    actionLabel: `批量提交 ${selectedCount} 项到审批中心`,
+    helperText: `已选择 ${selectedCount}/${selectableCount} 条可审批建议；这里只传递审批上下文，不执行广告动作。`,
+    disabled: false,
+    tone: 'ready',
+  };
+}
+
 function recommendationType(rec: RecommendationView): string {
   return rec.entityType || rec.evidence?.matchType || '-';
 }
@@ -803,6 +840,7 @@ export function RecommendationsPage() {
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [lastGenerateResult, setLastGenerateResult] = useState<GenerateAiSummary | null>(null);
+  const [selectedRecommendationIds, setSelectedRecommendationIds] = useState<Set<string>>(() => new Set());
   const currentBatchId = resolveRecommendationBatchId({
     scopeBatchId: scope.batchId,
     latestBatchId: data?.collection.latestBatch?.id,
@@ -903,6 +941,22 @@ export function RecommendationsPage() {
       nextStep: '回到广告量化页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。',
     };
   }, [lastGenerateResult, quantReady, recommendations.length]);
+  const formalApprovalRecommendations = useMemo(
+    () => recommendations.filter((item) => recommendationCanEnterFormalApproval(item, currentBatchId, currentRealReportSourceFiles)),
+    [currentBatchId, currentRealReportSourceFiles, recommendations],
+  );
+  const formalApprovalIdSet = useMemo(
+    () => new Set(formalApprovalRecommendations.map((item) => String(item.id))),
+    [formalApprovalRecommendations],
+  );
+  const selectedFormalRecommendations = useMemo(
+    () => formalApprovalRecommendations.filter((item) => selectedRecommendationIds.has(String(item.id))),
+    [formalApprovalRecommendations, selectedRecommendationIds],
+  );
+  const batchSelectionState = recommendationBatchSelectionState({
+    selectableCount: formalApprovalRecommendations.length,
+    selectedCount: selectedFormalRecommendations.length,
+  });
   const topRecommendation = [...recommendations].sort((a, b) => {
     const riskDelta = Number(['high', 'APPROVAL', 'HIGH'].includes(String(b.riskLevel))) - Number(['high', 'APPROVAL', 'HIGH'].includes(String(a.riskLevel)));
     if (riskDelta !== 0) return riskDelta;
@@ -943,6 +997,14 @@ export function RecommendationsPage() {
       const nextRows = Array.from(byId.values());
       setRecommendations(nextRows);
       setSelected((current) => (current && nextRows.some((row) => row.id === current.id) ? current : null));
+      setSelectedRecommendationIds((current) => {
+        const nextRowIds = new Set(nextRows.map((row) => String(row.id)));
+        const next = new Set<string>();
+        for (const id of current) {
+          if (nextRowIds.has(id)) next.add(id);
+        }
+        return next;
+      });
     } catch (caught) {
       setMessage(errorMessage(caught, '加载优化建议失败'));
     } finally {
@@ -1009,6 +1071,56 @@ export function RecommendationsPage() {
 
   function navigate(route: AppRoute) {
     window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: route }));
+  }
+
+  function toggleRecommendationSelection(rec: RecommendationView) {
+    const id = String(rec.id);
+    if (!formalApprovalIdSet.has(id)) {
+      setSelected(rec);
+      setMessage('这条建议还不能进入普通审批；请先查看详情里的送审前证据检查。');
+      return;
+    }
+    setSelectedRecommendationIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllFormalSelection() {
+    setSelectedRecommendationIds((current) => {
+      const allIds = formalApprovalRecommendations.map((item) => String(item.id));
+      const allSelected = allIds.length > 0 && allIds.every((id) => current.has(id));
+      return new Set(allSelected ? [] : allIds);
+    });
+  }
+
+  function submitSelectedToApproval() {
+    if (!selectedFormalRecommendations.length) {
+      setMessage('请先勾选至少 1 条可审批建议。');
+      return;
+    }
+    const ids = selectedFormalRecommendations.map((item) => String(item.id));
+    try {
+      window.sessionStorage?.setItem(APPROVAL_SELECTION_STORAGE_KEY, JSON.stringify({
+        ids,
+        count: ids.length,
+        batchId: currentBatchId,
+        scope: {
+          dateFrom: scope.dateFrom,
+          dateTo: scope.dateTo,
+          storeName: scope.storeName,
+          marketplaceCode: scope.marketplaceCode,
+          asin: scope.asin,
+        },
+        createdAt: new Date().toISOString(),
+      }));
+    } catch {
+      // Session storage is only a UI handoff hint. Approval still reloads the real queue.
+    }
+    setMessage(`已选择 ${ids.length} 条建议，正在进入审批中心逐条确认。`);
+    navigate('approval');
   }
 
   function runPrimaryTaskAction() {
@@ -1548,12 +1660,46 @@ export function RecommendationsPage() {
         </ProgressiveDetails>
 
         <Panel title="待处理建议">
+          <div className={`recommendation-selection-toolbar recommendation-selection-toolbar-${batchSelectionState.tone}`}>
+            <div>
+              <span>批量审批准备</span>
+              <strong>{selectedFormalRecommendations.length}/{formalApprovalRecommendations.length} 项已选择</strong>
+              <p>{batchSelectionState.helperText}</p>
+            </div>
+            <div className="action-row">
+              <button
+                className="secondary-button"
+                disabled={!formalApprovalRecommendations.length}
+                onClick={toggleAllFormalSelection}
+                type="button"
+              >
+                {formalApprovalRecommendations.length > 0 && selectedFormalRecommendations.length === formalApprovalRecommendations.length ? '取消全选' : `全选可审批 ${formalApprovalRecommendations.length}`}
+              </button>
+              <button
+                className={batchSelectionState.disabled ? 'secondary-button' : 'primary-button'}
+                disabled={batchSelectionState.disabled}
+                onClick={submitSelectedToApproval}
+                type="button"
+              >
+                {batchSelectionState.actionLabel}
+              </button>
+            </div>
+          </div>
           <details className="evidence-disclosure">
             <summary>展开待处理建议表（{recommendations.length} 条）</summary>
             <div className="table-wrap">
               <table className="business-table recommendation-table">
               <thead>
                 <tr>
+                  <th>
+                    <input
+                      aria-label="全选可审批建议"
+                      checked={formalApprovalRecommendations.length > 0 && selectedFormalRecommendations.length === formalApprovalRecommendations.length}
+                      disabled={!formalApprovalRecommendations.length}
+                      onChange={toggleAllFormalSelection}
+                      type="checkbox"
+                    />
+                  </th>
                   <th>建议动作</th>
                   <th>广告组合</th>
                   <th>广告活动</th>
@@ -1573,8 +1719,20 @@ export function RecommendationsPage() {
                 </tr>
               </thead>
               <tbody>
-                {recommendations.map((rec) => (
-                  <tr key={rec.id}>
+                {recommendations.map((rec) => {
+                  const isFormalApproval = formalApprovalIdSet.has(String(rec.id));
+                  const isSelectedForApproval = selectedRecommendationIds.has(String(rec.id));
+                  return (
+                  <tr className={isSelectedForApproval ? 'recommendation-row-selected' : ''} key={rec.id}>
+                    <td className="table-checkbox-cell">
+                      <input
+                        aria-label={`选择建议 ${rec.id}`}
+                        checked={isSelectedForApproval}
+                        disabled={!isFormalApproval}
+                        onChange={() => toggleRecommendationSelection(rec)}
+                        type="checkbox"
+                      />
+                    </td>
                     <td>{rec.actionType}</td>
                     <td>{rec.evidence?.portfolioName || '-'}</td>
                     <td>{rec.evidence?.campaignName || '-'}</td>
@@ -1610,10 +1768,11 @@ export function RecommendationsPage() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {!recommendations.length && (
                   <tr>
-                    <td colSpan={16}>{quantReady ? '当前范围还没有待审批或需复核建议。' : '缺少真实数据，本页不生成建议。'}</td>
+                    <td colSpan={17}>{quantReady ? '当前范围还没有待审批或需复核建议。' : '缺少真实数据，本页不生成建议。'}</td>
                   </tr>
                 )}
               </tbody>

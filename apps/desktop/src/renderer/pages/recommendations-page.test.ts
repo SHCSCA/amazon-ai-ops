@@ -8,6 +8,7 @@ import {
   recommendationHasEvidenceBlocker,
   recommendationNeedsOperatorResolution,
   recommendationMergeSummaryText,
+  recommendationBatchSelectionState,
   recommendationPrimaryTaskActionState,
   recommendationReviewExplanationText,
   recommendationWorkflowActionState,
@@ -455,6 +456,44 @@ describe('recommendationPrimaryTaskActionState', () => {
       route: 'data-collection',
       disabled: false,
     });
+  });
+});
+
+describe('recommendationBatchSelectionState', () => {
+  it('blocks batch handoff when no recommendation can enter formal approval', () => {
+    expect(recommendationBatchSelectionState({
+      selectableCount: 0,
+      selectedCount: 0,
+    })).toMatchObject({
+      actionLabel: '等待可审批建议',
+      disabled: true,
+      tone: 'blocked',
+    });
+  });
+
+  it('shows a disabled zero-selection action while selectable rows exist', () => {
+    expect(recommendationBatchSelectionState({
+      selectableCount: 4,
+      selectedCount: 0,
+    })).toMatchObject({
+      actionLabel: '批量提交 0/4 项到审批中心',
+      disabled: true,
+      tone: 'pending',
+    });
+  });
+
+  it('turns the primary batch action into a count-confirming approval handoff', () => {
+    const state = recommendationBatchSelectionState({
+      selectableCount: 4,
+      selectedCount: 3,
+    });
+
+    expect(state).toMatchObject({
+      actionLabel: '批量提交 3 项到审批中心',
+      disabled: false,
+      tone: 'ready',
+    });
+    expect(state.helperText).toContain('不执行广告动作');
   });
 });
 

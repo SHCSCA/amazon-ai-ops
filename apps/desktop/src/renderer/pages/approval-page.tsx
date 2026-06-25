@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
@@ -10,6 +10,7 @@ import { toUserFacingError } from '../user-facing-error';
 
 type ApprovalTab = 'pending' | 'needs_review' | 'approved' | 'rejected';
 type ApprovalFeedbackState = 'approving' | 'approved' | 'rejecting' | 'rejected' | 'blocked';
+const APPROVAL_SELECTION_STORAGE_KEY = 'amazon-ai-ops:approval-selection';
 
 const TAB_LABELS: Record<ApprovalTab, string> = {
   pending: '待审批',
@@ -331,6 +332,24 @@ export function buildApprovalStampFeedback(input: {
   };
 }
 
+export function parseApprovalSelectionIntent(value: unknown): {
+  ids: string[];
+  count: number;
+  batchId?: string;
+} | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as { ids?: unknown; count?: unknown; batchId?: unknown };
+  const ids = Array.isArray(record.ids)
+    ? Array.from(new Set(record.ids.map((id) => String(id || '').trim()).filter(Boolean)))
+    : [];
+  if (!ids.length) return null;
+  return {
+    ids,
+    count: Math.max(ids.length, Number(record.count || ids.length) || ids.length),
+    batchId: typeof record.batchId === 'string' ? record.batchId : undefined,
+  };
+}
+
 function approvalValueBlockers(rec: RecommendationView): string[] {
   const action = String(rec.actionType || '').trim();
   const currentValue = parseExecutableNumber(rec.currentValue);
@@ -475,6 +494,8 @@ export function ApprovalPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [submittingDecision, setSubmittingDecision] = useState<'approved' | 'rejected' | null>(null);
   const [decisionFeedback, setDecisionFeedback] = useState<ReturnType<typeof buildApprovalStampFeedback> | null>(null);
+  const [batchSelectionHint, setBatchSelectionHint] = useState<string | null>(null);
+  const pendingSelectionIntentRef = useRef<ReturnType<typeof parseApprovalSelectionIntent>>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const currentRealReportSourceFiles = useMemo(
     () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
@@ -530,6 +551,19 @@ export function ApprovalPage() {
     limit: 100,
   }), [currentBatchId, scope.asin, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName, tab]);
 
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage?.getItem(APPROVAL_SELECTION_STORAGE_KEY);
+      const parsed = raw ? parseApprovalSelectionIntent(JSON.parse(raw)) : null;
+      if (!parsed) return;
+      pendingSelectionIntentRef.current = parsed;
+      setBatchSelectionHint(`来自优化建议批量提交 ${parsed.count} 项；审批中心会逐条重新校验证据和安全边界。`);
+      window.sessionStorage?.removeItem(APPROVAL_SELECTION_STORAGE_KEY);
+    } catch {
+      pendingSelectionIntentRef.current = null;
+    }
+  }, []);
+
   async function loadRows(options: { clearMessage?: boolean } = {}) {
     setLoading(true);
     if (options.clearMessage !== false) setMessage(null);
@@ -537,7 +571,21 @@ export function ApprovalPage() {
       const nextRows = await (window as any).electronAPI?.getRecommendations?.(filter);
       const normalizedRows = Array.isArray(nextRows) ? nextRows : [];
       setRows(normalizedRows);
-      setSelected((current) => (current && normalizedRows.some((row) => row.id === current.id) ? current : null));
+      const pendingIntent = pendingSelectionIntentRef.current;
+      if (pendingIntent && tab === 'pending') {
+        const matched = normalizedRows.find((row) => pendingIntent.ids.includes(String(row.id)));
+        if (matched) {
+          setSelected(matched);
+          pendingSelectionIntentRef.current = null;
+          window.setTimeout(showApprovalQueue, 0);
+        } else {
+          setSelected(null);
+          setBatchSelectionHint(`来自优化建议批量提交 ${pendingIntent.count} 项，但当前审批队列没有匹配到这些建议；可能已处理或范围已变化。`);
+          pendingSelectionIntentRef.current = null;
+        }
+      } else {
+        setSelected((current) => (current && normalizedRows.some((row) => row.id === current.id) ? current : null));
+      }
     } catch (caught) {
       setMessage(errorMessage(caught, '加载审批队列失败'));
     } finally {
@@ -734,6 +782,12 @@ export function ApprovalPage() {
               </>
             )}
           </div>
+          {batchSelectionHint && (
+            <div className="approval-batch-handoff" role="status">
+              <StatusPill tone="ready">批量送审</StatusPill>
+              <span>{batchSelectionHint}</span>
+            </div>
+          )}
           {decisionFeedback && (
             <div
               aria-live="polite"
