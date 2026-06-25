@@ -38,6 +38,8 @@ type ScopeSummaryFact = {
   title?: string;
 };
 
+export type ScopeFieldFeedbackKey = 'dateFrom' | 'dateTo' | 'storeName' | 'marketplaceCode' | 'asin' | 'batchId';
+
 type ProductLabelRow = {
   asin?: string;
   title?: string;
@@ -77,6 +79,29 @@ export function buildScopeWarningSummary(input: {
   return null;
 }
 
+export function scopeFieldFeedbackLabel(field: ScopeFieldFeedbackKey): string {
+  const labels: Record<ScopeFieldFeedbackKey, string> = {
+    dateFrom: '开始日期已记录为待保存范围',
+    dateTo: '结束日期已记录为待保存范围',
+    storeName: '店铺已记录为待保存范围',
+    marketplaceCode: '站点已记录为待保存范围',
+    asin: 'ASIN 已记录为待保存范围',
+    batchId: '批次已记录为当前范围',
+  };
+  return labels[field];
+}
+
+export function scopeFieldFeedbackClass(
+  field: ScopeFieldFeedbackKey,
+  activeField?: ScopeFieldFeedbackKey | null,
+  baseClass = 'scope-field-feedback-shell',
+): string {
+  return [
+    baseClass,
+    activeField === field ? 'scope-field-confirmed' : '',
+  ].filter(Boolean).join(' ');
+}
+
 export function ScopeBar() {
   const { scope, setScope } = useScopeStore();
   const [editing, setEditing] = useState(false);
@@ -89,6 +114,7 @@ export function ScopeBar() {
   const [scopeHydrated, setScopeHydrated] = useState(false);
   const [scopePersistError, setScopePersistError] = useState('');
   const [products, setProducts] = useState<ProductLabelRow[]>([]);
+  const [confirmedField, setConfirmedField] = useState<{ field: ScopeFieldFeedbackKey; tick: number } | null>(null);
 
   const selectedBatch = useMemo(
     () => batchOptions.find((batch) => batch.id === scope.batchId),
@@ -129,15 +155,26 @@ export function ScopeBar() {
     setEditError('');
   };
 
+  const markFieldConfirmed = (field: ScopeFieldFeedbackKey) => {
+    setConfirmedField({ field, tick: Date.now() });
+  };
+
   const applyScopePatch = (patch: Partial<typeof scope>) => {
     const nextScope = { ...scope, ...patch, currency: 'USD' as const };
     setScope(nextScope);
     setDraft(nextScope);
   };
 
-  const updateRangeDraft = (patch: Partial<typeof scope>) => {
+  const updateRangeDraft = (field: ScopeFieldFeedbackKey, patch: Partial<typeof scope>) => {
     setEditError('');
+    markFieldConfirmed(field);
     setDraft((current) => ({ ...current, ...patch, batchId: undefined, currency: 'USD' as const }));
+  };
+
+  const updateDraftField = (field: ScopeFieldFeedbackKey, patch: Partial<typeof scope>) => {
+    setEditError('');
+    markFieldConfirmed(field);
+    setDraft((current) => ({ ...current, ...patch, currency: 'USD' as const }));
   };
 
   useEffect(() => {
@@ -191,6 +228,12 @@ export function ScopeBar() {
     window.addEventListener('business-ui:data-updated', refresh);
     return () => window.removeEventListener('business-ui:data-updated', refresh);
   }, []);
+
+  useEffect(() => {
+    if (!confirmedField) return undefined;
+    const timer = window.setTimeout(() => setConfirmedField(null), 900);
+    return () => window.clearTimeout(timer);
+  }, [confirmedField]);
 
   useEffect(() => {
     const openEditor = () => {
@@ -287,6 +330,12 @@ export function ScopeBar() {
     productLabel,
   });
   const warningSummary = buildScopeWarningSummary({ batchOptionsError, scopePersistError });
+  const confirmedFieldName = confirmedField?.field ?? null;
+  const renderFieldConfirmation = (field: ScopeFieldFeedbackKey) => (
+    <span className="scope-field-confirmation" aria-live="polite">
+      {confirmedFieldName === field ? scopeFieldFeedbackLabel(field) : '\u00A0'}
+    </span>
+  );
 
   return (
     <section className="scope-bar" aria-label="当前运营范围">
@@ -296,32 +345,36 @@ export function ScopeBar() {
           <strong>{scope.dateFrom} 至 {scope.dateTo} / {scope.storeName || '未选店铺'} / {scope.marketplaceCode || '未选站点'} / USD</strong>
         </div>
         <div className="scope-title-actions">
-          <select
-            aria-label="数据批次来源"
-            value={batchSelectValue}
-            onChange={(event) => {
-              const value = event.target.value;
-              if (value === AUTO_BATCH_VALUE) {
-                applyScopePatch({ batchId: undefined });
-                return;
-              }
-              if (value === MANUAL_BATCH_VALUE) {
-                setDraft(scope);
-                setEditing(true);
-                return;
-              }
-              applyScopePatch({ batchId: value });
-            }}
-          >
-            <option value={AUTO_BATCH_VALUE}>自动：使用当前范围最新完整批次</option>
-            {batchOptions.map((batch) => (
-              <option key={batch.id} value={batch.id}>{formatBatchOption(batch)}</option>
-            ))}
-            {scope.batchId && !selectedBatch && (
-              <option value={MANUAL_BATCH_VALUE}>手动批次：{scope.batchId}</option>
-            )}
-            <option value={MANUAL_BATCH_VALUE}>手动输入批次 ID</option>
-          </select>
+          <div className={scopeFieldFeedbackClass('batchId', confirmedFieldName, 'scope-title-action-field')}>
+            <select
+              aria-label="数据批次来源"
+              value={batchSelectValue}
+              onChange={(event) => {
+                markFieldConfirmed('batchId');
+                const value = event.target.value;
+                if (value === AUTO_BATCH_VALUE) {
+                  applyScopePatch({ batchId: undefined });
+                  return;
+                }
+                if (value === MANUAL_BATCH_VALUE) {
+                  setDraft(scope);
+                  setEditing(true);
+                  return;
+                }
+                applyScopePatch({ batchId: value });
+              }}
+            >
+              <option value={AUTO_BATCH_VALUE}>自动：使用当前范围最新完整批次</option>
+              {batchOptions.map((batch) => (
+                <option key={batch.id} value={batch.id}>{formatBatchOption(batch)}</option>
+              ))}
+              {scope.batchId && !selectedBatch && (
+                <option value={MANUAL_BATCH_VALUE}>手动批次：{scope.batchId}</option>
+              )}
+              <option value={MANUAL_BATCH_VALUE}>手动输入批次 ID</option>
+            </select>
+            {renderFieldConfirmation('batchId')}
+          </div>
           <button type="button" className="secondary-button compact-button" onClick={() => { setDraft(scope); setEditError(''); setEditing((value) => !value); }}>
             编辑范围
           </button>
@@ -361,29 +414,35 @@ export function ScopeBar() {
       </div>
       {editing && (
         <div className="scope-editor">
-          <label>
-            开始日期
-            <input type="date" value={draft.dateFrom} onChange={(event) => updateRangeDraft({ dateFrom: event.target.value })} />
+          <label className={scopeFieldFeedbackClass('dateFrom', confirmedFieldName)}>
+            <span>开始日期</span>
+            <input type="date" value={draft.dateFrom} onChange={(event) => updateRangeDraft('dateFrom', { dateFrom: event.target.value })} />
+            {renderFieldConfirmation('dateFrom')}
           </label>
-          <label>
-            结束日期
-            <input type="date" value={draft.dateTo} onChange={(event) => updateRangeDraft({ dateTo: event.target.value })} />
+          <label className={scopeFieldFeedbackClass('dateTo', confirmedFieldName)}>
+            <span>结束日期</span>
+            <input type="date" value={draft.dateTo} onChange={(event) => updateRangeDraft('dateTo', { dateTo: event.target.value })} />
+            {renderFieldConfirmation('dateTo')}
           </label>
-          <label>
-            店铺
-            <input value={draft.storeName} onChange={(event) => updateRangeDraft({ storeName: event.target.value })} />
+          <label className={scopeFieldFeedbackClass('storeName', confirmedFieldName)}>
+            <span>店铺</span>
+            <input value={draft.storeName} onChange={(event) => updateRangeDraft('storeName', { storeName: event.target.value })} />
+            {renderFieldConfirmation('storeName')}
           </label>
-          <label>
-            站点
-            <input value={draft.marketplaceCode} onChange={(event) => updateRangeDraft({ marketplaceCode: event.target.value })} />
+          <label className={scopeFieldFeedbackClass('marketplaceCode', confirmedFieldName)}>
+            <span>站点</span>
+            <input value={draft.marketplaceCode} onChange={(event) => updateRangeDraft('marketplaceCode', { marketplaceCode: event.target.value })} />
+            {renderFieldConfirmation('marketplaceCode')}
           </label>
-          <label>
-            ASIN
-            <input value={draft.asin || ''} onChange={(event) => setDraft({ ...draft, asin: event.target.value || undefined })} />
+          <label className={scopeFieldFeedbackClass('asin', confirmedFieldName)}>
+            <span>ASIN</span>
+            <input value={draft.asin || ''} onChange={(event) => updateDraftField('asin', { asin: event.target.value || undefined })} />
+            {renderFieldConfirmation('asin')}
           </label>
-          <label>
-            数据批次
-            <input value={draft.batchId || ''} onChange={(event) => setDraft({ ...draft, batchId: event.target.value || undefined })} />
+          <label className={scopeFieldFeedbackClass('batchId', confirmedFieldName)}>
+            <span>数据批次</span>
+            <input value={draft.batchId || ''} onChange={(event) => updateDraftField('batchId', { batchId: event.target.value || undefined })} />
+            {renderFieldConfirmation('batchId')}
           </label>
           <p className="scope-editor-note">修改日期、店铺或站点会自动清空旧批次；如需固定历史批次，请重新输入批次 ID。</p>
           {editError && <p className="scope-editor-error">{editError}</p>}

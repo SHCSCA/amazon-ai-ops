@@ -1,5 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildScopeSummaryFacts, buildScopeWarningSummary, formatBatchOption } from './scope-bar';
+import {
+  buildScopeSummaryFacts,
+  buildScopeWarningSummary,
+  formatBatchOption,
+  scopeFieldFeedbackClass,
+  scopeFieldFeedbackLabel,
+} from './scope-bar';
 
 describe('formatBatchOption', () => {
   it('describes batch coverage by report type and imported metric rows', () => {
@@ -62,7 +69,7 @@ describe('buildScopeSummaryFacts', () => {
     });
 
     expect(facts).toHaveLength(4);
-    expect(facts.map((fact) => fact.label)).toEqual(['批次', '报表', '指标', 'ASIN']);
+    expect(facts.map((fact) => fact.label)).toEqual(['批次', '报表', '指标', '产品']);
   });
 
   it('keeps the always-visible scope bar to four compact facts', () => {
@@ -76,7 +83,7 @@ describe('buildScopeSummaryFacts', () => {
       { label: '批次', value: 'batch_20260612', title: '自动使用当前范围最新完整批次' },
       { label: '报表', value: '8/8 类真实报表' },
       { label: '指标', value: '96 行' },
-      { label: 'ASIN', value: 'B0TESTASIN' },
+      { label: '产品', value: 'B0TESTASIN' },
     ]);
   });
 
@@ -100,6 +107,30 @@ describe('buildScopeSummaryFacts', () => {
     expect(facts[0]).toMatchObject({ label: '批次', value: longBatchId, title: '手动批次待校验' });
     expect(facts[0].value).not.toContain('当前使用手动批次');
     expect(facts[0].value).not.toContain('后续页面会按这个 ID 尝试读取');
+  });
+});
+
+describe('scope field feedback micro-response', () => {
+  it('labels changed fields as recorded without claiming unsaved draft fields are committed', () => {
+    expect(scopeFieldFeedbackLabel('storeName')).toBe('店铺已记录为待保存范围');
+    expect(scopeFieldFeedbackLabel('dateFrom')).toBe('开始日期已记录为待保存范围');
+    expect(scopeFieldFeedbackLabel('batchId')).toBe('批次已记录为当前范围');
+  });
+
+  it('adds the confirmed class only to the active scope field', () => {
+    expect(scopeFieldFeedbackClass('storeName', 'storeName')).toBe('scope-field-feedback-shell scope-field-confirmed');
+    expect(scopeFieldFeedbackClass('dateTo', 'storeName')).toBe('scope-field-feedback-shell');
+    expect(scopeFieldFeedbackClass('batchId', 'batchId', 'scope-title-action-field')).toBe('scope-title-action-field scope-field-confirmed');
+  });
+
+  it('keeps the field confirmation status space stable and animated in CSS', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.scope-field-confirmation');
+    expect(css).toContain('min-height: 14px');
+    expect(css).toContain('.scope-field-confirmed input');
+    expect(css).toContain('.scope-field-confirmed select');
+    expect(css).toContain('@keyframes scope-field-confirm-pulse');
   });
 });
 
