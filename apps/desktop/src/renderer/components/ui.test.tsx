@@ -1,4 +1,5 @@
 import React, { type ReactElement, type ReactNode } from 'react';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DecisionActionStrip, FormTable, FormTableRow, MicroStepper, SafetyGateLine, StateLightGrid } from './ui';
 
@@ -76,6 +77,18 @@ describe('industrial UI atoms', () => {
     }) as ReactElement;
 
     expect(collectText(tree)).toContain('无法常规批准');
+    expect(tree.props.role).toBe('group');
+    expect(tree.props['aria-label']).toBe('审批三态决策动作');
+    expect(tree.props['data-hover-fade']).toBe('true');
     expect(collectElements(tree, (element) => element.props.className === 'decision-action decision-action-blocked')).toHaveLength(1);
+    expect(collectElements(tree, (element) => element.props['data-decision-action'] === 'true')).toHaveLength(3);
+  });
+
+  it('keeps the decision strip hover contract in the stylesheet', () => {
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toContain('.decision-action-strip:hover .decision-action:not(:hover):not(:focus-visible):not(:disabled)');
+    expect(stylesheet).toContain('.decision-action-strip:focus-within .decision-action:not(:focus-visible):not(:disabled)');
+    expect(stylesheet).toContain('opacity: 0.4;');
   });
 });

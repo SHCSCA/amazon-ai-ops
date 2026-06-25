@@ -131,12 +131,24 @@ export interface DecisionActionItem {
   disabled?: boolean;
 }
 
-export function DecisionActionStrip({ items }: { items: DecisionActionItem[] }) {
+export function DecisionActionStrip({
+  items,
+  ariaLabel = '审批三态决策动作',
+}: {
+  items: DecisionActionItem[];
+  ariaLabel?: string;
+}) {
   return (
-    <div className="decision-action-strip">
+    <div
+      aria-label={ariaLabel}
+      className="decision-action-strip"
+      data-hover-fade="true"
+      role="group"
+    >
       {items.map((item) => (
         <button
           className={`decision-action decision-action-${item.tone}`}
+          data-decision-action="true"
           disabled={item.disabled}
           key={item.label}
           onClick={item.onClick}

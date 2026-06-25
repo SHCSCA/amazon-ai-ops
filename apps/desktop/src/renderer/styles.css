@@ -4900,7 +4900,7 @@ code {
   color: var(--text-main);
   text-align: left;
   cursor: pointer;
-  transition: border-color 150ms var(--motion-standard), box-shadow 150ms var(--motion-standard), transform 150ms var(--motion-standard), background 150ms var(--motion-standard);
+  transition: border-color 150ms var(--motion-standard), box-shadow 150ms var(--motion-standard), transform 150ms var(--motion-standard), background 150ms var(--motion-standard), opacity 120ms var(--motion-standard), filter 120ms var(--motion-standard);
 }
 
 .decision-action:hover:not(:disabled),
@@ -4910,12 +4910,24 @@ code {
 }
 
 .decision-action:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: scale(0.98);
 }
 
 .decision-action:disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.decision-action-strip:hover .decision-action:not(:hover):not(:focus-visible):not(:disabled),
+.decision-action-strip:focus-within .decision-action:not(:focus-visible):not(:disabled) {
+  opacity: 0.4;
+  filter: saturate(0.75);
+}
+
+.decision-action-strip:hover .decision-action:hover:not(:disabled),
+.decision-action-strip:focus-within .decision-action:focus-visible {
+  opacity: 1;
+  filter: none;
 }
 
 .decision-action strong {
