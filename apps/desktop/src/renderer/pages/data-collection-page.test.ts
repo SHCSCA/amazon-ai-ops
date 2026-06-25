@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildDataCollectionTaskState,
+  buildCollectionMonitorState,
   collectionActionButtonDetail,
   collectionActionButtonLabel,
   collectionActionError,
@@ -145,6 +146,75 @@ describe('runCollectionDownloadAction', () => {
 });
 
 describe('task-first data page helpers', () => {
+  it('opens a non-dismissible monitor state while full report recreation is running', () => {
+    const monitor = buildCollectionMonitorState({
+      runningAction: 'recreate-full',
+      actionNotice: '正在重新创建全部 8 类报表、下载并自动导入：广告活动报告',
+      actionError: null,
+      lastActionResult: null,
+      lastDiagnostic: null,
+      realReportCount: 0,
+      importedRowCount: 0,
+    });
+
+    expect(monitor?.tone).toBe('pending');
+    expect(monitor?.statusLabel).toBe('处理中');
+    expect(monitor?.headline).toBe('重新创建、下载并导入全部 8 类');
+    expect(monitor?.detail).toContain('正在重新创建全部 8 类报表');
+    expect(monitor?.canClose).toBe(false);
+  });
+
+  it('turns collection blockers into a visible monitor repair state', () => {
+    const monitor = buildCollectionMonitorState({
+      runningAction: null,
+      actionNotice: '创建并下载未完成。',
+      actionError: '页面验证未通过：缺少关键控件。',
+      lastActionResult: null,
+      lastDiagnostic: { ready: false, screenshotPath: 'C:/evidence/download-center.png' },
+      realReportCount: 0,
+      importedRowCount: 0,
+    });
+
+    expect(monitor?.tone).toBe('blocked');
+    expect(monitor?.statusLabel).toBe('需处理');
+    expect(monitor?.detail).toContain('采集动作被阻断');
+    expect(monitor?.previewDetail).toContain('download-center.png');
+    expect(monitor?.canClose).toBe(true);
+  });
+
+  it('summarizes successful collection results in the monitor', () => {
+    const monitor = buildCollectionMonitorState({
+      runningAction: null,
+      actionNotice: '采集动作已完成：本次新增 1 个真实原始报表文件。',
+      actionError: null,
+      lastActionResult: {
+        title: '重新创建、下载并导入全部 8 类报表完成',
+        tone: 'success',
+        mode: 'recreate-full',
+        batchIds: ['batch_1'],
+        downloadedCount: 8,
+        actionDownloadedFiles: [
+          { label: '关键词报告', fileName: 'keyword.xlsx', filePath: 'C:/reports/keyword.xlsx', fileSizeBytes: 1024 },
+        ],
+        failedCount: 0,
+        parsedFiles: 1,
+        insertedRows: 96,
+        currentImportedRows: 96,
+        nextStep: '下一步：进入广告量化。',
+        failedFiles: [],
+      },
+      lastDiagnostic: null,
+      realReportCount: 8,
+      importedRowCount: 96,
+    });
+
+    expect(monitor?.tone).toBe('ready');
+    expect(monitor?.statusLabel).toBe('已返回');
+    expect(monitor?.headline).toContain('全部 8 类');
+    expect(monitor?.previewDetail).toContain('当前范围覆盖 8/8 类');
+    expect(monitor?.canClose).toBe(true);
+  });
+
   it('uses the full 8-report refresh as the data collection primary action until rows are imported', () => {
     const firstViewportFolder = dataCollectionFirstViewportReportFolder({
       realReportCount: 0,

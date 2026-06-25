@@ -47,6 +47,17 @@ interface ActionProgressStep {
   status: 'ready' | 'pending' | 'blocked';
 }
 
+export interface CollectionMonitorState {
+  tone: 'pending' | 'ready' | 'blocked';
+  statusLabel: string;
+  title: string;
+  headline: string;
+  detail: string;
+  previewTitle: string;
+  previewDetail: string;
+  canClose: boolean;
+}
+
 function getFileExtension(fileName: string, filePath: string): string {
   const target = fileName || filePath;
   const dotIndex = target.lastIndexOf('.');
@@ -160,6 +171,83 @@ function actionModeLabel(mode: RunningCollectionActionMode): string {
     'verify-page': '验证下载中心页面',
   };
   return labels[mode];
+}
+
+export function buildCollectionMonitorState(input: {
+  runningAction: RunningCollectionActionMode | null;
+  actionNotice?: string | null;
+  actionError?: string | null;
+  lastActionResult?: LastActionResult | null;
+  lastDiagnostic?: any | null;
+  realReportCount: number;
+  importedRowCount: number;
+}): CollectionMonitorState | null {
+  const realReportCount = Math.max(0, Number(input.realReportCount) || 0);
+  const importedRowCount = Math.max(0, Number(input.importedRowCount) || 0);
+  if (input.runningAction) {
+    const isVerify = input.runningAction === 'verify-page';
+    return {
+      tone: 'pending',
+      statusLabel: '处理中',
+      title: isVerify ? '下载中心页面验证' : '自动数据采集监控',
+      headline: actionModeLabel(input.runningAction),
+      detail: input.actionNotice || '系统已接收动作，正在处理当前范围。完成前不要切换日期、店铺、站点或批次。',
+      previewTitle: isVerify ? '正在读取下载中心页面' : '领星下载中心任务执行中',
+      previewDetail: isVerify
+        ? '主进程正在刷新当前范围的页面截图、DOM 和页面模型证据。'
+        : `当前范围已有真实报表 ${realReportCount}/8 类，已导入 ${importedRowCount} 行。`,
+      canClose: false,
+    };
+  }
+
+  if (input.actionError) {
+    return {
+      tone: 'blocked',
+      statusLabel: '需处理',
+      title: '采集动作未完成',
+      headline: '动作已停止',
+      detail: '采集动作被阻断。请查看页面首屏的具体错误，并处理登录、页面模型、报表范围或表头解析问题后重试。',
+      previewTitle: input.lastDiagnostic?.ready ? '页面验证通过但动作未闭合' : '当前动作被阻断',
+      previewDetail: input.lastDiagnostic?.screenshotPath || input.lastDiagnostic?.domSnapshotPath
+        ? `诊断证据：${compactPath(input.lastDiagnostic.screenshotPath || input.lastDiagnostic.domSnapshotPath)}`
+        : '请按阻断说明处理登录、页面模型、报表范围或本地文件后重试。',
+      canClose: true,
+    };
+  }
+
+  if (input.lastActionResult) {
+    const result = input.lastActionResult;
+    const isReady = result.tone === 'success' || result.currentImportedRows > 0;
+    return {
+      tone: isReady ? 'ready' : 'pending',
+      statusLabel: isReady ? '已返回' : '待补齐',
+      title: '最近采集动作',
+      headline: result.title,
+      detail: result.nextStep,
+      previewTitle: result.actionDownloadedFiles.length > 0 ? '真实报表已落盘' : '未发现本次新增表格',
+      previewDetail: result.actionDownloadedFiles.length > 0
+        ? `本次新增 ${result.actionDownloadedFiles.length} 个真实报表，当前范围覆盖 ${result.downloadedCount}/8 类。`
+        : result.nextStep,
+      canClose: true,
+    };
+  }
+
+  if (input.actionNotice) {
+    return {
+      tone: 'ready',
+      statusLabel: '已返回',
+      title: '最近动作',
+      headline: '最近动作已返回',
+      detail: `动作已返回。当前范围已有真实报表 ${realReportCount}/8 类，已导入 ${importedRowCount} 行。`,
+      previewTitle: input.lastDiagnostic?.ready ? '页面验证通过' : '动作已返回',
+      previewDetail: input.lastDiagnostic?.screenshotPath || input.lastDiagnostic?.domSnapshotPath
+        ? `诊断证据：${compactPath(input.lastDiagnostic.screenshotPath || input.lastDiagnostic.domSnapshotPath)}`
+        : '可继续执行下一步动作。',
+      canClose: true,
+    };
+  }
+
+  return null;
 }
 
 export interface DataCollectionTaskState {
@@ -303,6 +391,62 @@ function buildActionProgressSteps(mode: CollectionActionMode | null, result: Las
       status: completed ? ((result?.currentImportedRows || 0) > 0 ? 'ready' : 'pending') : 'pending',
     },
   ];
+}
+
+function CollectionMonitorDrawer({
+  state,
+  steps,
+  evidencePath,
+  onClose,
+}: {
+  state: CollectionMonitorState;
+  steps: ActionProgressStep[];
+  evidencePath?: string;
+  onClose: () => void;
+}) {
+  return (
+    <aside className={`collection-monitor-drawer collection-monitor-${state.tone}`} aria-live="polite" aria-label="自动数据采集监控">
+      <div className="collection-monitor-header">
+        <div>
+          <span>{state.title}</span>
+          <strong>{state.headline}</strong>
+        </div>
+        <div className="collection-monitor-header-actions">
+          <StatusPill tone={state.tone}>{state.statusLabel}</StatusPill>
+          <button className="secondary-button compact-button" disabled={!state.canClose} onClick={onClose} type="button">
+            收起
+          </button>
+        </div>
+      </div>
+      <p className="collection-monitor-detail">{state.detail}</p>
+      <div className="collection-monitor-preview" aria-label="下载中心监控预览">
+        <div className="collection-monitor-preview-screen">
+          <span className="collection-monitor-scanline" />
+          <strong>{state.previewTitle}</strong>
+          <small>{state.previewDetail}</small>
+        </div>
+      </div>
+      {steps.length > 0 && (
+        <div className="collection-monitor-steps">
+          {steps.map((step) => (
+            <div className={`collection-monitor-step collection-monitor-step-${step.status}`} key={step.label}>
+              <span />
+              <div>
+                <strong>{step.label}</strong>
+                <p>{step.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {evidencePath && (
+        <div className="collection-monitor-evidence">
+          <span>证据位置</span>
+          <code>{evidencePath}</code>
+        </div>
+      )}
+    </aside>
+  );
 }
 
 function rawErrorMessage(error: unknown): string {
@@ -538,6 +682,7 @@ export function DataCollectionPage() {
   const [runningAction, setRunningAction] = useState<RunningCollectionActionMode | null>(null);
   const [lastActionResult, setLastActionResult] = useState<LastActionResult | null>(null);
   const [lastDiagnostic, setLastDiagnostic] = useState<any | null>(null);
+  const [collectionMonitorOpen, setCollectionMonitorOpen] = useState(false);
   const collection = data?.collection;
   const reportOptions = collection?.reportOptions || [];
   const realFiles = collection?.realReportFiles || [];
@@ -608,6 +753,20 @@ export function DataCollectionPage() {
     primaryReportFolder,
     runningAction,
   });
+  const collectionMonitorState = buildCollectionMonitorState({
+    runningAction,
+    actionNotice,
+    actionError,
+    lastActionResult,
+    lastDiagnostic,
+    realReportCount,
+    importedRowCount,
+  });
+  const collectionMonitorEvidencePath = lastActionSummary?.primaryPath
+    || lastActionResult?.manifestPath
+    || lastActionResult?.downloadDir
+    || lastDiagnostic?.screenshotPath
+    || lastDiagnostic?.domSnapshotPath;
 
   useEffect(() => {
     const validTypes = new Set(reportOptions.map((item) => item.type));
@@ -658,6 +817,7 @@ export function DataCollectionPage() {
     setActionError(null);
     setLastActionResult(null);
     setRunningAction('verify-page');
+    setCollectionMonitorOpen(true);
     setActionNotice('正在验证当前范围的领星下载中心页面，系统会刷新截图、DOM 和页面模型证据。');
     try {
       if (!api?.diagnoseLingxingDownloadCenter) {
@@ -702,6 +862,7 @@ export function DataCollectionPage() {
     setLastActionResult(null);
     setLastDiagnostic(null);
     setRunningAction(mode);
+    setCollectionMonitorOpen(true);
     if (mode === 'download-existing') {
       setActionNotice(`正在下载并自动导入领星下载中心已创建完成的已选报表，不会创建新任务：${selectedLabels.join('、')}`);
     } else {
@@ -754,6 +915,7 @@ export function DataCollectionPage() {
     setLastActionResult(null);
     setLastDiagnostic(null);
     setRunningAction('import');
+    setCollectionMonitorOpen(true);
     setActionNotice('正在导入当前范围已下载的真实原始报表...');
     try {
       if (!api?.importCurrentBusinessReports) {
@@ -794,6 +956,7 @@ export function DataCollectionPage() {
     setLastActionResult(null);
     setLastDiagnostic(null);
     setRunningAction('import');
+    setCollectionMonitorOpen(true);
     setActionNotice('请选择本地已有的领星原始广告表格，系统会复制到当前范围批次目录并导入。');
     try {
       if (!api?.importLocalBusinessReportFiles) {
@@ -863,6 +1026,15 @@ export function DataCollectionPage() {
           {loading && <p className="muted-line">正在读取采集状态...</p>}
           {error && <p className="blocked-line">读取接口异常：{error}</p>}
         </OperatorTaskPanel>
+
+        {collectionMonitorOpen && collectionMonitorState && (
+          <CollectionMonitorDrawer
+            evidencePath={collectionMonitorEvidencePath}
+            onClose={() => setCollectionMonitorOpen(false)}
+            state={collectionMonitorState}
+            steps={actionProgressSteps}
+          />
+        )}
 
         {(runningAction || actionNotice || actionError) && (
           <div
