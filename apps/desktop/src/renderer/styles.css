@@ -796,6 +796,48 @@ button:active:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.scope-task-feedback {
+  display: inline-flex;
+  min-height: 28px;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--tone-pending-bg);
+  padding: 4px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.scope-task-feedback strong {
+  color: inherit;
+  font-size: 12px;
+}
+
+.scope-task-feedback-saving {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+  color: var(--amber);
+}
+
+.scope-task-feedback-saved {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+  animation: event-card-flash 450ms ease-out;
+}
+
+.scope-task-feedback-error {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+  color: var(--red);
+}
+
 .progressive-details {
   border: 1px solid var(--line);
   border-radius: var(--radius);

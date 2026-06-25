@@ -19,6 +19,7 @@ The app remains local-first. It does not connect to Amazon SP-API or Amazon Ads 
 3. Use the split left menu for the upgraded v1.5 workflow:
    - `运营总览` -> `仪表盘`: current range data health, report coverage, imported row count, AI state, pending recommendation count, USD spend/sales/orders, and ACOS.
    - `运营总览` -> `产品管理`: select the product first, sync the current `scope.asin`, review product/global/ad-object events, and enter AI quantification, recommendations, keywords, or Listing from that product context.
+   - `数据与量化` -> `工作范围`: confirm the date, store, marketplace, batch, ASIN, and USD scope before data collection, import, quantification, recommendations, approval/readback, keyword opportunities, or Listing work.
    - `数据与量化` -> `数据采集`: Lingxing Ads report diagnostics, canary verification, full 8-report collection, manifests, and acceptance audit.
    - `数据与量化` -> `运营事件`: local notes for events such as discounts, BD, promotions, deals, coupons, price/stock changes, or Listing changes that affect daily advertising interpretation. The page exposes recording as the first-screen task and highlights the newest saved card.
    - `数据与量化` -> `广告量化`: daily DB-backed advertising metrics, rules thresholds, and AI threshold/strategy interpretation.
@@ -29,7 +30,17 @@ The app remains local-first. It does not connect to Amazon SP-API or Amazon Ads 
    - `关键词与 Listing` -> `Listing 优化`: manual Listing entry and version history as the primary source, optional Lingxing read-only fill, keyword heatmap coverage, suggestions, accepted-only drafts, and exports.
    - `系统与交付` -> `定时任务`, `设置`, `交付验收`: scheduling, AI settings, and final evidence summary. `交付验收` is a proof page, not a daily operation workbench.
 
-Current 2026-06-25 no-install executable for validation: `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe`, SHA-256 `74B706EEA19786457ACF15080420319FFE06B29A4909E95B5EBDCF767CE2EBD9`. Launch smoke evidence: `output\codex-evidence\package-launch-smoke-1782368864557.json`. This build includes encrypted local remember-account/password support, first-viewport AI/import feedback, OperatorTaskPanel action loading/spinner feedback, product-config first-screen task and inline autosave feedback, operation-event first-screen task feedback, data-collection monitor drawer, canonical daily ad metric explanation, ad readback screenshot paste/drop capture, heavy table virtualization for `数据导入与校验` and `关键词机会`, Listing keyword heatmap coverage, the Lingxing report creation fix that commits the date range picker after filling the start/end dates, the product-level workbench refresh that requires an explicit product before ASIN-specific analysis, and the live ad strategy diagnosis JSON-contract fix verified by `output\codex-evidence\ad-strategy-live-1782358641101.json`.
+Current 2026-06-25 no-install executable for validation: `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe`, SHA-256 `91AFAFCFC4F028A7D2B79129CAEC22E0FF49B0DEBB72D8919A59E72B9AB4C5DD`. Launch smoke evidence: `output\codex-evidence\package-launch-smoke-1782369575040.json`. This build includes encrypted local remember-account/password support, first-viewport AI/import feedback, OperatorTaskPanel action loading/spinner feedback, operation-scope first-screen confirmation feedback, product-config first-screen task and inline autosave feedback, operation-event first-screen task feedback, data-collection monitor drawer, canonical daily ad metric explanation, ad readback screenshot paste/drop capture, heavy table virtualization for `数据导入与校验` and `关键词机会`, Listing keyword heatmap coverage, the Lingxing report creation fix that commits the date range picker after filling the start/end dates, the product-level workbench refresh that requires an explicit product before ASIN-specific analysis, and the live ad strategy diagnosis JSON-contract fix verified by `output\codex-evidence\ad-strategy-live-1782358641101.json`.
+
+## 工作范围
+
+Open `数据与量化` -> `工作范围` before starting a new analysis pass or when you suspect the current data does not match the ERP view.
+
+1. Review the first-screen task panel. It summarizes real report coverage, imported metric rows, the active batch, and USD scope.
+2. Click `确认并保存范围` to persist the current date, store, marketplace, batch, ASIN, and currency. While saving, the button is disabled and shows the running state.
+3. Read the fixed feedback line under the task metrics. It reports whether the scope is unsaved, saving, saved, or failed without shifting the page.
+4. Use `编辑范围` to open the sticky ScopeBar editor from this page, instead of hunting for the top bar control.
+5. Use the next-step action suggested by the page: no reports routes to `数据采集`, downloaded-but-unimported reports route to `数据导入与校验`, and imported metrics route to `广告量化`.
 
 ## 产品管理
 
@@ -294,7 +305,7 @@ Each v1.5 task page shows its primary task and proof boundary at the top. `交�
 
 ## Final Readiness Evidence
 
-Use `交付验收` to review the delivery state. As of the 2026-06-25 high-fidelity Windows UI, AI output-contract refresh, real AI strategy JSON-contract fix, encrypted credential save, AI/import feedback refresh, OperatorTaskPanel loading feedback, Lingxing report date-picker fix, data-collection monitor drawer, ad readback screenshot capture, Listing keyword heatmap matrix, canonical daily metric explanation, and product-level workbench refresh, the packaged state is `APP_READY` for the evidence set fixed by `output\codex-evidence\v15-final-readiness-evidence-manifest-20260625142806.json`, `output\codex-evidence\final-readiness-20260625142806.json`, `output\codex-evidence\package-launch-smoke-1782368864557.json`, and `output\delivery-bundles\v15-delivery-bundle-20260625142806-ready`. This state includes the AI contract tags, compact metric/tag views, business-domain navigation, product maintenance, per-product daily ad metrics, table-like Listing editor, Listing keyword heatmap, data-collection monitor drawer, structured output-token floor, OpenAI-compatible saved temperature/maxTokens usage, strategy-diagnosis evidence-ref normalization, concrete JSON output examples, automatic commit/close behavior for the Lingxing date range picker during report creation, encrypted local credential save, first-viewport AI/import status feedback, screenshot drag/drop or Ctrl+V capture on the readback page, and explicit canonical daily ad metric accounting. Live ad strategy diagnosis evidence `output\codex-evidence\ad-strategy-live-1782358641101.json` returned `source=ai` with no fallback on the current DB scope. Historical evidence `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain useful as baseline proof only. The verified current-contract ad sample was a paused FT-US keyword `door lock` bid decrease from live `1.30` to `1.17`; the source recommendation remained traceable as `1.63 -> 1.46`, but was not written because the live bid was already lower than the source recommendation. Future ad changes must not reuse that scope and must each provide their own target, source report files/row, approval, before/after screenshots, and readback evidence.
+Use `交付验收` to review the delivery state. As of the 2026-06-25 high-fidelity Windows UI, AI output-contract refresh, real AI strategy JSON-contract fix, encrypted credential save, AI/import feedback refresh, OperatorTaskPanel loading feedback, Lingxing report date-picker fix, data-collection monitor drawer, ad readback screenshot capture, Listing keyword heatmap matrix, canonical daily metric explanation, and product-level workbench refresh, the packaged state is `APP_READY` for the evidence set fixed by `output\codex-evidence\v15-final-readiness-evidence-manifest-20260625144023.json`, `output\codex-evidence\final-readiness-20260625144023.json`, `output\codex-evidence\package-launch-smoke-1782369575040.json`, and `output\delivery-bundles\v15-delivery-bundle-20260625144023-ready`. This state includes the AI contract tags, compact metric/tag views, business-domain navigation, product maintenance, per-product daily ad metrics, table-like Listing editor, Listing keyword heatmap, data-collection monitor drawer, structured output-token floor, OpenAI-compatible saved temperature/maxTokens usage, strategy-diagnosis evidence-ref normalization, concrete JSON output examples, automatic commit/close behavior for the Lingxing date range picker during report creation, encrypted local credential save, first-viewport AI/import status feedback, screenshot drag/drop or Ctrl+V capture on the readback page, and explicit canonical daily ad metric accounting. Live ad strategy diagnosis evidence `output\codex-evidence\ad-strategy-live-1782358641101.json` returned `source=ai` with no fallback on the current DB scope. Historical evidence `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json` and bundle `output\delivery-bundles\v15-delivery-bundle-2026-06-18-portable-fix-ready` remain useful as baseline proof only. The verified current-contract ad sample was a paused FT-US keyword `door lock` bid decrease from live `1.30` to `1.17`; the source recommendation remained traceable as `1.63 -> 1.46`, but was not written because the live bid was already lower than the source recommendation. Future ad changes must not reuse that scope and must each provide their own target, source report files/row, approval, before/after screenshots, and readback evidence.
 
 The `交付验收` page also provides `刷新最终验收`. This is an in-app diagnostic refresh: it writes a new evidence-selection manifest and final readiness JSON, then shows the file paths and failed gate count. It does not override the final delivery rules. If a future ad readback gate is missing operator approval, before/after Ads UI screenshots, changed live value, or reload readback proof, the refresh must remain `APP_NEEDS_WORK`.
 
@@ -307,7 +318,7 @@ On `广告执行` -> `执行回读`, after creating or selecting a readback work
 After refreshing report, Listing, AI, and ad-readback evidence, write an explicit evidence-selection manifest first:
 
 ```powershell
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260625142806.json
+pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260625144023.json
 ```
 
 Build the current Windows installer and no-install portable executable before final readiness. The final readiness verifier records both package hashes and will not accept an APP_READY claim without them:
@@ -320,7 +331,7 @@ pnpm run smoke:package-launch
 Then run final readiness against that manifest and the current packaged launch smoke:
 
 ```powershell
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260625142806.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782368864557.json --out output\codex-evidence\final-readiness-20260625142806.json
+pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260625144023.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782369575040.json --out output\codex-evidence\final-readiness-20260625144023.json
 ```
 
 After final readiness passes, update the README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`. The delivery exporter refuses APP_READY bundles while the selected README still says IN_PROGRESS.
@@ -328,13 +339,13 @@ After final readiness passes, update the README 顶部 DELIVERY 行切到当前�
 Finally export the bounded handoff bundle only after confirming final-readiness JSON was produced from the current evidence manifest, records `evidenceSelection.mode=manifest`, and the README status has already been updated:
 
 ```powershell
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260625142806.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260625142806-ready
+pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260625144023.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260625144023-ready
 ```
 
 After the bundle is exported, run the READY safety gate:
 
 ```powershell
-pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260625142806.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260625142806-ready\delivery-bundle-manifest.json
+pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260625144023.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260625144023-ready\delivery-bundle-manifest.json
 ```
 
 The delivery bundle intentionally does not copy raw `.xlsx`, `.xls`, or `.csv` Lingxing report files. It writes `evidence/real-report-file-index.json` instead, with each source report's local path, existence flag, size, SHA-256, and evidence references. Use that index to locate the actual downloaded spreadsheets on the operator machine.

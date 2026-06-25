@@ -193,6 +193,16 @@ export function ScopeBar() {
   }, []);
 
   useEffect(() => {
+    const openEditor = () => {
+      setDraft(scope);
+      setEditError('');
+      setEditing(true);
+    };
+    window.addEventListener('amazon-ai-ops:open-scope-editor', openEditor);
+    return () => window.removeEventListener('amazon-ai-ops:open-scope-editor', openEditor);
+  }, [scope]);
+
+  useEffect(() => {
     let cancelled = false;
     async function loadProducts() {
       try {
