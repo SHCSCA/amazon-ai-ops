@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScopeText, useBusinessDataPipeline } from '../components/business-data';
+import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
@@ -105,7 +106,9 @@ export function buildProductManagementPageModel(input: {
         }
       : undefined,
   });
-  const selectedProduct = products.find((item) => item.asin === requestedAsin) || products[0];
+  const selectedProduct = requestedAsin
+    ? products.find((item) => item.asin === requestedAsin)
+    : undefined;
   const timeline = selectedProduct
     ? buildProductTimeline({ selectedAsin: selectedProduct.asin, events: input.data?.operations?.events || [] })
     : [];
@@ -119,6 +122,119 @@ export function buildProductManagementPageModel(input: {
     selectedDailyRows: selectedLedger?.daily || [],
     timeline,
     emptyReason: products.length ? '' : '当前范围还没有产品配置或可识别 ASIN 的广告数据。',
+  };
+}
+
+type ProductManagementPageModel = ReturnType<typeof buildProductManagementPageModel>;
+type ProductManagementTaskFeedbackTone = 'ready' | 'pending' | 'warning' | 'blocked';
+
+export function buildProductManagementTaskState(input: {
+  model: ProductManagementPageModel;
+  loading: boolean;
+  error?: string | null;
+  saving: boolean;
+  saveMessage?: string;
+  saveError?: string;
+  importedRows: number;
+  hasImportedMetrics: boolean;
+}) {
+  const routes = productManagementActionRoutes();
+  const selected = input.model.selectedProduct;
+  const productCount = input.model.products.length;
+
+  let title = '先选择一个产品';
+  let detail = '点击下方产品卡片后会写入全局 ASIN，后续广告量化、优化建议、运营事件、关键词和 Listing 都按该产品读取数据库。';
+  let primaryActionLabel = productCount ? '补齐产品配置' : '补齐产品配置';
+  let primaryRoute: AppRoute = routes.productConfig;
+  let primaryActionDisabled = false;
+  let primaryActionBusy = false;
+  let primaryBusyLabel = '读取中...';
+  let feedbackLabel = productCount ? '未锁定产品上下文' : '缺少产品配置';
+  let feedbackDetail = productCount ? '先点选一个产品，避免后续页面误用第一条 ASIN。' : input.model.emptyReason;
+  let feedbackTone: ProductManagementTaskFeedbackTone = 'warning';
+  let secondaryActions: Array<{ label: string; route: AppRoute; disabled?: boolean }> = [
+    { label: '指标核验入库', route: 'data-import-validation' },
+  ];
+
+  if (input.loading) {
+    title = '正在读取产品上下文';
+    detail = '正在读取产品、广告指标、日级账本和运营事件，读取完成后再锁定产品。';
+    primaryActionLabel = '读取中...';
+    primaryRoute = routes.productConfig;
+    primaryActionDisabled = true;
+    primaryActionBusy = true;
+    feedbackLabel = '读取产品数据';
+    feedbackDetail = '请等待当前数据管道返回，按钮已锁定防止重复操作。';
+    feedbackTone = 'pending';
+    secondaryActions = [];
+  } else if (input.error) {
+    title = '产品数据读取失败';
+    detail = '产品管理依赖当前范围、产品配置、广告指标和运营事件；先处理读取错误后再继续。';
+    primaryActionLabel = '回到工作范围';
+    primaryRoute = 'operation-scope';
+    feedbackLabel = '读取失败';
+    feedbackDetail = input.error;
+    feedbackTone = 'blocked';
+    secondaryActions = [{ label: '指标核验入库', route: 'data-import-validation' }];
+  } else if (!productCount) {
+    title = '先补齐产品配置';
+    detail = '当前范围没有可识别产品。先建立 ASIN、标题、SKU、成本和目标阈值，再进入广告量化。';
+    primaryActionLabel = '补齐产品配置';
+    primaryRoute = routes.productConfig;
+    secondaryActions = [{ label: '指标核验入库', route: 'data-import-validation' }];
+  } else if (selected && !input.hasImportedMetrics) {
+    title = `当前产品：${selected.title}`;
+    detail = `${selected.asin} 已锁定为产品上下文；当前缺少导入广告指标，先完成真实报表入库后再运行 AI。`;
+    primaryActionLabel = '先导入广告指标';
+    primaryRoute = 'data-import-validation';
+    feedbackLabel = '缺少导入指标';
+    feedbackDetail = `当前产品只有 ${input.importedRows} 行广告指标，AI 量化和优化建议暂不作为主动作。`;
+    feedbackTone = 'warning';
+    secondaryActions = [
+      { label: '维护运营事件', route: routes.operationEvents },
+      { label: '打开完整配置', route: routes.productConfig },
+    ];
+  } else if (selected) {
+    title = `当前产品：${selected.title}`;
+    detail = `${selected.asin} 已作为广告量化、优化建议、运营事件、关键词和 Listing 的共享上下文。`;
+    primaryActionLabel = '进入 AI 量化';
+    primaryRoute = routes.adQuant;
+    feedbackLabel = '已锁定产品上下文';
+    feedbackDetail = `${input.importedRows} 行广告指标可用于当前产品分析。`;
+    feedbackTone = 'ready';
+    secondaryActions = [
+      { label: '维护运营事件', route: routes.operationEvents },
+      { label: '关键词机会', route: routes.keywordOpportunities },
+      { label: 'Listing 优化', route: routes.listingOptimization },
+    ];
+  }
+
+  if (input.saving) {
+    feedbackLabel = '正在保存产品信息';
+    feedbackDetail = '保存成功后会同步当前 ASIN 到全局范围。';
+    feedbackTone = 'pending';
+  } else if (input.saveError) {
+    feedbackLabel = '保存失败';
+    feedbackDetail = input.saveError;
+    feedbackTone = 'blocked';
+  } else if (input.saveMessage) {
+    feedbackLabel = '产品信息已保存';
+    feedbackDetail = input.saveMessage;
+    feedbackTone = 'ready';
+  }
+
+  return {
+    title,
+    detail,
+    primaryActionLabel,
+    primaryRoute,
+    primaryActionDisabled,
+    primaryActionBusy,
+    primaryBusyLabel,
+    feedbackLabel,
+    feedbackDetail,
+    feedbackTone,
+    secondaryActions,
   };
 }
 
@@ -157,6 +273,21 @@ export function ProductManagementPage() {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [saveError, setSaveError] = useState('');
+  const importedRows = data?.quant?.importedRows ?? 0;
+  const hasImportedMetrics = Boolean(data?.quant?.hasImportedMetrics && importedRows > 0);
+  const taskState = useMemo(
+    () => buildProductManagementTaskState({
+      model,
+      loading,
+      error,
+      saving,
+      saveMessage,
+      saveError,
+      importedRows,
+      hasImportedMetrics,
+    }),
+    [error, hasImportedMetrics, importedRows, loading, model, saveError, saveMessage, saving],
+  );
 
   useEffect(() => {
     if (!selectedAsin && scope.asin) setSelectedAsin(scope.asin);
@@ -222,6 +353,42 @@ export function ProductManagementPage() {
       />
 
       <div className="business-stack">
+        <OperatorTaskPanel
+          eyebrow="产品作战台"
+          title={taskState.title}
+          detail={taskState.detail}
+          primaryAction={{
+            label: taskState.primaryActionLabel,
+            disabled: taskState.primaryActionDisabled,
+            busy: taskState.primaryActionBusy,
+            busyLabel: taskState.primaryBusyLabel,
+            onClick: () => navigate(taskState.primaryRoute),
+          }}
+          secondaryActions={taskState.secondaryActions.map((action) => ({
+            label: action.label,
+            disabled: action.disabled,
+            onClick: () => navigate(action.route),
+          }))}
+        >
+          <div className="dashboard-task-metrics" aria-label="产品管理任务摘要">
+            <StatusPill tone={selected ? (hasImportedMetrics ? 'ready' : 'warning') : 'pending'}>
+              产品 {model.products.length}
+            </StatusPill>
+            <span>{selected ? `${selected.title} / ${selected.asin}` : '未锁定 ASIN'}</span>
+            <span>指标 {importedRows} 行</span>
+            <span>日级 {model.selectedDailyRows.length} 天</span>
+            <span>凭证沙箱 Main 托管</span>
+          </div>
+          <div
+            aria-live="polite"
+            className={`product-management-task-feedback product-management-task-feedback-${taskState.feedbackTone}`}
+            role="status"
+          >
+            <span>{taskState.feedbackLabel}</span>
+            <strong>{taskState.feedbackDetail}</strong>
+          </div>
+        </OperatorTaskPanel>
+
         <Panel title="当前产品范围" tone={selected ? 'success' : 'warning'}>
           <div className="business-split">
             <div>
@@ -362,7 +529,7 @@ export function ProductManagementPage() {
                 <button className="secondary-button" onClick={() => navigate(routes.operationEvents)} type="button">维护运营事件</button>
                 <button className="secondary-button" onClick={() => navigate(routes.keywordOpportunities)} type="button">关键词机会</button>
                 <button className="secondary-button" onClick={() => navigate(routes.listingOptimization)} type="button">Listing 优化</button>
-                <button className="primary-button" onClick={() => navigate(routes.adQuant)} type="button">进入 AI 量化</button>
+                <button className="primary-button" disabled={!hasImportedMetrics} onClick={() => navigate(routes.adQuant)} type="button">进入 AI 量化</button>
               </div>
             </Panel>
 

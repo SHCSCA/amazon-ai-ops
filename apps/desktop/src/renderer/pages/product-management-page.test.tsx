@@ -3,6 +3,7 @@ import {
   PRODUCT_QUICK_COST_FIELDS,
   PRODUCT_QUICK_TARGET_FIELDS,
   buildProductManagementPageModel,
+  buildProductManagementTaskState,
   productManagementActionRoutes,
   productTimelineScopeLabel,
 } from './product-management-page';
@@ -106,6 +107,109 @@ describe('ProductManagementPage model', () => {
 
     expect(model.products).toHaveLength(0);
     expect(model.emptyReason).toBe('当前范围还没有产品配置或可识别 ASIN 的广告数据。');
+  });
+
+  it('does not silently select the first product when scope has no ASIN', () => {
+    const model = buildProductManagementPageModel({
+      data: {
+        ...pipeline(),
+        scope: { ...pipeline().scope, asin: undefined },
+      },
+      scopeAsin: '',
+    });
+
+    expect(model.products).toHaveLength(1);
+    expect(model.selectedProduct).toBeUndefined();
+    expect(model.selectedDailyRows).toEqual([]);
+    expect(model.timeline).toEqual([]);
+  });
+
+  it('builds a first-screen task state for a selected product with imported metrics', () => {
+    const model = buildProductManagementPageModel({
+      data: pipeline(),
+      scopeAsin: 'B001',
+    });
+
+    const taskState = buildProductManagementTaskState({
+      model,
+      loading: false,
+      error: '',
+      saving: false,
+      importedRows: 10,
+      hasImportedMetrics: true,
+    });
+
+    expect(taskState).toMatchObject({
+      title: '当前产品：D6 Smart Lock',
+      primaryActionLabel: '进入 AI 量化',
+      primaryRoute: 'ad-quant',
+      feedbackLabel: '已锁定产品上下文',
+      feedbackTone: 'ready',
+    });
+    expect(taskState.detail).toContain('B001');
+    expect(taskState.secondaryActions.map((action) => action.route)).toEqual([
+      'operation-events',
+      'keyword-opportunities',
+      'listing-optimization',
+    ]);
+  });
+
+  it('routes selected products without imported metrics back to import validation', () => {
+    const model = buildProductManagementPageModel({
+      data: pipeline(),
+      scopeAsin: 'B001',
+    });
+
+    const taskState = buildProductManagementTaskState({
+      model,
+      loading: false,
+      error: '',
+      saving: false,
+      importedRows: 0,
+      hasImportedMetrics: false,
+    });
+
+    expect(taskState).toMatchObject({
+      title: '当前产品：D6 Smart Lock',
+      primaryActionLabel: '先导入广告指标',
+      primaryRoute: 'data-import-validation',
+      feedbackLabel: '缺少导入指标',
+      feedbackTone: 'warning',
+    });
+    expect(taskState.detail).toContain('当前缺少导入广告指标');
+  });
+
+  it('keeps save feedback in the product task state', () => {
+    const model = buildProductManagementPageModel({
+      data: pipeline(),
+      scopeAsin: 'B001',
+    });
+
+    expect(buildProductManagementTaskState({
+      model,
+      loading: false,
+      error: '',
+      saving: true,
+      importedRows: 10,
+      hasImportedMetrics: true,
+    })).toMatchObject({
+      feedbackLabel: '正在保存产品信息',
+      feedbackTone: 'pending',
+    });
+
+    expect(buildProductManagementTaskState({
+      model,
+      loading: false,
+      error: '',
+      saving: false,
+      saveError: '保存产品信息失败。',
+      importedRows: 10,
+      hasImportedMetrics: true,
+    })).toMatchObject({
+      feedbackLabel: '保存失败',
+      feedbackDetail: '保存产品信息失败。',
+      feedbackTone: 'blocked',
+    });
   });
 
   it('defines product-context action routes', () => {
