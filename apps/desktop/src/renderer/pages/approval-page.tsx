@@ -9,6 +9,7 @@ import type { AiEvidenceDisplayItemView, RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 type ApprovalTab = 'pending' | 'needs_review' | 'approved' | 'rejected';
+type ApprovalFeedbackState = 'approving' | 'approved' | 'rejecting' | 'rejected' | 'blocked';
 
 const TAB_LABELS: Record<ApprovalTab, string> = {
   pending: '待审批',
@@ -277,6 +278,59 @@ export function buildApprovalDecisionPayload(input: {
   };
 }
 
+export function buildApprovalStampFeedback(input: {
+  state: ApprovalFeedbackState;
+  recommendationId?: number;
+  targetName?: string;
+  message?: string;
+}): {
+  label: string;
+  title: string;
+  detail: string;
+  tone: 'ready' | 'blocked' | 'pending';
+} {
+  const target = input.targetName ? ` / ${input.targetName}` : '';
+  const id = input.recommendationId ? `#${input.recommendationId}` : '';
+  if (input.state === 'approving') {
+    return {
+      label: 'SEALING',
+      title: `正在建立审批契约 ${id}`.trim(),
+      detail: `正在写入人工审批记录${target}，按钮已锁定，真实执行仍需进入执行回读。`,
+      tone: 'pending',
+    };
+  }
+  if (input.state === 'approved') {
+    return {
+      label: 'PASSED',
+      title: `审批已通过 ${id}`.trim(),
+      detail: input.message || `建议已进入待执行队列${target}，下一步到执行回读补审批凭证、前后截图和回读值。`,
+      tone: 'ready',
+    };
+  }
+  if (input.state === 'rejecting') {
+    return {
+      label: 'BLOCKING',
+      title: `正在记录拒绝 ${id}`.trim(),
+      detail: `正在写入拒绝原因${target}，该建议不会进入执行回读。`,
+      tone: 'pending',
+    };
+  }
+  if (input.state === 'rejected') {
+    return {
+      label: 'REJECTED',
+      title: `建议已拦截 ${id}`.trim(),
+      detail: input.message || `拒绝原因已写入建议证据${target}，该建议不会进入执行队列。`,
+      tone: 'blocked',
+    };
+  }
+  return {
+    label: 'BLOCKED',
+    title: `审批被阻断 ${id}`.trim(),
+    detail: input.message || '审批前置条件不完整，请补齐证据、审批人或拒绝原因后再提交。',
+    tone: 'blocked',
+  };
+}
+
 function approvalValueBlockers(rec: RecommendationView): string[] {
   const action = String(rec.actionType || '').trim();
   const currentValue = parseExecutableNumber(rec.currentValue);
@@ -419,6 +473,8 @@ export function ApprovalPage() {
   const [approvalNote, setApprovalNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [submittingDecision, setSubmittingDecision] = useState<'approved' | 'rejected' | null>(null);
+  const [decisionFeedback, setDecisionFeedback] = useState<ReturnType<typeof buildApprovalStampFeedback> | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const currentRealReportSourceFiles = useMemo(
     () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
@@ -492,48 +548,122 @@ export function ApprovalPage() {
   async function approveSelected() {
     if (!selected) return;
     if (selectedMissing.length > 0) {
-      setMessage(`审批阻断：建议缺少 ${selectedMissing.join('、')}，不能推进到执行回读。`);
+      const blocked = `审批阻断：建议缺少 ${selectedMissing.join('、')}，不能推进到执行回读。`;
+      setDecisionFeedback(buildApprovalStampFeedback({
+        state: 'blocked',
+        recommendationId: selected.id,
+        targetName: objectName(selected),
+      }));
+      setMessage(blocked);
       return;
     }
     if (selectedBlockers.length > 0) {
-      setMessage(`审批阻断：${selectedBlockers.join('、')}，不能走普通批准；需要先完成专门复核或重新生成规则确认后的建议。`);
+      const blocked = `审批阻断：${selectedBlockers.join('、')}，不能走普通批准；需要先完成专门复核或重新生成规则确认后的建议。`;
+      setDecisionFeedback(buildApprovalStampFeedback({
+        state: 'blocked',
+        recommendationId: selected.id,
+        targetName: objectName(selected),
+      }));
+      setMessage(blocked);
       return;
     }
     if (!approverName.trim()) {
-      setMessage('批准前必须填写审批人。');
+      const blocked = '批准前必须填写审批人。';
+      setDecisionFeedback(buildApprovalStampFeedback({
+        state: 'blocked',
+        recommendationId: selected.id,
+        targetName: objectName(selected),
+      }));
+      setMessage(blocked);
       return;
     }
+    const currentSelected = selected;
+    const targetName = objectName(currentSelected);
+    setSubmittingDecision('approved');
+    setDecisionFeedback(buildApprovalStampFeedback({
+      state: 'approving',
+      recommendationId: currentSelected.id,
+      targetName,
+    }));
     try {
-      await (window as any).electronAPI?.approveRecommendation?.({ id: selected.id, decision: decisionPayload('approved') });
-      setMessage(`已批准建议 #${selected.id}，审批人和备注已写入建议证据。审批范围：${scope.storeName} / ${scope.marketplaceCode} / ${selected.evidence?.campaignName || '-'} / ${selected.evidence?.adGroupName || '-'} / ${objectName(selected)}。`);
+      await (window as any).electronAPI?.approveRecommendation?.({ id: currentSelected.id, decision: decisionPayload('approved') });
+      const approvedMessage = `已批准建议 #${currentSelected.id}，审批人和备注已写入建议证据。审批范围：${scope.storeName} / ${scope.marketplaceCode} / ${currentSelected.evidence?.campaignName || '-'} / ${currentSelected.evidence?.adGroupName || '-'} / ${targetName}。`;
+      setDecisionFeedback(buildApprovalStampFeedback({
+        state: 'approved',
+        recommendationId: currentSelected.id,
+        targetName,
+      }));
+      setMessage(approvedMessage);
       setSelected(null);
       setApproverName('');
       setApprovalNote('');
       await loadRows({ clearMessage: false });
     } catch (caught) {
-      setMessage(errorMessage(caught, '批准建议失败'));
+      const failed = errorMessage(caught, '批准建议失败');
+      setDecisionFeedback(buildApprovalStampFeedback({
+        state: 'blocked',
+        recommendationId: currentSelected.id,
+        targetName,
+      }));
+      setMessage(failed);
+    } finally {
+      setSubmittingDecision(null);
     }
   }
 
   async function rejectSelected() {
     if (!selected) return;
     if (!approverName.trim()) {
-      setMessage('拒绝前必须填写处理人。');
+      const blocked = '拒绝前必须填写处理人。';
+      setDecisionFeedback(buildApprovalStampFeedback({
+        state: 'blocked',
+        recommendationId: selected.id,
+        targetName: objectName(selected),
+      }));
+      setMessage(blocked);
       return;
     }
     if (!approvalNote.trim()) {
-      setMessage('拒绝前必须填写拒绝原因。');
+      const blocked = '拒绝前必须填写拒绝原因。';
+      setDecisionFeedback(buildApprovalStampFeedback({
+        state: 'blocked',
+        recommendationId: selected.id,
+        targetName: objectName(selected),
+      }));
+      setMessage(blocked);
       return;
     }
+    const currentSelected = selected;
+    const targetName = objectName(currentSelected);
+    setSubmittingDecision('rejected');
+    setDecisionFeedback(buildApprovalStampFeedback({
+      state: 'rejecting',
+      recommendationId: currentSelected.id,
+      targetName,
+    }));
     try {
-      await (window as any).electronAPI?.rejectRecommendation?.({ id: selected.id, decision: decisionPayload('rejected') });
-      setMessage(`已拒绝建议 #${selected.id}，拒绝原因已写入建议证据${approvalNote ? `：${approvalNote}` : ''}`);
+      await (window as any).electronAPI?.rejectRecommendation?.({ id: currentSelected.id, decision: decisionPayload('rejected') });
+      const rejectedMessage = `已拒绝建议 #${currentSelected.id}，拒绝原因已写入建议证据${approvalNote ? `：${approvalNote}` : ''}`;
+      setDecisionFeedback(buildApprovalStampFeedback({
+        state: 'rejected',
+        recommendationId: currentSelected.id,
+        targetName,
+      }));
+      setMessage(rejectedMessage);
       setSelected(null);
       setApproverName('');
       setApprovalNote('');
       await loadRows({ clearMessage: false });
     } catch (caught) {
-      setMessage(errorMessage(caught, '拒绝建议失败'));
+      const failed = errorMessage(caught, '拒绝建议失败');
+      setDecisionFeedback(buildApprovalStampFeedback({
+        state: 'blocked',
+        recommendationId: currentSelected.id,
+        targetName,
+      }));
+      setMessage(failed);
+    } finally {
+      setSubmittingDecision(null);
     }
   }
 
@@ -604,6 +734,17 @@ export function ApprovalPage() {
               </>
             )}
           </div>
+          {decisionFeedback && (
+            <div
+              aria-live="polite"
+              className={`approval-stamp-feedback approval-stamp-feedback-${decisionFeedback.tone}`}
+              role="status"
+            >
+              <strong>{decisionFeedback.label}</strong>
+              <span>{decisionFeedback.title}</span>
+              <p>{decisionFeedback.detail}</p>
+            </div>
+          )}
         </OperatorTaskPanel>
 
         <ProgressiveDetails title="审批边界和处理要求">
@@ -654,6 +795,7 @@ export function ApprovalPage() {
                 onClick={() => {
                   setTab(item);
                   setSelected(null);
+                  setDecisionFeedback(null);
                 }}
                 type="button"
               >
@@ -701,6 +843,7 @@ export function ApprovalPage() {
                           setSelected(row);
                           setApproverName('');
                           setApprovalNote('');
+                          setDecisionFeedback(null);
                         }}
                         type="button"
                       >
@@ -756,7 +899,7 @@ export function ApprovalPage() {
                     label: '可以批准并推进',
                     detail: selectedApprovalDecision.canApprove ? '写入待执行队列' : '证据或复核未通过',
                     tone: selectedApprovalDecision.canApprove ? 'ready' : 'pending',
-                    disabled: selectedSubmitBlockers.length > 0,
+                    disabled: selectedSubmitBlockers.length > 0 || Boolean(submittingDecision),
                     onClick: approveSelected,
                   },
                   {
@@ -769,6 +912,7 @@ export function ApprovalPage() {
                     label: '强行拦截并拒绝',
                     detail: '记录拒绝结果，不进入执行',
                     tone: 'blocked',
+                    disabled: Boolean(submittingDecision),
                     onClick: rejectSelected,
                   },
                 ]}
@@ -943,13 +1087,20 @@ export function ApprovalPage() {
             <div className="action-row">
               <button
                 className={selectedSubmitBlockers.length > 0 ? 'secondary-button' : 'primary-button'}
-                disabled={selectedSubmitBlockers.length > 0}
+                disabled={selectedSubmitBlockers.length > 0 || Boolean(submittingDecision)}
                 onClick={approveSelected}
                 type="button"
               >
-                {selectedSubmitBlockers.length > 0 ? '普通批准不可用' : '批准并进入待执行'}
+                {submittingDecision === 'approved' ? '正在批准...' : selectedSubmitBlockers.length > 0 ? '普通批准不可用' : '批准并进入待执行'}
               </button>
-              <button className="secondary-button danger-button" onClick={rejectSelected} type="button">拒绝</button>
+              <button
+                className="secondary-button danger-button"
+                disabled={Boolean(submittingDecision)}
+                onClick={rejectSelected}
+                type="button"
+              >
+                {submittingDecision === 'rejected' ? '正在拒绝...' : '拒绝'}
+              </button>
             </div>
           </Panel>
         )}

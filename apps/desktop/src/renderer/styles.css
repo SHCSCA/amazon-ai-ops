@@ -4551,6 +4551,97 @@ code {
   background: var(--tone-pending-bg);
 }
 
+.approval-stamp-feedback {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: center;
+  min-height: 54px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--tone-pending-bg);
+  padding: 10px 12px;
+  overflow: hidden;
+  animation: approval-stamp-in 180ms ease-out;
+}
+
+.approval-stamp-feedback::after {
+  content: '';
+  position: absolute;
+  inset: 7px 10px auto auto;
+  width: 76px;
+  height: 32px;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  opacity: 0.16;
+  transform: rotate(-8deg);
+  pointer-events: none;
+}
+
+.approval-stamp-feedback strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  transform: rotate(-3deg);
+}
+
+.approval-stamp-feedback span {
+  min-width: 0;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.approval-stamp-feedback p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.approval-stamp-feedback-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+}
+
+.approval-stamp-feedback-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+  color: var(--red);
+}
+
+.approval-stamp-feedback-pending {
+  border-color: var(--line-soft);
+  background: var(--tone-pending-bg);
+  color: var(--text-muted);
+}
+
+@keyframes approval-stamp-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (max-width: 1180px) {
   .scope-title-row {
     grid-template-columns: 1fr;

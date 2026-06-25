@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecommendationView } from '../types';
-import { aiThresholdSummary, approvalBlockers, approvalDecisionState, approvalMissing, approvalSubmitBlockers, buildApprovalDecisionPayload, strategyLabel } from './approval-page';
+import { aiThresholdSummary, approvalBlockers, approvalDecisionState, approvalMissing, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, strategyLabel } from './approval-page';
 
 function recommendation(sourceRow: number | undefined = 12, sourceFiles = ['C:/reports/user-search-term.xlsx']): RecommendationView {
   return {
@@ -302,6 +302,61 @@ describe('approvalDecisionState', () => {
       statusLabel: '需要复核',
       canApprove: false,
       tone: 'warning',
+    });
+  });
+});
+
+describe('buildApprovalStampFeedback', () => {
+  it('builds an immediate pending stamp while approval is being written', () => {
+    expect(buildApprovalStampFeedback({
+      state: 'approving',
+      recommendationId: 101,
+      targetName: 'door lock',
+    })).toMatchObject({
+      label: 'SEALING',
+      title: '正在建立审批契约 #101',
+      tone: 'pending',
+    });
+  });
+
+  it('builds a passed stamp that routes the operator to readback instead of implying execution', () => {
+    const feedback = buildApprovalStampFeedback({
+      state: 'approved',
+      recommendationId: 101,
+      targetName: 'door lock',
+    });
+
+    expect(feedback).toMatchObject({
+      label: 'PASSED',
+      title: '审批已通过 #101',
+      tone: 'ready',
+    });
+    expect(feedback.detail).toContain('执行回读');
+  });
+
+  it('builds a rejected stamp for blocked decisions', () => {
+    expect(buildApprovalStampFeedback({
+      state: 'rejected',
+      recommendationId: 101,
+      message: '已拒绝建议 #101，拒绝原因已写入建议证据：风险过高',
+    })).toMatchObject({
+      label: 'REJECTED',
+      title: '建议已拦截 #101',
+      detail: '已拒绝建议 #101，拒绝原因已写入建议证据：风险过高',
+      tone: 'blocked',
+    });
+  });
+
+  it('builds a blocked stamp when approval preconditions are missing', () => {
+    expect(buildApprovalStampFeedback({
+      state: 'blocked',
+      recommendationId: 101,
+      message: '批准前必须填写审批人。',
+    })).toMatchObject({
+      label: 'BLOCKED',
+      title: '审批被阻断 #101',
+      detail: '批准前必须填写审批人。',
+      tone: 'blocked',
     });
   });
 });
