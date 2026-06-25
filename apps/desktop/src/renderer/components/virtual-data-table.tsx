@@ -1,0 +1,118 @@
+import React, { useMemo, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+export interface VirtualDataTableColumn<T> {
+  key: string;
+  header: React.ReactNode;
+  width?: string;
+  className?: string;
+  cell: (row: T, index: number) => React.ReactNode;
+}
+
+export function virtualColumnTemplate<T>(columns: Array<VirtualDataTableColumn<T>>): string {
+  return columns.map((column) => column.width || 'minmax(120px, 1fr)').join(' ');
+}
+
+export interface VirtualDataTableProps<T> {
+  rows: T[];
+  columns: Array<VirtualDataTableColumn<T>>;
+  getRowKey: (row: T, index: number) => React.Key;
+  emptyMessage: React.ReactNode;
+  loading?: boolean;
+  minWidth?: string;
+  estimateSize?: number;
+  overscan?: number;
+  className?: string;
+  rowClassName?: (row: T, index: number) => string | undefined;
+  expandedContent?: (row: T, index: number) => React.ReactNode;
+}
+
+export function VirtualDataTable<T>({
+  rows,
+  columns,
+  getRowKey,
+  emptyMessage,
+  loading = false,
+  minWidth = '960px',
+  estimateSize = 54,
+  overscan = 10,
+  className = '',
+  rowClassName,
+  expandedContent,
+}: VirtualDataTableProps<T>) {
+  const parentRef = useRef<HTMLDivElement | null>(null);
+  const gridTemplateColumns = useMemo(() => virtualColumnTemplate(columns), [columns]);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => estimateSize,
+    overscan,
+    getItemKey: (index) => getRowKey(rows[index], index),
+    measureElement: (element) => element?.getBoundingClientRect().height ?? estimateSize,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+
+  return (
+    <div
+      aria-busy={loading}
+      className={`virtual-table-wrap ${loading ? 'virtual-table-loading' : ''} ${className}`.trim()}
+      ref={parentRef}
+    >
+      {loading && (
+        <div aria-label="表格正在加载" className="virtual-table-skeleton">
+          <span />
+          <span />
+          <span />
+        </div>
+      )}
+      <div className="virtual-table" role="table" style={{ minWidth }}>
+        <div className="virtual-table-head" role="rowgroup">
+          <div className="virtual-table-row virtual-table-header-row" role="row" style={{ gridTemplateColumns }}>
+            {columns.map((column) => (
+              <div className={`virtual-table-cell virtual-table-header-cell ${column.className || ''}`.trim()} key={column.key} role="columnheader">
+                {column.header}
+              </div>
+            ))}
+          </div>
+        </div>
+        {rows.length ? (
+          <div className="virtual-table-body" role="rowgroup" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+            {virtualRows.map((virtualRow) => {
+              const row = rows[virtualRow.index];
+              const key = getRowKey(row, virtualRow.index);
+              const detail = expandedContent?.(row, virtualRow.index);
+              return (
+                <div
+                  className="virtual-table-item"
+                  data-index={virtualRow.index}
+                  key={key}
+                  ref={rowVirtualizer.measureElement}
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <div
+                    className={`virtual-table-row virtual-table-body-row ${rowClassName?.(row, virtualRow.index) || ''}`.trim()}
+                    role="row"
+                    style={{ gridTemplateColumns }}
+                  >
+                    {columns.map((column) => (
+                      <div className={`virtual-table-cell ${column.className || ''}`.trim()} key={column.key} role="cell">
+                        {column.cell(row, virtualRow.index)}
+                      </div>
+                    ))}
+                  </div>
+                  {detail && <div className="virtual-table-detail">{detail}</div>}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="virtual-table-empty" role="rowgroup">
+            <div role="row">
+              <div role="cell">{emptyMessage}</div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

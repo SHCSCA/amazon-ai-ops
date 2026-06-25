@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { formatPercent, formatUsd } from '../formatters';
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
 import { useScopeStore } from '../scope-store';
@@ -148,6 +149,51 @@ export function KeywordOpportunitiesPage() {
     if (row.asin) setScope({ asin: row.asin });
     setMessage(`已带入 Listing 优化：${row.asin || '未指定 ASIN'} / ${keywords.length} 个关键词。请打开 Listing 优化继续。`);
   }
+
+  const opportunityColumns: Array<VirtualDataTableColumn<KeywordOpportunityView>> = [
+    { key: 'asin', header: 'ASIN', width: '112px', cell: (row) => row.asin || '-' },
+    { key: 'portfolio', header: '广告组合', width: '150px', cell: (row) => row.portfolioName || '-' },
+    { key: 'campaign', header: '广告活动', width: '190px', cell: (row) => row.campaignName || '-' },
+    { key: 'adGroup', header: '广告组', width: '170px', cell: (row) => row.adGroupName || '-' },
+    {
+      key: 'keyword',
+      header: '关键词/搜索词/投放对象',
+      width: 'minmax(220px, 1.3fr)',
+      cell: (row) => (
+        <div>
+          <strong>{row.keyword}</strong>
+          <div className="muted-cell">{row.entityType}</div>
+        </div>
+      ),
+    },
+    { key: 'coverage', header: '覆盖状态', width: '108px', cell: (row) => row.coverageStatus },
+    { key: 'clicks', header: '点击/订单', width: '96px', cell: (row) => `${row.clicks} / ${row.orders}` },
+    { key: 'spend', header: '花费/销售', width: '130px', cell: (row) => `${formatUsd(row.spend)} / ${formatUsd(row.sales)}` },
+    { key: 'acos', header: 'ACOS', width: '78px', cell: (row) => formatPercent(row.acos * 100) },
+    { key: 'level', header: '机会等级', width: '88px', cell: (row) => row.opportunityLevel },
+    { key: 'placement', header: '建议位置', width: '130px', cell: (row) => row.recommendedPlacement },
+    {
+      key: 'risk',
+      header: '风险',
+      width: '230px',
+      cell: (row) => {
+        const key = rowKey(row);
+        return (
+          <div>
+            <div>{row.risk}</div>
+            <div className="table-action-row">
+              <button className="compact-button secondary-button" onClick={() => setExpandedKey(expandedKey === key ? null : key)} type="button">
+                {expandedKey === key ? '收起详情' : '来源详情'}
+              </button>
+              <button className="compact-button primary-button" disabled={!quantReady} onClick={() => handoffToListing(row)} type="button">
+                带入 Listing
+              </button>
+            </div>
+          </div>
+        );
+      },
+    },
+  ];
 
   return (
     <div>
@@ -338,82 +384,30 @@ export function KeywordOpportunitiesPage() {
         </Panel>
 
         <Panel title="关键词机会表">
-          <div className="table-wrap">
-            <table className="business-table recommendation-table">
-              <thead>
-                <tr>
-                  <th>ASIN</th>
-                  <th>广告组合</th>
-                  <th>广告活动</th>
-                  <th>广告组</th>
-                  <th>关键词/搜索词/投放对象</th>
-                  <th>覆盖状态</th>
-                  <th>点击/订单</th>
-                  <th>花费/销售</th>
-                  <th>ACOS</th>
-                  <th>机会等级</th>
-                  <th>建议位置</th>
-                  <th>风险</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((row) => {
-                  const key = rowKey(row);
-                  const importedRows = sourceImportRows(row);
-                  return (
-                    <React.Fragment key={key}>
-                      <tr>
-                        <td>{row.asin || '-'}</td>
-                        <td>{row.portfolioName || '-'}</td>
-                        <td>{row.campaignName || '-'}</td>
-                        <td>{row.adGroupName || '-'}</td>
-                        <td>
-                          <strong>{row.keyword}</strong>
-                          <div className="muted-cell">{row.entityType}</div>
-                        </td>
-                        <td>{row.coverageStatus}</td>
-                        <td>{row.clicks} / {row.orders}</td>
-                        <td>{formatUsd(row.spend)} / {formatUsd(row.sales)}</td>
-                        <td>{formatPercent(row.acos * 100)}</td>
-                        <td>{row.opportunityLevel}</td>
-                        <td>{row.recommendedPlacement}</td>
-                        <td>
-                          <div>{row.risk}</div>
-                          <div className="table-action-row">
-                            <button className="compact-button secondary-button" onClick={() => setExpandedKey(expandedKey === key ? null : key)} type="button">
-                              {expandedKey === key ? '收起详情' : '来源详情'}
-                            </button>
-                            <button className="compact-button primary-button" disabled={!quantReady} onClick={() => handoffToListing(row)} type="button">
-                              带入 Listing
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                      {expandedKey === key && (
-                        <tr className="detail-row">
-                          <td colSpan={12}>
-                            <div className="detail-grid">
-                              <div><span>数据批次</span><strong>{batchId}</strong></div>
-                              <div><span>报表类型</span><strong>{row.entityType}</strong></div>
-                              <div><span>导入行数</span><strong>{importedRows === null ? '当前文件未匹配' : importedRows}</strong></div>
-                              <div><span>来源文件</span><strong><code>{row.sourceFile || '-'}</code></strong></div>
-                              <div><span>数据口径</span><strong>店铺/站点/ASIN/广告活动/广告组/对象类型/关键词去重</strong></div>
-                              <div><span>下一步</span><strong>{row.orders > 0 || row.sales > 0 ? '进入 Listing 覆盖复核' : '先控制投放风险'}</strong></div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
-                {!visibleRows.length && (
-                  <tr>
-                    <td colSpan={12}>{quantReady ? '当前筛选条件没有可展示的关键词机会。' : '缺少真实报表和导入指标，关键词机会保持阻断。'}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <VirtualDataTable
+            columns={opportunityColumns}
+            emptyMessage={quantReady ? '当前筛选条件没有可展示的关键词机会。' : '缺少真实报表和导入指标，关键词机会保持阻断。'}
+            estimateSize={72}
+            expandedContent={(row) => {
+              const key = rowKey(row);
+              if (expandedKey !== key) return null;
+              const importedRows = sourceImportRows(row);
+              return (
+                <div className="detail-grid">
+                  <div><span>数据批次</span><strong>{batchId}</strong></div>
+                  <div><span>报表类型</span><strong>{row.entityType}</strong></div>
+                  <div><span>导入行数</span><strong>{importedRows === null ? '当前文件未匹配' : importedRows}</strong></div>
+                  <div><span>来源文件</span><strong><code>{row.sourceFile || '-'}</code></strong></div>
+                  <div><span>数据口径</span><strong>店铺/站点/ASIN/广告活动/广告组/对象类型/关键词去重</strong></div>
+                  <div><span>下一步</span><strong>{row.orders > 0 || row.sales > 0 ? '进入 Listing 覆盖复核' : '先控制投放风险'}</strong></div>
+                </div>
+              );
+            }}
+            getRowKey={rowKey}
+            loading={loading}
+            minWidth="1500px"
+            rows={visibleRows}
+          />
         </Panel>
       </div>
     </div>

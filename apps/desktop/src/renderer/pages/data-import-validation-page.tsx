@@ -3,6 +3,7 @@ import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath, formatUsd } from '../formatters';
 import { toUserFacingError } from '../user-facing-error';
@@ -299,6 +300,40 @@ export function DataImportValidationPage() {
     notice,
     importError,
   });
+  const reportColumns: Array<VirtualDataTableColumn<(typeof reportRows)[number]>> = [
+    { key: 'label', header: '报表', width: '170px', cell: (row) => row.label },
+    {
+      key: 'file',
+      header: '真实文件',
+      width: 'minmax(240px, 1.4fr)',
+      cell: (row) => row.filePath ? <code>{compactPath(row.filePath)}</code> : '缺少真实文件',
+    },
+    { key: 'ext', header: '类型', width: '72px', cell: (row) => <code>{row.filePath ? fileExtension(row.fileName, row.filePath) : '-'}</code> },
+    { key: 'size', header: '大小', width: '88px', cell: (row) => formatFileSize(row.fileSizeBytes) },
+    { key: 'rows', header: '入库行数', width: '96px', cell: (row) => row.importedRows },
+    {
+      key: 'status',
+      header: '状态',
+      width: 'minmax(240px, 1.1fr)',
+      cell: (row) => (
+        <div>
+          <StatusPill tone={row.statusDisplay.tone}>{row.statusDisplay.label}</StatusPill>
+          <div className="muted-line table-subtext">{row.statusDisplay.detail}</div>
+          {row.importError && <div className="blocked-line table-subtext">{row.importError}</div>}
+        </div>
+      ),
+    },
+    {
+      key: 'actions',
+      header: '操作',
+      width: '100px',
+      cell: (row) => (
+        <button className="secondary-button compact-button" disabled={!row.filePath} onClick={() => openPath(row.filePath)} type="button">
+          打开表格
+        </button>
+      ),
+    },
+  ];
 
   async function openPath(targetPath?: string) {
     if (!targetPath) return;
@@ -563,47 +598,15 @@ export function DataImportValidationPage() {
 
         <ProgressiveDetails title="8 类报表入库明细">
           <Panel title="8 类报表入库明细" tone={hasRealFiles ? 'default' : 'blocked'}>
-            <div className="table-wrap">
-              <table className="business-table">
-              <thead>
-                <tr>
-                  <th>报表</th>
-                  <th>真实文件</th>
-                  <th>类型</th>
-                  <th>大小</th>
-                  <th>入库行数</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reportRows.map((row) => (
-                  <tr key={row.type}>
-                    <td>{row.label}</td>
-                    <td>{row.filePath ? <code>{compactPath(row.filePath)}</code> : '缺少真实文件'}</td>
-                    <td><code>{row.filePath ? fileExtension(row.fileName, row.filePath) : '-'}</code></td>
-                    <td>{formatFileSize(row.fileSizeBytes)}</td>
-                    <td>{row.importedRows}</td>
-                    <td>
-                      <StatusPill tone={row.statusDisplay.tone}>{row.statusDisplay.label}</StatusPill>
-                      <div className="muted-line table-subtext">{row.statusDisplay.detail}</div>
-                      {row.importError && <div className="blocked-line table-subtext">{row.importError}</div>}
-                    </td>
-                    <td>
-                      <button className="secondary-button compact-button" disabled={!row.filePath} onClick={() => openPath(row.filePath)} type="button">
-                        打开表格
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!reportRows.length && (
-                  <tr>
-                    <td colSpan={7}>当前范围还没有报表状态。请先完成数据采集。</td>
-                  </tr>
-                )}
-              </tbody>
-              </table>
-            </div>
+            <VirtualDataTable
+              columns={reportColumns}
+              emptyMessage="当前范围还没有报表状态。请先完成数据采集。"
+              estimateSize={72}
+              getRowKey={(row) => row.type}
+              loading={loading}
+              minWidth="980px"
+              rows={reportRows}
+            />
           </Panel>
         </ProgressiveDetails>
 
