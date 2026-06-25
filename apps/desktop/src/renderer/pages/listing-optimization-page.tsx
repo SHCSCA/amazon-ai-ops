@@ -40,6 +40,43 @@ interface ListingAiStatus {
   tone: 'ready' | 'pending' | 'blocked' | 'warning';
 }
 
+interface ListingHeatmapSection {
+  key: string;
+  label: string;
+  currentText: string;
+  draftText: string;
+  currentHits: string[];
+  draftHits: string[];
+  charLimit?: number;
+}
+
+interface ListingHeatmapKeyword {
+  keyword: string;
+  score: number;
+  level: 'ready' | 'warning' | 'pending';
+  levelLabel: string;
+  hitSections: string[];
+  recommendedSection: string;
+  evidence: string;
+}
+
+interface ListingHeatmapModel {
+  keywords: ListingHeatmapKeyword[];
+  sections: ListingHeatmapSection[];
+  summary: {
+    keywordCount: number;
+    coveredCount: number;
+    draftGainCount: number;
+    missingCount: number;
+  };
+}
+
+export interface ListingTextSegment {
+  text: string;
+  matchedKeyword?: string;
+  active: boolean;
+}
+
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
 }
@@ -62,6 +99,156 @@ function readStatus(ok: boolean, missingLabel: string): string {
 function draftSourceLabel(draft: ListingDraftView): string {
   if (draft.aiFallbackReason) return '规则兜底';
   return draft.source === 'ai' ? 'AI' : '规则';
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeHeatmapKeyword(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function includesKeyword(text: string, keyword: string): boolean {
+  if (!text || !keyword) return false;
+  return text.toLocaleLowerCase().includes(keyword.toLocaleLowerCase());
+}
+
+function uniqueKeywords(input: string[]): string[] {
+  const seen = new Set<string>();
+  return input
+    .map(normalizeHeatmapKeyword)
+    .filter(Boolean)
+    .filter((keyword) => {
+      const key = keyword.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function draftTextForSection(drafts: ListingDraftView[], section: ListingSection): string {
+  return drafts.find((draft) => draft.section === section)?.draftedText || '';
+}
+
+export function buildListingHeatmapModel(input: {
+  keywords: string[];
+  listing?: ListingContentView | null;
+  drafts?: ListingDraftView[];
+}): ListingHeatmapModel {
+  const keywords = uniqueKeywords(input.keywords);
+  const listing = input.listing || {};
+  const drafts = input.drafts || [];
+  const bullets = ensureFiveBullets(listing.bullets);
+  const titleDraft = draftTextForSection(drafts, 'title');
+  const bulletDraft = draftTextForSection(drafts, 'bullet');
+  const backendDraft = draftTextForSection(drafts, 'backend_terms');
+  const sections: ListingHeatmapSection[] = [
+    {
+      key: 'title',
+      label: '标题',
+      currentText: listing.title || '',
+      draftText: titleDraft || listing.title || '',
+      currentHits: [],
+      draftHits: [],
+      charLimit: 200,
+    },
+    ...bullets.map((bullet, index) => ({
+      key: `bullet-${index + 1}`,
+      label: `五点 ${index + 1}`,
+      currentText: bullet || '',
+      draftText: index === 0 ? (bulletDraft || bullet || '') : (bullet || ''),
+      currentHits: [] as string[],
+      draftHits: [] as string[],
+      charLimit: 250,
+    })),
+    {
+      key: 'backend_terms',
+      label: '后台词',
+      currentText: listing.backendTerms || '',
+      draftText: backendDraft || listing.backendTerms || '',
+      currentHits: [],
+      draftHits: [],
+    },
+    {
+      key: 'details',
+      label: '详情/A+',
+      currentText: listing.description || listing.aPlus || '',
+      draftText: listing.description || listing.aPlus || '',
+      currentHits: [],
+      draftHits: [],
+    },
+  ];
+
+  for (const section of sections) {
+    section.currentHits = keywords.filter((keyword) => includesKeyword(section.currentText, keyword));
+    section.draftHits = keywords.filter((keyword) => includesKeyword(section.draftText, keyword));
+  }
+
+  const heatmapKeywords = keywords.map((keyword) => {
+    const currentSections = sections.filter((section) => includesKeyword(section.currentText, keyword));
+    const draftSections = sections.filter((section) => includesKeyword(section.draftText, keyword));
+    const hitSectionLabels = Array.from(new Set([...currentSections, ...draftSections].map((section) => section.label)));
+    const draftGain = draftSections.filter((section) => !includesKeyword(section.currentText, keyword));
+    const score = Math.min(100, (hitSectionLabels.length * 22) + (draftGain.length * 18));
+    const level: ListingHeatmapKeyword['level'] = score >= 60 ? 'ready' : score >= 22 ? 'warning' : 'pending';
+    const recommendedSection = !draftSections.some((section) => section.key === 'title')
+      ? '标题'
+      : !draftSections.some((section) => section.key.startsWith('bullet'))
+        ? '五点'
+        : !draftSections.some((section) => section.key === 'backend_terms')
+          ? '后台词'
+          : '保持复核';
+    return {
+      keyword,
+      score,
+      level,
+      levelLabel: level === 'ready' ? '覆盖密集' : level === 'warning' ? '部分覆盖' : '待融入',
+      hitSections: hitSectionLabels,
+      recommendedSection,
+      evidence: hitSectionLabels.length
+        ? `${hitSectionLabels.join('、')} 已命中${draftGain.length ? `，草案新增 ${draftGain.length} 处` : ''}`
+        : '当前文本和草案均未覆盖',
+    };
+  });
+
+  return {
+    keywords: heatmapKeywords,
+    sections,
+    summary: {
+      keywordCount: heatmapKeywords.length,
+      coveredCount: heatmapKeywords.filter((item) => item.hitSections.length > 0).length,
+      draftGainCount: heatmapKeywords.filter((item) => item.evidence.includes('草案新增')).length,
+      missingCount: heatmapKeywords.filter((item) => item.hitSections.length === 0).length,
+    },
+  };
+}
+
+export function highlightListingTextSegments(text: string, activeKeyword: string | null, keywords: string[]): ListingTextSegment[] {
+  if (!text) return [{ text: '', active: false }];
+  const candidates = uniqueKeywords(activeKeyword ? [activeKeyword] : keywords).sort((a, b) => b.length - a.length);
+  if (!candidates.length) return [{ text, active: false }];
+  const pattern = new RegExp(`(${candidates.map(escapeRegExp).join('|')})`, 'ig');
+  const segments: ListingTextSegment[] = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, index), active: false });
+    }
+    const matchedText = match[0];
+    const matchedKeyword = candidates.find((keyword) => keyword.toLocaleLowerCase() === matchedText.toLocaleLowerCase()) || matchedText;
+    segments.push({
+      text: matchedText,
+      matchedKeyword,
+      active: Boolean(activeKeyword && matchedKeyword.toLocaleLowerCase() === activeKeyword.toLocaleLowerCase()),
+    });
+    lastIndex = index + matchedText.length;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex), active: false });
+  }
+  return segments.length ? segments : [{ text, active: false }];
 }
 
 export function listingDraftGenerationMessage(quantReady: boolean, drafts: Array<Partial<ListingDraftView>>): string {
@@ -233,6 +420,7 @@ export function ListingOptimizationPage() {
   const [keywordsText, setKeywordsText] = useState('');
   const [handoffPayload, setHandoffPayload] = useState<ListingHandoffPayload | null>(null);
   const [aiStatus, setAiStatus] = useState<ListingAiStatus>(listingAiStatusFromSettings(null));
+  const [activeHeatmapKeyword, setActiveHeatmapKeyword] = useState<string | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id || data?.scope.batchId;
@@ -307,6 +495,14 @@ export function ListingOptimizationPage() {
     () => keywordsText.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean),
     [keywordsText],
   );
+  const heatmapModel = useMemo(
+    () => buildListingHeatmapModel({ keywords, listing: listing || manualListing, drafts }),
+    [drafts, keywords, listing, manualListing],
+  );
+  const heatmapKeywordNames = heatmapModel.keywords.map((item) => item.keyword);
+  const selectedHeatmapKeyword = activeHeatmapKeyword && heatmapKeywordNames.includes(activeHeatmapKeyword)
+    ? activeHeatmapKeyword
+    : heatmapKeywordNames[0] || null;
   const expectedAsin = (handoffPayload?.asin || scope.asin || '').trim().toUpperCase();
   const listingAsin = (listing?.asin || '').trim().toUpperCase();
   const readScopeStore = readEvidence?.scope?.storeName || '';
@@ -403,6 +599,11 @@ export function ListingOptimizationPage() {
     });
   }, [expectedAsin, scope.asin]);
 
+  useEffect(() => {
+    if (!activeHeatmapKeyword || heatmapKeywordNames.includes(activeHeatmapKeyword)) return;
+    setActiveHeatmapKeyword(heatmapKeywordNames[0] || null);
+  }, [activeHeatmapKeyword, heatmapKeywordNames]);
+
   async function loadListingVersions(asin: string) {
     const api = (window as any).electronAPI;
     if (!api?.listListingContentVersions || !asin.trim()) return;
@@ -487,6 +688,23 @@ export function ListingOptimizationPage() {
         {control}
       </FormTableRow>
     );
+  }
+
+  function renderHeatmapSegments(text: string, activeKeyword: string | null) {
+    const segments = highlightListingTextSegments(text || '-', activeKeyword, heatmapKeywordNames);
+    return segments.map((segment, index) => {
+      if (!segment.matchedKeyword) {
+        return <React.Fragment key={`${index}-text`}>{segment.text}</React.Fragment>;
+      }
+      return (
+        <mark
+          className={`listing-heatmap-token ${segment.active ? 'listing-heatmap-token-active' : ''}`}
+          key={`${index}-${segment.matchedKeyword}`}
+        >
+          {segment.text}
+        </mark>
+      );
+    });
   }
 
   async function saveManualListing() {
@@ -917,6 +1135,84 @@ export function ListingOptimizationPage() {
             </div>
           )}
           <p className="blocked-line">本页只生成本地草案和导出文件，不提交 Amazon，不修改 Lingxing Listing。</p>
+        </Panel>
+
+        <Panel title="核心商机词根热力图矩阵" tone={heatmapModel.summary.keywordCount ? (heatmapModel.summary.missingCount ? 'warning' : 'success') : 'warning'}>
+          <div className="business-split">
+            <div>
+              <p className="muted-line">左侧词根来自关键词机会或手工输入；点击任一词根后，右侧 Title、五点、后台词和详情/A+ 会即时高亮当前文本与本地草案的命中区域。</p>
+              <p className="blocked-line">热力图只做本地覆盖复核，不提交 Amazon，不自动改写 Lingxing Listing。</p>
+            </div>
+            <StatusPill tone={heatmapModel.summary.missingCount ? 'warning' : heatmapModel.summary.keywordCount ? 'ready' : 'pending'}>
+              {heatmapModel.summary.keywordCount ? `${heatmapModel.summary.coveredCount}/${heatmapModel.summary.keywordCount} 已覆盖` : '待输入词根'}
+            </StatusPill>
+          </div>
+          <div className="listing-heatmap-grid">
+            <aside className="listing-heatmap-keyword-rail" aria-label="核心商机词根">
+              <div className="listing-heatmap-summary">
+                <div><span>词根</span><strong>{heatmapModel.summary.keywordCount}</strong></div>
+                <div><span>草案新增</span><strong>{heatmapModel.summary.draftGainCount}</strong></div>
+                <div><span>待融入</span><strong>{heatmapModel.summary.missingCount}</strong></div>
+              </div>
+              {heatmapModel.keywords.length ? heatmapModel.keywords.map((item) => (
+                <button
+                  className={`listing-heatmap-keyword listing-heatmap-keyword-${item.level} ${selectedHeatmapKeyword === item.keyword ? 'listing-heatmap-keyword-active' : ''}`}
+                  key={item.keyword}
+                  onClick={() => setActiveHeatmapKeyword(item.keyword)}
+                  type="button"
+                >
+                  <span>{item.keyword}</span>
+                  <strong>{item.score}</strong>
+                  <small>{item.levelLabel} / 建议 {item.recommendedSection}</small>
+                </button>
+              )) : (
+                <p className="muted-line">从关键词机会页带入，或在下方粘贴关键词后显示词根热力图。</p>
+              )}
+            </aside>
+            <div className="listing-heatmap-matrix">
+              {heatmapModel.sections.map((section) => {
+                const activeHit = Boolean(selectedHeatmapKeyword && (
+                  includesKeyword(section.currentText, selectedHeatmapKeyword)
+                  || includesKeyword(section.draftText, selectedHeatmapKeyword)
+                ));
+                const draftLength = section.draftText.length;
+                const overLimit = Boolean(section.charLimit && draftLength > section.charLimit);
+                return (
+                  <section className={`listing-heatmap-section ${activeHit ? 'listing-heatmap-section-active' : ''}`} key={section.key}>
+                    <div className="listing-heatmap-section-head">
+                      <div>
+                        <span>{section.label}</span>
+                        <strong>{section.draftHits.length ? `命中 ${section.draftHits.length} 个词根` : '未命中词根'}</strong>
+                      </div>
+                      <StatusPill tone={section.draftHits.length ? 'ready' : section.currentText ? 'warning' : 'pending'}>
+                        {activeHit ? '当前命中' : section.draftHits.length ? '有覆盖' : '待覆盖'}
+                      </StatusPill>
+                    </div>
+                    <div className="listing-heatmap-text-grid">
+                      <div>
+                        <span>线上原文</span>
+                        <p>{renderHeatmapSegments(section.currentText, selectedHeatmapKeyword)}</p>
+                      </div>
+                      <div>
+                        <span>本地草案 / 复核文本</span>
+                        <p>{renderHeatmapSegments(section.draftText, selectedHeatmapKeyword)}</p>
+                        {section.charLimit && (
+                          <small className={overLimit ? 'listing-heatmap-limit listing-heatmap-limit-over' : 'listing-heatmap-limit'}>
+                            {draftLength} / {section.charLimit}
+                          </small>
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+          {selectedHeatmapKeyword && (
+            <p className="muted-line">
+              当前聚焦：{selectedHeatmapKeyword}。{heatmapModel.keywords.find((item) => item.keyword === selectedHeatmapKeyword)?.evidence || '暂无命中证据。'}
+            </p>
+          )}
         </Panel>
 
         <Panel title="当前 Listing 内容">
