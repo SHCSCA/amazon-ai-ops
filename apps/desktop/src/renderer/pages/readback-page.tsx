@@ -272,6 +272,49 @@ function firstImageFile(files: File[]): File | null {
   return files.find((file) => file.type.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(file.name)) || null;
 }
 
+export function readbackCaptureTargetView(
+  slot: ReadbackCaptureSlot,
+  input: { value?: string; saving?: boolean; dragging?: boolean } = {},
+) {
+  const copy = CAPTURE_SLOT_LABELS[slot];
+  const className = [
+    'readback-capture-target',
+    input.value ? 'readback-capture-filled' : '',
+    input.saving ? 'readback-capture-saving' : '',
+    input.dragging && !input.saving ? 'readback-capture-dragging' : '',
+  ].filter(Boolean).join(' ');
+  if (input.saving) {
+    return {
+      className,
+      title: '正在存证...',
+      detail: copy.detail,
+      helper: '正在写入本地证据目录...',
+    };
+  }
+  if (input.dragging) {
+    return {
+      className,
+      title: '松开即可存证',
+      detail: copy.detail,
+      helper: '已识别拖入截图，松开鼠标后写入本地证据目录。',
+    };
+  }
+  if (input.value) {
+    return {
+      className,
+      title: `${copy.title}已安全固定`,
+      detail: copy.detail,
+      helper: input.value,
+    };
+  }
+  return {
+    className,
+    title: copy.title,
+    detail: copy.detail,
+    helper: '点击此区域后 Ctrl+V，或拖入图片文件',
+  };
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -709,9 +752,16 @@ function ReadbackCaptureTarget({
   saving?: boolean;
   onCapture: (slot: ReadbackCaptureSlot, files: File[]) => void;
 }) {
-  const copy = CAPTURE_SLOT_LABELS[slot];
+  const [dragging, setDragging] = useState(false);
+  const view = readbackCaptureTargetView(slot, { value, saving, dragging });
+  const clearDragging = () => setDragging(false);
+  const markDragging = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!saving) setDragging(true);
+  };
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+    clearDragging();
     onCapture(slot, captureFileList(event.dataTransfer));
   };
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -722,17 +772,20 @@ function ReadbackCaptureTarget({
   };
   return (
     <div
-      aria-label={`${copy.title}拖拽或粘贴存证`}
-      className={`readback-capture-target${value ? ' readback-capture-filled' : ''}${saving ? ' readback-capture-saving' : ''}`}
-      onDragOver={(event) => event.preventDefault()}
+      aria-label={`${CAPTURE_SLOT_LABELS[slot].title}拖拽或粘贴存证`}
+      aria-live="polite"
+      className={view.className}
+      onDragEnter={markDragging}
+      onDragLeave={clearDragging}
+      onDragOver={markDragging}
       onDrop={handleDrop}
       onPaste={handlePaste}
       role="button"
       tabIndex={0}
     >
-      <strong>{saving ? '正在存证...' : copy.title}</strong>
-      <span>{copy.detail}</span>
-      <small>{value ? value : '点击此区域后 Ctrl+V，或拖入图片文件'}</small>
+      <strong>{view.title}</strong>
+      <span>{view.detail}</span>
+      <small>{view.helper}</small>
     </div>
   );
 }

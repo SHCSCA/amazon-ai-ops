@@ -4072,6 +4072,16 @@ code {
   background: #f3fbf6;
 }
 
+.readback-capture-dragging {
+  border-color: var(--blue);
+  background:
+    linear-gradient(#eff6ff, #eff6ff) padding-box,
+    repeating-linear-gradient(90deg, #2563eb 0 10px, transparent 10px 18px) border-box;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.16), inset 0 0 0 1px rgb(37 99 235 / 0.22);
+  transform: translateY(-1px);
+  animation: readback-capture-marching-ants 520ms linear infinite, readback-capture-breathe 900ms ease-in-out infinite alternate;
+}
+
 .readback-capture-saving {
   border-color: var(--blue);
   color: #fff;
@@ -4098,6 +4108,24 @@ code {
   }
   to {
     background-position: 40px 0;
+  }
+}
+
+@keyframes readback-capture-marching-ants {
+  from {
+    background-position: 0 0, 0 0;
+  }
+  to {
+    background-position: 0 0, 28px 0;
+  }
+}
+
+@keyframes readback-capture-breathe {
+  from {
+    box-shadow: 0 0 0 3px rgb(37 99 235 / 0.12), inset 0 0 0 1px rgb(37 99 235 / 0.18);
+  }
+  to {
+    box-shadow: 0 0 0 5px rgb(37 99 235 / 0.22), inset 0 0 0 1px rgb(37 99 235 / 0.3);
   }
 }
 

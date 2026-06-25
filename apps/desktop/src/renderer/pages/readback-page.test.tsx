@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   EMPTY_FORM,
   buildFillAdReadbackCommand,
@@ -11,6 +12,7 @@ import {
   formFromRecommendation,
   groupMissing,
   nextEvidenceCaptureSlot,
+  readbackCaptureTargetView,
   readbackContractChecks,
   readbackPrecheckCopy,
   readbackSessionSummary,
@@ -266,6 +268,42 @@ describe('readback capture helpers', () => {
 
     form.readbackEvidencePath = 'C:/session/readback.png';
     expect(nextEvidenceCaptureSlot(form)).toBe('readback');
+  });
+
+  it('builds distinct copy and classes for drop target visual states', () => {
+    expect(readbackCaptureTargetView('before')).toMatchObject({
+      className: 'readback-capture-target',
+      title: '执行前截图',
+      helper: '点击此区域后 Ctrl+V，或拖入图片文件',
+    });
+
+    expect(readbackCaptureTargetView('before', { dragging: true })).toMatchObject({
+      className: expect.stringContaining('readback-capture-dragging'),
+      title: '松开即可存证',
+      helper: '已识别拖入截图，松开鼠标后写入本地证据目录。',
+    });
+
+    const savingView = readbackCaptureTargetView('after', { saving: true, dragging: true });
+    expect(savingView).toMatchObject({
+      className: expect.stringContaining('readback-capture-saving'),
+      title: '正在存证...',
+      helper: '正在写入本地证据目录...',
+    });
+    expect(savingView.className).not.toContain('readback-capture-dragging');
+
+    expect(readbackCaptureTargetView('readback', { value: 'C:/evidence/readback.png' })).toMatchObject({
+      className: expect.stringContaining('readback-capture-filled'),
+      title: '回读截图已安全固定',
+      helper: 'C:/evidence/readback.png',
+    });
+  });
+
+  it('keeps the drag-over drop zone animation contract in CSS', () => {
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toContain('.readback-capture-dragging');
+    expect(stylesheet).toContain('readback-capture-marching-ants');
+    expect(stylesheet).toContain('readback-capture-breathe');
   });
 });
 
