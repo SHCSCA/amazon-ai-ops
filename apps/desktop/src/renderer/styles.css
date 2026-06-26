@@ -2117,6 +2117,68 @@ code {
   background: #f8fafc;
 }
 
+.virtual-table-sortable {
+  padding: 0;
+}
+
+.virtual-table-sort-button {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) 14px;
+  gap: 5px;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  padding: 7px 10px;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.virtual-table-sort-button:hover:not(:disabled),
+.virtual-table-sort-button:focus-visible {
+  background: #eef5ff;
+  color: #1d4ed8;
+  outline: 0;
+}
+
+.virtual-table-sort-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.virtual-table-sort-button:disabled {
+  cursor: not-allowed;
+}
+
+.virtual-table-sort-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #2563eb;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.42;
+  transition: transform 150ms ease, opacity 150ms ease;
+  will-change: transform;
+}
+
+.virtual-table-sort-active .virtual-table-sort-arrow {
+  opacity: 1;
+}
+
+.virtual-table-sort-active[data-sort-direction="asc"] .virtual-table-sort-arrow {
+  transform: rotate(180deg);
+}
+
+.virtual-table-sort-active[data-sort-direction="desc"] .virtual-table-sort-arrow {
+  transform: rotate(0deg);
+}
+
 .virtual-table-detail {
   border-bottom: 1px solid var(--line-soft);
   background: #f8fafc;

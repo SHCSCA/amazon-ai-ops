@@ -1,16 +1,33 @@
 import React, { useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
+export type VirtualSortDirection = 'asc' | 'desc';
+export type VirtualAriaSort = 'ascending' | 'descending' | 'none';
+
 export interface VirtualDataTableColumn<T> {
   key: string;
   header: React.ReactNode;
   width?: string;
   className?: string;
+  sortable?: boolean;
+  sortLabel?: string;
   cell: (row: T, index: number) => React.ReactNode;
 }
 
 export function virtualColumnTemplate<T>(columns: Array<VirtualDataTableColumn<T>>): string {
   return columns.map((column) => column.width || 'minmax(120px, 1fr)').join(' ');
+}
+
+export function virtualColumnSortAria(columnKey: string, sortKey?: string, sortDirection: VirtualSortDirection = 'desc'): VirtualAriaSort {
+  if (columnKey !== sortKey) return 'none';
+  return sortDirection === 'asc' ? 'ascending' : 'descending';
+}
+
+export function virtualSortHeaderClass({ sortable, active }: { sortable: boolean; active: boolean }): string {
+  return [
+    sortable ? 'virtual-table-sortable' : '',
+    active ? 'virtual-table-sort-active' : '',
+  ].filter(Boolean).join(' ');
 }
 
 export interface VirtualDataTableProps<T> {
@@ -25,6 +42,9 @@ export interface VirtualDataTableProps<T> {
   className?: string;
   rowClassName?: (row: T, index: number) => string | undefined;
   expandedContent?: (row: T, index: number) => React.ReactNode;
+  sortKey?: string;
+  sortDirection?: VirtualSortDirection;
+  onSortChange?: (key: string) => void;
 }
 
 export function VirtualDataTable<T>({
@@ -39,6 +59,9 @@ export function VirtualDataTable<T>({
   className = '',
   rowClassName,
   expandedContent,
+  sortKey,
+  sortDirection = 'desc',
+  onSortChange,
 }: VirtualDataTableProps<T>) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const gridTemplateColumns = useMemo(() => virtualColumnTemplate(columns), [columns]);
@@ -68,11 +91,33 @@ export function VirtualDataTable<T>({
       <div className="virtual-table" role="table" style={{ minWidth }}>
         <div className="virtual-table-head" role="rowgroup">
           <div className="virtual-table-row virtual-table-header-row" role="row" style={{ gridTemplateColumns }}>
-            {columns.map((column) => (
-              <div className={`virtual-table-cell virtual-table-header-cell ${column.className || ''}`.trim()} key={column.key} role="columnheader">
-                {column.header}
-              </div>
-            ))}
+            {columns.map((column) => {
+              const active = column.key === sortKey;
+              const sortable = Boolean(column.sortable);
+              const sortClass = virtualSortHeaderClass({ sortable, active });
+              return (
+                <div
+                  aria-sort={sortable ? virtualColumnSortAria(column.key, sortKey, sortDirection) : undefined}
+                  className={`virtual-table-cell virtual-table-header-cell ${sortClass} ${column.className || ''}`.trim()}
+                  data-sort-direction={active ? sortDirection : undefined}
+                  key={column.key}
+                  role="columnheader"
+                >
+                  {sortable ? (
+                    <button
+                      aria-label={`${column.sortLabel || String(column.header)} 排序`}
+                      className="virtual-table-sort-button"
+                      disabled={!onSortChange}
+                      onClick={() => onSortChange?.(column.key)}
+                      type="button"
+                    >
+                      <span>{column.header}</span>
+                      <span aria-hidden="true" className="virtual-table-sort-arrow">↓</span>
+                    </button>
+                  ) : column.header}
+                </div>
+              );
+            })}
           </div>
         </div>
         {rows.length ? (

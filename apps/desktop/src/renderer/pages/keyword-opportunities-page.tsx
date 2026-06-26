@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
@@ -11,6 +11,102 @@ import { toUserFacingError } from '../user-facing-error';
 
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
+}
+
+export type KeywordOpportunitySortKey =
+  | 'asin'
+  | 'portfolioName'
+  | 'campaignName'
+  | 'adGroupName'
+  | 'keyword'
+  | 'coverageStatus'
+  | 'clicks'
+  | 'orders'
+  | 'spend'
+  | 'sales'
+  | 'acos'
+  | 'opportunityLevel'
+  | 'recommendedPlacement';
+
+export interface KeywordOpportunitySortState {
+  key: KeywordOpportunitySortKey;
+  direction: 'asc' | 'desc';
+}
+
+const keywordTextSortKeys = new Set<KeywordOpportunitySortKey>([
+  'asin',
+  'portfolioName',
+  'campaignName',
+  'adGroupName',
+  'keyword',
+  'coverageStatus',
+  'recommendedPlacement',
+]);
+
+const opportunityLevelRank: Record<KeywordOpportunityView['opportunityLevel'], number> = {
+  low: 1,
+  medium: 2,
+  high: 3,
+};
+
+const keywordSortKeys = new Set<KeywordOpportunitySortKey>([
+  'asin',
+  'portfolioName',
+  'campaignName',
+  'adGroupName',
+  'keyword',
+  'coverageStatus',
+  'clicks',
+  'orders',
+  'spend',
+  'sales',
+  'acos',
+  'opportunityLevel',
+  'recommendedPlacement',
+]);
+
+function isKeywordOpportunitySortKey(key: string): key is KeywordOpportunitySortKey {
+  return keywordSortKeys.has(key as KeywordOpportunitySortKey);
+}
+
+function sortValue(row: KeywordOpportunityView, key: KeywordOpportunitySortKey): string | number {
+  if (key === 'opportunityLevel') return opportunityLevelRank[row.opportunityLevel] ?? 0;
+  const value = row[key];
+  if (typeof value === 'number') return value;
+  return String(value || '').toLowerCase();
+}
+
+export function sortKeywordOpportunities(
+  rows: KeywordOpportunityView[],
+  sort: KeywordOpportunitySortState,
+): KeywordOpportunityView[] {
+  const direction = sort.direction === 'asc' ? 1 : -1;
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const leftValue = sortValue(left.row, sort.key);
+      const rightValue = sortValue(right.row, sort.key);
+      let compared = 0;
+      if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+        compared = leftValue - rightValue;
+      } else {
+        compared = String(leftValue).localeCompare(String(rightValue), 'zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+      }
+      if (compared !== 0) return compared * direction;
+      const tieBreaker = left.row.keyword.localeCompare(right.row.keyword, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+      return tieBreaker || left.index - right.index;
+    })
+    .map((item) => item.row);
+}
+
+export function nextKeywordOpportunitySort(
+  current: KeywordOpportunitySortState,
+  nextKey: KeywordOpportunitySortKey,
+): KeywordOpportunitySortState {
+  if (current.key === nextKey) {
+    return { key: nextKey, direction: current.direction === 'desc' ? 'asc' : 'desc' };
+  }
+  return { key: nextKey, direction: keywordTextSortKeys.has(nextKey) ? 'asc' : 'desc' };
 }
 
 export function KeywordOpportunitiesPage() {
@@ -29,6 +125,7 @@ export function KeywordOpportunitiesPage() {
     minSpend: '',
     opportunityLevel: '',
   });
+  const [sortState, setSortState] = useState<KeywordOpportunitySortState>({ key: 'opportunityLevel', direction: 'desc' });
   const quantReady = Boolean(hasRealReportCoverage(data?.collection) && data?.quant.hasImportedMetrics);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const batchId = currentBatchId || '-';
@@ -64,7 +161,7 @@ export function KeywordOpportunitiesPage() {
     loadRows();
   }, [currentBatchId, quantReady, scope.asin, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
 
-  const filteredRows = rows.filter((row) => {
+  const filteredRows = useMemo(() => rows.filter((row) => {
     const minClicks = Number(filters.minClicks || 0);
     const minSpend = Number(filters.minSpend || 0);
     return (
@@ -76,10 +173,11 @@ export function KeywordOpportunitiesPage() {
       row.clicks >= minClicks &&
       row.spend >= minSpend
     );
-  });
+  }), [filters, rows]);
 
   const coverageOptions = quantReady ? Array.from(new Set(rows.map((row) => row.coverageStatus).filter(Boolean))) : [];
-  const visibleRows = quantReady ? filteredRows : [];
+  const sortedRows = useMemo(() => sortKeywordOpportunities(filteredRows, sortState), [filteredRows, sortState]);
+  const visibleRows = quantReady ? sortedRows : [];
   const visibleRowCount = quantReady ? rows.length : 0;
   const highOpportunityCount = visibleRows.filter((row) => row.opportunityLevel === 'high').length;
   const convertingCount = visibleRows.filter((row) => row.orders > 0 || row.sales > 0).length;
@@ -150,15 +248,22 @@ export function KeywordOpportunitiesPage() {
     setMessage(`已带入 Listing 优化：${row.asin || '未指定 ASIN'} / ${keywords.length} 个关键词。请打开 Listing 优化继续。`);
   }
 
+  function handleSortChange(key: string) {
+    if (!isKeywordOpportunitySortKey(key)) return;
+    setSortState((current) => nextKeywordOpportunitySort(current, key));
+  }
+
   const opportunityColumns: Array<VirtualDataTableColumn<KeywordOpportunityView>> = [
-    { key: 'asin', header: 'ASIN', width: '112px', cell: (row) => row.asin || '-' },
-    { key: 'portfolio', header: '广告组合', width: '150px', cell: (row) => row.portfolioName || '-' },
-    { key: 'campaign', header: '广告活动', width: '190px', cell: (row) => row.campaignName || '-' },
-    { key: 'adGroup', header: '广告组', width: '170px', cell: (row) => row.adGroupName || '-' },
+    { key: 'asin', header: 'ASIN', width: '112px', sortable: true, cell: (row) => row.asin || '-' },
+    { key: 'portfolioName', header: '广告组合', width: '150px', sortable: true, cell: (row) => row.portfolioName || '-' },
+    { key: 'campaignName', header: '广告活动', width: '190px', sortable: true, cell: (row) => row.campaignName || '-' },
+    { key: 'adGroupName', header: '广告组', width: '170px', sortable: true, cell: (row) => row.adGroupName || '-' },
     {
       key: 'keyword',
       header: '关键词/搜索词/投放对象',
       width: 'minmax(220px, 1.3fr)',
+      sortable: true,
+      sortLabel: '关键词',
       cell: (row) => (
         <div>
           <strong>{row.keyword}</strong>
@@ -166,12 +271,12 @@ export function KeywordOpportunitiesPage() {
         </div>
       ),
     },
-    { key: 'coverage', header: '覆盖状态', width: '108px', cell: (row) => row.coverageStatus },
-    { key: 'clicks', header: '点击/订单', width: '96px', cell: (row) => `${row.clicks} / ${row.orders}` },
-    { key: 'spend', header: '花费/销售', width: '130px', cell: (row) => `${formatUsd(row.spend)} / ${formatUsd(row.sales)}` },
-    { key: 'acos', header: 'ACOS', width: '78px', cell: (row) => formatPercent(row.acos * 100) },
-    { key: 'level', header: '机会等级', width: '88px', cell: (row) => row.opportunityLevel },
-    { key: 'placement', header: '建议位置', width: '130px', cell: (row) => row.recommendedPlacement },
+    { key: 'coverageStatus', header: '覆盖状态', width: '108px', sortable: true, cell: (row) => row.coverageStatus },
+    { key: 'clicks', header: '点击/订单', width: '96px', sortable: true, sortLabel: '点击', cell: (row) => `${row.clicks} / ${row.orders}` },
+    { key: 'spend', header: '花费/销售', width: '130px', sortable: true, sortLabel: '花费', cell: (row) => `${formatUsd(row.spend)} / ${formatUsd(row.sales)}` },
+    { key: 'acos', header: 'ACOS', width: '78px', sortable: true, cell: (row) => formatPercent(row.acos * 100) },
+    { key: 'opportunityLevel', header: '机会等级', width: '88px', sortable: true, cell: (row) => row.opportunityLevel },
+    { key: 'recommendedPlacement', header: '建议位置', width: '130px', sortable: true, cell: (row) => row.recommendedPlacement },
     {
       key: 'risk',
       header: '风险',
@@ -408,7 +513,10 @@ export function KeywordOpportunitiesPage() {
             getRowKey={rowKey}
             loading={loading}
             minWidth="1500px"
+            onSortChange={handleSortChange}
             rows={visibleRows}
+            sortDirection={sortState.direction}
+            sortKey={sortState.key}
           />
         </Panel>
       </div>
