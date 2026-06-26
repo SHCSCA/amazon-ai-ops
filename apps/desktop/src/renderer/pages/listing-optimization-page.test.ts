@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildListingHeatmapModel,
+  buildListingTextDiffSegments,
   highlightListingTextSegments,
+  listingCharacterLimitClass,
+  listingDraftPanelClass,
   listingDraftGenerationMessage,
   listingManualFieldGroups,
 } from './listing-optimization-page';
@@ -113,5 +117,42 @@ describe('highlightListingTextSegments', () => {
     );
 
     expect(segments.filter((segment) => segment.matchedKeyword).map((segment) => segment.text)).toEqual(['Wide toe box', 'trail runner']);
+  });
+});
+
+describe('Listing draft diff and feedback contract', () => {
+  it('marks removed original words and added draft words for review', () => {
+    const diff = buildListingTextDiffSegments(
+      'Lightweight running shoes for men',
+      'Barefoot running shoes for men wide toe box',
+    );
+
+    expect(diff.currentSegments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: 'Lightweight', kind: 'removed' }),
+    ]));
+    expect(diff.draftSegments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: 'Barefoot', kind: 'added' }),
+      expect.objectContaining({ text: 'wide', kind: 'added' }),
+      expect.objectContaining({ text: 'toe', kind: 'added' }),
+      expect.objectContaining({ text: 'box', kind: 'added' }),
+    ]));
+  });
+
+  it('exposes stable class contracts for draft skeleton and over-limit alarm', () => {
+    expect(listingDraftPanelClass(true)).toContain('listing-heatmap-draft-generating');
+    expect(listingDraftPanelClass(false)).not.toContain('listing-heatmap-draft-generating');
+    expect(listingCharacterLimitClass(215, 200)).toContain('listing-heatmap-limit-over');
+    expect(listingCharacterLimitClass(180, 200)).not.toContain('listing-heatmap-limit-over');
+  });
+
+  it('keeps the high-fidelity CSS for diff chips, skeleton wave, and flashing count', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.listing-heatmap-diff-added');
+    expect(css).toContain('.listing-heatmap-diff-removed');
+    expect(css).toContain('.listing-heatmap-draft-generating::after');
+    expect(css).toContain('@keyframes listing-draft-skeleton');
+    expect(css).toContain('@keyframes listing-limit-alert');
+    expect(css).toContain('animation: listing-limit-alert');
   });
 });

@@ -77,6 +77,16 @@ export interface ListingTextSegment {
   active: boolean;
 }
 
+export interface ListingTextDiffSegment {
+  text: string;
+  kind: 'same' | 'removed' | 'added';
+}
+
+export interface ListingTextDiff {
+  currentSegments: ListingTextDiffSegment[];
+  draftSegments: ListingTextDiffSegment[];
+}
+
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
 }
@@ -125,6 +135,69 @@ function uniqueKeywords(input: string[]): string[] {
       seen.add(key);
       return true;
     });
+}
+
+function tokenizeListingText(value: string): string[] {
+  return value.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?|[\u4e00-\u9fff]|[^\s]/g) || [];
+}
+
+function normalizeDiffToken(value: string): string {
+  return value.toLocaleLowerCase();
+}
+
+export function buildListingTextDiffSegments(currentText: string, draftText: string): ListingTextDiff {
+  const currentTokens = tokenizeListingText(currentText);
+  const draftTokens = tokenizeListingText(draftText);
+  const dp = Array.from({ length: currentTokens.length + 1 }, () => Array(draftTokens.length + 1).fill(0));
+
+  for (let i = currentTokens.length - 1; i >= 0; i--) {
+    for (let j = draftTokens.length - 1; j >= 0; j--) {
+      if (normalizeDiffToken(currentTokens[i]) === normalizeDiffToken(draftTokens[j])) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  const currentSegments: ListingTextDiffSegment[] = [];
+  const draftSegments: ListingTextDiffSegment[] = [];
+  let i = 0;
+  let j = 0;
+
+  while (i < currentTokens.length && j < draftTokens.length) {
+    if (normalizeDiffToken(currentTokens[i]) === normalizeDiffToken(draftTokens[j])) {
+      currentSegments.push({ text: currentTokens[i], kind: 'same' });
+      draftSegments.push({ text: draftTokens[j], kind: 'same' });
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      currentSegments.push({ text: currentTokens[i], kind: 'removed' });
+      i += 1;
+    } else {
+      draftSegments.push({ text: draftTokens[j], kind: 'added' });
+      j += 1;
+    }
+  }
+
+  while (i < currentTokens.length) {
+    currentSegments.push({ text: currentTokens[i], kind: 'removed' });
+    i += 1;
+  }
+  while (j < draftTokens.length) {
+    draftSegments.push({ text: draftTokens[j], kind: 'added' });
+    j += 1;
+  }
+
+  return { currentSegments, draftSegments };
+}
+
+export function listingDraftPanelClass(isGenerating: boolean): string {
+  return `listing-heatmap-draft-pane${isGenerating ? ' listing-heatmap-draft-generating' : ''}`;
+}
+
+export function listingCharacterLimitClass(length: number, limit?: number): string {
+  return `listing-heatmap-limit${limit && length > limit ? ' listing-heatmap-limit-over' : ''}`;
 }
 
 function draftTextForSection(drafts: ListingDraftView[], section: ListingSection): string {
@@ -707,6 +780,36 @@ export function ListingOptimizationPage() {
     });
   }
 
+  function renderListingDiffPreview(diff: ListingTextDiff) {
+    const removed = diff.currentSegments.filter((segment) => segment.kind === 'removed');
+    const added = diff.draftSegments.filter((segment) => segment.kind === 'added');
+    if (!removed.length && !added.length) {
+      return (
+        <div className="listing-heatmap-diff-strip listing-heatmap-diff-stable" aria-label="新旧草案差量">
+          <span>差量</span>
+          <strong>草案与当前文本一致</strong>
+        </div>
+      );
+    }
+
+    const renderTokens = (segments: ListingTextDiffSegment[], kind: 'removed' | 'added') => (
+      segments.length ? segments.map((segment, index) => (
+        <b className={`listing-heatmap-diff-token listing-heatmap-diff-${kind}`} key={`${kind}-${index}-${segment.text}`}>
+          {segment.text}
+        </b>
+      )) : <small>无</small>
+    );
+
+    return (
+      <div className="listing-heatmap-diff-strip" aria-label="新旧草案差量">
+        <span>删除</span>
+        <div>{renderTokens(removed, 'removed')}</div>
+        <span>新增</span>
+        <div>{renderTokens(added, 'added')}</div>
+      </div>
+    );
+  }
+
   async function saveManualListing() {
     setLoading('save-manual');
     setMessage(null);
@@ -1177,8 +1280,9 @@ export function ListingOptimizationPage() {
                   includesKeyword(section.currentText, selectedHeatmapKeyword)
                   || includesKeyword(section.draftText, selectedHeatmapKeyword)
                 ));
+                const diff = buildListingTextDiffSegments(section.currentText, section.draftText);
                 const draftLength = section.draftText.length;
-                const overLimit = Boolean(section.charLimit && draftLength > section.charLimit);
+                const draftGenerating = loading === 'draft';
                 return (
                   <section className={`listing-heatmap-section ${activeHit ? 'listing-heatmap-section-active' : ''}`} key={section.key}>
                     <div className="listing-heatmap-section-head">
@@ -1195,16 +1299,17 @@ export function ListingOptimizationPage() {
                         <span>线上原文</span>
                         <p>{renderHeatmapSegments(section.currentText, selectedHeatmapKeyword)}</p>
                       </div>
-                      <div>
+                      <div className={listingDraftPanelClass(draftGenerating)} aria-busy={draftGenerating}>
                         <span>本地草案 / 复核文本</span>
                         <p>{renderHeatmapSegments(section.draftText, selectedHeatmapKeyword)}</p>
                         {section.charLimit && (
-                          <small className={overLimit ? 'listing-heatmap-limit listing-heatmap-limit-over' : 'listing-heatmap-limit'}>
+                          <small className={listingCharacterLimitClass(draftLength, section.charLimit)}>
                             {draftLength} / {section.charLimit}
                           </small>
                         )}
                       </div>
                     </div>
+                    {renderListingDiffPreview(diff)}
                   </section>
                 );
               })}

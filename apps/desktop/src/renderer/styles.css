@@ -3246,6 +3246,24 @@ code {
   background: #fbfdff;
 }
 
+.listing-heatmap-draft-pane {
+  position: relative;
+  overflow: hidden;
+}
+
+.listing-heatmap-draft-generating::after {
+  content: '';
+  position: absolute;
+  inset: 36px 10px 10px;
+  border-radius: 6px;
+  background:
+    linear-gradient(90deg, rgb(226 232 240 / 0.28), rgb(255 255 255 / 0.86), rgb(226 232 240 / 0.28)),
+    repeating-linear-gradient(180deg, rgb(226 232 240 / 0.52) 0 9px, transparent 9px 18px);
+  background-size: 180% 100%, 100% 100%;
+  pointer-events: none;
+  animation: listing-draft-skeleton 900ms ease-in-out infinite;
+}
+
 .listing-heatmap-text-grid span {
   display: block;
   margin-bottom: 6px;
@@ -3277,6 +3295,62 @@ code {
   box-shadow: 0 0 0 2px rgb(37 99 235 / 0.18);
 }
 
+.listing-heatmap-diff-strip {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 6px 8px;
+  border-top: 1px solid var(--line-soft);
+  background: #fbfdff;
+  padding: 8px 11px 10px;
+  contain: layout style paint;
+}
+
+.listing-heatmap-diff-strip > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.6;
+}
+
+.listing-heatmap-diff-strip > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.listing-heatmap-diff-strip small,
+.listing-heatmap-diff-stable strong {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.listing-heatmap-diff-token {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.listing-heatmap-diff-removed {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+  color: var(--red);
+  text-decoration: line-through;
+}
+
+.listing-heatmap-diff-added {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+}
+
 .listing-heatmap-limit {
   display: block;
   margin-top: 8px;
@@ -3288,6 +3362,32 @@ code {
 
 .listing-heatmap-limit-over {
   color: var(--red);
+  animation: listing-limit-alert 720ms ease-in-out 3;
+}
+
+@keyframes listing-draft-skeleton {
+  from {
+    background-position: 120% 0, 0 0;
+    opacity: 0.58;
+  }
+
+  to {
+    background-position: -80% 0, 0 0;
+    opacity: 0.92;
+  }
+}
+
+@keyframes listing-limit-alert {
+  0%,
+  100% {
+    color: var(--red);
+    transform: translateY(0);
+  }
+
+  50% {
+    color: #7f1d1d;
+    transform: translateY(-1px);
+  }
 }
 
 .form-grid input,
