@@ -19,7 +19,27 @@ function collectElements(node: ReactNode, predicate: (element: ReactElement) => 
   return matches.concat(collectElements(node.props.children, predicate));
 }
 
+function rendererCss(): string {
+  return readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+}
+
+function cssRuleBody(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`));
+  return match?.[1] ?? '';
+}
+
 describe('industrial UI atoms', () => {
+  it('keeps the global button micro-response contract in the stylesheet', () => {
+    const stylesheet = rendererCss();
+    const activeButtonRule = cssRuleBody(stylesheet, 'button:active:not(:disabled)');
+    const disabledButtonRule = cssRuleBody(stylesheet, 'button:disabled');
+
+    expect(activeButtonRule).toMatch(/transform\s*:\s*scale\(0\.98\)\s*;/);
+    expect(disabledButtonRule).toMatch(/cursor\s*:\s*not-allowed\s*;/);
+    expect(stylesheet).not.toContain('translateY(1px)');
+  });
+
   it('renders state light cards for first-viewport operational status', () => {
     const tree = StateLightGrid({
       items: [
@@ -77,7 +97,7 @@ describe('industrial UI atoms', () => {
   });
 
   it('keeps form table feedback styles reserved and non-jumpy', () => {
-    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const stylesheet = rendererCss();
 
     expect(stylesheet).toMatch(/\.form-table-row[\s\S]*grid-template-columns:\s*160px minmax\(0, 1fr\)/);
     expect(stylesheet).toMatch(/\.form-table-feedback[\s\S]*min-height:\s*16px/);
@@ -110,7 +130,7 @@ describe('industrial UI atoms', () => {
   });
 
   it('keeps the decision strip hover contract in the stylesheet', () => {
-    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const stylesheet = rendererCss();
 
     expect(stylesheet).toContain('.decision-action-strip:hover .decision-action:not(:hover):not(:focus-visible):not(:disabled)');
     expect(stylesheet).toContain('.decision-action-strip:focus-within .decision-action:not(:focus-visible):not(:disabled)');

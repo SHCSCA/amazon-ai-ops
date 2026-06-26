@@ -70,7 +70,11 @@ textarea {
 }
 
 button:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: scale(0.98);
+}
+
+button:disabled {
+  cursor: not-allowed;
 }
 
 .app-shell {
@@ -780,11 +784,11 @@ button:active:not(:disabled) {
   cursor: not-allowed;
 }
 
-.primary-button:active,
-.secondary-button:active,
+.primary-button:active:not(:disabled),
+.secondary-button:active:not(:disabled),
 .nav-item:active,
 .workflow-step:active {
-  transform: translateY(1px);
+  transform: scale(0.98);
 }
 
 .primary-button:disabled:active,
@@ -1624,8 +1628,8 @@ code {
   cursor: not-allowed;
 }
 
-.collection-action-button:active {
-  transform: translateY(1px);
+.collection-action-button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .collection-action-button:disabled:active {
