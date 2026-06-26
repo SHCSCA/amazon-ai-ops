@@ -232,6 +232,7 @@ button:active:not(:disabled) {
   position: sticky;
   top: 0;
   z-index: 30;
+  isolation: isolate;
   margin: 0 -24px 14px;
   padding: 8px 10px;
   border: 0;
@@ -481,8 +482,19 @@ button:active:not(:disabled) {
   grid-template-columns: repeat(6, minmax(120px, 1fr)) auto;
   gap: 10px;
   align-items: end;
-  padding-top: 12px;
-  border-top: 1px solid #edf1f5;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 10px;
+  right: 10px;
+  z-index: 40;
+  max-height: min(460px, calc(100vh - 132px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 12px;
+  box-shadow: 0 18px 46px rgb(15 23 42 / 0.18);
+  animation: scope-editor-popover-in 120ms ease-out;
 }
 
 .scope-editor label {
@@ -560,6 +572,18 @@ button:active:not(:disabled) {
   100% {
     transform: translateY(0);
     background: #ffffff;
+  }
+}
+
+@keyframes scope-editor-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

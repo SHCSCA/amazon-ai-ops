@@ -8,6 +8,12 @@ import {
   scopeFieldFeedbackLabel,
 } from './scope-bar';
 
+function cssRuleBody(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`));
+  return match?.[1] ?? '';
+}
+
 describe('formatBatchOption', () => {
   it('describes batch coverage by report type and imported metric rows', () => {
     expect(formatBatchOption({
@@ -131,6 +137,20 @@ describe('scope field feedback micro-response', () => {
     expect(css).toContain('.scope-field-confirmed input');
     expect(css).toContain('.scope-field-confirmed select');
     expect(css).toContain('@keyframes scope-field-confirm-pulse');
+  });
+
+  it('renders the range editor as a popover so opening it does not push the workspace', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const scopeBarRule = cssRuleBody(css, '.scope-bar');
+    const editorRule = cssRuleBody(css, '.scope-editor');
+
+    expect(scopeBarRule).toMatch(/position\s*:\s*sticky\s*;/);
+    expect(editorRule).toMatch(/position\s*:\s*absolute\s*;/);
+    expect(editorRule).toMatch(/top\s*:\s*calc\(100%\s*\+\s*8px\)\s*;/);
+    expect(editorRule).toMatch(/left\s*:\s*10px\s*;/);
+    expect(editorRule).toMatch(/right\s*:\s*10px\s*;/);
+    expect(editorRule).toMatch(/z-index\s*:\s*40\s*;/);
+    expect(css).not.toMatch(/\.scope-editor\s*\{[^}]*position\s*:\s*static\s*;/);
   });
 });
 
