@@ -13,6 +13,7 @@ import {
   dashboardMetricStatusCopy,
   dashboardNormalizeDeliveryItem,
   dashboardPrimaryTaskAction,
+  dashboardPrimaryTaskNavigationFeedback,
   dashboardProductWorkbenchAction,
   dashboardSelectProductHistory,
   dashboardRecommendationHealthCopy,
@@ -1368,6 +1369,42 @@ describe('dashboardPrimaryTaskAction', () => {
       pendingRecommendationCount: 0,
       reviewRecommendationCount: 3,
     }).route).toBe('recommendations');
+  });
+});
+
+describe('dashboardPrimaryTaskNavigationFeedback', () => {
+  it('morphs the dashboard primary task action into a short jump feedback state', () => {
+    const idle = dashboardPrimaryTaskNavigationFeedback({
+      action: {
+        route: 'recommendations',
+        label: '去优化建议',
+        title: '可以分析：有建议需复核',
+      },
+      pendingRoute: null,
+    });
+
+    expect(idle).toEqual({
+      label: '去优化建议',
+      busy: false,
+      busyLabel: undefined,
+      disabled: false,
+    });
+
+    const jumping = dashboardPrimaryTaskNavigationFeedback({
+      action: {
+        route: 'recommendations',
+        label: '去优化建议',
+        title: '可以分析：有建议需复核',
+      },
+      pendingRoute: 'recommendations',
+    });
+
+    expect(jumping).toEqual({
+      label: '去优化建议',
+      busy: true,
+      busyLabel: '转跳中...',
+      disabled: true,
+    });
   });
 });
 

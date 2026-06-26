@@ -25,7 +25,7 @@ export interface DataImportFeedback {
   className: string;
 }
 
-export type DataImportSortKey = 'label' | 'file' | 'ext' | 'size' | 'rows' | 'status';
+export type DataImportSortKey = 'label' | 'file' | 'ext' | 'size' | 'hash' | 'rows' | 'status';
 export type DataImportSortDirection = 'asc' | 'desc';
 
 export interface DataImportSortState {
@@ -38,6 +38,7 @@ export interface DataImportReportRow {
   label: string;
   fileName: string;
   filePath: string;
+  fileHash: string;
   fileSizeBytes: number;
   importedRows: number;
   importError: string;
@@ -45,7 +46,7 @@ export interface DataImportReportRow {
   statusDisplay: ReportImportStatusDisplay;
 }
 
-const DATA_IMPORT_TEXT_SORT_KEYS = new Set<DataImportSortKey>(['label', 'file', 'ext', 'status']);
+const DATA_IMPORT_TEXT_SORT_KEYS = new Set<DataImportSortKey>(['label', 'file', 'ext', 'hash', 'status']);
 
 function fileExtension(fileName: string, filePath: string): string {
   const target = fileName || filePath;
@@ -60,10 +61,15 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function shortDataImportHash(hash: string): string {
+  return hash ? `${hash.slice(0, 16)}...` : '未记录';
+}
+
 function dataImportSortValue(row: DataImportReportRow, key: DataImportSortKey): string | number {
   if (key === 'file') return (row.fileName || row.filePath || '').toLowerCase();
   if (key === 'ext') return fileExtension(row.fileName, row.filePath);
   if (key === 'size') return Number(row.fileSizeBytes || 0);
+  if (key === 'hash') return (row.fileHash || '').toLowerCase();
   if (key === 'rows') return Number(row.importedRows || 0);
   if (key === 'status') return `${row.statusDisplay.label || ''} ${row.status || ''}`.toLowerCase();
   return (row.label || '').toLowerCase();
@@ -101,6 +107,7 @@ export function dataImportSortLabel(key: DataImportSortKey): string {
     file: '真实文件',
     ext: '类型',
     size: '大小',
+    hash: 'SHA-256',
     rows: '入库行数',
     status: '状态',
   };
@@ -374,6 +381,7 @@ export function DataImportValidationPage() {
       ...option,
       fileName: firstFile?.fileName || '',
       filePath: firstFile?.filePath || '',
+      fileHash: firstFile?.fileHash || '',
       fileSizeBytes: firstFile?.fileSizeBytes || 0,
       importedRows: importedForType,
       importError: firstFile?.importError || '',
@@ -420,6 +428,14 @@ export function DataImportValidationPage() {
     },
     { key: 'ext', header: '类型', width: '72px', sortable: true, sortLabel: '类型', cell: (row) => <code>{row.filePath ? fileExtension(row.fileName, row.filePath) : '-'}</code> },
     { key: 'size', header: '大小', width: '88px', sortable: true, sortLabel: '大小', cell: (row) => formatFileSize(row.fileSizeBytes) },
+    {
+      key: 'hash',
+      header: 'SHA-256',
+      width: '150px',
+      sortable: true,
+      sortLabel: 'SHA-256',
+      cell: (row) => <code title={row.fileHash || undefined}>{shortDataImportHash(row.fileHash)}</code>,
+    },
     { key: 'rows', header: '入库行数', width: '96px', sortable: true, sortLabel: '入库行数', cell: (row) => row.importedRows },
     {
       key: 'status',
@@ -448,7 +464,7 @@ export function DataImportValidationPage() {
   ];
 
   function handleReportSortChange(key: string) {
-    if (!['label', 'file', 'ext', 'size', 'rows', 'status'].includes(key)) return;
+    if (!['label', 'file', 'ext', 'size', 'hash', 'rows', 'status'].includes(key)) return;
     setSortState((current) => nextDataImportSort(current, key as DataImportSortKey));
     setTableRefreshing(true);
     if (refreshTimerRef.current) {
@@ -735,7 +751,7 @@ export function DataImportValidationPage() {
                 estimateSize={72}
                 getRowKey={(row) => row.type}
                 loading={loading}
-                minWidth="980px"
+                minWidth="1120px"
                 onSortChange={handleReportSortChange}
                 rows={sortedReportRows}
                 sortDirection={sortState?.direction ?? 'desc'}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
@@ -488,6 +488,12 @@ export function dashboardWorkflowRecommendationRoute(input: {
 }
 
 type DashboardPrimaryTaskAction = { route: AppRoute; label: string; title: string };
+type DashboardPrimaryTaskNavigationFeedback = {
+  label: string;
+  busy: boolean;
+  busyLabel?: string;
+  disabled: boolean;
+};
 
 export function dashboardPrimaryTaskAction(input: {
   canGenerateFormalRecommendations: boolean;
@@ -546,6 +552,19 @@ export function dashboardProductWorkbenchAction(input: {
     };
   }
   return input.baseAction;
+}
+
+export function dashboardPrimaryTaskNavigationFeedback(input: {
+  action: DashboardPrimaryTaskAction;
+  pendingRoute: AppRoute | null;
+}): DashboardPrimaryTaskNavigationFeedback {
+  const busy = Boolean(input.pendingRoute);
+  return {
+    label: input.action.label,
+    busy,
+    busyLabel: busy ? '转跳中...' : undefined,
+    disabled: busy,
+  };
 }
 
 type DashboardActionQueueItem = {
@@ -951,6 +970,8 @@ export function DashboardPage() {
   const [aiDiagnosisRuns, setAiDiagnosisRuns] = useState<AiDiagnosisRunView[]>([]);
   const [deliveryReadiness, setDeliveryReadiness] = useState<DeliveryReadinessView | null>(null);
   const [deliveryEvidenceStatus, setDeliveryEvidenceStatus] = useState<DeliveryEvidenceStatusView | null>(null);
+  const [pendingPrimaryRoute, setPendingPrimaryRoute] = useState<AppRoute | null>(null);
+  const primaryNavigationTimerRef = useRef<number | null>(null);
   const collection = data?.collection;
   const quant = data?.quant;
   const hasMetrics = Boolean(quant?.hasImportedMetrics);
@@ -1205,6 +1226,10 @@ export function DashboardPage() {
         label: '查看交付缺口',
         onClick: () => navigate('delivery' as AppRoute),
       }];
+  const primaryTaskNavigationFeedback = dashboardPrimaryTaskNavigationFeedback({
+    action: primaryTaskAction,
+    pendingRoute: pendingPrimaryRoute,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -1302,6 +1327,12 @@ export function DashboardPage() {
     };
   }, [data?.collection.latestBatch?.id, scope.asin, scope.batchId, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
 
+  useEffect(() => () => {
+    if (primaryNavigationTimerRef.current) {
+      window.clearTimeout(primaryNavigationTimerRef.current);
+    }
+  }, []);
+
   async function openPath(targetPath: string) {
     try {
       await (window as any).electronAPI?.openReportPath?.(targetPath);
@@ -1309,6 +1340,18 @@ export function DashboardPage() {
     } catch (caught) {
       setPathNotice(`打开失败：${toUserFacingError(caught, '打开路径失败。')}`);
     }
+  }
+
+  function navigatePrimaryTask(route: AppRoute) {
+    setPendingPrimaryRoute(route);
+    if (primaryNavigationTimerRef.current) {
+      window.clearTimeout(primaryNavigationTimerRef.current);
+    }
+    primaryNavigationTimerRef.current = window.setTimeout(() => {
+      navigate(route);
+      setPendingPrimaryRoute(null);
+      primaryNavigationTimerRef.current = null;
+    }, 150);
   }
 
   return (
@@ -1324,8 +1367,11 @@ export function DashboardPage() {
         title={primaryTaskAction.title}
         detail={primaryTaskDetail}
         primaryAction={{
-          label: primaryTaskAction.label,
-          onClick: () => navigate(primaryTaskAction.route),
+          label: primaryTaskNavigationFeedback.label,
+          busy: primaryTaskNavigationFeedback.busy,
+          busyLabel: primaryTaskNavigationFeedback.busyLabel,
+          disabled: primaryTaskNavigationFeedback.disabled,
+          onClick: () => navigatePrimaryTask(primaryTaskAction.route),
         }}
         secondaryActions={primaryTaskSecondaryActions}
       >
