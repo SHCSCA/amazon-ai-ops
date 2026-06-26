@@ -11,6 +11,7 @@ import {
   settingsSecondaryStatusMessage,
   settingsAiTaskTitle,
   settingsPrimaryAiStatusItems,
+  settingsRuleConfigFieldFeedback,
   shouldResetAiTestForSettingsField,
 } from './settings-page';
 
@@ -127,5 +128,47 @@ describe('settings secondary status message', () => {
     expect(settingsSecondaryStatusMessage('AI 设置已保存。API Key 仅显示为已配置状态，不在页面展示明文。')).toBe('');
     expect(settingsSecondaryStatusMessage('AI 连接测试失败：401 Unauthorized')).toBe('');
     expect(settingsSecondaryStatusMessage('阈值保存失败：目标 ACOS 必须大于 0。')).toBe('阈值保存失败：目标 ACOS 必须大于 0。');
+  });
+});
+
+describe('settings rule field feedback', () => {
+  it('maps invalid threshold rules back to exact form rows', () => {
+    expect(settingsRuleConfigFieldFeedback({
+      targetAcos: 0.35,
+      highAcosThreshold: 0.2,
+      noOrderClickThreshold: 0,
+      minSpend: -1,
+      bidAdjustPercent: 0.3,
+      maxBidDecrement: 0.2,
+      enableAutoLowerBid: true,
+      enableAutoAddNegative: true,
+      brandWordWhitelist: [],
+      coreWordWhitelist: [],
+      maxCpc: 0,
+      minCpc: 1,
+    })).toMatchObject({
+      highAcosThreshold: '高 ACOS 阈值不能低于目标 ACOS',
+      noOrderClickThreshold: '无订单点击阈值必须至少为 1',
+      minSpend: '最低花费不能为负数',
+      maxBidDecrement: '最大降价比例不能低于单次降价比例',
+      maxCpc: '最高 CPC 必须大于 0',
+    });
+  });
+
+  it('keeps valid threshold rules free of field feedback', () => {
+    expect(settingsRuleConfigFieldFeedback({
+      targetAcos: 0.25,
+      highAcosThreshold: 0.4,
+      noOrderClickThreshold: 30,
+      minSpend: 10,
+      bidAdjustPercent: 0.12,
+      maxBidDecrement: 0.35,
+      enableAutoLowerBid: true,
+      enableAutoAddNegative: true,
+      brandWordWhitelist: [],
+      coreWordWhitelist: [],
+      maxCpc: 5,
+      minCpc: 0.02,
+    })).toEqual({});
   });
 });

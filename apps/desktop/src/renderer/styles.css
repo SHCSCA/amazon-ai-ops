@@ -5133,9 +5133,9 @@ code {
 
 .form-table-row {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
+  grid-template-columns: 160px minmax(0, 1fr);
   gap: 16px;
-  align-items: center;
+  align-items: start;
   min-height: 48px;
   border-bottom: 1px solid #f1f5f9;
   padding: 8px 12px;
@@ -5160,6 +5160,68 @@ code {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.25;
+}
+
+.form-table-feedback {
+  min-height: 16px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 1px 5px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+  transform: translateY(0);
+  animation: form-table-feedback-in 120ms ease-out;
+}
+
+.form-table-feedback-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+  color: var(--red);
+}
+
+.form-table-feedback-warning {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+  color: var(--amber);
+}
+
+.form-table-feedback-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+}
+
+.form-table-feedback-pending {
+  border-color: var(--tone-pending-border);
+  background: var(--tone-pending-bg);
+  color: var(--text-muted);
+}
+
+.form-table-row-blocked input:not([type="checkbox"]),
+.form-table-row-blocked select,
+.form-table-row-blocked textarea {
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px rgb(201 47 53 / 0.10);
+}
+
+.form-table-row-warning input:not([type="checkbox"]),
+.form-table-row-warning select,
+.form-table-row-warning textarea {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 2px rgb(161 92 0 / 0.08);
+}
+
+@keyframes form-table-feedback-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .inline-input-grid {

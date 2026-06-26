@@ -313,28 +313,63 @@ function percentLabel(value: number): string {
   return `${(value * 100).toFixed(0)}%`;
 }
 
+function finiteRuleNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function settingsRuleConfigFieldFeedback(config: SettingsRuleConfig): Partial<Record<keyof SettingsRuleConfig, string>> {
+  const feedback: Partial<Record<keyof SettingsRuleConfig, string>> = {};
+  if (!finiteRuleNumber(config.targetAcos) || config.targetAcos <= 0) feedback.targetAcos = '目标 ACOS 必须大于 0';
+  if (!finiteRuleNumber(config.highAcosThreshold) || config.highAcosThreshold <= 0) {
+    feedback.highAcosThreshold = '高 ACOS 阈值必须大于 0';
+  } else if (finiteRuleNumber(config.targetAcos) && config.highAcosThreshold < config.targetAcos) {
+    feedback.highAcosThreshold = '高 ACOS 阈值不能低于目标 ACOS';
+  }
+  if (!finiteRuleNumber(config.noOrderClickThreshold) || config.noOrderClickThreshold < 1) {
+    feedback.noOrderClickThreshold = '无订单点击阈值必须至少为 1';
+  }
+  if (!finiteRuleNumber(config.minSpend) || config.minSpend < 0) feedback.minSpend = '最低花费不能为负数';
+  if (!finiteRuleNumber(config.bidAdjustPercent) || config.bidAdjustPercent <= 0 || config.bidAdjustPercent > 1) {
+    feedback.bidAdjustPercent = '降价比例必须在 0 到 1 之间';
+  }
+  if (!finiteRuleNumber(config.maxBidDecrement) || config.maxBidDecrement <= 0 || config.maxBidDecrement > 1) {
+    feedback.maxBidDecrement = '最大降价比例必须在 0 到 1 之间';
+  } else if (finiteRuleNumber(config.bidAdjustPercent) && config.maxBidDecrement < config.bidAdjustPercent) {
+    feedback.maxBidDecrement = '最大降价比例不能低于单次降价比例';
+  }
+  if (config.minCpc !== undefined && (!finiteRuleNumber(config.minCpc) || config.minCpc < 0)) feedback.minCpc = '最低 CPC 不能为负数';
+  if (config.maxCpc !== undefined && (!finiteRuleNumber(config.maxCpc) || config.maxCpc <= 0)) feedback.maxCpc = '最高 CPC 必须大于 0';
+  if (
+    finiteRuleNumber(config.minCpc)
+    && finiteRuleNumber(config.maxCpc)
+    && Number(config.minCpc) > Number(config.maxCpc)
+  ) {
+    feedback.minCpc = '最低 CPC 不能高于最高 CPC';
+  }
+  return feedback;
+}
+
 function validateRuleConfigForSave(config: SettingsRuleConfig): string[] {
   const errors: string[] = [];
-  const finite = (value: unknown) => typeof value === 'number' && Number.isFinite(value);
-  if (!finite(config.targetAcos) || config.targetAcos <= 0) errors.push('目标 ACOS 必须大于 0');
-  if (!finite(config.highAcosThreshold) || config.highAcosThreshold <= 0) errors.push('高 ACOS 阈值必须大于 0');
-  if (finite(config.targetAcos) && finite(config.highAcosThreshold) && config.highAcosThreshold < config.targetAcos) {
+  if (!finiteRuleNumber(config.targetAcos) || config.targetAcos <= 0) errors.push('目标 ACOS 必须大于 0');
+  if (!finiteRuleNumber(config.highAcosThreshold) || config.highAcosThreshold <= 0) errors.push('高 ACOS 阈值必须大于 0');
+  if (finiteRuleNumber(config.targetAcos) && finiteRuleNumber(config.highAcosThreshold) && config.highAcosThreshold < config.targetAcos) {
     errors.push('高 ACOS 阈值不能低于目标 ACOS');
   }
-  if (!finite(config.noOrderClickThreshold) || config.noOrderClickThreshold < 1) errors.push('无订单点击阈值必须至少为 1');
-  if (!finite(config.minSpend) || config.minSpend < 0) errors.push('最低花费不能为负数');
-  if (!finite(config.bidAdjustPercent) || config.bidAdjustPercent <= 0 || config.bidAdjustPercent > 1) {
+  if (!finiteRuleNumber(config.noOrderClickThreshold) || config.noOrderClickThreshold < 1) errors.push('无订单点击阈值必须至少为 1');
+  if (!finiteRuleNumber(config.minSpend) || config.minSpend < 0) errors.push('最低花费不能为负数');
+  if (!finiteRuleNumber(config.bidAdjustPercent) || config.bidAdjustPercent <= 0 || config.bidAdjustPercent > 1) {
     errors.push('降价比例必须在 0 到 1 之间');
   }
-  if (!finite(config.maxBidDecrement) || config.maxBidDecrement <= 0 || config.maxBidDecrement > 1) {
+  if (!finiteRuleNumber(config.maxBidDecrement) || config.maxBidDecrement <= 0 || config.maxBidDecrement > 1) {
     errors.push('最大降价比例必须在 0 到 1 之间');
   }
-  if (finite(config.bidAdjustPercent) && finite(config.maxBidDecrement) && config.maxBidDecrement < config.bidAdjustPercent) {
+  if (finiteRuleNumber(config.bidAdjustPercent) && finiteRuleNumber(config.maxBidDecrement) && config.maxBidDecrement < config.bidAdjustPercent) {
     errors.push('最大降价比例不能低于单次降价比例');
   }
-  if (config.minCpc !== undefined && (!finite(config.minCpc) || config.minCpc < 0)) errors.push('最低 CPC 不能为负数');
-  if (config.maxCpc !== undefined && (!finite(config.maxCpc) || config.maxCpc <= 0)) errors.push('最高 CPC 必须大于 0');
-  if (finite(config.minCpc) && finite(config.maxCpc) && Number(config.minCpc) > Number(config.maxCpc)) {
+  if (config.minCpc !== undefined && (!finiteRuleNumber(config.minCpc) || config.minCpc < 0)) errors.push('最低 CPC 不能为负数');
+  if (config.maxCpc !== undefined && (!finiteRuleNumber(config.maxCpc) || config.maxCpc <= 0)) errors.push('最高 CPC 必须大于 0');
+  if (finiteRuleNumber(config.minCpc) && finiteRuleNumber(config.maxCpc) && Number(config.minCpc) > Number(config.maxCpc)) {
     errors.push('最低 CPC 不能高于最高 CPC');
   }
   return errors;
@@ -476,9 +511,18 @@ export function SettingsPage() {
     () => settingsSecondaryStatusMessage(message),
     [message],
   );
+  const ruleFieldFeedback = useMemo(
+    () => settingsRuleConfigFieldFeedback(ruleConfig),
+    [ruleConfig],
+  );
   const aiCallDiagnostics = useMemo(
     () => buildAiCallDiagnostics(aiCallLogs),
     [aiCallLogs],
+  );
+  const ruleFeedbackFor = (field: keyof SettingsRuleConfig) => (
+    ruleFieldFeedback[field]
+      ? { tone: 'blocked' as const, children: ruleFieldFeedback[field] }
+      : undefined
   );
 
   async function saveAiSettings() {
@@ -788,7 +832,7 @@ export function SettingsPage() {
             </div>
           </div>
           <FormTable>
-            <FormTableRow label="目标 ACOS" required hint="低于目标线的词和投放对象优先保留、观察或扩量复核。">
+            <FormTableRow label="目标 ACOS" required hint="低于目标线的词和投放对象优先保留、观察或扩量复核。" feedback={ruleFeedbackFor('targetAcos')}>
               <input
                 type="number"
                 step="0.01"
@@ -796,7 +840,7 @@ export function SettingsPage() {
                 onChange={(event) => setRuleConfig({ ...ruleConfig, targetAcos: Number(event.target.value) })}
               />
             </FormTableRow>
-            <FormTableRow label="高 ACOS 阈值" required hint="超过风险线且花费达到最低门槛时，进入降价或否词建议。">
+            <FormTableRow label="高 ACOS 阈值" required hint="超过风险线且花费达到最低门槛时，进入降价或否词建议。" feedback={ruleFeedbackFor('highAcosThreshold')}>
               <input
                 type="number"
                 step="0.01"
@@ -804,14 +848,14 @@ export function SettingsPage() {
                 onChange={(event) => setRuleConfig({ ...ruleConfig, highAcosThreshold: Number(event.target.value) })}
               />
             </FormTableRow>
-            <FormTableRow label="无订单点击阈值" required hint="达到点击阈值仍无订单时，标记为浪费风险。">
+            <FormTableRow label="无订单点击阈值" required hint="达到点击阈值仍无订单时，标记为浪费风险。" feedback={ruleFeedbackFor('noOrderClickThreshold')}>
               <input
                 type="number"
                 value={ruleConfig.noOrderClickThreshold}
                 onChange={(event) => setRuleConfig({ ...ruleConfig, noOrderClickThreshold: Number(event.target.value) })}
               />
             </FormTableRow>
-            <FormTableRow label="最低花费" required hint="单位 USD；花费低于该值时只提示观察，不生成强动作。">
+            <FormTableRow label="最低花费" required hint="单位 USD；花费低于该值时只提示观察，不生成强动作。" feedback={ruleFeedbackFor('minSpend')}>
               <input
                 type="number"
                 step="0.01"
@@ -819,7 +863,7 @@ export function SettingsPage() {
                 onChange={(event) => setRuleConfig({ ...ruleConfig, minSpend: Number(event.target.value) })}
               />
             </FormTableRow>
-            <FormTableRow label="降价比例" required hint="只生成建议，不自动写入 Ads；执行仍走审批和回读。">
+            <FormTableRow label="降价比例" required hint="只生成建议，不自动写入 Ads；执行仍走审批和回读。" feedback={ruleFeedbackFor('bidAdjustPercent')}>
               <input
                 type="number"
                 step="0.01"
@@ -827,7 +871,7 @@ export function SettingsPage() {
                 onChange={(event) => setRuleConfig({ ...ruleConfig, bidAdjustPercent: Number(event.target.value) })}
               />
             </FormTableRow>
-            <FormTableRow label="最大降价比例" required hint="单次建议不超过该比例，且受 CPC 下限保护。">
+            <FormTableRow label="最大降价比例" required hint="单次建议不超过该比例，且受 CPC 下限保护。" feedback={ruleFeedbackFor('maxBidDecrement')}>
               <input
                 type="number"
                 step="0.01"
@@ -835,7 +879,7 @@ export function SettingsPage() {
                 onChange={(event) => setRuleConfig({ ...ruleConfig, maxBidDecrement: Number(event.target.value) })}
               />
             </FormTableRow>
-            <FormTableRow label="最高 CPC" hint="单位 USD；用于识别异常高出价和建议上限。">
+            <FormTableRow label="最高 CPC" hint="单位 USD；用于识别异常高出价和建议上限。" feedback={ruleFeedbackFor('maxCpc')}>
               <input
                 type="number"
                 step="0.01"
@@ -843,7 +887,7 @@ export function SettingsPage() {
                 onChange={(event) => setRuleConfig({ ...ruleConfig, maxCpc: Number(event.target.value) })}
               />
             </FormTableRow>
-            <FormTableRow label="最低 CPC" hint="单位 USD；降价建议不会低于该下限。">
+            <FormTableRow label="最低 CPC" hint="单位 USD；降价建议不会低于该下限。" feedback={ruleFeedbackFor('minCpc')}>
               <input
                 type="number"
                 step="0.01"

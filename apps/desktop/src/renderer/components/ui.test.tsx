@@ -60,6 +60,31 @@ describe('industrial UI atoms', () => {
     expect(collectElements(tree, (element) => element.props.className === 'form-table-row')).toHaveLength(1);
   });
 
+  it('renders reserved field feedback without replacing the row hint', () => {
+    const tree = FormTableRow({
+      label: '目标 ACOS',
+      required: true,
+      hint: '0 到 1 的小数格式。',
+      feedback: { tone: 'blocked', children: '目标 ACOS 必须大于 0' },
+      children: <input value="0" readOnly />,
+    }) as ReactElement;
+
+    expect(tree.props.className).toBe('form-table-row form-table-row-blocked');
+    expect(collectText(tree)).toContain('0 到 1 的小数格式。');
+    expect(collectText(tree)).toContain('目标 ACOS 必须大于 0');
+    expect(collectElements(tree, (element) => element.props.className === 'form-table-feedback form-table-feedback-blocked')).toHaveLength(1);
+    expect(collectElements(tree, (element) => element.props.role === 'status' && element.props['aria-live'] === 'polite')).toHaveLength(1);
+  });
+
+  it('keeps form table feedback styles reserved and non-jumpy', () => {
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toMatch(/\.form-table-row[\s\S]*grid-template-columns:\s*160px minmax\(0, 1fr\)/);
+    expect(stylesheet).toMatch(/\.form-table-feedback[\s\S]*min-height:\s*16px/);
+    expect(stylesheet).toContain('.form-table-feedback-blocked');
+    expect(stylesheet).toContain('@keyframes form-table-feedback-in');
+  });
+
   it('renders safety gate language as a dedicated first-class line', () => {
     const tree = SafetyGateLine({ children: '审批时间 <= 执行前时间 <= 线下动作执行时间 <= 真实回读时间' }) as ReactElement;
 

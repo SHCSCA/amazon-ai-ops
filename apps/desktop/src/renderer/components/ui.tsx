@@ -94,19 +94,26 @@ export function FormTable({ children }: { children: React.ReactNode }) {
   return <div className="form-table">{children}</div>;
 }
 
+export type FormTableFeedbackTone = 'ready' | 'pending' | 'blocked' | 'warning';
+
 export function FormTableRow({
   label,
   required,
   children,
   hint,
+  feedback,
 }: {
   label: string;
   required?: boolean;
   children: React.ReactNode;
   hint?: React.ReactNode;
+  feedback?: {
+    tone: FormTableFeedbackTone;
+    children: React.ReactNode;
+  };
 }) {
   return (
-    <label className="form-table-row">
+    <label className={`form-table-row${feedback ? ` form-table-row-${feedback.tone}` : ''}`}>
       <span className="form-table-label">
         {label}
         {required && <b aria-label="必填">*</b>}
@@ -114,6 +121,11 @@ export function FormTableRow({
       <span className="form-table-control">
         {children}
         {hint && <small>{hint}</small>}
+        {feedback && (
+          <small className={`form-table-feedback form-table-feedback-${feedback.tone}`} role="status" aria-live="polite">
+            {feedback.children}
+          </small>
+        )}
       </span>
     </label>
   );
