@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import type {
@@ -18,6 +18,13 @@ const REPORT_OPTIONS: BusinessReportOptionStatus[] = [
   { type: 'product_targeting', label: '商品投放报告', status: 'missing', realFileAvailable: false, importedRows: 0 },
   { type: 'user_search_term', label: '用户搜索词报告', status: 'missing', realFileAvailable: false, importedRows: 0 },
 ];
+
+export const BUSINESS_PIPELINE_SCOPE_DEBOUNCE_MS = 300;
+
+export function businessPipelineLoadDelay(input: { firstLoad: boolean; reloadChanged: boolean }): number {
+  if (input.firstLoad || input.reloadChanged) return 0;
+  return BUSINESS_PIPELINE_SCOPE_DEBOUNCE_MS;
+}
 
 function emptyPipeline(scope: OperationScope, reason: string): BusinessDataPipeline {
   return {
@@ -85,6 +92,8 @@ export function useBusinessDataPipeline() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
+  const firstLoadRef = useRef(true);
+  const previousReloadTokenRef = useRef(reloadToken);
 
   const scopeKey = useMemo(
     () => [scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode, scope.asin || '', scope.batchId || ''].join('|'),
@@ -93,6 +102,11 @@ export function useBusinessDataPipeline() {
 
   useEffect(() => {
     let cancelled = false;
+    const reloadChanged = reloadToken !== previousReloadTokenRef.current;
+    const loadDelay = businessPipelineLoadDelay({ firstLoad: firstLoadRef.current, reloadChanged });
+    previousReloadTokenRef.current = reloadToken;
+    firstLoadRef.current = false;
+
     async function load() {
       setLoading(true);
       setError(null);
@@ -138,9 +152,12 @@ export function useBusinessDataPipeline() {
       }
     }
 
-    load();
+    setLoading(true);
+    setError(null);
+    const timeout = window.setTimeout(load, loadDelay);
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
     };
   }, [scope, scopeKey, reloadToken]);
 
