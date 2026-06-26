@@ -1758,15 +1758,34 @@ code {
 
 .collection-monitor-preview-screen {
   position: relative;
-  display: grid;
-  gap: 8px;
   min-height: 112px;
   overflow: hidden;
   border: 1px solid #1e293b;
   border-radius: var(--radius);
-  background: #0f172a;
-  padding: 14px;
+  background:
+    radial-gradient(circle at 20% 18%, rgb(37 99 235 / 0.32), transparent 28%),
+    linear-gradient(135deg, #0f172a 0%, #111827 48%, #1e293b 100%);
   color: #e2e8f0;
+}
+
+.collection-monitor-preview-canvas {
+  display: block;
+  width: 100%;
+  min-height: 124px;
+  background:
+    linear-gradient(90deg, rgb(148 163 184 / 0.10) 0 1px, transparent 1px 18px),
+    linear-gradient(0deg, rgb(148 163 184 / 0.10) 0 1px, transparent 1px 18px),
+    linear-gradient(135deg, #0f172a 0%, #1d4ed8 52%, #0f172a 100%);
+}
+
+.collection-monitor-preview-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 14px;
+  background: linear-gradient(180deg, rgb(15 23 42 / 0.22), rgb(15 23 42 / 0.72));
 }
 
 .collection-monitor-preview-screen strong {

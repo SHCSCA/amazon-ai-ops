@@ -393,7 +393,7 @@ function buildActionProgressSteps(mode: CollectionActionMode | null, result: Las
   ];
 }
 
-function CollectionMonitorDrawer({
+export function CollectionMonitorDrawer({
   state,
   steps,
   evidencePath,
@@ -421,9 +421,18 @@ function CollectionMonitorDrawer({
       <p className="collection-monitor-detail">{state.detail}</p>
       <div className="collection-monitor-preview" aria-label="下载中心监控预览">
         <div className="collection-monitor-preview-screen">
-          <span className="collection-monitor-scanline" />
-          <strong>{state.previewTitle}</strong>
-          <small>{state.previewDetail}</small>
+          <canvas
+            aria-label="可见浏览器画面预览"
+            className="collection-monitor-preview-canvas"
+            height={180}
+            role="img"
+            width={320}
+          />
+          <div className="collection-monitor-preview-overlay">
+            <span className="collection-monitor-scanline" />
+            <strong>{state.previewTitle}</strong>
+            <small>{state.previewDetail}</small>
+          </div>
         </div>
       </div>
       {steps.length > 0 && (

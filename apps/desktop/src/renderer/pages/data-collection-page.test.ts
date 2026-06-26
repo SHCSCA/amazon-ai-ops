@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
+import React, { type ReactElement, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import * as dataCollectionPage from './data-collection-page';
 import {
   buildDataCollectionTaskState,
   buildCollectionMonitorState,
@@ -12,6 +15,14 @@ import {
   shouldOfferDownloadCenterVerification,
 } from './data-collection-page';
 import { buildDataImportFeedback, buildDataImportTaskState, buildReportImportStatusDisplay, dataImportFirstViewportReportFolder } from './data-import-validation-page';
+
+function collectElements(node: ReactNode, predicate: (element: ReactElement) => boolean): ReactElement[] {
+  if (node === null || node === undefined || typeof node === 'boolean') return [];
+  if (Array.isArray(node)) return node.flatMap((child) => collectElements(child, predicate));
+  if (!React.isValidElement(node)) return [];
+  const matches = predicate(node) ? [node] : [];
+  return matches.concat(collectElements(node.props.children, predicate));
+}
 
 describe('collectionCompletionNotice', () => {
   it('does not claim a download action completed when no real file was produced by this action', () => {
@@ -213,6 +224,47 @@ describe('task-first data page helpers', () => {
     expect(monitor?.headline).toContain('全部 8 类');
     expect(monitor?.previewDetail).toContain('当前范围覆盖 8/8 类');
     expect(monitor?.canClose).toBe(true);
+  });
+
+  it('renders a canvas browser preview inside the monitor drawer', () => {
+    const Drawer = (dataCollectionPage as {
+      CollectionMonitorDrawer?: (props: {
+        state: NonNullable<ReturnType<typeof buildCollectionMonitorState>>;
+        steps: Array<{ label: string; description: string; status: 'ready' | 'pending' | 'blocked' }>;
+        evidencePath?: string;
+        onClose: () => void;
+      }) => ReactElement;
+    }).CollectionMonitorDrawer;
+    expect(typeof Drawer).toBe('function');
+    if (!Drawer) return;
+
+    const state = buildCollectionMonitorState({
+      runningAction: 'recreate-full',
+      actionNotice: '正在重新创建全部 8 类报表、下载并自动导入。',
+      actionError: null,
+      lastActionResult: null,
+      lastDiagnostic: null,
+      realReportCount: 0,
+      importedRowCount: 0,
+    });
+    expect(state).toBeTruthy();
+
+    const tree = Drawer({
+      state: state!,
+      steps: [{ label: '1. 验证当前范围', description: '检查日期和店铺。', status: 'pending' }],
+      evidencePath: 'C:/evidence/download-center.png',
+      onClose: vi.fn(),
+    });
+    const canvases = collectElements(tree, (element) => element.type === 'canvas');
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(canvases).toHaveLength(1);
+    expect(canvases[0].props.className).toBe('collection-monitor-preview-canvas');
+    expect(canvases[0].props['aria-label']).toBe('可见浏览器画面预览');
+    expect(canvases[0].props.width).toBe(320);
+    expect(canvases[0].props.height).toBe(180);
+    expect(css).toContain('.collection-monitor-preview-canvas');
+    expect(css).toContain('.collection-monitor-preview-overlay');
   });
 
   it('uses the full 8-report refresh as the data collection primary action until rows are imported', () => {
