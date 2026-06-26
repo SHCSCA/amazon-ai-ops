@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildProductConfigBulkApplyState,
+  buildProductConfigBulkSaveInput,
   buildCostInputFromProduct,
   buildProductConfigTaskState,
   isProductConfigAutoSaveField,
+  normalizeProductConfigAcosPercent,
   productConfigMetricTone,
   productConfigNudgeCostValue,
   productConfigInlineSaveLabel,
@@ -115,5 +118,87 @@ describe('product config task and inline save feedback', () => {
     expect(productConfigMetricTone('targetAcos', 0.75)).toBe('blocked');
     expect(productConfigMetricTone('targetAcos', 0.45)).toBe('warning');
     expect(productConfigMetricTone('targetAcos', 0.3)).toBe('ready');
+  });
+});
+
+describe('product config bulk ACOS apply', () => {
+  it('turns operator percent input into product target ACOS decimal values', () => {
+    expect(normalizeProductConfigAcosPercent('35')).toBe(0.35);
+    expect(normalizeProductConfigAcosPercent(12.5)).toBe(0.125);
+    expect(normalizeProductConfigAcosPercent('not-a-number')).toBeNull();
+  });
+
+  it('builds a disabled state until products and a valid percent are selected', () => {
+    expect(buildProductConfigBulkApplyState({
+      totalProducts: 3,
+      selectedCount: 0,
+      targetAcosPercent: 35,
+      applying: false,
+    })).toMatchObject({
+      canApply: false,
+      primaryActionLabel: '先勾选产品',
+      statusTone: 'pending',
+    });
+
+    expect(buildProductConfigBulkApplyState({
+      totalProducts: 3,
+      selectedCount: 2,
+      targetAcosPercent: 35,
+      applying: false,
+    })).toMatchObject({
+      canApply: true,
+      primaryActionLabel: '应用到 2 个产品',
+      targetAcos: 0.35,
+      statusTone: 'ready',
+    });
+
+    expect(buildProductConfigBulkApplyState({
+      totalProducts: 3,
+      selectedCount: 2,
+      targetAcosPercent: 140,
+      applying: false,
+    })).toMatchObject({
+      canApply: false,
+      statusTone: 'blocked',
+    });
+  });
+
+  it('preserves product identity and cost fields while replacing only target ACOS', () => {
+    const input = buildProductConfigBulkSaveInput({
+      asin: 'B001',
+      parent_asin: 'P001',
+      msku: 'MSKU-1',
+      sku: 'SKU-1',
+      title: 'Smart Lock',
+      product_stage: 'scaling',
+      status: 'active',
+      cost: {
+        purchaseCost: 12,
+        minPrice: 39.99,
+        targetAcos: 0.25,
+        targetTacos: 0.12,
+      },
+    }, {
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+    }, 0.35);
+
+    expect(input.product).toMatchObject({
+      asin: 'B001',
+      parentAsin: 'P001',
+      msku: 'MSKU-1',
+      sku: 'SKU-1',
+      title: 'Smart Lock',
+      productStage: 'scaling',
+      status: 'active',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+    });
+    expect(input.cost).toMatchObject({
+      purchaseCost: 12,
+      minPrice: 39.99,
+      targetAcos: 0.35,
+      targetTacos: 0.12,
+    });
   });
 });

@@ -160,6 +160,75 @@ export function buildProductConfigTaskState(input: {
   };
 }
 
+export function normalizeProductConfigAcosPercent(value: string | number): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 100) return null;
+  return Number((parsed / 100).toFixed(4));
+}
+
+export function productConfigProductKey(product: any): string {
+  return String(product?.id ?? product?.asin ?? '');
+}
+
+export function buildProductConfigBulkApplyState(input: {
+  totalProducts: number;
+  selectedCount: number;
+  targetAcosPercent: string | number;
+  applying: boolean;
+}) {
+  const targetAcos = normalizeProductConfigAcosPercent(input.targetAcosPercent);
+  const targetPercent = Number(input.targetAcosPercent);
+  const validTarget = targetAcos !== null;
+  const targetAcosLabel = validTarget ? `${targetPercent.toFixed(2)}%` : '-';
+  const hasProducts = input.totalProducts > 0;
+  const hasSelection = input.selectedCount > 0;
+  const canApply = hasProducts && hasSelection && validTarget && !input.applying;
+  let statusTone: ProductConfigMetricTone = 'pending';
+  let statusMessage = hasProducts ? `${input.selectedCount}/${input.totalProducts} 个产品已勾选` : '当前范围暂无产品';
+  if (!validTarget) {
+    statusTone = 'blocked';
+    statusMessage = '目标 ACOS 必须为 0 到 100 之间的百分比';
+  } else if (!hasProducts) {
+    statusTone = 'pending';
+  } else if (!hasSelection) {
+    statusTone = 'pending';
+  } else if (input.applying) {
+    statusTone = 'warning';
+    statusMessage = `正在应用 ${targetAcosLabel}`;
+  } else {
+    statusTone = 'ready';
+    statusMessage = `将 ${targetAcosLabel} 应用到 ${input.selectedCount} 个产品`;
+  }
+  return {
+    canApply,
+    primaryActionLabel: input.applying ? '批量应用中...' : hasSelection ? `应用到 ${input.selectedCount} 个产品` : '先勾选产品',
+    statusTone,
+    statusMessage,
+    targetAcos,
+    targetAcosLabel,
+  };
+}
+
+export function buildProductConfigBulkSaveInput(product: any, scope: { storeName: string; marketplaceCode: string }, targetAcos: number) {
+  return {
+    product: {
+      asin: String(product?.asin || '').trim(),
+      parentAsin: product?.parent_asin || product?.parentAsin || '',
+      msku: product?.msku || '',
+      sku: product?.sku || '',
+      title: product?.title || '',
+      productStage: product?.product_stage || product?.productStage || 'keyword_exploration',
+      status: product?.status || 'active',
+      storeName: scope.storeName,
+      marketplaceCode: scope.marketplaceCode,
+    },
+    cost: {
+      ...buildCostInputFromProduct(product),
+      targetAcos,
+    },
+  };
+}
+
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
@@ -184,6 +253,11 @@ export function ProductConfigPage() {
   const [dirtyCostFields, setDirtyCostFields] = useState<Partial<Record<ProductCostKey, boolean>>>({});
   const [inlineSave, setInlineSave] = useState<{ field?: ProductCostKey; status: InlineSaveStatus }>({ status: 'idle' });
   const [nudgedCostField, setNudgedCostField] = useState<ProductCostKey | null>(null);
+  const [bulkSelectedProductKeys, setBulkSelectedProductKeys] = useState<string[]>([]);
+  const [bulkTargetAcosPercent, setBulkTargetAcosPercent] = useState(35);
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [bulkFeedback, setBulkFeedback] = useState('');
+  const [bulkFeedbackTone, setBulkFeedbackTone] = useState<ProductConfigMetricTone>('pending');
   const nudgeTimerRef = useRef<number | null>(null);
   const [draft, setDraft] = useState({
     asin: scope.asin || '',
@@ -212,6 +286,19 @@ export function ProductConfigPage() {
     importedRows,
     saving,
   });
+  const selectedBulkKeySet = useMemo(() => new Set(bulkSelectedProductKeys), [bulkSelectedProductKeys]);
+  const selectedBulkProducts = useMemo(
+    () => currentScopeProducts.filter((product) => selectedBulkKeySet.has(productConfigProductKey(product))),
+    [currentScopeProducts, selectedBulkKeySet],
+  );
+  const bulkApplyState = buildProductConfigBulkApplyState({
+    totalProducts: currentScopeProducts.length,
+    selectedCount: selectedBulkProducts.length,
+    targetAcosPercent: bulkTargetAcosPercent,
+    applying: bulkApplying,
+  });
+  const allCurrentProductsSelected = currentScopeProducts.length > 0
+    && currentScopeProducts.every((product) => selectedBulkKeySet.has(productConfigProductKey(product)));
 
   async function loadProducts() {
     setLoading(true);
@@ -237,6 +324,14 @@ export function ProductConfigPage() {
   useEffect(() => () => {
     if (nudgeTimerRef.current) window.clearTimeout(nudgeTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    const currentKeys = new Set(currentScopeProducts.map(productConfigProductKey));
+    setBulkSelectedProductKeys((current) => {
+      const next = current.filter((key) => currentKeys.has(key));
+      return next.length === current.length ? current : next;
+    });
+  }, [currentScopeProducts]);
 
   function loadProduct(product: any) {
     setDraft({
@@ -300,6 +395,54 @@ export function ProductConfigPage() {
 
   async function save() {
     await saveProductConfig({ source: 'manual' });
+  }
+
+  function toggleBulkProduct(productKey: string, checked: boolean) {
+    setBulkSelectedProductKeys((current) => {
+      if (checked) return Array.from(new Set([...current, productKey]));
+      return current.filter((key) => key !== productKey);
+    });
+  }
+
+  function toggleAllBulkProducts(checked: boolean) {
+    setBulkSelectedProductKeys(checked ? currentScopeProducts.map(productConfigProductKey).filter(Boolean) : []);
+  }
+
+  async function applyBulkTargetAcos() {
+    if (!bulkApplyState.canApply || bulkApplyState.targetAcos === null) {
+      setBulkFeedback(bulkApplyState.statusMessage);
+      setBulkFeedbackTone(bulkApplyState.statusTone);
+      return;
+    }
+    const targetAcos = bulkApplyState.targetAcos;
+    const targetLabel = bulkApplyState.targetAcosLabel;
+    const selectedRows = selectedBulkProducts;
+    setBulkApplying(true);
+    setBulkFeedback(`正在把目标 ACOS ${targetLabel} 应用到 ${selectedRows.length} 个产品...`);
+    setBulkFeedbackTone('warning');
+    setError('');
+    try {
+      for (const product of selectedRows) {
+        const result = await (window as any).electronAPI?.saveProductConfig?.(
+          buildProductConfigBulkSaveInput(product, scope, targetAcos),
+        );
+        if (!result?.success) throw new Error(`产品 ${product.asin || '-'} 保存失败。`);
+      }
+      if (selectedRows.some((product) => String(product.asin || '').toUpperCase() === draft.asin.trim().toUpperCase())) {
+        setCost((current) => ({ ...current, targetAcos }));
+      }
+      setBulkSelectedProductKeys([]);
+      setBulkFeedback(`已把目标 ACOS ${targetLabel} 应用到 ${selectedRows.length} 个产品。`);
+      setBulkFeedbackTone('ready');
+      window.dispatchEvent(new Event('business-ui:data-updated'));
+      await loadProducts();
+    } catch (caught) {
+      setBulkFeedback('批量应用失败，已保留勾选。');
+      setBulkFeedbackTone('blocked');
+      setError(toUserFacingError(caught, '批量应用目标 ACOS 失败。'));
+    } finally {
+      setBulkApplying(false);
+    }
   }
 
   function updateCost(key: ProductCostKey, value: string) {
@@ -528,13 +671,57 @@ export function ProductConfigPage() {
         </Panel>
 
         <Panel title="当前范围产品列表" tone={currentScopeProducts.length ? 'default' : 'warning'}>
+          <div className="product-bulk-toolbar" aria-label="批量目标 ACOS 工具栏">
+            <div className="product-bulk-copy">
+              <strong>统一应用目标 ACOS</strong>
+              <p>只改本地产品目标阈值，不批准建议、不执行 Ads。勾选当前店铺/站点产品后批量保存。</p>
+            </div>
+            <label className="product-bulk-input">
+              <span>目标 ACOS (%)</span>
+              <input
+                aria-label="批量目标 ACOS 百分比"
+                type="number"
+                min="0.01"
+                max="100"
+                step="0.5"
+                value={bulkTargetAcosPercent}
+                onChange={(event) => setBulkTargetAcosPercent(toNumber(event.target.value))}
+                disabled={bulkApplying}
+              />
+            </label>
+            <StatusPill tone={bulkApplyState.statusTone}>{bulkApplyState.statusMessage}</StatusPill>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!bulkApplyState.canApply}
+              aria-busy={bulkApplying}
+              onClick={() => { void applyBulkTargetAcos(); }}
+            >
+              {bulkApplyState.primaryActionLabel}
+            </button>
+          </div>
+          {bulkFeedback && (
+            <p className={bulkFeedbackTone === 'blocked' ? 'blocked-line' : 'ready-line'} aria-live="polite">
+              {bulkFeedback}
+            </p>
+          )}
           <div className="table-wrap">
             <table className="business-table">
               <thead>
                 <tr>
+                  <th className="table-checkbox-cell">
+                    <input
+                      aria-label="全选当前范围产品"
+                      type="checkbox"
+                      checked={allCurrentProductsSelected}
+                      disabled={!currentScopeProducts.length || bulkApplying}
+                      onChange={(event) => toggleAllBulkProducts(event.target.checked)}
+                    />
+                  </th>
                   <th>ASIN</th>
                   <th>标题</th>
                   <th>MSKU/SKU</th>
+                  <th>目标 ACOS</th>
                   <th>阶段</th>
                   <th>状态</th>
                   <th>更新时间</th>
@@ -543,10 +730,20 @@ export function ProductConfigPage() {
               </thead>
               <tbody>
                 {currentScopeProducts.map((product) => (
-                  <tr key={product.id}>
+                  <tr className={selectedBulkKeySet.has(productConfigProductKey(product)) ? 'product-config-row-selected' : ''} key={product.id}>
+                    <td className="table-checkbox-cell">
+                      <input
+                        aria-label={`选择产品 ${product.asin}`}
+                        type="checkbox"
+                        checked={selectedBulkKeySet.has(productConfigProductKey(product))}
+                        disabled={bulkApplying}
+                        onChange={(event) => toggleBulkProduct(productConfigProductKey(product), event.target.checked)}
+                      />
+                    </td>
                     <td>{product.asin}</td>
                     <td>{product.title || '-'}</td>
                     <td>{product.msku || '-'} / {product.sku || '-'}</td>
+                    <td>{formatPercent(Number(product.cost?.targetAcos || 0) * 100)}</td>
                     <td>{stageLabel(product.product_stage)}</td>
                     <td>{product.status || '-'}</td>
                     <td>{product.updated_at || '-'}</td>
@@ -555,7 +752,7 @@ export function ProductConfigPage() {
                 ))}
                 {!currentScopeProducts.length && (
                   <tr>
-                    <td colSpan={7}>{loading ? '加载中...' : '当前店铺/站点还没有产品配置。'}</td>
+                    <td colSpan={9}>{loading ? '加载中...' : '当前店铺/站点还没有产品配置。'}</td>
                   </tr>
                 )}
               </tbody>
