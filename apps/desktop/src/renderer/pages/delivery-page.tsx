@@ -3,6 +3,7 @@ import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput } from '../delivery-readiness-matrix';
+import { READBACK_REPAIR_INTENT_EVENT, READBACK_REPAIR_INTENT_STORAGE_KEY, type ReadbackRepairIntent } from '../readback-repair-intent';
 import { useScopeStore } from '../scope-store';
 import type { AiDiagnosisRunView, AppRoute, BusinessDataPipeline, DeliveryEvidenceStatusView, DeliveryReadinessGate, DeliveryReadinessView, OperationScope, RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -374,6 +375,17 @@ export function readbackBlockerSummary(gate: DeliveryReadinessGate | null): stri
   return `${message} ${evidence}`;
 }
 
+export function buildDeliveryReadbackRepairIntent(gate: DeliveryReadinessGate | null): ReadbackRepairIntent {
+  return {
+    source: 'delivery',
+    step: 'evidence',
+    candidatePath: gate?.evidencePath || undefined,
+    missingFields: ['执行前截图', '执行后截图', '回读证据', '回读值', '回读时间'],
+    summary: readbackBlockerSummary(gate),
+    createdAt: new Date().toISOString(),
+  };
+}
+
 function primaryMissingItems(
   readiness: DeliveryReadinessView | null,
   matrix: ReturnType<typeof buildDeliveryReadinessMatrix>,
@@ -579,7 +591,7 @@ export function DeliveryPage() {
     }
     if (topDeliveryGap?.key === 'readback') {
       return readbackBlockerGate
-        ? { kind: 'create-readback', label: '创建回读工作包', onClick: createReadbackWorkPackage }
+        ? { kind: 'repair-readback', label: '直达回读补证', onClick: requestReadbackRepair }
         : { kind: 'navigate-readback', label: '去执行回读', onClick: () => navigate('readback') };
     }
     if (topDeliveryGap?.key === 'package') {
@@ -783,6 +795,17 @@ export function DeliveryPage() {
     } catch (caught) {
       setMessage(compactDeliveryMessage(toUserFacingError(caught, '创建回读工作包失败。')));
     }
+  }
+
+  function requestReadbackRepair() {
+    const intent = buildDeliveryReadbackRepairIntent(readbackBlockerGate);
+    try {
+      window.sessionStorage?.setItem(READBACK_REPAIR_INTENT_STORAGE_KEY, JSON.stringify(intent));
+    } catch {
+      // Session storage is best-effort; the runtime event still covers same-page consumers.
+    }
+    window.dispatchEvent(new CustomEvent<ReadbackRepairIntent>(READBACK_REPAIR_INTENT_EVENT, { detail: intent }));
+    navigate('readback');
   }
 
   async function verifyReadbackWorkPackage() {
@@ -1051,8 +1074,8 @@ export function DeliveryPage() {
                 <button className="secondary-button" disabled={!readbackCandidatePath} onClick={() => openPath(readbackCandidatePath, '打开回读候选证据')} type="button">
                   打开候选证据
                 </button>
-                <button className="secondary-button" onClick={() => navigate('readback')} type="button">
-                  去执行回读页
+                <button className="secondary-button" onClick={requestReadbackRepair} type="button">
+                  直达补执行证据
                 </button>
               </div>
             </div>

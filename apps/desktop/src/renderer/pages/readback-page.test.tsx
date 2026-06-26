@@ -307,6 +307,24 @@ describe('readback capture helpers', () => {
   });
 });
 
+describe('delivery repair handoff', () => {
+  it('consumes delivery repair intent and renders a visible repair target', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('READBACK_REPAIR_INTENT_EVENT');
+    expect(source).toContain('READBACK_REPAIR_INTENT_STORAGE_KEY');
+    expect(source).toContain('parseReadbackRepairIntent');
+    expect(source).toContain('readback-repair-banner');
+    expect(source).toContain('readback-step-repair-pulse');
+    expect(source).toContain('readbackRepairPanelClass(Boolean(repairIntent), repairPulse)');
+    expect(stylesheet).toContain('.readback-repair-banner');
+    expect(stylesheet).toContain('.readback-step-repair-pulse');
+    expect(stylesheet).toContain('.readback-repair-target-pulse');
+    expect(stylesheet).toContain('@keyframes readback-repair-pulse');
+  });
+});
+
 describe('sessionCheckCopy', () => {
   it('translates backend capture field labels before showing them to operators', () => {
     const copy = sessionCheckCopy({

@@ -3,6 +3,15 @@ import { useBusinessDataPipeline, ScopeText } from '../components/business-data'
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, SafetyGateLine, StatusPill } from '../components/ui';
+import {
+  parseReadbackRepairIntent,
+  READBACK_REPAIR_INTENT_EVENT,
+  READBACK_REPAIR_INTENT_STORAGE_KEY,
+  readbackRepairIntentMessage,
+  readbackRepairIntentStep,
+  readbackRepairPanelClass,
+  type ReadbackRepairIntent,
+} from '../readback-repair-intent';
 import { firstIncompleteReadbackStep, readbackWizardSteps, type ReadbackWizardStepId } from '../readback-wizard';
 import type { RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -803,6 +812,8 @@ export function ReadbackPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<ReadbackWizardStepId>('target-source');
+  const [repairIntent, setRepairIntent] = useState<ReadbackRepairIntent | null>(null);
+  const [repairPulse, setRepairPulse] = useState(false);
   const [captureSavingSlot, setCaptureSavingSlot] = useState<ReadbackCaptureSlot | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const missing = useMemo(() => requiredMissing(form, currentBatchId), [currentBatchId, form]);
@@ -829,6 +840,7 @@ export function ReadbackPage() {
   const activeStepDetail = activeMissingCount
     ? `当前步骤还有 ${activeMissingCount} 项待补；所有安全缺口仍由本地校验决定。`
     : '当前步骤已满足；进入下一步前仍保留最终导出校验。';
+  const repairIntentStep = readbackRepairIntentStep(repairIntent);
   const readbackPrimaryAction = (() => {
     if (activeStep === 'target-source') {
       return form.recommendationId
@@ -854,6 +866,36 @@ export function ReadbackPage() {
       setSessionVerifyResult(null);
     }
   }
+
+  useEffect(() => {
+    let clearPulseTimer: number | null = null;
+    function applyIntent(intent: ReadbackRepairIntent | null) {
+      if (!intent) return;
+      setRepairIntent(intent);
+      setActiveStep(readbackRepairIntentStep(intent));
+      setRepairPulse(true);
+      setMessage(readbackRepairIntentMessage(intent));
+      if (clearPulseTimer) window.clearTimeout(clearPulseTimer);
+      clearPulseTimer = window.setTimeout(() => setRepairPulse(false), 1800);
+    }
+    function handleRepairIntent(event: Event) {
+      applyIntent((event as CustomEvent<ReadbackRepairIntent>).detail || null);
+    }
+    window.addEventListener(READBACK_REPAIR_INTENT_EVENT, handleRepairIntent);
+    try {
+      const storedIntent = parseReadbackRepairIntent(window.sessionStorage?.getItem(READBACK_REPAIR_INTENT_STORAGE_KEY));
+      if (storedIntent) {
+        window.sessionStorage?.removeItem(READBACK_REPAIR_INTENT_STORAGE_KEY);
+        applyIntent(storedIntent);
+      }
+    } catch {
+      // Repair intent is a convenience handoff; the readback page remains usable without it.
+    }
+    return () => {
+      window.removeEventListener(READBACK_REPAIR_INTENT_EVENT, handleRepairIntent);
+      if (clearPulseTimer) window.clearTimeout(clearPulseTimer);
+    };
+  }, []);
 
   async function captureEvidence(slot: ReadbackCaptureSlot, files: File[]) {
     const file = firstImageFile(files);
@@ -1228,11 +1270,18 @@ export function ReadbackPage() {
           </SafetyGateLine>
         </OperatorTaskPanel>
 
+        {repairIntent && (
+          <div className="readback-repair-banner" role="status" aria-live="polite">
+            <strong>交付验收直达修复</strong>
+            <span>{readbackRepairIntentMessage(repairIntent)}</span>
+          </div>
+        )}
+
         <div className="readback-step-grid readback-step-tabs" role="tablist" aria-label="执行回读步骤">
           {readbackStepSummaries.map((step, index) => (
             <button
               aria-selected={activeStep === step.id}
-              className={`readback-step readback-step-${step.status}${activeStep === step.id ? ' readback-step-active' : ''}`}
+              className={`readback-step readback-step-${step.status}${activeStep === step.id ? ' readback-step-active' : ''}${repairIntent && repairIntentStep === step.id ? ' readback-step-repair-pulse' : ''}`}
               key={step.id}
               onClick={() => setActiveStep(step.id)}
               role="tab"
@@ -1380,45 +1429,47 @@ export function ReadbackPage() {
         )}
 
         {activeStep === 'evidence' && (
-          <Panel title="3. 补执行前后和回读" tone={activeMissingCount ? 'blocked' : 'success'}>
-            <p className="muted-line">执行前、执行后、回读截图不能复用；回读值必须等于执行后值。</p>
-            <ReadbackContractStrip checks={contractChecks} />
-            <div className="form-grid">
-              <label>执行人<input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></label>
-              <label>执行编号<input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></label>
-              <label>执行时间<input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></label>
-              <label>执行前值<input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></label>
-              <label>执行前截图<input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></label>
-              <label>执行前时间<input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
-              <label>执行后值<input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></label>
-              <label>执行后截图<input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></label>
-              <label>执行后时间<input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
-              <label>回读值<input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></label>
-              <label>回读证据<input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></label>
-              <label>回读时间<input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></label>
-              <label className="form-grid-wide">现场行证明<textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></label>
-            </div>
-            <div className="readback-capture-grid">
-              <ReadbackCaptureTarget
-                onCapture={(slot, files) => { void captureEvidence(slot, files); }}
-                saving={captureSavingSlot === 'before'}
-                slot="before"
-                value={form.beforeScreenshotPath}
-              />
-              <ReadbackCaptureTarget
-                onCapture={(slot, files) => { void captureEvidence(slot, files); }}
-                saving={captureSavingSlot === 'after'}
-                slot="after"
-                value={form.afterScreenshotPath}
-              />
-              <ReadbackCaptureTarget
-                onCapture={(slot, files) => { void captureEvidence(slot, files); }}
-                saving={captureSavingSlot === 'readback'}
-                slot="readback"
-                value={form.readbackEvidencePath}
-              />
-            </div>
-          </Panel>
+          <div className={readbackRepairPanelClass(Boolean(repairIntent), repairPulse)}>
+            <Panel title="3. 补执行前后和回读" tone={activeMissingCount ? 'blocked' : 'success'}>
+              <p className="muted-line">执行前、执行后、回读截图不能复用；回读值必须等于执行后值。</p>
+              <ReadbackContractStrip checks={contractChecks} />
+              <div className="form-grid">
+                <label>执行人<input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></label>
+                <label>执行编号<input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></label>
+                <label>执行时间<input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></label>
+                <label>执行前值<input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></label>
+                <label>执行前截图<input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></label>
+                <label>执行前时间<input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
+                <label>执行后值<input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></label>
+                <label>执行后截图<input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></label>
+                <label>执行后时间<input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
+                <label>回读值<input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></label>
+                <label>回读证据<input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></label>
+                <label>回读时间<input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></label>
+                <label className="form-grid-wide">现场行证明<textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></label>
+              </div>
+              <div className="readback-capture-grid">
+                <ReadbackCaptureTarget
+                  onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                  saving={captureSavingSlot === 'before'}
+                  slot="before"
+                  value={form.beforeScreenshotPath}
+                />
+                <ReadbackCaptureTarget
+                  onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                  saving={captureSavingSlot === 'after'}
+                  slot="after"
+                  value={form.afterScreenshotPath}
+                />
+                <ReadbackCaptureTarget
+                  onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                  saving={captureSavingSlot === 'readback'}
+                  slot="readback"
+                  value={form.readbackEvidencePath}
+                />
+              </div>
+            </Panel>
+          </div>
         )}
 
         {activeStep === 'verify-export' && (

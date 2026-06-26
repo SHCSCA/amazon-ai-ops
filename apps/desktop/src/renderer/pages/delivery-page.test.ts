@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildDeliveryItems, buildDeliveryOverviewFacts, buildManifestActions, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
+import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
 
 describe('buildDeliveryOverviewFacts', () => {
   it('keeps the delivery first screen to short operator facts instead of long manifest paths', () => {
@@ -158,6 +159,32 @@ describe('readback blocker helpers', () => {
 
     expect(gate).toBeNull();
     expect(readbackBlockerSummary(gate)).toContain('没有检测到广告回读');
+  });
+
+  it('builds a delivery-to-readback repair intent with the candidate path and evidence step', () => {
+    const intent = buildDeliveryReadbackRepairIntent({
+      name: 'Real ad execution readback',
+      ok: false,
+      message: 'Current candidate is missing before/after/reload readback proof.',
+      evidencePath: 'C:/evidence/readback-candidate.json',
+    } as any);
+
+    expect(intent).toMatchObject({
+      source: 'delivery',
+      step: 'evidence',
+      candidatePath: 'C:/evidence/readback-candidate.json',
+    });
+    expect(intent.missingFields).toEqual(expect.arrayContaining(['执行前截图', '执行后截图', '回读证据']));
+    expect(intent.summary).toContain('当前候选动作缺少执行前、执行后和刷新回读证明。');
+  });
+
+  it('persists the repair intent before navigating to readback', () => {
+    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('READBACK_REPAIR_INTENT_STORAGE_KEY');
+    expect(source).toContain('READBACK_REPAIR_INTENT_EVENT');
+    expect(source).toContain("navigate('readback')");
+    expect(source).toContain('直达补执行证据');
   });
 });
 

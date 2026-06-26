@@ -3985,6 +3985,53 @@ code {
   box-shadow: 0 0 0 2px #2563eb;
 }
 
+.readback-repair-banner {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #f1c27d;
+  border-left: 4px solid #d97706;
+  border-radius: var(--radius);
+  background: #fff8ea;
+  padding: 10px 12px;
+  color: #6b3d05;
+}
+
+.readback-repair-banner strong {
+  color: #92400e;
+  font-size: 13px;
+}
+
+.readback-repair-banner span {
+  color: #6b3d05;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.readback-step-repair-pulse {
+  box-shadow: 0 0 0 2px #f59e0b, 0 12px 28px rgba(217, 119, 6, 0.16);
+}
+
+.readback-repair-target {
+  border-radius: var(--radius);
+}
+
+.readback-repair-target-active {
+  box-shadow: 0 0 0 2px #f59e0b;
+}
+
+.readback-repair-target-pulse {
+  animation: readback-repair-pulse 900ms ease-out 2;
+}
+
+@keyframes readback-repair-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.58);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(245, 158, 11, 0);
+  }
+}
+
 .readback-step::before {
   content: '';
   position: absolute;
