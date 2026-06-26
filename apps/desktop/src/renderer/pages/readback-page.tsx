@@ -750,16 +750,45 @@ export function readbackSessionSummary(sourcePath?: string): string {
   return '创建工作包后，按清单补审批、执行前、执行后和回读截图。';
 }
 
+function readbackRepairRelatedBlockers(label: string): string[] {
+  if (label === '执行前值' || label === '执行后值') {
+    return ['执行前值和执行后值不能相同', '降价动作必须证明执行后值低于执行前值'];
+  }
+  if (label === '回读值' || label === '执行后值') {
+    return ['回读值必须等于执行后值'];
+  }
+  if (label === '执行前截图' || label === '执行后截图' || label === '回读证据') {
+    return ['执行前、执行后和回读证据文件不能复用'];
+  }
+  if (label === '审批时间' || label === '执行前时间' || label === '执行时间' || label === '执行后时间' || label === '回读时间') {
+    return [`${label}不是可解析时间`, '时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读'];
+  }
+  return [];
+}
+
+export function readbackRepairFieldClass(label: string, missing: string[], active: boolean, pulsing: boolean): string {
+  if (!active) return '';
+  const needsAttention = missing.includes(label)
+    || readbackRepairRelatedBlockers(label).some((blocker) => missing.includes(blocker));
+  if (!needsAttention) return '';
+  return [
+    'readback-repair-field-active',
+    pulsing ? 'readback-repair-field-pulse' : '',
+  ].filter(Boolean).join(' ');
+}
+
 function ReadbackCaptureTarget({
   slot,
   value,
   saving,
   onCapture,
+  repairClassName = '',
 }: {
   slot: ReadbackCaptureSlot;
   value?: string;
   saving?: boolean;
   onCapture: (slot: ReadbackCaptureSlot, files: File[]) => void;
+  repairClassName?: string;
 }) {
   const [dragging, setDragging] = useState(false);
   const view = readbackCaptureTargetView(slot, { value, saving, dragging });
@@ -783,7 +812,7 @@ function ReadbackCaptureTarget({
     <div
       aria-label={`${CAPTURE_SLOT_LABELS[slot].title}拖拽或粘贴存证`}
       aria-live="polite"
-      className={view.className}
+      className={[view.className, repairClassName].filter(Boolean).join(' ')}
       onDragEnter={markDragging}
       onDragLeave={clearDragging}
       onDragOver={markDragging}
@@ -866,6 +895,10 @@ export function ReadbackPage() {
       setSessionVerifyResult(null);
     }
   }
+  const repairFieldClass = (label: string, baseClassName = '') => [
+    baseClassName,
+    readbackRepairFieldClass(label, missing, Boolean(repairIntent), repairPulse),
+  ].filter(Boolean).join(' ');
 
   useEffect(() => {
     let clearPulseTimer: number | null = null;
@@ -1434,35 +1467,38 @@ export function ReadbackPage() {
               <p className="muted-line">执行前、执行后、回读截图不能复用；回读值必须等于执行后值。</p>
               <ReadbackContractStrip checks={contractChecks} />
               <div className="form-grid">
-                <label>执行人<input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></label>
-                <label>执行编号<input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></label>
-                <label>执行时间<input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></label>
-                <label>执行前值<input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></label>
-                <label>执行前截图<input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></label>
-                <label>执行前时间<input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
-                <label>执行后值<input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></label>
-                <label>执行后截图<input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></label>
-                <label>执行后时间<input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
-                <label>回读值<input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></label>
-                <label>回读证据<input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></label>
-                <label>回读时间<input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></label>
-                <label className="form-grid-wide">现场行证明<textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></label>
+                <label className={repairFieldClass('执行人')}>执行人<input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></label>
+                <label className={repairFieldClass('执行编号')}>执行编号<input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></label>
+                <label className={repairFieldClass('执行时间')}>执行时间<input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></label>
+                <label className={repairFieldClass('执行前值')}>执行前值<input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></label>
+                <label className={repairFieldClass('执行前截图')}>执行前截图<input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></label>
+                <label className={repairFieldClass('执行前时间')}>执行前时间<input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
+                <label className={repairFieldClass('执行后值')}>执行后值<input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></label>
+                <label className={repairFieldClass('执行后截图')}>执行后截图<input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></label>
+                <label className={repairFieldClass('执行后时间')}>执行后时间<input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
+                <label className={repairFieldClass('回读值')}>回读值<input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></label>
+                <label className={repairFieldClass('回读证据')}>回读证据<input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></label>
+                <label className={repairFieldClass('回读时间')}>回读时间<input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></label>
+                <label className={repairFieldClass('现场行证明', 'form-grid-wide')}>现场行证明<textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></label>
               </div>
               <div className="readback-capture-grid">
                 <ReadbackCaptureTarget
                   onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                  repairClassName={repairFieldClass('执行前截图')}
                   saving={captureSavingSlot === 'before'}
                   slot="before"
                   value={form.beforeScreenshotPath}
                 />
                 <ReadbackCaptureTarget
                   onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                  repairClassName={repairFieldClass('执行后截图')}
                   saving={captureSavingSlot === 'after'}
                   slot="after"
                   value={form.afterScreenshotPath}
                 />
                 <ReadbackCaptureTarget
                   onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                  repairClassName={repairFieldClass('回读证据')}
                   saving={captureSavingSlot === 'readback'}
                   slot="readback"
                   value={form.readbackEvidencePath}

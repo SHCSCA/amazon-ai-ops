@@ -14,6 +14,7 @@ import {
   nextEvidenceCaptureSlot,
   readbackCaptureTargetView,
   readbackContractChecks,
+  readbackRepairFieldClass,
   readbackPrecheckCopy,
   readbackSessionSummary,
   readbackSessionWorkflow,
@@ -308,6 +309,15 @@ describe('readback capture helpers', () => {
 });
 
 describe('delivery repair handoff', () => {
+  it('maps delivery repair gaps to the exact evidence fields instead of only the panel', () => {
+    expect(readbackRepairFieldClass('执行后截图', ['执行后截图'], true, true)).toBe('readback-repair-field-active readback-repair-field-pulse');
+    expect(readbackRepairFieldClass('执行后截图', [], true, true)).toBe('');
+    expect(readbackRepairFieldClass('执行后截图', ['执行后截图'], false, true)).toBe('');
+    expect(readbackRepairFieldClass('回读值', ['回读值必须等于执行后值'], true, false)).toBe('readback-repair-field-active');
+    expect(readbackRepairFieldClass('执行前截图', ['执行前、执行后和回读证据文件不能复用'], true, false)).toBe('readback-repair-field-active');
+    expect(readbackRepairFieldClass('执行时间', ['时间顺序必须为审批≤执行前≤执行动作≤执行后≤回读'], true, false)).toBe('readback-repair-field-active');
+  });
+
   it('consumes delivery repair intent and renders a visible repair target', () => {
     const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
     const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
@@ -318,9 +328,12 @@ describe('delivery repair handoff', () => {
     expect(source).toContain('readback-repair-banner');
     expect(source).toContain('readback-step-repair-pulse');
     expect(source).toContain('readbackRepairPanelClass(Boolean(repairIntent), repairPulse)');
+    expect(source).toContain('repairClassName={repairFieldClass');
     expect(stylesheet).toContain('.readback-repair-banner');
     expect(stylesheet).toContain('.readback-step-repair-pulse');
     expect(stylesheet).toContain('.readback-repair-target-pulse');
+    expect(stylesheet).toContain('.readback-repair-field-active');
+    expect(stylesheet).toContain('@keyframes readback-repair-field-ring');
     expect(stylesheet).toContain('@keyframes readback-repair-pulse');
   });
 });

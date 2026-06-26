@@ -4023,12 +4023,38 @@ code {
   animation: readback-repair-pulse 900ms ease-out 2;
 }
 
+.readback-repair-field-active input,
+.readback-repair-field-active textarea,
+.readback-capture-target.readback-repair-field-active {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18), 0 0 0 5px rgba(220, 38, 38, 0.08);
+}
+
+.readback-repair-field-active {
+  color: #991b1b;
+}
+
+.readback-repair-field-pulse input,
+.readback-repair-field-pulse textarea,
+.readback-capture-target.readback-repair-field-pulse {
+  animation: readback-repair-field-ring 720ms ease-out 2;
+}
+
 @keyframes readback-repair-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.58);
   }
   100% {
     box-shadow: 0 0 0 10px rgba(245, 158, 11, 0);
+  }
+}
+
+@keyframes readback-repair-field-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.52);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgba(220, 38, 38, 0);
   }
 }
 
