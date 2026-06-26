@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
@@ -25,6 +25,28 @@ export interface DataImportFeedback {
   className: string;
 }
 
+export type DataImportSortKey = 'label' | 'file' | 'ext' | 'size' | 'rows' | 'status';
+export type DataImportSortDirection = 'asc' | 'desc';
+
+export interface DataImportSortState {
+  key: DataImportSortKey;
+  direction: DataImportSortDirection;
+}
+
+export interface DataImportReportRow {
+  type: string;
+  label: string;
+  fileName: string;
+  filePath: string;
+  fileSizeBytes: number;
+  importedRows: number;
+  importError: string;
+  status: string;
+  statusDisplay: ReportImportStatusDisplay;
+}
+
+const DATA_IMPORT_TEXT_SORT_KEYS = new Set<DataImportSortKey>(['label', 'file', 'ext', 'status']);
+
 function fileExtension(fileName: string, filePath: string): string {
   const target = fileName || filePath;
   const dotIndex = target.lastIndexOf('.');
@@ -36,6 +58,75 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function dataImportSortValue(row: DataImportReportRow, key: DataImportSortKey): string | number {
+  if (key === 'file') return (row.fileName || row.filePath || '').toLowerCase();
+  if (key === 'ext') return fileExtension(row.fileName, row.filePath);
+  if (key === 'size') return Number(row.fileSizeBytes || 0);
+  if (key === 'rows') return Number(row.importedRows || 0);
+  if (key === 'status') return `${row.statusDisplay.label || ''} ${row.status || ''}`.toLowerCase();
+  return (row.label || '').toLowerCase();
+}
+
+export function nextDataImportSort(current: DataImportSortState | null, key: DataImportSortKey): DataImportSortState {
+  if (current?.key === key) {
+    return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+  }
+  return { key, direction: DATA_IMPORT_TEXT_SORT_KEYS.has(key) ? 'asc' : 'desc' };
+}
+
+export function sortDataImportReportRows(rows: DataImportReportRow[], sort: DataImportSortState | null): DataImportReportRow[] {
+  if (!sort) return rows;
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const leftValue = dataImportSortValue(left.row, sort.key);
+      const rightValue = dataImportSortValue(right.row, sort.key);
+      if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+        const diff = leftValue - rightValue;
+        if (diff !== 0) return sort.direction === 'asc' ? diff : -diff;
+        return left.index - right.index;
+      }
+      const diff = String(leftValue).localeCompare(String(rightValue), 'zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+      if (diff !== 0) return sort.direction === 'asc' ? diff : -diff;
+      return left.index - right.index;
+    })
+    .map((entry) => entry.row);
+}
+
+export function dataImportSortLabel(key: DataImportSortKey): string {
+  const labels: Record<DataImportSortKey, string> = {
+    label: '报表',
+    file: '真实文件',
+    ext: '类型',
+    size: '大小',
+    rows: '入库行数',
+    status: '状态',
+  };
+  return labels[key];
+}
+
+export function buildDataImportTableFeedback({
+  importedRows,
+  realReportCount,
+  sortDirection,
+  sortLabel,
+  totalCount,
+}: {
+  importedRows: number;
+  realReportCount: number;
+  sortDirection: DataImportSortDirection | null;
+  sortLabel: string;
+  totalCount: number;
+}): string {
+  const orderText = sortDirection === 'asc' ? '升序' : '降序';
+  const sortText = sortDirection && sortLabel ? `按${sortLabel}${orderText}展示` : '按默认报表顺序展示';
+  return `${sortText} ${totalCount} 类报表；真实报表 ${realReportCount}/${totalCount}，已入库 ${importedRows} 行。`;
+}
+
+export function dataImportTableFeedbackClass(refreshing: boolean): string {
+  return `data-import-table-shell${refreshing ? ' data-import-table-refreshing' : ''}`;
 }
 
 function reportStatusLabel(status: string): string {
@@ -241,6 +332,9 @@ export function DataImportValidationPage() {
   const [notice, setNotice] = useState('');
   const [importError, setImportError] = useState('');
   const [pathNotice, setPathNotice] = useState('');
+  const [sortState, setSortState] = useState<DataImportSortState | null>(null);
+  const [tableRefreshing, setTableRefreshing] = useState(false);
+  const refreshTimerRef = useRef<number | null>(null);
   const collection = data?.collection;
   const quant = data?.quant;
   const reportOptions = collection?.reportOptions || [];
@@ -266,7 +360,13 @@ export function DataImportValidationPage() {
     importedRowCount: importedRows,
     rejectedEvidenceFileCount: rejectedEvidenceCount,
   }), [importedRows, realReportCount, rejectedEvidenceCount, reportOptions]);
-  const reportRows = useMemo(() => reportOptions.map((option) => {
+  useEffect(() => () => {
+    if (refreshTimerRef.current) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+  }, []);
+
+  const reportRows = useMemo<DataImportReportRow[]>(() => reportOptions.map((option) => {
     const files = realFiles.filter((file) => file.reportType === option.type);
     const firstFile = files[0];
     const importedForType = files.reduce((sum, file) => sum + Number(file.importedRows || 0), 0) || option.importedRows;
@@ -288,6 +388,14 @@ export function DataImportValidationPage() {
       importError: row.importError,
     }),
   })), [realFiles, reportOptions]);
+  const sortedReportRows = useMemo(() => sortDataImportReportRows(reportRows, sortState), [reportRows, sortState]);
+  const tableFeedback = buildDataImportTableFeedback({
+    importedRows,
+    realReportCount,
+    sortDirection: sortState?.direction ?? null,
+    sortLabel: sortState ? dataImportSortLabel(sortState.key) : '',
+    totalCount: reportRows.length,
+  });
   const taskState = buildDataImportTaskState({
     realReportCount,
     importedRows,
@@ -300,21 +408,25 @@ export function DataImportValidationPage() {
     notice,
     importError,
   });
-  const reportColumns: Array<VirtualDataTableColumn<(typeof reportRows)[number]>> = [
-    { key: 'label', header: '报表', width: '170px', cell: (row) => row.label },
+  const reportColumns: Array<VirtualDataTableColumn<DataImportReportRow>> = [
+    { key: 'label', header: '报表', width: '170px', sortable: true, sortLabel: '报表', cell: (row) => row.label },
     {
       key: 'file',
       header: '真实文件',
       width: 'minmax(240px, 1.4fr)',
+      sortable: true,
+      sortLabel: '真实文件',
       cell: (row) => row.filePath ? <code>{compactPath(row.filePath)}</code> : '缺少真实文件',
     },
-    { key: 'ext', header: '类型', width: '72px', cell: (row) => <code>{row.filePath ? fileExtension(row.fileName, row.filePath) : '-'}</code> },
-    { key: 'size', header: '大小', width: '88px', cell: (row) => formatFileSize(row.fileSizeBytes) },
-    { key: 'rows', header: '入库行数', width: '96px', cell: (row) => row.importedRows },
+    { key: 'ext', header: '类型', width: '72px', sortable: true, sortLabel: '类型', cell: (row) => <code>{row.filePath ? fileExtension(row.fileName, row.filePath) : '-'}</code> },
+    { key: 'size', header: '大小', width: '88px', sortable: true, sortLabel: '大小', cell: (row) => formatFileSize(row.fileSizeBytes) },
+    { key: 'rows', header: '入库行数', width: '96px', sortable: true, sortLabel: '入库行数', cell: (row) => row.importedRows },
     {
       key: 'status',
       header: '状态',
       width: 'minmax(240px, 1.1fr)',
+      sortable: true,
+      sortLabel: '状态',
       cell: (row) => (
         <div>
           <StatusPill tone={row.statusDisplay.tone}>{row.statusDisplay.label}</StatusPill>
@@ -334,6 +446,19 @@ export function DataImportValidationPage() {
       ),
     },
   ];
+
+  function handleReportSortChange(key: string) {
+    if (!['label', 'file', 'ext', 'size', 'rows', 'status'].includes(key)) return;
+    setSortState((current) => nextDataImportSort(current, key as DataImportSortKey));
+    setTableRefreshing(true);
+    if (refreshTimerRef.current) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      setTableRefreshing(false);
+      refreshTimerRef.current = null;
+    }, 100);
+  }
 
   async function openPath(targetPath?: string) {
     if (!targetPath) return;
@@ -602,15 +727,21 @@ export function DataImportValidationPage() {
 
         <ProgressiveDetails title="8 类报表入库明细">
           <Panel title="8 类报表入库明细" tone={hasRealFiles ? 'default' : 'blocked'}>
-            <VirtualDataTable
-              columns={reportColumns}
-              emptyMessage="当前范围还没有报表状态。请先完成数据采集。"
-              estimateSize={72}
-              getRowKey={(row) => row.type}
-              loading={loading}
-              minWidth="980px"
-              rows={reportRows}
-            />
+            <div className={dataImportTableFeedbackClass(tableRefreshing)}>
+              <p aria-live="polite" className="data-import-table-feedback">{tableFeedback}</p>
+              <VirtualDataTable
+                columns={reportColumns}
+                emptyMessage="当前范围还没有报表状态。请先完成数据采集。"
+                estimateSize={72}
+                getRowKey={(row) => row.type}
+                loading={loading}
+                minWidth="980px"
+                onSortChange={handleReportSortChange}
+                rows={sortedReportRows}
+                sortDirection={sortState?.direction ?? 'desc'}
+                sortKey={sortState?.key}
+              />
+            </div>
           </Panel>
         </ProgressiveDetails>
 
