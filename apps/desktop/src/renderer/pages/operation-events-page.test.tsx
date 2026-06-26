@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildOperationEventTaskState,
@@ -5,6 +6,7 @@ import {
   defaultOperationEventViewMode,
   filterOperationEventsForView,
   operationEventCardClassName,
+  operationEventFormClassName,
   operationEventInlineSaveLabel,
   operationEventScopeLabel,
 } from './operation-events-page';
@@ -90,6 +92,33 @@ describe('operation events page product/global views', () => {
   it('keeps the inline save button distinct from the first-screen primary action', () => {
     expect(operationEventInlineSaveLabel(false)).toBe('保存到上下文');
     expect(operationEventInlineSaveLabel(true)).toBe('正在保存...');
+  });
+
+  it('marks the event form as cleared for a short optimistic rebound response', () => {
+    expect(operationEventFormClassName(false)).toBe('operation-event-form');
+    expect(operationEventFormClassName(true)).toBe('operation-event-form operation-event-form-cleared');
+  });
+
+  it('clears the draft immediately before the save IPC and restores it on failure', () => {
+    const source = readFileSync(new URL('./operation-events-page.tsx', import.meta.url), 'utf8');
+    const clearIndex = source.indexOf('setDraft(resetDraft);');
+    const ipcIndex = source.indexOf('electronAPI.createOperationEvent');
+
+    expect(clearIndex).toBeGreaterThan(-1);
+    expect(ipcIndex).toBeGreaterThan(-1);
+    expect(clearIndex).toBeLessThan(ipcIndex);
+    expect(source).toContain('事件已提交，表单已清空，正在写入本地上下文...');
+    expect(source).toContain('setDraft(submittedDraft);');
+    expect(source).toContain('保存失败，已恢复刚才填写的事件。');
+  });
+
+  it('keeps the cleared form rebound animation scoped and non-layout shifting', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.operation-event-form');
+    expect(css).toContain('contain: layout style');
+    expect(css).toContain('.operation-event-form-cleared');
+    expect(css).toContain('@keyframes operation-event-form-rebound');
   });
 });
 

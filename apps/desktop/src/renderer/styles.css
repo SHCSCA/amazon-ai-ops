@@ -3764,10 +3764,35 @@ code {
   padding: 12px;
 }
 
+.operation-event-form {
+  contain: layout style;
+}
+
+.operation-event-form-cleared {
+  animation: operation-event-form-rebound 220ms ease-out;
+}
+
 .event-card-just-saved {
   border-color: #74d59a;
   background: #f1fbf5;
   animation: event-card-flash 450ms ease-out;
+}
+
+@keyframes operation-event-form-rebound {
+  0% {
+    transform: scale(0.995);
+    background: #f1fbf5;
+  }
+
+  55% {
+    transform: scale(1.003);
+    background: #ffffff;
+  }
+
+  100% {
+    transform: scale(1);
+    background: transparent;
+  }
 }
 
 @keyframes event-card-flash {

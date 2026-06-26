@@ -163,6 +163,10 @@ export function operationEventInlineSaveLabel(saving: boolean): string {
   return saving ? '正在保存...' : '保存到上下文';
 }
 
+export function operationEventFormClassName(recentlyCleared: boolean): string {
+  return recentlyCleared ? 'operation-event-form operation-event-form-cleared' : 'operation-event-form';
+}
+
 export function buildOperationEventTaskState(input: {
   visibleEventCount: number;
   totalEventCount: number;
@@ -224,6 +228,7 @@ export function OperationEventsPage() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [recentSavedEventId, setRecentSavedEventId] = useState<number | null>(null);
+  const [recentDraftClearTick, setRecentDraftClearTick] = useState<number | null>(null);
 
   const visibleEvents = useMemo(
     () => filterOperationEventsForView(events, viewMode, scope.asin),
@@ -295,26 +300,37 @@ export function OperationEventsPage() {
     return () => window.clearTimeout(timeout);
   }, [recentSavedEventId]);
 
+  useEffect(() => {
+    if (!recentDraftClearTick) return undefined;
+    const timeout = window.setTimeout(() => setRecentDraftClearTick(null), 360);
+    return () => window.clearTimeout(timeout);
+  }, [recentDraftClearTick]);
+
   async function saveEvent() {
+    const submittedDraft = draft;
+    const resetDraft = buildOperationEventDraftForScope(scope, viewMode);
     setSaving(true);
     setError('');
-    setMessage('');
+    setMessage('事件已提交，表单已清空，正在写入本地上下文...');
+    setDraft(resetDraft);
+    setRecentDraftClearTick(Date.now());
     try {
       const created = await (window as any).electronAPI.createOperationEvent({
-        ...draft,
-        asin: draft.asin || undefined,
-        campaignName: draft.campaignName || undefined,
-        adGroupName: draft.adGroupName || undefined,
-        notes: draft.notes || undefined,
-        evidencePath: draft.evidencePath || undefined,
+        ...submittedDraft,
+        asin: submittedDraft.asin || undefined,
+        campaignName: submittedDraft.campaignName || undefined,
+        adGroupName: submittedDraft.adGroupName || undefined,
+        notes: submittedDraft.notes || undefined,
+        evidencePath: submittedDraft.evidencePath || undefined,
       });
-      setDraft(buildOperationEventDraftForScope(scope, viewMode));
       setMessage('运营事件已记录，会进入广告量化和 AI 诊断上下文。');
       await loadEvents();
       const createdId = Number(created?.id);
       if (Number.isInteger(createdId) && createdId > 0) setRecentSavedEventId(createdId);
     } catch (caught) {
+      setDraft(submittedDraft);
       setError(toUserFacingError(caught, '保存运营事件失败'));
+      setMessage('保存失败，已恢复刚才填写的事件。');
     } finally {
       setSaving(false);
     }
@@ -475,89 +491,91 @@ export function OperationEventsPage() {
               </button>
             ))}
           </div>
-          <FormTable>
-            <FormTableRow label="事件日期" required hint="事件会按发生日期进入广告量化和 AI 阶段判断。">
-              <input
-                type="date"
-                value={draft.eventDate}
-                onChange={(event) => setDraft({ ...draft, eventDate: event.target.value })}
-              />
-            </FormTableRow>
-            <FormTableRow label="店铺" required hint="默认继承当前全局范围；需要跨店复盘时才手动调整。">
-              <input
-                value={draft.storeName}
-                onChange={(event) => setDraft({ ...draft, storeName: event.target.value })}
-              />
-            </FormTableRow>
-            <FormTableRow label="站点" required hint="当前计价防线固定按站点和 USD 解释。">
-              <input
-                value={draft.marketplaceCode}
-                onChange={(event) => setDraft({ ...draft, marketplaceCode: event.target.value })}
-              />
-            </FormTableRow>
-            <FormTableRow label="ASIN" hint="可选；留空表示全店/全范围事件。">
-              <input
-                placeholder="可选；留空表示全店/全范围"
-                value={draft.asin}
-                onChange={(event) => setDraft({ ...draft, asin: event.target.value })}
-              />
-            </FormTableRow>
-            <FormTableRow label="广告活动" hint="可选；用于绑定具体 campaign，减少 AI 跨对象误判。">
-              <input
-                placeholder="可选；用于绑定具体 campaign"
-                value={draft.campaignName}
-                onChange={(event) => setDraft({ ...draft, campaignName: event.target.value })}
-              />
-            </FormTableRow>
-            <FormTableRow label="广告组" hint="可选；用于绑定具体广告组或测词单元。">
-              <input
-                placeholder="可选；用于绑定具体广告组"
-                value={draft.adGroupName}
-                onChange={(event) => setDraft({ ...draft, adGroupName: event.target.value })}
-              />
-            </FormTableRow>
-            <FormTableRow label="事件类型" required hint={selectedTypeHint}>
-              <select
-                value={draft.eventType}
-                onChange={(event) => setDraft({ ...draft, eventType: event.target.value })}
-              >
-                {Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </FormTableRow>
-            <FormTableRow label="预期影响" required hint="用于提示 AI 对转化、流量和 ACOS 的解释方向。">
-              <select
-                value={draft.impactExpectation}
-                onChange={(event) => setDraft({ ...draft, impactExpectation: event.target.value })}
-              >
-                {Object.entries(IMPACT_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </FormTableRow>
-            <FormTableRow label="事件标题" required hint="写运营能一眼识别的事件名称。">
-              <input
-                placeholder="例如：10% Coupon 开始、大促报名、主图更新"
-                value={draft.title}
-                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-              />
-            </FormTableRow>
-            <FormTableRow label="证据路径" hint="可选：截图、活动页面或本地证明文件路径。">
-              <input
-                placeholder="可选：截图、活动页面或本地证明文件路径"
-                value={draft.evidencePath}
-                onChange={(event) => setDraft({ ...draft, evidencePath: event.target.value })}
-              />
-            </FormTableRow>
-            <FormTableRow label="备注" hint="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景。">
-              <textarea
-                placeholder="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景"
-                value={draft.notes}
-                onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
-              />
-            </FormTableRow>
-          </FormTable>
+          <div className={operationEventFormClassName(Boolean(recentDraftClearTick))}>
+            <FormTable>
+              <FormTableRow label="事件日期" required hint="事件会按发生日期进入广告量化和 AI 阶段判断。">
+                <input
+                  type="date"
+                  value={draft.eventDate}
+                  onChange={(event) => setDraft({ ...draft, eventDate: event.target.value })}
+                />
+              </FormTableRow>
+              <FormTableRow label="店铺" required hint="默认继承当前全局范围；需要跨店复盘时才手动调整。">
+                <input
+                  value={draft.storeName}
+                  onChange={(event) => setDraft({ ...draft, storeName: event.target.value })}
+                />
+              </FormTableRow>
+              <FormTableRow label="站点" required hint="当前计价防线固定按站点和 USD 解释。">
+                <input
+                  value={draft.marketplaceCode}
+                  onChange={(event) => setDraft({ ...draft, marketplaceCode: event.target.value })}
+                />
+              </FormTableRow>
+              <FormTableRow label="ASIN" hint="可选；留空表示全店/全范围事件。">
+                <input
+                  placeholder="可选；留空表示全店/全范围"
+                  value={draft.asin}
+                  onChange={(event) => setDraft({ ...draft, asin: event.target.value })}
+                />
+              </FormTableRow>
+              <FormTableRow label="广告活动" hint="可选；用于绑定具体 campaign，减少 AI 跨对象误判。">
+                <input
+                  placeholder="可选；用于绑定具体 campaign"
+                  value={draft.campaignName}
+                  onChange={(event) => setDraft({ ...draft, campaignName: event.target.value })}
+                />
+              </FormTableRow>
+              <FormTableRow label="广告组" hint="可选；用于绑定具体广告组或测词单元。">
+                <input
+                  placeholder="可选；用于绑定具体广告组"
+                  value={draft.adGroupName}
+                  onChange={(event) => setDraft({ ...draft, adGroupName: event.target.value })}
+                />
+              </FormTableRow>
+              <FormTableRow label="事件类型" required hint={selectedTypeHint}>
+                <select
+                  value={draft.eventType}
+                  onChange={(event) => setDraft({ ...draft, eventType: event.target.value })}
+                >
+                  {Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </FormTableRow>
+              <FormTableRow label="预期影响" required hint="用于提示 AI 对转化、流量和 ACOS 的解释方向。">
+                <select
+                  value={draft.impactExpectation}
+                  onChange={(event) => setDraft({ ...draft, impactExpectation: event.target.value })}
+                >
+                  {Object.entries(IMPACT_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </FormTableRow>
+              <FormTableRow label="事件标题" required hint="写运营能一眼识别的事件名称。">
+                <input
+                  placeholder="例如：10% Coupon 开始、大促报名、主图更新"
+                  value={draft.title}
+                  onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                />
+              </FormTableRow>
+              <FormTableRow label="证据路径" hint="可选：截图、活动页面或本地证明文件路径。">
+                <input
+                  placeholder="可选：截图、活动页面或本地证明文件路径"
+                  value={draft.evidencePath}
+                  onChange={(event) => setDraft({ ...draft, evidencePath: event.target.value })}
+                />
+              </FormTableRow>
+              <FormTableRow label="备注" hint="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景。">
+                <textarea
+                  placeholder="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景"
+                  value={draft.notes}
+                  onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
+                />
+              </FormTableRow>
+            </FormTable>
+          </div>
           <div className="operation-hint">
             <strong>{formatEventType(draft.eventType)}</strong>
             <p>{selectedTypeHint}</p>
