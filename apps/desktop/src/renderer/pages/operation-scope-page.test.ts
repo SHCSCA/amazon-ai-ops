@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  buildOperationScopeSelectOptions,
   buildOperationScopeTaskState,
+  normalizeOperationScopeDraft,
   operationScopeSaveFeedbackLabel,
 } from './operation-scope-page';
 
@@ -54,5 +57,49 @@ describe('operation scope task state', () => {
     expect(operationScopeSaveFeedbackLabel('saving')).toBe('正在保存范围...');
     expect(operationScopeSaveFeedbackLabel('saved')).toBe('范围已保存，后续页面会按此读取');
     expect(operationScopeSaveFeedbackLabel('error')).toBe('范围保存失败，请展开处理');
+  });
+
+  it('normalizes draft scope before saving it to the shared operation scope', () => {
+    expect(normalizeOperationScopeDraft({
+      dateFrom: ' 2026-05-21 ',
+      dateTo: ' 2026-06-23 ',
+      storeName: ' FT-US-US ',
+      marketplaceCode: ' US ',
+      asin: ' B0GTTJFQTM ',
+      batchId: ' ',
+      currency: 'USD',
+    })).toEqual({
+      dateFrom: '2026-05-21',
+      dateTo: '2026-06-23',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0GTTJFQTM',
+      batchId: undefined,
+      currency: 'USD',
+    });
+  });
+
+  it('builds unique select options while keeping the active value first', () => {
+    expect(buildOperationScopeSelectOptions('FT-US-US', ['FT-US-US', 'US-DEMO', '', null, 'US-DEMO'])).toEqual([
+      'FT-US-US',
+      'US-DEMO',
+    ]);
+  });
+
+  it('renders the page-level range form with field confirmation hooks', () => {
+    const source = readFileSync(new URL('./operation-scope-page.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('Panel title="范围表单"');
+    expect(source).toContain("scopeFieldFeedbackClass('storeName'");
+    expect(source).toContain("scopeFieldFeedbackClass('marketplaceCode'");
+    expect(source).toContain("scopeFieldFeedbackClass('dateFrom'");
+    expect(source).toContain("scopeFieldFeedbackClass('dateTo'");
+    expect(source).toContain("scopeFieldFeedbackClass('asin'");
+    expect(source).toContain("scopeFieldFeedbackClass('batchId'");
+    expect(source).toContain('api.saveOperationScope(normalizedDraft)');
+    expect(css).toContain('.operation-scope-field');
+    expect(css).toContain('.operation-scope-date-range');
+    expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
   });
 });

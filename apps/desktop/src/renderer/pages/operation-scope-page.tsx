@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
-import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { scopeFieldFeedbackClass, scopeFieldFeedbackLabel, type ScopeFieldFeedbackKey } from '../components/scope-bar';
+import { FormTable, FormTableRow, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
-import type { AppRoute } from '../types';
+import type { AppRoute, BusinessBatchOption, OperationScope } from '../types';
 
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
@@ -31,6 +33,38 @@ export function operationScopeSaveFeedbackLabel(status: OperationScopeSaveStatus
   if (status === 'saved') return '范围已保存，后续页面会按此读取';
   if (status === 'error') return '范围保存失败，请展开处理';
   return '范围尚未手动确认';
+}
+
+export function normalizeOperationScopeDraft(draft: OperationScope): OperationScope {
+  return {
+    dateFrom: draft.dateFrom.trim(),
+    dateTo: draft.dateTo.trim(),
+    storeName: draft.storeName.trim(),
+    marketplaceCode: draft.marketplaceCode.trim(),
+    asin: draft.asin?.trim() || undefined,
+    batchId: draft.batchId?.trim() || undefined,
+    currency: 'USD',
+  };
+}
+
+export function buildOperationScopeSelectOptions(current: string | undefined, candidates: Array<string | undefined | null>): string[] {
+  const seen = new Set<string>();
+  return [current, ...candidates]
+    .map((value) => String(value || '').trim())
+    .filter((value) => {
+      if (!value || seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+}
+
+function scopeDraftWithPatch(current: OperationScope, patch: Partial<OperationScope>, clearBatch = false): OperationScope {
+  return {
+    ...current,
+    ...patch,
+    batchId: clearBatch ? undefined : (patch.batchId ?? current.batchId),
+    currency: 'USD',
+  };
 }
 
 export function buildOperationScopeTaskState(input: {
@@ -79,8 +113,11 @@ export function buildOperationScopeTaskState(input: {
 
 export function OperationScopePage() {
   const { data, scope, loading, error } = useBusinessDataPipeline();
+  const setScope = useScopeStore((state) => state.setScope);
+  const [draft, setDraft] = useState<OperationScope>(scope);
   const [saveStatus, setSaveStatus] = useState<OperationScopeSaveStatus>('idle');
   const [saveError, setSaveError] = useState('');
+  const [confirmedField, setConfirmedField] = useState<{ field: ScopeFieldFeedbackKey; tick: number } | null>(null);
   const collection = data?.collection;
   const quant = data?.quant;
   const activeBatch = scope.batchId || collection?.latestBatch?.id || '';
@@ -93,14 +130,75 @@ export function OperationScopePage() {
     activeBatch,
     saveStatus,
   });
+  const availableBatches = useMemo(
+    () => collection?.availableBatches || [],
+    [collection?.availableBatches],
+  );
+  const storeOptions = useMemo(
+    () => buildOperationScopeSelectOptions(scope.storeName, [
+      collection?.latestBatch?.storeName,
+      ...availableBatches.map((batch: BusinessBatchOption) => batch.storeName),
+      'FT-US-US',
+    ]),
+    [availableBatches, collection?.latestBatch?.storeName, scope.storeName],
+  );
+  const marketplaceOptions = useMemo(
+    () => buildOperationScopeSelectOptions(scope.marketplaceCode, [
+      collection?.latestBatch?.marketplaceCode,
+      ...availableBatches.map((batch: BusinessBatchOption) => batch.marketplaceCode),
+      'US',
+    ]),
+    [availableBatches, collection?.latestBatch?.marketplaceCode, scope.marketplaceCode],
+  );
+  const confirmedFieldName = confirmedField?.field ?? null;
+
+  useEffect(() => {
+    setDraft(scope);
+  }, [scope.asin, scope.batchId, scope.currency, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
+
+  useEffect(() => {
+    if (!confirmedField) return undefined;
+    const timer = window.setTimeout(() => setConfirmedField(null), 900);
+    return () => window.clearTimeout(timer);
+  }, [confirmedField]);
+
+  const markDraftField = (field: ScopeFieldFeedbackKey, patch: Partial<OperationScope>, clearBatch = false) => {
+    setSaveStatus('idle');
+    setSaveError('');
+    setConfirmedField({ field, tick: Date.now() });
+    setDraft((current) => scopeDraftWithPatch(current, patch, clearBatch));
+  };
 
   const confirmScope = async () => {
+    const normalizedDraft = normalizeOperationScopeDraft(draft);
+    if (!normalizedDraft.dateFrom || !normalizedDraft.dateTo) {
+      setSaveStatus('error');
+      setSaveError('请填写开始日期和结束日期。');
+      return;
+    }
+    if (normalizedDraft.dateFrom > normalizedDraft.dateTo) {
+      setSaveStatus('error');
+      setSaveError('开始日期不能晚于结束日期。');
+      return;
+    }
+    if (!normalizedDraft.storeName) {
+      setSaveStatus('error');
+      setSaveError('请填写店铺。');
+      return;
+    }
+    if (!normalizedDraft.marketplaceCode) {
+      setSaveStatus('error');
+      setSaveError('请填写站点。');
+      return;
+    }
     setSaveStatus('saving');
     setSaveError('');
     try {
       const api = (window as any).electronAPI;
       if (!api?.saveOperationScope) throw new Error('范围保存接口未暴露');
-      await api.saveOperationScope(scope);
+      await api.saveOperationScope(normalizedDraft);
+      setScope(normalizedDraft);
+      setDraft(normalizedDraft);
       setSaveStatus('saved');
       window.dispatchEvent(new CustomEvent('business-ui:data-updated'));
     } catch (caught) {
@@ -146,6 +244,122 @@ export function OperationScopePage() {
             {saveError && <strong>{saveError}</strong>}
           </div>
         </OperatorTaskPanel>
+
+        <Panel title="范围表单" tone={saveStatus === 'error' ? 'blocked' : 'default'}>
+          <FormTable>
+            <FormTableRow
+              label="店铺"
+              required
+              hint="选中后会先写入本页待保存范围；保存后数据采集、导入、广告量化和 AI 建议统一使用。"
+            >
+              <span className={scopeFieldFeedbackClass('storeName', confirmedFieldName, 'operation-scope-field')}>
+                <select
+                  aria-label="店铺名称"
+                  value={draft.storeName}
+                  onChange={(event) => markDraftField('storeName', { storeName: event.target.value }, true)}
+                >
+                  {storeOptions.map((storeName) => (
+                    <option key={storeName} value={storeName}>{storeName}</option>
+                  ))}
+                </select>
+                <span className="scope-field-confirmation" aria-live="polite">
+                  {confirmedFieldName === 'storeName' ? scopeFieldFeedbackLabel('storeName') : '\u00A0'}
+                </span>
+              </span>
+            </FormTableRow>
+            <FormTableRow
+              label="站点"
+              required
+              hint="当前版本按 Windows 本地 USD 计价口径解释广告花费、销售额、CPC 和 ACOS。"
+            >
+              <span className={scopeFieldFeedbackClass('marketplaceCode', confirmedFieldName, 'operation-scope-field')}>
+                <select
+                  aria-label="运营站点"
+                  value={draft.marketplaceCode}
+                  onChange={(event) => markDraftField('marketplaceCode', { marketplaceCode: event.target.value }, true)}
+                >
+                  {marketplaceOptions.map((marketplaceCode) => (
+                    <option key={marketplaceCode} value={marketplaceCode}>{marketplaceCode}</option>
+                  ))}
+                </select>
+                <span className="scope-field-confirmation" aria-live="polite">
+                  {confirmedFieldName === 'marketplaceCode' ? scopeFieldFeedbackLabel('marketplaceCode') : '\u00A0'}
+                </span>
+              </span>
+            </FormTableRow>
+            <FormTableRow label="币种" hint="固定 USD，避免多币种混入造成财务判断偏差。">
+              <input aria-label="币种" readOnly value="USD" />
+            </FormTableRow>
+            <FormTableRow
+              label="分析周期"
+              required
+              hint="修改日期会清空手动批次，避免旧批次继续绑定到新时间范围。"
+            >
+              <span className="operation-scope-date-range">
+                <span className={scopeFieldFeedbackClass('dateFrom', confirmedFieldName, 'operation-scope-field')}>
+                  <input
+                    aria-label="开始日期"
+                    type="date"
+                    value={draft.dateFrom}
+                    onChange={(event) => markDraftField('dateFrom', { dateFrom: event.target.value }, true)}
+                  />
+                  <span className="scope-field-confirmation" aria-live="polite">
+                    {confirmedFieldName === 'dateFrom' ? scopeFieldFeedbackLabel('dateFrom') : '\u00A0'}
+                  </span>
+                </span>
+                <span className={scopeFieldFeedbackClass('dateTo', confirmedFieldName, 'operation-scope-field')}>
+                  <input
+                    aria-label="结束日期"
+                    type="date"
+                    value={draft.dateTo}
+                    onChange={(event) => markDraftField('dateTo', { dateTo: event.target.value }, true)}
+                  />
+                  <span className="scope-field-confirmation" aria-live="polite">
+                    {confirmedFieldName === 'dateTo' ? scopeFieldFeedbackLabel('dateTo') : '\u00A0'}
+                  </span>
+                </span>
+              </span>
+            </FormTableRow>
+            <FormTableRow
+              label="筛选 ASIN"
+              hint="可留空表示全部产品；填写后产品管理、广告量化、事件、关键词和 Listing 都按该 ASIN 过滤。"
+            >
+              <span className={scopeFieldFeedbackClass('asin', confirmedFieldName, 'operation-scope-field')}>
+                <input
+                  aria-label="筛选 ASIN"
+                  value={draft.asin || ''}
+                  onChange={(event) => markDraftField('asin', { asin: event.target.value || undefined })}
+                  placeholder="例如 B0..."
+                />
+                <span className="scope-field-confirmation" aria-live="polite">
+                  {confirmedFieldName === 'asin' ? scopeFieldFeedbackLabel('asin') : '\u00A0'}
+                </span>
+              </span>
+            </FormTableRow>
+            <FormTableRow
+              label="数据批次"
+              hint="留空为自动匹配当前范围最新完整批次；手动指定只影响读取，不会重新下载。"
+            >
+              <span className={scopeFieldFeedbackClass('batchId', confirmedFieldName, 'operation-scope-field')}>
+                <select
+                  aria-label="数据批次"
+                  value={draft.batchId || ''}
+                  onChange={(event) => markDraftField('batchId', { batchId: event.target.value || undefined })}
+                >
+                  <option value="">自动匹配最新完整批次</option>
+                  {availableBatches.map((batch: BusinessBatchOption) => (
+                    <option key={batch.id} value={batch.id}>
+                      {batch.id} · {Math.min(batch.realReportFileCount || 0, 8)}/8 类 · {batch.importedRowCount || 0} 行
+                    </option>
+                  ))}
+                </select>
+                <span className="scope-field-confirmation" aria-live="polite">
+                  {confirmedFieldName === 'batchId' ? scopeFieldFeedbackLabel('batchId') : '\u00A0'}
+                </span>
+              </span>
+            </FormTableRow>
+          </FormTable>
+        </Panel>
 
         <Panel title="当前操作范围" tone={canQuantify ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}>
           <StateLightGrid
