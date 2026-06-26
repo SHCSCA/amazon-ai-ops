@@ -932,6 +932,15 @@ button:disabled {
   .micro-step-pending .micro-step-indicator {
     animation: none;
   }
+
+  .virtual-table-body-row,
+  .virtual-table-sort-arrow {
+    transition: none;
+  }
+
+  .virtual-table-skeleton span {
+    animation: none;
+  }
 }
 
 .dashboard-task-metrics {
@@ -2230,10 +2239,23 @@ code {
 
 .virtual-table-body-row {
   min-height: 68px;
+  transition:
+    background var(--motion-fast),
+    box-shadow var(--motion-fast);
 }
 
 .virtual-table-body-row:hover {
   background: #f8fafc;
+}
+
+.virtual-table-body-row:focus-within {
+  background: #f8fbff;
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.virtual-table-body-row:active {
+  background: #eef5ff;
+  box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .virtual-table-cell {

@@ -60,9 +60,14 @@ describe('VirtualDataTable', () => {
     expect(text).toContain('.virtual-table-skeleton');
     expect(text).toMatch(/\.virtual-table-head[\s\S]*position:\s*sticky/);
     expect(text).toMatch(/\.virtual-table-cell[\s\S]*contain:\s*strict/);
+    expect(text).toMatch(/\.virtual-table-body-row[\s\S]*transition:\s*[\s\S]*background var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)/);
+    expect(text).toMatch(/\.virtual-table-body-row:active[\s\S]*box-shadow:\s*inset 3px 0 0 var\(--primary\)/);
+    expect(text).toMatch(/\.virtual-table-body-row:focus-within[\s\S]*box-shadow:\s*inset 3px 0 0 var\(--primary\)/);
     expect(text).toContain('.virtual-table-sort-button');
     expect(text).toMatch(/\.virtual-table-sort-arrow[\s\S]*transition:\s*transform 150ms/);
     expect(text).toMatch(/\.virtual-table-sort-active\[data-sort-direction="asc"\][\s\S]*rotate\(180deg\)/);
+    expect(text).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.virtual-table-sort-arrow[\s\S]*transition:\s*none/);
+    expect(text).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.virtual-table-skeleton span[\s\S]*animation:\s*none/);
   });
 
   it('renders sortable headers as buttons with sort callbacks and columnheader aria-sort', () => {
