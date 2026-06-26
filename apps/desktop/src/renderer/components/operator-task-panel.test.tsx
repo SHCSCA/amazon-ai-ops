@@ -148,6 +148,23 @@ describe('OperatorTaskPanel', () => {
     expect(actionButtonRule).toMatch(/white-space\s*:\s*normal\s*;/);
   });
 
+  it('keeps the panel shimmer layer non-blocking and motion-safe', () => {
+    const css = rendererCss();
+    const panelRule = cssRuleBody(css, '.operator-task-panel');
+    const shimmerRule = cssRuleBody(css, '.operator-task-panel::before');
+    const mainRule = cssRuleBody(css, '.operator-task-main');
+    const actionsRule = cssRuleBody(css, '.operator-task-actions');
+
+    expect(panelRule).toMatch(/position\s*:\s*relative\s*;/);
+    expect(panelRule).toMatch(/overflow\s*:\s*hidden\s*;/);
+    expect(shimmerRule).toMatch(/pointer-events\s*:\s*none\s*;/);
+    expect(shimmerRule).toMatch(/animation\s*:\s*operator-task-shimmer 4200ms ease-in-out infinite\s*;/);
+    expect(mainRule).toMatch(/z-index\s*:\s*1\s*;/);
+    expect(actionsRule).toMatch(/z-index\s*:\s*1\s*;/);
+    expect(css).toMatch(/@keyframes\s+operator-task-shimmer/);
+    expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.operator-task-panel::before[\s\S]*animation:\s*none/);
+  });
+
   it('defines the shared loading button micro-interaction styles', () => {
     const css = rendererCss();
     const loadingRule = cssRuleBody(css, '.button-loading');
