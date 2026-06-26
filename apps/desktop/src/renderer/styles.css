@@ -178,6 +178,7 @@ button:active:not(:disabled) {
   grid-template-columns: 30px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
+  position: relative;
   width: 100%;
   border: 0;
   border-left: 3px solid transparent;
@@ -187,6 +188,24 @@ button:active:not(:disabled) {
   color: var(--text);
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
+}
+
+.nav-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: var(--blue);
+  box-shadow: 0 0 14px rgba(37, 99, 235, 0.42);
+  opacity: 0;
+  transform: translateX(-7px);
+  transition: transform 150ms ease, opacity 150ms ease;
+  will-change: transform, opacity;
+  pointer-events: none;
 }
 
 .nav-item:hover {
@@ -211,6 +230,11 @@ button:active:not(:disabled) {
   background: var(--blue-soft);
   color: #0b55b7;
   font-weight: 700;
+}
+
+.nav-item[aria-current="page"]::before {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .nav-item[aria-current="page"] .nav-item-index {
