@@ -81,6 +81,7 @@ export function MicroStepper({ items }: { items: MicroStepItem[] }) {
     <div className="micro-stepper">
       {items.map((item) => (
         <div className={`micro-step micro-step-${item.tone}`} key={item.label}>
+          <span className="micro-step-indicator" aria-hidden="true" />
           <span>{item.label}</span>
           {item.meta && <strong>{item.meta}</strong>}
           {item.detail && <p>{item.detail}</p>}

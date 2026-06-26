@@ -72,6 +72,16 @@ describe('industrial UI atoms', () => {
 
     expect(collectText(tree)).toContain('广告活动报告');
     expect(collectText(tree)).toContain('等待领星下载中心异步生成');
+    expect(collectElements(tree, (element) => element.props.className === 'micro-step-indicator' && element.props['aria-hidden'] === 'true')).toHaveLength(2);
+  });
+
+  it('keeps micro stepper pending spinner feedback in the stylesheet', () => {
+    const stylesheet = rendererCss();
+
+    expect(stylesheet).toMatch(/\.micro-step\s*\{[\s\S]*grid-template-columns:\s*18px minmax\(150px, 0\.3fr\)/);
+    expect(stylesheet).toMatch(/\.micro-step-pending \.micro-step-indicator\s*\{[\s\S]*animation:\s*micro-step-spin 900ms linear infinite/);
+    expect(stylesheet).toContain('@keyframes micro-step-spin');
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.micro-step-pending \.micro-step-indicator[\s\S]*animation:\s*none/);
   });
 
   it('renders left-label structured form rows with required markers and hints', () => {

@@ -924,6 +924,10 @@ button:disabled {
   .state-light-card:hover {
     transform: none;
   }
+
+  .micro-step-pending .micro-step-indicator {
+    animation: none;
+  }
 }
 
 .dashboard-task-metrics {
@@ -5139,8 +5143,8 @@ code {
 
 .micro-step {
   display: grid;
-  grid-template-columns: minmax(160px, 0.32fr) minmax(90px, 0.18fr) minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 18px minmax(150px, 0.3fr) minmax(90px, 0.18fr) minmax(0, 1fr);
+  gap: 8px;
   align-items: center;
   min-height: 34px;
   border: 1px solid var(--line-soft);
@@ -5148,6 +5152,15 @@ code {
   background: #fff;
   padding: 6px 8px;
   contain: layout style paint;
+}
+
+.micro-step-indicator {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  color: #94a3b8;
+  justify-self: center;
 }
 
 .micro-step strong {
@@ -5167,17 +5180,47 @@ code {
   border-color: var(--tone-ready-border);
 }
 
+.micro-step-ready .micro-step-indicator {
+  border-color: #15803d;
+  background: #15803d;
+  box-shadow: 0 0 0 3px rgb(21 128 61 / 0.1);
+}
+
 .micro-step-warning {
   border-color: var(--tone-warning-border);
+}
+
+.micro-step-warning .micro-step-indicator {
+  color: #b45309;
+  border-color: #b45309;
+  box-shadow: 0 0 0 3px rgb(180 83 9 / 0.1);
 }
 
 .micro-step-blocked {
   border-color: var(--tone-blocked-border);
 }
 
+.micro-step-blocked .micro-step-indicator {
+  color: #b91c1c;
+  border-color: #b91c1c;
+  box-shadow: 0 0 0 3px rgb(185 28 28 / 0.1);
+}
+
 .micro-step-pending {
   border-color: var(--tone-pending-border);
   background: var(--tone-pending-bg);
+}
+
+.micro-step-pending .micro-step-indicator {
+  border-color: #94a3b8;
+  border-right-color: transparent;
+  animation: micro-step-spin 900ms linear infinite;
+}
+
+@keyframes micro-step-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .form-table {
