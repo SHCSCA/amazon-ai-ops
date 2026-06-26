@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildDataImportTableFeedback,
   dataImportTableFeedbackClass,
+  dataImportTableSortHandler,
   nextDataImportSort,
   sortDataImportReportRows,
   type DataImportReportRow,
@@ -88,8 +89,20 @@ describe('data import table micro-feedback', () => {
   });
 
   it('marks the table shell only during the 100ms sort refresh', () => {
-    expect(dataImportTableFeedbackClass(false)).toBe('data-import-table-shell');
-    expect(dataImportTableFeedbackClass(true)).toContain('data-import-table-refreshing');
+    expect(dataImportTableFeedbackClass({ refreshing: false, locked: false })).toBe('data-import-table-shell');
+    expect(dataImportTableFeedbackClass({ refreshing: true, locked: false })).toContain('data-import-table-refreshing');
+    expect(dataImportTableFeedbackClass({ refreshing: false, locked: true })).toContain('data-import-table-locked');
+  });
+
+  it('locks sorting while an import is writing metrics into SQLite', () => {
+    const sortSpy = vi.fn();
+
+    expect(dataImportTableSortHandler({ locked: true, onSort: sortSpy })).toBeUndefined();
+
+    const handler = dataImportTableSortHandler({ locked: false, onSort: sortSpy });
+    expect(handler).toBeTypeOf('function');
+    handler?.('hash');
+    expect(sortSpy).toHaveBeenCalledWith('hash');
   });
 
   it('keeps the 100ms sorting feedback and aria-live contract wired', () => {
@@ -98,10 +111,13 @@ describe('data import table micro-feedback', () => {
 
     expect(source).toContain('aria-live="polite"');
     expect(source).toContain('data-import-table-feedback');
+    expect(source).toContain('dataImportTableSortHandler');
+    expect(source).toContain('data-import-table-lock');
     expect(source).toContain("header: 'SHA-256'");
     expect(source).toContain('shortDataImportHash');
     expect(source).toContain('setTableRefreshing');
     expect(styles).toContain('.data-import-table-refreshing');
+    expect(styles).toContain('.data-import-table-locked');
     expect(styles).toContain('@keyframes data-import-table-refresh');
     expect(styles).toMatch(/animation:\s*data-import-table-refresh 100ms/);
     expect(styles).toContain('filter: blur(1px)');

@@ -132,8 +132,19 @@ export function buildDataImportTableFeedback({
   return `${sortText} ${totalCount} 类报表；真实报表 ${realReportCount}/${totalCount}，已入库 ${importedRows} 行。`;
 }
 
-export function dataImportTableFeedbackClass(refreshing: boolean): string {
-  return `data-import-table-shell${refreshing ? ' data-import-table-refreshing' : ''}`;
+export function dataImportTableFeedbackClass(input: { refreshing: boolean; locked: boolean }): string {
+  return [
+    'data-import-table-shell',
+    input.refreshing ? 'data-import-table-refreshing' : '',
+    input.locked ? 'data-import-table-locked' : '',
+  ].filter(Boolean).join(' ');
+}
+
+export function dataImportTableSortHandler(input: {
+  locked: boolean;
+  onSort: (key: string) => void;
+}): ((key: string) => void) | undefined {
+  return input.locked ? undefined : input.onSort;
 }
 
 function reportStatusLabel(status: string): string {
@@ -342,6 +353,7 @@ export function DataImportValidationPage() {
   const [sortState, setSortState] = useState<DataImportSortState | null>(null);
   const [tableRefreshing, setTableRefreshing] = useState(false);
   const refreshTimerRef = useRef<number | null>(null);
+  const importLocked = Boolean(runningImport);
   const collection = data?.collection;
   const quant = data?.quant;
   const reportOptions = collection?.reportOptions || [];
@@ -456,7 +468,7 @@ export function DataImportValidationPage() {
       header: '操作',
       width: '100px',
       cell: (row) => (
-        <button className="secondary-button compact-button" disabled={!row.filePath} onClick={() => openPath(row.filePath)} type="button">
+        <button className="secondary-button compact-button" disabled={!row.filePath || importLocked} onClick={() => openPath(row.filePath)} type="button">
           打开表格
         </button>
       ),
@@ -743,8 +755,13 @@ export function DataImportValidationPage() {
 
         <ProgressiveDetails title="8 类报表入库明细">
           <Panel title="8 类报表入库明细" tone={hasRealFiles ? 'default' : 'blocked'}>
-            <div className={dataImportTableFeedbackClass(tableRefreshing)}>
+            <div className={dataImportTableFeedbackClass({ refreshing: tableRefreshing, locked: importLocked })}>
               <p aria-live="polite" className="data-import-table-feedback">{tableFeedback}</p>
+              {importLocked && (
+                <p aria-live="polite" className="data-import-table-lock">
+                  正在写入 SQLite，表格已锁定为只读；完成后自动刷新入库行数。
+                </p>
+              )}
               <VirtualDataTable
                 columns={reportColumns}
                 emptyMessage="当前范围还没有报表状态。请先完成数据采集。"
@@ -752,7 +769,7 @@ export function DataImportValidationPage() {
                 getRowKey={(row) => row.type}
                 loading={loading}
                 minWidth="1120px"
-                onSortChange={handleReportSortChange}
+                onSortChange={dataImportTableSortHandler({ locked: importLocked, onSort: handleReportSortChange })}
                 rows={sortedReportRows}
                 sortDirection={sortState?.direction ?? 'desc'}
                 sortKey={sortState?.key}

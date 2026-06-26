@@ -2175,6 +2175,31 @@ code {
   line-height: 1.25;
 }
 
+.data-import-table-lock {
+  min-height: 18px;
+  margin: 0;
+  border: 1px solid #f1d08b;
+  border-radius: 8px;
+  background: #fff9eb;
+  color: #92400e;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.data-import-table-locked .virtual-table-wrap {
+  border-color: #f1d08b;
+  background: #fffbeb;
+  box-shadow: inset 0 0 0 1px rgb(241 208 139 / 0.35);
+}
+
+.data-import-table-locked .virtual-table-sort-button:disabled,
+.data-import-table-locked .compact-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .data-import-table-refreshing .virtual-table-wrap {
   animation: data-import-table-refresh 100ms ease-out;
   will-change: opacity, filter, transform;
