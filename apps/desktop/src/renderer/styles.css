@@ -5428,6 +5428,32 @@ code {
   color: var(--red);
 }
 
+.inline-save-field-nudged:not(.inline-save-field-saving):not(.inline-save-field-saved):not(.inline-save-field-error) input {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+  animation: product-config-nudge 260ms ease-out;
+}
+
+.inline-save-field-nudged:not(.inline-save-field-saving):not(.inline-save-field-saved):not(.inline-save-field-error) .inline-save-status {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+}
+
+@keyframes product-config-nudge {
+  0% {
+    transform: translateY(0);
+  }
+
+  45% {
+    transform: translateY(-1px);
+  }
+
+  100% {
+    transform: translateY(0);
+  }
+}
+
 .form-table input:not([type="checkbox"]),
 .form-table select,
 .form-table textarea {

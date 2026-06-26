@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
@@ -34,6 +34,8 @@ export const DEFAULT_COST = {
 type ProductCostInput = typeof DEFAULT_COST;
 type ProductCostKey = keyof ProductCostInput;
 type InlineSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+type ProductConfigMetricKey = 'grossCost' | 'margin' | 'targetAcos' | 'targetTacos';
+type ProductConfigMetricTone = 'ready' | 'warning' | 'blocked' | 'pending';
 
 const PRODUCT_COST_FIELD_LABELS: Record<ProductCostKey, string> = {
   purchaseCost: '采购成本',
@@ -95,6 +97,48 @@ export function productConfigInlineSaveLabel(key: string, status: InlineSaveStat
   return `${label} 保存失败`;
 }
 
+const RATE_COST_FIELDS = new Set<ProductCostKey>(['referralFeeRate', 'targetNetMargin', 'targetAcos', 'targetTacos']);
+
+function stepPrecision(step: string): number {
+  const decimal = String(step || '').split('.')[1];
+  return Math.max(2, decimal?.length || 0);
+}
+
+export function productConfigNudgeCostValue(
+  key: ProductCostKey,
+  value: number,
+  direction: 'up' | 'down',
+  step = '0.01',
+): number {
+  const delta = Math.abs(Number(step) || 0.01);
+  const current = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const next = current + (direction === 'up' ? delta : -delta);
+  const clampedLow = Math.max(0, next);
+  const clamped = RATE_COST_FIELDS.has(key) ? Math.min(1, clampedLow) : clampedLow;
+  return Number(clamped.toFixed(stepPrecision(step)));
+}
+
+export function productConfigMetricTone(metric: ProductConfigMetricKey, value: number): ProductConfigMetricTone {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 'pending';
+  if (metric === 'grossCost') return numeric > 0 ? 'ready' : 'pending';
+  if (metric === 'margin') {
+    if (numeric < 0) return 'blocked';
+    if (numeric < 0.1) return 'warning';
+    return 'ready';
+  }
+  if (metric === 'targetAcos') {
+    if (numeric <= 0) return 'pending';
+    if (numeric > 0.7) return 'blocked';
+    if (numeric > 0.4) return 'warning';
+    return 'ready';
+  }
+  if (numeric <= 0) return 'pending';
+  if (numeric > 0.45) return 'blocked';
+  if (numeric > 0.3) return 'warning';
+  return 'ready';
+}
+
 export function buildProductConfigTaskState(input: {
   asin?: string;
   configuredProducts: number;
@@ -139,6 +183,8 @@ export function ProductConfigPage() {
   const [error, setError] = useState('');
   const [dirtyCostFields, setDirtyCostFields] = useState<Partial<Record<ProductCostKey, boolean>>>({});
   const [inlineSave, setInlineSave] = useState<{ field?: ProductCostKey; status: InlineSaveStatus }>({ status: 'idle' });
+  const [nudgedCostField, setNudgedCostField] = useState<ProductCostKey | null>(null);
+  const nudgeTimerRef = useRef<number | null>(null);
   const [draft, setDraft] = useState({
     asin: scope.asin || '',
     parentAsin: '',
@@ -187,6 +233,10 @@ export function ProductConfigPage() {
     }));
     loadProducts();
   }, [scope.asin, scope.storeName, scope.marketplaceCode]);
+
+  useEffect(() => () => {
+    if (nudgeTimerRef.current) window.clearTimeout(nudgeTimerRef.current);
+  }, []);
 
   function loadProduct(product: any) {
     setDraft({
@@ -258,6 +308,15 @@ export function ProductConfigPage() {
     if (inlineSave.field === key && inlineSave.status !== 'saving') setInlineSave({ status: 'idle' });
   }
 
+  function nudgeCost(key: ProductCostKey, direction: 'up' | 'down', step: string) {
+    setCost((current) => ({ ...current, [key]: productConfigNudgeCostValue(key, current[key], direction, step) }));
+    setDirtyCostFields((current) => ({ ...current, [key]: true }));
+    if (inlineSave.field === key && inlineSave.status !== 'saving') setInlineSave({ status: 'idle' });
+    setNudgedCostField(key);
+    if (nudgeTimerRef.current) window.clearTimeout(nudgeTimerRef.current);
+    nudgeTimerRef.current = window.setTimeout(() => setNudgedCostField(null), 650);
+  }
+
   async function commitCostField(key: ProductCostKey) {
     if (saving || !dirtyCostFields[key]) return;
     await saveProductConfig({ source: 'inline', field: key });
@@ -265,24 +324,36 @@ export function ProductConfigPage() {
 
   function renderCostInput(key: ProductCostKey, step = '0.01') {
     const status = inlineSave.field === key ? inlineSave.status : 'idle';
-    const label = productConfigInlineSaveLabel(key, status);
+    const saveLabel = productConfigInlineSaveLabel(key, status);
+    const feedbackLabel = saveLabel || (nudgedCostField === key ? `${PRODUCT_COST_FIELD_LABELS[key]} 已调整，失焦或回车保存` : '');
     return (
-      <div className={`inline-save-field ${status !== 'idle' ? `inline-save-field-${status}` : ''}`}>
+      <div className={[
+        'inline-save-field',
+        status !== 'idle' ? `inline-save-field-${status}` : '',
+        nudgedCostField === key ? 'inline-save-field-nudged' : '',
+      ].filter(Boolean).join(' ')}>
         <input
           aria-label={PRODUCT_COST_FIELD_LABELS[key]}
+          title="使用上下方向键微调；失焦或回车保存。"
           type="number"
+          inputMode="decimal"
           step={step}
           value={cost[key]}
           onBlur={() => { void commitCostField(key); }}
           onChange={(event) => updateCost(key, event.target.value)}
           onKeyDown={(event) => {
+            if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+              event.preventDefault();
+              nudgeCost(key, event.key === 'ArrowUp' ? 'up' : 'down', step);
+              return;
+            }
             if (event.key === 'Enter') {
               event.preventDefault();
               void commitCostField(key);
             }
           }}
         />
-        <span className="inline-save-status" aria-live="polite">{label}</span>
+        <span className="inline-save-status" aria-live="polite">{feedbackLabel}</span>
       </div>
     );
   }
@@ -421,21 +492,27 @@ export function ProductConfigPage() {
             <div>
               <span>估算固定成本</span>
               <strong>{formatUsd(grossCost)}</strong>
+              <StatusPill tone={productConfigMetricTone('grossCost', grossCost)}>{grossCost > 0 ? '已填写' : '待填写'}</StatusPill>
               <p>采购、头程、FBA、仓储和其他成本之和。</p>
             </div>
             <div>
               <span>最低售价毛利空间</span>
               <strong>{formatPercent(minPriceMargin * 100)}</strong>
+              <StatusPill tone={productConfigMetricTone('margin', cost.minPrice > 0 ? minPriceMargin : Number.NaN)}>
+                {cost.minPrice > 0 ? '实时判定' : '待售价'}
+              </StatusPill>
               <p>扣除固定成本和推荐费后的粗略空间，用于判断广告 ACOS 上限。</p>
             </div>
             <div>
               <span>目标 ACOS</span>
               <strong>{formatPercent(cost.targetAcos * 100)}</strong>
+              <StatusPill tone={productConfigMetricTone('targetAcos', cost.targetAcos)}>实时目标</StatusPill>
               <p>AI 动态阈值会把它作为产品级目标，而不是只用全局默认值。</p>
             </div>
             <div>
               <span>目标 TACOS</span>
               <strong>{formatPercent(cost.targetTacos * 100)}</strong>
+              <StatusPill tone={productConfigMetricTone('targetTacos', cost.targetTacos)}>实时目标</StatusPill>
               <p>后续接入总销售后可用于广告整体预算约束。</p>
             </div>
           </div>

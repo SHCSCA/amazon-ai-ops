@@ -3,6 +3,8 @@ import {
   buildCostInputFromProduct,
   buildProductConfigTaskState,
   isProductConfigAutoSaveField,
+  productConfigMetricTone,
+  productConfigNudgeCostValue,
   productConfigInlineSaveLabel,
   productCostInputHint,
 } from './product-config-page';
@@ -95,5 +97,23 @@ describe('product config task and inline save feedback', () => {
     expect(productConfigInlineSaveLabel('targetAcos', 'saved')).toBe('目标 ACOS 已保存');
     expect(productConfigInlineSaveLabel('targetAcos', 'error')).toBe('目标 ACOS 保存失败');
     expect(productConfigInlineSaveLabel('targetAcos', 'idle')).toBe('');
+  });
+
+  it('nudges cost and target values with keyboard-safe bounds', () => {
+    expect(productConfigNudgeCostValue('minPrice', 39.99, 'up', '0.5')).toBe(40.49);
+    expect(productConfigNudgeCostValue('purchaseCost', 0, 'down', '0.01')).toBe(0);
+    expect(productConfigNudgeCostValue('targetAcos', 0.35, 'up', '0.01')).toBe(0.36);
+    expect(productConfigNudgeCostValue('targetAcos', 1, 'up', '0.01')).toBe(1);
+  });
+
+  it('maps live product target values to status chip tones', () => {
+    expect(productConfigMetricTone('grossCost', 0)).toBe('pending');
+    expect(productConfigMetricTone('grossCost', 18)).toBe('ready');
+    expect(productConfigMetricTone('margin', -0.02)).toBe('blocked');
+    expect(productConfigMetricTone('margin', 0.08)).toBe('warning');
+    expect(productConfigMetricTone('margin', 0.18)).toBe('ready');
+    expect(productConfigMetricTone('targetAcos', 0.75)).toBe('blocked');
+    expect(productConfigMetricTone('targetAcos', 0.45)).toBe('warning');
+    expect(productConfigMetricTone('targetAcos', 0.3)).toBe('ready');
   });
 });
