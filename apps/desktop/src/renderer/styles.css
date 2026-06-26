@@ -2005,6 +2005,36 @@ code {
   padding: 8px 10px;
 }
 
+.keyword-opportunity-filter-feedback {
+  min-height: 18px;
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.keyword-opportunity-table-shell {
+  contain: layout style paint;
+}
+
+.keyword-opportunity-table-refreshing {
+  animation: keyword-opportunity-filter-refresh 100ms ease-out;
+  will-change: opacity, transform;
+}
+
+@keyframes keyword-opportunity-filter-refresh {
+  from {
+    opacity: 0.72;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .textarea-label {
   display: grid;
   gap: 6px;

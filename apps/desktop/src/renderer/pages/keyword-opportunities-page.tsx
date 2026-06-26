@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
@@ -65,6 +65,22 @@ const keywordSortKeys = new Set<KeywordOpportunitySortKey>([
   'recommendedPlacement',
 ]);
 
+const keywordOpportunitySortLabels: Record<KeywordOpportunitySortKey, string> = {
+  asin: 'ASIN',
+  portfolioName: '广告组合',
+  campaignName: '广告活动',
+  adGroupName: '广告组',
+  keyword: '关键词',
+  coverageStatus: '覆盖状态',
+  clicks: '点击',
+  orders: '订单',
+  spend: '花费',
+  sales: '销售',
+  acos: 'ACOS',
+  opportunityLevel: '机会等级',
+  recommendedPlacement: '建议位置',
+};
+
 function isKeywordOpportunitySortKey(key: string): key is KeywordOpportunitySortKey {
   return keywordSortKeys.has(key as KeywordOpportunitySortKey);
 }
@@ -109,13 +125,39 @@ export function nextKeywordOpportunitySort(
   return { key: nextKey, direction: keywordTextSortKeys.has(nextKey) ? 'asc' : 'desc' };
 }
 
+export function keywordOpportunitySortLabel(key: KeywordOpportunitySortKey): string {
+  return keywordOpportunitySortLabels[key] || key;
+}
+
+export function buildKeywordOpportunityFilterFeedback(input: {
+  activeFilterCount: number;
+  sortDirection: KeywordOpportunitySortState['direction'];
+  sortLabel: string;
+  totalCount: number;
+  visibleCount: number;
+}): string {
+  const filterText = input.activeFilterCount > 0
+    ? `已应用 ${input.activeFilterCount} 个筛选条件`
+    : '未设置筛选条件';
+  const directionText = input.sortDirection === 'asc' ? '升序' : '降序';
+  return `${filterText}，按${input.sortLabel}${directionText}展示 ${input.visibleCount}/${input.totalCount} 个机会。`;
+}
+
+export function keywordOpportunityTableFeedbackClass(refreshing: boolean): string {
+  return refreshing
+    ? 'keyword-opportunity-table-shell keyword-opportunity-table-refreshing'
+    : 'keyword-opportunity-table-shell';
+}
+
 export function KeywordOpportunitiesPage() {
   const { data, scope } = useBusinessDataPipeline();
   const setScope = useScopeStore((state) => state.setScope);
+  const didMountFilterFeedback = useRef(false);
   const [rows, setRows] = useState<KeywordOpportunityView[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [tableRefreshing, setTableRefreshing] = useState(false);
   const [filters, setFilters] = useState({
     asin: '',
     campaign: '',
@@ -179,6 +221,14 @@ export function KeywordOpportunitiesPage() {
   const sortedRows = useMemo(() => sortKeywordOpportunities(filteredRows, sortState), [filteredRows, sortState]);
   const visibleRows = quantReady ? sortedRows : [];
   const visibleRowCount = quantReady ? rows.length : 0;
+  const activeFilterCount = Object.values(filters).filter((value) => String(value).trim().length > 0).length;
+  const filterFeedback = buildKeywordOpportunityFilterFeedback({
+    activeFilterCount,
+    sortDirection: sortState.direction,
+    sortLabel: keywordOpportunitySortLabel(sortState.key),
+    totalCount: visibleRowCount,
+    visibleCount: visibleRows.length,
+  });
   const highOpportunityCount = visibleRows.filter((row) => row.opportunityLevel === 'high').length;
   const convertingCount = visibleRows.filter((row) => row.orders > 0 || row.sales > 0).length;
   const noOrderSpend = visibleRows.filter((row) => row.spend > 0 && row.orders === 0).reduce((sum, row) => sum + row.spend, 0);
@@ -196,6 +246,32 @@ export function KeywordOpportunitiesPage() {
     row.entityType,
     row.keyword,
   ].join('|');
+
+  useEffect(() => {
+    if (!quantReady) {
+      setTableRefreshing(false);
+      didMountFilterFeedback.current = false;
+      return;
+    }
+    if (!didMountFilterFeedback.current) {
+      didMountFilterFeedback.current = true;
+      return;
+    }
+    setTableRefreshing(true);
+    const timer = window.setTimeout(() => setTableRefreshing(false), 120);
+    return () => window.clearTimeout(timer);
+  }, [
+    filters.adGroup,
+    filters.asin,
+    filters.campaign,
+    filters.coverageStatus,
+    filters.minClicks,
+    filters.minSpend,
+    filters.opportunityLevel,
+    quantReady,
+    sortState.direction,
+    sortState.key,
+  ]);
 
   function sourceImportRows(row: KeywordOpportunityView): number | null {
     if (!row.sourceFile || !hasRealReportCoverage(data?.collection)) return null;
@@ -487,37 +563,40 @@ export function KeywordOpportunitiesPage() {
               </select>
             </label>
           </div>
-          <p className="muted-line">当前显示 {visibleRows.length} / {visibleRowCount} 个机会；所有金额均为 USD。</p>
+          <p className="keyword-opportunity-filter-feedback" aria-live="polite">{filterFeedback}</p>
+          <p className="muted-line">所有金额均为 USD；筛选和排序只改变当前视图，不改写导入数据。</p>
         </Panel>
 
         <Panel title="关键词机会表">
-          <VirtualDataTable
-            columns={opportunityColumns}
-            emptyMessage={quantReady ? '当前筛选条件没有可展示的关键词机会。' : '缺少真实报表和导入指标，关键词机会保持阻断。'}
-            estimateSize={72}
-            expandedContent={(row) => {
-              const key = rowKey(row);
-              if (expandedKey !== key) return null;
-              const importedRows = sourceImportRows(row);
-              return (
-                <div className="detail-grid">
-                  <div><span>数据批次</span><strong>{batchId}</strong></div>
-                  <div><span>报表类型</span><strong>{row.entityType}</strong></div>
-                  <div><span>导入行数</span><strong>{importedRows === null ? '当前文件未匹配' : importedRows}</strong></div>
-                  <div><span>来源文件</span><strong><code>{row.sourceFile || '-'}</code></strong></div>
-                  <div><span>数据口径</span><strong>店铺/站点/ASIN/广告活动/广告组/对象类型/关键词去重</strong></div>
-                  <div><span>下一步</span><strong>{row.orders > 0 || row.sales > 0 ? '进入 Listing 覆盖复核' : '先控制投放风险'}</strong></div>
-                </div>
-              );
-            }}
-            getRowKey={rowKey}
-            loading={loading}
-            minWidth="1500px"
-            onSortChange={handleSortChange}
-            rows={visibleRows}
-            sortDirection={sortState.direction}
-            sortKey={sortState.key}
-          />
+          <div className={keywordOpportunityTableFeedbackClass(tableRefreshing)}>
+            <VirtualDataTable
+              columns={opportunityColumns}
+              emptyMessage={quantReady ? '当前筛选条件没有可展示的关键词机会。' : '缺少真实报表和导入指标，关键词机会保持阻断。'}
+              estimateSize={72}
+              expandedContent={(row) => {
+                const key = rowKey(row);
+                if (expandedKey !== key) return null;
+                const importedRows = sourceImportRows(row);
+                return (
+                  <div className="detail-grid">
+                    <div><span>数据批次</span><strong>{batchId}</strong></div>
+                    <div><span>报表类型</span><strong>{row.entityType}</strong></div>
+                    <div><span>导入行数</span><strong>{importedRows === null ? '当前文件未匹配' : importedRows}</strong></div>
+                    <div><span>来源文件</span><strong><code>{row.sourceFile || '-'}</code></strong></div>
+                    <div><span>数据口径</span><strong>店铺/站点/ASIN/广告活动/广告组/对象类型/关键词去重</strong></div>
+                    <div><span>下一步</span><strong>{row.orders > 0 || row.sales > 0 ? '进入 Listing 覆盖复核' : '先控制投放风险'}</strong></div>
+                  </div>
+                );
+              }}
+              getRowKey={rowKey}
+              loading={loading}
+              minWidth="1500px"
+              onSortChange={handleSortChange}
+              rows={visibleRows}
+              sortDirection={sortState.direction}
+              sortKey={sortState.key}
+            />
+          </div>
         </Panel>
       </div>
     </div>
