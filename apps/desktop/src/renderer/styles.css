@@ -916,6 +916,14 @@ button:disabled {
     animation: none;
     opacity: 0;
   }
+
+  .state-light-card {
+    transition: none;
+  }
+
+  .state-light-card:hover {
+    transform: none;
+  }
 }
 
 .dashboard-task-metrics {
@@ -5066,6 +5074,13 @@ code {
   background: #fff;
   padding: 10px 12px;
   contain: layout style paint;
+  transition: transform 120ms var(--motion-standard), box-shadow 120ms var(--motion-standard), border-color 120ms var(--motion-standard);
+  will-change: transform;
+}
+
+.state-light-card:hover {
+  box-shadow: 0 10px 24px rgb(15 23 42 / 0.08);
+  transform: translateY(-2px);
 }
 
 .state-light-card span,

@@ -53,6 +53,15 @@ describe('industrial UI atoms', () => {
     expect(collectElements(tree, (element) => element.props.className === 'state-light-card state-light-ready')).toHaveLength(1);
   });
 
+  it('keeps state light hover lift feedback in the stylesheet', () => {
+    const stylesheet = rendererCss();
+
+    expect(stylesheet).toMatch(/\.state-light-card\s*\{[\s\S]*transition:\s*transform 120ms/);
+    expect(stylesheet).toMatch(/\.state-light-card:hover\s*\{[\s\S]*box-shadow\s*:[^;]+;/);
+    expect(stylesheet).toMatch(/\.state-light-card:hover\s*\{[\s\S]*transform\s*:\s*translateY\(-2px\)\s*;/);
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.state-light-card:hover[\s\S]*transform:\s*none/);
+  });
+
   it('renders micro stepper rows without exposing raw technical labels by default', () => {
     const tree = MicroStepper({
       items: [
