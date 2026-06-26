@@ -119,9 +119,13 @@ describe('industrial UI atoms', () => {
     const stylesheet = rendererCss();
 
     expect(stylesheet).toMatch(/\.form-table-row[\s\S]*grid-template-columns:\s*160px minmax\(0, 1fr\)/);
+    expect(stylesheet).toMatch(/\.form-table-row[\s\S]*transition:\s*[\s\S]*background var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)/);
+    expect(stylesheet).toMatch(/\.form-table-row:focus-within\s*\{[\s\S]*box-shadow:\s*[\s\S]*inset 3px 0 0 var\(--primary\)[\s\S]*0 0 0 2px rgb\(37 99 235 \/ 0\.10\)/);
+    expect(stylesheet).toMatch(/\.form-table-row:focus-within \.form-table-label\s*\{[\s\S]*color:\s*var\(--primary\)/);
     expect(stylesheet).toMatch(/\.form-table-feedback[\s\S]*min-height:\s*16px/);
     expect(stylesheet).toContain('.form-table-feedback-blocked');
     expect(stylesheet).toContain('@keyframes form-table-feedback-in');
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.form-table-row[\s\S]*transition:\s*none/);
   });
 
   it('renders safety gate language as a dedicated first-class line', () => {

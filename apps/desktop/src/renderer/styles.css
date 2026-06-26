@@ -925,6 +925,10 @@ button:disabled {
     transform: none;
   }
 
+  .form-table-row {
+    transition: none;
+  }
+
   .micro-step-pending .micro-step-indicator {
     animation: none;
   }
@@ -5231,6 +5235,7 @@ code {
 }
 
 .form-table-row {
+  position: relative;
   display: grid;
   grid-template-columns: 160px minmax(0, 1fr);
   gap: 16px;
@@ -5238,6 +5243,23 @@ code {
   min-height: 48px;
   border-bottom: 1px solid #f1f5f9;
   padding: 8px 12px;
+  background: #fff;
+  transition:
+    background var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+
+.form-table-row:focus-within {
+  z-index: 1;
+  background: #f8fbff;
+  box-shadow:
+    inset 3px 0 0 var(--primary),
+    0 0 0 2px rgb(37 99 235 / 0.10),
+    0 10px 24px rgb(37 99 235 / 0.08);
+}
+
+.form-table-row:focus-within .form-table-label {
+  color: var(--primary);
 }
 
 .form-table-row:last-child {
