@@ -10,7 +10,10 @@ import { toUserFacingError } from '../user-facing-error';
 
 type ApprovalTab = 'pending' | 'needs_review' | 'approved' | 'rejected';
 type ApprovalFeedbackState = 'approving' | 'approved' | 'rejecting' | 'rejected' | 'blocked';
+type ApprovalQueueExitDecision = 'approved' | 'rejected';
+type ApprovalQueueExitState = { id: number; decision: ApprovalQueueExitDecision } | null;
 const APPROVAL_SELECTION_STORAGE_KEY = 'amazon-ai-ops:approval-selection';
+export const APPROVAL_QUEUE_EXIT_ANIMATION_MS = 180;
 
 const TAB_LABELS: Record<ApprovalTab, string> = {
   pending: '待审批',
@@ -25,6 +28,15 @@ function errorMessage(caught: unknown, fallback: string): string {
 
 function objectName(rec: RecommendationView): string {
   return rec.evidence?.searchTerm || rec.evidence?.targeting || rec.entityName || '-';
+}
+
+export function approvalRowsAfterDecision(rows: RecommendationView[], recommendationId: number): RecommendationView[] {
+  return rows.filter((row) => row.id !== recommendationId);
+}
+
+export function approvalQueueRowClass(row: RecommendationView, exiting: ApprovalQueueExitState): string {
+  if (!exiting || row.id !== exiting.id) return '';
+  return `approval-row-exiting approval-row-exiting-${exiting.decision}`;
 }
 
 function sourceFiles(rec: RecommendationView): string {
@@ -494,8 +506,10 @@ export function ApprovalPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [submittingDecision, setSubmittingDecision] = useState<'approved' | 'rejected' | null>(null);
   const [decisionFeedback, setDecisionFeedback] = useState<ReturnType<typeof buildApprovalStampFeedback> | null>(null);
+  const [exitingDecision, setExitingDecision] = useState<ApprovalQueueExitState>(null);
   const [batchSelectionHint, setBatchSelectionHint] = useState<string | null>(null);
   const pendingSelectionIntentRef = useRef<ReturnType<typeof parseApprovalSelectionIntent>>(null);
+  const exitTimerRef = useRef<number | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const currentRealReportSourceFiles = useMemo(
     () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
@@ -563,6 +577,21 @@ export function ApprovalPage() {
       pendingSelectionIntentRef.current = null;
     }
   }, []);
+
+  useEffect(() => () => {
+    if (exitTimerRef.current !== null) window.clearTimeout(exitTimerRef.current);
+  }, []);
+
+  function scheduleDecisionQueueExit(recommendationId: number, decision: ApprovalQueueExitDecision) {
+    if (exitTimerRef.current !== null) window.clearTimeout(exitTimerRef.current);
+    setExitingDecision({ id: recommendationId, decision });
+    exitTimerRef.current = window.setTimeout(() => {
+      setRows((current) => approvalRowsAfterDecision(current, recommendationId));
+      setExitingDecision(null);
+      exitTimerRef.current = null;
+      void loadRows({ clearMessage: false });
+    }, APPROVAL_QUEUE_EXIT_ANIMATION_MS);
+  }
 
   async function loadRows(options: { clearMessage?: boolean } = {}) {
     setLoading(true);
@@ -642,10 +671,10 @@ export function ApprovalPage() {
         targetName,
       }));
       setMessage(approvedMessage);
+      scheduleDecisionQueueExit(currentSelected.id, 'approved');
       setSelected(null);
       setApproverName('');
       setApprovalNote('');
-      await loadRows({ clearMessage: false });
     } catch (caught) {
       const failed = errorMessage(caught, '批准建议失败');
       setDecisionFeedback(buildApprovalStampFeedback({
@@ -698,10 +727,10 @@ export function ApprovalPage() {
         targetName,
       }));
       setMessage(rejectedMessage);
+      scheduleDecisionQueueExit(currentSelected.id, 'rejected');
       setSelected(null);
       setApproverName('');
       setApprovalNote('');
-      await loadRows({ clearMessage: false });
     } catch (caught) {
       const failed = errorMessage(caught, '拒绝建议失败');
       setDecisionFeedback(buildApprovalStampFeedback({
@@ -877,7 +906,7 @@ export function ApprovalPage() {
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.id}>
+                  <tr className={approvalQueueRowClass(row, exitingDecision)} key={row.id}>
                     <td>{row.actionType}</td>
                     <td>{row.evidence?.portfolioName || '-'}</td>
                     <td>{row.evidence?.campaignName || '-'}</td>

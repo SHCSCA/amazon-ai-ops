@@ -5787,6 +5787,19 @@ code {
   color: var(--text-muted);
 }
 
+.approval-row-exiting td {
+  animation: approval-row-exit 180ms ease-out forwards;
+  will-change: opacity, transform;
+}
+
+.approval-row-exiting-approved td {
+  background: var(--tone-ready-bg);
+}
+
+.approval-row-exiting-rejected td {
+  background: var(--tone-blocked-bg);
+}
+
 @keyframes approval-stamp-in {
   from {
     opacity: 0;
@@ -5795,6 +5808,17 @@ code {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes approval-row-exit {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(16px);
   }
 }
 

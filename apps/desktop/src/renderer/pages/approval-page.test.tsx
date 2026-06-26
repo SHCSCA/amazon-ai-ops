@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecommendationView } from '../types';
-import { aiThresholdSummary, approvalBlockers, approvalDecisionState, approvalMissing, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, parseApprovalSelectionIntent, strategyLabel } from './approval-page';
+import { aiThresholdSummary, approvalBlockers, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, parseApprovalSelectionIntent, strategyLabel } from './approval-page';
 
 function recommendation(sourceRow: number | undefined = 12, sourceFiles = ['C:/reports/user-search-term.xlsx']): RecommendationView {
   return {
@@ -378,6 +378,29 @@ describe('parseApprovalSelectionIntent', () => {
     expect(parseApprovalSelectionIntent(null)).toBeNull();
     expect(parseApprovalSelectionIntent({ ids: [] })).toBeNull();
     expect(parseApprovalSelectionIntent({ ids: [''] })).toBeNull();
+  });
+});
+
+describe('approval queue optimistic exit', () => {
+  it('removes a decided recommendation from the current local queue', () => {
+    const rows = [
+      recommendation(),
+      { ...recommendation(), id: 102, entityName: 'second target' },
+    ];
+
+    expect(approvalRowsAfterDecision(rows, 101).map((row) => row.id)).toEqual([102]);
+    expect(approvalRowsAfterDecision(rows, 999).map((row) => row.id)).toEqual([101, 102]);
+  });
+
+  it('marks only the decided row with a tone-specific exit class', () => {
+    const rows = [
+      recommendation(),
+      { ...recommendation(), id: 102, entityName: 'second target' },
+    ];
+
+    expect(approvalQueueRowClass(rows[0], { id: 101, decision: 'approved' })).toBe('approval-row-exiting approval-row-exiting-approved');
+    expect(approvalQueueRowClass(rows[1], { id: 101, decision: 'approved' })).toBe('');
+    expect(approvalQueueRowClass(rows[0], { id: 101, decision: 'rejected' })).toBe('approval-row-exiting approval-row-exiting-rejected');
   });
 });
 
