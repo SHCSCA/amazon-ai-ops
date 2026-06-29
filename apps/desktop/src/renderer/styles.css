@@ -3381,6 +3381,7 @@ code {
 }
 
 .listing-heatmap-keyword {
+  contain: strict;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 8px;

@@ -10,6 +10,11 @@ import {
   listingManualFieldGroups,
 } from './listing-optimization-page';
 
+function cssRule(css: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return css.match(new RegExp(`${escaped}\\s*\\{([\\s\\S]*?)\\}`))?.[1] || '';
+}
+
 describe('listingDraftGenerationMessage', () => {
   it('states when generated Listing drafts use rule fallback rather than AI output', () => {
     const message = listingDraftGenerationMessage(true, [
@@ -154,5 +159,12 @@ describe('Listing draft diff and feedback contract', () => {
     expect(css).toContain('@keyframes listing-draft-skeleton');
     expect(css).toContain('@keyframes listing-limit-alert');
     expect(css).toContain('animation: listing-limit-alert');
+  });
+
+  it('isolates high-density heatmap cells with strict containment', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(cssRule(css, '.listing-heatmap-keyword')).toMatch(/contain:\s*strict/);
+    expect(cssRule(css, '.listing-heatmap-text-grid > div')).toMatch(/contain:\s*strict/);
   });
 });
