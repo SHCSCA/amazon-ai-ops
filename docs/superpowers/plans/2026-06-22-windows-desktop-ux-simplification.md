@@ -1014,10 +1014,10 @@ Expected: installer and portable launch smoke pass.
 Run only after package smoke passes:
 
 ```powershell
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782118074963.json --out output\codex-evidence\final-readiness-20260618170712.json
-pnpm run export:v15-delivery-bundle -- --final-readiness output\codex-evidence\final-readiness-20260618170712.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260618170712-ready
-pnpm run verify:v15-ready-safety -- --final-readiness output\codex-evidence\final-readiness-20260618170712.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260618170712-ready\delivery-bundle-manifest.json
+pnpm run write:v15-evidence-manifest --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json
+pnpm run verify:v15-final-readiness --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-20260618170712.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1782118074963.json --out output\codex-evidence\final-readiness-20260618170712.json
+pnpm run export:v15-delivery-bundle --final-readiness output\codex-evidence\final-readiness-20260618170712.json --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out output\delivery-bundles\v15-delivery-bundle-20260618170712-ready
+pnpm run verify:v15-ready-safety --final-readiness output\codex-evidence\final-readiness-20260618170712.json --bundle-manifest output\delivery-bundles\v15-delivery-bundle-20260618170712-ready\delivery-bundle-manifest.json
 ```
 
 Expected: READY safety passes.

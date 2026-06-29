@@ -250,6 +250,13 @@ export function packageEvidenceSummary(packageEvidence: DeliveryEvidenceStatusVi
   return `${filePath}${hash}`;
 }
 
+export function canExportDeliveryBundle(
+  readiness: DeliveryReadinessView | null,
+  packageEvidence: DeliveryEvidenceStatusView['package'] | null | undefined,
+): boolean {
+  return Boolean(readiness?.appReady && readiness?.manifestDriven && packageEvidence?.installerAvailable);
+}
+
 function compactDeliveryPath(value: string): string {
   const normalized = String(value || '').trim().replace(/\\/g, '/');
   if (!normalized) return '';
@@ -546,8 +553,7 @@ export function DeliveryPage() {
   const importedRows = readNumber(data?.collection?.fileAudit?.importedRowCount, readNumber(quant?.importedRows));
   const tone = readinessTone(readiness);
   const manifestReady = readiness?.appReady && readiness?.manifestDriven;
-  const packageRecorded = Boolean(deliveryEvidenceStatus?.package?.installerAvailable);
-  const deliveryReady = Boolean(manifestReady && packageRecorded);
+  const deliveryReady = canExportDeliveryBundle(readiness, deliveryEvidenceStatus?.package);
   const packageSummary = packageEvidenceSummary(deliveryEvidenceStatus?.package);
   const gateSummaryText = readiness?.gatesSummary ? `${readiness.gatesSummary.passed}/${readiness.gatesSummary.total} 通过` : '未生成';
   const deliveryOverviewFacts = buildDeliveryOverviewFacts({
@@ -985,7 +991,14 @@ export function DeliveryPage() {
             <button className="secondary-button" onClick={() => openPath(deliveryBundleOpenPath, '打开交付包')} type="button">
               打开交付包
             </button>
-            <button className="secondary-button" onClick={exportBundle} type="button">
+            <button
+              aria-disabled={!deliveryReady}
+              className={`secondary-button delivery-export-button${deliveryReady ? '' : ' delivery-export-blocked'}`}
+              disabled={!deliveryReady}
+              onClick={exportBundle}
+              title={deliveryReady ? '导出当前 READY 交付包' : '最终验收通过且安装包证据已记录后才能导出交付包'}
+              type="button"
+            >
               导出交付包
             </button>
             <button className="secondary-button" onClick={() => openPath(reportFolder, '打开证据目录')} type="button">

@@ -13,6 +13,7 @@
   --tone-warning-border: #f1d08b;
   --tone-blocked-bg: #fff7f8;
   --tone-blocked-border: #f0b9bf;
+  --tone-blocked-text: #b91c1c;
   --tone-pending-bg: #f8fafc;
   --tone-pending-border: #e2e8f0;
   --bg: var(--color-bg-base);
@@ -4115,6 +4116,41 @@ code {
 .delivery-action-row button:disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.delivery-export-blocked:disabled,
+.delivery-export-blocked:disabled:hover,
+.delivery-export-blocked:disabled:focus-visible {
+  position: relative;
+  padding-right: 34px;
+  border-color: var(--tone-blocked-border);
+  background: linear-gradient(135deg, var(--tone-blocked-bg), #fff);
+  color: var(--tone-blocked-text);
+  cursor: no-drop;
+  opacity: 0.82;
+  box-shadow: inset 0 0 0 1px rgba(185, 28, 28, 0.12);
+  transform: none;
+}
+
+.delivery-export-blocked:disabled::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--tone-blocked-text);
+  border-radius: 999px;
+  transform: translateY(-50%) rotate(-38deg);
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0 39%,
+      var(--tone-blocked-text) 40% 60%,
+      transparent 61% 100%
+    );
+  opacity: 0.9;
+  pointer-events: none;
 }
 
 .delivery-meta-grid {

@@ -118,8 +118,8 @@ The helper writes the output JSON and immediately runs `verify:ad-readback`. If 
 
 ```powershell
 pnpm run verify:ad-readback -- output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18.json
-pnpm run verify:v15-final-readiness -- --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18.json --out output\codex-evidence\final-readiness-2026-06-18.json
+pnpm run write:v15-evidence-manifest --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18.json
+pnpm run verify:v15-final-readiness --evidence-manifest output\codex-evidence\v15-final-readiness-evidence-manifest-2026-06-18.json --out output\codex-evidence\final-readiness-2026-06-18.json
 ```
 
 For future ad actions, repeat this same approval, before/after screenshot, reload/readback, and verifier flow with that action's own dynamic target fields. Do not reuse the current D6 `door lock` candidate evidence for another product, ad group, target, or bid.

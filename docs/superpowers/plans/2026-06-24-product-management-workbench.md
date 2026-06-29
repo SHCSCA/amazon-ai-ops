@@ -1727,10 +1727,10 @@ if (-not $packageSmoke) { throw 'No package launch smoke evidence found.' }
 $manifest = "output\codex-evidence\v15-final-readiness-evidence-manifest-$stamp.json"
 $finalReadiness = "output\codex-evidence\final-readiness-$stamp.json"
 $bundle = "output\delivery-bundles\v15-delivery-bundle-$stamp-ready"
-pnpm run write:v15-evidence-manifest -- --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out $manifest
-pnpm run verify:v15-final-readiness -- --evidence-manifest $manifest --package-launch-smoke $packageSmoke.FullName --out $finalReadiness
-pnpm run export:v15-delivery-bundle -- --final-readiness $finalReadiness --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out $bundle
-pnpm run verify:v15-ready-safety -- --final-readiness $finalReadiness --bundle-manifest "$bundle\delivery-bundle-manifest.json"
+pnpm run write:v15-evidence-manifest --ad-readback output\codex-evidence\real-ad-execution-readback-candidate-rec-4-current-pass.json --out $manifest
+pnpm run verify:v15-final-readiness --evidence-manifest $manifest --package-launch-smoke $packageSmoke.FullName --out $finalReadiness
+pnpm run export:v15-delivery-bundle --final-readiness $finalReadiness --data-reconciliation output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.json --data-reconciliation-md output\codex-evidence\real-lingxing-reconciliation-batch_20260612020905629_gkchz1.md --out $bundle
+pnpm run verify:v15-ready-safety --final-readiness $finalReadiness --bundle-manifest "$bundle\delivery-bundle-manifest.json"
 ```
 
 Expected: final readiness is `APP_READY`; READY safety passes.

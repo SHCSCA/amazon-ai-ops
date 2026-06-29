@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
+import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
 
 describe('buildDeliveryOverviewFacts', () => {
   it('keeps the delivery first screen to short operator facts instead of long manifest paths', () => {
@@ -105,6 +105,46 @@ describe('packageEvidenceSummary', () => {
       sha256: 'ABCDEF1234567890',
       latestBuiltAt: '2026-06-17T12:00:00.000Z',
     })).toBe('C:/release/AmazonAIOpsAgent-1.5.0-portable.exe / SHA-256 ABCDEF123456...');
+  });
+});
+
+describe('canExportDeliveryBundle', () => {
+  const readyReadiness = {
+    available: true,
+    path: 'C:/evidence/final-readiness.json',
+    exists: true,
+    status: 'APP_READY',
+    appReady: true,
+    manifestDriven: true,
+    gates: [],
+    gatesSummary: { total: 1, passed: 1, failed: 0 },
+  } as any;
+
+  const recordedPackage = {
+    installerAvailable: true,
+    installerPath: 'C:/release/AmazonAIOpsAgent-1.5.0.exe',
+    portablePath: 'C:/release/AmazonAIOpsAgent-1.5.0-portable.exe',
+    sha256: 'ABCDEF123456',
+  } as any;
+
+  it('only allows bundle export after final readiness and package evidence are both recorded', () => {
+    expect(canExportDeliveryBundle(readyReadiness, recordedPackage)).toBe(true);
+    expect(canExportDeliveryBundle({ ...readyReadiness, appReady: false }, recordedPackage)).toBe(false);
+    expect(canExportDeliveryBundle({ ...readyReadiness, manifestDriven: false }, recordedPackage)).toBe(false);
+    expect(canExportDeliveryBundle(readyReadiness, null)).toBe(false);
+    expect(canExportDeliveryBundle(readyReadiness, { ...recordedPackage, installerAvailable: false })).toBe(false);
+  });
+
+  it('keeps the blocked export button physically disabled with a red forbidden cursor contract', () => {
+    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('disabled={!deliveryReady}');
+    expect(source).toContain('delivery-export-blocked');
+    expect(stylesheet).toContain('.delivery-export-blocked:disabled');
+    expect(stylesheet).toContain('cursor: no-drop');
+    expect(stylesheet).toContain('var(--tone-blocked-border)');
+    expect(stylesheet).toContain('content: ""');
   });
 });
 
