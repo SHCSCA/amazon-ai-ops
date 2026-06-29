@@ -1,7 +1,16 @@
 import React, { type ReactElement, type ReactNode } from 'react';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { ProgressiveDetails } from './progressive-details';
+
+function source(): string {
+  return readFileSync(new URL('./progressive-details.tsx', import.meta.url), 'utf8');
+}
+
+function css(): string {
+  return readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+}
 
 function classNames(element: ReactElement): string[] {
   const className = element.props.className;
@@ -70,5 +79,25 @@ describe('ProgressiveDetails', () => {
 
     expect(tree.props.open).toBe(true);
     expect(textContent(bodyElement(tree))).toContain('Ready bundle manifest');
+  });
+
+  it('gives the disclosure summary a zero-dead-corner interaction contract', () => {
+    const tree = ProgressiveDetails({
+      title: 'Audit evidence',
+      children: <span>technical detail</span>,
+    }) as ReactElement;
+    const summary = elementChildren(tree).find((child) => child.type === 'summary');
+    const styles = css();
+
+    expect(summary).toBeDefined();
+    expect(hasClass(summary!, 'progressive-details-summary')).toBe(true);
+    expect(source()).toContain('progressive-details-summary');
+    expect(styles).toMatch(/\.progressive-details-summary[\s\S]*transition:\s*[\s\S]*background var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)[\s\S]*transform var\(--motion-fast\)/);
+    expect(styles).toMatch(/\.progressive-details-summary:hover[\s\S]*box-shadow:\s*inset 3px 0 0 var\(--primary\)/);
+    expect(styles).toMatch(/\.progressive-details-summary:focus-visible[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
+    expect(styles).toMatch(/\.progressive-details-summary:active[\s\S]*transform:\s*scale\(0\.98\)/);
+    expect(styles).toMatch(/\.progressive-details-summary::after[\s\S]*content:\s*"展开"/);
+    expect(styles).toMatch(/\.progressive-details\[open\] > \.progressive-details-summary::after[\s\S]*content:\s*"收起"/);
+    expect(styles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.progressive-details-summary[\s\S]*transition:\s*none/);
   });
 });

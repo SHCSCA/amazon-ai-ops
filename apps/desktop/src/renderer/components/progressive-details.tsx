@@ -9,7 +9,7 @@ export type ProgressiveDetailsProps = {
 export function ProgressiveDetails({ title, children, defaultOpen }: ProgressiveDetailsProps) {
   return (
     <details className="progressive-details" open={defaultOpen}>
-      <summary>{title}</summary>
+      <summary className="progressive-details-summary">{title}</summary>
       <div className="progressive-details-body">{children}</div>
     </details>
   );
