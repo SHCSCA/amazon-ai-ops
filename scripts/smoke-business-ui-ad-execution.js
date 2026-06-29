@@ -898,7 +898,7 @@ async function main() {
 
   await navigateBusinessPage(page, NAV_RE.recommendations, 'recommendations');
   await expectVisible(page, '建议池');
-  await expectInBody(page, '可审批 1', 'recommendation task formal approval count');
+  await expectVisible(page, '正式可审批 1');
   await expectInBody(page, '需复核 1', 'recommendation task review count');
   await expectInBody(page, '缺证据 0', 'recommendation task evidence blocker count');
   await expectVisible(page, '去审批中心');

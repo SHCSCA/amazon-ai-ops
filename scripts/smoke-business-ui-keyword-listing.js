@@ -344,7 +344,7 @@ async function main() {
           evidence: 'AI 理由：关键词来自当前范围，草案仅本地保存',
           riskWarnings: ['需人工复核相关性'],
           source: index === 0 ? 'ai' : 'rule',
-          aiFallbackReason: index === 0 ? undefined : '模拟规则兜底状态',
+          aiFallbackReason: index === 0 ? undefined : '模拟本地规则参考状态',
           status: 'pending',
           createdAt: '2026-06-12T10:01:00.000Z',
         }));
@@ -446,12 +446,12 @@ async function main() {
     null,
     { timeout: 5000 },
   );
-  for (const text of ['手工录入当前 Listing', '基础信息', '标题', '五点', '五点 5', '详情与搜索词', '保存为新版本', '从领星辅助读取', '关键词交接与草案边界', '关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用', '当前 Listing 内容', 'Listing 版本历史', '关键词覆盖', '本地修改建议与草案导出', '草案可信度', '可引用当前广告数据', '草案只保存在本地，不会自动提交 Amazon。']) {
+  for (const text of ['手工录入当前 Listing', '基础信息', '标题', '五点', '五点 5', '详情与搜索词', '保存为新版本', '从领星辅助读取', '关键词交接与草案边界', '关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用', '当前 Listing 内容', 'Listing 版本历史', '关键词与本地草案工作台', '01 关键词输入', '02 数据门槛与用途', '03 生成与导出', '数据门槛', '草案用途', '真实广告数据可用', '本地复核草案', '本地草案不会自动提交 Amazon，不修改 Lingxing Listing；缺真实广告数据时也不会进入交付证据包。']) {
     await expectVisible(page, text);
   }
   await expectInBody(page, 'deepseek-v4-flash 已测试通过', 'listing ai readiness detail');
   await expectInBody(page, '不会自动提交 Amazon，也不会改写 Lingxing', 'listing publish boundary');
-  for (const text of ['Listing 工作流状态', '1 关键词机会', '2 Listing 内容录入/读取', '3 AI / 规则草案', '4 导出与发布边界']) {
+  for (const text of ['Listing 工作流状态', '1 关键词机会', '2 Listing 内容录入/读取', '3 AI / 本地规则草案', '4 导出与发布边界']) {
     await expectInBody(page, text, 'listing workflow status');
   }
   await expectVisible(page, '当前主任务');
@@ -470,7 +470,7 @@ async function main() {
   await expectVisible(page, 'https://erp.lingxing.com/erp/listing/mock/unparsed');
   await expectVisible(page, 'C:/evidence/listing-read-unparsed.png');
   await expectInBody(page, '当前页面已探测，但未解析到 ASIN、标题、五点或后台词。', 'listing evidence-only read guidance');
-  await page.getByRole('button', { name: '生成本地草案' }).evaluate((node) => {
+  await page.getByLabel('Listing 关键词与本地草案工作台').getByRole('button', { name: '生成本地草案' }).evaluate((node) => {
     if (!node.disabled) throw new Error('Draft generation button should stay disabled for evidence-only Listing read');
   });
   await page.evaluate(() => {
@@ -488,7 +488,7 @@ async function main() {
   await expectVisible(page, 'Listing 读取缺口');
   await expectInBody(page, '生成草案前需补齐：五点缺失、后台词缺失', 'partial listing field-level blockers');
   await expectInBody(page, '详情页已读取但 Listing 内容不完整', 'partial listing read guidance');
-  await page.getByRole('button', { name: '生成本地草案' }).evaluate((node) => {
+  await page.getByLabel('Listing 关键词与本地草案工作台').getByRole('button', { name: '生成本地草案' }).evaluate((node) => {
     if (!node.disabled) throw new Error('Draft generation button should stay disabled for partial Listing read');
   });
   await page.evaluate(() => {
@@ -512,11 +512,14 @@ async function main() {
   await expectInBody(page, '无，当前页面已满足草案门槛。', 'complete listing no blocker message');
   await expectVisible(page, 'Rechargeable Motion Sensor Wall Light');
   await expectVisible(page, '关键词和 Listing 已就绪，可以生成本地草案。');
-  await page.getByRole('button', { name: '生成本地草案' }).click();
+  await page.getByLabel('Listing 关键词与本地草案工作台').getByRole('button', { name: '生成本地草案' }).click();
   await page.getByText('已生成 1 条 AI 草案', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '已有 1 条本地 Listing 草案，可导出给运营复核。');
   await expectVisible(page, '导出草案并人工复核，不自动提交 Amazon 或改写 Lingxing Listing。');
-  await expectVisible(page, '1 AI / 0 规则');
+  await expectVisible(page, 'AI 草案');
+  await expectVisible(page, '本地规则参考');
+  await expectVisible(page, '可导出草案');
+  await page.locator('.listing-draft-metrics').filter({ hasText: 'AI 草案' }).getByText('1', { exact: true }).first().waitFor({ timeout: 5000 });
   await expectInBody(page, '条草案可导出', 'listing export readiness');
   await expectVisible(page, '标题');
   await expectVisible(page, '五点');

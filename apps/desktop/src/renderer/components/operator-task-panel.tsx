@@ -25,6 +25,8 @@ export function OperatorTaskPanel({
   secondaryActions = [],
   children,
 }: OperatorTaskPanelProps) {
+  const actionBusy = Boolean(primaryAction.busy || secondaryActions.some((action) => action.busy));
+
   const renderActionContent = (action: OperatorTaskAction) => {
     if (!action.busy) return action.label;
     return (
@@ -51,7 +53,7 @@ export function OperatorTaskPanel({
         <button
           aria-busy={primaryAction.busy || undefined}
           className={actionClassName('primary-button', primaryAction)}
-          disabled={primaryAction.disabled || primaryAction.busy}
+          disabled={primaryAction.disabled || actionBusy}
           onClick={primaryAction.onClick}
           type="button"
         >
@@ -61,7 +63,7 @@ export function OperatorTaskPanel({
           <button
             aria-busy={action.busy || undefined}
             className={actionClassName('secondary-button', action)}
-            disabled={action.disabled || action.busy}
+            disabled={action.disabled || actionBusy}
             key={`${action.label}-${index}`}
             onClick={action.onClick}
             type="button"

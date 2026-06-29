@@ -135,6 +135,63 @@ describe('OperatorTaskPanel', () => {
     expect(primary).not.toHaveBeenCalled();
   });
 
+  it('locks sibling actions while one task action is busy without making peers look active', () => {
+    const primary = vi.fn();
+    const secondary = vi.fn();
+    const tree = OperatorTaskPanel({
+      title: 'Run current-scope import',
+      primaryAction: { label: 'Import now', onClick: primary, busy: true, busyLabel: '入库中...' },
+      secondaryActions: [
+        { label: 'Open folder', onClick: secondary },
+      ],
+    }) as ReactElement;
+
+    const primaryButton = collectElements(tree, (element) => element.type === 'button' && hasClass(element, 'primary-button'))[0];
+    const secondaryButton = collectElements(tree, (element) => element.type === 'button' && hasClass(element, 'secondary-button'))[0];
+
+    clickButton(primaryButton);
+    clickButton(secondaryButton);
+
+    expect(primaryButton.props.disabled).toBe(true);
+    expect(primaryButton.props['aria-busy']).toBe(true);
+    expect(hasClass(primaryButton, 'button-loading')).toBe(true);
+    expect(textContent(primaryButton.props.children)).toContain('入库中...');
+    expect(secondaryButton.props.disabled).toBe(true);
+    expect(secondaryButton.props['aria-busy']).toBeUndefined();
+    expect(hasClass(secondaryButton, 'button-loading')).toBe(false);
+    expect(textContent(secondaryButton.props.children)).toBe('Open folder');
+    expect(primary).not.toHaveBeenCalled();
+    expect(secondary).not.toHaveBeenCalled();
+  });
+
+  it('locks the primary action while a secondary task action is busy', () => {
+    const primary = vi.fn();
+    const secondary = vi.fn();
+    const tree = OperatorTaskPanel({
+      title: 'Refresh AI settings',
+      primaryAction: { label: 'Test connection', onClick: primary },
+      secondaryActions: [
+        { label: 'Save settings', onClick: secondary, busy: true, busyLabel: '保存中...' },
+      ],
+    }) as ReactElement;
+
+    const primaryButton = collectElements(tree, (element) => element.type === 'button' && hasClass(element, 'primary-button'))[0];
+    const secondaryButton = collectElements(tree, (element) => element.type === 'button' && hasClass(element, 'secondary-button'))[0];
+
+    clickButton(primaryButton);
+    clickButton(secondaryButton);
+
+    expect(primaryButton.props.disabled).toBe(true);
+    expect(primaryButton.props['aria-busy']).toBeUndefined();
+    expect(hasClass(primaryButton, 'button-loading')).toBe(false);
+    expect(secondaryButton.props.disabled).toBe(true);
+    expect(secondaryButton.props['aria-busy']).toBe(true);
+    expect(hasClass(secondaryButton, 'button-loading')).toBe(true);
+    expect(textContent(secondaryButton.props.children)).toContain('保存中...');
+    expect(primary).not.toHaveBeenCalled();
+    expect(secondary).not.toHaveBeenCalled();
+  });
+
   it('keeps the actions column width controlled for narrow desktop panels', () => {
     const css = rendererCss();
     const panelRule = cssRuleBody(css, '.operator-task-panel');
