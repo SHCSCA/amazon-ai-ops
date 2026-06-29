@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { Sidebar } from './components/app-shell';
 import { ScopeBar } from './components/scope-bar';
@@ -285,7 +285,9 @@ function BusinessRoutePage({ route }: { route: AppRoute }) {
 export default function App() {
   const { isLoggedIn, currentStore, loginSession, activeTab, setActiveTab, setLoginState } = useStore();
   const [deliveryReadiness, setDeliveryReadiness] = useState<DeliveryReadinessView | null>(null);
+  const [pendingNavigationRoute, setPendingNavigationRoute] = useState<AppRoute | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
+  const navigationTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     async function checkLoginState() {
@@ -301,14 +303,29 @@ export default function App() {
     checkLoginState();
   }, [setLoginState]);
 
+  const requestNavigate = useCallback((route: AppRoute) => {
+    if (route === activeTab && !pendingNavigationRoute) return;
+    if (navigationTimerRef.current) window.clearTimeout(navigationTimerRef.current);
+    setPendingNavigationRoute(route);
+    setActiveTab(route);
+    navigationTimerRef.current = window.setTimeout(() => {
+      setPendingNavigationRoute((current) => (current === route ? null : current));
+      navigationTimerRef.current = null;
+    }, 150);
+  }, [activeTab, pendingNavigationRoute, setActiveTab]);
+
   useEffect(() => {
     const handleNavigate = (event: Event) => {
       const route = (event as CustomEvent<AppRoute>).detail;
-      if (route) setActiveTab(route);
+      if (route) requestNavigate(route);
     };
     window.addEventListener('amazon-ai-ops:navigate', handleNavigate);
     return () => window.removeEventListener('amazon-ai-ops:navigate', handleNavigate);
-  }, [setActiveTab]);
+  }, [requestNavigate]);
+
+  useEffect(() => () => {
+    if (navigationTimerRef.current) window.clearTimeout(navigationTimerRef.current);
+  }, []);
 
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0, left: 0 });
@@ -358,8 +375,13 @@ export default function App() {
         </div>
       </header>
       <div className="app-body">
-        <Sidebar activeRoute={activeTab} onNavigate={setActiveTab} />
-        <main ref={contentRef} className="app-content">
+        <Sidebar activeRoute={activeTab} pendingRoute={pendingNavigationRoute} onNavigate={requestNavigate} />
+        <main ref={contentRef} className={`app-content${pendingNavigationRoute ? ' app-content-navigating' : ''}`}>
+          {pendingNavigationRoute && (
+            <div className="route-handoff-feedback" role="status" aria-live="polite">
+              转跳中...
+            </div>
+          )}
           <ScopeBar />
           <BusinessRoutePage route={activeTab} />
         </main>

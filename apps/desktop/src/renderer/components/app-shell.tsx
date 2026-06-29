@@ -48,24 +48,43 @@ export function navItemOrdinal(index: number): string {
   return String(index + 1).padStart(2, '0');
 }
 
-export function Sidebar({ activeRoute, onNavigate }: { activeRoute: AppRoute; onNavigate: (route: AppRoute) => void }) {
+export function Sidebar({
+  activeRoute,
+  pendingRoute = null,
+  onNavigate,
+}: {
+  activeRoute: AppRoute;
+  pendingRoute?: AppRoute | null;
+  onNavigate: (route: AppRoute) => void;
+}) {
+  const navigationBusy = Boolean(pendingRoute);
+
   return (
-    <nav className="app-sidebar" aria-label="主导航">
+    <nav className="app-sidebar" aria-busy={navigationBusy || undefined} aria-label="主导航" data-navigation-busy={navigationBusy || undefined}>
       {navGroups.map((group) => (
         <div className="nav-group" key={group.label}>
           <div className="nav-group-label">{group.label}</div>
-          {group.items.map((item, index) => (
-            <button
-              aria-current={activeRoute === item.id ? 'page' : undefined}
-              className="nav-item"
-              key={item.id}
-              onClick={() => onNavigate(item.id)}
-              type="button"
-            >
-              <span className="nav-item-index">{navItemOrdinal(index)}</span>
-              <span>{item.label}</span>
-            </button>
-          ))}
+          {group.items.map((item, index) => {
+            const isPending = pendingRoute === item.id;
+            return (
+              <button
+                aria-busy={isPending || undefined}
+                aria-current={activeRoute === item.id ? 'page' : undefined}
+                className="nav-item"
+                data-pending={isPending ? 'true' : undefined}
+                disabled={navigationBusy}
+                key={item.id}
+                onClick={() => {
+                  if (!navigationBusy) onNavigate(item.id);
+                }}
+                type="button"
+              >
+                <span className="nav-item-index">{navItemOrdinal(index)}</span>
+                <span className="nav-item-label">{item.label}</span>
+                {isPending && <span className="nav-item-feedback">转跳中...</span>}
+              </button>
+            );
+          })}
         </div>
       ))}
     </nav>

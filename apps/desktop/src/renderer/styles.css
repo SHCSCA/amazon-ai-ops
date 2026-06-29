@@ -181,7 +181,7 @@ button:disabled {
 
 .nav-item {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   position: relative;
@@ -195,6 +195,25 @@ button:disabled {
   text-align: left;
   cursor: pointer;
   overflow: hidden;
+}
+
+.nav-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-item-feedback {
+  justify-self: end;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  padding: 2px 6px;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.1;
 }
 
 .nav-item::before {
@@ -216,6 +235,18 @@ button:disabled {
 
 .nav-item:hover {
   background: #f3f7fb;
+}
+
+.app-sidebar[data-navigation-busy="true"] .nav-item:not([data-pending="true"]) {
+  opacity: 0.58;
+}
+
+.nav-item[data-pending="true"] {
+  border-left-color: var(--blue);
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px rgb(37 99 235 / 0.16);
+  color: #0b55b7;
+  font-weight: 800;
 }
 
 .nav-item-index {
@@ -250,10 +281,37 @@ button:disabled {
 }
 
 .app-content {
+  position: relative;
   min-width: 0;
   flex: 1;
   overflow: auto;
   padding: 0 24px 28px;
+}
+
+.route-handoff-feedback {
+  position: absolute;
+  top: 12px;
+  right: 24px;
+  z-index: 60;
+  pointer-events: none;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: rgb(239 246 255 / 0.96);
+  box-shadow: 0 10px 24px rgb(15 23 42 / 0.12);
+  padding: 5px 10px;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.1;
+  transform: translateY(-4px);
+  animation: route-handoff-in 150ms ease-out forwards;
+}
+
+@keyframes route-handoff-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .scope-bar {
@@ -927,6 +985,11 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .route-handoff-feedback {
+    animation: none;
+    transform: none;
+  }
+
   .operator-task-panel::before {
     animation: none;
     opacity: 0;

@@ -2,6 +2,7 @@ import React, { type ReactElement, type ReactNode } from 'react';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { navGroups, navItemOrdinal, Sidebar } from './app-shell';
+import type { AppRoute } from '../types';
 
 function collectElements(node: ReactNode, predicate: (element: ReactElement) => boolean): ReactElement[] {
   if (node === null || node === undefined || typeof node === 'boolean') return [];
@@ -55,6 +56,29 @@ describe('Sidebar navigation', () => {
     expect(indexes.filter((value) => value === '01')).toHaveLength(5);
   });
 
+  it('marks the pending navigation target and locks sibling nav actions during route handoff', () => {
+    const clicked: AppRoute[] = [];
+    const tree = Sidebar({
+      activeRoute: 'dashboard',
+      pendingRoute: 'data-collection',
+      onNavigate: (route) => clicked.push(route),
+    }) as ReactElement;
+    const buttons = collectElements(tree, (element) => element.type === 'button');
+    const pendingButton = buttons.find((button) => collectText(button).includes('批量数据采集'));
+    const siblingButton = buttons.find((button) => collectText(button).includes('指标核验入库'));
+
+    expect(pendingButton?.props['aria-busy']).toBe(true);
+    expect(pendingButton?.props['data-pending']).toBe('true');
+    expect(collectText(pendingButton)).toContain('转跳中...');
+    expect(pendingButton?.props.disabled).toBe(true);
+    expect(siblingButton?.props.disabled).toBe(true);
+
+    pendingButton?.props.onClick();
+    siblingButton?.props.onClick();
+
+    expect(clicked).toEqual([]);
+  });
+
   it('keeps the aria-current active glow bar contract in CSS', () => {
     const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
@@ -63,5 +87,16 @@ describe('Sidebar navigation', () => {
     expect(css).toMatch(/\.nav-item::before[\s\S]*transform:\s*translateX\(-7px\)/);
     expect(css).toMatch(/\.nav-item\[aria-current="page"\]::before[\s\S]*transform:\s*translateX\(0\)/);
     expect(css).toMatch(/\.nav-item::before[\s\S]*will-change:\s*transform,\s*opacity/);
+  });
+
+  it('defines a non-layout-shifting global route handoff feedback layer', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.route-handoff-feedback');
+    expect(css).toMatch(/\.route-handoff-feedback[\s\S]*position:\s*absolute/);
+    expect(css).toMatch(/\.route-handoff-feedback[\s\S]*pointer-events:\s*none/);
+    expect(css).toMatch(/\.route-handoff-feedback[\s\S]*transform:\s*translateY\(-4px\)/);
+    expect(css).toMatch(/\.nav-item\[data-pending="true"\][\s\S]*box-shadow:/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.route-handoff-feedback[\s\S]*animation:\s*none/);
   });
 });
