@@ -1488,6 +1488,29 @@ button:disabled {
   line-height: 1.2;
 }
 
+.metric-tile-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.metric-tile-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+}
+
+.metric-tile-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+}
+
+.metric-tile-pending,
+.metric-tile-warning {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+}
+
 .business-definition-list {
   display: grid;
   gap: 10px;

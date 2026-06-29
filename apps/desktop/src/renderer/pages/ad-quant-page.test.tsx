@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AiDiagnosisRunView, BusinessQuantDiagnostic, BusinessQuantTimeline } from '../types';
-import { adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
+import { adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, buildWasteRiskSpendTile, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
 
 describe('strategyDiagnosisSourceLabel', () => {
   it('uses Chinese fallback copy for rule-based strategy diagnosis', () => {
@@ -246,6 +246,35 @@ describe('buildQuantAccountingLine', () => {
     expect(line).toContain('推广商品报表口径');
     expect(line).toContain('不跨批次');
     expect(line).toContain('不跨报表层级重复相加');
+  });
+});
+
+describe('buildWasteRiskSpendTile', () => {
+  it('turns wasted spend into a product-level amount and spend share', () => {
+    const tile = buildWasteRiskSpendTile({
+      wastedSpend: 25,
+      totalSpend: 100,
+      highRiskCount: 3,
+    });
+
+    expect(tile.label).toBe('浪费/高风险花费');
+    expect(tile.value).toBe('$25.00');
+    expect(tile.detail).toContain('占当前产品花费 25.0%');
+    expect(tile.detail).toContain('3 个高风险对象');
+    expect(tile.tone).toBe('blocked');
+  });
+
+  it('uses actionable missing-data copy instead of placeholder wording', () => {
+    const tile = buildWasteRiskSpendTile({
+      wastedSpend: null,
+      totalSpend: 0,
+      highRiskCount: 0,
+    });
+
+    expect(tile.value).toBe('待日级数据');
+    expect(tile.detail).toContain('先导入 8 类真实报表');
+    expect(`${tile.label}${tile.value}${tile.detail}`).not.toContain('占位');
+    expect(tile.tone).toBe('pending');
   });
 });
 

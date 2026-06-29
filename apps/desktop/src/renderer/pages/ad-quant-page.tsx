@@ -55,6 +55,13 @@ export interface StrategyRunFeedbackAction {
   target: 'run-ai' | 'settings' | 'data-collection' | 'recommendations';
 }
 
+export interface WasteRiskSpendTile {
+  label: string;
+  value: string;
+  detail: string;
+  tone: StatusTone;
+}
+
 function readNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -140,6 +147,38 @@ export function buildQuantAccountingLine(input: {
   const asinText = input.asin ? `，只筛选 ASIN ${input.asin}` : '';
   const rowText = Number(input.canonicalRows || 0) > 0 ? `，可加总 ${input.canonicalRows} 行` : '';
   return `当前总盘只读取 ${batchText} 的 ${quantSourceLabel(input.summarySource)}${asinText}${rowText}；重复采集按批次隔离，不跨批次、不跨报表层级重复相加。`;
+}
+
+export function buildWasteRiskSpendTile(input: {
+  wastedSpend?: number | null;
+  totalSpend?: number | null;
+  highRiskCount?: number | null;
+}): WasteRiskSpendTile {
+  const hasWastedSpend = typeof input.wastedSpend === 'number' && Number.isFinite(input.wastedSpend);
+  const totalSpend = typeof input.totalSpend === 'number' && Number.isFinite(input.totalSpend) ? input.totalSpend : 0;
+  const highRiskCount = Math.max(0, Number(input.highRiskCount || 0));
+
+  if (!hasWastedSpend) {
+    return {
+      label: '浪费/高风险花费',
+      value: '待日级数据',
+      detail: '先导入 8 类真实报表后显示金额占比。',
+      tone: 'pending',
+    };
+  }
+
+  const wastedSpend = Math.max(0, Number(input.wastedSpend));
+  const riskText = highRiskCount > 0 ? `${highRiskCount} 个高风险对象` : '暂无高风险对象';
+  const ratioText = totalSpend > 0
+    ? `占当前产品花费 ${formatPercent((wastedSpend / totalSpend) * 100)}`
+    : '当前产品花费为 0，暂不计算占比';
+
+  return {
+    label: '浪费/高风险花费',
+    value: formatUsd(wastedSpend),
+    detail: `${ratioText}；${riskText}`,
+    tone: wastedSpend > 0 || highRiskCount > 0 ? 'blocked' : 'ready',
+  };
 }
 
 function feedbackClassName(tone: StatusTone): string {
@@ -777,6 +816,11 @@ export function AdQuantPage() {
   const selectedSales = selectedProductGroup?.sales ?? visibleQuant?.totalSales ?? 0;
   const selectedOrders = selectedProductGroup?.orders ?? visibleQuant?.totalOrders ?? 0;
   const selectedAcos = selectedProductGroup ? selectedProductGroup.acos : (visibleQuant?.acos ?? 0);
+  const wasteRiskSpendTile = buildWasteRiskSpendTile({
+    wastedSpend: visibleQuant?.wastedSpend,
+    totalSpend: selectedSpend,
+    highRiskCount: visibleQuant?.highRiskCount,
+  });
   const quantTaskTitle = canDiagnose
     ? 'AI 量化引擎已完成统计'
     : '真实数据未闭合，量化诊断锁定';
@@ -1754,9 +1798,10 @@ export function AdQuantPage() {
               <span>CPC</span>
               <strong>{formatUsd(visibleQuant?.cpc)}</strong>
             </div>
-            <div className="metric-tile">
-              <span>浪费/高风险占位</span>
-              <strong>{visibleQuant?.wastedSpend === null || visibleQuant?.wastedSpend === undefined ? '待真实数据' : formatUsd(visibleQuant.wastedSpend)}</strong>
+            <div className={`metric-tile metric-tile-${wasteRiskSpendTile.tone}`}>
+              <span>{wasteRiskSpendTile.label}</span>
+              <strong>{wasteRiskSpendTile.value}</strong>
+              <p className="metric-tile-detail">{wasteRiskSpendTile.detail}</p>
             </div>
             <div className="metric-tile">
               <span>高风险实体</span>
