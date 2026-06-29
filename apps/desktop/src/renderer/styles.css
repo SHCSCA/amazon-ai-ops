@@ -45,7 +45,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   font-size: 14px;
   line-height: 1.25;
   letter-spacing: 0;
@@ -2591,6 +2591,7 @@ code {
   padding: 7px 10px;
   text-align: left;
   vertical-align: middle;
+  line-height: 1.25;
 }
 
 .business-table th {

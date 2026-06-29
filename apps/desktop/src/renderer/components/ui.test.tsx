@@ -30,6 +30,18 @@ function cssRuleBody(css: string, selector: string): string {
 }
 
 describe('industrial UI atoms', () => {
+  it('keeps the global typography contract aligned with dense desktop tables', () => {
+    const stylesheet = rendererCss();
+    const bodyRule = cssRuleBody(stylesheet, 'body');
+    const businessTableCellRule = cssRuleBody(stylesheet, '.business-table td');
+    const virtualTableCellRule = cssRuleBody(stylesheet, '.virtual-table-cell');
+
+    expect(bodyRule).toContain('font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;');
+    expect(bodyRule).toMatch(/line-height\s*:\s*1\.25\s*;/);
+    expect(businessTableCellRule).toMatch(/line-height\s*:\s*1\.25\s*;/);
+    expect(virtualTableCellRule).toMatch(/line-height\s*:\s*1\.25\s*;/);
+  });
+
   it('keeps the global button micro-response contract in the stylesheet', () => {
     const stylesheet = rendererCss();
     const activeButtonRule = cssRuleBody(stylesheet, 'button:active:not(:disabled)');
