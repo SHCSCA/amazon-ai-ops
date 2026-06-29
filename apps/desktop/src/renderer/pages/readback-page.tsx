@@ -903,6 +903,10 @@ export function ReadbackPage() {
   }, [missing]);
   const activeStepSummary = readbackStepSummaries.find((step) => step.id === activeStep) || readbackStepSummaries[0];
   const activeStepIndex = Math.max(0, readbackWizardSteps.findIndex((step) => step.id === activeStep));
+  const readbackStepRailStyle = {
+    '--readback-active-step': activeStepIndex,
+    '--readback-step-count': readbackWizardSteps.length,
+  } as React.CSSProperties;
   const activeMissingCount = activeStepSummary?.missingCount || 0;
   const activeStepDetail = activeMissingCount
     ? `当前步骤还有 ${activeMissingCount} 项待补；所有安全缺口仍由本地校验决定。`
@@ -1349,7 +1353,7 @@ export function ReadbackPage() {
           </div>
         )}
 
-        <div className="readback-step-grid readback-step-tabs" role="tablist" aria-label="执行回读步骤">
+        <div className="readback-step-grid readback-step-tabs" role="tablist" aria-label="执行回读步骤" style={readbackStepRailStyle}>
           {readbackStepSummaries.map((step, index) => (
             <button
               aria-selected={activeStep === step.id}

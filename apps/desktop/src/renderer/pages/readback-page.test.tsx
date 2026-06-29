@@ -326,6 +326,20 @@ describe('readback capture helpers', () => {
     expect(stylesheet).toContain('var(--tone-ready-bg)');
     expect(source).toContain('证据已安全固定');
   });
+
+  it('keeps the active wizard step rail slider contract', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('--readback-active-step');
+    expect(source).toContain('--readback-step-count');
+    expect(source).toContain('style={readbackStepRailStyle}');
+    expect(stylesheet).toContain('.readback-step-tabs::after');
+    expect(stylesheet).toContain('height: 2px');
+    expect(stylesheet).toContain('transform: translateX(calc(var(--readback-active-step) * (100% + 10px)))');
+    expect(stylesheet).toContain('transition: transform 180ms ease');
+    expect(stylesheet).toContain('@media (prefers-reduced-motion: reduce)');
+  });
 });
 
 describe('delivery repair handoff', () => {

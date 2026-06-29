@@ -4336,6 +4336,28 @@ code {
   gap: 10px;
 }
 
+.readback-step-tabs {
+  --readback-active-step: 0;
+  --readback-step-count: 4;
+  position: relative;
+  padding-bottom: 8px;
+}
+
+.readback-step-tabs::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: calc((100% - ((var(--readback-step-count) - 1) * 10px)) / var(--readback-step-count));
+  height: 2px;
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.38);
+  pointer-events: none;
+  transform: translateX(calc(var(--readback-active-step) * (100% + 10px)));
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
 .readback-step {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -4356,6 +4378,12 @@ code {
 
 .readback-step-tabs .readback-step {
   cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readback-step-tabs::after {
+    transition: none;
+  }
 }
 
 .readback-step-active {
