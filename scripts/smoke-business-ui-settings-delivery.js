@@ -96,6 +96,25 @@ async function assertDeliveryMessageHasNoLongPath(page, key) {
   }
 }
 
+async function assertBlockedDeliveryExportButton(page, key) {
+  const state = await page.getByRole('button', { name: '导出交付包' }).evaluate((element) => {
+    const button = element;
+    return {
+      ariaDisabled: button.getAttribute('aria-disabled'),
+      className: button.className,
+      cursor: window.getComputedStyle(button).cursor,
+      disabled: button.disabled === true,
+      title: button.getAttribute('title') || '',
+    };
+  });
+  if (!state.disabled || state.ariaDisabled !== 'true' || !state.className.includes('delivery-export-blocked') || state.cursor !== 'no-drop') {
+    fail('Blocked delivery export button should be physically disabled with red no-drop feedback', JSON.stringify({ key, state }, null, 2));
+  }
+  if (!state.title.includes('最终验收通过且安装包证据已记录后才能导出交付包')) {
+    fail('Blocked delivery export button should explain the package-aware readiness condition', JSON.stringify({ key, state }, null, 2));
+  }
+}
+
 async function expandDetails(page, summaryText) {
   await page.getByText(summaryText, { exact: false }).first().waitFor({ timeout: 5000 });
   await page.evaluate((text) => {
@@ -1077,9 +1096,7 @@ async function main() {
   await page.getByText('回读证据校验通过', { exact: false }).waitFor({ timeout: 5000 });
   await assertDeliveryMessageHasNoLongPath(page, 'delivery-verify-readback-evidence');
   await expectVisible(page, '回读证据校验：通过');
-  await page.getByRole('button', { name: '导出交付包' }).click();
-  await expectInBody(page, '最终验收汇总未通过，不能导出可交付包。', 'delivery export blocked message');
-  await assertDeliveryMessageHasNoLongPath(page, 'delivery-export-blocked');
+  await assertBlockedDeliveryExportButton(page, 'delivery-export-blocked');
   await assertAbsent(page, 'APP_NEEDS_WORK', 'delivery-export-message');
   await assertAbsent(page, 'READY 交付包', 'delivery-export-message');
   await page.getByRole('button', { name: '导出数据口径核对' }).click();
@@ -1203,8 +1220,8 @@ async function main() {
   if (!savedRuleConfig || savedRuleConfig.brandWordWhitelist.join('|') !== 'brand one|brand two' || savedRuleConfig.coreWordWhitelist.join('|') !== 'core one|core two') {
     fail('Brand/core whitelist fields were not saved independently', JSON.stringify(savedRuleConfig));
   }
-  if (!evidence.actionLog.some((item) => item.type === 'exportDeliveryBundle')) {
-    fail('Export delivery bundle button did not call export API');
+  if (evidence.actionLog.some((item) => item.type === 'exportDeliveryBundle')) {
+    fail('Blocked delivery export should not call export API before final readiness and package evidence are both recorded');
   }
   if (!evidence.actionLog.some((item) => item.type === 'refreshFinalReadiness')) {
     fail('Refresh final readiness button did not call refresh API');

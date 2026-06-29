@@ -296,6 +296,12 @@ describe('readback capture helpers', () => {
       className: expect.stringContaining('readback-capture-filled'),
       title: '回读截图已安全固定',
       helper: 'C:/evidence/readback.png',
+      preview: {
+        alt: '回读截图缩略预览',
+        badge: '证据已安全固定',
+        fileName: 'readback.png',
+        path: 'C:/evidence/readback.png',
+      },
     });
   });
 
@@ -305,6 +311,20 @@ describe('readback capture helpers', () => {
     expect(stylesheet).toContain('.readback-capture-dragging');
     expect(stylesheet).toContain('readback-capture-marching-ants');
     expect(stylesheet).toContain('readback-capture-breathe');
+  });
+
+  it('keeps the fixed screenshot thumbnail and green badge contract in CSS', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('readback-capture-fixed-preview');
+    expect(source).toContain('readback-capture-fixed-badge');
+    expect(source).toContain('readback-capture-thumbnail');
+    expect(stylesheet).toContain('.readback-capture-fixed-preview');
+    expect(stylesheet).toContain('.readback-capture-thumbnail');
+    expect(stylesheet).toContain('.readback-capture-fixed-badge');
+    expect(stylesheet).toContain('var(--tone-ready-bg)');
+    expect(source).toContain('证据已安全固定');
   });
 });
 

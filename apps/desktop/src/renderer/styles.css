@@ -4118,9 +4118,9 @@ code {
   opacity: 0.58;
 }
 
-.delivery-export-blocked:disabled,
-.delivery-export-blocked:disabled:hover,
-.delivery-export-blocked:disabled:focus-visible {
+.delivery-action-row .delivery-export-blocked:disabled,
+.delivery-action-row .delivery-export-blocked:disabled:hover,
+.delivery-action-row .delivery-export-blocked:disabled:focus-visible {
   position: relative;
   padding-right: 34px;
   border-color: var(--tone-blocked-border);
@@ -4132,7 +4132,7 @@ code {
   transform: none;
 }
 
-.delivery-export-blocked:disabled::after {
+.delivery-action-row .delivery-export-blocked:disabled::after {
   content: "";
   position: absolute;
   top: 50%;
@@ -4807,6 +4807,72 @@ code {
 .readback-capture-filled {
   border-color: #9bd7ae;
   background: #f3fbf6;
+}
+
+.readback-capture-fixed-preview {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid #b8e6c9;
+  border-radius: var(--radius-sm);
+  background: var(--tone-ready-bg);
+}
+
+.readback-capture-thumbnail {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 42px;
+  overflow: hidden;
+  border: 1px solid #9bd7ae;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgb(8 116 67 / 0.08);
+}
+
+.readback-capture-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.readback-capture-thumbnail span {
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.readback-capture-fixed-meta {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.readback-capture-fixed-badge {
+  width: fit-content;
+  border: 1px solid #b8e6c9;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 2px 7px;
+}
+
+.readback-capture-file-name {
+  color: #31523d;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .readback-capture-dragging {

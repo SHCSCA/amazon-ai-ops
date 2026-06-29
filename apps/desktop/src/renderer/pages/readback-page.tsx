@@ -281,9 +281,20 @@ function firstImageFile(files: File[]): File | null {
   return files.find((file) => file.type.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(file.name)) || null;
 }
 
+function captureFileName(value: string): string {
+  const normalized = String(value || '').trim().replace(/\\/g, '/');
+  return normalized.split('/').filter(Boolean).pop() || '截图文件';
+}
+
+function captureFileExtension(value: string): string {
+  const fileName = captureFileName(value);
+  const match = fileName.match(/\.([a-z0-9]+)$/i);
+  return (match?.[1] || 'IMG').toUpperCase().slice(0, 4);
+}
+
 export function readbackCaptureTargetView(
   slot: ReadbackCaptureSlot,
-  input: { value?: string; saving?: boolean; dragging?: boolean } = {},
+  input: { value?: string; saving?: boolean; dragging?: boolean; previewUrl?: string } = {},
 ) {
   const copy = CAPTURE_SLOT_LABELS[slot];
   const className = [
@@ -314,6 +325,14 @@ export function readbackCaptureTargetView(
       title: `${copy.title}已安全固定`,
       detail: copy.detail,
       helper: input.value,
+      preview: {
+        alt: `${copy.title}缩略预览`,
+        badge: '证据已安全固定',
+        extension: captureFileExtension(input.value),
+        fileName: captureFileName(input.value),
+        path: input.value,
+        src: input.previewUrl,
+      },
     };
   }
   return {
@@ -781,17 +800,19 @@ function ReadbackCaptureTarget({
   slot,
   value,
   saving,
+  previewUrl,
   onCapture,
   repairClassName = '',
 }: {
   slot: ReadbackCaptureSlot;
   value?: string;
   saving?: boolean;
+  previewUrl?: string;
   onCapture: (slot: ReadbackCaptureSlot, files: File[]) => void;
   repairClassName?: string;
 }) {
   const [dragging, setDragging] = useState(false);
-  const view = readbackCaptureTargetView(slot, { value, saving, dragging });
+  const view = readbackCaptureTargetView(slot, { value, saving, dragging, previewUrl });
   const clearDragging = () => setDragging(false);
   const markDragging = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -823,7 +844,23 @@ function ReadbackCaptureTarget({
     >
       <strong>{view.title}</strong>
       <span>{view.detail}</span>
-      <small>{view.helper}</small>
+      {'preview' in view && view.preview ? (
+        <div className="readback-capture-fixed-preview">
+          <div className="readback-capture-thumbnail" aria-label={view.preview.alt}>
+            {view.preview.src ? (
+              <img alt={view.preview.alt} src={view.preview.src} />
+            ) : (
+              <span aria-hidden="true">{view.preview.extension}</span>
+            )}
+          </div>
+          <div className="readback-capture-fixed-meta">
+            <span className="readback-capture-fixed-badge">{view.preview.badge}</span>
+            <small className="readback-capture-file-name" title={view.preview.path}>{view.preview.fileName}</small>
+          </div>
+        </div>
+      ) : (
+        <small>{view.helper}</small>
+      )}
     </div>
   );
 }
@@ -844,6 +881,7 @@ export function ReadbackPage() {
   const [repairIntent, setRepairIntent] = useState<ReadbackRepairIntent | null>(null);
   const [repairPulse, setRepairPulse] = useState(false);
   const [captureSavingSlot, setCaptureSavingSlot] = useState<ReadbackCaptureSlot | null>(null);
+  const [capturePreviews, setCapturePreviews] = useState<Partial<Record<ReadbackCaptureSlot, string>>>({});
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const missing = useMemo(() => requiredMissing(form, currentBatchId), [currentBatchId, form]);
   const sourceBatchMatches = Boolean(form.sourceBatchId && currentBatchId && form.sourceBatchId === currentBatchId);
@@ -952,6 +990,7 @@ export function ReadbackPage() {
         sessionDir: sessionResult?.sessionDir,
       });
       update(captureSlotPatch(slot, result.filePath, result.savedAt), { preserveSession: true });
+      setCapturePreviews((current) => ({ ...current, [slot]: dataUrl }));
       setSessionCheck(null);
       setSessionFillResult(null);
       setSessionVerifyResult(null);
@@ -1447,6 +1486,7 @@ export function ReadbackPage() {
             <div className="readback-capture-grid readback-capture-grid-single">
               <ReadbackCaptureTarget
                 onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                previewUrl={capturePreviews.approval}
                 saving={captureSavingSlot === 'approval'}
                 slot="approval"
                 value={form.approvalArtifactPath}
@@ -1484,6 +1524,7 @@ export function ReadbackPage() {
               <div className="readback-capture-grid">
                 <ReadbackCaptureTarget
                   onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                  previewUrl={capturePreviews.before}
                   repairClassName={repairFieldClass('执行前截图')}
                   saving={captureSavingSlot === 'before'}
                   slot="before"
@@ -1491,6 +1532,7 @@ export function ReadbackPage() {
                 />
                 <ReadbackCaptureTarget
                   onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                  previewUrl={capturePreviews.after}
                   repairClassName={repairFieldClass('执行后截图')}
                   saving={captureSavingSlot === 'after'}
                   slot="after"
@@ -1498,6 +1540,7 @@ export function ReadbackPage() {
                 />
                 <ReadbackCaptureTarget
                   onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                  previewUrl={capturePreviews.readback}
                   repairClassName={repairFieldClass('回读证据')}
                   saving={captureSavingSlot === 'readback'}
                   slot="readback"
