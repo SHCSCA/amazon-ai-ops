@@ -147,6 +147,44 @@ export function dataImportTableSortHandler(input: {
   return input.locked ? undefined : input.onSort;
 }
 
+export function dataImportBusyLabel(runningImport: ImportMode | null): string | undefined {
+  return runningImport ? '处理中...' : undefined;
+}
+
+export function dataImportActionButtonView(input: {
+  mode: ImportMode;
+  runningImport: ImportMode | null;
+  hasRealFiles: boolean;
+}): { label: string; disabled: boolean; ariaBusy: boolean; className: string } {
+  const active = input.runningImport === input.mode;
+  const labels: Record<ImportMode, string> = {
+    current: '导入已下载表格',
+    local: '导入本地报表',
+  };
+  const disabled = input.mode === 'current'
+    ? !input.hasRealFiles || Boolean(input.runningImport)
+    : Boolean(input.runningImport);
+
+  return {
+    label: active ? '处理中...' : labels[input.mode],
+    disabled,
+    ariaBusy: active,
+    className: `secondary-button${active ? ' button-loading' : ''}`,
+  };
+}
+
+export function dataImportExportButtonView(input: {
+  exportingReconciliation: boolean;
+  hasImportedMetrics: boolean;
+}): { label: string; disabled: boolean; ariaBusy: boolean; className: string } {
+  return {
+    label: input.exportingReconciliation ? '处理中...' : '导出数据对账',
+    disabled: !input.hasImportedMetrics || input.exportingReconciliation,
+    ariaBusy: input.exportingReconciliation,
+    className: `secondary-button${input.exportingReconciliation ? ' button-loading' : ''}`,
+  };
+}
+
 function reportStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     missing: '缺少真实文件',
@@ -428,6 +466,9 @@ export function DataImportValidationPage() {
     notice,
     importError,
   });
+  const currentImportButton = dataImportActionButtonView({ mode: 'current', runningImport, hasRealFiles });
+  const localImportButton = dataImportActionButtonView({ mode: 'local', runningImport, hasRealFiles });
+  const exportButton = dataImportExportButtonView({ exportingReconciliation, hasImportedMetrics });
   const reportColumns: Array<VirtualDataTableColumn<DataImportReportRow>> = [
     { key: 'label', header: '报表', width: '170px', sortable: true, sortLabel: '报表', cell: (row) => row.label },
     {
@@ -579,7 +620,7 @@ export function DataImportValidationPage() {
           primaryAction={{
             label: taskState.primaryActionLabel,
             busy: Boolean(runningImport),
-            busyLabel: runningImport === 'current' ? '正在导入...' : runningImport === 'local' ? '正在选择...' : undefined,
+            busyLabel: dataImportBusyLabel(runningImport),
             disabled: Boolean(runningImport),
             onClick: hasImportedMetrics
               ? () => navigateTo('ad-quant')
@@ -591,7 +632,7 @@ export function DataImportValidationPage() {
             {
               label: taskState.secondaryActionLabel,
               busy: Boolean(runningImport),
-              busyLabel: runningImport === 'current' ? '正在导入...' : runningImport === 'local' ? '正在选择...' : undefined,
+              busyLabel: dataImportBusyLabel(runningImport),
               disabled: Boolean(runningImport),
               onClick: reportFolder ? () => openPath(reportFolder) : () => runImport('local'),
             },
@@ -683,7 +724,12 @@ export function DataImportValidationPage() {
             </div>
             <div className="action-row">
               <button className="secondary-button" disabled={!hasRealFiles || !fileAudit?.downloadDir} onClick={() => openPath(fileAudit?.downloadDir)} type="button">打开原始表格目录</button>
-              <button className="secondary-button" disabled={!hasImportedMetrics || exportingReconciliation} onClick={exportReconciliation} type="button">{exportingReconciliation ? '正在导出...' : '导出数据对账'}</button>
+              <button aria-busy={exportButton.ariaBusy} className={exportButton.className} disabled={exportButton.disabled} onClick={exportReconciliation} type="button">
+                <span className={exportButton.ariaBusy ? 'button-content' : undefined}>
+                  {exportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                  {exportButton.label}
+                </span>
+              </button>
               <button className="secondary-button" disabled={!hasImportedMetrics} onClick={() => navigateTo('ad-quant')} type="button">进入广告量化</button>
             </div>
             {reconciliation && (
@@ -729,11 +775,17 @@ export function DataImportValidationPage() {
                 </p>
               </div>
               <div className="table-action-row">
-                <button className="secondary-button" disabled={!hasRealFiles || Boolean(runningImport)} onClick={() => runImport('current')} type="button">
-                  {runningImport === 'current' ? '正在导入...' : '导入已下载表格'}
+                <button aria-busy={currentImportButton.ariaBusy} className={currentImportButton.className} disabled={currentImportButton.disabled} onClick={() => runImport('current')} type="button">
+                  <span className={currentImportButton.ariaBusy ? 'button-content' : undefined}>
+                    {currentImportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                    {currentImportButton.label}
+                  </span>
                 </button>
-                <button className="secondary-button" disabled={Boolean(runningImport)} onClick={() => runImport('local')} type="button">
-                  {runningImport === 'local' ? '正在选择...' : '导入本地报表'}
+                <button aria-busy={localImportButton.ariaBusy} className={localImportButton.className} disabled={localImportButton.disabled} onClick={() => runImport('local')} type="button">
+                  <span className={localImportButton.ariaBusy ? 'button-content' : undefined}>
+                    {localImportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                    {localImportButton.label}
+                  </span>
                 </button>
               </div>
             </div>

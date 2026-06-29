@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  dataImportActionButtonView,
+  dataImportBusyLabel,
+  dataImportExportButtonView,
   buildDataImportTableFeedback,
   dataImportTableFeedbackClass,
   dataImportTableSortHandler,
@@ -121,5 +124,47 @@ describe('data import table micro-feedback', () => {
     expect(styles).toContain('@keyframes data-import-table-refresh');
     expect(styles).toMatch(/animation:\s*data-import-table-refresh 100ms/);
     expect(styles).toContain('filter: blur(1px)');
+  });
+});
+
+describe('data import action micro-feedback', () => {
+  it('keeps first-screen task buttons on the same processing copy', () => {
+    expect(dataImportBusyLabel('current')).toBe('处理中...');
+    expect(dataImportBusyLabel('local')).toBe('处理中...');
+    expect(dataImportBusyLabel(null)).toBeUndefined();
+  });
+
+  it('uses the shared busy contract for the active import action', () => {
+    const active = dataImportActionButtonView({
+      mode: 'current',
+      runningImport: 'current',
+      hasRealFiles: true,
+    });
+    const lockedPeer = dataImportActionButtonView({
+      mode: 'local',
+      runningImport: 'current',
+      hasRealFiles: true,
+    });
+
+    expect(active.label).toBe('处理中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.className).toContain('button-loading');
+    expect(lockedPeer.label).toBe('导入本地报表');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBe(false);
+    expect(lockedPeer.className).not.toContain('button-loading');
+  });
+
+  it('uses the shared busy contract while exporting reconciliation data', () => {
+    const active = dataImportExportButtonView({
+      exportingReconciliation: true,
+      hasImportedMetrics: true,
+    });
+
+    expect(active.label).toBe('处理中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.className).toContain('button-loading');
   });
 });
