@@ -7,6 +7,7 @@ import {
   buildCollectionMonitorState,
   collectionActionButtonDetail,
   collectionActionButtonLabel,
+  collectionActionButtonView,
   collectionActionError,
   collectionActionGuide,
   collectionCompletionNotice,
@@ -307,6 +308,31 @@ describe('task-first data page helpers', () => {
     expect(collectionActionButtonLabel('import')).toBe('导入本地');
     expect(collectionActionButtonDetail('recreate-full')).toBe('创建、下载并导入完整 8 类');
     expect(collectionActionButtonDetail('import')).toBe('选择本地 xlsx/xls/csv');
+  });
+
+  it('gives collection action buttons an explicit busy contract while a report action runs', () => {
+    const running = collectionActionButtonView({
+      mode: 'recreate-full',
+      runningAction: 'recreate-full',
+      selectedCount: 8,
+    });
+    const locked = collectionActionButtonView({
+      mode: 'download-existing',
+      runningAction: 'recreate-full',
+      selectedCount: 8,
+    });
+
+    expect(running.label).toBe('处理中...');
+    expect(running.detail).toBe('正在重新创建、下载并导入全部 8 类');
+    expect(running.disabled).toBe(true);
+    expect(running.ariaBusy).toBe(true);
+    expect(running.className).toContain('collection-action-button-running');
+    expect(running.className).toContain('button-loading');
+
+    expect(locked.label).toBe('下载已创建');
+    expect(locked.disabled).toBe(true);
+    expect(locked.ariaBusy).toBe(false);
+    expect(locked.className).not.toContain('collection-action-button-running');
   });
 
   it('aligns data import primary actions to report and row readiness', () => {

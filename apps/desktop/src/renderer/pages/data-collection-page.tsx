@@ -288,6 +288,48 @@ export function collectionActionButtonDetail(mode: CollectionActionMode): string
   return labels[mode];
 }
 
+export function collectionActionButtonBusyDetail(mode: CollectionActionMode): string {
+  const labels: Record<CollectionActionMode, string> = {
+    'download-existing': '正在下载并导入已创建报表',
+    'recreate-selected': '正在重新创建、下载并导入已选报表',
+    'recreate-full': '正在重新创建、下载并导入全部 8 类',
+    import: '正在导入本地/已下载报表',
+  };
+  return labels[mode];
+}
+
+export function collectionActionButtonView({
+  mode,
+  runningAction,
+  selectedCount,
+}: {
+  mode: CollectionActionMode;
+  runningAction: RunningCollectionActionMode | null;
+  selectedCount: number;
+}): {
+  label: string;
+  detail: string;
+  disabled: boolean;
+  ariaBusy: boolean;
+  className: string;
+} {
+  const isPrimary = mode === 'recreate-full';
+  const isCurrentAction = runningAction === mode;
+  const needsSelection = mode === 'download-existing' || mode === 'recreate-selected';
+  const disabled = Boolean(runningAction) || (needsSelection && selectedCount === 0);
+  return {
+    label: isCurrentAction ? '处理中...' : collectionActionButtonLabel(mode),
+    detail: isCurrentAction ? collectionActionButtonBusyDetail(mode) : collectionActionButtonDetail(mode),
+    disabled,
+    ariaBusy: isCurrentAction,
+    className: [
+      'collection-action-button',
+      isPrimary ? 'primary-action' : 'secondary-action',
+      isCurrentAction ? 'button-loading collection-action-button-running' : '',
+    ].filter(Boolean).join(' '),
+  };
+}
+
 export function buildDataCollectionTaskState({
   realReportCount,
   importedRowCount,
@@ -746,6 +788,10 @@ export function DataCollectionPage() {
   const recreateSelectedGuide = collectionActionGuide('recreate-selected');
   const recreateFullGuide = collectionActionGuide('recreate-full');
   const importGuide = collectionActionGuide('import');
+  const downloadExistingButton = collectionActionButtonView({ mode: 'download-existing', runningAction, selectedCount });
+  const recreateSelectedButton = collectionActionButtonView({ mode: 'recreate-selected', runningAction, selectedCount });
+  const recreateFullButton = collectionActionButtonView({ mode: 'recreate-full', runningAction, selectedCount });
+  const importButton = collectionActionButtonView({ mode: 'import', runningAction, selectedCount });
   const dataLedger = useMemo(
     () => buildDataReadinessLedger({
       requiredReportCount: 8,
@@ -1315,40 +1361,56 @@ export function DataCollectionPage() {
           </div>
           <div className="collection-action-grid">
             <button
-              className="collection-action-button secondary-action"
-              disabled={selectedCount === 0 || Boolean(runningAction)}
+              aria-busy={downloadExistingButton.ariaBusy}
+              className={downloadExistingButton.className}
+              disabled={downloadExistingButton.disabled}
               onClick={() => runDownloadAction('download-existing')}
               type="button"
             >
-              <span>{runningAction === 'download-existing' ? '正在下载...' : collectionActionButtonLabel('download-existing')}</span>
-              <small>{collectionActionButtonDetail('download-existing')}</small>
+              <span className={downloadExistingButton.ariaBusy ? 'button-content' : undefined}>
+                {downloadExistingButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {downloadExistingButton.label}
+              </span>
+              <small>{downloadExistingButton.detail}</small>
             </button>
             <button
-              className="collection-action-button secondary-action"
-              disabled={selectedCount === 0 || Boolean(runningAction)}
+              aria-busy={recreateSelectedButton.ariaBusy}
+              className={recreateSelectedButton.className}
+              disabled={recreateSelectedButton.disabled}
               onClick={() => runDownloadAction('recreate-selected')}
               type="button"
             >
-              <span>{runningAction === 'recreate-selected' ? '正在重建...' : collectionActionButtonLabel('recreate-selected')}</span>
-              <small>{collectionActionButtonDetail('recreate-selected')}</small>
+              <span className={recreateSelectedButton.ariaBusy ? 'button-content' : undefined}>
+                {recreateSelectedButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {recreateSelectedButton.label}
+              </span>
+              <small>{recreateSelectedButton.detail}</small>
             </button>
             <button
-              className="collection-action-button primary-action"
-              disabled={Boolean(runningAction)}
+              aria-busy={recreateFullButton.ariaBusy}
+              className={recreateFullButton.className}
+              disabled={recreateFullButton.disabled}
               onClick={() => runDownloadAction('recreate-full')}
               type="button"
             >
-              <span>{runningAction === 'recreate-full' ? '正在重建全部 8 类...' : collectionActionButtonLabel('recreate-full')}</span>
-              <small>{collectionActionButtonDetail('recreate-full')}</small>
+              <span className={recreateFullButton.ariaBusy ? 'button-content' : undefined}>
+                {recreateFullButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {recreateFullButton.label}
+              </span>
+              <small>{recreateFullButton.detail}</small>
             </button>
             <button
-              className="collection-action-button secondary-action"
-              disabled={Boolean(runningAction)}
+              aria-busy={importButton.ariaBusy}
+              className={importButton.className}
+              disabled={importButton.disabled}
               onClick={importLocalReports}
               type="button"
             >
-              <span>{runningAction === 'import' ? '正在导入...' : collectionActionButtonLabel('import')}</span>
-              <small>{collectionActionButtonDetail('import')}</small>
+              <span className={importButton.ariaBusy ? 'button-content' : undefined}>
+                {importButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {importButton.label}
+              </span>
+              <small>{importButton.detail}</small>
             </button>
           </div>
           <ProgressiveDetails title="报表动作说明">

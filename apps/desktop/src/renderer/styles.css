@@ -1707,6 +1707,25 @@ code {
   cursor: not-allowed;
 }
 
+.collection-action-button-running,
+.collection-action-button-running:disabled,
+.collection-action-button-running:disabled:hover {
+  border-color: var(--blue);
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.16) 0,
+      rgba(255, 255, 255, 0.16) 8px,
+      rgba(37, 99, 235, 0.12) 8px,
+      rgba(37, 99, 235, 0.12) 16px
+    ),
+    linear-gradient(180deg, #2378ed 0%, var(--blue) 100%);
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.2);
+  cursor: not-allowed;
+  animation: collection-action-progress 900ms linear infinite;
+}
+
 .collection-action-button:active:not(:disabled) {
   transform: scale(0.98);
 }
@@ -2001,6 +2020,15 @@ code {
   }
   to {
     transform: translateY(100%);
+  }
+}
+
+@keyframes collection-action-progress {
+  from {
+    background-position: 0 0, 0 0;
+  }
+  to {
+    background-position: 32px 0, 0 0;
   }
 }
 
