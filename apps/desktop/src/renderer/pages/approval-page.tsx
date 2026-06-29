@@ -10,7 +10,8 @@ import { toUserFacingError } from '../user-facing-error';
 
 type ApprovalTab = 'pending' | 'needs_review' | 'approved' | 'rejected';
 type ApprovalFeedbackState = 'approving' | 'approved' | 'rejecting' | 'rejected' | 'blocked';
-type ApprovalQueueExitDecision = 'approved' | 'rejected';
+export type ApprovalDecisionButtonMode = 'approved' | 'rejected';
+type ApprovalQueueExitDecision = ApprovalDecisionButtonMode;
 type ApprovalQueueExitState = { id: number; decision: ApprovalQueueExitDecision } | null;
 const APPROVAL_SELECTION_STORAGE_KEY = 'amazon-ai-ops:approval-selection';
 export const APPROVAL_QUEUE_EXIT_ANIMATION_MS = 180;
@@ -344,6 +345,34 @@ export function buildApprovalStampFeedback(input: {
   };
 }
 
+export function approvalDecisionButtonView({
+  mode,
+  submittingDecision,
+  blocked,
+}: {
+  mode: ApprovalDecisionButtonMode;
+  submittingDecision: ApprovalDecisionButtonMode | null;
+  blocked: boolean;
+}): {
+  label: string;
+  disabled: boolean;
+  ariaBusy: boolean;
+  className: string;
+} {
+  const isApprove = mode === 'approved';
+  const isCurrent = submittingDecision === mode;
+  const disabled = Boolean(submittingDecision) || (isApprove && blocked);
+  const baseClass = isApprove
+    ? blocked ? 'secondary-button' : 'primary-button'
+    : 'secondary-button danger-button';
+  return {
+    label: isCurrent ? '处理中...' : isApprove ? blocked ? '普通批准不可用' : '批准并进入待执行' : '拒绝',
+    disabled,
+    ariaBusy: isCurrent,
+    className: [baseClass, isCurrent ? 'button-loading' : ''].filter(Boolean).join(' '),
+  };
+}
+
 export function parseApprovalSelectionIntent(value: unknown): {
   ids: string[];
   count: number;
@@ -536,6 +565,16 @@ export function ApprovalPage() {
     }),
     [selected, selectedBlockers, selectedMissing],
   );
+  const approveButton = approvalDecisionButtonView({
+    mode: 'approved',
+    submittingDecision,
+    blocked: selectedSubmitBlockers.length > 0,
+  });
+  const rejectButton = approvalDecisionButtonView({
+    mode: 'rejected',
+    submittingDecision,
+    blocked: false,
+  });
 
   function decisionPayload(decision: 'approved' | 'rejected') {
     return buildApprovalDecisionPayload({
@@ -1169,20 +1208,24 @@ export function ApprovalPage() {
             <p className="muted-line">审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“执行回读”页逐条补齐。</p>
             <div className="action-row">
               <button
-                className={selectedSubmitBlockers.length > 0 ? 'secondary-button' : 'primary-button'}
-                disabled={selectedSubmitBlockers.length > 0 || Boolean(submittingDecision)}
+                aria-busy={approveButton.ariaBusy}
+                className={approveButton.className}
+                disabled={approveButton.disabled}
                 onClick={approveSelected}
                 type="button"
               >
-                {submittingDecision === 'approved' ? '正在批准...' : selectedSubmitBlockers.length > 0 ? '普通批准不可用' : '批准并进入待执行'}
+                {approveButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {approveButton.label}
               </button>
               <button
-                className="secondary-button danger-button"
-                disabled={Boolean(submittingDecision)}
+                aria-busy={rejectButton.ariaBusy}
+                className={rejectButton.className}
+                disabled={rejectButton.disabled}
                 onClick={rejectSelected}
                 type="button"
               >
-                {submittingDecision === 'rejected' ? '正在拒绝...' : '拒绝'}
+                {rejectButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {rejectButton.label}
               </button>
             </div>
           </Panel>

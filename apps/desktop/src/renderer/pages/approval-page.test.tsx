@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecommendationView } from '../types';
-import { aiThresholdSummary, approvalBlockers, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, parseApprovalSelectionIntent, strategyLabel } from './approval-page';
+import { aiThresholdSummary, approvalBlockers, approvalDecisionButtonView, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, parseApprovalSelectionIntent, strategyLabel } from './approval-page';
 
 function recommendation(sourceRow: number | undefined = 12, sourceFiles = ['C:/reports/user-search-term.xlsx']): RecommendationView {
   return {
@@ -378,6 +378,32 @@ describe('parseApprovalSelectionIntent', () => {
     expect(parseApprovalSelectionIntent(null)).toBeNull();
     expect(parseApprovalSelectionIntent({ ids: [] })).toBeNull();
     expect(parseApprovalSelectionIntent({ ids: [''] })).toBeNull();
+  });
+});
+
+describe('approvalDecisionButtonView', () => {
+  it('gives the active approval decision button an explicit busy contract', () => {
+    const approving = approvalDecisionButtonView({
+      mode: 'approved',
+      submittingDecision: 'approved',
+      blocked: false,
+    });
+    const lockedReject = approvalDecisionButtonView({
+      mode: 'rejected',
+      submittingDecision: 'approved',
+      blocked: false,
+    });
+
+    expect(approving.label).toBe('处理中...');
+    expect(approving.disabled).toBe(true);
+    expect(approving.ariaBusy).toBe(true);
+    expect(approving.className).toContain('button-loading');
+    expect(approving.className).toContain('primary-button');
+
+    expect(lockedReject.label).toBe('拒绝');
+    expect(lockedReject.disabled).toBe(true);
+    expect(lockedReject.ariaBusy).toBe(false);
+    expect(lockedReject.className).not.toContain('button-loading');
   });
 });
 
