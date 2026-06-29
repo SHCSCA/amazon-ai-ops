@@ -51,4 +51,24 @@ describe('TagMetricGroup', () => {
     buttons[0].props.onClick();
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ key: 'all', label: '全部对象' }));
   });
+
+  it('dims inactive metric chips when a focus filter is active', () => {
+    const tree = TagMetricGroup({
+      activeKey: 'waste',
+      ariaLabel: '量化维度',
+      dimInactive: true,
+      items: [
+        { key: 'all', label: '全部对象', value: 12, tone: 'ready' },
+        { key: 'waste', label: '浪费超支', value: '$30.00', tone: 'blocked' },
+        { key: 'orders', label: '出单对象', value: 5, tone: 'ready' },
+      ],
+      onSelect: vi.fn(),
+    }) as ReactElement;
+
+    const buttons = collectElements(tree, 'button');
+    expect(buttons[0].props.className).toContain('tag-metric-dimmed');
+    expect(buttons[1].props.className).toContain('tag-metric-active');
+    expect(buttons[1].props.className).not.toContain('tag-metric-dimmed');
+    expect(buttons[2].props.className).toContain('tag-metric-dimmed');
+  });
 });

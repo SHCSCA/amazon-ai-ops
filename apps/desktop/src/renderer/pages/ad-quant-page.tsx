@@ -904,6 +904,7 @@ export function AdQuantPage() {
           <TagMetricGroup
             activeKey={metricFocus}
             ariaLabel="广告量化维度快速聚焦"
+            dimInactive={metricFocus !== 'all'}
             items={[
               { key: 'all', label: '全部对象', value: productDiagnostics.length, tone: productDiagnostics.length > 0 ? 'ready' : 'blocked', detail: `${realReportCount}/8 类真实报表，${importedRowCount} 行指标` },
               { key: 'waste', label: '浪费超支', value: formatUsd(productNoOrderSpend), tone: productNoOrderSpend > 0 ? 'blocked' : 'ready' },

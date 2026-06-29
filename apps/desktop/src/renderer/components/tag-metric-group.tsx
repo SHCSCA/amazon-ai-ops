@@ -15,11 +15,13 @@ export function TagMetricGroup({
   items,
   activeKey,
   ariaLabel,
+  dimInactive = false,
   onSelect,
 }: {
   items: TagMetricItem[];
   activeKey?: string;
   ariaLabel?: string;
+  dimInactive?: boolean;
   onSelect?: (item: TagMetricItem) => void;
 }) {
   return (
@@ -32,6 +34,7 @@ export function TagMetricGroup({
           `tag-metric-${item.tone || 'neutral'}`,
           interactive ? 'tag-metric-action' : '',
           activeKey && metricKey === activeKey ? 'tag-metric-active' : '',
+          dimInactive && activeKey && metricKey && metricKey !== activeKey ? 'tag-metric-dimmed' : '',
         ].filter(Boolean).join(' ');
         const content = (
           <>

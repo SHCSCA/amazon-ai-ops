@@ -2807,6 +2807,17 @@ code {
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.13), 0 8px 18px rgba(15, 23, 42, 0.08);
 }
 
+.tag-metric-dimmed {
+  opacity: 0.6;
+  filter: saturate(0.72);
+}
+
+.tag-metric-dimmed:hover,
+.tag-metric-dimmed:focus-visible {
+  opacity: 0.82;
+  filter: none;
+}
+
 .ad-quant-focus-line {
   margin: 2px 0 0;
   color: #33465c;
