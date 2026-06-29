@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+
 import {
   dashboardAiStatus,
   dashboardAiWorkStatus,
@@ -1405,6 +1407,13 @@ describe('dashboardPrimaryTaskNavigationFeedback', () => {
       busyLabel: '转跳中...',
       disabled: true,
     });
+  });
+
+  it('wires dashboard primary pending state into the state-light refresh rail', () => {
+    const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('refreshing={primaryTaskNavigationFeedback.busy}');
+    expect(source).toContain('StateLightGrid');
   });
 });
 

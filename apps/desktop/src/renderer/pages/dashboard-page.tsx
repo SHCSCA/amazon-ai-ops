@@ -1413,6 +1413,7 @@ export function DashboardPage() {
 
         <Panel title="数据健康" tone={isQuantifiable ? 'success' : 'blocked'}>
           <StateLightGrid
+            refreshing={primaryTaskNavigationFeedback.busy}
             items={[
               {
                 label: '当前范围',

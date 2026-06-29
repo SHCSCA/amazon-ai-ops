@@ -5513,6 +5513,15 @@ code {
   .evidence-disclosure summary:active {
     transform: none;
   }
+
+  .state-light-grid-refreshing .state-light-card,
+  .state-light-grid-refreshing .state-light-card::after {
+    animation: none;
+  }
+
+  .state-light-grid-refreshing .state-light-card::after {
+    opacity: 0;
+  }
 }
 
 .state-light-grid {
@@ -5523,6 +5532,8 @@ code {
 
 .state-light-card {
   min-width: 0;
+  position: relative;
+  overflow: hidden;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   background: #fff;
@@ -5535,6 +5546,42 @@ code {
 .state-light-card:hover {
   box-shadow: 0 10px 24px rgb(15 23 42 / 0.08);
   transform: translateY(-2px);
+}
+
+.state-light-grid-refreshing .state-light-card {
+  animation: state-light-refresh-pulse 180ms ease-out;
+  border-color: rgba(37, 99, 235, 0.45);
+}
+
+.state-light-grid-refreshing .state-light-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.14), transparent);
+  pointer-events: none;
+  transform: translateX(-100%);
+  animation: state-light-refresh-sweep 180ms ease-out;
+}
+
+@keyframes state-light-refresh-pulse {
+  0% {
+    box-shadow: 0 0 0 rgba(37, 99, 235, 0);
+  }
+  40% {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(37, 99, 235, 0);
+  }
+}
+
+@keyframes state-light-refresh-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
 }
 
 .state-light-card span,

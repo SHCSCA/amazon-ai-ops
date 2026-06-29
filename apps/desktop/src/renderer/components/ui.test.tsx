@@ -65,13 +65,28 @@ describe('industrial UI atoms', () => {
     expect(collectElements(tree, (element) => element.props.className === 'state-light-card state-light-ready')).toHaveLength(1);
   });
 
+  it('can pulse state lights during a first-screen action refresh', () => {
+    const tree = StateLightGrid({
+      refreshing: true,
+      items: [
+        { label: '数据就绪', value: '8/8 报表全', tone: 'ready' },
+      ],
+    }) as ReactElement;
+
+    expect(tree.props.className).toContain('state-light-grid-refreshing');
+    expect(tree.props['data-refreshing']).toBe(true);
+  });
+
   it('keeps state light hover lift feedback in the stylesheet', () => {
     const stylesheet = rendererCss();
 
     expect(stylesheet).toMatch(/\.state-light-card\s*\{[\s\S]*transition:\s*transform 120ms/);
     expect(stylesheet).toMatch(/\.state-light-card:hover\s*\{[\s\S]*box-shadow\s*:[^;]+;/);
     expect(stylesheet).toMatch(/\.state-light-card:hover\s*\{[\s\S]*transform\s*:\s*translateY\(-2px\)\s*;/);
+    expect(stylesheet).toMatch(/\.state-light-grid-refreshing \.state-light-card\s*\{[\s\S]*animation:\s*state-light-refresh-pulse 180ms/);
+    expect(stylesheet).toMatch(/\.state-light-grid-refreshing \.state-light-card::after\s*\{[\s\S]*animation:\s*state-light-refresh-sweep 180ms/);
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.state-light-card:hover[\s\S]*transform:\s*none/);
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.state-light-grid-refreshing \.state-light-card,[\s\S]*\.state-light-grid-refreshing \.state-light-card::after[\s\S]*animation:\s*none/);
   });
 
   it('renders micro stepper rows without exposing raw technical labels by default', () => {

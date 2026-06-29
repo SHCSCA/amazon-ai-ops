@@ -55,9 +55,9 @@ export interface StateLightItem {
   tone: IndustrialTone;
 }
 
-export function StateLightGrid({ items }: { items: StateLightItem[] }) {
+export function StateLightGrid({ items, refreshing = false }: { items: StateLightItem[]; refreshing?: boolean }) {
   return (
-    <div className="state-light-grid">
+    <div className={`state-light-grid${refreshing ? ' state-light-grid-refreshing' : ''}`} data-refreshing={refreshing || undefined}>
       {items.map((item) => (
         <div className={`state-light-card state-light-${item.tone}`} key={item.label}>
           <span>{item.label}</span>
