@@ -159,4 +159,15 @@ describe('industrial UI atoms', () => {
     expect(stylesheet).toContain('.decision-action-strip:focus-within .decision-action:not(:focus-visible):not(:disabled)');
     expect(stylesheet).toContain('opacity: 0.4;');
   });
+
+  it('keeps direct details disclosures from becoming dead click targets', () => {
+    const stylesheet = rendererCss();
+
+    expect(stylesheet).toContain('--radius-sm: 6px;');
+    expect(stylesheet).toMatch(/\.dashboard-details summary,[\s\S]*\.details-panel summary,[\s\S]*\.evidence-disclosure summary\s*\{[\s\S]*transition:\s*[\s\S]*background var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)[\s\S]*transform var\(--motion-fast\)/);
+    expect(stylesheet).toMatch(/\.dashboard-details summary:hover,[\s\S]*\.details-panel summary:hover,[\s\S]*\.evidence-disclosure summary:hover\s*\{[\s\S]*box-shadow:\s*inset 3px 0 0 var\(--primary\)/);
+    expect(stylesheet).toMatch(/\.dashboard-details summary:focus-visible,[\s\S]*\.details-panel summary:focus-visible,[\s\S]*\.evidence-disclosure summary:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
+    expect(stylesheet).toMatch(/\.dashboard-details summary:active,[\s\S]*\.details-panel summary:active,[\s\S]*\.evidence-disclosure summary:active\s*\{[\s\S]*transform:\s*scale\(0\.98\)/);
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.dashboard-details summary,[\s\S]*\.details-panel summary,[\s\S]*\.evidence-disclosure summary[\s\S]*transition:\s*none/);
+  });
 });
