@@ -40,6 +40,30 @@ interface ListingAiStatus {
   tone: 'ready' | 'pending' | 'blocked' | 'warning';
 }
 
+interface ListingDraftWorkspaceCopyInput {
+  quantReady: boolean;
+  keywordCount: number;
+  draftCount: number;
+  aiDraftCount: number;
+  ruleDraftCount: number;
+  aiStatusLabel: string;
+  aiStatusDetail: string;
+  loadingDraft?: boolean;
+}
+
+export interface ListingDraftWorkspaceCopy {
+  keywordPlaceholder: string;
+  keywordStatusLabel: string;
+  dataGateLabel: string;
+  dataGateDetail: string;
+  dataGateTone: 'ready' | 'blocked';
+  draftUseLabel: string;
+  draftUseDetail: string;
+  sourceLabel: string;
+  sourceDetail: string;
+  primaryActionLabel: string;
+}
+
 interface ListingHeatmapSection {
   key: string;
   label: string;
@@ -107,8 +131,8 @@ function readStatus(ok: boolean, missingLabel: string): string {
 }
 
 function draftSourceLabel(draft: ListingDraftView): string {
-  if (draft.aiFallbackReason) return '规则兜底';
-  return draft.source === 'ai' ? 'AI' : '规则';
+  if (draft.aiFallbackReason) return '本地规则参考';
+  return draft.source === 'ai' ? 'AI 草案' : '本地规则参考';
 }
 
 function escapeRegExp(value: string): string {
@@ -331,13 +355,38 @@ export function listingDraftGenerationMessage(quantReady: boolean, drafts: Array
   const fallbackReasons = Array.from(new Set(fallbackDrafts.map((draft) => draft.aiFallbackReason).filter(Boolean)));
   const parts = [
     aiCount ? `${aiCount} 条 AI 草案` : '',
-    fallbackCount ? `${fallbackCount} 条规则兜底草案` : '',
+    fallbackCount ? `${fallbackCount} 条本地规则参考` : '',
   ].filter(Boolean).join('，') || `${drafts.length} 条 Listing 草案`;
-  const reason = fallbackReasons.length ? ` 兜底原因：${fallbackReasons.slice(0, 2).join('；')}。` : '';
+  const reason = fallbackReasons.length ? ` 规则参考原因：${fallbackReasons.slice(0, 2).join('；')}。` : '';
   if (!quantReady) {
-    return `已生成 ${parts}。当前范围缺真实广告数据，不能声明 AI 已验证。${reason}`;
+    return `已生成 ${parts}。当前范围缺真实广告数据，只能作为本地预览，不能声明 AI 已验证或进入交付证据。${reason}`;
   }
   return `已生成 ${parts}。${reason}草案只保存在本地，不会自动提交 Amazon。`;
+}
+
+export function listingDraftWorkspaceCopy(input: ListingDraftWorkspaceCopyInput): ListingDraftWorkspaceCopy {
+  const sourceLabel = input.draftCount
+    ? `${input.aiDraftCount} AI / ${input.ruleDraftCount} 本地规则`
+    : input.aiStatusLabel;
+
+  return {
+    keywordPlaceholder: '例如 wide toe box\nbarefoot shoes\nlightweight trail runner',
+    keywordStatusLabel: input.keywordCount ? `${input.keywordCount} 个关键词待复核` : '待带入关键词',
+    dataGateLabel: input.quantReady ? '真实广告数据可用' : '待补齐真实广告数据',
+    dataGateDetail: input.quantReady
+      ? '关键词可引用当前范围的真实广告指标；生成后仍需人工复核相关性。'
+      : '先完成 8 类真实报表采集并导入 DB；缺数据时草案只能用于本地编辑预览。',
+    dataGateTone: input.quantReady ? 'ready' : 'blocked',
+    draftUseLabel: input.quantReady ? '本地复核草案' : '仅本地预览',
+    draftUseDetail: input.quantReady
+      ? '可作为运营复核材料导出，但不会自动提交 Amazon 或改写 Lingxing Listing。'
+      : '只用于检查结构、词根覆盖和人工改写方向，不能进入交付证据包。',
+    sourceLabel,
+    sourceDetail: input.draftCount
+      ? '来源已在下方明细逐条标记；AI 与本地规则参考都必须人工复核。'
+      : input.aiStatusDetail,
+    primaryActionLabel: input.loadingDraft ? '生成中...' : input.quantReady ? '生成本地草案' : '生成本地预览草案',
+  };
 }
 
 export interface ListingManualField {
@@ -432,7 +481,7 @@ function listingAiStatusFromSettings(settings: Record<string, unknown> | null | 
   if (!settings) {
     return {
       label: 'Listing AI 状态未读取',
-      detail: '无法读取设置时仍可生成规则兜底草案，但不会声称 AI 已参与。',
+      detail: '无法读取设置时仍可生成本地规则参考草案，但不会声称 AI 已参与。',
       tone: 'pending',
     };
   }
@@ -448,7 +497,7 @@ function listingAiStatusFromSettings(settings: Record<string, unknown> | null | 
   if (!keyPresent) {
     return {
       label: 'Listing AI 未配置',
-      detail: '未配置 API Key，Listing 草案只能使用规则兜底。',
+      detail: '未配置 API Key，Listing 草案会生成本地规则参考。',
       tone: 'warning',
     };
   }
@@ -463,7 +512,7 @@ function listingAiStatusFromSettings(settings: Record<string, unknown> | null | 
   if (testMatchesCurrent && lastStatus === 'failed') {
     return {
       label: 'Listing AI 测试失败',
-      detail: lastMessage || '最近一次 AI 连接测试失败，草案会回落到规则兜底。',
+      detail: lastMessage || '最近一次 AI 连接测试失败，草案会使用本地规则参考。',
       tone: 'blocked',
     };
   }
@@ -651,6 +700,16 @@ export function ListingOptimizationPage() {
     ruleDraftCount,
     aiStatusLabel: aiStatus.label,
     quantReady,
+  });
+  const draftWorkspaceCopy = listingDraftWorkspaceCopy({
+    quantReady,
+    keywordCount: keywords.length,
+    draftCount: drafts.length,
+    aiDraftCount,
+    ruleDraftCount,
+    aiStatusLabel: aiStatus.label,
+    aiStatusDetail: aiStatus.detail,
+    loadingDraft: loading === 'draft',
   });
   const workflowBlocker = !keywords.length
     ? '先从关键词机会带入或粘贴关键词'
@@ -988,7 +1047,7 @@ export function ListingOptimizationPage() {
         section,
         currentText,
         suggestedText: buildSuggestedText(keyword, section, currentText),
-        evidence: quantReady ? '当前范围真实广告指标 + 关键词机会池' : '规则兜底：当前范围未满足真实广告指标门槛',
+        evidence: quantReady ? '当前范围真实广告指标 + 关键词机会池' : '本地规则参考：当前范围未满足真实广告指标门槛',
         riskWarnings: quantReady ? ['需人工复核相关性'] : ['缺当前真实广告数据门槛，不能声明 AI 已验证'],
         status: 'pending',
       };
@@ -1032,7 +1091,7 @@ export function ListingOptimizationPage() {
           title={draftReady ? '本地草案已生成，可导出复核' : workflowSummary.headline}
           detail={`${workflowSummary.nextAction.replace(/[。.!！]+$/, '')}。${workflowSummary.boundary}`}
           primaryAction={{
-            label: loading === 'draft' ? '生成中...' : 'AI 改写本地草案',
+            label: draftWorkspaceCopy.primaryActionLabel,
             busy: loading === 'draft',
             busyLabel: '生成中...',
             disabled: !listingReady || loading === 'draft',
@@ -1087,7 +1146,7 @@ export function ListingOptimizationPage() {
               <div>
                 <span>AI 与数据</span>
                 <strong>{workflowSummary.facts.slice(2).join(' / ')}</strong>
-                <p>{quantReady ? '草案可引用当前广告数据，但仍需人工复核。' : '缺真实广告数据时，草案只能按规则兜底标记。'}</p>
+                <p>{draftWorkspaceCopy.dataGateDetail}</p>
               </div>
               <div>
                 <span>下一步</span>
@@ -1110,9 +1169,9 @@ export function ListingOptimizationPage() {
               <StatusPill tone={listingSourceStatus.tone}>{listingSourceStatus.label}</StatusPill>
             </div>
             <div className="workflow-step workflow-step-static">
-              <span>3 AI / 规则草案</span>
-              <strong>{draftReady ? `${aiDraftCount} AI / ${ruleDraftCount} 规则` : aiStatus.label}</strong>
-              <p>{quantReady ? aiStatus.detail : '缺真实广告数据时只允许规则兜底标记。'}</p>
+              <span>3 AI / 本地规则草案</span>
+              <strong>{draftReady ? draftWorkspaceCopy.sourceLabel : aiStatus.label}</strong>
+              <p>{draftWorkspaceCopy.sourceDetail}</p>
               <StatusPill tone={draftReady ? 'ready' : listingReady && keywords.length ? aiStatus.tone : 'blocked'}>{draftReady ? '已生成' : aiStatus.label}</StatusPill>
             </div>
             <div className="workflow-step workflow-step-static">
@@ -1217,8 +1276,8 @@ export function ListingOptimizationPage() {
             </div>
             <div>
               <span>草案来源</span>
-              <strong>{drafts.length ? `${aiDraftCount} AI / ${ruleDraftCount} 规则` : '未生成'}</strong>
-              <p>DeepSeek 不可用时会标记规则兜底，不能当作 AI 已验证。</p>
+              <strong>{drafts.length ? draftWorkspaceCopy.sourceLabel : '未生成'}</strong>
+              <p>DeepSeek 不可用时会标记本地规则参考，不能当作 AI 已验证。</p>
             </div>
             <div>
               <span>AI 连接</span>
@@ -1372,39 +1431,83 @@ export function ListingOptimizationPage() {
           )}
         </Panel>
 
-        <Panel title="关键词覆盖">
-          <label className="textarea-label">
-            粘贴关键词机会（逗号或换行分隔）
-            <textarea value={keywordsText} onChange={(event) => setKeywordsText(event.target.value)} placeholder="keyword one&#10;keyword two" />
-          </label>
-          <p className="muted-line">已输入 {keywords.length} 个关键词；生成草案前请确认关键词来自当前范围的真实广告数据。当前门槛：{quantReady ? '真实广告数据可用' : '缺真实广告数据，生成时按规则兜底标记'}。</p>
-        </Panel>
+        <Panel title="关键词与本地草案工作台" tone={quantReady ? 'success' : 'warning'}>
+          <div className="listing-draft-workbench" aria-label="Listing 关键词与本地草案工作台">
+            <section className="listing-draft-pane listing-draft-keyword-pane">
+              <div className="listing-draft-pane-head">
+                <div>
+                  <span>01 关键词输入</span>
+                  <strong>{handoffPayload ? '来自关键词机会矩阵' : '手工粘贴或待带入'}</strong>
+                </div>
+                <StatusPill tone={keywords.length ? 'ready' : 'pending'}>{draftWorkspaceCopy.keywordStatusLabel}</StatusPill>
+              </div>
+              <label className="textarea-label">
+                粘贴关键词机会（逗号或换行分隔）
+                <textarea
+                  value={keywordsText}
+                  onChange={(event) => setKeywordsText(event.target.value)}
+                  placeholder={draftWorkspaceCopy.keywordPlaceholder}
+                />
+              </label>
+              <p className="muted-line" aria-live="polite">
+                已输入 {keywords.length} 个关键词；生成前请删除不相关词、竞品误匹配词和跨产品词。
+              </p>
+            </section>
 
-        <Panel title="本地修改建议与草案导出" tone={quantReady ? 'default' : 'warning'}>
-          <div className="context-summary-grid">
-            <div>
-              <span>草案可信度</span>
-              <strong>{quantReady ? '可引用当前广告数据' : '规则兜底'}</strong>
-              <p>{quantReady ? '关键词来自当前范围真实广告数据，仍需人工复核。' : '缺真实广告数据时只生成本地占位草案，不能进入交付证据。'}</p>
-            </div>
-            <div>
-              <span>AI 结果</span>
-              <strong>{drafts.length ? `${aiDraftCount} 条 AI` : aiStatus.label}</strong>
-              <p>{aiStatus.detail}</p>
-            </div>
-            <div>
-              <span>规则结果</span>
-              <strong>{drafts.length ? `${ruleDraftCount} 条规则` : '未生成'}</strong>
-              <p>规则结果只能作为编辑参考，不等同于 AI 验证或发布建议。</p>
-            </div>
+            <section className="listing-draft-pane">
+              <div className="listing-draft-pane-head">
+                <div>
+                  <span>02 数据门槛与用途</span>
+                  <strong>{draftWorkspaceCopy.draftUseLabel}</strong>
+                </div>
+                <StatusPill tone={draftWorkspaceCopy.dataGateTone}>{draftWorkspaceCopy.dataGateLabel}</StatusPill>
+              </div>
+              <div className="listing-draft-gate-grid">
+                <div className={`listing-draft-gate listing-draft-gate-${draftWorkspaceCopy.dataGateTone}`}>
+                  <span>数据门槛</span>
+                  <strong>{draftWorkspaceCopy.dataGateLabel}</strong>
+                  <p>{draftWorkspaceCopy.dataGateDetail}</p>
+                </div>
+                <div className={`listing-draft-gate listing-draft-gate-${quantReady ? 'ready' : 'warning'}`}>
+                  <span>草案用途</span>
+                  <strong>{draftWorkspaceCopy.draftUseLabel}</strong>
+                  <p>{draftWorkspaceCopy.draftUseDetail}</p>
+                </div>
+              </div>
+            </section>
+
+            <section className="listing-draft-pane listing-draft-action-pane">
+              <div className="listing-draft-pane-head">
+                <div>
+                  <span>03 生成与导出</span>
+                  <strong>{draftWorkspaceCopy.sourceLabel}</strong>
+                </div>
+                <StatusPill tone={draftReady ? 'ready' : listingReady && keywords.length ? aiStatus.tone : 'blocked'}>
+                  {draftReady ? '草案已生成' : aiStatus.label}
+                </StatusPill>
+              </div>
+              <p className="muted-line">{draftWorkspaceCopy.sourceDetail}</p>
+              <div className="listing-draft-metrics" aria-label="Listing 草案来源统计">
+                <div><span>AI 草案</span><strong>{aiDraftCount}</strong></div>
+                <div><span>本地规则参考</span><strong>{ruleDraftCount}</strong></div>
+                <div><span>可导出草案</span><strong>{drafts.length}</strong></div>
+              </div>
+              <div className="action-row">
+                <button className="primary-button" disabled={!listingReady || loading === 'draft'} onClick={generateDrafts} type="button">
+                  {draftWorkspaceCopy.primaryActionLabel}
+                </button>
+                <button className="secondary-button" disabled={!drafts.length} onClick={exportDrafts} type="button">导出草案</button>
+              </div>
+            </section>
           </div>
-          <div className="action-row">
-            <button className="primary-button" disabled={!listingReady || loading === 'draft'} onClick={generateDrafts} type="button">
-              {loading === 'draft' ? '生成中...' : quantReady ? '生成本地草案' : '生成规则兜底草案'}
-            </button>
-            <button className="secondary-button" disabled={!drafts.length} onClick={exportDrafts} type="button">导出草案</button>
+          <p className="blocked-line">本地草案不会自动提交 Amazon，不修改 Lingxing Listing；缺真实广告数据时也不会进入交付证据包。</p>
+          <div className="listing-draft-table-title">
+            <div>
+              <span>草案明细</span>
+              <strong>{draftReady ? `${drafts.length} 条待人工复核` : '尚未生成草案'}</strong>
+            </div>
+            <StatusPill tone={draftReady ? 'ready' : 'pending'}>{draftReady ? '可导出' : '待草案'}</StatusPill>
           </div>
-          <p className="blocked-line">草案只保存在本地，不会自动提交 Amazon。</p>
           <div className="table-wrap">
             <table className="business-table">
               <thead>

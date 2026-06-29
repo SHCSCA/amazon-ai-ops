@@ -159,9 +159,9 @@ export function buildListingWorkflowSummary(input: ListingWorkflowSummaryInput):
   const facts = [
     `关键词 ${input.keywordCount} 个`,
     input.listingReady ? 'Listing 已核对' : input.listingReadAttempted ? 'Listing 已录入但未完整' : 'Listing 未录入',
-    input.quantReady ? '当前范围有真实广告数据' : '缺真实广告数据，仅规则兜底',
+    input.quantReady ? '当前范围有真实广告数据' : '缺真实广告数据，仅本地预览',
     input.draftCount > 0
-      ? `AI 草案 ${input.aiDraftCount} 条 / 规则草案 ${input.ruleDraftCount} 条`
+      ? `AI 草案 ${input.aiDraftCount} 条 / 本地规则参考 ${input.ruleDraftCount} 条`
       : input.aiStatusLabel,
   ];
 
@@ -199,10 +199,10 @@ export function buildListingWorkflowSummary(input: ListingWorkflowSummaryInput):
       tone: input.quantReady ? 'warning' : 'pending',
       headline: input.quantReady
         ? '关键词和 Listing 已就绪，可以生成本地草案。'
-        : '关键词和 Listing 已就绪，但缺真实广告数据，只能生成规则兜底草案。',
+        : '关键词和 Listing 已就绪，但缺真实广告数据；只能生成本地预览草案。',
       facts,
       blockers: [],
-      nextAction: input.quantReady ? '生成本地草案并检查 AI/规则来源。' : '生成规则兜底草案，或先补齐真实广告数据后再生成。',
+      nextAction: input.quantReady ? '生成本地草案并检查 AI/规则来源。' : '先补齐真实广告数据，或生成仅供编辑对齐的本地预览草案。',
       boundary,
     };
   }

@@ -61,11 +61,11 @@ describe('buildListingWorkflowSummary', () => {
     expect(summary.tone).toBe('ready');
     expect(summary.headline).toBe('已有 4 条本地 Listing 草案，可导出给运营复核。');
     expect(summary.nextAction).toBe('导出草案并人工复核，不自动提交 Amazon 或改写 Lingxing Listing。');
-    expect(summary.facts).toContain('AI 草案 2 条 / 规则草案 2 条');
+    expect(summary.facts).toContain('AI 草案 2 条 / 本地规则参考 2 条');
     expect(summary.boundary).toBe('只生成本地草案，不提交 Amazon，不修改 Lingxing Listing。');
   });
 
-  it('uses Chinese fallback copy when real ad data is missing', () => {
+  it('uses production preview copy when real ad data is missing', () => {
     const summary = buildListingWorkflowSummary({
       keywordCount: 3,
       listingReadAttempted: true,
@@ -77,9 +77,12 @@ describe('buildListingWorkflowSummary', () => {
       quantReady: false,
     });
 
-    expect(summary.facts).toContain('缺真实广告数据，仅规则兜底');
-    expect(summary.headline).toBe('关键词和 Listing 已就绪，但缺真实广告数据，只能生成规则兜底草案。');
-    expect(summary.nextAction).toBe('生成规则兜底草案，或先补齐真实广告数据后再生成。');
+    expect(summary.facts).toContain('缺真实广告数据，仅本地预览');
+    expect(summary.headline).toBe('关键词和 Listing 已就绪，但缺真实广告数据；只能生成本地预览草案。');
+    expect(summary.nextAction).toBe('先补齐真实广告数据，或生成仅供编辑对齐的本地预览草案。');
+    expect(summary.facts.join('\n')).not.toContain('规则兜底');
+    expect(summary.headline).not.toContain('规则兜底');
+    expect(summary.nextAction).not.toContain('规则兜底');
     expect(summary.facts.join('\n')).not.toContain('fallback');
     expect(summary.headline).not.toContain('fallback');
     expect(summary.nextAction).not.toContain('fallback');

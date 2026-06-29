@@ -3458,6 +3458,124 @@ code {
   overflow-wrap: anywhere;
 }
 
+.listing-draft-workbench {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1fr) minmax(300px, 0.9fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.listing-draft-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  min-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 12px;
+}
+
+.listing-draft-keyword-pane {
+  grid-template-rows: auto auto 1fr;
+}
+
+.listing-draft-action-pane {
+  grid-template-rows: auto auto auto 1fr;
+}
+
+.listing-draft-pane-head,
+.listing-draft-table-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.listing-draft-pane-head span,
+.listing-draft-table-title span,
+.listing-draft-gate span,
+.listing-draft-metrics span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.listing-draft-pane-head strong,
+.listing-draft-table-title strong,
+.listing-draft-gate strong,
+.listing-draft-metrics strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.listing-draft-gate-grid {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.listing-draft-gate {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.listing-draft-gate-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+}
+
+.listing-draft-gate-warning {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+}
+
+.listing-draft-gate-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+}
+
+.listing-draft-gate p,
+.listing-draft-action-pane p {
+  margin: 7px 0 0;
+  color: #33465c;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.listing-draft-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.listing-draft-metrics div {
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: #f8fafc;
+  padding: 9px;
+}
+
+.listing-draft-metrics strong {
+  font-size: 18px;
+}
+
+.listing-draft-table-title {
+  margin: 12px 0 8px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+}
+
 .listing-heatmap-grid {
   display: grid;
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);

@@ -7,6 +7,7 @@ import {
   listingCharacterLimitClass,
   listingDraftPanelClass,
   listingDraftGenerationMessage,
+  listingDraftWorkspaceCopy,
   listingManualFieldGroups,
 } from './listing-optimization-page';
 
@@ -16,15 +17,17 @@ function cssRule(css: string, selector: string): string {
 }
 
 describe('listingDraftGenerationMessage', () => {
-  it('states when generated Listing drafts use rule fallback rather than AI output', () => {
+  it('states when generated Listing drafts use local rule reference rather than AI output', () => {
     const message = listingDraftGenerationMessage(true, [
       { source: 'rule', aiFallbackReason: 'AI 返回 JSON 无法解析' },
       { source: 'rule', aiFallbackReason: 'AI 返回 JSON 无法解析' },
     ]);
 
-    expect(message).toContain('2 条规则兜底草案');
+    expect(message).toContain('2 条本地规则参考');
     expect(message).toContain('AI 返回 JSON 无法解析');
     expect(message).toContain('不会自动提交 Amazon');
+    expect(message).not.toContain('占位草案');
+    expect(message).not.toContain('规则兜底草案');
     expect(message).not.toContain('fallback');
   });
 
@@ -35,8 +38,33 @@ describe('listingDraftGenerationMessage', () => {
     ]);
 
     expect(message).toContain('1 条 AI 草案');
-    expect(message).toContain('1 条规则兜底草案');
+    expect(message).toContain('1 条本地规则参考');
+    expect(message).not.toContain('占位草案');
+    expect(message).not.toContain('规则兜底草案');
     expect(message).not.toContain('fallback');
+  });
+});
+
+describe('listingDraftWorkspaceCopy', () => {
+  it('uses production wording for missing real ad data instead of placeholder or fallback copy', () => {
+    const copy = listingDraftWorkspaceCopy({
+      quantReady: false,
+      keywordCount: 2,
+      draftCount: 0,
+      aiDraftCount: 0,
+      ruleDraftCount: 0,
+      aiStatusLabel: 'Listing AI 未配置',
+      aiStatusDetail: '未配置 API Key，Listing 草案会生成本地规则参考。',
+    });
+
+    expect(copy.keywordPlaceholder).toContain('wide toe box');
+    expect(copy.keywordPlaceholder).toContain('barefoot shoes');
+    expect(copy.dataGateLabel).toBe('待补齐真实广告数据');
+    expect(copy.draftUseLabel).toBe('仅本地预览');
+    expect(copy.primaryActionLabel).toBe('生成本地预览草案');
+    expect(Object.values(copy).join('\n')).not.toContain('占位草案');
+    expect(Object.values(copy).join('\n')).not.toContain('规则兜底');
+    expect(Object.values(copy).join('\n')).not.toContain('keyword one');
   });
 });
 
