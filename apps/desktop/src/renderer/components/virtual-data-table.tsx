@@ -30,6 +30,10 @@ export function virtualSortHeaderClass({ sortable, active }: { sortable: boolean
   ].filter(Boolean).join(' ');
 }
 
+export function virtualRowParityClass(index: number): string {
+  return index % 2 === 0 ? 'virtual-table-row-even' : 'virtual-table-row-odd';
+}
+
 export interface VirtualDataTableProps<T> {
   rows: T[];
   columns: Array<VirtualDataTableColumn<T>>;
@@ -135,7 +139,7 @@ export function VirtualDataTable<T>({
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
                   <div
-                    className={`virtual-table-row virtual-table-body-row ${rowClassName?.(row, virtualRow.index) || ''}`.trim()}
+                    className={`virtual-table-row virtual-table-body-row ${virtualRowParityClass(virtualRow.index)} ${rowClassName?.(row, virtualRow.index) || ''}`.trim()}
                     role="row"
                     style={{ gridTemplateColumns }}
                   >

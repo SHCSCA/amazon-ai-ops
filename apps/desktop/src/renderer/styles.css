@@ -2348,6 +2348,14 @@ code {
     box-shadow var(--motion-fast);
 }
 
+.virtual-table-row-even {
+  background: #fff;
+}
+
+.virtual-table-row-odd {
+  background: #f8fafc;
+}
+
 .virtual-table-body-row:hover {
   background: #f8fafc;
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   virtualColumnSortAria,
   virtualColumnTemplate,
+  virtualRowParityClass,
   virtualSortHeaderClass,
   type VirtualDataTableColumn,
 } from './virtual-data-table';
@@ -77,5 +78,20 @@ describe('VirtualDataTable', () => {
     expect(text).toContain('aria-sort');
     expect(text).toContain('virtual-table-sort-button');
     expect(text).toContain('virtual-table-sort-arrow');
+  });
+
+  it('uses actual virtual row indexes for zebra striping instead of DOM nth-child order', () => {
+    const text = source();
+    const styles = css();
+
+    expect(virtualRowParityClass(0)).toBe('virtual-table-row-even');
+    expect(virtualRowParityClass(1)).toBe('virtual-table-row-odd');
+    expect(virtualRowParityClass(42)).toBe('virtual-table-row-even');
+    expect(text).toContain('virtual-table-row-even');
+    expect(text).toContain('virtual-table-row-odd');
+    expect(text).toContain('virtualRowParityClass(virtualRow.index)');
+    expect(styles).toMatch(/\.virtual-table-row-even[\s\S]*background:\s*#fff/);
+    expect(styles).toMatch(/\.virtual-table-row-odd[\s\S]*background:\s*#f8fafc/);
+    expect(styles.indexOf('.virtual-table-row-odd')).toBeLessThan(styles.indexOf('.virtual-table-body-row:hover'));
   });
 });
