@@ -124,6 +124,10 @@ describe('data import table micro-feedback', () => {
     expect(styles).toContain('@keyframes data-import-table-refresh');
     expect(styles).toMatch(/animation:\s*data-import-table-refresh 100ms/);
     expect(styles).toContain('filter: blur(1px)');
+    expect(styles).toContain('.data-import-table-refreshing .virtual-table-wrap::after');
+    expect(styles).toMatch(/\.data-import-table-refreshing \.virtual-table-wrap::after[\s\S]*pointer-events:\s*none/);
+    expect(styles).toMatch(/\.data-import-table-refreshing \.virtual-table-wrap::after[\s\S]*backdrop-filter:\s*blur\(2px\)/);
+    expect(styles).toContain('@keyframes data-import-table-refresh-sweep');
   });
 });
 

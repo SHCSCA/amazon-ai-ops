@@ -959,6 +959,10 @@ button:disabled {
   .data-import-table-refreshing .virtual-table-wrap {
     animation: none;
   }
+
+  .data-import-table-refreshing .virtual-table-wrap::after {
+    animation: none;
+  }
 }
 
 .dashboard-task-metrics {
@@ -2304,6 +2308,20 @@ code {
   will-change: opacity, filter, transform;
 }
 
+.data-import-table-refreshing .virtual-table-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  pointer-events: none;
+  background:
+    linear-gradient(105deg, transparent 0%, rgb(37 99 235 / 0.10) 46%, rgb(255 255 255 / 0.76) 52%, transparent 64%),
+    rgb(255 255 255 / 0.48);
+  background-size: 180% 100%, 100% 100%;
+  backdrop-filter: blur(2px);
+  animation: data-import-table-refresh-sweep 100ms ease-out;
+}
+
 @keyframes keyword-opportunity-filter-refresh {
   from {
     opacity: 0.72;
@@ -2327,6 +2345,18 @@ code {
     opacity: 1;
     filter: blur(0);
     transform: translateY(0);
+  }
+}
+
+@keyframes data-import-table-refresh-sweep {
+  from {
+    opacity: 0.94;
+    background-position: 120% 0, 0 0;
+  }
+
+  to {
+    opacity: 0;
+    background-position: -20% 0, 0 0;
   }
 }
 
