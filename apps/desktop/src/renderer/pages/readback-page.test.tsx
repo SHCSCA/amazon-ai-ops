@@ -13,6 +13,7 @@ import {
   groupMissing,
   nextEvidenceCaptureSlot,
   readbackCaptureTargetView,
+  readbackActionButtonView,
   readbackContractChecks,
   readbackRepairFieldClass,
   readbackPrecheckCopy,
@@ -231,6 +232,38 @@ describe('readbackPrecheckCopy', () => {
       exportButtonLabel: '导出回读证据',
       helperText: '字段已填写时仍需导出证据文件和说明文件，并由后端校验截图、真实报表和回读证据文件是否存在。',
     });
+  });
+});
+
+describe('readbackActionButtonView', () => {
+  it('locks evidence workflow peers while only the active readback action shows busy feedback', () => {
+    const active = readbackActionButtonView({
+      action: 'fill-session',
+      activeAction: 'fill-session',
+      baseClassName: 'primary-button',
+      busyLabel: '生成中...',
+      label: '生成回读证据',
+    });
+
+    expect(active.label).toBe('生成中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('button-loading');
+
+    const lockedPeer = readbackActionButtonView({
+      action: 'verify-evidence',
+      activeAction: 'fill-session',
+      baseClassName: 'secondary-button',
+      busyLabel: '校验中...',
+      label: '校验回读证据',
+    });
+
+    expect(lockedPeer.label).toBe('校验回读证据');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.showSpinner).toBe(false);
+    expect(lockedPeer.className).not.toContain('button-loading');
   });
 });
 

@@ -26,6 +26,62 @@ export interface ReadbackContractCheck {
   detail: string;
 }
 
+export type ReadbackActionKey =
+  | 'export-evidence'
+  | 'fill-session'
+  | 'prepare-session'
+  | 'verify-evidence'
+  | 'verify-session';
+
+interface ReadbackActionButtonInput {
+  action: ReadbackActionKey;
+  activeAction: ReadbackActionKey | null;
+  baseClassName: string;
+  busyLabel: string;
+  disabled?: boolean;
+  label: string;
+}
+
+export interface ReadbackActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function readbackActionButtonView(input: ReadbackActionButtonInput): ReadbackActionButtonView {
+  const active = input.activeAction === input.action;
+  return {
+    ariaBusy: active ? true : undefined,
+    className: [input.baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || input.activeAction),
+    label: active ? input.busyLabel : input.label,
+    showSpinner: active,
+  };
+}
+
+function readbackActionBusyLabel(action: ReadbackActionKey): string {
+  const labels: Record<ReadbackActionKey, string> = {
+    'export-evidence': '导出中...',
+    'fill-session': '生成中...',
+    'prepare-session': '创建中...',
+    'verify-evidence': '校验中...',
+    'verify-session': '检查中...',
+  };
+  return labels[action];
+}
+
+function readbackActionButtonContent(view: ReadbackActionButtonView) {
+  if (!view.showSpinner) return view.label;
+  return (
+    <span className="button-content">
+      <span aria-hidden="true" className="button-spinner" />
+      <span>{view.label}</span>
+    </span>
+  );
+}
+
 const CAPTURE_SLOT_LABELS: Record<ReadbackCaptureSlot, { title: string; detail: string }> = {
   approval: { title: '审批凭证', detail: '粘贴审批截图、工单或聊天凭证' },
   before: { title: '执行前截图', detail: '粘贴修改前 Ads UI 行截图' },
@@ -882,6 +938,7 @@ export function ReadbackPage() {
   const [repairPulse, setRepairPulse] = useState(false);
   const [captureSavingSlot, setCaptureSavingSlot] = useState<ReadbackCaptureSlot | null>(null);
   const [capturePreviews, setCapturePreviews] = useState<Partial<Record<ReadbackCaptureSlot, string>>>({});
+  const [readbackActionBusy, setReadbackActionBusy] = useState<ReadbackActionKey | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const missing = useMemo(() => requiredMissing(form, currentBatchId), [currentBatchId, form]);
   const sourceBatchMatches = Boolean(form.sourceBatchId && currentBatchId && form.sourceBatchId === currentBatchId);
@@ -924,7 +981,13 @@ export function ReadbackPage() {
     if (activeStep === 'evidence') {
       return { label: '进入校验并导出', onClick: () => setActiveStep('verify-export') };
     }
-    return { label: precheckCopy.exportButtonLabel, onClick: () => { void exportEvidence(); } };
+    return {
+      label: precheckCopy.exportButtonLabel,
+      onClick: () => { void exportEvidence(); },
+      busy: readbackActionBusy === 'export-evidence',
+      busyLabel: readbackActionBusyLabel('export-evidence'),
+      disabled: Boolean(readbackActionBusy && readbackActionBusy !== 'export-evidence'),
+    };
   })();
 
   function update(patch: Partial<ReadbackFormState>, options: { preserveSession?: boolean } = {}) {
@@ -1028,117 +1091,129 @@ export function ReadbackPage() {
     }
   }
 
-  async function exportEvidence() {
-    setMessage(null);
+  async function runReadbackAction(action: ReadbackActionKey, task: () => Promise<void>) {
+    if (readbackActionBusy) return;
+    setReadbackActionBusy(action);
     try {
-      const scopeText = [
-        form.storeName,
-        form.marketplaceCode,
-        form.asin,
-        form.campaignName,
-        form.adGroupName,
-        `${form.entityType}=${form.entityName}`,
-        form.actionType,
-      ].filter(Boolean).join(' / ');
-      const result = await (window as any).electronAPI?.exportAdReadbackEvidence?.({
-        target: {
-          storeName: form.storeName,
-          marketplaceCode: form.marketplaceCode,
-          portfolioName: form.portfolioName,
-          asin: form.asin,
-          metricDate: form.sourceMetricDate,
-          campaignName: form.campaignName,
-          adGroupName: form.adGroupName,
-          entityType: form.entityType,
-          entityName: form.entityName,
-          actionType: form.actionType,
-        },
-        source: {
-          recommendationId: form.recommendationId,
-          batchId: form.sourceBatchId,
-          metricDate: form.sourceMetricDate,
-          sourceRow: maybeNumber(form.sourceRow),
-          sourceFiles: form.sourceFiles.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
-          explanationSource: form.sourceExplanationSource,
-          aiModel: form.sourceAiModel,
-          entityType: form.entityType,
-          currentValue: form.currentValue,
-          recommendedValue: form.recommendedValue,
-          decisionAgreement: form.decisionAgreement,
-          decisionSource: form.decisionSource,
-          decisionReasons: form.decisionReasons,
-          decisionRiskWarnings: form.decisionRiskWarnings,
-          aiStrategySource: form.aiStrategySource,
-          aiLifecycleStage: form.aiLifecycleStage,
-          aiStrategySummary: form.aiStrategySummary,
-          aiStrategyFallbackReason: form.aiStrategyFallbackReason,
-          aiActionFallbackReason: form.aiActionFallbackReason,
-          aiMainProblems: form.aiMainProblems,
-          aiThresholdSuggestions: form.aiThresholdSuggestions,
-          aiStrategyRiskWarnings: form.aiStrategyRiskWarnings,
-          quantStatus: form.quantStatus,
-          quantLifecycleStage: form.quantLifecycleStage,
-          quantReasons: form.quantReasons,
-          quantThresholds: form.quantThresholds,
-          quantReviewRequired: form.quantReviewRequired,
-          operationEventCount: form.operationEventCount,
-          productContextCount: form.productContextCount,
-          productStage: form.productStage,
-          productTargetAcos: maybeNumber(form.productTargetAcos),
-          productTargetTacos: maybeNumber(form.productTargetTacos),
-          productTargetNetMargin: maybeNumber(form.productTargetNetMargin),
-          productMinPrice: maybeNumber(form.productMinPrice),
-        },
-        approval: {
-          operatorConfirmed: form.operatorConfirmed,
-          realWriteApproved: form.realWriteApproved,
-          scope: scopeText,
-          confirmedAt: form.approvalConfirmedAt,
-          approverName: form.approverName,
-          note: form.approvalNote,
-          approvalArtifactPath: form.approvalArtifactPath,
-        },
-        risk: {
-          allowedByPolicy: form.allowedByPolicy,
-          rationale: form.riskRationale,
-        },
-        before: {
-          value: form.beforeValue,
-          capturedAt: form.beforeCapturedAt,
-          screenshotPath: form.beforeScreenshotPath,
-          liveBidSourceNote: form.liveBidSourceNote,
-        },
-        after: {
-          value: form.afterValue,
-          capturedAt: form.afterCapturedAt,
-          screenshotPath: form.afterScreenshotPath,
-        },
-        readback: {
-          verified: form.readbackVerified,
-          method: 'Ads UI reload',
-          readAt: form.readbackReadAt,
-          actualValue: form.readbackActualValue,
-          evidencePath: form.readbackEvidencePath,
-        },
-        execution: {
-          success: form.executionSuccess,
-          verified: form.executionVerified,
-          executionId: form.executionId,
-          executedAt: form.executionExecutedAt,
-          channel: 'manual_ads_ui',
-          executedBy: form.executedBy,
-          appExecutorUsed: false,
-        },
-      });
-      setExportResult(result || null);
-      setSessionResult(null);
-      setSessionCheck(null);
-      setSessionFillResult(null);
-      setSessionVerifyResult(null);
-      setMessage(result?.readyForVerifier ? '回读证据已导出，字段完整，等待最终验收。' : '回读证据已导出，但仍存在缺失项，不能作为最终就绪证据。');
-    } catch (caught) {
-      setMessage(errorMessage(caught, '导出回读证据失败'));
+      await task();
+    } finally {
+      setReadbackActionBusy(null);
     }
+  }
+
+  async function exportEvidence() {
+    await runReadbackAction('export-evidence', async () => {
+      setMessage(null);
+      try {
+        const scopeText = [
+          form.storeName,
+          form.marketplaceCode,
+          form.asin,
+          form.campaignName,
+          form.adGroupName,
+          `${form.entityType}=${form.entityName}`,
+          form.actionType,
+        ].filter(Boolean).join(' / ');
+        const result = await (window as any).electronAPI?.exportAdReadbackEvidence?.({
+          target: {
+            storeName: form.storeName,
+            marketplaceCode: form.marketplaceCode,
+            portfolioName: form.portfolioName,
+            asin: form.asin,
+            metricDate: form.sourceMetricDate,
+            campaignName: form.campaignName,
+            adGroupName: form.adGroupName,
+            entityType: form.entityType,
+            entityName: form.entityName,
+            actionType: form.actionType,
+          },
+          source: {
+            recommendationId: form.recommendationId,
+            batchId: form.sourceBatchId,
+            metricDate: form.sourceMetricDate,
+            sourceRow: maybeNumber(form.sourceRow),
+            sourceFiles: form.sourceFiles.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+            explanationSource: form.sourceExplanationSource,
+            aiModel: form.sourceAiModel,
+            entityType: form.entityType,
+            currentValue: form.currentValue,
+            recommendedValue: form.recommendedValue,
+            decisionAgreement: form.decisionAgreement,
+            decisionSource: form.decisionSource,
+            decisionReasons: form.decisionReasons,
+            decisionRiskWarnings: form.decisionRiskWarnings,
+            aiStrategySource: form.aiStrategySource,
+            aiLifecycleStage: form.aiLifecycleStage,
+            aiStrategySummary: form.aiStrategySummary,
+            aiStrategyFallbackReason: form.aiStrategyFallbackReason,
+            aiActionFallbackReason: form.aiActionFallbackReason,
+            aiMainProblems: form.aiMainProblems,
+            aiThresholdSuggestions: form.aiThresholdSuggestions,
+            aiStrategyRiskWarnings: form.aiStrategyRiskWarnings,
+            quantStatus: form.quantStatus,
+            quantLifecycleStage: form.quantLifecycleStage,
+            quantReasons: form.quantReasons,
+            quantThresholds: form.quantThresholds,
+            quantReviewRequired: form.quantReviewRequired,
+            operationEventCount: form.operationEventCount,
+            productContextCount: form.productContextCount,
+            productStage: form.productStage,
+            productTargetAcos: maybeNumber(form.productTargetAcos),
+            productTargetTacos: maybeNumber(form.productTargetTacos),
+            productTargetNetMargin: maybeNumber(form.productTargetNetMargin),
+            productMinPrice: maybeNumber(form.productMinPrice),
+          },
+          approval: {
+            operatorConfirmed: form.operatorConfirmed,
+            realWriteApproved: form.realWriteApproved,
+            scope: scopeText,
+            confirmedAt: form.approvalConfirmedAt,
+            approverName: form.approverName,
+            note: form.approvalNote,
+            approvalArtifactPath: form.approvalArtifactPath,
+          },
+          risk: {
+            allowedByPolicy: form.allowedByPolicy,
+            rationale: form.riskRationale,
+          },
+          before: {
+            value: form.beforeValue,
+            capturedAt: form.beforeCapturedAt,
+            screenshotPath: form.beforeScreenshotPath,
+            liveBidSourceNote: form.liveBidSourceNote,
+          },
+          after: {
+            value: form.afterValue,
+            capturedAt: form.afterCapturedAt,
+            screenshotPath: form.afterScreenshotPath,
+          },
+          readback: {
+            verified: form.readbackVerified,
+            method: 'Ads UI reload',
+            readAt: form.readbackReadAt,
+            actualValue: form.readbackActualValue,
+            evidencePath: form.readbackEvidencePath,
+          },
+          execution: {
+            success: form.executionSuccess,
+            verified: form.executionVerified,
+            executionId: form.executionId,
+            executedAt: form.executionExecutedAt,
+            channel: 'manual_ads_ui',
+            executedBy: form.executedBy,
+            appExecutorUsed: false,
+          },
+        });
+        setExportResult(result || null);
+        setSessionResult(null);
+        setSessionCheck(null);
+        setSessionFillResult(null);
+        setSessionVerifyResult(null);
+        setMessage(result?.readyForVerifier ? '回读证据已导出，字段完整，等待最终验收。' : '回读证据已导出，但仍存在缺失项，不能作为最终就绪证据。');
+      } catch (caught) {
+        setMessage(errorMessage(caught, '导出回读证据失败'));
+      }
+    });
   }
 
   async function openExport() {
@@ -1153,16 +1228,18 @@ export function ReadbackPage() {
       setCopyNotice('请先导出回读证据，再创建回读工作包。');
       return;
     }
-    try {
-      const result = await (window as any).electronAPI?.prepareAdReadbackSession?.({ sourcePath });
-      setSessionResult(result || null);
-      setSessionCheck(null);
-      setSessionFillResult(null);
-      setSessionVerifyResult(null);
-      setCopyNotice('回读工作包已创建。');
-    } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, '创建回读工作包失败。'));
-    }
+    await runReadbackAction('prepare-session', async () => {
+      try {
+        const result = await (window as any).electronAPI?.prepareAdReadbackSession?.({ sourcePath });
+        setSessionResult(result || null);
+        setSessionCheck(null);
+        setSessionFillResult(null);
+        setSessionVerifyResult(null);
+        setCopyNotice('回读工作包已创建。');
+      } catch (caught) {
+        setCopyNotice(toUserFacingError(caught, '创建回读工作包失败。'));
+      }
+    });
   }
 
   async function openSessionPacket() {
@@ -1189,19 +1266,21 @@ export function ReadbackPage() {
       setCopyNotice('请先创建回读工作包，再检查工作包。');
       return;
     }
-    try {
-      const result = await (window as any).electronAPI?.verifyAdReadbackSession?.({ sessionDir });
-      setSessionCheck(result || null);
-      if (result?.ready && result?.captureReady) {
-        setCopyNotice('工作包结构和现场证据均已通过。');
-      } else if (result?.ready) {
-        setCopyNotice('工作包结构检查通过，现场证据仍待填写。');
-      } else {
-        setCopyNotice('工作包结构检查未通过。');
+    await runReadbackAction('verify-session', async () => {
+      try {
+        const result = await (window as any).electronAPI?.verifyAdReadbackSession?.({ sessionDir });
+        setSessionCheck(result || null);
+        if (result?.ready && result?.captureReady) {
+          setCopyNotice('工作包结构和现场证据均已通过。');
+        } else if (result?.ready) {
+          setCopyNotice('工作包结构检查通过，现场证据仍待填写。');
+        } else {
+          setCopyNotice('工作包结构检查未通过。');
+        }
+      } catch (caught) {
+        setCopyNotice(toUserFacingError(caught, '检查回读工作包失败。'));
       }
-    } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, '检查回读工作包失败。'));
-    }
+    });
   }
 
   async function fillSessionPacket() {
@@ -1210,14 +1289,16 @@ export function ReadbackPage() {
       setCopyNotice('请先创建回读工作包，再生成回读证据。');
       return;
     }
-    try {
-      const result = await (window as any).electronAPI?.fillAdReadbackSession?.({ sessionDir });
-      setSessionFillResult(result || null);
-      setSessionVerifyResult(null);
-      setCopyNotice(result?.readyForVerifier ? '回读证据已生成，等待最终校验。' : '回读证据仍未就绪。');
-    } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, '生成回读证据失败。'));
-    }
+    await runReadbackAction('fill-session', async () => {
+      try {
+        const result = await (window as any).electronAPI?.fillAdReadbackSession?.({ sessionDir });
+        setSessionFillResult(result || null);
+        setSessionVerifyResult(null);
+        setCopyNotice(result?.readyForVerifier ? '回读证据已生成，等待最终校验。' : '回读证据仍未就绪。');
+      } catch (caught) {
+        setCopyNotice(toUserFacingError(caught, '生成回读证据失败。'));
+      }
+    });
   }
 
   async function verifyReadbackEvidence() {
@@ -1226,13 +1307,15 @@ export function ReadbackPage() {
       setCopyNotice('请先生成回读证据，再运行最终校验。');
       return;
     }
-    try {
-      const result = await (window as any).electronAPI?.verifyAdReadbackEvidence?.({ evidencePath });
-      setSessionVerifyResult(result || null);
-      setCopyNotice(result?.ready ? '回读证据校验通过。' : '回读证据校验未通过。');
-    } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, '校验回读证据失败。'));
-    }
+    await runReadbackAction('verify-evidence', async () => {
+      try {
+        const result = await (window as any).electronAPI?.verifyAdReadbackEvidence?.({ evidencePath });
+        setSessionVerifyResult(result || null);
+        setCopyNotice(result?.ready ? '回读证据校验通过。' : '回读证据校验未通过。');
+      } catch (caught) {
+        setCopyNotice(toUserFacingError(caught, '校验回读证据失败。'));
+      }
+    });
   }
 
   async function copyFillCommand() {
@@ -1317,6 +1400,39 @@ export function ReadbackPage() {
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
   }, [activeStep, form, sessionResult?.sessionDir]);
+
+  const prepareSessionButton = readbackActionButtonView({
+    action: 'prepare-session',
+    activeAction: readbackActionBusy,
+    baseClassName: 'primary-button',
+    busyLabel: readbackActionBusyLabel('prepare-session'),
+    disabled: !exportResult?.jsonPath,
+    label: '创建回读工作包',
+  });
+  const verifySessionButton = readbackActionButtonView({
+    action: 'verify-session',
+    activeAction: readbackActionBusy,
+    baseClassName: 'secondary-button',
+    busyLabel: readbackActionBusyLabel('verify-session'),
+    disabled: !sessionResult?.sessionDir,
+    label: '检查工作包',
+  });
+  const fillSessionButton = readbackActionButtonView({
+    action: 'fill-session',
+    activeAction: readbackActionBusy,
+    baseClassName: 'primary-button',
+    busyLabel: readbackActionBusyLabel('fill-session'),
+    disabled: !sessionResult?.sessionDir,
+    label: '生成回读证据',
+  });
+  const verifyEvidenceButton = readbackActionButtonView({
+    action: 'verify-evidence',
+    activeAction: readbackActionBusy,
+    baseClassName: 'primary-button',
+    busyLabel: readbackActionBusyLabel('verify-evidence'),
+    disabled: !sessionFillResult?.jsonPath,
+    label: '校验回读证据',
+  });
 
   return (
     <div>
@@ -1630,8 +1746,8 @@ export function ReadbackPage() {
                 </StatusPill>
               </div>
               <div className="action-row">
-                <button className="primary-button" disabled={!exportResult?.jsonPath} onClick={prepareSessionPacket} type="button">
-                  创建回读工作包
+                <button aria-busy={prepareSessionButton.ariaBusy} className={prepareSessionButton.className} disabled={prepareSessionButton.disabled} onClick={prepareSessionPacket} type="button">
+                  {readbackActionButtonContent(prepareSessionButton)}
                 </button>
                 <button className="secondary-button" disabled={!sessionResult?.sessionDir} onClick={openSessionPacket} type="button">
                   打开工作包
@@ -1642,14 +1758,14 @@ export function ReadbackPage() {
                 <button className="secondary-button" disabled={!sessionResult?.sessionInputGuidePath} onClick={openSessionInputGuide} type="button">
                   打开填写说明
                 </button>
-                <button className="secondary-button" disabled={!sessionResult?.sessionDir} onClick={verifySessionPacket} type="button">
-                  检查工作包
+                <button aria-busy={verifySessionButton.ariaBusy} className={verifySessionButton.className} disabled={verifySessionButton.disabled} onClick={verifySessionPacket} type="button">
+                  {readbackActionButtonContent(verifySessionButton)}
                 </button>
-                <button className="primary-button" disabled={!sessionResult?.sessionDir} onClick={fillSessionPacket} type="button">
-                  生成回读证据
+                <button aria-busy={fillSessionButton.ariaBusy} className={fillSessionButton.className} disabled={fillSessionButton.disabled} onClick={fillSessionPacket} type="button">
+                  {readbackActionButtonContent(fillSessionButton)}
                 </button>
-                <button className="primary-button" disabled={!sessionFillResult?.jsonPath} onClick={verifyReadbackEvidence} type="button">
-                  校验回读证据
+                <button aria-busy={verifyEvidenceButton.ariaBusy} className={verifyEvidenceButton.className} disabled={verifyEvidenceButton.disabled} onClick={verifyReadbackEvidence} type="button">
+                  {readbackActionButtonContent(verifyEvidenceButton)}
                 </button>
               </div>
               <ProgressiveDetails title="工作包内要做什么">
