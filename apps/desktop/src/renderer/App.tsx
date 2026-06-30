@@ -127,7 +127,6 @@ const loginStyles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     background: '#1473e6',
     color: '#fff',
-    cursor: 'pointer',
     fontSize: 15,
     fontWeight: 800,
   },
@@ -156,6 +155,33 @@ export function headerReadinessLabel(readiness: DeliveryReadinessView | null): s
   return '等待最终验收';
 }
 
+export interface LoginSubmitButtonView {
+  ariaBusy?: boolean;
+  className: string;
+  label: string;
+  loading: boolean;
+}
+
+export function loginSubmitButtonView(loading: boolean): LoginSubmitButtonView {
+  return {
+    ariaBusy: loading ? true : undefined,
+    className: ['login-submit-button', loading ? 'button-loading' : ''].filter(Boolean).join(' '),
+    label: loading ? '正在确认 ERP 和 Ads 会话...' : '登录并进入 Ads',
+    loading,
+  };
+}
+
+export function loginStatusMessage(input: {
+  loading: boolean;
+  credentialNotice?: string;
+  rememberPassword: boolean;
+}): string {
+  if (input.loading) return '正在确认 ERP 和 Ads 会话，本机凭证只在主进程安全区解密。';
+  if (input.credentialNotice) return input.credentialNotice;
+  if (input.rememberPassword) return '勾选后账号密码只保存在本机加密区。';
+  return '未记住密码，只使用本次登录输入。';
+}
+
 function headerReadinessClass(readiness: DeliveryReadinessView | null): string {
   if (readiness?.appReady && readiness?.manifestDriven) return 'app-status app-status-ready';
   if (readiness?.available === false) return 'app-status app-status-pending';
@@ -170,6 +196,13 @@ function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const setLoginState = useStore((state) => state.setLoginState);
+  const loginButtonView = loginSubmitButtonView(loading);
+  const loginStatus = loginStatusMessage({ loading, credentialNotice, rememberPassword });
+  const loginStatusClass = [
+    'login-status-line',
+    loading ? 'login-status-line-pending' : '',
+    !loading && credentialNotice ? 'login-status-line-ready' : '',
+  ].filter(Boolean).join(' ');
 
   useEffect(() => {
     let cancelled = false;
@@ -250,11 +283,23 @@ function LoginPage() {
             </label>
             <span style={loginStyles.securityTag}>本机加密</span>
           </div>
-          {credentialNotice && <div style={loginStyles.notice}>{credentialNotice}</div>}
+          <div className={loginStatusClass} role="status" aria-live="polite">
+            {loginStatus}
+          </div>
           <div style={loginStyles.hint}>登录流程：ERP 登录 {'->'} ERP 广告入口 {'->'} Ads 会话确认。</div>
-          {error && <div style={loginStyles.error}>{error}</div>}
-          <button disabled={loading} onClick={handleLogin} style={loginStyles.button} type="button">
-            {loading ? '正在确认 ERP 和 Ads 会话...' : '登录并进入 Ads'}
+          {error && <div role="alert" style={loginStyles.error}>{error}</div>}
+          <button
+            aria-busy={loginButtonView.ariaBusy}
+            className={loginButtonView.className}
+            disabled={loading}
+            onClick={handleLogin}
+            style={loginStyles.button}
+            type="button"
+          >
+            <span className="button-content">
+              {loginButtonView.loading && <span className="button-spinner" aria-hidden="true" />}
+              <span>{loginButtonView.label}</span>
+            </span>
           </button>
         </div>
       </section>
