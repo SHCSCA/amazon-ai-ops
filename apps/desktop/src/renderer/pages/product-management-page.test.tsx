@@ -3,6 +3,7 @@ import {
   PRODUCT_QUICK_COST_FIELDS,
   PRODUCT_QUICK_TARGET_FIELDS,
   buildCredentialSandboxSummary,
+  productManagementActionButtonView,
   buildProductManagementOptionView,
   buildProductManagementPageModel,
   buildProductManagementTaskState,
@@ -257,6 +258,36 @@ describe('ProductManagementPage model', () => {
     expect(idleView.ariaPressed).toBe(false);
     expect(idleView.actionTag).toBe('点击锁定');
     expect(idleView.statusLine).toContain('点击锁定 D7 / B002');
+  });
+
+  it('gives product save actions an explicit busy contract', () => {
+    const saving = productManagementActionButtonView({
+      active: true,
+      baseClassName: 'primary-button',
+      busyLabel: '保存中...',
+      label: '保存产品信息',
+    });
+
+    expect(saving.label).toBe('保存中...');
+    expect(saving.className).toContain('primary-button');
+    expect(saving.className).toContain('button-loading');
+    expect(saving.disabled).toBe(true);
+    expect(saving.ariaBusy).toBe(true);
+    expect(saving.showSpinner).toBe(true);
+
+    const lockedPeer = productManagementActionButtonView({
+      active: false,
+      baseClassName: 'secondary-button',
+      busyLabel: '处理中...',
+      groupBusy: true,
+      label: '打开完整配置',
+    });
+
+    expect(lockedPeer.label).toBe('打开完整配置');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.className).not.toContain('button-loading');
+    expect(lockedPeer.showSpinner).toBe(false);
   });
 
   it('builds a non-secret Main credential sandbox hover summary', () => {

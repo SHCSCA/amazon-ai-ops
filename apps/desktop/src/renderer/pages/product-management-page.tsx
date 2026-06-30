@@ -128,6 +128,40 @@ export function buildProductManagementPageModel(input: {
 type ProductManagementPageModel = ReturnType<typeof buildProductManagementPageModel>;
 type ProductManagementTaskFeedbackTone = 'ready' | 'pending' | 'warning' | 'blocked';
 
+interface ProductManagementActionButtonInput {
+  active: boolean;
+  baseClassName: string;
+  label: string;
+  busyLabel: string;
+  disabled?: boolean;
+  groupBusy?: boolean;
+}
+
+export interface ProductManagementActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function productManagementActionButtonView({
+  active,
+  baseClassName,
+  label,
+  busyLabel,
+  disabled = false,
+  groupBusy = false,
+}: ProductManagementActionButtonInput): ProductManagementActionButtonView {
+  return {
+    ariaBusy: active ? true : undefined,
+    className: [baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(disabled || active || groupBusy),
+    label: active ? busyLabel : label,
+    showSpinner: active,
+  };
+}
+
 export function buildCredentialSandboxSummary(scope: Pick<OperationScope, 'dateFrom' | 'dateTo' | 'storeName' | 'marketplaceCode'>) {
   const period = String(scope.dateTo || scope.dateFrom || 'local').slice(0, 7) || 'local';
   const marketplace = String(scope.marketplaceCode || 'LOCAL').trim().toUpperCase() || 'LOCAL';
@@ -330,6 +364,21 @@ export function ProductManagementPage() {
     }),
     [error, hasImportedMetrics, importedRows, loading, model, saveError, saveMessage, saving],
   );
+  const productActionBusy = saving;
+  const saveProductButton = productManagementActionButtonView({
+    active: saving,
+    baseClassName: 'primary-button',
+    busyLabel: '保存中...',
+    disabled: !draft.asin.trim(),
+    label: '保存产品信息',
+  });
+  const openConfigButton = productManagementActionButtonView({
+    active: false,
+    baseClassName: 'secondary-button',
+    busyLabel: '处理中...',
+    groupBusy: productActionBusy,
+    label: '打开完整配置',
+  });
   const selectedOptionFeedback = useMemo(
     () => selected
       ? buildProductManagementOptionView({
@@ -595,10 +644,14 @@ export function ProductManagementPage() {
             </FormTableRow>
           </FormTable>
           <div className="action-row">
-            <button className="primary-button" disabled={saving || !draft.asin.trim()} onClick={saveProduct} type="button">
-              {saving ? '保存中...' : '保存产品信息'}
+            <button aria-busy={saveProductButton.ariaBusy} className={saveProductButton.className} disabled={saveProductButton.disabled} onClick={saveProduct} type="button">
+              {saveProductButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{saveProductButton.label}</span>
             </button>
-            <button className="secondary-button" onClick={() => navigate(routes.productConfig)} type="button">打开完整配置</button>
+            <button aria-busy={openConfigButton.ariaBusy} className={openConfigButton.className} disabled={openConfigButton.disabled} onClick={() => navigate(routes.productConfig)} type="button">
+              {openConfigButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{openConfigButton.label}</span>
+            </button>
           </div>
           {saveMessage && <p className="ready-line">{saveMessage}</p>}
           {saveError && <p className="blocked-line">{saveError}</p>}
