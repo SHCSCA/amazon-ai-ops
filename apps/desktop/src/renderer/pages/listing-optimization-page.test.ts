@@ -12,6 +12,7 @@ import {
   listingHeatmapKeywordButtonClass,
   listingHeatmapSectionClass,
   listingHeatmapTokenClass,
+  listingLocalActionButtonView,
   listingManualFieldGroups,
 } from './listing-optimization-page';
 
@@ -69,6 +70,41 @@ describe('listingDraftWorkspaceCopy', () => {
     expect(Object.values(copy).join('\n')).not.toContain('占位草案');
     expect(Object.values(copy).join('\n')).not.toContain('规则兜底');
     expect(Object.values(copy).join('\n')).not.toContain('keyword one');
+  });
+});
+
+describe('listingLocalActionButtonView', () => {
+  it('gives local Listing actions an explicit busy contract while running', () => {
+    const saving = listingLocalActionButtonView({
+      active: true,
+      baseClassName: 'primary-button',
+      label: '保存为新版本',
+      busyLabel: '保存中...',
+    });
+
+    expect(saving.label).toBe('保存中...');
+    expect(saving.className).toContain('primary-button');
+    expect(saving.className).toContain('button-loading');
+    expect(saving.ariaBusy).toBe(true);
+    expect(saving.disabled).toBe(true);
+    expect(saving.showSpinner).toBe(true);
+  });
+
+  it('locks sibling Listing actions without pretending they are running', () => {
+    const locked = listingLocalActionButtonView({
+      active: false,
+      baseClassName: 'secondary-button',
+      disabled: false,
+      groupBusy: true,
+      label: '导出草案',
+      busyLabel: '导出中...',
+    });
+
+    expect(locked.label).toBe('导出草案');
+    expect(locked.disabled).toBe(true);
+    expect(locked.ariaBusy).toBeUndefined();
+    expect(locked.className).not.toContain('button-loading');
+    expect(locked.showSpinner).toBe(false);
   });
 });
 

@@ -111,6 +111,40 @@ export interface ListingTextDiff {
   draftSegments: ListingTextDiffSegment[];
 }
 
+interface ListingLocalActionButtonInput {
+  active: boolean;
+  baseClassName: string;
+  label: string;
+  busyLabel: string;
+  disabled?: boolean;
+  groupBusy?: boolean;
+}
+
+export interface ListingLocalActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function listingLocalActionButtonView({
+  active,
+  baseClassName,
+  label,
+  busyLabel,
+  disabled = false,
+  groupBusy = false,
+}: ListingLocalActionButtonInput): ListingLocalActionButtonView {
+  return {
+    ariaBusy: active ? true : undefined,
+    className: [baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(disabled || active || groupBusy),
+    label: active ? busyLabel : label,
+    showSpinner: active,
+  };
+}
+
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
 }
@@ -1147,13 +1181,49 @@ export function ListingOptimizationPage() {
       setMessage('暂无可导出的草案。');
       return;
     }
+    setLoading('export-drafts');
+    setMessage(null);
     try {
       const exportPath = await (window as any).electronAPI?.exportListingDrafts?.(drafts, 'xlsx');
       setMessage(`已导出 Listing 草案：${exportPath}`);
     } catch (caught) {
       setMessage(errorMessage(caught, '导出 Listing 草案失败'));
+    } finally {
+      setLoading(null);
     }
   }
+
+  const listingActionBusy = Boolean(loading);
+  const saveManualButton = listingLocalActionButtonView({
+    active: loading === 'save-manual',
+    baseClassName: 'primary-button',
+    busyLabel: '保存中...',
+    groupBusy: listingActionBusy,
+    label: '保存为新版本',
+  });
+  const readLingxingButton = listingLocalActionButtonView({
+    active: loading === 'read',
+    baseClassName: 'secondary-button',
+    busyLabel: '读取中...',
+    groupBusy: listingActionBusy,
+    label: '尝试从当前领星页面填入表单',
+  });
+  const generateDraftButton = listingLocalActionButtonView({
+    active: loading === 'draft',
+    baseClassName: 'primary-button',
+    busyLabel: '生成中...',
+    disabled: !listingReady,
+    groupBusy: listingActionBusy,
+    label: draftWorkspaceCopy.primaryActionLabel,
+  });
+  const exportDraftButton = listingLocalActionButtonView({
+    active: loading === 'export-drafts',
+    baseClassName: 'secondary-button',
+    busyLabel: '导出中...',
+    disabled: !drafts.length,
+    groupBusy: listingActionBusy,
+    label: '导出草案',
+  });
 
   return (
     <div>
@@ -1284,10 +1354,11 @@ export function ListingOptimizationPage() {
             ))}
           </div>
           <div className="action-row">
-            <button className="primary-button" disabled={loading === 'save-manual'} onClick={saveManualListing} type="button">
-              {loading === 'save-manual' ? '保存中...' : '保存为新版本'}
+            <button aria-busy={saveManualButton.ariaBusy} className={saveManualButton.className} disabled={saveManualButton.disabled} onClick={saveManualListing} type="button">
+              {saveManualButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{saveManualButton.label}</span>
             </button>
-            <button className="secondary-button" disabled={!manualListing.asin?.trim()} onClick={() => loadListingVersions(manualListing.asin || '')} type="button">
+            <button className="secondary-button" disabled={!manualListing.asin?.trim() || listingActionBusy} onClick={() => loadListingVersions(manualListing.asin || '')} type="button">
               刷新版本历史
             </button>
           </div>
@@ -1303,8 +1374,9 @@ export function ListingOptimizationPage() {
             <StatusPill tone={listingSourceStatus.tone}>{listingSourceStatus.label}</StatusPill>
           </div>
           <div className="action-row">
-            <button className="secondary-button" disabled={loading === 'read'} onClick={readFromLingxing} type="button">
-              {loading === 'read' ? '读取中...' : '尝试从当前领星页面填入表单'}
+            <button aria-busy={readLingxingButton.ariaBusy} className={readLingxingButton.className} disabled={readLingxingButton.disabled} onClick={readFromLingxing} type="button">
+              {readLingxingButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{readLingxingButton.label}</span>
             </button>
           </div>
           <div className="evidence-grid">
@@ -1580,10 +1652,14 @@ export function ListingOptimizationPage() {
                 <div><span>可导出草案</span><strong>{drafts.length}</strong></div>
               </div>
               <div className="action-row">
-                <button className="primary-button" disabled={!listingReady || loading === 'draft'} onClick={generateDrafts} type="button">
-                  {draftWorkspaceCopy.primaryActionLabel}
+                <button aria-busy={generateDraftButton.ariaBusy} className={generateDraftButton.className} disabled={generateDraftButton.disabled} onClick={generateDrafts} type="button">
+                  {generateDraftButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                  <span>{generateDraftButton.label}</span>
                 </button>
-                <button className="secondary-button" disabled={!drafts.length} onClick={exportDrafts} type="button">导出草案</button>
+                <button aria-busy={exportDraftButton.ariaBusy} className={exportDraftButton.className} disabled={exportDraftButton.disabled} onClick={exportDrafts} type="button">
+                  {exportDraftButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                  <span>{exportDraftButton.label}</span>
+                </button>
               </div>
             </section>
           </div>
