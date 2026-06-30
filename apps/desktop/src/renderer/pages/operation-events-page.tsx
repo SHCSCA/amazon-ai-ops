@@ -163,6 +163,30 @@ export function operationEventInlineSaveLabel(saving: boolean): string {
   return saving ? '正在保存...' : '保存到上下文';
 }
 
+interface OperationEventInlineSaveButtonInput {
+  baseClassName: string;
+  canSave: boolean;
+  saving: boolean;
+}
+
+export interface OperationEventInlineSaveButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function operationEventInlineSaveButtonView(input: OperationEventInlineSaveButtonInput): OperationEventInlineSaveButtonView {
+  return {
+    ariaBusy: input.saving ? true : undefined,
+    className: [input.baseClassName, input.saving ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: input.saving || !input.canSave,
+    label: input.saving ? '保存中...' : '保存到上下文',
+    showSpinner: input.saving,
+  };
+}
+
 export function operationEventFormClassName(recentlyCleared: boolean): string {
   return recentlyCleared ? 'operation-event-form operation-event-form-cleared' : 'operation-event-form';
 }
@@ -254,6 +278,11 @@ export function OperationEventsPage() {
     specificEventCount,
     viewMode,
     selectedAsin: scope.asin,
+    canSave: canSaveEvent,
+    saving,
+  });
+  const inlineSaveButton = operationEventInlineSaveButtonView({
+    baseClassName: 'primary-button',
     canSave: canSaveEvent,
     saving,
   });
@@ -582,12 +611,14 @@ export function OperationEventsPage() {
           </div>
           <div className="action-row">
             <button
-              className="primary-button"
-              disabled={saving || !canSaveEvent}
+              aria-busy={inlineSaveButton.ariaBusy}
+              className={inlineSaveButton.className}
+              disabled={inlineSaveButton.disabled}
               onClick={saveEvent}
               type="button"
             >
-              {operationEventInlineSaveLabel(saving)}
+              {inlineSaveButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+              <span>{inlineSaveButton.label}</span>
             </button>
             <button className="secondary-button" onClick={loadEvents} type="button">刷新</button>
           </div>

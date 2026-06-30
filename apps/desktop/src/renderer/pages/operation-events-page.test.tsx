@@ -7,6 +7,7 @@ import {
   filterOperationEventsForView,
   operationEventCardClassName,
   operationEventFormClassName,
+  operationEventInlineSaveButtonView,
   operationEventInlineSaveLabel,
   operationEventScopeLabel,
 } from './operation-events-page';
@@ -92,6 +93,32 @@ describe('operation events page product/global views', () => {
   it('keeps the inline save button distinct from the first-screen primary action', () => {
     expect(operationEventInlineSaveLabel(false)).toBe('保存到上下文');
     expect(operationEventInlineSaveLabel(true)).toBe('正在保存...');
+  });
+
+  it('gives the inline save button an explicit busy contract', () => {
+    const saving = operationEventInlineSaveButtonView({
+      saving: true,
+      canSave: true,
+      baseClassName: 'primary-button',
+    });
+
+    expect(saving.label).toBe('保存中...');
+    expect(saving.className).toContain('button-loading');
+    expect(saving.disabled).toBe(true);
+    expect(saving.ariaBusy).toBe(true);
+    expect(saving.showSpinner).toBe(true);
+
+    const unavailable = operationEventInlineSaveButtonView({
+      saving: false,
+      canSave: false,
+      baseClassName: 'primary-button',
+    });
+
+    expect(unavailable.label).toBe('保存到上下文');
+    expect(unavailable.disabled).toBe(true);
+    expect(unavailable.ariaBusy).toBeUndefined();
+    expect(unavailable.className).not.toContain('button-loading');
+    expect(unavailable.showSpinner).toBe(false);
   });
 
   it('marks the event form as cleared for a short optimistic rebound response', () => {
