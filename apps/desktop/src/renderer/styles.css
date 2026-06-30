@@ -1788,6 +1788,65 @@ code {
   color: var(--text);
 }
 
+.selection-toolbar > div:first-child > span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.collection-selection-count {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 24px;
+  align-items: center;
+  margin-top: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: #fff;
+  padding: 3px 9px;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.1;
+  transition:
+    border-color var(--motion-fast),
+    box-shadow var(--motion-fast),
+    transform var(--motion-fast);
+}
+
+.collection-selection-count-active {
+  border-color: var(--tone-ready-border);
+  box-shadow: 0 0 0 3px rgb(34 197 94 / 0.12);
+  animation: collection-selection-count-pop 180ms ease-out;
+}
+
+.collection-selection-progress {
+  width: min(280px, 100%);
+  height: 6px;
+  margin-top: 7px;
+  overflow: hidden;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+}
+
+.collection-selection-progress::before {
+  content: "";
+  display: block;
+  width: var(--collection-selection-progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb, #22c55e);
+  transition: width var(--motion-fast);
+}
+
+.collection-selection-live {
+  min-height: 16px;
+  font-weight: 800;
+}
+
 .selection-toolbar p {
   margin: 4px 0 0;
   color: var(--muted);
@@ -1804,6 +1863,26 @@ code {
   background: #fff;
   box-shadow: inset 3px 0 0 transparent;
   padding: 10px;
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast),
+    box-shadow var(--motion-fast),
+    transform var(--motion-fast);
+}
+
+.report-option:focus-within {
+  border-color: var(--color-accent);
+  box-shadow:
+    inset 3px 0 0 var(--color-accent),
+    0 0 0 3px rgb(37 99 235 / 0.14);
+}
+
+.report-option-selected {
+  border-color: #93c5fd;
+  background: #f8fbff;
+  box-shadow:
+    inset 3px 0 0 var(--color-accent),
+    0 8px 20px rgb(37 99 235 / 0.08);
 }
 
 .report-option-ready {
@@ -1815,6 +1894,11 @@ code {
 .report-option input {
   grid-row: span 3;
   margin-top: 2px;
+  transform-origin: center;
+}
+
+.report-option input:checked {
+  animation: collection-report-check-pop 160ms ease-out;
 }
 
 .report-option span {
@@ -1829,6 +1913,45 @@ code {
 
 .report-option small {
   color: var(--muted);
+}
+
+@keyframes collection-selection-count-pop {
+  0% {
+    transform: scale(0.98);
+  }
+
+  55% {
+    transform: scale(1.03);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes collection-report-check-pop {
+  0% {
+    transform: scale(0.86);
+  }
+
+  60% {
+    transform: scale(1.12);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collection-selection-count-active,
+  .report-option input:checked {
+    animation: none;
+  }
+
+  .collection-selection-progress::before {
+    transition: none;
+  }
 }
 
 .action-row,

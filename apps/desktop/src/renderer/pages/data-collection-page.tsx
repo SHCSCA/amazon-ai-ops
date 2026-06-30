@@ -330,6 +330,36 @@ export function collectionActionButtonView({
   };
 }
 
+export function collectionReportSelectionState(input: {
+  selectedCount: number;
+  totalCount: number;
+  missingCount: number;
+  unimportedCount: number;
+}): {
+  ariaStatus: string;
+  countClassName: string;
+  countLabel: string;
+  progressPercent: number;
+  progressStyle: React.CSSProperties;
+} {
+  const totalCount = Math.max(0, Number(input.totalCount || 0));
+  const selectedCount = Math.min(totalCount, Math.max(0, Number(input.selectedCount || 0)));
+  const missingCount = Math.max(0, Number(input.missingCount || 0));
+  const unimportedCount = Math.max(0, Number(input.unimportedCount || 0));
+  const progressPercent = totalCount > 0 ? Math.round((selectedCount / totalCount) * 100) : 0;
+  return {
+    ariaStatus: selectedCount > 0
+      ? `已选择 ${selectedCount} 类报表，下载和重建只会作用于这些勾选项。`
+      : `当前未选择报表；可一键选择 ${missingCount} 个缺失报表或 ${unimportedCount} 个待入库报表。`,
+    countClassName: selectedCount > 0
+      ? 'collection-selection-count collection-selection-count-active'
+      : 'collection-selection-count',
+    countLabel: `已选 ${selectedCount}/${totalCount} 类`,
+    progressPercent,
+    progressStyle: { '--collection-selection-progress': `${progressPercent}%` } as React.CSSProperties,
+  };
+}
+
 export function buildDataCollectionTaskState({
   realReportCount,
   importedRowCount,
@@ -792,6 +822,12 @@ export function DataCollectionPage() {
   const recreateSelectedButton = collectionActionButtonView({ mode: 'recreate-selected', runningAction, selectedCount });
   const recreateFullButton = collectionActionButtonView({ mode: 'recreate-full', runningAction, selectedCount });
   const importButton = collectionActionButtonView({ mode: 'import', runningAction, selectedCount });
+  const reportSelectionState = collectionReportSelectionState({
+    selectedCount,
+    totalCount: reportOptions.length,
+    missingCount: missingReportTypes.length,
+    unimportedCount: unimportedReportTypes.length,
+  });
   const dataLedger = useMemo(
     () => buildDataReadinessLedger({
       requiredReportCount: 8,
@@ -1317,7 +1353,16 @@ export function DataCollectionPage() {
         <Panel title="8 类报表选择与进度">
           <div className="selection-toolbar">
             <div>
-              <strong>选择要创建/下载的报表：已选 {selectedCount}/{reportOptions.length}</strong>
+              <span>选择要创建/下载的报表</span>
+              <strong key={reportSelectionState.countLabel} className={reportSelectionState.countClassName}>
+                {reportSelectionState.countLabel}
+              </strong>
+              <div
+                className="collection-selection-progress"
+                aria-hidden="true"
+                style={reportSelectionState.progressStyle}
+              />
+              <p className="collection-selection-live" aria-live="polite">{reportSelectionState.ariaStatus}</p>
               <p>下载和重新创建只作用于当前勾选的报表；清空后不会自动恢复全选。</p>
             </div>
             <div className="table-action-row">
@@ -1347,7 +1392,14 @@ export function DataCollectionPage() {
           />
           <div className="report-option-grid">
             {reportOptions.map((item) => (
-              <label className={`report-option ${item.realFileAvailable ? 'report-option-ready' : ''}`} key={item.type}>
+              <label
+                className={[
+                  'report-option',
+                  item.realFileAvailable ? 'report-option-ready' : '',
+                  selectedTypes.includes(item.type) ? 'report-option-selected' : '',
+                ].filter(Boolean).join(' ')}
+                key={item.type}
+              >
                 <input
                   checked={selectedTypes.includes(item.type)}
                   onChange={() => toggleReport(item.type)}

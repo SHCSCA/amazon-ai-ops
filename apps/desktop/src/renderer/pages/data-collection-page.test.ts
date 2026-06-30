@@ -11,6 +11,7 @@ import {
   collectionActionError,
   collectionActionGuide,
   collectionCompletionNotice,
+  collectionReportSelectionState,
   dataCollectionFirstViewportReportFolder,
   runCollectionDownloadAction,
   shouldOfferDownloadCenterVerification,
@@ -333,6 +334,42 @@ describe('task-first data page helpers', () => {
     expect(locked.disabled).toBe(true);
     expect(locked.ariaBusy).toBe(false);
     expect(locked.className).not.toContain('collection-action-button-running');
+  });
+
+  it('gives report checkbox selection an explicit count and progress response', async () => {
+    expect(collectionReportSelectionState({
+      selectedCount: 0,
+      totalCount: 8,
+      missingCount: 3,
+      unimportedCount: 2,
+    })).toMatchObject({
+      ariaStatus: '当前未选择报表；可一键选择 3 个缺失报表或 2 个待入库报表。',
+      countClassName: 'collection-selection-count',
+      countLabel: '已选 0/8 类',
+      progressPercent: 0,
+      progressStyle: { '--collection-selection-progress': '0%' },
+    });
+
+    expect(collectionReportSelectionState({
+      selectedCount: 5,
+      totalCount: 8,
+      missingCount: 3,
+      unimportedCount: 2,
+    })).toMatchObject({
+      ariaStatus: '已选择 5 类报表，下载和重建只会作用于这些勾选项。',
+      countClassName: 'collection-selection-count collection-selection-count-active',
+      countLabel: '已选 5/8 类',
+      progressPercent: 63,
+      progressStyle: { '--collection-selection-progress': '63%' },
+    });
+
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    expect(css).toContain('.collection-selection-progress');
+    expect(css).toContain('.collection-selection-count-active');
+    expect(css).toContain('collection-report-check-pop');
+    expect(css).toMatch(/\.report-option-selected\s*\{[^}]*box-shadow:/s);
+    expect(css).toMatch(/\.report-option input:checked\s*\{[^}]*animation:\s*collection-report-check-pop/s);
+    expect(css).toMatch(/\.report-option:focus-within\s*\{[^}]*box-shadow:/s);
   });
 
   it('aligns data import primary actions to report and row readiness', () => {
