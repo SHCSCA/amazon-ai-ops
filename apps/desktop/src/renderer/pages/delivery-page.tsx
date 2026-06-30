@@ -95,6 +95,58 @@ interface ReadbackEvidenceVerifyResult {
   checks?: Array<{ label?: string; passed?: boolean; details?: string }>;
 }
 
+export type DeliveryActionKey =
+  | 'create-readback'
+  | 'export-bundle'
+  | 'export-reconciliation'
+  | 'fill-readback-session'
+  | 'refresh-final'
+  | 'refresh-final-with-readback'
+  | 'verify-readback-evidence'
+  | 'verify-readback-session';
+
+interface DeliveryActionButtonInput {
+  action: DeliveryActionKey;
+  activeAction: DeliveryActionKey | null;
+  baseClassName: string;
+  busyLabel: string;
+  disabled?: boolean;
+  idleLabel: string;
+}
+
+export interface DeliveryActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function deliveryActionButtonView(input: DeliveryActionButtonInput): DeliveryActionButtonView {
+  const isActive = input.activeAction === input.action;
+  return {
+    ariaBusy: isActive ? true : undefined,
+    className: [input.baseClassName, isActive ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || input.activeAction),
+    label: isActive ? input.busyLabel : input.idleLabel,
+    showSpinner: isActive,
+  };
+}
+
+function deliveryActionBusyLabel(action: DeliveryActionKey): string {
+  const labels: Record<DeliveryActionKey, string> = {
+    'create-readback': '创建中...',
+    'export-bundle': '导出中...',
+    'export-reconciliation': '导出中...',
+    'fill-readback-session': '生成中...',
+    'refresh-final': '刷新中...',
+    'refresh-final-with-readback': '刷新中...',
+    'verify-readback-evidence': '校验中...',
+    'verify-readback-session': '检查中...',
+  };
+  return labels[action];
+}
+
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
@@ -540,6 +592,7 @@ export function DeliveryPage() {
   const [readbackSessionFill, setReadbackSessionFill] = useState<ReadbackSessionFillResult | null>(null);
   const [readbackEvidenceVerify, setReadbackEvidenceVerify] = useState<ReadbackEvidenceVerifyResult | null>(null);
   const [exportedBundlePath, setExportedBundlePath] = useState('');
+  const [deliveryActionBusy, setDeliveryActionBusy] = useState<DeliveryActionKey | null>(null);
 
   const apiSurface = useMemo(() => api(), []);
   const canOpenPath = typeof apiSurface.openReportPath === 'function';
@@ -609,9 +662,21 @@ export function DeliveryPage() {
     return { kind: 'refresh', label: '刷新最终验收', onClick: refreshFinalReadinessManifest };
   })();
   const secondaryTaskActions = [
-    ...(deliveryPrimaryAction.kind === 'refresh' ? [] : [{ label: '刷新最终验收', onClick: refreshFinalReadinessManifest }]),
-    { label: '复制摘要', onClick: copySummary },
+    ...(deliveryPrimaryAction.kind === 'refresh' ? [] : [{
+      label: '刷新最终验收',
+      onClick: refreshFinalReadinessManifest,
+      busy: deliveryActionBusy === 'refresh-final',
+      busyLabel: deliveryActionBusyLabel('refresh-final'),
+      disabled: Boolean(deliveryActionBusy && deliveryActionBusy !== 'refresh-final'),
+    }]),
+    { label: '复制摘要', onClick: copySummary, disabled: Boolean(deliveryActionBusy) },
   ].slice(0, 2);
+  const primaryTaskBusyKey: DeliveryActionKey | null = deliveryPrimaryAction.kind === 'export'
+    ? 'export-bundle'
+    : deliveryPrimaryAction.kind === 'refresh'
+      ? 'refresh-final'
+      : null;
+  const primaryTaskBusy = Boolean(primaryTaskBusyKey && deliveryActionBusy === primaryTaskBusyKey);
 
   useEffect(() => {
     let mounted = true;
@@ -739,28 +804,40 @@ export function DeliveryPage() {
     }
   }
 
+  async function runDeliveryAction(action: DeliveryActionKey, task: () => Promise<void>) {
+    if (deliveryActionBusy) return;
+    setDeliveryActionBusy(action);
+    try {
+      await task();
+    } finally {
+      setDeliveryActionBusy(null);
+    }
+  }
+
   async function exportBundle() {
     if (typeof apiSurface.exportDeliveryBundle !== 'function') {
       setMessage('导出交付包能力未连接。请先生成最终验收汇总，再运行交付包导出。');
       return;
     }
-    try {
-      const result = await apiSurface.exportDeliveryBundle(scope);
-      if (result?.success) {
-        if (result.dataReconciliation) {
-          setDataReconciliation(result.dataReconciliation);
+    await runDeliveryAction('export-bundle', async () => {
+      try {
+        const result = await apiSurface.exportDeliveryBundle(scope);
+        if (result?.success) {
+          if (result.dataReconciliation) {
+            setDataReconciliation(result.dataReconciliation);
+          }
+          setExportedBundlePath(result.bundleDir || result.manifestPath || DELIVERY_BUNDLE_PATH);
+          const reconciliationSuffix = result.dataReconciliation?.jsonPath || result.dataReconciliation?.markdownPath
+            ? '；已包含当前范围数据口径核对'
+            : '';
+          setMessage(`交付包已导出${reconciliationSuffix}。`);
+        } else {
+          setMessage(compactDeliveryMessage(result?.message || '交付包未导出：请先补齐最终就绪证据。'));
         }
-        setExportedBundlePath(result.bundleDir || result.manifestPath || DELIVERY_BUNDLE_PATH);
-        const reconciliationSuffix = result.dataReconciliation?.jsonPath || result.dataReconciliation?.markdownPath
-          ? '；已包含当前范围数据口径核对'
-          : '';
-        setMessage(`交付包已导出${reconciliationSuffix}。`);
-      } else {
-        setMessage(compactDeliveryMessage(result?.message || '交付包未导出：请先补齐最终就绪证据。'));
+      } catch (caught) {
+        setMessage(compactDeliveryMessage(toUserFacingError(caught, '交付包导出失败。')));
       }
-    } catch (caught) {
-      setMessage(compactDeliveryMessage(toUserFacingError(caught, '交付包导出失败。')));
-    }
+    });
   }
 
   async function refreshFinalReadinessManifest() {
@@ -768,18 +845,20 @@ export function DeliveryPage() {
       setMessage('刷新最终验收能力未连接。');
       return;
     }
-    try {
-      const result = await apiSurface.refreshFinalReadiness();
-      setFinalReadinessRefresh(result || null);
-      if (result?.readiness) {
-        setReadiness(result.readiness);
+    await runDeliveryAction('refresh-final', async () => {
+      try {
+        const result = await apiSurface.refreshFinalReadiness();
+        setFinalReadinessRefresh(result || null);
+        if (result?.readiness) {
+          setReadiness(result.readiness);
+        }
+        setMessage(result?.readiness?.appReady
+          ? '最终验收已刷新并通过。'
+          : '最终验收已刷新，仍未就绪。');
+      } catch (caught) {
+        setMessage(compactDeliveryMessage(toUserFacingError(caught, '刷新最终验收失败。')));
       }
-      setMessage(result?.readiness?.appReady
-        ? '最终验收已刷新并通过。'
-        : '最终验收已刷新，仍未就绪。');
-    } catch (caught) {
-      setMessage(compactDeliveryMessage(toUserFacingError(caught, '刷新最终验收失败。')));
-    }
+    });
   }
 
   async function createReadbackWorkPackage() {
@@ -791,16 +870,18 @@ export function DeliveryPage() {
       setMessage('无法创建回读工作包：本地回读准备能力未连接。');
       return;
     }
-    try {
-      const result = await apiSurface.prepareAdReadbackSession({ sourcePath: readbackCandidatePath });
-      setReadbackSession(result || null);
-      setReadbackSessionCheck(null);
-      setReadbackSessionFill(null);
-      setReadbackEvidenceVerify(null);
-      setMessage('回读工作包已创建，路径见详情。');
-    } catch (caught) {
-      setMessage(compactDeliveryMessage(toUserFacingError(caught, '创建回读工作包失败。')));
-    }
+    await runDeliveryAction('create-readback', async () => {
+      try {
+        const result = await apiSurface.prepareAdReadbackSession({ sourcePath: readbackCandidatePath });
+        setReadbackSession(result || null);
+        setReadbackSessionCheck(null);
+        setReadbackSessionFill(null);
+        setReadbackEvidenceVerify(null);
+        setMessage('回读工作包已创建，路径见详情。');
+      } catch (caught) {
+        setMessage(compactDeliveryMessage(toUserFacingError(caught, '创建回读工作包失败。')));
+      }
+    });
   }
 
   function requestReadbackRepair() {
@@ -824,19 +905,21 @@ export function DeliveryPage() {
       setMessage('无法检查回读工作包：本地工作包检查能力未连接。');
       return;
     }
-    try {
-      const result = await apiSurface.verifyAdReadbackSession({ sessionDir });
-      setReadbackSessionCheck(result || null);
-      if (result?.ready && result?.captureReady) {
-        setMessage('回读工作包结构和现场证据均已通过。');
-      } else if (result?.ready) {
-        setMessage(`回读工作包结构已通过，但现场证据仍待填写：${formatCaptureMissing(result?.captureMissingFields, result?.unresolvedFields)}`);
-      } else {
-        setMessage(compactDeliveryMessage(`回读工作包仍需补齐：${(result?.issues || []).slice(0, 2).join('；')}`));
+    await runDeliveryAction('verify-readback-session', async () => {
+      try {
+        const result = await apiSurface.verifyAdReadbackSession({ sessionDir });
+        setReadbackSessionCheck(result || null);
+        if (result?.ready && result?.captureReady) {
+          setMessage('回读工作包结构和现场证据均已通过。');
+        } else if (result?.ready) {
+          setMessage(`回读工作包结构已通过，但现场证据仍待填写：${formatCaptureMissing(result?.captureMissingFields, result?.unresolvedFields)}`);
+        } else {
+          setMessage(compactDeliveryMessage(`回读工作包仍需补齐：${(result?.issues || []).slice(0, 2).join('；')}`));
+        }
+      } catch (caught) {
+        setMessage(compactDeliveryMessage(toUserFacingError(caught, '检查回读工作包失败。')));
       }
-    } catch (caught) {
-      setMessage(compactDeliveryMessage(toUserFacingError(caught, '检查回读工作包失败。')));
-    }
+    });
   }
 
   async function fillReadbackWorkPackage() {
@@ -849,15 +932,17 @@ export function DeliveryPage() {
       setMessage('无法生成回读证据：本地证据生成能力未连接。');
       return;
     }
-    try {
-      const result = await apiSurface.fillAdReadbackSession({ sessionDir });
-      setReadbackSessionFill(result || null);
-      setMessage(result?.readyForVerifier
-        ? '回读证据已生成，可进入校验。'
-        : compactDeliveryMessage(`回读证据未生成通过：${(result?.issues || []).slice(0, 2).join('；')}`));
-    } catch (caught) {
-      setMessage(compactDeliveryMessage(toUserFacingError(caught, '生成回读证据失败。')));
-    }
+    await runDeliveryAction('fill-readback-session', async () => {
+      try {
+        const result = await apiSurface.fillAdReadbackSession({ sessionDir });
+        setReadbackSessionFill(result || null);
+        setMessage(result?.readyForVerifier
+          ? '回读证据已生成，可进入校验。'
+          : compactDeliveryMessage(`回读证据未生成通过：${(result?.issues || []).slice(0, 2).join('；')}`));
+      } catch (caught) {
+        setMessage(compactDeliveryMessage(toUserFacingError(caught, '生成回读证据失败。')));
+      }
+    });
   }
 
   async function verifyGeneratedReadbackEvidence() {
@@ -870,16 +955,18 @@ export function DeliveryPage() {
       setMessage('无法校验回读证据：本地回读校验能力未连接。');
       return;
     }
-    try {
-      const result = await apiSurface.verifyAdReadbackEvidence({ evidencePath });
-      setReadbackEvidenceVerify(result || null);
-      const passed = Boolean(result?.ok || result?.verified || result?.ready || result?.status === 'PASS');
-      setMessage(passed
-        ? '回读证据校验通过。'
-        : compactDeliveryMessage(`回读证据仍未通过：${(result?.issues || result?.blockers || []).slice(0, 2).join('；')}`));
-    } catch (caught) {
-      setMessage(compactDeliveryMessage(toUserFacingError(caught, '校验回读证据失败。')));
-    }
+    await runDeliveryAction('verify-readback-evidence', async () => {
+      try {
+        const result = await apiSurface.verifyAdReadbackEvidence({ evidencePath });
+        setReadbackEvidenceVerify(result || null);
+        const passed = Boolean(result?.ok || result?.verified || result?.ready || result?.status === 'PASS');
+        setMessage(passed
+          ? '回读证据校验通过。'
+          : compactDeliveryMessage(`回读证据仍未通过：${(result?.issues || result?.blockers || []).slice(0, 2).join('；')}`));
+      } catch (caught) {
+        setMessage(compactDeliveryMessage(toUserFacingError(caught, '校验回读证据失败。')));
+      }
+    });
   }
 
   async function refreshFinalReadinessWithReadback() {
@@ -892,18 +979,20 @@ export function DeliveryPage() {
       setMessage('刷新最终验收能力未连接。');
       return;
     }
-    try {
-      const result = await apiSurface.refreshFinalReadiness({ adReadbackPath: evidencePath });
-      setFinalReadinessRefresh(result || null);
-      if (result?.readiness) {
-        setReadiness(result.readiness);
+    await runDeliveryAction('refresh-final-with-readback', async () => {
+      try {
+        const result = await apiSurface.refreshFinalReadiness({ adReadbackPath: evidencePath });
+        setFinalReadinessRefresh(result || null);
+        if (result?.readiness) {
+          setReadiness(result.readiness);
+        }
+        setMessage(result?.readiness?.appReady
+          ? '已使用回读证据刷新并通过最终验收。'
+          : '已使用回读证据刷新最终验收，仍未就绪。');
+      } catch (caught) {
+        setMessage(compactDeliveryMessage(toUserFacingError(caught, '使用回读证据刷新最终验收失败。')));
       }
-      setMessage(result?.readiness?.appReady
-        ? '已使用回读证据刷新并通过最终验收。'
-        : '已使用回读证据刷新最终验收，仍未就绪。');
-    } catch (caught) {
-      setMessage(compactDeliveryMessage(toUserFacingError(caught, '使用回读证据刷新最终验收失败。')));
-    }
+    });
   }
 
   async function exportDataReconciliation() {
@@ -911,17 +1000,19 @@ export function DeliveryPage() {
       setMessage('数据口径核对导出能力未连接。');
       return;
     }
-    try {
-      const result = await apiSurface.exportDataReconciliation(scope);
-      setDataReconciliation(result || null);
-      if (result?.jsonPath || result?.markdownPath) {
-        setMessage('数据口径核对报告已导出，路径见详情。');
-      } else {
-        setMessage('数据口径核对报告已生成，但未返回文件路径。');
+    await runDeliveryAction('export-reconciliation', async () => {
+      try {
+        const result = await apiSurface.exportDataReconciliation(scope);
+        setDataReconciliation(result || null);
+        if (result?.jsonPath || result?.markdownPath) {
+          setMessage('数据口径核对报告已导出，路径见详情。');
+        } else {
+          setMessage('数据口径核对报告已生成，但未返回文件路径。');
+        }
+      } catch (caught) {
+        setMessage(compactDeliveryMessage(toUserFacingError(caught, '数据口径核对报告导出失败。')));
       }
-    } catch (caught) {
-      setMessage(compactDeliveryMessage(toUserFacingError(caught, '数据口径核对报告导出失败。')));
-    }
+    });
   }
 
   async function copySummary() {
@@ -945,6 +1036,62 @@ export function DeliveryPage() {
     }
   }
 
+  const exportBundleButton = deliveryActionButtonView({
+    action: 'export-bundle',
+    activeAction: deliveryActionBusy,
+    baseClassName: `secondary-button delivery-export-button${deliveryReady ? '' : ' delivery-export-blocked'}`,
+    busyLabel: deliveryActionBusyLabel('export-bundle'),
+    disabled: !deliveryReady,
+    idleLabel: '导出交付包',
+  });
+  const exportReconciliationButton = deliveryActionButtonView({
+    action: 'export-reconciliation',
+    activeAction: deliveryActionBusy,
+    baseClassName: 'secondary-button',
+    busyLabel: deliveryActionBusyLabel('export-reconciliation'),
+    idleLabel: '导出数据口径核对',
+  });
+  const createReadbackButton = deliveryActionButtonView({
+    action: 'create-readback',
+    activeAction: deliveryActionBusy,
+    baseClassName: 'primary-button',
+    busyLabel: deliveryActionBusyLabel('create-readback'),
+    disabled: !readbackCandidatePath,
+    idleLabel: '创建回读工作包',
+  });
+  const verifyReadbackSessionButton = deliveryActionButtonView({
+    action: 'verify-readback-session',
+    activeAction: deliveryActionBusy,
+    baseClassName: 'secondary-button',
+    busyLabel: deliveryActionBusyLabel('verify-readback-session'),
+    disabled: !readbackSession?.sessionDir,
+    idleLabel: '检查工作包',
+  });
+  const fillReadbackSessionButton = deliveryActionButtonView({
+    action: 'fill-readback-session',
+    activeAction: deliveryActionBusy,
+    baseClassName: 'secondary-button',
+    busyLabel: deliveryActionBusyLabel('fill-readback-session'),
+    disabled: !readbackSession?.sessionDir,
+    idleLabel: '生成回读证据',
+  });
+  const verifyReadbackEvidenceButton = deliveryActionButtonView({
+    action: 'verify-readback-evidence',
+    activeAction: deliveryActionBusy,
+    baseClassName: 'secondary-button',
+    busyLabel: deliveryActionBusyLabel('verify-readback-evidence'),
+    disabled: !(readbackSessionFill?.jsonPath || readbackSession?.passEvidencePath),
+    idleLabel: '校验回读证据',
+  });
+  const refreshWithReadbackButton = deliveryActionButtonView({
+    action: 'refresh-final-with-readback',
+    activeAction: deliveryActionBusy,
+    baseClassName: 'primary-button',
+    busyLabel: deliveryActionBusyLabel('refresh-final-with-readback'),
+    disabled: !(readbackSessionFill?.jsonPath || readbackSession?.passEvidencePath),
+    idleLabel: '用回读证据刷新最终验收',
+  });
+
   return (
     <div>
       <PageHeader
@@ -962,6 +1109,9 @@ export function DeliveryPage() {
         primaryAction={{
           label: deliveryPrimaryAction.label,
           onClick: deliveryPrimaryAction.onClick,
+          busy: primaryTaskBusy,
+          busyLabel: primaryTaskBusyKey ? deliveryActionBusyLabel(primaryTaskBusyKey) : undefined,
+          disabled: Boolean(deliveryActionBusy && !primaryTaskBusy),
         }}
         secondaryActions={secondaryTaskActions}
       >
@@ -992,14 +1142,16 @@ export function DeliveryPage() {
               打开交付包
             </button>
             <button
-              aria-disabled={!deliveryReady}
-              className={`secondary-button delivery-export-button${deliveryReady ? '' : ' delivery-export-blocked'}`}
-              disabled={!deliveryReady}
+              aria-busy={exportBundleButton.ariaBusy}
+              aria-disabled={!deliveryReady || undefined}
+              className={exportBundleButton.className}
+              disabled={exportBundleButton.disabled}
               onClick={exportBundle}
               title={deliveryReady ? '导出当前 READY 交付包' : '最终验收通过且安装包证据已记录后才能导出交付包'}
               type="button"
             >
-              导出交付包
+              {exportBundleButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+              <span>{exportBundleButton.label}</span>
             </button>
             <button className="secondary-button" onClick={() => openPath(reportFolder, '打开证据目录')} type="button">
               打开证据目录
@@ -1010,8 +1162,9 @@ export function DeliveryPage() {
             <button className="secondary-button" onClick={() => openPath(finalManifestPath, '打开最终验收汇总')} type="button">
               打开最终验收汇总
             </button>
-            <button className="secondary-button" onClick={exportDataReconciliation} type="button">
-              导出数据口径核对
+            <button aria-busy={exportReconciliationButton.ariaBusy} className={exportReconciliationButton.className} disabled={exportReconciliationButton.disabled} onClick={exportDataReconciliation} type="button">
+              {exportReconciliationButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+              <span>{exportReconciliationButton.label}</span>
             </button>
           </div>
           <div className="delivery-meta-grid">
@@ -1080,8 +1233,9 @@ export function DeliveryPage() {
               </div>
               <div className="delivery-action-row">
                 {deliveryPrimaryAction.kind !== 'create-readback' && (
-                  <button className="primary-button" onClick={createReadbackWorkPackage} type="button">
-                    创建回读工作包
+                  <button aria-busy={createReadbackButton.ariaBusy} className={createReadbackButton.className} disabled={createReadbackButton.disabled} onClick={createReadbackWorkPackage} type="button">
+                    {createReadbackButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                    <span>{createReadbackButton.label}</span>
                   </button>
                 )}
                 <button className="secondary-button" disabled={!readbackCandidatePath} onClick={() => openPath(readbackCandidatePath, '打开回读候选证据')} type="button">
@@ -1139,17 +1293,21 @@ export function DeliveryPage() {
                 <button className="secondary-button" onClick={() => openPath(readbackSession.sessionInputGuidePath || '', '打开填写说明')} type="button">
                   打开填写说明
                 </button>
-                <button className="secondary-button" onClick={verifyReadbackWorkPackage} type="button">
-                  检查工作包
+                <button aria-busy={verifyReadbackSessionButton.ariaBusy} className={verifyReadbackSessionButton.className} disabled={verifyReadbackSessionButton.disabled} onClick={verifyReadbackWorkPackage} type="button">
+                  {verifyReadbackSessionButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                  <span>{verifyReadbackSessionButton.label}</span>
                 </button>
-                <button className="secondary-button" onClick={fillReadbackWorkPackage} type="button">
-                  生成回读证据
+                <button aria-busy={fillReadbackSessionButton.ariaBusy} className={fillReadbackSessionButton.className} disabled={fillReadbackSessionButton.disabled} onClick={fillReadbackWorkPackage} type="button">
+                  {fillReadbackSessionButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                  <span>{fillReadbackSessionButton.label}</span>
                 </button>
-                <button className="secondary-button" onClick={verifyGeneratedReadbackEvidence} type="button">
-                  校验回读证据
+                <button aria-busy={verifyReadbackEvidenceButton.ariaBusy} className={verifyReadbackEvidenceButton.className} disabled={verifyReadbackEvidenceButton.disabled} onClick={verifyGeneratedReadbackEvidence} type="button">
+                  {verifyReadbackEvidenceButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                  <span>{verifyReadbackEvidenceButton.label}</span>
                 </button>
-                <button className="primary-button" onClick={refreshFinalReadinessWithReadback} type="button">
-                  用回读证据刷新最终验收
+                <button aria-busy={refreshWithReadbackButton.ariaBusy} className={refreshWithReadbackButton.className} disabled={refreshWithReadbackButton.disabled} onClick={refreshFinalReadinessWithReadback} type="button">
+                  {refreshWithReadbackButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                  <span>{refreshWithReadbackButton.label}</span>
                 </button>
               </div>
             )}

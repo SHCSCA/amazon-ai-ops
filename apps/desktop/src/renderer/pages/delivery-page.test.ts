@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
+import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
 
 describe('buildDeliveryOverviewFacts', () => {
   it('keeps the delivery first screen to short operator facts instead of long manifest paths', () => {
@@ -139,12 +139,45 @@ describe('canExportDeliveryBundle', () => {
     const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
     const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
-    expect(source).toContain('disabled={!deliveryReady}');
+    expect(source).toContain('disabled: !deliveryReady');
+    expect(source).toContain('disabled={exportBundleButton.disabled}');
     expect(source).toContain('delivery-export-blocked');
     expect(stylesheet).toContain('.delivery-export-blocked:disabled');
     expect(stylesheet).toContain('cursor: no-drop');
     expect(stylesheet).toContain('var(--tone-blocked-border)');
     expect(stylesheet).toContain('content: ""');
+  });
+});
+
+describe('deliveryActionButtonView', () => {
+  it('locks delivery async action peers while only the active action shows busy feedback', () => {
+    const active = deliveryActionButtonView({
+      action: 'refresh-final',
+      activeAction: 'refresh-final',
+      baseClassName: 'primary-button',
+      busyLabel: '刷新中...',
+      idleLabel: '用回读证据刷新最终验收',
+    });
+
+    expect(active.label).toBe('刷新中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('button-loading');
+
+    const lockedPeer = deliveryActionButtonView({
+      action: 'verify-readback-evidence',
+      activeAction: 'refresh-final',
+      baseClassName: 'secondary-button',
+      busyLabel: '校验中...',
+      idleLabel: '校验回读证据',
+    });
+
+    expect(lockedPeer.label).toBe('校验回读证据');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.showSpinner).toBe(false);
+    expect(lockedPeer.className).not.toContain('button-loading');
   });
 });
 
