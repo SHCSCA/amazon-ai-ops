@@ -309,6 +309,32 @@ export function settingsSecondaryStatusMessage(message: string): string {
   return text;
 }
 
+interface SettingsRuleActionButtonInput {
+  active: boolean;
+  baseClassName: string;
+  busyLabel: string;
+  disabled?: boolean;
+  label: string;
+}
+
+export interface SettingsRuleActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function settingsRuleActionButtonView(input: SettingsRuleActionButtonInput): SettingsRuleActionButtonView {
+  return {
+    ariaBusy: input.active ? true : undefined,
+    className: [input.baseClassName, input.active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || input.active),
+    label: input.active ? input.busyLabel : input.label,
+    showSpinner: input.active,
+  };
+}
+
 function percentLabel(value: number): string {
   return `${(value * 100).toFixed(0)}%`;
 }
@@ -431,6 +457,13 @@ export function SettingsPage() {
     canSaveSettings,
     keyPresent,
     canTestAi: canRunAiTest,
+  });
+  const ruleSaveButton = settingsRuleActionButtonView({
+    active: savingRules,
+    baseClassName: 'primary-button',
+    busyLabel: '保存中...',
+    disabled: !canSaveRules,
+    label: '保存广告阈值',
   });
 
   async function refreshAiSettingsFromStore(): Promise<AiProviderSettings | null> {
@@ -931,8 +964,15 @@ export function SettingsPage() {
             </FormTableRow>
           </FormTable>
           <div className="action-row">
-            <button className="primary-button" disabled={savingRules || !canSaveRules} onClick={saveRuleConfig} type="button">
-              {savingRules ? '保存中...' : '保存广告阈值'}
+            <button
+              aria-busy={ruleSaveButton.ariaBusy}
+              className={ruleSaveButton.className}
+              disabled={ruleSaveButton.disabled}
+              onClick={saveRuleConfig}
+              type="button"
+            >
+              {ruleSaveButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+              <span>{ruleSaveButton.label}</span>
             </button>
           </div>
         </Panel>

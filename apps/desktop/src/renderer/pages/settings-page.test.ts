@@ -12,6 +12,7 @@ import {
   settingsAiTaskTitle,
   settingsPrimaryAiStatusItems,
   settingsRuleConfigFieldFeedback,
+  settingsRuleActionButtonView,
   shouldResetAiTestForSettingsField,
 } from './settings-page';
 
@@ -170,5 +171,35 @@ describe('settings rule field feedback', () => {
       maxCpc: 5,
       minCpc: 0.02,
     })).toEqual({});
+  });
+});
+
+describe('settings rule action feedback', () => {
+  it('gives rule save actions an explicit busy contract', () => {
+    const saving = settingsRuleActionButtonView({
+      active: true,
+      baseClassName: 'primary-button',
+      busyLabel: '保存中...',
+      label: '保存广告阈值',
+    });
+
+    expect(saving.label).toBe('保存中...');
+    expect(saving.className).toContain('button-loading');
+    expect(saving.disabled).toBe(true);
+    expect(saving.ariaBusy).toBe(true);
+    expect(saving.showSpinner).toBe(true);
+
+    const unavailable = settingsRuleActionButtonView({
+      active: false,
+      baseClassName: 'primary-button',
+      busyLabel: '保存中...',
+      disabled: true,
+      label: '保存广告阈值',
+    });
+
+    expect(unavailable.disabled).toBe(true);
+    expect(unavailable.ariaBusy).toBeUndefined();
+    expect(unavailable.className).not.toContain('button-loading');
+    expect(unavailable.showSpinner).toBe(false);
   });
 });
