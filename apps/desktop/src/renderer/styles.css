@@ -5916,6 +5916,7 @@ code {
   padding: 12px;
   text-align: left;
   cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 120ms ease;
 }
 
 .product-management-option:hover {
@@ -5923,10 +5924,49 @@ code {
   background: #f8fbff;
 }
 
+.product-management-option:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.32);
+  outline-offset: 2px;
+}
+
+.product-management-option:active {
+  transform: scale(0.98);
+}
+
 .product-management-option-active {
   border-color: var(--primary);
   background: #eff6ff;
   box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.14);
+}
+
+.product-management-option-locked {
+  animation: product-management-lock-pulse 360ms ease-out;
+}
+
+.product-management-option-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.product-management-option-lock {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--tone-pending-bg);
+  color: var(--text-muted);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.product-management-option-lock-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
 }
 
 .product-management-option strong,
@@ -5944,6 +5984,15 @@ code {
   font-size: 12px;
   font-weight: 650;
   line-height: 1.35;
+}
+
+.product-management-selection-live {
+  min-height: 20px;
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 .product-management-task-feedback {
@@ -6000,6 +6049,15 @@ code {
 
 .product-management-event {
   min-height: 0;
+}
+
+@keyframes product-management-lock-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.26);
+  }
+  100% {
+    box-shadow: 0 0 0 5px rgba(37, 99, 235, 0);
+  }
 }
 
 .evidence-disclosure {
@@ -6067,6 +6125,18 @@ code {
   .details-panel summary:active,
   .evidence-disclosure summary:active {
     transform: none;
+  }
+
+  .product-management-option {
+    transition: none;
+  }
+
+  .product-management-option:active {
+    transform: none;
+  }
+
+  .product-management-option-locked {
+    animation: none;
   }
 
   .state-light-grid-refreshing .state-light-card,

@@ -252,6 +252,30 @@ export function buildProductManagementTaskState(input: {
   };
 }
 
+export function buildProductManagementOptionView(input: {
+  selected: boolean;
+  productTitle: string;
+  asin: string;
+  hasImportedMetrics: boolean;
+  dailyDays: number;
+}) {
+  const className = [
+    'product-management-option',
+    input.selected ? 'product-management-option-active product-management-option-locked' : '',
+  ].filter(Boolean).join(' ');
+  const actionTag = input.selected ? '已锁定' : '点击锁定';
+  const statusLine = input.selected
+    ? `${input.productTitle} / ${input.asin} 已锁定，工具栏已解冻，后续页面按 ${input.asin} 读取数据库。${input.hasImportedMetrics ? `日级 ${input.dailyDays} 天可用于产品分析。` : '当前缺少导入指标，先去指标核验入库。'}`
+    : `点击锁定 ${input.productTitle} / ${input.asin}，后续页面会按该产品读取数据库。`;
+
+  return {
+    className,
+    ariaPressed: input.selected,
+    actionTag,
+    statusLine,
+  };
+}
+
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
@@ -305,6 +329,18 @@ export function ProductManagementPage() {
       hasImportedMetrics,
     }),
     [error, hasImportedMetrics, importedRows, loading, model, saveError, saveMessage, saving],
+  );
+  const selectedOptionFeedback = useMemo(
+    () => selected
+      ? buildProductManagementOptionView({
+          selected: true,
+          productTitle: selected.title,
+          asin: selected.asin,
+          hasImportedMetrics,
+          dailyDays: model.selectedDailyRows.length,
+        })
+      : null,
+    [hasImportedMetrics, model.selectedDailyRows.length, selected],
   );
 
   useEffect(() => {
@@ -451,25 +487,49 @@ export function ProductManagementPage() {
         <Panel title="产品列表" tone={model.products.length ? 'default' : 'warning'}>
           {model.products.length ? (
             <div className="product-management-grid">
-              {model.products.map((product) => (
-                <button
-                  className={`product-management-option ${selected?.asin === product.asin ? 'product-management-option-active' : ''}`}
-                  key={product.asin}
-                  onClick={() => selectProduct(product.asin)}
-                  type="button"
-                >
-                  <strong>{product.title}</strong>
-                  <span>{product.asin} / {product.skuLine}</span>
-                  <span>{stageLabel(product.stage)} / {product.status || '状态未配置'} / 事件 {product.eventCount}</span>
-                  <span>
-                    花费 {formatUsd(product.cost)} / 销售 {formatUsd(product.sales)} / 订单 {product.orders} / ACOS {formatPercent(product.acos * 100)}
-                  </span>
-                </button>
-              ))}
+              {model.products.map((product) => {
+                const isProductSelected = selected?.asin === product.asin;
+                const optionView = buildProductManagementOptionView({
+                  selected: isProductSelected,
+                  productTitle: product.title,
+                  asin: product.asin,
+                  hasImportedMetrics,
+                  dailyDays: isProductSelected ? model.selectedDailyRows.length : 0,
+                });
+
+                return (
+                  <button
+                    aria-label={optionView.statusLine}
+                    aria-pressed={optionView.ariaPressed}
+                    className={optionView.className}
+                    key={product.asin}
+                    onClick={() => selectProduct(product.asin)}
+                    type="button"
+                  >
+                    <span className="product-management-option-header">
+                      <strong>{product.title}</strong>
+                      <span
+                        aria-hidden="true"
+                        className={`product-management-option-lock ${isProductSelected ? 'product-management-option-lock-ready' : ''}`}
+                      >
+                        {optionView.actionTag}
+                      </span>
+                    </span>
+                    <span>{product.asin} / {product.skuLine}</span>
+                    <span>{stageLabel(product.stage)} / {product.status || '状态未配置'} / 事件 {product.eventCount}</span>
+                    <span>
+                      花费 {formatUsd(product.cost)} / 销售 {formatUsd(product.sales)} / 订单 {product.orders} / ACOS {formatPercent(product.acos * 100)}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <p className="muted-line">{model.emptyReason}</p>
           )}
+          <p aria-live="polite" className="product-management-selection-live" role="status">
+            {selectedOptionFeedback?.statusLine || '尚未锁定产品；点击产品卡片后工具栏会解冻。'}
+          </p>
         </Panel>
 
         <Panel title="产品信息维护" tone={draft.asin ? 'default' : 'warning'}>

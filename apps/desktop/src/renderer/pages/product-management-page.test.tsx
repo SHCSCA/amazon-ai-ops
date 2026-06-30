@@ -3,6 +3,7 @@ import {
   PRODUCT_QUICK_COST_FIELDS,
   PRODUCT_QUICK_TARGET_FIELDS,
   buildCredentialSandboxSummary,
+  buildProductManagementOptionView,
   buildProductManagementPageModel,
   buildProductManagementTaskState,
   productManagementActionRoutes,
@@ -227,6 +228,35 @@ describe('ProductManagementPage model', () => {
   it('names quick product cost and target fields explicitly', () => {
     expect(PRODUCT_QUICK_COST_FIELDS.map((field) => field.label)).toEqual(['采购成本', 'FBA 费用', '最低售价']);
     expect(PRODUCT_QUICK_TARGET_FIELDS.map((field) => field.label)).toEqual(['目标 ACOS', '目标 TACOS', '目标净利率']);
+  });
+
+  it('builds explicit lock feedback for selected product cards', () => {
+    const selectedView = buildProductManagementOptionView({
+      selected: true,
+      productTitle: 'D6 Smart Lock',
+      asin: 'B001',
+      hasImportedMetrics: true,
+      dailyDays: 2,
+    });
+
+    expect(selectedView.className).toContain('product-management-option-active');
+    expect(selectedView.className).toContain('product-management-option-locked');
+    expect(selectedView.ariaPressed).toBe(true);
+    expect(selectedView.actionTag).toBe('已锁定');
+    expect(selectedView.statusLine).toContain('工具栏已解冻');
+    expect(selectedView.statusLine).toContain('后续页面按 B001 读取数据库');
+
+    const idleView = buildProductManagementOptionView({
+      selected: false,
+      productTitle: 'D7',
+      asin: 'B002',
+      hasImportedMetrics: false,
+      dailyDays: 0,
+    });
+
+    expect(idleView.ariaPressed).toBe(false);
+    expect(idleView.actionTag).toBe('点击锁定');
+    expect(idleView.statusLine).toContain('点击锁定 D7 / B002');
   });
 
   it('builds a non-secret Main credential sandbox hover summary', () => {
