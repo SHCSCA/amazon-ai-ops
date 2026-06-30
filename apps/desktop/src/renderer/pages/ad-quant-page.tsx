@@ -57,6 +57,44 @@ export interface StrategyRunFeedbackAction {
   target: 'run-ai' | 'settings' | 'data-collection' | 'recommendations';
 }
 
+interface AdQuantActionButtonInput {
+  active: boolean;
+  baseClassName: string;
+  busyLabel: string;
+  disabled?: boolean;
+  groupBusy?: boolean;
+  idleLabel: string;
+}
+
+export interface AdQuantActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function adQuantActionButtonView(input: AdQuantActionButtonInput): AdQuantActionButtonView {
+  const active = Boolean(input.active);
+  return {
+    ariaBusy: active ? true : undefined,
+    className: [input.baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || active || (input.groupBusy && !active)),
+    label: active ? input.busyLabel : input.idleLabel,
+    showSpinner: active,
+  };
+}
+
+function adQuantActionButtonContent(view: AdQuantActionButtonView) {
+  if (!view.showSpinner) return view.label;
+  return (
+    <span className="button-content">
+      <span aria-hidden="true" className="button-spinner" />
+      <span>{view.label}</span>
+    </span>
+  );
+}
+
 export interface WasteRiskSpendTile {
   label: string;
   value: string;
@@ -920,6 +958,48 @@ export function AdQuantPage() {
     return false;
   }
 
+  const strategyRunActionButton = adQuantActionButtonView({
+    active: strategyLoading,
+    baseClassName: 'secondary-button',
+    busyLabel: 'AI 分析中...',
+    disabled: !canDiagnose,
+    idleLabel: '运行 AI 阶段分析',
+  });
+  const recommendationEntryButton = adQuantActionButtonView({
+    active: false,
+    baseClassName: 'primary-button',
+    busyLabel: '转跳中...',
+    disabled: !canGenerateFormalRecommendations || diagnosticCount === 0,
+    groupBusy: strategyLoading,
+    idleLabel: decisionStatus.primaryActionLabel,
+  });
+
+  function strategyFeedbackActionButtonView(action: StrategyRunFeedbackAction): AdQuantActionButtonView {
+    return adQuantActionButtonView({
+      active: strategyLoading && action.target === 'run-ai',
+      baseClassName: 'secondary-button compact-button',
+      busyLabel: 'AI 分析中...',
+      disabled: strategyFeedbackActionDisabled(action),
+      groupBusy: strategyLoading,
+      idleLabel: action.label,
+    });
+  }
+
+  function renderStrategyFeedbackAction(action: StrategyRunFeedbackAction) {
+    const view = strategyFeedbackActionButtonView(action);
+    return (
+      <button
+        aria-busy={view.ariaBusy}
+        className={view.className}
+        disabled={view.disabled}
+        onClick={() => handleStrategyFeedbackAction(action)}
+        type="button"
+      >
+        {adQuantActionButtonContent(view)}
+      </button>
+    );
+  }
+
   return (
     <div>
       <PageHeader
@@ -987,26 +1067,8 @@ export function AdQuantPage() {
               <StatusPill tone={strategyRunFeedback.tone}>{strategyRunFeedback.statusLabel}</StatusPill>
               {(strategyRunFeedback.primaryAction || strategyRunFeedback.secondaryAction) && (
                 <div className="collection-action-feedback-actions">
-                  {strategyRunFeedback.primaryAction && (
-                    <button
-                      className="secondary-button compact-button"
-                      disabled={strategyFeedbackActionDisabled(strategyRunFeedback.primaryAction)}
-                      onClick={() => handleStrategyFeedbackAction(strategyRunFeedback.primaryAction)}
-                      type="button"
-                    >
-                      {strategyRunFeedback.primaryAction.label}
-                    </button>
-                  )}
-                  {strategyRunFeedback.secondaryAction && (
-                    <button
-                      className="secondary-button compact-button"
-                      disabled={strategyFeedbackActionDisabled(strategyRunFeedback.secondaryAction)}
-                      onClick={() => handleStrategyFeedbackAction(strategyRunFeedback.secondaryAction)}
-                      type="button"
-                    >
-                      {strategyRunFeedback.secondaryAction.label}
-                    </button>
-                  )}
+                  {strategyRunFeedback.primaryAction && renderStrategyFeedbackAction(strategyRunFeedback.primaryAction)}
+                  {strategyRunFeedback.secondaryAction && renderStrategyFeedbackAction(strategyRunFeedback.secondaryAction)}
                 </div>
               )}
             </div>
@@ -1180,11 +1242,23 @@ export function AdQuantPage() {
             <button className="secondary-button" onClick={() => navigate('operation-events')} type="button">
               记录运营事件
             </button>
-            <button className="secondary-button" disabled={!canDiagnose || strategyLoading} onClick={runStrategyDiagnosis} type="button">
-              {strategyLoading ? 'AI 分析中...' : '运行 AI 阶段分析'}
+            <button
+              aria-busy={strategyRunActionButton.ariaBusy}
+              className={strategyRunActionButton.className}
+              disabled={strategyRunActionButton.disabled}
+              onClick={runStrategyDiagnosis}
+              type="button"
+            >
+              {adQuantActionButtonContent(strategyRunActionButton)}
             </button>
-            <button className="primary-button" disabled={!canGenerateFormalRecommendations || diagnosticCount === 0} onClick={() => navigate('recommendations')} type="button">
-              {decisionStatus.primaryActionLabel}
+            <button
+              aria-busy={recommendationEntryButton.ariaBusy}
+              className={recommendationEntryButton.className}
+              disabled={recommendationEntryButton.disabled}
+              onClick={() => navigate('recommendations')}
+              type="button"
+            >
+              {adQuantActionButtonContent(recommendationEntryButton)}
             </button>
           </div>
           {strategyError && <p className="blocked-line">AI 阶段分析失败：{strategyError}</p>}
@@ -1540,8 +1614,14 @@ export function AdQuantPage() {
               <button className="secondary-button" onClick={() => navigate('data-collection')} type="button">
                 返回数据采集
               </button>
-              <button className="primary-button" disabled={!canGenerateFormalRecommendations || diagnosticCount === 0} onClick={() => navigate('recommendations')} type="button">
-                {decisionStatus.primaryActionLabel}
+              <button
+                aria-busy={recommendationEntryButton.ariaBusy}
+                className={recommendationEntryButton.className}
+                disabled={recommendationEntryButton.disabled}
+                onClick={() => navigate('recommendations')}
+                type="button"
+              >
+                {adQuantActionButtonContent(recommendationEntryButton)}
               </button>
             </div>
           </div>

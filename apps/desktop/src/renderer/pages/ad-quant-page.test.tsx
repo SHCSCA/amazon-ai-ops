@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AiDiagnosisRunView, BusinessQuantDiagnostic, BusinessQuantTimeline } from '../types';
-import { adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, buildWasteRiskSpendTile, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
+import { adQuantActionButtonView, adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, buildWasteRiskSpendTile, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
 
 describe('strategyDiagnosisSourceLabel', () => {
   it('uses Chinese fallback copy for rule-based strategy diagnosis', () => {
@@ -257,6 +257,39 @@ describe('buildQuantAccountingLine', () => {
     expect(line).toContain('推广商品报表口径');
     expect(line).toContain('不跨批次');
     expect(line).toContain('不跨报表层级重复相加');
+  });
+});
+
+describe('adQuantActionButtonView', () => {
+  it('renders the active AI run button as an explicit busy control', () => {
+    const active = adQuantActionButtonView({
+      active: true,
+      baseClassName: 'secondary-button',
+      busyLabel: 'AI 分析中...',
+      idleLabel: '运行 AI 阶段分析',
+    });
+
+    expect(active.label).toBe('AI 分析中...');
+    expect(active.ariaBusy).toBe(true);
+    expect(active.disabled).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('button-loading');
+  });
+
+  it('locks peer actions during AI analysis without making them look active', () => {
+    const peer = adQuantActionButtonView({
+      active: false,
+      baseClassName: 'primary-button',
+      busyLabel: '转跳中...',
+      groupBusy: true,
+      idleLabel: '生成 AI+规则建议',
+    });
+
+    expect(peer.label).toBe('生成 AI+规则建议');
+    expect(peer.ariaBusy).toBeUndefined();
+    expect(peer.disabled).toBe(true);
+    expect(peer.showSpinner).toBe(false);
+    expect(peer.className).not.toContain('button-loading');
   });
 });
 
