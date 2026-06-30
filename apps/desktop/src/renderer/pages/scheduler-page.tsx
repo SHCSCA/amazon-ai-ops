@@ -55,6 +55,40 @@ function formatDate(value?: string): string {
 
 type SchedulerTaskPanelTone = 'ready' | 'pending' | 'warning' | 'blocked';
 
+interface SchedulerActionButtonInput {
+  active: boolean;
+  baseClassName: string;
+  label: string;
+  busyLabel: string;
+  disabled?: boolean;
+  groupBusy?: boolean;
+}
+
+export interface SchedulerActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function schedulerActionButtonView({
+  active,
+  baseClassName,
+  label,
+  busyLabel,
+  disabled = false,
+  groupBusy = false,
+}: SchedulerActionButtonInput): SchedulerActionButtonView {
+  return {
+    ariaBusy: active ? true : undefined,
+    className: [baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(disabled || active || groupBusy),
+    label: active ? busyLabel : label,
+    showSpinner: active,
+  };
+}
+
 export function buildSchedulerTaskPanelState(input: {
   tasks: ScheduledTaskView[];
   loading: boolean;
@@ -148,6 +182,7 @@ export function SchedulerPage() {
   const [message, setMessage] = useState('');
   const [pendingRunTask, setPendingRunTask] = useState<ScheduledTaskView | null>(null);
   const [runningTaskName, setRunningTaskName] = useState('');
+  const [togglingTaskName, setTogglingTaskName] = useState('');
 
   async function loadTasks(options: { clearMessage?: boolean } = {}) {
     setLoading(true);
@@ -165,11 +200,14 @@ export function SchedulerPage() {
   async function toggleTask(task: ScheduledTaskView) {
     try {
       setPendingRunTask(null);
+      setTogglingTaskName(task.name);
       await (window as any).electronAPI?.setTaskEnabled?.(task.name, !task.enabled);
       setMessage(`${taskLabel(task.name)} 已${task.enabled ? '停用' : '启用'}。`);
       await loadTasks({ clearMessage: false });
     } catch (caught) {
       setMessage(`更新任务失败：${toUserFacingError(caught, '更新任务失败。')}`);
+    } finally {
+      setTogglingTaskName('');
     }
   }
 
@@ -213,6 +251,21 @@ export function SchedulerPage() {
     message,
     pendingRunTask,
     runningTaskName,
+  });
+  const schedulerControlBusy = Boolean(loading || runningTaskName || togglingTaskName);
+  const refreshControlButton = schedulerActionButtonView({
+    active: loading && !runningTaskName && !togglingTaskName,
+    baseClassName: 'primary-button',
+    busyLabel: '正在刷新...',
+    groupBusy: schedulerControlBusy,
+    label: '刷新调度状态',
+  });
+  const confirmRunButton = schedulerActionButtonView({
+    active: Boolean(runningTaskName),
+    baseClassName: 'primary-button compact-button',
+    busyLabel: '执行中...',
+    groupBusy: schedulerControlBusy,
+    label: '确认触发',
   });
 
   return (
@@ -293,8 +346,9 @@ export function SchedulerPage() {
             ]}
           />
           <div className="action-row">
-            <button className="primary-button" disabled={loading} onClick={() => loadTasks()} type="button">
-              {loading ? '正在刷新' : '刷新调度状态'}
+            <button aria-busy={refreshControlButton.ariaBusy} className={refreshControlButton.className} disabled={refreshControlButton.disabled} onClick={() => loadTasks()} type="button">
+              {refreshControlButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{refreshControlButton.label}</span>
             </button>
           </div>
         </Panel>
@@ -355,19 +409,21 @@ export function SchedulerPage() {
               <div className="table-action-row">
                 <button
                   className="secondary-button compact-button"
-                  disabled={Boolean(runningTaskName)}
+                  disabled={schedulerControlBusy}
                   onClick={() => setPendingRunTask(null)}
                   type="button"
                 >
                   取消
                 </button>
                 <button
-                  className="primary-button compact-button"
-                  disabled={Boolean(runningTaskName)}
+                  aria-busy={confirmRunButton.ariaBusy}
+                  className={confirmRunButton.className}
+                  disabled={confirmRunButton.disabled}
                   onClick={confirmRunNow}
                   type="button"
                 >
-                  {runningTaskName ? '正在执行' : '确认触发'}
+                  {confirmRunButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                  <span>{confirmRunButton.label}</span>
                 </button>
               </div>
             </div>
@@ -386,32 +442,51 @@ export function SchedulerPage() {
                 </tr>
               </thead>
               <tbody>
-                {tasks.map((task) => (
-                  <tr key={task.name}>
-                    <td>
-                      <strong>{taskLabel(task.name)}</strong>
-                      <div className="muted-cell">{taskPurpose(task.name)}</div>
-                    </td>
-                    <td>
-                      <strong>{formatCronForOperator(task.cron)}</strong>
-                      {task.cron && <div className="muted-cell">Cron：{task.cron}</div>}
-                    </td>
-                    <td><StatusPill tone={task.enabled ? 'ready' : 'pending'}>{task.enabled ? '已启用' : '已停用'}</StatusPill></td>
-                    <td>{formatDate(task.nextRun)}</td>
-                    <td>{formatDate(task.lastRun)}</td>
-                    <td>{task.lastResult || '-'}</td>
-                    <td>
-                      <div className="table-action-row">
-                        <button className="secondary-button compact-button" onClick={() => toggleTask(task)} type="button">
-                          {task.enabled ? '停用' : '启用'}
-                        </button>
-                        <button className="secondary-button compact-button" onClick={() => requestRunNow(task)} type="button">
-                          立即执行
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {tasks.map((task) => {
+                  const toggleButton = schedulerActionButtonView({
+                    active: togglingTaskName === task.name,
+                    baseClassName: 'secondary-button compact-button',
+                    busyLabel: task.enabled ? '停用中...' : '启用中...',
+                    groupBusy: schedulerControlBusy,
+                    label: task.enabled ? '停用' : '启用',
+                  });
+                  const runNowButton = schedulerActionButtonView({
+                    active: runningTaskName === task.name,
+                    baseClassName: 'secondary-button compact-button',
+                    busyLabel: '执行中...',
+                    groupBusy: schedulerControlBusy,
+                    label: '立即执行',
+                  });
+
+                  return (
+                    <tr key={task.name}>
+                      <td>
+                        <strong>{taskLabel(task.name)}</strong>
+                        <div className="muted-cell">{taskPurpose(task.name)}</div>
+                      </td>
+                      <td>
+                        <strong>{formatCronForOperator(task.cron)}</strong>
+                        {task.cron && <div className="muted-cell">Cron：{task.cron}</div>}
+                      </td>
+                      <td><StatusPill tone={task.enabled ? 'ready' : 'pending'}>{task.enabled ? '已启用' : '已停用'}</StatusPill></td>
+                      <td>{formatDate(task.nextRun)}</td>
+                      <td>{formatDate(task.lastRun)}</td>
+                      <td>{task.lastResult || '-'}</td>
+                      <td>
+                        <div className="table-action-row">
+                          <button aria-busy={toggleButton.ariaBusy} className={toggleButton.className} disabled={toggleButton.disabled} onClick={() => toggleTask(task)} type="button">
+                            {toggleButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                            <span>{toggleButton.label}</span>
+                          </button>
+                          <button aria-busy={runNowButton.ariaBusy} className={runNowButton.className} disabled={runNowButton.disabled} onClick={() => requestRunNow(task)} type="button">
+                            {runNowButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                            <span>{runNowButton.label}</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {!tasks.length && (
                   <tr>
                     <td colSpan={7}>{loading ? '正在读取任务...' : '当前没有可显示的定时任务。'}</td>

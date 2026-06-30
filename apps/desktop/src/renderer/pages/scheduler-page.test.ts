@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSchedulerTaskPanelState, formatCronForOperator, taskPurpose } from './scheduler-page';
+import { buildSchedulerTaskPanelState, formatCronForOperator, schedulerActionButtonView, taskPurpose } from './scheduler-page';
 
 describe('taskPurpose', () => {
   it('describes recommendation generation as a review queue rather than only pending approval', () => {
@@ -73,6 +73,40 @@ describe('buildSchedulerTaskPanelState', () => {
       feedbackDetail: '立即执行失败：浏览器未登录。',
       feedbackTone: 'blocked',
     });
+  });
+});
+
+describe('schedulerActionButtonView', () => {
+  it('marks the active scheduler control as busy with spinner and aria state', () => {
+    const running = schedulerActionButtonView({
+      active: true,
+      baseClassName: 'secondary-button compact-button',
+      busyLabel: '停用中...',
+      label: '停用',
+    });
+
+    expect(running.label).toBe('停用中...');
+    expect(running.className).toContain('secondary-button compact-button');
+    expect(running.className).toContain('button-loading');
+    expect(running.disabled).toBe(true);
+    expect(running.ariaBusy).toBe(true);
+    expect(running.showSpinner).toBe(true);
+  });
+
+  it('locks peer scheduler controls without making them look like the running action', () => {
+    const locked = schedulerActionButtonView({
+      active: false,
+      baseClassName: 'secondary-button compact-button',
+      busyLabel: '启用中...',
+      groupBusy: true,
+      label: '启用',
+    });
+
+    expect(locked.label).toBe('启用');
+    expect(locked.disabled).toBe(true);
+    expect(locked.ariaBusy).toBeUndefined();
+    expect(locked.className).not.toContain('button-loading');
+    expect(locked.showSpinner).toBe(false);
   });
 });
 
