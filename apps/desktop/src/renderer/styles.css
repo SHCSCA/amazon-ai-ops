@@ -1031,6 +1031,10 @@ button:disabled {
   .data-import-table-row-refresh {
     animation: none;
   }
+
+  .checkbox-grid input[type="checkbox"]:checked {
+    animation: none;
+  }
 }
 
 .dashboard-task-metrics {
@@ -4628,6 +4632,34 @@ code {
   color: #33465c;
   font-size: 12px;
   font-weight: 700;
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast), background var(--motion-fast), color var(--motion-fast);
+  will-change: transform;
+}
+
+.checkbox-grid label:hover {
+  border-color: #9ebbe0;
+  background: #f8fbff;
+}
+
+.checkbox-grid label:focus-within {
+  border-color: rgba(37, 99, 235, 0.42);
+  background: #f8fbff;
+  box-shadow:
+    inset 3px 0 0 var(--primary),
+    0 0 0 2px rgb(37 99 235 / 0.12);
+}
+
+.checkbox-grid label:active {
+  transform: scale(0.98);
+}
+
+.checkbox-grid input[type="checkbox"] {
+  accent-color: var(--primary);
+}
+
+.checkbox-grid input[type="checkbox"]:checked {
+  animation: readback-checkbox-confirm 180ms ease-out;
+  box-shadow: 0 0 0 3px rgb(34 197 94 / 0.16);
 }
 
 .chip {
@@ -4638,6 +4670,20 @@ code {
   padding: 4px 8px;
   font-size: 12px;
   font-weight: 700;
+}
+
+@keyframes readback-checkbox-confirm {
+  0% {
+    transform: scale(0.88);
+  }
+
+  55% {
+    transform: scale(1.12);
+  }
+
+  100% {
+    transform: scale(1);
+  }
 }
 
 .chip-blocked {

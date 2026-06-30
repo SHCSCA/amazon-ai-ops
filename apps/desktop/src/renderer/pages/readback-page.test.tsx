@@ -149,6 +149,18 @@ describe('requiredMissing', () => {
   });
 });
 
+describe('readback safety checkbox feedback', () => {
+  it('gives approval and verification checkboxes visible confirmation feedback', () => {
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toMatch(/\.checkbox-grid label:focus-within[\s\S]*box-shadow:/);
+    expect(stylesheet).toMatch(/\.checkbox-grid label:active[\s\S]*transform:\s*scale\(0\.98\)/);
+    expect(stylesheet).toMatch(/\.checkbox-grid input\[type="checkbox"\]:checked[\s\S]*animation:\s*readback-checkbox-confirm/);
+    expect(stylesheet).toContain('@keyframes readback-checkbox-confirm');
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.checkbox-grid input\[type="checkbox"\]:checked[\s\S]*animation:\s*none/);
+  });
+});
+
 describe('groupMissing', () => {
   it('groups every readback verifier-aligned blocker so operators can see the recovery area', () => {
     const blockers = [
