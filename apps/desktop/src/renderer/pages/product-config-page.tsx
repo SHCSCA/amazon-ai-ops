@@ -37,6 +37,40 @@ type InlineSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 type ProductConfigMetricKey = 'grossCost' | 'margin' | 'targetAcos' | 'targetTacos';
 type ProductConfigMetricTone = 'ready' | 'warning' | 'blocked' | 'pending';
 
+interface ProductConfigActionButtonInput {
+  active: boolean;
+  baseClassName: string;
+  label: string;
+  busyLabel: string;
+  disabled?: boolean;
+  groupBusy?: boolean;
+}
+
+export interface ProductConfigActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function productConfigActionButtonView({
+  active,
+  baseClassName,
+  label,
+  busyLabel,
+  disabled = false,
+  groupBusy = false,
+}: ProductConfigActionButtonInput): ProductConfigActionButtonView {
+  return {
+    ariaBusy: active ? true : undefined,
+    className: [baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(disabled || active || groupBusy),
+    label: active ? busyLabel : label,
+    showSpinner: active,
+  };
+}
+
 const PRODUCT_COST_FIELD_LABELS: Record<ProductCostKey, string> = {
   purchaseCost: '采购成本',
   firstLegCost: '头程费用',
@@ -296,6 +330,34 @@ export function ProductConfigPage() {
     selectedCount: selectedBulkProducts.length,
     targetAcosPercent: bulkTargetAcosPercent,
     applying: bulkApplying,
+  });
+  const saveConfigButton = productConfigActionButtonView({
+    active: saving,
+    baseClassName: 'primary-button',
+    busyLabel: '保存中...',
+    disabled: !draft.asin.trim(),
+    label: '保存完整产品配置',
+  });
+  const operationEventsButton = productConfigActionButtonView({
+    active: false,
+    baseClassName: 'secondary-button',
+    busyLabel: '处理中...',
+    groupBusy: saving,
+    label: '补充运营事件',
+  });
+  const adQuantButton = productConfigActionButtonView({
+    active: false,
+    baseClassName: 'secondary-button',
+    busyLabel: '处理中...',
+    groupBusy: saving,
+    label: '进入广告量化',
+  });
+  const bulkApplyButton = productConfigActionButtonView({
+    active: bulkApplying,
+    baseClassName: 'primary-button',
+    busyLabel: '批量应用中...',
+    disabled: !bulkApplyState.canApply,
+    label: bulkApplyState.primaryActionLabel,
   });
   const allCurrentProductsSelected = currentScopeProducts.length > 0
     && currentScopeProducts.every((product) => selectedBulkKeySet.has(productConfigProductKey(product)));
@@ -660,11 +722,18 @@ export function ProductConfigPage() {
             </div>
           </div>
           <div className="action-row">
-            <button className="primary-button" disabled={saving || !draft.asin.trim()} onClick={save} type="button">
-              {saving ? '保存中...' : '保存完整产品配置'}
+            <button aria-busy={saveConfigButton.ariaBusy} className={saveConfigButton.className} disabled={saveConfigButton.disabled} onClick={save} type="button">
+              {saveConfigButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{saveConfigButton.label}</span>
             </button>
-            <button className="secondary-button" onClick={() => navigate('operation-events')} type="button">补充运营事件</button>
-            <button className="secondary-button" onClick={() => navigate('ad-quant')} type="button">进入广告量化</button>
+            <button aria-busy={operationEventsButton.ariaBusy} className={operationEventsButton.className} disabled={operationEventsButton.disabled} onClick={() => navigate('operation-events')} type="button">
+              {operationEventsButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{operationEventsButton.label}</span>
+            </button>
+            <button aria-busy={adQuantButton.ariaBusy} className={adQuantButton.className} disabled={adQuantButton.disabled} onClick={() => navigate('ad-quant')} type="button">
+              {adQuantButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{adQuantButton.label}</span>
+            </button>
           </div>
           {message && <p className="ready-line">{message}</p>}
           {error && <p className="blocked-line">{error}</p>}
@@ -691,13 +760,14 @@ export function ProductConfigPage() {
             </label>
             <StatusPill tone={bulkApplyState.statusTone}>{bulkApplyState.statusMessage}</StatusPill>
             <button
-              className="primary-button"
+              className={bulkApplyButton.className}
               type="button"
-              disabled={!bulkApplyState.canApply}
-              aria-busy={bulkApplying}
+              disabled={bulkApplyButton.disabled}
+              aria-busy={bulkApplyButton.ariaBusy}
               onClick={() => { void applyBulkTargetAcos(); }}
             >
-              {bulkApplyState.primaryActionLabel}
+              {bulkApplyButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{bulkApplyButton.label}</span>
             </button>
           </div>
           {bulkFeedback && (

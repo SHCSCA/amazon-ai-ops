@@ -3,6 +3,7 @@ import {
   buildProductConfigBulkApplyState,
   buildProductConfigBulkSaveInput,
   buildCostInputFromProduct,
+  productConfigActionButtonView,
   buildProductConfigTaskState,
   isProductConfigAutoSaveField,
   normalizeProductConfigAcosPercent,
@@ -100,6 +101,36 @@ describe('product config task and inline save feedback', () => {
     expect(productConfigInlineSaveLabel('targetAcos', 'saved')).toBe('目标 ACOS 已保存');
     expect(productConfigInlineSaveLabel('targetAcos', 'error')).toBe('目标 ACOS 保存失败');
     expect(productConfigInlineSaveLabel('targetAcos', 'idle')).toBe('');
+  });
+
+  it('gives direct save actions an explicit busy contract', () => {
+    const saving = productConfigActionButtonView({
+      active: true,
+      baseClassName: 'primary-button',
+      busyLabel: '保存中...',
+      label: '保存完整产品配置',
+    });
+
+    expect(saving.label).toBe('保存中...');
+    expect(saving.className).toContain('primary-button');
+    expect(saving.className).toContain('button-loading');
+    expect(saving.disabled).toBe(true);
+    expect(saving.ariaBusy).toBe(true);
+    expect(saving.showSpinner).toBe(true);
+
+    const lockedPeer = productConfigActionButtonView({
+      active: false,
+      baseClassName: 'secondary-button',
+      busyLabel: '处理中...',
+      groupBusy: true,
+      label: '进入广告量化',
+    });
+
+    expect(lockedPeer.label).toBe('进入广告量化');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.className).not.toContain('button-loading');
+    expect(lockedPeer.showSpinner).toBe(false);
   });
 
   it('nudges cost and target values with keyboard-safe bounds', () => {
