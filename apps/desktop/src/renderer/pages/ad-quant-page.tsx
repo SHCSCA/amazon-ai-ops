@@ -46,6 +46,8 @@ export interface StrategyRunFeedback {
   statusLabel: string;
   tone: StatusTone;
   className: string;
+  ariaBusy?: boolean;
+  radarVisible?: boolean;
   primaryAction?: StrategyRunFeedbackAction;
   secondaryAction?: StrategyRunFeedbackAction;
 }
@@ -216,7 +218,9 @@ export function buildStrategyRunFeedback(input: {
       detail: '正在调用模型、校验证据引用并生成阶段判断；完成或失败都会在这里显示。',
       statusLabel: '运行中',
       tone: 'pending',
-      className: feedbackClassName('pending'),
+      className: `${feedbackClassName('pending')} ad-quant-strategy-feedback-running`,
+      ariaBusy: true,
+      radarVisible: true,
     };
   }
   if (input.error) {
@@ -965,11 +969,19 @@ export function AdQuantPage() {
         </OperatorTaskPanel>
 
         {strategyRunFeedback.visible && (
-          <div className={strategyRunFeedback.className} id="ai-strategy-run-feedback">
-            <div>
-              <span>AI 运行反馈</span>
-              <strong>{strategyRunFeedback.title}</strong>
-              <p>{strategyRunFeedback.detail}</p>
+          <div className={strategyRunFeedback.className} id="ai-strategy-run-feedback" aria-busy={strategyRunFeedback.ariaBusy || undefined}>
+            <div className="ad-quant-strategy-feedback-main">
+              {strategyRunFeedback.radarVisible && (
+                <div className="ad-quant-strategy-radar" aria-hidden="true">
+                  <span />
+                  <i />
+                </div>
+              )}
+              <div>
+                <span>AI 运行反馈</span>
+                <strong>{strategyRunFeedback.title}</strong>
+                <p>{strategyRunFeedback.detail}</p>
+              </div>
             </div>
             <div className="collection-action-feedback-side">
               <StatusPill tone={strategyRunFeedback.tone}>{strategyRunFeedback.statusLabel}</StatusPill>

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AiDiagnosisRunView, BusinessQuantDiagnostic, BusinessQuantTimeline } from '../types';
 import { adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, buildWasteRiskSpendTile, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
@@ -148,6 +149,16 @@ describe('buildStrategyRunFeedback', () => {
     expect(feedback.title).toBe('AI 阶段分析运行中');
     expect(feedback.statusLabel).toBe('运行中');
     expect(feedback.detail).toContain('完成或失败都会在这里显示');
+    expect(feedback).toMatchObject({
+      ariaBusy: true,
+      radarVisible: true,
+    });
+    expect(feedback.className).toContain('ad-quant-strategy-feedback-running');
+
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    expect(css).toContain('.ad-quant-strategy-radar');
+    expect(css).toContain('@keyframes ad-quant-radar-sweep');
+    expect(css).toContain('@keyframes ad-quant-radar-pulse');
   });
 
   it('shows rule fallback as a completed AI run with a clear reason', () => {

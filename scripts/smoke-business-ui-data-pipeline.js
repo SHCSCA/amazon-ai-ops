@@ -1218,19 +1218,34 @@ async function main() {
   await expectVisible(page, '真实报表文件检查');
   await page.locator('summary').filter({ hasText: '真实报表文件检查' }).click();
   await expectVisible(page, '文件位置与用途');
-  await expectVisible(page, '选择要创建/下载的报表：已选 8/8');
+  await expectVisible(page, '选择要创建/下载的报表');
+  await expectVisible(page, '已选 8/8 类');
+  await expectVisible(page, '已选择 8 类报表，下载和重建只会作用于这些勾选项。');
+  const initialSelectionProgress = await page.locator('.collection-selection-progress').evaluate((element) => (
+    getComputedStyle(element).getPropertyValue('--collection-selection-progress').trim()
+  ));
+  if (initialSelectionProgress !== '100%') {
+    fail('Expected full report selection progress to be 100%', initialSelectionProgress);
+  }
   await expectVisible(page, '下载和重新创建只作用于当前勾选的报表；清空后不会自动恢复全选。');
   await expectVisible(page, '全选 8 类');
   await expectVisible(page, '只选缺失报表');
   await expectVisible(page, '只选未导入');
   await expectVisible(page, '清空');
   await page.getByRole('button', { name: '清空' }).click();
-  await expectVisible(page, '选择要创建/下载的报表：已选 0/8');
+  await expectVisible(page, '已选 0/8 类');
+  await expectVisible(page, '当前未选择报表；可一键选择 8 个缺失报表或 0 个待入库报表。');
+  const emptySelectionProgress = await page.locator('.collection-selection-progress').evaluate((element) => (
+    getComputedStyle(element).getPropertyValue('--collection-selection-progress').trim()
+  ));
+  if (emptySelectionProgress !== '0%') {
+    fail('Expected empty report selection progress to be 0%', emptySelectionProgress);
+  }
   if (!(await page.getByRole('button', { name: /下载已创建/ }).isDisabled())) {
     fail('Download-existing button should be disabled after clearing report selection');
   }
   await page.getByRole('button', { name: '全选 8 类' }).click();
-  await expectVisible(page, '选择要创建/下载的报表：已选 8/8');
+  await expectVisible(page, '已选 8/8 类');
   await page.locator('summary').filter({ hasText: '文件位置与用途' }).click();
   await expectVisible(page, '真实广告表格');
   await expectVisible(page, '采集清单');

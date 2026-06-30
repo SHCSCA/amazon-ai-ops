@@ -2080,6 +2080,62 @@ code {
   box-shadow: inset 3px 0 0 var(--green);
 }
 
+.ad-quant-strategy-feedback-running {
+  border-color: #b8ccf2;
+  background:
+    linear-gradient(90deg, rgb(37 99 235 / 0.08), transparent 38%),
+    #f8fbff;
+}
+
+.ad-quant-strategy-feedback-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.ad-quant-strategy-radar {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid #93c5fd;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, rgb(37 99 235 / 0.18) 0 2px, transparent 3px),
+    repeating-radial-gradient(circle at center, transparent 0 8px, rgb(37 99 235 / 0.13) 9px 10px),
+    #eff6ff;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.09);
+  contain: strict;
+}
+
+.ad-quant-strategy-radar::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: inherit;
+  background: conic-gradient(from 0deg, rgb(37 99 235 / 0.62), rgb(34 197 94 / 0.18), transparent 42%);
+  animation: ad-quant-radar-sweep 1100ms linear infinite;
+  transform-origin: center;
+}
+
+.ad-quant-strategy-radar span {
+  position: absolute;
+  inset: 12px;
+  border: 1px solid rgb(37 99 235 / 0.36);
+  border-radius: inherit;
+  animation: ad-quant-radar-pulse 1100ms ease-out infinite;
+}
+
+.ad-quant-strategy-radar i {
+  position: absolute;
+  inset: 19px;
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.18);
+}
+
 .collection-action-feedback span {
   display: block;
   color: var(--muted);
@@ -2351,6 +2407,39 @@ code {
   }
   to {
     background-position: 32px 0, 0 0;
+  }
+}
+
+@keyframes ad-quant-radar-sweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ad-quant-radar-pulse {
+  0% {
+    opacity: 0.75;
+    transform: scale(0.72);
+  }
+
+  75% {
+    opacity: 0;
+    transform: scale(1.65);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.65);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ad-quant-strategy-radar::before,
+  .ad-quant-strategy-radar span {
+    animation: none;
   }
 }
 
