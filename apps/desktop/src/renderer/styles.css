@@ -3405,6 +3405,38 @@ code {
   font-weight: 900;
 }
 
+.recommendation-selection-count {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 24px;
+  align-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: #fff;
+  padding: 3px 9px;
+  color: var(--text-main);
+  line-height: 1.1;
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast),
+    box-shadow var(--motion-fast),
+    transform var(--motion-fast);
+}
+
+.recommendation-selection-count-active {
+  border-color: var(--tone-ready-border);
+  box-shadow: 0 0 0 3px rgb(34 197 94 / 0.12);
+  animation: recommendation-selection-count-pop 180ms ease-out;
+}
+
+.recommendation-selection-live {
+  min-height: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
 .recommendation-selection-toolbar p {
   margin: 0;
   color: var(--text-muted);
@@ -3438,12 +3470,69 @@ code {
   height: 16px;
   accent-color: var(--accent);
   cursor: pointer;
+  transform-origin: center;
+  transition:
+    box-shadow var(--motion-fast),
+    opacity var(--motion-fast),
+    transform var(--motion-fast);
+}
+
+.business-table th input[type="checkbox"]:focus-visible,
+.business-table td input[type="checkbox"]:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.18);
+}
+
+.business-table th input[type="checkbox"]:active:not(:disabled),
+.business-table td input[type="checkbox"]:active:not(:disabled) {
+  transform: scale(0.9);
+}
+
+.business-table th input[type="checkbox"]:checked,
+.business-table td input[type="checkbox"]:checked {
+  animation: checkbox-confirm-pop 160ms ease-out;
 }
 
 .business-table th input[type="checkbox"]:disabled,
 .business-table td input[type="checkbox"]:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+@keyframes recommendation-selection-count-pop {
+  0% {
+    transform: translateY(0) scale(0.98);
+  }
+
+  55% {
+    transform: translateY(-1px) scale(1.03);
+  }
+
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes checkbox-confirm-pop {
+  0% {
+    transform: scale(0.86);
+  }
+
+  60% {
+    transform: scale(1.12);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recommendation-selection-count-active,
+  .business-table th input[type="checkbox"]:checked,
+  .business-table td input[type="checkbox"]:checked {
+    animation: none;
+  }
 }
 
 .approval-batch-handoff {

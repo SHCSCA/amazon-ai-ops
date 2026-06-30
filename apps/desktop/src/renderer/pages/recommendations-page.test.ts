@@ -530,6 +530,9 @@ describe('recommendationBatchSelectionState', () => {
       selectedCount: 0,
     })).toMatchObject({
       actionLabel: '等待可审批建议',
+      ariaStatus: '当前没有可批量送审的正式建议。',
+      countClassName: 'recommendation-selection-count',
+      countLabel: '0/0 项已选择',
       disabled: true,
       tone: 'blocked',
     });
@@ -541,6 +544,9 @@ describe('recommendationBatchSelectionState', () => {
       selectedCount: 0,
     })).toMatchObject({
       actionLabel: '批量提交 0/4 项到审批中心',
+      ariaStatus: '当前有 4 条可审批建议，尚未选择。',
+      countClassName: 'recommendation-selection-count',
+      countLabel: '0/4 项已选择',
       disabled: true,
       tone: 'pending',
     });
@@ -554,10 +560,24 @@ describe('recommendationBatchSelectionState', () => {
 
     expect(state).toMatchObject({
       actionLabel: '批量提交 3 项到审批中心',
+      ariaStatus: '已选择 3 条可审批建议，提交后仍需审批中心逐条确认。',
+      countClassName: 'recommendation-selection-count recommendation-selection-count-active',
+      countLabel: '3/4 项已选择',
       disabled: false,
       tone: 'ready',
     });
     expect(state.helperText).toContain('不执行广告动作');
+  });
+
+  it('defines checkbox and selected-count micro-response styles', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.recommendation-selection-count');
+    expect(css).toContain('recommendation-selection-count-pop');
+    expect(css).toContain('checkbox-confirm-pop');
+    expect(css).toMatch(/\.business-table th input\[type="checkbox"\]:checked,\s*\.business-table td input\[type="checkbox"\]:checked\s*\{[^}]*animation:\s*checkbox-confirm-pop/s);
+    expect(css).toMatch(/\.business-table th input\[type="checkbox"\]:focus-visible,\s*\.business-table td input\[type="checkbox"\]:focus-visible\s*\{[^}]*box-shadow:/s);
   });
 });
 

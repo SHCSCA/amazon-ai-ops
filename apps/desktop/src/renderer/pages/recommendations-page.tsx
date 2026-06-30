@@ -467,15 +467,25 @@ export function recommendationBatchSelectionState(input: {
   selectedCount: number;
 }): {
   actionLabel: string;
+  ariaStatus: string;
+  countClassName: string;
+  countLabel: string;
   helperText: string;
   disabled: boolean;
   tone: 'ready' | 'pending' | 'blocked';
 } {
   const selectableCount = Math.max(0, Number(input.selectableCount || 0));
-  const selectedCount = Math.max(0, Number(input.selectedCount || 0));
+  const selectedCount = Math.min(selectableCount, Math.max(0, Number(input.selectedCount || 0)));
+  const countLabel = `${selectedCount}/${selectableCount} 项已选择`;
+  const countClassName = selectedCount > 0
+    ? 'recommendation-selection-count recommendation-selection-count-active'
+    : 'recommendation-selection-count';
   if (selectableCount <= 0) {
     return {
       actionLabel: '等待可审批建议',
+      ariaStatus: '当前没有可批量送审的正式建议。',
+      countClassName,
+      countLabel,
       helperText: '当前建议池没有证据完整、可进入普通审批的动作。',
       disabled: true,
       tone: 'blocked',
@@ -484,6 +494,9 @@ export function recommendationBatchSelectionState(input: {
   if (selectedCount <= 0) {
     return {
       actionLabel: `批量提交 0/${selectableCount} 项到审批中心`,
+      ariaStatus: `当前有 ${selectableCount} 条可审批建议，尚未选择。`,
+      countClassName,
+      countLabel,
       helperText: '勾选可审批建议后，再批量带入审批中心逐条盖章。',
       disabled: true,
       tone: 'pending',
@@ -491,6 +504,9 @@ export function recommendationBatchSelectionState(input: {
   }
   return {
     actionLabel: `批量提交 ${selectedCount} 项到审批中心`,
+    ariaStatus: `已选择 ${selectedCount} 条可审批建议，提交后仍需审批中心逐条确认。`,
+    countClassName,
+    countLabel,
     helperText: `已选择 ${selectedCount}/${selectableCount} 条可审批建议；这里只传递审批上下文，不执行广告动作。`,
     disabled: false,
     tone: 'ready',
@@ -1727,7 +1743,12 @@ export function RecommendationsPage() {
           <div className={`recommendation-selection-toolbar recommendation-selection-toolbar-${batchSelectionState.tone}`}>
             <div>
               <span>批量审批准备</span>
-              <strong>{selectedVisibleFormalRecommendations.length}/{visibleFormalApprovalRecommendations.length} 项已选择</strong>
+              <strong key={batchSelectionState.countLabel} className={batchSelectionState.countClassName}>
+                {batchSelectionState.countLabel}
+              </strong>
+              <span className="recommendation-selection-live" aria-live="polite">
+                {batchSelectionState.ariaStatus}
+              </span>
               <p>{batchSelectionState.helperText}</p>
             </div>
             <div className="action-row">
