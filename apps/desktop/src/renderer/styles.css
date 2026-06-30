@@ -4055,6 +4055,11 @@ code {
   box-shadow: 0 0 0 2px rgb(37 99 235 / 0.10);
 }
 
+.listing-heatmap-keyword[aria-pressed="true"] {
+  border-color: var(--blue);
+  background: #eff6ff;
+}
+
 .listing-heatmap-keyword:active {
   transform: scale(0.98);
 }
@@ -4210,6 +4215,21 @@ code {
   box-shadow: 0 0 0 2px rgb(37 99 235 / 0.18);
 }
 
+.listing-heatmap-flash-a {
+  animation: listing-heatmap-focus-flash 260ms ease-out;
+}
+
+.listing-heatmap-flash-b {
+  animation: listing-heatmap-focus-flash 260ms ease-out;
+}
+
+.listing-heatmap-focus-status {
+  min-height: 18px;
+  border-radius: var(--radius);
+  background: #f8fbff;
+  padding: 6px 8px;
+}
+
 .listing-heatmap-diff-strip {
   display: grid;
   grid-template-columns: 48px minmax(0, 1fr);
@@ -4302,6 +4322,30 @@ code {
   50% {
     color: #7f1d1d;
     transform: translateY(-1px);
+  }
+}
+
+@keyframes listing-heatmap-focus-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgb(37 99 235 / 0.34);
+    filter: saturate(1);
+  }
+
+  48% {
+    box-shadow: 0 0 0 4px rgb(37 99 235 / 0.18);
+    filter: saturate(1.18);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgb(37 99 235 / 0);
+    filter: saturate(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .listing-heatmap-flash-a,
+  .listing-heatmap-flash-b {
+    animation: none;
   }
 }
 

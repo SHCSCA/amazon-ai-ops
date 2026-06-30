@@ -2,12 +2,16 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildListingHeatmapModel,
+  buildListingHeatmapFocusAnnouncement,
   buildListingTextDiffSegments,
   highlightListingTextSegments,
   listingCharacterLimitClass,
   listingDraftPanelClass,
   listingDraftGenerationMessage,
   listingDraftWorkspaceCopy,
+  listingHeatmapKeywordButtonClass,
+  listingHeatmapSectionClass,
+  listingHeatmapTokenClass,
   listingManualFieldGroups,
 } from './listing-optimization-page';
 
@@ -128,6 +132,41 @@ describe('buildListingHeatmapModel', () => {
       recommendedSection: '标题',
     });
   });
+
+  it('exposes production focus feedback when a keyword rail item is selected', () => {
+    const model = buildListingHeatmapModel({
+      keywords: ['wide toe box', 'trail runner'],
+      listing: {
+        asin: 'B0ABCDEF12',
+        title: 'Wide Toe Box Running Shoes',
+        bullets: ['Lightweight mesh upper'],
+        backendTerms: '',
+      },
+      drafts: [
+        {
+          asin: 'B0ABCDEF12',
+          section: 'bullet',
+          currentText: 'Lightweight mesh upper',
+          draftedText: 'Trail runner fit with wide toe box comfort',
+          keywords: ['trail runner', 'wide toe box'],
+          evidence: 'keyword opportunity',
+          riskWarnings: [],
+          source: 'rule',
+          status: 'pending',
+        },
+      ],
+    });
+
+    expect(buildListingHeatmapFocusAnnouncement(model, 'trail runner')).toContain(
+      '已聚焦 trail runner：五点 1 已命中，右侧命中区域已闪烁高亮。',
+    );
+    expect(listingHeatmapKeywordButtonClass('warning', true, true, 1)).toContain('listing-heatmap-keyword-active');
+    expect(listingHeatmapKeywordButtonClass('warning', true, true, 1)).toContain('listing-heatmap-flash-a');
+    expect(listingHeatmapSectionClass(true, true, 2)).toContain('listing-heatmap-section-active');
+    expect(listingHeatmapSectionClass(true, true, 2)).toContain('listing-heatmap-flash-b');
+    expect(listingHeatmapTokenClass(true, true, 1)).toContain('listing-heatmap-token-active');
+    expect(listingHeatmapTokenClass(true, true, 1)).toContain('listing-heatmap-flash-a');
+  });
 });
 
 describe('highlightListingTextSegments', () => {
@@ -186,6 +225,9 @@ describe('Listing draft diff and feedback contract', () => {
     expect(css).toContain('.listing-heatmap-draft-generating::after');
     expect(css).toContain('@keyframes listing-draft-skeleton');
     expect(css).toContain('@keyframes listing-limit-alert');
+    expect(css).toContain('@keyframes listing-heatmap-focus-flash');
+    expect(cssRule(css, '.listing-heatmap-flash-a')).toContain('animation: listing-heatmap-focus-flash');
+    expect(cssRule(css, '.listing-heatmap-keyword[aria-pressed="true"]')).toContain('border-color: var(--blue)');
     expect(css).toContain('animation: listing-limit-alert');
   });
 

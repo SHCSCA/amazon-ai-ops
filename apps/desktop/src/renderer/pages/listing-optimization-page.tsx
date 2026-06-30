@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
@@ -224,6 +224,41 @@ export function listingCharacterLimitClass(length: number, limit?: number): stri
   return `listing-heatmap-limit${limit && length > limit ? ' listing-heatmap-limit-over' : ''}`;
 }
 
+function listingHeatmapPulseClass(pulsing: boolean, pulseSerial: number): string {
+  if (!pulsing) return '';
+  return pulseSerial % 2 === 0 ? ' listing-heatmap-flash-b' : ' listing-heatmap-flash-a';
+}
+
+export function listingHeatmapKeywordButtonClass(
+  level: ListingHeatmapKeyword['level'],
+  active: boolean,
+  pulsing: boolean,
+  pulseSerial: number,
+): string {
+  return [
+    'listing-heatmap-keyword',
+    `listing-heatmap-keyword-${level}`,
+    active ? 'listing-heatmap-keyword-active' : '',
+    listingHeatmapPulseClass(active && pulsing, pulseSerial).trim(),
+  ].filter(Boolean).join(' ');
+}
+
+export function listingHeatmapSectionClass(activeHit: boolean, pulsing: boolean, pulseSerial: number): string {
+  return [
+    'listing-heatmap-section',
+    activeHit ? 'listing-heatmap-section-active' : '',
+    listingHeatmapPulseClass(activeHit && pulsing, pulseSerial).trim(),
+  ].filter(Boolean).join(' ');
+}
+
+export function listingHeatmapTokenClass(active: boolean, pulsing: boolean, pulseSerial: number): string {
+  return [
+    'listing-heatmap-token',
+    active ? 'listing-heatmap-token-active' : '',
+    listingHeatmapPulseClass(active && pulsing, pulseSerial).trim(),
+  ].filter(Boolean).join(' ');
+}
+
 function draftTextForSection(drafts: ListingDraftView[], section: ListingSection): string {
   return drafts.find((draft) => draft.section === section)?.draftedText || '';
 }
@@ -346,6 +381,18 @@ export function highlightListingTextSegments(text: string, activeKeyword: string
     segments.push({ text: text.slice(lastIndex), active: false });
   }
   return segments.length ? segments : [{ text, active: false }];
+}
+
+export function buildListingHeatmapFocusAnnouncement(model: ListingHeatmapModel, activeKeyword: string | null): string {
+  const keyword = normalizeHeatmapKeyword(activeKeyword || '');
+  if (!keyword) return '未选择词根。';
+  const hitSections = model.sections
+    .filter((section) => includesKeyword(section.currentText, keyword) || includesKeyword(section.draftText, keyword))
+    .map((section) => section.label);
+  if (!hitSections.length) {
+    return `已聚焦 ${keyword}：当前文本和本地草案均未命中，建议优先补入标题或五点。`;
+  }
+  return `已聚焦 ${keyword}：${Array.from(new Set(hitSections)).join('、')} 已命中，右侧命中区域已闪烁高亮。`;
 }
 
 export function listingDraftGenerationMessage(quantReady: boolean, drafts: Array<Partial<ListingDraftView>>): string {
@@ -543,8 +590,11 @@ export function ListingOptimizationPage() {
   const [handoffPayload, setHandoffPayload] = useState<ListingHandoffPayload | null>(null);
   const [aiStatus, setAiStatus] = useState<ListingAiStatus>(listingAiStatusFromSettings(null));
   const [activeHeatmapKeyword, setActiveHeatmapKeyword] = useState<string | null>(null);
+  const [heatmapPulseKeyword, setHeatmapPulseKeyword] = useState<string | null>(null);
+  const [heatmapPulseSerial, setHeatmapPulseSerial] = useState(0);
   const [loading, setLoading] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const heatmapPulseTimeoutRef = useRef<number | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id || data?.scope.batchId;
 
   useEffect(() => {
@@ -625,6 +675,12 @@ export function ListingOptimizationPage() {
   const selectedHeatmapKeyword = activeHeatmapKeyword && heatmapKeywordNames.includes(activeHeatmapKeyword)
     ? activeHeatmapKeyword
     : heatmapKeywordNames[0] || null;
+  const pulsingHeatmapKeyword = heatmapPulseKeyword && heatmapPulseKeyword === selectedHeatmapKeyword
+    ? heatmapPulseKeyword
+    : null;
+  const heatmapFocusAnnouncement = selectedHeatmapKeyword
+    ? buildListingHeatmapFocusAnnouncement(heatmapModel, selectedHeatmapKeyword)
+    : '';
   const expectedAsin = (handoffPayload?.asin || scope.asin || '').trim().toUpperCase();
   const listingAsin = (listing?.asin || '').trim().toUpperCase();
   const readScopeStore = readEvidence?.scope?.storeName || '';
@@ -736,6 +792,30 @@ export function ListingOptimizationPage() {
     setActiveHeatmapKeyword(heatmapKeywordNames[0] || null);
   }, [activeHeatmapKeyword, heatmapKeywordNames]);
 
+  useEffect(() => {
+    if (!heatmapPulseKeyword || heatmapKeywordNames.includes(heatmapPulseKeyword)) return;
+    setHeatmapPulseKeyword(null);
+  }, [heatmapPulseKeyword, heatmapKeywordNames]);
+
+  useEffect(() => () => {
+    if (heatmapPulseTimeoutRef.current) {
+      window.clearTimeout(heatmapPulseTimeoutRef.current);
+    }
+  }, []);
+
+  function focusHeatmapKeyword(keyword: string) {
+    setActiveHeatmapKeyword(keyword);
+    setHeatmapPulseKeyword(keyword);
+    setHeatmapPulseSerial((serial) => serial + 1);
+    if (heatmapPulseTimeoutRef.current) {
+      window.clearTimeout(heatmapPulseTimeoutRef.current);
+    }
+    heatmapPulseTimeoutRef.current = window.setTimeout(() => {
+      setHeatmapPulseKeyword((current) => (current === keyword ? null : current));
+      heatmapPulseTimeoutRef.current = null;
+    }, 360);
+  }
+
   async function loadListingVersions(asin: string) {
     const api = (window as any).electronAPI;
     if (!api?.listListingContentVersions || !asin.trim()) return;
@@ -822,7 +902,7 @@ export function ListingOptimizationPage() {
     );
   }
 
-  function renderHeatmapSegments(text: string, activeKeyword: string | null) {
+  function renderHeatmapSegments(text: string, activeKeyword: string | null, pulsing: boolean) {
     const segments = highlightListingTextSegments(text || '-', activeKeyword, heatmapKeywordNames);
     return segments.map((segment, index) => {
       if (!segment.matchedKeyword) {
@@ -830,7 +910,7 @@ export function ListingOptimizationPage() {
       }
       return (
         <mark
-          className={`listing-heatmap-token ${segment.active ? 'listing-heatmap-token-active' : ''}`}
+          className={listingHeatmapTokenClass(segment.active, pulsing && segment.active, heatmapPulseSerial)}
           key={`${index}-${segment.matchedKeyword}`}
         >
           {segment.text}
@@ -1320,9 +1400,15 @@ export function ListingOptimizationPage() {
               </div>
               {heatmapModel.keywords.length ? heatmapModel.keywords.map((item) => (
                 <button
-                  className={`listing-heatmap-keyword listing-heatmap-keyword-${item.level} ${selectedHeatmapKeyword === item.keyword ? 'listing-heatmap-keyword-active' : ''}`}
+                  aria-pressed={selectedHeatmapKeyword === item.keyword}
+                  className={listingHeatmapKeywordButtonClass(
+                    item.level,
+                    selectedHeatmapKeyword === item.keyword,
+                    pulsingHeatmapKeyword === item.keyword,
+                    heatmapPulseSerial,
+                  )}
                   key={item.keyword}
-                  onClick={() => setActiveHeatmapKeyword(item.keyword)}
+                  onClick={() => focusHeatmapKeyword(item.keyword)}
                   type="button"
                 >
                   <span>{item.keyword}</span>
@@ -1339,11 +1425,12 @@ export function ListingOptimizationPage() {
                   includesKeyword(section.currentText, selectedHeatmapKeyword)
                   || includesKeyword(section.draftText, selectedHeatmapKeyword)
                 ));
+                const pulsingSection = Boolean(activeHit && pulsingHeatmapKeyword);
                 const diff = buildListingTextDiffSegments(section.currentText, section.draftText);
                 const draftLength = section.draftText.length;
                 const draftGenerating = loading === 'draft';
                 return (
-                  <section className={`listing-heatmap-section ${activeHit ? 'listing-heatmap-section-active' : ''}`} key={section.key}>
+                  <section className={listingHeatmapSectionClass(activeHit, pulsingSection, heatmapPulseSerial)} key={section.key}>
                     <div className="listing-heatmap-section-head">
                       <div>
                         <span>{section.label}</span>
@@ -1356,11 +1443,11 @@ export function ListingOptimizationPage() {
                     <div className="listing-heatmap-text-grid">
                       <div>
                         <span>线上原文</span>
-                        <p>{renderHeatmapSegments(section.currentText, selectedHeatmapKeyword)}</p>
+                        <p>{renderHeatmapSegments(section.currentText, selectedHeatmapKeyword, pulsingSection)}</p>
                       </div>
                       <div className={listingDraftPanelClass(draftGenerating)} aria-busy={draftGenerating}>
                         <span>本地草案 / 复核文本</span>
-                        <p>{renderHeatmapSegments(section.draftText, selectedHeatmapKeyword)}</p>
+                        <p>{renderHeatmapSegments(section.draftText, selectedHeatmapKeyword, pulsingSection)}</p>
                         {section.charLimit && (
                           <small className={listingCharacterLimitClass(draftLength, section.charLimit)}>
                             {draftLength} / {section.charLimit}
@@ -1375,8 +1462,8 @@ export function ListingOptimizationPage() {
             </div>
           </div>
           {selectedHeatmapKeyword && (
-            <p className="muted-line">
-              当前聚焦：{selectedHeatmapKeyword}。{heatmapModel.keywords.find((item) => item.keyword === selectedHeatmapKeyword)?.evidence || '暂无命中证据。'}
+            <p aria-atomic="true" aria-live="polite" className="muted-line listing-heatmap-focus-status">
+              {heatmapFocusAnnouncement} {heatmapModel.keywords.find((item) => item.keyword === selectedHeatmapKeyword)?.evidence || '暂无命中证据。'}
             </p>
           )}
         </Panel>
