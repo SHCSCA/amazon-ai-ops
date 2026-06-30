@@ -187,6 +187,31 @@ export function operationEventInlineSaveButtonView(input: OperationEventInlineSa
   };
 }
 
+export function operationEventRefreshButtonView(loading: boolean): OperationEventInlineSaveButtonView {
+  return {
+    ariaBusy: loading ? true : undefined,
+    className: ['secondary-button', loading ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: loading,
+    label: loading ? '刷新中...' : '刷新',
+    showSpinner: loading,
+  };
+}
+
+export function operationEventRowDeleteButtonView(input: {
+  eventId: number;
+  deletingEventId?: number | null;
+}): OperationEventInlineSaveButtonView {
+  const active = input.deletingEventId === input.eventId;
+  const locked = input.deletingEventId != null;
+  return {
+    ariaBusy: active ? true : undefined,
+    className: ['secondary-button compact-button', active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: locked,
+    label: active ? '删除中...' : '删除',
+    showSpinner: active,
+  };
+}
+
 export function operationEventFormClassName(recentlyCleared: boolean): string {
   return recentlyCleared ? 'operation-event-form operation-event-form-cleared' : 'operation-event-form';
 }
@@ -253,6 +278,7 @@ export function OperationEventsPage() {
   const [message, setMessage] = useState('');
   const [recentSavedEventId, setRecentSavedEventId] = useState<number | null>(null);
   const [recentDraftClearTick, setRecentDraftClearTick] = useState<number | null>(null);
+  const [deletingEventId, setDeletingEventId] = useState<number | null>(null);
 
   const visibleEvents = useMemo(
     () => filterOperationEventsForView(events, viewMode, scope.asin),
@@ -286,6 +312,7 @@ export function OperationEventsPage() {
     canSave: canSaveEvent,
     saving,
   });
+  const refreshButton = operationEventRefreshButtonView(loading);
 
   function applyPreset(preset: (typeof EVENT_PRESETS)[number]) {
     setDraft({
@@ -366,14 +393,18 @@ export function OperationEventsPage() {
   }
 
   async function deleteEvent(id: number) {
+    if (deletingEventId != null) return;
+    setDeletingEventId(id);
     setError('');
-    setMessage('');
+    setMessage('正在删除运营事件...');
     try {
       await (window as any).electronAPI.deleteOperationEvent(id);
       setMessage('运营事件已删除。');
       await loadEvents();
     } catch (caught) {
       setError(toUserFacingError(caught, '删除运营事件失败'));
+    } finally {
+      setDeletingEventId(null);
     }
   }
 
@@ -620,7 +651,18 @@ export function OperationEventsPage() {
               {inlineSaveButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
               <span>{inlineSaveButton.label}</span>
             </button>
-            <button className="secondary-button" onClick={loadEvents} type="button">刷新</button>
+            <button
+              aria-busy={refreshButton.ariaBusy}
+              className={refreshButton.className}
+              disabled={refreshButton.disabled}
+              onClick={() => {
+                void loadEvents();
+              }}
+              type="button"
+            >
+              {refreshButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+              <span>{refreshButton.label}</span>
+            </button>
           </div>
           {message && <p className="ready-line">{message}</p>}
           {error && <p className="blocked-line">{error}</p>}
@@ -636,23 +678,37 @@ export function OperationEventsPage() {
               <div className="event-day" key={date}>
                 <div className="event-day-date">{date}</div>
                 <div className="event-cards">
-                  {rows.map((event) => (
-                    <article className={operationEventCardClassName(event.id, recentSavedEventId)} key={event.id}>
-                      <div className="event-card-title">
-                        <strong>{event.title}</strong>
-                        <StatusPill tone="pending">{formatEventType(event.eventType)}</StatusPill>
-                        <StatusPill tone={operationEventScopeLabel(event, scope.asin) === '全局' ? 'pending' : 'ready'}>
-                          {operationEventScopeLabel(event, scope.asin)}
-                        </StatusPill>
-                      </div>
-                      <p>{formatImpact(event.impactExpectation)} / {formatEventScope(event)}</p>
-                      {event.notes && <p className="muted-line">{event.notes}</p>}
-                      {event.evidencePath && <p className="mono-line">{event.evidencePath}</p>}
-                      <div className="action-row">
-                        <button className="secondary-button compact-button" onClick={() => deleteEvent(event.id)} type="button">删除</button>
-                      </div>
-                    </article>
-                  ))}
+                  {rows.map((event) => {
+                    const deleteButton = operationEventRowDeleteButtonView({ eventId: event.id, deletingEventId });
+                    return (
+                      <article className={operationEventCardClassName(event.id, recentSavedEventId)} key={event.id}>
+                        <div className="event-card-title">
+                          <strong>{event.title}</strong>
+                          <StatusPill tone="pending">{formatEventType(event.eventType)}</StatusPill>
+                          <StatusPill tone={operationEventScopeLabel(event, scope.asin) === '全局' ? 'pending' : 'ready'}>
+                            {operationEventScopeLabel(event, scope.asin)}
+                          </StatusPill>
+                        </div>
+                        <p>{formatImpact(event.impactExpectation)} / {formatEventScope(event)}</p>
+                        {event.notes && <p className="muted-line">{event.notes}</p>}
+                        {event.evidencePath && <p className="mono-line">{event.evidencePath}</p>}
+                        <div className="action-row">
+                          <button
+                            aria-busy={deleteButton.ariaBusy}
+                            className={deleteButton.className}
+                            disabled={deleteButton.disabled}
+                            onClick={() => {
+                              void deleteEvent(event.id);
+                            }}
+                            type="button"
+                          >
+                            {deleteButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                            <span>{deleteButton.label}</span>
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               </div>
             ))}

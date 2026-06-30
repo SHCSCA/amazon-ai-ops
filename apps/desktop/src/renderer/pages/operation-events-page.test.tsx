@@ -9,6 +9,8 @@ import {
   operationEventFormClassName,
   operationEventInlineSaveButtonView,
   operationEventInlineSaveLabel,
+  operationEventRefreshButtonView,
+  operationEventRowDeleteButtonView,
   operationEventScopeLabel,
 } from './operation-events-page';
 import type { OperationEventView, OperationScope } from '../types';
@@ -119,6 +121,33 @@ describe('operation events page product/global views', () => {
     expect(unavailable.ariaBusy).toBeUndefined();
     expect(unavailable.className).not.toContain('button-loading');
     expect(unavailable.showSpinner).toBe(false);
+  });
+
+  it('gives refresh and delete actions explicit busy feedback', () => {
+    const refreshing = operationEventRefreshButtonView(true);
+    expect(refreshing.label).toBe('刷新中...');
+    expect(refreshing.className).toContain('button-loading');
+    expect(refreshing.disabled).toBe(true);
+    expect(refreshing.ariaBusy).toBe(true);
+    expect(refreshing.showSpinner).toBe(true);
+
+    const idleRefresh = operationEventRefreshButtonView(false);
+    expect(idleRefresh.label).toBe('刷新');
+    expect(idleRefresh.className).not.toContain('button-loading');
+    expect(idleRefresh.ariaBusy).toBeUndefined();
+
+    const deleting = operationEventRowDeleteButtonView({ eventId: 42, deletingEventId: 42 });
+    expect(deleting.label).toBe('删除中...');
+    expect(deleting.className).toContain('button-loading');
+    expect(deleting.disabled).toBe(true);
+    expect(deleting.ariaBusy).toBe(true);
+    expect(deleting.showSpinner).toBe(true);
+
+    const lockedPeer = operationEventRowDeleteButtonView({ eventId: 41, deletingEventId: 42 });
+    expect(lockedPeer.label).toBe('删除');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.className).not.toContain('button-loading');
   });
 
   it('marks the event form as cleared for a short optimistic rebound response', () => {
