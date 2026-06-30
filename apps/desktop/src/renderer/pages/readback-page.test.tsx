@@ -16,6 +16,7 @@ import {
   readbackActionButtonView,
   readbackContractChecks,
   readbackCopyCommandButtonView,
+  readbackOpenPathButtonView,
   readbackRepairFieldClass,
   readbackPrecheckCopy,
   readbackSessionSummary,
@@ -291,6 +292,34 @@ describe('readbackCopyCommandButtonView', () => {
     });
 
     expect(lockedPeer.label).toBe('复制检查工作包命令');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.showSpinner).toBe(false);
+    expect(lockedPeer.className).not.toContain('button-loading');
+  });
+});
+
+describe('readbackOpenPathButtonView', () => {
+  it('gives readback local path buttons explicit opening feedback and locks peers', () => {
+    const active = readbackOpenPathButtonView({
+      activePathKey: '打开工作包:C:/session',
+      idleLabel: '打开工作包',
+      pathKey: '打开工作包:C:/session',
+    });
+
+    expect(active.label).toBe('打开中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('button-loading');
+
+    const lockedPeer = readbackOpenPathButtonView({
+      activePathKey: '打开工作包:C:/session',
+      idleLabel: '打开填写文件',
+      pathKey: '打开填写文件:C:/session/session-input.json',
+    });
+
+    expect(lockedPeer.label).toBe('打开填写文件');
     expect(lockedPeer.disabled).toBe(true);
     expect(lockedPeer.ariaBusy).toBeUndefined();
     expect(lockedPeer.showSpinner).toBe(false);

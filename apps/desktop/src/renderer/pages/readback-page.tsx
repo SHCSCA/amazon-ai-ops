@@ -81,6 +81,27 @@ export function readbackCopyCommandButtonView(input: ReadbackCopyCommandButtonIn
   };
 }
 
+export function readbackPathActionKey(label: string, targetPath?: string): string {
+  return targetPath ? `${label}:${targetPath}` : '';
+}
+
+export function readbackOpenPathButtonView(input: {
+  activePathKey: string | null;
+  baseClassName?: string;
+  disabled?: boolean;
+  idleLabel: string;
+  pathKey: string;
+}): ReadbackActionButtonView {
+  const active = Boolean(input.activePathKey && input.activePathKey === input.pathKey);
+  return {
+    ariaBusy: active ? true : undefined,
+    className: [input.baseClassName || 'secondary-button', active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || input.activePathKey || !input.pathKey),
+    label: active ? '打开中...' : input.idleLabel,
+    showSpinner: active,
+  };
+}
+
 function readbackActionBusyLabel(action: ReadbackActionKey): string {
   const labels: Record<ReadbackActionKey, string> = {
     'export-evidence': '导出中...',
@@ -960,6 +981,7 @@ export function ReadbackPage() {
   const [capturePreviews, setCapturePreviews] = useState<Partial<Record<ReadbackCaptureSlot, string>>>({});
   const [readbackActionBusy, setReadbackActionBusy] = useState<ReadbackActionKey | null>(null);
   const [copyCommandBusy, setCopyCommandBusy] = useState<ReadbackCopyCommandKey | null>(null);
+  const [pathOpenKey, setPathOpenKey] = useState<string | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const missing = useMemo(() => requiredMissing(form, currentBatchId), [currentBatchId, form]);
   const sourceBatchMatches = Boolean(form.sourceBatchId && currentBatchId && form.sourceBatchId === currentBatchId);
@@ -1010,6 +1032,31 @@ export function ReadbackPage() {
       disabled: Boolean(readbackActionBusy && readbackActionBusy !== 'export-evidence'),
     };
   })();
+  const exportOpenPath = exportResult?.jsonPath || exportResult?.markdownPath || '';
+  const openExportButton = readbackOpenPathButtonView({
+    activePathKey: pathOpenKey,
+    disabled: !exportOpenPath,
+    idleLabel: '打开导出文件',
+    pathKey: readbackPathActionKey('打开导出文件', exportOpenPath),
+  });
+  const openSessionPacketButton = readbackOpenPathButtonView({
+    activePathKey: pathOpenKey,
+    disabled: !sessionResult?.sessionDir,
+    idleLabel: '打开工作包',
+    pathKey: readbackPathActionKey('打开工作包', sessionResult?.sessionDir),
+  });
+  const openSessionInputFileButton = readbackOpenPathButtonView({
+    activePathKey: pathOpenKey,
+    disabled: !sessionResult?.sessionInputPath,
+    idleLabel: '打开填写文件',
+    pathKey: readbackPathActionKey('打开填写文件', sessionResult?.sessionInputPath),
+  });
+  const openSessionInputGuideButton = readbackOpenPathButtonView({
+    activePathKey: pathOpenKey,
+    disabled: !sessionResult?.sessionInputGuidePath,
+    idleLabel: '打开填写说明',
+    pathKey: readbackPathActionKey('打开填写说明', sessionResult?.sessionInputGuidePath),
+  });
 
   function update(patch: Partial<ReadbackFormState>, options: { preserveSession?: boolean } = {}) {
     setForm((current) => ({ ...current, ...patch }));
@@ -1237,10 +1284,24 @@ export function ReadbackPage() {
     });
   }
 
-  async function openExport() {
-    const targetPath = exportResult?.jsonPath || exportResult?.markdownPath;
+  async function openReadbackPath(targetPath?: string, label = '打开路径') {
     if (!targetPath) return;
-    await (window as any).electronAPI?.openReportPath?.(targetPath);
+    if (pathOpenKey) return;
+    const key = readbackPathActionKey(label, targetPath);
+    setPathOpenKey(key);
+    setCopyNotice(`${label}打开中...`);
+    try {
+      await (window as any).electronAPI?.openReportPath?.(targetPath);
+      setCopyNotice(`${label}已请求打开。`);
+    } catch (caught) {
+      setCopyNotice(toUserFacingError(caught, `${label}打开失败。`));
+    } finally {
+      setPathOpenKey(null);
+    }
+  }
+
+  async function openExport() {
+    await openReadbackPath(exportOpenPath, '打开导出文件');
   }
 
   async function prepareSessionPacket() {
@@ -1264,21 +1325,15 @@ export function ReadbackPage() {
   }
 
   async function openSessionPacket() {
-    const sessionDir = sessionResult?.sessionDir;
-    if (!sessionDir) return;
-    await (window as any).electronAPI?.openReportPath?.(sessionDir);
+    await openReadbackPath(sessionResult?.sessionDir, '打开工作包');
   }
 
   async function openSessionInputFile() {
-    const sessionInputPath = sessionResult?.sessionInputPath;
-    if (!sessionInputPath) return;
-    await (window as any).electronAPI?.openReportPath?.(sessionInputPath);
+    await openReadbackPath(sessionResult?.sessionInputPath, '打开填写文件');
   }
 
   async function openSessionInputGuide() {
-    const sessionInputGuidePath = sessionResult?.sessionInputGuidePath;
-    if (!sessionInputGuidePath) return;
-    await (window as any).electronAPI?.openReportPath?.(sessionInputGuidePath);
+    await openReadbackPath(sessionResult?.sessionInputGuidePath, '打开填写说明');
   }
 
   async function verifySessionPacket() {
@@ -1761,7 +1816,9 @@ export function ReadbackPage() {
                   )}
                 </div>
                 <div className="action-row">
-                  <button className="secondary-button" disabled={!exportResult} onClick={openExport} type="button">打开导出文件</button>
+                  <button aria-busy={openExportButton.ariaBusy} className={openExportButton.className} disabled={openExportButton.disabled} onClick={openExport} type="button">
+                    {readbackActionButtonContent(openExportButton)}
+                  </button>
                 </div>
               </div>
               <p className="muted-line">
@@ -1810,14 +1867,14 @@ export function ReadbackPage() {
                 <button aria-busy={prepareSessionButton.ariaBusy} className={prepareSessionButton.className} disabled={prepareSessionButton.disabled} onClick={prepareSessionPacket} type="button">
                   {readbackActionButtonContent(prepareSessionButton)}
                 </button>
-                <button className="secondary-button" disabled={!sessionResult?.sessionDir} onClick={openSessionPacket} type="button">
-                  打开工作包
+                <button aria-busy={openSessionPacketButton.ariaBusy} className={openSessionPacketButton.className} disabled={openSessionPacketButton.disabled} onClick={openSessionPacket} type="button">
+                  {readbackActionButtonContent(openSessionPacketButton)}
                 </button>
-                <button className="secondary-button" disabled={!sessionResult?.sessionInputPath} onClick={openSessionInputFile} type="button">
-                  打开填写文件
+                <button aria-busy={openSessionInputFileButton.ariaBusy} className={openSessionInputFileButton.className} disabled={openSessionInputFileButton.disabled} onClick={openSessionInputFile} type="button">
+                  {readbackActionButtonContent(openSessionInputFileButton)}
                 </button>
-                <button className="secondary-button" disabled={!sessionResult?.sessionInputGuidePath} onClick={openSessionInputGuide} type="button">
-                  打开填写说明
+                <button aria-busy={openSessionInputGuideButton.ariaBusy} className={openSessionInputGuideButton.className} disabled={openSessionInputGuideButton.disabled} onClick={openSessionInputGuide} type="button">
+                  {readbackActionButtonContent(openSessionInputGuideButton)}
                 </button>
                 <button aria-busy={verifySessionButton.ariaBusy} className={verifySessionButton.className} disabled={verifySessionButton.disabled} onClick={verifySessionPacket} type="button">
                   {readbackActionButtonContent(verifySessionButton)}
