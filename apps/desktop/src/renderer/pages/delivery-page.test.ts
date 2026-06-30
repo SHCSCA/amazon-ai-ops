@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
+import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
 
 describe('buildDeliveryOverviewFacts', () => {
   it('keeps the delivery first screen to short operator facts instead of long manifest paths', () => {
@@ -178,6 +178,33 @@ describe('deliveryActionButtonView', () => {
     expect(lockedPeer.ariaBusy).toBeUndefined();
     expect(lockedPeer.showSpinner).toBe(false);
     expect(lockedPeer.className).not.toContain('button-loading');
+  });
+});
+
+describe('deliveryCopySummaryActionView', () => {
+  it('gives the delivery summary copy action its own busy feedback contract', () => {
+    const onClick = () => undefined;
+    const active = deliveryCopySummaryActionView({
+      copying: true,
+      onClick,
+    });
+
+    expect(active.label).toBe('复制摘要');
+    expect(active.busy).toBe(true);
+    expect(active.busyLabel).toBe('复制中...');
+    expect(active.disabled).toBe(true);
+    expect(active.onClick).toBe(onClick);
+
+    const lockedByDeliveryAction = deliveryCopySummaryActionView({
+      copying: false,
+      disabled: true,
+      onClick,
+    });
+
+    expect(lockedByDeliveryAction.label).toBe('复制摘要');
+    expect(lockedByDeliveryAction.busy).toBe(false);
+    expect(lockedByDeliveryAction.busyLabel).toBe('复制中...');
+    expect(lockedByDeliveryAction.disabled).toBe(true);
   });
 });
 

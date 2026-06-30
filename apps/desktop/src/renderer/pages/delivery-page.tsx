@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
+import { OperatorTaskPanel, type OperatorTaskAction } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput } from '../delivery-readiness-matrix';
@@ -130,6 +130,22 @@ export function deliveryActionButtonView(input: DeliveryActionButtonInput): Deli
     disabled: Boolean(input.disabled || input.activeAction),
     label: isActive ? input.busyLabel : input.idleLabel,
     showSpinner: isActive,
+  };
+}
+
+interface DeliveryCopySummaryActionInput {
+  copying: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}
+
+export function deliveryCopySummaryActionView(input: DeliveryCopySummaryActionInput): OperatorTaskAction {
+  return {
+    label: '复制摘要',
+    onClick: input.onClick,
+    busy: input.copying,
+    busyLabel: '复制中...',
+    disabled: Boolean(input.copying || input.disabled),
   };
 }
 
@@ -593,6 +609,7 @@ export function DeliveryPage() {
   const [readbackEvidenceVerify, setReadbackEvidenceVerify] = useState<ReadbackEvidenceVerifyResult | null>(null);
   const [exportedBundlePath, setExportedBundlePath] = useState('');
   const [deliveryActionBusy, setDeliveryActionBusy] = useState<DeliveryActionKey | null>(null);
+  const [copySummaryBusy, setCopySummaryBusy] = useState(false);
 
   const apiSurface = useMemo(() => api(), []);
   const canOpenPath = typeof apiSurface.openReportPath === 'function';
@@ -669,7 +686,11 @@ export function DeliveryPage() {
       busyLabel: deliveryActionBusyLabel('refresh-final'),
       disabled: Boolean(deliveryActionBusy && deliveryActionBusy !== 'refresh-final'),
     }]),
-    { label: '复制摘要', onClick: copySummary, disabled: Boolean(deliveryActionBusy) },
+    deliveryCopySummaryActionView({
+      copying: copySummaryBusy,
+      disabled: Boolean(deliveryActionBusy),
+      onClick: copySummary,
+    }),
   ].slice(0, 2);
   const primaryTaskBusyKey: DeliveryActionKey | null = deliveryPrimaryAction.kind === 'export'
     ? 'export-bundle'
@@ -1016,6 +1037,7 @@ export function DeliveryPage() {
   }
 
   async function copySummary() {
+    if (copySummaryBusy) return;
     const summary = [
       `交付状态：${deliveryTaskTitle}`,
       `范围：${summarizeScope(data, scope)}`,
@@ -1028,11 +1050,15 @@ export function DeliveryPage() {
       `最终验收汇总：${finalManifestPath || '最终验收汇总尚未生成'}`,
       `安装包：${packageSummary}`,
     ].join('\n');
+    setCopySummaryBusy(true);
+    setMessage('正在复制交付摘要...');
     try {
       await navigator.clipboard.writeText(summary);
       setMessage('交付摘要已复制。');
     } catch (caught) {
       setMessage(toUserFacingError(caught, '复制交付摘要失败。'));
+    } finally {
+      setCopySummaryBusy(false);
     }
   }
 

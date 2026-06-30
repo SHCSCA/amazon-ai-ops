@@ -33,6 +33,8 @@ export type ReadbackActionKey =
   | 'verify-evidence'
   | 'verify-session';
 
+export type ReadbackCopyCommandKey = 'fill' | 'long-fill' | 'prepare' | 'verify';
+
 interface ReadbackActionButtonInput {
   action: ReadbackActionKey;
   activeAction: ReadbackActionKey | null;
@@ -57,6 +59,24 @@ export function readbackActionButtonView(input: ReadbackActionButtonInput): Read
     className: [input.baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
     disabled: Boolean(input.disabled || input.activeAction),
     label: active ? input.busyLabel : input.label,
+    showSpinner: active,
+  };
+}
+
+interface ReadbackCopyCommandButtonInput {
+  activeCommand: ReadbackCopyCommandKey | null;
+  command: ReadbackCopyCommandKey;
+  disabled?: boolean;
+  label: string;
+}
+
+export function readbackCopyCommandButtonView(input: ReadbackCopyCommandButtonInput): ReadbackActionButtonView {
+  const active = input.activeCommand === input.command;
+  return {
+    ariaBusy: active ? true : undefined,
+    className: ['secondary-button', active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || input.activeCommand),
+    label: active ? '复制中...' : input.label,
     showSpinner: active,
   };
 }
@@ -939,6 +959,7 @@ export function ReadbackPage() {
   const [captureSavingSlot, setCaptureSavingSlot] = useState<ReadbackCaptureSlot | null>(null);
   const [capturePreviews, setCapturePreviews] = useState<Partial<Record<ReadbackCaptureSlot, string>>>({});
   const [readbackActionBusy, setReadbackActionBusy] = useState<ReadbackActionKey | null>(null);
+  const [copyCommandBusy, setCopyCommandBusy] = useState<ReadbackCopyCommandKey | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const missing = useMemo(() => requiredMissing(form, currentBatchId), [currentBatchId, form]);
   const sourceBatchMatches = Boolean(form.sourceBatchId && currentBatchId && form.sourceBatchId === currentBatchId);
@@ -1324,11 +1345,16 @@ export function ReadbackPage() {
       setCopyNotice('请先导出回读证据，再复制备用命令。');
       return;
     }
+    if (copyCommandBusy) return;
+    setCopyCommandBusy('long-fill');
+    setCopyNotice('正在复制长参数生成命令...');
     try {
       await navigator.clipboard.writeText(buildFillAdReadbackCommand(form, sourcePath));
       setCopyNotice('长参数生成命令已复制。');
     } catch (caught) {
       setCopyNotice(toUserFacingError(caught, '复制生成命令失败。'));
+    } finally {
+      setCopyCommandBusy(null);
     }
   }
 
@@ -1338,6 +1364,7 @@ export function ReadbackPage() {
       setCopyNotice('请先导出回读证据，再复制工作包命令。');
       return;
     }
+    if (copyCommandBusy) return;
     const builders = {
       prepare: buildPrepareAdReadbackSessionCommand,
       verify: buildVerifyAdReadbackSessionCommand,
@@ -1348,11 +1375,20 @@ export function ReadbackPage() {
       verify: '检查工作包命令已复制。',
       fill: '生成回读证据命令已复制。',
     };
+    const runningLabels = {
+      prepare: '正在复制创建工作包命令...',
+      verify: '正在复制检查工作包命令...',
+      fill: '正在复制生成回读证据命令...',
+    };
+    setCopyCommandBusy(kind);
+    setCopyNotice(runningLabels[kind]);
     try {
       await navigator.clipboard.writeText(builders[kind](sourcePath));
       setCopyNotice(labels[kind]);
     } catch (caught) {
       setCopyNotice(toUserFacingError(caught, '复制工作包命令失败。'));
+    } finally {
+      setCopyCommandBusy(null);
     }
   }
 
@@ -1432,6 +1468,31 @@ export function ReadbackPage() {
     busyLabel: readbackActionBusyLabel('verify-evidence'),
     disabled: !sessionFillResult?.jsonPath,
     label: '校验回读证据',
+  });
+  const canCopyCommands = Boolean(exportResult?.jsonPath);
+  const prepareCopyCommandButton = readbackCopyCommandButtonView({
+    activeCommand: copyCommandBusy,
+    command: 'prepare',
+    disabled: !canCopyCommands || Boolean(readbackActionBusy),
+    label: '复制创建工作包命令',
+  });
+  const verifyCopyCommandButton = readbackCopyCommandButtonView({
+    activeCommand: copyCommandBusy,
+    command: 'verify',
+    disabled: !canCopyCommands || Boolean(readbackActionBusy),
+    label: '复制检查工作包命令',
+  });
+  const fillCopyCommandButton = readbackCopyCommandButtonView({
+    activeCommand: copyCommandBusy,
+    command: 'fill',
+    disabled: !canCopyCommands || Boolean(readbackActionBusy),
+    label: '复制生成回读证据命令',
+  });
+  const longFillCopyCommandButton = readbackCopyCommandButtonView({
+    activeCommand: copyCommandBusy,
+    command: 'long-fill',
+    disabled: !canCopyCommands || Boolean(readbackActionBusy),
+    label: '复制长参数生成命令',
   });
 
   return (
@@ -1869,17 +1930,17 @@ export function ReadbackPage() {
               <p>最终验收仍以本地证据文件、截图路径、时间顺序和最终验收汇总为准；业务页不展示长命令块。</p>
               <p>真实执行路径保持 fail-closed：没有审批、执行前、执行后、回读证据时不能声称执行完成。</p>
               <div className="action-row">
-                <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('prepare')} type="button">
-                  复制创建工作包命令
+                <button aria-busy={prepareCopyCommandButton.ariaBusy} className={prepareCopyCommandButton.className} disabled={prepareCopyCommandButton.disabled} onClick={() => copySessionCommand('prepare')} type="button">
+                  {readbackActionButtonContent(prepareCopyCommandButton)}
                 </button>
-                <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('verify')} type="button">
-                  复制检查工作包命令
+                <button aria-busy={verifyCopyCommandButton.ariaBusy} className={verifyCopyCommandButton.className} disabled={verifyCopyCommandButton.disabled} onClick={() => copySessionCommand('verify')} type="button">
+                  {readbackActionButtonContent(verifyCopyCommandButton)}
                 </button>
-                <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={() => copySessionCommand('fill')} type="button">
-                  复制生成回读证据命令
+                <button aria-busy={fillCopyCommandButton.ariaBusy} className={fillCopyCommandButton.className} disabled={fillCopyCommandButton.disabled} onClick={() => copySessionCommand('fill')} type="button">
+                  {readbackActionButtonContent(fillCopyCommandButton)}
                 </button>
-                <button className="secondary-button" disabled={!exportResult?.jsonPath} onClick={copyFillCommand} type="button">
-                  复制长参数生成命令
+                <button aria-busy={longFillCopyCommandButton.ariaBusy} className={longFillCopyCommandButton.className} disabled={longFillCopyCommandButton.disabled} onClick={copyFillCommand} type="button">
+                  {readbackActionButtonContent(longFillCopyCommandButton)}
                 </button>
               </div>
               {copyNotice && <p className="muted-line">{copyNotice}</p>}

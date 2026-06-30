@@ -15,6 +15,7 @@ import {
   readbackCaptureTargetView,
   readbackActionButtonView,
   readbackContractChecks,
+  readbackCopyCommandButtonView,
   readbackRepairFieldClass,
   readbackPrecheckCopy,
   readbackSessionSummary,
@@ -260,6 +261,36 @@ describe('readbackActionButtonView', () => {
     });
 
     expect(lockedPeer.label).toBe('校验回读证据');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.showSpinner).toBe(false);
+    expect(lockedPeer.className).not.toContain('button-loading');
+  });
+});
+
+describe('readbackCopyCommandButtonView', () => {
+  it('gives backup copy-command buttons active feedback and locks copy peers', () => {
+    const active = readbackCopyCommandButtonView({
+      activeCommand: 'prepare',
+      command: 'prepare',
+      disabled: false,
+      label: '复制创建工作包命令',
+    });
+
+    expect(active.label).toBe('复制中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('button-loading');
+
+    const lockedPeer = readbackCopyCommandButtonView({
+      activeCommand: 'prepare',
+      command: 'verify',
+      disabled: false,
+      label: '复制检查工作包命令',
+    });
+
+    expect(lockedPeer.label).toBe('复制检查工作包命令');
     expect(lockedPeer.disabled).toBe(true);
     expect(lockedPeer.ariaBusy).toBeUndefined();
     expect(lockedPeer.showSpinner).toBe(false);
