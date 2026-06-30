@@ -4,6 +4,7 @@ import {
   buildScopeSummaryFacts,
   buildScopeWarningSummary,
   formatBatchOption,
+  scopeEditorSaveButtonView,
   scopeFieldFeedbackClass,
   scopeFieldFeedbackLabel,
 } from './scope-bar';
@@ -151,6 +152,24 @@ describe('scope field feedback micro-response', () => {
     expect(editorRule).toMatch(/right\s*:\s*10px\s*;/);
     expect(editorRule).toMatch(/z-index\s*:\s*40\s*;/);
     expect(css).not.toMatch(/\.scope-editor\s*\{[^}]*position\s*:\s*static\s*;/);
+  });
+
+  it('gives the editor save action an explicit busy contract', () => {
+    const idle = scopeEditorSaveButtonView(false);
+    const saving = scopeEditorSaveButtonView(true);
+
+    expect(idle.label).toBe('保存范围');
+    expect(idle.disabled).toBe(false);
+    expect(idle.ariaBusy).toBe(false);
+    expect(idle.showSpinner).toBe(false);
+    expect(idle.className).toBe('primary-button');
+
+    expect(saving.label).toBe('正在保存...');
+    expect(saving.disabled).toBe(true);
+    expect(saving.ariaBusy).toBe(true);
+    expect(saving.showSpinner).toBe(true);
+    expect(saving.className).toContain('primary-button');
+    expect(saving.className).toContain('button-loading');
   });
 });
 

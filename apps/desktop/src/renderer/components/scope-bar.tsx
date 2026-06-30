@@ -102,6 +102,22 @@ export function scopeFieldFeedbackClass(
   ].filter(Boolean).join(' ');
 }
 
+export function scopeEditorSaveButtonView(saving: boolean): {
+  label: string;
+  disabled: boolean;
+  ariaBusy: boolean;
+  showSpinner: boolean;
+  className: string;
+} {
+  return {
+    label: saving ? '正在保存...' : '保存范围',
+    disabled: saving,
+    ariaBusy: saving,
+    showSpinner: saving,
+    className: ['primary-button', saving ? 'button-loading' : ''].filter(Boolean).join(' '),
+  };
+}
+
 export function ScopeBar() {
   const { scope, setScope } = useScopeStore();
   const [editing, setEditing] = useState(false);
@@ -115,6 +131,7 @@ export function ScopeBar() {
   const [scopePersistError, setScopePersistError] = useState('');
   const [products, setProducts] = useState<ProductLabelRow[]>([]);
   const [confirmedField, setConfirmedField] = useState<{ field: ScopeFieldFeedbackKey; tick: number } | null>(null);
+  const [scopeEditorSaving, setScopeEditorSaving] = useState(false);
 
   const selectedBatch = useMemo(
     () => batchOptions.find((batch) => batch.id === scope.batchId),
@@ -122,7 +139,8 @@ export function ScopeBar() {
   );
   const autoMatchedBatch = useMemo(() => batchOptions[0], [batchOptions]);
 
-  const save = () => {
+  const save = async () => {
+    if (scopeEditorSaving) return;
     const normalizedDraft = {
       ...draft,
       dateFrom: draft.dateFrom.trim(),
@@ -149,10 +167,24 @@ export function ScopeBar() {
       setEditError('请填写站点。');
       return;
     }
-    setScope(normalizedDraft);
-    setDraft(normalizedDraft);
-    setEditing(false);
-    setEditError('');
+    setScopeEditorSaving(true);
+    try {
+      const api = (window as any).electronAPI;
+      if (api?.saveOperationScope) {
+        await api.saveOperationScope(normalizedDraft);
+      }
+      setScope(normalizedDraft);
+      setDraft(normalizedDraft);
+      setEditing(false);
+      setEditError('');
+      setScopePersistError('');
+    } catch (caught) {
+      const message = toUserFacingError(caught, '保存运营范围失败。');
+      setEditError(message);
+      setScopePersistError(message);
+    } finally {
+      setScopeEditorSaving(false);
+    }
   };
 
   const markFieldConfirmed = (field: ScopeFieldFeedbackKey) => {
@@ -331,6 +363,7 @@ export function ScopeBar() {
   });
   const warningSummary = buildScopeWarningSummary({ batchOptionsError, scopePersistError });
   const confirmedFieldName = confirmedField?.field ?? null;
+  const editorSaveButton = scopeEditorSaveButtonView(scopeEditorSaving);
   const renderFieldConfirmation = (field: ScopeFieldFeedbackKey) => (
     <span className="scope-field-confirmation" aria-live="polite">
       {confirmedFieldName === field ? scopeFieldFeedbackLabel(field) : '\u00A0'}
@@ -446,7 +479,18 @@ export function ScopeBar() {
           </label>
           <p className="scope-editor-note">修改日期、店铺或站点会自动清空旧批次；如需固定历史批次，请重新输入批次 ID。</p>
           {editError && <p className="scope-editor-error">{editError}</p>}
-          <button type="button" className="primary-button" onClick={save}>保存范围</button>
+          <button
+            type="button"
+            aria-busy={editorSaveButton.ariaBusy}
+            className={editorSaveButton.className}
+            disabled={editorSaveButton.disabled}
+            onClick={() => { void save(); }}
+          >
+            <span className={editorSaveButton.showSpinner ? 'button-content' : undefined}>
+              {editorSaveButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+              {editorSaveButton.label}
+            </span>
+          </button>
         </div>
       )}
     </section>
