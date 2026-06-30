@@ -11,6 +11,7 @@ import {
   collectionActionError,
   collectionActionGuide,
   collectionCompletionNotice,
+  collectionFeedbackActionButtonView,
   collectionOpenPathButtonView,
   collectionReportSelectionState,
   dataCollectionFirstViewportReportFolder,
@@ -335,6 +336,35 @@ describe('task-first data page helpers', () => {
     expect(locked.disabled).toBe(true);
     expect(locked.ariaBusy).toBe(false);
     expect(locked.className).not.toContain('collection-action-button-running');
+  });
+
+  it('keeps feedback repair action buttons visible with a focused busy contract', () => {
+    const active = collectionFeedbackActionButtonView({
+      idleLabel: '验证页面',
+      runningAction: 'verify-page',
+      targetAction: 'verify-page',
+      variant: 'primary',
+    });
+    const locked = collectionFeedbackActionButtonView({
+      idleLabel: '重试获取 8 类',
+      runningAction: 'verify-page',
+      targetAction: 'recreate-full',
+      variant: 'secondary',
+    });
+
+    expect(active.label).toBe('处理中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('primary-button');
+    expect(active.className).toContain('button-loading');
+
+    expect(locked.label).toBe('重试获取 8 类');
+    expect(locked.disabled).toBe(true);
+    expect(locked.ariaBusy).toBe(false);
+    expect(locked.showSpinner).toBe(false);
+    expect(locked.className).toContain('secondary-button');
+    expect(locked.className).not.toContain('button-loading');
   });
 
   it('gives local path open buttons an explicit busy contract while opening a file or folder', () => {

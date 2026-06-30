@@ -11,6 +11,7 @@ import { toUserFacingError } from '../user-facing-error';
 type CollectionActionMode = 'download-existing' | 'recreate-selected' | 'recreate-full' | 'import';
 type DownloadCollectionActionMode = Exclude<CollectionActionMode, 'import'>;
 type RunningCollectionActionMode = CollectionActionMode | 'verify-page';
+type CollectionFeedbackActionGroup = 'repair' | 'refresh-ready';
 
 export interface CollectionActionGuide {
   title: string;
@@ -326,6 +327,37 @@ export function collectionActionButtonView({
       'collection-action-button',
       isPrimary ? 'primary-action' : 'secondary-action',
       isCurrentAction ? 'button-loading collection-action-button-running' : '',
+    ].filter(Boolean).join(' '),
+  };
+}
+
+export function collectionFeedbackActionButtonView({
+  idleLabel,
+  runningAction,
+  targetAction,
+  variant,
+}: {
+  idleLabel: string;
+  runningAction: RunningCollectionActionMode | null;
+  targetAction: RunningCollectionActionMode;
+  variant: 'primary' | 'secondary';
+}): {
+  label: string;
+  disabled: boolean;
+  ariaBusy: boolean;
+  showSpinner: boolean;
+  className: string;
+} {
+  const isCurrentAction = runningAction === targetAction;
+  const baseClassName = variant === 'primary' ? 'primary-button' : 'secondary-button';
+  return {
+    label: isCurrentAction ? '处理中...' : idleLabel,
+    disabled: Boolean(runningAction),
+    ariaBusy: isCurrentAction,
+    showSpinner: isCurrentAction,
+    className: [
+      baseClassName,
+      isCurrentAction ? 'button-loading' : '',
     ].filter(Boolean).join(' '),
   };
 }
@@ -788,6 +820,7 @@ export function DataCollectionPage() {
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<RunningCollectionActionMode | null>(null);
+  const [feedbackActionGroup, setFeedbackActionGroup] = useState<CollectionFeedbackActionGroup | null>(null);
   const [openingPathKey, setOpeningPathKey] = useState<string | null>(null);
   const [lastActionResult, setLastActionResult] = useState<LastActionResult | null>(null);
   const [lastDiagnostic, setLastDiagnostic] = useState<any | null>(null);
@@ -850,6 +883,24 @@ export function DataCollectionPage() {
   const recreateSelectedButton = collectionActionButtonView({ mode: 'recreate-selected', runningAction, selectedCount });
   const recreateFullButton = collectionActionButtonView({ mode: 'recreate-full', runningAction, selectedCount });
   const importButton = collectionActionButtonView({ mode: 'import', runningAction, selectedCount });
+  const verifyFeedbackButton = collectionFeedbackActionButtonView({
+    idleLabel: '验证页面',
+    runningAction,
+    targetAction: 'verify-page',
+    variant: 'primary',
+  });
+  const retryFullFeedbackButton = collectionFeedbackActionButtonView({
+    idleLabel: '重试获取 8 类',
+    runningAction,
+    targetAction: 'recreate-full',
+    variant: 'secondary',
+  });
+  const refreshFullFeedbackButton = collectionFeedbackActionButtonView({
+    idleLabel: '重新获取完整 8 类报表',
+    runningAction,
+    targetAction: 'recreate-full',
+    variant: 'primary',
+  });
   const reportSelectionState = collectionReportSelectionState({
     selectedCount,
     totalCount: reportOptions.length,
@@ -976,6 +1027,7 @@ export function DataCollectionPage() {
       setActionNotice('验证页面未完成。');
     } finally {
       setRunningAction(null);
+      setFeedbackActionGroup(null);
     }
   }
 
@@ -1039,6 +1091,7 @@ export function DataCollectionPage() {
         : '创建并下载未完成。请根据错误处理登录、页面模型或报表范围后重试。');
     } finally {
       setRunningAction(null);
+      setFeedbackActionGroup(null);
     }
   }
 
@@ -1080,6 +1133,7 @@ export function DataCollectionPage() {
       setActionNotice('真实报表导入未完成。');
     } finally {
       setRunningAction(null);
+      setFeedbackActionGroup(null);
     }
   }
 
@@ -1250,15 +1304,51 @@ export function DataCollectionPage() {
               {runningAction && <StatusPill tone="pending">处理中</StatusPill>}
               {!runningAction && actionError && <StatusPill tone="blocked">需处理</StatusPill>}
               {!runningAction && !actionError && <StatusPill tone="ready">已返回</StatusPill>}
-              {!runningAction && shouldShowVerifyAction && (
+              {((!runningAction && shouldShowVerifyAction) || feedbackActionGroup === 'repair') && (
                 <div className="collection-action-feedback-actions">
-                  <button className="primary-button" onClick={runVerifyDownloadCenter} type="button">验证页面</button>
-                  <button className="secondary-button" onClick={() => runDownloadAction('recreate-full')} type="button">重试获取 8 类</button>
+                  <button
+                    aria-busy={verifyFeedbackButton.ariaBusy}
+                    className={verifyFeedbackButton.className}
+                    disabled={verifyFeedbackButton.disabled}
+                    onClick={() => {
+                      setFeedbackActionGroup('repair');
+                      void runVerifyDownloadCenter();
+                    }}
+                    type="button"
+                  >
+                    {verifyFeedbackButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                    <span>{verifyFeedbackButton.label}</span>
+                  </button>
+                  <button
+                    aria-busy={retryFullFeedbackButton.ariaBusy}
+                    className={retryFullFeedbackButton.className}
+                    disabled={retryFullFeedbackButton.disabled}
+                    onClick={() => {
+                      setFeedbackActionGroup('repair');
+                      void runDownloadAction('recreate-full');
+                    }}
+                    type="button"
+                  >
+                    {retryFullFeedbackButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                    <span>{retryFullFeedbackButton.label}</span>
+                  </button>
                 </div>
               )}
-              {!runningAction && !actionError && lastDiagnostic?.ready && (
+              {((!runningAction && !actionError && lastDiagnostic?.ready) || feedbackActionGroup === 'refresh-ready') && (
                 <div className="collection-action-feedback-actions">
-                  <button className="primary-button" onClick={() => runDownloadAction('recreate-full')} type="button">重新获取完整 8 类报表</button>
+                  <button
+                    aria-busy={refreshFullFeedbackButton.ariaBusy}
+                    className={refreshFullFeedbackButton.className}
+                    disabled={refreshFullFeedbackButton.disabled}
+                    onClick={() => {
+                      setFeedbackActionGroup('refresh-ready');
+                      void runDownloadAction('recreate-full');
+                    }}
+                    type="button"
+                  >
+                    {refreshFullFeedbackButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                    <span>{refreshFullFeedbackButton.label}</span>
+                  </button>
                 </div>
               )}
             </div>
