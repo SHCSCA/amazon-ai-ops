@@ -10,6 +10,7 @@ import {
   recommendationNeedsOperatorResolution,
   recommendationMergeSummaryText,
   recommendationBatchSelectionState,
+  recommendationActionButtonView,
   recommendationPrimaryTaskActionState,
   recommendationReviewExplanationText,
   recommendationWorkflowActionState,
@@ -578,6 +579,37 @@ describe('recommendationBatchSelectionState', () => {
     expect(css).toContain('checkbox-confirm-pop');
     expect(css).toMatch(/\.business-table th input\[type="checkbox"\]:checked,\s*\.business-table td input\[type="checkbox"\]:checked\s*\{[^}]*animation:\s*checkbox-confirm-pop/s);
     expect(css).toMatch(/\.business-table th input\[type="checkbox"\]:focus-visible,\s*\.business-table td input\[type="checkbox"\]:focus-visible\s*\{[^}]*box-shadow:/s);
+  });
+});
+
+describe('recommendationActionButtonView', () => {
+  it('gives direct recommendation actions an explicit busy contract', () => {
+    const generating = recommendationActionButtonView({
+      active: true,
+      baseClassName: 'secondary-button',
+      busyLabel: '生成中...',
+      idleLabel: '生成优化建议',
+    });
+
+    expect(generating.label).toBe('生成中...');
+    expect(generating.className).toContain('button-loading');
+    expect(generating.disabled).toBe(true);
+    expect(generating.ariaBusy).toBe(true);
+    expect(generating.showSpinner).toBe(true);
+
+    const unavailable = recommendationActionButtonView({
+      active: false,
+      baseClassName: 'secondary-button',
+      busyLabel: '生成中...',
+      disabled: true,
+      idleLabel: '生成优化建议',
+    });
+
+    expect(unavailable.label).toBe('生成优化建议');
+    expect(unavailable.disabled).toBe(true);
+    expect(unavailable.ariaBusy).toBeUndefined();
+    expect(unavailable.className).not.toContain('button-loading');
+    expect(unavailable.showSpinner).toBe(false);
   });
 });
 

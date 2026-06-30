@@ -513,6 +513,32 @@ export function recommendationBatchSelectionState(input: {
   };
 }
 
+interface RecommendationActionButtonInput {
+  active: boolean;
+  baseClassName: string;
+  busyLabel: string;
+  disabled?: boolean;
+  idleLabel: string;
+}
+
+export interface RecommendationActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function recommendationActionButtonView(input: RecommendationActionButtonInput): RecommendationActionButtonView {
+  return {
+    ariaBusy: input.active ? true : undefined,
+    className: [input.baseClassName, input.active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || input.active),
+    label: input.active ? input.busyLabel : input.idleLabel,
+    showSpinner: input.active,
+  };
+}
+
 function recommendationType(rec: RecommendationView): string {
   return rec.entityType || rec.evidence?.matchType || '-';
 }
@@ -1252,6 +1278,27 @@ export function RecommendationsPage() {
     loadRecommendations();
   }, [currentBatchId, filter]);
 
+  const refreshRecommendationsButton = recommendationActionButtonView({
+    active: loading,
+    baseClassName: 'secondary-button',
+    busyLabel: '刷新中...',
+    idleLabel: '刷新建议',
+  });
+  const directGenerateButton = recommendationActionButtonView({
+    active: generating,
+    baseClassName: 'secondary-button',
+    busyLabel: '生成中...',
+    disabled: !quantReady || pipelineLoading,
+    idleLabel: '生成优化建议',
+  });
+  const workflowGenerateButton = recommendationActionButtonView({
+    active: generating,
+    baseClassName: 'workflow-step',
+    busyLabel: '生成中...',
+    disabled: !quantReady || pipelineLoading,
+    idleLabel: recommendations.length ? `${recommendations.length} 条待处理` : '等待生成建议',
+  });
+
   return (
     <div>
       <PageHeader
@@ -1376,8 +1423,15 @@ export function RecommendationsPage() {
             </div>
           )}
           <div className="action-row">
-            <button className="secondary-button" disabled={loading} onClick={loadRecommendations} type="button">
-              {loading ? '刷新中...' : '刷新建议'}
+            <button
+              aria-busy={refreshRecommendationsButton.ariaBusy}
+              className={refreshRecommendationsButton.className}
+              disabled={refreshRecommendationsButton.disabled}
+              onClick={loadRecommendations}
+              type="button"
+            >
+              {refreshRecommendationsButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+              <span>{refreshRecommendationsButton.label}</span>
             </button>
           </div>
         </Panel>
@@ -1452,9 +1506,18 @@ export function RecommendationsPage() {
         <ProgressiveDetails title="完整处理路径与安全边界">
         <Panel title="建议处理路径">
           <div className="workflow-strip">
-            <button className="workflow-step" onClick={() => generateRecommendations()} disabled={!quantReady || generating || pipelineLoading} type="button">
+            <button
+              aria-busy={workflowGenerateButton.ariaBusy}
+              className={workflowGenerateButton.className}
+              onClick={() => generateRecommendations()}
+              disabled={workflowGenerateButton.disabled}
+              type="button"
+            >
               <span>1. 生成解释</span>
-              <strong>{recommendations.length ? `${recommendations.length} 条待处理` : '等待生成建议'}</strong>
+              <strong>
+                {workflowGenerateButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                <span>{workflowGenerateButton.label}</span>
+              </strong>
               <StatusPill tone={quantReady ? 'pending' : 'blocked'}>{quantReady ? '本页完成' : '缺真实数据'}</StatusPill>
             </button>
             <button className="workflow-step" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'approval' }))} disabled={workflowActionState.approvalDisabled} type="button">
@@ -1663,8 +1726,15 @@ export function RecommendationsPage() {
               </div>
             )}
             <div className="action-row">
-              <button className="secondary-button" disabled={!quantReady || generating || pipelineLoading} onClick={generateRecommendations} type="button">
-                {generating ? '生成中...' : '生成优化建议'}
+              <button
+                aria-busy={directGenerateButton.ariaBusy}
+                className={directGenerateButton.className}
+                disabled={directGenerateButton.disabled}
+                onClick={generateRecommendations}
+                type="button"
+              >
+                {directGenerateButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                <span>{directGenerateButton.label}</span>
               </button>
               <button className="secondary-button" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: quantReady ? 'ad-quant' : 'data-collection' }))} type="button">
                 {quantReady ? '查看广告量化' : '去数据采集'}

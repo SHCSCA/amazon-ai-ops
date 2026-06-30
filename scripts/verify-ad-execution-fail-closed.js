@@ -135,7 +135,8 @@ mustContain(readbackPage, '复制长参数生成命令', 'readback page provides
 mustContain(recommendationsPage, '建议生成范围', 'recommendations page exposes filter/generate controls');
 mustContain(recommendationsPage, '生成优化建议', 'recommendations page exposes generation action');
 mustContain(recommendationsPage, 'generateRecommendations?.({', 'renderer sends recommendation generation scope to main process');
-mustContain(recommendationsPage, 'disabled={!quantReady || generating || pipelineLoading}', 'renderer requires explicit scope before generating recommendations');
+mustContain(recommendationsPage, 'if (!quantReady) {', 'renderer runtime blocks recommendation generation without explicit scope');
+mustContain(recommendationsPage, 'disabled: !quantReady || pipelineLoading', 'renderer disables recommendation generation actions without explicit scope');
 mustContain(renderer, '不能声称执行完成', 'recommendations workflow warns against treating blocked audit as success');
 mustContain(readbackPage, 'verifyAdReadbackEvidence', 'readback page references the readback verifier');
 mustNotContain(renderer, 'setActionMessage(\'广告执行已通过可验证回读。', 'renderer no longer displays success/readback copy for fail-closed execution');
