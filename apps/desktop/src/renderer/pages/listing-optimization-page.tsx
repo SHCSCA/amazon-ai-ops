@@ -145,6 +145,21 @@ export function listingLocalActionButtonView({
   };
 }
 
+export function listingHistoryRefreshButtonView(input: {
+  active: boolean;
+  canRefresh: boolean;
+  groupBusy?: boolean;
+}): ListingLocalActionButtonView {
+  return listingLocalActionButtonView({
+    active: input.active,
+    baseClassName: 'secondary-button',
+    busyLabel: '刷新中...',
+    disabled: !input.canRefresh,
+    groupBusy: input.groupBusy,
+    label: '刷新版本历史',
+  });
+}
+
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
 }
@@ -850,16 +865,36 @@ export function ListingOptimizationPage() {
     }, 360);
   }
 
-  async function loadListingVersions(asin: string) {
+  async function loadListingVersions(asin: string): Promise<ListingContentVersionView[]> {
     const api = (window as any).electronAPI;
-    if (!api?.listListingContentVersions || !asin.trim()) return;
+    if (!api?.listListingContentVersions || !asin.trim()) return [];
     const versions = await api.listListingContentVersions({
       asin: asin.trim().toUpperCase(),
       storeName: scope.storeName,
       marketplaceCode: scope.marketplaceCode,
       limit: 10,
     });
-    setListingVersions(Array.isArray(versions) ? versions : []);
+    const normalizedVersions = Array.isArray(versions) ? versions : [];
+    setListingVersions(normalizedVersions);
+    return normalizedVersions;
+  }
+
+  async function refreshListingVersions() {
+    const asin = manualListing.asin?.trim();
+    if (!asin) {
+      setMessage('请先填写 ASIN，再刷新本地版本历史。');
+      return;
+    }
+    setLoading('history');
+    setMessage('正在刷新 Listing 版本历史...');
+    try {
+      const versions = await loadListingVersions(asin);
+      setMessage(`已刷新 Listing 版本历史：${versions.length} 个本地版本。`);
+    } catch (caught) {
+      setMessage(errorMessage(caught, '刷新 Listing 版本历史失败'));
+    } finally {
+      setLoading(null);
+    }
   }
 
   function updateManualListing(patch: Partial<ListingContentView>) {
@@ -1194,6 +1229,11 @@ export function ListingOptimizationPage() {
   }
 
   const listingActionBusy = Boolean(loading);
+  const historyRefreshButton = listingHistoryRefreshButtonView({
+    active: loading === 'history',
+    canRefresh: Boolean(manualListing.asin?.trim()),
+    groupBusy: listingActionBusy,
+  });
   const saveManualButton = listingLocalActionButtonView({
     active: loading === 'save-manual',
     baseClassName: 'primary-button',
@@ -1358,8 +1398,17 @@ export function ListingOptimizationPage() {
               {saveManualButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
               <span>{saveManualButton.label}</span>
             </button>
-            <button className="secondary-button" disabled={!manualListing.asin?.trim() || listingActionBusy} onClick={() => loadListingVersions(manualListing.asin || '')} type="button">
-              刷新版本历史
+            <button
+              aria-busy={historyRefreshButton.ariaBusy}
+              className={historyRefreshButton.className}
+              disabled={historyRefreshButton.disabled}
+              onClick={() => {
+                void refreshListingVersions();
+              }}
+              type="button"
+            >
+              {historyRefreshButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{historyRefreshButton.label}</span>
             </button>
           </div>
         </Panel>

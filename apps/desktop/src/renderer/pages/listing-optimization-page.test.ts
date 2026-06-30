@@ -12,6 +12,7 @@ import {
   listingHeatmapKeywordButtonClass,
   listingHeatmapSectionClass,
   listingHeatmapTokenClass,
+  listingHistoryRefreshButtonView,
   listingLocalActionButtonView,
   listingManualFieldGroups,
 } from './listing-optimization-page';
@@ -105,6 +106,33 @@ describe('listingLocalActionButtonView', () => {
     expect(locked.ariaBusy).toBeUndefined();
     expect(locked.className).not.toContain('button-loading');
     expect(locked.showSpinner).toBe(false);
+  });
+});
+
+describe('listingHistoryRefreshButtonView', () => {
+  it('gives version-history refresh its own running feedback', () => {
+    const refreshing = listingHistoryRefreshButtonView({
+      active: true,
+      canRefresh: true,
+      groupBusy: true,
+    });
+
+    expect(refreshing.label).toBe('刷新中...');
+    expect(refreshing.className).toContain('button-loading');
+    expect(refreshing.disabled).toBe(true);
+    expect(refreshing.ariaBusy).toBe(true);
+    expect(refreshing.showSpinner).toBe(true);
+
+    const locked = listingHistoryRefreshButtonView({
+      active: false,
+      canRefresh: true,
+      groupBusy: true,
+    });
+
+    expect(locked.label).toBe('刷新版本历史');
+    expect(locked.disabled).toBe(true);
+    expect(locked.ariaBusy).toBeUndefined();
+    expect(locked.className).not.toContain('button-loading');
   });
 });
 
