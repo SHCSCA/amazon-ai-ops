@@ -79,6 +79,29 @@ describe('Sidebar navigation', () => {
     expect(clicked).toEqual([]);
   });
 
+  it('anchors the legacy product-config route under the visible product management nav item', () => {
+    const tree = Sidebar({ activeRoute: 'product-config', onNavigate: () => undefined }) as ReactElement;
+    const buttons = collectElements(tree, (element) => element.type === 'button');
+    const productManagementButton = buttons.find((button) => collectText(button).includes('产品管理'));
+
+    expect(productManagementButton?.props['aria-current']).toBe('page');
+    expect(collectText(tree)).not.toContain('产品 ACOS 配置');
+  });
+
+  it('shows product management as pending when a deep product-config handoff is running', () => {
+    const tree = Sidebar({
+      activeRoute: 'dashboard',
+      pendingRoute: 'product-config',
+      onNavigate: () => undefined,
+    }) as ReactElement;
+    const buttons = collectElements(tree, (element) => element.type === 'button');
+    const productManagementButton = buttons.find((button) => collectText(button).includes('产品管理'));
+
+    expect(productManagementButton?.props['aria-busy']).toBe(true);
+    expect(productManagementButton?.props['data-pending']).toBe('true');
+    expect(collectText(productManagementButton)).toContain('转跳中...');
+  });
+
   it('keeps the aria-current active glow bar contract in CSS', () => {
     const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 

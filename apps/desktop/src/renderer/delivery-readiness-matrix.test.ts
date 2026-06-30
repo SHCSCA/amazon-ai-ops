@@ -145,6 +145,30 @@ describe('buildDeliveryReadinessMatrix', () => {
     expect(matrix.items.find((item) => item.key === 'aiEvidence')?.detail).toContain('1 条仅作洞察');
   });
 
+  it('routes missing product context repair to product management instead of the legacy product config page', () => {
+    const matrix = buildDeliveryReadinessMatrix({
+      realReportCount: 8,
+      importedRows: 96,
+      actionableRows: 12,
+      aiAvailable: true,
+      aiSuccessCount: 1,
+      operationEventCount: 1,
+      productContextCount: 0,
+      listingReadReady: true,
+      listingDraftReady: true,
+      pendingRecommendationCount: 0,
+      approvedRecommendationCount: 0,
+      readbackVerifiedCount: 0,
+      installerAvailable: false,
+      deliveryManifestReady: false,
+    });
+
+    const contextItem = matrix.items.find((item) => item.key === 'businessContext');
+
+    expect(contextItem?.nextAction).toBe('维护运营事件和产品配置');
+    expect(contextItem?.route).toBe('product-management');
+  });
+
   it('does not mark review-only recommendations as directly approvable', () => {
     const matrix = buildDeliveryReadinessMatrix({
       realReportCount: 8,

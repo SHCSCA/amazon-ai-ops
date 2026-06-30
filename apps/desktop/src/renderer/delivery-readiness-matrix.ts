@@ -149,7 +149,7 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
         ? `${operationEventCount} 条运营事件，${productContextCount} 个产品配置已进入 AI+规则上下文。`
         : `${operationEventCount} 条运营事件，${productContextCount} 个产品配置；缺少背景时 AI 阈值判断容易误判。`,
       nextAction: contextReady ? '复核产品阶段' : '维护运营事件和产品配置',
-      route: contextReady ? 'ad-quant' : operationEventCount <= 0 ? 'operation-events' : 'product-config',
+      route: contextReady ? 'ad-quant' : operationEventCount <= 0 ? 'operation-events' : 'product-management',
     },
     {
       key: 'listing',

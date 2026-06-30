@@ -29,7 +29,7 @@ export function productManagementActionRoutes(): ProductManagementRoutes {
     keywordOpportunities: 'keyword-opportunities',
     listingOptimization: 'listing-optimization',
     operationEvents: 'operation-events',
-    productConfig: 'product-config',
+    productConfig: 'product-management',
   };
 }
 

@@ -48,6 +48,12 @@ export function navItemOrdinal(index: number): string {
   return String(index + 1).padStart(2, '0');
 }
 
+export function visibleNavRouteFor(route?: AppRoute | null): AppRoute | null {
+  if (!route) return null;
+  if (route === 'product-config') return 'product-management';
+  return route;
+}
+
 export function Sidebar({
   activeRoute,
   pendingRoute = null,
@@ -58,6 +64,8 @@ export function Sidebar({
   onNavigate: (route: AppRoute) => void;
 }) {
   const navigationBusy = Boolean(pendingRoute);
+  const activeNavRoute = visibleNavRouteFor(activeRoute);
+  const pendingNavRoute = visibleNavRouteFor(pendingRoute);
 
   return (
     <nav className="app-sidebar" aria-busy={navigationBusy || undefined} aria-label="主导航" data-navigation-busy={navigationBusy || undefined}>
@@ -65,11 +73,11 @@ export function Sidebar({
         <div className="nav-group" key={group.label}>
           <div className="nav-group-label">{group.label}</div>
           {group.items.map((item, index) => {
-            const isPending = pendingRoute === item.id;
+            const isPending = pendingNavRoute === item.id;
             return (
               <button
                 aria-busy={isPending || undefined}
-                aria-current={activeRoute === item.id ? 'page' : undefined}
+                aria-current={activeNavRoute === item.id ? 'page' : undefined}
                 className="nav-item"
                 data-pending={isPending ? 'true' : undefined}
                 disabled={navigationBusy}
