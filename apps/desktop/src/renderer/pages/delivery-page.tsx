@@ -133,6 +133,26 @@ export function deliveryActionButtonView(input: DeliveryActionButtonInput): Deli
   };
 }
 
+interface DeliveryOpenPathButtonInput {
+  activePathKey: string | null;
+  baseClassName?: string;
+  busyLabel?: string;
+  disabled?: boolean;
+  idleLabel: string;
+  pathKey: string;
+}
+
+export function deliveryOpenPathButtonView(input: DeliveryOpenPathButtonInput): DeliveryActionButtonView {
+  const isActive = input.activePathKey === input.pathKey;
+  return {
+    ariaBusy: isActive ? true : undefined,
+    className: [input.baseClassName || 'secondary-button', isActive ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || input.activePathKey),
+    label: isActive ? (input.busyLabel || '打开中...') : input.idleLabel,
+    showSpinner: isActive,
+  };
+}
+
 interface DeliveryCopySummaryActionInput {
   copying: boolean;
   disabled?: boolean;
@@ -161,6 +181,10 @@ function deliveryActionBusyLabel(action: DeliveryActionKey): string {
     'verify-readback-session': '检查中...',
   };
   return labels[action];
+}
+
+function deliveryPathActionKey(label: string, targetPath: string): string {
+  return `${label}:${String(targetPath || 'missing')}`;
 }
 
 function navigate(route: AppRoute) {
@@ -609,6 +633,7 @@ export function DeliveryPage() {
   const [readbackEvidenceVerify, setReadbackEvidenceVerify] = useState<ReadbackEvidenceVerifyResult | null>(null);
   const [exportedBundlePath, setExportedBundlePath] = useState('');
   const [deliveryActionBusy, setDeliveryActionBusy] = useState<DeliveryActionKey | null>(null);
+  const [openingPathKey, setOpeningPathKey] = useState<string | null>(null);
   const [copySummaryBusy, setCopySummaryBusy] = useState(false);
 
   const apiSurface = useMemo(() => api(), []);
@@ -809,6 +834,7 @@ export function DeliveryPage() {
   }, [apiSurface, scope.asin, scope.batchId, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
 
   async function openPath(targetPath: string, label: string) {
+    if (openingPathKey) return;
     if (!targetPath) {
       setMessage(`${label}不可用：最终验收汇总尚未生成。`);
       return;
@@ -817,11 +843,16 @@ export function DeliveryPage() {
       setMessage(`${label}不可用：openReportPath 未接入。`);
       return;
     }
+    const pathKey = deliveryPathActionKey(label, targetPath);
+    setOpeningPathKey(pathKey);
+    setMessage(`${label}打开中...`);
     try {
       await apiSurface.openReportPath(targetPath);
       setMessage(`${label}已请求打开，路径见详情。`);
     } catch (caught) {
       setMessage(compactDeliveryMessage(toUserFacingError(caught, `${label}打开失败。`)));
+    } finally {
+      setOpeningPathKey(null);
     }
   }
 
@@ -1118,6 +1149,35 @@ export function DeliveryPage() {
     idleLabel: '用回读证据刷新最终验收',
   });
 
+  function renderOpenPathButton(input: {
+    className?: string;
+    disabled?: boolean;
+    idleLabel: string;
+    messageLabel?: string;
+    targetPath: string;
+  }) {
+    const messageLabel = input.messageLabel || input.idleLabel;
+    const view = deliveryOpenPathButtonView({
+      activePathKey: openingPathKey,
+      baseClassName: input.className,
+      disabled: input.disabled,
+      idleLabel: input.idleLabel,
+      pathKey: deliveryPathActionKey(messageLabel, input.targetPath),
+    });
+    return (
+      <button
+        aria-busy={view.ariaBusy}
+        className={view.className}
+        disabled={view.disabled}
+        onClick={() => openPath(input.targetPath, messageLabel)}
+        type="button"
+      >
+        {view.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+        <span>{view.label}</span>
+      </button>
+    );
+  }
+
   return (
     <div>
       <PageHeader
@@ -1164,9 +1224,7 @@ export function DeliveryPage() {
       <div className="business-stack delivery-details-stack">
         <ProgressiveDetails title="文件与技术入口">
           <div className="delivery-action-row">
-            <button className="secondary-button" onClick={() => openPath(deliveryBundleOpenPath, '打开交付包')} type="button">
-              打开交付包
-            </button>
+            {renderOpenPathButton({ idleLabel: '打开交付包', targetPath: deliveryBundleOpenPath })}
             <button
               aria-busy={exportBundleButton.ariaBusy}
               aria-disabled={!deliveryReady || undefined}
@@ -1179,15 +1237,9 @@ export function DeliveryPage() {
               {exportBundleButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
               <span>{exportBundleButton.label}</span>
             </button>
-            <button className="secondary-button" onClick={() => openPath(reportFolder, '打开证据目录')} type="button">
-              打开证据目录
-            </button>
-            <button className="secondary-button" disabled={!packageDirectory} onClick={() => openPath(packageDirectory, '打开安装包目录')} type="button">
-              打开安装包目录
-            </button>
-            <button className="secondary-button" onClick={() => openPath(finalManifestPath, '打开最终验收汇总')} type="button">
-              打开最终验收汇总
-            </button>
+            {renderOpenPathButton({ idleLabel: '打开证据目录', targetPath: reportFolder })}
+            {renderOpenPathButton({ disabled: !packageDirectory, idleLabel: '打开安装包目录', targetPath: packageDirectory })}
+            {renderOpenPathButton({ idleLabel: '打开最终验收汇总', targetPath: finalManifestPath })}
             <button aria-busy={exportReconciliationButton.ariaBusy} className={exportReconciliationButton.className} disabled={exportReconciliationButton.disabled} onClick={exportDataReconciliation} type="button">
               {exportReconciliationButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
               <span>{exportReconciliationButton.label}</span>
@@ -1264,9 +1316,7 @@ export function DeliveryPage() {
                     <span>{createReadbackButton.label}</span>
                   </button>
                 )}
-                <button className="secondary-button" disabled={!readbackCandidatePath} onClick={() => openPath(readbackCandidatePath, '打开回读候选证据')} type="button">
-                  打开候选证据
-                </button>
+                {renderOpenPathButton({ disabled: !readbackCandidatePath, idleLabel: '打开候选证据', messageLabel: '打开回读候选证据', targetPath: readbackCandidatePath })}
                 <button className="secondary-button" onClick={requestReadbackRepair} type="button">
                   直达补执行证据
                 </button>
@@ -1304,21 +1354,11 @@ export function DeliveryPage() {
             )}
             {readbackSession?.sessionDir && (
               <div className="delivery-action-row">
-                <button className="secondary-button" onClick={() => openPath(readbackSession.sessionDir || '', '打开回读工作包')} type="button">
-                  打开回读工作包
-                </button>
-                <button className="secondary-button" onClick={() => openPath(readbackSession.checklistPath || '', '打开操作清单')} type="button">
-                  打开操作清单
-                </button>
-                <button className="secondary-button" onClick={() => openPath(readbackSession.locatorGuidePath || '', '打开广告后台定位单')} type="button">
-                  打开广告后台定位单
-                </button>
-                <button className="secondary-button" onClick={() => openPath(readbackSession.sessionInputPath || '', '打开待填写文件')} type="button">
-                  打开待填写文件
-                </button>
-                <button className="secondary-button" onClick={() => openPath(readbackSession.sessionInputGuidePath || '', '打开填写说明')} type="button">
-                  打开填写说明
-                </button>
+                {renderOpenPathButton({ idleLabel: '打开回读工作包', targetPath: readbackSession.sessionDir || '' })}
+                {renderOpenPathButton({ idleLabel: '打开操作清单', targetPath: readbackSession.checklistPath || '' })}
+                {renderOpenPathButton({ idleLabel: '打开广告后台定位单', targetPath: readbackSession.locatorGuidePath || '' })}
+                {renderOpenPathButton({ idleLabel: '打开待填写文件', targetPath: readbackSession.sessionInputPath || '' })}
+                {renderOpenPathButton({ idleLabel: '打开填写说明', targetPath: readbackSession.sessionInputGuidePath || '' })}
                 <button aria-busy={verifyReadbackSessionButton.ariaBusy} className={verifyReadbackSessionButton.className} disabled={verifyReadbackSessionButton.disabled} onClick={verifyReadbackWorkPackage} type="button">
                   {verifyReadbackSessionButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
                   <span>{verifyReadbackSessionButton.label}</span>
@@ -1418,12 +1458,8 @@ export function DeliveryPage() {
               </ul>
             )}
             <div className="delivery-action-row">
-              <button className="secondary-button" disabled={!dataReconciliation.markdownPath} onClick={() => openPath(dataReconciliation.markdownPath || '', '打开数据口径核对说明文件')} type="button">
-                打开说明文件
-              </button>
-              <button className="secondary-button" disabled={!dataReconciliation.jsonPath} onClick={() => openPath(dataReconciliation.jsonPath || '', '打开数据口径核对数据文件')} type="button">
-                打开数据文件
-              </button>
+              {renderOpenPathButton({ disabled: !dataReconciliation.markdownPath, idleLabel: '打开说明文件', messageLabel: '打开数据口径核对说明文件', targetPath: dataReconciliation.markdownPath || '' })}
+              {renderOpenPathButton({ disabled: !dataReconciliation.jsonPath, idleLabel: '打开数据文件', messageLabel: '打开数据口径核对数据文件', targetPath: dataReconciliation.jsonPath || '' })}
             </div>
           </ProgressiveDetails>
         )}

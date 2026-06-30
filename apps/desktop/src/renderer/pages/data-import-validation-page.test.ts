@@ -4,6 +4,7 @@ import {
   dataImportActionButtonView,
   dataImportBusyLabel,
   dataImportExportButtonView,
+  dataImportOpenPathButtonView,
   buildDataImportTableFeedback,
   dataImportTableFeedbackClass,
   dataImportTableRefreshRowClass,
@@ -179,5 +180,29 @@ describe('data import action micro-feedback', () => {
     expect(active.disabled).toBe(true);
     expect(active.ariaBusy).toBe(true);
     expect(active.className).toContain('button-loading');
+  });
+
+  it('uses the shared busy contract while opening local report paths', () => {
+    const active = dataImportOpenPathButtonView({
+      activePathKey: '打开报表目录:C:/reports',
+      idleLabel: '打开报表目录',
+      pathKey: '打开报表目录:C:/reports',
+    });
+    const lockedPeer = dataImportOpenPathButtonView({
+      activePathKey: '打开报表目录:C:/reports',
+      idleLabel: '打开对账说明文件',
+      pathKey: '打开对账说明文件:C:/reports/reconcile.md',
+    });
+
+    expect(active.label).toBe('打开中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('button-loading');
+    expect(lockedPeer.label).toBe('打开对账说明文件');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.showSpinner).toBe(false);
+    expect(lockedPeer.className).not.toContain('button-loading');
   });
 });

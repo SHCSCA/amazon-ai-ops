@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
+import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryOpenPathButtonView, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
 
 describe('buildDeliveryOverviewFacts', () => {
   it('keeps the delivery first screen to short operator facts instead of long manifest paths', () => {
@@ -205,6 +205,34 @@ describe('deliveryCopySummaryActionView', () => {
     expect(lockedByDeliveryAction.busy).toBe(false);
     expect(lockedByDeliveryAction.busyLabel).toBe('复制中...');
     expect(lockedByDeliveryAction.disabled).toBe(true);
+  });
+});
+
+describe('deliveryOpenPathButtonView', () => {
+  it('gives local path open actions active feedback and locks peer path buttons', () => {
+    const active = deliveryOpenPathButtonView({
+      activePathKey: 'bundle:C:/bundle',
+      idleLabel: '打开交付包',
+      pathKey: 'bundle:C:/bundle',
+    });
+
+    expect(active.label).toBe('打开中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('button-loading');
+
+    const lockedPeer = deliveryOpenPathButtonView({
+      activePathKey: 'bundle:C:/bundle',
+      idleLabel: '打开证据目录',
+      pathKey: 'evidence:C:/evidence',
+    });
+
+    expect(lockedPeer.label).toBe('打开证据目录');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.showSpinner).toBe(false);
+    expect(lockedPeer.className).not.toContain('button-loading');
   });
 });
 

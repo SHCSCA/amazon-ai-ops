@@ -189,6 +189,33 @@ export function dataImportExportButtonView(input: {
   };
 }
 
+export function dataImportPathActionKey(label: string, targetPath?: string): string {
+  return `${label}:${String(targetPath || 'missing')}`;
+}
+
+export function dataImportOpenPathButtonView(input: {
+  activePathKey: string | null;
+  baseClassName?: string;
+  disabled?: boolean;
+  idleLabel: string;
+  pathKey: string;
+}): {
+  label: string;
+  disabled: boolean;
+  ariaBusy?: true;
+  className: string;
+  showSpinner: boolean;
+} {
+  const active = input.activePathKey === input.pathKey;
+  return {
+    label: active ? '打开中...' : input.idleLabel,
+    disabled: Boolean(input.disabled || input.activePathKey),
+    ariaBusy: active ? true : undefined,
+    className: [input.baseClassName || 'secondary-button', active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    showSpinner: active,
+  };
+}
+
 function reportStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     missing: '缺少真实文件',
@@ -392,6 +419,7 @@ export function DataImportValidationPage() {
   const [notice, setNotice] = useState('');
   const [importError, setImportError] = useState('');
   const [pathNotice, setPathNotice] = useState('');
+  const [openingPathKey, setOpeningPathKey] = useState<string | null>(null);
   const [sortState, setSortState] = useState<DataImportSortState | null>(null);
   const [tableRefreshing, setTableRefreshing] = useState(false);
   const refreshTimerRef = useRef<number | null>(null);
@@ -463,6 +491,8 @@ export function DataImportValidationPage() {
     importedRows,
     reportFolder,
   });
+  const reportFolderOpenKey = reportFolder ? dataImportPathActionKey('打开报表目录', reportFolder) : '';
+  const reportFolderOpening = Boolean(reportFolder && openingPathKey === reportFolderOpenKey);
   const importFeedback = buildDataImportFeedback({
     realReportCount,
     importedRows,
@@ -473,6 +503,34 @@ export function DataImportValidationPage() {
   const currentImportButton = dataImportActionButtonView({ mode: 'current', runningImport, hasRealFiles });
   const localImportButton = dataImportActionButtonView({ mode: 'local', runningImport, hasRealFiles });
   const exportButton = dataImportExportButtonView({ exportingReconciliation, hasImportedMetrics });
+  function renderOpenPathButton(input: {
+    className?: string;
+    disabled?: boolean;
+    idleLabel: string;
+    messageLabel?: string;
+    targetPath?: string;
+  }) {
+    const messageLabel = input.messageLabel || input.idleLabel;
+    const view = dataImportOpenPathButtonView({
+      activePathKey: openingPathKey,
+      baseClassName: input.className,
+      disabled: input.disabled,
+      idleLabel: input.idleLabel,
+      pathKey: dataImportPathActionKey(messageLabel, input.targetPath),
+    });
+    return (
+      <button
+        aria-busy={view.ariaBusy}
+        className={view.className}
+        disabled={view.disabled}
+        onClick={() => openPath(input.targetPath, messageLabel)}
+        type="button"
+      >
+        {view.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+        <span>{view.label}</span>
+      </button>
+    );
+  }
   const reportColumns: Array<VirtualDataTableColumn<DataImportReportRow>> = [
     { key: 'label', header: '报表', width: '170px', sortable: true, sortLabel: '报表', cell: (row) => row.label },
     {
@@ -513,9 +571,13 @@ export function DataImportValidationPage() {
       header: '操作',
       width: '100px',
       cell: (row) => (
-        <button className="secondary-button compact-button" disabled={!row.filePath || importLocked} onClick={() => openPath(row.filePath)} type="button">
-          打开表格
-        </button>
+        renderOpenPathButton({
+          className: 'secondary-button compact-button',
+          disabled: !row.filePath || importLocked,
+          idleLabel: '打开表格',
+          messageLabel: `打开${row.label}`,
+          targetPath: row.filePath,
+        })
       ),
     },
   ];
@@ -533,13 +595,22 @@ export function DataImportValidationPage() {
     }, 200);
   }
 
-  async function openPath(targetPath?: string) {
-    if (!targetPath) return;
+  async function openPath(targetPath?: string, label = '打开路径') {
+    if (openingPathKey) return;
+    if (!targetPath) {
+      setPathNotice('打开路径不可用：当前没有可打开的文件或目录。');
+      return;
+    }
+    const pathKey = dataImportPathActionKey(label, targetPath);
+    setOpeningPathKey(pathKey);
+    setPathNotice(`${label}打开中...`);
     try {
       await (window as any).electronAPI?.openReportPath?.(targetPath);
       setPathNotice(`已请求打开：${compactPath(targetPath)}`);
     } catch (caught) {
       setPathNotice(`打开失败：${toUserFacingError(caught, '打开路径失败。')}`);
+    } finally {
+      setOpeningPathKey(null);
     }
   }
 
@@ -635,10 +706,10 @@ export function DataImportValidationPage() {
           secondaryActions={[
             {
               label: taskState.secondaryActionLabel,
-              busy: Boolean(runningImport),
-              busyLabel: dataImportBusyLabel(runningImport),
-              disabled: Boolean(runningImport),
-              onClick: reportFolder ? () => openPath(reportFolder) : () => runImport('local'),
+              busy: Boolean(runningImport || reportFolderOpening),
+              busyLabel: reportFolderOpening ? '打开中...' : dataImportBusyLabel(runningImport),
+              disabled: Boolean(runningImport || openingPathKey),
+              onClick: reportFolder ? () => openPath(reportFolder, '打开报表目录') : () => runImport('local'),
             },
           ]}
         >
@@ -666,7 +737,7 @@ export function DataImportValidationPage() {
               </div>
               <div className="business-pill-row business-pill-row-right">
                 <StatusPill tone="ready">真实报表 {realReportCount}/8</StatusPill>
-                <button className="secondary-button" onClick={() => openPath(reportFolder)} type="button">打开报表目录</button>
+                {renderOpenPathButton({ idleLabel: '打开报表目录', targetPath: reportFolder })}
               </div>
             </div>
           </Panel>
@@ -727,7 +798,7 @@ export function DataImportValidationPage() {
             </div>
             </div>
             <div className="action-row">
-              <button className="secondary-button" disabled={!hasRealFiles || !fileAudit?.downloadDir} onClick={() => openPath(fileAudit?.downloadDir)} type="button">打开原始表格目录</button>
+              {renderOpenPathButton({ disabled: !hasRealFiles || !fileAudit?.downloadDir, idleLabel: '打开原始表格目录', targetPath: fileAudit?.downloadDir })}
               <button aria-busy={exportButton.ariaBusy} className={exportButton.className} disabled={exportButton.disabled} onClick={exportReconciliation} type="button">
                 <span className={exportButton.ariaBusy ? 'button-content' : undefined}>
                   {exportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
@@ -751,12 +822,12 @@ export function DataImportValidationPage() {
                   <div className="path-row">
                     <span>对账数据文件</span>
                     <code>{reconciliation.jsonPath || '-'}</code>
-                    <button className="secondary-button compact-button" disabled={!reconciliation.jsonPath} onClick={() => openPath(reconciliation.jsonPath)} type="button">打开对账数据文件</button>
+                    {renderOpenPathButton({ className: 'secondary-button compact-button', disabled: !reconciliation.jsonPath, idleLabel: '打开对账数据文件', targetPath: reconciliation.jsonPath })}
                   </div>
                   <div className="path-row">
                     <span>对账说明文件</span>
                     <code>{reconciliation.markdownPath || '-'}</code>
-                    <button className="secondary-button compact-button" disabled={!reconciliation.markdownPath} onClick={() => openPath(reconciliation.markdownPath)} type="button">打开对账说明文件</button>
+                    {renderOpenPathButton({ className: 'secondary-button compact-button', disabled: !reconciliation.markdownPath, idleLabel: '打开对账说明文件', targetPath: reconciliation.markdownPath })}
                   </div>
                 </div>
               </div>
@@ -841,12 +912,12 @@ export function DataImportValidationPage() {
             <div className="path-row">
               <span>真实广告表格目录</span>
               <code>{fileAudit?.downloadDir ? compactPath(fileAudit.downloadDir) : '暂无'}</code>
-              <button className="secondary-button compact-button" disabled={!fileAudit?.downloadDir} onClick={() => openPath(fileAudit?.downloadDir)} type="button">打开</button>
+              {renderOpenPathButton({ className: 'secondary-button compact-button', disabled: !fileAudit?.downloadDir, idleLabel: '打开', messageLabel: '打开真实广告表格目录', targetPath: fileAudit?.downloadDir })}
             </div>
             <div className="path-row">
               <span>采集清单</span>
               <code>{fileAudit?.manifestPath ? compactPath(fileAudit.manifestPath) : '暂无'}</code>
-              <button className="secondary-button compact-button" disabled={!fileAudit?.manifestPath} onClick={() => openPath(fileAudit?.manifestPath)} type="button">打开</button>
+              {renderOpenPathButton({ className: 'secondary-button compact-button', disabled: !fileAudit?.manifestPath, idleLabel: '打开', messageLabel: '打开采集清单', targetPath: fileAudit?.manifestPath })}
             </div>
             </div>
             <p className="warning-line">采集清单和审计证据只用于追溯流程；广告量化只读取上方真实报表和 SQLite 指标。</p>

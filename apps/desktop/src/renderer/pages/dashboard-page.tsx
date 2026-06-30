@@ -567,6 +567,33 @@ export function dashboardPrimaryTaskNavigationFeedback(input: {
   };
 }
 
+export function dashboardPathActionKey(label: string, targetPath: string): string {
+  return `${label}:${String(targetPath || 'missing')}`;
+}
+
+export function dashboardOpenPathButtonView(input: {
+  activePathKey: string | null;
+  baseClassName?: string;
+  disabled?: boolean;
+  idleLabel: string;
+  pathKey: string;
+}): {
+  label: string;
+  disabled: boolean;
+  ariaBusy?: true;
+  className: string;
+  showSpinner: boolean;
+} {
+  const active = input.activePathKey === input.pathKey;
+  return {
+    label: active ? '打开中...' : input.idleLabel,
+    disabled: Boolean(input.disabled || input.activePathKey),
+    ariaBusy: active ? true : undefined,
+    className: [input.baseClassName || 'secondary-button', active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    showSpinner: active,
+  };
+}
+
 type DashboardActionQueueItem = {
   title: string;
   detail: string;
@@ -962,6 +989,7 @@ export function dashboardRiskObjectSecondaryAction(input: {
 export function DashboardPage() {
   const { data, error, loading, scope } = useBusinessDataPipeline();
   const [pathNotice, setPathNotice] = useState<string | null>(null);
+  const [openingPathKey, setOpeningPathKey] = useState<string | null>(null);
   const [ruleConfig, setRuleConfig] = useState(() => normalizeRuleConfig(null));
   const [aiStatus, setAiStatus] = useState(() => dashboardAiStatus(null));
   const [pendingRecommendations, setPendingRecommendations] = useState<RecommendationView[]>([]);
@@ -1333,13 +1361,50 @@ export function DashboardPage() {
     }
   }, []);
 
-  async function openPath(targetPath: string) {
+  async function openPath(targetPath: string, label = '打开路径') {
+    if (openingPathKey) return;
+    if (!targetPath) {
+      setPathNotice('打开路径不可用：当前没有可打开的文件或目录。');
+      return;
+    }
+    const pathKey = dashboardPathActionKey(label, targetPath);
+    setOpeningPathKey(pathKey);
+    setPathNotice(`${label}打开中...`);
     try {
       await (window as any).electronAPI?.openReportPath?.(targetPath);
       setPathNotice(`已请求打开：${compactPath(targetPath)}`);
     } catch (caught) {
       setPathNotice(`打开失败：${toUserFacingError(caught, '打开路径失败。')}`);
+    } finally {
+      setOpeningPathKey(null);
     }
+  }
+
+  function renderOpenPathButton(input: {
+    className?: string;
+    idleLabel: string;
+    messageLabel?: string;
+    targetPath: string;
+  }) {
+    const messageLabel = input.messageLabel || input.idleLabel;
+    const view = dashboardOpenPathButtonView({
+      activePathKey: openingPathKey,
+      baseClassName: input.className,
+      idleLabel: input.idleLabel,
+      pathKey: dashboardPathActionKey(messageLabel, input.targetPath),
+    });
+    return (
+      <button
+        aria-busy={view.ariaBusy}
+        className={view.className}
+        disabled={view.disabled}
+        onClick={() => openPath(input.targetPath, messageLabel)}
+        type="button"
+      >
+        {view.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+        <span>{view.label}</span>
+      </button>
+    );
   }
 
   function navigatePrimaryTask(route: AppRoute) {
@@ -1608,13 +1673,7 @@ export function DashboardPage() {
                     <div className="path-row" key={`${item.kind}-${item.path}`}>
                       <span>{item.label}</span>
                       <code title={item.path}>{compactPath(item.path)}</code>
-                      <button
-                        className="secondary-button compact-button"
-                        onClick={() => openPath(item.path)}
-                        type="button"
-                      >
-                        打开
-                      </button>
+                      {renderOpenPathButton({ className: 'secondary-button compact-button', idleLabel: '打开', messageLabel: `打开${item.label}`, targetPath: item.path })}
                     </div>
                   ))}
                   {pathNotice && <p className={pathNotice.startsWith('打开失败') ? 'blocked-line' : 'muted-line'}>{pathNotice}</p>}

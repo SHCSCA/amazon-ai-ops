@@ -330,6 +330,33 @@ export function collectionActionButtonView({
   };
 }
 
+export function collectionPathActionKey(label: string, targetPath: string): string {
+  return `${label}:${String(targetPath || 'missing')}`;
+}
+
+export function collectionOpenPathButtonView(input: {
+  activePathKey: string | null;
+  baseClassName?: string;
+  disabled?: boolean;
+  idleLabel: string;
+  pathKey: string;
+}): {
+  label: string;
+  disabled: boolean;
+  ariaBusy?: true;
+  className: string;
+  showSpinner: boolean;
+} {
+  const isActive = input.activePathKey === input.pathKey;
+  return {
+    label: isActive ? '打开中...' : input.idleLabel,
+    disabled: Boolean(input.disabled || input.activePathKey),
+    ariaBusy: isActive ? true : undefined,
+    className: [input.baseClassName || 'secondary-button', isActive ? 'button-loading' : ''].filter(Boolean).join(' '),
+    showSpinner: isActive,
+  };
+}
+
 export function collectionReportSelectionState(input: {
   selectedCount: number;
   totalCount: number;
@@ -761,6 +788,7 @@ export function DataCollectionPage() {
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<RunningCollectionActionMode | null>(null);
+  const [openingPathKey, setOpeningPathKey] = useState<string | null>(null);
   const [lastActionResult, setLastActionResult] = useState<LastActionResult | null>(null);
   const [lastDiagnostic, setLastDiagnostic] = useState<any | null>(null);
   const [collectionMonitorOpen, setCollectionMonitorOpen] = useState(false);
@@ -844,6 +872,8 @@ export function DataCollectionPage() {
     primaryReportFolder,
     runningAction,
   });
+  const primaryReportFolderOpenKey = primaryReportFolder ? collectionPathActionKey('打开报表目录', primaryReportFolder) : '';
+  const primaryReportFolderOpening = Boolean(primaryReportFolder && openingPathKey === primaryReportFolderOpenKey);
   const collectionMonitorState = buildCollectionMonitorState({
     runningAction,
     actionNotice,
@@ -882,14 +912,26 @@ export function DataCollectionPage() {
     ));
   }
 
-  async function openPath(targetPath: string) {
+  async function openPath(targetPath: string, label = '打开路径') {
+    if (openingPathKey) return;
+    if (!targetPath) {
+      setActionError('打开路径不可用：当前没有可打开的文件或目录。');
+      setActionNotice('打开路径不可用。');
+      return;
+    }
+    const pathKey = collectionPathActionKey(label, targetPath);
+    setOpeningPathKey(pathKey);
     try {
+      setActionError(null);
+      setActionNotice(`${label}打开中...`);
       await (window as any).electronAPI?.openReportPath?.(targetPath);
       setActionError(null);
       setActionNotice(`已请求打开：${compactPath(targetPath)}`);
     } catch (caught) {
       setActionError(toUserFacingError(caught, '打开路径失败。'));
       setActionNotice('打开路径失败。');
+    } finally {
+      setOpeningPathKey(null);
     }
   }
 
@@ -1086,6 +1128,68 @@ export function DataCollectionPage() {
     }
   }
 
+  function renderOpenPathButton(input: {
+    className?: string;
+    disabled?: boolean;
+    idleLabel: string;
+    messageLabel?: string;
+    targetPath: string;
+  }) {
+    const messageLabel = input.messageLabel || input.idleLabel;
+    const view = collectionOpenPathButtonView({
+      activePathKey: openingPathKey,
+      baseClassName: input.className,
+      disabled: input.disabled,
+      idleLabel: input.idleLabel,
+      pathKey: collectionPathActionKey(messageLabel, input.targetPath),
+    });
+    return (
+      <button
+        aria-busy={view.ariaBusy}
+        className={view.className}
+        disabled={view.disabled}
+        onClick={() => openPath(input.targetPath, messageLabel)}
+        type="button"
+      >
+        {view.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+        <span>{view.label}</span>
+      </button>
+    );
+  }
+
+  function renderOpenPathChip(file: {
+    displayName: string;
+    fileName: string;
+    filePath: string;
+    id?: string;
+    importedRows?: number;
+    smallText?: string;
+  }) {
+    const view = collectionOpenPathButtonView({
+      activePathKey: openingPathKey,
+      baseClassName: 'real-file-chip',
+      idleLabel: file.displayName,
+      pathKey: collectionPathActionKey(file.displayName, file.filePath),
+    });
+    return (
+      <button
+        aria-busy={view.ariaBusy}
+        className={view.className}
+        disabled={view.disabled}
+        key={file.id || file.filePath}
+        onClick={() => openPath(file.filePath, file.displayName)}
+        type="button"
+      >
+        <span>{file.displayName}</span>
+        <strong>{file.fileName}</strong>
+        <small>
+          {view.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+          {view.showSpinner ? view.label : file.smallText || `${getFileExtension(file.fileName, file.filePath)} / ${file.importedRows || 0} 行`}
+        </small>
+      </button>
+    );
+  }
+
   return (
     <div>
       <PageHeader
@@ -1111,10 +1215,10 @@ export function DataCollectionPage() {
           secondaryActions={[
             {
               label: taskState.secondaryActionLabel,
-              busy: Boolean(runningAction),
-              busyLabel: runningAction ? actionModeLabel(runningAction) : undefined,
-              disabled: Boolean(runningAction),
-              onClick: primaryReportFolder ? () => openPath(primaryReportFolder) : importLocalReports,
+              busy: Boolean(runningAction || primaryReportFolderOpening),
+              busyLabel: primaryReportFolderOpening ? '打开中...' : runningAction ? actionModeLabel(runningAction) : undefined,
+              disabled: Boolean(runningAction || openingPathKey),
+              onClick: primaryReportFolder ? () => openPath(primaryReportFolder, '打开报表目录') : importLocalReports,
             },
           ]}
         >
@@ -1170,7 +1274,7 @@ export function DataCollectionPage() {
               </div>
               <div className="business-pill-row business-pill-row-right">
                 <StatusPill tone="ready">{collectionStatusLabel(collection?.status)}</StatusPill>
-                <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开报表目录</button>
+                {renderOpenPathButton({ idleLabel: '打开报表目录', targetPath: primaryReportFolder })}
               </div>
             </div>
           </Panel>
@@ -1261,10 +1365,10 @@ export function DataCollectionPage() {
             )}
             <div className="action-row">
               {fileAudit?.downloadDir && (
-                <button className="secondary-button" onClick={() => openPath(fileAudit.downloadDir!)} type="button">打开真实报表目录</button>
+                renderOpenPathButton({ idleLabel: '打开真实报表目录', targetPath: fileAudit.downloadDir })
               )}
               {fileAudit?.manifestPath && (
-                <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开采集清单</button>
+                renderOpenPathButton({ idleLabel: '打开采集清单', targetPath: fileAudit.manifestPath })
               )}
               <button
                 className="primary-button"
@@ -1312,13 +1416,13 @@ export function DataCollectionPage() {
             </div>
             <div className="action-row">
               {primaryReportFolder && (
-                <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开真实报表目录</button>
+                renderOpenPathButton({ idleLabel: '打开真实报表目录', targetPath: primaryReportFolder })
               )}
               {fileAudit?.manifestPath && (
-                <button className="secondary-button" onClick={() => openPath(fileAudit.manifestPath!)} type="button">打开采集清单</button>
+                renderOpenPathButton({ idleLabel: '打开采集清单', targetPath: fileAudit.manifestPath })
               )}
               {primaryAuditPath && (
-                <button className="secondary-button" onClick={() => openPath(primaryAuditPath)} type="button">打开审计证据</button>
+                renderOpenPathButton({ idleLabel: '打开审计证据', targetPath: primaryAuditPath })
               )}
             </div>
             <div className="real-file-summary">
@@ -1328,13 +1432,7 @@ export function DataCollectionPage() {
               </div>
               {realFiles.length ? (
                 <div className="real-file-chip-grid">
-                  {visibleRealFiles.map((file) => (
-                    <button className="real-file-chip" key={file.id} onClick={() => openPath(file.filePath)} type="button">
-                      <span>{file.displayName}</span>
-                      <strong>{file.fileName}</strong>
-                      <small>{getFileExtension(file.fileName, file.filePath)} / {file.importedRows} 行</small>
-                    </button>
-                  ))}
+                  {visibleRealFiles.map((file) => renderOpenPathChip(file))}
                   {hiddenRealFileCount > 0 && (
                     <div className="real-file-chip real-file-chip-muted">
                       <span>更多文件</span>
@@ -1532,9 +1630,7 @@ export function DataCollectionPage() {
                 </div>
                 {lastActionSummary.primaryPath && (
                   <div className="action-row">
-                    <button className="secondary-button" onClick={() => openPath(lastActionSummary.primaryPath!)} type="button">
-                      打开动作证据位置
-                    </button>
+                    {renderOpenPathButton({ idleLabel: '打开动作证据位置', targetPath: lastActionSummary.primaryPath })}
                   </div>
                 )}
               </div>
@@ -1563,15 +1659,16 @@ export function DataCollectionPage() {
             {(lastActionResult.downloadDir || lastActionResult.manifestPath || primaryReportFolder) && (
               <div className="action-row">
                 {lastActionResult.downloadDir && (
-                  <button className="secondary-button" onClick={() => openPath(lastActionResult.downloadDir!)} type="button">
-                    {lastActionResult.mode === 'import' ? '打开本次导入目录' : '打开本次下载目录'}
-                  </button>
+                  renderOpenPathButton({
+                    idleLabel: lastActionResult.mode === 'import' ? '打开本次导入目录' : '打开本次下载目录',
+                    targetPath: lastActionResult.downloadDir,
+                  })
                 )}
                 {lastActionResult.manifestPath && (
-                  <button className="secondary-button" onClick={() => openPath(lastActionResult.manifestPath!)} type="button">打开本次采集清单</button>
+                  renderOpenPathButton({ idleLabel: '打开本次采集清单', targetPath: lastActionResult.manifestPath })
                 )}
                 {primaryReportFolder && (
-                  <button className="secondary-button" onClick={() => openPath(primaryReportFolder)} type="button">打开当前真实报表目录</button>
+                  renderOpenPathButton({ idleLabel: '打开当前真实报表目录', targetPath: primaryReportFolder })
                 )}
               </div>
             )}
@@ -1583,11 +1680,12 @@ export function DataCollectionPage() {
                 </div>
                 <div className="real-file-chip-grid">
                   {lastActionResult.actionDownloadedFiles.map((file) => (
-                    <button className="real-file-chip" key={file.filePath} onClick={() => openPath(file.filePath)} type="button">
-                      <span>{file.label}</span>
-                      <strong>{file.fileName}</strong>
-                      <small>{formatFileSize(file.fileSizeBytes)} / 点击打开表格</small>
-                    </button>
+                    renderOpenPathChip({
+                      displayName: file.label,
+                      fileName: file.fileName,
+                      filePath: file.filePath,
+                      smallText: `${formatFileSize(file.fileSizeBytes)} / 点击打开表格`,
+                    })
                   ))}
                 </div>
               </div>
@@ -1646,8 +1744,8 @@ export function DataCollectionPage() {
                       <td>{reportStatusLabel(file.status)}</td>
                       <td>
                         <div className="table-action-row">
-                          <button className="secondary-button compact-button" onClick={() => openPath(file.filePath)} type="button">打开文件</button>
-                          <button className="secondary-button compact-button" onClick={() => openPath(file.folderPath)} type="button">打开文件夹</button>
+                          {renderOpenPathButton({ className: 'secondary-button compact-button', idleLabel: '打开文件', messageLabel: `打开${file.displayName}`, targetPath: file.filePath })}
+                          {renderOpenPathButton({ className: 'secondary-button compact-button', idleLabel: '打开文件夹', messageLabel: `打开${file.displayName}文件夹`, targetPath: file.folderPath })}
                         </div>
                       </td>
                     </tr>

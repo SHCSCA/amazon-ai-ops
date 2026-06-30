@@ -11,6 +11,7 @@ import {
   collectionActionError,
   collectionActionGuide,
   collectionCompletionNotice,
+  collectionOpenPathButtonView,
   collectionReportSelectionState,
   dataCollectionFirstViewportReportFolder,
   runCollectionDownloadAction,
@@ -334,6 +335,31 @@ describe('task-first data page helpers', () => {
     expect(locked.disabled).toBe(true);
     expect(locked.ariaBusy).toBe(false);
     expect(locked.className).not.toContain('collection-action-button-running');
+  });
+
+  it('gives local path open buttons an explicit busy contract while opening a file or folder', () => {
+    const active = collectionOpenPathButtonView({
+      activePathKey: '打开报表目录:C:/reports',
+      idleLabel: '打开报表目录',
+      pathKey: '打开报表目录:C:/reports',
+    });
+    const locked = collectionOpenPathButtonView({
+      activePathKey: '打开报表目录:C:/reports',
+      idleLabel: '打开采集清单',
+      pathKey: '打开采集清单:C:/manifest.json',
+    });
+
+    expect(active.label).toBe('打开中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('button-loading');
+
+    expect(locked.label).toBe('打开采集清单');
+    expect(locked.disabled).toBe(true);
+    expect(locked.ariaBusy).toBeUndefined();
+    expect(locked.showSpinner).toBe(false);
+    expect(locked.className).not.toContain('button-loading');
   });
 
   it('gives report checkbox selection an explicit count and progress response', async () => {

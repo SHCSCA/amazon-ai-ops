@@ -14,6 +14,7 @@ import {
   dashboardDeliveryPrimaryRoute,
   dashboardMetricStatusCopy,
   dashboardNormalizeDeliveryItem,
+  dashboardOpenPathButtonView,
   dashboardPrimaryTaskAction,
   dashboardPrimaryTaskNavigationFeedback,
   dashboardProductWorkbenchAction,
@@ -1414,6 +1415,31 @@ describe('dashboardPrimaryTaskNavigationFeedback', () => {
 
     expect(source).toContain('refreshing={primaryTaskNavigationFeedback.busy}');
     expect(source).toContain('StateLightGrid');
+  });
+});
+
+describe('dashboardOpenPathButtonView', () => {
+  it('gives dashboard evidence path buttons active feedback and locks path peers', () => {
+    const active = dashboardOpenPathButtonView({
+      activePathKey: '打开证据:C:/evidence',
+      idleLabel: '打开',
+      pathKey: '打开证据:C:/evidence',
+    });
+    const locked = dashboardOpenPathButtonView({
+      activePathKey: '打开证据:C:/evidence',
+      idleLabel: '打开',
+      pathKey: '打开清单:C:/manifest.json',
+    });
+
+    expect(active.label).toBe('打开中...');
+    expect(active.disabled).toBe(true);
+    expect(active.ariaBusy).toBe(true);
+    expect(active.showSpinner).toBe(true);
+    expect(active.className).toContain('button-loading');
+    expect(locked.label).toBe('打开');
+    expect(locked.disabled).toBe(true);
+    expect(locked.ariaBusy).toBeUndefined();
+    expect(locked.showSpinner).toBe(false);
   });
 });
 
