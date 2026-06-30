@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { KeywordOpportunityView } from '../types';
 import {
   buildKeywordOpportunityFilterFeedback,
+  keywordOpportunityActionButtonView,
   keywordOpportunityTableFeedbackClass,
   nextKeywordOpportunitySort,
   sortKeywordOpportunities,
@@ -101,5 +102,39 @@ describe('keyword opportunity filter micro-feedback', () => {
     expect(styles).toContain('@keyframes keyword-opportunity-filter-refresh');
     expect(styles).toMatch(/animation:\s*keyword-opportunity-filter-refresh 100ms/);
     expect(styles).toContain('transform: translateY(4px)');
+  });
+});
+
+describe('keywordOpportunityActionButtonView', () => {
+  it('gives the refresh action an explicit busy contract', () => {
+    const running = keywordOpportunityActionButtonView({
+      active: true,
+      baseClassName: 'secondary-button',
+      busyLabel: '刷新中...',
+      label: '刷新机会',
+    });
+
+    expect(running.label).toBe('刷新中...');
+    expect(running.className).toContain('secondary-button');
+    expect(running.className).toContain('button-loading');
+    expect(running.disabled).toBe(true);
+    expect(running.ariaBusy).toBe(true);
+    expect(running.showSpinner).toBe(true);
+  });
+
+  it('locks peer keyword actions without making them look active', () => {
+    const locked = keywordOpportunityActionButtonView({
+      active: false,
+      baseClassName: 'secondary-button',
+      busyLabel: '刷新中...',
+      groupBusy: true,
+      label: '进入 Listing',
+    });
+
+    expect(locked.label).toBe('进入 Listing');
+    expect(locked.disabled).toBe(true);
+    expect(locked.ariaBusy).toBeUndefined();
+    expect(locked.className).not.toContain('button-loading');
+    expect(locked.showSpinner).toBe(false);
   });
 });

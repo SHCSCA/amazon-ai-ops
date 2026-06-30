@@ -149,6 +149,40 @@ export function keywordOpportunityTableFeedbackClass(refreshing: boolean): strin
     : 'keyword-opportunity-table-shell';
 }
 
+interface KeywordOpportunityActionButtonInput {
+  active: boolean;
+  baseClassName: string;
+  label: string;
+  busyLabel: string;
+  disabled?: boolean;
+  groupBusy?: boolean;
+}
+
+export interface KeywordOpportunityActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function keywordOpportunityActionButtonView({
+  active,
+  baseClassName,
+  label,
+  busyLabel,
+  disabled = false,
+  groupBusy = false,
+}: KeywordOpportunityActionButtonInput): KeywordOpportunityActionButtonView {
+  return {
+    ariaBusy: active ? true : undefined,
+    className: [baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(disabled || active || groupBusy),
+    label: active ? busyLabel : label,
+    showSpinner: active,
+  };
+}
+
 export function KeywordOpportunitiesPage() {
   const { data, scope } = useBusinessDataPipeline();
   const setScope = useScopeStore((state) => state.setScope);
@@ -228,6 +262,14 @@ export function KeywordOpportunitiesPage() {
     sortLabel: keywordOpportunitySortLabel(sortState.key),
     totalCount: visibleRowCount,
     visibleCount: visibleRows.length,
+  });
+  const keywordActionBusy = loading;
+  const refreshOpportunityButton = keywordOpportunityActionButtonView({
+    active: loading,
+    baseClassName: 'secondary-button',
+    busyLabel: '刷新中...',
+    disabled: !quantReady,
+    label: '刷新机会',
   });
   const highOpportunityCount = visibleRows.filter((row) => row.opportunityLevel === 'high').length;
   const convertingCount = visibleRows.filter((row) => row.orders > 0 || row.sales > 0).length;
@@ -359,6 +401,14 @@ export function KeywordOpportunitiesPage() {
       width: '230px',
       cell: (row) => {
         const key = rowKey(row);
+        const listingHandoffButton = keywordOpportunityActionButtonView({
+          active: false,
+          baseClassName: 'compact-button primary-button',
+          busyLabel: '处理中...',
+          disabled: !quantReady,
+          groupBusy: keywordActionBusy,
+          label: '带入 Listing',
+        });
         return (
           <div>
             <div>{row.risk}</div>
@@ -366,8 +416,9 @@ export function KeywordOpportunitiesPage() {
               <button className="compact-button secondary-button" onClick={() => setExpandedKey(expandedKey === key ? null : key)} type="button">
                 {expandedKey === key ? '收起详情' : '来源详情'}
               </button>
-              <button className="compact-button primary-button" disabled={!quantReady} onClick={() => handoffToListing(row)} type="button">
-                带入 Listing
+              <button aria-busy={listingHandoffButton.ariaBusy} className={listingHandoffButton.className} disabled={listingHandoffButton.disabled} onClick={() => handoffToListing(row)} type="button">
+                {listingHandoffButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                <span>{listingHandoffButton.label}</span>
               </button>
             </div>
           </div>
@@ -442,8 +493,9 @@ export function KeywordOpportunitiesPage() {
             </StatusPill>
           </div>
           <div className="action-row">
-            <button className="secondary-button" disabled={loading || !quantReady} onClick={loadRows} type="button">
-              {loading ? '刷新中...' : '刷新机会'}
+            <button aria-busy={refreshOpportunityButton.ariaBusy} className={refreshOpportunityButton.className} disabled={refreshOpportunityButton.disabled} onClick={loadRows} type="button">
+              {refreshOpportunityButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{refreshOpportunityButton.label}</span>
             </button>
           </div>
           {message && <p className={message.includes('失败') || message.includes('缺少') || message.includes('不能') ? 'blocked-line' : 'muted-line'}>{message}</p>}
