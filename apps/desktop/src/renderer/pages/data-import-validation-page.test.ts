@@ -6,6 +6,7 @@ import {
   dataImportExportButtonView,
   buildDataImportTableFeedback,
   dataImportTableFeedbackClass,
+  dataImportTableRefreshRowClass,
   dataImportTableSortHandler,
   nextDataImportSort,
   sortDataImportReportRows,
@@ -91,10 +92,12 @@ describe('data import table micro-feedback', () => {
     })).toBe('按默认报表顺序展示 8 类报表；真实报表 2/8，已入库 0 行。');
   });
 
-  it('marks the table shell only during the 100ms sort refresh', () => {
+  it('marks the table shell and rows during the 200ms sort refresh', () => {
     expect(dataImportTableFeedbackClass({ refreshing: false, locked: false })).toBe('data-import-table-shell');
     expect(dataImportTableFeedbackClass({ refreshing: true, locked: false })).toContain('data-import-table-refreshing');
     expect(dataImportTableFeedbackClass({ refreshing: false, locked: true })).toContain('data-import-table-locked');
+    expect(dataImportTableRefreshRowClass(false)).toBeUndefined();
+    expect(dataImportTableRefreshRowClass(true)).toBe('data-import-table-row-refresh');
   });
 
   it('locks sorting while an import is writing metrics into SQLite', () => {
@@ -108,7 +111,7 @@ describe('data import table micro-feedback', () => {
     expect(sortSpy).toHaveBeenCalledWith('hash');
   });
 
-  it('keeps the 100ms sorting feedback and aria-live contract wired', () => {
+  it('keeps the 200ms sorting feedback and aria-live contract wired', () => {
     const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
@@ -119,15 +122,21 @@ describe('data import table micro-feedback', () => {
     expect(source).toContain("header: 'SHA-256'");
     expect(source).toContain('shortDataImportHash');
     expect(source).toContain('setTableRefreshing');
+    expect(source).toContain('dataImportTableRefreshRowClass(tableRefreshing)');
+    expect(source).toContain('}, 200)');
     expect(styles).toContain('.data-import-table-refreshing');
     expect(styles).toContain('.data-import-table-locked');
     expect(styles).toContain('@keyframes data-import-table-refresh');
-    expect(styles).toMatch(/animation:\s*data-import-table-refresh 100ms/);
+    expect(styles).toMatch(/animation:\s*data-import-table-refresh 200ms/);
     expect(styles).toContain('filter: blur(1px)');
     expect(styles).toContain('.data-import-table-refreshing .virtual-table-wrap::after');
     expect(styles).toMatch(/\.data-import-table-refreshing \.virtual-table-wrap::after[\s\S]*pointer-events:\s*none/);
     expect(styles).toMatch(/\.data-import-table-refreshing \.virtual-table-wrap::after[\s\S]*backdrop-filter:\s*blur\(2px\)/);
     expect(styles).toContain('@keyframes data-import-table-refresh-sweep');
+    expect(styles).toContain('.data-import-table-row-refresh');
+    expect(styles).toContain('@keyframes data-import-row-fade-in');
+    expect(styles).toMatch(/\.data-import-table-row-refresh[\s\S]*animation:\s*data-import-row-fade-in 200ms/);
+    expect(styles).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.data-import-table-row-refresh[\s\S]*animation:\s*none/);
   });
 });
 

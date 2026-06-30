@@ -1027,6 +1027,10 @@ button:disabled {
   .data-import-table-refreshing .virtual-table-wrap::after {
     animation: none;
   }
+
+  .data-import-table-row-refresh {
+    animation: none;
+  }
 }
 
 .dashboard-task-metrics {
@@ -2653,7 +2657,7 @@ code {
 }
 
 .data-import-table-refreshing .virtual-table-wrap {
-  animation: data-import-table-refresh 100ms ease-out;
+  animation: data-import-table-refresh 200ms ease-out;
   will-change: opacity, filter, transform;
 }
 
@@ -2668,7 +2672,12 @@ code {
     rgb(255 255 255 / 0.48);
   background-size: 180% 100%, 100% 100%;
   backdrop-filter: blur(2px);
-  animation: data-import-table-refresh-sweep 100ms ease-out;
+  animation: data-import-table-refresh-sweep 200ms ease-out;
+}
+
+.data-import-table-row-refresh {
+  animation: data-import-row-fade-in 200ms ease-out;
+  will-change: opacity, transform;
 }
 
 @keyframes keyword-opportunity-filter-refresh {
@@ -2706,6 +2715,18 @@ code {
   to {
     opacity: 0;
     background-position: -20% 0, 0 0;
+  }
+}
+
+@keyframes data-import-row-fade-in {
+  from {
+    opacity: 0.72;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

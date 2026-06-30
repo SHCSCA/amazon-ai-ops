@@ -140,6 +140,10 @@ export function dataImportTableFeedbackClass(input: { refreshing: boolean; locke
   ].filter(Boolean).join(' ');
 }
 
+export function dataImportTableRefreshRowClass(refreshing: boolean): string | undefined {
+  return refreshing ? 'data-import-table-row-refresh' : undefined;
+}
+
 export function dataImportTableSortHandler(input: {
   locked: boolean;
   onSort: (key: string) => void;
@@ -526,7 +530,7 @@ export function DataImportValidationPage() {
     refreshTimerRef.current = window.setTimeout(() => {
       setTableRefreshing(false);
       refreshTimerRef.current = null;
-    }, 100);
+    }, 200);
   }
 
   async function openPath(targetPath?: string) {
@@ -822,6 +826,7 @@ export function DataImportValidationPage() {
                 loading={loading}
                 minWidth="1120px"
                 onSortChange={dataImportTableSortHandler({ locked: importLocked, onSort: handleReportSortChange })}
+                rowClassName={() => dataImportTableRefreshRowClass(tableRefreshing)}
                 rows={sortedReportRows}
                 sortDirection={sortState?.direction ?? 'desc'}
                 sortKey={sortState?.key}
