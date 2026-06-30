@@ -335,6 +335,46 @@ export function settingsRuleActionButtonView(input: SettingsRuleActionButtonInpu
   };
 }
 
+type SettingsLocalActionKey = 'clear-ai-key' | 'copy-diagnostics';
+
+interface SettingsLocalActionButtonInput {
+  action: SettingsLocalActionKey;
+  activeAction: SettingsLocalActionKey | null;
+  baseClassName: string;
+  busyLabel: string;
+  disabled?: boolean;
+  label: string;
+}
+
+export interface SettingsLocalActionButtonView {
+  ariaBusy?: true;
+  className: string;
+  disabled: boolean;
+  label: string;
+  showSpinner: boolean;
+}
+
+export function settingsLocalActionButtonView(input: SettingsLocalActionButtonInput): SettingsLocalActionButtonView {
+  const active = input.activeAction === input.action;
+  return {
+    ariaBusy: active ? true : undefined,
+    className: [input.baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || active || (input.activeAction && !active)),
+    label: active ? input.busyLabel : input.label,
+    showSpinner: active,
+  };
+}
+
+function settingsLocalActionButtonContent(view: SettingsLocalActionButtonView) {
+  if (!view.showSpinner) return view.label;
+  return (
+    <span className="button-content">
+      <span aria-hidden="true" className="button-spinner" />
+      <span>{view.label}</span>
+    </span>
+  );
+}
+
 function percentLabel(value: number): string {
   return `${(value * 100).toFixed(0)}%`;
 }
@@ -440,6 +480,7 @@ export function SettingsPage() {
   const [savingAi, setSavingAi] = useState(false);
   const [savingRules, setSavingRules] = useState(false);
   const [copyNotice, setCopyNotice] = useState('');
+  const [localAction, setLocalAction] = useState<SettingsLocalActionKey | null>(null);
   const [storagePaths, setStoragePaths] = useState<StoragePathsView>({});
   const [aiCallLogs, setAiCallLogs] = useState<AiCallLogView[]>([]);
 
@@ -464,6 +505,21 @@ export function SettingsPage() {
     busyLabel: '保存中...',
     disabled: !canSaveRules,
     label: '保存广告阈值',
+  });
+  const clearAiKeyButton = settingsLocalActionButtonView({
+    action: 'clear-ai-key',
+    activeAction: localAction,
+    baseClassName: 'secondary-button',
+    busyLabel: '清除中...',
+    disabled: savingAi || !canSaveSettings || !keyPresent,
+    label: '清除本地 AI Key',
+  });
+  const copyDiagnosticsButton = settingsLocalActionButtonView({
+    action: 'copy-diagnostics',
+    activeAction: localAction,
+    baseClassName: 'secondary-button',
+    busyLabel: '复制中...',
+    label: '复制诊断检查清单',
   });
 
   async function refreshAiSettingsFromStore(): Promise<AiProviderSettings | null> {
@@ -621,8 +677,9 @@ export function SettingsPage() {
       setMessage('saveSettings 未接入，无法清除本地 AI Key。');
       return;
     }
+    setLocalAction('clear-ai-key');
     setSavingAi(true);
-    setMessage('');
+    setMessage('正在清除本地 AI Key...');
     try {
       await apiSurface.saveSettings({
         ...aiSettings,
@@ -654,6 +711,7 @@ export function SettingsPage() {
       setMessage(`AI Key 清除失败：${toUserFacingError(caught, 'AI Key 清除失败。')}`);
     } finally {
       setSavingAi(false);
+      setLocalAction(null);
     }
   }
 
@@ -680,11 +738,15 @@ export function SettingsPage() {
   }
 
   async function copyDiagnostics() {
+    setLocalAction('copy-diagnostics');
+    setCopyNotice('正在复制诊断检查清单...');
     try {
       await navigator.clipboard.writeText(DIAGNOSTIC_CHECKS.join('\n'));
       setCopyNotice('诊断检查清单已复制。');
     } catch (caught) {
       setCopyNotice(`复制失败：${toUserFacingError(caught, '复制失败。')}`);
+    } finally {
+      setLocalAction(null);
     }
   }
 
@@ -834,8 +896,14 @@ export function SettingsPage() {
               </label>
             </div>
             <div className="action-row">
-              <button className="secondary-button" disabled={savingAi || !canSaveSettings || !keyPresent} onClick={clearLocalAiKey} type="button">
-                清除本地 AI Key
+              <button
+                aria-busy={clearAiKeyButton.ariaBusy}
+                className={clearAiKeyButton.className}
+                disabled={clearAiKeyButton.disabled}
+                onClick={clearLocalAiKey}
+                type="button"
+              >
+                {settingsLocalActionButtonContent(clearAiKeyButton)}
               </button>
             </div>
           </ProgressiveDetails>
@@ -1058,7 +1126,15 @@ export function SettingsPage() {
         <ProgressiveDetails title="诊断工具">
           <div className="settings-diagnostic-row">
             <p>用于验证 AI 连接、广告解释、Listing 草案和最终交付状态；不会改变广告账户，也不会绕过审批、执行前/执行后/回读或范围匹配要求。</p>
-            <button className="secondary-button" onClick={copyDiagnostics} type="button">复制诊断检查清单</button>
+            <button
+              aria-busy={copyDiagnosticsButton.ariaBusy}
+              className={copyDiagnosticsButton.className}
+              disabled={copyDiagnosticsButton.disabled}
+              onClick={copyDiagnostics}
+              type="button"
+            >
+              {settingsLocalActionButtonContent(copyDiagnosticsButton)}
+            </button>
           </div>
           <details className="details-panel inline-details">
             <summary>查看诊断覆盖项</summary>

@@ -13,6 +13,7 @@ import {
   settingsPrimaryAiStatusItems,
   settingsRuleConfigFieldFeedback,
   settingsRuleActionButtonView,
+  settingsLocalActionButtonView,
   shouldResetAiTestForSettingsField,
 } from './settings-page';
 
@@ -201,5 +202,37 @@ describe('settings rule action feedback', () => {
     expect(unavailable.ariaBusy).toBeUndefined();
     expect(unavailable.className).not.toContain('button-loading');
     expect(unavailable.showSpinner).toBe(false);
+  });
+});
+
+describe('settings local utility action feedback', () => {
+  it('marks only the active local utility action as busy', () => {
+    const clearing = settingsLocalActionButtonView({
+      action: 'clear-ai-key',
+      activeAction: 'clear-ai-key',
+      baseClassName: 'secondary-button',
+      busyLabel: '清除中...',
+      label: '清除本地 AI Key',
+    });
+
+    expect(clearing.label).toBe('清除中...');
+    expect(clearing.className).toContain('button-loading');
+    expect(clearing.disabled).toBe(true);
+    expect(clearing.ariaBusy).toBe(true);
+    expect(clearing.showSpinner).toBe(true);
+
+    const lockedPeer = settingsLocalActionButtonView({
+      action: 'copy-diagnostics',
+      activeAction: 'clear-ai-key',
+      baseClassName: 'secondary-button',
+      busyLabel: '复制中...',
+      label: '复制诊断检查清单',
+    });
+
+    expect(lockedPeer.label).toBe('复制诊断检查清单');
+    expect(lockedPeer.disabled).toBe(true);
+    expect(lockedPeer.ariaBusy).toBeUndefined();
+    expect(lockedPeer.className).not.toContain('button-loading');
+    expect(lockedPeer.showSpinner).toBe(false);
   });
 });
