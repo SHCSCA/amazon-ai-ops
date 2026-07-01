@@ -5,6 +5,14 @@ import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import type { AppRoute, OperationEventView } from '../types';
 
+export const OPERATION_EVENT_PAGE_COPY = {
+  title: '核心运营事件时间轴标记',
+  description: '把 Coupon、BD、大促、调价、库存、Listing 和站外动作挂载进 LLM 推理上下文，AI 解释广告波动时会读取这些时间轴标记，避免只看广告表格误判。',
+  primaryTask: '把关键运营动作标记进 LLM 上下文',
+  timelinePanelTitle: '运营事件时间轴',
+  newEventPanelTitle: '新增运营事件标记',
+};
+
 const EVENT_TYPE_LABELS: Record<string, string> = {
   coupon: 'Coupon / 折扣券',
   deal: 'Deal / 促销活动',
@@ -438,9 +446,9 @@ export function OperationEventsPage() {
     <div>
       <PageHeader
         eyebrow="数据与量化"
-        title="运营事件"
-        description="记录折扣、BD、大促、价格、Listing、库存和站外动作。AI 分析广告波动时会读取这些上下文，避免只看广告数据误判。"
-        primaryTask="补齐广告数据上下文"
+        title={OPERATION_EVENT_PAGE_COPY.title}
+        description={OPERATION_EVENT_PAGE_COPY.description}
+        primaryTask={OPERATION_EVENT_PAGE_COPY.primaryTask}
         nextAction={events.length ? '进入广告量化' : '先记录关键事件'}
       />
 
@@ -564,7 +572,7 @@ export function OperationEventsPage() {
           </Panel>
         </div>
 
-        <Panel title="新增运营事件">
+        <Panel title={OPERATION_EVENT_PAGE_COPY.newEventPanelTitle}>
           <div className="quick-template-row" aria-label="运营事件快速模板">
             {EVENT_PRESETS.map((preset) => (
               <button
@@ -694,7 +702,7 @@ export function OperationEventsPage() {
           {error && <p className="blocked-line">{error}</p>}
         </Panel>
 
-        <Panel title="事件时间线" tone={visibleEvents.length ? 'default' : 'warning'}>
+        <Panel title={OPERATION_EVENT_PAGE_COPY.timelinePanelTitle} tone={visibleEvents.length ? 'default' : 'warning'}>
           {loading && <p className="muted-line">正在读取运营事件...</p>}
           {!loading && eventsByDate.length === 0 && (
             <p className="muted-line">当前范围还没有运营事件。若近期做过折扣、BD、价格、Listing 或库存动作，应先记录，否则 AI 只能看广告表格。</p>

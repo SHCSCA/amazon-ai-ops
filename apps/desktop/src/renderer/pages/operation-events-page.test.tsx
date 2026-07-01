@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  OPERATION_EVENT_PAGE_COPY,
   buildOperationEventTaskState,
   buildOperationEventDraftForScope,
   defaultOperationEventViewMode,
@@ -86,6 +87,14 @@ describe('operation events page product/global views', () => {
     expect(task.primaryActionDisabled).toBe(false);
     expect(task.primaryActionBusy).toBe(false);
     expect(task.secondaryActionLabel).toBe('进入广告量化');
+  });
+
+  it('anchors the page copy on the operation-event timeline marking job', () => {
+    expect(OPERATION_EVENT_PAGE_COPY.title).toBe('核心运营事件时间轴标记');
+    expect(OPERATION_EVENT_PAGE_COPY.primaryTask).toBe('把关键运营动作标记进 LLM 上下文');
+    expect(OPERATION_EVENT_PAGE_COPY.description).toContain('LLM 推理上下文');
+    expect(OPERATION_EVENT_PAGE_COPY.timelinePanelTitle).toBe('运营事件时间轴');
+    expect(OPERATION_EVENT_PAGE_COPY.newEventPanelTitle).toBe('新增运营事件标记');
   });
 
   it('marks the newest saved event card for transient feedback', () => {
