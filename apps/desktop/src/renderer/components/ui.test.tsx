@@ -138,8 +138,21 @@ describe('industrial UI atoms', () => {
     expect(tree.props.className).toBe('form-table-row form-table-row-blocked');
     expect(collectText(tree)).toContain('0 到 1 的小数格式。');
     expect(collectText(tree)).toContain('目标 ACOS 必须大于 0');
+    expect(collectElements(tree, (element) => element.props.className === 'form-table-feedback-slot')).toHaveLength(1);
     expect(collectElements(tree, (element) => element.props.className === 'form-table-feedback form-table-feedback-blocked')).toHaveLength(1);
     expect(collectElements(tree, (element) => element.props.role === 'status' && element.props['aria-live'] === 'polite')).toHaveLength(1);
+  });
+
+  it('keeps a blank feedback slot on quiet form rows so later validation cannot push layout', () => {
+    const tree = FormTableRow({
+      label: '最低花费',
+      hint: '单位 USD',
+      children: <input value="10.00" readOnly />,
+    }) as ReactElement;
+
+    expect(collectElements(tree, (element) => element.props.className === 'form-table-feedback-slot')).toHaveLength(1);
+    expect(collectElements(tree, (element) => element.props.className === 'form-table-feedback form-table-feedback-placeholder')).toHaveLength(1);
+    expect(collectElements(tree, (element) => element.props['aria-hidden'] === 'true')).toHaveLength(1);
   });
 
   it('keeps form table feedback styles reserved and non-jumpy', () => {
@@ -149,7 +162,9 @@ describe('industrial UI atoms', () => {
     expect(stylesheet).toMatch(/\.form-table-row[\s\S]*transition:\s*[\s\S]*background var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)/);
     expect(stylesheet).toMatch(/\.form-table-row:focus-within\s*\{[\s\S]*box-shadow:\s*[\s\S]*inset 3px 0 0 var\(--primary\)[\s\S]*0 0 0 2px rgb\(37 99 235 \/ 0\.10\)/);
     expect(stylesheet).toMatch(/\.form-table-row:focus-within \.form-table-label\s*\{[\s\S]*color:\s*var\(--primary\)/);
+    expect(stylesheet).toMatch(/\.form-table-feedback-slot[\s\S]*min-height:\s*18px/);
     expect(stylesheet).toMatch(/\.form-table-feedback[\s\S]*min-height:\s*16px/);
+    expect(stylesheet).toMatch(/\.form-table-feedback-placeholder[\s\S]*visibility:\s*hidden/);
     expect(stylesheet).toContain('.form-table-feedback-blocked');
     expect(stylesheet).toContain('@keyframes form-table-feedback-in');
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.form-table-row[\s\S]*transition:\s*none/);

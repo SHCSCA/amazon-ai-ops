@@ -6692,7 +6692,14 @@ code {
   line-height: 1.25;
 }
 
+.form-table-feedback-slot {
+  display: block;
+  min-height: 18px;
+  line-height: 1.25;
+}
+
 .form-table-feedback {
+  display: inline-block;
   min-height: 16px;
   width: fit-content;
   max-width: 100%;
@@ -6703,6 +6710,10 @@ code {
   overflow-wrap: anywhere;
   transform: translateY(0);
   animation: form-table-feedback-in 120ms ease-out;
+}
+
+.form-table-feedback-placeholder {
+  visibility: hidden;
 }
 
 .form-table-feedback-blocked {

@@ -423,10 +423,11 @@ async function main() {
   await expectVisible(page, 'motion sensor wall light');
   await expectVisible(page, 'D6-ad-group');
   await expectVisible(page, 'D6-research-group');
-  await page.getByLabel('Ad Group').fill('D6-research-group');
+  const adGroupFilter = page.locator('.filter-grid').getByRole('textbox', { name: /广告组/ });
+  await adGroupFilter.fill('D6-research-group');
   await expectVisible(page, '同词不同广告组，需单独判断');
   await expectNotInBody(page, '36 / 4');
-  await page.getByLabel('Ad Group').fill('');
+  await adGroupFilter.fill('');
   await expectVisible(page, '36 / 4');
   await assertGlobalGuards(page, 'keyword-opportunities');
   const keywordScreenshotPath = path.join(evidenceDir, `business-ui-keyword-listing-keywords-${runId}.png`);

@@ -122,11 +122,17 @@ export function FormTableRow({
       <span className="form-table-control">
         {children}
         {hint && <small>{hint}</small>}
-        {feedback && (
-          <small className={`form-table-feedback form-table-feedback-${feedback.tone}`} role="status" aria-live="polite">
-            {feedback.children}
-          </small>
-        )}
+        <span className="form-table-feedback-slot">
+          {feedback ? (
+            <small className={`form-table-feedback form-table-feedback-${feedback.tone}`} role="status" aria-live="polite">
+              {feedback.children}
+            </small>
+          ) : (
+            <small aria-hidden="true" className="form-table-feedback form-table-feedback-placeholder">
+              &nbsp;
+            </small>
+          )}
+        </span>
       </span>
     </label>
   );
