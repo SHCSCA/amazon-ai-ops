@@ -222,7 +222,7 @@ describe('ProductManagementPage model', () => {
       keywordOpportunities: 'keyword-opportunities',
       listingOptimization: 'listing-optimization',
       operationEvents: 'operation-events',
-      productConfig: 'product-management',
+      productConfig: 'product-config',
     });
   });
 
