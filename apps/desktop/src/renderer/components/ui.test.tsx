@@ -99,6 +99,21 @@ describe('industrial UI atoms', () => {
     expect(collectElements(tree, (element) => element.props.className === 'state-light-card state-light-ready')).toHaveLength(1);
   });
 
+  it('exposes state light cards as a keyboard-scannable status list', () => {
+    const tree = StateLightGrid({
+      items: [
+        { label: '数据就绪', value: '8/8 报表全', detail: '当前范围真实报表完整', tone: 'ready' },
+        { label: '审批就绪', value: '无挂起任务', tone: 'pending' },
+      ],
+    }) as ReactElement;
+    const cards = collectElements(tree, (element) => String(element.props.className || '').startsWith('state-light-card'));
+
+    expect(tree.props.role).toBe('list');
+    expect(tree.props['aria-label']).toBe('首屏状态红绿灯');
+    expect(cards).toHaveLength(2);
+    expect(cards.every((card) => card.props.role === 'listitem' && card.props.tabIndex === 0)).toBe(true);
+  });
+
   it('can pulse state lights during a first-screen action refresh', () => {
     const tree = StateLightGrid({
       refreshing: true,
@@ -117,9 +132,12 @@ describe('industrial UI atoms', () => {
     expect(stylesheet).toMatch(/\.state-light-card\s*\{[\s\S]*transition:\s*transform 120ms/);
     expect(stylesheet).toMatch(/\.state-light-card:hover\s*\{[\s\S]*box-shadow\s*:[^;]+;/);
     expect(stylesheet).toMatch(/\.state-light-card:hover\s*\{[\s\S]*transform\s*:\s*translateY\(-2px\)\s*;/);
+    expect(stylesheet).toMatch(/\.state-light-card:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
+    expect(stylesheet).toMatch(/\.state-light-card:focus-visible\s*\{[\s\S]*transform:\s*translateY\(-2px\)/);
     expect(stylesheet).toMatch(/\.state-light-grid-refreshing \.state-light-card\s*\{[\s\S]*animation:\s*state-light-refresh-pulse 180ms/);
     expect(stylesheet).toMatch(/\.state-light-grid-refreshing \.state-light-card::after\s*\{[\s\S]*animation:\s*state-light-refresh-sweep 180ms/);
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.state-light-card:hover[\s\S]*transform:\s*none/);
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.state-light-card:focus-visible[\s\S]*transform:\s*none/);
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.state-light-grid-refreshing \.state-light-card,[\s\S]*\.state-light-grid-refreshing \.state-light-card::after[\s\S]*animation:\s*none/);
   });
 

@@ -67,11 +67,24 @@ export interface StateLightItem {
   tone: IndustrialTone;
 }
 
-export function StateLightGrid({ items, refreshing = false }: { items: StateLightItem[]; refreshing?: boolean }) {
+export function StateLightGrid({
+  items,
+  refreshing = false,
+  ariaLabel = '首屏状态红绿灯',
+}: {
+  items: StateLightItem[];
+  refreshing?: boolean;
+  ariaLabel?: string;
+}) {
   return (
-    <div className={`state-light-grid${refreshing ? ' state-light-grid-refreshing' : ''}`} data-refreshing={refreshing || undefined}>
+    <div
+      aria-label={ariaLabel}
+      className={`state-light-grid${refreshing ? ' state-light-grid-refreshing' : ''}`}
+      data-refreshing={refreshing || undefined}
+      role="list"
+    >
       {items.map((item) => (
-        <div className={`state-light-card state-light-${item.tone}`} key={item.label}>
+        <div className={`state-light-card state-light-${item.tone}`} key={item.label} role="listitem" tabIndex={0}>
           <span>{item.label}</span>
           <strong>{item.value}</strong>
           {item.detail && <p>{item.detail}</p>}

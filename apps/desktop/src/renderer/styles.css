@@ -1032,6 +1032,10 @@ button:disabled {
     transform: none;
   }
 
+  .state-light-card:focus-visible {
+    transform: none;
+  }
+
   .form-table-row {
     transition: none;
   }
@@ -6500,12 +6504,21 @@ code {
   background: #fff;
   padding: 10px 12px;
   contain: layout style paint;
+  outline: 0;
   transition: transform 120ms var(--motion-standard), box-shadow 120ms var(--motion-standard), border-color 120ms var(--motion-standard);
   will-change: transform;
 }
 
 .state-light-card:hover {
   box-shadow: 0 10px 24px rgb(15 23 42 / 0.08);
+  transform: translateY(-2px);
+}
+
+.state-light-card:focus-visible {
+  border-color: var(--primary);
+  outline: 2px solid rgba(37, 99, 235, 0.34);
+  outline-offset: 2px;
+  box-shadow: 0 10px 24px rgb(15 23 42 / 0.08), 0 0 0 2px rgb(37 99 235 / 0.10);
   transform: translateY(-2px);
 }
 
