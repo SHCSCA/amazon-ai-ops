@@ -12,6 +12,7 @@ import {
   operationEventRefreshButtonView,
   operationEventRowDeleteButtonView,
   operationEventScopeLabel,
+  operationEventTimelineCardView,
 } from './operation-events-page';
 import type { OperationEventView, OperationScope } from '../types';
 
@@ -90,6 +91,28 @@ describe('operation events page product/global views', () => {
   it('marks the newest saved event card for transient feedback', () => {
     expect(operationEventCardClassName(42, 42)).toContain('event-card-just-saved');
     expect(operationEventCardClassName(41, 42)).toBe('event-card');
+  });
+
+  it('reads back how a timeline event enters AI context', () => {
+    const view = operationEventTimelineCardView(
+      event({
+        id: 42,
+        asin: 'B001',
+        eventType: 'coupon',
+        impactExpectation: 'conversion_up',
+        title: 'Coupon started',
+      }),
+      'B001',
+      42,
+    );
+
+    expect(view.className).toContain('event-card');
+    expect(view.className).toContain('event-card-just-saved');
+    expect(view.className).toContain('event-card-ai-context-ready');
+    expect(view.ariaLabel).toBe('Coupon started，产品事件，预期转化上升，将进入 AI 上下文');
+    expect(view.contextLabel).toBe('AI 上下文');
+    expect(view.contextDetail).toContain('产品 B001');
+    expect(view.contextDetail).toContain('预期转化上升');
   });
 
   it('keeps the inline save button distinct from the first-screen primary action', () => {
@@ -176,6 +199,16 @@ describe('operation events page product/global views', () => {
     expect(css).toContain('.operation-event-form-cleared');
     expect(css).toContain('@keyframes operation-event-form-rebound');
   });
+
+  it('visually isolates timeline cards on hover and keyboard focus', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.event-card:hover');
+    expect(css).toContain('.event-card:focus-visible');
+    expect(css).toContain('.event-card:active');
+    expect(css).toContain('.event-card-context');
+    expect(css).toContain('event-card-focus-pop');
+  });
 });
 
 function event(patch: Partial<OperationEventView>): OperationEventView {
@@ -189,7 +222,7 @@ function event(patch: Partial<OperationEventView>): OperationEventView {
     adGroupName: patch.adGroupName,
     eventType: 'coupon',
     title: patch.title || 'Event',
-    impactExpectation: 'unknown',
+    impactExpectation: patch.impactExpectation || 'unknown',
     createdAt: '2026-06-01T00:00:00.000Z',
     updatedAt: '2026-06-01T00:00:00.000Z',
   };

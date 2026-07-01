@@ -159,6 +159,32 @@ export function operationEventCardClassName(eventId: number, recentSavedEventId?
   return eventId === recentSavedEventId ? 'event-card event-card-just-saved' : 'event-card';
 }
 
+export function operationEventTimelineCardView(
+  event: OperationEventView,
+  selectedAsin?: string,
+  recentSavedEventId?: number | null,
+) {
+  const scopeLabel = operationEventScopeLabel(event, selectedAsin);
+  const impactLabel = formatImpact(event.impactExpectation);
+  const eventAsin = normalizeAsin(event.asin);
+  const contextTarget = scopeLabel === '产品' && eventAsin
+    ? `产品 ${eventAsin}`
+    : scopeLabel === '广告对象'
+      ? formatEventScope(event)
+      : '全店/全范围';
+
+  return {
+    ariaLabel: `${event.title}，${scopeLabel}事件，${impactLabel}，将进入 AI 上下文`,
+    className: [
+      operationEventCardClassName(event.id, recentSavedEventId),
+      'event-card-ai-context-ready',
+    ].join(' '),
+    contextDetail: `已绑定${contextTarget}，${impactLabel}，广告量化和 AI 诊断会读取。`,
+    contextLabel: 'AI 上下文',
+    scopeLabel,
+  };
+}
+
 export function operationEventInlineSaveLabel(saving: boolean): string {
   return saving ? '正在保存...' : '保存到上下文';
 }
@@ -680,16 +706,26 @@ export function OperationEventsPage() {
                 <div className="event-cards">
                   {rows.map((event) => {
                     const deleteButton = operationEventRowDeleteButtonView({ eventId: event.id, deletingEventId });
+                    const cardView = operationEventTimelineCardView(event, scope.asin, recentSavedEventId);
                     return (
-                      <article className={operationEventCardClassName(event.id, recentSavedEventId)} key={event.id}>
+                      <article
+                        aria-label={cardView.ariaLabel}
+                        className={cardView.className}
+                        key={event.id}
+                        tabIndex={0}
+                      >
                         <div className="event-card-title">
                           <strong>{event.title}</strong>
                           <StatusPill tone="pending">{formatEventType(event.eventType)}</StatusPill>
-                          <StatusPill tone={operationEventScopeLabel(event, scope.asin) === '全局' ? 'pending' : 'ready'}>
-                            {operationEventScopeLabel(event, scope.asin)}
+                          <StatusPill tone={cardView.scopeLabel === '全局' ? 'pending' : 'ready'}>
+                            {cardView.scopeLabel}
                           </StatusPill>
                         </div>
                         <p>{formatImpact(event.impactExpectation)} / {formatEventScope(event)}</p>
+                        <div className="event-card-context">
+                          <StatusPill tone="ready">{cardView.contextLabel}</StatusPill>
+                          <span>{cardView.contextDetail}</span>
+                        </div>
                         {event.notes && <p className="muted-line">{event.notes}</p>}
                         {event.evidencePath && <p className="mono-line">{event.evidencePath}</p>}
                         <div className="action-row">
