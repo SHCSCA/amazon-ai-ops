@@ -885,7 +885,7 @@ async function main() {
   ];
   for (const { nav, heading, label, key } of routes) {
     await navigateBusinessPage(page, nav, key);
-    await page.getByRole('heading', { name: heading, level: 2 }).waitFor();
+    await page.getByRole('heading', { name: heading, level: 1 }).waitFor();
     await assertGlobalGuards(page, key);
     const screenshotPath = path.join(evidenceDir, `business-ui-ad-execution-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });

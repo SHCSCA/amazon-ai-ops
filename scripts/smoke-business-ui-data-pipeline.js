@@ -1023,7 +1023,7 @@ async function main() {
 
     for (const { nav, heading, label, key } of routes) {
     await navigateBusinessPage(page, nav, key);
-    await page.getByRole('heading', { name: heading, level: 2 }).waitFor();
+    await page.getByRole('heading', { name: heading, level: 1 }).waitFor();
     await assertGlobalGuards(page, key);
     if (key === 'product-management') {
       await expectVisible(page, '先选择产品，再关联广告数据、运营事件、AI 量化、关键词和 Listing。');

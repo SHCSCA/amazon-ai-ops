@@ -816,7 +816,7 @@ async function main() {
   await assertGlobalGuards(page, 'initial');
 
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
-  await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
   await expectVisible(page, '待测试');
   await expectVisible(page, '已配置（已隐藏）');
   await expectVisible(page, '已配置，待测试');
@@ -887,24 +887,24 @@ async function main() {
   await page.waitForFunction(() => document.body.innerText.includes('AI 连接测试通过'), null, { timeout: 5000 });
   await expectVisible(page, 'AI 可用');
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
-  await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
   await expectVisible(page, 'AI 可用');
   await expandDetails(page, '高级 AI 参数');
   await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.dashboard }).click();
-  await page.getByRole('heading', { name: HEADING_RE.dashboard, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.dashboard, level: 1 }).waitFor();
   await expectVisible(page, 'AI / 数据门槛');
   await expectVisible(page, '等待数据门槛');
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.recommendations }).click();
-  await page.getByRole('heading', { name: HEADING_RE.recommendations, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.recommendations, level: 1 }).waitFor();
   await expandDetails(page, '生成范围、AI 配置和规则阈值');
   await expectVisible(page, 'AI 可用');
   await expectVisible(page, 'deepseek-v4-flash');
   await expectInBody(page, '生成建议时会调用 AI 参与产品阶段诊断、动态阈值建议和动作解释。', 'cross-page AI readiness after settings test');
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
-  await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
   await expectVisible(page, 'AI 可用');
   await expandDetails(page, '高级 AI 参数');
   await expectVisible(page, '广告诊断 v1');
@@ -917,9 +917,9 @@ async function main() {
   await page.getByText('AI 设置已保存', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, 'AI 可用');
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
-  await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
   await expectVisible(page, 'AI 可用');
   await expandDetails(page, '高级 AI 参数');
   await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
@@ -980,7 +980,7 @@ async function main() {
   await page.getByText('2026-06-02 至 2026-06-13 / FT-US-TEST / CA / USD', { exact: true }).waitFor({ timeout: 5000 });
 
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
   for (const text of [
     '交付摘要',
     '还不能交付',
@@ -1234,7 +1234,7 @@ async function main() {
   });
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
   await expandDetails(page, '文件与技术入口');
   await page.getByText('最终验收汇总尚未生成', { exact: false }).first().waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: '打开最终验收汇总' }).click();
@@ -1246,7 +1246,7 @@ async function main() {
   });
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
   await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await expandDetails(page, '完整业务证据项');
   await page.getByText('最终验收未通过，不能声明可交付。', { exact: true }).waitFor({ timeout: 5000 });
@@ -1257,7 +1257,7 @@ async function main() {
   });
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
   await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await expandDetails(page, '完整业务证据项');
   await expandDetails(page, '最终证据清单');
@@ -1280,7 +1280,7 @@ async function main() {
   });
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
   await page.getByText('可以交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.getByText('交付包摘要', { exact: false }).waitFor({ timeout: 5000 });
   await page.getByText('AmazonAIOpsAgent-1.5.0-portable.exe / SHA-256 D9C181C09B32...', { exact: false }).first().waitFor({ timeout: 5000 });

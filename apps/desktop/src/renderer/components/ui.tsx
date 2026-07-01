@@ -1,31 +1,43 @@
 import React from 'react';
 import type { PageHeaderProps } from '../types';
 
+function pageHeaderIdSeed(eyebrow: string, title: string): string {
+  let hash = 0;
+  for (const char of `${eyebrow}:${title}`) {
+    hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 export function PageHeader({ eyebrow, title, description, primaryTask, nextAction }: PageHeaderProps) {
+  const idSeed = pageHeaderIdSeed(eyebrow, title);
+  const titleId = `page-header-${idSeed}-title`;
+  const descriptionId = `page-header-${idSeed}-description`;
+
   return (
-    <div className="page-header">
+    <header className="page-header" aria-describedby={descriptionId} aria-labelledby={titleId}>
       <div>
         <div className="page-eyebrow">{eyebrow}</div>
-        <h2>{title}</h2>
-        <p>{description}</p>
+        <h1 id={titleId}>{title}</h1>
+        <p id={descriptionId}>{description}</p>
       </div>
       {(primaryTask || nextAction) && (
-        <div className="page-header-rail">
+        <div className="page-header-rail" role="list" aria-label="首屏主任务和建议下一步">
           {primaryTask && (
-            <div>
+            <div className="page-header-rail-card" role="listitem" tabIndex={0}>
               <span>当前主任务</span>
               <strong>{primaryTask}</strong>
             </div>
           )}
           {nextAction && (
-            <div>
+            <div className="page-header-rail-card" role="listitem" tabIndex={0}>
               <span>建议下一步</span>
               <strong>{nextAction}</strong>
             </div>
           )}
         </div>
       )}
-    </div>
+    </header>
   );
 }
 

@@ -99,12 +99,12 @@ async function main() {
 
   async function capturePage(key, label) {
     const screenshotPath = path.join(evidenceDir, `v15-${key}-ui-smoke-${Date.now()}.png`);
-    const h2 = await page.locator('h2').first().innerText();
+    const heading = await page.locator('h1').first().innerText();
     const bodyTextSample = (await page.locator('body').innerText()).slice(0, 1600);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     evidence.pages[key] = {
       label,
-      h2,
+      heading,
       screenshotPath,
       bodyTextSample,
     };
@@ -255,7 +255,7 @@ async function main() {
   }
 
   await sidebar.getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: '交付验收', level: 1 }).waitFor();
   await page.getByText('把最终验收结果翻译成运营可执行的交付判断。').waitFor();
   await page.getByText('交付摘要', { exact: true }).waitFor();
   await page.getByText('完整矩阵：已闭合', { exact: false }).waitFor();
@@ -264,7 +264,7 @@ async function main() {
   evidence.screenshotPath = await capturePage('delivery', '交付验收');
 
   await sidebar.getByRole('button', { name: NAV_RE.dataCollection }).click();
-  await page.getByRole('heading', { name: '数据采集', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: '数据采集', level: 1 }).waitFor();
   await page.getByText('拿到真实原始报表', { exact: true }).waitFor();
   await page.getByText('8 类报表选择与进度', { exact: true }).waitFor();
   await expectNoOldWorkbench(page);
@@ -273,7 +273,7 @@ async function main() {
   await capturePage('reports', '数据采集');
 
   await sidebar.getByRole('button', { name: NAV_RE.recommendations }).click();
-  await page.getByRole('heading', { name: '优化建议', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: '优化建议', level: 1 }).waitFor();
   await page.getByText('建议池', { exact: true }).waitFor();
   await page.getByText('高风险强阻断', { exact: true }).waitFor();
   await page.getByText('已就绪可批准', { exact: true }).waitFor();
@@ -284,7 +284,7 @@ async function main() {
   await capturePage('recommendations', '优化建议');
 
   await sidebar.getByRole('button', { name: NAV_RE.keyword }).click();
-  await page.getByRole('heading', { name: '关键词机会', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: '关键词机会', level: 1 }).waitFor();
   await page.getByRole('main').getByText('关键词机会矩阵', { exact: true }).waitFor();
   await page.getByText('运行机会识别', { exact: true }).waitFor();
   await page.getByText('关键词机会表', { exact: true }).waitFor();
@@ -294,7 +294,7 @@ async function main() {
   await capturePage('keywords', '关键词机会');
 
   await sidebar.getByRole('button', { name: NAV_RE.listing }).click();
-  await page.getByRole('heading', { name: 'Listing 优化', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: 'Listing 优化', level: 1 }).waitFor();
   await page.getByText('Listing 本地沙箱', { exact: true }).waitFor();
   await page.getByText('AI 改写本地草案', { exact: true }).waitFor();
   await page.getByText('手工录入当前 Listing', { exact: true }).waitFor();
@@ -305,7 +305,7 @@ async function main() {
   evidence.listingScreenshotPath = await capturePage('listing', 'Listing 优化');
 
   await sidebar.getByRole('button', { name: NAV_RE.settings }).click();
-  await page.getByRole('heading', { name: SETTINGS_HEADING_RE, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: SETTINGS_HEADING_RE, level: 1 }).waitFor();
   await page.getByText('DeepSeek / OpenAI Compatible', { exact: true }).waitFor();
   await page.getByText('广告诊断 v1', { exact: true }).waitFor();
   await page.getByText('Listing 草案 v1', { exact: true }).waitFor();
@@ -334,7 +334,7 @@ async function main() {
   await page.getByText('关键词与 Listing', { exact: true }).waitFor();
   await page.getByText('系统与交付', { exact: true }).waitFor();
   await page.getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: '交付验收', level: 1 }).waitFor();
   await page.getByText('只汇总最终可交付状态、缺失证据和验收命令').waitFor();
   await page.getByText('确认 APP_READY 证据闭环', { exact: true }).waitFor();
   await page.getByText('manifest 驱动最终聚合 + 真实 readback', { exact: true }).waitFor();
@@ -362,7 +362,7 @@ async function main() {
   await expectAbsent(page, 'Listing 建议');
   evidence.screenshotPath = await capturePage('delivery', '交付验收');
   await page.getByRole('button', { name: NAV_RE.dataCollection }).click();
-  await page.getByRole('heading', { name: '数据采集', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: '数据采集', level: 1 }).waitFor();
   await page.getByText('展示当前采集状态、8 类领星广告报表进度', { exact: false }).waitFor();
   await page.getByText('拿到真实原始报表', { exact: true }).waitFor();
   await page.getByText('当前采集状态', { exact: true }).waitFor();
@@ -373,7 +373,7 @@ async function main() {
   await expectAbsent(page, 'Listing 建议');
   await capturePage('reports', '数据采集');
   await page.getByRole('button', { name: NAV_RE.recommendations }).click();
-  await page.getByRole('heading', { name: '优化建议', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: '优化建议', level: 1 }).waitFor();
   await page.getByText('广告建议支持审批和审计').waitFor();
   await page.getByText('建议筛选与生成', { exact: true }).waitFor();
   await page.getByLabel('优化建议范围预设').waitFor();
@@ -478,7 +478,7 @@ async function main() {
   await expectAbsent(page, 'Listing 建议');
   await capturePage('recommendations-ad-readback', '优化建议 - 广告 readback');
   await page.getByRole('button', { name: NAV_RE.keyword }).click();
-  await page.getByRole('heading', { name: '关键词机会', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: '关键词机会', level: 1 }).waitFor();
   await page.getByText('把搜索词、关键词或 SQP 文件清洗成可筛选的关键词机会').waitFor();
   await page.getByText('生成可用关键词机会池', { exact: true }).waitFor();
   await page.getByText('去重策略 + 解析诊断 + 风险标记', { exact: true }).waitFor();
@@ -490,7 +490,7 @@ async function main() {
   await expectAbsent(page, 'Listing 建议');
   await capturePage('keywords', '关键词机会');
   await page.getByRole('button', { name: NAV_RE.listing }).click();
-  await page.getByRole('heading', { name: 'Listing 优化', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: 'Listing 优化', level: 1 }).waitFor();
   await page.getByText('读取或导入 Listing 内容，结合关键词机会生成建议和草案').waitFor();
   await page.getByText('产出可导出的 Listing 建议', { exact: true }).waitFor();
   await page.getByText('只读读取证据 + source=ai 草案证据', { exact: true }).waitFor();
@@ -524,7 +524,7 @@ async function main() {
   await page.getByText('Listing 建议', { exact: true }).waitFor();
   await page.getByText('从当前领星页面读取', { exact: true }).scrollIntoViewIfNeeded();
   await page.getByRole('button', { name: NAV_RE.settings }).click();
-  await page.getByRole('heading', { name: SETTINGS_HEADING_RE, level: 2 }).waitFor();
+  await page.getByRole('heading', { name: SETTINGS_HEADING_RE, level: 1 }).waitFor();
   await page.getByText('AI / DeepSeek 配置', { exact: true }).waitFor();
   await page.locator('strong').filter({ hasText: /^保存真实 Key$/ }).waitFor();
   await page.locator('strong').filter({ hasText: /^测试 AI 连接$/ }).waitFor();

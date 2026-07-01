@@ -448,7 +448,7 @@ button:disabled {
 }
 
 .scope-summary div,
-.page-header-rail div {
+.page-header-rail-card {
   display: grid;
   gap: 4px;
 }
@@ -704,10 +704,11 @@ button:disabled {
   font-weight: 800;
 }
 
-.page-header h2 {
+.page-header h1 {
   margin: 0;
   font-size: 26px;
   letter-spacing: 0;
+  line-height: 1.15;
 }
 
 .page-header p {
@@ -723,7 +724,7 @@ button:disabled {
   gap: 12px;
 }
 
-.page-header-rail div,
+.page-header-rail-card,
 .ui-panel {
   min-width: 0;
   border: 1px solid var(--line);
@@ -733,9 +734,29 @@ button:disabled {
   box-shadow: var(--shadow-card);
 }
 
-.page-header-rail div {
+.page-header-rail-card {
   border-color: #cfe0f5;
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  outline: 0;
+  transition:
+    border-color var(--motion-fast),
+    box-shadow var(--motion-fast),
+    transform var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.page-header-rail-card:hover {
+  border-color: #9ebbe0;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.10), var(--shadow-card);
+  transform: translateY(-2px);
+}
+
+.page-header-rail-card:focus-visible {
+  border-color: var(--primary);
+  outline: 2px solid rgba(37, 99, 235, 0.34);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.10), var(--shadow-card);
 }
 
 .page-grid {
@@ -993,6 +1014,14 @@ button:disabled {
   .operator-task-panel::before {
     animation: none;
     opacity: 0;
+  }
+
+  .page-header-rail-card {
+    transition: none;
+  }
+
+  .page-header-rail-card:hover {
+    transform: none;
   }
 
   .state-light-card {

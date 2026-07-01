@@ -342,7 +342,7 @@ async function main() {
 
   for (const { nav, heading, label, key } of routes) {
     await page.locator('.app-sidebar').getByRole('button', { name: nav }).click();
-    await page.getByRole('heading', { name: heading, level: 2 }).waitFor();
+    await page.getByRole('heading', { name: heading, level: 1 }).waitFor();
     const screenshotPath = path.join(evidenceDir, `business-ui-shell-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     const bodyText = await page.locator('body').innerText();

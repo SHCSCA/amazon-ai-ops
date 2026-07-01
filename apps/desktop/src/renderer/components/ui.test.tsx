@@ -1,7 +1,7 @@
 import React, { type ReactElement, type ReactNode } from 'react';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { DecisionActionStrip, FormTable, FormTableRow, MicroStepper, SafetyGateLine, StateLightGrid } from './ui';
+import { DecisionActionStrip, FormTable, FormTableRow, MicroStepper, PageHeader, SafetyGateLine, StateLightGrid } from './ui';
 
 function collectText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
@@ -30,6 +30,30 @@ function cssRuleBody(css: string, selector: string): string {
 }
 
 describe('industrial UI atoms', () => {
+  it('renders page headers as first-level desktop landmarks with a readable task rail', () => {
+    const tree = PageHeader({
+      eyebrow: '数据与量化',
+      title: '广告全口径量化诊断中心',
+      description: '展示当前产品的真实广告指标、风险对象和 AI 阶段诊断。',
+      primaryTask: '运行 AI 阶段分析',
+      nextAction: '生成优化建议',
+    }) as ReactElement;
+    const headings = collectElements(tree, (element) => element.type === 'h1');
+    const description = collectElements(tree, (element) => element.type === 'p' && element.props.id === tree.props['aria-describedby']);
+    const taskRail = collectElements(tree, (element) => element.props.className === 'page-header-rail');
+    const taskCards = collectElements(tree, (element) => element.props.className === 'page-header-rail-card');
+
+    expect(tree.type).toBe('header');
+    expect(tree.props.className).toBe('page-header');
+    expect(headings).toHaveLength(1);
+    expect(headings[0].props.id).toBe(tree.props['aria-labelledby']);
+    expect(description).toHaveLength(1);
+    expect(taskRail[0].props.role).toBe('list');
+    expect(taskRail[0].props['aria-label']).toBe('首屏主任务和建议下一步');
+    expect(taskCards).toHaveLength(2);
+    expect(taskCards.every((card) => card.props.role === 'listitem' && card.props.tabIndex === 0)).toBe(true);
+  });
+
   it('keeps the global typography contract aligned with dense desktop tables', () => {
     const stylesheet = rendererCss();
     const bodyRule = cssRuleBody(stylesheet, 'body');
@@ -50,6 +74,16 @@ describe('industrial UI atoms', () => {
     expect(activeButtonRule).toMatch(/transform\s*:\s*scale\(0\.98\)\s*;/);
     expect(disabledButtonRule).toMatch(/cursor\s*:\s*not-allowed\s*;/);
     expect(stylesheet).not.toContain('translateY(1px)');
+  });
+
+  it('keeps page header title and rail cards aligned with the first-screen contract', () => {
+    const stylesheet = rendererCss();
+
+    expect(stylesheet).toMatch(/\.page-header h1\s*\{[\s\S]*font-size:\s*26px/);
+    expect(stylesheet).toMatch(/\.page-header-rail-card\s*\{[\s\S]*transition:\s*[\s\S]*border-color var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)[\s\S]*transform var\(--motion-fast\)/);
+    expect(stylesheet).toMatch(/\.page-header-rail-card:hover\s*\{[\s\S]*transform:\s*translateY\(-2px\)/);
+    expect(stylesheet).toMatch(/\.page-header-rail-card:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.page-header-rail-card[\s\S]*transition:\s*none/);
   });
 
   it('renders state light cards for first-viewport operational status', () => {
