@@ -167,6 +167,24 @@ export interface KeywordOpportunityActionButtonView {
   showSpinner: boolean;
 }
 
+function KeywordOpportunityFilterCell({
+  children,
+  hint,
+  label,
+}: {
+  children: React.ReactNode;
+  hint: string;
+  label: string;
+}) {
+  return (
+    <label className="keyword-filter-cell">
+      <span className="keyword-filter-cell-label">{label}</span>
+      <span className="keyword-filter-cell-control">{children}</span>
+      <span className="keyword-filter-cell-hint">{hint}</span>
+    </label>
+  );
+}
+
 export function keywordOpportunityActionButtonView({
   active,
   baseClassName,
@@ -579,42 +597,35 @@ export function KeywordOpportunitiesPage() {
             </div>
           </div>
           <div className="filter-grid">
-            <label>
-              ASIN
+            <KeywordOpportunityFilterCell hint="只看某个产品的关键词机会；留空显示当前范围全部产品。" label="ASIN">
               <input value={filters.asin} onChange={(event) => setFilters({ ...filters, asin: event.target.value })} placeholder="B0..." />
-            </label>
-            <label>
-              Campaign
+            </KeywordOpportunityFilterCell>
+            <KeywordOpportunityFilterCell hint="按广告活动名称缩小范围，不会修改导入报表。" label="广告活动">
               <input value={filters.campaign} onChange={(event) => setFilters({ ...filters, campaign: event.target.value })} placeholder="广告活动名称" />
-            </label>
-            <label>
-              Ad Group
+            </KeywordOpportunityFilterCell>
+            <KeywordOpportunityFilterCell hint="锁定具体测词单元，适合复核同词不同组表现。" label="广告组">
               <input value={filters.adGroup} onChange={(event) => setFilters({ ...filters, adGroup: event.target.value })} placeholder="广告组名称" />
-            </label>
-            <label>
-              覆盖状态
+            </KeywordOpportunityFilterCell>
+            <KeywordOpportunityFilterCell hint="区分已覆盖、未覆盖和需要补入 Listing 的机会。" label="覆盖状态">
               <select value={filters.coverageStatus} onChange={(event) => setFilters({ ...filters, coverageStatus: event.target.value })}>
                 <option value="">全部</option>
                 {coverageOptions.map((option) => <option key={option} value={option}>{option}</option>)}
               </select>
-            </label>
-            <label>
-              最低点击
+            </KeywordOpportunityFilterCell>
+            <KeywordOpportunityFilterCell hint="过滤低样本对象，避免点击太少造成误判。" label="最低点击">
               <input min="0" type="number" value={filters.minClicks} onChange={(event) => setFilters({ ...filters, minClicks: event.target.value })} />
-            </label>
-            <label>
-              最低花费 USD
+            </KeywordOpportunityFilterCell>
+            <KeywordOpportunityFilterCell hint="单位 USD；用于优先暴露真实花费风险和高价值机会。" label="最低花费">
               <input min="0" step="0.01" type="number" value={filters.minSpend} onChange={(event) => setFilters({ ...filters, minSpend: event.target.value })} />
-            </label>
-            <label>
-              机会等级
+            </KeywordOpportunityFilterCell>
+            <KeywordOpportunityFilterCell hint="high 优先进入标题/五点覆盖复核，low 只保留观察。" label="机会等级">
               <select value={filters.opportunityLevel} onChange={(event) => setFilters({ ...filters, opportunityLevel: event.target.value })}>
                 <option value="">全部</option>
                 <option value="high">high</option>
                 <option value="medium">medium</option>
                 <option value="low">low</option>
               </select>
-            </label>
+            </KeywordOpportunityFilterCell>
           </div>
           <p className="keyword-opportunity-filter-feedback" aria-live="polite">{filterFeedback}</p>
           <p className="muted-line">所有金额均为 USD；筛选和排序只改变当前视图，不改写导入数据。</p>

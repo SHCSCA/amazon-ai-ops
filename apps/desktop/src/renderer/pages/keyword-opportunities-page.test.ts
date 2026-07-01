@@ -103,6 +103,21 @@ describe('keyword opportunity filter micro-feedback', () => {
     expect(styles).toMatch(/animation:\s*keyword-opportunity-filter-refresh 100ms/);
     expect(styles).toContain('transform: translateY(4px)');
   });
+
+  it('uses structured filter cells instead of bare filter labels', () => {
+    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    const filterStart = source.indexOf('<div className="filter-grid">');
+    const feedbackStart = source.indexOf('<p className="keyword-opportunity-filter-feedback"', filterStart);
+    const filterMarkup = source.slice(filterStart, feedbackStart);
+
+    expect(filterMarkup).toContain('<KeywordOpportunityFilterCell');
+    expect(filterMarkup).not.toMatch(/<label>\s*(ASIN|Campaign|Ad Group|覆盖状态|最低点击|最低花费 USD|机会等级)/);
+    expect(styles).toContain('.keyword-filter-cell');
+    expect(styles).toContain('.keyword-filter-cell:focus-within');
+    expect(styles).toContain('.keyword-filter-cell-hint');
+  });
 });
 
 describe('keywordOpportunityActionButtonView', () => {
