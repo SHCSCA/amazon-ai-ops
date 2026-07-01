@@ -6769,6 +6769,96 @@ code {
   background: #e8f8ef;
 }
 
+.product-row-acos-cell {
+  min-width: 150px;
+}
+
+.product-row-acos-field {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.product-row-acos-input-wrap {
+  display: grid;
+  grid-template-columns: minmax(74px, 1fr) 20px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.product-row-acos-input-wrap input {
+  width: 100%;
+  height: 30px;
+  min-width: 0;
+  border: 0;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.product-row-acos-input-wrap input:focus {
+  outline: 0;
+}
+
+.product-row-acos-input-wrap span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.product-row-acos-field:focus-within .product-row-acos-input-wrap {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+.product-row-acos-status {
+  min-height: 18px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 1px 5px;
+  color: transparent;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.product-row-acos-field-saving .product-row-acos-status {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+  color: var(--amber);
+}
+
+.product-row-acos-field-saved .product-row-acos-input-wrap {
+  border-color: var(--tone-ready-border);
+  box-shadow: 0 0 0 2px rgb(34 197 94 / 0.12);
+}
+
+.product-row-acos-field-saved .product-row-acos-status {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+  animation: event-card-flash 450ms ease-out;
+}
+
+.product-row-acos-field-error .product-row-acos-input-wrap {
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px rgb(201 47 53 / 0.10);
+}
+
+.product-row-acos-field-error .product-row-acos-status {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+  color: var(--red);
+}
+
 .product-config-load-button-active {
   border-color: var(--primary);
   background: #eff6ff;

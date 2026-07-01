@@ -7,6 +7,7 @@ import {
   productConfigActionButtonView,
   productConfigBulkSelectionState,
   productConfigLoadButtonView,
+  productConfigRowTargetAcosView,
   productConfigRowClass,
   buildProductConfigTaskState,
   isProductConfigAutoSaveField,
@@ -150,6 +151,59 @@ describe('product config task and inline save feedback', () => {
     expect(idle.label).toBe('载入编辑');
     expect(idle.ariaPressed).toBe(false);
     expect(idle.className).not.toContain('product-config-load-button-active');
+  });
+
+  it('builds row-level target ACOS editing feedback for the product table', () => {
+    expect(productConfigRowTargetAcosView({
+      asin: 'B001',
+      draftValue: undefined,
+      disabled: false,
+      productTargetAcos: 0.35,
+      status: 'idle',
+    })).toMatchObject({
+      ariaLabel: '编辑 B001 目标 ACOS',
+      className: 'product-row-acos-field',
+      disabled: false,
+      feedbackLabel: '',
+      inputValue: '35.00',
+    });
+
+    expect(productConfigRowTargetAcosView({
+      asin: 'B001',
+      draftValue: '28.5',
+      disabled: false,
+      productTargetAcos: 0.35,
+      status: 'saving',
+    })).toMatchObject({
+      className: 'product-row-acos-field product-row-acos-field-saving',
+      disabled: true,
+      feedbackLabel: '目标 ACOS 保存中...',
+      inputValue: '28.5',
+    });
+
+    expect(productConfigRowTargetAcosView({
+      asin: 'B001',
+      draftValue: '28.5',
+      disabled: false,
+      productTargetAcos: 0.35,
+      status: 'saved',
+    }).feedbackLabel).toBe('目标 ACOS 已保存');
+
+    expect(productConfigRowTargetAcosView({
+      asin: 'B001',
+      draftValue: '140',
+      disabled: false,
+      productTargetAcos: 0.35,
+      status: 'error',
+    }).feedbackLabel).toBe('目标 ACOS 保存失败');
+  });
+
+  it('styles row-level target ACOS editing feedback without shifting the table row', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.product-row-acos-field');
+    expect(css).toContain('.product-row-acos-status');
+    expect(css).toContain('.product-row-acos-field-saved');
   });
 
   it('styles the loaded product row and active load button as visible feedback', () => {

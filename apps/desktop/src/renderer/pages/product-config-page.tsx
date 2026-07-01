@@ -60,6 +60,14 @@ export interface ProductConfigLoadButtonView {
   label: string;
 }
 
+export interface ProductConfigRowTargetAcosView {
+  ariaLabel: string;
+  className: string;
+  disabled: boolean;
+  feedbackLabel: string;
+  inputValue: string;
+}
+
 export function productConfigActionButtonView({
   active,
   baseClassName,
@@ -92,6 +100,35 @@ export function productConfigLoadButtonView(input: { loaded: boolean }): Product
       input.loaded ? 'product-config-load-button-active' : '',
     ].filter(Boolean).join(' '),
     label: input.loaded ? '已载入' : '载入编辑',
+  };
+}
+
+export function productConfigRowTargetAcosView(input: {
+  asin?: string;
+  disabled?: boolean;
+  draftValue?: string;
+  productTargetAcos: number;
+  status: InlineSaveStatus;
+}): ProductConfigRowTargetAcosView {
+  const currentPercent = Number.isFinite(Number(input.productTargetAcos))
+    ? (Number(input.productTargetAcos) * 100).toFixed(2)
+    : '0.00';
+  const feedbackLabel = input.status === 'saving'
+    ? '目标 ACOS 保存中...'
+    : input.status === 'saved'
+      ? '目标 ACOS 已保存'
+      : input.status === 'error'
+        ? '目标 ACOS 保存失败'
+        : '';
+  return {
+    ariaLabel: `编辑 ${String(input.asin || '产品').trim() || '产品'} 目标 ACOS`,
+    className: [
+      'product-row-acos-field',
+      input.status !== 'idle' ? `product-row-acos-field-${input.status}` : '',
+    ].filter(Boolean).join(' '),
+    disabled: Boolean(input.disabled || input.status === 'saving'),
+    feedbackLabel,
+    inputValue: input.draftValue ?? currentPercent,
   };
 }
 
@@ -344,6 +381,9 @@ export function ProductConfigPage() {
   const [bulkApplying, setBulkApplying] = useState(false);
   const [bulkFeedback, setBulkFeedback] = useState('');
   const [bulkFeedbackTone, setBulkFeedbackTone] = useState<ProductConfigMetricTone>('pending');
+  const [rowTargetAcosDrafts, setRowTargetAcosDrafts] = useState<Record<string, string>>({});
+  const [rowTargetAcosStatus, setRowTargetAcosStatus] = useState<Record<string, InlineSaveStatus>>({});
+  const [rowTargetAcosSavingKey, setRowTargetAcosSavingKey] = useState<string | null>(null);
   const nudgeTimerRef = useRef<number | null>(null);
   const [draft, setDraft] = useState({
     asin: scope.asin || '',
@@ -453,6 +493,12 @@ export function ProductConfigPage() {
       const next = current.filter((key) => currentKeys.has(key));
       return next.length === current.length ? current : next;
     });
+    setRowTargetAcosDrafts((current) => Object.fromEntries(
+      Object.entries(current).filter(([key]) => currentKeys.has(key)),
+    ));
+    setRowTargetAcosStatus((current) => Object.fromEntries(
+      Object.entries(current).filter(([key]) => currentKeys.has(key)),
+    ));
   }, [currentScopeProducts]);
 
   function loadProduct(product: any) {
@@ -528,6 +574,73 @@ export function ProductConfigPage() {
 
   function toggleAllBulkProducts(checked: boolean) {
     setBulkSelectedProductKeys(checked ? currentScopeProducts.map(productConfigProductKey).filter(Boolean) : []);
+  }
+
+  function updateRowTargetAcos(productKey: string, value: string) {
+    setRowTargetAcosDrafts((current) => ({ ...current, [productKey]: value }));
+    setRowTargetAcosStatus((current) => (
+      current[productKey] === 'saving' ? current : { ...current, [productKey]: 'idle' }
+    ));
+  }
+
+  function nudgeRowTargetAcos(product: any, direction: 'up' | 'down') {
+    const productKey = productConfigProductKey(product);
+    if (!productKey) return;
+    const current = Number(rowTargetAcosDrafts[productKey] ?? (Number(product.cost?.targetAcos || 0) * 100));
+    const next = Math.min(100, Math.max(0.01, (Number.isFinite(current) ? current : 0) + (direction === 'up' ? 0.5 : -0.5)));
+    updateRowTargetAcos(productKey, next.toFixed(2));
+  }
+
+  async function commitRowTargetAcos(product: any) {
+    const productKey = productConfigProductKey(product);
+    if (!productKey || rowTargetAcosSavingKey) return;
+    const draftValue = rowTargetAcosDrafts[productKey];
+    if (draftValue === undefined) return;
+    const targetAcos = normalizeProductConfigAcosPercent(draftValue);
+    if (targetAcos === null) {
+      setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'error' }));
+      return;
+    }
+    const currentTarget = Number(product.cost?.targetAcos || 0);
+    if (Math.abs(currentTarget - targetAcos) < 0.00005) {
+      setRowTargetAcosDrafts((current) => {
+        const next = { ...current };
+        delete next[productKey];
+        return next;
+      });
+      setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'idle' }));
+      return;
+    }
+    setRowTargetAcosSavingKey(productKey);
+    setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'saving' }));
+    setError('');
+    try {
+      const result = await (window as any).electronAPI?.saveProductConfig?.(
+        buildProductConfigBulkSaveInput(product, scope, targetAcos),
+      );
+      if (!result?.success) throw new Error(`产品 ${product.asin || '-'} 目标 ACOS 保存失败。`);
+      if (String(product.asin || '').toUpperCase() === draft.asin.trim().toUpperCase()) {
+        setCost((current) => ({ ...current, targetAcos }));
+      }
+      setRowTargetAcosDrafts((current) => {
+        const next = { ...current };
+        delete next[productKey];
+        return next;
+      });
+      setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'saved' }));
+      window.setTimeout(() => {
+        setRowTargetAcosStatus((current) => (
+          current[productKey] === 'saved' ? { ...current, [productKey]: 'idle' } : current
+        ));
+      }, 900);
+      window.dispatchEvent(new Event('business-ui:data-updated'));
+      await loadProducts();
+    } catch (caught) {
+      setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'error' }));
+      setError(toUserFacingError(caught, '保存行内目标 ACOS 失败。'));
+    } finally {
+      setRowTargetAcosSavingKey(null);
+    }
   }
 
   async function applyBulkTargetAcos() {
@@ -874,6 +987,13 @@ export function ProductConfigPage() {
                   const productKey = productConfigProductKey(product);
                   const rowLoaded = Boolean(productKey && productKey === loadedProductRowKey);
                   const loadButton = productConfigLoadButtonView({ loaded: rowLoaded });
+                  const rowTargetAcos = productConfigRowTargetAcosView({
+                    asin: product.asin,
+                    disabled: bulkApplying || Boolean(rowTargetAcosSavingKey && rowTargetAcosSavingKey !== productKey),
+                    draftValue: rowTargetAcosDrafts[productKey],
+                    productTargetAcos: Number(product.cost?.targetAcos || 0),
+                    status: rowTargetAcosStatus[productKey] || 'idle',
+                  });
                   return (
                     <tr className={productConfigRowClass({ bulkSelected: selectedBulkKeySet.has(productKey), loaded: rowLoaded })} key={product.id}>
                       <td className="table-checkbox-cell">
@@ -888,7 +1008,36 @@ export function ProductConfigPage() {
                       <td>{product.asin}</td>
                       <td>{product.title || '-'}</td>
                       <td>{product.msku || '-'} / {product.sku || '-'}</td>
-                      <td>{formatPercent(Number(product.cost?.targetAcos || 0) * 100)}</td>
+                      <td className="product-row-acos-cell">
+                        <div className={rowTargetAcos.className}>
+                          <div className="product-row-acos-input-wrap">
+                            <input
+                              aria-label={rowTargetAcos.ariaLabel}
+                              disabled={rowTargetAcos.disabled}
+                              max="100"
+                              min="0.01"
+                              onBlur={() => { void commitRowTargetAcos(product); }}
+                              onChange={(event) => updateRowTargetAcos(productKey, event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                                  event.preventDefault();
+                                  nudgeRowTargetAcos(product, event.key === 'ArrowUp' ? 'up' : 'down');
+                                  return;
+                                }
+                                if (event.key === 'Enter') {
+                                  event.preventDefault();
+                                  void commitRowTargetAcos(product);
+                                }
+                              }}
+                              step="0.5"
+                              type="number"
+                              value={rowTargetAcos.inputValue}
+                            />
+                            <span aria-hidden="true">%</span>
+                          </div>
+                          <span className="product-row-acos-status" aria-live="polite">{rowTargetAcos.feedbackLabel}</span>
+                        </div>
+                      </td>
                       <td>{stageLabel(product.product_stage)}</td>
                       <td>{product.status || '-'}</td>
                       <td>{product.updated_at || '-'}</td>
