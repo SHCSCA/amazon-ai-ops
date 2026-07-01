@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
@@ -25,6 +25,35 @@ export interface ReadbackContractCheck {
   title: string;
   status: ReadbackContractStatus;
   detail: string;
+}
+
+export function readbackStepTabId(stepId: ReadbackWizardStepId): string {
+  return `readback-step-tab-${stepId}`;
+}
+
+export function readbackStepPanelId(stepId: ReadbackWizardStepId): string {
+  return `readback-step-panel-${stepId}`;
+}
+
+export function readbackStepPanelProps(stepId: ReadbackWizardStepId) {
+  return {
+    'aria-labelledby': readbackStepTabId(stepId),
+    className: 'readback-step-panel',
+    id: readbackStepPanelId(stepId),
+    role: 'tabpanel' as const,
+    tabIndex: 0,
+  };
+}
+
+export function readbackStepFromKeyboard(currentStepId: ReadbackWizardStepId, key: string): ReadbackWizardStepId | null {
+  const stepIds = readbackWizardSteps.map((step) => step.id);
+  const currentIndex = stepIds.indexOf(currentStepId);
+  if (currentIndex < 0) return null;
+  if (key === 'ArrowRight' || key === 'ArrowDown') return stepIds[(currentIndex + 1) % stepIds.length];
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return stepIds[(currentIndex - 1 + stepIds.length) % stepIds.length];
+  if (key === 'Home') return stepIds[0];
+  if (key === 'End') return stepIds[stepIds.length - 1];
+  return null;
 }
 
 export type ReadbackActionKey =
@@ -1000,6 +1029,19 @@ export function ReadbackPage() {
   const [readbackActionBusy, setReadbackActionBusy] = useState<ReadbackActionKey | null>(null);
   const [copyCommandBusy, setCopyCommandBusy] = useState<ReadbackCopyCommandKey | null>(null);
   const [pathOpenKey, setPathOpenKey] = useState<string | null>(null);
+  const stepTabRefs = useRef<Partial<Record<ReadbackWizardStepId, HTMLButtonElement | null>>>({});
+  const focusStepTab = (stepId: ReadbackWizardStepId) => {
+    const focusTab = () => stepTabRefs.current[stepId]?.focus();
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(focusTab);
+      return;
+    }
+    focusTab();
+  };
+  const activateReadbackStep = (stepId: ReadbackWizardStepId, focusTab = false) => {
+    setActiveStep(stepId);
+    if (focusTab) focusStepTab(stepId);
+  };
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const missing = useMemo(() => requiredMissing(form, currentBatchId), [currentBatchId, form]);
   const sourceBatchMatches = Boolean(form.sourceBatchId && currentBatchId && form.sourceBatchId === currentBatchId);
@@ -1033,14 +1075,14 @@ export function ReadbackPage() {
   const readbackPrimaryAction = (() => {
     if (activeStep === 'target-source') {
       return form.recommendationId
-        ? { label: '继续填写审批允许', onClick: () => setActiveStep('approval') }
+        ? { label: '继续填写审批允许', onClick: () => activateReadbackStep('approval', true) }
         : { label: loading ? '加载中...' : '刷新已批准动作', busy: loading, busyLabel: '加载中...', onClick: () => { void loadApprovedRows(); } };
     }
     if (activeStep === 'approval') {
-      return { label: '继续补执行证据', onClick: () => setActiveStep('evidence') };
+      return { label: '继续补执行证据', onClick: () => activateReadbackStep('evidence', true) };
     }
     if (activeStep === 'evidence') {
-      return { label: '进入校验并导出', onClick: () => setActiveStep('verify-export') };
+      return { label: '进入校验并导出', onClick: () => activateReadbackStep('verify-export', true) };
     }
     return {
       label: precheckCopy.exportButtonLabel,
@@ -1606,11 +1648,23 @@ export function ReadbackPage() {
         <div className="readback-step-grid readback-step-tabs" role="tablist" aria-label="执行回读步骤" style={readbackStepRailStyle}>
           {readbackStepSummaries.map((step, index) => (
             <button
+              aria-controls={readbackStepPanelId(step.id)}
               aria-selected={activeStep === step.id}
               className={`readback-step readback-step-${step.status}${activeStep === step.id ? ' readback-step-active' : ''}${repairIntent && repairIntentStep === step.id ? ' readback-step-repair-pulse' : ''}`}
+              id={readbackStepTabId(step.id)}
               key={step.id}
-              onClick={() => setActiveStep(step.id)}
+              onClick={() => activateReadbackStep(step.id)}
+              onKeyDown={(event) => {
+                const nextStep = readbackStepFromKeyboard(step.id, event.key);
+                if (!nextStep) return;
+                event.preventDefault();
+                activateReadbackStep(nextStep, true);
+              }}
+              ref={(node) => {
+                stepTabRefs.current[step.id] = node;
+              }}
               role="tab"
+              tabIndex={activeStep === step.id ? 0 : -1}
               type="button"
             >
               <span>{index + 1}</span>
@@ -1621,7 +1675,8 @@ export function ReadbackPage() {
         </div>
 
         {activeStep === 'target-source' && (
-          <Panel title="1. 确认动作和来源" tone={activeMissingCount ? 'blocked' : 'success'}>
+          <div {...readbackStepPanelProps('target-source')}>
+            <Panel title="1. 确认动作和来源" tone={activeMissingCount ? 'blocked' : 'success'}>
             <div className="business-split">
               <div>
                 <div className="business-scope-line">当前有效批次：{currentBatchId || '暂无'}</div>
@@ -1726,11 +1781,13 @@ export function ReadbackPage() {
                 </div>
               </div>
             )}
-          </Panel>
+            </Panel>
+          </div>
         )}
 
         {activeStep === 'approval' && (
-          <Panel title="2. 填写审批允许" tone={activeMissingCount ? 'blocked' : 'success'}>
+          <div {...readbackStepPanelProps('approval')}>
+            <Panel title="2. 填写审批允许" tone={activeMissingCount ? 'blocked' : 'success'}>
             <div className="form-grid">
               <ReadbackFieldCell label="审批人"><input value={form.approverName} onChange={(event) => update({ approverName: event.target.value })} /></ReadbackFieldCell>
               <ReadbackFieldCell label="审批备注"><input value={form.approvalNote} onChange={(event) => update({ approvalNote: event.target.value })} /></ReadbackFieldCell>
@@ -1752,11 +1809,15 @@ export function ReadbackPage() {
               <label><input checked={form.allowedByPolicy} onChange={(event) => update({ allowedByPolicy: event.target.checked })} type="checkbox" /> 低风险策略允许</label>
             </div>
             <p className="muted-line">审批允许只开放人工已批准的低风险动作；没有审批凭证、审批时间和明确允许时不能声称执行完成。</p>
-          </Panel>
+            </Panel>
+          </div>
         )}
 
         {activeStep === 'evidence' && (
-          <div className={readbackRepairPanelClass(Boolean(repairIntent), repairPulse)}>
+          <div
+            {...readbackStepPanelProps('evidence')}
+            className={`readback-step-panel ${readbackRepairPanelClass(Boolean(repairIntent), repairPulse)}`}
+          >
             <Panel title="3. 补执行前后和回读" tone={activeMissingCount ? 'blocked' : 'success'}>
               <p className="muted-line">执行前、执行后、回读截图不能复用；回读值必须等于执行后值。</p>
               <ReadbackContractStrip checks={contractChecks} />
@@ -1806,7 +1867,7 @@ export function ReadbackPage() {
         )}
 
         {activeStep === 'verify-export' && (
-          <>
+          <div {...readbackStepPanelProps('verify-export')}>
             <Panel title="4. 校验并导出证据" tone={missing.length ? 'blocked' : 'success'}>
               <div className="checkbox-grid">
                 <label><input checked={form.executionSuccess} onChange={(event) => update({ executionSuccess: event.target.checked })} type="checkbox" /> 执行成功确认</label>
@@ -2020,7 +2081,7 @@ export function ReadbackPage() {
               </div>
               {copyNotice && <p className="muted-line">{copyNotice}</p>}
             </ProgressiveDetails>
-          </>
+          </div>
         )}
       </div>
     </div>

@@ -21,6 +21,10 @@ import {
   readbackPrecheckCopy,
   readbackSessionSummary,
   readbackSessionWorkflow,
+  readbackStepFromKeyboard,
+  readbackStepPanelId,
+  readbackStepPanelProps,
+  readbackStepTabId,
   requiredMissing,
   sessionCheckCopy,
 } from './readback-page';
@@ -177,6 +181,39 @@ describe('readback structured field cells', () => {
     expect(stylesheet).toMatch(/\.readback-field-cell\s*{[\s\S]*border:\s*1px solid var\(--line-soft\)/);
     expect(stylesheet).toMatch(/\.readback-field-cell:focus-within\s*{[\s\S]*box-shadow:/);
     expect(stylesheet).toMatch(/\.readback-field-cell-label\s*{[\s\S]*background:\s*#fff/);
+  });
+});
+
+describe('readback wizard tab semantics', () => {
+  it('binds step tabs to the active tabpanel and keeps a single keyboard landing point', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(readbackStepTabId('approval')).toBe('readback-step-tab-approval');
+    expect(readbackStepPanelId('approval')).toBe('readback-step-panel-approval');
+    expect(readbackStepPanelProps('approval')).toEqual({
+      'aria-labelledby': 'readback-step-tab-approval',
+      className: 'readback-step-panel',
+      id: 'readback-step-panel-approval',
+      role: 'tabpanel',
+      tabIndex: 0,
+    });
+    expect(source).toContain('aria-controls={readbackStepPanelId(step.id)}');
+    expect(source).toContain('id={readbackStepTabId(step.id)}');
+    expect(source).toContain('tabIndex={activeStep === step.id ? 0 : -1}');
+    expect(source).toContain("{...readbackStepPanelProps('target-source')}");
+    expect(source).toContain("{...readbackStepPanelProps('verify-export')}");
+    expect(stylesheet).toMatch(/\.readback-step-panel:focus-visible[\s\S]*outline:\s*2px solid rgb\(37 99 235 \/ 0\.34\)/);
+  });
+
+  it('supports desktop tablist keyboard navigation across readback steps', () => {
+    expect(readbackStepFromKeyboard('target-source', 'ArrowRight')).toBe('approval');
+    expect(readbackStepFromKeyboard('approval', 'ArrowDown')).toBe('evidence');
+    expect(readbackStepFromKeyboard('evidence', 'ArrowLeft')).toBe('approval');
+    expect(readbackStepFromKeyboard('target-source', 'ArrowUp')).toBe('verify-export');
+    expect(readbackStepFromKeyboard('evidence', 'Home')).toBe('target-source');
+    expect(readbackStepFromKeyboard('approval', 'End')).toBe('verify-export');
+    expect(readbackStepFromKeyboard('approval', 'Enter')).toBeNull();
   });
 });
 

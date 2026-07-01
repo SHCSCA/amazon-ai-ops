@@ -5269,6 +5269,17 @@ code {
   box-shadow: 0 0 0 2px #2563eb;
 }
 
+.readback-step-panel {
+  outline: 0;
+}
+
+.readback-step-panel:focus-visible {
+  border-radius: var(--radius);
+  outline: 2px solid rgb(37 99 235 / 0.34);
+  outline-offset: 4px;
+  box-shadow: 0 0 0 4px rgb(37 99 235 / 0.10);
+}
+
 .readback-repair-banner {
   display: grid;
   gap: 4px;
