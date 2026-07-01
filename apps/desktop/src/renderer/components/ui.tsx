@@ -197,7 +197,19 @@ export function FormTableRow({
 }
 
 export function SafetyGateLine({ children, tone = 'blocked' }: { children: React.ReactNode; tone?: IndustrialTone }) {
-  return <div className={`safety-gate-line safety-gate-${tone}`}>{children}</div>;
+  return (
+    <div
+      aria-atomic={true}
+      aria-live="polite"
+      aria-roledescription="安全门状态"
+      className={`safety-gate-line safety-gate-${tone}`}
+      data-safety-tone={tone}
+      role="status"
+      tabIndex={0}
+    >
+      {children}
+    </div>
+  );
 }
 
 export interface DecisionActionItem {

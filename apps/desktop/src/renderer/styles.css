@@ -7338,6 +7338,23 @@ code {
   font-size: 12px;
   font-weight: 800;
   line-height: 1.25;
+  outline: 0;
+  transition:
+    border-color var(--motion-fast),
+    box-shadow var(--motion-fast),
+    transform var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.safety-gate-line:hover {
+  box-shadow: 0 8px 18px rgb(15 23 42 / 0.07);
+  transform: translateY(-1px);
+}
+
+.safety-gate-line:focus-visible {
+  outline: 2px solid rgb(37 99 235 / 0.34);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgb(37 99 235 / 0.10);
 }
 
 .safety-gate-ready {
@@ -7356,6 +7373,16 @@ code {
   border-color: var(--tone-pending-border);
   background: var(--tone-pending-bg);
   color: #475569;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .safety-gate-line {
+    transition: none;
+  }
+
+  .safety-gate-line:hover {
+    transform: none;
+  }
 }
 
 .decision-action-strip {

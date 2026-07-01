@@ -310,6 +310,22 @@ describe('industrial UI atoms', () => {
 
     expect(collectText(tree)).toContain('审批时间');
     expect(tree.props.className).toBe('safety-gate-line safety-gate-blocked');
+    expect(tree.props.role).toBe('status');
+    expect(tree.props['aria-live']).toBe('polite');
+    expect(tree.props['aria-atomic']).toBe(true);
+    expect(tree.props['aria-roledescription']).toBe('安全门状态');
+    expect(tree.props['data-safety-tone']).toBe('blocked');
+    expect(tree.props.tabIndex).toBe(0);
+  });
+
+  it('keeps the safety gate line keyboard-visible without adding layout shift', () => {
+    const stylesheet = rendererCss();
+
+    expect(stylesheet).toMatch(/\.safety-gate-line[\s\S]*transition:\s*[\s\S]*border-color var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)[\s\S]*transform var\(--motion-fast\)/);
+    expect(stylesheet).toMatch(/\.safety-gate-line:hover[\s\S]*transform:\s*translateY\(-1px\)/);
+    expect(stylesheet).toMatch(/\.safety-gate-line:focus-visible[\s\S]*outline:\s*2px solid rgb\(37 99 235 \/ 0\.34\)/);
+    expect(stylesheet).toMatch(/\.safety-gate-line:focus-visible[\s\S]*box-shadow:\s*0 0 0 4px rgb\(37 99 235 \/ 0\.10\)/);
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.safety-gate-line[\s\S]*transition:\s*none/);
   });
 
   it('renders a three-state decision action strip for approval flows', () => {
