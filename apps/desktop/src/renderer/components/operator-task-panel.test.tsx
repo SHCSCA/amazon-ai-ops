@@ -71,6 +71,31 @@ describe('OperatorTaskPanel', () => {
     expect(primaryButtons[0].props.children).toBe('Approve');
   });
 
+  it('labels the first-screen task region and action group for scanability', () => {
+    const tree = OperatorTaskPanel({
+      eyebrow: '数据与量化',
+      title: '确认当前范围并导入真实报表',
+      detail: '先保存范围，再把下载完成的 Lingxing 表格写入 SQLite。',
+      primaryAction: { label: '导入已下载表格', onClick: vi.fn() },
+      secondaryActions: [
+        { label: '打开目录', onClick: vi.fn() },
+      ],
+    }) as ReactElement;
+
+    const section = collectElements(tree, (element) => element.type === 'section' && hasClass(element, 'operator-task-panel'))[0];
+    const heading = collectElements(tree, (element) => element.type === 'h2')[0];
+    const detail = collectElements(tree, (element) => element.type === 'p' && element.props.id === section.props['aria-describedby'])[0];
+    const actionGroup = collectElements(tree, (element) => element.props.className === 'operator-task-actions')[0];
+
+    expect(section.props['aria-labelledby']).toBe(heading.props.id);
+    expect(section.props['aria-describedby']).toBe(detail.props.id);
+    expect(heading.props.id).toContain('operator-task-');
+    expect(textContent(heading)).toBe('确认当前范围并导入真实报表');
+    expect(textContent(detail)).toContain('SQLite');
+    expect(actionGroup.props.role).toBe('group');
+    expect(actionGroup.props['aria-label']).toBe('首屏任务动作');
+  });
+
   it('renders secondary actions and calls primary and secondary handlers', () => {
     const primary = vi.fn();
     const secondary = vi.fn();
@@ -220,6 +245,7 @@ describe('OperatorTaskPanel', () => {
     expect(actionsRule).toMatch(/z-index\s*:\s*1\s*;/);
     expect(css).toMatch(/@keyframes\s+operator-task-shimmer/);
     expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.operator-task-panel::before[\s\S]*animation:\s*none/);
+    expect(css).toMatch(/\.operator-task-main h2\s*\{[\s\S]*font-size:\s*17px/);
   });
 
   it('defines the shared loading button micro-interaction styles', () => {

@@ -17,6 +17,14 @@ export type OperatorTaskPanelProps = {
   children?: React.ReactNode;
 };
 
+function operatorTaskPanelIdSeed(eyebrow: string | undefined, title: string): string {
+  let hash = 0;
+  for (const char of `${eyebrow ?? ''}:${title}`) {
+    hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 export function OperatorTaskPanel({
   eyebrow,
   title,
@@ -25,6 +33,9 @@ export function OperatorTaskPanel({
   secondaryActions = [],
   children,
 }: OperatorTaskPanelProps) {
+  const idSeed = operatorTaskPanelIdSeed(eyebrow, title);
+  const titleId = `operator-task-${idSeed}-title`;
+  const detailId = detail ? `operator-task-${idSeed}-detail` : undefined;
   const actionBusy = Boolean(primaryAction.busy || secondaryActions.some((action) => action.busy));
 
   const renderActionContent = (action: OperatorTaskAction) => {
@@ -42,14 +53,14 @@ export function OperatorTaskPanel({
   );
 
   return (
-    <section className="operator-task-panel">
+    <section className="operator-task-panel" aria-describedby={detailId} aria-labelledby={titleId}>
       <div className="operator-task-main">
         {eyebrow && <div className="operator-task-eyebrow">{eyebrow}</div>}
-        <h3>{title}</h3>
-        {detail && <p>{detail}</p>}
+        <h2 id={titleId}>{title}</h2>
+        {detail && <p id={detailId}>{detail}</p>}
         {children}
       </div>
-      <div className="operator-task-actions">
+      <div className="operator-task-actions" role="group" aria-label="首屏任务动作">
         <button
           aria-busy={primaryAction.busy || undefined}
           className={actionClassName('primary-button', primaryAction)}

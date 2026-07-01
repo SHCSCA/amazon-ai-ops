@@ -961,7 +961,7 @@ button:disabled {
   font-weight: 800;
 }
 
-.operator-task-main h3 {
+.operator-task-main h2 {
   margin: 0;
   color: var(--text);
   font-size: 17px;
