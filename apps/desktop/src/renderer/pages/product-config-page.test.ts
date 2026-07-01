@@ -1,9 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildProductConfigBulkApplyState,
   buildProductConfigBulkSaveInput,
   buildCostInputFromProduct,
   productConfigActionButtonView,
+  productConfigLoadButtonView,
+  productConfigRowClass,
   buildProductConfigTaskState,
   isProductConfigAutoSaveField,
   normalizeProductConfigAcosPercent,
@@ -131,6 +134,29 @@ describe('product config task and inline save feedback', () => {
     expect(lockedPeer.ariaBusy).toBeUndefined();
     expect(lockedPeer.className).not.toContain('button-loading');
     expect(lockedPeer.showSpinner).toBe(false);
+  });
+
+  it('confirms which product row is loaded for editing', () => {
+    expect(productConfigRowClass({ bulkSelected: false, loaded: true })).toContain('product-config-row-loaded');
+    expect(productConfigRowClass({ bulkSelected: true, loaded: true })).toContain('product-config-row-selected');
+
+    const loaded = productConfigLoadButtonView({ loaded: true });
+    expect(loaded.label).toBe('已载入');
+    expect(loaded.ariaPressed).toBe(true);
+    expect(loaded.className).toContain('product-config-load-button-active');
+
+    const idle = productConfigLoadButtonView({ loaded: false });
+    expect(idle.label).toBe('载入编辑');
+    expect(idle.ariaPressed).toBe(false);
+    expect(idle.className).not.toContain('product-config-load-button-active');
+  });
+
+  it('styles the loaded product row and active load button as visible feedback', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.product-config-row-loaded td');
+    expect(css).toContain('.product-config-load-button-active');
+    expect(css).toContain('event-card-flash');
   });
 
   it('nudges cost and target values with keyboard-safe bounds', () => {

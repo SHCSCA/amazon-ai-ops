@@ -6700,6 +6700,23 @@ code {
   background: var(--tone-ready-bg);
 }
 
+.product-config-row-loaded td {
+  background: #eff6ff;
+  box-shadow: inset 3px 0 0 var(--primary);
+  animation: event-card-flash 450ms ease-out;
+}
+
+.product-config-row-selected.product-config-row-loaded td {
+  background: #e8f8ef;
+}
+
+.product-config-load-button-active {
+  border-color: var(--primary);
+  background: #eff6ff;
+  color: var(--primary);
+  font-weight: 900;
+}
+
 @keyframes product-config-nudge {
   0% {
     transform: translateY(0);

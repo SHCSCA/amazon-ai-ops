@@ -54,6 +54,12 @@ export interface ProductConfigActionButtonView {
   showSpinner: boolean;
 }
 
+export interface ProductConfigLoadButtonView {
+  ariaPressed: boolean;
+  className: string;
+  label: string;
+}
+
 export function productConfigActionButtonView({
   active,
   baseClassName,
@@ -68,6 +74,24 @@ export function productConfigActionButtonView({
     disabled: Boolean(disabled || active || groupBusy),
     label: active ? busyLabel : label,
     showSpinner: active,
+  };
+}
+
+export function productConfigRowClass(input: { bulkSelected: boolean; loaded: boolean }): string {
+  return [
+    input.bulkSelected ? 'product-config-row-selected' : '',
+    input.loaded ? 'product-config-row-loaded' : '',
+  ].filter(Boolean).join(' ');
+}
+
+export function productConfigLoadButtonView(input: { loaded: boolean }): ProductConfigLoadButtonView {
+  return {
+    ariaPressed: input.loaded,
+    className: [
+      'secondary-button compact-button product-config-load-button',
+      input.loaded ? 'product-config-load-button-active' : '',
+    ].filter(Boolean).join(' '),
+    label: input.loaded ? '已载入' : '载入编辑',
   };
 }
 
@@ -361,6 +385,10 @@ export function ProductConfigPage() {
   });
   const allCurrentProductsSelected = currentScopeProducts.length > 0
     && currentScopeProducts.every((product) => selectedBulkKeySet.has(productConfigProductKey(product)));
+  const loadedProduct = currentScopeProducts.find((product) => (
+    String(product.asin || '').trim().toUpperCase() === draft.asin.trim().toUpperCase()
+  ));
+  const loadedProductRowKey = loadedProduct ? productConfigProductKey(loadedProduct) : '';
 
   async function loadProducts() {
     setLoading(true);
@@ -735,7 +763,7 @@ export function ProductConfigPage() {
               <span>{adQuantButton.label}</span>
             </button>
           </div>
-          {message && <p className="ready-line">{message}</p>}
+          {message && <p className="ready-line" role="status" aria-live="polite">{message}</p>}
           {error && <p className="blocked-line">{error}</p>}
         </Panel>
 
@@ -799,27 +827,41 @@ export function ProductConfigPage() {
                 </tr>
               </thead>
               <tbody>
-                {currentScopeProducts.map((product) => (
-                  <tr className={selectedBulkKeySet.has(productConfigProductKey(product)) ? 'product-config-row-selected' : ''} key={product.id}>
-                    <td className="table-checkbox-cell">
-                      <input
-                        aria-label={`选择产品 ${product.asin}`}
-                        type="checkbox"
-                        checked={selectedBulkKeySet.has(productConfigProductKey(product))}
-                        disabled={bulkApplying}
-                        onChange={(event) => toggleBulkProduct(productConfigProductKey(product), event.target.checked)}
-                      />
-                    </td>
-                    <td>{product.asin}</td>
-                    <td>{product.title || '-'}</td>
-                    <td>{product.msku || '-'} / {product.sku || '-'}</td>
-                    <td>{formatPercent(Number(product.cost?.targetAcos || 0) * 100)}</td>
-                    <td>{stageLabel(product.product_stage)}</td>
-                    <td>{product.status || '-'}</td>
-                    <td>{product.updated_at || '-'}</td>
-                    <td><button className="secondary-button compact-button" onClick={() => loadProduct(product)} type="button">载入编辑</button></td>
-                  </tr>
-                ))}
+                {currentScopeProducts.map((product) => {
+                  const productKey = productConfigProductKey(product);
+                  const rowLoaded = Boolean(productKey && productKey === loadedProductRowKey);
+                  const loadButton = productConfigLoadButtonView({ loaded: rowLoaded });
+                  return (
+                    <tr className={productConfigRowClass({ bulkSelected: selectedBulkKeySet.has(productKey), loaded: rowLoaded })} key={product.id}>
+                      <td className="table-checkbox-cell">
+                        <input
+                          aria-label={`选择产品 ${product.asin}`}
+                          type="checkbox"
+                          checked={selectedBulkKeySet.has(productKey)}
+                          disabled={bulkApplying}
+                          onChange={(event) => toggleBulkProduct(productKey, event.target.checked)}
+                        />
+                      </td>
+                      <td>{product.asin}</td>
+                      <td>{product.title || '-'}</td>
+                      <td>{product.msku || '-'} / {product.sku || '-'}</td>
+                      <td>{formatPercent(Number(product.cost?.targetAcos || 0) * 100)}</td>
+                      <td>{stageLabel(product.product_stage)}</td>
+                      <td>{product.status || '-'}</td>
+                      <td>{product.updated_at || '-'}</td>
+                      <td>
+                        <button
+                          aria-pressed={loadButton.ariaPressed}
+                          className={loadButton.className}
+                          onClick={() => loadProduct(product)}
+                          type="button"
+                        >
+                          {loadButton.label}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {!currentScopeProducts.length && (
                   <tr>
                     <td colSpan={9}>{loading ? '加载中...' : '当前店铺/站点还没有产品配置。'}</td>
