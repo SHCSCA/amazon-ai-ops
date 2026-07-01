@@ -808,6 +808,21 @@ button:disabled {
   padding: 4px 8px;
   font-size: 12px;
   font-weight: 800;
+  outline: 0;
+  contain: layout style paint;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease, filter 120ms ease;
+}
+
+.status-pill:hover {
+  filter: saturate(1.08);
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.08);
+  transform: translateY(-1px);
+}
+
+.status-pill:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.34);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.10);
 }
 
 .status-ready {
@@ -828,6 +843,16 @@ button:disabled {
 .status-warning {
   background: var(--amber-soft);
   color: var(--amber);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-pill {
+    transition: none;
+  }
+
+  .status-pill:hover {
+    transform: none;
+  }
 }
 
 .primary-button,

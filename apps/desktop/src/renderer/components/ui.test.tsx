@@ -1,7 +1,7 @@
 import React, { type ReactElement, type ReactNode } from 'react';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { DecisionActionStrip, FormTable, FormTableRow, MicroStepper, PageHeader, Panel, SafetyGateLine, StateLightGrid } from './ui';
+import { DecisionActionStrip, FormTable, FormTableRow, MicroStepper, PageHeader, Panel, SafetyGateLine, StateLightGrid, StatusPill } from './ui';
 
 function collectText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
@@ -99,6 +99,50 @@ describe('industrial UI atoms', () => {
     expect(tree.props['aria-labelledby']).toBe(headings[0].props.id);
     expect(headings[0].props.id).toMatch(/^ui-panel-[a-z0-9]+-title$/);
     expect(collectText(tree)).toContain('数据健康');
+  });
+
+  it('renders status pills as semantic dense status tags without polluting tab order', () => {
+    const tree = StatusPill({
+      tone: 'warning',
+      children: '需复核 3',
+    }) as ReactElement;
+
+    expect(tree.type).toBe('span');
+    expect(tree.props.className).toBe('status-pill status-warning');
+    expect(tree.props.role).toBe('note');
+    expect(tree.props['aria-roledescription']).toBe('状态标签');
+    expect(tree.props['data-status-tone']).toBe('warning');
+    expect(tree.props.tabIndex).toBeUndefined();
+    expect(collectText(tree)).toContain('需复核 3');
+  });
+
+  it('allows status pills to opt into keyboard focus or live readback only when needed', () => {
+    const focusable = StatusPill({
+      tone: 'blocked',
+      focusable: true,
+      children: '强阻断',
+    }) as ReactElement;
+    const live = StatusPill({
+      tone: 'ready',
+      live: true,
+      children: '已保存',
+    }) as ReactElement;
+
+    expect(focusable.props.tabIndex).toBe(0);
+    expect(focusable.props.role).toBe('note');
+    expect(live.props.role).toBe('status');
+    expect(live.props['aria-live']).toBe('polite');
+    expect(live.props['aria-atomic']).toBe(true);
+  });
+
+  it('keeps status pill hover and optional focus feedback in the stylesheet', () => {
+    const stylesheet = rendererCss();
+
+    expect(stylesheet).toMatch(/\.status-pill\s*\{[\s\S]*transition:\s*background 120ms/);
+    expect(stylesheet).toMatch(/\.status-pill:hover\s*\{[\s\S]*transform:\s*translateY\(-1px\)/);
+    expect(stylesheet).toMatch(/\.status-pill:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.status-pill[\s\S]*transition:\s*none/);
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.status-pill:hover[\s\S]*transform:\s*none/);
   });
 
   it('renders state light cards for first-viewport operational status', () => {

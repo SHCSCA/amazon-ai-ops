@@ -64,8 +64,31 @@ export function Panel({ title, children, tone = 'default' }: { title?: string; c
   );
 }
 
-export function StatusPill({ tone, children }: { tone: 'ready' | 'pending' | 'blocked' | 'warning'; children: React.ReactNode }) {
-  return <span className={`status-pill status-${tone}`}>{children}</span>;
+export function StatusPill({
+  tone,
+  children,
+  focusable = false,
+  live = false,
+}: {
+  tone: 'ready' | 'pending' | 'blocked' | 'warning';
+  children: React.ReactNode;
+  focusable?: boolean;
+  live?: boolean;
+}) {
+  const semanticProps: React.HTMLAttributes<HTMLSpanElement> = live
+    ? { role: 'status', 'aria-live': 'polite', 'aria-atomic': true }
+    : { role: 'note', 'aria-roledescription': '状态标签' };
+
+  return (
+    <span
+      {...semanticProps}
+      className={`status-pill status-${tone}`}
+      data-status-tone={tone}
+      tabIndex={focusable ? 0 : undefined}
+    >
+      {children}
+    </span>
+  );
 }
 
 export type IndustrialTone = 'ready' | 'pending' | 'blocked' | 'warning';
