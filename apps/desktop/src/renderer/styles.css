@@ -179,6 +179,17 @@ button:disabled {
   font-weight: 800;
 }
 
+.nav-item-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-item-shell {
+  min-width: 0;
+}
+
 .nav-item {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;

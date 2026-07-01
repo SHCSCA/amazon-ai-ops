@@ -65,6 +65,37 @@ describe('Sidebar navigation', () => {
     expect(indexes.filter((value) => value === '01')).toHaveLength(5);
   });
 
+  it('exposes the desktop business navigation as labelled groups and group-local lists', () => {
+    const tree = Sidebar({ activeRoute: 'dashboard', onNavigate: () => undefined }) as ReactElement;
+    const groups = collectElements(tree, (element) => element.props.className === 'nav-group');
+
+    expect(tree.type).toBe('nav');
+    expect(tree.props['aria-label']).toBe('主业务导航');
+    expect(groups).toHaveLength(navGroups.length);
+
+    groups.forEach((groupElement, groupIndex) => {
+      const labels = collectElements(groupElement, (element) => element.props.className === 'nav-group-label');
+      const lists = collectElements(groupElement, (element) => element.props.className === 'nav-item-list');
+      const itemShells = collectElements(groupElement, (element) => element.props.className === 'nav-item-shell');
+      const buttons = collectElements(groupElement, (element) => element.type === 'button');
+      const groupLabelId = `app-nav-group-${groupIndex + 1}-label`;
+
+      expect(groupElement.props.role).toBe('group');
+      expect(groupElement.props['aria-labelledby']).toBe(groupLabelId);
+      expect(labels[0]?.props.id).toBe(groupLabelId);
+      expect(lists[0]?.props.role).toBe('list');
+      expect(itemShells).toHaveLength(navGroups[groupIndex].items.length);
+      expect(buttons).toHaveLength(navGroups[groupIndex].items.length);
+
+      itemShells.forEach((itemShell, itemIndex) => {
+        expect(itemShell.props.role).toBe('listitem');
+        expect(itemShell.props['aria-posinset']).toBe(itemIndex + 1);
+        expect(itemShell.props['aria-setsize']).toBe(navGroups[groupIndex].items.length);
+        expect(buttons[itemIndex].props['aria-describedby']).toBe(groupLabelId);
+      });
+    });
+  });
+
   it('marks the pending navigation target and locks sibling nav actions during route handoff', () => {
     const clicked: AppRoute[] = [];
     const tree = Sidebar({

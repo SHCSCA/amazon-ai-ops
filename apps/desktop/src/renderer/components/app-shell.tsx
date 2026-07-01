@@ -49,6 +49,10 @@ export function navItemOrdinal(index: number): string {
   return String(index + 1).padStart(2, '0');
 }
 
+export function navGroupLabelId(index: number): string {
+  return `app-nav-group-${index + 1}-label`;
+}
+
 export function visibleNavRouteFor(route?: AppRoute | null): AppRoute | null {
   if (!route) return null;
   return route;
@@ -68,33 +72,43 @@ export function Sidebar({
   const pendingNavRoute = visibleNavRouteFor(pendingRoute);
 
   return (
-    <nav className="app-sidebar" aria-busy={navigationBusy || undefined} aria-label="主导航" data-navigation-busy={navigationBusy || undefined}>
-      {navGroups.map((group) => (
-        <div className="nav-group" key={group.label}>
-          <div className="nav-group-label">{group.label}</div>
-          {group.items.map((item, index) => {
-            const isPending = pendingNavRoute === item.id;
-            return (
-              <button
-                aria-busy={isPending || undefined}
-                aria-current={activeNavRoute === item.id ? 'page' : undefined}
-                className="nav-item"
-                data-pending={isPending ? 'true' : undefined}
-                disabled={navigationBusy}
-                key={item.id}
-                onClick={() => {
-                  if (!navigationBusy) onNavigate(item.id);
-                }}
-                type="button"
-              >
-                <span className="nav-item-index">{navItemOrdinal(index)}</span>
-                <span className="nav-item-label">{item.label}</span>
-                {isPending && <span className="nav-item-feedback">转跳中...</span>}
-              </button>
-            );
-          })}
-        </div>
-      ))}
+    <nav className="app-sidebar" aria-busy={navigationBusy || undefined} aria-label="主业务导航" data-navigation-busy={navigationBusy || undefined}>
+      {navGroups.map((group, groupIndex) => {
+        const groupLabelId = navGroupLabelId(groupIndex);
+
+        return (
+          <section className="nav-group" key={group.label} role="group" aria-labelledby={groupLabelId}>
+            <div className="nav-group-label" id={groupLabelId}>
+              {group.label}
+            </div>
+            <div className="nav-item-list" role="list" aria-label={`${group.label}导航项`}>
+              {group.items.map((item, index) => {
+                const isPending = pendingNavRoute === item.id;
+                return (
+                  <div className="nav-item-shell" key={item.id} role="listitem" aria-posinset={index + 1} aria-setsize={group.items.length}>
+                    <button
+                      aria-busy={isPending || undefined}
+                      aria-current={activeNavRoute === item.id ? 'page' : undefined}
+                      aria-describedby={groupLabelId}
+                      className="nav-item"
+                      data-pending={isPending ? 'true' : undefined}
+                      disabled={navigationBusy}
+                      onClick={() => {
+                        if (!navigationBusy) onNavigate(item.id);
+                      }}
+                      type="button"
+                    >
+                      <span className="nav-item-index">{navItemOrdinal(index)}</span>
+                      <span className="nav-item-label">{item.label}</span>
+                      {isPending && <span className="nav-item-feedback">转跳中...</span>}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
     </nav>
   );
 }
