@@ -59,6 +59,7 @@ describe('Sidebar navigation', () => {
     expect(navText).toContain('今日看板');
     expect(navText).toContain('批量数据采集');
     expect(navText).toContain('指标核验入库');
+    expect(navText).toContain('运营事件标记');
     expect(navText).toContain('渐进执行回读');
     expect(navText).toContain('最终验收就绪门');
     expect(indexes.filter((value) => value === '01')).toHaveLength(5);
