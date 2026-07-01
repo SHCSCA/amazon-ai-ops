@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useId, useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 export type VirtualSortDirection = 'asc' | 'desc';
@@ -39,6 +39,13 @@ export function virtualRowParityClass(index: number): string {
   return index % 2 === 0 ? 'virtual-table-row-even' : 'virtual-table-row-odd';
 }
 
+export function virtualTableStatusText({ loading, rowCount, columnCount }: { loading: boolean; rowCount: number; columnCount: number }): string {
+  if (loading && rowCount > 0) return `表格正在加载，当前暂存 ${rowCount} 行 / ${columnCount} 列。`;
+  if (loading) return `表格正在加载，保留 ${columnCount} 列结构。`;
+  if (rowCount > 0) return `当前展示 ${rowCount} 行 / ${columnCount} 列。`;
+  return `当前没有可展示的表格行，表头保留 ${columnCount} 列。`;
+}
+
 export interface VirtualDataTableProps<T> {
   rows: T[];
   columns: Array<VirtualDataTableColumn<T>>;
@@ -72,8 +79,10 @@ export function VirtualDataTable<T>({
   sortDirection = 'desc',
   onSortChange,
 }: VirtualDataTableProps<T>) {
+  const statusId = useId();
   const parentRef = useRef<HTMLDivElement | null>(null);
   const gridTemplateColumns = useMemo(() => virtualColumnTemplate(columns), [columns]);
+  const statusText = virtualTableStatusText({ loading, rowCount: rows.length, columnCount: columns.length });
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
@@ -90,6 +99,9 @@ export function VirtualDataTable<T>({
       className={`virtual-table-wrap ${loading ? 'virtual-table-loading' : ''} ${className}`.trim()}
       ref={parentRef}
     >
+      <div className="virtual-table-status" id={statusId} role="status" aria-live="polite" aria-atomic="true">
+        {statusText}
+      </div>
       {loading && (
         <div aria-label="表格正在加载" className="virtual-table-skeleton">
           <span />
@@ -97,7 +109,7 @@ export function VirtualDataTable<T>({
           <span />
         </div>
       )}
-      <div className="virtual-table" role="table" style={{ minWidth }}>
+      <div aria-colcount={columns.length} aria-describedby={statusId} aria-rowcount={rows.length} className="virtual-table" role="table" style={{ minWidth }}>
         <div className="virtual-table-head" role="rowgroup">
           <div className="virtual-table-row virtual-table-header-row" role="row" style={{ gridTemplateColumns }}>
             {columns.map((column) => {

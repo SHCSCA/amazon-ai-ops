@@ -4,6 +4,7 @@ import {
   virtualColumnSortAria,
   virtualColumnStickyClass,
   virtualColumnTemplate,
+  virtualTableStatusText,
   virtualRowParityClass,
   virtualSortHeaderClass,
   type VirtualDataTableColumn,
@@ -113,5 +114,31 @@ describe('VirtualDataTable', () => {
     expect(styles).toMatch(/\.virtual-table-row-even[\s\S]*background:\s*#fff/);
     expect(styles).toMatch(/\.virtual-table-row-odd[\s\S]*background:\s*#f8fafc/);
     expect(styles.indexOf('.virtual-table-row-odd')).toBeLessThan(styles.indexOf('.virtual-table-body-row:hover'));
+  });
+
+  it('exposes a stable table status line for loading, populated, and empty states', () => {
+    expect(virtualTableStatusText({ loading: true, rowCount: 0, columnCount: 7 })).toBe('表格正在加载，保留 7 列结构。');
+    expect(virtualTableStatusText({ loading: true, rowCount: 18, columnCount: 7 })).toBe('表格正在加载，当前暂存 18 行 / 7 列。');
+    expect(virtualTableStatusText({ loading: false, rowCount: 18, columnCount: 7 })).toBe('当前展示 18 行 / 7 列。');
+    expect(virtualTableStatusText({ loading: false, rowCount: 0, columnCount: 7 })).toBe('当前没有可展示的表格行，表头保留 7 列。');
+  });
+
+  it('wires the status line to the virtual table without layout shift', () => {
+    const text = source();
+    const styles = css();
+
+    expect(text).toContain('useId');
+    expect(text).toContain('const statusId = useId()');
+    expect(text).toContain('virtualTableStatusText({ loading, rowCount: rows.length, columnCount: columns.length })');
+    expect(text).toContain('className="virtual-table-status"');
+    expect(text).toContain('role="status"');
+    expect(text).toContain('aria-live="polite"');
+    expect(text).toContain('aria-atomic="true"');
+    expect(text).toContain('aria-describedby={statusId}');
+    expect(text).toContain('aria-colcount={columns.length}');
+    expect(text).toContain('aria-rowcount={rows.length}');
+    expect(styles).toMatch(/\.virtual-table-status[\s\S]*min-height:\s*30px/);
+    expect(styles).toMatch(/\.virtual-table-status[\s\S]*border-bottom:\s*1px solid var\(--line-soft\)/);
+    expect(styles).toMatch(/\.virtual-table-skeleton[\s\S]*top:\s*30px/);
   });
 });

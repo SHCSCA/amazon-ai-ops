@@ -2856,6 +2856,19 @@ code {
   box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
 }
 
+.virtual-table-status {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  border-bottom: 1px solid var(--line-soft);
+  background: #f8fafc;
+  color: var(--text-muted);
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
 .virtual-table {
   position: relative;
   color: var(--text-main);
@@ -3029,7 +3042,10 @@ code {
 
 .virtual-table-skeleton {
   position: absolute;
-  inset: 0;
+  top: 30px;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 20;
   display: grid;
   align-content: start;
