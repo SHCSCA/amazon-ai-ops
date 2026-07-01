@@ -9,6 +9,14 @@ function pageHeaderIdSeed(eyebrow: string, title: string): string {
   return hash.toString(36);
 }
 
+function panelIdSeed(title: string, tone: string): string {
+  let hash = 0;
+  for (const char of `${tone}:${title}`) {
+    hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 export function PageHeader({ eyebrow, title, description, primaryTask, nextAction }: PageHeaderProps) {
   const idSeed = pageHeaderIdSeed(eyebrow, title);
   const titleId = `page-header-${idSeed}-title`;
@@ -42,11 +50,13 @@ export function PageHeader({ eyebrow, title, description, primaryTask, nextActio
 }
 
 export function Panel({ title, children, tone = 'default' }: { title?: string; children: React.ReactNode; tone?: 'default' | 'warning' | 'blocked' | 'success' }) {
+  const titleId = title ? `ui-panel-${panelIdSeed(title, tone)}-title` : undefined;
+
   return (
-    <section className={`ui-panel ui-panel-${tone}`}>
+    <section aria-labelledby={titleId} className={`ui-panel ui-panel-${tone}`}>
       {title && (
         <div className="panel-title-row">
-          <h3>{title}</h3>
+          <h3 id={titleId}>{title}</h3>
         </div>
       )}
       {children}

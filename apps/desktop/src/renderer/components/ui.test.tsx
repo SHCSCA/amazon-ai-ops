@@ -1,7 +1,7 @@
 import React, { type ReactElement, type ReactNode } from 'react';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { DecisionActionStrip, FormTable, FormTableRow, MicroStepper, PageHeader, SafetyGateLine, StateLightGrid } from './ui';
+import { DecisionActionStrip, FormTable, FormTableRow, MicroStepper, PageHeader, Panel, SafetyGateLine, StateLightGrid } from './ui';
 
 function collectText(node: ReactNode): string {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
@@ -84,6 +84,21 @@ describe('industrial UI atoms', () => {
     expect(stylesheet).toMatch(/\.page-header-rail-card:hover\s*\{[\s\S]*transform:\s*translateY\(-2px\)/);
     expect(stylesheet).toMatch(/\.page-header-rail-card:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.page-header-rail-card[\s\S]*transition:\s*none/);
+  });
+
+  it('names titled panels as scannable page sections', () => {
+    const tree = Panel({
+      title: '数据健康',
+      tone: 'success',
+      children: <p>8/8 真实报表已导入。</p>,
+    }) as ReactElement;
+    const headings = collectElements(tree, (element) => element.type === 'h3');
+
+    expect(tree.type).toBe('section');
+    expect(tree.props.className).toBe('ui-panel ui-panel-success');
+    expect(tree.props['aria-labelledby']).toBe(headings[0].props.id);
+    expect(headings[0].props.id).toMatch(/^ui-panel-[a-z0-9]+-title$/);
+    expect(collectText(tree)).toContain('数据健康');
   });
 
   it('renders state light cards for first-viewport operational status', () => {
