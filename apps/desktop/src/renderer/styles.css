@@ -2844,7 +2844,7 @@ code {
   contain: strict;
 }
 
-.virtual-table-cell:first-child {
+.virtual-table-cell-sticky-left {
   position: sticky;
   left: 0;
   z-index: 3;
@@ -2862,7 +2862,7 @@ code {
   white-space: nowrap;
 }
 
-.virtual-table-header-cell:first-child {
+.virtual-table-header-cell.virtual-table-cell-sticky-left {
   z-index: 9;
   background: #f8fafc;
 }

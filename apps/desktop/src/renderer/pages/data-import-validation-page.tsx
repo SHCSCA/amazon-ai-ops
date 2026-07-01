@@ -532,7 +532,7 @@ export function DataImportValidationPage() {
     );
   }
   const reportColumns: Array<VirtualDataTableColumn<DataImportReportRow>> = [
-    { key: 'label', header: '报表', width: '170px', sortable: true, sortLabel: '报表', cell: (row) => row.label },
+    { key: 'label', header: '报表', width: '170px', sticky: 'left', sortable: true, sortLabel: '报表', cell: (row) => row.label },
     {
       key: 'file',
       header: '真实文件',

@@ -9,6 +9,7 @@ export interface VirtualDataTableColumn<T> {
   header: React.ReactNode;
   width?: string;
   className?: string;
+  sticky?: 'left';
   sortable?: boolean;
   sortLabel?: string;
   cell: (row: T, index: number) => React.ReactNode;
@@ -28,6 +29,10 @@ export function virtualSortHeaderClass({ sortable, active }: { sortable: boolean
     sortable ? 'virtual-table-sortable' : '',
     active ? 'virtual-table-sort-active' : '',
   ].filter(Boolean).join(' ');
+}
+
+export function virtualColumnStickyClass<T>(column: VirtualDataTableColumn<T>): string {
+  return column.sticky === 'left' ? 'virtual-table-cell-sticky-left' : '';
 }
 
 export function virtualRowParityClass(index: number): string {
@@ -99,10 +104,11 @@ export function VirtualDataTable<T>({
               const active = column.key === sortKey;
               const sortable = Boolean(column.sortable);
               const sortClass = virtualSortHeaderClass({ sortable, active });
+              const stickyClass = virtualColumnStickyClass(column);
               return (
                 <div
                   aria-sort={sortable ? virtualColumnSortAria(column.key, sortKey, sortDirection) : undefined}
-                  className={`virtual-table-cell virtual-table-header-cell ${sortClass} ${column.className || ''}`.trim()}
+                  className={`virtual-table-cell virtual-table-header-cell ${sortClass} ${stickyClass} ${column.className || ''}`.trim()}
                   data-sort-direction={active ? sortDirection : undefined}
                   key={column.key}
                   role="columnheader"
@@ -143,11 +149,14 @@ export function VirtualDataTable<T>({
                     role="row"
                     style={{ gridTemplateColumns }}
                   >
-                    {columns.map((column) => (
-                      <div className={`virtual-table-cell ${column.className || ''}`.trim()} key={column.key} role="cell">
-                        {column.cell(row, virtualRow.index)}
-                      </div>
-                    ))}
+                    {columns.map((column) => {
+                      const stickyClass = virtualColumnStickyClass(column);
+                      return (
+                        <div className={`virtual-table-cell ${stickyClass} ${column.className || ''}`.trim()} key={column.key} role="cell">
+                          {column.cell(row, virtualRow.index)}
+                        </div>
+                      );
+                    })}
                   </div>
                   {detail && <div className="virtual-table-detail">{detail}</div>}
                 </div>

@@ -372,7 +372,7 @@ export function KeywordOpportunitiesPage() {
   }
 
   const opportunityColumns: Array<VirtualDataTableColumn<KeywordOpportunityView>> = [
-    { key: 'asin', header: 'ASIN', width: '112px', sortable: true, cell: (row) => row.asin || '-' },
+    { key: 'asin', header: 'ASIN', width: '112px', sticky: 'left', sortable: true, cell: (row) => row.asin || '-' },
     { key: 'portfolioName', header: '广告组合', width: '150px', sortable: true, cell: (row) => row.portfolioName || '-' },
     { key: 'campaignName', header: '广告活动', width: '190px', sortable: true, cell: (row) => row.campaignName || '-' },
     { key: 'adGroupName', header: '广告组', width: '170px', sortable: true, cell: (row) => row.adGroupName || '-' },

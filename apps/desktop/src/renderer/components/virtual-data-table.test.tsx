@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   virtualColumnSortAria,
+  virtualColumnStickyClass,
   virtualColumnTemplate,
   virtualRowParityClass,
   virtualSortHeaderClass,
@@ -42,6 +43,21 @@ describe('VirtualDataTable', () => {
     expect(virtualColumnTemplate(columns)).toBe('minmax(180px, 1.4fr) 96px minmax(120px, 1fr)');
   });
 
+  it('makes sticky columns an explicit table contract instead of a first-child side effect', () => {
+    const columns: Array<VirtualDataTableColumn<Row>> = [
+      { key: 'keyword', header: '关键词', sticky: 'left', cell: (row) => row.keyword },
+      { key: 'score', header: '评分', cell: (row) => row.score },
+    ];
+
+    expect(virtualColumnStickyClass(columns[0])).toBe('virtual-table-cell-sticky-left');
+    expect(virtualColumnStickyClass(columns[1])).toBe('');
+
+    const text = source();
+
+    expect(text).toContain('virtualColumnStickyClass(column)');
+    expect(text).toContain('const stickyClass = virtualColumnStickyClass(column);');
+  });
+
   it('maps active sortable headers to stable ARIA sort states', () => {
     expect(virtualColumnSortAria('keyword', 'keyword', 'asc')).toBe('ascending');
     expect(virtualColumnSortAria('score', 'score', 'desc')).toBe('descending');
@@ -61,6 +77,10 @@ describe('VirtualDataTable', () => {
     expect(text).toContain('.virtual-table-skeleton');
     expect(text).toMatch(/\.virtual-table-head[\s\S]*position:\s*sticky/);
     expect(text).toMatch(/\.virtual-table-cell[\s\S]*contain:\s*strict/);
+    expect(text).toMatch(/\.virtual-table-cell-sticky-left[\s\S]*position:\s*sticky/);
+    expect(text).toMatch(/\.virtual-table-cell-sticky-left[\s\S]*left:\s*0/);
+    expect(text).toMatch(/\.virtual-table-header-cell\.virtual-table-cell-sticky-left[\s\S]*z-index:\s*9/);
+    expect(text).not.toContain('.virtual-table-cell:first-child');
     expect(text).toMatch(/\.virtual-table-body-row[\s\S]*transition:\s*[\s\S]*background var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)/);
     expect(text).toMatch(/\.virtual-table-body-row:active[\s\S]*box-shadow:\s*inset 3px 0 0 var\(--primary\)/);
     expect(text).toMatch(/\.virtual-table-body-row:focus-within[\s\S]*box-shadow:\s*inset 3px 0 0 var\(--primary\)/);
