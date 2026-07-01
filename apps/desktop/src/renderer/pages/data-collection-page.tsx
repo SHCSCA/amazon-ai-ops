@@ -3,6 +3,7 @@ import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { MicroStepper, PageHeader, Panel, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildCollectionActionSummary } from '../collection-action-summary';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath } from '../formatters';
@@ -1248,7 +1249,7 @@ export function DataCollectionPage() {
     <div>
       <PageHeader
         eyebrow="数据与量化"
-        title="数据采集"
+        title={PAGE_HEADER_TITLES.dataCollection}
         description="展示当前采集状态、8 类领星广告报表进度、真实原始文件和导入行数。审计文件、截图和页面存档不计为真实报表文件。"
         primaryTask="拿到真实原始报表"
         nextAction="确认文件存在后再导入量化"

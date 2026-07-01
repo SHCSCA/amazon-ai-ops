@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
@@ -272,7 +273,7 @@ export function SchedulerPage() {
     <div>
       <PageHeader
         eyebrow="系统与交付"
-        title="定时任务"
+        title={PAGE_HEADER_TITLES.scheduler}
         description="查看和控制本地自动化任务。定时任务不能绕过真实报表、人工审批和执行回读门槛。"
         primaryTask="管理自动化节奏"
         nextAction={tasks.some((task) => task.enabled) ? '关注下一次运行结果' : '按需启用任务'}

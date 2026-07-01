@@ -3,6 +3,7 @@ import { useBusinessDataPipeline, ScopeText } from '../components/business-data'
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { DecisionActionStrip, FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
 import type { AiEvidenceDisplayItemView, RecommendationView } from '../types';
@@ -811,7 +812,7 @@ export function ApprovalPage() {
     <div>
       <PageHeader
         eyebrow="广告执行"
-        title="审批中心"
+        title={PAGE_HEADER_TITLES.approval}
         description="这里只处理人工审批决策。真实执行和回读证据在“执行回读”页面独立完成。"
         primaryTask="确认哪些动作允许执行"
         nextAction={selected ? '填写审批人后批准或拒绝' : '选择一条建议'}

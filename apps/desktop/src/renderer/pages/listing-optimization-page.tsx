@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import {
   buildListingReadinessIssues,
   buildListingSourceStatus,
@@ -1269,7 +1270,7 @@ export function ListingOptimizationPage() {
     <div>
       <PageHeader
         eyebrow="关键词与 Listing"
-        title="Listing 优化"
+        title={PAGE_HEADER_TITLES.listingOptimization}
         description="手工录入当前 Listing，结合关键词机会检查覆盖并生成 AI/规则标记的本地草案。领星读取只作为辅助填充。不会自动提交 Amazon。"
         primaryTask="生成可导出的 Listing 草案"
         nextAction={listing ? '生成草案并导出' : '先录入并保存 Listing'}

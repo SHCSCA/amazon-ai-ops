@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ScopeText, useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
 import { buildCostInputFromProduct, DEFAULT_COST, productCostInputHint } from './product-config-page';
@@ -449,7 +450,7 @@ export function ProductManagementPage() {
     <div>
       <PageHeader
         eyebrow="运营总览"
-        title="产品管理"
+        title={PAGE_HEADER_TITLES.productManagement}
         description="先选择产品，再关联广告数据、运营事件、AI 量化、关键词和 Listing。"
         primaryTask="按产品管理运营上下文"
         nextAction={selected ? '查看产品详情' : '补齐产品配置'}

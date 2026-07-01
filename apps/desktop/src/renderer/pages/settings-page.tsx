@@ -5,6 +5,7 @@ import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup, type TagMetricItem } from '../components/tag-metric-group';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AiCallLogView, AiConnectionStatus, AiProviderSettings, SettingsRuleConfig, StoragePathsView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
@@ -754,7 +755,7 @@ export function SettingsPage() {
     <div>
       <PageHeader
         eyebrow="系统与交付"
-        title="AI 设置"
+        title={PAGE_HEADER_TITLES.settings}
         description="配置模型连接、固定输出合同、阈值和本地诊断。API Key 全程脱敏。"
         primaryTask="配置 AI 与规则阈值"
         nextAction={keyPresent ? '测试 AI 连接' : '填写 API Key'}

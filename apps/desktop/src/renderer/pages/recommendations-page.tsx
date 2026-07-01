@@ -3,6 +3,7 @@ import { useBusinessDataPipeline, ScopeText } from '../components/business-data'
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
@@ -1303,7 +1304,7 @@ export function RecommendationsPage() {
     <div>
       <PageHeader
         eyebrow="广告执行"
-        title="优化建议"
+        title={PAGE_HEADER_TITLES.recommendations}
         description="只负责生成和解释广告建议。审批、真实执行和回读在后续独立页面完成，避免一个页面承担全部任务。"
         primaryTask="解释为什么要改"
         nextAction={quantReady ? '生成或复核建议' : '先完成数据采集和广告量化'}

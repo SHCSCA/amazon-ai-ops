@@ -3,10 +3,11 @@ import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute, OperationEventView } from '../types';
 
 export const OPERATION_EVENT_PAGE_COPY = {
-  title: '核心运营事件时间轴标记',
+  title: PAGE_HEADER_TITLES.operationEvents,
   description: '把 Coupon、BD、大促、调价、库存、Listing 和站外动作挂载进 LLM 推理上下文，AI 解释广告波动时会读取这些时间轴标记，避免只看广告表格误判。',
   primaryTask: '把关键运营动作标记进 LLM 上下文',
   timelinePanelTitle: '运营事件时间轴',
@@ -446,7 +447,7 @@ export function OperationEventsPage() {
     <div>
       <PageHeader
         eyebrow="数据与量化"
-        title={OPERATION_EVENT_PAGE_COPY.title}
+        title={PAGE_HEADER_TITLES.operationEvents}
         description={OPERATION_EVENT_PAGE_COPY.description}
         primaryTask={OPERATION_EVENT_PAGE_COPY.primaryTask}
         nextAction={events.length ? '进入广告量化' : '先记录关键事件'}

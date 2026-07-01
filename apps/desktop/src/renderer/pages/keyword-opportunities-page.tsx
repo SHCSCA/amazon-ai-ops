@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { formatPercent, formatUsd } from '../formatters';
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
@@ -431,7 +432,7 @@ export function KeywordOpportunitiesPage() {
     <div>
       <PageHeader
         eyebrow="关键词与 Listing"
-        title="关键词机会"
+        title={PAGE_HEADER_TITLES.keywordOpportunities}
         description="从当前范围真实导入的 search term / keyword / targeting 指标中去重生成机会，保留 ASIN、广告活动、广告组和来源文件。"
         primaryTask="生成可用关键词机会池"
         nextAction={quantReady ? '复核机会并进入 Listing 覆盖' : '先完成真实报表导入'}

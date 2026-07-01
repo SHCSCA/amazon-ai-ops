@@ -3,6 +3,7 @@ import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput, type DeliveryMatrixItem, type DeliveryMatrixStatus } from '../delivery-readiness-matrix';
 import { compactPath, formatPercent, formatUsd } from '../formatters';
 import { operatorFacingAiError } from '../ai-call-diagnostics';
@@ -1423,7 +1424,7 @@ export function DashboardPage() {
     <div>
       <PageHeader
         eyebrow="运营总览"
-        title="今日看板"
+        title={PAGE_HEADER_TITLES.dashboard}
         description="看数据就绪、安全门禁和下一步。"
       />
 

@@ -3,6 +3,7 @@ import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { scopeFieldFeedbackClass, scopeFieldFeedbackLabel, type ScopeFieldFeedbackKey } from '../components/scope-bar';
 import { FormTable, FormTableRow, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import type { AppRoute, BusinessBatchOption, OperationScope } from '../types';
@@ -211,7 +212,7 @@ export function OperationScopePage() {
     <div>
       <PageHeader
         eyebrow="数据与量化"
-        title="全局范围"
+        title={PAGE_HEADER_TITLES.operationScope}
         description="日期、店铺、站点、币种和批次。后续页面统一按这个范围读取。"
         primaryTask="确认全局范围"
         nextAction={canQuantify ? '进入广告量化' : realReportCount > 0 ? '导入已下载表格' : '获取真实报表'}

@@ -3,6 +3,7 @@ import { useBusinessDataPipeline, ScopeText } from '../components/business-data'
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, SafetyGateLine, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import {
   parseReadbackRepairIntent,
   READBACK_REPAIR_INTENT_EVENT,
@@ -1554,7 +1555,7 @@ export function ReadbackPage() {
     <div>
       <PageHeader
         eyebrow="广告执行"
-        title="回读向导"
+        title={PAGE_HEADER_TITLES.readback}
         description="按步骤保存人工执行、截图和回读证据，不自动写广告后台。"
         primaryTask="证明执行结果可回读"
         nextAction={form.recommendationId ? '补齐证据并导出' : '选择已批准动作'}

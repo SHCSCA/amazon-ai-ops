@@ -3,6 +3,7 @@ import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath, formatUsd } from '../formatters';
@@ -681,7 +682,7 @@ export function DataImportValidationPage() {
     <div>
       <PageHeader
         eyebrow="数据与量化"
-        title="数据导入与校验"
+        title={PAGE_HEADER_TITLES.dataImportValidation}
         description="只处理真实 Lingxing xlsx/xls/csv 表格入库和口径校验。审计文件、截图、HTML 和采集清单不会被当作广告数据。"
         primaryTask="把真实报表写入每日广告数据库"
         nextAction={hasImportedMetrics ? '进入广告量化' : hasRealFiles ? '导入已下载表格' : '先到数据采集获取报表'}

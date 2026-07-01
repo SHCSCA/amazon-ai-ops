@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { OperatorTaskPanel, type OperatorTaskAction } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput } from '../delivery-readiness-matrix';
 import { READBACK_REPAIR_INTENT_EVENT, READBACK_REPAIR_INTENT_STORAGE_KEY, type ReadbackRepairIntent } from '../readback-repair-intent';
 import { useScopeStore } from '../scope-store';
@@ -1182,7 +1183,7 @@ export function DeliveryPage() {
     <div>
       <PageHeader
         eyebrow="系统与交付"
-        title="交付验收"
+        title={PAGE_HEADER_TITLES.delivery}
         description="把最终验收结果翻译成运营可执行的交付判断。"
         primaryTask={deliveryTaskTitle}
         nextAction={deliveryPrimaryAction.label}

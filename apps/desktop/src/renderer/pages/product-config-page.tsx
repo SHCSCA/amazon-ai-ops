@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
 import type { AppRoute } from '../types';
@@ -767,7 +768,7 @@ export function ProductConfigPage() {
     <div>
       <PageHeader
         eyebrow="数据与量化"
-        title="产品配置"
+        title={PAGE_HEADER_TITLES.productConfig}
         description="维护产品阶段、成本、利润目标和广告目标。AI 量化阈值不能只看固定 ACOS，必须结合产品所处阶段和利润空间。"
         primaryTask="补齐产品阶段与利润约束"
         nextAction={draft.asin ? '保存产品配置' : '填写 ASIN'}

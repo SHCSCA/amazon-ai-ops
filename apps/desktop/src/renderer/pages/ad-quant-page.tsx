@@ -4,6 +4,7 @@ import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup } from '../components/tag-metric-group';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildAdQuantProductGroups, filterAdQuantByProduct, productGroupScopePatch } from '../ad-quant-product-groups';
 import { buildAdQuantDiagnosisSummary, formatEvidenceRefSummary, operatorFacingAdQuantReason } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
@@ -1004,7 +1005,7 @@ export function AdQuantPage() {
     <div>
       <PageHeader
         eyebrow="数据与量化"
-        title="广告量化"
+        title={PAGE_HEADER_TITLES.adQuant}
         description="基于真实导入的广告指标展示总盘、效率和实体诊断。没有真实文件和导入指标时，本页只呈现阻断，不生成建议。"
         primaryTask="量化广告表现"
         nextAction={canDiagnose ? '复核高风险实体' : '返回数据采集'}
