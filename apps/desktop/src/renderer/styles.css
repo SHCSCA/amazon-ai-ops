@@ -6649,7 +6649,7 @@ code {
 
 .product-bulk-toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 160px auto auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 0.42fr) 160px auto auto;
   gap: 10px;
   align-items: center;
   margin-bottom: 12px;
@@ -6676,6 +6676,65 @@ code {
   font-size: 11px;
   font-weight: 700;
   line-height: 1.25;
+}
+
+.product-bulk-selection {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.product-bulk-selection-count {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  min-height: 24px;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: #fff;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.product-bulk-selection-count-active {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--green);
+  animation: product-bulk-selection-pop 180ms ease-out;
+}
+
+.product-bulk-selection-progress {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.product-bulk-selection-progress::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--product-bulk-selection-progress, 0%);
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--green));
+  content: "";
+  transition: width 150ms ease;
+}
+
+.product-bulk-selection-live {
+  min-height: 14px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .product-bulk-input {
@@ -6728,6 +6787,30 @@ code {
 
   100% {
     transform: translateY(0);
+  }
+}
+
+@keyframes product-bulk-selection-pop {
+  0% {
+    transform: scale(0.98);
+  }
+
+  60% {
+    transform: scale(1.03);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-bulk-selection-count-active {
+    animation: none;
+  }
+
+  .product-bulk-selection-progress::before {
+    transition: none;
   }
 }
 

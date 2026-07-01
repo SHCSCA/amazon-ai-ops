@@ -228,6 +228,34 @@ export function productConfigProductKey(product: any): string {
   return String(product?.id ?? product?.asin ?? '');
 }
 
+export function productConfigBulkSelectionState(input: {
+  selectedCount: number;
+  totalProducts: number;
+}) {
+  const totalProducts = Math.max(0, Number(input.totalProducts) || 0);
+  const selectedCount = totalProducts > 0
+    ? Math.min(Math.max(0, Number(input.selectedCount) || 0), totalProducts)
+    : 0;
+  const progressPercent = totalProducts > 0 ? Math.round((selectedCount / totalProducts) * 100) : 0;
+  const hasSelection = selectedCount > 0;
+
+  return {
+    ariaStatus: totalProducts > 0
+      ? hasSelection
+        ? `已选择 ${selectedCount} 个产品，批量目标 ACOS 只会写入这些本地产品配置。`
+        : '当前未选择产品；批量目标 ACOS 不会作用于任何产品。'
+      : '当前范围暂无产品；批量目标 ACOS 不会作用于任何产品。',
+    countClassName: [
+      'product-bulk-selection-count',
+      hasSelection ? 'product-bulk-selection-count-active' : '',
+    ].filter(Boolean).join(' '),
+    countLabel: `已选 ${selectedCount}/${totalProducts} 个产品`,
+    progressPercent,
+    progressStyle: { '--product-bulk-selection-progress': `${progressPercent}%` } as React.CSSProperties,
+    tone: hasSelection ? 'ready' : 'pending',
+  };
+}
+
 export function buildProductConfigBulkApplyState(input: {
   totalProducts: number;
   selectedCount: number;
@@ -354,6 +382,10 @@ export function ProductConfigPage() {
     selectedCount: selectedBulkProducts.length,
     targetAcosPercent: bulkTargetAcosPercent,
     applying: bulkApplying,
+  });
+  const bulkSelectionState = productConfigBulkSelectionState({
+    selectedCount: selectedBulkProducts.length,
+    totalProducts: currentScopeProducts.length,
   });
   const saveConfigButton = productConfigActionButtonView({
     active: saving,
@@ -772,6 +804,17 @@ export function ProductConfigPage() {
             <div className="product-bulk-copy">
               <strong>统一应用目标 ACOS</strong>
               <p>只改本地产品目标阈值，不批准建议、不执行 Ads。勾选当前店铺/站点产品后批量保存。</p>
+            </div>
+            <div className={`product-bulk-selection product-bulk-selection-${bulkSelectionState.tone}`}>
+              <strong key={bulkSelectionState.countLabel} className={bulkSelectionState.countClassName}>
+                {bulkSelectionState.countLabel}
+              </strong>
+              <span
+                aria-hidden="true"
+                className="product-bulk-selection-progress"
+                style={bulkSelectionState.progressStyle}
+              />
+              <p className="product-bulk-selection-live" aria-live="polite">{bulkSelectionState.ariaStatus}</p>
             </div>
             <label className="product-bulk-input">
               <span>目标 ACOS (%)</span>

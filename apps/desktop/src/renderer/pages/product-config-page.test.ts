@@ -5,6 +5,7 @@ import {
   buildProductConfigBulkSaveInput,
   buildCostInputFromProduct,
   productConfigActionButtonView,
+  productConfigBulkSelectionState,
   productConfigLoadButtonView,
   productConfigRowClass,
   buildProductConfigTaskState,
@@ -179,6 +180,40 @@ describe('product config task and inline save feedback', () => {
 });
 
 describe('product config bulk ACOS apply', () => {
+  it('summarizes selected products with count, progress, and aria feedback', () => {
+    expect(productConfigBulkSelectionState({
+      selectedCount: 0,
+      totalProducts: 4,
+    })).toMatchObject({
+      ariaStatus: '当前未选择产品；批量目标 ACOS 不会作用于任何产品。',
+      countClassName: 'product-bulk-selection-count',
+      countLabel: '已选 0/4 个产品',
+      progressPercent: 0,
+      progressStyle: { '--product-bulk-selection-progress': '0%' },
+      tone: 'pending',
+    });
+
+    expect(productConfigBulkSelectionState({
+      selectedCount: 3,
+      totalProducts: 4,
+    })).toMatchObject({
+      ariaStatus: '已选择 3 个产品，批量目标 ACOS 只会写入这些本地产品配置。',
+      countClassName: 'product-bulk-selection-count product-bulk-selection-count-active',
+      countLabel: '已选 3/4 个产品',
+      progressPercent: 75,
+      progressStyle: { '--product-bulk-selection-progress': '75%' },
+      tone: 'ready',
+    });
+  });
+
+  it('styles bulk product selection count and progress as visible feedback', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.product-bulk-selection-count');
+    expect(css).toContain('.product-bulk-selection-progress');
+    expect(css).toContain('--product-bulk-selection-progress');
+  });
+
   it('turns operator percent input into product target ACOS decimal values', () => {
     expect(normalizeProductConfigAcosPercent('35')).toBe(0.35);
     expect(normalizeProductConfigAcosPercent(12.5)).toBe(0.125);
