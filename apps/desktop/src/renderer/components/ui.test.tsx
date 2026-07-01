@@ -169,6 +169,21 @@ describe('industrial UI atoms', () => {
     expect(collectElements(tree, (element) => element.props.className === 'micro-step-indicator' && element.props['aria-hidden'] === 'true')).toHaveLength(2);
   });
 
+  it('exposes micro stepper rows as keyboard-scannable process steps', () => {
+    const tree = MicroStepper({
+      items: [
+        { label: '创建报表', meta: '已完成', tone: 'ready' },
+        { label: '下载中心轮询', meta: '进行中', tone: 'pending' },
+      ],
+    }) as ReactElement;
+    const rows = collectElements(tree, (element) => String(element.props.className ?? '').includes('micro-step '));
+
+    expect(tree.props.role).toBe('list');
+    expect(tree.props['aria-label']).toBe('流程步骤状态');
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.props.role === 'listitem' && row.props.tabIndex === 0)).toBe(true);
+  });
+
   it('keeps micro stepper pending spinner feedback in the stylesheet', () => {
     const stylesheet = rendererCss();
 
@@ -176,6 +191,15 @@ describe('industrial UI atoms', () => {
     expect(stylesheet).toMatch(/\.micro-step-pending \.micro-step-indicator\s*\{[\s\S]*animation:\s*micro-step-spin 900ms linear infinite/);
     expect(stylesheet).toContain('@keyframes micro-step-spin');
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.micro-step-pending \.micro-step-indicator[\s\S]*animation:\s*none/);
+  });
+
+  it('keeps micro stepper keyboard focus feedback in the stylesheet', () => {
+    const stylesheet = rendererCss();
+
+    expect(stylesheet).toMatch(/\.micro-step\s*\{[\s\S]*transition:\s*border-color 120ms/);
+    expect(stylesheet).toMatch(/\.micro-step:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
+    expect(stylesheet).toMatch(/\.micro-step:focus-visible\s*\{[\s\S]*transform:\s*translateY\(-1px\)/);
+    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.micro-step:focus-visible[\s\S]*transform:\s*none/);
   });
 
   it('renders left-label structured form rows with required markers and hints', () => {

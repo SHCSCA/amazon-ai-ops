@@ -111,11 +111,11 @@ export interface MicroStepItem {
   tone: IndustrialTone;
 }
 
-export function MicroStepper({ items }: { items: MicroStepItem[] }) {
+export function MicroStepper({ ariaLabel = '流程步骤状态', items }: { ariaLabel?: string; items: MicroStepItem[] }) {
   return (
-    <div className="micro-stepper">
+    <div aria-label={ariaLabel} className="micro-stepper" role="list">
       {items.map((item) => (
-        <div className={`micro-step micro-step-${item.tone}`} key={item.label}>
+        <div className={`micro-step micro-step-${item.tone}`} key={item.label} role="listitem" tabIndex={0}>
           <span className="micro-step-indicator" aria-hidden="true" />
           <span>{item.label}</span>
           {item.meta && <strong>{item.meta}</strong>}

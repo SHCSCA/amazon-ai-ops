@@ -6623,6 +6623,8 @@ code {
   background: #fff;
   padding: 6px 8px;
   contain: layout style paint;
+  outline: 0;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease, background 120ms ease;
 }
 
 .micro-step-indicator {
@@ -6645,6 +6647,14 @@ code {
   color: #475569;
   font-size: 12px;
   line-height: 1.25;
+}
+
+.micro-step:focus-visible {
+  border-color: var(--primary);
+  outline: 2px solid rgba(37, 99, 235, 0.34);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.10), var(--shadow-card);
+  transform: translateY(-1px);
 }
 
 .micro-step-ready {
@@ -6691,6 +6701,16 @@ code {
 @keyframes micro-step-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .micro-step {
+    transition: none;
+  }
+
+  .micro-step:focus-visible {
+    transform: none;
   }
 }
 
