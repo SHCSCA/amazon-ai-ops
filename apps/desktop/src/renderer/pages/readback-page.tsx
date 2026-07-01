@@ -124,6 +124,23 @@ function readbackActionButtonContent(view: ReadbackActionButtonView) {
   );
 }
 
+function ReadbackFieldCell({
+  children,
+  className = '',
+  label,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  label: string;
+}) {
+  return (
+    <label className={['readback-field-cell', className].filter(Boolean).join(' ')}>
+      <span className="readback-field-cell-label">{label}</span>
+      {children}
+    </label>
+  );
+}
+
 const CAPTURE_SLOT_LABELS: Record<ReadbackCaptureSlot, { title: string; detail: string }> = {
   approval: { title: '审批凭证', detail: '粘贴审批截图、工单或聊天凭证' },
   before: { title: '执行前截图', detail: '粘贴修改前 Ads UI 行截图' },
@@ -1665,23 +1682,23 @@ export function ReadbackPage() {
               </table>
             </div>
             <div className="form-grid">
-              <label>店铺<input value={form.storeName} onChange={(event) => update({ storeName: event.target.value })} /></label>
-              <label>站点<input value={form.marketplaceCode} onChange={(event) => update({ marketplaceCode: event.target.value })} /></label>
-              <label>广告组合<input value={form.portfolioName} onChange={(event) => update({ portfolioName: event.target.value })} /></label>
-              <label>ASIN<input value={form.asin} onChange={(event) => update({ asin: event.target.value })} /></label>
-              <label>广告活动<input value={form.campaignName} onChange={(event) => update({ campaignName: event.target.value })} /></label>
-              <label>广告组<input value={form.adGroupName} onChange={(event) => update({ adGroupName: event.target.value })} /></label>
-              <label>对象类型<input value={form.entityType} onChange={(event) => update({ entityType: event.target.value })} /></label>
-              <label>对象名称<input value={form.entityName} onChange={(event) => update({ entityName: event.target.value })} /></label>
-              <label>动作类型<input value={form.actionType} onChange={(event) => update({ actionType: event.target.value })} /></label>
-              <label>来源当前值<input value={form.currentValue} onChange={(event) => update({ currentValue: event.target.value })} /></label>
-              <label>来源建议值<input value={form.recommendedValue} onChange={(event) => update({ recommendedValue: event.target.value })} /></label>
-              <label>来源批次<input value={form.sourceBatchId} onChange={(event) => update({ sourceBatchId: event.target.value })} /></label>
-              <label>指标日期<input value={form.sourceMetricDate} onChange={(event) => update({ sourceMetricDate: event.target.value })} /></label>
-              <label>来源行号<input value={form.sourceRow} onChange={(event) => update({ sourceRow: event.target.value })} /></label>
-              <label>解释来源<input value={form.sourceExplanationSource} onChange={(event) => update({ sourceExplanationSource: event.target.value })} /></label>
-              <label>AI 模型<input value={form.sourceAiModel} onChange={(event) => update({ sourceAiModel: event.target.value })} /></label>
-              <label className="form-grid-wide">推荐来源文件<textarea value={form.sourceFiles} onChange={(event) => update({ sourceFiles: event.target.value })} /></label>
+              <ReadbackFieldCell label="店铺"><input value={form.storeName} onChange={(event) => update({ storeName: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="站点"><input value={form.marketplaceCode} onChange={(event) => update({ marketplaceCode: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="广告组合"><input value={form.portfolioName} onChange={(event) => update({ portfolioName: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="ASIN"><input value={form.asin} onChange={(event) => update({ asin: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="广告活动"><input value={form.campaignName} onChange={(event) => update({ campaignName: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="广告组"><input value={form.adGroupName} onChange={(event) => update({ adGroupName: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="对象类型"><input value={form.entityType} onChange={(event) => update({ entityType: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="对象名称"><input value={form.entityName} onChange={(event) => update({ entityName: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="动作类型"><input value={form.actionType} onChange={(event) => update({ actionType: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="来源当前值"><input value={form.currentValue} onChange={(event) => update({ currentValue: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="来源建议值"><input value={form.recommendedValue} onChange={(event) => update({ recommendedValue: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="来源批次"><input value={form.sourceBatchId} onChange={(event) => update({ sourceBatchId: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="指标日期"><input value={form.sourceMetricDate} onChange={(event) => update({ sourceMetricDate: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="来源行号"><input value={form.sourceRow} onChange={(event) => update({ sourceRow: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="解释来源"><input value={form.sourceExplanationSource} onChange={(event) => update({ sourceExplanationSource: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="AI 模型"><input value={form.sourceAiModel} onChange={(event) => update({ sourceAiModel: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell className="form-grid-wide" label="推荐来源文件"><textarea value={form.sourceFiles} onChange={(event) => update({ sourceFiles: event.target.value })} /></ReadbackFieldCell>
             </div>
             <p className="muted-line">每个广告动作都必须重新绑定自己的店铺、站点、广告活动、广告组、对象、动作和现场值。</p>
             {(form.productStage || form.decisionAgreement || form.aiLifecycleStage || form.quantLifecycleStage) && (
@@ -1715,10 +1732,10 @@ export function ReadbackPage() {
         {activeStep === 'approval' && (
           <Panel title="2. 填写审批允许" tone={activeMissingCount ? 'blocked' : 'success'}>
             <div className="form-grid">
-              <label>审批人<input value={form.approverName} onChange={(event) => update({ approverName: event.target.value })} /></label>
-              <label>审批备注<input value={form.approvalNote} onChange={(event) => update({ approvalNote: event.target.value })} /></label>
-              <label>审批凭证<input value={form.approvalArtifactPath} onChange={(event) => update({ approvalArtifactPath: event.target.value })} /></label>
-              <label>审批时间<input value={form.approvalConfirmedAt} onChange={(event) => update({ approvalConfirmedAt: event.target.value })} placeholder="ISO 时间" /></label>
+              <ReadbackFieldCell label="审批人"><input value={form.approverName} onChange={(event) => update({ approverName: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="审批备注"><input value={form.approvalNote} onChange={(event) => update({ approvalNote: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="审批凭证"><input value={form.approvalArtifactPath} onChange={(event) => update({ approvalArtifactPath: event.target.value })} /></ReadbackFieldCell>
+              <ReadbackFieldCell label="审批时间"><input value={form.approvalConfirmedAt} onChange={(event) => update({ approvalConfirmedAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
             </div>
             <div className="readback-capture-grid readback-capture-grid-single">
               <ReadbackCaptureTarget
@@ -1744,19 +1761,19 @@ export function ReadbackPage() {
               <p className="muted-line">执行前、执行后、回读截图不能复用；回读值必须等于执行后值。</p>
               <ReadbackContractStrip checks={contractChecks} />
               <div className="form-grid">
-                <label className={repairFieldClass('执行人')}>执行人<input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></label>
-                <label className={repairFieldClass('执行编号')}>执行编号<input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></label>
-                <label className={repairFieldClass('执行时间')}>执行时间<input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></label>
-                <label className={repairFieldClass('执行前值')}>执行前值<input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></label>
-                <label className={repairFieldClass('执行前截图')}>执行前截图<input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></label>
-                <label className={repairFieldClass('执行前时间')}>执行前时间<input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
-                <label className={repairFieldClass('执行后值')}>执行后值<input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></label>
-                <label className={repairFieldClass('执行后截图')}>执行后截图<input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></label>
-                <label className={repairFieldClass('执行后时间')}>执行后时间<input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></label>
-                <label className={repairFieldClass('回读值')}>回读值<input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></label>
-                <label className={repairFieldClass('回读证据')}>回读证据<input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></label>
-                <label className={repairFieldClass('回读时间')}>回读时间<input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></label>
-                <label className={repairFieldClass('现场行证明', 'form-grid-wide')}>现场行证明<textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></label>
+                <ReadbackFieldCell className={repairFieldClass('执行人')} label="执行人"><input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('执行编号')} label="执行编号"><input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('执行时间')} label="执行时间"><input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('执行前值')} label="执行前值"><input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('执行前截图')} label="执行前截图"><input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('执行前时间')} label="执行前时间"><input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('执行后值')} label="执行后值"><input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('执行后截图')} label="执行后截图"><input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('执行后时间')} label="执行后时间"><input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('回读值')} label="回读值"><input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('回读证据')} label="回读证据"><input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('回读时间')} label="回读时间"><input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('现场行证明', 'form-grid-wide')} label="现场行证明"><textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></ReadbackFieldCell>
               </div>
               <div className="readback-capture-grid">
                 <ReadbackCaptureTarget

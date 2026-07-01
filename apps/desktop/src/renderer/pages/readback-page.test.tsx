@@ -164,6 +164,22 @@ describe('readback safety checkbox feedback', () => {
   });
 });
 
+describe('readback structured field cells', () => {
+  it('renders manual evidence inputs as labeled field cells instead of bare label/input pairs', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('function ReadbackFieldCell');
+    expect(source).toContain('className="readback-field-cell-label"');
+    expect(source).toMatch(/<ReadbackFieldCell[\s\S]{0,120}label="执行前值"/);
+    expect(source).toMatch(/<ReadbackFieldCell[\s\S]{0,120}label="回读时间"/);
+    expect(source).not.toContain("<label className={repairFieldClass('执行前值')}>执行前值<input");
+    expect(stylesheet).toMatch(/\.readback-field-cell\s*{[\s\S]*border:\s*1px solid var\(--line-soft\)/);
+    expect(stylesheet).toMatch(/\.readback-field-cell:focus-within\s*{[\s\S]*box-shadow:/);
+    expect(stylesheet).toMatch(/\.readback-field-cell-label\s*{[\s\S]*background:\s*#fff/);
+  });
+});
+
 describe('groupMissing', () => {
   it('groups every readback verifier-aligned blocker so operators can see the recovery area', () => {
     const blockers = [
