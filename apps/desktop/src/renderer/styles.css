@@ -6859,6 +6859,46 @@ code {
   color: var(--red);
 }
 
+.product-row-health-cell {
+  min-width: 132px;
+}
+
+.product-row-health {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.product-row-health .status-pill {
+  min-width: 66px;
+  justify-content: center;
+}
+
+.product-row-health-detail {
+  min-height: 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.product-row-health-ready .product-row-health-detail {
+  color: var(--green);
+}
+
+.product-row-health-warning .product-row-health-detail {
+  color: var(--amber);
+}
+
+.product-row-health-blocked .product-row-health-detail {
+  color: var(--red);
+}
+
+.product-row-health-pending .product-row-health-detail {
+  color: var(--text-muted);
+}
+
 .product-config-load-button-active {
   border-color: var(--primary);
   background: #eff6ff;

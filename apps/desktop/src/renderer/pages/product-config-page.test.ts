@@ -7,6 +7,7 @@ import {
   productConfigActionButtonView,
   productConfigBulkSelectionState,
   productConfigLoadButtonView,
+  productConfigRowHealthView,
   productConfigRowTargetAcosView,
   productConfigRowClass,
   buildProductConfigTaskState,
@@ -204,6 +205,42 @@ describe('product config task and inline save feedback', () => {
     expect(css).toContain('.product-row-acos-field');
     expect(css).toContain('.product-row-acos-status');
     expect(css).toContain('.product-row-acos-field-saved');
+  });
+
+  it('builds row-level target ACOS health feedback for the product table', () => {
+    expect(productConfigRowHealthView({ targetAcos: 0.3 })).toMatchObject({
+      className: 'product-row-health product-row-health-ready',
+      detail: '目标 ACOS 30.00%',
+      label: '目标正常',
+      tone: 'ready',
+    });
+
+    expect(productConfigRowHealthView({ targetAcos: 0.45 })).toMatchObject({
+      className: 'product-row-health product-row-health-warning',
+      label: '需复核',
+      tone: 'warning',
+    });
+
+    expect(productConfigRowHealthView({ targetAcos: 0.75 })).toMatchObject({
+      className: 'product-row-health product-row-health-blocked',
+      label: '高风险',
+      tone: 'blocked',
+    });
+
+    expect(productConfigRowHealthView({ targetAcos: 0 })).toMatchObject({
+      className: 'product-row-health product-row-health-pending',
+      detail: '未配置目标 ACOS',
+      label: '待配置',
+      tone: 'pending',
+    });
+  });
+
+  it('styles row-level product health status as a fixed table chip', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.product-row-health');
+    expect(css).toContain('.product-row-health-detail');
+    expect(css).toContain('.product-row-health-blocked');
   });
 
   it('styles the loaded product row and active load button as visible feedback', () => {

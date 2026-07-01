@@ -68,6 +68,14 @@ export interface ProductConfigRowTargetAcosView {
   inputValue: string;
 }
 
+export interface ProductConfigRowHealthView {
+  ariaLabel: string;
+  className: string;
+  detail: string;
+  label: string;
+  tone: ProductConfigMetricTone;
+}
+
 export function productConfigActionButtonView({
   active,
   baseClassName,
@@ -129,6 +137,25 @@ export function productConfigRowTargetAcosView(input: {
     disabled: Boolean(input.disabled || input.status === 'saving'),
     feedbackLabel,
     inputValue: input.draftValue ?? currentPercent,
+  };
+}
+
+export function productConfigRowHealthView(input: { targetAcos: number }): ProductConfigRowHealthView {
+  const targetAcos = Number(input.targetAcos);
+  const tone = productConfigMetricTone('targetAcos', targetAcos);
+  const labelByTone: Record<ProductConfigMetricTone, string> = {
+    ready: '目标正常',
+    warning: '需复核',
+    blocked: '高风险',
+    pending: '待配置',
+  };
+  const detail = tone === 'pending' ? '未配置目标 ACOS' : `目标 ACOS ${(targetAcos * 100).toFixed(2)}%`;
+  return {
+    ariaLabel: `产品目标健康度：${labelByTone[tone]}，${detail}`,
+    className: `product-row-health product-row-health-${tone}`,
+    detail,
+    label: labelByTone[tone],
+    tone,
   };
 }
 
@@ -976,6 +1003,7 @@ export function ProductConfigPage() {
                   <th>标题</th>
                   <th>MSKU/SKU</th>
                   <th>目标 ACOS</th>
+                  <th>健康度</th>
                   <th>阶段</th>
                   <th>状态</th>
                   <th>更新时间</th>
@@ -993,6 +1021,12 @@ export function ProductConfigPage() {
                     draftValue: rowTargetAcosDrafts[productKey],
                     productTargetAcos: Number(product.cost?.targetAcos || 0),
                     status: rowTargetAcosStatus[productKey] || 'idle',
+                  });
+                  const draftTargetAcos = rowTargetAcosDrafts[productKey] === undefined
+                    ? Number(product.cost?.targetAcos || 0)
+                    : normalizeProductConfigAcosPercent(rowTargetAcosDrafts[productKey]);
+                  const rowHealth = productConfigRowHealthView({
+                    targetAcos: draftTargetAcos ?? Number(product.cost?.targetAcos || 0),
                   });
                   return (
                     <tr className={productConfigRowClass({ bulkSelected: selectedBulkKeySet.has(productKey), loaded: rowLoaded })} key={product.id}>
@@ -1038,6 +1072,12 @@ export function ProductConfigPage() {
                           <span className="product-row-acos-status" aria-live="polite">{rowTargetAcos.feedbackLabel}</span>
                         </div>
                       </td>
+                      <td className="product-row-health-cell">
+                        <div className={rowHealth.className} aria-label={rowHealth.ariaLabel}>
+                          <StatusPill tone={rowHealth.tone}>{rowHealth.label}</StatusPill>
+                          <span className="product-row-health-detail">{rowHealth.detail}</span>
+                        </div>
+                      </td>
                       <td>{stageLabel(product.product_stage)}</td>
                       <td>{product.status || '-'}</td>
                       <td>{product.updated_at || '-'}</td>
@@ -1056,7 +1096,7 @@ export function ProductConfigPage() {
                 })}
                 {!currentScopeProducts.length && (
                   <tr>
-                    <td colSpan={9}>{loading ? '加载中...' : '当前店铺/站点还没有产品配置。'}</td>
+                    <td colSpan={10}>{loading ? '加载中...' : '当前店铺/站点还没有产品配置。'}</td>
                   </tr>
                 )}
               </tbody>
