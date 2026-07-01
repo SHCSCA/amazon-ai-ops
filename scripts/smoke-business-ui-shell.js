@@ -323,21 +323,21 @@ async function main() {
   await expectNotInBody(page, '套用已验证范围');
 
   const routes = [
-    { nav: NAV_RE.dashboard, heading: /今日看板|仪表盘/, label: '今日看板', key: 'dashboard' },
-    { nav: NAV_RE.productManagement, heading: /产品管理/, label: '产品管理', key: 'product-management' },
-    { nav: /工作范围/, heading: /全局范围|工作范围/, label: '工作范围', key: 'operation-scope' },
-    { nav: NAV_RE.dataCollection, heading: /数据采集/, label: '数据采集', key: 'data-collection' },
-    { nav: NAV_RE.dataImport, heading: /数据导入与校验/, label: '数据导入与校验', key: 'data-import-validation' },
-    { nav: NAV_RE.operationEvents, heading: /运营事件/, label: '运营事件', key: 'operation-events' },
-    { nav: NAV_RE.adQuant, heading: /广告量化/, label: '广告量化', key: 'ad-quant' },
-    { nav: NAV_RE.recommendations, heading: /优化建议/, label: '优化建议', key: 'recommendations' },
-    { nav: NAV_RE.approval, heading: /审批中心/, label: '审批中心', key: 'approval' },
-    { nav: NAV_RE.readback, heading: /回读向导|执行回读/, label: '执行回读', key: 'readback' },
-    { nav: NAV_RE.keyword, heading: /关键词机会/, label: '关键词机会', key: 'keyword-opportunities' },
-    { nav: NAV_RE.listing, heading: /Listing 优化/, label: 'Listing 优化', key: 'listing-optimization' },
-    { nav: NAV_RE.scheduler, heading: /定时任务/, label: '定时任务', key: 'scheduler' },
-    { nav: NAV_RE.settings, heading: /AI 设置|设置/, label: '设置', key: 'settings' },
-    { nav: NAV_RE.delivery, heading: /交付验收/, label: '交付验收', key: 'delivery' },
+    { nav: NAV_RE.dashboard, heading: /今日运营看板与自动化链路就绪健康度总览/, label: '今日看板', key: 'dashboard' },
+    { nav: NAV_RE.productManagement, heading: /店铺商品 SKU \/ ASIN 本地主映射数据对齐工作台/, label: '产品管理', key: 'product-management' },
+    { nav: /工作范围/, heading: /设置全局分析视图与计价边界/, label: '工作范围', key: 'operation-scope' },
+    { nav: NAV_RE.dataCollection, heading: /领星下载中心广告报告自动化批量采集管道/, label: '数据采集', key: 'data-collection' },
+    { nav: NAV_RE.dataImport, heading: /原始报表本地核验与 DuckDB 结构化对账工作台/, label: '数据导入与校验', key: 'data-import-validation' },
+    { nav: NAV_RE.operationEvents, heading: /核心运营事件时间轴标记/, label: '运营事件', key: 'operation-events' },
+    { nav: NAV_RE.adQuant, heading: /广告全口径量化诊断中心/, label: '广告量化', key: 'ad-quant' },
+    { nav: NAV_RE.recommendations, heading: /广告优化策略生成建议草案工作台/, label: '优化建议', key: 'recommendations' },
+    { nav: NAV_RE.approval, heading: /策略修改行为安全决策审批中心/, label: '审批中心', key: 'approval' },
+    { nav: NAV_RE.readback, heading: /广告操作手动执行与截图存证过闸向导/, label: '执行回读', key: 'readback' },
+    { nav: NAV_RE.keyword, heading: /全渠道多源融合关键词机会与商机评分看板/, label: '关键词机会', key: 'keyword-opportunities' },
+    { nav: NAV_RE.listing, heading: /亚马逊 Listing 关键词覆盖热力图与结构化草案编辑器/, label: 'Listing 优化', key: 'listing-optimization' },
+    { nav: NAV_RE.scheduler, heading: /本地定时调度与自动化队列控制台/, label: '定时任务', key: 'scheduler' },
+    { nav: NAV_RE.settings, heading: /全局系统运行参数、大模型适配与存储诊断中心/, label: '设置', key: 'settings' },
+    { nav: NAV_RE.delivery, heading: /本地运营资产交付验证门与最终就绪审计中心/, label: '交付验收', key: 'delivery' },
   ];
 
   for (const { nav, heading, label, key } of routes) {

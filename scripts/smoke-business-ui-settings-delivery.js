@@ -14,8 +14,10 @@ const NAV_RE = {
   settings: /AI 适配与诊断|设置/,
 };
 const HEADING_RE = {
-  dashboard: /今日看板|仪表盘/,
-  settings: /AI 设置|设置/,
+  dashboard: /今日运营看板与自动化链路就绪健康度总览/,
+  delivery: /本地运营资产交付验证门与最终就绪审计中心/,
+  recommendations: /广告优化策略生成建议草案工作台/,
+  settings: /全局系统运行参数、大模型适配与存储诊断中心/,
 };
 
 function fail(message, details) {
@@ -885,7 +887,7 @@ async function main() {
   await page.waitForFunction(() => document.body.innerText.includes('AI 连接测试通过'), null, { timeout: 5000 });
   await expectVisible(page, 'AI 可用');
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
@@ -896,7 +898,7 @@ async function main() {
   await expectVisible(page, 'AI / 数据门槛');
   await expectVisible(page, '等待数据门槛');
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.recommendations }).click();
-  await page.getByRole('heading', { name: '优化建议', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.recommendations, level: 2 }).waitFor();
   await expandDetails(page, '生成范围、AI 配置和规则阈值');
   await expectVisible(page, 'AI 可用');
   await expectVisible(page, 'deepseek-v4-flash');
@@ -915,7 +917,7 @@ async function main() {
   await page.getByText('AI 设置已保存', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, 'AI 可用');
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.getByRole('heading', { name: HEADING_RE.settings, level: 2 }).waitFor();
   await expectVisible(page, 'AI 可用');
@@ -978,7 +980,7 @@ async function main() {
   await page.getByText('2026-06-02 至 2026-06-13 / FT-US-TEST / CA / USD', { exact: true }).waitFor({ timeout: 5000 });
 
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
   for (const text of [
     '交付摘要',
     '还不能交付',
@@ -1232,7 +1234,7 @@ async function main() {
   });
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
   await expandDetails(page, '文件与技术入口');
   await page.getByText('最终验收汇总尚未生成', { exact: false }).first().waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: '打开最终验收汇总' }).click();
@@ -1244,7 +1246,7 @@ async function main() {
   });
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
   await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await expandDetails(page, '完整业务证据项');
   await page.getByText('最终验收未通过，不能声明可交付。', { exact: true }).waitFor({ timeout: 5000 });
@@ -1255,7 +1257,7 @@ async function main() {
   });
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
   await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await expandDetails(page, '完整业务证据项');
   await expandDetails(page, '最终证据清单');
@@ -1278,7 +1280,7 @@ async function main() {
   });
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
-  await page.getByRole('heading', { name: '交付验收', level: 2 }).waitFor();
+  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 2 }).waitFor();
   await page.getByText('可以交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.getByText('交付包摘要', { exact: false }).waitFor({ timeout: 5000 });
   await page.getByText('AmazonAIOpsAgent-1.5.0-portable.exe / SHA-256 D9C181C09B32...', { exact: false }).first().waitFor({ timeout: 5000 });

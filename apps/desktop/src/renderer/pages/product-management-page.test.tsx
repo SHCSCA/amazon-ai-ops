@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   PRODUCT_QUICK_COST_FIELDS,
   PRODUCT_QUICK_TARGET_FIELDS,
@@ -229,6 +230,16 @@ describe('ProductManagementPage model', () => {
   it('names quick product cost and target fields explicitly', () => {
     expect(PRODUCT_QUICK_COST_FIELDS.map((field) => field.label)).toEqual(['采购成本', 'FBA 费用', '最低售价']);
     expect(PRODUCT_QUICK_TARGET_FIELDS.map((field) => field.label)).toEqual(['目标 ACOS', '目标 TACOS', '目标净利率']);
+  });
+
+  it('styles quick product fields as labeled mini table cells instead of bare inputs', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toMatch(/\.inline-field\s*{[\s\S]*border:\s*1px solid var\(--line-soft\)/);
+    expect(css).toMatch(/\.inline-field\s*{[\s\S]*border-radius:\s*var\(--radius-sm\)/);
+    expect(css).toMatch(/\.inline-field:focus-within\s*{[\s\S]*box-shadow:/);
+    expect(css).toMatch(/\.inline-field-label\s*{[\s\S]*background:\s*#fff/);
+    expect(css).toMatch(/\.inline-field input\[type="number"\]\s*{[\s\S]*text-align:\s*right/);
   });
 
   it('builds explicit lock feedback for selected product cards', () => {
