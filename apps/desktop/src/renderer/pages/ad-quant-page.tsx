@@ -3,7 +3,7 @@ import { useBusinessDataPipeline, ScopeText } from '../components/business-data'
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup } from '../components/tag-metric-group';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildAdQuantProductGroups, filterAdQuantByProduct, productGroupScopePatch } from '../ad-quant-product-groups';
 import { buildAdQuantDiagnosisSummary, formatEvidenceRefSummary, operatorFacingAdQuantReason } from '../evidence-display';
@@ -1030,6 +1030,32 @@ export function AdQuantPage() {
             },
           ]}
         >
+          <div className="kpi-row kpi-row--task" aria-label="广告量化任务摘要">
+            <KpiCard
+              label="当前产品"
+              value={selectedProductGroup?.label || scope.asin || '全部'}
+              detail={selectedProductGroup?.stage ? `阶段 ${lifecycleLabel(selectedProductGroup.stage)}` : '按当前范围读取'}
+              tone={selectedProductGroup?.asin || scope.asin ? 'ready' : 'warning'}
+            />
+            <KpiCard
+              label="花费 / 订单"
+              value={`${formatUsd(selectedSpend)} / ${selectedOrders}`}
+              detail={`销售 ${formatUsd(selectedSales)}`}
+              tone={selectedSpend > 0 ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="ACOS"
+              value={formatPercent(selectedAcos * 100)}
+              detail={`目标 ${formatPercent(ruleConfig.targetAcos * 100)}`}
+              tone={selectedAcos > ruleConfig.highAcosThreshold ? 'blocked' : selectedAcos > ruleConfig.targetAcos ? 'warning' : 'ready'}
+            />
+            <KpiCard
+              label="风险对象"
+              value={diagnosticCount}
+              detail={`${productHighAcosRows.length} 个高 ACOS`}
+              tone={diagnosticCount > 0 ? 'warning' : canDiagnose ? 'ready' : 'blocked'}
+            />
+          </div>
           <TagMetricGroup
             activeKey={metricFocus}
             ariaLabel="广告量化维度快速聚焦"

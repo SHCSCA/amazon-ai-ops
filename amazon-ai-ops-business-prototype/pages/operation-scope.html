@@ -1,0 +1,318 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工作范围</title>
+    <style id="theme-vars">
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  --aao-bg: #f8fafc;
+  --aao-surface: #ffffff;
+  --aao-surface-2: #f1f5f9;
+  --aao-surface-3: #e2e8f0;
+  --aao-ink: #0f172a;
+  --aao-ink-2: #475569;
+  --aao-ink-3: #94a3b8;
+  --aao-line: #e2e8f0;
+  --aao-line-strong: #cbd5e1;
+  --aao-brand-50: #eff6ff;
+  --aao-brand-100: #dbeafe;
+  --aao-brand-200: #bfdbfe;
+  --aao-brand-300: #93c5fd;
+  --aao-brand-500: #3b82f6;
+  --aao-brand-600: #2563eb;
+  --aao-brand-700: #1d4ed8;
+  --state-success: #16a34a;
+  --state-success-soft: #f0fdf4;
+  --state-warning: #ca8a04;
+  --state-warning-soft: #fefce8;
+  --state-error: #dc2626;
+  --state-error-soft: #fef2f2;
+  --state-info: #2563eb;
+  --state-info-soft: #eff6ff;
+  --shadow-1: 0 1px 3px rgba(0,0,0,.06);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-body: "DM Sans","Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono: "DM Mono","Cascadia Mono","SFMono-Regular",Consolas,monospace;
+  color-scheme: light;
+}
+
+.dark {
+  --aao-bg: #0a0e14;
+  --aao-surface: #11161e;
+  --aao-surface-2: #161c26;
+  --aao-surface-3: #1c2330;
+  --aao-ink: #e6edf3;
+  --aao-ink-2: #8b949e;
+  --aao-ink-3: #484f58;
+  --aao-line: #21262d;
+  --aao-line-strong: #30363d;
+  --aao-brand-50: #0d1117;
+  --aao-brand-100: #161b22;
+  --aao-brand-200: #1f2937;
+  --aao-brand-300: #388bfd;
+  --aao-brand-500: #58a6ff;
+  --aao-brand-600: #388bfd;
+  --aao-brand-700: #79c0ff;
+  --state-success: #3fb950;
+  --state-success-soft: #0d3320;
+  --state-warning: #d29922;
+  --state-warning-soft: #332516;
+  --state-error: #f85149;
+  --state-error-soft: #331216;
+  --state-info: #58a6ff;
+  --state-info-soft: #0c1c32;
+  --shadow-1: 0 1px 3px rgba(0,0,0,.24);
+  color-scheme: dark;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--aao-bg);color:var(--aao-ink);font-family:var(--font-body);font-size:13px;line-height:1.5;letter-spacing:-0.01em}
+button,input,select,textarea{font:inherit;font-family:var(--font-body)}
+button{cursor:pointer;transition:all .15s ease}
+button:hover{filter:brightness(1.06)}
+button:active{transform:scale(.97)}
+
+.proto-layout{min-height:100vh;display:flex;flex-direction:column}
+.proto-statusbar{height:40px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px;border-bottom:1px solid var(--aao-line);background:var(--aao-surface-2);font-size:11px;color:var(--aao-ink-2)}
+.proto-workspace{flex:1;display:grid;grid-template-columns:192px minmax(0,1fr);min-height:0}
+.proto-sidebar{padding:12px 8px;border-right:1px solid var(--aao-line);background:var(--aao-surface);overflow-y:auto}
+.proto-brand{padding:10px;border-radius:var(--radius-sm);background:var(--aao-surface-2);margin-bottom:10px}
+.proto-brand strong{display:block;font-size:13px;font-weight:700;color:var(--aao-brand-600);letter-spacing:-0.02em}
+.proto-brand span{font-size:10px;color:var(--aao-ink-3)}
+.proto-nav-group{margin-bottom:8px}
+.proto-nav-title{margin:0 0 4px;padding:0 8px;font-size:9px;color:var(--aao-ink-3);text-transform:uppercase;letter-spacing:.8px;font-weight:600}
+.proto-nav-item{width:100%;display:flex;align-items:center;gap:6px;padding:6px 8px;margin-bottom:2px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--aao-ink-2);text-align:left;font-size:12px;letter-spacing:-0.01em}
+.proto-nav-item[data-active="true"]{background:var(--aao-brand-50);border-color:var(--aao-brand-200);color:var(--aao-brand-700)}
+.proto-nav-item:hover:not([data-active="true"]){background:var(--aao-surface-2)}
+.proto-main{min-width:0;display:flex;flex-direction:column}
+.proto-scopebar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 16px;border-bottom:1px solid var(--aao-line);background:var(--aao-surface-2);font-size:11px;color:var(--aao-ink-2)}
+.proto-scopebar strong{font-size:11px;color:var(--aao-ink);font-family:var(--font-mono)}
+.proto-scope-tags,.chip-row,.action-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.proto-pagehead{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px 6px}
+.proto-pagehead h1{margin:0;font-size:18px;font-weight:700;letter-spacing:-0.02em}
+.proto-pagehead p{margin:1px 0 0;color:var(--aao-ink-3);font-size:11px;max-width:480px}
+.proto-content{padding:0 16px 16px;display:flex;flex-direction:column;gap:10px}
+.proto-footer{display:none}
+
+.kpi-strip,.status-grid,.triple-grid,.quad-grid,.steps-grid,.stat-grid{display:grid;gap:8px}
+.kpi-strip,.status-grid,.quad-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.triple-grid,.steps-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.dual-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.panel,.kpi,.status-card,.step-card,.stat-card{background:var(--aao-surface);border:1px solid var(--aao-line);border-radius:var(--radius-md)}
+.panel,.step-card,.stat-card{padding:12px}
+.kpi,.status-card{padding:10px 12px}
+
+.panel-head{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px}
+.panel-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:-0.01em}
+.panel-head p{margin:1px 0 0;color:var(--aao-ink-3);font-size:10px}
+
+.kpi label,.status-card label,.stat-card label{display:block;color:var(--aao-ink-3);font-size:10px;margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px}
+.kpi strong,.status-card strong,.stat-card strong{display:block;font-size:20px;line-height:1.15;margin-bottom:1px;font-family:var(--font-mono);font-weight:500}
+.kpi p,.status-card p,.step-card p,.stat-card p,.panel li,.panel p{margin:0;color:var(--aao-ink-3);font-size:10px}
+
+.badge{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 6px;border-radius:4px;font-size:10px;border:1px solid var(--aao-line);white-space:nowrap;letter-spacing:-0.01em}
+.badge.ready{color:var(--state-success);background:var(--state-success-soft)}
+.badge.warning{color:var(--state-warning);background:var(--state-warning-soft)}
+.badge.blocked{color:var(--state-error);background:var(--state-error-soft)}
+.badge.info{color:var(--state-info);background:var(--state-info-soft)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-height:30px;padding:0 10px;border-radius:4px;border:1px solid var(--aao-line-strong);background:var(--aao-surface);color:var(--aao-ink-2);font-size:11px;font-weight:500;letter-spacing:-0.01em}
+.btn.primary{border-color:var(--aao-brand-600);background:var(--aao-brand-600);color:#fff;font-weight:600}
+.btn.danger{border-color:var(--state-error);color:var(--state-error)}
+.btn.ghost{background:transparent;border-color:transparent}
+.btn[disabled]{opacity:.4;cursor:not-allowed}
+.btn.xs{min-height:24px;padding:0 6px;font-size:10px}
+
+.table-wrap{overflow:auto;border:1px solid var(--aao-line);border-radius:var(--radius-sm)}
+table{width:100%;min-width:560px;border-collapse:collapse;background:var(--aao-surface)}
+th,td{padding:6px 8px;border-bottom:1px solid var(--aao-line);text-align:left;vertical-align:top;font-size:11px}
+th{background:var(--aao-surface-2);color:var(--aao-ink-2);font-weight:600;white-space:nowrap;font-size:10px;letter-spacing:.3px;text-transform:uppercase}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--aao-surface-2)}
+
+.metric-bar{height:4px;border-radius:999px;overflow:hidden;background:var(--aao-surface-3)}
+.metric-bar span{display:block;height:100%;background:var(--aao-brand-500);transition:width .6s ease}
+
+.progress-steps{display:flex;align-items:center;gap:0;padding:0}
+.progress-step{display:flex;align-items:center;gap:6px;flex:1;position:relative}
+.progress-step:not(:last-child)::after{content:'';flex:1;height:1px;margin:0 8px;background:var(--aao-line)}
+.progress-step.done::after{background:var(--aao-brand-500)}
+.progress-step.active::after{background:var(--aao-line)}
+.progress-dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;font-family:var(--font-mono);border:1.5px solid var(--aao-line);background:var(--aao-surface);color:var(--aao-ink-3);flex-shrink:0}
+.progress-step.done .progress-dot{border-color:var(--aao-brand-500);background:var(--aao-brand-500);color:#fff}
+.progress-step.active .progress-dot{border-color:var(--aao-brand-500);background:var(--aao-surface);color:var(--aao-brand-500)}
+.progress-label{font-size:10px;color:var(--aao-ink-3);white-space:nowrap}
+.progress-step.done .progress-label,.progress-step.active .progress-label{color:var(--aao-ink)}
+
+.stamp{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;border:1px solid}
+.stamp.passed{color:var(--state-success);background:var(--state-success-soft)}
+.stamp.rejected{color:var(--state-error);background:var(--state-error-soft)}
+.stamp.pending{color:var(--state-warning);background:var(--state-warning-soft)}
+
+.list-stack,.timeline,.evidence-list{display:flex;flex-direction:column;gap:6px}
+.list-item,.timeline-item,.evidence-item,.drawer,.notice{padding:8px 10px;border-radius:4px;font-size:11px}
+.list-item,.timeline-item,.evidence-item,.drawer{border:1px solid var(--aao-line);background:var(--aao-surface-2)}
+.list-item p,.evidence-item p,.timeline-item p{font-size:10px;color:var(--aao-ink-3);margin:1px 0 0}
+.list-item strong,.evidence-item strong,.timeline-item strong{font-size:11px}
+.notice{border:1px solid var(--aao-line);background:var(--aao-surface-2);color:var(--aao-ink-2);font-size:10px}
+
+.timeline-item{display:grid;grid-template-columns:64px 1fr;gap:8px}
+
+.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.field{display:flex;flex-direction:column;gap:3px}
+.field label{font-size:10px;color:var(--aao-ink-3);text-transform:uppercase;letter-spacing:.3px;font-weight:500}
+.field input,.field select,.field textarea{width:100%;padding:6px 8px;border:1px solid var(--aao-line-strong);border-radius:4px;background:var(--aao-surface);color:var(--aao-ink);font-size:12px;transition:border-color .15s ease}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--aao-brand-500);box-shadow:0 0 0 2px rgba(59,130,246,.12)}
+.field input.edited{border-color:var(--state-warning)}
+.field input.saved{border-color:var(--state-success)}
+
+.code-path{font-family:var(--font-mono);font-size:10px;color:var(--aao-ink-2)}
+
+.login-page{min-height:100vh;display:grid;grid-template-columns:1fr 400px;background:var(--aao-bg)}
+.login-side{padding:40px;display:flex;flex-direction:column;justify-content:center;gap:24px}
+.login-card{margin:24px;background:var(--aao-surface);border:1px solid var(--aao-line);border-radius:var(--radius-lg);box-shadow:0 8px 32px rgba(0,0,0,.06);padding:24px}
+.login-card h1,.login-side h1{margin:0;font-size:24px;font-weight:700;letter-spacing:-0.02em}
+.login-side p,.login-card p{color:var(--aao-ink-3);font-size:11px}
+
+details{border:1px solid var(--aao-line);border-radius:4px;background:var(--aao-surface-2);font-size:11px}
+details summary{cursor:pointer;padding:8px 10px;font-weight:600}
+details>div{padding:0 10px 10px}
+
+.dropzone{border:1px dashed var(--aao-line-strong);border-radius:var(--radius-sm);padding:20px;text-align:center;color:var(--aao-ink-3);font-size:11px;transition:border-color .2s ease;cursor:pointer}
+.dropzone:hover{border-color:var(--aao-brand-500);color:var(--aao-brand-500)}
+
+.diff-del{color:var(--state-error);text-decoration:line-through}
+.diff-add{color:var(--state-success)}
+.diff-panel{padding:10px;border-radius:4px;border:1px solid var(--aao-line);background:var(--aao-surface-2);font-size:11px;line-height:1.6;font-family:var(--font-mono)}
+
+.row-approved{background:var(--state-success-soft)!important}
+.row-rejected{background:var(--state-error-soft)!important}
+
+@media(max-width:1200px){
+  .proto-workspace{grid-template-columns:168px minmax(0,1fr)}
+  .kpi-strip,.status-grid,.quad-grid,.triple-grid,.steps-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dual-grid{grid-template-columns:1fr}
+}
+@media(max-width:860px){
+  .proto-workspace,.login-page,.form-grid,.kpi-strip,.status-grid,.quad-grid,.triple-grid,.steps-grid,.stat-grid{grid-template-columns:1fr}
+  .proto-sidebar{display:none}
+  .proto-pagehead,.proto-statusbar{flex-direction:column;align-items:flex-start;height:auto;padding-top:8px;padding-bottom:8px}
+  .login-card,.login-side{margin:0;padding:16px}
+}
+
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.1/dist/index.global.js"></script>
+    <script src="https://unpkg.com/lucide@1.8.0/dist/umd/lucide.min.js"></script>
+    <style type="text/tailwindcss">
+
+  @theme inline {
+    --color-primary: var(--aao-brand-500);
+    --color-primary-foreground: #fff;
+    --color-background: var(--aao-bg);
+    --color-foreground: var(--aao-ink);
+    --color-card: var(--aao-surface);
+    --color-card-foreground: var(--aao-ink);
+    --color-muted: var(--aao-surface-2);
+    --color-muted-foreground: var(--aao-ink-2);
+    --color-accent: var(--aao-brand-50);
+    --color-accent-foreground: var(--aao-brand-700);
+    --color-destructive: var(--state-error);
+    --color-destructive-foreground: #fff;
+    --color-border: var(--aao-line);
+    --color-input: var(--aao-line-strong);
+    --color-ring: var(--aao-brand-300);
+    --color-secondary: var(--aao-surface-2);
+    --color-secondary-foreground: var(--aao-ink);
+    --radius-sm: var(--radius-sm);
+    --radius-md: var(--radius-md);
+    --radius-lg: var(--radius-lg);
+  }
+
+@layer base {
+    body { background: var(--aao-surface); color: var(--aao-foreground); }
+    td, th { @apply break-words; word-break: break-all; word-break: auto-phrase; }
+    th { @apply whitespace-nowrap; }
+  }
+    </style>
+    <style>
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      [data-icon] {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-mask-size: contain;
+        mask-size: contain;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        mask-position: center;
+        background-color: currentColor;
+      }
+    </style>
+</head>
+<body>
+  <div class="proto-layout">
+    <header class="proto-statusbar">
+      <div class="chip-row"><strong>Amazon AI Ops</strong></header><div class="proto-workspace">
+      <aside class="proto-sidebar">
+        <div class="proto-brand"><strong>Amazon AI Ops</strong><span>v1.5</span></div>
+        <div class="proto-nav-group"><p class="proto-nav-title">总览</p><button class="proto-nav-item" type="button"><span>今日看板</span></button><button class="proto-nav-item" type="button"><span>产品管理</span></button></div>
+        <div class="proto-nav-group"><p class="proto-nav-title">数据</p><button class="proto-nav-item" type="button"><span>工作范围</span></button><button class="proto-nav-item" type="button"><span>数据采集</span></button><button class="proto-nav-item" type="button"><span>入库核验</span></button><button class="proto-nav-item" type="button"><span>运营事件</span></button><button class="proto-nav-item" type="button"><span>ACOS配置</span></button><button class="proto-nav-item" type="button"><span>量化诊断</span></button></div>
+        <div class="proto-nav-group"><p class="proto-nav-title">广告</p><button class="proto-nav-item" type="button"><span>优化建议</span></button><button class="proto-nav-item" type="button"><span>审批中心</span></button><button class="proto-nav-item" type="button"><span>执行回读</span></button></div>
+        <div class="proto-nav-group"><p class="proto-nav-title">增长</p><button class="proto-nav-item" type="button"><span>机会矩阵</span></button><button class="proto-nav-item" type="button"><span>Listing重写</span></button></div>
+        <div class="proto-nav-group"><p class="proto-nav-title">系统</p><button class="proto-nav-item" type="button"><span>定时调度</span></button><button class="proto-nav-item" type="button"><span>AI设置</span></button><button class="proto-nav-item" type="button"><span>交付验收</span></button></div>
+      </aside>
+
+      <section class="proto-main">
+        <div class="proto-scopebar">
+          <strong>当前范围：2026-06-24 - 06-30 / US / B0C8QW42LM</strong>
+          <div class="proto-scope-tags"><span class="badge ready">已保存</span></div>
+        </div>
+
+        <header class="proto-pagehead">
+          <div>
+            <h1>工作范围</h1>
+            <p>定义全局业务边界</p>
+          </div>
+          <div class="action-row">
+            <button class="btn primary" type="button" data-dom-id="go-data-collection">进入数据采集</button>
+          </div>
+        </header>
+
+        <main class="proto-content">
+          <section class="panel">
+            <div class="panel-head"><h2>范围设置</h2><span class="badge info">全局生效</span></div>
+            <div class="form-grid">
+              <div class="field"><label for="s-from">开始日期</label><input id="s-from" type="date" value="2026-06-24"></div>
+              <div class="field"><label for="s-to">结束日期</label><input id="s-to" type="date" value="2026-06-30"></div>
+              <div class="field"><label for="s-store">店铺</label><select id="s-store"><option selected>US-旗舰店</option><option>US-Outlet 店</option></select></div>
+              <div class="field"><label for="s-site">站点</label><select id="s-site"><option selected>US</option><option>CA</option></select></div>
+              <div class="field"><label for="s-asin">ASIN</label><input id="s-asin" value="B0C8QW42LM"></div>
+              <div class="field"><label for="s-batch">数据批次</label><input id="s-batch" value="BATCH-20260630-US-01"></div>
+              <div class="field"><label for="s-curr">币种</label><input id="s-curr" value="USD" readonly></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head"><h2>当前范围摘要</h2><span class="badge ready">8 类报表齐</span></div>
+            <div class="list-stack">
+              <div class="list-item"><strong>日期范围</strong><p>2026-06-24 至 2026-06-30（7 天）</p></div>
+              <div class="list-item"><strong>店铺与站点</strong><p>US-旗舰店 / US</p></div>
+              <div class="list-item"><strong>当前 ASIN</strong><p>B0C8QW42LM - Wireless Desk Lamp</p></div>
+              <div class="list-item"><strong>数据批次</strong><p>BATCH-20260630-US-01</p></div>
+            </div>
+          </section>
+        </main>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

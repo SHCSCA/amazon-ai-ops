@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
-import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
@@ -167,7 +167,7 @@ const PRODUCT_COST_FIELD_LABELS: Record<ProductCostKey, string> = {
   referralFeeRate: '推荐费率',
   storageFee: '仓储费',
   otherCost: '其他成本',
-  minPrice: '最低售价',
+  minPrice: '最低可接受售价',
   targetNetMargin: '目标净利率',
   targetAcos: '目标 ACOS',
   targetTacos: '目标 TACOS',
@@ -203,9 +203,9 @@ export function productCostInputHint(cost: ProductCostInput): string {
     cost.minPrice,
   ].some((value) => Number(value || 0) > 0);
   if (!hasRealCostOrPrice) {
-    return '当前成本和最低售价仍像默认值；保存前请替换为真实采购、物流、FBA、售价和利润目标，避免 AI 阈值被模板数字误导。';
+    return '当前成本和最低可接受售价仍像默认值；保存前请替换为真实采购、物流、FBA、售价和利润目标，避免 AI 阈值被模板数字误导。';
   }
-  return '已填写成本或最低售价；保存前请确认这些数字来自当前产品。';
+  return '已填写成本或最低可接受售价；保存前请确认这些数字来自当前产品。';
 }
 
 export function isProductConfigAutoSaveField(key: string): key is ProductCostKey {
@@ -797,11 +797,26 @@ export function ProductConfigPage() {
             },
           ]}
         >
-          <div className="dashboard-task-metrics" aria-label="产品配置任务摘要">
-            <StatusPill tone={currentScopeProducts.length ? 'ready' : 'pending'}>配置 {currentScopeProducts.length}</StatusPill>
-            <span>指标 {importedRows} 行</span>
-            <span>目标 ACOS {formatPercent(cost.targetAcos * 100)}</span>
-            <span>失焦或回车即时保存</span>
+          <div className="kpi-row kpi-row--task" aria-label="产品配置任务摘要">
+            <KpiCard
+              label="已配置产品"
+              value={currentScopeProducts.length}
+              detail={draft.asin ? `当前 ${draft.asin}` : '等待 ASIN'}
+              tone={currentScopeProducts.length ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="入库指标"
+              value={`${importedRows} 行`}
+              detail="用于阶段和阈值判断"
+              tone={importedRows > 0 ? 'ready' : 'blocked'}
+            />
+            <KpiCard
+              label="目标 ACOS"
+              value={formatPercent(cost.targetAcos * 100)}
+              detail={`TACOS ${formatPercent(cost.targetTacos * 100)}`}
+              tone={cost.targetAcos > 0 ? 'ready' : 'warning'}
+            />
+            <KpiCard label="保存方式" value="即时保存" detail="失焦或回车生效" tone="pending" />
           </div>
         </OperatorTaskPanel>
 
@@ -881,7 +896,7 @@ export function ProductConfigPage() {
             <FormTableRow label="其他成本" hint="单位 USD；包装、售后或额外成本。">
               {renderCostInput('otherCost')}
             </FormTableRow>
-            <FormTableRow label="最低售价" hint="单位 USD；用于估算最低毛利空间。">
+            <FormTableRow label="最低可接受售价" hint="单位 USD；用于估算最低毛利空间；不是 Amazon 当前售价。">
               {renderCostInput('minPrice')}
             </FormTableRow>
             <FormTableRow label="目标净利率" hint="小数格式，例如 0.15 表示 15%。">
@@ -902,7 +917,7 @@ export function ProductConfigPage() {
               <p>采购、头程、FBA、仓储和其他成本之和。</p>
             </div>
             <div>
-              <span>最低售价毛利空间</span>
+              <span>最低可接受售价毛利空间</span>
               <strong>{formatPercent(minPriceMargin * 100)}</strong>
               <StatusPill tone={productConfigMetricTone('margin', cost.minPrice > 0 ? minPriceMargin : Number.NaN)}>
                 {cost.minPrice > 0 ? '实时判定' : '待售价'}

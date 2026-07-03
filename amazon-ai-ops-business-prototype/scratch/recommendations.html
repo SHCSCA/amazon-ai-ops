@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html class="light" lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>优化建议草案 - Amazon AI Ops</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main data-dom-id="recommendations-page">
+    <header data-dom-id="recommendations-header">
+      <h1 data-dom-id="recommendations-title">优化建议草案</h1>
+      <p data-dom-id="recommendations-desc">AI 生成的广告优化建议，审核后送审批中心</p>
+    </header>
+
+    <section data-dom-id="recommendations-stat-section">
+      <div data-dom-id="recommendations-stat-cards">
+        <div data-dom-id="stat-total" class="stat-card">
+          <span class="stat-label">建议总数</span>
+          <span class="stat-value">24</span>
+        </div>
+        <div data-dom-id="stat-approvable" class="stat-card">
+          <span class="stat-label">可审批</span>
+          <span class="stat-value">15</span>
+        </div>
+        <div data-dom-id="stat-review" class="stat-card">
+          <span class="stat-label">需复核</span>
+          <span class="stat-value">9</span>
+        </div>
+      </div>
+    </section>
+
+    <section data-dom-id="recommendations-table-section">
+      <h2 data-dom-id="recommendations-table-title">建议列表</h2>
+      <table data-dom-id="recommendations-table">
+        <thead>
+          <tr>
+            <th>对象</th><th>动作</th><th>来源</th><th>风险</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-dom-id="rec-row-1">
+            <td>关键词 A</td>
+            <td>降低竞价 15%</td>
+            <td>AI 诊断</td>
+            <td><span class="risk-high">高风险</span></td>
+            <td><button data-dom-id="rec-submit-1" disabled>送审</button></td>
+          </tr>
+          <tr data-dom-id="rec-row-2">
+            <td>ASIN B</td>
+            <td>上调预算 20%</td>
+            <td>量化分析</td>
+            <td><span class="risk-low">低风险</span></td>
+            <td><button data-dom-id="rec-submit-2">送审</button></td>
+          </tr>
+          <tr data-dom-id="rec-row-3">
+            <td>关键词 C</td>
+            <td>暂停投放</td>
+            <td>AI 诊断</td>
+            <td><span class="risk-high">高风险</span></td>
+            <td><button data-dom-id="rec-submit-3">送审</button></td>
+          </tr>
+          <tr data-dom-id="rec-row-4">
+            <td>品类 D</td>
+            <td>调整目标 ACOS</td>
+            <td>规则引擎</td>
+            <td><span class="risk-medium">中风险</span></td>
+            <td><button data-dom-id="rec-submit-4" disabled>送审</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section data-dom-id="recommendations-cta-section">
+      <a href="#" data-dom-id="recommendations-cta-goto-approval" class="cta-button">进入审批中心</a>
+    </section>
+  </main>
+</body>
+</html>

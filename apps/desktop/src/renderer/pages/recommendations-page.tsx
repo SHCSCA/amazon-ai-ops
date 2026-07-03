@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
@@ -1323,6 +1323,32 @@ export function RecommendationsPage() {
             onClick: runPrimaryTaskAction,
           }}
         >
+          <div className="kpi-row kpi-row--task" aria-label="建议池任务摘要">
+            <KpiCard
+              label="可审批"
+              value={formalApprovalCount}
+              detail={`${recommendations.length} 条建议`}
+              tone={formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending'}
+            />
+            <KpiCard
+              label="人工复核"
+              value={manualReviewCount}
+              detail="不会进入普通批准"
+              tone={manualReviewCount > 0 ? 'warning' : 'pending'}
+            />
+            <KpiCard
+              label="证据阻断"
+              value={evidenceBlockedCount}
+              detail={`${realReportCount}/8 类报表`}
+              tone={evidenceBlockedCount > 0 ? 'blocked' : 'ready'}
+            />
+            <KpiCard
+              label="AI 参与"
+              value={aiParticipatedCount}
+              detail={`规则 ${ruleOnlyCount} 条`}
+              tone={aiParticipatedCount > 0 ? 'ready' : 'pending'}
+            />
+          </div>
           <div className="recommendation-bucket-grid" role="group" aria-label="建议池快速筛选">
             {bucketItems.map((item) => (
               <button

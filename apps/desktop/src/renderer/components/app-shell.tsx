@@ -73,6 +73,10 @@ export function Sidebar({
 
   return (
     <nav className="app-sidebar" aria-busy={navigationBusy || undefined} aria-label="主业务导航" data-navigation-busy={navigationBusy || undefined}>
+      <div className="sidebar-brand">
+        <strong>Amazon AI Ops</strong>
+        <span>高密度证据驱动桌面工作台</span>
+      </div>
       {navGroups.map((group, groupIndex) => {
         const groupLabelId = navGroupLabelId(groupIndex);
 

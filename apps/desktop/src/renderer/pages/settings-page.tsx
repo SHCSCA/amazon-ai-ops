@@ -4,7 +4,7 @@ import { aiContractPrimaryCopy, aiOutputContracts, aiOutputContractTags } from '
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup, type TagMetricItem } from '../components/tag-metric-group';
-import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AiCallLogView, AiConnectionStatus, AiProviderSettings, SettingsRuleConfig, StoragePathsView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -783,11 +783,31 @@ export function SettingsPage() {
             },
           ]}
         >
-          <div className="dashboard-task-metrics settings-task-metrics" aria-label="AI 设置任务摘要">
-            <StatusPill tone={displayAiStatusTone(aiStatus, keyPresent)}>{displayAiStatusLabel(aiStatus, keyPresent)}</StatusPill>
-            <span>{aiSettings.aiModel || '未配置模型'}</span>
-            <span>{aiSettings.aiBaseUrl || '未配置 Base URL'}</span>
-            <span>{keyPresent ? 'Key 已脱敏' : 'Key 未配置'}</span>
+          <div className="kpi-row kpi-row--task settings-task-metrics" aria-label="AI 设置任务摘要">
+            <KpiCard
+              label="连接状态"
+              value={displayAiStatusLabel(aiStatus, keyPresent)}
+              detail={keyPresent ? 'Key 已脱敏' : 'Key 未配置'}
+              tone={displayAiStatusTone(aiStatus, keyPresent)}
+            />
+            <KpiCard
+              label="模型"
+              value={aiSettings.aiModel || '未配置'}
+              detail={aiSettings.aiOutputLanguage || DEFAULT_AI_SETTINGS.aiOutputLanguage}
+              tone={aiSettings.aiModel ? 'ready' : 'blocked'}
+            />
+            <KpiCard
+              label="Base URL"
+              value={aiSettings.aiBaseUrl ? '已填写' : '未配置'}
+              detail={aiSettings.aiBaseUrl || '需要兼容 Chat Completions'}
+              tone={aiSettings.aiBaseUrl ? 'ready' : 'blocked'}
+            />
+            <KpiCard
+              label="输出合同"
+              value={`${clampStructuredAiMaxTokens(aiSettings.aiMaxTokens)} tokens`}
+              detail={`温度 ${aiSettings.aiTemperature || DEFAULT_AI_SETTINGS.aiTemperature}`}
+              tone="pending"
+            />
           </div>
           <div className={`settings-ai-feedback settings-ai-feedback-${aiConnectionFeedback.tone}`} aria-live="polite" role="status">
             <span>{aiConnectionFeedback.label}</span>

@@ -1,0 +1,146 @@
+{
+  "root": {
+    "id": "gen-project-shell",
+    "type": "project-shell",
+    "title": "Amazon AI Ops 项目壳层",
+    "output": "partials/project-shell.html",
+    "children": [
+      {
+        "id": "page-login",
+        "type": "leaf",
+        "slug": "login",
+        "title": "登录与会话确认",
+        "htmlSrc": "pages/login.html",
+        "pageType": "task-driven"
+      },
+      {
+        "id": "page-dashboard",
+        "type": "leaf",
+        "slug": "dashboard",
+        "title": "今日看板",
+        "htmlSrc": "pages/dashboard.html",
+        "pageType": "information-dense"
+      },
+      {
+        "id": "page-product-management",
+        "type": "leaf",
+        "slug": "product-management",
+        "title": "产品管理",
+        "htmlSrc": "pages/product-management.html",
+        "pageType": "information-dense"
+      },
+      {
+        "id": "page-operation-scope",
+        "type": "leaf",
+        "slug": "operation-scope",
+        "title": "工作范围",
+        "htmlSrc": "pages/operation-scope.html",
+        "pageType": "task-driven"
+      },
+      {
+        "id": "page-data-collection",
+        "type": "leaf",
+        "slug": "data-collection",
+        "title": "批量数据采集",
+        "htmlSrc": "pages/data-collection.html",
+        "pageType": "information-dense"
+      },
+      {
+        "id": "page-data-import-validation",
+        "type": "leaf",
+        "slug": "data-import-validation",
+        "title": "指标核验入库",
+        "htmlSrc": "pages/data-import-validation.html",
+        "pageType": "information-dense"
+      },
+      {
+        "id": "page-operation-events",
+        "type": "leaf",
+        "slug": "operation-events",
+        "title": "运营事件标记",
+        "htmlSrc": "pages/operation-events.html",
+        "pageType": "task-driven"
+      },
+      {
+        "id": "page-product-config",
+        "type": "leaf",
+        "slug": "product-config",
+        "title": "产品 ACOS 配置",
+        "htmlSrc": "pages/product-config.html",
+        "pageType": "task-driven"
+      },
+      {
+        "id": "page-ad-quant",
+        "type": "leaf",
+        "slug": "ad-quant",
+        "title": "量化诊断中心",
+        "htmlSrc": "pages/ad-quant.html",
+        "pageType": "information-dense"
+      },
+      {
+        "id": "page-recommendations",
+        "type": "leaf",
+        "slug": "recommendations",
+        "title": "优化建议草案",
+        "htmlSrc": "pages/recommendations.html",
+        "pageType": "information-dense"
+      },
+      {
+        "id": "page-approval",
+        "type": "leaf",
+        "slug": "approval",
+        "title": "审批历史中心",
+        "htmlSrc": "pages/approval.html",
+        "pageType": "information-dense"
+      },
+      {
+        "id": "page-readback",
+        "type": "leaf",
+        "slug": "readback",
+        "title": "渐进执行回读",
+        "htmlSrc": "pages/readback.html",
+        "pageType": "task-driven"
+      },
+      {
+        "id": "page-keyword-opportunities",
+        "type": "leaf",
+        "slug": "keyword-opportunities",
+        "title": "关键词机会矩阵",
+        "htmlSrc": "pages/keyword-opportunities.html",
+        "pageType": "information-dense"
+      },
+      {
+        "id": "page-listing-optimization",
+        "type": "leaf",
+        "slug": "listing-optimization",
+        "title": "Listing 结构重写",
+        "htmlSrc": "pages/listing-optimization.html",
+        "pageType": "task-driven"
+      },
+      {
+        "id": "page-scheduler",
+        "type": "leaf",
+        "slug": "scheduler",
+        "title": "本地定时调度",
+        "htmlSrc": "pages/scheduler.html",
+        "pageType": "information-dense"
+      },
+      {
+        "id": "page-settings",
+        "type": "leaf",
+        "slug": "settings",
+        "title": "AI 适配与诊断",
+        "htmlSrc": "pages/settings.html",
+        "pageType": "task-driven"
+      },
+      {
+        "id": "page-delivery",
+        "type": "leaf",
+        "slug": "delivery",
+        "title": "最终验收就绪门",
+        "htmlSrc": "pages/delivery.html",
+        "pageType": "information-dense"
+      }
+    ]
+  }
+}

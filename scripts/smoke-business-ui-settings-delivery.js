@@ -14,10 +14,10 @@ const NAV_RE = {
   settings: /AI 适配与诊断|设置/,
 };
 const HEADING_RE = {
-  dashboard: /今日运营看板与自动化链路就绪健康度总览/,
-  delivery: /本地运营资产交付验证门与最终就绪审计中心/,
-  recommendations: /广告优化策略生成建议草案工作台/,
-  settings: /全局系统运行参数、大模型适配与存储诊断中心/,
+  dashboard: /今日看板/,
+  delivery: /最终验收就绪门/,
+  recommendations: /优化建议草案/,
+  settings: /AI 适配与诊断/,
 };
 
 function fail(message, details) {

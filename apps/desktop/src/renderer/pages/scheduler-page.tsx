@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
-import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -299,13 +299,26 @@ export function SchedulerPage() {
               : () => action.route && navigate(action.route),
           }))}
         >
-          <div className="dashboard-task-metrics" aria-label="定时任务摘要">
-            <StatusPill tone={enabledTaskCount ? 'ready' : 'pending'}>
-              启用 {enabledTaskCount}/{tasks.length}
-            </StatusPill>
-            <span>{nextTask ? `下次 ${taskLabel(nextTask.name)}` : '暂无下次运行'}</span>
-            <span>{lastTask ? `最近 ${taskLabel(lastTask.name)}` : '尚无执行记录'}</span>
-            <span>禁止自动写广告</span>
+          <div className="kpi-row kpi-row--task" aria-label="定时任务摘要">
+            <KpiCard
+              label="启用任务"
+              value={`${enabledTaskCount}/${tasks.length}`}
+              detail={enabledTaskCount ? '按本地计划排队' : '全部停用'}
+              tone={enabledTaskCount ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="下次运行"
+              value={nextTask ? taskLabel(nextTask.name) : '暂无'}
+              detail={nextTask?.nextRun || '等待调度'}
+              tone={nextTask ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="最近执行"
+              value={lastTask ? taskLabel(lastTask.name) : '尚无'}
+              detail={lastTask?.lastRun || '未记录'}
+              tone={lastTask ? 'ready' : 'pending'}
+            />
+            <KpiCard label="安全边界" value="不写广告" detail="只创建本地待审建议" tone="warning" />
           </div>
           <div
             aria-live="polite"

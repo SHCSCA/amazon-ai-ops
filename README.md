@@ -4,7 +4,7 @@
 
 它把领星广告报表采集、产品级广告量化、关键词与 Listing 优化、AI + 规则建议、人工审批、Ads UI 执行回读和最终交付验收串成一个可审计的本地闭环。
 
-**DELIVERY: APP_READY.** 当前 v1.5 Windows 桌面包已完成打包、启动 smoke、manifest-driven final-readiness、READY bundle 和 READY safety。应用内广告写入仍保持 fail-closed；任何 Ads 改动都必须经过人工审批、截图、执行和回读验证。
+**DELIVERY: APP_READY.** 当前 v1.5 Windows 桌面包已按 `amazon-ai-ops-business-prototype/` 完成 17 页首屏原型 parity 接入、重新打包、启动 smoke、manifest-driven final-readiness、READY bundle 和 READY safety。应用内广告写入仍保持 fail-closed；任何 Ads 改动都必须经过人工审批、截图、执行和回读验证。
 
 ## 当前交付
 
@@ -15,11 +15,11 @@
 | 当前状态 | `APP_READY` |
 | 无安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe` |
 | 安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
-| 无安装版 SHA-256 | `EA99F03AE8F78F274440995AF244F98825DB850EE08C1EDCEEEED891455A72F3` |
-| 安装版 SHA-256 | `20894EA6CE59CF1BD27410DEBB1933679C4945F7C6911E9E73319A919BF26063` |
-| 最终验收证据 | `output\codex-evidence\final-readiness-1782891434700.json` |
-| Package launch smoke | `output\codex-evidence\package-launch-smoke-1782891389579.json` |
-| READY bundle | `output\delivery-bundles\v15-delivery-bundle-2026-07-01T07-37-16-749Z-ready` |
+| 无安装版 SHA-256 | `849E5C11D5F4742C936FB4A532E1435B3D33B76187E561CB912A08FA6F673CB9` |
+| 安装版 SHA-256 | `3CAB193DE243D53ADB3348569FF5506B1C5A2FE7D237C7590B849A3FFC44D89B` |
+| 最终验收证据 | `output\codex-evidence\final-readiness-1783043003005.json` |
+| Package launch smoke | `output\codex-evidence\package-launch-smoke-1783043003005.json` |
+| READY bundle | `output\delivery-bundles\v15-delivery-bundle-2026-07-03T01-43-56-prototype-parity` |
 
 > 注意：`output/`、`storage/`、AppData DB、raw 领星报表、release EXE 和密钥都是本地交付/运行产物，不进入 Git 提交。
 
@@ -32,6 +32,18 @@
 | 广告执行 | 优化建议草案、审批历史中心、渐进执行回读 |
 | 关键词与 Listing | 关键词机会矩阵、Listing 结构重写、产品管理 |
 | 系统与交付 | 最终验收就绪门、本地定时调度、AI 适配与诊断 |
+
+## 当前 UI 状态
+
+| 项目 | 状态 |
+|---|---|
+| 原型基准 | `amazon-ai-ops-business-prototype/pages/*.html` 17 页 |
+| 生产主题 | 只保留浅色 Windows 桌面主题；不实现暗色切换 |
+| 字体依赖 | renderer 使用本地/system 字体栈，不依赖 Google Fonts |
+| 页面结构 | `ScopeBar -> PageHeader -> OperatorTaskPanel/KPI -> 主业务内容` |
+| 17 页首屏 | 已接入短标题、共享 `KpiCard`、状态/表格/流程反馈合同 |
+| 产品字段 | 已明确为产品成本、FBA 费用、当前售价、最低可接受售价、目标 ACOS、目标 TACOS、目标净利率 |
+| 原型清单 | `docs\design\prototype-reference-index.md`、`docs\design\prototype-parity-checklist.md` |
 
 ## 核心工作流
 
@@ -57,7 +69,7 @@
 | 报表采集 | 只采集/下载/导入真实领星广告报表；截图、审计文件或页面归档不能替代真实报表。 |
 | 数据口径 | `campaign`、`ad_group`、`placement`、`advertised_product`、`user_search_term` 是不同维度展开，不能直接相加。 |
 | AI 建议 | AI 只生成诊断、解释、阈值建议和草案，不直接写入 Amazon Ads。 |
-| 产品配置 | 成本、最低价、目标 ACOS/TACOS 等只保存到本地配置，不审批建议，不执行广告动作。 |
+| 产品配置 | 成本、FBA、当前售价、最低可接受售价、目标 ACOS/TACOS/净利率只保存到本地配置，不审批建议，不执行广告动作。 |
 | Listing | Listing 草案只保存为本地版本，不自动提交 Amazon 或领星。 |
 | 广告执行 | 桌面端执行保持 fail-closed；低风险动作也必须逐条人工审批、截图、执行、reload 回读和 verifier 通过。 |
 | 密钥与凭证 | 登录凭证和 AI Key 由本地安全存储处理，UI 不展示明文，仓库不保存密钥。 |
@@ -68,11 +80,11 @@
 |---|---|---|
 | TypeScript | 通过 | `pnpm --filter @amazon-ai-ops/desktop run typecheck` |
 | Renderer build | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:renderer` |
-| 当前业务 UI smoke | 通过 | `output\codex-evidence\current-business-ui-smoke-1782891312188.json` |
+| 当前业务 UI smoke | 通过 | `output\codex-evidence\current-business-ui-smoke-1783042927932.json` |
 | 广告执行 fail-closed | 通过 | `pnpm run verify:ad-execution` |
 | Windows 打包 | 通过 | installer + portable 已生成 |
-| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1782891389579.json` |
-| Final readiness | 通过 | `output\codex-evidence\final-readiness-1782891434700.json` |
+| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1783043003005.json` |
+| Final readiness | 通过 | `output\codex-evidence\final-readiness-1783043003005.json` |
 | READY safety | 通过 | `pnpm run verify:v15-ready-safety ...` |
 
 ## 开发环境

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
-import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { formatPercent, formatUsd } from '../formatters';
@@ -471,6 +471,32 @@ export function KeywordOpportunitiesPage() {
             onClick: loadRows,
           }}
         >
+          <div className="kpi-row kpi-row--task" aria-label="关键词机会任务摘要">
+            <KpiCard
+              label="真实广告事实"
+              value={`${sourceReportCount}/8`}
+              detail={`${importedMetricRows} 行指标`}
+              tone={quantReady ? 'ready' : 'blocked'}
+            />
+            <KpiCard
+              label="A级机会"
+              value={highOpportunityCount}
+              detail={`${convertingCount} 个已有转化`}
+              tone={highOpportunityCount > 0 ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="未覆盖池"
+              value={visibleRows.length}
+              detail={`${asinCount} 个 ASIN`}
+              tone={visibleRows.length ? 'warning' : 'pending'}
+            />
+            <KpiCard
+              label="风险花费"
+              value={formatUsd(noOrderSpend)}
+              detail="有花费无订单"
+              tone={noOrderSpend > 0 ? 'blocked' : 'ready'}
+            />
+          </div>
           <StateLightGrid
             items={[
               {

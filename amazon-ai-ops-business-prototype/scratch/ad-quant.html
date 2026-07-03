@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html class="light" lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>量化诊断中心 - Amazon AI Ops</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main data-dom-id="ad-quant-page">
+    <header data-dom-id="ad-quant-header">
+      <h1 data-dom-id="ad-quant-title">量化诊断中心</h1>
+      <p data-dom-id="ad-quant-desc">基于实时广告数据对可行动对象进行量化诊断</p>
+    </header>
+
+    <section data-dom-id="ad-quant-kpi-section">
+      <div data-dom-id="ad-quant-kpi-cards">
+        <div data-dom-id="kpi-total-spend" class="kpi-card">
+          <span class="kpi-label">总花费</span>
+          <span class="kpi-value">$12,450.80</span>
+        </div>
+        <div data-dom-id="kpi-total-sales" class="kpi-card">
+          <span class="kpi-label">总销售</span>
+          <span class="kpi-value">$68,320.15</span>
+        </div>
+        <div data-dom-id="kpi-acos" class="kpi-card">
+          <span class="kpi-label">ACOS</span>
+          <span class="kpi-value">18.22%</span>
+        </div>
+        <div data-dom-id="kpi-actionable" class="kpi-card">
+          <span class="kpi-label">可行动对象数</span>
+          <span class="kpi-value">12</span>
+        </div>
+      </div>
+    </section>
+
+    <section data-dom-id="ad-quant-table-section">
+      <h2 data-dom-id="ad-quant-table-title">诊断对象</h2>
+      <table data-dom-id="ad-quant-diagnosis-table">
+        <thead>
+          <tr>
+            <th>对象</th><th>花费</th><th>销售</th><th>ACOS</th><th>Tag</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-dom-id="ad-quant-row-1">
+            <td>关键词 A</td><td>$3,200.50</td><td>$15,400.00</td><td>20.78%</td><td>高 ACOS</td>
+            <td><button data-dom-id="ad-quant-action-1">诊断</button></td>
+          </tr>
+          <tr data-dom-id="ad-quant-row-2">
+            <td>ASIN B</td><td>$1,850.00</td><td>$22,100.00</td><td>8.37%</td><td>可扩量</td>
+            <td><button data-dom-id="ad-quant-action-2">诊断</button></td>
+          </tr>
+          <tr data-dom-id="ad-quant-row-3">
+            <td>关键词 C</td><td>$4,100.20</td><td>$10,500.00</td><td>39.05%</td><td>浪费超支</td>
+            <td><button data-dom-id="ad-quant-action-3">诊断</button></td>
+          </tr>
+          <tr data-dom-id="ad-quant-row-4">
+            <td>品类 D</td><td>$920.00</td><td>$3,800.00</td><td>24.21%</td><td>待复核</td>
+            <td><button data-dom-id="ad-quant-action-4">诊断</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section data-dom-id="ad-quant-cta-section">
+      <a href="#" data-dom-id="ad-quant-cta-goto-recommendations" class="cta-button">进入建议草案</a>
+    </section>
+  </main>
+</body>
+</html>

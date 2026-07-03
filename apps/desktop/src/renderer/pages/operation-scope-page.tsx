@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { scopeFieldFeedbackClass, scopeFieldFeedbackLabel, type ScopeFieldFeedbackKey } from '../components/scope-bar';
-import { FormTable, FormTableRow, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
@@ -234,11 +234,26 @@ export function OperationScopePage() {
             { label: taskState.nextActionLabel, onClick: () => navigate(taskState.nextRoute) },
           ]}
         >
-          <div className="dashboard-task-metrics" aria-label="工作范围任务摘要">
-            <StatusPill tone={taskState.tone}>报表 {Math.min(realReportCount, 8)}/8</StatusPill>
-            <StatusPill tone={importedRows > 0 ? 'ready' : 'blocked'}>指标 {importedRows} 行</StatusPill>
-            <StatusPill tone={activeBatch ? 'ready' : 'pending'}>{activeBatch || '自动匹配批次'}</StatusPill>
-            <StatusPill tone="pending">USD</StatusPill>
+          <div className="kpi-row kpi-row--task" aria-label="工作范围任务摘要">
+            <KpiCard
+              label="真实报表"
+              value={`${Math.min(realReportCount, 8)}/8`}
+              detail={realReportCount ? '当前范围已有文件' : '保存后去采集'}
+              tone={taskState.tone}
+            />
+            <KpiCard
+              label="入库指标"
+              value={`${importedRows} 行`}
+              detail={importedRows > 0 ? '可进入量化' : '等待导入'}
+              tone={importedRows > 0 ? 'ready' : 'blocked'}
+            />
+            <KpiCard
+              label="数据批次"
+              value={activeBatch || '自动匹配'}
+              detail={scope.batchId ? '手动指定' : '最新完整优先'}
+              tone={activeBatch ? 'ready' : 'pending'}
+            />
+            <KpiCard label="币种" value="USD" detail="全链路统一口径" tone="pending" />
           </div>
           <div className={`scope-task-feedback scope-task-feedback-${saveStatus}`} aria-live="polite">
             <span>{operationScopeSaveFeedbackLabel(saveStatus)}</span>

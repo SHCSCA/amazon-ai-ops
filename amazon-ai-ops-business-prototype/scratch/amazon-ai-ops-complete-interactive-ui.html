@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amazon AI Ops - 完整交互式 UI 预览</title>
+<style>
+:root {
+  --aao-bg: #f4f7fb;
+  --aao-surface: #ffffff;
+  --aao-surface-2: #edf2f7;
+  --aao-surface-3: #e5ecf4;
+  --aao-ink: #172334;
+  --aao-ink-2: #506178;
+  --aao-ink-3: #7a899f;
+  --aao-line: #d6deea;
+  --aao-line-strong: #c4cfde;
+  --aao-brand-50: #eef4fb;
+  --aao-brand-100: #e2ebf7;
+  --aao-brand-200: #c6d7eb;
+  --aao-brand-300: #9fb9d8;
+  --aao-brand-500: #486b94;
+  --aao-brand-600: #395778;
+  --aao-brand-700: #2a425c;
+  --state-success: #2c7a58;
+  --state-success-soft: #e7f3ec;
+  --state-warning: #9a6c15;
+  --state-warning-soft: #fbf2de;
+  --state-error: #b04444;
+  --state-error-soft: #f8e6e6;
+  --state-info: #305f93;
+  --state-info-soft: #e8f0fa;
+  --shadow-1: 0 1px 2px rgba(23,35,52,0.04), 0 1px 1px rgba(23,35,52,0.02);
+  --shadow-2: 0 4px 12px rgba(23,35,52,0.08);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --font-body: "Inter","Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono: "Cascadia Mono","SFMono-Regular",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--aao-bg);color:var(--aao-ink);font-family:var(--font-body);font-size:14px;line-height:1.5}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer;transition:all .15s}
+button:hover{filter:brightness(.96)}
+button:active{transform:scale(.98)}
+
+/* Shell */
+.proto-layout{min-height:100vh;display:flex;flex-direction:column}
+.proto-statusbar{height:48px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px;border-bottom:1px solid var(--aao-line);background:rgba(255,255,255,.94)}
+.proto-workspace{flex:1;display:grid;grid-template-columns:260px minmax(0,1fr);min-height:0}
+.proto-sidebar{padding:20px 16px;border-right:1px solid var(--aao-line);background:#f8fbff;overflow-y:auto}
+.proto-brand{padding:14px 16px;border:1px solid var(--aao-line);border-radius:var(--radius-lg);background:var(--aao-surface);box-shadow:var(--shadow-1);margin-bottom:16px}
+.proto-brand strong{display:block;font-size:18px}
+.proto-brand span{color:var(--aao-ink-2);font-size:12px}
+.proto-nav-group{margin-bottom:14px}
+.proto-nav-title{margin:0 0 8px;font-size:12px;color:var(--aao-ink-3);text-transform:uppercase;letter-spacing:.5px}
+.proto-nav-item{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;margin-bottom:6px;border:1px solid transparent;border-radius:var(--radius-md);background:transparent;color:var(--aao-ink-2);text-align:left;transition:all .15s}
+.proto-nav-item small{color:var(--aao-ink-3)}
+.proto-nav-item:hover{background:var(--aao-brand-50);border-color:var(--aao-brand-200)}
+.proto-nav-item.active{background:var(--aao-brand-50);border-color:var(--aao-brand-200);color:var(--aao-brand-700)}
+.proto-nav-item.active small{color:var(--aao-brand-500)}
+.proto-main{min-width:0;display:flex;flex-direction:column;overflow-y:auto}
+.proto-scopebar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 24px;border-bottom:1px solid var(--aao-line);background:rgba(255,255,255,.82)}
+.proto-scopebar strong{font-size:13px}
+.proto-pagehead{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:20px 24px 12px}
+.proto-pagehead h1{margin:0;font-size:28px;line-height:1.18}
+.proto-pagehead p{margin:6px 0 0;color:var(--aao-ink-2)}
+.proto-content{padding:0 24px 24px;display:flex;flex-direction:column;gap:16px}
+.proto-footer{display:flex;justify-content:space-between;gap:16px;padding:14px 24px;border-top:1px solid var(--aao-line);color:var(--aao-ink-3);background:rgba(255,255,255,.9);font-size:12px}
+
+/* Grids */
+.kpi-strip,.status-grid,.triple-grid,.quad-grid,.steps-grid,.stat-grid{display:grid;gap:12px}
+.kpi-strip,.status-grid,.quad-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.triple-grid,.steps-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.dual-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:16px}
+
+/* Cards */
+.panel,.kpi,.status-card,.step-card,.stat-card{background:var(--aao-surface);border:1px solid var(--aao-line);border-radius:var(--radius-lg);box-shadow:var(--shadow-1)}
+.panel,.step-card,.stat-card{padding:16px}
+.kpi,.status-card{padding:14px 16px}
+.kpi{transition:all .2s}
+.kpi:hover{box-shadow:var(--shadow-2);transform:translateY(-2px)}
+.panel-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}
+.panel-head h2{margin:0;font-size:18px}
+.panel-head p{margin:4px 0 0;color:var(--aao-ink-2)}
+.kpi label,.status-card label,.stat-card label{display:block;color:var(--aao-ink-3);font-size:12px;margin-bottom:6px}
+.kpi strong,.status-card strong,.stat-card strong{display:block;font-size:24px;line-height:1.2;margin-bottom:4px}
+.kpi p,.status-card p,.step-card p,.stat-card p,.panel li,.panel p{margin:0;color:var(--aao-ink-2)}
+
+/* KPI tones */
+.kpi.ready{border-left:3px solid var(--state-success)}
+.kpi.warning{border-left:3px solid var(--state-warning)}
+.kpi.blocked{border-left:3px solid var(--state-error)}
+.kpi.pending{border-left:3px solid var(--state-info)}
+.status-card.ready strong{color:var(--state-success)}
+.status-card.warning strong{color:var(--state-warning)}
+.status-card.blocked strong{color:var(--state-error)}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:var(--radius-md);font-size:12px;border:1px solid transparent;white-space:nowrap}
+.badge.ready{color:var(--state-success);background:var(--state-success-soft)}
+.badge.warning{color:var(--state-warning);background:var(--state-warning-soft)}
+.badge.blocked{color:var(--state-error);background:var(--state-error-soft)}
+.badge.info{color:var(--state-info);background:var(--state-info-soft)}
+.chip-row,.proto-scope-tags,.action-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 14px;border-radius:var(--radius-md);border:1px solid var(--aao-line-strong);background:var(--aao-surface);color:var(--aao-ink);font-size:14px;transition:all .15s}
+.btn.primary{border-color:var(--aao-brand-600);background:var(--aao-brand-600);color:#fff}
+.btn.primary:hover{background:var(--aao-brand-700)}
+.btn.ghost{background:transparent;border-color:transparent}
+.btn.ghost:hover{background:var(--aao-surface-2)}
+.btn.danger{border-color:var(--state-error);color:var(--state-error)}
+.btn.danger:hover{background:var(--state-error-soft)}
+.btn.compact{min-height:32px;padding:0 10px;font-size:12px}
+.btn[disabled],.btn:disabled{opacity:.56;cursor:not-allowed;pointer-events:none}
+
+/* Table */
+.table-wrap{overflow:auto;border:1px solid var(--aao-line);border-radius:10px}
+table{width:100%;min-width:720px;border-collapse:collapse;background:var(--aao-surface)}
+th,td{padding:10px 12px;border-bottom:1px solid var(--aao-line);text-align:left;vertical-align:top}
+th{background:var(--aao-surface-2);color:var(--aao-ink-2);font-weight:600;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--aao-brand-50)}
+
+/* Misc */
+.metric-bar{height:8px;border-radius:999px;overflow:hidden;background:var(--aao-surface-3)}
+.metric-bar span{display:block;height:100%;background:var(--aao-brand-500);border-radius:999px;transition:width .6s ease}
+.list-stack,.timeline,.evidence-list{display:flex;flex-direction:column;gap:10px}
+.list-item,.timeline-item,.evidence-item,.drawer,.notice{padding:12px 14px;border-radius:10px}
+.list-item,.timeline-item,.evidence-item,.drawer{border:1px solid var(--aao-line);background:var(--aao-surface-2)}
+.notice{border:1px solid var(--aao-line);background:var(--aao-surface-2);color:var(--aao-ink-2)}
+.notice.warning{color:var(--state-warning);background:var(--state-warning-soft)}
+.notice.blocked{color:var(--state-error);background:var(--state-error-soft)}
+.timeline-item{display:grid;grid-template-columns:88px 1fr;gap:12px}
+.timeline-item strong,.evidence-item strong,.list-item strong,.step-card strong{display:block;margin-bottom:4px}
+.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:12px;color:var(--aao-ink-2)}
+.field input,.field select,.field textarea{width:100%;padding:10px 12px;border:1px solid var(--aao-line-strong);border-radius:var(--radius-md);background:var(--aao-surface);color:var(--aao-ink)}
+.field textarea{min-height:96px;resize:vertical}
+.code-path{font-family:var(--font-mono);font-size:12px;color:var(--aao-ink-2)}
+details{border:1px solid var(--aao-line);border-radius:10px;background:var(--aao-surface-2)}
+details summary{cursor:pointer;padding:12px 14px;font-weight:600}
+details>div{padding:0 14px 14px}
+
+/* Login */
+.login-page{min-height:100vh;display:grid;grid-template-columns:1.05fr .95fr;background:linear-gradient(180deg,#f6f9fd 0%,#eef3f9 100%)}
+.login-side{padding:48px;display:flex;flex-direction:column;justify-content:space-between}
+.login-card{margin:40px;background:rgba(255,255,255,.96);border:1px solid var(--aao-line);border-radius:16px;box-shadow:0 10px 30px rgba(23,35,52,.06);padding:28px}
+.login-card h1,.login-side h1{margin:0 0 8px;font-size:34px;line-height:1.16}
+.login-side p,.login-card p{color:var(--aao-ink-2)}
+
+/* Activity Feed */
+.activity-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--aao-line)}
+.activity-row:last-child{border-bottom:none}
+.activity-dot{width:8px;height:8px;border-radius:999px;background:var(--aao-brand-500);flex-shrink:0}
+.activity-dot.warn{background:var(--state-warning)}
+.activity-dot.success{background:var(--state-success)}
+.activity-dot.error{background:var(--state-error)}
+.activity-row time{font-size:11px;color:var(--aao-ink-3);white-space:nowrap;min-width:48px}
+.activity-row span{flex:1;color:var(--aao-ink-2);font-size:13px}
+
+/* Toast */
+.global-toast{position:fixed;top:64px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast-item{display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:var(--radius-md);background:var(--aao-surface);border:1px solid var(--aao-line);box-shadow:var(--shadow-2);font-size:13px;animation:toastIn .3s ease;pointer-events:auto;min-width:280px}
+.toast-item.success{border-left:3px solid var(--state-success)}
+.toast-item.error{border-left:3px solid var(--state-error)}
+.toast-item.info{border-left:3px solid var(--state-info)}
+.toast-item.warning{border-left:3px solid var(--state-warning)}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+
+/* Page visibility */
+.page-view{display:none}
+.page-view.active{display:flex;flex-direction:column;flex:1;min-height:0}
+
+/* AI Module Card */
+.ai-module-card{border:2px solid var(--aao-line);border-radius:var(--radius-lg);padding:20px;background:var(--aao-surface);transition:all .2s}
+.ai-module-card:hover{border-color:var(--aao-brand-300);box-shadow:var(--shadow-2)}
+.ai-module-card.running{border-color:var(--aao-brand-500);background:var(--aao-brand-50)}
+.ai-module-card.ready{border-color:var(--state-success)}
+.ai-module-card.failed{border-color:var(--state-error);background:var(--state-error-soft)}
+.ai-module-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+.ai-module-header h3{margin:0;font-size:16px}
+.ai-module-body{color:var(--aao-ink-2);margin-bottom:14px}
+.ai-module-footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* Spinner */
+.spinner{width:16px;height:16px;border:2px solid var(--aao-line);border-top-color:var(--aao-brand-500);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Page Transition */
+.page-fade{animation:pageFadeIn .25s ease}
+@keyframes pageFadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+/* Responsive */
+@media(max-width:1200px){
+  .proto-workspace{grid-template-columns:224px minmax(0,1fr)}
+  .kpi-strip,.status-grid,.quad-grid,.triple-grid,.steps-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dual-grid{grid-template-columns:1fr}
+}
+@media(max-width:860px){
+  .proto-workspace,.login-page,.form-grid,.kpi-strip,.status-grid,.quad-grid,.triple-grid,.steps-grid,.stat-grid{grid-template-columns:1fr}
+  .proto-sidebar{display:none}
+  .proto-pagehead,.proto-footer,.proto-statusbar{flex-direction:column;align-items:flex-start;height:auto;padding-top:12px;padding-bottom:12px}
+  .login-card,.login-side{margin:0;padding:24px}
+}
+</style>
+</head>
+<body>
+
+<!-- Toast container -->
+<div class="global-toast" id="toastContainer"></div>
+
+<!-- ============ LOGIN VIEW ============ -->
+<div class="page-view active" id="view-login">
+<div class="login-page">
+<section class="login-side">
+<div>
+<div class="chip-row" style="margin-bottom:20px">
+<span class="badge info">Windows 本地工作台</span>
+<span class="badge ready">本机加密已启用</span>
+<span class="badge warning">USD 口径</span>
+</div>
+<h1>登录与会话确认</h1>
+<p>先确认账号、ERP 会话、Ads 会话与本地证据目录，再进入 Amazon AI Ops 业务工作台。</p>
+</div>
+<div class="quad-grid">
+<article class="status-card"><label>当前状态</label><strong>会话待确认</strong><p>ERP 已识别账号，Ads 会话需确认</p></article>
+<article class="status-card"><label>证据</label><strong>3 条已就绪</strong><p>本机加密、配置目录、下载快照均可读取</p></article>
+<article class="status-card"><label>阻塞原因</label><strong>1 项</strong><p>Ads Cookie 近过期，需确认</p></article>
+<article class="status-card"><label>下一步</label><strong>确认会话</strong><p>进入今日看板，沿用统一范围和 USD</p></article>
+</div>
+<div class="dual-grid">
+<article class="panel">
+<div class="panel-head"><div><h2>登录流程</h2><p>先门禁，后进入业务页</p></div><span class="badge info">门禁链路</span></div>
+<div class="list-stack">
+<div class="list-item"><strong>1. 输入账号与密码</strong><p>账号加密保存本机，不展示明文</p></div>
+<div class="list-item"><strong>2. 核验 ERP / Ads 会话</strong><p>确认 ERP 可进入下载中心，Ads 可读取真实报表</p></div>
+<div class="list-item"><strong>3. 确认证据目录</strong><p>使用本地 evidence、reports、delivery 目录</p></div>
+</div>
+</article>
+<article class="panel">
+<div class="panel-head"><div><h2>最近会话状态</h2><p>只展示业务相关状态</p></div><span class="badge ready">可追溯</span></div>
+<div class="timeline">
+<div class="timeline-item"><span>09:12</span><div><strong>ERP 会话通过</strong><p>账号 wang.zh@ops.local 已完成校验</p></div></div>
+<div class="timeline-item"><span>09:13</span><div><strong>本机目录可写</strong><p class="code-path">D:\AmazonOps\evidence\2026-06-30</p></div></div>
+<div class="timeline-item"><span>09:14</span><div><strong>Ads 会话待确认</strong><p>Cookie 到期预警，需人工确认</p></div></div>
+</div>
+</article>
+</div>
+</section>
+<aside class="login-card">
+<div class="panel-head" style="margin-bottom:20px"><div><h2>进入工作台</h2><p>登录成功后默认进入今日看板</p></div><span class="badge info">证据优先</span></div>
+<div class="form-grid">
+<div class="field"><label>运营账号</label><input value="wang.zh@ops.local"></div>
+<div class="field"><label>默认店铺</label><input value="US-旗舰店"></div>
+<div class="field"><label>密码</label><input type="password" value="masked-password"></div>
+<div class="field"><label>默认站点</label><input value="US"></div>
+</div>
+<div class="notice" style="margin:16px 0">本机已启用账号加密与路径白名单。登录只放行业务访问，不代表允许直接执行广告动作。</div>
+<div class="triple-grid" style="margin-bottom:16px">
+<article class="stat-card"><label>ERP 会话</label><strong>已确认</strong><p>可进入下载中心</p></article>
+<article class="stat-card"><label>Ads 会话</label><strong>待确认</strong><p>Cookie 2 小时后过期</p></article>
+<article class="stat-card"><label>证据目录</label><strong>可写</strong><p>路径权限正常</p></article>
+</div>
+<div class="action-row" style="justify-content:space-between">
+<button class="btn" type="button">查看最近日志</button>
+<button class="btn primary" type="button" onclick="login()">确认并进入</button>
+</div>
+</aside>
+</div>
+</div>
+
+<!-- ============ MAIN APP SHELL ============ -->
+<div class="page-view" id="view-app">
+<div class="proto-layout">
+<header class="proto-statusbar">
+<div class="chip-row"><strong>Amazon AI Ops</strong><span>Windows 本地运营工作台</span><span class="badge info">浅底深字</span></div>
+<div class="chip-row" id="statusBarRight">
+<span class="badge ready">本机加密已启用</span>
+<span class="badge info">证据优先链路</span>
+<span>USD</span>
+<button class="btn compact ghost" onclick="logout()" title="退出登录">退出</button>
+</div>
+</header>
+<div class="proto-workspace">
+<aside class="proto-sidebar">
+<div class="proto-brand"><strong>Amazon AI Ops</strong><span>高密度证据驱动桌面工作台</span></div>
+<div class="proto-nav-group"><p class="proto-nav-title">运营总览</p>
+<button class="proto-nav-item active" data-nav="dashboard"><span>今日看板</span><small>总览</small></button>
+<button class="proto-nav-item" data-nav="product-management"><span>产品管理</span><small>产品</small></button>
+</div>
+<div class="proto-nav-group"><p class="proto-nav-title">数据与量化</p>
+<button class="proto-nav-item" data-nav="operation-scope"><span>工作范围</span><small>范围</small></button>
+<button class="proto-nav-item" data-nav="data-collection"><span>批量数据采集</span><small>采集</small></button>
+<button class="proto-nav-item" data-nav="data-import-validation"><span>指标核验入库</span><small>入库</small></button>
+<button class="proto-nav-item" data-nav="operation-events"><span>运营事件标记</span><small>事件</small></button>
+<button class="proto-nav-item" data-nav="product-config"><span>产品 ACOS 配置</span><small>配置</small></button>
+<button class="proto-nav-item" data-nav="ad-quant"><span>量化诊断中心</span><small>诊断</small></button>
+</div>
+<div class="proto-nav-group"><p class="proto-nav-title">广告执行</p>
+<button class="proto-nav-item" data-nav="recommendations"><span>优化建议草案</span><small>建议</small></button>
+<button class="proto-nav-item" data-nav="approval"><span>审批历史中心</span><small>审批</small></button>
+<button class="proto-nav-item" data-nav="readback"><span>渐进执行回读</span><small>回读</small></button>
+</div>
+<div class="proto-nav-group"><p class="proto-nav-title">关键词与 Listing</p>
+<button class="proto-nav-item" data-nav="keyword-opportunities"><span>关键词机会矩阵</span><small>机会</small></button>
+<button class="proto-nav-item" data-nav="listing-optimization"><span>Listing 结构重写</span><small>草案</small></button>
+</div>
+<div class="proto-nav-group"><p class="proto-nav-title">系统与交付</p>
+<button class="proto-nav-item" data-nav="scheduler"><span>本地定时调度</span><small>调度</small></button>
+<button class="proto-nav-item" data-nav="settings"><span>AI 适配与诊断</span><small>设置</small></button>
+<button class="proto-nav-item" data-nav="delivery"><span>最终验收就绪门</span><small>交付</small></button>
+</div>
+</aside>
+<section class="proto-main">
+<div class="proto-scopebar">
+<strong id="scopeInfo">当前运营范围：2026-06-24 至 2026-06-30 / US-旗舰店 / US / ASIN B0C8QW42LM / BATCH-20260630-US-01 / USD</strong>
+<div class="proto-scope-tags">
+<span class="badge ready">真实报表 8/8</span>
+<span class="badge info">证据路径已登记</span>
+<span class="badge warning">审批≠执行</span>
+</div>
+</div>
+<div id="pageContainer" class="page-fade"></div>
+<footer class="proto-footer">
+<span>共享桌面壳层：顶部状态栏 / 左侧业务导航 / 顶部范围条</span>
+<span>16 个业务页面的统一视觉连续性</span>
+</footer>
+</section>
+</div>
+</div>
+</div>
+
+<script>
+// ---- Page Registry ----
+const pages = {
+  dashboard: {
+    title: '今日看板',
+    desc: '先看数据门槛、证据和阻塞项，再决定今天最安全的下一步动作。',
+    maxActions: 2,
+    actions: [
+      { label: '进入产品工作台', cls: 'primary', nav: 'product-management' },
+      { label: '打开证据目录', cls: '', nav: null }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi ready"><label>今日花费</label><strong>$3,842.17</strong><p>较昨日 +5.8%</p></article>
+<article class="kpi"><label>广告销售</label><strong>$14,906.52</strong><p>全部按 USD 口径展示</p></article>
+<article class="kpi warning"><label>ACOS</label><strong>25.8%</strong><p>目标 24.0%，需复核高花费对象</p></article>
+<article class="kpi blocked"><label>审批待办</label><strong>6 条</strong><p>2 条高风险，4 条中风险</p></article>
+</section>
+<section class="status-grid">
+<article class="status-card ready"><label>当前状态</label><strong>可分析</strong><p>真实报表与入库指标已闭合</p></article>
+<article class="status-card"><label>证据</label><strong>9 项</strong><p>下载快照、原始文件、量化批次与审批记录均已挂载</p></article>
+<article class="status-card warning"><label>阻塞原因</label><strong>1 项</strong><p>2 条建议缺少 after 回读值</p></article>
+<article class="status-card"><label>下一步</label><strong>先选产品</strong><p>确认目标 ASIN 后再进入范围、量化与建议主链路</p></article>
+</section>
+<section class="dual-grid">
+<article class="panel">
+<div class="panel-head"><div><h2>今日主任务</h2><p>先产品、后范围、再数据与建议的门禁链路</p></div><span class="badge info">门禁链路</span></div>
+<div class="list-stack">
+<div class="list-item"><strong>1. 选择产品工作台</strong><p>ASIN B0C8QW42LM，确认生命周期和风险对象</p></div>
+<div class="list-item"><strong>2. 复核量化风险</strong><p>高 ACOS 对象 5 个，无订单花费对象 3 个</p></div>
+<div class="list-item"><strong>3. 处理待审批建议</strong><p>共 6 条待审批，其中 2 条需运营负责人确认</p></div>
+</div>
+</article>
+<article class="panel">
+<div class="panel-head"><div><h2>快捷分支</h2><p>快速查看专项页面</p></div><span class="badge warning">快捷入口</span></div>
+<div class="triple-grid">
+<button class="btn compact" onclick="navigateTo('keyword-opportunities')">机会词矩阵</button>
+<button class="btn compact" onclick="navigateTo('operation-events')">运营事件</button>
+<button class="btn compact" onclick="navigateTo('product-config')">ACOS 配置</button>
+<button class="btn compact" onclick="navigateTo('scheduler')">本地调度</button>
+<button class="btn compact" onclick="navigateTo('settings')">AI 设置</button>
+<button class="btn compact" onclick="navigateTo('delivery')">交付缺口</button>
+</div>
+</article>
+</section>
+<section class="dual-grid">
+<article class="panel">
+<div class="panel-head"><div><h2>风险对象</h2><p>高花费 / 低转化对象</p></div><span class="badge blocked">需复核</span></div>
+<div class="table-wrap"><table><thead><tr><th>对象</th><th>广告活动</th><th>花费 USD</th><th>销售 USD</th><th>ACOS</th><th>阻塞项</th></tr></thead><tbody>
+<tr><td>ASIN / B0C8QW42LM</td><td>US-Core-Exact</td><td>$486.40</td><td>$1,204.55</td><td>40.4%</td><td>目标 ACOS 超线</td></tr>
+<tr><td>关键词 / wireless desk lamp</td><td>US-SearchTerm-Auto</td><td>$212.18</td><td>$0.00</td><td>—</td><td>34 点击 0 单</td></tr>
+<tr><td>广告组 / SP-01</td><td>US-Scaling</td><td>$308.82</td><td>$1,592.10</td><td>19.4%</td><td>预算上限待确认</td></tr>
+</tbody></table></div>
+</article>
+<article class="panel">
+<div class="panel-head"><div><h2>证据与阻塞</h2><p>所有状态指向真实路径</p></div><span class="badge ready">可审计</span></div>
+<div class="evidence-list">
+<div class="evidence-item"><strong>真实报表</strong><p class="code-path">D:\AmazonOps\reports\2026-06-30\US-旗舰店\</p></div>
+<div class="evidence-item"><strong>入库批次</strong><p>BATCH-20260630-US-01，148,320 行，通过率 99.3%</p></div>
+<div class="evidence-item"><strong>当前阻塞</strong><p>最终交付缺 2 条建议的 after 回读值</p></div>
+<div class="evidence-item"><strong>下一步动作</strong><p>从产品管理进入主链路</p></div>
+</div>
+</article>
+</section>`;
+    }
+  },
+  'product-management': {
+    title: '产品管理',
+    desc: '先确定今天真正要处理的 ASIN，再让范围、事件、量化与建议围绕同一产品展开。',
+    maxActions: 2,
+    actions: [
+      { label: '确认工作范围', cls: 'primary', nav: 'operation-scope' },
+      { label: '导出产品清单', cls: '', nav: null }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi ready"><label>产品池</label><strong>12 个</strong><p>已锁定当前产品</p></article>
+<article class="kpi ready"><label>当前产品</label><strong>B0C8QW42LM</strong><p>Desk Lamp / US / 稳定转化</p></article>
+<article class="kpi warning"><label>入库指标</label><strong>148,320 行</strong><p>可进入量化诊断</p></article>
+<article class="kpi"><label>日级账本</label><strong>7 天</strong><p>按产品查看趋势</p></article>
+</section>
+<section class="status-grid">
+<article class="status-card ready"><label>当前状态</label><strong>已锁定 1 个产品</strong><p>主链路默认读取 B0C8QW42LM</p></article>
+<article class="status-card"><label>证据</label><strong>生命周期清楚</strong><p>30 天花费、订单、事件和关键词证据已归档</p></article>
+<article class="status-card warning"><label>阻塞原因</label><strong>2 项</strong><p>2 个广告组预算边界待确认</p></article>
+<article class="status-card"><label>下一步</label><strong>设置范围</strong><p>确认日期、站点、批次与 ASIN</p></article>
+</section>
+<section class="dual-grid">
+<article class="panel">
+<div class="panel-head"><div><h2>ASIN 卡片</h2><p>有证据价值的产品</p></div><span class="badge info">产品入口</span></div>
+<div class="triple-grid">
+<article class="stat-card"><label>主工作台</label><strong>B0C8QW42LM</strong><p>Desk Lamp / US / 稳定转化</p><div class="chip-row" style="margin-top:10px"><span class="badge ready">当前 ASIN</span><span class="badge info">报表齐</span></div></article>
+<article class="stat-card"><label>对照产品</label><strong>B0C1HX72PP</strong><p>Reading Light / US / 放量期</p><div class="chip-row" style="margin-top:10px"><span class="badge warning">预算待审</span></div></article>
+<article class="stat-card"><label>候选产品</label><strong>B09ZRM18LK</strong><p>Clip Lamp / US / 冷启动</p><div class="chip-row" style="margin-top:10px"><span class="badge blocked">报表未齐</span></div></article>
+</div>
+</article>
+<article class="panel">
+<div class="panel-head"><div><h2>快捷入口</h2><p>围绕当前产品进入后续页面</p></div><span class="badge ready">同一产品上下文</span></div>
+<div class="list-stack">
+<div class="list-item"><strong>工作范围</strong><p>把日期、店铺、站点、批次和 ASIN 固定下来</p></div>
+<div class="list-item"><strong>运营事件</strong><p>如有改价、优惠券、素材替换应先补时间线</p></div>
+<div class="list-item"><strong>关键词与 Listing</strong><p>产品上下文稳定时才能分析</p></div>
+</div>
+</article>
+</section>
+<section class="panel">
+<div class="panel-head"><div><h2>产品账本总览</h2><p>产品阶段、预算边界、证据完整度</p></div><span class="badge warning">高密度表格</span></div>
+<div class="table-wrap"><table><thead><tr><th>ASIN</th><th>标题</th><th>生命周期</th><th>近7日花费</th><th>近7日销售</th><th>最近事件</th><th>证据</th><th>动作</th></tr></thead><tbody>
+<tr><td>B0C8QW42LM</td><td>Wireless Desk Lamp</td><td>稳定转化</td><td>$1,208.44</td><td>$5,302.71</td><td>06-28 改价 -3%</td><td>报表齐/事件齐</td><td>去工作范围</td></tr>
+<tr><td>B0C1HX72PP</td><td>Reading Light</td><td>放量期</td><td>$1,904.52</td><td>$8,231.26</td><td>06-29 提高预算</td><td>审批待补</td><td>去审批中心</td></tr>
+<tr><td>B09ZRM18LK</td><td>Clip On Lamp</td><td>冷启动</td><td>$412.88</td><td>$958.64</td><td>06-27 新建活动</td><td>报表缺2类</td><td>去数据采集</td></tr>
+</tbody></table></div>
+</section>`;
+    }
+  },
+  'operation-scope': {
+    title: '工作范围',
+    desc: '固定日期、店铺、站点、ASIN 和数据批次，确保所有后续页面沿用同一上下文。',
+    maxActions: 2,
+    actions: [
+      { label: '确认当前范围', cls: 'primary', nav: null },
+      { label: '去批量数据采集', cls: '', nav: 'data-collection' }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi ready"><label>日期范围</label><strong>2026-06-24 ~ 06-30</strong><p>7 天运营窗口</p></article>
+<article class="kpi ready"><label>站点</label><strong>US</strong><p>默认美元口径</p></article>
+<article class="kpi ready"><label>店铺</label><strong>US-旗舰店</strong><p>主账号</p></article>
+<article class="kpi"><label>数据批次</label><strong>BATCH-20260630-US-01</strong><p>当前批次</p></article>
+</section>
+<section class="status-grid">
+<article class="status-card ready"><label>当前状态</label><strong>范围已确认</strong><p>日期、站点、店铺、批次已固定</p></article>
+<article class="status-card"><label>证据</label><strong>5 项</strong><p>范围快照、批处理日志、路径校验记录</p></article>
+<article class="status-card"><label>阻塞原因</label><strong>0 项</strong><p>当前无阻塞</p></article>
+<article class="status-card"><label>下一步</label><strong>进入数据采集</strong><p>确认报表齐全后核验入库</p></article>
+</section>
+<section class="panel">
+<div class="panel-head"><div><h2>范围配置</h2><p>修改后需要重新确认</p></div><span class="badge info">可编辑</span></div>
+<div class="form-grid">
+<div class="field"><label>开始日期</label><input type="date" value="2026-06-24"></div>
+<div class="field"><label>结束日期</label><input type="date" value="2026-06-30"></div>
+<div class="field"><label>站点</label><input value="US"></div>
+<div class="field"><label>所属店铺</label><input value="US-旗舰店"></div>
+<div class="field"><label>默认 ASIN</label><input value="B0C8QW42LM"></div>
+<div class="field"><label>数据批次号</label><input value="BATCH-20260630-US-01"></div>
+</div>
+</section>`;
+    }
+  },
+  'data-collection': {
+    title: '批量数据采集',
+    desc: '确认真实报表是否存在、路径是否可信、批次是否清楚，不提前输出建议结论。',
+    maxActions: 2,
+    actions: [
+      { label: '进入指标核验入库', cls: 'primary', nav: 'data-import-validation' },
+      { label: '打开本地报表目录', cls: '', nav: null }
+    ],
+    render: function() {
+      return `
+<section class="status-grid">
+<article class="status-card ready"><label>当前状态</label><strong>报表已齐</strong><p>8 类广告报表已存在</p></article>
+<article class="status-card"><label>证据</label><strong>23 个原始文件</strong><p>仅统计 xlsx/xls/csv</p></article>
+<article class="status-card warning"><label>阻塞原因</label><strong>1 项</strong><p>1 个搜索词文件名与日期不一致</p></article>
+<article class="status-card"><label>下一步</label><strong>核验入库</strong><p>先看行数与证据路径</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>8 类报表进度</h2><p>进度不代表结果可信</p></div><span class="badge info">真实报表</span></div>
+<div class="quad-grid">
+${['广告活动','广告组','关键词','搜索词','商品投放','投放位置','商品归因','预算记录'].map(function(n){return '<article class="stat-card"><label>'+n+'</label><strong>100%</strong><div class="metric-bar"><span style="width:100%"></span></div></article>'}).join('')}
+</div></section>
+<section class="dual-grid">
+<article class="panel"><div class="panel-head"><div><h2>原始文件表</h2><p>文件名、日期范围、入库状态</p></div><span class="badge ready">可追溯</span></div>
+<div class="table-wrap"><table><thead><tr><th>报表类型</th><th>文件名</th><th>日期范围</th><th>入库状态</th></tr></thead><tbody>
+<tr><td>广告活动</td><td>campaign-20260624-20260630.xlsx</td><td>06-24 ~ 06-30</td><td>待复核</td></tr>
+<tr><td>搜索词</td><td>search-term-20260625-20260630.csv</td><td>06-25 ~ 06-30</td><td>需校正</td></tr>
+<tr><td>商品投放</td><td>product-targeting-20260624-20260630.xlsx</td><td>06-24 ~ 06-30</td><td>待复核</td></tr>
+</tbody></table></div></article>
+<article class="panel"><div class="panel-head"><div><h2>批次状态</h2><p>不要让批次号替代证据</p></div><span class="badge warning">先看阻塞</span></div>
+<div class="list-stack">
+<div class="list-item"><strong>批次</strong><p>BATCH-20260630-US-01，已绑定 23 个原始文件</p></div>
+<div class="list-item"><strong>阻塞</strong><p>搜索词文件日期起点晚于范围 1 天</p></div>
+<div class="list-item"><strong>下一步</strong><p>进入"指标核验入库"看行数、口径与证据</p></div>
+</div></article>
+</section>`;
+    }
+  },
+  'data-import-validation': {
+    title: '指标核验入库',
+    desc: '核验入库行数、口径一致性、数据完整性与证据路径，确认后才能进入量化诊断。',
+    maxActions: 2,
+    actions: [
+      { label: '执行入库校验', cls: 'primary', nav: null },
+      { label: '进入量化诊断', cls: '', nav: 'ad-quant' }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi ready"><label>入库进度</label><strong>8/8 类</strong><p>全部报表类型已导入</p></article>
+<article class="kpi"><label>总行数</label><strong>148,320 行</strong><p>广告指标完整入库</p></article>
+<article class="kpi warning"><label>异常行</label><strong>1,038 行</strong><p>0.7% 待人工复核</p></article>
+<article class="kpi"><label>口径一致</label><strong>99.3%</strong><p>USD 口径无冲突</p></article>
+</section>
+<section class="status-grid">
+<article class="status-card ready"><label>当前状态</label><strong>入库完成</strong><p>8 类报表均已入库校验</p></article>
+<article class="status-card"><label>证据</label><strong>8 类校验快照</strong><p>每类保留入库前后对比</p></article>
+<article class="status-card warning"><label>阻塞</label><strong>1,038 行待复核</strong><p>约 0.7% 存在金额或数量不一致</p></article>
+<article class="status-card"><label>下一步</label><strong>进入量化诊断</strong><p>复核异常后启动 AI 分析</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>入库校验摘要</h2><p>按报表类型查看入库结果</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>报表类型</th><th>文件数</th><th>入库行数</th><th>通过率</th><th>异常数</th><th>证据</th></tr></thead><tbody>
+<tr><td>广告活动</td><td>3</td><td>2,410</td><td>99.8%</td><td>5</td><td>快照已存</td></tr>
+<tr><td>广告组</td><td>3</td><td>6,820</td><td>99.5%</td><td>34</td><td>快照已存</td></tr>
+<tr><td>关键词</td><td>5</td><td>48,300</td><td>99.2%</td><td>386</td><td>快照已存</td></tr>
+<tr><td>搜索词</td><td>4</td><td>72,100</td><td>99.1%</td><td>494</td><td>快照已存</td></tr>
+<tr><td>商品投放</td><td>3</td><td>12,500</td><td>99.6%</td><td>50</td><td>快照已存</td></tr>
+<tr><td>其他类型</td><td>5</td><td>6,190</td><td>99.0%</td><td>69</td><td>快照已存</td></tr>
+</tbody></table></div></section>`;
+    }
+  },
+  'operation-events': {
+    title: '运营事件标记',
+    desc: '记录改价、优惠券、素材替换等运营动作，形成可追溯的事件时间线。',
+    maxActions: 2,
+    actions: [
+      { label: '新增运营事件', cls: 'primary', nav: null },
+      { label: '去 ACOS 配置', cls: '', nav: 'product-config' }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi"><label>事件总数</label><strong>8 条</strong><p>近 30 天运营事件</p></article>
+<article class="kpi warning"><label>未标记</label><strong>3 条</strong><p>待补充时间线</p></article>
+<article class="kpi ready"><label>已标记</label><strong>5 条</strong><p>证据完整可追溯</p></article>
+<article class="kpi"><label>影响范围</label><strong>2 个产品</strong><p>当前 ASIN 范围</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>事件时间线</h2><p>按时间倒序排列的运营动作</p></div><span class="badge info">可编辑</span></div>
+<div class="timeline">
+<div class="timeline-item"><span>06-30</span><div><strong>新增广告活动 SP-06</strong><p>针对 B0C8QW42LM 的 Exact 匹配活动，初始预算 $50/天</p></div></div>
+<div class="timeline-item"><span>06-28</span><div><strong>改价 -3%</strong><p>Desk Lamp 降价至 $29.99，可能影响转化率和 AOV</p></div></div>
+<div class="timeline-item"><span>06-27</span><div><strong>更新主图</strong><p>场景图替换为白底图，可能影响 CTR</p></div></div>
+<div class="timeline-item"><span>06-26</span><div><strong>优惠券 10% OFF</strong><p>持续至 06-30，期间 ACOS 可能偏高</p></div></div>
+<div class="timeline-item"><span>06-25</span><div><strong>预算提额</strong><p>核心活动从 $30 提至 $45/天</p></div></div>
+</div></section>
+<section class="panel"><div class="panel-head"><div><h2>新增事件</h2><p>填入关键信息后标记到时间线</p></div></div>
+<div class="form-grid">
+<div class="field"><label>事件类型</label><select><option>改价</option><option>优惠券</option><option>素材替换</option><option>预算调整</option><option>新建活动</option><option>其他</option></select></div>
+<div class="field"><label>日期</label><input type="date" value="2026-07-02"></div>
+<div class="field"><label>影响产品</label><input value="B0C8QW42LM"></div>
+<div class="field"><label>描述</label><input placeholder="简要描述事件内容"></div>
+</div>
+</section>`;
+    }
+  },
+  'product-config': {
+    title: '产品 ACOS 配置',
+    desc: '为每个产品设定目标 ACOS 和预算边界，作为量化诊断与建议的基准线。',
+    maxActions: 2,
+    actions: [
+      { label: '保存配置', cls: 'primary', nav: null },
+      { label: '去量化诊断', cls: '', nav: 'ad-quant' }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi"><label>已配置产品</label><strong>12/12</strong><p>全部 ASIN 已有目标</p></article>
+<article class="kpi warning"><label>超线产品</label><strong>3 个</strong><p>当前 ACOS 超目标线</p></article>
+<article class="kpi ready"><label>达标产品</label><strong>9 个</strong><p>ACOS 在目标范围内</p></article>
+<article class="kpi"><label>平均目标</label><strong>24.0%</strong><p>全局加权均值</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>ACOS 配置表</h2><p>目标 ACOS 和预算上线</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>ASIN</th><th>标题</th><th>目标 ACOS</th><th>当前 ACOS</th><th>预算上限/天</th><th>状态</th></tr></thead><tbody>
+<tr><td>B0C8QW42LM</td><td>Desk Lamp</td><td>24.0%</td><td><span style="color:var(--state-warning)">25.8%</span></td><td>$150</td><td><span class="badge warning">超线</span></td></tr>
+<tr><td>B0C1HX72PP</td><td>Reading Light</td><td>22.0%</td><td>19.4%</td><td>$200</td><td><span class="badge ready">达标</span></td></tr>
+<tr><td>B09ZRM18LK</td><td>Clip Lamp</td><td>30.0%</td><td>42.1%</td><td>$80</td><td><span class="badge blocked">严重超线</span></td></tr>
+</tbody></table></div></section>`;
+    }
+  },
+  'ad-quant': {
+    title: '量化诊断中心',
+    desc: '基于真实报表数据，AI 诊断广告对象健康状况，标记风险与机会。',
+    maxActions: 2,
+    actions: [
+      { label: '启动 AI 诊断', cls: 'primary', nav: null },
+      { label: '去优化建议', cls: '', nav: 'recommendations' }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi"><label>诊断对象</label><strong>48 个</strong><p>覆盖 ASIN、关键词、广告组</p></article>
+<article class="kpi warning"><label>高风险</label><strong>5 个</strong><p>ACOS 严重超线</p></article>
+<article class="kpi blocked"><label>无转化</label><strong>3 个</strong><p>花费但 0 订单</p></article>
+<article class="kpi ready"><label>健康</label><strong>31 个</strong><p>在预期范围内</p></article>
+</section>
+<section class="status-grid">
+<article class="status-card"><label>AI 诊断引擎</label><strong>就绪</strong><p>已接入 4 个诊断模型</p></article>
+<article class="status-card ready"><label>上次诊断</label><strong>06-30 09:15</strong><p>48 个对象完成分析</p></article>
+<article class="status-card warning"><label>需要复核</label><strong>8 个对象</strong><p>存在需人工判断的边界</p></article>
+<article class="status-card"><label>建议生成</label><strong>12 条</strong><p>已转发至优化建议草案</p></article>
+</section>
+<section class="dual-grid">
+<article class="panel"><div class="panel-head"><div><h2>风险对象</h2><p>按风险等级排序</p></div><span class="badge blocked">高优先级</span></div>
+<div class="table-wrap"><table><thead><tr><th>对象</th><th>类型</th><th>花费</th><th>销售</th><th>ACOS</th><th>风险</th></tr></thead><tbody>
+<tr><td>B0C8QW42LM</td><td>ASIN</td><td>$486.40</td><td>$1,204.55</td><td>40.4%</td><td>高</td></tr>
+<tr><td>wireless desk lamp</td><td>关键词</td><td>$212.18</td><td>$0.00</td><td>—</td><td>无转化</td></tr>
+<tr><td>SP-Broad-02</td><td>广告组</td><td>$308.82</td><td>$1,592.10</td><td>19.4%</td><td>中</td></tr>
+</tbody></table></div></article>
+<article class="panel"><div class="panel-head"><div><h2>AI 模块状态</h2></div></div>
+<div class="ai-module-card ready"><div class="ai-module-header"><h3>ACOS 归因分析</h3><span class="badge ready">就绪</span></div>
+<div class="ai-module-body">可对任一产品启动 ACOS 归因，拆解花费、转化率、CPC 和 AOV 的贡献度。</div>
+<div class="ai-module-footer"><button class="btn compact primary">启动分析</button></div></div>
+<div class="ai-module-card" style="margin-top:12px"><div class="ai-module-header"><h3>预算优化建议</h3><span class="badge info">待运行</span></div>
+<div class="ai-module-body">基于历史花费与转化曲线，建议最优日预算分配。</div>
+<div class="ai-module-footer"><button class="btn compact primary">生成建议</button></div></div>
+</article>
+</section>`;
+    }
+  },
+  recommendations: {
+    title: '优化建议草案',
+    desc: 'AI 生成的广告优化建议，需人工审批后才能执行。',
+    maxActions: 2,
+    actions: [
+      { label: '刷新建议', cls: 'primary', nav: null },
+      { label: '去审批中心', cls: '', nav: 'approval' }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi"><label>建议总数</label><strong>12 条</strong><p>当前活跃建议</p></article>
+<article class="kpi warning"><label>待审批</label><strong>6 条</strong><p>需运营确认</p></article>
+<article class="kpi ready"><label>已批准</label><strong>4 条</strong><p>等待执行</p></article>
+<article class="kpi"><label>已执行</label><strong>2 条</strong><p>最近 7 天</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>建议列表</h2><p>按优先级排列，需逐条审批</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>ID</th><th>类型</th><th>对象</th><th>建议动作</th><th>优先级</th><th>状态</th></tr></thead><tbody>
+<tr><td>REC-001</td><td>否词</td><td>关键词/wireless desk lamp</td><td>添加否定关键词，34点击0转化</td><td><span class="badge blocked">高</span></td><td>待审批</td></tr>
+<tr><td>REC-002</td><td>降价</td><td>关键词/desk lamp usb</td><td>CPC $1.85→$1.40，ACOS 偏高</td><td><span class="badge warning">中</span></td><td>待审批</td></tr>
+<tr><td>REC-003</td><td>预算</td><td>广告组/SP-01</td><td>日预算$45→$60，ROAS 4.2</td><td><span class="badge info">低</span></td><td>已批准</td></tr>
+<tr><td>REC-004</td><td>否词</td><td>ASIN/B0C8QW42LM</td><td>向核心活动添加5个否定词</td><td><span class="badge warning">中</span></td><td>待审批</td></tr>
+</tbody></table></div></section>`;
+    }
+  },
+  approval: {
+    title: '审批历史中心',
+    desc: '逐条审批 AI 建议，审批通过后进入执行回读链路。审批≠执行。',
+    maxActions: 2,
+    actions: [
+      { label: '批量审批', cls: 'primary', nav: null },
+      { label: '去执行回读', cls: '', nav: 'readback' }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi"><label>审批总数</label><strong>6 条</strong><p>当前待处理</p></article>
+<article class="kpi warning"><label>高风险</label><strong>2 条</strong><p>需运营负责人确认</p></article>
+<article class="kpi"><label>中风险</label><strong>4 条</strong><p>普通审批</p></article>
+<article class="kpi ready"><label>已通过</label><strong>8 条</strong><p>历史记录</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>审批列表</h2><p>每条建议需单独审批</p></div><span class="badge warning">审批≠执行</span></div>
+<div class="table-wrap"><table><thead><tr><th>建议 ID</th><th>动作</th><th>风险</th><th>申请人</th><th>时间</th><th>操作</th></tr></thead><tbody>
+<tr><td>REC-001</td><td>否定关键词: wireless desk lamp</td><td><span class="badge blocked">高</span></td><td>AI 诊断</td><td>09:15</td><td><button class="btn compact primary">批准</button> <button class="btn compact danger">驳回</button></td></tr>
+<tr><td>REC-002</td><td>调整 CPC: desk lamp usb</td><td><span class="badge warning">中</span></td><td>AI 诊断</td><td>09:16</td><td><button class="btn compact primary">批准</button> <button class="btn compact danger">驳回</button></td></tr>
+<tr><td>REC-004</td><td>否定关键词: 5个词</td><td><span class="badge warning">中</span></td><td>AI 诊断</td><td>09:17</td><td><button class="btn compact primary">批准</button> <button class="btn compact danger">驳回</button></td></tr>
+</tbody></table></div></section>`;
+    }
+  },
+  readback: {
+    title: '渐进执行回读',
+    desc: '执行审批后的建议并回读 after 值，形成完整的执行证据闭环。',
+    maxActions: 2,
+    actions: [
+      { label: '开始回读流程', cls: 'primary', nav: null },
+      { label: '去交付验收', cls: '', nav: 'delivery' }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi"><label>待回读</label><strong>4 条</strong><p>已批准待执行</p></article>
+<article class="kpi warning"><label>回读中</label><strong>2 条</strong><p>正在等待 after 数据</p></article>
+<article class="kpi ready"><label>已完成</label><strong>2 条</strong><p>回读值已验证</p></article>
+<article class="kpi"><label>缺失</label><strong>2 条</strong><p>after 值未到位</p></article>
+</section>
+<section class="status-grid">
+<article class="status-card warning"><label>回读步骤 1/4</label><strong>审批确认</strong><p>核对审批状态与执行范围</p></article>
+<article class="status-card"><label>回读步骤 2/4</label><strong>截图采集</strong><p>截取执行前后广告控制台页面</p></article>
+<article class="status-card"><label>回读步骤 3/4</label><strong>数据校验</strong><p>比对 before/after 数值</p></article>
+<article class="status-card"><label>回读步骤 4/4</label><strong>证据导出</strong><p>生成回读证据包</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>回读清单</h2><p>逐条跟踪执行状态</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>建议 ID</th><th>动作</th><th>审批状态</th><th>Before</th><th>After</th><th>证据</th></tr></thead><tbody>
+<tr><td>REC-003</td><td>预算$45→$60</td><td><span class="badge ready">已通过</span></td><td>$45/天</td><td>$60/天</td><td>截图已存</td></tr>
+<tr><td>REC-005</td><td>关闭低效活动</td><td><span class="badge ready">已通过</span></td><td>运行中</td><td>已暂停</td><td>待截图</td></tr>
+<tr><td>REC-001</td><td>否定关键词</td><td><span class="badge warning">回读中</span></td><td>34点击</td><td>—</td><td>等待 after</td></tr>
+</tbody></table></div></section>`;
+    }
+  },
+  'keyword-opportunities': {
+    title: '关键词机会矩阵',
+    desc: '分析关键词表现，发现高潜力关键词和需要否定的低效关键词。',
+    maxActions: 2,
+    actions: [
+      { label: '刷新分析', cls: 'primary', nav: null },
+      { label: '去 Listing 优化', cls: '', nav: 'listing-optimization' }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi"><label>关键词总数</label><strong>1,248</strong><p>当前活跃广告覆盖</p></article>
+<article class="kpi ready"><label>高转化</label><strong>87 个</strong><p>ACOS 低于目标线</p></article>
+<article class="kpi warning"><label>待否定</label><strong>23 个</strong><p>高花费 0 转化</p></article>
+<article class="kpi"><label>新机会</label><strong>42 个</strong><p>搜索量上升无覆盖</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>关键词矩阵</h2><p>按花费/转化/ACOS 排列</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>关键词</th><th>匹配类型</th><th>花费</th><th>订单</th><th>ACOS</th><th>建议</th></tr></thead><tbody>
+<tr><td>desk lamp with usb</td><td>Exact</td><td>$486.40</td><td>4</td><td>40.4%</td><td><span class="badge warning">降 CPC</span></td></tr>
+<tr><td>wireless desk lamp</td><td>Broad</td><td>$212.18</td><td>0</td><td>—</td><td><span class="badge blocked">否定</span></td></tr>
+<tr><td>led table lamp</td><td>Phrase</td><td>$120.50</td><td>8</td><td>12.1%</td><td><span class="badge ready">加预算</span></td></tr>
+<tr><td>clip lamp for desk</td><td>Exact</td><td>$85.30</td><td>3</td><td>22.5%</td><td><span class="badge info">观察</span></td></tr>
+</tbody></table></div></section>`;
+    }
+  },
+  'listing-optimization': {
+    title: 'Listing 结构重写',
+    desc: '基于关键词分析和竞品对比，AI 辅助生成 Listing 优化草案。',
+    maxActions: 2,
+    actions: [
+      { label: '生成 AI 草案', cls: 'primary', nav: null },
+      { label: '导出草案', cls: '', nav: null }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi"><label>产品 Listing</label><strong>3 个</strong><p>当前编辑中的产品</p></article>
+<article class="kpi warning"><label>待优化</label><strong>2 个</strong><p>有优化空间的产品</p></article>
+<article class="kpi ready"><label>已优化</label><strong>1 个</strong><p>最近完成优化</p></article>
+<article class="kpi"><label>AI 草案</label><strong>5 份</strong><p>可用草稿</p></article>
+</section>
+<section class="dual-grid">
+<article class="panel"><div class="panel-head"><div><h2>Listing 编辑</h2><p>当前 ASIN 的标题和五点描述</p></div><span class="badge info">仅本地预览</span></div>
+<div class="form-grid">
+<div class="field"><label>产品标题</label><input value="Wireless Desk Lamp - USB Rechargeable, Adjustable LED Table Light"></div>
+<div class="field"><label>品牌</label><input value="BrightHome"></div>
+<div class="field" style="grid-column:1/-1"><label>五点描述</label><textarea>1. USB 充电无线台灯，无需插电使用\n2. 可调节亮度和色温 (3000K-6000K)\n3. 无级调光，触控开关\n4. 360° 可旋转灯臂\n5. 长续航，满电持续 8-48 小时</textarea></div>
+</div></article>
+<article class="panel"><div class="panel-head"><div><h2>AI 优化建议</h2><p>基于竞品和关键词分析</p></div></div>
+<div class="list-stack">
+<div class="list-item"><strong>标题建议</strong><p>在标题中添加 "Eye-Caring" 和 "Touch Control"，提升搜索匹配</p></div>
+<div class="list-item"><strong>关键词建议</strong><p>添加 dorm、college、reading 等场景词到五点</p></div>
+<div class="list-item"><strong>结构建议</strong><p>五点第3条改为功能描述，第4条保留使用场景</p></div>
+</div>
+</article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>版本历史</h2><p>Listing 修改记录</p></div></div>
+<div class="timeline">
+<div class="timeline-item"><span>06-30</span><div><strong>v3</strong><p>AI 辅助优化标题和五点描述关键词密度</p></div></div>
+<div class="timeline-item"><span>06-15</span><div><strong>v2</strong><p>添加 USB 充电、色温可调等卖点</p></div></div>
+<div class="timeline-item"><span>05-20</span><div><strong>v1</strong><p>初始 Listing</p></div></div>
+</div></section>`;
+    }
+  },
+  scheduler: {
+    title: '本地定时调度',
+    desc: '配置定时任务自动执行数据采集、AI 诊断和建议生成。',
+    maxActions: 2,
+    actions: [
+      { label: '新增定时任务', cls: 'primary', nav: null },
+      { label: '刷新状态', cls: '', nav: null }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi"><label>任务总数</label><strong>4 个</strong><p>已配置定时任务</p></article>
+<article class="kpi ready"><label>运行中</label><strong>3 个</strong><p>正常调度中</p></article>
+<article class="kpi warning"><label>已暂停</label><strong>1 个</strong><p>手动暂停</p></article>
+<article class="kpi"><label>最近执行</label><strong>09:00</strong><p>今日首次运行</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>定时任务列表</h2><p>调度状态和下次执行时间</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>任务</th><th>调度</th><th>状态</th><th>上次执行</th><th>下次执行</th><th>操作</th></tr></thead><tbody>
+<tr><td>日报采集</td><td>每日 03:00</td><td><span class="badge ready">运行中</span></td><td>03:02</td><td>明天 03:00</td><td><button class="btn compact">暂停</button></td></tr>
+<tr><td>AI 诊断</td><td>每日 06:00</td><td><span class="badge ready">运行中</span></td><td>06:05</td><td>明天 06:00</td><td><button class="btn compact">暂停</button></td></tr>
+<tr><td>建议刷新</td><td>每日 08:00</td><td><span class="badge ready">运行中</span></td><td>08:02</td><td>明天 08:00</td><td><button class="btn compact">暂停</button></td></tr>
+<tr><td>证据归档</td><td>每周一 10:00</td><td><span class="badge warning">已暂停</span></td><td>06-24</td><td>—</td><td><button class="btn compact primary">启用</button></td></tr>
+</tbody></table></div></section>`;
+    }
+  },
+  settings: {
+    title: 'AI 适配与诊断',
+    desc: '配置 AI 连接、模型参数和系统偏好，确保 AI 引擎正常运行。',
+    maxActions: 2,
+    actions: [
+      { label: '测试连接', cls: 'primary', nav: null },
+      { label: '保存设置', cls: '', nav: null }
+    ],
+    render: function() {
+      return `
+<section class="status-grid">
+<article class="status-card ready"><label>AI 连接</label><strong>已连接</strong><p>API 端点可正常访问</p></article>
+<article class="status-card"><label>模型版本</label><strong>Claude 3.5 Sonnet</strong><p>当前诊断引擎模型</p></article>
+<article class="status-card warning"><label>Token 用量</label><strong>42,180 / 100,000</strong><p>本月用量 42%</p></article>
+<article class="status-card"><label>延迟</label><strong>320ms</strong><p>平均响应延迟</p></article>
+</section>
+<section class="dual-grid">
+<article class="panel"><div class="panel-head"><div><h2>AI 连接配置</h2><p>API 端点和凭据</p></div><span class="badge ready">已连接</span></div>
+<div class="form-grid">
+<div class="field"><label>API 端点</label><input value="https://api.anthropic.com"></div>
+<div class="field"><label>API Key</label><input type="password" value="••••••••••••••••••••"></div>
+<div class="field"><label>默认模型</label><input value="claude-3-5-sonnet-20241022"></div>
+<div class="field"><label>最大 Token</label><input value="4096"></div>
+<div class="field"><label>温度</label><input value="0.3"></div>
+<div class="field"><label>超时(ms)</label><input value="30000"></div>
+</div></article>
+<article class="panel"><div class="panel-head"><div><h2>系统偏好</h2><p>本地应用设置</p></div></div>
+<div class="form-grid">
+<div class="field"><label>默认货币</label><select><option>USD</option><option>EUR</option><option>GBP</option></select></div>
+<div class="field"><label>语言</label><select><option>中文 (简体)</option><option>English</option></select></div>
+<div class="field"><label>证据目录</label><input value="D:\AmazonOps\evidence"></div>
+<div class="field"><label>报表目录</label><input value="D:\AmazonOps\reports"></div>
+</div>
+<div class="notice" style="margin-top:12px">本机数据不自动上传云端。审批和执行链路分离。</div>
+</article>
+</section>`;
+    }
+  },
+  delivery: {
+    title: '最终验收就绪门',
+    desc: '最终交付验收清单，确认所有建议已审批、已执行、已回读。',
+    maxActions: 2,
+    actions: [
+      { label: '生成交付包', cls: 'primary', nav: null },
+      { label: '查看证据目录', cls: '', nav: null }
+    ],
+    render: function() {
+      return `
+<section class="kpi-strip">
+<article class="kpi ready"><label>审批完成</label><strong>8/8</strong><p>全部通过</p></article>
+<article class="kpi warning"><label>执行完成</label><strong>6/8</strong><p>2 条待执行</p></article>
+<article class="kpi"><label>回读完成</label><strong>4/8</strong><p>4 条待回读</p></article>
+<article class="kpi blocked"><label>就绪门</label><strong>未通过</strong><p>条件未满足</p></article>
+</section>
+<section class="status-grid">
+<article class="status-card ready"><label>审批门</label><strong>通过</strong><p>8 条建议已审批</p></article>
+<article class="status-card warning"><label>执行门</label><strong>2 条待执行</strong><p>REC-006、REC-008 未执行</p></article>
+<article class="status-card warning"><label>证据门</label><strong>4 条待回读</strong><p>after 值仍需补充</p></article>
+<article class="status-card blocked"><label>交付门</label><strong>未就绪</strong><p>至少需完成执行+回读</p></article>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>交付清单</h2><p>全部建议的交付状态</p></div><span class="badge warning">待补齐</span></div>
+<div class="table-wrap"><table><thead><tr><th>建议 ID</th><th>动作</th><th>审批</th><th>执行</th><th>回读</th><th>证据</th></tr></thead><tbody>
+<tr><td>REC-001</td><td>否定关键词</td><td><span class="badge ready">通过</span></td><td><span class="badge ready">已执行</span></td><td><span class="badge ready">已回读</span></td><td>截图+数值</td></tr>
+<tr><td>REC-002</td><td>调整 CPC</td><td><span class="badge ready">通过</span></td><td><span class="badge ready">已执行</span></td><td><span class="badge warning">待回读</span></td><td>截图已有</td></tr>
+<tr><td>REC-003</td><td>预算调整</td><td><span class="badge ready">通过</span></td><td><span class="badge ready">已执行</span></td><td><span class="badge ready">已回读</span></td><td>完整</td></tr>
+<tr><td>REC-006</td><td>暂停活动</td><td><span class="badge ready">通过</span></td><td><span class="badge blocked">未执行</span></td><td><span class="badge blocked">—</span></td><td>无</td></tr>
+</tbody></table></div></section>`;
+    }
+  }
+};
+
+// ---- Navigation ----
+function navigateTo(pageId) {
+  var page = pages[pageId];
+  if (!page) return;
+  // Update nav
+  document.querySelectorAll('.proto-nav-item').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.nav === pageId);
+  });
+  // Render page header + content
+  var container = document.getElementById('pageContainer');
+  var actionsHtml = '';
+  if (page.actions) {
+    actionsHtml = '<div class="action-row">' + page.actions.map(function(a) {
+      return a.nav
+        ? '<button class="btn ' + a.cls + '" onclick="navigateTo(\'' + a.nav + '\')" type="button">' + a.label + '</button>'
+        : '<button class="btn ' + a.cls + '" onclick="showToast(\'' + a.label + ' 功能已触发\', \'info\')" type="button">' + a.label + '</button>';
+    }).join('') + '</div>';
+  }
+  container.innerHTML = '' +
+    '<header class="proto-pagehead"><div><h1>' + page.title + '</h1><p>' + page.desc + '</p></div>' +
+    actionsHtml + '</header>' +
+    '<main class="proto-content">' + page.render() + '</main>';
+  // Fade
+  container.classList.remove('page-fade');
+  void container.offsetWidth;
+  container.classList.add('page-fade');
+}
+
+// ---- Login ----
+function login() {
+  document.getElementById('view-login').classList.remove('active');
+  document.getElementById('view-app').classList.add('active');
+  navigateTo('dashboard');
+  showToast('登录成功，欢迎进入 Amazon AI Ops', 'success');
+}
+
+function logout() {
+  document.getElementById('view-app').classList.remove('active');
+  document.getElementById('view-login').classList.add('active');
+  showToast('已安全退出', 'info');
+}
+
+// ---- Toast ----
+var toastId = 0;
+function showToast(msg, tone) {
+  tone = tone || 'info';
+  var id = 't' + (++toastId);
+  var el = document.createElement('div');
+  el.className = 'toast-item ' + tone;
+  el.id = id;
+  el.textContent = msg;
+  document.getElementById('toastContainer').appendChild(el);
+  setTimeout(function() {
+    var t = document.getElementById(id);
+    if (t) { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }
+    setTimeout(function() { var t2 = document.getElementById(id); if (t2) t2.remove(); }, 300);
+  }, 3000);
+}
+
+// ---- Init: show toast demo on login buttons click ----
+document.querySelectorAll('#view-login .btn').forEach(function(b) {
+  var orig = b.onclick;
+  if (b.onclick && b.textContent.indexOf('确认并进入') < 0) {
+    b.addEventListener('click', function(e) {
+      if (e.target !== b) return;
+      // Show interaction toast for non-login buttons
+      if (b.textContent === '查看最近日志') showToast('日志查看功能已触发', 'info');
+    });
+  }
+});
+[].forEach.call(document.querySelectorAll('#pageContainer .btn'), function(b) {
+  if (b.dataset && b.dataset.nav) return;
+  if (b.textContent.indexOf('打开最近日志') >= 0) {
+    b.addEventListener('click', function() { showToast('日志查看功能已触发', 'info'); });
+  }
+});
+</script>
+</body>
+</html>

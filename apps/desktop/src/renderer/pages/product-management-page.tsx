@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScopeText, useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
-import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
@@ -48,7 +48,7 @@ const STAGE_OPTIONS: Array<{ value: ProductStage; label: string }> = [
 export const PRODUCT_QUICK_COST_FIELDS = [
   { key: 'purchaseCost', label: '采购成本', placeholder: '例如 103.00' },
   { key: 'fbaFee', label: 'FBA 费用', placeholder: '例如 6.00' },
-  { key: 'minPrice', label: '最低售价', placeholder: '例如 39.99' },
+  { key: 'minPrice', label: '最低可接受售价', placeholder: '例如 39.99' },
 ] as const;
 
 export const PRODUCT_QUICK_TARGET_FIELDS = [
@@ -474,13 +474,33 @@ export function ProductManagementPage() {
             onClick: () => navigate(action.route),
           }))}
         >
-          <div className="dashboard-task-metrics" aria-label="产品管理任务摘要">
-            <StatusPill tone={selected ? (hasImportedMetrics ? 'ready' : 'warning') : 'pending'}>
-              产品 {model.products.length}
-            </StatusPill>
-            <span>{selected ? `${selected.title} / ${selected.asin}` : '未锁定 ASIN'}</span>
-            <span>指标 {importedRows} 行</span>
-            <span>日级 {model.selectedDailyRows.length} 天</span>
+          <div className="kpi-row kpi-row--task" aria-label="产品管理任务摘要">
+            <KpiCard
+              label="产品池"
+              value={`${model.products.length} 个`}
+              detail={selected ? '已锁定当前产品' : '等待选择 ASIN'}
+              tone={selected ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="当前产品"
+              value={selected ? selected.title : '未锁定'}
+              detail={selected ? selected.asin : '避免默认取第一条'}
+              tone={selected ? 'ready' : 'warning'}
+            />
+            <KpiCard
+              label="入库指标"
+              value={`${importedRows} 行`}
+              detail={hasImportedMetrics ? '可进入量化' : '先导入真实报表'}
+              tone={hasImportedMetrics ? 'ready' : 'blocked'}
+            />
+            <KpiCard
+              label="日级账本"
+              value={`${model.selectedDailyRows.length} 天`}
+              detail="按产品查看趋势"
+              tone={model.selectedDailyRows.length ? 'ready' : 'pending'}
+            />
+          </div>
+          <div className="dashboard-task-metrics" aria-label="产品管理凭证摘要">
             <span
               aria-describedby="product-management-credential-sandbox-popover"
               aria-label={`${credentialSandbox.label}，${credentialSandbox.status}，${credentialSandbox.detail}`}

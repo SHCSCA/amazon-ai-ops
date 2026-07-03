@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { DecisionActionStrip, FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { DecisionActionStrip, FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
@@ -833,21 +833,60 @@ export function ApprovalPage() {
             onClick: selected ? showSelectedDecisionTarget : showApprovalQueue,
           }}
         >
-          <div className="dashboard-task-metrics" aria-label="审批任务摘要">
+          <div className="kpi-row kpi-row--task" aria-label="审批任务摘要">
             {selected ? (
               <>
-                <StatusPill tone={selectedApprovalDecision.tone}>{selectedApprovalDecision.statusLabel}</StatusPill>
-                <span>{selected.actionType}</span>
-                <span>{objectName(selected)}</span>
-                <span>缺证据 {selectedMissing.length}</span>
-                <span>复核项 {selectedBlockers.length}</span>
+                <KpiCard
+                  label="审批状态"
+                  value={selectedApprovalDecision.statusLabel}
+                  detail={selected.actionType}
+                  tone={selectedApprovalDecision.tone}
+                />
+                <KpiCard
+                  label="广告对象"
+                  value={objectName(selected)}
+                  detail={selected.evidence?.campaignName || '当前建议'}
+                  tone="pending"
+                />
+                <KpiCard
+                  label="缺证据"
+                  value={selectedMissing.length}
+                  detail={selectedMissing.length ? selectedMissing.slice(0, 2).join('、') : '预检通过'}
+                  tone={selectedMissing.length ? 'blocked' : 'ready'}
+                />
+                <KpiCard
+                  label="复核项"
+                  value={selectedBlockers.length}
+                  detail={selectedBlockers.length ? selectedBlockers.slice(0, 2).join('、') : '可普通审批'}
+                  tone={selectedBlockers.length ? 'warning' : 'ready'}
+                />
               </>
             ) : (
               <>
-                <StatusPill tone={rows.length ? 'pending' : 'blocked'}>{TAB_LABELS[tab]} {rows.length}</StatusPill>
-                <span>{scope.storeName || '-'}</span>
-                <span>{scope.marketplaceCode || '-'}</span>
-                <span>只审批，不执行</span>
+                <KpiCard
+                  label="当前队列"
+                  value={`${TAB_LABELS[tab]} ${rows.length}`}
+                  detail={currentBatchId || '批次待确认'}
+                  tone={rows.length ? 'pending' : 'blocked'}
+                />
+                <KpiCard
+                  label="店铺"
+                  value={scope.storeName || '-'}
+                  detail={scope.marketplaceCode || '-'}
+                  tone={scope.storeName ? 'ready' : 'warning'}
+                />
+                <KpiCard
+                  label="动作边界"
+                  value="只审批"
+                  detail="不执行广告"
+                  tone="warning"
+                />
+                <KpiCard
+                  label="下一步"
+                  value={rows.length ? '选择建议' : '等待建议'}
+                  detail="批准后进入回读"
+                  tone={rows.length ? 'pending' : 'blocked'}
+                />
               </>
             )}
           </div>

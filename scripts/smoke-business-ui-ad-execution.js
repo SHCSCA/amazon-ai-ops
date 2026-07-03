@@ -13,9 +13,9 @@ const NAV_RE = {
   recommendations: /优化建议草案|优化建议/,
 };
 const HEADING_RE = {
-  approval: /策略修改行为安全决策审批中心/,
-  readback: /广告操作手动执行与截图存证过闸向导/,
-  recommendations: /广告优化策略生成建议草案工作台/,
+  approval: /审批历史中心/,
+  readback: /渐进执行回读/,
+  recommendations: /优化建议草案/,
 };
 
 function fail(message, details) {

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
@@ -714,6 +714,32 @@ export function DataImportValidationPage() {
             },
           ]}
         >
+          <div className="kpi-row kpi-row--task" aria-label="指标入库任务摘要">
+            <KpiCard
+              label="真实报表"
+              value={`${realReportCount}/8`}
+              detail={hasRealFiles ? '目录中可导入' : '等待采集'}
+              tone={realReportCount >= 8 ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
+            />
+            <KpiCard
+              label="日级指标"
+              value={`${importedRows} 行`}
+              detail={hasImportedMetrics ? '已写入 SQLite' : '尚未入库'}
+              tone={hasImportedMetrics ? 'ready' : 'blocked'}
+            />
+            <KpiCard
+              label="异常证据"
+              value={`${rejectedEvidenceCount} 个`}
+              detail="截图/审计不算广告数据"
+              tone={rejectedEvidenceCount > 0 ? 'warning' : 'ready'}
+            />
+            <KpiCard
+              label="下一步"
+              value={hasImportedMetrics ? '广告量化' : hasRealFiles ? '导入表格' : '获取报表'}
+              detail="只按真实表格推进"
+              tone={hasImportedMetrics ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
+            />
+          </div>
           {loading && <p className="muted-line">正在读取当前范围文件和数据库状态...</p>}
           {error && <p className="blocked-line">读取异常：{error}</p>}
         </OperatorTaskPanel>

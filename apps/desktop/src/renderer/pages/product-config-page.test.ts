@@ -47,7 +47,7 @@ describe('productCostInputHint', () => {
       targetNetMargin: 0.15,
       targetAcos: 0.35,
       targetTacos: 0.12,
-    })).toBe('已填写成本或最低售价；保存前请确认这些数字来自当前产品。');
+    })).toBe('已填写成本或最低可接受售价；保存前请确认这些数字来自当前产品。');
   });
 
   it('hydrates editable cost fields from loaded product rows', () => {

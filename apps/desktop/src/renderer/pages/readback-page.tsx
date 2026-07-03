@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, SafetyGateLine, StatusPill } from '../components/ui';
+import { KpiCard, PageHeader, Panel, SafetyGateLine, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import {
   parseReadbackRepairIntent,
@@ -1068,6 +1068,12 @@ export function ReadbackPage() {
     '--readback-step-count': readbackWizardSteps.length,
   } as React.CSSProperties;
   const activeMissingCount = activeStepSummary?.missingCount || 0;
+  const capturedEvidenceCount = [
+    form.approvalArtifactPath,
+    form.beforeScreenshotPath,
+    form.afterScreenshotPath,
+    form.readbackEvidencePath,
+  ].filter((value) => value.trim()).length;
   const activeStepDetail = activeMissingCount
     ? `当前步骤还有 ${activeMissingCount} 项待补；所有安全缺口仍由本地校验决定。`
     : '当前步骤已满足；进入下一步前仍保留最终导出校验。';
@@ -1627,6 +1633,32 @@ export function ReadbackPage() {
           detail={activeStepDetail}
           primaryAction={readbackPrimaryAction}
         >
+          <div className="kpi-row kpi-row--task" aria-label="回读任务摘要">
+            <KpiCard
+              label="当前步骤"
+              value={`${activeStepIndex + 1}/4`}
+              detail={activeStepSummary.title}
+              tone={activeMissingCount ? 'warning' : 'ready'}
+            />
+            <KpiCard
+              label="已批准动作"
+              value={approvedRows.length}
+              detail={form.recommendationId ? `已选择 #${form.recommendationId}` : '等待选择'}
+              tone={form.recommendationId ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="当前缺口"
+              value={activeMissingCount}
+              detail={precheckCopy.statusLabel}
+              tone={activeMissingCount ? 'blocked' : 'ready'}
+            />
+            <KpiCard
+              label="截图证据"
+              value={`${capturedEvidenceCount}/4`}
+              detail="审批/前/后/回读"
+              tone={capturedEvidenceCount >= 4 ? 'ready' : capturedEvidenceCount > 0 ? 'warning' : 'blocked'}
+            />
+          </div>
           <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
           <div className="chip-row readback-safety-row">
             <span className="chip chip-warning">人工执行证据，不批量写入</span>

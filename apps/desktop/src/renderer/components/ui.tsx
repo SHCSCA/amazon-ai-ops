@@ -250,3 +250,22 @@ export function DecisionActionStrip({
     </div>
   );
 }
+
+/* ── v1.6 低噪音设计系统扩展 ── */
+
+export interface KpiCardProps {
+  label: string;
+  value: React.ReactNode;
+  detail?: React.ReactNode;
+  tone?: 'ready' | 'warning' | 'blocked' | 'pending';
+}
+
+export function KpiCard({ label, value, detail, tone }: KpiCardProps) {
+  return (
+    <div className={`kpi-card${tone ? ` kpi-card--${tone}` : ''}`}>
+      <span className="kpi-card__label">{label}</span>
+      <span className="kpi-card__value">{value}</span>
+      {detail && <p className="kpi-card__detail">{detail}</p>}
+    </div>
+  );
+}

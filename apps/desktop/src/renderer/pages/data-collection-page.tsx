@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { MicroStepper, PageHeader, Panel, StatusPill } from '../components/ui';
+import { KpiCard, MicroStepper, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildCollectionActionSummary } from '../collection-action-summary';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
@@ -1277,6 +1277,32 @@ export function DataCollectionPage() {
             },
           ]}
         >
+          <div className="kpi-row kpi-row--task" aria-label="数据采集任务摘要">
+            <KpiCard
+              label="真实报表"
+              value={`${realReportCount}/8`}
+              detail={realReportCount >= 8 ? '完整覆盖' : '缺少部分报表'}
+              tone={realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}
+            />
+            <KpiCard
+              label="入库指标"
+              value={`${importedRowCount} 行`}
+              detail={importedRowCount > 0 ? '已写入本地 DB' : '等待导入'}
+              tone={importedRowCount > 0 ? 'ready' : 'blocked'}
+            />
+            <KpiCard
+              label="已选报表"
+              value={`${selectedCount}/${reportOptions.length || 8}`}
+              detail="重建/下载只作用于已选项"
+              tone={selectedCount > 0 ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="当前动作"
+              value={runningAction ? actionModeLabel(runningAction) : taskState.isComplete ? '已完成' : '待执行'}
+              detail={runningAction ? '请勿切换范围' : taskState.primaryActionLabel}
+              tone={runningAction ? 'pending' : taskState.isComplete ? 'ready' : 'warning'}
+            />
+          </div>
           {loading && <p className="muted-line">正在读取采集状态...</p>}
           {error && <p className="blocked-line">读取接口异常：{error}</p>}
         </OperatorTaskPanel>

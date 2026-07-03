@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput, type DeliveryMatrixItem, type DeliveryMatrixStatus } from '../delivery-readiness-matrix';
 import { compactPath, formatPercent, formatUsd } from '../formatters';
@@ -1441,13 +1441,31 @@ export function DashboardPage() {
         }}
         secondaryActions={primaryTaskSecondaryActions}
       >
-        <div className="dashboard-task-metrics" aria-label="数据健康摘要">
-          <StatusPill tone={hasProductScope ? 'ready' : 'warning'}>{hasProductScope ? `产品 ${selectedScopeAsin}` : '未选产品'}</StatusPill>
-          <StatusPill tone={isQuantifiable ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>{dataGateLabel}</StatusPill>
-          <span>{realReportCount}/8 类报表</span>
-          <span>{importedRows} 行指标</span>
-          {actionableRows > 0 && <span>{actionableRows} 行{isQuantifiable ? '可建议' : '可行动'}</span>}
-          {taskRecommendationMetric && <span>{taskRecommendationMetric}</span>}
+        <div className="kpi-row kpi-row--task" aria-label="数据健康摘要">
+          <KpiCard
+            label="产品"
+            value={hasProductScope ? selectedScopeAsin : '未选'}
+            detail={hasProductScope ? '当前 ASIN 已锁定' : '先进入产品管理'}
+            tone={hasProductScope ? 'ready' : 'warning'}
+          />
+          <KpiCard
+            label="数据门槛"
+            value={dataGateLabel}
+            detail={`${realReportCount}/8 类报表`}
+            tone={isQuantifiable ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
+          />
+          <KpiCard
+            label="入库指标"
+            value={`${importedRows} 行`}
+            detail={actionableRows > 0 ? `${actionableRows} 行可行动` : '等待可行动对象'}
+            tone={importedRows > 0 ? 'ready' : 'blocked'}
+          />
+          <KpiCard
+            label="建议队列"
+            value={taskRecommendationMetric || '待生成'}
+            detail="审批前不执行广告"
+            tone={pendingRecommendationCount > 0 ? 'warning' : taskRecommendationMetric ? 'ready' : 'pending'}
+          />
         </div>
       </OperatorTaskPanel>
 

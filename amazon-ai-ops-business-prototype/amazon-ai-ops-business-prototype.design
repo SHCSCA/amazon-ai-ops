@@ -1,0 +1,384 @@
+{
+  "data": [
+    {
+      "id": "page-login",
+      "title": "登录与会话确认",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 0,
+        "y": 0,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/login.html",
+        "interactions": [
+          {
+            "domId": "enter-dashboard",
+            "targetPageId": "page-dashboard",
+            "transitionLabel": "进入工作台"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-dashboard",
+      "title": "今日看板",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 620,
+        "y": 0,
+        "group": 1
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/dashboard.html",
+        "interactions": [
+          {
+            "domId": "go-product-management",
+            "targetPageId": "page-product-management",
+            "transitionLabel": "进入产品管理"
+          },
+          {
+            "domId": "jump-keyword-opportunities",
+            "targetPageId": "page-keyword-opportunities",
+            "hideEdge": true,
+            "transitionLabel": "关键词支线"
+          },
+          {
+            "domId": "jump-settings",
+            "targetPageId": "page-settings",
+            "hideEdge": true,
+            "transitionLabel": "进入设置"
+          },
+          {
+            "domId": "jump-scheduler",
+            "targetPageId": "page-scheduler",
+            "hideEdge": true,
+            "transitionLabel": "查看调度"
+          },
+          {
+            "domId": "jump-operation-events",
+            "targetPageId": "page-operation-events",
+            "hideEdge": true,
+            "transitionLabel": "查看事件"
+          },
+          {
+            "domId": "jump-product-config",
+            "targetPageId": "page-product-config",
+            "hideEdge": true,
+            "transitionLabel": "查看 ACOS 配置"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-product-management",
+      "title": "产品管理",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 1240,
+        "y": 0,
+        "group": 1
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/product-management.html",
+        "interactions": [
+          {
+            "domId": "go-operation-scope",
+            "targetPageId": "page-operation-scope",
+            "transitionLabel": "确认工作范围"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-operation-scope",
+      "title": "工作范围",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 1860,
+        "y": 0,
+        "group": 2
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/operation-scope.html",
+        "interactions": [
+          {
+            "domId": "go-data-collection",
+            "targetPageId": "page-data-collection",
+            "transitionLabel": "进入数据采集"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-data-collection",
+      "title": "批量数据采集",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 2480,
+        "y": 0,
+        "group": 2
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/data-collection.html",
+        "interactions": [
+          {
+            "domId": "go-data-import-validation",
+            "targetPageId": "page-data-import-validation",
+            "transitionLabel": "进入指标入库"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-data-import-validation",
+      "title": "指标核验入库",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 3100,
+        "y": 0,
+        "group": 2
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/data-import-validation.html",
+        "interactions": [
+          {
+            "domId": "go-ad-quant",
+            "targetPageId": "page-ad-quant",
+            "transitionLabel": "进入量化诊断"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-operation-events",
+      "title": "运营事件标记",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 0,
+        "y": 435,
+        "group": 2
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/operation-events.html",
+        "interactions": []
+      }
+    },
+    {
+      "id": "page-product-config",
+      "title": "产品 ACOS 配置",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 620,
+        "y": 435,
+        "group": 2
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/product-config.html",
+        "interactions": []
+      }
+    },
+    {
+      "id": "page-ad-quant",
+      "title": "量化诊断中心",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 3720,
+        "y": 0,
+        "group": 2
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/ad-quant.html",
+        "interactions": [
+          {
+            "domId": "go-recommendations",
+            "targetPageId": "page-recommendations",
+            "transitionLabel": "进入建议草案"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-recommendations",
+      "title": "优化建议草案",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 4340,
+        "y": 0,
+        "group": 3
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/recommendations.html",
+        "interactions": [
+          {
+            "domId": "go-approval",
+            "targetPageId": "page-approval",
+            "transitionLabel": "送审"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-approval",
+      "title": "审批历史中心",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 4960,
+        "y": 0,
+        "group": 3
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/approval.html",
+        "interactions": [
+          {
+            "domId": "go-readback",
+            "targetPageId": "page-readback",
+            "transitionLabel": "进入执行回读"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-readback",
+      "title": "渐进执行回读",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 5580,
+        "y": 0,
+        "group": 3
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/readback.html",
+        "interactions": [
+          {
+            "domId": "go-delivery",
+            "targetPageId": "page-delivery",
+            "transitionLabel": "进入最终验收"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-keyword-opportunities",
+      "title": "关键词机会矩阵",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 1240,
+        "y": 435,
+        "group": 4
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/keyword-opportunities.html",
+        "interactions": [
+          {
+            "domId": "go-listing-optimization",
+            "targetPageId": "page-listing-optimization",
+            "hideEdge": true,
+            "transitionLabel": "进入 Listing 草案"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-listing-optimization",
+      "title": "Listing 结构重写",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 1860,
+        "y": 435,
+        "group": 4
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/listing-optimization.html",
+        "interactions": []
+      }
+    },
+    {
+      "id": "page-scheduler",
+      "title": "本地定时调度",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 2480,
+        "y": 435,
+        "group": 5
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/scheduler.html",
+        "interactions": []
+      }
+    },
+    {
+      "id": "page-settings",
+      "title": "AI 适配与诊断",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 3100,
+        "y": 435,
+        "group": 5
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/settings.html",
+        "interactions": []
+      }
+    },
+    {
+      "id": "page-delivery",
+      "title": "最终验收就绪门",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1782864000000,
+      "canvasData": {
+        "x": 6200,
+        "y": 0,
+        "group": 5
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/delivery.html",
+        "interactions": []
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": true,
+    "deviceType": "desktop",
+    "projectName": "Amazon AI Ops 业务原型",
+    "designLibrary": null,
+    "windowSize": {
+      "width": 800,
+      "height": 600
+    },
+    "showEdge": true
+  }
+}

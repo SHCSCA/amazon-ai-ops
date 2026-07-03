@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html class="light" lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>产品 ACOS 配置 - Amazon AI Ops</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main data-dom-id="product-config-page">
+    <header data-dom-id="product-config-header">
+      <h1 data-dom-id="product-config-title">产品 ACOS 配置</h1>
+      <p data-dom-id="product-config-desc">为当前范围内产品设置目标 ACOS/TACOS 阈值</p>
+    </header>
+
+    <section data-dom-id="product-config-form-section">
+      <h2 data-dom-id="product-config-form-title">配置表单</h2>
+      <form data-dom-id="product-config-form">
+        <label data-dom-id="product-config-form-asin">
+          ASIN <input type="text" placeholder="B0XXXXXXXXXX" data-dom-id="asin-input">
+        </label>
+        <label data-dom-id="product-config-form-stage">
+          阶段
+          <select data-dom-id="stage-select">
+            <option>新品期</option><option>成长期</option><option>成熟期</option><option>衰退期</option>
+          </select>
+        </label>
+        <label data-dom-id="product-config-form-cost">
+          成本 <input type="number" step="0.01" placeholder="0.00" data-dom-id="cost-input">
+        </label>
+        <label data-dom-id="product-config-form-price">
+          售价 <input type="number" step="0.01" placeholder="0.00" data-dom-id="price-input">
+        </label>
+        <label data-dom-id="product-config-form-target-acos">
+          目标 ACOS % <input type="number" step="0.1" placeholder="15.0" data-dom-id="target-acos-input">
+        </label>
+        <label data-dom-id="product-config-form-target-tacos">
+          目标 TACOS % <input type="number" step="0.1" placeholder="20.0" data-dom-id="target-tacos-input">
+        </label>
+        <button type="button" data-dom-id="product-config-save-btn">保存配置</button>
+      </form>
+    </section>
+
+    <section data-dom-id="product-config-table-section">
+      <h2 data-dom-id="product-config-table-title">已配置产品</h2>
+      <table data-dom-id="product-config-table">
+        <thead>
+          <tr>
+            <th>ASIN</th><th>阶段</th><th>目标 ACOS</th><th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-dom-id="product-config-row-1">
+            <td>B0XXXXXXXX01</td><td>成长期</td><td>18.5%</td><td>目标正常</td>
+          </tr>
+          <tr data-dom-id="product-config-row-2">
+            <td>B0XXXXXXXX02</td><td>成熟期</td><td>12.0%</td><td>需复核</td>
+          </tr>
+          <tr data-dom-id="product-config-row-3">
+            <td>B0XXXXXXXX03</td><td>新品期</td><td>25.0%</td><td>待配置</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

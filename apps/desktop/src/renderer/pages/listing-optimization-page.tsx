@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
-import { FormTable, FormTableRow, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import {
   buildListingReadinessIssues,
@@ -1289,6 +1289,32 @@ export function ListingOptimizationPage() {
             onClick: generateDrafts,
           }}
         >
+          <div className="kpi-row kpi-row--task" aria-label="Listing 草案任务摘要">
+            <KpiCard
+              label="目标 ASIN"
+              value={expectedAsin || '-'}
+              detail={listing ? (pageMatched ? '页面已匹配' : '待核对') : '尚未保存 Listing'}
+              tone={listing && pageMatched ? 'ready' : 'warning'}
+            />
+            <KpiCard
+              label="关键词输入"
+              value={keywords.length}
+              detail={handoffPayload ? '来自机会矩阵' : '手工输入'}
+              tone={keywords.length ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="Listing 字段"
+              value={listingReady ? '可生成' : '待补齐'}
+              detail={listingReadinessIssues.slice(0, 1).join('、') || '字段闭合'}
+              tone={listingReady ? 'ready' : 'blocked'}
+            />
+            <KpiCard
+              label="草案边界"
+              value={draftReady ? `${drafts.length} 条` : '本地保存'}
+              detail="不提交 Amazon"
+              tone={draftReady ? 'ready' : 'pending'}
+            />
+          </div>
           <StateLightGrid
             items={[
               {

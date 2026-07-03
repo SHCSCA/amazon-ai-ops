@@ -12,8 +12,8 @@ const NAV_RE = {
   listing: /Listing 结构重写|Listing 优化/,
 };
 const HEADING_RE = {
-  keyword: /全渠道多源融合关键词机会与商机评分看板/,
-  listing: /亚马逊 Listing 关键词覆盖热力图与结构化草案编辑器/,
+  keyword: /关键词机会矩阵/,
+  listing: /Listing 结构重写/,
 };
 
 function fail(message, details) {

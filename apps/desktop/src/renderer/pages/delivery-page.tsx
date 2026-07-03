@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { OperatorTaskPanel, type OperatorTaskAction } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput } from '../delivery-readiness-matrix';
 import { READBACK_REPAIR_INTENT_EVENT, READBACK_REPAIR_INTENT_STORAGE_KEY, type ReadbackRepairIntent } from '../readback-repair-intent';
@@ -1202,7 +1202,32 @@ export function DeliveryPage() {
         }}
         secondaryActions={secondaryTaskActions}
       >
-        <StatusPill tone={deliveryTaskTone}>{deliveryTaskTitle}</StatusPill>
+        <div className="kpi-row kpi-row--task" aria-label="交付验收任务摘要">
+          <KpiCard
+            label="交付状态"
+            value={deliveryTaskTitle}
+            detail={gateSummaryText}
+            tone={deliveryTaskTone}
+          />
+          <KpiCard
+            label="最终验收"
+            value={readinessStatus(readiness)}
+            detail={readiness?.path ? 'manifest 已生成' : '等待生成'}
+            tone={readinessTone(readiness)}
+          />
+          <KpiCard
+            label="交付包"
+            value={deliveryReady ? '可导出' : '阻断'}
+            detail={packageBrief}
+            tone={deliveryReady ? 'ready' : 'blocked'}
+          />
+          <KpiCard
+            label="缺口"
+            value={missingItems.length || 0}
+            detail={missingItems[0] || '无主要缺口'}
+            tone={missingItems.length ? 'warning' : 'ready'}
+          />
+        </div>
         <div className="delivery-overview-grid">
           {visibleOverviewFacts.map((fact) => (
             <div key={fact.label}>

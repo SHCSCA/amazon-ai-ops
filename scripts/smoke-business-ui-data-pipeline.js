@@ -1013,12 +1013,12 @@ async function main() {
     await expectNotInBody(page, 'pnpm run verify:ad-readback');
 
   const routes = [
-    { nav: NAV_RE.dashboard, heading: /今日运营看板与自动化链路就绪健康度总览/, label: '今日看板', key: 'dashboard' },
-    { nav: NAV_RE.productManagement, heading: /店铺商品 SKU \/ ASIN 本地主映射数据对齐工作台/, label: '产品管理', key: 'product-management' },
-    { nav: NAV_RE.dataCollection, heading: /领星下载中心广告报告自动化批量采集管道/, label: '数据采集', key: 'data-collection' },
-    { nav: NAV_RE.dataImport, heading: /原始报表本地核验与 DuckDB 结构化对账工作台/, label: '数据导入与校验', key: 'data-import-validation' },
-    { nav: /运营事件/, heading: /核心运营事件时间轴标记/, label: '运营事件', key: 'operation-events' },
-    { nav: NAV_RE.adQuant, heading: /广告全口径量化诊断中心/, label: '广告量化', key: 'ad-quant' },
+    { nav: NAV_RE.dashboard, heading: /今日看板/, label: '今日看板', key: 'dashboard' },
+    { nav: NAV_RE.productManagement, heading: /产品管理/, label: '产品管理', key: 'product-management' },
+    { nav: NAV_RE.dataCollection, heading: /批量数据采集/, label: '数据采集', key: 'data-collection' },
+    { nav: NAV_RE.dataImport, heading: /指标核验入库/, label: '数据导入与校验', key: 'data-import-validation' },
+    { nav: /运营事件/, heading: /运营事件标记/, label: '运营事件', key: 'operation-events' },
+    { nav: NAV_RE.adQuant, heading: /量化诊断中心/, label: '广告量化', key: 'ad-quant' },
   ];
 
     for (const { nav, heading, label, key } of routes) {

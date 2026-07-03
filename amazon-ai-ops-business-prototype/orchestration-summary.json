@@ -1,0 +1,290 @@
+{
+  "project": {
+    "operation": "create",
+    "language": "zh-CN",
+    "projectName": "Amazon AI Ops 业务原型",
+    "projectSlug": "amazon-ai-ops-business-prototype",
+    "deviceType": "desktop",
+    "styleDefinitionBrief": "面向亚马逊运营的高密度证据驱动桌面工作台，浅底深字、钢蓝主色、克制层次、业务优先",
+    "designRead": "桌面运营工作台 / 亚马逊广告运营与负责人 / 冷静可信 / 高密度 / 避免营销感与炫技感",
+    "designDials": {
+      "layoutVariance": 2,
+      "motionIntensity": 1,
+      "visualDensity": 4
+    },
+    "config": {
+      "autoLayout": true,
+      "deviceType": "desktop",
+      "designLibrary": null
+    },
+    "sharedProjectShellContract": {
+      "topStatusBar": "白底细边框、显示本机状态与证据链路",
+      "leftNavigation": "稳定侧边导航，不改变分组顺序",
+      "scopeBar": "固定展示日期、店铺、站点、ASIN、数据批次、USD",
+      "visualSystem": "浅底深字、钢蓝主色、中性灰、轻阴影、边框分层",
+      "componentLanguage": "表格、状态条、步骤器、抽屉、表单、时间线"
+    },
+    "generationTree": {
+      "rootId": "gen-project-shell",
+      "rootOutput": "partials/project-shell.html"
+    }
+  },
+  "assets": [],
+  "pages": [
+    {
+      "nodeId": "page-login",
+      "slug": "login",
+      "title": "登录与会话确认",
+      "htmlSrc": "pages/login.html",
+      "pageType": "task-driven",
+      "businessScenario": "在本机进入领星 ERP 与 Amazon Ads 会话前，确认账号、加密与当前证据链路是否可用。",
+      "visualNorthStar": "可信登录门禁而非炫技欢迎页",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "钢蓝主色按钮",
+        "轻边框卡片",
+        "短标题短按钮"
+      ]
+    },
+    {
+      "nodeId": "page-dashboard",
+      "slug": "dashboard",
+      "title": "今日看板",
+      "htmlSrc": "pages/dashboard.html",
+      "pageType": "information-dense",
+      "businessScenario": "运营负责人快速判断数据健康、AI 状态、审批待办与今天最安全的下一步动作。",
+      "visualNorthStar": "第一屏直接看懂今日门禁与风险对象",
+      "compositionPattern": "Large / medium / small stacked",
+      "continuityAnchors": [
+        "顶部状态栏",
+        "左侧业务导航",
+        "KPI 条 + 风险表"
+      ]
+    },
+    {
+      "nodeId": "page-product-management",
+      "slug": "product-management",
+      "title": "产品管理",
+      "htmlSrc": "pages/product-management.html",
+      "pageType": "information-dense",
+      "businessScenario": "围绕 ASIN 管理生命周期、证据状态与各业务入口，明确当前产品工作台。",
+      "visualNorthStar": "先定产品，再定范围",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "稳定壳层",
+        "边框主导卡片",
+        "证据与阻塞并列"
+      ]
+    },
+    {
+      "nodeId": "page-operation-scope",
+      "slug": "operation-scope",
+      "title": "工作范围",
+      "htmlSrc": "pages/operation-scope.html",
+      "pageType": "task-driven",
+      "businessScenario": "统一编辑日期、店铺、站点、ASIN、批次与币种，让全链路读取同一运营范围。",
+      "visualNorthStar": "表单清晰、影响说明明确、保存动作短而稳",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "范围条固定展示",
+        "短标签字段",
+        "证据说明面板"
+      ]
+    },
+    {
+      "nodeId": "page-data-collection",
+      "slug": "data-collection",
+      "title": "批量数据采集",
+      "htmlSrc": "pages/data-collection.html",
+      "pageType": "information-dense",
+      "businessScenario": "收集 8 类真实报表，确认原始文件存在、本地路径可追溯、批次状态闭合。",
+      "visualNorthStar": "真实报表优先，下载状态与文件证据一眼可查",
+      "compositionPattern": "Large / medium / small stacked",
+      "continuityAnchors": [
+        "进度条",
+        "原始文件表",
+        "阻塞原因卡"
+      ]
+    },
+    {
+      "nodeId": "page-data-import-validation",
+      "slug": "data-import-validation",
+      "title": "指标核验入库",
+      "htmlSrc": "pages/data-import-validation.html",
+      "pageType": "information-dense",
+      "businessScenario": "核验导入行数、口径一致性、证据路径与异常样本，确认指标可安全进入量化。",
+      "visualNorthStar": "入库结果可信，可追溯到行数与文件路径",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "入库状态卡",
+        "核验矩阵",
+        "证据抽屉"
+      ]
+    },
+    {
+      "nodeId": "page-operation-events",
+      "slug": "operation-events",
+      "title": "运营事件标记",
+      "htmlSrc": "pages/operation-events.html",
+      "pageType": "task-driven",
+      "businessScenario": "记录改价、促销、库存、素材替换等事件，并把归因窗口与说明固定下来。",
+      "visualNorthStar": "事件录入轻量但时间线扎实",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "表单 + 时间线",
+        "短按钮",
+        "阻塞说明条"
+      ]
+    },
+    {
+      "nodeId": "page-product-config",
+      "slug": "product-config",
+      "title": "产品 ACOS 配置",
+      "htmlSrc": "pages/product-config.html",
+      "pageType": "task-driven",
+      "businessScenario": "管理成本、售价、目标 ACOS/TACOS 与不同阶段的目标口径，避免建议偏离经营目标。",
+      "visualNorthStar": "目标参数稳定、阶段说明简洁",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "表单主导",
+        "阶段卡片",
+        "状态标签"
+      ]
+    },
+    {
+      "nodeId": "page-ad-quant",
+      "slug": "ad-quant",
+      "title": "量化诊断中心",
+      "htmlSrc": "pages/ad-quant.html",
+      "pageType": "information-dense",
+      "businessScenario": "基于真实报表与入库指标量化风险、浪费与扩量对象，给建议页提供可审计基础。",
+      "visualNorthStar": "核心指标 + 对象级表格构成第一阅读层",
+      "compositionPattern": "Large / medium / small stacked",
+      "continuityAnchors": [
+        "KPI 条",
+        "对象表格",
+        "阈值说明"
+      ]
+    },
+    {
+      "nodeId": "page-recommendations",
+      "slug": "recommendations",
+      "title": "优化建议草案",
+      "htmlSrc": "pages/recommendations.html",
+      "pageType": "information-dense",
+      "businessScenario": "以规则与 AI 解释生成可送审的建议草案，明确当前值、建议值、来源和证据。",
+      "visualNorthStar": "建议不是结论墙，而是可送审的草案池",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "建议表",
+        "证据抽屉",
+        "风险与来源并列"
+      ]
+    },
+    {
+      "nodeId": "page-approval",
+      "slug": "approval",
+      "title": "审批历史中心",
+      "htmlSrc": "pages/approval.html",
+      "pageType": "information-dense",
+      "businessScenario": "让审批人按范围、风险和证据做决策，并明确审批不等于执行。",
+      "visualNorthStar": "审批记录稳定、范围边界清楚",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "审批分栏",
+        "状态标签",
+        "历史表格"
+      ]
+    },
+    {
+      "nodeId": "page-readback",
+      "slug": "readback",
+      "title": "渐进执行回读",
+      "htmlSrc": "pages/readback.html",
+      "pageType": "task-driven",
+      "businessScenario": "记录执行前后证据、回读值与校验结果，把执行与交付之间的门禁透明化。",
+      "visualNorthStar": "四步流程清楚，before/after 证据对照明确",
+      "compositionPattern": "Large / medium / small stacked",
+      "continuityAnchors": [
+        "步骤器",
+        "证据对照表",
+        "阻塞原因卡"
+      ]
+    },
+    {
+      "nodeId": "page-keyword-opportunities",
+      "slug": "keyword-opportunities",
+      "title": "关键词机会矩阵",
+      "htmlSrc": "pages/keyword-opportunities.html",
+      "pageType": "information-dense",
+      "businessScenario": "从真实导入指标中去重机会词，保留 ASIN、活动、广告组、关键词上下文与机会评分。",
+      "visualNorthStar": "矩阵筛选清楚，机会词必须带上下文",
+      "compositionPattern": "Large / medium / small stacked",
+      "continuityAnchors": [
+        "机会表格",
+        "得分条",
+        "上下文标签"
+      ]
+    },
+    {
+      "nodeId": "page-listing-optimization",
+      "slug": "listing-optimization",
+      "title": "Listing 结构重写",
+      "htmlSrc": "pages/listing-optimization.html",
+      "pageType": "task-driven",
+      "businessScenario": "读取 Listing 原文并结合关键词机会做结构重写草案，强调本地草案与导出，不暗示自动提交。",
+      "visualNorthStar": "原文、覆盖分析、草案输出三段式清楚分工",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "大文本区",
+        "覆盖分析表",
+        "导出区域"
+      ]
+    },
+    {
+      "nodeId": "page-scheduler",
+      "slug": "scheduler",
+      "title": "本地定时调度",
+      "htmlSrc": "pages/scheduler.html",
+      "pageType": "information-dense",
+      "businessScenario": "管理采集、导入、量化、建议与证据导出任务，强调计划不等于已完成。",
+      "visualNorthStar": "任务列表密集但不混乱，失败原因可追溯",
+      "compositionPattern": "Large / medium / small stacked",
+      "continuityAnchors": [
+        "任务表格",
+        "最近结果条",
+        "阻塞清单"
+      ]
+    },
+    {
+      "nodeId": "page-settings",
+      "slug": "settings",
+      "title": "AI 适配与诊断",
+      "htmlSrc": "pages/settings.html",
+      "pageType": "task-driven",
+      "businessScenario": "配置 Provider、模型、Base URL、阈值、脱敏密钥与诊断工具，保护敏感信息。",
+      "visualNorthStar": "设置表单克制，诊断结果可信但不过度技术化",
+      "compositionPattern": "Asymmetric two-column",
+      "continuityAnchors": [
+        "表单结构",
+        "掩码字段",
+        "诊断面板"
+      ]
+    },
+    {
+      "nodeId": "page-delivery",
+      "slug": "delivery",
+      "title": "最终验收就绪门",
+      "htmlSrc": "pages/delivery.html",
+      "pageType": "information-dense",
+      "businessScenario": "汇总最终证据、缺口、安装包与 hash，判断是否达到可交付状态。",
+      "visualNorthStar": "就绪门必须严格，缺口与证据并置展示",
+      "compositionPattern": "Large / medium / small stacked",
+      "continuityAnchors": [
+        "最终状态条",
+        "缺口列表",
+        "证据清单与 hash"
+      ]
+    }
+  ]
+}

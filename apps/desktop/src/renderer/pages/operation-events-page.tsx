@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import { OperatorTaskPanel } from '../components/operator-task-panel';
-import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute, OperationEventView } from '../types';
 
@@ -472,11 +472,26 @@ export function OperationEventsPage() {
             },
           ]}
         >
-          <div className="dashboard-task-metrics" aria-label="运营事件任务摘要">
-            <StatusPill tone={visibleEvents.length ? 'ready' : 'pending'}>当前视图 {visibleEvents.length}</StatusPill>
-            <span>{viewMode === 'product' && scope.asin ? `产品 ${scope.asin}` : viewMode === 'global' ? '全局事件' : '全部事件'}</span>
-            <span>绑定对象 {specificEventCount}</span>
-            <span>只补上下文，不执行广告</span>
+          <div className="kpi-row kpi-row--task" aria-label="运营事件任务摘要">
+            <KpiCard
+              label="当前视图"
+              value={visibleEvents.length}
+              detail={viewMode === 'product' && scope.asin ? `产品 ${scope.asin}` : viewMode === 'global' ? '全局事件' : '全部事件'}
+              tone={visibleEvents.length ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="绑定对象"
+              value={specificEventCount}
+              detail="产品/活动/广告组"
+              tone={specificEventCount ? 'ready' : 'pending'}
+            />
+            <KpiCard
+              label="全局事件"
+              value={Math.max(0, visibleEvents.length - specificEventCount)}
+              detail="用于解释整体波动"
+              tone={visibleEvents.length - specificEventCount > 0 ? 'ready' : 'pending'}
+            />
+            <KpiCard label="执行边界" value="不执行广告" detail="只补 AI 上下文" tone="warning" />
           </div>
         </OperatorTaskPanel>
 
