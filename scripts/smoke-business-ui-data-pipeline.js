@@ -1135,10 +1135,6 @@ async function main() {
     '重建已选',
     '重建全部 8 类',
     '导入本地',
-    '只处理已生成的 ready 报表',
-    '只重建当前勾选报表',
-    '创建、下载并导入完整 8 类',
-    '选择本地 xlsx/xls/csv',
     '报表动作说明',
   ]) {
     await expectInBody(page, text, 'data collection action copy');

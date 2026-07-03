@@ -90,7 +90,7 @@ describe('operation events page product/global views', () => {
   });
 
   it('anchors the page copy on the operation-event timeline marking job', () => {
-    expect(OPERATION_EVENT_PAGE_COPY.title).toBe('核心运营事件时间轴标记');
+    expect(OPERATION_EVENT_PAGE_COPY.title).toBe('运营事件标记');
     expect(OPERATION_EVENT_PAGE_COPY.primaryTask).toBe('把关键运营动作标记进 LLM 上下文');
     expect(OPERATION_EVENT_PAGE_COPY.description).toContain('LLM 推理上下文');
     expect(OPERATION_EVENT_PAGE_COPY.timelinePanelTitle).toBe('运营事件时间轴');

@@ -54,14 +54,15 @@ describe('industrial UI atoms', () => {
     expect(taskCards.every((card) => card.props.role === 'listitem' && card.props.tabIndex === 0)).toBe(true);
   });
 
-  it('keeps the global typography contract aligned with dense desktop tables', () => {
+  it('keeps the global typography contract aligned with prototype desktop density', () => {
     const stylesheet = rendererCss();
     const bodyRule = cssRuleBody(stylesheet, 'body');
     const businessTableCellRule = cssRuleBody(stylesheet, '.business-table td');
     const virtualTableCellRule = cssRuleBody(stylesheet, '.virtual-table-cell');
 
-    expect(bodyRule).toContain('font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;');
-    expect(bodyRule).toMatch(/line-height\s*:\s*1\.25\s*;/);
+    expect(bodyRule).toContain('font-family: var(--font-body);');
+    expect(bodyRule).toMatch(/font-size\s*:\s*13px\s*;/);
+    expect(bodyRule).toMatch(/line-height\s*:\s*1\.5\s*;/);
     expect(businessTableCellRule).toMatch(/line-height\s*:\s*1\.25\s*;/);
     expect(virtualTableCellRule).toMatch(/line-height\s*:\s*1\.25\s*;/);
   });
@@ -79,7 +80,7 @@ describe('industrial UI atoms', () => {
   it('keeps page header title and rail cards aligned with the first-screen contract', () => {
     const stylesheet = rendererCss();
 
-    expect(stylesheet).toMatch(/\.page-header h1\s*\{[\s\S]*font-size:\s*26px/);
+    expect(stylesheet).toMatch(/\.page-header h1\s*\{[\s\S]*font-size:\s*18px/);
     expect(stylesheet).toMatch(/\.page-header-rail-card\s*\{[\s\S]*transition:\s*[\s\S]*border-color var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)[\s\S]*transform var\(--motion-fast\)/);
     expect(stylesheet).toMatch(/\.page-header-rail-card:hover\s*\{[\s\S]*transform:\s*translateY\(-2px\)/);
     expect(stylesheet).toMatch(/\.page-header-rail-card:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);

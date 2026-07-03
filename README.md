@@ -4,7 +4,7 @@
 
 它把领星广告报表采集、产品级广告量化、关键词与 Listing 优化、AI + 规则建议、人工审批、Ads UI 执行回读和最终交付验收串成一个可审计的本地闭环。
 
-**DELIVERY: APP_READY.** 当前 v1.5 Windows 桌面包已按 `amazon-ai-ops-business-prototype/` 完成 17 页首屏原型 parity 接入、重新打包、启动 smoke、manifest-driven final-readiness、READY bundle 和 READY safety。应用内广告写入仍保持 fail-closed；任何 Ads 改动都必须经过人工审批、截图、执行和回读验证。
+**DELIVERY: APP_READY.** 当前 v1.5 Windows 桌面包已按 `amazon-ai-ops-business-prototype/` 继续收紧 Shell、ScopeBar、KPI 首屏、面板密度和数据采集动作按钮，完成重新打包、启动 smoke、manifest-driven final-readiness、READY bundle 和 READY safety。应用内广告写入仍保持 fail-closed；任何 Ads 改动都必须经过人工审批、截图、执行和回读验证。
 
 ## 当前交付
 
@@ -15,11 +15,11 @@
 | 当前状态 | `APP_READY` |
 | 无安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe` |
 | 安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
-| 无安装版 SHA-256 | `849E5C11D5F4742C936FB4A532E1435B3D33B76187E561CB912A08FA6F673CB9` |
-| 安装版 SHA-256 | `3CAB193DE243D53ADB3348569FF5506B1C5A2FE7D237C7590B849A3FFC44D89B` |
-| 最终验收证据 | `output\codex-evidence\final-readiness-1783043003005.json` |
-| Package launch smoke | `output\codex-evidence\package-launch-smoke-1783043003005.json` |
-| READY bundle | `output\delivery-bundles\v15-delivery-bundle-2026-07-03T01-43-56-prototype-parity` |
+| 无安装版 SHA-256 | `60D382BBF76D823BA49A8ADFBE61A1C1AA08F4CC0D7507998E86714D07357026` |
+| 安装版 SHA-256 | `C619D603FABB073E2F4A056268339B68A2EC22DFF7C2F033358B966AE3785028` |
+| 最终验收证据 | `output\codex-evidence\final-readiness-1783046121145.json` |
+| Package launch smoke | `output\codex-evidence\package-launch-smoke-1783046036873.json` |
+| READY bundle | `output\delivery-bundles\v15-delivery-bundle-2026-07-03T02-36-30-prototype-visual-parity` |
 
 > 注意：`output/`、`storage/`、AppData DB、raw 领星报表、release EXE 和密钥都是本地交付/运行产物，不进入 Git 提交。
 
@@ -80,11 +80,11 @@
 |---|---|---|
 | TypeScript | 通过 | `pnpm --filter @amazon-ai-ops/desktop run typecheck` |
 | Renderer build | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:renderer` |
-| 当前业务 UI smoke | 通过 | `output\codex-evidence\current-business-ui-smoke-1783042927932.json` |
+| 当前业务 UI smoke | 通过 | `output\codex-evidence\current-business-ui-smoke-1783045615490.json` |
 | 广告执行 fail-closed | 通过 | `pnpm run verify:ad-execution` |
 | Windows 打包 | 通过 | installer + portable 已生成 |
-| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1783043003005.json` |
-| Final readiness | 通过 | `output\codex-evidence\final-readiness-1783043003005.json` |
+| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1783046036873.json` |
+| Final readiness | 通过 | `output\codex-evidence\final-readiness-1783046121145.json` |
 | READY safety | 通过 | `pnpm run verify:v15-ready-safety ...` |
 
 ## 开发环境
@@ -124,6 +124,17 @@ pnpm dev
 | `pnpm run verify:v15-final-readiness -- ...` | 生成/验证 final-readiness |
 | `pnpm run export:v15-delivery-bundle -- ...` | 导出 READY 交付包 |
 | `pnpm run verify:v15-ready-safety -- ...` | READY 交付安全门 |
+
+生产交付顺序固定为：
+
+```powershell
+pnpm --filter @amazon-ai-ops/desktop run build:win
+pnpm run smoke:package-launch
+pnpm run verify:v15-final-readiness -- ...
+# README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`
+pnpm run export:v15-delivery-bundle -- ...
+pnpm run verify:v15-ready-safety -- ...
+```
 
 Windows 打包时如果 C 盘临时目录空间不足，可以把 `TEMP` / `TMP` 切到 D 盘：
 
