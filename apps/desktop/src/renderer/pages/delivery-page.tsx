@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { OperatorTaskPanel, type OperatorTaskAction } from '../components/operator-task-panel';
+import type { OperatorTaskAction } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
@@ -398,6 +398,76 @@ function reconciliationSourceLabel(source?: string): string {
   return source || '未记录';
 }
 
+type EvidenceGovernanceFact = {
+  label: string;
+  value: string;
+  tone: DeliveryTone;
+};
+
+export function buildEvidenceGovernanceFacts(input: {
+  finalManifestPath: string;
+  finalReadinessRefresh: FinalReadinessRefreshResult | null;
+  packageSummary: string;
+  readiness: DeliveryReadinessView | null;
+}): EvidenceGovernanceFact[] {
+  const readiness = input.readiness;
+  const authoritative = Boolean(readiness?.appReady && readiness?.manifestDriven);
+  const manifestPath = input.finalReadinessRefresh?.evidenceManifestPath || input.finalManifestPath;
+  const finalReadinessPath = input.finalReadinessRefresh?.finalReadinessPath || input.finalManifestPath;
+  const packageRecorded = input.packageSummary && !input.packageSummary.includes('未记录') && !input.packageSummary.includes('不可用');
+
+  return [
+    {
+      label: '权威来源',
+      value: readiness?.manifestDriven ? 'manifest 驱动' : '不是权威验收',
+      tone: readiness?.manifestDriven ? 'ready' : 'blocked',
+    },
+    {
+      label: '最终验收',
+      value: finalReadinessPath ? compactDeliveryPath(finalReadinessPath) : '尚未生成',
+      tone: finalReadinessPath ? (authoritative ? 'ready' : 'warning') : 'blocked',
+    },
+    {
+      label: '证据清单',
+      value: manifestPath ? compactDeliveryPath(manifestPath) : '等待选择证据',
+      tone: manifestPath ? 'ready' : 'warning',
+    },
+    {
+      label: '安装包索引',
+      value: packageRecorded ? '已记录并绑定' : '未绑定当前包',
+      tone: packageRecorded ? 'ready' : 'blocked',
+    },
+  ];
+}
+
+function evidenceGovernanceSummary(readiness: DeliveryReadinessView | null): string {
+  if (readiness?.appReady && readiness?.manifestDriven) {
+    return '交付判断以 manifest 驱动的最终验收为准，README 和用户指南只是摘要说明。';
+  }
+  if (readiness?.manifestDriven === false) {
+    return '当前最终验收不是 manifest 驱动，不能作为可交付声明来源。';
+  }
+  return '先生成 manifest 驱动的最终验收，再导出交付包并运行 READY safety。';
+}
+
+function evidenceGovernanceRules(readiness: DeliveryReadinessView | null): string[] {
+  const rules = [
+    '真实领星报表才算数据来源；截图、HTML、审计 JSON 只能作为辅助证据。',
+    'UI smoke 和文档状态不能替代 manifest 驱动的 final readiness。',
+    '安装版和免安装版校验码必须来自当前包索引。',
+  ];
+  if (!readiness?.manifestDriven) {
+    rules.unshift('当前页面不能仅凭最新文件或 README 文案声明可交付状态。');
+  }
+  return rules;
+}
+
+function evidenceGovernanceTone(readiness: DeliveryReadinessView | null): DeliveryTone {
+  if (readiness?.appReady && readiness?.manifestDriven) return 'ready';
+  if (readiness?.manifestDriven === false) return 'blocked';
+  return 'warning';
+}
+
 type DeliveryOverviewFact = {
   label: string;
   value: string;
@@ -545,10 +615,10 @@ export function buildDeliveryItems(
       ],
     },
     {
-      title: '广告量化',
+      title: '广告表现',
       tone: diagnostics.length > 0 ? 'warning' : 'blocked',
-      summary: diagnostics.length > 0 ? `已有 ${diagnostics.length} 条量化诊断需要业务复核。` : '还没有可交付的实体级广告量化诊断。',
-      actions: diagnostics.length > 0 ? ['先复核高风险行，再生成或审批优化建议。'] : ['真实文件和导入指标齐备后运行广告量化。'],
+      summary: diagnostics.length > 0 ? `已有 ${diagnostics.length} 条广告表现诊断需要业务复核。` : '还没有可交付的实体级广告表现诊断。',
+      actions: diagnostics.length > 0 ? ['先复核高风险行，再生成或审批优化建议。'] : ['真实文件和导入指标齐备后查看广告表现。'],
       evidence: diagnostics.slice(0, 3).map((item) => `${item.campaignName || '广告活动'} / ${item.objectName || '对象'}：ACOS ${percent(readNumber(item.acos))}`),
     },
     {
@@ -651,6 +721,13 @@ export function DeliveryPage() {
   const manifestReady = readiness?.appReady && readiness?.manifestDriven;
   const deliveryReady = canExportDeliveryBundle(readiness, deliveryEvidenceStatus?.package);
   const packageSummary = packageEvidenceSummary(deliveryEvidenceStatus?.package);
+  const evidenceGovernanceFacts = buildEvidenceGovernanceFacts({
+    finalManifestPath,
+    finalReadinessRefresh,
+    packageSummary,
+    readiness,
+  });
+  const evidenceGovernanceStatus = evidenceGovernanceTone(readiness);
   const gateSummaryText = readiness?.gatesSummary ? `${readiness.gatesSummary.passed}/${readiness.gatesSummary.total} 通过` : '未生成';
   const deliveryOverviewFacts = buildDeliveryOverviewFacts({
     scopeSummary: summarizeScope(data, scope),
@@ -694,7 +771,7 @@ export function DeliveryPage() {
     if (topDeliveryGap?.key === 'readback') {
       return readbackBlockerGate
         ? { kind: 'repair-readback', label: '直达回读补证', onClick: requestReadbackRepair }
-        : { kind: 'navigate-readback', label: '去执行回读', onClick: () => navigate('readback') };
+        : { kind: 'navigate-readback', label: '去结果核对', onClick: () => navigate('readback') };
     }
     if (topDeliveryGap?.key === 'package') {
       return { kind: 'refresh', label: '刷新最终验收', onClick: refreshFinalReadinessManifest };
@@ -1182,17 +1259,11 @@ export function DeliveryPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="系统与交付"
+        eyebrow="系统"
         title={PAGE_HEADER_TITLES.delivery}
-        description="把最终验收结果翻译成运营可执行的交付判断。"
+        description="判断当前范围能不能交付、最关键阻塞是什么、交付包在哪里，以及可复制给运营的交付摘要。"
         primaryTask={deliveryTaskTitle}
         nextAction={deliveryPrimaryAction.label}
-      />
-
-      <OperatorTaskPanel
-        eyebrow="交付摘要"
-        title={deliveryTaskTitle}
-        detail={deliveryTaskDetail}
         primaryAction={{
           label: deliveryPrimaryAction.label,
           onClick: deliveryPrimaryAction.onClick,
@@ -1200,9 +1271,10 @@ export function DeliveryPage() {
           busyLabel: primaryTaskBusyKey ? deliveryActionBusyLabel(primaryTaskBusyKey) : undefined,
           disabled: Boolean(deliveryActionBusy && !primaryTaskBusy),
         }}
-        secondaryActions={secondaryTaskActions}
-      >
-        <div className="kpi-row kpi-row--task" aria-label="交付验收任务摘要">
+      />
+
+      <div className="business-stack delivery-prototype-stack">
+        <div className="kpi-row delivery-prototype-status-grid" aria-label="交付验收状态">
           <KpiCard
             label="交付状态"
             value={deliveryTaskTitle}
@@ -1228,27 +1300,76 @@ export function DeliveryPage() {
             tone={missingItems.length ? 'warning' : 'ready'}
           />
         </div>
-        <div className="delivery-overview-grid">
-          {visibleOverviewFacts.map((fact) => (
-            <div key={fact.label}>
-              <span>{fact.label}</span>
-              <strong>{fact.value}</strong>
+        <Panel title="交付摘要" tone={deliveryReady ? 'success' : missingItems.length ? 'warning' : 'default'}>
+          <div className="prototype-list-stack">
+            <div className="prototype-list-item">
+              <strong>{deliveryTaskTitle}</strong>
+              <p>{deliveryTaskDetail}</p>
             </div>
-          ))}
-        </div>
-        {deliveryReady ? (
-          <p className="muted-line">交付包摘要：{packageBrief}</p>
-        ) : (
-          <ul className="delivery-action-list delivery-primary-missing-list">
-            {(missingItems.length ? missingItems : ['刷新最终验收后查看当前最关键缺口。']).map((item) => (
-              <li key={item}>{item}</li>
+          </div>
+          <div className="delivery-overview-grid">
+            {visibleOverviewFacts.map((fact) => (
+              <div key={fact.label}>
+                <span>{fact.label}</span>
+                <strong>{fact.value}</strong>
+              </div>
             ))}
-          </ul>
-        )}
-      </OperatorTaskPanel>
+          </div>
+          {deliveryReady ? (
+            <p className="muted-line">交付包摘要：{packageBrief}</p>
+          ) : (
+            <ul className="delivery-action-list delivery-primary-missing-list">
+              {(missingItems.length ? missingItems : ['刷新最终验收后查看当前最关键缺口。']).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          )}
+          {secondaryTaskActions.length > 0 && (
+            <div className="action-row delivery-prototype-actions">
+              {secondaryTaskActions.map((action) => (
+                <button
+                  aria-busy={action.busy || undefined}
+                  className={action.busy ? 'secondary-button button-loading' : 'secondary-button'}
+                  disabled={action.disabled}
+                  key={action.label}
+                  onClick={action.onClick}
+                  type="button"
+                >
+                  {action.busy && <span className="button-spinner" aria-hidden="true" />}
+                  <span>{action.busy ? action.busyLabel || action.label : action.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </div>
 
       <div className="business-stack delivery-details-stack">
-        <ProgressiveDetails title="文件与技术入口">
+        <Panel title="交付判断依据" tone={evidenceGovernanceStatus === 'ready' ? 'success' : evidenceGovernanceStatus === 'blocked' ? 'blocked' : 'warning'}>
+          <div className="evidence-governance-card">
+            <div className="evidence-governance-headline">
+              <StatusPill tone={evidenceGovernanceStatus === 'ready' ? 'ready' : evidenceGovernanceStatus === 'blocked' ? 'blocked' : 'warning'}>
+                {evidenceGovernanceStatus === 'ready' ? '权威证据已绑定' : evidenceGovernanceStatus === 'blocked' ? '证据治理阻断' : '证据需复核'}
+              </StatusPill>
+              <p>{evidenceGovernanceSummary(readiness)}</p>
+            </div>
+            <div className="delivery-meta-grid evidence-governance-grid">
+              {evidenceGovernanceFacts.map((fact) => (
+                <div key={fact.label}>
+                  <span>{fact.label}</span>
+                  <strong>{fact.value}</strong>
+                </div>
+              ))}
+            </div>
+            <ul className="delivery-action-list evidence-governance-rules">
+              {evidenceGovernanceRules(readiness).map((rule) => (
+                <li key={rule}>{rule}</li>
+              ))}
+            </ul>
+          </div>
+        </Panel>
+
+        <ProgressiveDetails title="文件位置与支持入口">
           <div className="delivery-action-row">
             {renderOpenPathButton({ idleLabel: '打开交付包', targetPath: deliveryBundleOpenPath })}
             <button
@@ -1427,7 +1548,7 @@ export function DeliveryPage() {
           </ProgressiveDetails>
         )}
 
-        <ProgressiveDetails title={`完整矩阵：已闭合 ${deliveryMatrix.readyCount}/${deliveryMatrix.totalCount}`}>
+        <ProgressiveDetails title={`业务闭环矩阵：已闭合 ${deliveryMatrix.readyCount}/${deliveryMatrix.totalCount}`}>
           <div className="delivery-readiness-row">
             <div>
               <StatusPill tone={deliveryMatrix.status === 'ready' ? 'ready' : deliveryMatrix.status === 'blocked' ? 'blocked' : 'warning'}>
@@ -1535,7 +1656,7 @@ export function DeliveryPage() {
           </div>
         </ProgressiveDetails>
 
-        <ProgressiveDetails title="技术细节">
+        <ProgressiveDetails title="技术支持细节">
           <div className="details-content">
             <p>数据管道生成时间：{data?.generatedAt || (loading ? '读取中...' : '不可用')}</p>
             <p>最终验收生成时间：{readiness?.generatedAt || '不可用'}</p>

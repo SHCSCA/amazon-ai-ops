@@ -256,6 +256,18 @@ describe('highlightListingTextSegments', () => {
   });
 });
 
+describe('Listing Phase 5 local draft surface', () => {
+  it('keeps Listing copy focused on local drafts and publish boundaries', () => {
+    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('生成本地 Listing 草案');
+    expect(source).toContain('本地草案工作流');
+    expect(source).toContain('当前草案任务');
+    expect(source).toContain('关键词交接与发布边界');
+    expect(source).toContain('不会提交 Amazon，也不会改写 Lingxing');
+    expect(source).not.toContain('primaryTask="生成可导出的 Listing 草案"');
+  });
+});
 describe('Listing draft diff and feedback contract', () => {
   it('marks removed original words and added draft words for review', () => {
     const diff = buildListingTextDiffSegments(

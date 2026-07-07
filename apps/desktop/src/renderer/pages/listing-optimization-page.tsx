@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import {
@@ -1269,87 +1268,82 @@ export function ListingOptimizationPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="关键词与 Listing"
+        eyebrow="增长"
         title={PAGE_HEADER_TITLES.listingOptimization}
-        description="手工录入当前 Listing，结合关键词机会检查覆盖并生成 AI/规则标记的本地草案。领星读取只作为辅助填充。不会自动提交 Amazon。"
-        primaryTask="生成可导出的 Listing 草案"
+        description="录入或辅助读取当前 Listing，结合关键词机会检查覆盖，生成只供本地复核和导出的草案；不会提交 Amazon，也不会改写 Lingxing。"
+        primaryTask="生成本地 Listing 草案"
         nextAction={listing ? '生成草案并导出' : '先录入并保存 Listing'}
+        primaryAction={{
+          label: draftWorkspaceCopy.primaryActionLabel,
+          busy: loading === 'draft',
+          busyLabel: '生成中...',
+          disabled: !listingReady || loading === 'draft',
+          onClick: generateDrafts,
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="Listing 本地沙箱"
-          title={draftReady ? '本地草案已生成，可导出复核' : workflowSummary.headline}
-          detail={`${workflowSummary.nextAction.replace(/[。.!！]+$/, '')}。${workflowSummary.boundary}`}
-          primaryAction={{
-            label: draftWorkspaceCopy.primaryActionLabel,
-            busy: loading === 'draft',
-            busyLabel: '生成中...',
-            disabled: !listingReady || loading === 'draft',
-            onClick: generateDrafts,
-          }}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="Listing 草案任务摘要">
-            <KpiCard
-              label="目标 ASIN"
-              value={expectedAsin || '-'}
-              detail={listing ? (pageMatched ? '页面已匹配' : '待核对') : '尚未保存 Listing'}
-              tone={listing && pageMatched ? 'ready' : 'warning'}
-            />
-            <KpiCard
-              label="关键词输入"
-              value={keywords.length}
-              detail={handoffPayload ? '来自机会矩阵' : '手工输入'}
-              tone={keywords.length ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="Listing 字段"
-              value={listingReady ? '可生成' : '待补齐'}
-              detail={listingReadinessIssues.slice(0, 1).join('、') || '字段闭合'}
-              tone={listingReady ? 'ready' : 'blocked'}
-            />
-            <KpiCard
-              label="草案边界"
-              value={draftReady ? `${drafts.length} 条` : '本地保存'}
-              detail="不提交 Amazon"
-              tone={draftReady ? 'ready' : 'pending'}
-            />
-          </div>
-          <StateLightGrid
-            items={[
-              {
-                label: '目标 ASIN',
-                value: expectedAsin || '-',
-                detail: listing ? (pageMatched ? '页面 ASIN 已匹配' : '页面 ASIN 待核对') : '尚未保存 Listing',
-                tone: listing && pageMatched ? 'ready' : 'warning',
-              },
-              {
-                label: '关键词输入',
-                value: keywords.length,
-                detail: handoffPayload ? '来自关键词机会矩阵' : '手工输入或待带入',
-                tone: keywords.length ? 'ready' : 'pending',
-              },
-              {
-                label: 'Listing 字段',
-                value: listingReady ? '可生成' : '待补齐',
-                detail: listingReadinessIssues.slice(0, 2).join('、') || '标题、五点、后台词已闭合',
-                tone: listingReady ? 'ready' : 'blocked',
-              },
-              {
-                label: '草案边界',
-                value: draftReady ? `${drafts.length} 条` : '本地保存',
-                detail: '不提交 Amazon，不覆盖 Lingxing',
-                tone: draftReady ? 'ready' : 'pending',
-              },
-            ]}
+        <div className="kpi-row listing-prototype-status-grid" aria-label="Listing 草案状态">
+          <KpiCard
+            label="目标 ASIN"
+            value={expectedAsin || '-'}
+            detail={listing ? (pageMatched ? '页面已匹配' : '待核对') : '尚未保存 Listing'}
+            tone={listing && pageMatched ? 'ready' : 'warning'}
           />
-        </OperatorTaskPanel>
+          <KpiCard
+            label="关键词输入"
+            value={keywords.length}
+            detail={handoffPayload ? '来自关键词机会' : '手工输入'}
+            tone={keywords.length ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="Listing 字段"
+            value={listingReady ? '可生成' : '待补齐'}
+            detail={listingReadinessIssues.slice(0, 1).join('、') || '字段闭合'}
+            tone={listingReady ? 'ready' : 'blocked'}
+          />
+          <KpiCard
+            label="草案边界"
+            value={draftReady ? `${drafts.length} 条` : '本地保存'}
+            detail="不提交 Amazon"
+            tone={draftReady ? 'ready' : 'pending'}
+          />
+        </div>
+        <StateLightGrid
+          ariaLabel="Listing 草案红绿灯"
+          items={[
+            {
+              label: '目标 ASIN',
+              value: expectedAsin || '-',
+              detail: listing ? (pageMatched ? '页面 ASIN 已匹配' : '页面 ASIN 待核对') : '尚未保存 Listing',
+              tone: listing && pageMatched ? 'ready' : 'warning',
+            },
+            {
+              label: '关键词输入',
+              value: keywords.length,
+              detail: handoffPayload ? '来自关键词机会' : '手工输入或待带入',
+              tone: keywords.length ? 'ready' : 'pending',
+            },
+            {
+              label: 'Listing 字段',
+              value: listingReady ? '可生成' : '待补齐',
+              detail: listingReadinessIssues.slice(0, 2).join('、') || '标题、五点、后台词已闭合',
+              tone: listingReady ? 'ready' : 'blocked',
+            },
+            {
+              label: '草案边界',
+              value: draftReady ? `${drafts.length} 条` : '本地保存',
+              detail: '不提交 Amazon，不覆盖 Lingxing',
+              tone: draftReady ? 'ready' : 'pending',
+            },
+          ]}
+        />
 
-        <Panel title="Listing 工作流状态" tone={draftReady ? 'success' : keywords.length && listingReady ? 'warning' : 'default'}>
+        <Panel title="本地草案工作流" tone={draftReady ? 'success' : keywords.length && listingReady ? 'warning' : 'default'}>
           <div className="evidence-check-panel">
             <div className="business-split">
               <div>
-                <h3>当前主任务</h3>
+                <h3>当前草案任务</h3>
                 <p className="muted-line">{workflowSummary.headline}</p>
               </div>
               <StatusPill tone={workflowSummary.tone}>{workflowSummary.statusLabel}</StatusPill>
@@ -1485,7 +1479,7 @@ export function ListingOptimizationPage() {
           )}
         </Panel>
 
-        <Panel title="关键词交接与草案边界" tone={keywords.length ? 'success' : 'warning'}>
+        <Panel title="关键词交接与发布边界" tone={keywords.length ? 'success' : 'warning'}>
           <div className="context-summary-grid">
             <div>
               <span>关键词来源</span>
@@ -1672,7 +1666,7 @@ export function ListingOptimizationPage() {
               <div className="listing-draft-pane-head">
                 <div>
                   <span>01 关键词输入</span>
-                  <strong>{handoffPayload ? '来自关键词机会矩阵' : '手工粘贴或待带入'}</strong>
+                  <strong>{handoffPayload ? '来自关键词机会' : '手工粘贴或待带入'}</strong>
                 </div>
                 <StatusPill tone={keywords.length ? 'ready' : 'pending'}>{draftWorkspaceCopy.keywordStatusLabel}</StatusPill>
               </div>

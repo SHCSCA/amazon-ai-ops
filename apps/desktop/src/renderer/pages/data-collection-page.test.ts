@@ -63,7 +63,7 @@ describe('collectionCompletionNotice', () => {
       parsedFiles: 1,
       insertedRows: 96,
       currentImportedRows: 96,
-      nextStep: '下一步：进入广告量化，复核 ACOS、花费和订单口径。',
+      nextStep: '下一步：查看广告表现，复核 ACOS、花费和订单口径。',
       failedFiles: [],
     });
 
@@ -215,7 +215,7 @@ describe('task-first data page helpers', () => {
         parsedFiles: 1,
         insertedRows: 96,
         currentImportedRows: 96,
-        nextStep: '下一步：进入广告量化。',
+        nextStep: '下一步：查看广告表现。',
         failedFiles: [],
       },
       lastDiagnostic: null,
@@ -291,7 +291,7 @@ describe('task-first data page helpers', () => {
     expect(task.secondaryActionLabel).toBe('导入本地报表');
   });
 
-  it('moves data collection to ad quantification after full reports and imported rows exist', () => {
+  it('moves data collection to ad performance after full reports and imported rows exist', () => {
     const task = buildDataCollectionTaskState({
       realReportCount: 8,
       importedRowCount: 96,
@@ -300,14 +300,14 @@ describe('task-first data page helpers', () => {
     });
 
     expect(task.title).toBe('真实报表 8/8，已导入 96 行');
-    expect(task.primaryActionLabel).toBe('进入广告量化');
+    expect(task.primaryActionLabel).toBe('查看广告表现');
     expect(task.secondaryActionLabel).toBe('打开报表目录');
   });
 
   it('shortens 8-report chooser action labels without changing action modes', () => {
     expect(collectionActionButtonLabel('download-existing')).toBe('下载已创建');
-    expect(collectionActionButtonLabel('recreate-selected')).toBe('重建已选');
-    expect(collectionActionButtonLabel('recreate-full')).toBe('重建全部 8 类');
+    expect(collectionActionButtonLabel('recreate-selected')).toBe('重新获取已选');
+    expect(collectionActionButtonLabel('recreate-full')).toBe('重新获取完整 8 类');
     expect(collectionActionButtonLabel('import')).toBe('导入本地');
     expect(collectionActionButtonDetail('recreate-full')).toBe('创建、下载并导入完整 8 类');
     expect(collectionActionButtonDetail('import')).toBe('选择本地 xlsx/xls/csv');
@@ -439,7 +439,7 @@ describe('task-first data page helpers', () => {
     expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder }).primaryActionLabel).toBe('去数据采集');
     expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder }).secondaryActionLabel).toBe('导入本地报表');
     expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 0, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('导入已下载表格');
-    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 96, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('进入广告量化');
+    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 96, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('查看广告表现');
   });
 
   it('makes downloaded report files explicitly wait for DB import', () => {

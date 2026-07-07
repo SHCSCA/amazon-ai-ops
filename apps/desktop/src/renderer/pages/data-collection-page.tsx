@@ -1,18 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, MicroStepper, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildCollectionActionSummary } from '../collection-action-summary';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath } from '../formatters';
+import type { AppRoute } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 type CollectionActionMode = 'download-existing' | 'recreate-selected' | 'recreate-full' | 'import';
 type DownloadCollectionActionMode = Exclude<CollectionActionMode, 'import'>;
 type RunningCollectionActionMode = CollectionActionMode | 'verify-page';
 type CollectionFeedbackActionGroup = 'repair' | 'refresh-ready';
+
+function navigate(route: AppRoute) {
+  window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
+}
 
 export interface CollectionActionGuide {
   title: string;
@@ -273,8 +277,8 @@ export function dataCollectionFirstViewportReportFolder(input: {
 export function collectionActionButtonLabel(mode: CollectionActionMode): string {
   const labels: Record<CollectionActionMode, string> = {
     'download-existing': '下载已创建',
-    'recreate-selected': '重建已选',
-    'recreate-full': '重建全部 8 类',
+    'recreate-selected': '重新获取已选',
+    'recreate-full': '重新获取完整 8 类',
     import: '导入本地',
   };
   return labels[mode];
@@ -437,12 +441,12 @@ export function buildDataCollectionTaskState({
   return {
     title: `真实报表 ${reportCount}/8，已导入 ${rowCount} 行`,
     detail: isComplete
-      ? '真实报表和日级指标已闭合，可以进入广告量化。'
+      ? '真实报表和日级指标已闭合，可以查看广告表现。'
       : reportCount > 0
         ? '先补齐完整 8 类报表；已有本地表格时可从目录确认或导入。'
         : '当前范围缺少真实报表，先获取完整 8 类或导入本地表格。',
     primaryActionLabel: isComplete
-      ? '进入广告量化'
+      ? '查看广告表现'
       : runningAction === 'verify-page'
         ? '正在验证下载中心页面...'
       : runningAction === 'recreate-full'
@@ -496,7 +500,7 @@ function buildActionProgressSteps(mode: CollectionActionMode | null, result: Las
     return [
       { label: '1. 确认真实文件', description: '只读取当前范围的 xlsx/xls/csv，不读取审计文件。', status: baseStatus },
       { label: '2. 解析表格', description: '识别报表类型、日期、广告活动/广告组、关键词/投放对象和金额列。', status: completed ? (blocked ? 'blocked' : 'ready') : 'pending' },
-      { label: '3. 写入数据库', description: '形成每日广告事实，后续量化和 AI 只从数据库读取。', status: completed ? (blocked ? 'blocked' : 'ready') : 'pending' },
+      { label: '3. 写入数据库', description: '形成每日广告事实，后续广告表现和 AI 只从数据库读取。', status: completed ? (blocked ? 'blocked' : 'ready') : 'pending' },
     ];
   }
   return [
@@ -761,7 +765,7 @@ function buildLastActionResult(
   const nextStep = failedFiles.length > 0 && actionDownloadedFiles.length === 0
     ? '下一步：查看失败原因和本次采集清单，确认领星 ready 行、页面模型、日期/店铺/站点后再重试。'
     : importedRows > 0
-      ? '下一步：进入广告量化，复核 ACOS、花费和订单口径。'
+      ? '下一步：查看广告表现，复核 ACOS、花费和订单口径。'
       : realFileCount > 0
         ? '下一步：点击“导入已下载表格”，把本地表格写入广告指标。'
         : '下一步：检查下载中心页面、报表 ready 状态或失败报表后重试。';
@@ -812,7 +816,7 @@ export function collectionCompletionNotice(result: LastActionResult): string {
   if (result.downloadedCount > 0) {
     return `当前范围已有 ${result.downloadedCount}/8 类真实报表，但本次没有新增真实原始报表文件，且还没有可量化指标。请点击“导入已下载表格”或重新下载缺失报表。`;
   }
-  return `采集动作返回，但当前范围仍未满足量化门槛：真实报表覆盖 ${result.downloadedCount}/8 类，导入指标 ${result.currentImportedRows} 行。没有 xlsx/xls/csv 或解析入库失败时不能进行广告量化。`;
+  return `采集动作返回，但当前范围仍未满足量化门槛：真实报表覆盖 ${result.downloadedCount}/8 类，导入指标 ${result.currentImportedRows} 行。没有 xlsx/xls/csv 或解析入库失败时不能进行广告表现。`;
 }
 
 export function DataCollectionPage() {
@@ -918,14 +922,6 @@ export function DataCollectionPage() {
     }),
     [importedRowCount, realReportCount, rejectedEvidenceCount, reportOptions],
   );
-  const taskState = buildDataCollectionTaskState({
-    realReportCount,
-    importedRowCount,
-    primaryReportFolder,
-    runningAction,
-  });
-  const primaryReportFolderOpenKey = primaryReportFolder ? collectionPathActionKey('打开报表目录', primaryReportFolder) : '';
-  const primaryReportFolderOpening = Boolean(primaryReportFolder && openingPathKey === primaryReportFolderOpenKey);
   const collectionMonitorState = buildCollectionMonitorState({
     runningAction,
     actionNotice,
@@ -985,10 +981,6 @@ export function DataCollectionPage() {
     } finally {
       setOpeningPathKey(null);
     }
-  }
-
-  function navigateToAdQuant() {
-    window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'ad-quant' }));
   }
 
   async function runVerifyDownloadCenter() {
@@ -1248,64 +1240,97 @@ export function DataCollectionPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="数据与量化"
+        eyebrow="数据"
         title={PAGE_HEADER_TITLES.dataCollection}
-        description="展示当前采集状态、8 类领星广告报表进度、真实原始文件和导入行数。审计文件、截图和页面存档不计为真实报表文件。"
-        primaryTask="拿到真实原始报表"
-        nextAction="确认文件存在后再导入量化"
+        description="确认 8 类报表均已下载，审计文件、截图和页面存档不计为真实报表。"
+        primaryAction={{
+          label: '进入导入校验',
+          onClick: () => navigate('data-import-validation'),
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="当前任务"
-          title={taskState.title}
-          detail={taskState.detail}
-          primaryAction={{
-            label: taskState.primaryActionLabel,
-            busy: Boolean(runningAction),
-            busyLabel: runningAction ? actionModeLabel(runningAction) : undefined,
-            disabled: Boolean(runningAction),
-            onClick: taskState.isComplete ? navigateToAdQuant : () => runDownloadAction('recreate-full'),
-          }}
-          secondaryActions={[
-            {
-              label: taskState.secondaryActionLabel,
-              busy: Boolean(runningAction || primaryReportFolderOpening),
-              busyLabel: primaryReportFolderOpening ? '打开中...' : runningAction ? actionModeLabel(runningAction) : undefined,
-              disabled: Boolean(runningAction || openingPathKey),
-              onClick: primaryReportFolder ? () => openPath(primaryReportFolder, '打开报表目录') : importLocalReports,
-            },
-          ]}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="数据采集任务摘要">
-            <KpiCard
-              label="真实报表"
-              value={`${realReportCount}/8`}
-              detail={realReportCount >= 8 ? '完整覆盖' : '缺少部分报表'}
-              tone={realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}
-            />
-            <KpiCard
-              label="入库指标"
-              value={`${importedRowCount} 行`}
-              detail={importedRowCount > 0 ? '已写入本地 DB' : '等待导入'}
-              tone={importedRowCount > 0 ? 'ready' : 'blocked'}
-            />
-            <KpiCard
-              label="已选报表"
-              value={`${selectedCount}/${reportOptions.length || 8}`}
-              detail="重建/下载只作用于已选项"
-              tone={selectedCount > 0 ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="当前动作"
-              value={runningAction ? actionModeLabel(runningAction) : taskState.isComplete ? '已完成' : '待执行'}
-              detail={runningAction ? '请勿切换范围' : taskState.primaryActionLabel}
-              tone={runningAction ? 'pending' : taskState.isComplete ? 'ready' : 'warning'}
-            />
+        <div className="kpi-row data-collection-prototype-status-grid" aria-label="数据采集状态">
+          <KpiCard
+            label="浏览器状态"
+            value={lastDiagnostic?.ready ? '就绪' : '待验证'}
+            detail={lastDiagnostic?.ready ? 'Lingxing 会话有效' : '需要验证下载中心页面'}
+            tone={lastDiagnostic?.ready ? 'ready' : 'warning'}
+          />
+          <KpiCard
+            label="下载中心"
+            value={realReportCount >= 8 ? '已完成' : realReportCount > 0 ? '部分完成' : '待采集'}
+            detail={`${realReportCount}/8 类真实报表`}
+            tone={realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}
+          />
+          <KpiCard
+            label="报表目录"
+            value={primaryReportFolder ? '可写' : '待创建'}
+            detail={primaryReportFolder ? compactPath(primaryReportFolder) : 'storage/reports/ 待生成'}
+            tone={primaryReportFolder ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="入库指标"
+            value={`${importedRowCount} 行`}
+            detail={importedRowCount > 0 ? '已写入本地 DB' : '等待导入'}
+            tone={importedRowCount > 0 ? 'ready' : 'blocked'}
+          />
+        </div>
+
+        <Panel title="采集进度" tone={realReportCount >= 8 ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}>
+          <MicroStepper
+            items={[
+              {
+                label: '下载',
+                meta: `${realReportCount}/8`,
+                detail: realReportCount >= 8 ? '8 类真实报表已留存。' : '等待领星下载中心生成并下载。',
+                tone: realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked',
+              },
+              {
+                label: '校验',
+                meta: fileAudit?.missingReportLabels?.length ? `${fileAudit.missingReportLabels.length} 类缺失` : '待执行',
+                detail: '只接受 xlsx/xls/csv 原始广告报表。',
+                tone: realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'pending',
+              },
+              {
+                label: '排除证据文件',
+                meta: rejectedEvidenceCount ? `${rejectedEvidenceCount} 个证据文件` : '无阻断',
+                detail: '截图、DOM、审计包只做证据，不参与广告表现计算。',
+                tone: hasOnlyDiagnosticFiles ? 'blocked' : 'ready',
+              },
+              {
+                label: '入库',
+                meta: `${importedRowCount} 行`,
+                detail: importedRowCount > 0 ? '指标已写入本地数据库。' : '下载完成后进入导入校验。',
+                tone: importedRowCount > 0 ? 'ready' : 'pending',
+              },
+            ]}
+          />
+          <div className="action-row">
+            <button
+              aria-busy={recreateFullButton.ariaBusy}
+              className={recreateFullButton.className}
+              disabled={recreateFullButton.disabled}
+              onClick={() => runDownloadAction('recreate-full')}
+              type="button"
+            >
+              <span className={recreateFullButton.ariaBusy ? 'button-content' : undefined}>
+                {recreateFullButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {recreateFullButton.label}
+              </span>
+            </button>
+            <button
+              className="secondary-button"
+              disabled={Boolean(runningAction || openingPathKey)}
+              onClick={primaryReportFolder ? () => openPath(primaryReportFolder, '打开报表目录') : importLocalReports}
+              type="button"
+            >
+              {primaryReportFolder ? '打开报表目录' : '导入本地报表'}
+            </button>
           </div>
           {loading && <p className="muted-line">正在读取采集状态...</p>}
           {error && <p className="blocked-line">读取接口异常：{error}</p>}
-        </OperatorTaskPanel>
+        </Panel>
 
         {collectionMonitorOpen && collectionMonitorState && (
           <CollectionMonitorDrawer
@@ -1387,7 +1412,7 @@ export function DataCollectionPage() {
             <div className="business-split">
               <div>
                 <div className="business-scope-line">{compactPath(primaryReportFolder)}</div>
-                <p className="muted-line">这里只放当前范围可用于后续量化的 Lingxing xlsx/xls/csv 原始报表。</p>
+                <p className="muted-line">这里只放当前范围可用于后续广告表现的 Lingxing xlsx/xls/csv 原始报表。</p>
               </div>
               <div className="business-pill-row business-pill-row-right">
                 <StatusPill tone="ready">{collectionStatusLabel(collection?.status)}</StatusPill>
@@ -1425,7 +1450,7 @@ export function DataCollectionPage() {
           <Panel title="数据流程四段闭环" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
             <div className="business-split">
               <div>
-                <div className="business-scope-line">系统只在四段都闭合后放行广告量化、AI 证据包和优化建议。</div>
+                <div className="business-scope-line">系统只在四段都闭合后放行广告表现、AI 证据包和优化建议。</div>
                 <p className="muted-line">批次号和审计文件只用于追溯；运营判断看这四段是否完成。</p>
               </div>
               <StatusPill tone={dataLedger.status === 'ready' ? 'ready' : dataLedger.status === 'partial' ? 'pending' : 'blocked'}>
@@ -1472,9 +1497,9 @@ export function DataCollectionPage() {
               </div>
             </div>
             {hasOnlyDiagnosticFiles && (
-              <p className="blocked-line">当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能进行广告量化。</p>
+              <p className="blocked-line">当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能用于广告表现计算。</p>
             )}
-            <p className="warning-line">审计文件、截图、DOM/HTML 和采集清单只用于证明流程，不是广告数据，不能进入广告量化。</p>
+            <p className="warning-line">审计文件、截图、DOM/HTML 和采集清单只用于证明流程，不是广告数据，不能参与广告表现计算。</p>
             {(fileAudit?.missingReportLabels?.length || 0) > 0 && (
               <p className="muted-line">
                 缺少真实报表：{fileAudit?.missingReportLabels.slice(0, 8).join('、')}
@@ -1513,7 +1538,7 @@ export function DataCollectionPage() {
               <div>
                 <span>真实广告表格</span>
                 <strong>{primaryReportFolder || '暂无目录'}</strong>
-                <p>这里应能看到 Lingxing 下载的 xlsx/xls/csv，后续广告量化只读取这些文件。</p>
+                <p>这里应能看到 Lingxing 下载的 xlsx/xls/csv，后续广告表现只读取这些文件。</p>
               </div>
               <div>
                 <span>采集清单</span>
@@ -1526,7 +1551,7 @@ export function DataCollectionPage() {
                 <p>这里只放审计文件、截图、HTML 等证据；找广告数据请打开“真实广告表格”目录。</p>
               </div>
               <div>
-                <span>量化入口</span>
+                <span>广告表现入口</span>
                 <strong>{importedRowCount > 0 ? `${importedRowCount} 行可用` : '未导入'}</strong>
                 <p>{realReportCount > 0 ? '先确认表格存在；若没有入库指标，再点击“导入已下载表格”。' : '先下载并导入已创建报表、重新创建下载并导入，或导入本地报表。'}</p>
               </div>
@@ -1600,7 +1625,7 @@ export function DataCollectionPage() {
               label: item.label,
               meta: item.importedRows > 0 ? `${item.importedRows} 行` : item.realFileAvailable ? '待入库' : reportStatusLabel(item.status),
               detail: item.realFileAvailable
-                ? '原始 xlsx/xls/csv 已留存；后续量化只读取这些真实表格。'
+                ? '原始 xlsx/xls/csv 已留存；后续广告表现只读取这些真实表格。'
                 : '等待领星下载中心生成，或通过本地导入补齐。',
               tone: reportOptionTone(item),
             }))}
@@ -1695,7 +1720,7 @@ export function DataCollectionPage() {
                 </div>
               ))}
             </div>
-            <p className="muted-line">动作区别：下载已创建只读取 ready 行且不会创建新任务；重建已选只为勾选报表创建任务；重建全部 8 类会刷新完整报表；导入本地不访问领星下载中心。</p>
+            <p className="muted-line">动作区别：下载已创建只读取 ready 行且不会创建新任务；重新获取已选只为勾选报表创建任务；重新获取完整 8 类会刷新完整报表；导入本地不访问领星下载中心。</p>
           </ProgressiveDetails>
           {actionProgressSteps.length > 0 && (
             <div className="collection-progress-panel" aria-label="采集动作进度">
@@ -1869,7 +1894,7 @@ export function DataCollectionPage() {
                   ))}
                   {!realFiles.length && (
                     <tr>
-                      <td colSpan={10}>{hasOnlyDiagnosticFiles ? '当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能进行广告量化。' : '当前范围还没有可量化的真实广告数据'}</td>
+                      <td colSpan={10}>{hasOnlyDiagnosticFiles ? '当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能用于广告表现计算。' : '当前范围还没有可量化的真实广告数据'}</td>
                     </tr>
                   )}
                 </tbody>

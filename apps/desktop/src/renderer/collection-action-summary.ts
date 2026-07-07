@@ -41,12 +41,12 @@ export function buildCollectionActionSummary(input: CollectionActionSummaryInput
 
   if (input.currentImportedRows > 0 || input.insertedRows > 0) {
     return {
-      statusLabel: '可进入量化',
+      statusLabel: '可查看广告表现',
       tone: 'ready',
       headline: `真实报表已经入库，当前范围有 ${input.currentImportedRows || input.insertedRows} 行日级广告指标。`,
       facts,
       blockers: [],
-      nextAction: '进入广告量化，复核花费、订单、ACOS 和产品阶段。',
+      nextAction: '查看广告表现，复核花费、订单、ACOS 和产品阶段。',
       primaryPathLabel: input.downloadDir ? actionDirectoryLabel(input.mode) : '打开本次 Manifest',
       primaryPath: input.downloadDir || input.manifestPath,
     };

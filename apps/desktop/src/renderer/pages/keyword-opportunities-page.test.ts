@@ -153,3 +153,15 @@ describe('keywordOpportunityActionButtonView', () => {
     expect(locked.showSpinner).toBe(false);
   });
 });
+
+describe('Phase 5 keyword opportunity user task surface', () => {
+  it('frames keyword opportunities as Listing handoff decisions with evidence kept visible', () => {
+    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('复核可带入 Listing 的关键词机会');
+    expect(source).toContain('关键词机会与 Listing 覆盖关系');
+    expect(source).toContain('机会复核摘要');
+    expect(source).toContain('可带入 Listing 的机会表');
+    expect(source).toContain('审计文件、截图和 DOM 证据不算广告数据');
+  });
+});

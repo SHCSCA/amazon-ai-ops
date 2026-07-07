@@ -8,12 +8,12 @@ const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
 const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const NAV_RE = {
-  keyword: /关键词机会矩阵|关键词机会/,
-  listing: /Listing 结构重写|Listing 优化/,
+  keyword: /关键词机会/,
+  listing: /Listing草案|Listing 优化/,
 };
 const HEADING_RE = {
-  keyword: /关键词机会矩阵/,
-  listing: /Listing 结构重写/,
+  keyword: /关键词机会/,
+  listing: /Listing草案|Listing 优化/,
 };
 
 function fail(message, details) {
@@ -400,23 +400,23 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.keyword }).click();
   await page.getByRole('heading', { name: HEADING_RE.keyword, level: 1 }).waitFor();
   await expectVisible(page, '机会来源');
-  await expectVisible(page, '关键词机会来源与覆盖关系');
+  await expectVisible(page, '关键词机会与 Listing 覆盖关系');
   await expectVisible(page, '真实广告报表');
   await expectVisible(page, '导入指标行');
   await page.locator('.context-summary-grid').filter({ hasText: '导入指标行' }).getByText('96', { exact: true }).waitFor({ timeout: 5000 });
   await expectVisible(page, '覆盖 ASIN');
   await expectVisible(page, '这里是广告数据到 Listing 的交接池，不读取 Listing 页面，也不会修改 Amazon；点击“带入 Listing”后仍需在 Listing 优化页读取真实 Listing 并人工复核。');
-  await expectVisible(page, '机会摘要');
+  await expectVisible(page, '机会复核摘要');
   await expectVisible(page, '高优先级机会');
   await expectVisible(page, '无订单花费');
   await expectVisible(page, '优先复核对象');
   await expectVisible(page, 'manual_keyword_listing_batch');
-  await expectVisible(page, '筛选');
+  await expectVisible(page, '筛选和排序');
   await expectVisible(page, '当前日期范围');
   await expectVisible(page, '店铺 / 站点');
   await expectVisible(page, '广告上下文');
   await expectVisible(page, '2 个活动 / 2 个广告组');
-  await expectVisible(page, '关键词机会表');
+  await expectVisible(page, '可带入 Listing 的机会表');
   for (const text of ['ASIN', '广告组合', '广告活动', '广告组', '关键词/搜索词/投放对象', '覆盖状态', '点击/订单', '花费/销售', 'ACOS', '机会等级', '建议位置', '风险']) {
     await expectVisible(page, text);
   }
@@ -451,15 +451,15 @@ async function main() {
     null,
     { timeout: 5000 },
   );
-  for (const text of ['手工录入当前 Listing', '基础信息', '标题', '五点', '五点 5', '详情与搜索词', '保存为新版本', '从领星辅助读取', '关键词交接与草案边界', '关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用', '当前 Listing 内容', 'Listing 版本历史', '关键词与本地草案工作台', '01 关键词输入', '02 数据门槛与用途', '03 生成与导出', '数据门槛', '草案用途', '真实广告数据可用', '本地复核草案', '本地草案不会自动提交 Amazon，不修改 Lingxing Listing；缺真实广告数据时也不会进入交付证据包。']) {
+  for (const text of ['手工录入当前 Listing', '基础信息', '标题', '五点', '五点 5', '详情与搜索词', '保存为新版本', '从领星辅助读取', '关键词交接与发布边界', '关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用', '当前 Listing 内容', 'Listing 版本历史', '关键词与本地草案工作台', '01 关键词输入', '02 数据门槛与用途', '03 生成与导出', '数据门槛', '草案用途', '真实广告数据可用', '本地复核草案', '本地草案不会自动提交 Amazon，不修改 Lingxing Listing；缺真实广告数据时也不会进入交付证据包。']) {
     await expectVisible(page, text);
   }
   await expectInBody(page, 'deepseek-v4-flash 已测试通过', 'listing ai readiness detail');
   await expectInBody(page, '不会自动提交 Amazon，也不会改写 Lingxing', 'listing publish boundary');
-  for (const text of ['Listing 工作流状态', '1 关键词机会', '2 Listing 内容录入/读取', '3 AI / 本地规则草案', '4 导出与发布边界']) {
+  for (const text of ['本地草案工作流', '1 关键词机会', '2 Listing 内容录入/读取', '3 AI / 本地规则草案', '4 导出与发布边界']) {
     await expectInBody(page, text, 'listing workflow status');
   }
-  await expectVisible(page, '当前主任务');
+  await expectVisible(page, '当前草案任务');
   await expectVisible(page, '关键词已就绪，但 Listing 内容未达到生成草案门槛。');
   await expectVisible(page, '尚未录入或读取当前 Listing 内容');
   for (const text of ['广告组合', 'D6 Portfolio', '广告活动', 'D6-auto-test', '广告组', 'D6-ad-group', '对象类型', 'user_search_term', '触发关键词', 'motion sensor wall light', '点击/订单', '36 / 4', '花费/销售 USD', '25.5 / 98.25', '来源文件', 'C:/reports/keyword.xlsx']) {

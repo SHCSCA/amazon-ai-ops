@@ -81,10 +81,10 @@ describe('buildCollectionActionSummary', () => {
       manifestPath: 'C:/downloads/batch_1/manifest.json',
     });
 
-    expect(summary.statusLabel).toBe('可进入量化');
+    expect(summary.statusLabel).toBe('可查看广告表现');
     expect(summary.tone).toBe('ready');
     expect(summary.headline).toBe('真实报表已经入库，当前范围有 96 行日级广告指标。');
-    expect(summary.nextAction).toBe('进入广告量化，复核花费、订单、ACOS 和产品阶段。');
+    expect(summary.nextAction).toBe('查看广告表现，复核花费、订单、ACOS 和产品阶段。');
     expect(summary.facts).toContain('本次解析 8 表');
     expect(summary.facts).toContain('本次写入 96 行');
   });

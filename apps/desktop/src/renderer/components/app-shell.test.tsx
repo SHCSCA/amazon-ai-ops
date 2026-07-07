@@ -32,13 +32,13 @@ describe('Sidebar navigation', () => {
     ]);
   });
 
-  it('renders product management and product ACOS config as distinct operator entries', () => {
+  it('renders product management and product target settings as distinct operator entries', () => {
     const tree = Sidebar({ activeRoute: 'product-management', onNavigate: () => undefined }) as ReactElement;
     const navText = collectText(tree);
 
     expect(navText).toContain('今日看板');
     expect(navText).toContain('产品管理');
-    expect(navText).toContain('产品 ACOS 配置');
+    expect(navText).toContain('成本目标');
     expect(navGroups[0].items.map((item) => item.id)).toEqual(['dashboard', 'product-management']);
     expect(navGroups[1].items.map((item) => item.id)).toEqual([
       'operation-scope',
@@ -50,18 +50,19 @@ describe('Sidebar navigation', () => {
     ]);
   });
 
-  it('renders the v1.5 high-fidelity business-domain labels', () => {
+  it('renders the operator task navigation labels', () => {
     const tree = Sidebar({ activeRoute: 'dashboard', onNavigate: () => undefined }) as ReactElement;
     const navText = collectText(tree);
     const indexes = collectElements(tree, (element) => element.props.className === 'nav-item-index')
       .map((element) => collectText(element));
 
     expect(navText).toContain('今日看板');
-    expect(navText).toContain('批量数据采集');
-    expect(navText).toContain('指标核验入库');
-    expect(navText).toContain('运营事件标记');
-    expect(navText).toContain('渐进执行回读');
-    expect(navText).toContain('最终验收就绪门');
+    expect(navText).toContain('数据采集');
+    expect(navText).toContain('导入校验');
+    expect(navText).toContain('运营事件');
+    expect(navText).toContain('结果核对');
+    expect(navText).toContain('交付验收');
+    expect(navGroups.map((group) => group.label)).toEqual(['总览', '数据', '广告', '增长', '系统']);
     expect(indexes.filter((value) => value === '01')).toHaveLength(5);
   });
 
@@ -104,8 +105,8 @@ describe('Sidebar navigation', () => {
       onNavigate: (route) => clicked.push(route),
     }) as ReactElement;
     const buttons = collectElements(tree, (element) => element.type === 'button');
-    const pendingButton = buttons.find((button) => collectText(button).includes('批量数据采集'));
-    const siblingButton = buttons.find((button) => collectText(button).includes('指标核验入库'));
+    const pendingButton = buttons.find((button) => collectText(button).includes('数据采集'));
+    const siblingButton = buttons.find((button) => collectText(button).includes('导入校验'));
 
     expect(pendingButton?.props['aria-busy']).toBe(true);
     expect(pendingButton?.props['data-pending']).toBe('true');
@@ -119,17 +120,17 @@ describe('Sidebar navigation', () => {
     expect(clicked).toEqual([]);
   });
 
-  it('marks product ACOS config as the active item for the product-config route', () => {
+  it('marks product target settings as the active item for the product-config route', () => {
     const tree = Sidebar({ activeRoute: 'product-config', onNavigate: () => undefined }) as ReactElement;
     const buttons = collectElements(tree, (element) => element.type === 'button');
     const productManagementButton = buttons.find((button) => collectText(button).includes('产品管理'));
-    const productAcosButton = buttons.find((button) => collectText(button).includes('产品 ACOS 配置'));
+    const productTargetButton = buttons.find((button) => collectText(button).includes('成本目标'));
 
     expect(productManagementButton?.props['aria-current']).toBeUndefined();
-    expect(productAcosButton?.props['aria-current']).toBe('page');
+    expect(productTargetButton?.props['aria-current']).toBe('page');
   });
 
-  it('shows product ACOS config as pending when a product-config handoff is running', () => {
+  it('shows product target settings as pending when a product-config handoff is running', () => {
     const tree = Sidebar({
       activeRoute: 'dashboard',
       pendingRoute: 'product-config',
@@ -137,12 +138,12 @@ describe('Sidebar navigation', () => {
     }) as ReactElement;
     const buttons = collectElements(tree, (element) => element.type === 'button');
     const productManagementButton = buttons.find((button) => collectText(button).includes('产品管理'));
-    const productAcosButton = buttons.find((button) => collectText(button).includes('产品 ACOS 配置'));
+    const productTargetButton = buttons.find((button) => collectText(button).includes('成本目标'));
 
     expect(productManagementButton?.props['aria-busy']).toBeUndefined();
-    expect(productAcosButton?.props['aria-busy']).toBe(true);
-    expect(productAcosButton?.props['data-pending']).toBe('true');
-    expect(collectText(productAcosButton)).toContain('转跳中...');
+    expect(productTargetButton?.props['aria-busy']).toBe(true);
+    expect(productTargetButton?.props['data-pending']).toBe('true');
+    expect(collectText(productTargetButton)).toContain('转跳中...');
   });
 
   it('keeps the aria-current active glow bar contract in CSS', () => {

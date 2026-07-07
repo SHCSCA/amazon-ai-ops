@@ -4,6 +4,8 @@
 > 原型项目路径：`amazon-ai-ops-business-prototype/`
 > 代码根目录：`apps/desktop/src/renderer/`
 > 当前生产主题：浅色 Windows 桌面主题；暗色变量保留在原型资产中，不进入本次生产实现。
+>
+> 使用原则：原型用于约束业务结构、页面语气和首屏任务清晰度，不作为“增加面板密度”的目标；生产界面需要用渐进详情、友好空态/错态和明确下一步补足原型未覆盖的日常运营体验。
 
 ## 一、全局公共组件
 
@@ -12,74 +14,74 @@
 | Shell 壳层 | `colors_and_type.css` (`.proto-layout` / `.proto-statusbar` / `.proto-sidebar`) | `components/app-shell.tsx` |
 | 登录/路由 | — | `App.tsx` |
 | ScopeBar | `.proto-scopebar` | `components/scope-bar.tsx` + `scope-store.ts` |
-| 设计系统 | `colors_and_type.css` 的浅色 token、低噪音 KPI、面板、按钮和表单语言 | `styles.css` + `components/ui.tsx` |
+| 设计系统 | `colors_and_type.css` 的浅色 token、低噪音 KPI、面板、按钮和表单语言 | `styles.css` + `components/ui.tsx`; login surface, safety gates, and read-only status cards now share the production light token semantics |
 | 按钮契约 | `.btn` / `.btn.primary` / `[disabled]` | `aria-busy` + spinner + `button-loading` |
 
 ---
 
 ## 二、页面映射总表
 
-### 组 1 — 运营总览
+### 组 1 — 总览
 
 | # | 页面 | 原型文件 | 代码路径 | 核心组件 | 交互边 | 实现状态 |
 |---|------|---------|---------|---------|--------|---------|
 | 1 | 登录与会话确认 | `pages/login.html` | `App.tsx` (`LoginPage` 内嵌) | `login-card` / `stat-card` | `enter-dashboard` → 今日看板 | 部分接入 |
-| 2 | 今日看板 | `pages/dashboard.html` | `pages/dashboard-page.tsx` | `OperatorTaskPanel` / `KpiCard` / `StateLightGrid` / `ProgressiveDetails` | `go-product-management` → 产品管理；`jump-*` (5 条隐藏边) → 机会矩阵/设置/调度/事件/ACOS配置 | 高保真首屏接入 |
-| 3 | 产品管理 | `pages/product-management.html` | `pages/product-management-page.tsx` | `KpiCard` / product-card + `aria-pressed` / inline-field / 时间线 | `go-operation-scope` → 工作范围 | 高保真首屏接入 |
+| 2 | 今日看板 | `pages/dashboard.html` | `pages/dashboard-page.tsx` | 原型 KPI 条 / 状态网格 / 风险对象表 / 产品工作台补充区 / 就绪态下一步 | `primary-task` → 产品管理/数据采集/导入校验/广告表现/优化建议/审批中心（按当前门禁）；`jump-*` (5 条隐藏边) → 关键词机会/AI与规则/自动任务/运营事件/成本目标 | 高保真接入中 |
+| 3 | 产品管理 | `pages/product-management.html` | `pages/product-management-page.tsx` | 原型状态卡 / 产品表格 / 产品详情 / 明确成本售价目标字段 / 时间线 | `go-operation-scope` → 工作范围 | 高保真接入中 |
 
-### 组 2 — 数据与量化
-
-| # | 页面 | 原型文件 | 代码路径 | 核心组件 | 交互边 | 实现状态 |
-|---|------|---------|---------|---------|--------|---------|
-| 4 | 工作范围 | `pages/operation-scope.html` | `pages/operation-scope-page.tsx` | `KpiCard` / FormTable / 字段确认反馈 / 推荐下一步 | `go-data-collection` → 数据采集 | 高保真首屏接入 |
-| 5 | 批量数据采集 | `pages/data-collection.html` | `pages/data-collection-page.tsx` | `KpiCard` / `CollectionMonitorDrawer` / `MicroStepper` / 动作反馈三态 | `go-data-import-validation` → 指标入库 | 高保真首屏接入 |
-| 6 | 指标核验入库 | `pages/data-import-validation.html` | `pages/data-import-validation-page.tsx` | `KpiCard` / `VirtualDataTable` / sortable headers / 只读锁定 | `go-ad-quant` → 量化诊断 | 高保真首屏接入 |
-| 7 | 运营事件标记 | `pages/operation-events.html` | `pages/operation-events-page.tsx` | `KpiCard` / 时间轴卡片 / AI 上下文读回 / 乐观清除 | — | 高保真首屏接入 |
-| 8 | 产品 ACOS 配置 | `pages/product-config.html` | `pages/product-config-page.tsx` | `KpiCard` / 批量工具栏 / inline 编辑 / 健康度列 | — | 高保真首屏接入 |
-| 9 | 量化诊断中心 | `pages/ad-quant.html` | `pages/ad-quant-page.tsx` | `KpiCard` / `TagMetricGroup` 6维筛选 / AI Radar / 证据明细表 5 列 / 产品分组 / 对象时间线 | `go-recommendations` → 建议草案 | 高保真首屏接入 |
-
-### 组 3 — 广告执行
+### 组 2 — 数据
 
 | # | 页面 | 原型文件 | 代码路径 | 核心组件 | 交互边 | 实现状态 |
 |---|------|---------|---------|---------|--------|---------|
-| 10 | 优化建议草案 | `pages/recommendations.html` | `pages/recommendations-page.tsx` | `KpiCard` / 状态桶过滤 4 个 / `recommendationHasEvidenceBlocker` / 批量送审 | `go-approval` → 审批中心 | 高保真首屏接入 |
-| 11 | 审批历史中心 | `pages/approval.html` | `pages/approval-page.tsx` | `KpiCard` / 选项卡 4 个 / `DecisionActionStrip` 三态 / stamp / 行退出动画 | `go-readback` → 执行回读 | 高保真首屏接入 |
-| 12 | 渐进执行回读 | `pages/readback.html` | `pages/readback-page.tsx` | `KpiCard` / 4步 wizard / `SafetyGateLine` / 截图 Ctrl+V / 安全复选框 | `go-delivery` → 交付验收 | 高保真首屏接入 |
+| 4 | 工作范围 | `pages/operation-scope.html` | `pages/operation-scope-page.tsx` | 当前工作范围 / `FormTable` / 字段确认反馈 / 范围影响说明 / 推荐下一步 | `go-data-collection` → 数据采集 | 部分接入，待原型复核 |
+| 5 | 数据采集 | `pages/data-collection.html` | `pages/data-collection-page.tsx` | 原型状态卡 / `CollectionMonitorDrawer` / `MicroStepper` / 8 类报表选择 / 排除证据文件 / 动作反馈三态 | `go-data-import-validation` → 导入校验 | 高保真接入中 |
+| 6 | 导入校验 | `pages/data-import-validation.html` | `pages/data-import-validation-page.tsx` | 真实报表目录 / SQLite 入库动作 / 入库快照 / `VirtualDataTable` / 只读锁定 | `go-ad-quant` → 广告表现 | 部分接入，待原型复核 |
+| 7 | 运营事件 | `pages/operation-events.html` | `pages/operation-events-page.tsx` | 新增事件表单 / 时间线卡片 / AI 上下文读回 / 乐观清除 | — | 部分接入，待原型复核 |
+| 8 | 成本目标 | `pages/product-config.html` | `pages/product-config-page.tsx` | 批量工具栏 / 当前产品表 / inline ACOS 编辑 / 健康度列 | — | 部分接入，待原型复核 |
+| 9 | 广告表现 | `pages/ad-quant.html` | `pages/ad-quant-page.tsx` | 总盘指标 / `TagMetricGroup` 6 维筛选 / AI Radar / 产品分组 / 对象时间线 | `go-recommendations` → 优化建议 | 部分接入，待原型复核 |
 
-### 组 4 — 关键词与 Listing
-
-| # | 页面 | 原型文件 | 代码路径 | 核心组件 | 交互边 | 实现状态 |
-|---|------|---------|---------|---------|--------|---------|
-| 13 | 关键词机会矩阵 | `pages/keyword-opportunities.html` | `pages/keyword-opportunities-page.tsx` | `KpiCard` / `VirtualDataTable` 13 列 / sticky ASIN / crossfade | `go-listing-optimization` (隐藏边) → Listing 重写 | 高保真首屏接入 |
-| 14 | Listing 结构重写 | `pages/listing-optimization.html` | `pages/listing-optimization-page.tsx` | `KpiCard` / 热力图矩阵 / diff 芯片 / `contain:strict` / skeleton wave | — | 高保真首屏接入 |
-
-### 组 5 — 系统与交付
+### 组 3 — 广告
 
 | # | 页面 | 原型文件 | 代码路径 | 核心组件 | 交互边 | 实现状态 |
 |---|------|---------|---------|---------|--------|---------|
-| 15 | 本地定时调度 | `pages/scheduler.html` | `pages/scheduler-page.tsx` | `KpiCard` / cron 格式化 / 行级启用禁用 | — | 高保真首屏接入 |
-| 16 | AI 适配与诊断 | `pages/settings.html` | `pages/settings-page.tsx` | `KpiCard` / AI 合同标签 3 个 / 阈值 12 字段 / 审计日志 / 安全策略 | — | 高保真首屏接入 |
-| 17 | 最终验收就绪门 | `pages/delivery.html` | `pages/delivery-page.tsx` | `KpiCard` / 交付矩阵 / 回读修复 handoff / 工作包创建/检查/填充 / blocked-state | — | 高保真首屏接入 |
+| 10 | 优化建议 | `pages/recommendations.html` | `pages/recommendations-page.tsx` | 用户任务化建议动作表 / 送审判断 / 证据状态 / AI+规则详情折叠 | `go-approval` → 审批中心 | 高保真接入中 |
+| 11 | 审批中心 | `pages/approval.html` | `pages/approval-page.tsx` | 批准 / 拒绝 / 查看复核要求 / stamp / 行退出动画 / 缺证据 fail-closed | `go-readback` → 结果核对 | 高保真接入中 |
+| 12 | 结果核对 | `pages/readback.html` | `pages/readback-page.tsx` | 已批准动作选择 / 审批凭证 / 执行前后证据 / 回读值 / 导出校验 | `go-delivery` → 交付验收 | 高保真接入中 |
+
+### 组 4 — 增长
+
+| # | 页面 | 原型文件 | 代码路径 | 核心组件 | 交互边 | 实现状态 |
+|---|------|---------|---------|---------|--------|---------|
+| 13 | 关键词机会 | `pages/keyword-opportunities.html` | `pages/keyword-opportunities-page.tsx` | ASIN / 广告活动 / 广告组 / 搜索词上下文 / 证据状态 / Listing 交接 / 筛选排序虚拟表 | `go-listing-optimization` (隐藏边) → Listing草案 | 高保真接入中 |
+| 14 | Listing草案 | `pages/listing-optimization.html` | `pages/listing-optimization-page.tsx` | 本地草案工作流 / 关键词热力图 / 草稿 diff / 字符限制 / 本地导出 / 不提交 Amazon 或 Lingxing | — | 高保真接入中 |
+
+### 组 5 — 系统
+
+| # | 页面 | 原型文件 | 代码路径 | 核心组件 | 交互边 | 实现状态 |
+|---|------|---------|---------|---------|--------|---------|
+| 15 | 自动任务 | `pages/scheduler.html` | `pages/scheduler-page.tsx` | 任务状态 / cron / 启停按钮 / 运行记录 | — | 部分接入，待原型复核 |
+| 16 | AI与规则 | `pages/settings.html` | `pages/settings-page.tsx` | AI 服务连接 / 规则阈值与动作边界 / AI 调用记录折叠 / 本地支持路径折叠 / 安全策略 | — | 高保真接入中 |
+| 17 | 交付验收 | `pages/delivery.html` | `pages/delivery-page.tsx` | 可交付判断 / 当前阻塞 / 交付包位置 / 可复制摘要 / 文件与矩阵折叠 | — | 高保真接入中 |
 
 ---
 
 ## 三、业务门禁链路（原型交互流）
 
 ```
-登录会话 ──→ 今日看板 ──→ 产品管理 ──→ 工作范围 ──→ 批量数据采集
+登录会话 ──→ 今日看板 ──→ 产品管理 ──→ 工作范围 ──→ 数据采集
                                                          │
-                                         关键词机会矩阵 ←─┼──→ 指标核验入库
+                                              关键词机会 ←─┼──→ 导入校验
                                               │           │
-                                         Listing 重写      │
+                                          Listing草案      │
                                                          ↓
-                                         产品 ACOS 配置 ←─ 运营事件标记 ──→ 量化诊断中心
+                                           成本目标 ←─ 运营事件 ──→ 广告表现
                                                                                │
                                                                                ↓
-                   最终验收就绪门 ←── 渐进执行回读 ←── 审批历史中心 ←── 优化建议草案
+                         交付验收 ←── 结果核对 ←── 审批中心 ←── 优化建议
 ```
 
-**支线**：指标入库 → 关键词机会矩阵 → Listing 结构重写 → 导出草稿
-**系统**：定时调度 / AI 设置 — 独立于业务范围
+**支线**：导入校验 → 关键词机会 → Listing草案 → 导出草稿
+**系统**：自动任务 / AI与规则 / 交付验收 — 独立于日常广告执行。
 
 ---
 

@@ -60,7 +60,7 @@ describe('formatEvidenceRefSummary', () => {
     expect(summary.reasons).toContain('metric_1 显示高花费且订单不足。');
     expect(summary.evidenceSummary).toContain('报表指标');
     expect(summary.evidenceSummary).toContain('行 19');
-    expect(summary.nextAction).toBe('可进入审批，但仍需人工确认和执行回读。');
+    expect(summary.nextAction).toBe('可进入审批，但仍需人工确认和结果核对。');
   });
 
   it('does not mark aligned AI recommendations as ready when evidence refs have no displayable details', () => {
@@ -176,7 +176,7 @@ describe('formatEvidenceRefSummary', () => {
     expect(summary.evidenceSummary).toContain('对象时间线');
     expect(summary.evidenceSummary).toContain('运营事件');
     expect(summary.evidenceStats).toContain('12 条指标证据');
-    expect(summary.nextAction).toBe('可以进入优化建议，但正式动作仍需审批和执行回读。');
+    expect(summary.nextAction).toBe('可以进入优化建议，但正式动作仍需审批和结果核对。');
   });
 
   it('does not mark an AI ad quant diagnosis as ready when lifecycle evidence refs have no displayable details', () => {

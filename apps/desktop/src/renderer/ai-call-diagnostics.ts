@@ -14,7 +14,7 @@ export function buildAiCallDiagnostics(logs: AiCallLogView[]): AiCallDiagnostics
       status: 'warning',
       headline: '暂无 AI 调用记录',
       detail: '当前还没有广告诊断、建议解释或 Listing 草案调用记录，无法证明 AI 已参与业务分析。',
-      nextAction: '先测试 AI 连接，再运行广告量化或优化建议',
+      nextAction: '先测试 AI 连接，再查看广告表现或生成优化建议',
     };
   }
 
@@ -32,7 +32,7 @@ export function buildAiCallDiagnostics(logs: AiCallLogView[]): AiCallDiagnostics
     status: 'ready',
     headline: '最近 AI 调用成功',
     detail: `${aiCallKindLabel(latest)} / ${latest.model} / 输出格式 ${aiCallOutputFormatLabel(latest)} / ${evidenceLabel}。`,
-    nextAction: '查看广告量化或优化建议中的 AI 判断依据',
+    nextAction: '查看广告表现或优化建议中的 AI 判断依据',
   };
 }
 

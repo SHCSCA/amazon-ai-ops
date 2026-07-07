@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { formatPercent, formatUsd } from '../formatters';
@@ -274,12 +273,12 @@ export function buildProductConfigTaskState(input: {
     title: hasAsin ? `维护 ${asin} 的产品目标` : '先填写 ASIN，再维护产品目标',
     detail: hasAsin
       ? `当前范围已有 ${input.importedRows} 行广告指标，${input.configuredProducts} 个产品配置；成本、最低价、目标 ACOS/TACOS 会进入 AI 阈值判断。`
-      : '产品目标必须先绑定 ASIN，否则广告量化只能按全局默认阈值解释 ACOS 和花费。',
+      : '产品目标必须先绑定 ASIN，否则广告表现只能按全局默认阈值解释 ACOS 和花费。',
     primaryActionLabel: input.saving ? '保存中...' : hasAsin ? '保存目标配置' : '先填写 ASIN',
     primaryActionBusy: input.saving,
     primaryActionBusyLabel: '保存中...',
     primaryActionDisabled: input.saving || !hasAsin,
-    secondaryActionLabel: '进入广告量化',
+    secondaryActionLabel: '查看广告表现',
   };
 }
 
@@ -474,7 +473,7 @@ export function ProductConfigPage() {
     baseClassName: 'secondary-button',
     busyLabel: '处理中...',
     groupBusy: saving,
-    label: '进入广告量化',
+    label: '查看广告表现',
   });
   const bulkApplyButton = productConfigActionButtonView({
     active: bulkApplying,
@@ -767,58 +766,42 @@ export function ProductConfigPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="数据与量化"
+        eyebrow="数据"
         title={PAGE_HEADER_TITLES.productConfig}
         description="维护产品阶段、成本、利润目标和广告目标。AI 量化阈值不能只看固定 ACOS，必须结合产品所处阶段和利润空间。"
         primaryTask="补齐产品阶段与利润约束"
         nextAction={draft.asin ? '保存产品配置' : '填写 ASIN'}
+        primaryAction={{
+          label: taskState.primaryActionLabel,
+          busy: taskState.primaryActionBusy,
+          busyLabel: taskState.primaryActionBusyLabel,
+          disabled: taskState.primaryActionDisabled,
+          onClick: save,
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="当前任务"
-          title={taskState.title}
-          detail={taskState.detail}
-          primaryAction={{
-            label: taskState.primaryActionLabel,
-            busy: taskState.primaryActionBusy,
-            busyLabel: taskState.primaryActionBusyLabel,
-            disabled: taskState.primaryActionDisabled,
-            onClick: save,
-          }}
-          secondaryActions={[
-            {
-              label: taskState.secondaryActionLabel,
-              onClick: () => navigate('ad-quant'),
-            },
-            {
-              label: '补充运营事件',
-              onClick: () => navigate('operation-events'),
-            },
-          ]}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="产品配置任务摘要">
-            <KpiCard
-              label="已配置产品"
-              value={currentScopeProducts.length}
-              detail={draft.asin ? `当前 ${draft.asin}` : '等待 ASIN'}
-              tone={currentScopeProducts.length ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="入库指标"
-              value={`${importedRows} 行`}
-              detail="用于阶段和阈值判断"
-              tone={importedRows > 0 ? 'ready' : 'blocked'}
-            />
-            <KpiCard
-              label="目标 ACOS"
-              value={formatPercent(cost.targetAcos * 100)}
-              detail={`TACOS ${formatPercent(cost.targetTacos * 100)}`}
-              tone={cost.targetAcos > 0 ? 'ready' : 'warning'}
-            />
-            <KpiCard label="保存方式" value="即时保存" detail="失焦或回车生效" tone="pending" />
-          </div>
-        </OperatorTaskPanel>
+        <div className="kpi-row product-config-prototype-status-grid" aria-label="成本目标状态">
+          <KpiCard
+            label="已配置产品"
+            value={currentScopeProducts.length}
+            detail={draft.asin ? `当前 ${draft.asin}` : '等待 ASIN'}
+            tone={currentScopeProducts.length ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="入库指标"
+            value={`${importedRows} 行`}
+            detail="用于阶段和阈值判断"
+            tone={importedRows > 0 ? 'ready' : 'blocked'}
+          />
+          <KpiCard
+            label="目标 ACOS"
+            value={formatPercent(cost.targetAcos * 100)}
+            detail={`TACOS ${formatPercent(cost.targetTacos * 100)}`}
+            tone={cost.targetAcos > 0 ? 'ready' : 'warning'}
+          />
+          <KpiCard label="保存方式" value="即时保存" detail="失焦或回车生效" tone="pending" />
+        </div>
 
         <Panel title="当前范围产品配置" tone="warning">
           <div className="business-split">
@@ -831,6 +814,14 @@ export function ProductConfigPage() {
               </p>
             </div>
             <StatusPill tone={currentScopeProducts.length ? 'ready' : 'pending'}>已配置产品 {currentScopeProducts.length}</StatusPill>
+          </div>
+          <div className="action-row product-config-prototype-actions">
+            <button className="secondary-button" disabled={saving} onClick={() => navigate('ad-quant')} type="button">
+              {taskState.secondaryActionLabel}
+            </button>
+            <button className="secondary-button" disabled={saving} onClick={() => navigate('operation-events')} type="button">
+              补充运营事件
+            </button>
           </div>
         </Panel>
 

@@ -3,44 +3,44 @@ import type { AppRoute, NavGroup } from '../types';
 
 export const navGroups: NavGroup[] = [
   {
-    label: '运营总览',
+    label: '总览',
     items: [
       { id: 'dashboard', label: '今日看板' },
       { id: 'product-management', label: '产品管理' },
     ],
   },
   {
-    label: '数据与量化',
+    label: '数据',
     items: [
       { id: 'operation-scope', label: '工作范围' },
-      { id: 'data-collection', label: '批量数据采集' },
-      { id: 'data-import-validation', label: '指标核验入库' },
-      { id: 'operation-events', label: '运营事件标记' },
-      { id: 'product-config', label: '产品 ACOS 配置' },
-      { id: 'ad-quant', label: '量化诊断中心' },
+      { id: 'data-collection', label: '数据采集' },
+      { id: 'data-import-validation', label: '导入校验' },
+      { id: 'operation-events', label: '运营事件' },
+      { id: 'product-config', label: '成本目标' },
+      { id: 'ad-quant', label: '广告表现' },
     ],
   },
   {
-    label: '广告执行',
+    label: '广告',
     items: [
-      { id: 'recommendations', label: '优化建议草案' },
-      { id: 'approval', label: '审批历史中心' },
-      { id: 'readback', label: '渐进执行回读' },
+      { id: 'recommendations', label: '优化建议' },
+      { id: 'approval', label: '审批中心' },
+      { id: 'readback', label: '结果核对' },
     ],
   },
   {
-    label: '关键词与 Listing',
+    label: '增长',
     items: [
-      { id: 'keyword-opportunities', label: '关键词机会矩阵' },
-      { id: 'listing-optimization', label: 'Listing 结构重写' },
+      { id: 'keyword-opportunities', label: '关键词机会' },
+      { id: 'listing-optimization', label: 'Listing草案' },
     ],
   },
   {
-    label: '系统与交付',
+    label: '系统',
     items: [
-      { id: 'delivery', label: '最终验收就绪门' },
-      { id: 'scheduler', label: '本地定时调度' },
-      { id: 'settings', label: 'AI 适配与诊断' },
+      { id: 'delivery', label: '交付验收' },
+      { id: 'scheduler', label: '自动任务' },
+      { id: 'settings', label: 'AI与规则' },
     ],
   },
 ];
@@ -75,7 +75,7 @@ export function Sidebar({
     <nav className="app-sidebar" aria-busy={navigationBusy || undefined} aria-label="主业务导航" data-navigation-busy={navigationBusy || undefined}>
       <div className="sidebar-brand">
         <strong>Amazon AI Ops</strong>
-        <span>高密度证据驱动桌面工作台</span>
+        <span>v1.5</span>
       </div>
       {navGroups.map((group, groupIndex) => {
         const groupLabelId = navGroupLabelId(groupIndex);

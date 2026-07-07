@@ -22,7 +22,7 @@ describe('buildAiCallDiagnostics', () => {
     expect(diagnostics.detail).toContain('证据包 5 条');
     expect(diagnostics.detail).not.toContain('ad_strategy_diagnosis');
     expect(diagnostics.detail).not.toContain('schema');
-    expect(diagnostics.nextAction).toBe('查看广告量化或优化建议中的 AI 判断依据');
+    expect(diagnostics.nextAction).toBe('查看广告表现或优化建议中的 AI 判断依据');
   });
 
   it('surfaces the latest failed AI call and tells the operator what to check next', () => {
@@ -72,7 +72,7 @@ describe('buildAiCallDiagnostics', () => {
 
     expect(diagnostics.status).toBe('warning');
     expect(diagnostics.headline).toBe('暂无 AI 调用记录');
-    expect(diagnostics.nextAction).toBe('先测试 AI 连接，再运行广告量化或优化建议');
+    expect(diagnostics.nextAction).toBe('先测试 AI 连接，再查看广告表现或生成优化建议');
   });
 
   it('labels evidence count by AI call type so operators know what was checked', () => {

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup } from '../components/tag-metric-group';
 import { KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
@@ -530,7 +529,7 @@ export function buildAdQuantDecisionStatus(input: {
       ruleDetail: '规则量化继续作为确定性安全边界。',
       ruleTone: 'ready',
       actionLabel: '可生成 AI+规则建议',
-      actionDetail: '进入建议页后仍需审批和执行回读。',
+      actionDetail: '进入建议页后仍需审批和结果核对。',
       actionTone: 'ready',
       primaryActionLabel: '生成 AI+规则建议',
     };
@@ -866,7 +865,7 @@ export function AdQuantPage() {
   });
   const quantTaskTitle = canDiagnose
     ? 'AI 量化引擎已完成统计'
-    : '真实数据未闭合，量化诊断锁定';
+    : '真实数据未齐，广告表现锁定';
   const quantTaskDetail = canDiagnose
     ? `当前聚焦 ${adQuantFocusLabel(metricFocus)}，显示 ${diagnosticCount}/${productDiagnostics.length} 个诊断对象；先运行 AI 阶段诊断，再去优化建议。`
     : '先补齐真实广告报表和导入指标，系统不会用审计文件或空数据生成广告判断。';
@@ -1004,61 +1003,57 @@ export function AdQuantPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="数据与量化"
+        eyebrow="数据"
         title={PAGE_HEADER_TITLES.adQuant}
         description="基于真实导入的广告指标展示总盘、效率和实体诊断。没有真实文件和导入指标时，本页只呈现阻断，不生成建议。"
         primaryTask="量化广告表现"
         nextAction={canDiagnose ? '复核高风险实体' : '返回数据采集'}
+        primaryAction={{
+          label: strategyLoading ? 'AI 分析中...' : '运行 AI 分析',
+          busy: strategyLoading,
+          busyLabel: 'AI 分析中...',
+          disabled: !canDiagnose || strategyLoading,
+          onClick: runStrategyDiagnosis,
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="量化诊断中心"
-          title={quantTaskTitle}
-          detail={quantTaskDetail}
-          primaryAction={{
-            label: strategyLoading ? 'AI 分析中...' : '运行大模型深度诊断',
-            busy: strategyLoading,
-            busyLabel: 'AI 分析中...',
-            disabled: !canDiagnose || strategyLoading,
-            onClick: runStrategyDiagnosis,
-          }}
-          secondaryActions={[
-            {
-              label: canGenerateFormalRecommendations && diagnosticCount > 0 ? '进入优化建议' : '返回数据采集',
-              onClick: () => navigate(canGenerateFormalRecommendations && diagnosticCount > 0 ? 'recommendations' : 'data-collection'),
-            },
-          ]}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="广告量化任务摘要">
-            <KpiCard
-              label="当前产品"
-              value={selectedProductGroup?.label || scope.asin || '全部'}
-              detail={selectedProductGroup?.stage ? `阶段 ${lifecycleLabel(selectedProductGroup.stage)}` : '按当前范围读取'}
-              tone={selectedProductGroup?.asin || scope.asin ? 'ready' : 'warning'}
-            />
-            <KpiCard
-              label="花费 / 订单"
-              value={`${formatUsd(selectedSpend)} / ${selectedOrders}`}
-              detail={`销售 ${formatUsd(selectedSales)}`}
-              tone={selectedSpend > 0 ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="ACOS"
-              value={formatPercent(selectedAcos * 100)}
-              detail={`目标 ${formatPercent(ruleConfig.targetAcos * 100)}`}
-              tone={selectedAcos > ruleConfig.highAcosThreshold ? 'blocked' : selectedAcos > ruleConfig.targetAcos ? 'warning' : 'ready'}
-            />
-            <KpiCard
-              label="风险对象"
-              value={diagnosticCount}
-              detail={`${productHighAcosRows.length} 个高 ACOS`}
-              tone={diagnosticCount > 0 ? 'warning' : canDiagnose ? 'ready' : 'blocked'}
-            />
+        <div className="kpi-row ad-quant-prototype-kpi-strip" aria-label="广告表现总盘">
+          <KpiCard
+            label="当前产品"
+            value={selectedProductGroup?.label || scope.asin || '全部'}
+            detail={selectedProductGroup?.stage ? `阶段 ${lifecycleLabel(selectedProductGroup.stage)}` : '按当前范围读取'}
+            tone={selectedProductGroup?.asin || scope.asin ? 'ready' : 'warning'}
+          />
+          <KpiCard
+            label="花费 / 订单"
+            value={`${formatUsd(selectedSpend)} / ${selectedOrders}`}
+            detail={`销售 ${formatUsd(selectedSales)}`}
+            tone={selectedSpend > 0 ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="ACOS"
+            value={formatPercent(selectedAcos * 100)}
+            detail={`目标 ${formatPercent(ruleConfig.targetAcos * 100)}`}
+            tone={selectedAcos > ruleConfig.highAcosThreshold ? 'blocked' : selectedAcos > ruleConfig.targetAcos ? 'warning' : 'ready'}
+          />
+          <KpiCard
+            label="风险对象"
+            value={diagnosticCount}
+            detail={`${productHighAcosRows.length} 个高 ACOS`}
+            tone={diagnosticCount > 0 ? 'warning' : canDiagnose ? 'ready' : 'blocked'}
+          />
+        </div>
+        <Panel title="广告表现聚焦" tone={canDiagnose ? 'success' : 'blocked'}>
+          <div className="prototype-list-stack">
+            <div className="prototype-list-item">
+              <strong>{quantTaskTitle}</strong>
+              <p>{quantTaskDetail}</p>
+            </div>
           </div>
           <TagMetricGroup
             activeKey={metricFocus}
-            ariaLabel="广告量化维度快速聚焦"
+            ariaLabel="广告表现维度快速聚焦"
             dimInactive={metricFocus !== 'all'}
             items={[
               { key: 'all', label: '全部对象', value: productDiagnostics.length, tone: productDiagnostics.length > 0 ? 'ready' : 'blocked', detail: `${realReportCount}/8 类真实报表，${importedRowCount} 行指标` },
@@ -1073,7 +1068,27 @@ export function AdQuantPage() {
           <p className="ad-quant-focus-line" aria-live="polite">
             当前聚焦：{adQuantFocusLabel(metricFocus)}，下方诊断表、时间线和复核队列显示 {diagnosticCount}/{productDiagnostics.length} 个对象；聚焦只改变本页视图，不写入广告账户。
           </p>
-        </OperatorTaskPanel>
+          <div className="action-row ad-quant-prototype-actions">
+            <button
+              aria-busy={strategyRunActionButton.ariaBusy}
+              className={strategyRunActionButton.className}
+              disabled={strategyRunActionButton.disabled}
+              onClick={runStrategyDiagnosis}
+              type="button"
+            >
+              {adQuantActionButtonContent(strategyRunActionButton)}
+            </button>
+            <button
+              aria-busy={canGenerateFormalRecommendations && diagnosticCount > 0 ? recommendationEntryButton.ariaBusy : undefined}
+              className={canGenerateFormalRecommendations && diagnosticCount > 0 ? recommendationEntryButton.className : 'secondary-button'}
+              disabled={canGenerateFormalRecommendations && diagnosticCount > 0 ? recommendationEntryButton.disabled : strategyLoading}
+              onClick={() => navigate(canGenerateFormalRecommendations && diagnosticCount > 0 ? 'recommendations' : 'data-collection')}
+              type="button"
+            >
+              {canGenerateFormalRecommendations && diagnosticCount > 0 ? adQuantActionButtonContent(recommendationEntryButton) : '返回数据采集'}
+            </button>
+          </div>
+        </Panel>
 
         {strategyRunFeedback.visible && (
           <div className={strategyRunFeedback.className} id="ai-strategy-run-feedback" aria-busy={strategyRunFeedback.ariaBusy || undefined}>
@@ -1191,7 +1206,7 @@ export function AdQuantPage() {
             <div className="business-split">
               <div>
                 <div className="business-scope-line">
-                  当前只展示一个 ASIN 的广告量化
+                  当前只展示一个 ASIN 的广告表现
                 </div>
                 <p className="muted-line">
                   先选择产品，再看阶段、阈值、风险和建议，避免把多个产品的广告表现混在一起判断。
@@ -1864,7 +1879,7 @@ export function AdQuantPage() {
             ) : (
               <p className="muted-line">当前范围暂无需要排序的诊断对象。</p>
             )}
-            <p className="muted-line">复核队列只用于决定先看哪几行；真正的广告动作仍需进入优化建议、审批和执行回读。</p>
+            <p className="muted-line">复核队列只用于决定先看哪几行；真正的广告动作仍需进入优化建议、审批和结果核对。</p>
           </Panel>
         )}
 

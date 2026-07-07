@@ -16,10 +16,10 @@ describe('operation scope task state', () => {
       saveStatus: 'idle',
     });
 
-    expect(state.title).toBe('确认当前范围后进入广告量化');
+    expect(state.title).toBe('确认当前工作范围后查看广告表现');
     expect(state.detail).toContain('8/8 类真实报表');
     expect(state.primaryActionLabel).toBe('确认并保存范围');
-    expect(state.nextActionLabel).toBe('进入广告量化');
+    expect(state.nextActionLabel).toBe('查看广告表现');
     expect(state.nextRoute).toBe('ad-quant');
     expect(state.tone).toBe('ready');
   });
@@ -90,7 +90,7 @@ describe('operation scope task state', () => {
     const source = readFileSync(new URL('./operation-scope-page.tsx', import.meta.url), 'utf8');
     const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
-    expect(source).toContain('Panel title="范围表单"');
+    expect(source).toContain('Panel title="范围设置"');
     expect(source).toContain("scopeFieldFeedbackClass('storeName'");
     expect(source).toContain("scopeFieldFeedbackClass('marketplaceCode'");
     expect(source).toContain("scopeFieldFeedbackClass('dateFrom'");

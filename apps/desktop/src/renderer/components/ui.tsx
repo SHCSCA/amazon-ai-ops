@@ -17,7 +17,7 @@ function panelIdSeed(title: string, tone: string): string {
   return hash.toString(36);
 }
 
-export function PageHeader({ eyebrow, title, description, primaryTask, nextAction }: PageHeaderProps) {
+export function PageHeader({ eyebrow, title, description, primaryTask, nextAction, primaryAction }: PageHeaderProps) {
   const idSeed = pageHeaderIdSeed(eyebrow, title);
   const titleId = `page-header-${idSeed}-title`;
   const descriptionId = `page-header-${idSeed}-description`;
@@ -32,24 +32,46 @@ export function PageHeader({ eyebrow, title, description, primaryTask, nextActio
       {(primaryTask || nextAction) && (
         <div className="page-header-rail" role="list" aria-label="首屏主任务和建议下一步">
           {primaryTask && (
-            <div className="page-header-rail-card" role="listitem" tabIndex={0}>
+            <div className="page-header-rail-card" role="listitem">
               <span>当前主任务</span>
               <strong>{primaryTask}</strong>
             </div>
           )}
           {nextAction && (
-            <div className="page-header-rail-card" role="listitem" tabIndex={0}>
+            <div className="page-header-rail-card" role="listitem">
               <span>建议下一步</span>
               <strong>{nextAction}</strong>
             </div>
           )}
         </div>
       )}
+      {primaryAction && (
+        <button
+          aria-busy={primaryAction.busy || undefined}
+          className={primaryAction.className || 'primary-button'}
+          disabled={primaryAction.disabled}
+          onClick={primaryAction.onClick}
+          type="button"
+        >
+          {primaryAction.busy && <span aria-hidden="true" className="button-spinner" />}
+          <span>{primaryAction.busy ? primaryAction.busyLabel || primaryAction.label : primaryAction.label}</span>
+        </button>
+      )}
     </header>
   );
 }
 
-export function Panel({ title, children, tone = 'default' }: { title?: string; children: React.ReactNode; tone?: 'default' | 'warning' | 'blocked' | 'success' }) {
+export function Panel({
+  title,
+  titleAccessory,
+  children,
+  tone = 'default',
+}: {
+  title?: string;
+  titleAccessory?: React.ReactNode;
+  children: React.ReactNode;
+  tone?: 'default' | 'warning' | 'blocked' | 'success';
+}) {
   const titleId = title ? `ui-panel-${panelIdSeed(title, tone)}-title` : undefined;
 
   return (
@@ -57,6 +79,7 @@ export function Panel({ title, children, tone = 'default' }: { title?: string; c
       {title && (
         <div className="panel-title-row">
           <h3 id={titleId}>{title}</h3>
+          {titleAccessory && <div className="panel-title-accessory">{titleAccessory}</div>}
         </div>
       )}
       {children}
@@ -117,7 +140,7 @@ export function StateLightGrid({
       role="list"
     >
       {items.map((item) => (
-        <div className={`state-light-card state-light-${item.tone}`} key={item.label} role="listitem" tabIndex={0}>
+        <div className={`state-light-card state-light-${item.tone}`} key={item.label} role="listitem">
           <span>{item.label}</span>
           <strong>{item.value}</strong>
           {item.detail && <p>{item.detail}</p>}
@@ -138,7 +161,7 @@ export function MicroStepper({ ariaLabel = '流程步骤状态', items }: { aria
   return (
     <div aria-label={ariaLabel} className="micro-stepper" role="list">
       {items.map((item) => (
-        <div className={`micro-step micro-step-${item.tone}`} key={item.label} role="listitem" tabIndex={0}>
+        <div className={`micro-step micro-step-${item.tone}`} key={item.label} role="listitem">
           <span className="micro-step-indicator" aria-hidden="true" />
           <span>{item.label}</span>
           {item.meta && <strong>{item.meta}</strong>}
@@ -196,7 +219,15 @@ export function FormTableRow({
   );
 }
 
-export function SafetyGateLine({ children, tone = 'blocked' }: { children: React.ReactNode; tone?: IndustrialTone }) {
+export function SafetyGateLine({
+  children,
+  focusable = false,
+  tone = 'blocked',
+}: {
+  children: React.ReactNode;
+  focusable?: boolean;
+  tone?: IndustrialTone;
+}) {
   return (
     <div
       aria-atomic={true}
@@ -205,7 +236,7 @@ export function SafetyGateLine({ children, tone = 'blocked' }: { children: React
       className={`safety-gate-line safety-gate-${tone}`}
       data-safety-tone={tone}
       role="status"
-      tabIndex={0}
+      tabIndex={focusable ? 0 : undefined}
     >
       {children}
     </div>

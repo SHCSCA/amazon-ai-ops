@@ -28,7 +28,7 @@ import {
   requiredMissing,
   sessionCheckCopy,
 } from './readback-page';
-import { firstIncompleteReadbackStep } from '../readback-wizard';
+import { firstIncompleteReadbackStep, readbackWizardSteps } from '../readback-wizard';
 
 function completeForm(sourceRow = '12') {
   return {
@@ -165,6 +165,21 @@ describe('readback safety checkbox feedback', () => {
     expect(stylesheet).toMatch(/\.checkbox-grid input\[type="checkbox"\]:checked[\s\S]*animation:\s*readback-checkbox-confirm/);
     expect(stylesheet).toContain('@keyframes readback-checkbox-confirm');
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.checkbox-grid input\[type="checkbox"\]:checked[\s\S]*animation:\s*none/);
+  });
+});
+
+describe('readback wizard user-task copy', () => {
+  it('frames the readback flow as approved action, approval proof, execution evidence, and export', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+
+    expect(readbackWizardSteps.map((step) => step.title)).toEqual([
+      '1. 选择已批准动作',
+      '2. 填写审批凭证',
+      '3. 记录执行和回读',
+      '4. 校验并导出证据',
+    ]);
+    expect(source).toContain('选择已批准动作，保存审批凭证、执行前后截图和刷新后的回读值');
+    expect(source).toContain('先记录执行前值和截图，再记录执行后值和截图，最后刷新广告后台填写回读值和回读截图');
   });
 });
 

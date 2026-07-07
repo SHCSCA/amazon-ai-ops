@@ -9,13 +9,13 @@ const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const NAV_RE = {
   approval: /审批历史中心|审批中心/,
-  readback: /渐进执行回读|执行回读/,
+  readback: /结果核对|结果核对/,
   recommendations: /优化建议草案|优化建议/,
 };
 const HEADING_RE = {
-  approval: /审批历史中心/,
-  readback: /渐进执行回读/,
-  recommendations: /优化建议草案/,
+  approval: /审批历史中心|审批中心/,
+  readback: /结果核对|结果核对/,
+  recommendations: /优化建议草案|优化建议/,
 };
 
 function fail(message, details) {
@@ -873,15 +873,15 @@ async function main() {
   await page.getByRole('textbox', { name: '数据批次', exact: true }).fill('manual_ad_execution_batch');
   await page.getByRole('button', { name: '保存范围' }).click();
   await page.waitForFunction(() => document.body.innerText.includes('manual_ad_execution_batch'), null, { timeout: 5000 });
-  await page.getByText('批次', { exact: true }).first().waitFor({ timeout: 5000 });
-  await page.getByText('报表', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.getByText('追溯批次', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.getByText('真实报表', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.waitForFunction(() => document.body.textContent?.includes('手动批次未自动校验：manual_ad_execution_batch'), null, { timeout: 5000 });
   await expectInBody(page, 'manual_ad_execution_batch', 'manual batch scope value');
 
   const routes = [
     { nav: NAV_RE.recommendations, heading: HEADING_RE.recommendations, label: '优化建议', key: 'recommendations' },
     { nav: NAV_RE.approval, heading: HEADING_RE.approval, label: '审批中心', key: 'approval' },
-    { nav: NAV_RE.readback, heading: HEADING_RE.readback, label: '执行回读', key: 'readback' },
+    { nav: NAV_RE.readback, heading: HEADING_RE.readback, label: '结果核对', key: 'readback' },
   ];
   for (const { nav, heading, label, key } of routes) {
     await navigateBusinessPage(page, nav, key);
@@ -897,8 +897,8 @@ async function main() {
   }
 
   await navigateBusinessPage(page, NAV_RE.recommendations, 'recommendations');
-  await expectVisible(page, '建议池');
-  await expectVisible(page, '正式可审批 1');
+  await expectVisible(page, '建议动作');
+  await expectVisible(page, '可送审动作 1');
   await expectInBody(page, '需复核 1', 'recommendation task review count');
   await expectInBody(page, '缺证据 0', 'recommendation task evidence blocker count');
   await expectVisible(page, '去审批中心');
@@ -906,11 +906,11 @@ async function main() {
   await expectVisible(page, '建议处理路径');
   await expectVisible(page, '1. 生成解释');
   await expectVisible(page, '2. 审批决策');
-  await expectVisible(page, '3. 执行回读');
+  await expectVisible(page, '3. 结果核对');
   await expectVisible(page, '本页不审批、不执行广告、不写入 Amazon；真实动作必须在审批后逐条记录截图和回读证据。');
   await expectVisible(page, '建议上下文检查');
   await expectVisible(page, '建议决策总览');
-  await expectVisible(page, '正式可审批');
+  await expectVisible(page, '可送审动作');
   await expectVisible(page, '人工复核');
   await expectVisible(page, 'AI 洞察未采纳');
   await expectVisible(page, '证据不足阻断');
@@ -928,7 +928,7 @@ async function main() {
   await expectVisible(page, '1 条时间线 / 1 条运营事件');
   await expectVisible(page, 'AI 会结合对象生命周期、Coupon、BD、调价、库存和 Listing 变更解释波动。');
   await expectVisible(page, '本次 AI 输入');
-  await expectVisible(page, '广告事实 + 产品配置 + 运营事件 + 规则阈值 + 量化诊断');
+  await expectVisible(page, '广告事实 + 产品配置 + 运营事件 + 规则阈值 + 广告表现');
   await expectVisible(page, 'AI 不直接读取审计包，也不会在缺真实数据时用 0 值生成建议。');
   await expectVisible(page, '产品配置');
   await expectVisible(page, '1 个产品 / 1 个有目标阈值');
@@ -958,12 +958,12 @@ async function main() {
   await expectVisible(page, '2 浪费 / 1 需处理');
   await expectVisible(page, 'manual_ad_execution_batch');
   await openEvidenceDisclosures(page);
-  await expectVisible(page, '对象类型');
-  await expectVisible(page, '批次/来源');
-  await expectVisible(page, 'AI/规则判断');
-  await expectVisible(page, '浪费风险');
+  await expectVisible(page, '动作建议');
+  await expectVisible(page, '证据状态');
+  await expectVisible(page, '当前 → 建议');
+  await expectVisible(page, '原因指标');
   await expectVisible(page, '可进入普通审批');
-  await expectVisible(page, '规则+AI 一致');
+  await expectVisible(page, '可送审');
   await expectVisible(page, '关键词探索');
   await expectVisible(page, '建议优先级与判断标准');
   await expectInBody(page, '规则阈值：目标 ACOS 25.0% / 高 ACOS 50.0% / 无订单 30 点击 / 最低花费 $10.00', 'recommendation threshold summary');
@@ -976,7 +976,7 @@ async function main() {
   await expectVisible(page, '本次生成 AI 参与状态');
   await expectVisible(page, 'AI 已参与');
   await expectVisible(page, '1 新建议 / 1 可审批动作');
-  await expectInBody(page, '正式可审批 1', 'formal recommendation count');
+  await expectInBody(page, '可送审动作 1', 'formal recommendation count');
   await expectInBody(page, '人工复核 1', 'manual review recommendation count');
   await expectInBody(page, 'AI 洞察未采纳 0', 'insight only recommendation count');
   await expectInBody(page, '证据不足阻断 0', 'blocked evidence recommendation count');
@@ -1028,16 +1028,17 @@ async function main() {
   await page.evaluate(() => {
     window.__mockScopedMetricsMissing = false;
   });
-  await expectVisible(page, '查看详情');
-  await expectVisible(page, 'DeepSeek AI');
-  await page.getByRole('button', { name: '查看详情' }).first().click();
+  await expectVisible(page, '查看送审判断');
+  await expectVisible(page, '可送审');
+  await page.getByRole('button', { name: '查看送审判断' }).first().click();
   await openEvidenceDisclosures(page);
-  await expectVisible(page, '送审前证据检查');
+  await expectVisible(page, '送审判断');
   await expectVisible(page, '证据完整');
-  await expectVisible(page, '来源批次匹配');
-  await expectVisible(page, '当前/建议值');
-  await expectVisible(page, '当前值');
-  await expectVisible(page, '建议值');
+  await expectVisible(page, '可以送到审批中心');
+  await expectVisible(page, '匹配当前范围');
+  await expectVisible(page, '建议动作');
+  await expectVisible(page, '广告对象');
+  await expectVisible(page, '为什么建议');
   await expectVisible(page, '策略诊断');
   await expectVisible(page, 'AI 动态阈值');
   await expectVisible(page, '规则量化');
@@ -1059,7 +1060,7 @@ async function main() {
   await expectVisible(page, 'Coupon 背景显示该产品仍处于测词阶段，同时需要收紧无订单花费。');
   await expectVisible(page, 'AI/规则决策摘要');
   await expectVisible(page, '规则与 AI 一致，且已绑定可回查证据。');
-  await expectVisible(page, '可进入审批，但仍需人工确认和执行回读。');
+  await expectVisible(page, '可进入审批，但仍需人工确认和结果核对。');
   await expectVisible(page, 'AI 判断依据');
   await expectVisible(page, '引用证据详情');
   await expectVisible(page, '报表指标');
@@ -1075,7 +1076,7 @@ async function main() {
   await expectVisible(page, '来源行号');
   await expectVisible(page, '12');
   await expectVisible(page, 'C:/reports/source_user_search_term.xlsx');
-  await expectInBody(page, '可进入审批中心复核；来源批次 manual_ad_execution_batch 已绑定当前范围。', 'recommendation evidence readiness');
+  await expectInBody(page, '动作、对象、当前值、建议值和真实报表来源已绑定；审批中心仍会逐条重新校验。', 'recommendation evidence readiness');
   await expectVisible(page, '只解释和送审，不执行广告动作');
   await expectInBody(page, 'deepseek-chat', 'recommendation detail AI model');
   await page.evaluate(() => {
@@ -1109,18 +1110,18 @@ async function main() {
   await expectVisible(page, '洞察未采纳 1');
   await expectVisible(page, '最终可审批 0');
   await expectVisible(page, '下一步处理顺序');
-  await expectVisible(page, '先回广告量化页查看风险对象和样本量');
+  await expectVisible(page, '先回广告表现页查看风险对象和样本量');
   await expectVisible(page, '补充运营事件或产品配置后重新生成');
   await expectVisible(page, '确认广告活动、广告组、关键词/搜索词/投放对象能绑定真实报表行');
   await expectVisible(page, 'AI 诊断摘要');
   await expectVisible(page, '当前表现相对稳定，暂时没有足够证据支持调整出价或新增否定词。');
   await expectVisible(page, '未进入建议池的原因');
   await expectVisible(page, '下一步补证据');
-  await expectVisible(page, '回到广告量化页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。');
+  await expectVisible(page, '回到广告表现页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。');
   await expectVisible(page, 'AI 洞察但未采纳');
   await expectVisible(page, 'unbound no-candidate insight');
   await expectVisible(page, '没有可绑定到当前真实指标的广告活动/广告组/对象。');
-  await expectVisible(page, '查看广告量化');
+  await expectVisible(page, '查看广告表现');
   await expectVisible(page, '稳定转化 / AI');
   await page.evaluate(() => {
     window.__mockBlockedPipeline = true;
@@ -1145,27 +1146,27 @@ async function main() {
     window.dispatchEvent(new Event('business-ui:data-updated'));
   });
   await page.getByRole('button', { name: '刷新建议' }).click();
-  await expectVisible(page, '查看详情');
+  await expectVisible(page, '查看送审判断');
 
   await navigateBusinessPage(page, NAV_RE.approval, 'approval');
-  await expectVisible(page, '选择一条建议');
+  await expectVisible(page, '选择一条待审批动作');
   await expectVisible(page, '查看审批队列');
   await openEvidenceDisclosures(page);
   await expectVisible(page, '审批安全边界');
   await expectVisible(page, '仅审批，不执行');
   await expectVisible(page, '审批处理要求');
   await expectVisible(page, '批准后下一步');
-  await expectVisible(page, '在执行回读页补录审批凭证、执行前/执行后截图、回读值和现场行证明。');
+  await expectVisible(page, '在结果核对页补录审批凭证、执行前/执行后截图、回读值和现场行证明。');
   await page.getByRole('button', { name: '复核队列' }).click();
   await openEvidenceDisclosures(page);
   await expectInBody(page, 'AI 独立洞察不能直接批准');
   await expectInBody(page, '规则量化要求人工复核');
   await page.getByRole('button', { name: '处理' }).first().click();
   await expectVisible(page, '需要复核');
-  await expectVisible(page, '普通批准不可用');
+  await expectVisible(page, '暂不能批准');
   await openEvidenceDisclosures(page);
   await expectInBody(page, '这条建议不能走普通批准');
-  await page.getByRole('button', { name: '普通批准不可用' }).evaluate((node) => {
+  await page.getByRole('button', { name: '暂不能批准' }).evaluate((node) => {
     if (!node.disabled) throw new Error('Blocked review recommendation approve button was not disabled');
   });
   await page.getByRole('button', { name: '待审批' }).click();
@@ -1180,10 +1181,10 @@ async function main() {
   await page.waitForFunction(() => window.__businessUiActionLog?.some((item) => item.type === 'getRecommendations' && item.filter?.status === 'pending'));
   await page.getByRole('button', { name: '处理' }).first().click();
   await expectVisible(page, '不能普通批准');
-  await expectVisible(page, '普通批准不可用');
+  await expectVisible(page, '暂不能批准');
   await openEvidenceDisclosures(page);
   await expectInBody(page, 'AI 建议缺少可回查证据引用');
-  await page.getByRole('button', { name: '普通批准不可用' }).evaluate((node) => {
+  await page.getByRole('button', { name: '暂不能批准' }).evaluate((node) => {
     if (!node.disabled) throw new Error('AI recommendation without evidence refs approve button was not disabled');
   });
   await page.evaluate(() => {
@@ -1198,7 +1199,7 @@ async function main() {
   await expectInBody(page, 'ai explanation only target');
   await page.getByRole('button', { name: '处理' }).first().click();
   await expectNotInBody(page, 'AI 建议缺少可回查证据引用');
-  await page.getByRole('button', { name: '批准并进入待执行' }).evaluate((node) => {
+  await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).evaluate((node) => {
     if (node.disabled) throw new Error('Rule recommendation with AI explanation only should remain approvable');
   });
   await page.evaluate(() => {
@@ -1218,10 +1219,10 @@ async function main() {
   await page.getByRole('button', { name: '处理' }).first().click();
   await expectVisible(page, '可以批准');
   await openEvidenceDisclosures(page);
-  await expectVisible(page, '审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“执行回读”页逐条补齐。');
+  await expectVisible(page, '审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“结果核对”页逐条补齐。');
   await expectVisible(page, 'AI/规则决策摘要');
   await expectVisible(page, '规则与 AI 一致，且已绑定可回查证据。');
-  await expectVisible(page, '可进入审批，但仍需人工确认和执行回读。');
+  await expectVisible(page, '可进入审批，但仍需人工确认和结果核对。');
   await expectVisible(page, '当前值/建议值');
   await expectVisible(page, '来源文件');
   await expectVisible(page, '当前批次');
@@ -1261,12 +1262,12 @@ async function main() {
   await page.getByRole('button', { name: '处理' }).first().click();
   await page.getByPlaceholder('负责人姓名').fill('QA Approver');
   await page.getByPlaceholder('记录审批范围、外部审批凭证或拒绝原因').fill('Approved for smoke scope only.');
-  await page.getByRole('button', { name: '批准并进入待执行' }).click();
+  await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).click();
 
   await navigateBusinessPage(page, NAV_RE.readback, 'readback');
-  await expectVisible(page, '1. 确认动作和来源');
-  await expectVisible(page, '2. 填写审批允许');
-  await expectVisible(page, '3. 补执行前后和回读');
+  await expectVisible(page, '1. 选择已批准动作');
+  await expectVisible(page, '2. 填写审批凭证');
+  await expectVisible(page, '3. 记录执行和回读');
   await expectVisible(page, '4. 校验并导出证据');
   await expectVisible(page, '人工执行证据，不批量写入');
   await expectVisible(page, '执行前、执行后、回读截图不能复用');
@@ -1280,7 +1281,7 @@ async function main() {
   await expectNotInBody(page, 'pnpm run verify:ad-readback');
   await expectNotInBody(page, 'create:ad-readback-template');
   await page.getByRole('button', { name: '载入' }).first().click();
-  await clickReadbackStep(page, '1. 确认动作和来源');
+  await clickReadbackStep(page, '1. 选择已批准动作');
   await expectVisible(page, '来源批次');
   await expectVisible(page, '指标日期');
   await expectVisible(page, '来源行号');
@@ -1305,7 +1306,7 @@ async function main() {
   await page.getByRole('textbox', { name: '推荐来源文件', exact: true }).evaluate((node) => {
     if (!node.value.includes('C:/reports/source_user_search_term.xlsx')) throw new Error(`Unexpected source files: ${node.value}`);
   });
-  await clickReadbackStep(page, '2. 填写审批允许');
+  await clickReadbackStep(page, '2. 填写审批凭证');
   await page.getByRole('textbox', { name: '审批人', exact: true }).evaluate((node) => {
     if (node.value !== 'QA Approver') throw new Error(`Unexpected carried approver: ${node.value}`);
   });
@@ -1315,24 +1316,24 @@ async function main() {
   await page.getByRole('textbox', { name: '审批时间', exact: true }).evaluate((node) => {
     if (!String(node.value || '').includes('T')) throw new Error(`Approval time was not carried into readback: ${node.value}`);
   });
-  await clickReadbackStep(page, '1. 确认动作和来源');
+  await clickReadbackStep(page, '1. 选择已批准动作');
   await page.getByRole('textbox', { name: '来源批次', exact: true }).fill('stale_ad_execution_batch');
   await expectVisible(page, '来源批次不一致');
   await clickReadbackStep(page, '4. 校验并导出证据');
   await expectVisible(page, '来源批次必须等于当前批次');
   await expectVisible(page, '导出缺口草稿');
-  await clickReadbackStep(page, '1. 确认动作和来源');
+  await clickReadbackStep(page, '1. 选择已批准动作');
   await page.getByRole('textbox', { name: '来源批次', exact: true }).fill('manual_ad_execution_batch');
-  await clickReadbackStep(page, '1. 确认动作和来源');
+  await clickReadbackStep(page, '1. 选择已批准动作');
   await expectVisible(page, '来源批次匹配');
-  await clickReadbackStep(page, '2. 填写审批允许');
+  await clickReadbackStep(page, '2. 填写审批凭证');
   await page.getByRole('textbox', { name: '审批人', exact: true }).fill('QA Approver');
   await page.getByRole('textbox', { name: '审批凭证', exact: true }).fill('C:/evidence/approval.png');
   await page.getByRole('textbox', { name: '审批时间', exact: true }).fill('2026-06-12T10:00:00.000Z');
   for (const label of ['审批人确认范围', '外部审批允许', '低风险策略允许']) {
     await page.getByLabel(label).check();
   }
-  await clickReadbackStep(page, '3. 补执行前后和回读');
+  await clickReadbackStep(page, '3. 记录执行和回读');
   await page.getByRole('textbox', { name: '执行人', exact: true }).fill('QA Operator');
   await page.getByRole('textbox', { name: '执行编号', exact: true }).fill('manual-smoke-001');
   await page.getByRole('textbox', { name: '执行时间', exact: true }).fill('2026-06-12T10:05:00.000Z');
@@ -1402,11 +1403,11 @@ async function main() {
   const afterExportScreenshotPath = path.join(evidenceDir, `business-ui-ad-execution-readback-after-export-${runId}.png`);
   await page.screenshot({ path: afterExportScreenshotPath, fullPage: true });
   evidence.pages.readbackAfterExport = {
-    label: '执行回读导出结果',
+    label: '结果核对导出结果',
     screenshotPath: afterExportScreenshotPath,
     bodyTextSample: (await bodyText(page)).slice(0, 1800),
   };
-  await clickReadbackStep(page, '3. 补执行前后和回读');
+  await clickReadbackStep(page, '3. 记录执行和回读');
   await page.getByRole('textbox', { name: '执行后值', exact: true }).fill('');
   await page.getByRole('textbox', { name: '执行后值', exact: true }).fill('1.07');
   await page.waitForTimeout(50);

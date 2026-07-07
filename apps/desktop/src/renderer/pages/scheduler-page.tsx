@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute } from '../types';
@@ -134,7 +133,7 @@ export function buildSchedulerTaskPanelState(input: {
 
   if (pending) {
     title = `确认触发：${taskLabel(pending.name)}`;
-    detail = `${taskPurpose(pending.name)} 本次只触发本地任务，仍不能绕过真实报表、人工审批和执行回读。`;
+    detail = `${taskPurpose(pending.name)} 本次只触发本地任务，仍不能绕过真实报表、人工审批和结果核对。`;
     primaryActionLabel = '执行本地任务';
     primaryBusyLabel = '正在执行...';
     primaryActionBusy = running;
@@ -272,63 +271,67 @@ export function SchedulerPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="系统与交付"
+        eyebrow="系统"
         title={PAGE_HEADER_TITLES.scheduler}
-        description="查看和控制本地自动化任务。定时任务不能绕过真实报表、人工审批和执行回读门槛。"
+        description="查看和控制本地自动化任务。定时任务不能绕过真实报表、人工审批和结果核对门槛。"
         primaryTask="管理自动化节奏"
         nextAction={tasks.some((task) => task.enabled) ? '关注下一次运行结果' : '按需启用任务'}
+        primaryAction={{
+          label: taskPanelState.primaryActionLabel,
+          busy: taskPanelState.primaryActionBusy,
+          busyLabel: taskPanelState.primaryBusyLabel,
+          disabled: taskPanelState.primaryActionDisabled,
+          onClick: taskPanelState.mode === 'confirm-run' ? confirmRunNow : () => loadTasks(),
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="本地调度"
-          title={taskPanelState.title}
-          detail={taskPanelState.detail}
-          primaryAction={{
-            label: taskPanelState.primaryActionLabel,
-            busy: taskPanelState.primaryActionBusy,
-            busyLabel: taskPanelState.primaryBusyLabel,
-            disabled: taskPanelState.primaryActionDisabled,
-            onClick: taskPanelState.mode === 'confirm-run' ? confirmRunNow : () => loadTasks(),
-          }}
-          secondaryActions={taskPanelState.secondaryActions.map((action) => ({
-            label: action.label,
-            disabled: action.disabled,
-            onClick: action.kind === 'cancel-run'
-              ? () => setPendingRunTask(null)
-              : () => action.route && navigate(action.route),
-          }))}
+        <div className="kpi-row scheduler-prototype-status-grid" aria-label="自动任务摘要">
+          <KpiCard
+            label="启用任务"
+            value={`${enabledTaskCount}/${tasks.length}`}
+            detail={enabledTaskCount ? '按本地计划排队' : '全部停用'}
+            tone={enabledTaskCount ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="下次运行"
+            value={nextTask ? taskLabel(nextTask.name) : '暂无'}
+            detail={nextTask?.nextRun || '等待调度'}
+            tone={nextTask ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="最近执行"
+            value={lastTask ? taskLabel(lastTask.name) : '尚无'}
+            detail={lastTask?.lastRun || '未记录'}
+            tone={lastTask ? 'ready' : 'pending'}
+          />
+          <KpiCard label="安全边界" value="不写广告" detail="只创建本地待审建议" tone="warning" />
+        </div>
+        <div
+          aria-live="polite"
+          className={`scheduler-task-feedback scheduler-task-feedback-${taskPanelState.feedbackTone} scheduler-prototype-feedback`}
+          role="status"
         >
-          <div className="kpi-row kpi-row--task" aria-label="定时任务摘要">
-            <KpiCard
-              label="启用任务"
-              value={`${enabledTaskCount}/${tasks.length}`}
-              detail={enabledTaskCount ? '按本地计划排队' : '全部停用'}
-              tone={enabledTaskCount ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="下次运行"
-              value={nextTask ? taskLabel(nextTask.name) : '暂无'}
-              detail={nextTask?.nextRun || '等待调度'}
-              tone={nextTask ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="最近执行"
-              value={lastTask ? taskLabel(lastTask.name) : '尚无'}
-              detail={lastTask?.lastRun || '未记录'}
-              tone={lastTask ? 'ready' : 'pending'}
-            />
-            <KpiCard label="安全边界" value="不写广告" detail="只创建本地待审建议" tone="warning" />
+          <span>{taskPanelState.title}</span>
+          <strong>{taskPanelState.feedbackLabel}</strong>
+          <p>{taskPanelState.detail}</p>
+          <em>{taskPanelState.feedbackDetail}</em>
+        </div>
+        {taskPanelState.secondaryActions.length > 0 && (
+          <div className="action-row scheduler-prototype-actions">
+            {taskPanelState.secondaryActions.map((action) => (
+              <button
+                className="secondary-button"
+                disabled={action.disabled}
+                key={`${action.kind || action.route || action.label}-${action.label}`}
+                onClick={action.kind === 'cancel-run' ? () => setPendingRunTask(null) : () => action.route && navigate(action.route)}
+                type="button"
+              >
+                {action.label}
+              </button>
+            ))}
           </div>
-          <div
-            aria-live="polite"
-            className={`scheduler-task-feedback scheduler-task-feedback-${taskPanelState.feedbackTone}`}
-            role="status"
-          >
-            <span>{taskPanelState.feedbackLabel}</span>
-            <strong>{taskPanelState.feedbackDetail}</strong>
-          </div>
-        </OperatorTaskPanel>
+        )}
 
         <Panel title="本地调度控制器" tone={enabledTaskCount ? 'success' : 'warning'}>
           <StateLightGrid

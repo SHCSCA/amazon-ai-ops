@@ -9,7 +9,7 @@ export type ReadbackWizardStep = {
 export const readbackWizardSteps: ReadbackWizardStep[] = [
   {
     id: 'target-source',
-    title: '1. 确认动作和来源',
+    title: '1. 选择已批准动作',
     fields: [
       '店铺',
       '站点',
@@ -32,7 +32,7 @@ export const readbackWizardSteps: ReadbackWizardStep[] = [
   },
   {
     id: 'approval',
-    title: '2. 填写审批允许',
+    title: '2. 填写审批凭证',
     fields: [
       '审批人',
       '审批凭证',
@@ -45,7 +45,7 @@ export const readbackWizardSteps: ReadbackWizardStep[] = [
   },
   {
     id: 'evidence',
-    title: '3. 补执行前后和回读',
+    title: '3. 记录执行和回读',
     fields: [
       '执行人',
       '执行编号',

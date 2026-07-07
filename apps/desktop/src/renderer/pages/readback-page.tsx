@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, PageHeader, Panel, SafetyGateLine, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
@@ -1539,7 +1538,7 @@ export function ReadbackPage() {
       setSessionFillResult(null);
       setSessionVerifyResult(null);
       setActiveStep('target-source');
-      setMessage('已清空执行回读表单：当前范围不再包含该已批准动作。');
+      setMessage('已清空结果核对表单：当前范围不再包含该已批准动作。');
     }
   }, [approvedRows, form.recommendationId]);
 
@@ -1619,47 +1618,44 @@ export function ReadbackPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="广告执行"
+        eyebrow="广告"
         title={PAGE_HEADER_TITLES.readback}
-        description="按步骤保存人工执行、截图和回读证据，不自动写广告后台。"
-        primaryTask="证明执行结果可回读"
-        nextAction={form.recommendationId ? '补齐证据并导出' : '选择已批准动作'}
+        description="选择已批准动作，保存审批凭证、执行前后截图和刷新后的回读值，再导出本地证据。"
+        primaryTask="按步骤证明执行结果"
+        nextAction={form.recommendationId ? '补齐执行和回读证据' : '选择已批准动作'}
+        primaryAction={readbackPrimaryAction}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow={`步骤 ${activeStepIndex + 1}/4`}
-          title={activeStepSummary.title}
-          detail={activeStepDetail}
-          primaryAction={readbackPrimaryAction}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="回读任务摘要">
-            <KpiCard
-              label="当前步骤"
-              value={`${activeStepIndex + 1}/4`}
-              detail={activeStepSummary.title}
-              tone={activeMissingCount ? 'warning' : 'ready'}
-            />
-            <KpiCard
-              label="已批准动作"
-              value={approvedRows.length}
-              detail={form.recommendationId ? `已选择 #${form.recommendationId}` : '等待选择'}
-              tone={form.recommendationId ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="当前缺口"
-              value={activeMissingCount}
-              detail={precheckCopy.statusLabel}
-              tone={activeMissingCount ? 'blocked' : 'ready'}
-            />
-            <KpiCard
-              label="截图证据"
-              value={`${capturedEvidenceCount}/4`}
-              detail="审批/前/后/回读"
-              tone={capturedEvidenceCount >= 4 ? 'ready' : capturedEvidenceCount > 0 ? 'warning' : 'blocked'}
-            />
-          </div>
+        <div className="kpi-row readback-prototype-status-grid" aria-label="结果核对状态">
+          <KpiCard
+            label="当前步骤"
+            value={`${activeStepIndex + 1}/4`}
+            detail={activeStepSummary.title}
+            tone={activeMissingCount ? 'warning' : 'ready'}
+          />
+          <KpiCard
+            label="已批准动作"
+            value={approvedRows.length}
+            detail={form.recommendationId ? `已选择 #${form.recommendationId}` : '等待选择'}
+            tone={form.recommendationId ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="当前缺口"
+            value={activeMissingCount}
+            detail={precheckCopy.statusLabel}
+            tone={activeMissingCount ? 'blocked' : 'ready'}
+          />
+          <KpiCard
+            label="截图证据"
+            value={`${capturedEvidenceCount}/4`}
+            detail="审批/前/后/回读"
+            tone={capturedEvidenceCount >= 4 ? 'ready' : capturedEvidenceCount > 0 ? 'warning' : 'blocked'}
+          />
+        </div>
+        <Panel title={`步骤 ${activeStepIndex + 1}/4：${activeStepSummary.title}`} tone={activeMissingCount ? 'warning' : 'success'}>
           <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
+          <p className="muted-line">{activeStepDetail}</p>
           <div className="chip-row readback-safety-row">
             <span className="chip chip-warning">人工执行证据，不批量写入</span>
             <span className="chip chip-warning">执行前、执行后、回读截图不能复用</span>
@@ -1668,7 +1664,7 @@ export function ReadbackPage() {
           <SafetyGateLine>
             {'存证顺序：审批时间 <= 执行前时间 <= 线下动作执行时间 <= 真实回读时间；回读值必须等于执行后值。'}
           </SafetyGateLine>
-        </OperatorTaskPanel>
+        </Panel>
 
         {repairIntent && (
           <div className="readback-repair-banner" role="status" aria-live="polite">
@@ -1677,7 +1673,7 @@ export function ReadbackPage() {
           </div>
         )}
 
-        <div className="readback-step-grid readback-step-tabs" role="tablist" aria-label="执行回读步骤" style={readbackStepRailStyle}>
+        <div className="readback-step-grid readback-step-tabs" role="tablist" aria-label="结果核对步骤" style={readbackStepRailStyle}>
           {readbackStepSummaries.map((step, index) => (
             <button
               aria-controls={readbackStepPanelId(step.id)}
@@ -1708,7 +1704,7 @@ export function ReadbackPage() {
 
         {activeStep === 'target-source' && (
           <div {...readbackStepPanelProps('target-source')}>
-            <Panel title="1. 确认动作和来源" tone={activeMissingCount ? 'blocked' : 'success'}>
+            <Panel title="1. 选择已批准动作" tone={activeMissingCount ? 'blocked' : 'success'}>
             <div className="business-split">
               <div>
                 <div className="business-scope-line">当前有效批次：{currentBatchId || '暂无'}</div>
@@ -1819,7 +1815,7 @@ export function ReadbackPage() {
 
         {activeStep === 'approval' && (
           <div {...readbackStepPanelProps('approval')}>
-            <Panel title="2. 填写审批允许" tone={activeMissingCount ? 'blocked' : 'success'}>
+            <Panel title="2. 填写审批凭证" tone={activeMissingCount ? 'blocked' : 'success'}>
             <div className="form-grid">
               <ReadbackFieldCell label="审批人"><input value={form.approverName} onChange={(event) => update({ approverName: event.target.value })} /></ReadbackFieldCell>
               <ReadbackFieldCell label="审批备注"><input value={form.approvalNote} onChange={(event) => update({ approvalNote: event.target.value })} /></ReadbackFieldCell>
@@ -1850,8 +1846,8 @@ export function ReadbackPage() {
             {...readbackStepPanelProps('evidence')}
             className={`readback-step-panel ${readbackRepairPanelClass(Boolean(repairIntent), repairPulse)}`}
           >
-            <Panel title="3. 补执行前后和回读" tone={activeMissingCount ? 'blocked' : 'success'}>
-              <p className="muted-line">执行前、执行后、回读截图不能复用；回读值必须等于执行后值。</p>
+            <Panel title="3. 记录执行和回读" tone={activeMissingCount ? 'blocked' : 'success'}>
+              <p className="muted-line">先记录执行前值和截图，再记录执行后值和截图，最后刷新广告后台填写回读值和回读截图；三类截图不能复用。</p>
               <ReadbackContractStrip checks={contractChecks} />
               <div className="form-grid">
                 <ReadbackFieldCell className={repairFieldClass('执行人')} label="执行人"><input value={form.executedBy} onChange={(event) => update({ executedBy: event.target.value })} /></ReadbackFieldCell>

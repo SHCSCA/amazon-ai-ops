@@ -79,7 +79,7 @@ describe('product config task and inline save feedback', () => {
     expect(task.detail).toContain('2416');
     expect(task.primaryActionLabel).toBe('保存目标配置');
     expect(task.primaryActionDisabled).toBe(false);
-    expect(task.secondaryActionLabel).toBe('进入广告量化');
+    expect(task.secondaryActionLabel).toBe('查看广告表现');
   });
 
   it('keeps the task action disabled until ASIN is present', () => {

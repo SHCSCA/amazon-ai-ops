@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { aiCallEvidenceLabel, aiCallEvidenceTotal, aiCallKindLabel, aiCallOutputFormatLabel, buildAiCallDiagnostics } from '../ai-call-diagnostics';
 import { aiContractPrimaryCopy, aiOutputContracts, aiOutputContractTags } from '../ai-output-contracts';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup, type TagMetricItem } from '../components/tag-metric-group';
 import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
@@ -505,7 +504,7 @@ export function SettingsPage() {
     baseClassName: 'primary-button',
     busyLabel: '保存中...',
     disabled: !canSaveRules,
-    label: '保存广告阈值',
+    label: '保存规则阈值',
   });
   const clearAiKeyButton = settingsLocalActionButtonView({
     action: 'clear-ai-key',
@@ -520,7 +519,7 @@ export function SettingsPage() {
     activeAction: localAction,
     baseClassName: 'secondary-button',
     busyLabel: '复制中...',
-    label: '复制诊断检查清单',
+    label: '复制支持检查清单',
   });
 
   async function refreshAiSettingsFromStore(): Promise<AiProviderSettings | null> {
@@ -730,7 +729,7 @@ export function SettingsPage() {
     setMessage('');
     try {
       await apiSurface.saveRuleConfig(ruleConfig);
-      setMessage('广告量化阈值已保存。');
+      setMessage('广告表现阈值已保存。');
     } catch (caught) {
       setMessage(`阈值保存失败：${toUserFacingError(caught, '阈值保存失败。')}`);
     } finally {
@@ -740,10 +739,10 @@ export function SettingsPage() {
 
   async function copyDiagnostics() {
     setLocalAction('copy-diagnostics');
-    setCopyNotice('正在复制诊断检查清单...');
+    setCopyNotice('正在复制支持检查清单...');
     try {
       await navigator.clipboard.writeText(DIAGNOSTIC_CHECKS.join('\n'));
-      setCopyNotice('诊断检查清单已复制。');
+      setCopyNotice('支持检查清单已复制。');
     } catch (caught) {
       setCopyNotice(`复制失败：${toUserFacingError(caught, '复制失败。')}`);
     } finally {
@@ -754,68 +753,54 @@ export function SettingsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="系统与交付"
+        eyebrow="系统"
         title={PAGE_HEADER_TITLES.settings}
-        description="配置模型连接、固定输出合同、阈值和本地诊断。API Key 全程脱敏。"
-        primaryTask="配置 AI 与规则阈值"
+        description="连接 AI 服务、配置安全规则，并把调用日志、存储路径和排障工具收进支持详情。API Key 全程脱敏。"
+        primaryTask="连接 AI 服务并配置安全规则"
         nextAction={keyPresent ? '测试 AI 连接' : '填写 API Key'}
+        primaryAction={{
+          label: aiStatus === 'available' ? '重新测试 AI 连接' : keyPresent ? '测试 AI 连接' : '填写 API Key',
+          onClick: testAiSettings,
+          disabled: !canRunAiTest,
+          busy: aiStatus === 'testing',
+          busyLabel: '测试中...',
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="AI 适配与诊断"
-          title={settingsAiTaskTitle({ status: aiStatus, keyPresent })}
-          detail="先确认模型连接和本地凭证，再让 AI 参与广告诊断、建议解释和 Listing 草案。"
-          primaryAction={{
-            label: aiStatus === 'available' ? '重新测试 AI 连接' : keyPresent ? '测试 AI 连接' : '填写 API Key',
-            onClick: testAiSettings,
-            disabled: !canRunAiTest,
-            busy: aiStatus === 'testing',
-            busyLabel: '测试中...',
-          }}
-          secondaryActions={[
-            {
-              label: '保存 AI 设置',
-              onClick: saveAiSettings,
-              disabled: !canSaveSettings,
-              busy: savingAi,
-              busyLabel: '保存中...',
-            },
-          ]}
-        >
-          <div className="kpi-row kpi-row--task settings-task-metrics" aria-label="AI 设置任务摘要">
-            <KpiCard
-              label="连接状态"
-              value={displayAiStatusLabel(aiStatus, keyPresent)}
-              detail={keyPresent ? 'Key 已脱敏' : 'Key 未配置'}
-              tone={displayAiStatusTone(aiStatus, keyPresent)}
-            />
-            <KpiCard
-              label="模型"
-              value={aiSettings.aiModel || '未配置'}
-              detail={aiSettings.aiOutputLanguage || DEFAULT_AI_SETTINGS.aiOutputLanguage}
-              tone={aiSettings.aiModel ? 'ready' : 'blocked'}
-            />
-            <KpiCard
-              label="Base URL"
-              value={aiSettings.aiBaseUrl ? '已填写' : '未配置'}
-              detail={aiSettings.aiBaseUrl || '需要兼容 Chat Completions'}
-              tone={aiSettings.aiBaseUrl ? 'ready' : 'blocked'}
-            />
-            <KpiCard
-              label="输出合同"
-              value={`${clampStructuredAiMaxTokens(aiSettings.aiMaxTokens)} tokens`}
-              detail={`温度 ${aiSettings.aiTemperature || DEFAULT_AI_SETTINGS.aiTemperature}`}
-              tone="pending"
-            />
-          </div>
-          <div className={`settings-ai-feedback settings-ai-feedback-${aiConnectionFeedback.tone}`} aria-live="polite" role="status">
-            <span>{aiConnectionFeedback.label}</span>
-            <strong>{aiConnectionFeedback.detail}</strong>
-          </div>
-        </OperatorTaskPanel>
+        <div className="kpi-row settings-prototype-status-grid" aria-label="AI 与规则状态">
+          <KpiCard
+            label="连接状态"
+            value={displayAiStatusLabel(aiStatus, keyPresent)}
+            detail={keyPresent ? 'Key 已脱敏' : 'Key 未配置'}
+            tone={displayAiStatusTone(aiStatus, keyPresent)}
+          />
+          <KpiCard
+            label="模型"
+            value={aiSettings.aiModel || '未配置'}
+            detail={aiSettings.aiOutputLanguage || DEFAULT_AI_SETTINGS.aiOutputLanguage}
+            tone={aiSettings.aiModel ? 'ready' : 'blocked'}
+          />
+          <KpiCard
+            label="Base URL"
+            value={aiSettings.aiBaseUrl ? '已填写' : '未配置'}
+            detail={aiSettings.aiBaseUrl || '需要兼容 Chat Completions'}
+            tone={aiSettings.aiBaseUrl ? 'ready' : 'blocked'}
+          />
+          <KpiCard
+            label="输出合同"
+            value={`${clampStructuredAiMaxTokens(aiSettings.aiMaxTokens)} tokens`}
+            detail={`温度 ${aiSettings.aiTemperature || DEFAULT_AI_SETTINGS.aiTemperature}`}
+            tone="pending"
+          />
+        </div>
+        <div className={`settings-ai-feedback settings-ai-feedback-${aiConnectionFeedback.tone} settings-prototype-feedback`} aria-live="polite" role="status">
+          <span>{settingsAiTaskTitle({ status: aiStatus, keyPresent })}</span>
+          <strong>{aiConnectionFeedback.label}</strong>
+          <p>{aiConnectionFeedback.detail}</p>
+        </div>
 
-        <Panel title="DeepSeek / OpenAI Compatible">
+        <Panel title="AI 服务连接">
           <div className="settings-section-header">
             <StatusPill tone={displayAiStatusTone(aiStatus, keyPresent)}>{displayAiStatusLabel(aiStatus, keyPresent)}</StatusPill>
             {loading && <span className="muted-line">正在读取设置...</span>}
@@ -852,7 +837,7 @@ export function SettingsPage() {
                 placeholder="https://api.deepseek.com"
               />
             </FormTableRow>
-            <FormTableRow label="Model" required hint="诊断、建议和 Listing 草案共用同一模型配置。">
+            <FormTableRow label="Model" required hint="广告表现解释、建议说明和 Listing 本地草案共用同一模型配置。">
               <input
                 value={aiSettings.aiModel}
                 onChange={(event) => {
@@ -863,6 +848,28 @@ export function SettingsPage() {
               />
             </FormTableRow>
           </FormTable>
+          <div className="action-row settings-prototype-actions">
+            <button
+              aria-busy={savingAi || undefined}
+              className={savingAi ? 'primary-button button-loading' : 'primary-button'}
+              disabled={!canSaveSettings || savingAi}
+              onClick={saveAiSettings}
+              type="button"
+            >
+              {savingAi && <span className="button-spinner" aria-hidden="true" />}
+              <span>{savingAi ? '保存中...' : '保存 AI 设置'}</span>
+            </button>
+            <button
+              aria-busy={aiStatus === 'testing' || undefined}
+              className={aiStatus === 'testing' ? 'secondary-button button-loading' : 'secondary-button'}
+              disabled={!canRunAiTest || aiStatus === 'testing'}
+              onClick={testAiSettings}
+              type="button"
+            >
+              {aiStatus === 'testing' && <span className="button-spinner" aria-hidden="true" />}
+              <span>{aiStatus === 'testing' ? '测试中...' : '测试当前连接'}</span>
+            </button>
+          </div>
           <p className="muted-line">{settingsAiContractPrimaryCopy()}</p>
           <TagMetricGroup items={settingsAiContractTags()} />
           {aiActionHint && <p className="muted-line">{aiActionHint}</p>}
@@ -930,7 +937,7 @@ export function SettingsPage() {
           </ProgressiveDetails>
         </Panel>
 
-        <Panel title="广告量化阈值">
+        <Panel title="规则阈值与动作边界">
           <div className="settings-rule-summary">
             <div>
               <span>目标利润线</span>
@@ -1066,7 +1073,7 @@ export function SettingsPage() {
           </div>
         </Panel>
 
-        <ProgressiveDetails title="AI 调用审计">
+        <ProgressiveDetails title="AI 调用记录与支持信息">
           <p className="muted-line">{aiAuditIntroText()}</p>
           <div className="context-summary-grid">
             <div>
@@ -1114,7 +1121,7 @@ export function SettingsPage() {
             </ul>
           </ProgressiveDetails>
 
-          <ProgressiveDetails title="本地存储路径">
+          <ProgressiveDetails title="本地支持路径">
             <dl className="business-definition-list">
               <div>
                 <dt>设置路径</dt>
@@ -1144,7 +1151,7 @@ export function SettingsPage() {
           </ProgressiveDetails>
         </div>
 
-        <ProgressiveDetails title="诊断工具">
+        <ProgressiveDetails title="支持检查工具">
           <div className="settings-diagnostic-row">
             <p>用于验证 AI 连接、广告解释、Listing 草案和最终交付状态；不会改变广告账户，也不会绕过审批、执行前/执行后/回读或范围匹配要求。</p>
             <button

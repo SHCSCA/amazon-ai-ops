@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
@@ -449,83 +448,76 @@ export function KeywordOpportunitiesPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="关键词与 Listing"
+        eyebrow="增长"
         title={PAGE_HEADER_TITLES.keywordOpportunities}
-        description="从当前范围真实导入的 search term / keyword / targeting 指标中去重生成机会，保留 ASIN、广告活动、广告组和来源文件。"
-        primaryTask="生成可用关键词机会池"
+        description="从当前范围真实导入的 search term / keyword / targeting 指标中去重生成机会，保留 ASIN、广告活动、广告组、搜索词和来源证据。"
+        primaryTask="复核可带入 Listing 的关键词机会"
         nextAction={quantReady ? '复核机会并进入 Listing 覆盖' : '先完成真实报表导入'}
+        primaryAction={{
+          label: loading ? '识别中...' : '运行机会识别',
+          busy: loading,
+          busyLabel: '识别中...',
+          disabled: loading || !quantReady,
+          onClick: loadRows,
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="关键词机会矩阵"
-          title={quantReady ? '多源关键词机会已按当前范围归一化' : '关键词机会被真实数据门拦截'}
-          detail={quantReady
-            ? `当前展示 ${visibleRows.length}/${visibleRowCount} 个机会，优先处理高等级、已转化、Listing 未覆盖的词。`
-            : '先完成真实报表下载和指标入库，系统不会用审计文件或空数据生成机会词。'}
-          primaryAction={{
-            label: loading ? '识别中...' : '运行机会识别',
-            busy: loading,
-            busyLabel: '识别中...',
-            disabled: loading || !quantReady,
-            onClick: loadRows,
-          }}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="关键词机会任务摘要">
-            <KpiCard
-              label="真实广告事实"
-              value={`${sourceReportCount}/8`}
-              detail={`${importedMetricRows} 行指标`}
-              tone={quantReady ? 'ready' : 'blocked'}
-            />
-            <KpiCard
-              label="A级机会"
-              value={highOpportunityCount}
-              detail={`${convertingCount} 个已有转化`}
-              tone={highOpportunityCount > 0 ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="未覆盖池"
-              value={visibleRows.length}
-              detail={`${asinCount} 个 ASIN`}
-              tone={visibleRows.length ? 'warning' : 'pending'}
-            />
-            <KpiCard
-              label="风险花费"
-              value={formatUsd(noOrderSpend)}
-              detail="有花费无订单"
-              tone={noOrderSpend > 0 ? 'blocked' : 'ready'}
-            />
-          </div>
-          <StateLightGrid
-            items={[
-              {
-                label: '真实广告事实',
-                value: `${sourceReportCount}/8 类`,
-                detail: `${importedMetricRows} 行指标`,
-                tone: quantReady ? 'ready' : 'blocked',
-              },
-              {
-                label: '商机等级 A',
-                value: highOpportunityCount,
-                detail: `${convertingCount} 个已有订单或销售`,
-                tone: highOpportunityCount > 0 ? 'ready' : 'pending',
-              },
-              {
-                label: 'Listing 未覆盖池',
-                value: visibleRows.length,
-                detail: `${asinCount} 个 ASIN / ${campaignCount} 个活动`,
-                tone: visibleRows.length ? 'warning' : 'pending',
-              },
-              {
-                label: '风险先控',
-                value: formatUsd(noOrderSpend),
-                detail: '有花费无订单先复核投放',
-                tone: noOrderSpend > 0 ? 'blocked' : 'ready',
-              },
-            ]}
+        <div className="kpi-row keyword-prototype-status-grid" aria-label="关键词机会状态">
+          <KpiCard
+            label="真实广告事实"
+            value={`${sourceReportCount}/8`}
+            detail={`${importedMetricRows} 行指标`}
+            tone={quantReady ? 'ready' : 'blocked'}
           />
-        </OperatorTaskPanel>
+          <KpiCard
+            label="A级机会"
+            value={highOpportunityCount}
+            detail={`${convertingCount} 个已有转化`}
+            tone={highOpportunityCount > 0 ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="未覆盖池"
+            value={visibleRows.length}
+            detail={`${asinCount} 个 ASIN`}
+            tone={visibleRows.length ? 'warning' : 'pending'}
+          />
+          <KpiCard
+            label="风险花费"
+            value={formatUsd(noOrderSpend)}
+            detail="有花费无订单"
+            tone={noOrderSpend > 0 ? 'blocked' : 'ready'}
+          />
+        </div>
+        <StateLightGrid
+          ariaLabel="关键词机会红绿灯"
+          items={[
+            {
+              label: '真实广告事实',
+              value: `${sourceReportCount}/8 类`,
+              detail: `${importedMetricRows} 行指标`,
+              tone: quantReady ? 'ready' : 'blocked',
+            },
+            {
+              label: '商机等级 A',
+              value: highOpportunityCount,
+              detail: `${convertingCount} 个已有订单或销售`,
+              tone: highOpportunityCount > 0 ? 'ready' : 'pending',
+            },
+            {
+              label: 'Listing 未覆盖池',
+              value: visibleRows.length,
+              detail: `${asinCount} 个 ASIN / ${campaignCount} 个活动`,
+              tone: visibleRows.length ? 'warning' : 'pending',
+            },
+            {
+              label: '风险先控',
+              value: formatUsd(noOrderSpend),
+              detail: '有花费无订单先复核投放',
+              tone: noOrderSpend > 0 ? 'blocked' : 'ready',
+            },
+          ]}
+        />
 
         <Panel title="机会来源" tone={quantReady ? 'success' : 'blocked'}>
           <div className="business-split">
@@ -546,7 +538,7 @@ export function KeywordOpportunitiesPage() {
           {message && <p className={message.includes('失败') || message.includes('缺少') || message.includes('不能') ? 'blocked-line' : 'muted-line'}>{message}</p>}
         </Panel>
 
-        <Panel title="关键词机会来源与覆盖关系" tone={quantReady ? 'success' : 'blocked'}>
+        <Panel title="关键词机会与 Listing 覆盖关系" tone={quantReady ? 'success' : 'blocked'}>
           <div className="context-summary-grid">
             <div>
               <span>真实广告报表</span>
@@ -574,7 +566,7 @@ export function KeywordOpportunitiesPage() {
           </p>
         </Panel>
 
-        <Panel title="机会摘要">
+        <Panel title="机会复核摘要">
           <div className="context-summary-grid">
             <div>
               <span>当前批次</span>
@@ -599,7 +591,7 @@ export function KeywordOpportunitiesPage() {
           </div>
         </Panel>
 
-        <Panel title="筛选">
+        <Panel title="筛选和排序">
           <div className="context-summary-grid compact-summary">
             <div>
               <span>当前日期范围</span>
@@ -657,7 +649,7 @@ export function KeywordOpportunitiesPage() {
           <p className="muted-line">所有金额均为 USD；筛选和排序只改变当前视图，不改写导入数据。</p>
         </Panel>
 
-        <Panel title="关键词机会表">
+        <Panel title="可带入 Listing 的机会表">
           <div className={keywordOpportunityTableFeedbackClass(tableRefreshing)}>
             <VirtualDataTable
               columns={opportunityColumns}

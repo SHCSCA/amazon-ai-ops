@@ -4,7 +4,7 @@
 
 它把领星广告报表采集、产品级广告量化、关键词与 Listing 优化、AI + 规则建议、人工审批、Ads UI 执行回读和最终交付验收串成一个可审计的本地闭环。
 
-**DELIVERY: APP_READY.** 当前 v1.5 Windows 桌面包已按 `amazon-ai-ops-business-prototype/` 继续收紧 Shell、ScopeBar、KPI 首屏、面板密度和数据采集动作按钮，完成重新打包、启动 smoke、manifest-driven final-readiness、READY bundle 和 READY safety。应用内广告写入仍保持 fail-closed；任何 Ads 改动都必须经过人工审批、截图、执行和回读验证。
+**DELIVERY: APP_READY.** 当前 v1.5 Windows 桌面包已完成原型高保真 UI 接入刷新：重新打包、package launch smoke、manifest-driven final-readiness、READY bundle 和 READY safety 均已通过。应用内广告写入仍保持 fail-closed；任何 Ads 改动都必须经过人工审批、截图、执行和回读验证。
 
 ## 当前交付
 
@@ -15,23 +15,25 @@
 | 当前状态 | `APP_READY` |
 | 无安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe` |
 | 安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
-| 无安装版 SHA-256 | `60D382BBF76D823BA49A8ADFBE61A1C1AA08F4CC0D7507998E86714D07357026` |
-| 安装版 SHA-256 | `C619D603FABB073E2F4A056268339B68A2EC22DFF7C2F033358B966AE3785028` |
-| 最终验收证据 | `output\codex-evidence\final-readiness-1783046121145.json` |
-| Package launch smoke | `output\codex-evidence\package-launch-smoke-1783046036873.json` |
-| READY bundle | `output\delivery-bundles\v15-delivery-bundle-2026-07-03T02-36-30-prototype-visual-parity` |
+| 无安装版 SHA-256 | `7778FC34DCA19E0C335786AAD78DF48067C29E8ACD79443FCFB00944E990A62D` |
+| 安装版 SHA-256 | `47016CBDCA4417777E86B43DD77BDE866076E22F2DF8EE7FD6857938AC223514` |
+| 最终验收证据 | `output\codex-evidence\final-readiness-1783397783221.json` |
+| Package launch smoke | `output\codex-evidence\package-launch-smoke-1783397746093.json` |
+| READY bundle | `output\delivery-bundles\v15-delivery-bundle-2026-07-07T04-16-23-prototype-ui-refresh` |
 
 > 注意：`output/`、`storage/`、AppData DB、raw 领星报表、release EXE 和密钥都是本地交付/运行产物，不进入 Git 提交。
+>
+> 发布事实源：README 与用户指南只展示摘要；是否可以声明 `APP_READY` 以 manifest-driven final readiness、当前安装包索引、交付包 manifest 和 READY safety 的校验结果为准。
 
 ## 能做什么
 
 | 业务域 | 功能 |
 |---|---|
-| 运营总览 | 今日看板、数据健康、审批/交付状态总览 |
-| 数据与量化 | 工作范围、8 类领星广告报表采集、指标核验入库、运营事件标记、产品 ACOS 配置、广告量化诊断 |
-| 广告执行 | 优化建议草案、审批历史中心、渐进执行回读 |
-| 关键词与 Listing | 关键词机会矩阵、Listing 结构重写、产品管理 |
-| 系统与交付 | 最终验收就绪门、本地定时调度、AI 适配与诊断 |
+| 总览 | 今日看板、产品管理、数据健康、审批/交付状态总览 |
+| 数据 | 工作范围、数据采集、导入校验、运营事件、成本目标、广告表现 |
+| 广告 | 优化建议、审批中心、结果核对 |
+| 增长 | 关键词机会、Listing 草案 |
+| 系统 | 交付验收、自动任务、AI 与规则 |
 
 ## 当前 UI 状态
 
@@ -40,8 +42,8 @@
 | 原型基准 | `amazon-ai-ops-business-prototype/pages/*.html` 17 页 |
 | 生产主题 | 只保留浅色 Windows 桌面主题；不实现暗色切换 |
 | 字体依赖 | renderer 使用本地/system 字体栈，不依赖 Google Fonts |
-| 页面结构 | `ScopeBar -> PageHeader -> OperatorTaskPanel/KPI -> 主业务内容` |
-| 17 页首屏 | 已接入短标题、共享 `KpiCard`、状态/表格/流程反馈合同 |
+| 页面结构 | `ScopeBar -> PageHeader -> KPI/状态网格 -> 主业务内容` |
+| 17 页首屏 | 已接入短标题、共享 `KpiCard`、状态/表格/流程反馈合同，并按当前简化页面命名对齐 |
 | 产品字段 | 已明确为产品成本、FBA 费用、当前售价、最低可接受售价、目标 ACOS、目标 TACOS、目标净利率 |
 | 原型清单 | `docs\design\prototype-reference-index.md`、`docs\design\prototype-parity-checklist.md` |
 
@@ -50,15 +52,15 @@
 ```text
 设置工作范围
   -> 采集 8 类领星广告报表
-  -> 核验并导入本地 DB
+  -> 导入校验并写入本地 DB
   -> 锁定产品 ASIN
   -> 维护产品成本 / 售价 / ACOS 目标
   -> 记录运营事件
-  -> 运行广告量化与 AI 阶段诊断
+  -> 运行广告表现与 AI 阶段诊断
   -> 生成优化建议
   -> 人工审批
   -> 人工进入 Ads UI 执行
-  -> 截图 / reload / 回读
+  -> 截图 / reload / 结果核对
   -> 最终交付验收
 ```
 
@@ -80,11 +82,11 @@
 |---|---|---|
 | TypeScript | 通过 | `pnpm --filter @amazon-ai-ops/desktop run typecheck` |
 | Renderer build | 通过 | `pnpm --filter @amazon-ai-ops/desktop run build:renderer` |
-| 当前业务 UI smoke | 通过 | `output\codex-evidence\current-business-ui-smoke-1783045615490.json` |
+| 当前业务 UI smoke | 通过 | `output\codex-evidence\current-business-ui-smoke-1783397655342.json` |
 | 广告执行 fail-closed | 通过 | `pnpm run verify:ad-execution` |
 | Windows 打包 | 通过 | installer + portable 已生成 |
-| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1783046036873.json` |
-| Final readiness | 通过 | `output\codex-evidence\final-readiness-1783046121145.json` |
+| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1783397746093.json` |
+| Final readiness | 通过 | `output\codex-evidence\final-readiness-1783397783221.json` |
 | READY safety | 通过 | `pnpm run verify:v15-ready-safety ...` |
 
 ## 开发环境

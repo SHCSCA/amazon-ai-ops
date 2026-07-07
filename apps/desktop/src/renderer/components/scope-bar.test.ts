@@ -76,7 +76,7 @@ describe('buildScopeSummaryFacts', () => {
     });
 
     expect(facts).toHaveLength(4);
-    expect(facts.map((fact) => fact.label)).toEqual(['批次', '报表', '指标', '产品']);
+    expect(facts.map((fact) => fact.label)).toEqual(['产品', '真实报表', '入库指标', '追溯批次']);
   });
 
   it('keeps the always-visible scope bar to four compact facts', () => {
@@ -87,10 +87,10 @@ describe('buildScopeSummaryFacts', () => {
       importedRows: '96 行',
       asin: 'B0TESTASIN',
     })).toEqual([
-      { label: '批次', value: 'batch_20260612', title: '自动使用当前范围最新完整批次' },
-      { label: '报表', value: '8/8 类真实报表' },
-      { label: '指标', value: '96 行' },
       { label: '产品', value: 'B0TESTASIN' },
+      { label: '真实报表', value: '8/8 类真实报表' },
+      { label: '入库指标', value: '96 行' },
+      { label: '追溯批次', value: 'batch_20260612', title: '自动使用当前范围最新完整批次' },
     ]);
   });
 
@@ -99,7 +99,7 @@ describe('buildScopeSummaryFacts', () => {
       batchModeLabel: '自动匹配当前范围',
       reportCoverage: '暂无匹配批次',
       importedRows: '0 行',
-    }).map((fact) => fact.value)).toEqual(['自动匹配', '暂无匹配批次', '0 行', '全部产品']);
+    }).map((fact) => fact.value)).toEqual(['全部产品', '暂无匹配批次', '0 行', '自动匹配']);
   });
 
   it('keeps long manual batch IDs as data, not explanatory helper copy', () => {
@@ -111,9 +111,9 @@ describe('buildScopeSummaryFacts', () => {
       importedRows: '待校验',
     });
 
-    expect(facts[0]).toMatchObject({ label: '批次', value: longBatchId, title: '手动批次待校验' });
-    expect(facts[0].value).not.toContain('当前使用手动批次');
-    expect(facts[0].value).not.toContain('后续页面会按这个 ID 尝试读取');
+    expect(facts[3]).toMatchObject({ label: '追溯批次', value: longBatchId, title: '手动批次待校验' });
+    expect(facts[3].value).not.toContain('当前使用手动批次');
+    expect(facts[3].value).not.toContain('后续页面会按这个 ID 尝试读取');
   });
 });
 

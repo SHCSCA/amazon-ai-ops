@@ -84,7 +84,7 @@ describe('dashboard product workbench', () => {
   it('routes the dashboard primary task to product management before product-scoped work', () => {
     expect(dashboardProductWorkbenchAction({
       scopeAsin: '',
-      baseAction: { route: 'ad-quant', label: '复核广告量化', title: '可以分析：真实报表和日级指标已闭合' },
+      baseAction: { route: 'ad-quant', label: '查看广告表现', title: '可以分析：真实报表和日级指标已闭合' },
     })).toEqual({
       route: 'product-management',
       label: '选择产品',
@@ -232,7 +232,7 @@ describe('pre-gate dashboard copy', () => {
         deliveryStatus: 'needs_work',
         gateRoute: gateRoute.route,
         gateLabel: gateRoute.label,
-        matrixLabel: '继续审批与执行回读',
+        matrixLabel: '继续审批与结果核对',
       });
       const outputs = [
         gateAction.title,
@@ -274,7 +274,7 @@ describe('pre-gate dashboard copy', () => {
           canGenerateFormalRecommendations: false,
           gateRoute: gateRoute.route,
           gateLabel: gateRoute.label,
-          matrixHeadline: '建议审批与执行回读待完成',
+          matrixHeadline: '建议审批与结果核对待完成',
         }),
         normalizedDeliveryItem.label,
         normalizedDeliveryItem.statusLabel,
@@ -369,7 +369,7 @@ describe('dashboardDeliveryHeadline', () => {
       canGenerateFormalRecommendations: false,
       gateRoute: 'ad-quant',
       gateLabel: '复核量化口径',
-      matrixHeadline: '建议审批与执行回读待完成',
+      matrixHeadline: '建议审批与结果核对待完成',
     });
 
     expect(headline).toBe('量化门槛未闭合：复核量化口径');
@@ -755,7 +755,7 @@ describe('dashboardNormalizeDeliveryItem', () => {
     } as any;
     const readbackItem = {
       key: 'readback',
-      label: '执行回读',
+      label: '结果核对',
       statusLabel: '等待审批回读',
       detail: '完成审批和回读。',
       route: 'readback',
@@ -892,7 +892,7 @@ describe('dashboardDeliveryPrimaryAction', () => {
     expect(dashboardDeliveryPrimaryAction({
       deliveryStatus: 'needs_work',
       gateRoute: 'ad-quant',
-      gateLabel: '复核量化诊断',
+      gateLabel: '复核广告表现',
       matrixLabel: '查看交付验收',
     })).toEqual({
       route: 'delivery',
@@ -971,7 +971,7 @@ describe('dashboardRecommendationHealthCopy', () => {
     expect(dashboardRecommendationHealthCopy({
       isQuantifiable: true,
       gateRoute: 'ad-quant',
-      gateLabel: '复核量化诊断',
+      gateLabel: '复核广告表现',
       aiWorkStatus: {
         label: 'AI 已产出建议',
         detail: '最近一次 AI 诊断形成 2 条正式建议，另有 1 条洞察。继续到优化建议页查看证据和审批状态。',
@@ -1014,7 +1014,7 @@ describe('dashboardRecommendationHealthSummary', () => {
     expect(dashboardRecommendationHealthSummary({
       isQuantifiable: true,
       gateRoute: 'ad-quant',
-      gateLabel: '复核量化诊断',
+      gateLabel: '复核广告表现',
       aiWorkStatus: {
         label: 'AI 已产出建议',
         detail: '最近一次 AI 诊断形成 2 条正式建议，另有 1 条洞察。继续到优化建议页查看证据和审批状态。',
@@ -1071,7 +1071,7 @@ describe('dashboardTaskRecommendationMetric', () => {
     expect(dashboardTaskRecommendationMetric({
       isQuantifiable: true,
       gateRoute: 'ad-quant',
-      gateLabel: '复核量化诊断',
+      gateLabel: '复核广告表现',
       actionRecommendationCount: 3,
       pendingRecommendationCount: 2,
       reviewRecommendationCount: 1,
@@ -1108,7 +1108,7 @@ describe('dashboardSecondaryRecommendationAction', () => {
     expect(dashboardSecondaryRecommendationAction({
       isQuantifiable: true,
       gateRoute: 'ad-quant',
-      gateLabel: '复核量化诊断',
+      gateLabel: '复核广告表现',
     })).toEqual({
       route: 'recommendations',
       label: '生成优化建议',
@@ -1137,7 +1137,7 @@ describe('dashboardWorkflowPostQuantSteps', () => {
       fallbackRoute: 'ad-quant',
     }).map((step) => step.title)).toEqual([
       '3. 生成建议',
-      '4. 审批与执行回读',
+      '4. 审批与结果核对',
     ]);
   });
 });
@@ -1177,10 +1177,10 @@ describe('dashboardRiskObjectPrimaryAction', () => {
     expect(dashboardRiskObjectPrimaryAction({
       isQuantifiable: true,
       gateRoute: 'ad-quant',
-      gateLabel: '复核量化诊断',
+      gateLabel: '复核广告表现',
     })).toEqual({
       route: 'ad-quant',
-      label: '查看量化明细',
+      label: '查看广告表现',
       disabled: false,
     });
   });
@@ -1208,7 +1208,7 @@ describe('dashboardRiskObjectSecondaryAction', () => {
       isQuantifiable: true,
       primaryAction: {
         route: 'ad-quant',
-        label: '查看量化明细',
+        label: '查看广告表现',
         disabled: false,
       },
       secondaryAction: {
@@ -1410,6 +1410,18 @@ describe('dashboardPrimaryTaskNavigationFeedback', () => {
     });
   });
 
+  it('wires the page header primary action to the readiness-driven dashboard task', () => {
+    const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const basePrimaryTaskAction = dashboardPrimaryTaskAction({');
+    expect(source).toContain('const primaryTaskAction = dashboardProductWorkbenchAction({');
+    expect(source).toContain('primaryTask={primaryTaskAction.title}');
+    expect(source).toContain('nextAction={primaryTaskAction.label}');
+    expect(source).toContain('label: primaryTaskNavigationFeedback.label');
+    expect(source).toContain('onClick: () => navigatePrimaryTask(primaryTaskAction.route)');
+    expect(source).not.toContain("onClick: () => navigatePrimaryTask('product-management')");
+  });
+
   it('wires dashboard primary pending state into the state-light refresh rail', () => {
     const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
 
@@ -1498,7 +1510,7 @@ describe('dashboardVisibleDeliveryItems', () => {
       { key: 'businessContext', tone: 'warning', label: '运营上下文' },
       { key: 'listing', tone: 'warning', label: 'Listing 草案' },
       { key: 'recommendations', tone: 'ready', label: '建议与审批' },
-      { key: 'readback', tone: 'blocked', label: '执行回读' },
+      { key: 'readback', tone: 'blocked', label: '结果核对' },
       { key: 'package', tone: 'blocked', label: '最终交付包' },
     ] as any;
 

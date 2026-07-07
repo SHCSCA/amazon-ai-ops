@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
@@ -194,7 +193,7 @@ export function dashboardDataGateAction(input: {
   if (formalGatePassed) {
     return {
       route: 'ad-quant',
-      label: '复核量化诊断',
+      label: '查看广告表现',
       title: '可以分析：真实报表和日级指标已闭合',
       detail: dashboardDataGateDetail({
         isQuantifiable: true,
@@ -263,7 +262,7 @@ export function dashboardDataGateAction(input: {
     route: 'ad-quant',
     label: '复核量化门槛',
     title: '量化门槛待复核',
-    detail: '已有指标尚未闭合量化门槛，先回到广告量化页确认对象、阈值和证据口径。',
+    detail: '已有指标尚未闭合量化门槛，先回到广告表现页确认对象、阈值和证据口径。',
   };
 }
 
@@ -334,7 +333,7 @@ export function dashboardDataGateLabel(input: {
   importedRows: number;
   actionableRows: number;
 }): string {
-  if (input.canGenerateFormalRecommendations) return '已具备量化条件';
+  if (input.canGenerateFormalRecommendations) return '已具备广告表现条件';
   return dashboardDataGateAction(input).label;
 }
 
@@ -374,7 +373,7 @@ export function dashboardWorkflowQuantNext(input: {
   importedRows: number;
   actionableRows: number;
 }): { route: AppRoute; label: string } {
-  if (input.canGenerateFormalRecommendations) return { route: 'ad-quant', label: '复核量化诊断' };
+  if (input.canGenerateFormalRecommendations) return { route: 'ad-quant', label: '查看广告表现' };
   const gateAction = dashboardDataGateAction(input);
   return {
     route: gateAction.route,
@@ -473,7 +472,7 @@ export function dashboardWorkflowPostQuantSteps(input: {
     {
       id: 'approval',
       route: 'approval',
-      title: '4. 审批与执行回读',
+      title: '4. 审批与结果核对',
       status: '建议生成后进入审批',
       tone: 'pending',
       next: '去审批中心',
@@ -536,7 +535,7 @@ export function dashboardPrimaryTaskAction(input: {
   }
   return {
     route: 'ad-quant',
-    label: '复核广告量化',
+    label: '复核广告表现',
     title: '可以分析：真实报表和日级指标已闭合',
   };
 }
@@ -769,7 +768,7 @@ export function dashboardAiWorkStatus(baseStatus: DashboardStatusCard, runs: AiD
   if (latest.success === false) {
     return {
       label: 'AI 最近诊断失败',
-      detail: operatorFacingAiError(latest.errorMessage || latest.diagnosis?.aiFallbackReason || '最近一次 AI 诊断失败，建议到广告量化页查看调用记录并复测 AI 设置。'),
+      detail: operatorFacingAiError(latest.errorMessage || latest.diagnosis?.aiFallbackReason || '最近一次 AI 诊断失败，建议到广告表现页查看调用记录并复测 AI 设置。'),
       tone: 'blocked',
       route: 'ad-quant',
       actionLabel: '查看 AI 诊断',
@@ -958,7 +957,7 @@ export function dashboardRiskObjectPrimaryAction(input: {
   if (input.isQuantifiable) {
     return {
       route: 'ad-quant',
-      label: '查看量化明细',
+      label: '查看广告表现',
       disabled: false,
     };
   }
@@ -1103,7 +1102,6 @@ export function DashboardPage() {
   });
   const primaryProductHistory = dashboardSelectProductHistory(productHistoryLedgers, selectedScopeAsin);
   const primaryProductTrendDays = primaryProductHistory?.daily.slice(-4) || [];
-  const primaryProductMaxDailyCost = Math.max(1, ...primaryProductTrendDays.map((item) => Number(item.cost || 0)));
   const topDiagnostic = quant?.diagnostics?.[0];
   const highAcosDiagnostics = (quant?.diagnostics || []).filter((item) => item.acos >= ruleConfig.highAcosThreshold && item.spend >= ruleConfig.minSpend);
   const noOrderDiagnostics = (quant?.diagnostics || []).filter((item) => item.orders === 0 && (item.spend >= ruleConfig.minSpend || item.clicks >= ruleConfig.noOrderClickThreshold));
@@ -1119,7 +1117,7 @@ export function DashboardPage() {
     if (dataBlocker) return [dataBlocker];
     return [
       {
-        title: highAcosDiagnostics.length ? '先复核高 ACOS' : '复核量化明细',
+        title: highAcosDiagnostics.length ? '先复核高 ACOS' : '复核广告表现',
         detail: highAcosDiagnostics.length
           ? `${highAcosDiagnostics.length} 个对象超过 ${formatPercent(ruleConfig.highAcosThreshold * 100)} 且花费达到 ${formatUsd(ruleConfig.minSpend)}。`
           : '暂无超过风险线的对象，仍需检查高花费和相关性。',
@@ -1136,7 +1134,7 @@ export function DashboardPage() {
       },
       {
         title: '生成优化建议',
-        detail: '量化复核后进入建议页生成 AI/规则解释，再走审批和回读。',
+        detail: '广告表现复核后进入建议页生成 AI/规则解释，再走审批和回读。',
         route: 'recommendations' as AppRoute,
         tone: 'pending' as const,
       },
@@ -1214,7 +1212,7 @@ export function DashboardPage() {
     {
       id: 'quant',
       route: workflowQuantNext.route,
-      title: '2. 广告量化',
+      title: '2. 广告表现',
       status: dashboardWorkflowQuantStatus({
         canGenerateFormalRecommendations: isQuantifiable,
         hasMetrics,
@@ -1240,21 +1238,6 @@ export function DashboardPage() {
     scopeAsin: selectedScopeAsin,
     baseAction: basePrimaryTaskAction,
   });
-  const primaryTaskDetail = hasProductScope
-    ? dashboardDataGateDetail({
-        isQuantifiable,
-        hasRealFiles,
-        realReportCount,
-        importedRows,
-        actionableRows,
-      })
-    : '先在产品管理中选择或维护一个 ASIN；后续广告量化、优化建议、运营事件、关键词机会和 Listing 都按该产品读取数据库。';
-  const primaryTaskSecondaryActions = deliveryMatrix.status === 'ready'
-    ? []
-    : [{
-        label: '查看交付缺口',
-        onClick: () => navigate('delivery' as AppRoute),
-      }];
   const primaryTaskNavigationFeedback = dashboardPrimaryTaskNavigationFeedback({
     action: primaryTaskAction,
     pendingRoute: pendingPrimaryRoute,
@@ -1423,15 +1406,11 @@ export function DashboardPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="运营总览"
+        eyebrow="总览"
         title={PAGE_HEADER_TITLES.dashboard}
-        description="看数据就绪、安全门禁和下一步。"
-      />
-
-      <OperatorTaskPanel
-        eyebrow="当前主任务"
-        title={primaryTaskAction.title}
-        detail={primaryTaskDetail}
+        description="看广告总览、风险对象、产品工作台和下一步。"
+        primaryTask={primaryTaskAction.title}
+        nextAction={primaryTaskAction.label}
         primaryAction={{
           label: primaryTaskNavigationFeedback.label,
           busy: primaryTaskNavigationFeedback.busy,
@@ -1439,59 +1418,142 @@ export function DashboardPage() {
           disabled: primaryTaskNavigationFeedback.disabled,
           onClick: () => navigatePrimaryTask(primaryTaskAction.route),
         }}
-        secondaryActions={primaryTaskSecondaryActions}
-      >
-        <div className="kpi-row kpi-row--task" aria-label="数据健康摘要">
+      />
+
+      <div className="business-stack dashboard-stack-after-task dashboard-prototype-stack">
+        <div className="kpi-row dashboard-prototype-kpi-strip" aria-label="今日看板指标">
           <KpiCard
-            label="产品"
-            value={hasProductScope ? selectedScopeAsin : '未选'}
-            detail={hasProductScope ? '当前 ASIN 已锁定' : '先进入产品管理'}
-            tone={hasProductScope ? 'ready' : 'warning'}
+            label="今日花费"
+            value={isQuantifiable ? formatUsd(quant?.totalSpend) : '-'}
+            detail={isQuantifiable ? `${scope.dateFrom} ~ ${scope.dateTo}` : dataGateLabel}
+            tone={isQuantifiable ? (acosPercent >= ruleConfig.highAcosThreshold * 100 ? 'warning' : 'ready') : 'blocked'}
           />
           <KpiCard
-            label="数据门槛"
-            value={dataGateLabel}
-            detail={`${realReportCount}/8 类报表`}
-            tone={isQuantifiable ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
+            label="广告销售"
+            value={isQuantifiable ? formatUsd(quant?.totalSales) : '-'}
+            detail={quant?.totalOrders ? `${quant.totalOrders} 单` : metricStatusCopy.performanceDetail}
+            tone={isQuantifiable ? 'ready' : 'blocked'}
           />
           <KpiCard
-            label="入库指标"
-            value={`${importedRows} 行`}
-            detail={actionableRows > 0 ? `${actionableRows} 行可行动` : '等待可行动对象'}
-            tone={importedRows > 0 ? 'ready' : 'blocked'}
+            label="ACOS"
+            value={isQuantifiable ? formatPercent(acosPercent) : '-'}
+            detail={`目标 ${formatPercent(ruleConfig.targetAcos * 100)}`}
+            tone={isQuantifiable ? (acosPercent >= ruleConfig.highAcosThreshold * 100 ? 'warning' : 'ready') : 'blocked'}
+          />
+          <KpiCard
+            label="审批待办"
+            value={`${pendingRecommendationCount} 条`}
+            detail={`${reviewRecommendationCount} 条需复核`}
+            tone={pendingRecommendationCount > 0 ? 'warning' : taskRecommendationMetric ? 'ready' : 'pending'}
+          />
+        </div>
+
+        <div className="kpi-row dashboard-prototype-status-grid" aria-label="今日看板状态">
+          <KpiCard
+            label="AI 连接状态"
+            value={aiStatus.label}
+            detail={aiStatus.detail}
+            tone={aiStatus.label === 'AI 可用' ? 'ready' : 'warning'}
+          />
+          <KpiCard
+            label="AI 工作状态"
+            value={aiWorkStatus.label}
+            detail={aiWorkStatus.detail}
+            tone={isQuantifiable ? 'ready' : 'blocked'}
+          />
+          <KpiCard
+            label="规则阈值"
+            value="已配置"
+            detail={`ACOS <= ${formatPercent(ruleConfig.targetAcos * 100)}`}
+            tone="ready"
           />
           <KpiCard
             label="建议队列"
             value={taskRecommendationMetric || '待生成'}
             detail="审批前不执行广告"
-            tone={pendingRecommendationCount > 0 ? 'warning' : taskRecommendationMetric ? 'ready' : 'pending'}
+            tone={pendingRecommendationCount > 0 ? 'warning' : reviewRecommendationCount > 0 ? 'pending' : isQuantifiable ? 'ready' : 'blocked'}
           />
         </div>
-      </OperatorTaskPanel>
 
-      <div className="business-stack dashboard-stack-after-task">
-        <Panel title="产品工作台" tone={hasProductScope ? primaryProductHistory ? 'success' : 'warning' : 'warning'}>
-          <div className="judgment-panel">
-            <div>
-              <span>当前产品</span>
+        <Panel
+          title="风险对象"
+          titleAccessory={<StatusPill tone={topDiagnostic ? 'blocked' : isQuantifiable ? 'ready' : 'warning'}>{topDiagnostic ? '需复核' : isQuantifiable ? '已复核' : '待数据'}</StatusPill>}
+          tone={topDiagnostic ? 'warning' : isQuantifiable ? 'default' : 'blocked'}
+        >
+          {(quant?.diagnostics || []).length ? (
+            <div className="table-wrap">
+              <table className="business-table dashboard-risk-table">
+                <thead>
+                  <tr>
+                    <th>对象</th>
+                    <th>广告活动</th>
+                    <th>花费 USD</th>
+                    <th>销售 USD</th>
+                    <th>ACOS</th>
+                    <th>阻塞项</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(quant?.diagnostics || []).slice(0, 3).map((item, index) => (
+                    <tr key={`${item.objectType}-${item.objectName}-${index}`}>
+                      <td>{item.objectType || '对象'} / {item.objectName || item.asin || '-'}</td>
+                      <td>{item.campaignName || item.adGroupName || '-'}</td>
+                      <td>{formatUsd(item.spend)}</td>
+                      <td>{formatUsd(item.sales)}</td>
+                      <td>{item.orders > 0 ? formatPercent(item.acos * 100) : '-'}</td>
+                      <td>{item.diagnosis || (item.orders === 0 ? `${item.clicks} 点击 0 单` : '待复核')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className={isQuantifiable ? 'muted-line' : 'blocked-line'}>
+              {riskObjectFallbackCopy}
+            </p>
+          )}
+          <div className="action-row">
+            <button className="secondary-button" disabled={riskObjectPrimaryAction.disabled} onClick={() => navigate(riskObjectPrimaryAction.route)} type="button">{riskObjectPrimaryAction.label}</button>
+            {riskObjectSecondaryAction && (
+              <button className="secondary-button" disabled={riskObjectSecondaryAction.disabled} onClick={() => navigate(riskObjectSecondaryAction.route)} type="button">{riskObjectSecondaryAction.label}</button>
+            )}
+          </div>
+        </Panel>
+
+        <Panel
+          title="产品工作台"
+          titleAccessory={<StatusPill tone={hasProductScope ? 'ready' : 'warning'}>{hasProductScope ? '当前选中' : '待选择'}</StatusPill>}
+          tone={hasProductScope ? primaryProductHistory ? 'success' : 'warning' : 'warning'}
+        >
+          <div className="prototype-list-stack">
+            <div className="prototype-list-item">
               <strong>
                 {hasProductScope
-                  ? [selectedProductContext?.title, selectedScopeAsin].filter(Boolean).join(' / ')
+                  ? `ASIN ${selectedScopeAsin}${selectedProductContext?.title ? ` · ${selectedProductContext.title}` : ''}`
                   : '未选择产品'}
               </strong>
               <p>
                 {hasProductScope
-                  ? '当前看板、AI 量化、运营事件、关键词机会和 Listing 优化都沿用这个 ASIN。'
+                  ? `阶段：${productStageLabel(selectedProductContext?.productStage || primaryProductHistory?.inferredStage)} | 成本 ${formatUsd(selectedProductContext?.cost?.purchaseCost)} | 目标 ACOS ${selectedProductContext?.cost?.targetAcos ? formatPercent(selectedProductContext.cost.targetAcos * 100) : formatPercent(ruleConfig.targetAcos * 100)}`
                   : '先选择或维护产品，避免不同产品的数据、事件和建议混在同一个工作流里。'}
               </p>
             </div>
-            <button
-              className={hasProductScope ? 'secondary-button' : 'primary-button'}
-              onClick={() => navigate('product-management')}
-              type="button"
-            >
-              {hasProductScope ? '查看产品管理' : '选择产品'}
-            </button>
+            <div className="action-row dashboard-prototype-action-row">
+              <button
+                className="secondary-button"
+                onClick={() => navigate('product-config')}
+                type="button"
+              >
+                打开完整配置
+              </button>
+              <button
+                className={hasProductScope ? 'secondary-button' : 'primary-button'}
+                onClick={() => navigate('product-management')}
+                type="button"
+              >
+                {hasProductScope ? '查看产品管理' : '选择产品'}
+              </button>
+            </div>
           </div>
         </Panel>
 
@@ -1529,83 +1591,38 @@ export function DashboardPage() {
           {error && <p className="blocked-line">读取接口异常：{error}</p>}
         </Panel>
 
-        <Panel title="首要风险对象" tone={topDiagnostic ? 'warning' : isQuantifiable ? 'default' : 'blocked'}>
-          {topDiagnostic ? (
-            <div className="detail-grid">
-              <div><span>广告组合/活动</span><strong>{topDiagnostic.portfolioName || '-'} / {topDiagnostic.campaignName || '-'}</strong></div>
-              <div><span>广告组</span><strong>{topDiagnostic.adGroupName || '-'}</strong></div>
-              <div><span>产品/ASIN</span><strong>{topDiagnostic.asin || '-'}</strong></div>
-              <div><span>对象</span><strong>{topDiagnostic.objectType || '-'} / {topDiagnostic.objectName || '-'}</strong></div>
-              <div><span>花费/销售/订单</span><strong>{formatUsd(topDiagnostic.spend)} / {formatUsd(topDiagnostic.sales)} / {topDiagnostic.orders}</strong></div>
-              <div><span>诊断</span><strong>{topDiagnostic.diagnosis}</strong></div>
-            </div>
-          ) : (
-            <p className={isQuantifiable ? 'muted-line' : 'blocked-line'}>
-              {riskObjectFallbackCopy}
-            </p>
-          )}
-          <div className="action-row">
-            <button className="secondary-button" disabled={riskObjectPrimaryAction.disabled} onClick={() => navigate(riskObjectPrimaryAction.route)} type="button">{riskObjectPrimaryAction.label}</button>
-            {riskObjectSecondaryAction && (
-              <button className="secondary-button" disabled={riskObjectSecondaryAction.disabled} onClick={() => navigate(riskObjectSecondaryAction.route)} type="button">{riskObjectSecondaryAction.label}</button>
-            )}
-          </div>
-        </Panel>
-
-        <Panel title="产品广告历史账本" tone={hasProductScope ? primaryProductHistory ? 'success' : isQuantifiable ? 'warning' : 'blocked' : 'warning'}>
+        <Panel
+          title="广告历史账本摘要"
+          titleAccessory={<StatusPill tone={primaryProductHistory ? 'ready' : 'warning'}>{primaryProductHistory ? `${primaryProductHistory.activeDays} 天` : '待入库'}</StatusPill>}
+          tone={hasProductScope ? primaryProductHistory ? 'success' : isQuantifiable ? 'warning' : 'blocked' : 'warning'}
+        >
           {primaryProductHistory ? (
-            <details className="dashboard-details">
-              <summary>
-                {primaryProductHistory.asin} · 阶段 {productStageLabel(primaryProductHistory.inferredStage)} · 活跃 {primaryProductHistory.activeDays} 天
-              </summary>
-              <div className="business-split">
-                <div>
-                  <span className="eyebrow">{primaryProductHistory.dateFrom} 至 {primaryProductHistory.dateTo}</span>
-                  <strong>{primaryProductHistory.asin}</strong>
-                  <p>阶段 {productStageLabel(primaryProductHistory.inferredStage)}</p>
-                  <p className="muted-line">
-                    活跃 {primaryProductHistory.activeDays} 天；{formatUsd(primaryProductHistory.totals.cost)} 花费 / {formatUsd(primaryProductHistory.totals.sales)} 销售 / {primaryProductHistory.totals.orders} 单 / ACOS {formatPercent(primaryProductHistory.totals.acos * 100)}。
-                  </p>
-                  {primaryProductHistory.stageReasons?.[0] && <p className="muted-line">{primaryProductHistory.stageReasons[0]}</p>}
-                </div>
-                <div className="business-pill-row business-pill-row-right">
-                  <StatusPill tone="pending">活跃 {primaryProductHistory.activeDays} 天</StatusPill>
-                  <StatusPill tone="ready">阶段 {productStageLabel(primaryProductHistory.inferredStage)}</StatusPill>
-                  <StatusPill tone={primaryProductHistory.events?.length ? 'ready' : 'warning'}>运营事件 {primaryProductHistory.events?.length || 0}</StatusPill>
-                </div>
-              </div>
-              <div className="product-history-preview-grid">
-                <div>
-                  <h3>日级趋势</h3>
-                  <div className="product-trend-list">
-                    {primaryProductTrendDays.map((day) => (
-                      <div className="product-trend-row" key={`${primaryProductHistory.asin}-${day.date}`}>
-                        <span>{day.date}</span>
-                        <div className="product-trend-bar" aria-label={`${day.date} ${formatUsd(day.cost)} 花费`}>
-                          <i style={{ width: `${Math.max(8, Math.min(100, (Number(day.cost || 0) / primaryProductMaxDailyCost) * 100))}%` }} />
-                        </div>
-                        <strong>{formatUsd(day.cost)} / {day.orders} 单</strong>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <h3>事件叠加</h3>
-                  {primaryProductHistory.events?.length ? (
-                    <div className="product-event-stack">
-                      {primaryProductHistory.events.slice(0, 3).map((event) => (
-                        <div className="product-event-chip" key={`${event.eventDate}-${event.title}`}>
-                          <span>{event.eventDate} / {event.eventType}</span>
-                          <strong>{event.title}</strong>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="muted-line">当前范围没有运营事件。</p>
-                  )}
-                </div>
-              </div>
-            </details>
+            <div className="kpi-row dashboard-prototype-history-strip" aria-label="广告历史账本摘要">
+              <KpiCard
+                label="累计花费"
+                value={formatUsd(primaryProductHistory.totals.cost)}
+                detail={`${primaryProductHistory.firstMetricDate || primaryProductHistory.dateFrom} 起`}
+                tone={primaryProductHistory.totals.acos >= ruleConfig.highAcosThreshold ? 'warning' : 'ready'}
+              />
+              <KpiCard
+                label="累计销售"
+                value={formatUsd(primaryProductHistory.totals.sales)}
+                detail={`${primaryProductHistory.totals.orders} 单`}
+                tone="ready"
+              />
+              <KpiCard
+                label="累计 ACOS"
+                value={formatPercent(primaryProductHistory.totals.acos * 100)}
+                detail={`阶段 ${productStageLabel(primaryProductHistory.inferredStage)}`}
+                tone={primaryProductHistory.totals.acos >= ruleConfig.highAcosThreshold ? 'warning' : 'ready'}
+              />
+              <KpiCard
+                label="近 4 日趋势"
+                value={primaryProductTrendDays.length ? `${primaryProductTrendDays.length} 天` : '-'}
+                detail={primaryProductTrendDays.length ? `${formatUsd(primaryProductTrendDays.reduce((sum, day) => sum + Number(day.cost || 0), 0))} 花费` : '暂无日级数据'}
+                tone={primaryProductTrendDays.length ? 'ready' : 'pending'}
+              />
+            </div>
           ) : (
             <p className={hasProductScope && !isQuantifiable ? 'blocked-line' : 'muted-line'}>
               {!hasProductScope
@@ -1676,7 +1693,7 @@ export function DashboardPage() {
                     <span>#{index + 1}</span>
                     <strong>{item.title}</strong>
                     <p>{item.detail}</p>
-                    <StatusPill tone={item.tone}>{item.route === 'recommendations' ? '去建议页' : item.route === 'ad-quant' ? '去量化页' : item.route === 'data-import-validation' ? '去导入页' : '去采集页'}</StatusPill>
+                    <StatusPill tone={item.tone}>{item.route === 'recommendations' ? '去建议页' : item.route === 'ad-quant' ? '去广告表现页' : item.route === 'data-import-validation' ? '去导入页' : '去采集页'}</StatusPill>
                   </button>
                 ))}
               </div>

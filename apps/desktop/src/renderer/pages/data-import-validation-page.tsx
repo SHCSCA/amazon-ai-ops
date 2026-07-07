@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
@@ -252,7 +251,7 @@ export function buildReportImportStatusDisplay(input: {
   if (importedRows > 0 || input.status === 'imported') {
     return {
       label: '已入库',
-      detail: `${importedRows} 行日级广告指标已写入 SQLite，可被广告量化和 AI 证据包读取。`,
+      detail: `${importedRows} 行日级广告指标已写入 SQLite，可被广告表现和 AI 证据包读取。`,
       tone: 'ready',
     };
   }
@@ -288,7 +287,7 @@ export function buildDataImportFeedback(input: {
   if (input.runningImport === 'current') {
     return {
       title: '正在写入 SQLite',
-      detail: '正在解析当前范围已下载的 Lingxing 原始表格，完成后会刷新入库行数和广告量化口径。',
+      detail: '正在解析当前范围已下载的 Lingxing 原始表格，完成后会刷新入库行数和广告表现口径。',
       statusLabel: '导入中',
       tone: 'pending',
       className: feedbackClassName('pending'),
@@ -401,7 +400,7 @@ export function buildDataImportTaskState({
       : hasRealReports
         ? '真实报表已下载但未入库，下一步把广告指标写入 SQLite。'
         : '当前范围缺少真实报表，先回数据采集获取或导入本地表格。',
-    primaryActionLabel: hasRows ? '进入广告量化' : hasRealReports ? '导入已下载表格' : '去数据采集',
+    primaryActionLabel: hasRows ? '查看广告表现' : hasRealReports ? '导入已下载表格' : '去数据采集',
     secondaryActionLabel: reportFolder ? '打开报表目录' : '导入本地报表',
   };
 }
@@ -487,13 +486,6 @@ export function DataImportValidationPage() {
     sortLabel: sortState ? dataImportSortLabel(sortState.key) : '',
     totalCount: reportRows.length,
   });
-  const taskState = buildDataImportTaskState({
-    realReportCount,
-    importedRows,
-    reportFolder,
-  });
-  const reportFolderOpenKey = reportFolder ? dataImportPathActionKey('打开报表目录', reportFolder) : '';
-  const reportFolderOpening = Boolean(reportFolder && openingPathKey === reportFolderOpenKey);
   const importFeedback = buildDataImportFeedback({
     realReportCount,
     importedRows,
@@ -681,68 +673,104 @@ export function DataImportValidationPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="数据与量化"
+        eyebrow="数据"
         title={PAGE_HEADER_TITLES.dataImportValidation}
         description="只处理真实 Lingxing xlsx/xls/csv 表格入库和口径校验。审计文件、截图、HTML 和采集清单不会被当作广告数据。"
         primaryTask="把真实报表写入每日广告数据库"
-        nextAction={hasImportedMetrics ? '进入广告量化' : hasRealFiles ? '导入已下载表格' : '先到数据采集获取报表'}
+        nextAction={hasImportedMetrics ? '查看广告表现' : hasRealFiles ? '导入已下载表格' : '先到数据采集获取报表'}
+        primaryAction={{
+          label: hasImportedMetrics ? '查看广告表现' : hasRealFiles ? '导入已下载表格' : '去数据采集',
+          busy: Boolean(runningImport),
+          busyLabel: dataImportBusyLabel(runningImport),
+          disabled: Boolean(runningImport),
+          onClick: hasImportedMetrics
+            ? () => navigateTo('ad-quant')
+            : hasRealFiles
+              ? () => runImport('current')
+              : () => navigateTo('data-collection'),
+        }}
       />
 
-      <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="当前任务"
-          title={taskState.title}
-          detail={taskState.detail}
-          primaryAction={{
-            label: taskState.primaryActionLabel,
-            busy: Boolean(runningImport),
-            busyLabel: dataImportBusyLabel(runningImport),
-            disabled: Boolean(runningImport),
-            onClick: hasImportedMetrics
-              ? () => navigateTo('ad-quant')
-              : hasRealFiles
-                ? () => runImport('current')
-                : () => navigateTo('data-collection'),
-          }}
-          secondaryActions={[
-            {
-              label: taskState.secondaryActionLabel,
-              busy: Boolean(runningImport || reportFolderOpening),
-              busyLabel: reportFolderOpening ? '打开中...' : dataImportBusyLabel(runningImport),
-              disabled: Boolean(runningImport || openingPathKey),
-              onClick: reportFolder ? () => openPath(reportFolder, '打开报表目录') : () => runImport('local'),
-            },
-          ]}
+      <div className="business-stack data-import-prototype-stack">
+        <div className="kpi-row data-import-prototype-status-grid" aria-label="导入校验状态">
+          <KpiCard
+            label="真实报表"
+            value={`${realReportCount}/8`}
+            detail={hasRealFiles ? '目录中可导入' : '等待采集'}
+            tone={realReportCount >= 8 ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
+          />
+          <KpiCard
+            label="入库行数"
+            value={`${importedRows} 行`}
+            detail={hasImportedMetrics ? '已写入 SQLite' : '尚未入库'}
+            tone={hasImportedMetrics ? 'ready' : 'blocked'}
+          />
+          <KpiCard
+            label="异常证据"
+            value={`${rejectedEvidenceCount} 个`}
+            detail="截图/审计不算广告数据"
+            tone={rejectedEvidenceCount > 0 ? 'warning' : 'ready'}
+          />
+          <KpiCard
+            label="下一步"
+            value={hasImportedMetrics ? '广告表现' : hasRealFiles ? '导入表格' : '获取报表'}
+            detail="只按真实表格推进"
+            tone={hasImportedMetrics ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
+          />
+        </div>
+
+        <Panel
+          title="导入批次状态"
+          titleAccessory={<StatusPill tone={hasImportedMetrics ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>{hasImportedMetrics ? '已入库' : hasRealFiles ? '待导入' : '缺报表'}</StatusPill>}
+          tone={hasImportedMetrics ? 'success' : hasRealFiles ? 'warning' : 'blocked'}
         >
-          <div className="kpi-row kpi-row--task" aria-label="指标入库任务摘要">
-            <KpiCard
-              label="真实报表"
-              value={`${realReportCount}/8`}
-              detail={hasRealFiles ? '目录中可导入' : '等待采集'}
-              tone={realReportCount >= 8 ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
-            />
-            <KpiCard
-              label="日级指标"
-              value={`${importedRows} 行`}
-              detail={hasImportedMetrics ? '已写入 SQLite' : '尚未入库'}
-              tone={hasImportedMetrics ? 'ready' : 'blocked'}
-            />
-            <KpiCard
-              label="异常证据"
-              value={`${rejectedEvidenceCount} 个`}
-              detail="截图/审计不算广告数据"
-              tone={rejectedEvidenceCount > 0 ? 'warning' : 'ready'}
-            />
-            <KpiCard
-              label="下一步"
-              value={hasImportedMetrics ? '广告量化' : hasRealFiles ? '导入表格' : '获取报表'}
-              detail="只按真实表格推进"
-              tone={hasImportedMetrics ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
-            />
+          <div className="table-wrap">
+            <table className="business-table data-import-prototype-table">
+              <thead>
+                <tr>
+                  <th>报表</th>
+                  <th>入库行数</th>
+                  <th>状态</th>
+                  <th>真实文件</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(sortedReportRows.length ? sortedReportRows : reportRows).slice(0, 8).map((row) => (
+                  <tr key={row.type}>
+                    <td><strong>{row.label}</strong></td>
+                    <td>{row.importedRows}</td>
+                    <td>
+                      <StatusPill tone={row.statusDisplay.tone}>{row.statusDisplay.label}</StatusPill>
+                      <p className="table-subtext">{row.statusDisplay.detail}</p>
+                    </td>
+                    <td>{row.filePath ? <code>{compactPath(row.filePath)}</code> : '缺少真实文件'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
           {loading && <p className="muted-line">正在读取当前范围文件和数据库状态...</p>}
           {error && <p className="blocked-line">读取异常：{error}</p>}
-        </OperatorTaskPanel>
+          <div className="action-row">
+            <button aria-busy={currentImportButton.ariaBusy} className={currentImportButton.className} disabled={currentImportButton.disabled} onClick={() => runImport('current')} type="button">
+              <span className={currentImportButton.ariaBusy ? 'button-content' : undefined}>
+                {currentImportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {currentImportButton.label}
+              </span>
+            </button>
+            {renderOpenPathButton({
+              disabled: Boolean(runningImport || openingPathKey || !reportFolder),
+              idleLabel: reportFolder ? '打开报表目录' : '导入本地表格',
+              targetPath: reportFolder,
+            })}
+            <button aria-busy={exportButton.ariaBusy} className={exportButton.className} disabled={exportButton.disabled} onClick={exportReconciliation} type="button">
+              <span className={exportButton.ariaBusy ? 'button-content' : undefined}>
+                {exportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {exportButton.label}
+              </span>
+            </button>
+          </div>
+        </Panel>
 
         <div className={importFeedback.className}>
           <div>
@@ -775,7 +803,7 @@ export function DataImportValidationPage() {
             <div className="judgment-panel">
               <div>
                 <span>{hasRealFiles && hasImportedMetrics ? '数据链已闭合' : '数据链未闭合'}</span>
-                <strong>{hasRealFiles && hasImportedMetrics ? '可以进入广告量化' : hasRealFiles ? '先完成指标入库' : '先获取真实广告报表'}</strong>
+                <strong>{hasRealFiles && hasImportedMetrics ? '可以查看广告表现' : hasRealFiles ? '先完成指标入库' : '先获取真实广告报表'}</strong>
                 <p>导入页只负责把真实报表变成日级广告事实；审计证据不能替代广告数据。</p>
               </div>
             </div>
@@ -792,7 +820,7 @@ export function DataImportValidationPage() {
             </div>
             <p className={hasImportedMetrics ? 'muted-line' : 'warning-line'}>
               {hasImportedMetrics
-                ? '下一步：进入广告量化，复核 ACOS、花费、订单和产品阶段。'
+                ? '下一步：查看广告表现，复核 ACOS、花费、订单和产品阶段。'
                 : hasRealFiles
                   ? '下一步：点击“导入已下载表格”，把真实报表写入 SQLite 日级指标。'
                   : '下一步：回到数据采集页下载已创建报表、重新创建下载，或导入本地报表。'}
@@ -811,7 +839,7 @@ export function DataImportValidationPage() {
             <div>
               <span>SQLite 日级指标</span>
               <strong>{importedRows} 行可用</strong>
-              <p>{hasImportedMetrics ? '广告量化、AI 证据包和优化建议会读取这些日级广告事实。' : '未导入前数据库没有可用于广告量化的每日指标。'}</p>
+              <p>{hasImportedMetrics ? '广告表现、AI 证据包和优化建议会读取这些日级广告事实。' : '未导入前数据库没有可用于广告表现的每日指标。'}</p>
             </div>
             <div>
               <span>审计文件不参与计算</span>
@@ -820,7 +848,7 @@ export function DataImportValidationPage() {
             </div>
             <div>
               <span>下一步</span>
-              <strong>{hasImportedMetrics ? '下一步去广告量化' : hasRealFiles ? '导入已下载表格' : '回数据采集获取真实报表'}</strong>
+              <strong>{hasImportedMetrics ? '下一步查看广告表现' : hasRealFiles ? '导入已下载表格' : '回数据采集获取真实报表'}</strong>
               <p>{hasImportedMetrics ? '复核 ACOS、花费、订单、产品阶段和 AI 证据链。' : hasRealFiles ? '把真实报表解析并写入 SQLite 后才能生成建议。' : '先下载已创建报表、重新创建下载，或导入本地真实报表。'}</p>
             </div>
             </div>
@@ -832,7 +860,7 @@ export function DataImportValidationPage() {
                   {exportButton.label}
                 </span>
               </button>
-              <button className="secondary-button" disabled={!hasImportedMetrics} onClick={() => navigateTo('ad-quant')} type="button">进入广告量化</button>
+              <button className="secondary-button" disabled={!hasImportedMetrics} onClick={() => navigateTo('ad-quant')} type="button">查看广告表现</button>
             </div>
             {reconciliation && (
               <div className="evidence-check-panel">
@@ -947,7 +975,7 @@ export function DataImportValidationPage() {
               {renderOpenPathButton({ className: 'secondary-button compact-button', disabled: !fileAudit?.manifestPath, idleLabel: '打开', messageLabel: '打开采集清单', targetPath: fileAudit?.manifestPath })}
             </div>
             </div>
-            <p className="warning-line">采集清单和审计证据只用于追溯流程；广告量化只读取上方真实报表和 SQLite 指标。</p>
+            <p className="warning-line">采集清单和审计证据只用于追溯流程；广告表现只读取上方真实报表和 SQLite 指标。</p>
             {pathNotice && <p className={pathNotice.startsWith('打开失败') ? 'blocked-line' : 'muted-line'}>{pathNotice}</p>}
           </Panel>
         </ProgressiveDetails>

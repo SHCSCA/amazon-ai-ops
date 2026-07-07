@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { scopeFieldFeedbackClass, scopeFieldFeedbackLabel, type ScopeFieldFeedbackKey } from '../components/scope-bar';
 import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
@@ -78,13 +77,13 @@ export function buildOperationScopeTaskState(input: {
   const canQuantify = hasReports && input.importedRows > 0;
   if (canQuantify) {
     return {
-      title: '确认当前范围后进入广告量化',
-      detail: `${Math.min(input.realReportCount, 8)}/8 类真实报表，${input.importedRows} 行广告指标已入库；保存后广告量化、建议、审批和回读都按这个范围读取。`,
+      title: '确认当前工作范围后查看广告表现',
+      detail: `${Math.min(input.realReportCount, 8)}/8 类真实报表，${input.importedRows} 行广告指标已入库；保存后广告表现、建议、审批和结果核对都按这个范围读取。`,
       tone: 'ready',
       primaryActionLabel: '确认并保存范围',
       primaryActionBusy: input.saveStatus === 'saving',
       primaryActionBusyLabel: '保存中...',
-      nextActionLabel: '进入广告量化',
+      nextActionLabel: '查看广告表现',
       nextRoute: 'ad-quant',
     };
   }
@@ -211,62 +210,59 @@ export function OperationScopePage() {
   return (
     <div>
       <PageHeader
-        eyebrow="数据与量化"
+        eyebrow="数据"
         title={PAGE_HEADER_TITLES.operationScope}
-        description="日期、店铺、站点、币种和批次。后续页面统一按这个范围读取。"
-        primaryTask="确认全局范围"
-        nextAction={canQuantify ? '进入广告量化' : realReportCount > 0 ? '导入已下载表格' : '获取真实报表'}
+        description="日期、店铺、站点、币种和批次。后续页面统一按这个工作范围读取。"
+        primaryTask="确认当前工作范围"
+        nextAction={canQuantify ? '查看广告表现' : realReportCount > 0 ? '导入已下载表格' : '获取真实报表'}
+        primaryAction={{
+          label: taskState.primaryActionLabel,
+          onClick: () => { void confirmScope(); },
+          busy: taskState.primaryActionBusy,
+          busyLabel: taskState.primaryActionBusyLabel,
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="范围确认"
-          title={taskState.title}
-          detail={taskState.detail}
-          primaryAction={{
-            label: taskState.primaryActionLabel,
-            onClick: () => { void confirmScope(); },
-            busy: taskState.primaryActionBusy,
-            busyLabel: taskState.primaryActionBusyLabel,
-          }}
-          secondaryActions={[
-            { label: '编辑范围', onClick: openScopeEditor },
-            { label: taskState.nextActionLabel, onClick: () => navigate(taskState.nextRoute) },
-          ]}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="工作范围任务摘要">
-            <KpiCard
-              label="真实报表"
-              value={`${Math.min(realReportCount, 8)}/8`}
-              detail={realReportCount ? '当前范围已有文件' : '保存后去采集'}
-              tone={taskState.tone}
-            />
-            <KpiCard
-              label="入库指标"
-              value={`${importedRows} 行`}
-              detail={importedRows > 0 ? '可进入量化' : '等待导入'}
-              tone={importedRows > 0 ? 'ready' : 'blocked'}
-            />
-            <KpiCard
-              label="数据批次"
-              value={activeBatch || '自动匹配'}
-              detail={scope.batchId ? '手动指定' : '最新完整优先'}
-              tone={activeBatch ? 'ready' : 'pending'}
-            />
-            <KpiCard label="币种" value="USD" detail="全链路统一口径" tone="pending" />
-          </div>
-          <div className={`scope-task-feedback scope-task-feedback-${saveStatus}`} aria-live="polite">
-            <span>{operationScopeSaveFeedbackLabel(saveStatus)}</span>
-            {saveError && <strong>{saveError}</strong>}
-          </div>
-        </OperatorTaskPanel>
+        <div className="kpi-row operation-scope-prototype-status-grid" aria-label="工作范围状态">
+          <KpiCard
+            label="真实报表"
+            value={`${Math.min(realReportCount, 8)}/8`}
+            detail={realReportCount ? '当前范围已有文件' : '保存后去采集'}
+            tone={taskState.tone}
+          />
+          <KpiCard
+            label="入库指标"
+            value={`${importedRows} 行`}
+            detail={importedRows > 0 ? '可查看广告表现' : '等待导入'}
+            tone={importedRows > 0 ? 'ready' : 'blocked'}
+          />
+          <KpiCard
+            label="数据批次"
+            value={activeBatch || '自动匹配'}
+            detail={scope.batchId ? '手动指定' : '最新完整优先'}
+            tone={activeBatch ? 'ready' : 'pending'}
+          />
+          <KpiCard label="币种" value="USD" detail="全链路统一口径" tone="pending" />
+        </div>
+        <div className={`scope-task-feedback scope-task-feedback-${saveStatus} operation-scope-prototype-feedback`} aria-live="polite">
+          <span>{taskState.title}</span>
+          <strong>{operationScopeSaveFeedbackLabel(saveStatus)}</strong>
+          <p>{saveError || taskState.detail}</p>
+        </div>
+        <div className="action-row operation-scope-prototype-actions">
+          <button className="secondary-button" onClick={openScopeEditor} type="button">编辑范围</button>
+          <button className="secondary-button" onClick={() => navigate(taskState.nextRoute)} type="button">
+            {taskState.nextActionLabel}
+          </button>
+        </div>
 
-        <Panel title="范围表单" tone={saveStatus === 'error' ? 'blocked' : 'default'}>
+        <Panel title="范围设置" tone={saveStatus === 'error' ? 'blocked' : 'default'}>
           <FormTable>
             <FormTableRow
               label="店铺"
               required
-              hint="选中后会先写入本页待保存范围；保存后数据采集、导入、广告量化和 AI 建议统一使用。"
+              hint="选中后会先写入本页待保存范围；保存后数据采集、导入、广告表现和 AI 建议统一使用。"
             >
               <span className={scopeFieldFeedbackClass('storeName', confirmedFieldName, 'operation-scope-field')}>
                 <select
@@ -338,7 +334,7 @@ export function OperationScopePage() {
             </FormTableRow>
             <FormTableRow
               label="筛选 ASIN"
-              hint="可留空表示全部产品；填写后产品管理、广告量化、事件、关键词和 Listing 都按该 ASIN 过滤。"
+              hint="可留空表示全部产品；填写后产品管理、广告表现、事件、关键词和 Listing 都按该 ASIN 过滤。"
             >
               <span className={scopeFieldFeedbackClass('asin', confirmedFieldName, 'operation-scope-field')}>
                 <input
@@ -377,7 +373,7 @@ export function OperationScopePage() {
           </FormTable>
         </Panel>
 
-        <Panel title="当前操作范围" tone={canQuantify ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}>
+        <Panel title="当前范围摘要" tone={canQuantify ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}>
           <StateLightGrid
             items={[
               {
@@ -420,7 +416,7 @@ export function OperationScopePage() {
             {[
               ['数据采集', '只创建/下载这个范围的领星 8 类报表。', 'data-collection'],
               ['数据导入与校验', '只导入这个范围的 xlsx/xls/csv，不读取审计文件。', 'data-import-validation'],
-              ['广告量化', '只计算这个范围已入库的每日广告指标。', 'ad-quant'],
+              ['广告表现', '只计算这个范围已入库的每日广告指标。', 'ad-quant'],
               ['优化建议', '只生成这个范围可绑定广告对象的建议。', 'recommendations'],
             ].map(([title, description, route]) => (
               <button className="workflow-step" key={route} onClick={() => navigate(route as AppRoute)} type="button">
@@ -438,9 +434,9 @@ export function OperationScopePage() {
               <div>
                 <span>当前范围已可量化</span>
                 <strong>{importedRows} 行广告指标可用于规则和 AI 分析</strong>
-                <p>下一步进入广告量化，先看产品阶段、阈值和风险对象，再生成优化建议。</p>
+                <p>下一步查看广告表现，先看产品阶段、阈值和风险对象，再生成优化建议。</p>
               </div>
-              <button className="primary-button" onClick={() => navigate('ad-quant')} type="button">进入广告量化</button>
+              <button className="primary-button" onClick={() => navigate('ad-quant')} type="button">查看广告表现</button>
             </div>
           ) : realReportCount > 0 ? (
             <div className="judgment-panel">

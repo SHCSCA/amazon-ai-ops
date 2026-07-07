@@ -124,7 +124,7 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
       detail: dataReady
         ? `${realReportCount}/8 类真实广告报表，${importedRows} 行 DB 日级指标，${actionableRows} 行可生成建议。`
         : `${realReportCount}/8 类真实广告报表，${importedRows} 行 DB 日级指标，${actionableRows} 行可生成建议；正式建议必须先补齐真实数据。`,
-      nextAction: dataReady ? '进入广告量化' : '去数据采集',
+      nextAction: dataReady ? '查看广告表现' : '去数据采集',
       route: dataReady ? 'ad-quant' : realReportCount > 0 ? 'data-import-validation' : 'data-collection',
     },
     {
@@ -170,7 +170,7 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
       statusLabel: recommendationsReady ? '可审批' : recommendationsReviewOnly ? '需复核' : dataReady ? '待生成' : '阻断',
       tone: recommendationsReady ? 'ready' : recommendationsReviewOnly || dataReady ? 'warning' : 'blocked',
       detail: recommendationsReady
-        ? `${pendingRecommendationCount} 条待审批，${approvedRecommendationCount} 条已批准，${reviewRecommendationCount} 条复核中；后续必须进入执行回读。`
+        ? `${pendingRecommendationCount} 条待审批，${approvedRecommendationCount} 条已批准，${reviewRecommendationCount} 条复核中；后续必须进入结果核对。`
         : recommendationsReviewOnly
           ? [
               `${reviewRecommendationCount} 条建议需复核，尚不能普通审批。`,
@@ -184,13 +184,13 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
     },
     {
       key: 'readback',
-      label: '执行回读',
+      label: '结果核对',
       statusLabel: readbackReady ? '通过' : '阻断',
       tone: readbackReady ? 'ready' : 'blocked',
       detail: readbackReady
         ? `${readbackVerifiedCount} 条真实广告动作已完成执行前/执行后/回读验证。`
         : '还没有真实广告动作的执行前、执行后和回读闭环证据。',
-      nextAction: readbackReady ? '查看执行回读' : '完成审批和回读',
+      nextAction: readbackReady ? '查看结果核对' : '完成审批和结果核对',
       route: readbackReady ? 'readback' : recommendationsReady ? 'approval' : 'recommendations',
     },
     {
@@ -233,8 +233,8 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
 
   return {
     status: 'needs_work',
-    headline: '还差执行回读和最终交付证据',
-    primaryNextAction: '先完成审批、真实执行回读和最终交付包',
+    headline: '还差结果核对和最终交付证据',
+    primaryNextAction: '先完成审批、真实结果核对和最终交付包',
     readyCount,
     totalCount,
     items,

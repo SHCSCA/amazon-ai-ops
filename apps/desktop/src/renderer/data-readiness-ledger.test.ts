@@ -33,7 +33,7 @@ describe('buildDataReadinessLedger', () => {
       expect.objectContaining({
         key: 'imported',
         status: 'complete',
-        title: '已导入 DB 日级指标',
+        title: '日级指标已入库',
         value: '2416 行',
       }),
       expect.objectContaining({
@@ -43,6 +43,10 @@ describe('buildDataReadinessLedger', () => {
         value: '已放行',
       }),
     ]);
+
+    expect(ledger.nextAction).toBe('查看广告表现');
+    expect(ledger.detail).toContain('可用于广告表现');
+    expect(ledger.stages[3].detail).toContain('可以查看广告表现');
   });
 
   it('separates created reports from downloaded real files and imported DB rows', () => {

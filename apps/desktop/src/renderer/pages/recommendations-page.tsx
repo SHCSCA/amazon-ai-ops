@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
@@ -370,7 +369,7 @@ export function recommendationWorkflowActionState(input: {
       approvalDisabled: false,
       readbackDisabled: approvedCount <= 0,
       approvalLabel: '去审批中心',
-      readbackLabel: approvedCount > 0 ? '去执行回读' : '审批后回读',
+      readbackLabel: approvedCount > 0 ? '去结果核对' : '审批后回读',
     };
   }
   if (input.recommendationCount > 0 && (input.manualReviewCount > 0 || input.evidenceBlockedCount > 0)) {
@@ -378,14 +377,14 @@ export function recommendationWorkflowActionState(input: {
       approvalDisabled: true,
       readbackDisabled: true,
       approvalLabel: '先处理复核/证据',
-      readbackLabel: '等待可审批建议',
+      readbackLabel: '等待可送审动作',
     };
   }
   return {
     approvalDisabled: true,
     readbackDisabled: true,
     approvalLabel: '等待建议',
-    readbackLabel: '等待可审批建议',
+    readbackLabel: '等待可送审动作',
   };
 }
 
@@ -426,8 +425,8 @@ export function recommendationPrimaryTaskActionState(input: {
       label: '补齐证据或复核',
       action: 'navigate',
       route,
-      title: `建议池未开放：可审批 0，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
-      detail: `当前真实报表 ${realReportCount}/8 类，导入指标 ${importedRowCount} 行，可行动指标 ${actionableMetricRows} 行。下一步：补齐证据或复核。`,
+      title: `建议动作未开放：可送审 0，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
+      detail: `当前真实报表 ${realReportCount}/8 类，导入指标 ${importedRowCount} 行，可行动指标 ${actionableMetricRows} 行。下一步：补齐真实数据或回到广告表现复核。`,
       disabled: false,
     };
   }
@@ -437,8 +436,8 @@ export function recommendationPrimaryTaskActionState(input: {
       label: '去审批中心',
       action: 'navigate',
       route: 'approval',
-      title: `建议池：可审批 ${formalApprovalCount}，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
-      detail: `当前共有 ${recommendationCount} 条待处理建议。下一步：去审批中心逐条批准或拒绝；真实执行和回读仍在后续页面完成。`,
+      title: `建议动作：可送审 ${formalApprovalCount}，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
+      detail: `当前共有 ${recommendationCount} 条待处理建议。下一步：选择证据完整的动作送到审批中心；真实执行和回读仍在后续页面完成。`,
       disabled: false,
     };
   }
@@ -448,8 +447,8 @@ export function recommendationPrimaryTaskActionState(input: {
       label: '补齐证据或复核',
       action: 'navigate',
       route: 'ad-quant',
-      title: `建议池：可审批 0，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
-      detail: `当前共有 ${recommendationCount} 条建议，但没有可进入普通审批的动作。下一步：补齐证据或复核量化输入。`,
+      title: `建议动作：可送审 0，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
+      detail: `当前共有 ${recommendationCount} 条建议，但没有证据完整、可送审的动作。下一步：补齐证据或回到广告表现复核输入。`,
       disabled: false,
     };
   }
@@ -457,8 +456,8 @@ export function recommendationPrimaryTaskActionState(input: {
   return {
     label: '生成优化建议',
     action: 'generate',
-    title: `建议池：可审批 ${formalApprovalCount}，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
-    detail: `真实报表 ${realReportCount}/8 类，导入指标 ${importedRowCount} 行，可行动指标 ${actionableMetricRows} 行。下一步：生成优化建议。`,
+    title: `建议动作：可送审 ${formalApprovalCount}，需复核 ${manualReviewCount}，缺证据 ${evidenceBlockedCount}`,
+    detail: `真实报表 ${realReportCount}/8 类，导入指标 ${importedRowCount} 行，可行动指标 ${actionableMetricRows} 行。下一步：生成可解释的广告动作建议。`,
     disabled: Boolean(input.generating || input.pipelineLoading),
   };
 }
@@ -483,32 +482,32 @@ export function recommendationBatchSelectionState(input: {
     : 'recommendation-selection-count';
   if (selectableCount <= 0) {
     return {
-      actionLabel: '等待可审批建议',
-      ariaStatus: '当前没有可批量送审的正式建议。',
+      actionLabel: '等待可送审动作',
+      ariaStatus: '当前没有可送到审批中心的动作。',
       countClassName,
       countLabel,
-      helperText: '当前建议池没有证据完整、可进入普通审批的动作。',
+      helperText: '当前建议池没有证据完整、可进入审批中心的动作。',
       disabled: true,
       tone: 'blocked',
     };
   }
   if (selectedCount <= 0) {
     return {
-      actionLabel: `批量提交 0/${selectableCount} 项到审批中心`,
-      ariaStatus: `当前有 ${selectableCount} 条可审批建议，尚未选择。`,
+      actionLabel: `提交 0/${selectableCount} 项到审批中心`,
+      ariaStatus: `当前有 ${selectableCount} 条可送审动作，尚未选择。`,
       countClassName,
       countLabel,
-      helperText: '勾选可审批建议后，再批量带入审批中心逐条盖章。',
+      helperText: '勾选可送审动作后，再带入审批中心逐条确认。',
       disabled: true,
       tone: 'pending',
     };
   }
   return {
-    actionLabel: `批量提交 ${selectedCount} 项到审批中心`,
-    ariaStatus: `已选择 ${selectedCount} 条可审批建议，提交后仍需审批中心逐条确认。`,
+    actionLabel: `提交 ${selectedCount} 项到审批中心`,
+    ariaStatus: `已选择 ${selectedCount} 条可送审动作，提交后仍需审批中心逐条确认。`,
     countClassName,
     countLabel,
-    helperText: `已选择 ${selectedCount}/${selectableCount} 条可审批建议；这里只传递审批上下文，不执行广告动作。`,
+    helperText: `已选择 ${selectedCount}/${selectableCount} 条可送审动作；这里只传递审批上下文，不执行广告动作。`,
     disabled: false,
     tone: 'ready',
   };
@@ -876,7 +875,7 @@ export function emptyRecommendationReason(
     return {
       title: '没有可安全绑定的广告动作',
       detail: `${lastGenerateResult.reason || '规则和 AI 完成诊断，但没有找到足够明确、可绑定广告活动/广告组/对象的动作。'} ${aiCandidateText}${filterReasons}`,
-      nextStep: '查看广告量化页的风险对象；必要时补充运营事件或调整阈值后重新生成。若 AI 候选被过滤，说明它缺少可匹配的广告活动/广告组/关键词/投放对象。',
+      nextStep: '查看广告表现页的风险对象；必要时补充运营事件或调整阈值后重新生成。若 AI 候选被过滤，说明它缺少可匹配的广告活动/广告组/关键词/投放对象。',
       tone: 'warning',
     };
   }
@@ -997,7 +996,7 @@ export function RecommendationsPage() {
       summary: strategy?.summary || lastGenerateResult.reason || 'AI 已完成诊断，但未返回可进入审批的广告动作。',
       reasons: reasons.length ? reasons : ['规则和 AI 完成诊断，但没有找到足够明确、可绑定广告活动/广告组/对象的动作。'],
       insights: strategy?.aiInsights || [],
-      nextStep: '回到广告量化页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。',
+      nextStep: '回到广告表现页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。',
     };
   }, [lastGenerateResult, quantReady, recommendations.length]);
   const visibleRecommendations = useMemo(
@@ -1303,51 +1302,53 @@ export function RecommendationsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="广告执行"
+        eyebrow="广告"
         title={PAGE_HEADER_TITLES.recommendations}
-        description="只负责生成和解释广告建议。审批、真实执行和回读在后续独立页面完成，避免一个页面承担全部任务。"
-        primaryTask="解释为什么要改"
-        nextAction={quantReady ? '生成或复核建议' : '先完成数据采集和广告量化'}
+        description="把广告表现转成可判断的动作建议：看要改什么、从多少改到多少、为什么改、风险和证据是否足够。"
+        primaryTask="判断哪些动作值得送审"
+        nextAction={quantReady ? '选择动作送到审批中心' : '先完成数据采集和广告表现'}
+        primaryAction={{
+          label: primaryTaskAction.label,
+          busy: generating,
+          busyLabel: '生成中...',
+          disabled: primaryTaskAction.disabled,
+          onClick: runPrimaryTaskAction,
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="建议池"
-          title={primaryTaskAction.title}
-          detail={primaryTaskAction.detail}
-          primaryAction={{
-            label: primaryTaskAction.label,
-            busy: generating,
-            busyLabel: '生成中...',
-            disabled: primaryTaskAction.disabled,
-            onClick: runPrimaryTaskAction,
-          }}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="建议池任务摘要">
-            <KpiCard
-              label="可审批"
-              value={formalApprovalCount}
-              detail={`${recommendations.length} 条建议`}
-              tone={formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending'}
-            />
-            <KpiCard
-              label="人工复核"
-              value={manualReviewCount}
-              detail="不会进入普通批准"
-              tone={manualReviewCount > 0 ? 'warning' : 'pending'}
-            />
-            <KpiCard
-              label="证据阻断"
-              value={evidenceBlockedCount}
-              detail={`${realReportCount}/8 类报表`}
-              tone={evidenceBlockedCount > 0 ? 'blocked' : 'ready'}
-            />
-            <KpiCard
-              label="AI 参与"
-              value={aiParticipatedCount}
-              detail={`规则 ${ruleOnlyCount} 条`}
-              tone={aiParticipatedCount > 0 ? 'ready' : 'pending'}
-            />
+        <div className="kpi-row recommendations-prototype-status-grid" aria-label="建议池状态">
+          <KpiCard
+            label="可送审"
+            value={formalApprovalCount}
+            detail={`${recommendations.length} 条建议`}
+            tone={formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending'}
+          />
+          <KpiCard
+            label="人工复核"
+            value={manualReviewCount}
+            detail="不会进入普通批准"
+            tone={manualReviewCount > 0 ? 'warning' : 'pending'}
+          />
+          <KpiCard
+            label="证据阻断"
+            value={evidenceBlockedCount}
+            detail={`${realReportCount}/8 类报表`}
+            tone={evidenceBlockedCount > 0 ? 'blocked' : 'ready'}
+          />
+          <KpiCard
+            label="AI 参与"
+            value={aiParticipatedCount}
+            detail={`规则 ${ruleOnlyCount} 条`}
+            tone={aiParticipatedCount > 0 ? 'ready' : 'pending'}
+          />
+        </div>
+        <Panel title="建议池筛选" tone={formalApprovalCount > 0 ? 'success' : recommendations.length ? 'warning' : 'default'}>
+          <div className="prototype-list-stack">
+            <div className="prototype-list-item">
+              <strong>{primaryTaskAction.title}</strong>
+              <p>{primaryTaskAction.detail}</p>
+            </div>
           </div>
           <div className="recommendation-bucket-grid" role="group" aria-label="建议池快速筛选">
             {bucketItems.map((item) => (
@@ -1368,12 +1369,12 @@ export function RecommendationsPage() {
             当前视图：{activeBucketLabel[bucketFilter]}，显示 {visibleRecommendations.length}/{recommendations.length} 条；切换视图会清空当前勾选，避免隐藏行被批量提交。
           </p>
           <div className="business-pill-row" aria-label="建议池分类计数">
-            <StatusPill tone={formalApprovalCount > 0 ? 'ready' : 'pending'}>正式可审批 {formalApprovalCount}</StatusPill>
+            <StatusPill tone={formalApprovalCount > 0 ? 'ready' : 'pending'}>可送审动作 {formalApprovalCount}</StatusPill>
             <StatusPill tone={manualReviewCount > 0 ? 'warning' : 'pending'}>人工复核 {manualReviewCount}</StatusPill>
             <StatusPill tone={insightOnlyCount > 0 ? 'warning' : 'ready'}>AI 洞察未采纳 {insightOnlyCount}</StatusPill>
             <StatusPill tone={evidenceBlockedCount > 0 ? 'blocked' : 'ready'}>证据不足阻断 {evidenceBlockedCount}</StatusPill>
           </div>
-        </OperatorTaskPanel>
+        </Panel>
 
         {message && <p className={message.includes('失败') || message.includes('不能') ? 'blocked-line' : 'muted-line'}>{message}</p>}
 
@@ -1430,7 +1431,7 @@ export function RecommendationsPage() {
             </div>
             <div>
               <span>本次 AI 输入</span>
-              <strong>广告事实 + 产品配置 + 运营事件 + 规则阈值 + 量化诊断</strong>
+              <strong>广告事实 + 产品配置 + 运营事件 + 规则阈值 + 广告表现</strong>
               <p>AI 不直接读取审计包，也不会在缺真实数据时用 0 值生成建议。</p>
             </div>
             <div>
@@ -1553,7 +1554,7 @@ export function RecommendationsPage() {
               <StatusPill tone={workflowActionState.approvalDisabled ? 'blocked' : 'pending'}>{workflowActionState.approvalLabel}</StatusPill>
             </button>
             <button className="workflow-step" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: 'readback' }))} disabled={workflowActionState.readbackDisabled} type="button">
-              <span>3. 执行回读</span>
+              <span>3. 结果核对</span>
               <strong>记录执行前/执行后/回读</strong>
               <StatusPill tone={workflowActionState.readbackDisabled ? 'blocked' : 'warning'}>{workflowActionState.readbackLabel}</StatusPill>
             </button>
@@ -1578,8 +1579,8 @@ export function RecommendationsPage() {
           <StateLightGrid
             items={[
               {
-                label: '正式可审批',
-                value: `正式可审批 ${formalApprovalCount}`,
+                label: '可送审动作',
+                value: `可送审 ${formalApprovalCount}`,
                 detail: recommendationFormalApprovalExplanationText(),
                 tone: formalApprovalCount > 0 ? 'ready' : 'pending',
               },
@@ -1710,7 +1711,7 @@ export function RecommendationsPage() {
                 </div>
                 <div className="business-scope-line">下一步处理顺序</div>
                 <ul className="business-list">
-                  <li>先回广告量化页查看风险对象和样本量</li>
+                  <li>先回广告表现页查看风险对象和样本量</li>
                   <li>补充运营事件或产品配置后重新生成</li>
                   <li>确认广告活动、广告组、关键词/搜索词/投放对象能绑定真实报表行</li>
                 </ul>
@@ -1764,7 +1765,7 @@ export function RecommendationsPage() {
                 <span>{directGenerateButton.label}</span>
               </button>
               <button className="secondary-button" onClick={() => window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: quantReady ? 'ad-quant' : 'data-collection' }))} type="button">
-                {quantReady ? '查看广告量化' : '去数据采集'}
+                {quantReady ? '查看广告表现' : '去数据采集'}
               </button>
             </div>
           </Panel>
@@ -1839,7 +1840,7 @@ export function RecommendationsPage() {
         <Panel title="待处理建议">
           <div className={`recommendation-selection-toolbar recommendation-selection-toolbar-${batchSelectionState.tone}`}>
             <div>
-              <span>批量审批准备</span>
+              <span>送审准备</span>
               <strong key={batchSelectionState.countLabel} className={batchSelectionState.countClassName}>
                 {batchSelectionState.countLabel}
               </strong>
@@ -1855,7 +1856,7 @@ export function RecommendationsPage() {
                 onClick={toggleAllFormalSelection}
                 type="button"
               >
-                {visibleFormalApprovalRecommendations.length > 0 && selectedVisibleFormalRecommendations.length === visibleFormalApprovalRecommendations.length ? '取消全选' : `全选可审批 ${visibleFormalApprovalRecommendations.length}`}
+                {visibleFormalApprovalRecommendations.length > 0 && selectedVisibleFormalRecommendations.length === visibleFormalApprovalRecommendations.length ? '取消全选' : `全选可送审 ${visibleFormalApprovalRecommendations.length}`}
               </button>
               <button
                 className={batchSelectionState.disabled ? 'secondary-button' : 'primary-button'}
@@ -1868,7 +1869,7 @@ export function RecommendationsPage() {
             </div>
           </div>
           <details className="evidence-disclosure">
-            <summary>展开待处理建议表（{visibleRecommendations.length}/{recommendations.length} 条）</summary>
+            <summary>展开完整建议表（{visibleRecommendations.length}/{recommendations.length} 条）</summary>
             <div className="table-wrap">
               <table className="business-table recommendation-table">
               <thead>
@@ -1882,20 +1883,14 @@ export function RecommendationsPage() {
                       type="checkbox"
                     />
                   </th>
-                  <th>建议动作</th>
-                  <th>广告组合</th>
+                  <th>动作建议</th>
                   <th>广告活动</th>
                   <th>广告组</th>
                   <th>产品/ASIN</th>
-                  <th>对象类型</th>
                   <th>对象</th>
-                  <th>当前值</th>
-                  <th>建议值</th>
-                  <th>证据指标</th>
-                  <th>批次/来源</th>
-                  <th>来源</th>
-                  <th>规则量化</th>
-                  <th>AI/规则判断</th>
+                  <th>当前 → 建议</th>
+                  <th>原因指标</th>
+                  <th>证据状态</th>
                   <th>风险</th>
                   <th>操作</th>
                 </tr>
@@ -1916,14 +1911,14 @@ export function RecommendationsPage() {
                       />
                     </td>
                     <td>{rec.actionType}</td>
-                    <td>{rec.evidence?.portfolioName || '-'}</td>
                     <td>{rec.evidence?.campaignName || '-'}</td>
                     <td>{rec.evidence?.adGroupName || '-'}</td>
                     <td>{rec.evidence?.asin || '-'}</td>
-                    <td>{recommendationType(rec)}</td>
-                    <td>{recommendationObject(rec)}</td>
-                    <td>{rec.currentValue || '-'}</td>
-                    <td>{rec.recommendedValue || '-'}</td>
+                    <td>
+                      <strong>{recommendationObject(rec)}</strong>
+                      <div className="muted-cell">{recommendationType(rec)}</div>
+                    </td>
+                    <td>{rec.currentValue || '-'} {'→'} {rec.recommendedValue || '-'}</td>
                     <td>
                       <strong>{formatUsd(rec.evidence?.cost ?? rec.cost)}</strong>
                       <div className="muted-cell">
@@ -1931,22 +1926,13 @@ export function RecommendationsPage() {
                       </div>
                     </td>
                     <td>
-                      <strong>{evidenceBatch(rec, currentBatchId)}</strong>
-                      <div className="muted-cell">{evidenceSourceFiles(rec).length} 个来源文件{rec.evidence?.sourceRow ? ` / 行 ${rec.evidence.sourceRow}` : ''}</div>
-                    </td>
-                    <td>{sourceLabel(rec)}</td>
-                    <td>
-                      <StatusPill tone={quantTone(rec.evidence?.quantStatus)}>{quantLabel(rec.evidence?.quantStatus)}</StatusPill>
-                      <div className="muted-cell">{lifecycleLabel(rec.evidence?.quantLifecycleStage || rec.evidence?.aiLifecycleStage)}</div>
-                    </td>
-                    <td>
-                      <StatusPill tone={decisionTone(rec)}>{decisionLabel(rec)}</StatusPill>
+                      <StatusPill tone={isFormalApproval ? 'ready' : recommendationHasEvidenceBlocker(rec, currentBatchId, currentRealReportSourceFiles) ? 'blocked' : 'warning'}>{isFormalApproval ? '可送审' : recommendationHasEvidenceBlocker(rec, currentBatchId, currentRealReportSourceFiles) ? '缺证据' : '需复核'}</StatusPill>
                       <div className="muted-cell">{reviewReason(rec)}</div>
                     </td>
                     <td><StatusPill tone={riskTone(rec.riskLevel)}>{rec.riskLevel}</StatusPill></td>
                     <td>
                       <button className="secondary-button compact-button" onClick={() => setSelected(rec)} type="button">
-                        查看详情
+                        查看送审判断
                       </button>
                     </td>
                   </tr>
@@ -1954,7 +1940,7 @@ export function RecommendationsPage() {
                 })}
                 {!visibleRecommendations.length && (
                   <tr>
-                    <td colSpan={17}>{recommendations.length ? `当前视图“${activeBucketLabel[bucketFilter]}”没有建议。` : quantReady ? '当前范围还没有待审批或需复核建议。' : '缺少真实数据，本页不生成建议。'}</td>
+                    <td colSpan={11}>{recommendations.length ? `当前视图“${activeBucketLabel[bucketFilter]}”没有建议。` : quantReady ? '当前范围还没有待审批或需复核建议。' : '缺少真实数据，本页不生成建议。'}</td>
                   </tr>
                 )}
               </tbody>
@@ -1964,7 +1950,7 @@ export function RecommendationsPage() {
         </Panel>
 
         {selected && (
-          <Panel title="建议详情">
+          <Panel title="送审判断">
             {(() => {
               const issues = recommendationEvidenceIssues(selected, currentBatchId, currentRealReportSourceFiles);
               const sourceBatchId = selected.evidence?.batchId || '-';
@@ -1973,35 +1959,39 @@ export function RecommendationsPage() {
                 <div className="evidence-check-panel">
                   <div className="business-split">
                     <div>
-                      <h3>送审前证据检查</h3>
-                      <p className="muted-line">审批中心只接收绑定当前批次、对象、来源文件和当前/建议值完整的建议。</p>
+                      <h3>{issues.length ? '暂不能送审' : '可以送到审批中心'}</h3>
+                      <p className={issues.length ? 'blocked-line' : 'muted-line'}>
+                        {issues.length
+                          ? `送审前需要补齐：${issues.join('、')}。`
+                          : `动作、对象、当前值、建议值和真实报表来源已绑定；审批中心仍会逐条重新校验。`}
+                      </p>
                     </div>
                     <StatusPill tone={issues.length ? 'blocked' : 'ready'}>
                       {issues.length ? `缺 ${issues.length} 项` : '证据完整'}
                     </StatusPill>
                   </div>
-                  <div className="business-pill-row">
-                    <StatusPill tone={batchMatched ? 'ready' : 'blocked'}>
-                      {batchMatched ? '来源批次匹配' : '来源批次需核对'}
-                    </StatusPill>
-                    <StatusPill tone={evidenceSourceFiles(selected).length ? 'ready' : 'blocked'}>
-                      来源文件 {evidenceSourceFiles(selected).length}
-                    </StatusPill>
-                    <StatusPill tone={selected.currentValue && selected.recommendedValue ? 'ready' : 'blocked'}>
-                      当前/建议值
-                    </StatusPill>
-                    <StatusPill tone={selected.evidence?.explanationSource === 'ai' ? 'ready' : 'pending'}>
-                      {sourceLabel(selected)}
-                    </StatusPill>
-                    <StatusPill tone={decisionTone(selected)}>
-                      {decisionLabel(selected)}
-                    </StatusPill>
+                  <div className="context-summary-grid compact-summary">
+                    <div>
+                      <span>建议动作</span>
+                      <strong>{selected.actionType}</strong>
+                      <p>{selected.currentValue || '-'} {'→'} {selected.recommendedValue || '-'}</p>
+                    </div>
+                    <div>
+                      <span>广告对象</span>
+                      <strong>{recommendationObject(selected)}</strong>
+                      <p>{selected.evidence?.campaignName || '-'} / {selected.evidence?.adGroupName || '-'} / {selected.evidence?.asin || '-'}</p>
+                    </div>
+                    <div>
+                      <span>为什么建议</span>
+                      <strong>{formatUsd(selected.evidence?.cost ?? selected.cost)} / ACOS {formatPercent((selected.evidence?.acos ?? selected.acos ?? 0) * 100)}</strong>
+                      <p>{selected.evidence?.orders ?? '-'} 单 / {selected.evidence?.clicks ?? selected.clicks} 点击 / {reviewReason(selected)}</p>
+                    </div>
+                    <div>
+                      <span>风险和证据</span>
+                      <strong>{selected.riskLevel || '待判断'}</strong>
+                      <p>来源批次 {sourceBatchId}；{batchMatched ? '匹配当前范围' : '需核对当前范围'}；来源文件 {evidenceSourceFiles(selected).length} 个。</p>
+                    </div>
                   </div>
-                  <p className={issues.length ? 'blocked-line' : 'muted-line'}>
-                    {issues.length
-                      ? `送审前需要补齐：${issues.join('、')}。`
-                      : `可进入审批中心复核；来源批次 ${sourceBatchId} 已绑定当前范围。`}
-                  </p>
                 </div>
               );
             })()}
@@ -2030,7 +2020,7 @@ export function RecommendationsPage() {
                 <div>
                   <span>下一步</span>
                   <strong>{selectedDecisionSummary.nextAction}</strong>
-                  <p>正式动作仍需要人工审批、真实广告后台操作和执行回读。</p>
+                  <p>正式动作仍需要人工审批、真实广告后台操作和结果核对。</p>
                 </div>
               </div>
               {selectedDecisionSummary.riskWarnings.length > 0 && (

@@ -145,7 +145,7 @@ export function buildDecisionEvidenceSummary(
       ),
       evidenceSummary,
       riskWarnings,
-      nextAction: '可进入审批，但仍需人工确认和执行回读。',
+      nextAction: '可进入审批，但仍需人工确认和结果核对。',
     };
   }
 
@@ -287,7 +287,7 @@ export function buildAdQuantDiagnosisSummary(
     evidenceSummary,
     evidenceStats: evidenceSufficiencyStats(sufficiency),
     riskWarnings: operatorFacingReasons(riskWarnings),
-    nextAction: '可以进入优化建议，但正式动作仍需审批和执行回读。',
+    nextAction: '可以进入优化建议，但正式动作仍需审批和结果核对。',
   };
 }
 

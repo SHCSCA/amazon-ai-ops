@@ -58,14 +58,14 @@ export function buildScopeSummaryFacts(input: {
   productLabel?: string;
 }): ScopeSummaryFact[] {
   return [
+    { label: '产品', value: input.productLabel || input.asin?.trim() || '全部产品' },
+    { label: '真实报表', value: input.reportCoverage },
+    { label: '入库指标', value: input.importedRows },
     {
-      label: '批次',
+      label: '追溯批次',
       value: input.batchId || '自动匹配',
       title: input.batchModeLabel,
     },
-    { label: '报表', value: input.reportCoverage },
-    { label: '指标', value: input.importedRows },
-    { label: '产品', value: input.productLabel || input.asin?.trim() || '全部产品' },
   ];
 }
 
@@ -370,12 +370,14 @@ export function ScopeBar() {
     </span>
   );
 
+  const scopeLine = `${scope.dateFrom} ~ ${scope.dateTo} / ${scope.storeName || '未选店铺'} / ${scope.marketplaceCode || '未选站点'} / USD${scope.asin?.trim() ? ` / ASIN ${scope.asin.trim()}` : ' / 全部产品'}`;
+
   return (
-    <section className="scope-bar" aria-label="当前运营范围">
+    <section className="scope-bar" aria-label="当前工作范围">
       <div className="scope-title-row">
         <div className="scope-title-main">
-          <span>当前操作范围</span>
-          <strong>{scope.dateFrom} 至 {scope.dateTo} / {scope.storeName || '未选店铺'} / {scope.marketplaceCode || '未选站点'} / USD</strong>
+          <span>当前工作范围：</span>
+          <strong>{scopeLine}</strong>
         </div>
         <div className="scope-title-actions">
           <div className={scopeFieldFeedbackClass('batchId', confirmedFieldName, 'scope-title-action-field')}>
@@ -428,7 +430,7 @@ export function ScopeBar() {
       )}
       <div className="scope-details-panel">
         <ProgressiveDetails title="范围与批次说明">
-          <p>这是全局范围。数据采集、导入校验、广告量化、优化建议、审批回读、关键词机会和 Listing 草案都会按这里读取。</p>
+          <p>这是当前工作范围。数据采集、导入校验、广告表现、优化建议、审批中心、结果核对、关键词机会和 Listing 草案都会按这里读取。</p>
           <p className="scope-helper">{scopeHelperText}</p>
           {(scope.batchId || batchOptionsError || scopePersistError) && (
             <div className="scope-batch-note" aria-label="范围与批次详情">

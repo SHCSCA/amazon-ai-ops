@@ -109,7 +109,7 @@ describe('operator UX copy helpers', () => {
       importedRows: 96,
       actionableRows: 12,
     })).toMatchObject({
-      label: '复核广告量化',
+      label: '查看广告表现',
       route: 'ad-quant',
     });
   });

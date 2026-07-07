@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute, OperationEventView } from '../types';
@@ -11,7 +10,7 @@ export const OPERATION_EVENT_PAGE_COPY = {
   description: '把 Coupon、BD、大促、调价、库存、Listing 和站外动作挂载进 LLM 推理上下文，AI 解释广告波动时会读取这些时间轴标记，避免只看广告表格误判。',
   primaryTask: '把关键运营动作标记进 LLM 上下文',
   timelinePanelTitle: '运营事件时间轴',
-  newEventPanelTitle: '新增运营事件标记',
+  newEventPanelTitle: '新增运营事件',
 };
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
@@ -188,7 +187,7 @@ export function operationEventTimelineCardView(
       operationEventCardClassName(event.id, recentSavedEventId),
       'event-card-ai-context-ready',
     ].join(' '),
-    contextDetail: `已绑定${contextTarget}，${impactLabel}，广告量化和 AI 诊断会读取。`,
+    contextDetail: `已绑定${contextTarget}，${impactLabel}，广告表现和 AI 诊断会读取。`,
     contextLabel: 'AI 上下文',
     scopeLabel,
   };
@@ -270,13 +269,13 @@ export function buildOperationEventTaskState(input: {
       ? `${scopeText}已有 ${input.visibleEventCount} 条运营事件`
       : `${scopeText}还缺运营事件上下文`,
     detail: input.visibleEventCount
-      ? `其中 ${input.specificEventCount} 条绑定产品或广告对象；AI 会在广告量化和建议解释时读取这些事件。`
+      ? `其中 ${input.specificEventCount} 条绑定产品或广告对象；AI 会在广告表现和建议解释时读取这些事件。`
       : `先为${scopeText}记录 Coupon、BD、调价、库存或 Listing 变化，避免 AI 只看广告表格误判波动原因。`,
     primaryActionLabel: input.saving ? '正在保存...' : '记录事件',
     primaryActionBusy: input.saving,
     primaryActionBusyLabel: '正在保存...',
     primaryActionDisabled: input.saving || !input.canSave,
-    secondaryActionLabel: '进入广告量化',
+    secondaryActionLabel: '查看广告表现',
   };
 }
 
@@ -414,7 +413,7 @@ export function OperationEventsPage() {
         notes: submittedDraft.notes || undefined,
         evidencePath: submittedDraft.evidencePath || undefined,
       });
-      setMessage('运营事件已记录，会进入广告量化和 AI 诊断上下文。');
+      setMessage('运营事件已记录，会进入广告表现和 AI 诊断上下文。');
       await loadEvents();
       const createdId = Number(created?.id);
       if (Number.isInteger(createdId) && createdId > 0) setRecentSavedEventId(createdId);
@@ -446,54 +445,42 @@ export function OperationEventsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="数据与量化"
+        eyebrow="数据"
         title={PAGE_HEADER_TITLES.operationEvents}
         description={OPERATION_EVENT_PAGE_COPY.description}
         primaryTask={OPERATION_EVENT_PAGE_COPY.primaryTask}
-        nextAction={events.length ? '进入广告量化' : '先记录关键事件'}
+        nextAction={events.length ? '查看广告表现' : '先记录关键事件'}
+        primaryAction={{
+          label: taskState.primaryActionLabel,
+          busy: taskState.primaryActionBusy,
+          busyLabel: taskState.primaryActionBusyLabel,
+          disabled: taskState.primaryActionDisabled,
+          onClick: saveEvent,
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow="当前任务"
-          title={taskState.title}
-          detail={taskState.detail}
-          primaryAction={{
-            label: taskState.primaryActionLabel,
-            busy: taskState.primaryActionBusy,
-            busyLabel: taskState.primaryActionBusyLabel,
-            disabled: taskState.primaryActionDisabled,
-            onClick: saveEvent,
-          }}
-          secondaryActions={[
-            {
-              label: taskState.secondaryActionLabel,
-              onClick: () => navigate('ad-quant'),
-            },
-          ]}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="运营事件任务摘要">
-            <KpiCard
-              label="当前视图"
-              value={visibleEvents.length}
-              detail={viewMode === 'product' && scope.asin ? `产品 ${scope.asin}` : viewMode === 'global' ? '全局事件' : '全部事件'}
-              tone={visibleEvents.length ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="绑定对象"
-              value={specificEventCount}
-              detail="产品/活动/广告组"
-              tone={specificEventCount ? 'ready' : 'pending'}
-            />
-            <KpiCard
-              label="全局事件"
-              value={Math.max(0, visibleEvents.length - specificEventCount)}
-              detail="用于解释整体波动"
-              tone={visibleEvents.length - specificEventCount > 0 ? 'ready' : 'pending'}
-            />
-            <KpiCard label="执行边界" value="不执行广告" detail="只补 AI 上下文" tone="warning" />
-          </div>
-        </OperatorTaskPanel>
+        <div className="kpi-row operation-events-prototype-status-grid" aria-label="运营事件状态">
+          <KpiCard
+            label="当前视图"
+            value={visibleEvents.length}
+            detail={viewMode === 'product' && scope.asin ? `产品 ${scope.asin}` : viewMode === 'global' ? '全局事件' : '全部事件'}
+            tone={visibleEvents.length ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="绑定对象"
+            value={specificEventCount}
+            detail="产品/活动/广告组"
+            tone={specificEventCount ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="全局事件"
+            value={Math.max(0, visibleEvents.length - specificEventCount)}
+            detail="用于解释整体波动"
+            tone={visibleEvents.length - specificEventCount > 0 ? 'ready' : 'pending'}
+          />
+          <KpiCard label="执行边界" value="不执行广告" detail="只补 AI 上下文" tone="warning" />
+        </div>
 
         <Panel title="当前范围与作用" tone="success">
           <div className="business-split">
@@ -502,12 +489,17 @@ export function OperationEventsPage() {
                 {scope.dateFrom} 至 {scope.dateTo} / {scope.storeName} / {scope.marketplaceCode} / USD
               </div>
               <p className="muted-line">
-                当前范围内的事件会进入广告量化、AI 阶段判断和动态阈值建议。第一版由运营手动维护，后续可接入领星/亚马逊活动、价格和库存数据。
+                当前范围内的事件会进入广告表现、AI 阶段判断和动态阈值建议。第一版由运营手动维护，后续可接入领星/亚马逊活动、价格和库存数据。
               </p>
             </div>
             <StatusPill tone={events.length ? 'ready' : 'pending'}>
               当前事件 {events.length}
             </StatusPill>
+          </div>
+          <div className="action-row operation-events-prototype-actions">
+            <button className="secondary-button" onClick={() => navigate('ad-quant')} type="button">
+              {taskState.secondaryActionLabel}
+            </button>
           </div>
         </Panel>
 
@@ -515,7 +507,7 @@ export function OperationEventsPage() {
           <Panel title="AI 与规则如何使用这些事件">
             <div className="operation-impact-grid">
               <div>
-                <span>广告量化</span>
+                <span>广告表现</span>
                 <strong>解释阈值变化</strong>
                 <p>规则仍先按 ACOS、点击、花费和订单算风险；事件用于解释为什么今天的阈值可能要更保守或更宽松。</p>
               </div>
@@ -579,7 +571,7 @@ export function OperationEventsPage() {
             </div>
             <div className="action-row">
               <button className="secondary-button" onClick={() => navigate('ad-quant')} type="button">
-                查看广告量化
+                查看广告表现
               </button>
               <button className="primary-button" onClick={() => navigate('recommendations')} type="button">
                 生成 AI+规则建议
@@ -603,7 +595,7 @@ export function OperationEventsPage() {
           </div>
           <div className={operationEventFormClassName(Boolean(recentDraftClearTick))}>
             <FormTable>
-              <FormTableRow label="事件日期" required hint="事件会按发生日期进入广告量化和 AI 阶段判断。">
+              <FormTableRow label="事件日期" required hint="事件会按发生日期进入广告表现和 AI 阶段判断。">
                 <input
                   type="date"
                   value={draft.eventDate}

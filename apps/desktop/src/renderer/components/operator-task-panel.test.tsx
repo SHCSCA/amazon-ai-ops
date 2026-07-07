@@ -73,7 +73,7 @@ describe('OperatorTaskPanel', () => {
 
   it('labels the first-screen task region and action group for scanability', () => {
     const tree = OperatorTaskPanel({
-      eyebrow: '数据与量化',
+      eyebrow: '数据',
       title: '确认当前范围并导入真实报表',
       detail: '先保存范围，再把下载完成的 Lingxing 表格写入 SQLite。',
       primaryAction: { label: '导入已下载表格', onClick: vi.fn() },

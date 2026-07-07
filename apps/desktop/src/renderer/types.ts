@@ -32,6 +32,14 @@ export interface PageHeaderProps {
   description: string;
   primaryTask?: string;
   nextAction?: string;
+  primaryAction?: {
+    label: string;
+    onClick?: () => void;
+    disabled?: boolean;
+    busy?: boolean;
+    busyLabel?: string;
+    className?: string;
+  };
 }
 
 export interface NavItem {

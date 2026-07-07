@@ -57,8 +57,8 @@ export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataR
     return {
       status: 'ready',
       headline: '真实报表和 DB 日级指标已闭合',
-      detail: `${realReportFileCount}/${requiredReportCount} 类报表已落盘，${importedRowCount} 行日级广告指标可用于量化、AI 证据包和优化建议。`,
-      nextAction: '进入广告量化',
+      detail: `${realReportFileCount}/${requiredReportCount} 类报表已落盘，${importedRowCount} 行日级广告指标可用于广告表现、AI 证据包和优化建议。`,
+      nextAction: '查看广告表现',
       gaps: [],
       stages,
     };
@@ -68,7 +68,7 @@ export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataR
     return {
       status: 'blocked',
       headline: '已有真实报表，等待导入',
-      detail: `${realReportFileCount}/${requiredReportCount} 类报表已落盘，但 DB 还没有可量化的日级广告指标。`,
+      detail: `${realReportFileCount}/${requiredReportCount} 类报表已落盘，但 DB 还没有可分析的日级广告指标。`,
       nextAction: '导入已下载表格',
       gaps,
       stages,
@@ -89,7 +89,7 @@ export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataR
   return {
     status: 'blocked',
     headline: '没有真实广告报表',
-    detail: '当前范围没有可量化的 Lingxing xlsx/xls/csv，系统不能生成广告量化、AI 结论或优化建议。',
+    detail: '当前范围没有可分析的 Lingxing xlsx/xls/csv，系统不能生成广告表现、AI 结论或优化建议。',
     nextAction: '下载或导入真实报表',
     gaps,
     stages,
@@ -131,12 +131,12 @@ function buildReadinessStages(input: DataReadinessLedgerInput & {
     },
     {
       key: 'imported',
-      title: '已导入 DB 日级指标',
+      title: '日级指标已入库',
       status: input.importedRowCount > 0 ? 'complete' : 'blocked',
       value: input.importedRowCount > 0 ? `${input.importedRowCount} 行` : '0 行',
       detail: input.importedRowCount > 0
         ? 'SQLite 已形成每日广告事实，后续分析只读取入库指标。'
-        : '真实报表尚未形成可量化 DB 指标。',
+        : '真实报表尚未形成可分析的日级指标。',
     },
     {
       key: 'usable',
@@ -144,7 +144,7 @@ function buildReadinessStages(input: DataReadinessLedgerInput & {
       status: usable ? 'complete' : 'blocked',
       value: usable ? '已放行' : '未放行',
       detail: usable
-        ? '当前范围可以进入广告量化、AI 证据包和优化建议。'
+        ? '当前范围可以查看广告表现、AI 证据包和优化建议。'
         : '补齐真实报表和导入缺口后才会放行正式建议。',
     },
   ];

@@ -19,7 +19,7 @@ export const aiOutputContracts: AiOutputContract[] = [
     key: 'ad-strategy',
     label: '广告诊断',
     version: 'ad_strategy_diagnosis_v1',
-    usedBy: '广告量化、优化建议',
+    usedBy: '广告表现、优化建议',
     consumedAs: '阶段判断、阈值建议、候选动作',
   },
   {

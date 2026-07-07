@@ -32,8 +32,8 @@ function cssRuleBody(css: string, selector: string): string {
 describe('industrial UI atoms', () => {
   it('renders page headers as first-level desktop landmarks with a readable task rail', () => {
     const tree = PageHeader({
-      eyebrow: '数据与量化',
-      title: '广告全口径量化诊断中心',
+      eyebrow: '数据',
+      title: '广告表现',
       description: '展示当前产品的真实广告指标、风险对象和 AI 阶段诊断。',
       primaryTask: '运行 AI 阶段分析',
       nextAction: '生成优化建议',
@@ -51,7 +51,7 @@ describe('industrial UI atoms', () => {
     expect(taskRail[0].props.role).toBe('list');
     expect(taskRail[0].props['aria-label']).toBe('首屏主任务和建议下一步');
     expect(taskCards).toHaveLength(2);
-    expect(taskCards.every((card) => card.props.role === 'listitem' && card.props.tabIndex === 0)).toBe(true);
+    expect(taskCards.every((card) => card.props.role === 'listitem' && card.props.tabIndex === undefined)).toBe(true);
   });
 
   it('keeps the global typography contract aligned with prototype desktop density', () => {
@@ -83,7 +83,7 @@ describe('industrial UI atoms', () => {
     expect(stylesheet).toMatch(/\.page-header h1\s*\{[\s\S]*font-size:\s*18px/);
     expect(stylesheet).toMatch(/\.page-header-rail-card\s*\{[\s\S]*transition:\s*[\s\S]*border-color var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)[\s\S]*transform var\(--motion-fast\)/);
     expect(stylesheet).toMatch(/\.page-header-rail-card:hover\s*\{[\s\S]*transform:\s*translateY\(-2px\)/);
-    expect(stylesheet).toMatch(/\.page-header-rail-card:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
+    expect(stylesheet).not.toMatch(/\.page-header-rail-card:focus-visible\s*\{/);
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.page-header-rail-card[\s\S]*transition:\s*none/);
   });
 
@@ -159,7 +159,7 @@ describe('industrial UI atoms', () => {
     expect(collectElements(tree, (element) => element.props.className === 'state-light-card state-light-ready')).toHaveLength(1);
   });
 
-  it('exposes state light cards as a keyboard-scannable status list', () => {
+  it('exposes state light cards as a readable status list without extra tab stops', () => {
     const tree = StateLightGrid({
       items: [
         { label: '数据就绪', value: '8/8 报表全', detail: '当前范围真实报表完整', tone: 'ready' },
@@ -171,7 +171,7 @@ describe('industrial UI atoms', () => {
     expect(tree.props.role).toBe('list');
     expect(tree.props['aria-label']).toBe('首屏状态红绿灯');
     expect(cards).toHaveLength(2);
-    expect(cards.every((card) => card.props.role === 'listitem' && card.props.tabIndex === 0)).toBe(true);
+    expect(cards.every((card) => card.props.role === 'listitem' && card.props.tabIndex === undefined)).toBe(true);
   });
 
   it('can pulse state lights during a first-screen action refresh', () => {
@@ -186,18 +186,15 @@ describe('industrial UI atoms', () => {
     expect(tree.props['data-refreshing']).toBe(true);
   });
 
-  it('keeps state light hover lift feedback in the stylesheet', () => {
+  it('keeps state light hover feedback visually quiet because cards are read-only status', () => {
     const stylesheet = rendererCss();
 
-    expect(stylesheet).toMatch(/\.state-light-card\s*\{[\s\S]*transition:\s*transform 120ms/);
-    expect(stylesheet).toMatch(/\.state-light-card:hover\s*\{[\s\S]*box-shadow\s*:[^;]+;/);
-    expect(stylesheet).toMatch(/\.state-light-card:hover\s*\{[\s\S]*transform\s*:\s*translateY\(-2px\)\s*;/);
-    expect(stylesheet).toMatch(/\.state-light-card:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
-    expect(stylesheet).toMatch(/\.state-light-card:focus-visible\s*\{[\s\S]*transform:\s*translateY\(-2px\)/);
+    expect(stylesheet).toMatch(/\.state-light-card\s*\{[\s\S]*transition:\s*box-shadow 120ms/);
+    expect(stylesheet).toMatch(/\.state-light-card:hover\s*\{\s*border-color:[^}]*box-shadow:[^}]*\}/);
+    expect(stylesheet).not.toMatch(/\.state-light-card:hover\s*\{[^}]*translateY/);
     expect(stylesheet).toMatch(/\.state-light-grid-refreshing \.state-light-card\s*\{[\s\S]*animation:\s*state-light-refresh-pulse 180ms/);
     expect(stylesheet).toMatch(/\.state-light-grid-refreshing \.state-light-card::after\s*\{[\s\S]*animation:\s*state-light-refresh-sweep 180ms/);
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.state-light-card:hover[\s\S]*transform:\s*none/);
-    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.state-light-card:focus-visible[\s\S]*transform:\s*none/);
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.state-light-grid-refreshing \.state-light-card,[\s\S]*\.state-light-grid-refreshing \.state-light-card::after[\s\S]*animation:\s*none/);
   });
 
@@ -214,7 +211,7 @@ describe('industrial UI atoms', () => {
     expect(collectElements(tree, (element) => element.props.className === 'micro-step-indicator' && element.props['aria-hidden'] === 'true')).toHaveLength(2);
   });
 
-  it('exposes micro stepper rows as keyboard-scannable process steps', () => {
+  it('exposes micro stepper rows as readable process steps without extra tab stops', () => {
     const tree = MicroStepper({
       items: [
         { label: '创建报表', meta: '已完成', tone: 'ready' },
@@ -226,7 +223,7 @@ describe('industrial UI atoms', () => {
     expect(tree.props.role).toBe('list');
     expect(tree.props['aria-label']).toBe('流程步骤状态');
     expect(rows).toHaveLength(2);
-    expect(rows.every((row) => row.props.role === 'listitem' && row.props.tabIndex === 0)).toBe(true);
+    expect(rows.every((row) => row.props.role === 'listitem' && row.props.tabIndex === undefined)).toBe(true);
   });
 
   it('keeps micro stepper pending spinner feedback in the stylesheet', () => {
@@ -238,13 +235,11 @@ describe('industrial UI atoms', () => {
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.micro-step-pending \.micro-step-indicator[\s\S]*animation:\s*none/);
   });
 
-  it('keeps micro stepper keyboard focus feedback in the stylesheet', () => {
+  it('keeps micro stepper rows visually stable as read-only process status', () => {
     const stylesheet = rendererCss();
 
     expect(stylesheet).toMatch(/\.micro-step\s*\{[\s\S]*transition:\s*border-color 120ms/);
-    expect(stylesheet).toMatch(/\.micro-step:focus-visible\s*\{[\s\S]*outline:\s*2px solid rgba\(37,\s*99,\s*235,\s*0\.34\)/);
-    expect(stylesheet).toMatch(/\.micro-step:focus-visible\s*\{[\s\S]*transform:\s*translateY\(-1px\)/);
-    expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.micro-step:focus-visible[\s\S]*transform:\s*none/);
+    expect(stylesheet).not.toMatch(/\.micro-step:focus-visible\s*\{/);
   });
 
   it('renders left-label structured form rows with required markers and hints', () => {
@@ -316,7 +311,13 @@ describe('industrial UI atoms', () => {
     expect(tree.props['aria-atomic']).toBe(true);
     expect(tree.props['aria-roledescription']).toBe('安全门状态');
     expect(tree.props['data-safety-tone']).toBe('blocked');
-    expect(tree.props.tabIndex).toBe(0);
+    expect(tree.props.tabIndex).toBeUndefined();
+
+    const focusable = SafetyGateLine({
+      children: '审批时间 <= 执行前时间 <= 线下动作执行时间 <= 真实回读时间',
+      focusable: true,
+    }) as ReactElement;
+    expect(focusable.props.tabIndex).toBe(0);
   });
 
   it('keeps the safety gate line keyboard-visible without adding layout shift', () => {
@@ -325,7 +326,8 @@ describe('industrial UI atoms', () => {
     expect(stylesheet).toMatch(/\.safety-gate-line[\s\S]*transition:\s*[\s\S]*border-color var\(--motion-fast\)[\s\S]*box-shadow var\(--motion-fast\)[\s\S]*transform var\(--motion-fast\)/);
     expect(stylesheet).toMatch(/\.safety-gate-line:hover[\s\S]*transform:\s*translateY\(-1px\)/);
     expect(stylesheet).toMatch(/\.safety-gate-line:focus-visible[\s\S]*outline:\s*2px solid rgb\(37 99 235 \/ 0\.34\)/);
-    expect(stylesheet).toMatch(/\.safety-gate-line:focus-visible[\s\S]*box-shadow:\s*0 0 0 4px rgb\(37 99 235 \/ 0\.10\)/);
+    expect(stylesheet).toMatch(/\.safety-gate-blocked\s*\{[\s\S]*box-shadow:\s*inset 4px 0 0 var\(--state-error\)/);
+    expect(stylesheet).toMatch(/\.safety-gate-blocked\s*\{[\s\S]*background:\s*linear-gradient/);
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.safety-gate-line[\s\S]*transition:\s*none/);
   });
 

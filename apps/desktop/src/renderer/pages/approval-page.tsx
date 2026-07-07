@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { OperatorTaskPanel } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { DecisionActionStrip, FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
@@ -221,7 +220,7 @@ export function approvalDecisionState(input: {
     statusLabel: '可以批准',
     tone: 'ready',
     title: '可以批准',
-    detail: '审批预检通过。填写审批人和备注后可批准；真实执行和回读仍在后续页面逐条完成。',
+    detail: '审批预检通过。填写审批人和备注后可批准；真实广告后台操作和结果核对仍在后续页面逐条完成。',
     primaryActionLabel: '填写审批表单',
     canApprove: true,
   };
@@ -310,7 +309,7 @@ export function buildApprovalStampFeedback(input: {
     return {
       label: 'SEALING',
       title: `正在建立审批契约 ${id}`.trim(),
-      detail: `正在写入人工审批记录${target}，按钮已锁定，真实执行仍需进入执行回读。`,
+      detail: `正在写入人工审批记录${target}，按钮已锁定，真实广告后台操作仍需进入结果核对。`,
       tone: 'pending',
     };
   }
@@ -318,7 +317,7 @@ export function buildApprovalStampFeedback(input: {
     return {
       label: 'PASSED',
       title: `审批已通过 ${id}`.trim(),
-      detail: input.message || `建议已进入待执行队列${target}，下一步到执行回读补审批凭证、前后截图和回读值。`,
+      detail: input.message || `建议已进入待执行队列${target}，下一步到结果核对补审批凭证、执行前后截图和回读值。`,
       tone: 'ready',
     };
   }
@@ -326,7 +325,7 @@ export function buildApprovalStampFeedback(input: {
     return {
       label: 'BLOCKING',
       title: `正在记录拒绝 ${id}`.trim(),
-      detail: `正在写入拒绝原因${target}，该建议不会进入执行回读。`,
+      detail: `正在写入拒绝原因${target}，该建议不会进入结果核对。`,
       tone: 'pending',
     };
   }
@@ -367,7 +366,7 @@ export function approvalDecisionButtonView({
     ? blocked ? 'secondary-button' : 'primary-button'
     : 'secondary-button danger-button';
   return {
-    label: isCurrent ? '处理中...' : isApprove ? blocked ? '普通批准不可用' : '批准并进入待执行' : '拒绝',
+    label: isCurrent ? '处理中...' : isApprove ? blocked ? '暂不能批准' : '批准，进入结果核对' : '拒绝',
     disabled,
     ariaBusy: isCurrent,
     className: [baseClass, isCurrent ? 'button-loading' : ''].filter(Boolean).join(' '),
@@ -665,7 +664,7 @@ export function ApprovalPage() {
   async function approveSelected() {
     if (!selected) return;
     if (selectedMissing.length > 0) {
-      const blocked = `审批阻断：建议缺少 ${selectedMissing.join('、')}，不能推进到执行回读。`;
+      const blocked = `审批阻断：建议缺少 ${selectedMissing.join('、')}，不能推进到结果核对。`;
       setDecisionFeedback(buildApprovalStampFeedback({
         state: 'blocked',
         recommendationId: selected.id,
@@ -811,88 +810,90 @@ export function ApprovalPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="广告执行"
+        eyebrow="广告"
         title={PAGE_HEADER_TITLES.approval}
-        description="这里只处理人工审批决策。真实执行和回读证据在“执行回读”页面独立完成。"
-        primaryTask="确认哪些动作允许执行"
-        nextAction={selected ? '填写审批人后批准或拒绝' : '选择一条建议'}
+        description="逐条确认动作是否允许执行：批准、拒绝，或因缺证据和范围不匹配退回复核。"
+        primaryTask="做出人工审批决定"
+        nextAction={selected ? '填写处理人后批准或拒绝' : '选择一条待审批动作'}
+        primaryAction={{
+          label: selected ? selectedApprovalDecision.primaryActionLabel : '查看审批队列',
+          busy: loading && !selected,
+          busyLabel: '加载中...',
+          disabled: loading && !selected,
+          onClick: selected ? showSelectedDecisionTarget : showApprovalQueue,
+        }}
       />
 
       <div className="business-stack">
-        <OperatorTaskPanel
-          eyebrow={selected ? '审批决策' : '审批任务'}
-          title={selected ? selectedApprovalDecision.title : '选择一条建议'}
-          detail={selected
-            ? selectedApprovalDecision.detail
-            : `当前${TAB_LABELS[tab]}队列 ${rows.length} 条。先选择一条建议，再做批准或拒绝。`}
-          primaryAction={{
-            label: selected ? selectedApprovalDecision.primaryActionLabel : '查看审批队列',
-            busy: loading && !selected,
-            busyLabel: '加载中...',
-            disabled: loading && !selected,
-            onClick: selected ? showSelectedDecisionTarget : showApprovalQueue,
-          }}
-        >
-          <div className="kpi-row kpi-row--task" aria-label="审批任务摘要">
-            {selected ? (
-              <>
-                <KpiCard
-                  label="审批状态"
-                  value={selectedApprovalDecision.statusLabel}
-                  detail={selected.actionType}
-                  tone={selectedApprovalDecision.tone}
-                />
-                <KpiCard
-                  label="广告对象"
-                  value={objectName(selected)}
-                  detail={selected.evidence?.campaignName || '当前建议'}
-                  tone="pending"
-                />
-                <KpiCard
-                  label="缺证据"
-                  value={selectedMissing.length}
-                  detail={selectedMissing.length ? selectedMissing.slice(0, 2).join('、') : '预检通过'}
-                  tone={selectedMissing.length ? 'blocked' : 'ready'}
-                />
-                <KpiCard
-                  label="复核项"
-                  value={selectedBlockers.length}
-                  detail={selectedBlockers.length ? selectedBlockers.slice(0, 2).join('、') : '可普通审批'}
-                  tone={selectedBlockers.length ? 'warning' : 'ready'}
-                />
-              </>
-            ) : (
-              <>
-                <KpiCard
-                  label="当前队列"
-                  value={`${TAB_LABELS[tab]} ${rows.length}`}
-                  detail={currentBatchId || '批次待确认'}
-                  tone={rows.length ? 'pending' : 'blocked'}
-                />
-                <KpiCard
-                  label="店铺"
-                  value={scope.storeName || '-'}
-                  detail={scope.marketplaceCode || '-'}
-                  tone={scope.storeName ? 'ready' : 'warning'}
-                />
-                <KpiCard
-                  label="动作边界"
-                  value="只审批"
-                  detail="不执行广告"
-                  tone="warning"
-                />
-                <KpiCard
-                  label="下一步"
-                  value={rows.length ? '选择建议' : '等待建议'}
-                  detail="批准后进入回读"
-                  tone={rows.length ? 'pending' : 'blocked'}
-                />
-              </>
-            )}
+        <div className="kpi-row approval-prototype-status-grid" aria-label="审批状态">
+          {selected ? (
+            <>
+              <KpiCard
+                label="审批状态"
+                value={selectedApprovalDecision.statusLabel}
+                detail={selected.actionType}
+                tone={selectedApprovalDecision.tone}
+              />
+              <KpiCard
+                label="广告对象"
+                value={objectName(selected)}
+                detail={selected.evidence?.campaignName || '当前建议'}
+                tone="pending"
+              />
+              <KpiCard
+                label="缺证据"
+                value={selectedMissing.length}
+                detail={selectedMissing.length ? selectedMissing.slice(0, 2).join('、') : '预检通过'}
+                tone={selectedMissing.length ? 'blocked' : 'ready'}
+              />
+              <KpiCard
+                label="复核项"
+                value={selectedBlockers.length}
+                detail={selectedBlockers.length ? selectedBlockers.slice(0, 2).join('、') : '可普通审批'}
+                tone={selectedBlockers.length ? 'warning' : 'ready'}
+              />
+            </>
+          ) : (
+            <>
+              <KpiCard
+                label="当前队列"
+                value={`${TAB_LABELS[tab]} ${rows.length}`}
+                detail={currentBatchId || '批次待确认'}
+                tone={rows.length ? 'pending' : 'blocked'}
+              />
+              <KpiCard
+                label="店铺"
+                value={scope.storeName || '-'}
+                detail={scope.marketplaceCode || '-'}
+                tone={scope.storeName ? 'ready' : 'warning'}
+              />
+              <KpiCard
+                label="动作边界"
+                value="只审批"
+                detail="不执行广告"
+                tone="warning"
+              />
+              <KpiCard
+                label="下一步"
+                value={rows.length ? '选择动作' : '等待建议'}
+                detail="批准后进入结果核对"
+                tone={rows.length ? 'pending' : 'blocked'}
+              />
+            </>
+          )}
+        </div>
+        <Panel title={selected ? '人工审批任务' : '审批队列状态'} tone={selected ? (selectedApprovalDecision.tone === 'ready' ? 'success' : selectedApprovalDecision.tone) : rows.length ? 'warning' : 'blocked'}>
+          <div className="prototype-list-stack">
+            <div className="prototype-list-item">
+              <strong>{selected ? selectedApprovalDecision.title : '选择一条待审批动作'}</strong>
+              <p>{selected
+                ? selectedApprovalDecision.detail
+                : `当前${TAB_LABELS[tab]}队列 ${rows.length} 条。先选择一条动作，再批准、拒绝或查看复核要求。`}</p>
+            </div>
           </div>
           {batchSelectionHint && (
             <div className="approval-batch-handoff" role="status">
-              <StatusPill tone="ready">批量送审</StatusPill>
+              <StatusPill tone="ready">来自优化建议</StatusPill>
               <span>{batchSelectionHint}</span>
             </div>
           )}
@@ -907,7 +908,7 @@ export function ApprovalPage() {
               <p>{decisionFeedback.detail}</p>
             </div>
           )}
-        </OperatorTaskPanel>
+        </Panel>
 
         <ProgressiveDetails title="审批边界和处理要求">
         <Panel title="审批安全边界" tone="warning">
@@ -934,8 +935,8 @@ export function ApprovalPage() {
             </div>
             <div>
               <span>批准后下一步</span>
-              <strong>进入执行回读</strong>
-              <p>在执行回读页补录审批凭证、执行前/执行后截图、回读值和现场行证明。</p>
+              <strong>进入结果核对</strong>
+              <p>在结果核对页补录审批凭证、执行前/执行后截图、回读值和现场行证明。</p>
             </div>
             <div>
               <span>当前队列</span>
@@ -1027,7 +1028,7 @@ export function ApprovalPage() {
         </div>
 
         {selected && (
-          <Panel title="审批决策">
+          <Panel title="人工审批决定">
             <div className="evidence-check-panel">
               <div className="business-split">
                 <div>
@@ -1045,33 +1046,33 @@ export function ApprovalPage() {
                   <p>{selected.actionType} / {selected.currentValue || '-'} {'→'} {selected.recommendedValue || '-'}</p>
                 </div>
                 <div>
-                  <span>审批范围</span>
+                  <span>处理范围</span>
                   <strong>{scope.storeName || '-'} / {scope.marketplaceCode || '-'}</strong>
-                  <p>只记录人工审批；真实执行和回读在后续页面完成。</p>
+                  <p>这里只记录人工审批；真实广告后台操作和结果核对在后续页面完成。</p>
                 </div>
                 <div>
                   <span>阻断概况</span>
                   <strong>缺证据 {selectedMissing.length} / 复核项 {selectedBlockers.length}</strong>
-                  <p>{selectedApprovalDecision.canApprove ? '普通批准可用。' : '普通批准不可用，请查看下方详情。'}</p>
+                  <p>{selectedApprovalDecision.canApprove ? '可以批准，批准后进入结果核对。' : '不能直接批准，请查看缺证据或复核要求。'}</p>
                 </div>
               </div>
               <DecisionActionStrip
                 items={[
                   {
-                    label: '可以批准并推进',
+                    label: '批准，进入结果核对',
                     detail: selectedApprovalDecision.canApprove ? '写入待执行队列' : '证据或复核未通过',
                     tone: selectedApprovalDecision.canApprove ? 'ready' : 'pending',
                     disabled: selectedSubmitBlockers.length > 0 || Boolean(submittingDecision),
                     onClick: approveSelected,
                   },
                   {
-                    label: '无法常规批准',
+                    label: '查看复核要求',
                     detail: `缺证据 ${selectedMissing.length} / 复核项 ${selectedBlockers.length}`,
                     tone: selectedApprovalDecision.tone === 'ready' ? 'pending' : selectedApprovalDecision.tone,
                     onClick: showSelectedDecisionTarget,
                   },
                   {
-                    label: '强行拦截并拒绝',
+                    label: '拒绝，不进入结果核对',
                     detail: '记录拒绝结果，不进入执行',
                     tone: 'blocked',
                     disabled: Boolean(submittingDecision),
@@ -1245,7 +1246,7 @@ export function ApprovalPage() {
                 </FormTableRow>
               </FormTable>
             </div>
-            <p className="muted-line">审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“执行回读”页逐条补齐。</p>
+            <p className="muted-line">审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“结果核对”页逐条补齐。</p>
             <div className="action-row">
               <button
                 aria-busy={approveButton.ariaBusy}

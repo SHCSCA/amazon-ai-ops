@@ -149,6 +149,19 @@ describe('canExportDeliveryBundle', () => {
   });
 });
 
+describe('Phase 5 delivery user task surface', () => {
+  it('answers delivery readiness first and keeps file paths plus technical details secondary', () => {
+    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('判断当前范围能不能交付、最关键阻塞是什么、交付包在哪里');
+    expect(source).toContain('<Panel title="交付判断依据"');
+    expect(source).toContain('<ProgressiveDetails title="文件位置与支持入口">');
+    expect(source).toContain('业务闭环矩阵：已闭合');
+    expect(source).toContain('<ProgressiveDetails title="技术支持细节">');
+    expect(source).not.toContain('<Panel title="证据治理"');
+    expect(source).not.toContain('<ProgressiveDetails title="文件与技术入口">');
+  });
+});
 describe('deliveryActionButtonView', () => {
   it('locks delivery async action peers while only the active action shows busy feedback', () => {
     const active = deliveryActionButtonView({

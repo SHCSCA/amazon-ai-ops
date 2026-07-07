@@ -94,7 +94,7 @@ export function primaryActionForDataState(dataState: DataStateInput): PrimaryAct
 
   if (normalizedDataState.actionableRows > 0) {
     return {
-      label: '复核广告量化',
+      label: '查看广告表现',
       tone: 'ready',
       detail: '已有可复核广告对象，检查花费、订单和 ACOS 后再生成建议。',
       route: 'ad-quant',

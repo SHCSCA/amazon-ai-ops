@@ -138,8 +138,8 @@ describe('buildDeliveryReadinessMatrix', () => {
     });
 
     expect(matrix.status).toBe('needs_work');
-    expect(matrix.headline).toContain('还差执行回读和最终交付证据');
-    expect(matrix.primaryNextAction).toBe('先完成审批、真实执行回读和最终交付包');
+    expect(matrix.headline).toContain('还差结果核对和最终交付证据');
+    expect(matrix.primaryNextAction).toBe('先完成审批、真实结果核对和最终交付包');
     expect(matrix.items.find((item) => item.key === 'readback')?.tone).toBe('blocked');
     expect(matrix.items.find((item) => item.key === 'package')?.tone).toBe('blocked');
     expect(matrix.items.find((item) => item.key === 'aiEvidence')?.detail).toContain('1 条仅作洞察');

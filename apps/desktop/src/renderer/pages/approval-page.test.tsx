@@ -331,7 +331,7 @@ describe('buildApprovalStampFeedback', () => {
       title: '审批已通过 #101',
       tone: 'ready',
     });
-    expect(feedback.detail).toContain('执行回读');
+    expect(feedback.detail).toContain('结果核对');
   });
 
   it('builds a rejected stamp for blocked decisions', () => {
@@ -382,6 +382,17 @@ describe('parseApprovalSelectionIntent', () => {
 });
 
 describe('approvalDecisionButtonView', () => {
+  it('keeps the first approval surface focused on user decisions', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./approval-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('逐条确认动作是否允许执行');
+    expect(source).toContain('批准，进入结果核对');
+    expect(source).toContain('查看复核要求');
+    expect(source).toContain('拒绝，不进入结果核对');
+    expect(source).toContain('真实广告后台操作和结果核对在后续页面完成');
+  });
+
   it('gives the active approval decision button an explicit busy contract', () => {
     const approving = approvalDecisionButtonView({
       mode: 'approved',

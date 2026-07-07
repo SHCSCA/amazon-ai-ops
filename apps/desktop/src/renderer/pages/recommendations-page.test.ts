@@ -432,7 +432,7 @@ describe('recommendationWorkflowActionState', () => {
       approvalDisabled: true,
       readbackDisabled: true,
       approvalLabel: '先处理复核/证据',
-      readbackLabel: '等待可审批建议',
+      readbackLabel: '等待可送审动作',
     });
   });
 
@@ -530,8 +530,8 @@ describe('recommendationBatchSelectionState', () => {
       selectableCount: 0,
       selectedCount: 0,
     })).toMatchObject({
-      actionLabel: '等待可审批建议',
-      ariaStatus: '当前没有可批量送审的正式建议。',
+      actionLabel: '等待可送审动作',
+      ariaStatus: '当前没有可送到审批中心的动作。',
       countClassName: 'recommendation-selection-count',
       countLabel: '0/0 项已选择',
       disabled: true,
@@ -544,8 +544,8 @@ describe('recommendationBatchSelectionState', () => {
       selectableCount: 4,
       selectedCount: 0,
     })).toMatchObject({
-      actionLabel: '批量提交 0/4 项到审批中心',
-      ariaStatus: '当前有 4 条可审批建议，尚未选择。',
+      actionLabel: '提交 0/4 项到审批中心',
+      ariaStatus: '当前有 4 条可送审动作，尚未选择。',
       countClassName: 'recommendation-selection-count',
       countLabel: '0/4 项已选择',
       disabled: true,
@@ -560,8 +560,8 @@ describe('recommendationBatchSelectionState', () => {
     });
 
     expect(state).toMatchObject({
-      actionLabel: '批量提交 3 项到审批中心',
-      ariaStatus: '已选择 3 条可审批建议，提交后仍需审批中心逐条确认。',
+      actionLabel: '提交 3 项到审批中心',
+      ariaStatus: '已选择 3 条可送审动作，提交后仍需审批中心逐条确认。',
       countClassName: 'recommendation-selection-count recommendation-selection-count-active',
       countLabel: '3/4 项已选择',
       disabled: false,
@@ -579,6 +579,20 @@ describe('recommendationBatchSelectionState', () => {
     expect(css).toContain('checkbox-confirm-pop');
     expect(css).toMatch(/\.business-table th input\[type="checkbox"\]:checked,\s*\.business-table td input\[type="checkbox"\]:checked\s*\{[^}]*animation:\s*checkbox-confirm-pop/s);
     expect(css).toMatch(/\.business-table th input\[type="checkbox"\]:focus-visible,\s*\.business-table td input\[type="checkbox"\]:focus-visible\s*\{[^}]*box-shadow:/s);
+  });
+});
+
+describe('recommendation Phase 4 user-task copy', () => {
+  it('keeps the default recommendation table focused on business actions instead of diagnostics', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./recommendations-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('title="送审判断"');
+    expect(source).toContain('动作、对象、当前值、建议值和真实报表来源已绑定');
+    expect(source).toContain('<th>当前 → 建议</th>');
+    expect(source).toContain('<th>证据状态</th>');
+    expect(source).not.toContain('<th>批次/来源</th>');
+    expect(source).not.toContain('<th>AI/规则判断</th>');
   });
 });
 

@@ -10,7 +10,7 @@ const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const NAV_RE = {
   dataCollection: /批量数据采集|数据采集/,
   delivery: /最终验收就绪门|交付验收/,
-  keyword: /关键词机会矩阵|关键词机会/,
+  keyword: /关键词机会|关键词机会/,
   listing: /Listing 结构重写|Listing 优化/,
   recommendations: /优化建议草案|优化建议/,
   settings: /AI 适配与诊断|设置/,
@@ -285,7 +285,7 @@ async function main() {
 
   await sidebar.getByRole('button', { name: NAV_RE.keyword }).click();
   await page.getByRole('heading', { name: '关键词机会', level: 1 }).waitFor();
-  await page.getByRole('main').getByText('关键词机会矩阵', { exact: true }).waitFor();
+  await page.getByRole('main').getByText('关键词机会', { exact: true }).waitFor();
   await page.getByText('运行机会识别', { exact: true }).waitFor();
   await page.getByText('关键词机会表', { exact: true }).waitFor();
   await expectNoOldWorkbench(page);

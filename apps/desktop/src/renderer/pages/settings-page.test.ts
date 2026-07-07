@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   aiAuditIntroText,
@@ -133,6 +134,20 @@ describe('settings secondary status message', () => {
   });
 });
 
+describe('Phase 5 settings user task surface', () => {
+  it('keeps support logs, paths, and troubleshooting out of the primary settings surface', () => {
+    const source = readFileSync(new URL('./settings-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('<Panel title="AI 服务连接">');
+    expect(source).toContain('<Panel title="规则阈值与动作边界">');
+    expect(source).toContain('<ProgressiveDetails title="AI 调用记录与支持信息">');
+    expect(source).toContain('<ProgressiveDetails title="本地支持路径">');
+    expect(source).toContain('<ProgressiveDetails title="支持检查工具">');
+    expect(source).not.toContain('<Panel title="DeepSeek / OpenAI Compatible">');
+    expect(source).not.toContain('<Panel title="广告表现阈值">');
+    expect(source).not.toContain('<ProgressiveDetails title="诊断工具">');
+  });
+});
 describe('settings rule field feedback', () => {
   it('maps invalid threshold rules back to exact form rows', () => {
     expect(settingsRuleConfigFieldFeedback({
@@ -181,7 +196,7 @@ describe('settings rule action feedback', () => {
       active: true,
       baseClassName: 'primary-button',
       busyLabel: '保存中...',
-      label: '保存广告阈值',
+      label: '保存规则阈值',
     });
 
     expect(saving.label).toBe('保存中...');
@@ -195,7 +210,7 @@ describe('settings rule action feedback', () => {
       baseClassName: 'primary-button',
       busyLabel: '保存中...',
       disabled: true,
-      label: '保存广告阈值',
+      label: '保存规则阈值',
     });
 
     expect(unavailable.disabled).toBe(true);
@@ -226,10 +241,10 @@ describe('settings local utility action feedback', () => {
       activeAction: 'clear-ai-key',
       baseClassName: 'secondary-button',
       busyLabel: '复制中...',
-      label: '复制诊断检查清单',
+      label: '复制支持检查清单',
     });
 
-    expect(lockedPeer.label).toBe('复制诊断检查清单');
+    expect(lockedPeer.label).toBe('复制支持检查清单');
     expect(lockedPeer.disabled).toBe(true);
     expect(lockedPeer.ariaBusy).toBeUndefined();
     expect(lockedPeer.className).not.toContain('button-loading');

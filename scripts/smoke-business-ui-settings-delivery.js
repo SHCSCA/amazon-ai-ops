@@ -11,13 +11,13 @@ const NAV_RE = {
   dashboard: /今日看板|仪表盘/,
   delivery: /最终验收就绪门|交付验收/,
   recommendations: /优化建议草案|优化建议/,
-  settings: /AI 适配与诊断|设置/,
+  settings: /AI与规则|AI 与规则|设置/,
 };
 const HEADING_RE = {
   dashboard: /今日看板/,
-  delivery: /最终验收就绪门/,
-  recommendations: /优化建议草案/,
-  settings: /AI 适配与诊断/,
+  delivery: /最终验收就绪门|交付验收/,
+  recommendations: /优化建议草案|优化建议/,
+  settings: /AI与规则|设置/,
 };
 
 function fail(message, details) {
@@ -147,11 +147,11 @@ async function assertSettingsMainSectionOrder(page) {
         .filter(Boolean);
     });
   });
-  const expectedPrefix = ['DeepSeek / OpenAI Compatible', '广告量化阈值'];
+  const expectedPrefix = ['AI 服务连接', '规则阈值与动作边界'];
   if (sectionTitles[0] !== expectedPrefix[0] || sectionTitles[1] !== expectedPrefix[1]) {
-    fail('Settings page should show normal AI settings first and ad thresholds second', JSON.stringify({ sectionTitles }, null, 2));
+    fail('Settings page should show normal AI connection first and rule boundaries second', JSON.stringify({ sectionTitles }, null, 2));
   }
-  for (const advancedTitle of ['AI 调用审计', '安全策略', '本地存储路径', '诊断工具']) {
+  for (const advancedTitle of ['AI 调用记录与支持信息', '安全策略', '本地支持路径', '支持检查工具']) {
     const index = sectionTitles.indexOf(advancedTitle);
     if (index !== -1 && index < expectedPrefix.length) {
       fail('Settings advanced sections should follow the normal settings sections', JSON.stringify({ advancedTitle, sectionTitles }, null, 2));
@@ -825,7 +825,7 @@ async function main() {
     await expectVisible(page, text);
   }
   await assertAbsent(page, '广告诊断、广告建议解释和 Listing 草案都会要求 AI 返回标准 JSON', 'settings-primary-ai-contract-copy');
-  for (const text of ['DeepSeek / OpenAI Compatible', '广告量化阈值', 'AI 调用审计', '安全策略', '本地存储路径', '诊断工具']) {
+  for (const text of ['AI 服务连接', '规则阈值与动作边界', 'AI 调用记录与支持信息', '安全策略', '本地支持路径', '支持检查工具']) {
     await expectVisible(page, text);
   }
   await assertSettingsMainSectionOrder(page);
@@ -850,7 +850,7 @@ async function main() {
     screenshotPath: settingsScreenshotPath,
     bodyTextSample: (await bodyText(page)).slice(0, 2200),
   };
-  await expandDetails(page, 'AI 调用审计');
+  await expandDetails(page, 'AI 调用记录与支持信息');
   await expectVisible(page, '最近 AI 是否参与');
   await expectVisible(page, '最近 AI 调用失败');
   await expectVisible(page, '检查模型、Base URL、固定输出格式和证据包');
@@ -868,7 +868,7 @@ async function main() {
   await expectVisible(page, '草案证据 1 条');
   await expectVisible(page, '成功');
   await expectVisible(page, '失败');
-  await expandDetails(page, '诊断工具');
+  await expandDetails(page, '支持检查工具');
   await page.getByText('查看诊断覆盖项', { exact: true }).click();
   await page.getByText('AI 连接：确认 Provider、Base URL、模型和脱敏 Key 状态。', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByPlaceholder('DeepSeek 或 OpenAI Compatible API Key').fill('test-redacted-smoke-key');
@@ -912,7 +912,7 @@ async function main() {
   await assertAbsent(page, 'ad_strategy_diagnosis_v1', 'settings-advanced-contract-tags');
   await assertAbsent(page, 'ad_action_reason_v1', 'settings-advanced-contract-tags');
   await assertAbsent(page, 'listing_rewrite_v1', 'settings-advanced-contract-tags');
-  await page.getByLabel('AI 人设与表达风格').fill('你是中文亚马逊广告量化运营顾问。必须输出简体中文，并引用证据说明判断。');
+  await page.getByLabel('AI 人设与表达风格').fill('你是中文亚马逊广告表现运营顾问。必须输出简体中文，并引用证据说明判断。');
   await page.getByRole('button', { name: '保存 AI 设置' }).click();
   await page.getByText('AI 设置已保存', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, 'AI 可用');
@@ -925,7 +925,7 @@ async function main() {
   await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
   const savedAiSettingsCalls = await page.evaluate(() => (window.__businessUiActionLog || []).filter((item) => item.type === 'saveSettings'));
   const latestAiSave = savedAiSettingsCalls[savedAiSettingsCalls.length - 1];
-  if (!latestAiSave?.settings?.aiPersona?.includes('中文亚马逊广告量化运营顾问')) {
+  if (!latestAiSave?.settings?.aiPersona?.includes('中文亚马逊广告表现运营顾问')) {
     fail('AI persona save did not include configured persona', JSON.stringify(latestAiSave));
   }
   if (latestAiSave?.settings?.aiLastTestStatus !== 'available') {
@@ -940,7 +940,7 @@ async function main() {
   if (!clearKeySave) {
     fail('Clearing AI key should save with clearAiKey=true', JSON.stringify(await page.evaluate(() => window.__businessUiActionLog || [])));
   }
-  await expandDetails(page, '本地存储路径');
+  await expandDetails(page, '本地支持路径');
   for (const text of ['设置路径', '证据目录', '下载目录', '导出目录', '交付包目录', '本地数据库', '品牌词白名单', '核心词白名单']) {
     await expectVisible(page, text);
   }
@@ -948,7 +948,7 @@ async function main() {
     await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
   }
   await page.getByLabel('高 ACOS 阈值').fill('0.10');
-  await page.getByRole('button', { name: '保存广告阈值' }).click();
+  await page.getByRole('button', { name: '保存规则阈值' }).click();
   await page.getByText('阈值保存已阻断：高 ACOS 阈值不能低于目标 ACOS。', { exact: false }).waitFor({ timeout: 5000 });
   const saveCountBeforeValid = await page.evaluate(() => (window.__businessUiActionLog || []).filter((item) => item.type === 'saveRuleConfig').length);
   if (saveCountBeforeValid !== 0) {
@@ -957,7 +957,7 @@ async function main() {
   await page.getByLabel('高 ACOS 阈值').fill('0.40');
   await page.getByLabel('品牌词白名单').fill('brand one,brand two');
   await page.getByLabel('核心词白名单').fill('core one\ncore two');
-  await page.getByRole('button', { name: '保存广告阈值' }).click();
+  await page.getByRole('button', { name: '保存规则阈值' }).click();
   await page.waitForFunction(
     () => (window.__businessUiActionLog || []).some((item) => item.type === 'saveRuleConfig'),
     null,
@@ -970,14 +970,18 @@ async function main() {
   await page.getByLabel('开始日期').fill('2026-06-14');
   await page.getByRole('button', { name: '保存范围' }).click();
   await page.getByText('开始日期不能晚于结束日期。', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('2026-06-01 至 2026-06-12 / FT-US-US / US / USD', { exact: true }).waitFor({ timeout: 5000 });
+  for (const text of ['2026-06-01', '2026-06-12', 'FT-US-US', 'US']) {
+    await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
+  }
   await page.getByLabel('开始日期').fill('2026-06-02');
   await page.getByLabel('结束日期').fill('2026-06-13');
   await page.getByLabel('店铺').fill('  FT-US-TEST  ');
   await page.getByLabel('站点').fill('  CA  ');
   await page.getByText('修改日期、店铺或站点会自动清空旧批次；如需固定历史批次，请重新输入批次 ID。', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: '保存范围' }).click();
-  await page.getByText('2026-06-02 至 2026-06-13 / FT-US-TEST / CA / USD', { exact: true }).waitFor({ timeout: 5000 });
+  for (const text of ['2026-06-02', '2026-06-13', 'FT-US-TEST', 'CA']) {
+    await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
+  }
 
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
   await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
@@ -997,18 +1001,18 @@ async function main() {
   ]) {
     await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
   }
-  await expandDetails(page, '文件与技术入口');
+  await expandDetails(page, '文件位置与支持入口');
   await expandDetails(page, '广告回读补证');
-  await expandDetails(page, '完整矩阵');
+  await expandDetails(page, '业务闭环矩阵');
   await expandDetails(page, '最终证据清单');
   await expandDetails(page, '完整业务证据项');
-  await expandDetails(page, '技术细节');
+  await expandDetails(page, '技术支持细节');
   for (const text of [
-    '完整矩阵：已闭合 2/7',
+    '业务闭环矩阵：已闭合 2/7',
     '完整业务证据项',
     '原始广告报表',
     '广告指标入库',
-    '广告量化',
+    '广告表现',
     'AI 业务证据',
     '优化建议证据',
     '审批与回读',
@@ -1026,10 +1030,10 @@ async function main() {
     '运营上下文',
     'Listing 草案证据',
     '建议与审批',
-    '执行回读',
+    '结果核对',
     '最终交付包',
     '最终验收汇总尚未证明真实 AI 连接、广告 AI 解释和 Listing AI 草案。',
-    '1 条待审批，1 条已批准，1 条复核中；后续必须进入执行回读。',
+    '1 条待审批，1 条已批准，1 条复核中；后续必须进入结果核对。',
     '先完成真实报表下载和 DB 日级指标导入',
     '最终证据清单',
     '这里列出最终验收汇总采用的证据文件。',
@@ -1049,7 +1053,7 @@ async function main() {
     '打开安装包目录',
     '打开最终验收汇总',
     '导出数据口径核对',
-    '技术细节',
+    '技术支持细节',
   ]) {
     await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
   }
@@ -1235,7 +1239,7 @@ async function main() {
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.settings }).click();
   await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.delivery }).click();
   await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
-  await expandDetails(page, '文件与技术入口');
+  await expandDetails(page, '文件位置与支持入口');
   await page.getByText('最终验收汇总尚未生成', { exact: false }).first().waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: '打开最终验收汇总' }).click();
   await page.getByText('最终验收汇总尚未生成。', { exact: false }).first().waitFor({ timeout: 5000 });
