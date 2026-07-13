@@ -9,7 +9,7 @@ import packageReadinessEvaluator from '../apps/desktop/src/main/final-readiness-
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
-const { collectPackageIndex } = packageReadinessEvaluator;
+const { collectPackageIndex, evaluatePackageReadinessFromFiles } = packageReadinessEvaluator;
 
 function runNode(script, args = []) {
   return spawnSync(process.execPath, [path.join(root, script), ...args], {
@@ -71,6 +71,40 @@ describe('verify v15 final readiness', () => {
       missingCount: 0,
       releaseDir: null,
     });
+  });
+
+  it('returns a structured fail-closed package failure when releaseDir is a file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-final-readiness-release-file-'));
+    const releaseFile = path.join(dir, 'release');
+    fs.writeFileSync(releaseFile, 'not a directory', 'utf8');
+
+    expect(() => evaluatePackageReadinessFromFiles({
+      releaseDir: releaseFile,
+      packageLaunchSmokePath: null,
+    })).not.toThrow();
+
+    const result = evaluatePackageReadinessFromFiles({
+      releaseDir: releaseFile,
+      packageLaunchSmokePath: null,
+    });
+    expect(result.packageIndex).toMatchObject({
+      present: false,
+      count: 0,
+      releaseDir: releaseFile,
+      error: {
+        code: 'PACKAGE_RELEASE_DIR_NOT_DIRECTORY',
+      },
+    });
+    expect(result.gates.find((gate) => gate.id === 'release-package-hash')).toMatchObject({
+      ok: false,
+      status: 'needs_work',
+    });
+    expect(result.failures).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        gateId: 'release-package-hash',
+        code: 'PACKAGE_RELEASE_DIR_NOT_DIRECTORY',
+      }),
+    ]));
   });
 
   it('does not pass AI live provider evidence that leaks an API key shaped secret', () => {

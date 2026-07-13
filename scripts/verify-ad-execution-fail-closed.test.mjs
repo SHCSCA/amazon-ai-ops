@@ -14,8 +14,12 @@ describe('verify ad execution fail-closed contract', () => {
     const output = `${result.stdout || ''}${result.stderr || ''}`;
     expect(output).not.toContain('readback page shows execution readback wizard');
     expect(output).toContain('[PASS] readback page exposes the semantic wizard tablist');
+    expect(output).toContain('[PASS] readback wizard buttons expose the tab role');
     expect(output).toContain('[PASS] readback wizard tabs are bound to stable panels');
+    expect(output).toContain('[PASS] readback wizard tabs expose stable reciprocal ids');
     expect(output).toContain('[PASS] readback wizard exposes semantic tab panels');
+    expect(output).toContain('[PASS] readback wizard panels expose stable reciprocal ids');
+    expect(output).toContain('[PASS] readback wizard panels reference their controlling tabs');
     expect(result.status).toBe(0);
   });
 });

@@ -136,13 +136,33 @@ mustContain(
 );
 mustContain(
   readbackPage,
+  'role="tab"',
+  'readback wizard buttons expose the tab role',
+);
+mustContain(
+  readbackPage,
   'aria-controls={readbackStepPanelId(step.id)}',
   'readback wizard tabs are bound to stable panels',
 );
 mustContain(
   readbackPage,
+  'id={readbackStepTabId(step.id)}',
+  'readback wizard tabs expose stable reciprocal ids',
+);
+mustContain(
+  readbackPage,
   "role: 'tabpanel' as const",
   'readback wizard exposes semantic tab panels',
+);
+mustContain(
+  readbackPage,
+  'id: readbackStepPanelId(stepId)',
+  'readback wizard panels expose stable reciprocal ids',
+);
+mustContain(
+  readbackPage,
+  "'aria-labelledby': readbackStepTabId(stepId)",
+  'readback wizard panels reference their controlling tabs',
 );
 mustContain(readbackPage, 'title="4. 校验并导出证据"', 'readback page shows ad readback evidence panel');
 mustContain(readbackPage, '复制长参数生成命令', 'readback page provides copy command affordance');

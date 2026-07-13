@@ -36,7 +36,26 @@ function collectPackageIndex(releaseDir) {
   const resolvedReleaseDir = typeof releaseDir === 'string' && releaseDir.trim()
     ? path.resolve(releaseDir)
     : '';
-  const packages = latestReleasePackageFiles(resolvedReleaseDir).map((entry) => {
+  let packageEntries = [];
+  let error = null;
+  if (resolvedReleaseDir && fs.existsSync(resolvedReleaseDir)) {
+    try {
+      if (!fs.statSync(resolvedReleaseDir).isDirectory()) {
+        error = {
+          code: 'PACKAGE_RELEASE_DIR_NOT_DIRECTORY',
+          message: 'releaseDir exists but is not a directory',
+        };
+      } else {
+        packageEntries = latestReleasePackageFiles(resolvedReleaseDir);
+      }
+    } catch (readError) {
+      error = {
+        code: 'PACKAGE_RELEASE_DIR_UNREADABLE',
+        message: readError instanceof Error ? readError.message : String(readError),
+      };
+    }
+  }
+  const packages = packageEntries.map((entry) => {
     const stat = fs.statSync(entry.filePath);
     return {
       kind: entry.kind,
@@ -55,6 +74,7 @@ function collectPackageIndex(releaseDir) {
     existingCount: packages.filter((item) => item.exists).length,
     missingCount: packages.filter((item) => !item.exists).length,
     releaseDir: resolvedReleaseDir || null,
+    error,
     copyPolicy: 'Installer and portable EXE binaries are not copied into readiness evidence; this index records local paths, existence, size, and SHA-256.',
     packages,
   };
@@ -137,7 +157,11 @@ function evaluatePackageReadiness({ packageIndex, selectedSmoke }) {
   const installer = packageIndex.packages?.find((item) => item.kind === 'installer');
   const currentPortablePackage = packageIndex.packages?.find((item) => item.kind === 'portable') || null;
 
-  if (!packageIndex.present || packageIndex.count <= 0) {
+  if (packageIndex.error) {
+    const message = packageIndex.error.message || 'release package directory could not be read';
+    packageGate = makeGate('release-package-hash', 'Release package hash', false, packageIndex.releaseDir, message);
+    failures.push(packageFailure(packageGate.id, packageIndex.error.code || 'PACKAGE_RELEASE_DIR_UNREADABLE', message, packageGate.evidencePath));
+  } else if (!packageIndex.present || packageIndex.count <= 0) {
     const message = 'installer/package hash evidence is missing';
     packageGate = makeGate('release-package-hash', 'Release package hash', false, packageIndex.releaseDir, message, 'missing');
     failures.push(packageFailure(packageGate.id, 'PACKAGE_INDEX_MISSING', message, packageGate.evidencePath));
