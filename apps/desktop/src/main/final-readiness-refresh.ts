@@ -1,7 +1,7 @@
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { verifyAdReadbackEvidenceFile } from './ad-readback-evidence-verifier';
+import { evaluatePackageReadinessFromFiles, evaluateReadinessContract } from './final-readiness-package-evaluator.js';
 
 export interface RefreshFinalReadinessInput {
   repoRootDir: string;
@@ -17,7 +17,7 @@ export interface RefreshedFinalReadiness {
   status: string;
   appReady: boolean;
   manifestDriven: boolean;
-  gates: Array<{ name: string; status: string; ok: boolean; evidencePath?: string | null; message?: string; safetyFailClosed?: boolean }>;
+  gates: Array<{ id: string; name: string; status: string; ok: boolean; evidencePath?: string | null; message?: string; safetyFailClosed?: boolean }>;
 }
 
 function readJson(filePath: string): any {
@@ -34,10 +34,6 @@ function latestEvidence(evidenceDir: string, pattern: RegExp): string | null {
     })
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   return files[0]?.filePath || null;
-}
-
-function sha256(filePath: string): string {
-  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').toUpperCase();
 }
 
 function containsObviousSecret(value: unknown): boolean {
@@ -205,53 +201,6 @@ function checkAdExecutionReadback(evidencePath: string | null) {
   };
 }
 
-function latestReleasePackageFiles(releaseDir: string) {
-  if (!releaseDir || !fs.existsSync(releaseDir)) return [];
-  const files = fs.readdirSync(releaseDir)
-    .filter((name) => /^AmazonAIOpsAgent-.*\.exe$/i.test(name))
-    .map((name) => path.join(releaseDir, name))
-    .filter((filePath) => fs.existsSync(filePath) && fs.statSync(filePath).isFile())
-    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-  const portable = files.find((filePath) => /portable/i.test(path.basename(filePath)));
-  const installer = files.find((filePath) => !/portable/i.test(path.basename(filePath)));
-  return [
-    installer ? { kind: 'installer', filePath: installer } : null,
-    portable ? { kind: 'portable', filePath: portable } : null,
-  ].filter(Boolean) as Array<{ kind: string; filePath: string }>;
-}
-
-function buildPackageIndex(releaseDir: string) {
-  const packages = latestReleasePackageFiles(releaseDir).map((entry) => {
-    const stat = fs.statSync(entry.filePath);
-    return {
-      kind: entry.kind,
-      sourcePath: path.resolve(entry.filePath),
-      fileName: path.basename(entry.filePath),
-      exists: true,
-      sizeBytes: stat.size,
-      sha256: sha256(entry.filePath),
-      modifiedAt: stat.mtime.toISOString(),
-    };
-  });
-  return {
-    generatedAt: new Date().toISOString(),
-    present: packages.length > 0,
-    count: packages.length,
-    existingCount: packages.filter((item) => item.exists).length,
-    missingCount: packages.filter((item) => !item.exists).length,
-    releaseDir,
-    copyPolicy: 'Installer and portable EXE binaries are not copied into readiness evidence; this index records local paths, existence, size, and SHA-256.',
-    packages,
-  };
-}
-
-function checkReleasePackageHash(packageIndex: any) {
-  const hasInstaller = packageIndex.packages?.some((item: any) => item.kind === 'installer');
-  const hasPortable = packageIndex.packages?.some((item: any) => item.kind === 'portable');
-  const ok = packageIndex.present && hasInstaller && hasPortable && packageIndex.missingCount === 0;
-  return gate('Release package hash', ok, packageIndex.releaseDir, ok ? `${packageIndex.count} release package artifacts indexed with SHA-256.` : 'installer and portable package hash evidence is incomplete', ok ? 'passed' : 'needs_work');
-}
-
 function selectAdReadbackEvidence(evidenceDir: string, explicitPath?: string): { filePath: string | null; selectedBy: string } {
   if (explicitPath && explicitPath.trim()) {
     return { filePath: path.resolve(explicitPath), selectedBy: 'explicit-arg' };
@@ -277,6 +226,7 @@ export function refreshFinalReadiness(input: RefreshFinalReadinessInput): Refres
     adAiExplanation: { filePath: latestEvidence(input.evidenceDir, /^(installed-)?ad-ai-explanation-.*\.json$/i), selectedBy: 'latest-evidence' },
     listingAiDraft: { filePath: latestEvidence(input.evidenceDir, /^(installed-listing-ai-draft|listing-ai-draft).*\.json$/i), selectedBy: 'latest-evidence' },
     adReadback: selectedAdReadback,
+    packageLaunchSmoke: { filePath: latestEvidence(input.evidenceDir, /^package-launch-smoke-.*\.json$/i), selectedBy: 'latest-evidence' },
   };
   const evidenceManifestPath = path.join(input.evidenceDir, `v15-final-readiness-evidence-manifest-desktop-${stamp}.json`);
   const finalReadinessPath = path.join(input.evidenceDir, `final-readiness-${stamp}.json`);
@@ -292,22 +242,26 @@ export function refreshFinalReadiness(input: RefreshFinalReadinessInput): Refres
       adAiExplanation: evidenceEntry(input.repoRootDir, 'Ad recommendation AI explanation', selected.adAiExplanation.filePath, selected.adAiExplanation.selectedBy),
       listingAiDraft: evidenceEntry(input.repoRootDir, 'Listing AI draft', selected.listingAiDraft.filePath, selected.listingAiDraft.selectedBy),
       adReadback: evidenceEntry(input.repoRootDir, 'Real ad execution readback', selected.adReadback.filePath, selected.adReadback.selectedBy),
+      packageLaunchSmoke: evidenceEntry(input.repoRootDir, 'Package launch smoke', selected.packageLaunchSmoke.filePath, selected.packageLaunchSmoke.selectedBy),
     },
     note: 'This manifest was generated by the desktop app. It selects evidence paths for final readiness and does not make APP_READY claims by itself.',
   };
 
-  const packageIndex = buildPackageIndex(input.releaseDir);
-  const gates = [
+  const businessGates = [
     checkReportCollection(selected.delivery.filePath),
     checkListingRead(selected.listingRead.filePath),
     checkAiLive(selected.aiLive.filePath),
     checkAdAiExplanation(selected.adAiExplanation.filePath),
     checkListingAiDraft(selected.listingAiDraft.filePath),
     checkAdExecutionReadback(selected.adReadback.filePath),
-    checkReleasePackageHash(packageIndex),
   ];
-  const allGatesPass = gates.every((item) => item.ok);
-  const appReady = allGatesPass;
+  const packageEvaluation = evaluatePackageReadinessFromFiles({
+    releaseDir: input.releaseDir,
+    packageLaunchSmokePath: selected.packageLaunchSmoke.filePath,
+    selectedBy: selected.packageLaunchSmoke.selectedBy,
+  });
+  const readiness = evaluateReadinessContract({ businessGates, packageEvaluation, manifestDriven: true });
+  const { gates, allGatesPass, appReady } = readiness;
   const finalReadiness = {
     generatedAt: new Date().toISOString(),
     evidenceSelection: {
@@ -322,7 +276,10 @@ export function refreshFinalReadiness(input: RefreshFinalReadinessInput): Refres
     allGatesPass,
     missing: gates.filter((item) => !item.ok).map((item) => item.message || `${item.name} 未通过。`),
     actionItems: gates.filter((item) => !item.ok).map((item) => `补齐 ${item.name} 证据后重新运行最终验收。`),
-    packageIndex,
+    failures: readiness.failures,
+    packageIndex: readiness.packageIndex,
+    currentPortablePackage: readiness.currentPortablePackage,
+    packageLaunchSmoke: readiness.packageLaunchSmoke,
     gates,
   };
 

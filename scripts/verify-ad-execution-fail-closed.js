@@ -129,7 +129,21 @@ mustContain(adActions, 'success: verified', 'bid/toggle executors tie success to
 mustContain(adActions, '回读校验失败', 'executor exposes readback failure reason');
 
 mustContain(readbackPage, 'buildFillAdReadbackCommand', 'renderer exposes ad readback acceptance commands');
-mustContain(readbackPage, 'aria-label="执行回读步骤"', 'readback page shows execution readback wizard');
+mustContain(
+  readbackPage,
+  'role="tablist"',
+  'readback page exposes the semantic wizard tablist',
+);
+mustContain(
+  readbackPage,
+  'aria-controls={readbackStepPanelId(step.id)}',
+  'readback wizard tabs are bound to stable panels',
+);
+mustContain(
+  readbackPage,
+  "role: 'tabpanel' as const",
+  'readback wizard exposes semantic tab panels',
+);
 mustContain(readbackPage, 'title="4. 校验并导出证据"', 'readback page shows ad readback evidence panel');
 mustContain(readbackPage, '复制长参数生成命令', 'readback page provides copy command affordance');
 mustContain(recommendationsPage, '建议生成范围', 'recommendations page exposes filter/generate controls');

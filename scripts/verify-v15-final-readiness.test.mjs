@@ -5,9 +5,11 @@ import crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
+import packageReadinessEvaluator from '../apps/desktop/src/main/final-readiness-package-evaluator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
+const { collectPackageIndex } = packageReadinessEvaluator;
 
 function runNode(script, args = []) {
   return spawnSync(process.execPath, [path.join(root, script), ...args], {
@@ -60,6 +62,17 @@ function writePackageLaunchSmoke(filePath, releaseDir, portablePath, portableCon
 }
 
 describe('verify v15 final readiness', () => {
+  it('fails closed without scanning the working directory when releaseDir is omitted', () => {
+    expect(() => collectPackageIndex(undefined)).not.toThrow();
+    expect(collectPackageIndex(undefined)).toMatchObject({
+      present: false,
+      count: 0,
+      existingCount: 0,
+      missingCount: 0,
+      releaseDir: null,
+    });
+  });
+
   it('does not pass AI live provider evidence that leaks an API key shaped secret', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-final-readiness-ai-live-secret-'));
     const manifestPath = path.join(dir, 'evidence-manifest.json');
@@ -240,6 +253,7 @@ describe('verify v15 final readiness', () => {
     const summary = readJson(outPath);
     const launchGate = summary.gates.find((gate) => gate.name === 'Package launch smoke');
     expect(launchGate).toMatchObject({
+      id: 'package-launch-smoke',
       ok: true,
       status: 'passed',
     });
