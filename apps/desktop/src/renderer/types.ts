@@ -516,6 +516,9 @@ export interface DeliveryReadinessView {
   deliveryReviewReasons?: string[];
   finalReadinessBlockers?: string[];
   message?: string;
+  previewOnly?: boolean;
+  previewReady?: boolean;
+  previewScenarioId?: string;
 }
 
 export interface DeliveryEvidenceStatusView {
@@ -542,6 +545,12 @@ export interface DeliveryEvidenceStatusView {
     portablePath?: string;
     sha256?: string;
     latestBuiltAt?: string;
+  };
+  preview?: {
+    previewOnly: true;
+    scenarioId: string;
+    workflowComplete: boolean;
+    message: string;
   };
 }
 

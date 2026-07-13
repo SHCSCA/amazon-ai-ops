@@ -567,18 +567,47 @@ export function createBrowserPreviewElectronApi(
     getSettings: async () => ({ ai: { provider: 'deepseek', model: 'deepseek-v4-flash', baseUrl: 'https://api.deepseek.com' } }),
     getDeliveryReadiness: async () => ({
       available: scenario.deliveryReady,
+      path: null,
+      exists: false,
+      status: scenario.deliveryReady ? 'PREVIEW_ONLY_READY' : 'PREVIEW_ONLY_BLOCKED',
       appReady: false,
       manifestDriven: false,
       previewOnly: true,
       previewReady: scenario.deliveryReady,
-      blockers: scenario.deliveryReady
-        ? ['开发预览场景已走通；不代表真实 APP_READY，也不生成验收证据']
-        : ['浏览器预览不代表最终交付'],
+      previewScenarioId: scenario.id,
+      gates: [],
+      gatesSummary: { total: 0, passed: 0, failed: 0 },
+      missing: ['开发预览不能替代真实报表、回读、安装包和 manifest 验收。'],
+      actionItems: ['退出开发预览后运行真实最终验收。'],
+      message: scenario.deliveryReady
+        ? '仅开发预览已走通；不可视为 APP_READY。'
+        : '开发预览场景尚未走通；不可视为 APP_READY。',
     }),
     getDeliveryEvidenceStatus: async () => ({
-      ready: scenario.readbackEvidenceReady,
-      previewOnly: true,
-      missing: scenario.readbackEvidenceReady ? [] : ['readback'],
+      listing: {
+        readReady: false,
+        draftReady: false,
+        contentCount: 0,
+        fullContentCount: 0,
+        draftCount: 0,
+        aiDraftCount: 0,
+        ruleFallbackDraftCount: 0,
+      },
+      readback: {
+        verifiedCount: scenario.readbackEvidenceReady ? 1 : 0,
+        latestStatus: scenario.readbackEvidenceReady ? 'preview-only-verified' : 'preview-only-missing',
+      },
+      package: {
+        installerAvailable: false,
+      },
+      preview: {
+        previewOnly: true,
+        scenarioId: scenario.id,
+        workflowComplete: scenario.deliveryReady,
+        message: scenario.deliveryReady
+          ? '仅开发预览已走通；不可视为 APP_READY。'
+          : '开发预览场景尚未走通；不可视为 APP_READY。',
+      },
     }),
     getScheduledTasks: async () => [{ name: 'daily-import-preview', enabled: true, cron: '0 9 * * *', lastStatus: 'success' }],
     setTaskEnabled: async () => ({ ok: true }),

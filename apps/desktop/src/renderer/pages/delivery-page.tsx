@@ -21,6 +21,13 @@ const DELIVERY_BUNDLE_PATH = 'output/delivery-bundles';
 
 type DeliveryTone = 'ready' | 'pending' | 'blocked' | 'warning';
 
+export interface DeliveryPreviewState {
+  detail: string;
+  headline: '仅开发预览已走通' | '仅开发预览场景未走通';
+  scenarioId: string;
+  tone: 'warning';
+}
+
 interface DeliveryItem {
   title: string;
   tone: DeliveryTone;
@@ -292,6 +299,32 @@ function statusLabel(tone: DeliveryTone): string {
 
 function readinessStatus(readiness: DeliveryReadinessView | null): string {
   return readiness?.appReady && readiness?.manifestDriven ? '可交付' : '未就绪';
+}
+
+export function deliveryPreviewState(
+  readiness: DeliveryReadinessView | null,
+  evidenceStatus: DeliveryEvidenceStatusView | null | undefined,
+): DeliveryPreviewState | null {
+  const preview = evidenceStatus?.preview;
+  if (!readiness?.previewOnly && !preview?.previewOnly) return null;
+  const workflowComplete = Boolean(readiness?.previewReady && preview?.workflowComplete);
+  return {
+    detail: '此状态只验证开发 fixture 的页面流程，不可视为 APP_READY，也不能满足真实导出或验收 gate。',
+    headline: workflowComplete ? '仅开发预览已走通' : '仅开发预览场景未走通',
+    scenarioId: preview?.scenarioId || readiness?.previewScenarioId || 'unknown',
+    tone: 'warning',
+  };
+}
+
+export function DeliveryPreviewNotice({ state }: { state: DeliveryPreviewState | null }) {
+  if (!state) return null;
+  return (
+    <div className="delivery-summary-data-line delivery-preview-notice" role="status" aria-live="polite">
+      <StatusPill tone={state.tone}>仅开发预览</StatusPill>
+      <strong>{state.headline}</strong>
+      <small>{state.detail} 当前场景：{state.scenarioId}</small>
+    </div>
+  );
 }
 
 function evidenceFolder(data: BusinessDataPipeline | null): string {
@@ -712,6 +745,10 @@ export function DeliveryPage() {
   const importedRows = readNumber(data?.collection?.fileAudit?.importedRowCount, readNumber(quant?.importedRows));
   const manifestReady = readiness?.appReady && readiness?.manifestDriven;
   const deliveryReady = canExportDeliveryBundle(readiness, deliveryEvidenceStatus?.package);
+  const previewState = useMemo(
+    () => deliveryPreviewState(readiness, deliveryEvidenceStatus),
+    [deliveryEvidenceStatus, readiness],
+  );
   const packageSummary = packageEvidenceSummary(deliveryEvidenceStatus?.package);
   const evidenceGovernanceFacts = buildEvidenceGovernanceFacts({
     finalManifestPath,
@@ -1250,6 +1287,7 @@ export function DeliveryPage() {
 
       <div className="business-stack delivery-prototype-stack">
         <Panel className="delivery-summary-workbench" title="交付摘要" tone={deliveryReady ? 'success' : missingItems.length ? 'warning' : 'default'}>
+          <DeliveryPreviewNotice state={previewState} />
           <div className="delivery-summary-hero" aria-label="交付验收结论">
             <div className="delivery-summary-conclusion">
               <div className="delivery-summary-status-row">
