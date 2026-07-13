@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
-import { Sidebar } from './components/app-shell';
+import { NextSafeActionHandoff, Sidebar } from './components/app-shell';
 import { ScopeBar } from './components/scope-bar';
 import { AdQuantPage } from './pages/ad-quant-page';
 import { ApprovalPage } from './pages/approval-page';
@@ -19,6 +19,16 @@ import { RecommendationsPage } from './pages/recommendations-page';
 import { SchedulerPage } from './pages/scheduler-page';
 import { SettingsPage } from './pages/settings-page';
 import type { AppRoute, DeliveryReadinessView } from './types';
+import {
+  DEFAULT_WORKSPACE_INTENTS,
+  navigationIntentsEqual,
+  normalizeNavigationTarget,
+  resolveNavigationTarget,
+} from './navigation';
+import type { NavigationIntent } from './navigation';
+import { useScopeStore } from './scope-store';
+import { deriveWorkflowEvidence, selectNextSafeAction } from './workflow-state';
+import type { WorkflowEvidence } from './workflow-state';
 import { toUserFacingError } from './user-facing-error';
 import { bootstrapBrowserPreview } from './dev-preview-api';
 import './styles.css';
@@ -34,8 +44,8 @@ interface AppState {
   isLoggedIn: boolean;
   currentStore: string;
   loginSession?: LoginSessionInfo | null;
-  activeTab: AppRoute;
-  setActiveTab: (tab: AppRoute) => void;
+  activeNavigation: NavigationIntent;
+  setActiveNavigation: (intent: NavigationIntent) => void;
   setLoginState: (isLoggedIn: boolean, store?: string, loginSession?: LoginSessionInfo | null) => void;
 }
 
@@ -43,8 +53,8 @@ const useStore = create<AppState>((set) => ({
   isLoggedIn: false,
   currentStore: '',
   loginSession: null,
-  activeTab: 'dashboard',
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  activeNavigation: DEFAULT_WORKSPACE_INTENTS.today,
+  setActiveNavigation: (intent) => set({ activeNavigation: intent }),
   setLoginState: (isLoggedIn, store = '', loginSession = null) => set({ isLoggedIn, currentStore: store, loginSession }),
 }));
 
@@ -58,6 +68,15 @@ function bootstrapAppBrowserPreview(username = 'SHC001') {
 }
 
 const browserPreviewBootstrap = bootstrapAppBrowserPreview();
+
+export function createAppNavigationEventHandler(onNavigate: (intent: NavigationIntent) => void) {
+  return (event: Event): boolean => {
+    const intent = normalizeNavigationTarget((event as CustomEvent<unknown>).detail);
+    if (!intent) return false;
+    onNavigate(intent);
+    return true;
+  };
+}
 
 function appElectronApi(username = 'SHC001') {
   bootstrapAppBrowserPreview(username);
@@ -352,9 +371,14 @@ function BusinessRoutePage({ route }: { route: AppRoute }) {
 }
 
 export default function App() {
-  const { isLoggedIn, currentStore, loginSession, activeTab, setActiveTab, setLoginState } = useStore();
+  const { isLoggedIn, currentStore, loginSession, activeNavigation, setActiveNavigation, setLoginState } = useStore();
+  const scope = useScopeStore((state) => state.scope);
+  const activeTab = resolveNavigationTarget(activeNavigation) || 'dashboard';
   const [deliveryReadiness, setDeliveryReadiness] = useState<DeliveryReadinessView | null>(null);
-  const [pendingNavigationRoute, setPendingNavigationRoute] = useState<AppRoute | null>(null);
+  const [workflowEvidence, setWorkflowEvidence] = useState<WorkflowEvidence>(() => deriveWorkflowEvidence({}));
+  const [pendingNavigationIntent, setPendingNavigationIntent] = useState<NavigationIntent | null>(null);
+  const pendingNavigationRoute = resolveNavigationTarget(pendingNavigationIntent);
+  const nextSafeAction = selectNextSafeAction(workflowEvidence);
   const contentRef = useRef<HTMLElement | null>(null);
   const navigationTimerRef = useRef<number | null>(null);
 
@@ -373,22 +397,23 @@ export default function App() {
     checkLoginState();
   }, [setLoginState]);
 
-  const requestNavigate = useCallback((route: AppRoute) => {
-    if (route === activeTab && !pendingNavigationRoute) return;
+  const requestNavigate = useCallback((target: AppRoute | NavigationIntent) => {
+    const intent = normalizeNavigationTarget(target);
+    if (!intent) return;
+    const route = resolveNavigationTarget(target);
+    if (!route) return;
+    if (navigationIntentsEqual(intent, activeNavigation) && !pendingNavigationIntent) return;
     if (navigationTimerRef.current) window.clearTimeout(navigationTimerRef.current);
-    setPendingNavigationRoute(route);
-    setActiveTab(route);
+    setPendingNavigationIntent(intent);
+    setActiveNavigation(intent);
     navigationTimerRef.current = window.setTimeout(() => {
-      setPendingNavigationRoute((current) => (current === route ? null : current));
+      setPendingNavigationIntent((current) => (navigationIntentsEqual(current, intent) ? null : current));
       navigationTimerRef.current = null;
     }, 150);
-  }, [activeTab, pendingNavigationRoute, setActiveTab]);
+  }, [activeNavigation, pendingNavigationIntent, setActiveNavigation]);
 
   useEffect(() => {
-    const handleNavigate = (event: Event) => {
-      const route = (event as CustomEvent<AppRoute>).detail;
-      if (route) requestNavigate(route);
-    };
+    const handleNavigate = createAppNavigationEventHandler(requestNavigate);
     window.addEventListener('amazon-ai-ops:navigate', handleNavigate);
     return () => window.removeEventListener('amazon-ai-ops:navigate', handleNavigate);
   }, [requestNavigate]);
@@ -399,27 +424,61 @@ export default function App() {
 
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0, left: 0 });
-  }, [activeTab]);
+  }, [activeNavigation.subview, activeNavigation.workspace]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
     let cancelled = false;
-    async function loadDeliveryReadiness() {
+    async function loadWorkflowState() {
       try {
-        const readiness = await (window as any).electronAPI?.getDeliveryReadiness?.();
-        if (!cancelled && readiness) setDeliveryReadiness(readiness);
+        const api = (window as any).electronAPI;
+        const pipeline = await api?.getBusinessUiDataPipeline?.(scope);
+        const batchId = scope.batchId || pipeline?.collection?.latestBatch?.id;
+        const filter = {
+          dateFrom: scope.dateFrom,
+          dateTo: scope.dateTo,
+          storeName: scope.storeName,
+          marketplaceCode: scope.marketplaceCode,
+          asin: scope.asin,
+          batchId,
+          limit: 100,
+        };
+        const [pending, needsReview, approved, readback, readiness] = await Promise.all([
+          api?.getRecommendations?.({ ...filter, status: 'pending' }) || [],
+          api?.getRecommendations?.({ ...filter, status: 'needs_review' }) || [],
+          api?.getRecommendations?.({ ...filter, status: 'approved' }) || [],
+          api?.getDeliveryEvidenceStatus?.(filter) || null,
+          api?.getDeliveryReadiness?.() || null,
+        ]);
+        if (!cancelled) {
+          setDeliveryReadiness(readiness || null);
+          setWorkflowEvidence(deriveWorkflowEvidence({
+            scope,
+            pipeline,
+            recommendations: {
+              pending: Array.isArray(pending) ? pending.length : 0,
+              needsReview: Array.isArray(needsReview) ? needsReview.length : 0,
+              approved: Array.isArray(approved) ? approved.length : 0,
+            },
+            readback: readback?.readback,
+            readiness,
+          }));
+        }
       } catch {
-        if (!cancelled) setDeliveryReadiness(null);
+        if (!cancelled) {
+          setDeliveryReadiness(null);
+          setWorkflowEvidence(deriveWorkflowEvidence({ scope }));
+        }
       }
     }
 
-    loadDeliveryReadiness();
-    window.addEventListener('business-ui:data-updated', loadDeliveryReadiness);
+    loadWorkflowState();
+    window.addEventListener('business-ui:data-updated', loadWorkflowState);
     return () => {
       cancelled = true;
-      window.removeEventListener('business-ui:data-updated', loadDeliveryReadiness);
+      window.removeEventListener('business-ui:data-updated', loadWorkflowState);
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, scope]);
 
   async function handleLogout() {
     await (window as any).electronAPI.browserLogout();
@@ -458,6 +517,7 @@ export default function App() {
       <div className="app-body">
         <Sidebar activeRoute={activeTab} pendingRoute={pendingNavigationRoute} onNavigate={requestNavigate} />
         <main ref={contentRef} className={`app-content${pendingNavigationRoute ? ' app-content-navigating' : ''}`}>
+          <NextSafeActionHandoff action={nextSafeAction} onNavigate={requestNavigate} />
           {pendingNavigationRoute && (
             <div className="route-handoff-feedback" role="status" aria-live="polite">
               转跳中...
