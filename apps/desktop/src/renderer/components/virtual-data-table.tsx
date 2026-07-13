@@ -58,6 +58,9 @@ export interface VirtualDataTableProps<T> {
   className?: string;
   rowClassName?: (row: T, index: number) => string | undefined;
   expandedContent?: (row: T, index: number) => React.ReactNode;
+  selectedRowKey?: React.Key | null;
+  onRowSelect?: (row: T, index: number) => void;
+  rowAriaLabel?: (row: T, index: number) => string;
   sortKey?: string;
   sortDirection?: VirtualSortDirection;
   onSortChange?: (key: string) => void;
@@ -75,6 +78,9 @@ export function VirtualDataTable<T>({
   className = '',
   rowClassName,
   expandedContent,
+  selectedRowKey = null,
+  onRowSelect,
+  rowAriaLabel,
   sortKey,
   sortDirection = 'desc',
   onSortChange,
@@ -148,6 +154,8 @@ export function VirtualDataTable<T>({
               const row = rows[virtualRow.index];
               const key = getRowKey(row, virtualRow.index);
               const detail = expandedContent?.(row, virtualRow.index);
+              const rowSelectable = Boolean(onRowSelect);
+              const rowSelected = selectedRowKey !== null && selectedRowKey === key;
               return (
                 <div
                   className="virtual-table-item"
@@ -157,9 +165,18 @@ export function VirtualDataTable<T>({
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
                   <div
-                    className={`virtual-table-row virtual-table-body-row ${virtualRowParityClass(virtualRow.index)} ${rowClassName?.(row, virtualRow.index) || ''}`.trim()}
+                    aria-label={rowAriaLabel?.(row, virtualRow.index)}
+                    aria-selected={rowSelectable ? rowSelected : undefined}
+                    className={`virtual-table-row virtual-table-body-row ${virtualRowParityClass(virtualRow.index)} ${rowSelectable ? 'virtual-table-row-selectable' : ''} ${rowSelected ? 'virtual-table-row-selected' : ''} ${rowClassName?.(row, virtualRow.index) || ''}`.trim()}
+                    onClick={rowSelectable ? () => onRowSelect?.(row, virtualRow.index) : undefined}
+                    onKeyDown={rowSelectable ? (event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      onRowSelect?.(row, virtualRow.index);
+                    } : undefined}
                     role="row"
                     style={{ gridTemplateColumns }}
+                    tabIndex={rowSelectable ? 0 : undefined}
                   >
                     {columns.map((column) => {
                       const stickyClass = virtualColumnStickyClass(column);

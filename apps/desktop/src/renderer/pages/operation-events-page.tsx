@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
+import { ProgressiveDetails } from '../components/progressive-details';
 import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute, OperationEventView } from '../types';
@@ -313,6 +314,7 @@ export function OperationEventsPage() {
   const [recentSavedEventId, setRecentSavedEventId] = useState<number | null>(null);
   const [recentDraftClearTick, setRecentDraftClearTick] = useState<number | null>(null);
   const [deletingEventId, setDeletingEventId] = useState<number | null>(null);
+  const [eventEditorOpen, setEventEditorOpen] = useState(false);
 
   const visibleEvents = useMemo(
     () => filterOperationEventsForView(events, viewMode, scope.asin),
@@ -358,6 +360,15 @@ export function OperationEventsPage() {
     });
   }
 
+  function openEventEditor() {
+    setEventEditorOpen(true);
+  }
+
+  function closeEventEditor() {
+    if (saving) return;
+    setEventEditorOpen(false);
+  }
+
   async function loadEvents() {
     setLoading(true);
     setError('');
@@ -396,6 +407,15 @@ export function OperationEventsPage() {
     return () => window.clearTimeout(timeout);
   }, [recentDraftClearTick]);
 
+  useEffect(() => {
+    if (!eventEditorOpen) return undefined;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !saving) closeEventEditor();
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [eventEditorOpen, saving]);
+
   async function saveEvent() {
     const submittedDraft = draft;
     const resetDraft = buildOperationEventDraftForScope(scope, viewMode);
@@ -417,6 +437,7 @@ export function OperationEventsPage() {
       await loadEvents();
       const createdId = Number(created?.id);
       if (Number.isInteger(createdId) && createdId > 0) setRecentSavedEventId(createdId);
+      setEventEditorOpen(false);
     } catch (caught) {
       setDraft(submittedDraft);
       setError(toUserFacingError(caught, '保存运营事件失败'));
@@ -447,19 +468,132 @@ export function OperationEventsPage() {
       <PageHeader
         eyebrow="数据"
         title={PAGE_HEADER_TITLES.operationEvents}
-        description={OPERATION_EVENT_PAGE_COPY.description}
-        primaryTask={OPERATION_EVENT_PAGE_COPY.primaryTask}
-        nextAction={events.length ? '查看广告表现' : '先记录关键事件'}
-        primaryAction={{
-          label: taskState.primaryActionLabel,
-          busy: taskState.primaryActionBusy,
-          busyLabel: taskState.primaryActionBusyLabel,
-          disabled: taskState.primaryActionDisabled,
-          onClick: saveEvent,
-        }}
+        description="先看当前范围事件时间轴；新增和维护通过弹窗处理，AI 使用说明和覆盖统计放在辅助区。"
       />
 
       <div className="business-stack">
+        <div className="operation-events-workbench-toolbar">
+          <div className="operation-events-workbench-summary" aria-label="运营事件摘要">
+            <div>
+              <span>当前视图</span>
+              <strong>{visibleEvents.length}</strong>
+            </div>
+            <div>
+              <span>绑定对象</span>
+              <strong>{specificEventCount}</strong>
+            </div>
+            <div>
+              <span>全局事件</span>
+              <strong>{Math.max(0, visibleEvents.length - specificEventCount)}</strong>
+            </div>
+            <div>
+              <span>执行边界</span>
+              <strong>只补上下文</strong>
+            </div>
+          </div>
+          <div className="operation-events-workbench-actions">
+            <button className="primary-button compact-button" onClick={openEventEditor} type="button">
+              新增事件
+            </button>
+            <button className="secondary-button compact-button" onClick={() => navigate('ad-quant')} type="button">
+              广告表现
+            </button>
+            <button className="secondary-button compact-button" onClick={() => navigate('recommendations')} type="button">
+              优化建议
+            </button>
+          </div>
+        </div>
+        {message && <p className="ready-line" role="status" aria-live="polite">{message}</p>}
+        {error && <p className="blocked-line">{error}</p>}
+
+        <Panel title={OPERATION_EVENT_PAGE_COPY.timelinePanelTitle} tone={visibleEvents.length ? 'success' : 'warning'}>
+          <div className="business-pill-row operation-events-view-switch">
+            <button
+              className={`secondary-button compact-button ${viewMode === 'product' ? 'button-active' : ''}`}
+              disabled={!scope.asin}
+              onClick={() => {
+                setViewMode('product');
+                setDraft(buildOperationEventDraftForScope(scope, 'product'));
+              }}
+              type="button"
+            >
+              当前产品
+            </button>
+            <button
+              className={`secondary-button compact-button ${viewMode === 'global' ? 'button-active' : ''}`}
+              onClick={() => {
+                setViewMode('global');
+                setDraft(buildOperationEventDraftForScope(scope, 'global'));
+              }}
+              type="button"
+            >
+              全局事件
+            </button>
+            <button
+              className={`secondary-button compact-button ${viewMode === 'all' ? 'button-active' : ''}`}
+              onClick={() => setViewMode('all')}
+              type="button"
+            >
+              全部事件
+            </button>
+          </div>
+          {loading && <p className="muted-line">正在读取运营事件...</p>}
+          {!loading && eventsByDate.length === 0 && (
+            <p className="muted-line">当前范围还没有运营事件。若近期做过折扣、BD、价格、Listing 或库存动作，应先记录，否则 AI 只能看广告表格。</p>
+          )}
+          <div className="event-timeline operation-events-primary-timeline">
+            {eventsByDate.map(([date, rows]) => (
+              <div className="event-day" key={date}>
+                <div className="event-day-date">{date}</div>
+                <div className="event-cards">
+                  {rows.map((event) => {
+                    const deleteButton = operationEventRowDeleteButtonView({ eventId: event.id, deletingEventId });
+                    const cardView = operationEventTimelineCardView(event, scope.asin, recentSavedEventId);
+                    return (
+                      <article
+                        aria-label={cardView.ariaLabel}
+                        className={cardView.className}
+                        key={event.id}
+                        tabIndex={0}
+                      >
+                        <div className="event-card-title">
+                          <strong>{event.title}</strong>
+                          <StatusPill tone="pending">{formatEventType(event.eventType)}</StatusPill>
+                          <StatusPill tone={cardView.scopeLabel === '全局' ? 'pending' : 'ready'}>
+                            {cardView.scopeLabel}
+                          </StatusPill>
+                        </div>
+                        <p>{formatImpact(event.impactExpectation)} / {formatEventScope(event)}</p>
+                        <div className="event-card-context">
+                          <StatusPill tone="ready">{cardView.contextLabel}</StatusPill>
+                          <span>{cardView.contextDetail}</span>
+                        </div>
+                        {event.notes && <p className="muted-line">{event.notes}</p>}
+                        {event.evidencePath && <p className="mono-line">{event.evidencePath}</p>}
+                        <div className="action-row">
+                          <button
+                            aria-busy={deleteButton.ariaBusy}
+                            className={deleteButton.className}
+                            disabled={deleteButton.disabled}
+                            onClick={() => {
+                              void deleteEvent(event.id);
+                            }}
+                            type="button"
+                          >
+                            {deleteButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                            <span>{deleteButton.label}</span>
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <ProgressiveDetails title="新增/维护事件、AI 使用说明和覆盖统计">
         <div className="kpi-row operation-events-prototype-status-grid" aria-label="运营事件状态">
           <KpiCard
             label="当前视图"
@@ -581,192 +715,175 @@ export function OperationEventsPage() {
         </div>
 
         <Panel title={OPERATION_EVENT_PAGE_COPY.newEventPanelTitle}>
-          <div className="quick-template-row" aria-label="运营事件快速模板">
-            {EVENT_PRESETS.map((preset) => (
+          <div className="operation-event-create-entry">
+            <div>
+              <strong>通过弹窗记录事件</strong>
+              <p>折扣、BD、调价、库存、Listing 变更和人工备注都在弹窗里填写；主页面只保留时间线和上下文说明。</p>
+            </div>
+            <button className="primary-button" onClick={openEventEditor} type="button">
+              新增运营事件
+            </button>
+          </div>
+        </Panel>
+        </ProgressiveDetails>
+      </div>
+
+      {eventEditorOpen && (
+        <div
+          className="product-config-modal-backdrop operation-event-modal-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeEventEditor();
+          }}
+        >
+          <section
+            aria-labelledby="operation-event-modal-title"
+            aria-modal="true"
+            className="product-config-modal operation-event-modal"
+            role="dialog"
+          >
+            <header className="product-config-modal-header">
+              <div>
+                <span>{viewMode === 'product' && scope.asin ? `产品 ${scope.asin}` : viewMode === 'global' ? '全局事件' : '当前范围'}</span>
+                <h2 id="operation-event-modal-title">{OPERATION_EVENT_PAGE_COPY.newEventPanelTitle}</h2>
+              </div>
+              <button className="secondary-button compact-button" disabled={saving} onClick={closeEventEditor} type="button">关闭</button>
+            </header>
+
+            <div className="product-config-modal-body operation-event-modal-body">
+              <div className="quick-template-row operation-event-modal-presets" aria-label="运营事件快速模板">
+                {EVENT_PRESETS.map((preset) => (
+                  <button
+                    className="secondary-button compact-button"
+                    key={preset.label}
+                    onClick={() => applyPreset(preset)}
+                    type="button"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <div className={operationEventFormClassName(Boolean(recentDraftClearTick))}>
+                <FormTable>
+                  <FormTableRow label="事件日期" required hint="事件会按发生日期进入广告表现和 AI 阶段判断。">
+                    <input
+                      type="date"
+                      value={draft.eventDate}
+                      onChange={(event) => setDraft({ ...draft, eventDate: event.target.value })}
+                    />
+                  </FormTableRow>
+                  <FormTableRow label="店铺" required hint="默认继承当前全局范围；需要跨店复盘时才手动调整。">
+                    <input
+                      value={draft.storeName}
+                      onChange={(event) => setDraft({ ...draft, storeName: event.target.value })}
+                    />
+                  </FormTableRow>
+                  <FormTableRow label="站点" required hint="当前计价防线固定按站点和 USD 解释。">
+                    <input
+                      value={draft.marketplaceCode}
+                      onChange={(event) => setDraft({ ...draft, marketplaceCode: event.target.value })}
+                    />
+                  </FormTableRow>
+                  <FormTableRow label="ASIN" hint="可选；留空表示全店/全范围事件。">
+                    <input
+                      placeholder="可选；留空表示全店/全范围"
+                      value={draft.asin}
+                      onChange={(event) => setDraft({ ...draft, asin: event.target.value })}
+                    />
+                  </FormTableRow>
+                  <FormTableRow label="广告活动" hint="可选；用于绑定具体 campaign，减少 AI 跨对象误判。">
+                    <input
+                      placeholder="可选；用于绑定具体 campaign"
+                      value={draft.campaignName}
+                      onChange={(event) => setDraft({ ...draft, campaignName: event.target.value })}
+                    />
+                  </FormTableRow>
+                  <FormTableRow label="广告组" hint="可选；用于绑定具体广告组或测词单元。">
+                    <input
+                      placeholder="可选；用于绑定具体广告组"
+                      value={draft.adGroupName}
+                      onChange={(event) => setDraft({ ...draft, adGroupName: event.target.value })}
+                    />
+                  </FormTableRow>
+                  <FormTableRow label="事件类型" required hint={selectedTypeHint}>
+                    <select
+                      value={draft.eventType}
+                      onChange={(event) => setDraft({ ...draft, eventType: event.target.value })}
+                    >
+                      {Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </FormTableRow>
+                  <FormTableRow label="预期影响" required hint="用于提示 AI 对转化、流量和 ACOS 的解释方向。">
+                    <select
+                      value={draft.impactExpectation}
+                      onChange={(event) => setDraft({ ...draft, impactExpectation: event.target.value })}
+                    >
+                      {Object.entries(IMPACT_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </FormTableRow>
+                  <FormTableRow label="事件标题" required hint="写运营能一眼识别的事件名称。">
+                    <input
+                      placeholder="例如：10% Coupon 开始、大促报名、主图更新"
+                      value={draft.title}
+                      onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                    />
+                  </FormTableRow>
+                  <FormTableRow label="证据路径" hint="可选：截图、活动页面或本地证明文件路径。">
+                    <input
+                      placeholder="可选：截图、活动页面或本地证明文件路径"
+                      value={draft.evidencePath}
+                      onChange={(event) => setDraft({ ...draft, evidencePath: event.target.value })}
+                    />
+                  </FormTableRow>
+                  <FormTableRow label="备注" hint="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景。">
+                    <textarea
+                      placeholder="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景"
+                      value={draft.notes}
+                      onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
+                    />
+                  </FormTableRow>
+                </FormTable>
+              </div>
+              <div className="operation-hint">
+                <strong>{formatEventType(draft.eventType)}</strong>
+                <p>{selectedTypeHint}</p>
+              </div>
+              {message && <p className="ready-line" role="status" aria-live="polite">{message}</p>}
+              {error && <p className="blocked-line">{error}</p>}
+            </div>
+
+            <footer className="product-config-modal-footer">
               <button
-                className="secondary-button compact-button"
-                key={preset.label}
-                onClick={() => applyPreset(preset)}
+                aria-busy={inlineSaveButton.ariaBusy}
+                className={inlineSaveButton.className}
+                disabled={inlineSaveButton.disabled}
+                onClick={saveEvent}
                 type="button"
               >
-                {preset.label}
+                {inlineSaveButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                <span>{inlineSaveButton.label}</span>
               </button>
-            ))}
-          </div>
-          <div className={operationEventFormClassName(Boolean(recentDraftClearTick))}>
-            <FormTable>
-              <FormTableRow label="事件日期" required hint="事件会按发生日期进入广告表现和 AI 阶段判断。">
-                <input
-                  type="date"
-                  value={draft.eventDate}
-                  onChange={(event) => setDraft({ ...draft, eventDate: event.target.value })}
-                />
-              </FormTableRow>
-              <FormTableRow label="店铺" required hint="默认继承当前全局范围；需要跨店复盘时才手动调整。">
-                <input
-                  value={draft.storeName}
-                  onChange={(event) => setDraft({ ...draft, storeName: event.target.value })}
-                />
-              </FormTableRow>
-              <FormTableRow label="站点" required hint="当前计价防线固定按站点和 USD 解释。">
-                <input
-                  value={draft.marketplaceCode}
-                  onChange={(event) => setDraft({ ...draft, marketplaceCode: event.target.value })}
-                />
-              </FormTableRow>
-              <FormTableRow label="ASIN" hint="可选；留空表示全店/全范围事件。">
-                <input
-                  placeholder="可选；留空表示全店/全范围"
-                  value={draft.asin}
-                  onChange={(event) => setDraft({ ...draft, asin: event.target.value })}
-                />
-              </FormTableRow>
-              <FormTableRow label="广告活动" hint="可选；用于绑定具体 campaign，减少 AI 跨对象误判。">
-                <input
-                  placeholder="可选；用于绑定具体 campaign"
-                  value={draft.campaignName}
-                  onChange={(event) => setDraft({ ...draft, campaignName: event.target.value })}
-                />
-              </FormTableRow>
-              <FormTableRow label="广告组" hint="可选；用于绑定具体广告组或测词单元。">
-                <input
-                  placeholder="可选；用于绑定具体广告组"
-                  value={draft.adGroupName}
-                  onChange={(event) => setDraft({ ...draft, adGroupName: event.target.value })}
-                />
-              </FormTableRow>
-              <FormTableRow label="事件类型" required hint={selectedTypeHint}>
-                <select
-                  value={draft.eventType}
-                  onChange={(event) => setDraft({ ...draft, eventType: event.target.value })}
-                >
-                  {Object.entries(EVENT_TYPE_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              </FormTableRow>
-              <FormTableRow label="预期影响" required hint="用于提示 AI 对转化、流量和 ACOS 的解释方向。">
-                <select
-                  value={draft.impactExpectation}
-                  onChange={(event) => setDraft({ ...draft, impactExpectation: event.target.value })}
-                >
-                  {Object.entries(IMPACT_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              </FormTableRow>
-              <FormTableRow label="事件标题" required hint="写运营能一眼识别的事件名称。">
-                <input
-                  placeholder="例如：10% Coupon 开始、大促报名、主图更新"
-                  value={draft.title}
-                  onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-                />
-              </FormTableRow>
-              <FormTableRow label="证据路径" hint="可选：截图、活动页面或本地证明文件路径。">
-                <input
-                  placeholder="可选：截图、活动页面或本地证明文件路径"
-                  value={draft.evidencePath}
-                  onChange={(event) => setDraft({ ...draft, evidencePath: event.target.value })}
-                />
-              </FormTableRow>
-              <FormTableRow label="备注" hint="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景。">
-                <textarea
-                  placeholder="说明活动力度、价格、库存、Listing 调整点或需要 AI 注意的背景"
-                  value={draft.notes}
-                  onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
-                />
-              </FormTableRow>
-            </FormTable>
-          </div>
-          <div className="operation-hint">
-            <strong>{formatEventType(draft.eventType)}</strong>
-            <p>{selectedTypeHint}</p>
-          </div>
-          <div className="action-row">
-            <button
-              aria-busy={inlineSaveButton.ariaBusy}
-              className={inlineSaveButton.className}
-              disabled={inlineSaveButton.disabled}
-              onClick={saveEvent}
-              type="button"
-            >
-              {inlineSaveButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
-              <span>{inlineSaveButton.label}</span>
-            </button>
-            <button
-              aria-busy={refreshButton.ariaBusy}
-              className={refreshButton.className}
-              disabled={refreshButton.disabled}
-              onClick={() => {
-                void loadEvents();
-              }}
-              type="button"
-            >
-              {refreshButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
-              <span>{refreshButton.label}</span>
-            </button>
-          </div>
-          {message && <p className="ready-line">{message}</p>}
-          {error && <p className="blocked-line">{error}</p>}
-        </Panel>
-
-        <Panel title={OPERATION_EVENT_PAGE_COPY.timelinePanelTitle} tone={visibleEvents.length ? 'default' : 'warning'}>
-          {loading && <p className="muted-line">正在读取运营事件...</p>}
-          {!loading && eventsByDate.length === 0 && (
-            <p className="muted-line">当前范围还没有运营事件。若近期做过折扣、BD、价格、Listing 或库存动作，应先记录，否则 AI 只能看广告表格。</p>
-          )}
-          <div className="event-timeline">
-            {eventsByDate.map(([date, rows]) => (
-              <div className="event-day" key={date}>
-                <div className="event-day-date">{date}</div>
-                <div className="event-cards">
-                  {rows.map((event) => {
-                    const deleteButton = operationEventRowDeleteButtonView({ eventId: event.id, deletingEventId });
-                    const cardView = operationEventTimelineCardView(event, scope.asin, recentSavedEventId);
-                    return (
-                      <article
-                        aria-label={cardView.ariaLabel}
-                        className={cardView.className}
-                        key={event.id}
-                        tabIndex={0}
-                      >
-                        <div className="event-card-title">
-                          <strong>{event.title}</strong>
-                          <StatusPill tone="pending">{formatEventType(event.eventType)}</StatusPill>
-                          <StatusPill tone={cardView.scopeLabel === '全局' ? 'pending' : 'ready'}>
-                            {cardView.scopeLabel}
-                          </StatusPill>
-                        </div>
-                        <p>{formatImpact(event.impactExpectation)} / {formatEventScope(event)}</p>
-                        <div className="event-card-context">
-                          <StatusPill tone="ready">{cardView.contextLabel}</StatusPill>
-                          <span>{cardView.contextDetail}</span>
-                        </div>
-                        {event.notes && <p className="muted-line">{event.notes}</p>}
-                        {event.evidencePath && <p className="mono-line">{event.evidencePath}</p>}
-                        <div className="action-row">
-                          <button
-                            aria-busy={deleteButton.ariaBusy}
-                            className={deleteButton.className}
-                            disabled={deleteButton.disabled}
-                            onClick={() => {
-                              void deleteEvent(event.id);
-                            }}
-                            type="button"
-                          >
-                            {deleteButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
-                            <span>{deleteButton.label}</span>
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </div>
+              <button
+                aria-busy={refreshButton.ariaBusy}
+                className={refreshButton.className}
+                disabled={refreshButton.disabled}
+                onClick={() => {
+                  void loadEvents();
+                }}
+                type="button"
+              >
+                {refreshButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                <span>{refreshButton.label}</span>
+              </button>
+              <button className="secondary-button" disabled={saving} onClick={closeEventEditor} type="button">关闭</button>
+            </footer>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

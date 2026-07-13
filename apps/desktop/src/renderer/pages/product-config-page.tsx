@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
@@ -25,6 +25,7 @@ export const DEFAULT_COST = {
   referralFeeRate: 0.15,
   storageFee: 0,
   otherCost: 0,
+  currentPrice: 0,
   minPrice: 0,
   targetNetMargin: 0.15,
   targetAcos: 0.35,
@@ -166,6 +167,7 @@ const PRODUCT_COST_FIELD_LABELS: Record<ProductCostKey, string> = {
   referralFeeRate: '推荐费率',
   storageFee: '仓储费',
   otherCost: '其他成本',
+  currentPrice: '当前售价',
   minPrice: '最低可接受售价',
   targetNetMargin: '目标净利率',
   targetAcos: '目标 ACOS',
@@ -185,6 +187,7 @@ export function buildCostInputFromProduct(product: any): ProductCostInput {
     referralFeeRate: numberOrDefault('referralFeeRate'),
     storageFee: numberOrDefault('storageFee'),
     otherCost: numberOrDefault('otherCost'),
+    currentPrice: numberOrDefault('currentPrice'),
     minPrice: numberOrDefault('minPrice'),
     targetNetMargin: numberOrDefault('targetNetMargin'),
     targetAcos: numberOrDefault('targetAcos'),
@@ -199,12 +202,13 @@ export function productCostInputHint(cost: ProductCostInput): string {
     cost.fbaFee,
     cost.storageFee,
     cost.otherCost,
+    cost.currentPrice,
     cost.minPrice,
   ].some((value) => Number(value || 0) > 0);
   if (!hasRealCostOrPrice) {
-    return '当前成本和最低可接受售价仍像默认值；保存前请替换为真实采购、物流、FBA、售价和利润目标，避免 AI 阈值被模板数字误导。';
+    return '当前成本、售价和最低可接受售价仍像默认值；保存前请替换为真实采购、物流、FBA、售价和利润目标，避免 AI 阈值被模板数字误导。';
   }
-  return '已填写成本或最低可接受售价；保存前请确认这些数字来自当前产品。';
+  return '已填写成本、售价或最低可接受售价；保存前请确认这些数字来自当前产品。';
 }
 
 export function isProductConfigAutoSaveField(key: string): key is ProductCostKey {
@@ -408,9 +412,7 @@ export function ProductConfigPage() {
   const [bulkApplying, setBulkApplying] = useState(false);
   const [bulkFeedback, setBulkFeedback] = useState('');
   const [bulkFeedbackTone, setBulkFeedbackTone] = useState<ProductConfigMetricTone>('pending');
-  const [rowTargetAcosDrafts, setRowTargetAcosDrafts] = useState<Record<string, string>>({});
-  const [rowTargetAcosStatus, setRowTargetAcosStatus] = useState<Record<string, InlineSaveStatus>>({});
-  const [rowTargetAcosSavingKey, setRowTargetAcosSavingKey] = useState<string | null>(null);
+  const [editorMode, setEditorMode] = useState<'product' | 'target' | 'bulk' | null>(null);
   const nudgeTimerRef = useRef<number | null>(null);
   const [draft, setDraft] = useState({
     asin: scope.asin || '',
@@ -461,20 +463,6 @@ export function ProductConfigPage() {
     disabled: !draft.asin.trim(),
     label: '保存完整产品配置',
   });
-  const operationEventsButton = productConfigActionButtonView({
-    active: false,
-    baseClassName: 'secondary-button',
-    busyLabel: '处理中...',
-    groupBusy: saving,
-    label: '补充运营事件',
-  });
-  const adQuantButton = productConfigActionButtonView({
-    active: false,
-    baseClassName: 'secondary-button',
-    busyLabel: '处理中...',
-    groupBusy: saving,
-    label: '查看广告表现',
-  });
   const bulkApplyButton = productConfigActionButtonView({
     active: bulkApplying,
     baseClassName: 'primary-button',
@@ -482,12 +470,34 @@ export function ProductConfigPage() {
     disabled: !bulkApplyState.canApply,
     label: bulkApplyState.primaryActionLabel,
   });
-  const allCurrentProductsSelected = currentScopeProducts.length > 0
-    && currentScopeProducts.every((product) => selectedBulkKeySet.has(productConfigProductKey(product)));
   const loadedProduct = currentScopeProducts.find((product) => (
     String(product.asin || '').trim().toUpperCase() === draft.asin.trim().toUpperCase()
   ));
   const loadedProductRowKey = loadedProduct ? productConfigProductKey(loadedProduct) : '';
+  const editorBusy = saving || bulkApplying;
+
+  useEffect(() => {
+    if (!editorMode) return undefined;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || editorBusy) return;
+      event.preventDefault();
+      setEditorMode(null);
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [editorBusy, editorMode]);
+
+  function closeEditor() {
+    if (editorBusy) return;
+    setEditorMode(null);
+  }
+
+  function handleEditorKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Escape' || editorBusy) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setEditorMode(null);
+  }
 
   async function loadProducts() {
     setLoading(true);
@@ -520,13 +530,26 @@ export function ProductConfigPage() {
       const next = current.filter((key) => currentKeys.has(key));
       return next.length === current.length ? current : next;
     });
-    setRowTargetAcosDrafts((current) => Object.fromEntries(
-      Object.entries(current).filter(([key]) => currentKeys.has(key)),
-    ));
-    setRowTargetAcosStatus((current) => Object.fromEntries(
-      Object.entries(current).filter(([key]) => currentKeys.has(key)),
-    ));
   }, [currentScopeProducts]);
+
+  useEffect(() => {
+    if (editorMode) return;
+    if (Object.values(dirtyCostFields).some(Boolean)) return;
+    const targetAsin = String(scope.asin || draft.asin || '').trim().toUpperCase();
+    if (!targetAsin) return;
+    const product = currentScopeProducts.find((item) => String(item.asin || '').trim().toUpperCase() === targetAsin);
+    if (!product) return;
+    setDraft({
+      asin: product.asin || '',
+      parentAsin: product.parent_asin || '',
+      msku: product.msku || '',
+      sku: product.sku || '',
+      title: product.title || '',
+      productStage: product.product_stage || 'keyword_exploration',
+      status: product.status || 'active',
+    });
+    setCost(buildCostInputFromProduct(product));
+  }, [currentScopeProducts, dirtyCostFields, draft.asin, editorMode, scope.asin]);
 
   function loadProduct(product: any) {
     setDraft({
@@ -542,6 +565,18 @@ export function ProductConfigPage() {
     setDirtyCostFields({});
     setInlineSave({ status: 'idle' });
     setMessage(`已载入 ${product.asin}，成本配置如需复用请重新确认后保存。`);
+  }
+
+  function openProductEditor(product: any, mode: 'product' | 'target') {
+    if (product) loadProduct(product);
+    setEditorMode(mode);
+  }
+
+  function openBulkEditor() {
+    if (currentScopeProducts.length && bulkSelectedProductKeys.length === 0) {
+      setBulkSelectedProductKeys(currentScopeProducts.map(productConfigProductKey).filter(Boolean));
+    }
+    setEditorMode('bulk');
   }
 
   async function saveProductConfig(options: { source?: 'manual' | 'inline'; field?: ProductCostKey } = {}) {
@@ -601,73 +636,6 @@ export function ProductConfigPage() {
 
   function toggleAllBulkProducts(checked: boolean) {
     setBulkSelectedProductKeys(checked ? currentScopeProducts.map(productConfigProductKey).filter(Boolean) : []);
-  }
-
-  function updateRowTargetAcos(productKey: string, value: string) {
-    setRowTargetAcosDrafts((current) => ({ ...current, [productKey]: value }));
-    setRowTargetAcosStatus((current) => (
-      current[productKey] === 'saving' ? current : { ...current, [productKey]: 'idle' }
-    ));
-  }
-
-  function nudgeRowTargetAcos(product: any, direction: 'up' | 'down') {
-    const productKey = productConfigProductKey(product);
-    if (!productKey) return;
-    const current = Number(rowTargetAcosDrafts[productKey] ?? (Number(product.cost?.targetAcos || 0) * 100));
-    const next = Math.min(100, Math.max(0.01, (Number.isFinite(current) ? current : 0) + (direction === 'up' ? 0.5 : -0.5)));
-    updateRowTargetAcos(productKey, next.toFixed(2));
-  }
-
-  async function commitRowTargetAcos(product: any) {
-    const productKey = productConfigProductKey(product);
-    if (!productKey || rowTargetAcosSavingKey) return;
-    const draftValue = rowTargetAcosDrafts[productKey];
-    if (draftValue === undefined) return;
-    const targetAcos = normalizeProductConfigAcosPercent(draftValue);
-    if (targetAcos === null) {
-      setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'error' }));
-      return;
-    }
-    const currentTarget = Number(product.cost?.targetAcos || 0);
-    if (Math.abs(currentTarget - targetAcos) < 0.00005) {
-      setRowTargetAcosDrafts((current) => {
-        const next = { ...current };
-        delete next[productKey];
-        return next;
-      });
-      setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'idle' }));
-      return;
-    }
-    setRowTargetAcosSavingKey(productKey);
-    setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'saving' }));
-    setError('');
-    try {
-      const result = await (window as any).electronAPI?.saveProductConfig?.(
-        buildProductConfigBulkSaveInput(product, scope, targetAcos),
-      );
-      if (!result?.success) throw new Error(`产品 ${product.asin || '-'} 目标 ACOS 保存失败。`);
-      if (String(product.asin || '').toUpperCase() === draft.asin.trim().toUpperCase()) {
-        setCost((current) => ({ ...current, targetAcos }));
-      }
-      setRowTargetAcosDrafts((current) => {
-        const next = { ...current };
-        delete next[productKey];
-        return next;
-      });
-      setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'saved' }));
-      window.setTimeout(() => {
-        setRowTargetAcosStatus((current) => (
-          current[productKey] === 'saved' ? { ...current, [productKey]: 'idle' } : current
-        ));
-      }, 900);
-      window.dispatchEvent(new Event('business-ui:data-updated'));
-      await loadProducts();
-    } catch (caught) {
-      setRowTargetAcosStatus((current) => ({ ...current, [productKey]: 'error' }));
-      setError(toUserFacingError(caught, '保存行内目标 ACOS 失败。'));
-    } finally {
-      setRowTargetAcosSavingKey(null);
-    }
   }
 
   async function applyBulkTargetAcos() {
@@ -768,226 +736,33 @@ export function ProductConfigPage() {
       <PageHeader
         eyebrow="数据"
         title={PAGE_HEADER_TITLES.productConfig}
-        description="维护产品阶段、成本、利润目标和广告目标。AI 量化阈值不能只看固定 ACOS，必须结合产品所处阶段和利润空间。"
-        primaryTask="补齐产品阶段与利润约束"
-        nextAction={draft.asin ? '保存产品配置' : '填写 ASIN'}
+        description="查看当前范围内产品的成本、售价边界和目标 ACOS；编辑动作进入弹窗，不把表单常驻在工作台。"
         primaryAction={{
-          label: taskState.primaryActionLabel,
-          busy: taskState.primaryActionBusy,
-          busyLabel: taskState.primaryActionBusyLabel,
-          disabled: taskState.primaryActionDisabled,
-          onClick: save,
+          label: draft.asin ? '编辑当前产品目标' : '新建产品配置',
+          disabled: saving,
+          onClick: () => setEditorMode(draft.asin ? 'target' : 'product'),
         }}
       />
 
-      <div className="business-stack">
-        <div className="kpi-row product-config-prototype-status-grid" aria-label="成本目标状态">
-          <KpiCard
-            label="已配置产品"
-            value={currentScopeProducts.length}
-            detail={draft.asin ? `当前 ${draft.asin}` : '等待 ASIN'}
-            tone={currentScopeProducts.length ? 'ready' : 'pending'}
-          />
-          <KpiCard
-            label="入库指标"
-            value={`${importedRows} 行`}
-            detail="用于阶段和阈值判断"
-            tone={importedRows > 0 ? 'ready' : 'blocked'}
-          />
-          <KpiCard
-            label="目标 ACOS"
-            value={formatPercent(cost.targetAcos * 100)}
-            detail={`TACOS ${formatPercent(cost.targetTacos * 100)}`}
-            tone={cost.targetAcos > 0 ? 'ready' : 'warning'}
-          />
-          <KpiCard label="保存方式" value="即时保存" detail="失焦或回车生效" tone="pending" />
-        </div>
-
-        <Panel title="当前范围产品配置" tone="warning">
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line">
-                {scope.dateFrom} 至 {scope.dateTo} / {scope.storeName} / {scope.marketplaceCode} / USD
+      <div className="business-stack product-config-page-stack">
+        <Panel className="product-config-list-panel" title="产品目标列表" tone={currentScopeProducts.length ? 'default' : 'warning'}>
+          <div className="product-config-list-head">
+            <div className="product-config-list-facts" aria-label="当前产品目标概览">
+              <StatusPill tone={currentScopeProducts.length ? 'ready' : 'pending'}>{currentScopeProducts.length} 个产品</StatusPill>
+              <StatusPill tone={importedRows > 0 ? 'ready' : 'blocked'}>{importedRows} 行指标</StatusPill>
+              <StatusPill tone={draft.asin ? 'ready' : 'pending'}>{draft.asin ? `当前 ${draft.asin}` : '未选产品'}</StatusPill>
+            </div>
+            <details className="product-config-action-menu">
+              <summary>更多产品操作</summary>
+              <div className="product-config-list-actions">
+                <button className="secondary-button compact-button" disabled={!draft.asin || saving} onClick={() => setEditorMode('product')} type="button">编辑信息</button>
+                <button className="secondary-button compact-button" disabled={!currentScopeProducts.length || saving} onClick={openBulkEditor} type="button">批量设置</button>
+                <button className="primary-button compact-button" disabled={saving} onClick={() => setEditorMode('product')} type="button">新建产品</button>
               </div>
-              <p className="muted-line">
-                当前范围已有 {importedRows} 行广告指标。产品阶段和利润目标会进入 AI 阶段判断，帮助决定目标 ACOS、高风险 ACOS、无订单点击和最低花费阈值。
-              </p>
-            </div>
-            <StatusPill tone={currentScopeProducts.length ? 'ready' : 'pending'}>已配置产品 {currentScopeProducts.length}</StatusPill>
-          </div>
-          <div className="action-row product-config-prototype-actions">
-            <button className="secondary-button" disabled={saving} onClick={() => navigate('ad-quant')} type="button">
-              {taskState.secondaryActionLabel}
-            </button>
-            <button className="secondary-button" disabled={saving} onClick={() => navigate('operation-events')} type="button">
-              补充运营事件
-            </button>
-          </div>
-        </Panel>
-
-        <Panel title="产品基础信息">
-          <FormTable>
-            <FormTableRow label="ASIN" required hint="当前产品配置的主键；保存后进入 AI 阶段判断和动态阈值。">
-              <input value={draft.asin} onChange={(event) => setDraft({ ...draft, asin: event.target.value })} placeholder="例如 B0..." />
-            </FormTableRow>
-            <FormTableRow label="Parent ASIN" hint="可选；用于后续父子体汇总。">
-              <input value={draft.parentAsin} onChange={(event) => setDraft({ ...draft, parentAsin: event.target.value })} />
-            </FormTableRow>
-            <FormTableRow label="MSKU" hint="可选；便于运营识别本地 SKU。">
-              <input value={draft.msku} onChange={(event) => setDraft({ ...draft, msku: event.target.value })} />
-            </FormTableRow>
-            <FormTableRow label="SKU" hint="可选；与 ERP 或 Amazon 后台 SKU 对齐。">
-              <input value={draft.sku} onChange={(event) => setDraft({ ...draft, sku: event.target.value })} />
-            </FormTableRow>
-            <FormTableRow label="标题" hint="产品标题只用于运营识别，不自动改写 Listing。">
-              <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="产品标题，便于运营识别" />
-            </FormTableRow>
-            <FormTableRow label="产品阶段" required hint={selectedStage?.description || '不同阶段会影响 AI 对目标 ACOS、放量和降价的解释。'}>
-              <select value={draft.productStage} onChange={(event) => setDraft({ ...draft, productStage: event.target.value as ProductStage })}>
-                {STAGE_OPTIONS.map((item) => (
-                  <option key={item.value} value={item.value}>{item.label}</option>
-                ))}
-              </select>
-            </FormTableRow>
-            <FormTableRow label="状态" required hint="状态用于提示规则引擎是否应保守处理扩量、清货或暂停产品。">
-              <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
-                <option value="active">正常运营</option>
-                <option value="paused">暂停推广</option>
-                <option value="clearance">清货</option>
-                <option value="watch">观察</option>
-              </select>
-            </FormTableRow>
-          </FormTable>
-          <div className="operation-hint">
-            <strong>{stageLabel(draft.productStage)}</strong>
-            <p>{selectedStage?.description}</p>
-          </div>
-        </Panel>
-
-        <Panel title="利润与广告目标">
-          <p className={cost.purchaseCost || cost.firstLegCost || cost.fbaFee || cost.minPrice ? 'muted-line' : 'warning-line'}>
-            {costHint}
-          </p>
-          <FormTable>
-            <FormTableRow label="采购成本" hint="单位 USD；商品采购成本。">
-              {renderCostInput('purchaseCost')}
-            </FormTableRow>
-            <FormTableRow label="头程费用" hint="单位 USD；头程、清关或入仓前费用。">
-              {renderCostInput('firstLegCost')}
-            </FormTableRow>
-            <FormTableRow label="FBA 费用" hint="单位 USD；亚马逊履约费用。">
-              {renderCostInput('fbaFee')}
-            </FormTableRow>
-            <FormTableRow label="推荐费率" hint="小数格式，例如 0.15 表示 15%。">
-              {renderCostInput('referralFeeRate')}
-            </FormTableRow>
-            <FormTableRow label="仓储费" hint="单位 USD；可按单件或估算值维护。">
-              {renderCostInput('storageFee')}
-            </FormTableRow>
-            <FormTableRow label="其他成本" hint="单位 USD；包装、售后或额外成本。">
-              {renderCostInput('otherCost')}
-            </FormTableRow>
-            <FormTableRow label="最低可接受售价" hint="单位 USD；用于估算最低毛利空间；不是 Amazon 当前售价。">
-              {renderCostInput('minPrice')}
-            </FormTableRow>
-            <FormTableRow label="目标净利率" hint="小数格式，例如 0.15 表示 15%。">
-              {renderCostInput('targetNetMargin')}
-            </FormTableRow>
-            <FormTableRow label="目标 ACOS" hint="小数格式；AI 动态阈值会把它作为产品级广告目标。">
-              {renderCostInput('targetAcos')}
-            </FormTableRow>
-            <FormTableRow label="目标 TACOS" hint="小数格式；后续接入总销售后用于整体预算约束。">
-              {renderCostInput('targetTacos')}
-            </FormTableRow>
-          </FormTable>
-          <div className="context-summary-grid">
-            <div>
-              <span>估算固定成本</span>
-              <strong>{formatUsd(grossCost)}</strong>
-              <StatusPill tone={productConfigMetricTone('grossCost', grossCost)}>{grossCost > 0 ? '已填写' : '待填写'}</StatusPill>
-              <p>采购、头程、FBA、仓储和其他成本之和。</p>
-            </div>
-            <div>
-              <span>最低可接受售价毛利空间</span>
-              <strong>{formatPercent(minPriceMargin * 100)}</strong>
-              <StatusPill tone={productConfigMetricTone('margin', cost.minPrice > 0 ? minPriceMargin : Number.NaN)}>
-                {cost.minPrice > 0 ? '实时判定' : '待售价'}
-              </StatusPill>
-              <p>扣除固定成本和推荐费后的粗略空间，用于判断广告 ACOS 上限。</p>
-            </div>
-            <div>
-              <span>目标 ACOS</span>
-              <strong>{formatPercent(cost.targetAcos * 100)}</strong>
-              <StatusPill tone={productConfigMetricTone('targetAcos', cost.targetAcos)}>实时目标</StatusPill>
-              <p>AI 动态阈值会把它作为产品级目标，而不是只用全局默认值。</p>
-            </div>
-            <div>
-              <span>目标 TACOS</span>
-              <strong>{formatPercent(cost.targetTacos * 100)}</strong>
-              <StatusPill tone={productConfigMetricTone('targetTacos', cost.targetTacos)}>实时目标</StatusPill>
-              <p>后续接入总销售后可用于广告整体预算约束。</p>
-            </div>
-          </div>
-          <div className="action-row">
-            <button aria-busy={saveConfigButton.ariaBusy} className={saveConfigButton.className} disabled={saveConfigButton.disabled} onClick={save} type="button">
-              {saveConfigButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{saveConfigButton.label}</span>
-            </button>
-            <button aria-busy={operationEventsButton.ariaBusy} className={operationEventsButton.className} disabled={operationEventsButton.disabled} onClick={() => navigate('operation-events')} type="button">
-              {operationEventsButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{operationEventsButton.label}</span>
-            </button>
-            <button aria-busy={adQuantButton.ariaBusy} className={adQuantButton.className} disabled={adQuantButton.disabled} onClick={() => navigate('ad-quant')} type="button">
-              {adQuantButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{adQuantButton.label}</span>
-            </button>
+            </details>
           </div>
           {message && <p className="ready-line" role="status" aria-live="polite">{message}</p>}
           {error && <p className="blocked-line">{error}</p>}
-        </Panel>
-
-        <Panel title="当前范围产品列表" tone={currentScopeProducts.length ? 'default' : 'warning'}>
-          <div className="product-bulk-toolbar" aria-label="批量目标 ACOS 工具栏">
-            <div className="product-bulk-copy">
-              <strong>统一应用目标 ACOS</strong>
-              <p>只改本地产品目标阈值，不批准建议、不执行 Ads。勾选当前店铺/站点产品后批量保存。</p>
-            </div>
-            <div className={`product-bulk-selection product-bulk-selection-${bulkSelectionState.tone}`}>
-              <strong key={bulkSelectionState.countLabel} className={bulkSelectionState.countClassName}>
-                {bulkSelectionState.countLabel}
-              </strong>
-              <span
-                aria-hidden="true"
-                className="product-bulk-selection-progress"
-                style={bulkSelectionState.progressStyle}
-              />
-              <p className="product-bulk-selection-live" aria-live="polite">{bulkSelectionState.ariaStatus}</p>
-            </div>
-            <label className="product-bulk-input">
-              <span>目标 ACOS (%)</span>
-              <input
-                aria-label="批量目标 ACOS 百分比"
-                type="number"
-                min="0.01"
-                max="100"
-                step="0.5"
-                value={bulkTargetAcosPercent}
-                onChange={(event) => setBulkTargetAcosPercent(toNumber(event.target.value))}
-                disabled={bulkApplying}
-              />
-            </label>
-            <StatusPill tone={bulkApplyState.statusTone}>{bulkApplyState.statusMessage}</StatusPill>
-            <button
-              className={bulkApplyButton.className}
-              type="button"
-              disabled={bulkApplyButton.disabled}
-              aria-busy={bulkApplyButton.ariaBusy}
-              onClick={() => { void applyBulkTargetAcos(); }}
-            >
-              {bulkApplyButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{bulkApplyButton.label}</span>
-            </button>
-          </div>
           {bulkFeedback && (
             <p className={bulkFeedbackTone === 'blocked' ? 'blocked-line' : 'ready-line'} aria-live="polite">
               {bulkFeedback}
@@ -997,15 +772,6 @@ export function ProductConfigPage() {
             <table className="business-table">
               <thead>
                 <tr>
-                  <th className="table-checkbox-cell">
-                    <input
-                      aria-label="全选当前范围产品"
-                      type="checkbox"
-                      checked={allCurrentProductsSelected}
-                      disabled={!currentScopeProducts.length || bulkApplying}
-                      onChange={(event) => toggleAllBulkProducts(event.target.checked)}
-                    />
-                  </th>
                   <th>ASIN</th>
                   <th>标题</th>
                   <th>MSKU/SKU</th>
@@ -1021,62 +787,18 @@ export function ProductConfigPage() {
                 {currentScopeProducts.map((product) => {
                   const productKey = productConfigProductKey(product);
                   const rowLoaded = Boolean(productKey && productKey === loadedProductRowKey);
-                  const loadButton = productConfigLoadButtonView({ loaded: rowLoaded });
-                  const rowTargetAcos = productConfigRowTargetAcosView({
-                    asin: product.asin,
-                    disabled: bulkApplying || Boolean(rowTargetAcosSavingKey && rowTargetAcosSavingKey !== productKey),
-                    draftValue: rowTargetAcosDrafts[productKey],
-                    productTargetAcos: Number(product.cost?.targetAcos || 0),
-                    status: rowTargetAcosStatus[productKey] || 'idle',
-                  });
-                  const draftTargetAcos = rowTargetAcosDrafts[productKey] === undefined
-                    ? Number(product.cost?.targetAcos || 0)
-                    : normalizeProductConfigAcosPercent(rowTargetAcosDrafts[productKey]);
+                  const productTargetAcos = Number(product.cost?.targetAcos || 0);
                   const rowHealth = productConfigRowHealthView({
-                    targetAcos: draftTargetAcos ?? Number(product.cost?.targetAcos || 0),
+                    targetAcos: productTargetAcos,
                   });
                   return (
-                    <tr className={productConfigRowClass({ bulkSelected: selectedBulkKeySet.has(productKey), loaded: rowLoaded })} key={product.id}>
-                      <td className="table-checkbox-cell">
-                        <input
-                          aria-label={`选择产品 ${product.asin}`}
-                          type="checkbox"
-                          checked={selectedBulkKeySet.has(productKey)}
-                          disabled={bulkApplying}
-                          onChange={(event) => toggleBulkProduct(productKey, event.target.checked)}
-                        />
-                      </td>
+                    <tr className={productConfigRowClass({ bulkSelected: false, loaded: rowLoaded })} key={productKey || product.id || product.asin}>
                       <td>{product.asin}</td>
                       <td>{product.title || '-'}</td>
                       <td>{product.msku || '-'} / {product.sku || '-'}</td>
                       <td className="product-row-acos-cell">
-                        <div className={rowTargetAcos.className}>
-                          <div className="product-row-acos-input-wrap">
-                            <input
-                              aria-label={rowTargetAcos.ariaLabel}
-                              disabled={rowTargetAcos.disabled}
-                              max="100"
-                              min="0.01"
-                              onBlur={() => { void commitRowTargetAcos(product); }}
-                              onChange={(event) => updateRowTargetAcos(productKey, event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-                                  event.preventDefault();
-                                  nudgeRowTargetAcos(product, event.key === 'ArrowUp' ? 'up' : 'down');
-                                  return;
-                                }
-                                if (event.key === 'Enter') {
-                                  event.preventDefault();
-                                  void commitRowTargetAcos(product);
-                                }
-                              }}
-                              step="0.5"
-                              type="number"
-                              value={rowTargetAcos.inputValue}
-                            />
-                            <span aria-hidden="true">%</span>
-                          </div>
-                          <span className="product-row-acos-status" aria-live="polite">{rowTargetAcos.feedbackLabel}</span>
+                        <div className="product-row-target-readout">
+                          <strong>{productTargetAcos > 0 ? formatPercent(productTargetAcos * 100) : '-'}</strong>
                         </div>
                       </td>
                       <td className="product-row-health-cell">
@@ -1089,28 +811,381 @@ export function ProductConfigPage() {
                       <td>{product.status || '-'}</td>
                       <td>{product.updated_at || '-'}</td>
                       <td>
-                        <button
-                          aria-pressed={loadButton.ariaPressed}
-                          className={loadButton.className}
-                          onClick={() => loadProduct(product)}
-                          type="button"
-                        >
-                          {loadButton.label}
-                        </button>
+                        <div className="product-config-row-actions">
+                          <button
+                            aria-pressed={rowLoaded}
+                            className="secondary-button compact-button"
+                            onClick={() => openProductEditor(product, 'target')}
+                            type="button"
+                          >
+                            编辑
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
                 {!currentScopeProducts.length && (
                   <tr>
-                    <td colSpan={10}>{loading ? '加载中...' : '当前店铺/站点还没有产品配置。'}</td>
+                    <td colSpan={9}>{loading ? '加载中...' : '当前店铺/站点还没有产品配置。'}</td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
         </Panel>
+
+        <details className="folded-ops-panel product-config-scope-panel">
+          <summary>
+            <span>范围口径与后续影响</span>
+            <StatusPill tone={currentScopeProducts.length ? 'ready' : 'pending'}>{scope.storeName} / {scope.marketplaceCode}</StatusPill>
+          </summary>
+          <div className="folded-ops-body">
+            <div className="context-summary-grid compact-summary">
+              <div>
+                <span>工作范围</span>
+                <strong>{scope.dateFrom} 至 {scope.dateTo}</strong>
+                <p>{scope.storeName} / {scope.marketplaceCode} / USD；全局范围已经在顶部栏维护，本页不再重复放大。</p>
+              </div>
+              <div>
+                <span>产品目标用途</span>
+                <strong>AI 阈值和广告表现解释</strong>
+                <p>产品阶段、成本、最低可接受售价、目标 ACOS/TACOS 会影响量化诊断。</p>
+              </div>
+              <div>
+                <span>安全边界</span>
+                <strong>只保存本地目标</strong>
+                <p>本页不会批准建议，不会写入 Amazon Ads。</p>
+              </div>
+            </div>
+            <div className="action-row product-config-prototype-actions">
+              <button className="secondary-button" disabled={saving} onClick={() => navigate('ad-quant')} type="button">
+                {taskState.secondaryActionLabel}
+              </button>
+              <button className="secondary-button" disabled={saving} onClick={() => navigate('operation-events')} type="button">
+                补充运营事件
+              </button>
+            </div>
+          </div>
+        </details>
       </div>
+
+      {editorMode && (
+        <div className="product-config-modal-backdrop" role="presentation">
+          <section
+            aria-labelledby="product-config-editor-title"
+            aria-modal="true"
+            className={`product-config-modal ${editorMode === 'target' ? 'product-config-target-panel' : editorMode === 'bulk' ? 'product-config-bulk-panel' : 'product-config-basic-panel'}`}
+            onKeyDown={handleEditorKeyDown}
+            role="dialog"
+          >
+            <div className="product-config-modal-header">
+              <div>
+                <span>{editorMode === 'bulk' ? bulkSelectionState.countLabel : draft.asin || '新产品'}</span>
+                <h2 id="product-config-editor-title">
+                  {editorMode === 'target' ? '编辑利润与广告目标' : editorMode === 'bulk' ? '批量设置目标 ACOS' : '编辑产品基础信息'}
+                </h2>
+              </div>
+              <button className="secondary-button compact-button" disabled={editorBusy} onClick={closeEditor} type="button">关闭</button>
+            </div>
+
+            {editorMode === 'product' ? (
+              <div className="product-config-modal-body">
+                <FormTable>
+                  <FormTableRow label="ASIN" required hint="当前产品配置的主键；保存后进入 AI 阶段判断和动态阈值。">
+                    <input value={draft.asin} onChange={(event) => setDraft({ ...draft, asin: event.target.value })} placeholder="例如 B0..." />
+                  </FormTableRow>
+                  <FormTableRow label="Parent ASIN" hint="可选；用于后续父子体汇总。">
+                    <input value={draft.parentAsin} onChange={(event) => setDraft({ ...draft, parentAsin: event.target.value })} />
+                  </FormTableRow>
+                  <FormTableRow label="MSKU" hint="可选；便于运营识别本地 SKU。">
+                    <input value={draft.msku} onChange={(event) => setDraft({ ...draft, msku: event.target.value })} />
+                  </FormTableRow>
+                  <FormTableRow label="SKU" hint="可选；与 ERP 或 Amazon 后台 SKU 对齐。">
+                    <input value={draft.sku} onChange={(event) => setDraft({ ...draft, sku: event.target.value })} />
+                  </FormTableRow>
+                  <FormTableRow label="标题" hint="产品标题只用于运营识别，不自动改写 Listing。">
+                    <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="产品标题，便于运营识别" />
+                  </FormTableRow>
+                  <FormTableRow label="产品阶段" required hint={selectedStage?.description || '不同阶段会影响 AI 对目标 ACOS、放量和降价的解释。'}>
+                    <select value={draft.productStage} onChange={(event) => setDraft({ ...draft, productStage: event.target.value as ProductStage })}>
+                      {STAGE_OPTIONS.map((item) => (
+                        <option key={item.value} value={item.value}>{item.label}</option>
+                      ))}
+                    </select>
+                  </FormTableRow>
+                  <FormTableRow label="状态" required hint="状态用于提示规则引擎是否应保守处理扩量、清货或暂停产品。">
+                    <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
+                      <option value="active">正常运营</option>
+                      <option value="paused">暂停推广</option>
+                      <option value="clearance">清货</option>
+                      <option value="watch">观察</option>
+                    </select>
+                  </FormTableRow>
+                </FormTable>
+                <div className="operation-hint">
+                  <strong>{stageLabel(draft.productStage)}</strong>
+                  <p>{selectedStage?.description}</p>
+                </div>
+              </div>
+            ) : editorMode === 'bulk' ? (
+              <div className="product-config-modal-body">
+                <div className="product-bulk-toolbar product-bulk-toolbar-modal" aria-label="批量目标 ACOS 工具栏">
+                  <div className="product-bulk-copy">
+                    <strong>统一应用目标 ACOS</strong>
+                    <p>只改本地产品目标，不批准优化建议，不执行 Amazon Ads。</p>
+                  </div>
+                  <div className={`product-bulk-selection product-bulk-selection-${bulkSelectionState.tone}`}>
+                    <strong key={bulkSelectionState.countLabel} className={bulkSelectionState.countClassName}>
+                      {bulkSelectionState.countLabel}
+                    </strong>
+                    <span
+                      aria-hidden="true"
+                      className="product-bulk-selection-progress"
+                      style={bulkSelectionState.progressStyle}
+                    />
+                    <p className="product-bulk-selection-live" aria-live="polite">{bulkSelectionState.ariaStatus}</p>
+                  </div>
+                  <label className="product-bulk-input">
+                    <span>目标 ACOS (%)</span>
+                    <input
+                      aria-label="批量目标 ACOS 百分比"
+                      type="number"
+                      min="0.01"
+                      max="100"
+                      step="0.5"
+                      value={bulkTargetAcosPercent}
+                      onChange={(event) => setBulkTargetAcosPercent(toNumber(event.target.value))}
+                      disabled={bulkApplying}
+                    />
+                  </label>
+                  <StatusPill tone={bulkApplyState.statusTone}>{bulkApplyState.statusMessage}</StatusPill>
+                </div>
+                <div className="product-config-bulk-picker" aria-label="批量目标 ACOS 产品选择">
+                  <div className="product-config-bulk-picker-head">
+                    <div>
+                      <strong>选择要批量更新的产品</strong>
+                      <p>选择只在本弹窗内维护；主表保持只读，避免误以为勾选就已经保存。</p>
+                    </div>
+                    <div className="table-action-row">
+                      <button
+                        className="secondary-button compact-button"
+                        disabled={!currentScopeProducts.length || bulkApplying}
+                        onClick={() => toggleAllBulkProducts(true)}
+                        type="button"
+                      >
+                        全选
+                      </button>
+                      <button
+                        className="secondary-button compact-button"
+                        disabled={!currentScopeProducts.length || bulkApplying || !selectedBulkProducts.length}
+                        onClick={() => toggleAllBulkProducts(false)}
+                        type="button"
+                      >
+                        清空
+                      </button>
+                    </div>
+                  </div>
+                  <div className="product-config-bulk-row-grid">
+                    {currentScopeProducts.map((product) => {
+                      const productKey = productConfigProductKey(product);
+                      const checked = selectedBulkKeySet.has(productKey);
+                      return (
+                        <label className={checked ? 'product-config-bulk-row product-config-bulk-row-selected' : 'product-config-bulk-row'} key={productKey || product.id || product.asin}>
+                          <input
+                            aria-label={`批量选择产品 ${product.asin}`}
+                            type="checkbox"
+                            checked={checked}
+                            disabled={bulkApplying}
+                            onChange={(event) => toggleBulkProduct(productKey, event.target.checked)}
+                          />
+                          <span>{product.asin}</span>
+                          <strong>{product.title || product.asin}</strong>
+                          <small>当前目标 ACOS {formatPercent(Number(product.cost?.targetAcos || 0) * 100)}</small>
+                        </label>
+                      );
+                    })}
+                    {!currentScopeProducts.length && (
+                      <p className="warning-line">当前范围暂无产品，不能批量设置目标 ACOS。</p>
+                    )}
+                  </div>
+                </div>
+                {selectedBulkProducts.length ? (
+                  <div className="context-summary-grid product-config-bulk-preview">
+                    <div>
+                      <span>将要更新</span>
+                      <strong>{selectedBulkProducts.length} 个产品</strong>
+                      <p>{selectedBulkProducts.map((product) => product.asin).join('、')}</p>
+                    </div>
+                    <div>
+                      <span>目标 ACOS</span>
+                      <strong>{bulkApplyState.targetAcosLabel}</strong>
+                      <p>{bulkApplyState.statusMessage}</p>
+                    </div>
+                    <div>
+                      <span>安全边界</span>
+                      <strong>只保存本地目标</strong>
+                      <p>不会批准建议，不会写入 Amazon Ads。</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="warning-line">请先在本弹窗内选择需要批量设置的产品。</p>
+                )}
+              </div>
+            ) : (
+              <div className="product-config-modal-body">
+                <div className="product-target-editor">
+                  <p className={cost.purchaseCost || cost.firstLegCost || cost.fbaFee || cost.minPrice ? 'muted-line product-target-editor-note' : 'warning-line product-target-editor-note'}>
+                    {costHint}
+                  </p>
+                  <div className="context-summary-grid product-target-summary-grid">
+                  <div>
+                    <span>估算固定成本</span>
+                    <strong>{formatUsd(grossCost)}</strong>
+                    <StatusPill tone={productConfigMetricTone('grossCost', grossCost)}>{grossCost > 0 ? '已填写' : '待填写'}</StatusPill>
+                  </div>
+                  <div>
+                    <span>最低价毛利空间</span>
+                    <strong>{formatPercent(minPriceMargin * 100)}</strong>
+                    <StatusPill tone={productConfigMetricTone('margin', cost.minPrice > 0 ? minPriceMargin : Number.NaN)}>
+                      {cost.minPrice > 0 ? '实时判定' : '待售价'}
+                    </StatusPill>
+                  </div>
+                  <div>
+                    <span>目标 ACOS</span>
+                    <strong>{formatPercent(cost.targetAcos * 100)}</strong>
+                    <StatusPill tone={productConfigMetricTone('targetAcos', cost.targetAcos)}>实时目标</StatusPill>
+                  </div>
+                  <div>
+                    <span>目标 TACOS</span>
+                    <strong>{formatPercent(cost.targetTacos * 100)}</strong>
+                    <StatusPill tone={productConfigMetricTone('targetTacos', cost.targetTacos)}>实时目标</StatusPill>
+                  </div>
+                </div>
+                  <div className="product-target-field-groups">
+                    <section className="product-target-field-group" aria-labelledby="product-target-cost-heading">
+                      <header>
+                        <span>01</span>
+                        <div>
+                          <h3 id="product-target-cost-heading">成本构成</h3>
+                          <p>只维护产品本地成本口径，用于毛利和最低价判断。</p>
+                        </div>
+                      </header>
+                      <div className="product-target-field-grid">
+                        <label className="product-target-field-cell">
+                          <span>采购成本</span>
+                          {renderCostInput('purchaseCost')}
+                          <small>商品采购成本，单位 USD。</small>
+                        </label>
+                        <label className="product-target-field-cell">
+                          <span>头程费用</span>
+                          {renderCostInput('firstLegCost')}
+                          <small>头程、清关或入仓前费用。</small>
+                        </label>
+                        <label className="product-target-field-cell">
+                          <span>FBA 费用</span>
+                          {renderCostInput('fbaFee')}
+                          <small>亚马逊履约费用。</small>
+                        </label>
+                        <label className="product-target-field-cell">
+                          <span>推荐费率</span>
+                          {renderCostInput('referralFeeRate')}
+                          <small>小数格式，例如 0.15 表示 15%。</small>
+                        </label>
+                        <label className="product-target-field-cell">
+                          <span>仓储费</span>
+                          {renderCostInput('storageFee')}
+                          <small>可按单件或估算值维护。</small>
+                        </label>
+                        <label className="product-target-field-cell">
+                          <span>其他成本</span>
+                          {renderCostInput('otherCost')}
+                          <small>包装、售后或额外成本。</small>
+                        </label>
+                      </div>
+                    </section>
+
+                    <section className="product-target-field-group" aria-labelledby="product-target-price-heading">
+                      <header>
+                        <span>02</span>
+                        <div>
+                          <h3 id="product-target-price-heading">售价与利润</h3>
+                          <p>这里不改 Amazon 售价，只给 AI 和运营判断价格边界。</p>
+                        </div>
+                      </header>
+                      <div className="product-target-field-grid product-target-field-grid-compact">
+                        <label className="product-target-field-cell">
+                          <span>当前售价</span>
+                          {renderCostInput('currentPrice')}
+                          <small>运营判断当前价格口径。</small>
+                        </label>
+                        <label className="product-target-field-cell">
+                          <span>最低可接受售价</span>
+                          {renderCostInput('minPrice')}
+                          <small>用于估算最低毛利空间。</small>
+                        </label>
+                        <label className="product-target-field-cell">
+                          <span>目标净利率</span>
+                          {renderCostInput('targetNetMargin')}
+                          <small>小数格式，例如 0.15。</small>
+                        </label>
+                      </div>
+                    </section>
+
+                    <section className="product-target-field-group" aria-labelledby="product-target-ad-heading">
+                      <header>
+                        <span>03</span>
+                        <div>
+                          <h3 id="product-target-ad-heading">广告目标</h3>
+                          <p>这些目标会参与广告表现解释和建议阈值，不会直接执行广告。</p>
+                        </div>
+                      </header>
+                      <div className="product-target-field-grid product-target-field-grid-compact">
+                        <label className="product-target-field-cell">
+                          <span>目标 ACOS</span>
+                          {renderCostInput('targetAcos')}
+                          <small>产品级广告目标，小数格式。</small>
+                        </label>
+                        <label className="product-target-field-cell">
+                          <span>目标 TACOS</span>
+                          {renderCostInput('targetTacos')}
+                          <small>总销售接入后用于整体预算约束。</small>
+                        </label>
+                      </div>
+                    </section>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="product-config-modal-footer">
+              {editorMode === 'bulk' ? (
+                <>
+                  <button
+                    className={bulkApplyButton.className}
+                    type="button"
+                    disabled={bulkApplyButton.disabled}
+                    aria-busy={bulkApplyButton.ariaBusy}
+                    onClick={() => { void applyBulkTargetAcos(); }}
+                  >
+                    {bulkApplyButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                    <span>{bulkApplyButton.label}</span>
+                  </button>
+                  <button className="secondary-button" disabled={bulkApplying} onClick={closeEditor} type="button">关闭</button>
+                </>
+              ) : (
+                <>
+                  <button aria-busy={saveConfigButton.ariaBusy} className={saveConfigButton.className} disabled={saveConfigButton.disabled} onClick={save} type="button">
+                    {saveConfigButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                    <span>{saveConfigButton.label}</span>
+                  </button>
+                  <button className="secondary-button" disabled={editorBusy} onClick={closeEditor} type="button">关闭</button>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

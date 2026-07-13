@@ -305,12 +305,26 @@ describe('task-first data page helpers', () => {
   });
 
   it('shortens 8-report chooser action labels without changing action modes', () => {
-    expect(collectionActionButtonLabel('download-existing')).toBe('下载已创建');
-    expect(collectionActionButtonLabel('recreate-selected')).toBe('重新获取已选');
-    expect(collectionActionButtonLabel('recreate-full')).toBe('重新获取完整 8 类');
-    expect(collectionActionButtonLabel('import')).toBe('导入本地');
+    expect(collectionActionButtonLabel('download-existing')).toBe('下载已创建报表');
+    expect(collectionActionButtonLabel('recreate-selected')).toBe('重新获取已选报表');
+    expect(collectionActionButtonLabel('recreate-full')).toBe('重新获取完整 8 类报表');
+    expect(collectionActionButtonLabel('import')).toBe('导入本地报表');
     expect(collectionActionButtonDetail('recreate-full')).toBe('创建、下载并导入完整 8 类');
     expect(collectionActionButtonDetail('import')).toBe('选择本地 xlsx/xls/csv');
+  });
+
+  it('keeps secondary report actions folded so the first screen has one primary collection action', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('更多报表操作');
+    expect(source).toContain('data-collection-secondary-actions');
+    expect(source).toContain('data-collection-secondary-action-row');
+    expect(source).not.toContain('8 类报表选择与进度');
+    expect(source).not.toContain('collection-action-grid');
+    expect(source.indexOf('aria-busy={recreateFullButton.ariaBusy}')).toBeLessThan(source.indexOf('data-collection-secondary-actions'));
+    expect(css).toContain('.data-collection-secondary-actions');
+    expect(css).toContain('.data-collection-secondary-action-row');
   });
 
   it('gives collection action buttons an explicit busy contract while a report action runs', () => {
@@ -332,7 +346,7 @@ describe('task-first data page helpers', () => {
     expect(running.className).toContain('collection-action-button-running');
     expect(running.className).toContain('button-loading');
 
-    expect(locked.label).toBe('下载已创建');
+    expect(locked.label).toBe('下载已创建报表');
     expect(locked.disabled).toBe(true);
     expect(locked.ariaBusy).toBe(false);
     expect(locked.className).not.toContain('collection-action-button-running');
@@ -390,6 +404,22 @@ describe('task-first data page helpers', () => {
     expect(locked.ariaBusy).toBeUndefined();
     expect(locked.showSpinner).toBe(false);
     expect(locked.className).not.toContain('button-loading');
+  });
+
+  it('keeps per-file path operations behind a detail dialog instead of crowding the report table', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('selectedReportFile');
+    expect(source).toContain('collection-file-modal');
+    expect(source).toContain('查看${file.displayName}文件详情');
+    expect(source).toContain('<th>文件</th>');
+    expect(source).not.toContain('<th>文件路径</th>');
+    expect(source).not.toContain('<th>文件指纹</th>');
+    expect(source).not.toContain('<td><code>{file.filePath}</code></td>');
+    expect(source).not.toContain('<td><code>{shortHash(file.fileHash)}</code></td>');
+    expect(css).toContain('.collection-file-detail-grid');
+    expect(css).toContain('.collection-file-path-block');
   });
 
   it('gives report checkbox selection an explicit count and progress response', async () => {

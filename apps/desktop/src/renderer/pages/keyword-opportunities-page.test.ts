@@ -104,19 +104,28 @@ describe('keyword opportunity filter micro-feedback', () => {
     expect(styles).toContain('transform: translateY(4px)');
   });
 
-  it('uses structured filter cells instead of bare filter labels', () => {
+  it('keeps structured filter cells inside a modal instead of the main workbench', () => {
     const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
-    const filterStart = source.indexOf('<div className="filter-grid">');
-    const feedbackStart = source.indexOf('<p className="keyword-opportunity-filter-feedback"', filterStart);
-    const filterMarkup = source.slice(filterStart, feedbackStart);
+    const modalStart = source.indexOf('className="product-config-modal keyword-filter-modal"');
+    const modalEnd = source.indexOf('<footer className="product-config-modal-footer">', modalStart);
+    const filterMarkup = source.slice(modalStart, modalEnd);
 
+    expect(source).toContain('filterModalOpen');
+    expect(source).toContain('筛选条件');
+    expect(source).not.toContain('keyword-filter-details');
+    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain('onKeyDown={handleFilterModalKeyDown}');
+    expect(source).toContain('onClick={closeFilterModal}');
     expect(filterMarkup).toContain('<KeywordOpportunityFilterCell');
     expect(filterMarkup).not.toMatch(/<label>\s*(ASIN|Campaign|Ad Group|覆盖状态|最低点击|最低花费 USD|机会等级)/);
     expect(styles).toContain('.keyword-filter-cell');
     expect(styles).toContain('.keyword-filter-cell:focus-within');
     expect(styles).toContain('.keyword-filter-cell-hint');
+    expect(styles).toContain('.keyword-filter-modal');
+    expect(styles).toContain('.keyword-filter-actions');
   });
 });
 
@@ -155,13 +164,26 @@ describe('keywordOpportunityActionButtonView', () => {
 });
 
 describe('Phase 5 keyword opportunity user task surface', () => {
-  it('frames keyword opportunities as Listing handoff decisions with evidence kept visible', () => {
+  it('frames keyword opportunities as a table-first Listing handoff workbench with evidence folded', () => {
     const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
     expect(source).toContain('复核可带入 Listing 的关键词机会');
-    expect(source).toContain('关键词机会与 Listing 覆盖关系');
-    expect(source).toContain('机会复核摘要');
-    expect(source).toContain('可带入 Listing 的机会表');
+    expect(source).toContain('关键词机会池');
+    expect(source).toContain('keyword-opportunity-summary-grid');
+    expect(source).toContain('keyword-opportunity-blocker-strip');
+    expect(source).not.toContain('KpiCard');
+    expect(source).toContain('selectedRowKey={selectedOpportunityKey}');
+    expect(source).toContain('onRowSelect={(row) => setSelectedOpportunityKey(rowKey(row))}');
+    expect(source).toContain('keyword-opportunity-selection-bar');
+    expect(source).toContain('keyword-opportunity-detail-modal');
+    expect(source).not.toContain('keyword-opportunity-selected-summary');
+    expect(source).not.toContain('查看处理');
+    expect(source).not.toContain('收起处理');
+    expect(source).toContain('机会口径、来源和复核摘要');
+    expect(source).toContain('folded-ops-panel');
     expect(source).toContain('审计文件、截图和 DOM 证据不算广告数据');
+    expect(styles).toContain('.keyword-opportunity-page-stack .virtual-table-row-selected');
+    expect(styles).toContain('inset 4px 0 0 var(--color-accent)');
   });
 });

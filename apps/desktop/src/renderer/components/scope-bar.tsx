@@ -79,6 +79,29 @@ export function buildScopeWarningSummary(input: {
   return null;
 }
 
+export function buildScopeCompactRangeLabel(input: {
+  dateFrom?: string;
+  dateTo?: string;
+}): string {
+  const dateFrom = input.dateFrom?.trim();
+  const dateTo = input.dateTo?.trim();
+  if (dateFrom && dateTo) return `${dateFrom} ~ ${dateTo}`;
+  if (dateFrom || dateTo) return dateFrom || dateTo || '日期待设置';
+  return '日期待设置';
+}
+
+export function buildScopeCompactContextLabel(input: {
+  storeName?: string;
+  marketplaceCode?: string;
+  asin?: string;
+}): string {
+  return [
+    input.storeName?.trim() || '未选店铺',
+    input.marketplaceCode?.trim() || '未选站点',
+    input.asin?.trim() || '全部产品',
+  ].join(' / ');
+}
+
 export function scopeFieldFeedbackLabel(field: ScopeFieldFeedbackKey): string {
   const labels: Record<ScopeFieldFeedbackKey, string> = {
     dateFrom: '开始日期已记录为待保存范围',
@@ -132,6 +155,7 @@ export function ScopeBar() {
   const [products, setProducts] = useState<ProductLabelRow[]>([]);
   const [confirmedField, setConfirmedField] = useState<{ field: ScopeFieldFeedbackKey; tick: number } | null>(null);
   const [scopeEditorSaving, setScopeEditorSaving] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const selectedBatch = useMemo(
     () => batchOptions.find((batch) => batch.id === scope.batchId),
@@ -271,11 +295,24 @@ export function ScopeBar() {
     const openEditor = () => {
       setDraft(scope);
       setEditError('');
+      setDetailsOpen(false);
       setEditing(true);
     };
     window.addEventListener('amazon-ai-ops:open-scope-editor', openEditor);
     return () => window.removeEventListener('amazon-ai-ops:open-scope-editor', openEditor);
   }, [scope]);
+
+  useEffect(() => {
+    if (!detailsOpen && !editing) return;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || scopeEditorSaving) return;
+      setDetailsOpen(false);
+      setEditing(false);
+      setEditError('');
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [detailsOpen, editing, scopeEditorSaving]);
 
   useEffect(() => {
     let cancelled = false;
@@ -369,67 +406,100 @@ export function ScopeBar() {
       {confirmedFieldName === field ? scopeFieldFeedbackLabel(field) : '\u00A0'}
     </span>
   );
+  const renderBatchSelect = () => (
+    <label className={scopeFieldFeedbackClass('batchId', confirmedFieldName, 'scope-title-action-field')}>
+      <span>数据批次</span>
+      <select
+        aria-label="数据批次来源"
+        value={batchSelectValue}
+        onChange={(event) => {
+          markFieldConfirmed('batchId');
+          const value = event.target.value;
+          if (value === AUTO_BATCH_VALUE) {
+            applyScopePatch({ batchId: undefined });
+            return;
+          }
+          if (value === MANUAL_BATCH_VALUE) {
+            setDraft(scope);
+            setEditing(true);
+            return;
+          }
+          applyScopePatch({ batchId: value });
+        }}
+      >
+        <option value={AUTO_BATCH_VALUE}>自动批次</option>
+        {batchOptions.map((batch) => (
+          <option key={batch.id} value={batch.id}>{formatBatchOption(batch)}</option>
+        ))}
+        {scope.batchId && !selectedBatch && (
+          <option value={MANUAL_BATCH_VALUE}>手动批次：{scope.batchId}</option>
+        )}
+        <option value={MANUAL_BATCH_VALUE}>手动输入批次 ID</option>
+      </select>
+      {renderFieldConfirmation('batchId')}
+    </label>
+  );
 
-  const scopeLine = `${scope.dateFrom} ~ ${scope.dateTo} / ${scope.storeName || '未选店铺'} / ${scope.marketplaceCode || '未选站点'} / USD${scope.asin?.trim() ? ` / ASIN ${scope.asin.trim()}` : ' / 全部产品'}`;
+  const scopeRangeLabel = buildScopeCompactRangeLabel(scope);
+  const scopeContextLabel = buildScopeCompactContextLabel(scope);
+  const scopeFullLine = `${scopeRangeLabel} / ${scope.storeName || '未选店铺'} / ${scope.marketplaceCode || '未选站点'} / USD${scope.asin?.trim() ? ` / ASIN ${scope.asin.trim()}` : ' / 全部产品'}`;
+  const topbarFacts = summaryFacts.filter((fact) => fact.label === '真实报表' || fact.label === '入库指标');
 
   return (
     <section className="scope-bar" aria-label="当前工作范围">
       <div className="scope-title-row">
-        <div className="scope-title-main">
-          <span>当前工作范围：</span>
-          <strong>{scopeLine}</strong>
-        </div>
+        <button
+          aria-expanded={detailsOpen}
+          className="scope-title-main scope-compact-trigger"
+          onClick={() => {
+            setEditing(false);
+            setDetailsOpen((value) => !value);
+          }}
+          title={scopeFullLine}
+          type="button"
+        >
+          <span>范围</span>
+          <strong>{scopeRangeLabel}</strong>
+          <em>{scopeContextLabel}</em>
+          {warningSummary && (
+            <span className="scope-visible-warning" role="status" title={warningSummary}>
+              范围待处理
+            </span>
+          )}
+        </button>
         <div className="scope-title-actions">
-          <div className={scopeFieldFeedbackClass('batchId', confirmedFieldName, 'scope-title-action-field')}>
-            <select
-              aria-label="数据批次来源"
-              value={batchSelectValue}
-              onChange={(event) => {
-                markFieldConfirmed('batchId');
-                const value = event.target.value;
-                if (value === AUTO_BATCH_VALUE) {
-                  applyScopePatch({ batchId: undefined });
-                  return;
-                }
-                if (value === MANUAL_BATCH_VALUE) {
-                  setDraft(scope);
-                  setEditing(true);
-                  return;
-                }
-                applyScopePatch({ batchId: value });
-              }}
-            >
-              <option value={AUTO_BATCH_VALUE}>自动：使用当前范围最新完整批次</option>
-              {batchOptions.map((batch) => (
-                <option key={batch.id} value={batch.id}>{formatBatchOption(batch)}</option>
-              ))}
-              {scope.batchId && !selectedBatch && (
-                <option value={MANUAL_BATCH_VALUE}>手动批次：{scope.batchId}</option>
-              )}
-              <option value={MANUAL_BATCH_VALUE}>手动输入批次 ID</option>
-            </select>
-            {renderFieldConfirmation('batchId')}
-          </div>
-          <button type="button" className="secondary-button compact-button" onClick={() => { setDraft(scope); setEditError(''); setEditing((value) => !value); }}>
-            编辑范围
+          {topbarFacts.map((fact) => (
+            <span className="scope-topbar-fact" key={fact.label} title={fact.title || fact.value}>
+              <b>{fact.label}</b>
+              {fact.value}
+            </span>
+          ))}
+          <button
+            type="button"
+            aria-expanded={editing}
+            className="secondary-button compact-button scope-settings-button"
+            onClick={() => {
+              setDraft(scope);
+              setEditError('');
+              setDetailsOpen(false);
+              setEditing((value) => !value);
+            }}
+          >
+            范围设置
           </button>
         </div>
       </div>
-      <div className="scope-compact-facts">
-        {summaryFacts.map((fact) => (
-          <span className="scope-fact" key={fact.label} title={fact.title}>
-            <b>{fact.label}</b>
-            {fact.value}
-          </span>
-        ))}
-      </div>
-      {warningSummary && (
-        <div className="scope-visible-warning" role="status">
-          {warningSummary}
-        </div>
-      )}
+      <div className="scope-compact-facts" aria-hidden="true" />
+      {detailsOpen && (
       <div className="scope-details-panel">
-        <ProgressiveDetails title="范围与批次说明">
+        <ProgressiveDetails title="范围与批次说明" defaultOpen>
+          <div className="scope-details-facts" aria-label="当前范围详情">
+            <span><b>日期</b>{scopeRangeLabel}</span>
+            <span><b>店铺/站点</b>{scope.storeName || '未选店铺'} / {scope.marketplaceCode || '未选站点'}</span>
+            <span><b>币种</b>USD</span>
+            <span><b>产品</b>{productLabel}</span>
+            <span><b>批次</b>{activeBatch?.id || scope.batchId || '自动匹配'}</span>
+          </div>
           <p>这是当前工作范围。数据采集、导入校验、广告表现、优化建议、审批中心、结果核对、关键词机会和 Listing 草案都会按这里读取。</p>
           <p className="scope-helper">{scopeHelperText}</p>
           {(scope.batchId || batchOptionsError || scopePersistError) && (
@@ -447,8 +517,18 @@ export function ScopeBar() {
           )}
         </ProgressiveDetails>
       </div>
+      )}
       {editing && (
         <div className="scope-editor">
+          <div className="scope-editor-summary" aria-label="当前范围摘要">
+            {summaryFacts.map((fact) => (
+              <span className="scope-fact" key={fact.label} title={fact.title}>
+                <b>{fact.label}</b>
+                {fact.value}
+              </span>
+            ))}
+            <p>{scopeHelperText}</p>
+          </div>
           <label className={scopeFieldFeedbackClass('dateFrom', confirmedFieldName)}>
             <span>开始日期</span>
             <input type="date" value={draft.dateFrom} onChange={(event) => updateRangeDraft('dateFrom', { dateFrom: event.target.value })} />
@@ -474,8 +554,9 @@ export function ScopeBar() {
             <input value={draft.asin || ''} onChange={(event) => updateDraftField('asin', { asin: event.target.value || undefined })} />
             {renderFieldConfirmation('asin')}
           </label>
+          {renderBatchSelect()}
           <label className={scopeFieldFeedbackClass('batchId', confirmedFieldName)}>
-            <span>数据批次</span>
+            <span>手动批次 ID</span>
             <input value={draft.batchId || ''} onChange={(event) => updateDraftField('batchId', { batchId: event.target.value || undefined })} />
             {renderFieldConfirmation('batchId')}
           </label>

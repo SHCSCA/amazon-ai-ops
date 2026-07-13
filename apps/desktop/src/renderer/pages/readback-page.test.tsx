@@ -25,6 +25,7 @@ import {
   readbackStepPanelId,
   readbackStepPanelProps,
   readbackStepTabId,
+  readbackStepTabTitle,
   requiredMissing,
   sessionCheckCopy,
 } from './readback-page';
@@ -181,6 +182,15 @@ describe('readback wizard user-task copy', () => {
     expect(source).toContain('选择已批准动作，保存审批凭证、执行前后截图和刷新后的回读值');
     expect(source).toContain('先记录执行前值和截图，再记录执行后值和截图，最后刷新广告后台填写回读值和回读截图');
   });
+
+  it('removes duplicate step numbers from the tab label while keeping numbered panel titles', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+
+    expect(readbackStepTabTitle('1. 选择已批准动作')).toBe('选择已批准动作');
+    expect(readbackStepTabTitle('4. 校验并导出证据')).toBe('校验并导出证据');
+    expect(source).toContain('<strong>{readbackStepTabTitle(step.title)}</strong>');
+    expect(source).toContain('<Panel title="1. 选择已批准动作"');
+  });
 });
 
 describe('readback structured field cells', () => {
@@ -196,6 +206,35 @@ describe('readback structured field cells', () => {
     expect(stylesheet).toMatch(/\.readback-field-cell\s*{[\s\S]*border:\s*1px solid var\(--line-soft\)/);
     expect(stylesheet).toMatch(/\.readback-field-cell:focus-within\s*{[\s\S]*box-shadow:/);
     expect(stylesheet).toMatch(/\.readback-field-cell-label\s*{[\s\S]*background:\s*#fff/);
+  });
+
+  it('keeps loaded source correction behind a modal instead of an inline page form', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('className="readback-source-summary"');
+    expect(source).toContain('setSourceFieldEditorOpen(true)');
+    expect(source).toContain('aria-modal="true"');
+    expect(source).toContain('className="product-config-modal readback-source-modal"');
+    expect(source).not.toContain('<ProgressiveDetails title="查看或修正载入后的来源字段"');
+    expect(stylesheet).toMatch(/\.readback-source-summary\s*{[\s\S]*grid-template-columns:/);
+    expect(stylesheet).toMatch(/\.readback-source-field-grid\s*{[\s\S]*repeat\(4, minmax\(0, 1fr\)\)/);
+  });
+
+  it('keeps readback safety gate details behind a compact modal entry', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('guardModalOpen');
+    expect(source).toContain('查看安全门');
+    expect(source).toContain('className="product-config-modal readback-guard-modal"');
+    expect(source).toContain('安全门与当前缺口');
+    expect(source).toContain('readback-guard-lines');
+    expect(source).toContain('<ReadbackContractStrip checks={contractChecks} />');
+    expect(stylesheet).toMatch(/\.readback-current-step-summary\s*{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+    expect(stylesheet).toContain('.readback-current-step-actions');
+    expect(stylesheet).toContain('.readback-guard-modal');
+    expect(stylesheet).toContain('.readback-guard-lines');
   });
 });
 
@@ -509,7 +548,7 @@ describe('readback capture helpers', () => {
     expect(source).toContain('style={readbackStepRailStyle}');
     expect(stylesheet).toContain('.readback-step-tabs::after');
     expect(stylesheet).toContain('height: 2px');
-    expect(stylesheet).toContain('transform: translateX(calc(var(--readback-active-step) * (100% + 10px)))');
+    expect(stylesheet).toContain('transform: translateX(calc(var(--readback-active-step) * (100% + 6px)))');
     expect(stylesheet).toContain('transition: transform 180ms ease');
     expect(stylesheet).toContain('@media (prefers-reduced-motion: reduce)');
   });

@@ -3,7 +3,7 @@ import { aiCallEvidenceLabel, aiCallEvidenceTotal, aiCallKindLabel, aiCallOutput
 import { aiContractPrimaryCopy, aiOutputContracts, aiOutputContractTags } from '../ai-output-contracts';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup, type TagMetricItem } from '../components/tag-metric-group';
-import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AiCallLogView, AiConnectionStatus, AiProviderSettings, SettingsRuleConfig, StoragePathsView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -110,10 +110,15 @@ export function aiAuditLogTitle(log: Pick<AiCallLogView, 'promptKey'>): string {
 }
 
 export function aiSettingsActionHint(input: { canSaveSettings: boolean; keyPresent: boolean; canTestAi: boolean }): string {
-  if (!input.canSaveSettings) return '当前环境未接入设置保存接口，无法保存或清除 API Key。';
+  if (!input.canSaveSettings) return '当前预览环境只能查看配置；请在桌面应用中保存或清除 API Key。';
   if (!input.keyPresent) return '填写 API Key 后才能测试连接。';
-  if (!input.canTestAi) return '当前环境未接入 AI 连接测试接口。';
+  if (!input.canTestAi) return '当前预览环境不能发起 AI 连接测试。';
   return '';
+}
+
+export function storagePathDisplay(value: unknown, label: string): string {
+  const pathValue = readString(value).trim();
+  return pathValue || `${label}会在桌面应用中显示。`;
 }
 
 export function settingsAiContractPrimaryCopy(): string {
@@ -135,6 +140,11 @@ export function settingsAiContractVersionItems(): TagMetricItem[] {
     detail: `${contract.usedBy}：${contract.consumedAs}`,
     tone: 'neutral',
   }));
+}
+
+function tagToneToStatusPillTone(tone: TagMetricItem['tone']): 'ready' | 'warning' | 'blocked' | 'pending' {
+  if (tone === 'ready' || tone === 'warning' || tone === 'blocked') return tone;
+  return 'pending';
 }
 
 function clampStructuredAiMaxTokens(value: string): string {
@@ -336,6 +346,7 @@ export function settingsRuleActionButtonView(input: SettingsRuleActionButtonInpu
 }
 
 type SettingsLocalActionKey = 'clear-ai-key' | 'copy-diagnostics';
+type SettingsModalMode = 'ai-contract' | 'ai-connection' | 'rules' | null;
 
 interface SettingsLocalActionButtonInput {
   action: SettingsLocalActionKey;
@@ -483,6 +494,7 @@ export function SettingsPage() {
   const [localAction, setLocalAction] = useState<SettingsLocalActionKey | null>(null);
   const [storagePaths, setStoragePaths] = useState<StoragePathsView>({});
   const [aiCallLogs, setAiCallLogs] = useState<AiCallLogView[]>([]);
+  const [settingsModal, setSettingsModal] = useState<SettingsModalMode>(null);
 
   const apiSurface = useMemo(() => api(), []);
   const canLoadSettings = typeof apiSurface.getSettings === 'function';
@@ -521,6 +533,27 @@ export function SettingsPage() {
     busyLabel: '复制中...',
     label: '复制支持检查清单',
   });
+
+  function closeSettingsModal() {
+    if (savingAi || savingRules) return;
+    setSettingsModal(null);
+  }
+
+  function handleSettingsModalKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Escape' || savingAi || savingRules) return;
+    event.stopPropagation();
+    closeSettingsModal();
+  }
+
+  useEffect(() => {
+    if (!settingsModal) return;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || savingAi || savingRules) return;
+      closeSettingsModal();
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [settingsModal, savingAi, savingRules]);
 
   async function refreshAiSettingsFromStore(): Promise<AiProviderSettings | null> {
     if (!canLoadSettings) return null;
@@ -755,186 +788,65 @@ export function SettingsPage() {
       <PageHeader
         eyebrow="系统"
         title={PAGE_HEADER_TITLES.settings}
-        description="连接 AI 服务、配置安全规则，并把调用日志、存储路径和排障工具收进支持详情。API Key 全程脱敏。"
-        primaryTask="连接 AI 服务并配置安全规则"
-        nextAction={keyPresent ? '测试 AI 连接' : '填写 API Key'}
-        primaryAction={{
-          label: aiStatus === 'available' ? '重新测试 AI 连接' : keyPresent ? '测试 AI 连接' : '填写 API Key',
-          onClick: testAiSettings,
-          disabled: !canRunAiTest,
-          busy: aiStatus === 'testing',
-          busyLabel: '测试中...',
-        }}
+        description="连接 AI 服务、确认固定输出合同、维护规则边界；表单和支持信息默认收起。API Key 全程脱敏。"
       />
 
       <div className="business-stack">
-        <div className="kpi-row settings-prototype-status-grid" aria-label="AI 与规则状态">
-          <KpiCard
-            label="连接状态"
-            value={displayAiStatusLabel(aiStatus, keyPresent)}
-            detail={keyPresent ? 'Key 已脱敏' : 'Key 未配置'}
-            tone={displayAiStatusTone(aiStatus, keyPresent)}
-          />
-          <KpiCard
-            label="模型"
-            value={aiSettings.aiModel || '未配置'}
-            detail={aiSettings.aiOutputLanguage || DEFAULT_AI_SETTINGS.aiOutputLanguage}
-            tone={aiSettings.aiModel ? 'ready' : 'blocked'}
-          />
-          <KpiCard
-            label="Base URL"
-            value={aiSettings.aiBaseUrl ? '已填写' : '未配置'}
-            detail={aiSettings.aiBaseUrl || '需要兼容 Chat Completions'}
-            tone={aiSettings.aiBaseUrl ? 'ready' : 'blocked'}
-          />
-          <KpiCard
-            label="输出合同"
-            value={`${clampStructuredAiMaxTokens(aiSettings.aiMaxTokens)} tokens`}
-            detail={`温度 ${aiSettings.aiTemperature || DEFAULT_AI_SETTINGS.aiTemperature}`}
-            tone="pending"
-          />
-        </div>
-        <div className={`settings-ai-feedback settings-ai-feedback-${aiConnectionFeedback.tone} settings-prototype-feedback`} aria-live="polite" role="status">
-          <span>{settingsAiTaskTitle({ status: aiStatus, keyPresent })}</span>
-          <strong>{aiConnectionFeedback.label}</strong>
-          <p>{aiConnectionFeedback.detail}</p>
-        </div>
-
-        <Panel title="AI 服务连接">
-          <div className="settings-section-header">
-            <StatusPill tone={displayAiStatusTone(aiStatus, keyPresent)}>{displayAiStatusLabel(aiStatus, keyPresent)}</StatusPill>
-            {loading && <span className="muted-line">正在读取设置...</span>}
-          </div>
-          <div className="settings-status-grid">
-            {aiStatusItems.map((item) => (
-              <div key={item.label}>
-                <span>{item.label}</span>
-                <strong>{item.value}</strong>
-              </div>
-            ))}
-          </div>
-          <FormTable>
-            <FormTableRow label="API Key" required hint="仅保存脱敏状态，页面不展示完整 Key。">
-              <input
-                autoComplete="off"
-                placeholder="DeepSeek 或 OpenAI Compatible API Key"
-                type="password"
-                value={aiSettings.aiApiKey}
-                onChange={(event) => {
-                  const nextKey = event.target.value;
-                  setAiSettings(updateAiSettingsField(aiSettings, 'aiApiKey', nextKey));
-                  setAiStatus(nextKey.trim() || aiSettings.aiKeyConfigured ? 'pending_test' : 'unconfigured');
-                }}
-              />
-            </FormTableRow>
-            <FormTableRow label="Base URL" required hint="兼容 OpenAI Chat Completions 的服务地址。">
-              <input
-                value={aiSettings.aiBaseUrl}
-                onChange={(event) => {
-                  setAiSettings(updateAiSettingsField(aiSettings, 'aiBaseUrl', event.target.value));
-                  setAiStatus(keyPresent ? 'pending_test' : 'unconfigured');
-                }}
-                placeholder="https://api.deepseek.com"
-              />
-            </FormTableRow>
-            <FormTableRow label="Model" required hint="广告表现解释、建议说明和 Listing 本地草案共用同一模型配置。">
-              <input
-                value={aiSettings.aiModel}
-                onChange={(event) => {
-                  setAiSettings(updateAiSettingsField(aiSettings, 'aiModel', event.target.value));
-                  setAiStatus(keyPresent ? 'pending_test' : 'unconfigured');
-                }}
-                placeholder="deepseek-v4-flash"
-              />
-            </FormTableRow>
-          </FormTable>
-          <div className="action-row settings-prototype-actions">
-            <button
-              aria-busy={savingAi || undefined}
-              className={savingAi ? 'primary-button button-loading' : 'primary-button'}
-              disabled={!canSaveSettings || savingAi}
-              onClick={saveAiSettings}
-              type="button"
-            >
-              {savingAi && <span className="button-spinner" aria-hidden="true" />}
-              <span>{savingAi ? '保存中...' : '保存 AI 设置'}</span>
-            </button>
-            <button
-              aria-busy={aiStatus === 'testing' || undefined}
-              className={aiStatus === 'testing' ? 'secondary-button button-loading' : 'secondary-button'}
-              disabled={!canRunAiTest || aiStatus === 'testing'}
-              onClick={testAiSettings}
-              type="button"
-            >
-              {aiStatus === 'testing' && <span className="button-spinner" aria-hidden="true" />}
-              <span>{aiStatus === 'testing' ? '测试中...' : '测试当前连接'}</span>
-            </button>
-          </div>
-          <p className="muted-line">{settingsAiContractPrimaryCopy()}</p>
-          <TagMetricGroup items={settingsAiContractTags()} />
-          {aiActionHint && <p className="muted-line">{aiActionHint}</p>}
-          <ProgressiveDetails title="高级 AI 参数">
-            <div className="settings-status-grid">
-              <div>
-                <span>输出语言</span>
-                <strong>{aiSettings.aiOutputLanguage || DEFAULT_AI_SETTINGS.aiOutputLanguage || '简体中文'}</strong>
-              </div>
-              <div>
-                <span>最近测试</span>
-                <strong>{aiSettings.aiLastTestAt ? `${aiSettings.aiLastTestStatus === 'available' ? '通过' : '失败'} / ${aiSettings.aiLastTestMessage || aiSettings.aiLastTestAt}` : '暂无记录'}</strong>
-              </div>
+        <Panel
+          title="AI 服务连接"
+          titleAccessory={<StatusPill tone={displayAiStatusTone(aiStatus, keyPresent)}>{displayAiStatusLabel(aiStatus, keyPresent)}</StatusPill>}
+        >
+          <div className={`settings-ai-workbench settings-ai-workbench-${aiConnectionFeedback.tone}`}>
+            <div className="settings-ai-workbench-task" aria-live="polite" role="status">
+              <span>{settingsAiTaskTitle({ status: aiStatus, keyPresent })}</span>
+              <strong>{aiConnectionFeedback.label}</strong>
+              <p>{aiConnectionFeedback.detail}</p>
             </div>
-            <TagMetricGroup items={settingsAiContractVersionItems()} />
-            <div className="settings-form-grid">
-              <label>
-                Temperature
-                <input
-                  type="number"
-                  step="0.1"
-                  value={aiSettings.aiTemperature}
-                  onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiTemperature', event.target.value))}
-                />
-              </label>
-              <label>
-                结构输出预算
-                <input
-                  type="number"
-                  min={STRUCTURED_AI_OUTPUT_TOKEN_FLOOR}
-                  value={aiSettings.aiMaxTokens}
-                  onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiMaxTokens', event.target.value))}
-                  onBlur={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiMaxTokens', clampStructuredAiMaxTokens(event.target.value)))}
-                />
-              </label>
-              <label>
-                输出语言
-                <input
-                  value={aiSettings.aiOutputLanguage || ''}
-                  onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiOutputLanguage', event.target.value))}
-                  placeholder="简体中文"
-                />
-              </label>
-              <label className="form-grid-wide">
-                <span>AI 人设与表达风格</span>
-                <textarea
-                  aria-label="AI 人设与表达风格"
-                  value={aiSettings.aiPersona || ''}
-                  onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiPersona', event.target.value))}
-                  placeholder={DEFAULT_AI_PERSONA}
-                />
-              </label>
+            <div className="settings-ai-workbench-facts">
+              {aiStatusItems.map((item) => (
+                <div key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </div>
+              ))}
             </div>
-            <div className="action-row">
+            <div className="settings-ai-workbench-actions">
               <button
-                aria-busy={clearAiKeyButton.ariaBusy}
-                className={clearAiKeyButton.className}
-                disabled={clearAiKeyButton.disabled}
-                onClick={clearLocalAiKey}
+                aria-busy={aiStatus === 'testing' || undefined}
+                className={aiStatus === 'testing' ? 'primary-button button-loading' : 'primary-button'}
+                disabled={!canRunAiTest || aiStatus === 'testing'}
+                onClick={testAiSettings}
                 type="button"
               >
-                {settingsLocalActionButtonContent(clearAiKeyButton)}
+                {aiStatus === 'testing' && <span className="button-spinner" aria-hidden="true" />}
+                <span>{aiStatus === 'testing' ? '测试中...' : '测试当前连接'}</span>
+              </button>
+              <button className="secondary-button" disabled={savingAi} onClick={() => setSettingsModal('ai-connection')} type="button">
+                编辑连接
+              </button>
+              <button className="secondary-button" onClick={() => setSettingsModal('ai-contract')} type="button">
+                输出合同
               </button>
             </div>
-          </ProgressiveDetails>
+          </div>
+          <div className="settings-section-header">
+            {loading && <span className="muted-line">正在读取设置...</span>}
+          </div>
+          {aiActionHint && <p className="muted-line">{aiActionHint}</p>}
+          <div className="settings-contract-strip settings-ai-contract-copy-folded">
+            <div>
+              <span>AI 输出合同</span>
+              <strong>系统固定字段，普通用户只看标准结果</strong>
+              <p>{settingsAiContractPrimaryCopy()}</p>
+            </div>
+            <div className="business-pill-row">
+              {settingsAiContractTags().map((item) => (
+                <StatusPill key={item.label} tone={tagToneToStatusPillTone(item.tone)}>
+                  {item.label}
+                </StatusPill>
+              ))}
+            </div>
+          </div>
         </Panel>
 
         <Panel title="规则阈值与动作边界">
@@ -960,224 +872,427 @@ export function SettingsPage() {
               <p>单次建议不超过 {percentLabel(ruleConfig.maxBidDecrement)}，且受 CPC 下限保护。</p>
             </div>
           </div>
-          <FormTable>
-            <FormTableRow label="目标 ACOS" required hint="低于目标线的词和投放对象优先保留、观察或扩量复核。" feedback={ruleFeedbackFor('targetAcos')}>
-              <input
-                type="number"
-                step="0.01"
-                value={ruleConfig.targetAcos}
-                onChange={(event) => setRuleConfig({ ...ruleConfig, targetAcos: Number(event.target.value) })}
-              />
-            </FormTableRow>
-            <FormTableRow label="高 ACOS 阈值" required hint="超过风险线且花费达到最低门槛时，进入降价或否词建议。" feedback={ruleFeedbackFor('highAcosThreshold')}>
-              <input
-                type="number"
-                step="0.01"
-                value={ruleConfig.highAcosThreshold}
-                onChange={(event) => setRuleConfig({ ...ruleConfig, highAcosThreshold: Number(event.target.value) })}
-              />
-            </FormTableRow>
-            <FormTableRow label="无订单点击阈值" required hint="达到点击阈值仍无订单时，标记为浪费风险。" feedback={ruleFeedbackFor('noOrderClickThreshold')}>
-              <input
-                type="number"
-                value={ruleConfig.noOrderClickThreshold}
-                onChange={(event) => setRuleConfig({ ...ruleConfig, noOrderClickThreshold: Number(event.target.value) })}
-              />
-            </FormTableRow>
-            <FormTableRow label="最低花费" required hint="单位 USD；花费低于该值时只提示观察，不生成强动作。" feedback={ruleFeedbackFor('minSpend')}>
-              <input
-                type="number"
-                step="0.01"
-                value={ruleConfig.minSpend}
-                onChange={(event) => setRuleConfig({ ...ruleConfig, minSpend: Number(event.target.value) })}
-              />
-            </FormTableRow>
-            <FormTableRow label="降价比例" required hint="只生成建议，不自动写入 Ads；执行仍走审批和回读。" feedback={ruleFeedbackFor('bidAdjustPercent')}>
-              <input
-                type="number"
-                step="0.01"
-                value={ruleConfig.bidAdjustPercent}
-                onChange={(event) => setRuleConfig({ ...ruleConfig, bidAdjustPercent: Number(event.target.value) })}
-              />
-            </FormTableRow>
-            <FormTableRow label="最大降价比例" required hint="单次建议不超过该比例，且受 CPC 下限保护。" feedback={ruleFeedbackFor('maxBidDecrement')}>
-              <input
-                type="number"
-                step="0.01"
-                value={ruleConfig.maxBidDecrement}
-                onChange={(event) => setRuleConfig({ ...ruleConfig, maxBidDecrement: Number(event.target.value) })}
-              />
-            </FormTableRow>
-            <FormTableRow label="最高 CPC" hint="单位 USD；用于识别异常高出价和建议上限。" feedback={ruleFeedbackFor('maxCpc')}>
-              <input
-                type="number"
-                step="0.01"
-                value={ruleConfig.maxCpc}
-                onChange={(event) => setRuleConfig({ ...ruleConfig, maxCpc: Number(event.target.value) })}
-              />
-            </FormTableRow>
-            <FormTableRow label="最低 CPC" hint="单位 USD；降价建议不会低于该下限。" feedback={ruleFeedbackFor('minCpc')}>
-              <input
-                type="number"
-                step="0.01"
-                value={ruleConfig.minCpc}
-                onChange={(event) => setRuleConfig({ ...ruleConfig, minCpc: Number(event.target.value) })}
-              />
-            </FormTableRow>
-            <FormTableRow label="降价建议" hint="只生成建议，不自动写入 Ads；执行仍走审批和回读。">
-              <input
-                checked={ruleConfig.enableAutoLowerBid}
-                type="checkbox"
-                onChange={(event) => setRuleConfig({ ...ruleConfig, enableAutoLowerBid: event.target.checked })}
-              />
-            </FormTableRow>
-            <FormTableRow label="否词建议" hint="只进入建议池，白名单词会阻断。">
-              <input
-                checked={ruleConfig.enableAutoAddNegative}
-                type="checkbox"
-                onChange={(event) => setRuleConfig({ ...ruleConfig, enableAutoAddNegative: event.target.checked })}
-              />
-            </FormTableRow>
-            <FormTableRow label="品牌词白名单" hint="品牌词用逗号或换行分隔，命中后阻断否词建议。">
-              <textarea
-                aria-label="品牌词白名单"
-                value={listToText(ruleConfig.brandWordWhitelist)}
-                onChange={(event) => {
-                  setRuleConfig({ ...ruleConfig, brandWordWhitelist: parseListInput(event.target.value) });
-                }}
-                placeholder="品牌词，用逗号或换行分隔"
-              />
-            </FormTableRow>
-            <FormTableRow label="核心词白名单" hint="核心业务词用逗号或换行分隔，命中后进入人工复核。">
-              <textarea
-                aria-label="核心词白名单"
-                value={listToText(ruleConfig.coreWordWhitelist)}
-                onChange={(event) => {
-                  setRuleConfig({ ...ruleConfig, coreWordWhitelist: parseListInput(event.target.value) });
-                }}
-                placeholder="核心业务词，用逗号或换行分隔"
-              />
-            </FormTableRow>
-          </FormTable>
-          <div className="action-row">
-            <button
-              aria-busy={ruleSaveButton.ariaBusy}
-              className={ruleSaveButton.className}
-              disabled={ruleSaveButton.disabled}
-              onClick={saveRuleConfig}
-              type="button"
-            >
-              {ruleSaveButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
-              <span>{ruleSaveButton.label}</span>
+          <div className="settings-panel-action-line">
+            <span>阈值用于生成建议和解释，不会直接写入广告账户。</span>
+            <button className="secondary-button" disabled={savingRules} onClick={() => setSettingsModal('rules')} type="button">
+              编辑规则阈值
             </button>
           </div>
         </Panel>
 
-        <ProgressiveDetails title="AI 调用记录与支持信息">
-          <p className="muted-line">{aiAuditIntroText()}</p>
-          <div className="context-summary-grid">
-            <div>
-              <span>最近 AI 是否参与</span>
-              <strong>{aiCallDiagnostics.headline}</strong>
-              <p>{aiCallDiagnostics.detail}</p>
-              <StatusPill tone={aiCallDiagnostics.status === 'ready' ? 'ready' : aiCallDiagnostics.status === 'blocked' ? 'blocked' : 'warning'}>
-                {aiCallDiagnostics.nextAction}
-              </StatusPill>
-            </div>
-            <div>
-              <span>日志数量</span>
-              <strong>{aiCallLogs.length} 条</strong>
-              <p>{aiAuditPurposeText()}</p>
-              <StatusPill tone={canLoadAiCallLogs ? 'ready' : 'blocked'}>{canLoadAiCallLogs ? '接口可用' : '接口缺失'}</StatusPill>
-            </div>
-          </div>
-          {!canLoadAiCallLogs && <p className="warning-line">当前环境未暴露 AI 调用审计接口。</p>}
-          {canLoadAiCallLogs && aiCallLogs.length === 0 && <p className="muted-line">暂无 AI 调用记录。</p>}
-          {aiCallLogs.length > 0 && (
-            <div className="context-summary-grid">
-              {aiCallLogs.map((log) => (
-                <div key={log.id}>
-                  <span>{aiAuditLogTitle(log)}</span>
-                  <strong>{log.model}</strong>
-                  <p className="muted-line">{log.createdAt}</p>
-                  <p className="muted-line">{aiAuditLogFormatLine(log)}</p>
-                  <div className="business-pill-row">
-                    <StatusPill tone={log.success ? 'ready' : 'blocked'}>{log.success ? '成功' : '失败'}</StatusPill>
-                    <StatusPill tone={aiCallEvidenceTotal(log) ? 'ready' : 'warning'}>{aiCallEvidenceLabel(log)}</StatusPill>
-                  </div>
-                  {log.errorMessage && <p className="warning-line">{log.errorMessage}</p>}
+        <ProgressiveDetails title="高级诊断与本地支持">
+          <div className="settings-support-stack">
+            <Panel title="AI 调用记录与支持信息">
+              <p className="muted-line">{aiAuditIntroText()}</p>
+              <div className="context-summary-grid">
+                <div>
+                  <span>最近 AI 是否参与</span>
+                  <strong>{aiCallDiagnostics.headline}</strong>
+                  <p>{aiCallDiagnostics.detail}</p>
+                  <StatusPill tone={aiCallDiagnostics.status === 'ready' ? 'ready' : aiCallDiagnostics.status === 'blocked' ? 'blocked' : 'warning'}>
+                    {aiCallDiagnostics.nextAction}
+                  </StatusPill>
                 </div>
-              ))}
+                <div>
+                  <span>日志数量</span>
+                  <strong>{aiCallLogs.length} 条</strong>
+                  <p>{aiAuditPurposeText()}</p>
+                  <StatusPill tone={canLoadAiCallLogs ? 'ready' : 'blocked'}>{canLoadAiCallLogs ? '接口可用' : '接口缺失'}</StatusPill>
+                </div>
+              </div>
+              {!canLoadAiCallLogs && <p className="warning-line">当前环境未暴露 AI 调用审计接口。</p>}
+              {canLoadAiCallLogs && aiCallLogs.length === 0 && <p className="muted-line">暂无 AI 调用记录。</p>}
+              {aiCallLogs.length > 0 && (
+                <div className="context-summary-grid">
+                  {aiCallLogs.map((log) => (
+                    <div key={log.id}>
+                      <span>{aiAuditLogTitle(log)}</span>
+                      <strong>{log.model}</strong>
+                      <p className="muted-line">{log.createdAt}</p>
+                      <p className="muted-line">{aiAuditLogFormatLine(log)}</p>
+                      <div className="business-pill-row">
+                        <StatusPill tone={log.success ? 'ready' : 'blocked'}>{log.success ? '成功' : '失败'}</StatusPill>
+                        <StatusPill tone={aiCallEvidenceTotal(log) ? 'ready' : 'warning'}>{aiCallEvidenceLabel(log)}</StatusPill>
+                      </div>
+                      {log.errorMessage && <p className="warning-line">{log.errorMessage}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            <div className="business-grid">
+              <Panel title="安全策略">
+                <ul className="business-list">
+                  {SAFETY_POLICIES.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </Panel>
+
+              <Panel title="本地支持路径">
+                <dl className="business-definition-list">
+                  <div>
+                    <dt>设置路径</dt>
+                    <dd>{storagePathDisplay(storagePaths.settingsPath, '设置路径')}</dd>
+                  </div>
+                  <div>
+                    <dt>证据目录</dt>
+                    <dd>{storagePathDisplay(storagePaths.evidenceDir, '证据目录')}</dd>
+                  </div>
+                  <div>
+                    <dt>下载目录</dt>
+                    <dd>{storagePathDisplay(storagePaths.downloadsDir, '下载目录')}</dd>
+                  </div>
+                  <div>
+                    <dt>导出目录</dt>
+                    <dd>{storagePathDisplay(storagePaths.exportsDir, '导出目录')}</dd>
+                  </div>
+                  <div>
+                    <dt>交付包目录</dt>
+                    <dd>{storagePathDisplay(storagePaths.deliveryDir, '交付包目录')}</dd>
+                  </div>
+                  <div>
+                    <dt>本地数据库</dt>
+                    <dd>{storagePathDisplay(storagePaths.localDbPath, '本地数据库')}</dd>
+                  </div>
+                </dl>
+              </Panel>
             </div>
-          )}
-        </ProgressiveDetails>
 
-        <div className="business-grid">
-          <ProgressiveDetails title="安全策略">
-            <ul className="business-list">
-              {SAFETY_POLICIES.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </ProgressiveDetails>
+            <Panel title="支持检查工具">
+              <div className="settings-diagnostic-row">
+                <p>用于验证 AI 连接、广告解释、Listing 草案和最终交付状态；不会改变广告账户，也不会绕过审批、执行前/执行后/回读或范围匹配要求。</p>
+                <button
+                  aria-busy={copyDiagnosticsButton.ariaBusy}
+                  className={copyDiagnosticsButton.className}
+                  disabled={copyDiagnosticsButton.disabled}
+                  onClick={copyDiagnostics}
+                  type="button"
+                >
+                  {settingsLocalActionButtonContent(copyDiagnosticsButton)}
+                </button>
+              </div>
+              <details className="details-panel inline-details">
+                <summary>查看诊断覆盖项</summary>
+                <div className="details-content">
+                  <ul className="business-list">
+                    {DIAGNOSTIC_CHECKS.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+              {copyNotice && <p className="muted-line">{copyNotice}</p>}
+            </Panel>
 
-          <ProgressiveDetails title="本地支持路径">
-            <dl className="business-definition-list">
-              <div>
-                <dt>设置路径</dt>
-                <dd>{storagePaths.settingsPath || '不可用：getStoragePaths 未返回 settingsPath'}</dd>
-              </div>
-              <div>
-                <dt>证据目录</dt>
-                <dd>{storagePaths.evidenceDir || '不可用：getStoragePaths 未返回 evidenceDir'}</dd>
-              </div>
-              <div>
-                <dt>下载目录</dt>
-                <dd>{storagePaths.downloadsDir || '不可用：getStoragePaths 未返回 downloadsDir'}</dd>
-              </div>
-              <div>
-                <dt>导出目录</dt>
-                <dd>{storagePaths.exportsDir || '不可用：getStoragePaths 未返回 exportsDir'}</dd>
-              </div>
-              <div>
-                <dt>交付包目录</dt>
-                <dd>{storagePaths.deliveryDir || '不可用：getStoragePaths 未返回 deliveryDir'}</dd>
-              </div>
-              <div>
-                <dt>本地数据库</dt>
-                <dd>{storagePaths.localDbPath || '不可用：getStoragePaths 未返回 localDbPath'}</dd>
-              </div>
-            </dl>
-          </ProgressiveDetails>
-        </div>
-
-        <ProgressiveDetails title="支持检查工具">
-          <div className="settings-diagnostic-row">
-            <p>用于验证 AI 连接、广告解释、Listing 草案和最终交付状态；不会改变广告账户，也不会绕过审批、执行前/执行后/回读或范围匹配要求。</p>
-            <button
-              aria-busy={copyDiagnosticsButton.ariaBusy}
-              className={copyDiagnosticsButton.className}
-              disabled={copyDiagnosticsButton.disabled}
-              onClick={copyDiagnostics}
-              type="button"
-            >
-              {settingsLocalActionButtonContent(copyDiagnosticsButton)}
-            </button>
+            {secondaryStatusMessage && (
+              <Panel title="本地接口状态">{secondaryStatusMessage}</Panel>
+            )}
           </div>
-          <details className="details-panel inline-details">
-            <summary>查看诊断覆盖项</summary>
-            <div className="details-content">
-              <ul className="business-list">
-                {DIAGNOSTIC_CHECKS.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          </details>
-          {copyNotice && <p className="muted-line">{copyNotice}</p>}
         </ProgressiveDetails>
 
-        {secondaryStatusMessage && <Panel title="状态">{secondaryStatusMessage}</Panel>}
+        {settingsModal && (
+          <div
+            className="settings-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeSettingsModal();
+            }}
+            role="presentation"
+          >
+            <section
+              aria-labelledby="settings-modal-title"
+              aria-modal="true"
+              className="settings-modal"
+              onKeyDown={handleSettingsModalKeyDown}
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+            >
+              <header className="settings-modal-header">
+                <div>
+                  <span>AI 与规则设置</span>
+                  <h2 id="settings-modal-title">
+                    {settingsModal === 'ai-contract'
+                      ? 'AI 输出合同和字段'
+                      : settingsModal === 'ai-connection'
+                        ? '编辑 AI 连接和输出参数'
+                        : '编辑规则阈值、动作边界和白名单'}
+                  </h2>
+                </div>
+                <button
+                  className="secondary-button compact-button"
+                  disabled={savingAi || savingRules}
+                  onClick={closeSettingsModal}
+                  type="button"
+                >
+                  关闭
+                </button>
+              </header>
+
+              <div className="settings-modal-body">
+                {settingsModal === 'ai-contract' && (
+                  <>
+                    <div className="settings-ai-contract-copy">
+                      <span>输出合同</span>
+                      <strong>系统固定字段</strong>
+                      <p>{settingsAiContractPrimaryCopy()}</p>
+                    </div>
+                    <TagMetricGroup items={settingsAiContractTags()} />
+                    <TagMetricGroup items={settingsAiContractVersionItems()} />
+                    <div className="settings-status-grid">
+                      <div>
+                        <span>输出预算</span>
+                        <strong>{clampStructuredAiMaxTokens(aiSettings.aiMaxTokens)} tokens</strong>
+                      </div>
+                      <div>
+                        <span>普通用户视图</span>
+                        <strong>只展示标准字段和解释</strong>
+                        <p>原始输出只用于诊断，不作为日常操作入口。</p>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {settingsModal === 'ai-connection' && (
+                  <>
+                    <FormTable>
+                      <FormTableRow label="API Key" required hint="仅保存脱敏状态，页面不展示完整 Key。">
+                        <input
+                          autoComplete="off"
+                          placeholder="DeepSeek 或 OpenAI Compatible API Key"
+                          type="password"
+                          value={aiSettings.aiApiKey}
+                          onChange={(event) => {
+                            const nextKey = event.target.value;
+                            setAiSettings(updateAiSettingsField(aiSettings, 'aiApiKey', nextKey));
+                            setAiStatus(nextKey.trim() || aiSettings.aiKeyConfigured ? 'pending_test' : 'unconfigured');
+                          }}
+                        />
+                      </FormTableRow>
+                      <FormTableRow label="Base URL" required hint="兼容 OpenAI Chat Completions 的服务地址。">
+                        <input
+                          value={aiSettings.aiBaseUrl}
+                          onChange={(event) => {
+                            setAiSettings(updateAiSettingsField(aiSettings, 'aiBaseUrl', event.target.value));
+                            setAiStatus(keyPresent ? 'pending_test' : 'unconfigured');
+                          }}
+                          placeholder="https://api.deepseek.com"
+                        />
+                      </FormTableRow>
+                      <FormTableRow label="Model" required hint="广告表现解释、建议说明和 Listing 本地草案共用同一模型配置。">
+                        <input
+                          value={aiSettings.aiModel}
+                          onChange={(event) => {
+                            setAiSettings(updateAiSettingsField(aiSettings, 'aiModel', event.target.value));
+                            setAiStatus(keyPresent ? 'pending_test' : 'unconfigured');
+                          }}
+                          placeholder="deepseek-v4-flash"
+                        />
+                      </FormTableRow>
+                    </FormTable>
+                    <div className="settings-status-grid">
+                      <div>
+                        <span>输出语言</span>
+                        <strong>{aiSettings.aiOutputLanguage || DEFAULT_AI_SETTINGS.aiOutputLanguage || '简体中文'}</strong>
+                      </div>
+                      <div>
+                        <span>最近测试</span>
+                        <strong>{aiSettings.aiLastTestAt ? `${aiSettings.aiLastTestStatus === 'available' ? '通过' : '失败'} / ${aiSettings.aiLastTestMessage || aiSettings.aiLastTestAt}` : '暂无记录'}</strong>
+                      </div>
+                    </div>
+                    <div className="settings-form-grid">
+                      <label>
+                        Temperature
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={aiSettings.aiTemperature}
+                          onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiTemperature', event.target.value))}
+                        />
+                      </label>
+                      <label>
+                        结构输出预算
+                        <input
+                          type="number"
+                          min={STRUCTURED_AI_OUTPUT_TOKEN_FLOOR}
+                          value={aiSettings.aiMaxTokens}
+                          onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiMaxTokens', event.target.value))}
+                          onBlur={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiMaxTokens', clampStructuredAiMaxTokens(event.target.value)))}
+                        />
+                      </label>
+                      <label>
+                        输出语言
+                        <input
+                          value={aiSettings.aiOutputLanguage || ''}
+                          onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiOutputLanguage', event.target.value))}
+                          placeholder="简体中文"
+                        />
+                      </label>
+                      <label className="form-grid-wide">
+                        <span>AI 人设与表达风格</span>
+                        <textarea
+                          aria-label="AI 人设与表达风格"
+                          value={aiSettings.aiPersona || ''}
+                          onChange={(event) => setAiSettings(updateAiSettingsField(aiSettings, 'aiPersona', event.target.value))}
+                          placeholder={DEFAULT_AI_PERSONA}
+                        />
+                      </label>
+                    </div>
+                  </>
+                )}
+
+                {settingsModal === 'rules' && (
+                  <FormTable>
+                    <FormTableRow label="目标 ACOS" required hint="低于目标线的词和投放对象优先保留、观察或扩量复核。" feedback={ruleFeedbackFor('targetAcos')}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={ruleConfig.targetAcos}
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, targetAcos: Number(event.target.value) })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="高 ACOS 阈值" required hint="超过风险线且花费达到最低门槛时，进入降价或否词建议。" feedback={ruleFeedbackFor('highAcosThreshold')}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={ruleConfig.highAcosThreshold}
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, highAcosThreshold: Number(event.target.value) })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="无订单点击阈值" required hint="达到点击阈值仍无订单时，标记为浪费风险。" feedback={ruleFeedbackFor('noOrderClickThreshold')}>
+                      <input
+                        type="number"
+                        value={ruleConfig.noOrderClickThreshold}
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, noOrderClickThreshold: Number(event.target.value) })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="最低花费" required hint="单位 USD；花费低于该值时只提示观察，不生成强动作。" feedback={ruleFeedbackFor('minSpend')}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={ruleConfig.minSpend}
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, minSpend: Number(event.target.value) })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="降价比例" required hint="只生成建议，不自动写入 Ads；执行仍走审批和回读。" feedback={ruleFeedbackFor('bidAdjustPercent')}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={ruleConfig.bidAdjustPercent}
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, bidAdjustPercent: Number(event.target.value) })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="最大降价比例" required hint="单次建议不超过该比例，且受 CPC 下限保护。" feedback={ruleFeedbackFor('maxBidDecrement')}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={ruleConfig.maxBidDecrement}
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, maxBidDecrement: Number(event.target.value) })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="最高 CPC" hint="单位 USD；用于识别异常高出价和建议上限。" feedback={ruleFeedbackFor('maxCpc')}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={ruleConfig.maxCpc}
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, maxCpc: Number(event.target.value) })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="最低 CPC" hint="单位 USD；降价建议不会低于该下限。" feedback={ruleFeedbackFor('minCpc')}>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={ruleConfig.minCpc}
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, minCpc: Number(event.target.value) })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="降价建议" hint="只生成建议，不自动写入 Ads；执行仍走审批和回读。">
+                      <input
+                        checked={ruleConfig.enableAutoLowerBid}
+                        type="checkbox"
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, enableAutoLowerBid: event.target.checked })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="否词建议" hint="只进入建议池，白名单词会阻断。">
+                      <input
+                        checked={ruleConfig.enableAutoAddNegative}
+                        type="checkbox"
+                        onChange={(event) => setRuleConfig({ ...ruleConfig, enableAutoAddNegative: event.target.checked })}
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="品牌词白名单" hint="品牌词用逗号或换行分隔，命中后阻断否词建议。">
+                      <textarea
+                        aria-label="品牌词白名单"
+                        value={listToText(ruleConfig.brandWordWhitelist)}
+                        onChange={(event) => {
+                          setRuleConfig({ ...ruleConfig, brandWordWhitelist: parseListInput(event.target.value) });
+                        }}
+                        placeholder="品牌词，用逗号或换行分隔"
+                      />
+                    </FormTableRow>
+                    <FormTableRow label="核心词白名单" hint="核心业务词用逗号或换行分隔，命中后进入人工复核。">
+                      <textarea
+                        aria-label="核心词白名单"
+                        value={listToText(ruleConfig.coreWordWhitelist)}
+                        onChange={(event) => {
+                          setRuleConfig({ ...ruleConfig, coreWordWhitelist: parseListInput(event.target.value) });
+                        }}
+                        placeholder="核心业务词，用逗号或换行分隔"
+                      />
+                    </FormTableRow>
+                  </FormTable>
+                )}
+              </div>
+
+              <footer className="settings-modal-footer">
+                {settingsModal === 'ai-connection' && (
+                  <>
+                    <button
+                      aria-busy={savingAi || undefined}
+                      className={savingAi ? 'primary-button button-loading' : 'primary-button'}
+                      disabled={!canSaveSettings || savingAi}
+                      onClick={saveAiSettings}
+                      type="button"
+                    >
+                      {savingAi && <span className="button-spinner" aria-hidden="true" />}
+                      <span>{savingAi ? '保存中...' : '保存 AI 设置'}</span>
+                    </button>
+                    <button
+                      aria-busy={clearAiKeyButton.ariaBusy}
+                      className={clearAiKeyButton.className}
+                      disabled={clearAiKeyButton.disabled}
+                      onClick={clearLocalAiKey}
+                      type="button"
+                    >
+                      {settingsLocalActionButtonContent(clearAiKeyButton)}
+                    </button>
+                  </>
+                )}
+                {settingsModal === 'rules' && (
+                  <button
+                    aria-busy={ruleSaveButton.ariaBusy}
+                    className={ruleSaveButton.className}
+                    disabled={ruleSaveButton.disabled}
+                    onClick={saveRuleConfig}
+                    type="button"
+                  >
+                    {ruleSaveButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                    <span>{ruleSaveButton.label}</span>
+                  </button>
+                )}
+                <button
+                  className="secondary-button"
+                  disabled={savingAi || savingRules}
+                  onClick={closeSettingsModal}
+                  type="button"
+                >
+                  {settingsModal === 'ai-contract' ? '关闭' : '取消'}
+                </button>
+              </footer>
+            </section>
+          </div>
+        )}
+
       </div>
     </div>
   );

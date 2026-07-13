@@ -260,12 +260,52 @@ describe('Listing Phase 5 local draft surface', () => {
   it('keeps Listing copy focused on local drafts and publish boundaries', () => {
     const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain('生成本地 Listing 草案');
+    expect(source).toContain('关键词与本地草案工作台');
     expect(source).toContain('本地草案工作流');
     expect(source).toContain('当前草案任务');
+    expect(source).toContain('录入、辅助读取和维护当前 Listing');
+    expect(source).toContain('当前 Listing 内容与版本历史');
     expect(source).toContain('关键词交接与发布边界');
     expect(source).toContain('不会提交 Amazon，也不会改写 Lingxing');
     expect(source).not.toContain('primaryTask="生成可导出的 Listing 草案"');
+  });
+
+  it('keeps current Listing details folded out of the default first screen', () => {
+    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+    const detailsStart = source.indexOf('<ProgressiveDetails title="当前 Listing 内容与版本历史">');
+    const currentPanelStart = source.indexOf('<Panel className="listing-current-panel" title="当前 Listing 内容">');
+    const draftWorkspaceStart = source.indexOf('<ProgressiveDetails title="关键词、草案生成和导出">');
+
+    expect(detailsStart).toBeGreaterThan(-1);
+    expect(currentPanelStart).toBeGreaterThan(detailsStart);
+    expect(currentPanelStart).toBeLessThan(draftWorkspaceStart);
+  });
+
+  it('moves manual Listing maintenance into a modal and leaves a compact page summary', () => {
+    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('listing-editor-entry-panel');
+    expect(source).toContain('listing-editor-summary-grid');
+    expect(source).toContain('listingEditorOpen &&');
+    expect(source).toContain('className="product-config-modal listing-editor-modal"');
+    expect(source).toContain('listing-editor-modal-table');
+    expect(source).not.toContain('<Panel className="listing-editor-panel" title="手工录入当前 Listing"');
+    expect(css).toMatch(/\.listing-editor-summary-grid\s*{[\s\S]*grid-template-columns:/);
+    expect(css).toMatch(/\.listing-editor-modal\s*{[\s\S]*width:\s*min\(1120px/);
+  });
+
+  it('lets the keyword editor modal close through Escape and backdrop clicks', () => {
+    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('function closeKeywordEditor()');
+    expect(source).toContain("event.key !== 'Escape'");
+    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain('onMouseDown={(event) => {');
+    expect(source).toContain('event.target === event.currentTarget');
+    expect(source).toContain('onMouseDown={(event) => event.stopPropagation()}');
+    expect(source).toContain('onKeyDown={handleKeywordEditorKeyDown}');
   });
 });
 describe('Listing draft diff and feedback contract', () => {

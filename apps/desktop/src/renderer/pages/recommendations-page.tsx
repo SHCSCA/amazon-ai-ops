@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
@@ -120,6 +120,13 @@ function reviewReason(rec: RecommendationView): string {
   if (rec.evidence?.quantReviewRequired) return '规则量化要求人工复核';
   if (rec.status === 'needs_review') return '已进入复核队列';
   return '可进入普通审批';
+}
+
+function recommendationSendStatusText(rec: RecommendationView, currentBatchId?: string, allowedSourceFiles?: string[]): string {
+  if (recommendationHasEvidenceBlocker(rec, currentBatchId, allowedSourceFiles)) return '证据不足，不能送审';
+  if (recommendationRequiresManualReview(rec, currentBatchId, allowedSourceFiles)) return reviewReason(rec);
+  if (recommendationCanEnterFormalApproval(rec, currentBatchId, allowedSourceFiles)) return '证据完整，可送审';
+  return reviewReason(rec);
 }
 
 export function recommendationFormalApprovalExplanationText(): string {
@@ -1019,6 +1026,8 @@ export function RecommendationsPage() {
     selectableCount: visibleFormalApprovalRecommendations.length,
     selectedCount: selectedVisibleFormalRecommendations.length,
   });
+  const showApprovalSelection = visibleFormalApprovalRecommendations.length > 0;
+  const compactRecommendationTableColSpan = showApprovalSelection ? 9 : 8;
   const activeBucketLabel: Record<RecommendationBucketFilter, string> = {
     all: '全部建议',
     blocked: '高风险强阻断',
@@ -1291,6 +1300,13 @@ export function RecommendationsPage() {
     disabled: !quantReady || pipelineLoading,
     idleLabel: '生成优化建议',
   });
+  const primaryGenerateButton = recommendationActionButtonView({
+    active: generating,
+    baseClassName: 'primary-button compact-button',
+    busyLabel: '生成中...',
+    disabled: primaryTaskAction.disabled,
+    idleLabel: primaryTaskAction.label,
+  });
   const workflowGenerateButton = recommendationActionButtonView({
     active: generating,
     baseClassName: 'workflow-step',
@@ -1304,81 +1320,213 @@ export function RecommendationsPage() {
       <PageHeader
         eyebrow="广告"
         title={PAGE_HEADER_TITLES.recommendations}
-        description="把广告表现转成可判断的动作建议：看要改什么、从多少改到多少、为什么改、风险和证据是否足够。"
-        primaryTask="判断哪些动作值得送审"
-        nextAction={quantReady ? '选择动作送到审批中心' : '先完成数据采集和广告表现'}
-        primaryAction={{
-          label: primaryTaskAction.label,
-          busy: generating,
-          busyLabel: '生成中...',
-          disabled: primaryTaskAction.disabled,
-          onClick: runPrimaryTaskAction,
-        }}
+        description="直接查看待处理广告动作，勾选证据完整的建议送审；生成口径、AI 状态和证据细节放在下方辅助区。"
       />
 
       <div className="business-stack">
-        <div className="kpi-row recommendations-prototype-status-grid" aria-label="建议池状态">
-          <KpiCard
-            label="可送审"
-            value={formalApprovalCount}
-            detail={`${recommendations.length} 条建议`}
-            tone={formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending'}
-          />
-          <KpiCard
-            label="人工复核"
-            value={manualReviewCount}
-            detail="不会进入普通批准"
-            tone={manualReviewCount > 0 ? 'warning' : 'pending'}
-          />
-          <KpiCard
-            label="证据阻断"
-            value={evidenceBlockedCount}
-            detail={`${realReportCount}/8 类报表`}
-            tone={evidenceBlockedCount > 0 ? 'blocked' : 'ready'}
-          />
-          <KpiCard
-            label="AI 参与"
-            value={aiParticipatedCount}
-            detail={`规则 ${ruleOnlyCount} 条`}
-            tone={aiParticipatedCount > 0 ? 'ready' : 'pending'}
-          />
-        </div>
-        <Panel title="建议池筛选" tone={formalApprovalCount > 0 ? 'success' : recommendations.length ? 'warning' : 'default'}>
-          <div className="prototype-list-stack">
-            <div className="prototype-list-item">
-              <strong>{primaryTaskAction.title}</strong>
-              <p>{primaryTaskAction.detail}</p>
+        <Panel
+          className="recommendation-primary-panel"
+          title="待处理建议"
+          titleAccessory={(
+            <div className="recommendation-title-pills" aria-label="建议池摘要">
+              <StatusPill tone={formalApprovalCount > 0 ? 'ready' : recommendations.length ? 'warning' : 'pending'}>
+                {visibleRecommendations.length}/{recommendations.length} 条
+              </StatusPill>
+              <StatusPill tone={formalApprovalCount > 0 ? 'ready' : 'pending'}>可送审 {formalApprovalCount}</StatusPill>
+              <StatusPill tone={manualReviewCount > 0 ? 'warning' : 'pending'}>复核 {manualReviewCount}</StatusPill>
+              <StatusPill tone={evidenceBlockedCount > 0 ? 'blocked' : 'ready'}>阻断 {evidenceBlockedCount}</StatusPill>
+            </div>
+          )}
+          tone={formalApprovalCount > 0 ? 'success' : recommendations.length ? 'warning' : 'default'}
+        >
+          <div className="recommendation-primary-head">
+            <div>
+              <div className="business-scope-line">{primaryTaskAction.title}</div>
+              <p className="muted-line">{primaryTaskAction.detail}</p>
+            </div>
+            <div className="recommendation-primary-actions">
+              <button
+                aria-busy={primaryTaskAction.action === 'generate' ? primaryGenerateButton.ariaBusy : undefined}
+                className={primaryTaskAction.action === 'generate' ? primaryGenerateButton.className : 'primary-button compact-button'}
+                disabled={primaryTaskAction.action === 'generate' ? primaryGenerateButton.disabled : primaryTaskAction.disabled}
+                onClick={runPrimaryTaskAction}
+                type="button"
+              >
+                {primaryTaskAction.action === 'generate' && primaryGenerateButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                <span>{primaryTaskAction.action === 'generate' ? primaryGenerateButton.label : primaryTaskAction.label}</span>
+              </button>
+              <details className="product-config-action-menu recommendation-action-menu">
+                <summary>更多操作</summary>
+                <div className="product-config-list-actions">
+                  <button
+                    aria-busy={directGenerateButton.ariaBusy}
+                    className={directGenerateButton.className}
+                    disabled={directGenerateButton.disabled}
+                    onClick={generateRecommendations}
+                    type="button"
+                  >
+                    {directGenerateButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                    <span>{directGenerateButton.label}</span>
+                  </button>
+                  <button
+                    aria-busy={refreshRecommendationsButton.ariaBusy}
+                    className={refreshRecommendationsButton.className}
+                    disabled={refreshRecommendationsButton.disabled}
+                    onClick={loadRecommendations}
+                    type="button"
+                  >
+                    {refreshRecommendationsButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+                    <span>{refreshRecommendationsButton.label}</span>
+                  </button>
+                  <button className="secondary-button compact-button" onClick={() => navigate('ad-quant')} type="button">
+                    回广告表现
+                  </button>
+                </div>
+              </details>
             </div>
           </div>
-          <div className="recommendation-bucket-grid" role="group" aria-label="建议池快速筛选">
+          <div className="recommendation-workbench-filter" role="group" aria-label="建议池快速筛选">
             {bucketItems.map((item) => (
               <button
                 aria-pressed={bucketFilter === item.filter}
-                className={`recommendation-bucket-card recommendation-bucket-${item.tone}${bucketFilter === item.filter ? ' recommendation-bucket-active' : ''}`}
+                className={`recommendation-filter-chip recommendation-filter-${item.tone}${bucketFilter === item.filter ? ' recommendation-filter-active' : ''}`}
                 key={item.filter}
                 onClick={() => applyBucketFilter(item.filter)}
                 type="button"
               >
                 <span>{item.label}</span>
                 <strong>{item.value}</strong>
-                <p>{item.detail}</p>
               </button>
             ))}
           </div>
           <p className="recommendation-filter-line" aria-live="polite">
-            当前视图：{activeBucketLabel[bucketFilter]}，显示 {visibleRecommendations.length}/{recommendations.length} 条；切换视图会清空当前勾选，避免隐藏行被批量提交。
+            当前视图：{activeBucketLabel[bucketFilter]}，显示 {visibleRecommendations.length}/{recommendations.length} 条；切换视图会清空当前勾选。
           </p>
-          <div className="business-pill-row" aria-label="建议池分类计数">
-            <StatusPill tone={formalApprovalCount > 0 ? 'ready' : 'pending'}>可送审动作 {formalApprovalCount}</StatusPill>
-            <StatusPill tone={manualReviewCount > 0 ? 'warning' : 'pending'}>人工复核 {manualReviewCount}</StatusPill>
-            <StatusPill tone={insightOnlyCount > 0 ? 'warning' : 'ready'}>AI 洞察未采纳 {insightOnlyCount}</StatusPill>
-            <StatusPill tone={evidenceBlockedCount > 0 ? 'blocked' : 'ready'}>证据不足阻断 {evidenceBlockedCount}</StatusPill>
+          {visibleFormalApprovalRecommendations.length > 0 ? (
+            <div className={`recommendation-selection-toolbar recommendation-selection-toolbar-${batchSelectionState.tone}`}>
+              <div>
+                <span>送审准备</span>
+                <strong key={batchSelectionState.countLabel} className={batchSelectionState.countClassName}>
+                  {batchSelectionState.countLabel}
+                </strong>
+                <span className="recommendation-selection-live" aria-live="polite">
+                  {batchSelectionState.ariaStatus}
+                </span>
+              </div>
+              <div className="action-row">
+                <button
+                  className="secondary-button compact-button"
+                  onClick={toggleAllFormalSelection}
+                  type="button"
+                >
+                  {selectedVisibleFormalRecommendations.length === visibleFormalApprovalRecommendations.length ? '取消全选' : `全选 ${visibleFormalApprovalRecommendations.length}`}
+                </button>
+                <button
+                  className={batchSelectionState.disabled ? 'secondary-button compact-button' : 'primary-button compact-button'}
+                  disabled={batchSelectionState.disabled}
+                  onClick={submitSelectedToApproval}
+                  type="button"
+                >
+                  {batchSelectionState.actionLabel}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="recommendation-selection-empty recommendation-selection-strip" role="status" aria-live="polite">
+              <span>送审准备</span>
+              <strong>暂无可送审动作</strong>
+              <p>当前建议需要先补齐证据或人工复核；表格仍可查看每条建议的阻断原因。</p>
+            </div>
+          )}
+          <div className="table-wrap recommendation-workbench-table-wrap">
+            <table className="business-table recommendation-table recommendation-workbench-table">
+              <thead>
+                <tr>
+                  {showApprovalSelection && (
+                    <th>
+                      <input
+                        aria-label="全选可审批建议"
+                        checked={selectedVisibleFormalRecommendations.length === visibleFormalApprovalRecommendations.length}
+                        onChange={toggleAllFormalSelection}
+                        type="checkbox"
+                      />
+                    </th>
+                  )}
+                  <th>动作</th>
+                  <th>广告活动 / 广告组</th>
+                  <th>对象</th>
+                  <th>当前 {'->'} 建议</th>
+                  <th>指标依据</th>
+                  <th>证据状态</th>
+                  <th>风险</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRecommendations.map((rec) => {
+                  const isFormalApproval = visibleFormalApprovalIdSet.has(String(rec.id));
+                  const isSelectedForApproval = showApprovalSelection && selectedRecommendationIds.has(String(rec.id));
+                  return (
+                    <tr className={isSelectedForApproval ? 'recommendation-row-selected' : ''} key={rec.id}>
+                      {showApprovalSelection && (
+                        <td className="table-checkbox-cell">
+                          {isFormalApproval ? (
+                            <input
+                              aria-label={`选择建议 ${rec.id}`}
+                              checked={isSelectedForApproval}
+                              onChange={() => toggleRecommendationSelection(rec)}
+                              type="checkbox"
+                            />
+                          ) : (
+                            <span className="table-checkbox-placeholder" aria-hidden="true" />
+                          )}
+                        </td>
+                      )}
+                      <td>
+                        <strong>{rec.actionType}</strong>
+                        <div className="muted-cell">{rec.evidence?.asin || '-'}</div>
+                      </td>
+                      <td>
+                        {rec.evidence?.campaignName || '-'}
+                        <div className="muted-cell">{rec.evidence?.adGroupName || '-'}</div>
+                      </td>
+                      <td>
+                        <strong>{recommendationObject(rec)}</strong>
+                        <div className="muted-cell">{recommendationType(rec)}</div>
+                      </td>
+                      <td>{rec.currentValue || '-'} {'->'} {rec.recommendedValue || '-'}</td>
+                      <td>
+                        <strong>{formatUsd(rec.evidence?.cost ?? rec.cost)}</strong>
+                        <div className="muted-cell">
+                          ACOS {formatPercent((rec.evidence?.acos ?? rec.acos ?? 0) * 100)} / {rec.evidence?.orders ?? '-'} 单 / {rec.evidence?.clicks ?? rec.clicks} 点击
+                        </div>
+                      </td>
+                      <td>
+                        <StatusPill tone={isFormalApproval ? 'ready' : recommendationHasEvidenceBlocker(rec, currentBatchId, currentRealReportSourceFiles) ? 'blocked' : 'warning'}>{isFormalApproval ? '可送审' : recommendationHasEvidenceBlocker(rec, currentBatchId, currentRealReportSourceFiles) ? '缺证据' : '需复核'}</StatusPill>
+                        <div className="muted-cell">{recommendationSendStatusText(rec, currentBatchId, currentRealReportSourceFiles)}</div>
+                      </td>
+                      <td><StatusPill tone={riskTone(rec.riskLevel)}>{rec.riskLevel}</StatusPill></td>
+                      <td>
+                        <button className="secondary-button compact-button" onClick={() => setSelected(rec)} type="button">
+                          详情
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!visibleRecommendations.length && (
+                  <tr>
+                    <td colSpan={compactRecommendationTableColSpan}>{recommendations.length ? `当前视图“${activeBucketLabel[bucketFilter]}”没有建议。` : quantReady ? '当前范围还没有待审批或需复核建议。' : '缺少真实数据，本页不生成建议。'}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </Panel>
 
         {message && <p className={message.includes('失败') || message.includes('不能') ? 'blocked-line' : 'muted-line'}>{message}</p>}
 
-        <ProgressiveDetails title="生成范围、AI 配置和规则阈值">
+        <ProgressiveDetails title="辅助生成口径、AI 状态和证据详情">
         <Panel title="建议生成范围" tone={quantReady ? 'success' : 'blocked'}>
           <div className="business-split">
             <div>
@@ -1576,34 +1724,24 @@ export function RecommendationsPage() {
               {formalApprovalCount > 0 ? '有正式建议' : recommendations.length ? '需复核' : '暂无建议'}
             </StatusPill>
           </div>
-          <StateLightGrid
-            items={[
-              {
-                label: '可送审动作',
-                value: `可送审 ${formalApprovalCount}`,
-                detail: recommendationFormalApprovalExplanationText(),
-                tone: formalApprovalCount > 0 ? 'ready' : 'pending',
-              },
-              {
-                label: '人工复核',
-                value: `人工复核 ${manualReviewCount}`,
-                detail: recommendationReviewExplanationText(),
-                tone: manualReviewCount > 0 ? 'warning' : 'pending',
-              },
-              {
-                label: 'AI 洞察未采纳',
-                value: `AI 洞察未采纳 ${insightOnlyCount}`,
-                detail: '缺证据、无法绑定对象或被合并层过滤',
-                tone: insightOnlyCount > 0 ? 'warning' : 'ready',
-              },
-              {
-                label: '证据不足阻断',
-                value: `证据不足阻断 ${evidenceBlockedCount}`,
-                detail: '缺批次、来源文件、当前/建议值或 AI 证据',
-                tone: evidenceBlockedCount > 0 ? 'blocked' : 'ready',
-              },
-            ]}
-          />
+          <div className="recommendation-decision-list" role="list" aria-label="建议分类解释">
+            <div role="listitem">
+              <StatusPill tone={formalApprovalCount > 0 ? 'ready' : 'pending'}>可送审 {formalApprovalCount}</StatusPill>
+              <span>{recommendationFormalApprovalExplanationText()}</span>
+            </div>
+            <div role="listitem">
+              <StatusPill tone={manualReviewCount > 0 ? 'warning' : 'pending'}>人工复核 {manualReviewCount}</StatusPill>
+              <span>{recommendationReviewExplanationText()}</span>
+            </div>
+            <div role="listitem">
+              <StatusPill tone={insightOnlyCount > 0 ? 'warning' : 'ready'}>AI 洞察未采纳 {insightOnlyCount}</StatusPill>
+              <span>缺证据、无法绑定对象或被合并层过滤。</span>
+            </div>
+            <div role="listitem">
+              <StatusPill tone={evidenceBlockedCount > 0 ? 'blocked' : 'ready'}>证据阻断 {evidenceBlockedCount}</StatusPill>
+              <span>缺批次、来源文件、当前/建议值或 AI 证据。</span>
+            </div>
+          </div>
           {insightOnlyReasons.length > 0 && (
             <p className="warning-line">未进入建议池原因：{Array.from(new Set(insightOnlyReasons)).slice(0, 3).join('；')}</p>
           )}
@@ -1837,118 +1975,6 @@ export function RecommendationsPage() {
         </Panel>
         </ProgressiveDetails>
 
-        <Panel title="待处理建议">
-          <div className={`recommendation-selection-toolbar recommendation-selection-toolbar-${batchSelectionState.tone}`}>
-            <div>
-              <span>送审准备</span>
-              <strong key={batchSelectionState.countLabel} className={batchSelectionState.countClassName}>
-                {batchSelectionState.countLabel}
-              </strong>
-              <span className="recommendation-selection-live" aria-live="polite">
-                {batchSelectionState.ariaStatus}
-              </span>
-              <p>{batchSelectionState.helperText}</p>
-            </div>
-            <div className="action-row">
-              <button
-                className="secondary-button"
-                disabled={!visibleFormalApprovalRecommendations.length}
-                onClick={toggleAllFormalSelection}
-                type="button"
-              >
-                {visibleFormalApprovalRecommendations.length > 0 && selectedVisibleFormalRecommendations.length === visibleFormalApprovalRecommendations.length ? '取消全选' : `全选可送审 ${visibleFormalApprovalRecommendations.length}`}
-              </button>
-              <button
-                className={batchSelectionState.disabled ? 'secondary-button' : 'primary-button'}
-                disabled={batchSelectionState.disabled}
-                onClick={submitSelectedToApproval}
-                type="button"
-              >
-                {batchSelectionState.actionLabel}
-              </button>
-            </div>
-          </div>
-          <details className="evidence-disclosure">
-            <summary>展开完整建议表（{visibleRecommendations.length}/{recommendations.length} 条）</summary>
-            <div className="table-wrap">
-              <table className="business-table recommendation-table">
-              <thead>
-                <tr>
-                  <th>
-                    <input
-                      aria-label="全选可审批建议"
-                      checked={visibleFormalApprovalRecommendations.length > 0 && selectedVisibleFormalRecommendations.length === visibleFormalApprovalRecommendations.length}
-                      disabled={!visibleFormalApprovalRecommendations.length}
-                      onChange={toggleAllFormalSelection}
-                      type="checkbox"
-                    />
-                  </th>
-                  <th>动作建议</th>
-                  <th>广告活动</th>
-                  <th>广告组</th>
-                  <th>产品/ASIN</th>
-                  <th>对象</th>
-                  <th>当前 → 建议</th>
-                  <th>原因指标</th>
-                  <th>证据状态</th>
-                  <th>风险</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRecommendations.map((rec) => {
-                  const isFormalApproval = visibleFormalApprovalIdSet.has(String(rec.id));
-                  const isSelectedForApproval = selectedRecommendationIds.has(String(rec.id));
-                  return (
-                  <tr className={isSelectedForApproval ? 'recommendation-row-selected' : ''} key={rec.id}>
-                    <td className="table-checkbox-cell">
-                      <input
-                        aria-label={`选择建议 ${rec.id}`}
-                        checked={isSelectedForApproval}
-                        disabled={!isFormalApproval}
-                        onChange={() => toggleRecommendationSelection(rec)}
-                        type="checkbox"
-                      />
-                    </td>
-                    <td>{rec.actionType}</td>
-                    <td>{rec.evidence?.campaignName || '-'}</td>
-                    <td>{rec.evidence?.adGroupName || '-'}</td>
-                    <td>{rec.evidence?.asin || '-'}</td>
-                    <td>
-                      <strong>{recommendationObject(rec)}</strong>
-                      <div className="muted-cell">{recommendationType(rec)}</div>
-                    </td>
-                    <td>{rec.currentValue || '-'} {'→'} {rec.recommendedValue || '-'}</td>
-                    <td>
-                      <strong>{formatUsd(rec.evidence?.cost ?? rec.cost)}</strong>
-                      <div className="muted-cell">
-                        ACOS {formatPercent((rec.evidence?.acos ?? rec.acos ?? 0) * 100)} / {rec.evidence?.orders ?? '-'} 单 / {rec.evidence?.clicks ?? rec.clicks} 点击
-                      </div>
-                    </td>
-                    <td>
-                      <StatusPill tone={isFormalApproval ? 'ready' : recommendationHasEvidenceBlocker(rec, currentBatchId, currentRealReportSourceFiles) ? 'blocked' : 'warning'}>{isFormalApproval ? '可送审' : recommendationHasEvidenceBlocker(rec, currentBatchId, currentRealReportSourceFiles) ? '缺证据' : '需复核'}</StatusPill>
-                      <div className="muted-cell">{reviewReason(rec)}</div>
-                    </td>
-                    <td><StatusPill tone={riskTone(rec.riskLevel)}>{rec.riskLevel}</StatusPill></td>
-                    <td>
-                      <button className="secondary-button compact-button" onClick={() => setSelected(rec)} type="button">
-                        查看送审判断
-                      </button>
-                    </td>
-                  </tr>
-                  );
-                })}
-                {!visibleRecommendations.length && (
-                  <tr>
-                    <td colSpan={11}>{recommendations.length ? `当前视图“${activeBucketLabel[bucketFilter]}”没有建议。` : quantReady ? '当前范围还没有待审批或需复核建议。' : '缺少真实数据，本页不生成建议。'}</td>
-                  </tr>
-                )}
-              </tbody>
-              </table>
-            </div>
-          </details>
-        </Panel>
-
         {selected && (
           <Panel title="送审判断">
             {(() => {
@@ -1984,7 +2010,7 @@ export function RecommendationsPage() {
                     <div>
                       <span>为什么建议</span>
                       <strong>{formatUsd(selected.evidence?.cost ?? selected.cost)} / ACOS {formatPercent((selected.evidence?.acos ?? selected.acos ?? 0) * 100)}</strong>
-                      <p>{selected.evidence?.orders ?? '-'} 单 / {selected.evidence?.clicks ?? selected.clicks} 点击 / {reviewReason(selected)}</p>
+                      <p>{selected.evidence?.orders ?? '-'} 单 / {selected.evidence?.clicks ?? selected.clicks} 点击 / {recommendationSendStatusText(selected, currentBatchId, currentRealReportSourceFiles)}</p>
                     </div>
                     <div>
                       <span>风险和证据</span>
@@ -2049,7 +2075,7 @@ export function RecommendationsPage() {
               <div><span>AI 动态阈值</span><strong>{thresholdSuggestionSummary(selected)}</strong></div>
               <div><span>规则量化</span><strong>{quantLabel(selected.evidence?.quantStatus)} / {lifecycleLabel(selected.evidence?.quantLifecycleStage)}</strong></div>
               <div><span>规则阈值</span><strong>{ruleQuantThresholdSummary(selected)}</strong></div>
-              <div><span>复核原因</span><strong>{reviewReason(selected)}</strong></div>
+              <div><span>复核原因</span><strong>{recommendationSendStatusText(selected, currentBatchId, currentRealReportSourceFiles)}</strong></div>
               <div><span>AI/规则合并</span><strong>{decisionLabel(selected)}{selected.evidence?.decisionRequiresReview ? ' / 需人工复核' : ''}</strong></div>
               <div><span>运营事件</span><strong>{selected.evidence?.operationEventCount ?? 0} 条进入诊断上下文</strong></div>
               <div><span>产品配置</span><strong>{selected.evidence?.productContextCount ?? 0} 个进入诊断上下文</strong></div>

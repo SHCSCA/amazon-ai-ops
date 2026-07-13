@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  buildScopeCompactContextLabel,
+  buildScopeCompactRangeLabel,
   buildScopeSummaryFacts,
   buildScopeWarningSummary,
   formatBatchOption,
@@ -117,6 +119,27 @@ describe('buildScopeSummaryFacts', () => {
   });
 });
 
+describe('compact scope labels', () => {
+  it('keeps the always-visible topbar range label short', () => {
+    expect(buildScopeCompactRangeLabel({
+      dateFrom: '2026-05-21',
+      dateTo: '2026-06-23',
+    })).toBe('2026-05-21 ~ 2026-06-23');
+
+    expect(buildScopeCompactRangeLabel({})).toBe('日期待设置');
+  });
+
+  it('keeps store, marketplace, and product context separate from the date range', () => {
+    expect(buildScopeCompactContextLabel({
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0GTTJFQTM',
+    })).toBe('FT-US-US / US / B0GTTJFQTM');
+
+    expect(buildScopeCompactContextLabel({})).toBe('未选店铺 / 未选站点 / 全部产品');
+  });
+});
+
 describe('scope field feedback micro-response', () => {
   it('labels changed fields as recorded without claiming unsaved draft fields are committed', () => {
     expect(scopeFieldFeedbackLabel('storeName')).toBe('店铺已记录为待保存范围');
@@ -140,12 +163,20 @@ describe('scope field feedback micro-response', () => {
     expect(css).toContain('@keyframes scope-field-confirm-pulse');
   });
 
-  it('renders the range editor as a popover so opening it does not push the workspace', () => {
+  it('renders scope details and the range editor as popovers so opening them does not push the workspace', () => {
     const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
-    const scopeBarRule = cssRuleBody(css, '.scope-bar');
+    const topbarRule = cssRuleBody(css, '.topbar');
+    const compactTriggerRule = cssRuleBody(css, '.topbar .scope-compact-trigger');
+    const topbarDetailsRule = cssRuleBody(css, '.topbar .scope-details-panel');
     const editorRule = cssRuleBody(css, '.scope-editor');
 
-    expect(scopeBarRule).toMatch(/position\s*:\s*sticky\s*;/);
+    expect(topbarRule).toMatch(/min-height\s*:\s*40px\s*;/);
+    expect(compactTriggerRule).toMatch(/display\s*:\s*grid\s*;/);
+    expect(compactTriggerRule).toMatch(/grid-template-columns\s*:\s*auto minmax\(138px,\s*auto\) minmax\(120px,\s*1fr\) auto\s*;/);
+    expect(topbarDetailsRule).toMatch(/display\s*:\s*block\s*;/);
+    expect(topbarDetailsRule).toMatch(/position\s*:\s*absolute\s*;/);
+    expect(topbarDetailsRule).toMatch(/top\s*:\s*calc\(100%\s*\+\s*6px\)\s*;/);
+    expect(topbarDetailsRule).toMatch(/z-index\s*:\s*260\s*;/);
     expect(editorRule).toMatch(/position\s*:\s*absolute\s*;/);
     expect(editorRule).toMatch(/top\s*:\s*calc\(100%\s*\+\s*8px\)\s*;/);
     expect(editorRule).toMatch(/left\s*:\s*10px\s*;/);

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { DecisionActionStrip, FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
+import { DecisionActionStrip, FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
@@ -798,6 +798,29 @@ export function ApprovalPage() {
     document.getElementById(selectedApprovalDecision.canApprove ? 'approval-form' : 'approval-decision-details')?.scrollIntoView({ block: 'start' });
   }
 
+  function closeApprovalDecisionModal() {
+    if (submittingDecision) return;
+    setSelected(null);
+    setApproverName('');
+    setApprovalNote('');
+  }
+
+  function handleApprovalDecisionModalKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'Escape' || submittingDecision) return;
+    event.stopPropagation();
+    closeApprovalDecisionModal();
+  }
+
+  useEffect(() => {
+    if (!selected) return;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || submittingDecision) return;
+      closeApprovalDecisionModal();
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [selected, submittingDecision]);
+
   useEffect(() => {
     if (!currentBatchId) {
       setRows([]);
@@ -813,82 +836,19 @@ export function ApprovalPage() {
         eyebrow="广告"
         title={PAGE_HEADER_TITLES.approval}
         description="逐条确认动作是否允许执行：批准、拒绝，或因缺证据和范围不匹配退回复核。"
-        primaryTask="做出人工审批决定"
-        nextAction={selected ? '填写处理人后批准或拒绝' : '选择一条待审批动作'}
-        primaryAction={{
-          label: selected ? selectedApprovalDecision.primaryActionLabel : '查看审批队列',
-          busy: loading && !selected,
-          busyLabel: '加载中...',
-          disabled: loading && !selected,
-          onClick: selected ? showSelectedDecisionTarget : showApprovalQueue,
-        }}
       />
 
       <div className="business-stack">
-        <div className="kpi-row approval-prototype-status-grid" aria-label="审批状态">
-          {selected ? (
-            <>
-              <KpiCard
-                label="审批状态"
-                value={selectedApprovalDecision.statusLabel}
-                detail={selected.actionType}
-                tone={selectedApprovalDecision.tone}
-              />
-              <KpiCard
-                label="广告对象"
-                value={objectName(selected)}
-                detail={selected.evidence?.campaignName || '当前建议'}
-                tone="pending"
-              />
-              <KpiCard
-                label="缺证据"
-                value={selectedMissing.length}
-                detail={selectedMissing.length ? selectedMissing.slice(0, 2).join('、') : '预检通过'}
-                tone={selectedMissing.length ? 'blocked' : 'ready'}
-              />
-              <KpiCard
-                label="复核项"
-                value={selectedBlockers.length}
-                detail={selectedBlockers.length ? selectedBlockers.slice(0, 2).join('、') : '可普通审批'}
-                tone={selectedBlockers.length ? 'warning' : 'ready'}
-              />
-            </>
-          ) : (
-            <>
-              <KpiCard
-                label="当前队列"
-                value={`${TAB_LABELS[tab]} ${rows.length}`}
-                detail={currentBatchId || '批次待确认'}
-                tone={rows.length ? 'pending' : 'blocked'}
-              />
-              <KpiCard
-                label="店铺"
-                value={scope.storeName || '-'}
-                detail={scope.marketplaceCode || '-'}
-                tone={scope.storeName ? 'ready' : 'warning'}
-              />
-              <KpiCard
-                label="动作边界"
-                value="只审批"
-                detail="不执行广告"
-                tone="warning"
-              />
-              <KpiCard
-                label="下一步"
-                value={rows.length ? '选择动作' : '等待建议'}
-                detail="批准后进入结果核对"
-                tone={rows.length ? 'pending' : 'blocked'}
-              />
-            </>
-          )}
-        </div>
-        <Panel title={selected ? '人工审批任务' : '审批队列状态'} tone={selected ? (selectedApprovalDecision.tone === 'ready' ? 'success' : selectedApprovalDecision.tone) : rows.length ? 'warning' : 'blocked'}>
-          <div className="prototype-list-stack">
-            <div className="prototype-list-item">
-              <strong>{selected ? selectedApprovalDecision.title : '选择一条待审批动作'}</strong>
-              <p>{selected
-                ? selectedApprovalDecision.detail
-                : `当前${TAB_LABELS[tab]}队列 ${rows.length} 条。先选择一条动作，再批准、拒绝或查看复核要求。`}</p>
+        <div id="approval-queue-panel">
+        <Panel title="审批队列" tone={rows.length ? 'warning' : 'blocked'}>
+          <div className="approval-workbench-head">
+            <div>
+              <strong>{TAB_LABELS[tab]} {rows.length} 条</strong>
+              <p>先选择一条动作，再批准或拒绝；本页只记录人工决策，不执行广告。</p>
+            </div>
+            <div className="approval-workbench-status">
+              <StatusPill tone={currentBatchId ? 'ready' : 'warning'}>{currentBatchId || '批次待确认'}</StatusPill>
+              <StatusPill tone="warning">只审批，不执行</StatusPill>
             </div>
           </div>
           {batchSelectionHint && (
@@ -908,47 +868,6 @@ export function ApprovalPage() {
               <p>{decisionFeedback.detail}</p>
             </div>
           )}
-        </Panel>
-
-        <ProgressiveDetails title="审批边界和处理要求">
-        <Panel title="审批安全边界" tone="warning">
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
-              <p className="muted-line">不会批量自动写入。每个动作必须绑定店铺、站点、广告活动、广告组、对象和动作，并保留审批与回读证据。</p>
-            </div>
-            <StatusPill tone="pending">仅审批，不执行</StatusPill>
-          </div>
-        </Panel>
-
-        <Panel title="审批处理要求">
-          <div className="context-summary-grid">
-            <div>
-              <span>本页职责</span>
-              <strong>只做人工决策</strong>
-              <p>批准或拒绝规则确认后的建议；AI 独立洞察和冲突建议先进入复核队列。</p>
-            </div>
-            <div>
-              <span>批准前确认</span>
-              <strong>范围和动作</strong>
-              <p>核对店铺、站点、广告活动、广告组、对象、当前值和建议值。</p>
-            </div>
-            <div>
-              <span>批准后下一步</span>
-              <strong>进入结果核对</strong>
-              <p>在结果核对页补录审批凭证、执行前/执行后截图、回读值和现场行证明。</p>
-            </div>
-            <div>
-              <span>当前队列</span>
-              <strong>{rows.length} 条</strong>
-              <p>{TAB_LABELS[tab]}；切换标签只查看状态，不会执行动作。</p>
-            </div>
-          </div>
-        </Panel>
-        </ProgressiveDetails>
-
-        <div id="approval-queue-panel">
-        <Panel title="审批队列">
           <div className="tab-row">
             {(Object.keys(TAB_LABELS) as ApprovalTab[]).map((item) => (
               <button
@@ -966,9 +885,7 @@ export function ApprovalPage() {
               </button>
             ))}
           </div>
-          <details className="evidence-disclosure" id="approval-queue-details">
-            <summary>展开审批队列（{rows.length} 条）</summary>
-            <div className="table-wrap">
+          <div className="table-wrap">
               <table className="business-table approval-table">
               <thead>
                 <tr>
@@ -1022,13 +939,79 @@ export function ApprovalPage() {
                 )}
               </tbody>
               </table>
-            </div>
-          </details>
+          </div>
         </Panel>
         </div>
 
+        <ProgressiveDetails title="审批边界和处理要求">
+        <Panel title="审批安全边界" tone="warning">
+          <div className="business-split">
+            <div>
+              <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
+              <p className="muted-line">不会批量自动写入。每个动作必须绑定店铺、站点、广告活动、广告组、对象和动作，并保留审批与回读证据。</p>
+            </div>
+            <StatusPill tone="pending">仅审批，不执行</StatusPill>
+          </div>
+        </Panel>
+
+        <Panel title="审批处理要求">
+          <div className="context-summary-grid">
+            <div>
+              <span>本页职责</span>
+              <strong>只做人工决策</strong>
+              <p>批准或拒绝规则确认后的建议；AI 独立洞察和冲突建议先进入复核队列。</p>
+            </div>
+            <div>
+              <span>批准前确认</span>
+              <strong>范围和动作</strong>
+              <p>核对店铺、站点、广告活动、广告组、对象、当前值和建议值。</p>
+            </div>
+            <div>
+              <span>批准后下一步</span>
+              <strong>进入结果核对</strong>
+              <p>在结果核对页补录审批凭证、执行前/执行后截图、回读值和现场行证明。</p>
+            </div>
+            <div>
+              <span>当前队列</span>
+              <strong>{rows.length} 条</strong>
+              <p>{TAB_LABELS[tab]}；切换标签只查看状态，不会执行动作。</p>
+            </div>
+          </div>
+        </Panel>
+        </ProgressiveDetails>
+
         {selected && (
-          <Panel title="人工审批决定">
+          <div
+            className="product-config-modal-backdrop approval-decision-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeApprovalDecisionModal();
+            }}
+            role="presentation"
+          >
+            <section
+              aria-labelledby="approval-decision-modal-title"
+              aria-modal="true"
+              className="product-config-modal approval-decision-modal"
+              onKeyDown={handleApprovalDecisionModalKeyDown}
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+            >
+              <header className="product-config-modal-header">
+                <div>
+                  <span>审批处理</span>
+                  <h2 id="approval-decision-modal-title">人工审批决定</h2>
+                </div>
+                <button
+                  className="secondary-button compact-button"
+                  disabled={Boolean(submittingDecision)}
+                  onClick={closeApprovalDecisionModal}
+                  type="button"
+                >
+                  关闭
+                </button>
+              </header>
+              <div className="product-config-modal-body approval-decision-modal-body">
+                <div className="approval-decision-panel">
             <div className="evidence-check-panel">
               <div className="business-split">
                 <div>
@@ -1269,7 +1252,10 @@ export function ApprovalPage() {
                 {rejectButton.label}
               </button>
             </div>
-          </Panel>
+                </div>
+              </div>
+            </section>
+          </div>
         )}
 
         {message && <p className={message.includes('失败') || message.includes('必须') ? 'blocked-line' : 'muted-line'}>{message}</p>}

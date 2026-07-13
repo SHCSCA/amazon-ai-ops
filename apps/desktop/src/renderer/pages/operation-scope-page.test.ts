@@ -86,20 +86,25 @@ describe('operation scope task state', () => {
     ]);
   });
 
-  it('renders the page-level range form with field confirmation hooks', () => {
+  it('keeps range editing in the global scope editor instead of rendering a duplicate page form', () => {
     const source = readFileSync(new URL('./operation-scope-page.tsx', import.meta.url), 'utf8');
-    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
-    expect(source).toContain('Panel title="范围设置"');
-    expect(source).toContain("scopeFieldFeedbackClass('storeName'");
-    expect(source).toContain("scopeFieldFeedbackClass('marketplaceCode'");
-    expect(source).toContain("scopeFieldFeedbackClass('dateFrom'");
-    expect(source).toContain("scopeFieldFeedbackClass('dateTo'");
-    expect(source).toContain("scopeFieldFeedbackClass('asin'");
-    expect(source).toContain("scopeFieldFeedbackClass('batchId'");
+    expect(source).toContain("window.dispatchEvent(new CustomEvent('amazon-ai-ops:open-scope-editor'))");
+    expect(source).toContain('<button className="secondary-button compact-button" onClick={openScopeEditor} type="button">编辑范围</button>');
+    expect(source).toContain('title="范围字段确认"');
+    expect(source).toContain('className="operation-scope-field-card"');
+    expect(source).toContain('后续读取与影响页面');
+    expect(source).not.toContain('operation-scope-prototype-status-grid');
+    expect(source).not.toContain('KpiCard');
+    expect(source).not.toContain('className="action-row operation-scope-prototype-actions"');
+    expect(source).toContain('className="scope-impact-tags"');
+    expect(source).not.toContain('className="workflow-step"');
+    expect(source).not.toContain('Panel title="这个范围会影响哪些页面"');
+    expect(source).not.toContain('Panel title="推荐下一步"');
+    expect(source).not.toContain('Panel title="范围确认与下一步"');
+    expect(source).not.toContain('Panel title="当前范围摘要"');
+    expect(source).not.toContain('Panel title="范围设置"');
+    expect(source).not.toContain('<FormTable>');
     expect(source).toContain('api.saveOperationScope(normalizedDraft)');
-    expect(css).toContain('.operation-scope-field');
-    expect(css).toContain('.operation-scope-date-range');
-    expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))');
   });
 });

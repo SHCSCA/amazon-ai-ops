@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScopeText, useBusinessDataPipeline } from '../components/business-data';
-import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
@@ -345,6 +345,8 @@ export function ProductManagementPage() {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [saveError, setSaveError] = useState('');
+  const [productSearch, setProductSearch] = useState('');
+  const [openProductPanel, setOpenProductPanel] = useState<'detail' | 'edit' | 'daily' | 'timeline' | ''>('');
   const importedRows = data?.quant?.importedRows ?? 0;
   const hasImportedMetrics = Boolean(data?.quant?.hasImportedMetrics && importedRows > 0);
   const taskState = useMemo(
@@ -387,6 +389,17 @@ export function ProductManagementPage() {
       : null,
     [hasImportedMetrics, model.selectedDailyRows.length, selected],
   );
+  const visibleProducts = useMemo(() => {
+    const query = productSearch.trim().toUpperCase();
+    if (!query) return model.products;
+    return model.products.filter((product) => [
+      product.asin,
+      product.title,
+      product.skuLine,
+      stageLabel(product.stage),
+      product.status || '',
+    ].some((value) => String(value || '').toUpperCase().includes(query)));
+  }, [model.products, productSearch]);
 
   useEffect(() => {
     if (!selectedAsin && scope.asin) setSelectedAsin(scope.asin);
@@ -399,9 +412,23 @@ export function ProductManagementPage() {
     setSaveError('');
   }, [scope.asin, selected, selectedContext]);
 
+  useEffect(() => {
+    if (!openProductPanel) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenProductPanel('');
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [openProductPanel]);
+
   function selectProduct(asin: string) {
     setSelectedAsin(asin);
     setScope({ asin, currency: 'USD' });
+  }
+
+  function openProductDialog(asin: string, panel: 'detail' | 'edit' | 'daily' | 'timeline' = 'detail') {
+    selectProduct(asin);
+    setOpenProductPanel(panel);
   }
 
   function clearProduct() {
@@ -441,45 +468,46 @@ export function ProductManagementPage() {
     }
   }
 
+  const productDialogTitle = openProductPanel === 'edit'
+    ? '维护产品信息'
+    : openProductPanel === 'daily'
+      ? '按天广告数据'
+      : openProductPanel === 'timeline'
+        ? '产品运营时间线'
+        : '当前产品概览';
+
   return (
     <div>
       <PageHeader
         eyebrow="总览"
         title={PAGE_HEADER_TITLES.productManagement}
-        description="确定要处理的 ASIN，再进入工作范围和后续广告分析。"
+        description="管理产品池、锁定当前 ASIN，再把产品上下文交给广告表现、关键词和 Listing。"
         primaryAction={{
-          label: '进入工作范围',
-          onClick: () => navigate('operation-scope'),
+          label: '打开完整配置',
+          onClick: () => navigate(routes.productConfig),
         }}
       />
 
-      <div className="business-stack">
-        <div className="kpi-row product-prototype-status-grid" aria-label="产品管理状态">
-          <KpiCard
-            label="产品池"
-            value={`${model.products.length} 个`}
-            detail={selected ? '已锁定当前产品' : '等待选择 ASIN'}
-            tone={selected ? 'ready' : 'pending'}
-          />
-          <KpiCard
-            label="当前产品"
-            value={selected ? selected.title : '未锁定'}
-            detail={selected ? selected.asin : '避免默认取第一条'}
-            tone={selected ? 'ready' : 'warning'}
-          />
-          <KpiCard
-            label="入库指标"
-            value={`${importedRows} 行`}
-            detail={hasImportedMetrics ? '可进入广告表现' : '先导入真实报表'}
-            tone={hasImportedMetrics ? 'ready' : 'blocked'}
-          />
-          <KpiCard
-            label="日级账本"
-            value={`${model.selectedDailyRows.length} 天`}
-            detail="按产品查看趋势"
-            tone={model.selectedDailyRows.length ? 'ready' : 'pending'}
-          />
+      <div className="business-stack product-management-workspace">
+        <div className="product-management-topline" aria-label="产品管理概览">
+          <div>
+            <span>产品池</span>
+            <strong>{model.products.length} 个产品</strong>
+          </div>
+          <div>
+            <span>当前产品</span>
+            <strong>{selected ? selected.asin : '未锁定'}</strong>
+          </div>
+          <div>
+            <span>数据状态</span>
+            <strong>{hasImportedMetrics ? `${importedRows} 行可用` : '待导入'}</strong>
+          </div>
+          <div>
+            <span>日级账本</span>
+            <strong>{selected ? `${model.selectedDailyRows.length} 天` : '锁定后查看'}</strong>
+          </div>
         </div>
+
         <div
           aria-live="polite"
           className={`product-management-task-feedback product-management-task-feedback-${taskState.feedbackTone}`}
@@ -489,257 +517,319 @@ export function ProductManagementPage() {
           <strong>{taskState.feedbackDetail}</strong>
         </div>
 
-        <Panel title="当前产品范围" tone={selected ? 'success' : 'warning'}>
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line"><ScopeText scope={scope} /></div>
-              <p className="muted-line">
-                选中产品后会同步当前 ASIN，广告表现、优化建议、运营事件、关键词机会和 Listing 会沿用该产品上下文。
-              </p>
+        <div className="product-management-shell">
+          <Panel
+            title="产品列表"
+            tone={model.products.length ? 'default' : 'warning'}
+            titleAccessory={<StatusPill tone={selected ? 'ready' : 'warning'}>{selected ? '已锁定当前产品' : '请选择产品'}</StatusPill>}
+          >
+            <div className="product-management-list-toolbar">
+              <label className="product-management-search">
+                <span>搜索产品</span>
+                <input
+                  value={productSearch}
+                  onChange={(event) => setProductSearch(event.target.value)}
+                  placeholder="ASIN / 标题 / SKU / 阶段"
+                />
+              </label>
+              <div className="product-management-list-actions">
+                <button className="secondary-button compact-button" onClick={() => navigate(routes.productConfig)} type="button">批量配置</button>
+                <button className="secondary-button compact-button" disabled={!selected} onClick={clearProduct} type="button">查看全部</button>
+              </div>
             </div>
-            <div className="business-pill-row business-pill-row-right">
-              <StatusPill tone={selected ? 'ready' : 'warning'}>
-                {selected ? `${selected.title} / ${selected.asin}` : '全部产品'}
-              </StatusPill>
-              {selected && (
-                <button className="secondary-button compact-button" onClick={clearProduct} type="button">
-                  查看全部产品
-                </button>
-              )}
-            </div>
-          </div>
-          {loading && <p className="muted-line">正在读取产品、广告数据和运营事件...</p>}
-          {error && <p className="blocked-line">{error}</p>}
-        </Panel>
 
-        <Panel title="产品列表" tone={model.products.length ? 'default' : 'warning'}>
-          {model.products.length ? (
-            <div className="table-wrap">
-              <table className="business-table product-management-table">
-                <thead>
-                  <tr>
-                    <th>ASIN</th>
-                    <th>标题</th>
-                    <th>状态</th>
-                    <th>广告表现</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {model.products.map((product) => {
-                    const isProductSelected = selected?.asin === product.asin;
-                    const optionView = buildProductManagementOptionView({
-                      selected: isProductSelected,
-                      productTitle: product.title,
-                      asin: product.asin,
-                      hasImportedMetrics,
-                      dailyDays: isProductSelected ? model.selectedDailyRows.length : 0,
-                    });
+            {visibleProducts.length ? (
+              <div className="table-wrap product-management-list-wrap">
+                <table className="business-table product-management-table product-management-table-primary">
+                  <thead>
+                    <tr>
+                      <th>产品</th>
+                      <th>阶段 / 状态</th>
+                      <th>广告表现</th>
+                      <th>数据</th>
+                      <th>配置</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleProducts.map((product) => {
+                      const isProductSelected = selected?.asin === product.asin;
+                      const optionView = buildProductManagementOptionView({
+                        selected: isProductSelected,
+                        productTitle: product.title,
+                        asin: product.asin,
+                        hasImportedMetrics,
+                        dailyDays: isProductSelected ? model.selectedDailyRows.length : 0,
+                      });
 
-                    return (
-                      <tr
-                        aria-label={optionView.statusLine}
-                        className={isProductSelected ? 'product-management-table-row-selected' : undefined}
-                        key={product.asin}
-                      >
-                        <td><strong>{product.asin}</strong><p>{product.skuLine}</p></td>
-                        <td>{product.title}</td>
-                        <td>
-                          <StatusPill tone={isProductSelected ? 'ready' : product.orders > 0 ? 'pending' : 'warning'}>
-                            {isProductSelected ? '当前产品' : product.orders > 0 ? '待复核' : '报表未齐'}
-                          </StatusPill>
-                          <p>{stageLabel(product.stage)} / 事件 {product.eventCount}</p>
-                        </td>
-                        <td>
-                          <strong>{formatUsd(product.cost)} / ACOS {formatPercent(product.acos * 100)}</strong>
-                          <p>销售 {formatUsd(product.sales)} / 订单 {product.orders}</p>
-                        </td>
-                        <td>
-                          <button
-                            className={isProductSelected ? 'secondary-button compact-button' : 'primary-button compact-button'}
-                            disabled={isProductSelected}
-                            onClick={() => selectProduct(product.asin)}
-                            type="button"
-                          >
-                            {isProductSelected ? '已锁定' : '锁定'}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="muted-line">{model.emptyReason}</p>
-          )}
-          <p aria-live="polite" className="product-management-selection-live" role="status">
-            {selectedOptionFeedback?.statusLine || '尚未锁定产品；点击产品卡片后工具栏会解冻。'}
-          </p>
-        </Panel>
-
-        <Panel title="产品信息维护" tone={draft.asin ? 'default' : 'warning'}>
-          <FormTable>
-            <FormTableRow label="ASIN" required hint="全局产品上下文的主键；保存后广告表现、优化建议、运营事件、关键词和 Listing 都会沿用该 ASIN。">
-              <input value={draft.asin} onChange={(event) => setDraft({ ...draft, asin: event.target.value })} placeholder="例如 B0..." />
-            </FormTableRow>
-            <FormTableRow label="标题" hint="用于运营识别，不自动提交到 Amazon 或领星。">
-              <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="产品标题" />
-            </FormTableRow>
-            <FormTableRow label="MSKU / SKU" hint="本地识别字段，可与 ERP 或 Amazon 后台对齐。">
-              <div className="inline-input-grid">
-                <input value={draft.msku} onChange={(event) => setDraft({ ...draft, msku: event.target.value })} placeholder="MSKU" />
-                <input value={draft.sku} onChange={(event) => setDraft({ ...draft, sku: event.target.value })} placeholder="SKU" />
-              </div>
-            </FormTableRow>
-            <FormTableRow label="阶段 / 状态" required hint="阶段和状态会参与 AI 阶段判断、动态阈值和建议风险解释。">
-              <div className="inline-input-grid">
-                <select value={draft.productStage} onChange={(event) => setDraft({ ...draft, productStage: event.target.value as ProductStage })}>
-                  {STAGE_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                </select>
-                <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
-                  <option value="active">正常运营</option>
-                  <option value="paused">暂停推广</option>
-                  <option value="clearance">清货</option>
-                  <option value="watch">观察</option>
-                </select>
-              </div>
-            </FormTableRow>
-            <FormTableRow label="成本与售价" hint={productCostInputHint(cost)}>
-              <div className="inline-input-grid inline-input-grid-3">
-                {PRODUCT_QUICK_COST_FIELDS.map((field) => (
-                  <span className="inline-field" key={field.key}>
-                    <span className="inline-field-label">{field.label}</span>
-                    <input
-                      aria-label={field.label}
-                      type="number"
-                      step="0.01"
-                      value={cost[field.key]}
-                      onChange={(event) => updateCost(field.key, event.target.value)}
-                      placeholder={field.placeholder}
-                    />
-                  </span>
-                ))}
-              </div>
-            </FormTableRow>
-            <FormTableRow label="广告目标" hint="目标 ACOS/TACOS 和净利率会作为产品级阈值约束。">
-              <div className="inline-input-grid inline-input-grid-3">
-                {PRODUCT_QUICK_TARGET_FIELDS.map((field) => (
-                  <span className="inline-field" key={field.key}>
-                    <span className="inline-field-label">{field.label}</span>
-                    <input
-                      aria-label={field.label}
-                      type="number"
-                      step="0.01"
-                      value={cost[field.key]}
-                      onChange={(event) => updateCost(field.key, event.target.value)}
-                      placeholder={field.placeholder}
-                    />
-                  </span>
-                ))}
-              </div>
-            </FormTableRow>
-          </FormTable>
-          <div className="action-row">
-            <button aria-busy={saveProductButton.ariaBusy} className={saveProductButton.className} disabled={saveProductButton.disabled} onClick={saveProduct} type="button">
-              {saveProductButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{saveProductButton.label}</span>
-            </button>
-            <button aria-busy={openConfigButton.ariaBusy} className={openConfigButton.className} disabled={openConfigButton.disabled} onClick={() => navigate(routes.productConfig)} type="button">
-              {openConfigButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{openConfigButton.label}</span>
-            </button>
-          </div>
-          {saveMessage && <p className="ready-line">{saveMessage}</p>}
-          {saveError && <p className="blocked-line">{saveError}</p>}
-        </Panel>
-
-        {selected && (
-          <>
-            <Panel title="产品详情" tone="success">
-              <div className="context-summary-grid">
-                <div><span>产品</span><strong>{selected.title}</strong><p>{selected.asin} / {selected.skuLine}</p></div>
-                <div><span>阶段</span><strong>{stageLabel(selected.stage)}</strong><p>{selected.status || '状态未配置'}</p></div>
-                <div>
-                  <span>广告表现</span>
-                  <strong>{formatUsd(selected.cost)} / {selected.orders} 单</strong>
-                  <p>销售 {formatUsd(selected.sales)} / ACOS {formatPercent(selected.acos * 100)}</p>
-                </div>
-                <div>
-                  <span>风险</span>
-                  <strong>{selected.highRiskCount} 个高风险对象</strong>
-                  <p>诊断 {selected.diagnosticCount} / 事件 {selected.eventCount}</p>
-                </div>
-              </div>
-              <div className="action-row">
-                <button className="secondary-button" onClick={() => navigate(routes.operationEvents)} type="button">维护运营事件</button>
-                <button className="secondary-button" onClick={() => navigate(routes.keywordOpportunities)} type="button">关键词机会</button>
-                <button className="secondary-button" onClick={() => navigate(routes.listingOptimization)} type="button">Listing 优化</button>
-                <button className="primary-button" disabled={!hasImportedMetrics} onClick={() => navigate(routes.adQuant)} type="button">进入 AI 量化</button>
-              </div>
-            </Panel>
-
-            <Panel title="按天广告数据" tone={model.selectedDailyRows.length ? 'success' : 'warning'}>
-              {model.selectedDailyRows.length ? (
-                <div className="table-wrap">
-                  <table className="business-table">
-                    <thead>
-                      <tr>
-                        <th>日期</th>
-                        <th>花费</th>
-                        <th>销售</th>
-                        <th>订单</th>
-                        <th>点击</th>
-                        <th>ACOS</th>
-                        <th>CVR</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {model.selectedDailyRows.map((row) => (
-                        <tr key={row.date}>
-                          <td>{row.date}</td>
-                          <td>{formatUsd(row.cost)}</td>
-                          <td>{formatUsd(row.sales)}</td>
-                          <td>{row.orders}</td>
-                          <td>{row.clicks}</td>
-                          <td>{formatPercent(row.acos * 100)}</td>
-                          <td>{formatPercent(row.cvr * 100)}</td>
+                      return (
+                        <tr
+                          aria-label={optionView.statusLine}
+                          className={isProductSelected ? 'product-management-table-row-selected' : undefined}
+                          key={product.asin}
+                        >
+                          <td>
+                            <strong>{product.title}</strong>
+                            <p>{product.asin} / {product.skuLine}</p>
+                          </td>
+                          <td>
+                            <StatusPill tone={isProductSelected ? 'ready' : product.orders > 0 ? 'pending' : 'warning'}>
+                              {isProductSelected ? '当前产品' : product.orders > 0 ? '待复核' : '报表未齐'}
+                            </StatusPill>
+                            <p>{stageLabel(product.stage)} / 事件 {product.eventCount}</p>
+                          </td>
+                          <td>
+                            <strong>{formatUsd(product.cost)} / ACOS {formatPercent(product.acos * 100)}</strong>
+                            <p>销售 {formatUsd(product.sales)} / 订单 {product.orders}</p>
+                          </td>
+                          <td>
+                            <strong>{isProductSelected ? `${model.selectedDailyRows.length} 天` : '-'}</strong>
+                            <p>{hasImportedMetrics ? `${importedRows} 行指标` : '待导入真实报表'}</p>
+                          </td>
+                          <td>
+                            <StatusPill tone={product.configured ? 'ready' : 'warning'}>{product.configured ? '已配置' : '待补齐'}</StatusPill>
+                            <p>{product.highRiskCount ? `${product.highRiskCount} 个高风险` : '风险待复核'}</p>
+                          </td>
+                          <td>
+                            <div className="product-management-row-actions">
+                              <button
+                                className={isProductSelected ? 'secondary-button compact-button' : 'primary-button compact-button'}
+                                disabled={isProductSelected}
+                                onClick={() => selectProduct(product.asin)}
+                                type="button"
+                              >
+                                {isProductSelected ? '已锁定' : '锁定'}
+                              </button>
+                              <button
+                                className="secondary-button compact-button"
+                                onClick={() => openProductDialog(product.asin)}
+                                type="button"
+                              >
+                                详情
+                              </button>
+                            </div>
+                          </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="muted-line">
-                  当前产品范围还没有可回查的日级广告指标。请先完成完整 8 类报表采集并导入 DB，再运行 AI 量化和优化建议。
-                </p>
-              )}
-            </Panel>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="muted-line">{model.products.length ? '没有匹配的产品。' : model.emptyReason}</p>
+            )}
+            <p aria-live="polite" className="product-management-selection-live" role="status">
+              {selectedOptionFeedback?.statusLine || '尚未锁定产品；点击产品行后，右侧详情和后续页面会按该 ASIN 读取数据。'}
+            </p>
+          </Panel>
+        </div>
 
-            <Panel title="产品运营时间线" tone={model.timeline.length ? 'success' : 'warning'}>
-              {model.timeline.length ? (
-                <div className="event-timeline">
-                  {model.timeline.map((item) => (
-                    <article className="event-card product-management-event" key={`${item.event.id}-${item.scope}`}>
-                      <div className="event-card-title">
-                        <strong>{item.event.eventDate} / {item.event.title}</strong>
-                        <StatusPill tone={productTimelineScopeTone(item.scope)}>
-                          {productTimelineScopeLabel(item.scope)}
-                        </StatusPill>
-                      </div>
-                      <p>{item.event.eventType} / {item.event.impactExpectation || '影响待观察'}</p>
-                      {item.event.notes && <p className="muted-line">{item.event.notes}</p>}
-                      {item.event.evidencePath && <p className="mono-line">{item.event.evidencePath}</p>}
-                    </article>
-                  ))}
+        {selected && openProductPanel && (
+          <div
+            className="product-config-modal-backdrop product-management-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setOpenProductPanel('');
+            }}
+            role="presentation"
+          >
+            <section
+              aria-labelledby="product-management-modal-title"
+              aria-modal="true"
+              className="product-config-modal product-management-modal"
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+            >
+              <header className="product-config-modal-header">
+                <div>
+                  <span>{selected.asin} / {selected.skuLine}</span>
+                  <h2 id="product-management-modal-title">{productDialogTitle}</h2>
                 </div>
-              ) : (
-                <p className="muted-line">
-                  当前产品还没有产品事件或全局事件。记录 Coupon、BD、调价、Listing 或库存变化后，AI 量化会使用这些背景。
-                </p>
-              )}
-            </Panel>
-          </>
+                <button className="secondary-button compact-button" onClick={() => setOpenProductPanel('')} type="button">关闭</button>
+              </header>
+
+              <div className="product-config-modal-body product-management-modal-body">
+                <div className="product-management-modal-tabs" aria-label="当前产品工作窗">
+                  <button className={openProductPanel === 'detail' ? 'primary-button compact-button' : 'secondary-button compact-button'} onClick={() => setOpenProductPanel('detail')} type="button">概览</button>
+                  <button className={openProductPanel === 'edit' ? 'primary-button compact-button' : 'secondary-button compact-button'} onClick={() => setOpenProductPanel('edit')} type="button">维护</button>
+                  <button className={openProductPanel === 'daily' ? 'primary-button compact-button' : 'secondary-button compact-button'} onClick={() => setOpenProductPanel('daily')} type="button">日级</button>
+                  <button className={openProductPanel === 'timeline' ? 'primary-button compact-button' : 'secondary-button compact-button'} onClick={() => setOpenProductPanel('timeline')} type="button">事件</button>
+                </div>
+
+                {openProductPanel === 'detail' && (
+                  <div className="product-management-current-card product-management-modal-summary">
+                    <div className="product-management-current-head">
+                      <div>
+                        <span>当前产品</span>
+                        <strong>{selected.title}</strong>
+                        <p>{selected.asin} / {selected.skuLine}</p>
+                      </div>
+                      <StatusPill tone="ready">已锁定</StatusPill>
+                    </div>
+                    <div className="product-management-current-metrics">
+                      <div><span>阶段</span><strong>{stageLabel(selected.stage)}</strong></div>
+                      <div><span>花费</span><strong>{formatUsd(selected.cost)}</strong></div>
+                      <div><span>销售</span><strong>{formatUsd(selected.sales)}</strong></div>
+                      <div><span>ACOS</span><strong>{formatPercent(selected.acos * 100)}</strong></div>
+                      <div><span>订单</span><strong>{selected.orders}</strong></div>
+                      <div><span>风险</span><strong>{selected.highRiskCount}</strong></div>
+                    </div>
+                    <p className="muted-line">
+                      这个窗口只展示当前产品上下文；主界面保持产品池和锁定动作，不再常驻表单和长明细。
+                    </p>
+                  </div>
+                )}
+
+                {openProductPanel === 'edit' && (
+                  <>
+                    <FormTable>
+                      <FormTableRow label="ASIN" required hint="全局产品上下文的主键；保存后后续页面会沿用该 ASIN。">
+                        <input value={draft.asin} onChange={(event) => setDraft({ ...draft, asin: event.target.value })} placeholder="例如 B0..." />
+                      </FormTableRow>
+                      <FormTableRow label="标题" hint="用于运营识别，不自动提交到 Amazon 或领星。">
+                        <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="产品标题" />
+                      </FormTableRow>
+                      <FormTableRow label="MSKU / SKU" hint="本地识别字段，可与 ERP 或 Amazon 后台对齐。">
+                        <div className="inline-input-grid">
+                          <input value={draft.msku} onChange={(event) => setDraft({ ...draft, msku: event.target.value })} placeholder="MSKU" />
+                          <input value={draft.sku} onChange={(event) => setDraft({ ...draft, sku: event.target.value })} placeholder="SKU" />
+                        </div>
+                      </FormTableRow>
+                      <FormTableRow label="阶段 / 状态" required hint="阶段和状态会参与 AI 阶段判断、动态阈值和建议风险解释。">
+                        <div className="inline-input-grid">
+                          <select value={draft.productStage} onChange={(event) => setDraft({ ...draft, productStage: event.target.value as ProductStage })}>
+                            {STAGE_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                          </select>
+                          <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>
+                            <option value="active">正常运营</option>
+                            <option value="paused">暂停推广</option>
+                            <option value="clearance">清货</option>
+                            <option value="watch">观察</option>
+                          </select>
+                        </div>
+                      </FormTableRow>
+                      <FormTableRow label="成本与售价" hint={productCostInputHint(cost)}>
+                        <div className="inline-input-grid inline-input-grid-3">
+                          {PRODUCT_QUICK_COST_FIELDS.map((field) => (
+                            <span className="inline-field" key={field.key}>
+                              <span className="inline-field-label">{field.label}</span>
+                              <input
+                                aria-label={field.label}
+                                type="number"
+                                step="0.01"
+                                value={cost[field.key]}
+                                onChange={(event) => updateCost(field.key, event.target.value)}
+                                placeholder={field.placeholder}
+                              />
+                            </span>
+                          ))}
+                        </div>
+                      </FormTableRow>
+                      <FormTableRow label="广告目标" hint="目标 ACOS/TACOS 和净利率会作为产品级阈值约束。">
+                        <div className="inline-input-grid inline-input-grid-3">
+                          {PRODUCT_QUICK_TARGET_FIELDS.map((field) => (
+                            <span className="inline-field" key={field.key}>
+                              <span className="inline-field-label">{field.label}</span>
+                              <input
+                                aria-label={field.label}
+                                type="number"
+                                step="0.01"
+                                value={cost[field.key]}
+                                onChange={(event) => updateCost(field.key, event.target.value)}
+                                placeholder={field.placeholder}
+                              />
+                            </span>
+                          ))}
+                        </div>
+                      </FormTableRow>
+                    </FormTable>
+                    {saveMessage && <p className="ready-line">{saveMessage}</p>}
+                    {saveError && <p className="blocked-line">{saveError}</p>}
+                  </>
+                )}
+
+                {openProductPanel === 'daily' && (
+                  model.selectedDailyRows.length ? (
+                    <div className="table-wrap product-management-detail-table">
+                      <table className="business-table">
+                        <thead>
+                          <tr>
+                            <th>日期</th>
+                            <th>花费</th>
+                            <th>销售</th>
+                            <th>订单</th>
+                            <th>点击</th>
+                            <th>ACOS</th>
+                            <th>CVR</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {model.selectedDailyRows.map((row) => (
+                            <tr key={row.date}>
+                              <td>{row.date}</td>
+                              <td>{formatUsd(row.cost)}</td>
+                              <td>{formatUsd(row.sales)}</td>
+                              <td>{row.orders}</td>
+                              <td>{row.clicks}</td>
+                              <td>{formatPercent(row.acos * 100)}</td>
+                              <td>{formatPercent(row.cvr * 100)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="muted-line">
+                      当前产品还没有可回查的日级广告指标。请先完成完整 8 类报表采集并导入 DB。
+                    </p>
+                  )
+                )}
+
+                {openProductPanel === 'timeline' && (
+                  model.timeline.length ? (
+                    <div className="event-timeline product-management-timeline">
+                      {model.timeline.map((item) => (
+                        <article className="event-card product-management-event" key={`${item.event.id}-${item.scope}`}>
+                          <div className="event-card-title">
+                            <strong>{item.event.eventDate} / {item.event.title}</strong>
+                            <StatusPill tone={productTimelineScopeTone(item.scope)}>
+                              {productTimelineScopeLabel(item.scope)}
+                            </StatusPill>
+                          </div>
+                          <p>{item.event.eventType} / {item.event.impactExpectation || '影响待观察'}</p>
+                          {item.event.notes && <p className="muted-line">{item.event.notes}</p>}
+                          {item.event.evidencePath && <p className="mono-line">{item.event.evidencePath}</p>}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted-line">
+                      当前产品还没有产品事件或全局事件。记录 Coupon、BD、调价、Listing 或库存变化后，AI 会使用这些背景。
+                    </p>
+                  )
+                )}
+              </div>
+
+              <footer className="product-config-modal-footer">
+                {openProductPanel === 'edit' ? (
+                  <>
+                    <button aria-busy={openConfigButton.ariaBusy} className={openConfigButton.className} disabled={openConfigButton.disabled} onClick={() => navigate(routes.productConfig)} type="button">
+                      {openConfigButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                      <span>{openConfigButton.label}</span>
+                    </button>
+                    <button aria-busy={saveProductButton.ariaBusy} className={saveProductButton.className} disabled={saveProductButton.disabled} onClick={saveProduct} type="button">
+                      {saveProductButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                      <span>{saveProductButton.label}</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button className="secondary-button" onClick={() => setOpenProductPanel('edit')} type="button">维护信息</button>
+                    <button className="primary-button" disabled={!hasImportedMetrics} onClick={() => navigate(routes.adQuant)} type="button">进入广告表现</button>
+                  </>
+                )}
+              </footer>
+            </section>
+          </div>
         )}
       </div>
     </div>

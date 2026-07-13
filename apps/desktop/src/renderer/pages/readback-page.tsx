@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
+import { useBusinessDataPipeline } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { KpiCard, PageHeader, Panel, SafetyGateLine, StatusPill } from '../components/ui';
+import { PageHeader, Panel, SafetyGateLine, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import {
   parseReadbackRepairIntent,
@@ -42,6 +42,10 @@ export function readbackStepPanelProps(stepId: ReadbackWizardStepId) {
     role: 'tabpanel' as const,
     tabIndex: 0,
   };
+}
+
+export function readbackStepTabTitle(title: string): string {
+  return title.replace(/^\d+\.\s*/, '');
 }
 
 export function readbackStepFromKeyboard(currentStepId: ReadbackWizardStepId, key: string): ReadbackWizardStepId | null {
@@ -1028,6 +1032,8 @@ export function ReadbackPage() {
   const [readbackActionBusy, setReadbackActionBusy] = useState<ReadbackActionKey | null>(null);
   const [copyCommandBusy, setCopyCommandBusy] = useState<ReadbackCopyCommandKey | null>(null);
   const [pathOpenKey, setPathOpenKey] = useState<string | null>(null);
+  const [sourceFieldEditorOpen, setSourceFieldEditorOpen] = useState(false);
+  const [guardModalOpen, setGuardModalOpen] = useState(false);
   const stepTabRefs = useRef<Partial<Record<ReadbackWizardStepId, HTMLButtonElement | null>>>({});
   const focusStepTab = (stepId: ReadbackWizardStepId) => {
     const focusTab = () => stepTabRefs.current[stepId]?.focus();
@@ -1076,27 +1082,24 @@ export function ReadbackPage() {
   const activeStepDetail = activeMissingCount
     ? `当前步骤还有 ${activeMissingCount} 项待补；所有安全缺口仍由本地校验决定。`
     : '当前步骤已满足；进入下一步前仍保留最终导出校验。';
+  const sourceFieldCount = [
+    form.storeName,
+    form.marketplaceCode,
+    form.asin,
+    form.campaignName,
+    form.adGroupName,
+    form.entityType,
+    form.entityName,
+    form.actionType,
+    form.currentValue,
+    form.recommendedValue,
+    form.sourceBatchId,
+    form.sourceMetricDate,
+    form.sourceRow,
+    form.sourceFiles,
+  ].filter((value) => value.trim()).length;
+  const sourceFilesCount = sourceFileLines(form.sourceFiles).length;
   const repairIntentStep = readbackRepairIntentStep(repairIntent);
-  const readbackPrimaryAction = (() => {
-    if (activeStep === 'target-source') {
-      return form.recommendationId
-        ? { label: '继续填写审批允许', onClick: () => activateReadbackStep('approval', true) }
-        : { label: loading ? '加载中...' : '刷新已批准动作', busy: loading, busyLabel: '加载中...', onClick: () => { void loadApprovedRows(); } };
-    }
-    if (activeStep === 'approval') {
-      return { label: '继续补执行证据', onClick: () => activateReadbackStep('evidence', true) };
-    }
-    if (activeStep === 'evidence') {
-      return { label: '进入校验并导出', onClick: () => activateReadbackStep('verify-export', true) };
-    }
-    return {
-      label: precheckCopy.exportButtonLabel,
-      onClick: () => { void exportEvidence(); },
-      busy: readbackActionBusy === 'export-evidence',
-      busyLabel: readbackActionBusyLabel('export-evidence'),
-      disabled: Boolean(readbackActionBusy && readbackActionBusy !== 'export-evidence'),
-    };
-  })();
   const exportOpenPath = exportResult?.jsonPath || exportResult?.markdownPath || '';
   const openExportButton = readbackOpenPathButtonView({
     activePathKey: pathOpenKey,
@@ -1167,6 +1170,33 @@ export function ReadbackPage() {
       if (clearPulseTimer) window.clearTimeout(clearPulseTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!sourceFieldEditorOpen) return;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setSourceFieldEditorOpen(false);
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [sourceFieldEditorOpen]);
+
+  useEffect(() => {
+    if (!guardModalOpen) return;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setGuardModalOpen(false);
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [guardModalOpen]);
+
+  function handleGuardModalKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    setGuardModalOpen(false);
+  }
 
   async function captureEvidence(slot: ReadbackCaptureSlot, files: File[]) {
     const file = firstImageFile(files);
@@ -1621,50 +1651,33 @@ export function ReadbackPage() {
         eyebrow="广告"
         title={PAGE_HEADER_TITLES.readback}
         description="选择已批准动作，保存审批凭证、执行前后截图和刷新后的回读值，再导出本地证据。"
-        primaryTask="按步骤证明执行结果"
-        nextAction={form.recommendationId ? '补齐执行和回读证据' : '选择已批准动作'}
-        primaryAction={readbackPrimaryAction}
       />
 
       <div className="business-stack">
-        <div className="kpi-row readback-prototype-status-grid" aria-label="结果核对状态">
-          <KpiCard
-            label="当前步骤"
-            value={`${activeStepIndex + 1}/4`}
-            detail={activeStepSummary.title}
-            tone={activeMissingCount ? 'warning' : 'ready'}
-          />
-          <KpiCard
-            label="已批准动作"
-            value={approvedRows.length}
-            detail={form.recommendationId ? `已选择 #${form.recommendationId}` : '等待选择'}
-            tone={form.recommendationId ? 'ready' : 'pending'}
-          />
-          <KpiCard
-            label="当前缺口"
-            value={activeMissingCount}
-            detail={precheckCopy.statusLabel}
-            tone={activeMissingCount ? 'blocked' : 'ready'}
-          />
-          <KpiCard
-            label="截图证据"
-            value={`${capturedEvidenceCount}/4`}
-            detail="审批/前/后/回读"
-            tone={capturedEvidenceCount >= 4 ? 'ready' : capturedEvidenceCount > 0 ? 'warning' : 'blocked'}
-          />
-        </div>
-        <Panel title={`步骤 ${activeStepIndex + 1}/4：${activeStepSummary.title}`} tone={activeMissingCount ? 'warning' : 'success'}>
-          <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
-          <p className="muted-line">{activeStepDetail}</p>
-          <div className="chip-row readback-safety-row">
-            <span className="chip chip-warning">人工执行证据，不批量写入</span>
-            <span className="chip chip-warning">执行前、执行后、回读截图不能复用</span>
-            <span className="chip chip-warning">回读值必须等于执行后值</span>
+        <div className={`readback-current-step-summary ${activeMissingCount ? 'readback-current-step-warning' : 'readback-current-step-ready'}`}>
+          <div>
+            <span>步骤 {activeStepIndex + 1}/4</span>
+            <strong>{activeStepSummary.title}</strong>
+            <p>{activeStepDetail}</p>
+            <div className="readback-current-step-meta" aria-label="结果核对摘要">
+              <span>已批准动作 {approvedRows.length}</span>
+              <span>{form.recommendationId ? `已选择 #${form.recommendationId}` : '等待选择动作'}</span>
+              <span>当前缺口 {activeMissingCount}</span>
+              <span>截图 {capturedEvidenceCount}/4</span>
+            </div>
           </div>
-          <SafetyGateLine>
-            {'存证顺序：审批时间 <= 执行前时间 <= 线下动作执行时间 <= 真实回读时间；回读值必须等于执行后值。'}
-          </SafetyGateLine>
-        </Panel>
+          <div className="readback-current-step-actions">
+            <div className="chip-row readback-safety-row">
+              <span className="chip chip-warning">人工执行</span>
+              <span className="chip chip-warning">截图不复用</span>
+              <span className="chip chip-warning">回读值一致</span>
+              <span className="chip chip-warning">时间可追溯</span>
+            </div>
+            <button className="secondary-button compact-button" onClick={() => setGuardModalOpen(true)} type="button">
+              查看安全门
+            </button>
+          </div>
+        </div>
 
         {repairIntent && (
           <div className="readback-repair-banner" role="status" aria-live="polite">
@@ -1696,7 +1709,7 @@ export function ReadbackPage() {
               type="button"
             >
               <span>{index + 1}</span>
-              <strong>{step.title}</strong>
+              <strong>{readbackStepTabTitle(step.title)}</strong>
               <small>{step.detail}</small>
             </button>
           ))}
@@ -1704,7 +1717,7 @@ export function ReadbackPage() {
 
         {activeStep === 'target-source' && (
           <div {...readbackStepPanelProps('target-source')}>
-            <Panel title="1. 选择已批准动作" tone={activeMissingCount ? 'blocked' : 'success'}>
+            <Panel title="1. 选择已批准动作" tone={activeMissingCount ? 'warning' : 'success'}>
             <div className="business-split">
               <div>
                 <div className="business-scope-line">当前有效批次：{currentBatchId || '暂无'}</div>
@@ -1764,58 +1777,43 @@ export function ReadbackPage() {
                 </tbody>
               </table>
             </div>
-            <div className="form-grid">
-              <ReadbackFieldCell label="店铺"><input value={form.storeName} onChange={(event) => update({ storeName: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="站点"><input value={form.marketplaceCode} onChange={(event) => update({ marketplaceCode: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="广告组合"><input value={form.portfolioName} onChange={(event) => update({ portfolioName: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="ASIN"><input value={form.asin} onChange={(event) => update({ asin: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="广告活动"><input value={form.campaignName} onChange={(event) => update({ campaignName: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="广告组"><input value={form.adGroupName} onChange={(event) => update({ adGroupName: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="对象类型"><input value={form.entityType} onChange={(event) => update({ entityType: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="对象名称"><input value={form.entityName} onChange={(event) => update({ entityName: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="动作类型"><input value={form.actionType} onChange={(event) => update({ actionType: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="来源当前值"><input value={form.currentValue} onChange={(event) => update({ currentValue: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="来源建议值"><input value={form.recommendedValue} onChange={(event) => update({ recommendedValue: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="来源批次"><input value={form.sourceBatchId} onChange={(event) => update({ sourceBatchId: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="指标日期"><input value={form.sourceMetricDate} onChange={(event) => update({ sourceMetricDate: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="来源行号"><input value={form.sourceRow} onChange={(event) => update({ sourceRow: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="解释来源"><input value={form.sourceExplanationSource} onChange={(event) => update({ sourceExplanationSource: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="AI 模型"><input value={form.sourceAiModel} onChange={(event) => update({ sourceAiModel: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell className="form-grid-wide" label="推荐来源文件"><textarea value={form.sourceFiles} onChange={(event) => update({ sourceFiles: event.target.value })} /></ReadbackFieldCell>
-            </div>
-            <p className="muted-line">每个广告动作都必须重新绑定自己的店铺、站点、广告活动、广告组、对象、动作和现场值。</p>
-            {(form.productStage || form.decisionAgreement || form.aiLifecycleStage || form.quantLifecycleStage) && (
-              <div className="readback-context-grid">
+            <div className="readback-source-summary" aria-label="载入来源字段摘要">
+              <div className="readback-source-summary-main">
+                <span>来源字段</span>
+                <strong>{form.entityName || form.asin || '尚未载入动作'}</strong>
+                <p>
+                  {form.actionType || '待选择动作'}
+                  {' / '}
+                  来源行 {form.sourceRow || '-'}
+                  {' / '}
+                  指标日 {form.sourceMetricDate || '-'}
+                </p>
+              </div>
+              <div className="readback-source-summary-grid">
                 <div>
-                  <span>产品阶段</span>
-                  <strong>{form.productStage || form.aiLifecycleStage || form.quantLifecycleStage || '-'}</strong>
-                  <small>
-                    目标 ACOS {form.productTargetAcos || '-'} / TACOS {form.productTargetTacos || '-'} / 净利率 {form.productTargetNetMargin || '-'} / 最低价 ${form.productMinPrice || '-'}
-                  </small>
+                  <span>字段完整度</span>
+                  <strong>{sourceFieldCount}/14</strong>
                 </div>
                 <div>
-                  <span>AI 与规则关系</span>
-                  <strong>{decisionAgreementLabel(form.decisionAgreement)} / {decisionSourceLabel(form.decisionSource)}</strong>
-                  <small>{form.decisionReasons.slice(0, 2).join('；') || form.aiStrategySummary || '无来源说明'}</small>
+                  <span>来源文件</span>
+                  <strong>{sourceFilesCount || 0} 个</strong>
                 </div>
                 <div>
-                  <span>量化阈值</span>
-                  <strong>
-                    ACOS {form.quantThresholds.targetAcos != null ? `${(form.quantThresholds.targetAcos * 100).toFixed(1)}%` : '-'}
-                    {' / '}
-                    高 ACOS {form.quantThresholds.highAcosThreshold != null ? `${(form.quantThresholds.highAcosThreshold * 100).toFixed(1)}%` : '-'}
-                  </strong>
-                  <small>{form.quantReasons.slice(0, 2).join('；') || '无规则量化说明'}</small>
+                  <span>批次状态</span>
+                  <strong>{sourceBatchMatches ? '匹配' : form.sourceBatchId ? '不一致' : '待载入'}</strong>
                 </div>
               </div>
-            )}
+              <button className="secondary-button" onClick={() => setSourceFieldEditorOpen(true)} type="button">
+                修正来源字段
+              </button>
+            </div>
             </Panel>
           </div>
         )}
 
         {activeStep === 'approval' && (
           <div {...readbackStepPanelProps('approval')}>
-            <Panel title="2. 填写审批凭证" tone={activeMissingCount ? 'blocked' : 'success'}>
+            <Panel title="2. 填写审批凭证" tone={activeMissingCount ? 'warning' : 'success'}>
             <div className="form-grid">
               <ReadbackFieldCell label="审批人"><input value={form.approverName} onChange={(event) => update({ approverName: event.target.value })} /></ReadbackFieldCell>
               <ReadbackFieldCell label="审批备注"><input value={form.approvalNote} onChange={(event) => update({ approvalNote: event.target.value })} /></ReadbackFieldCell>
@@ -1846,7 +1844,7 @@ export function ReadbackPage() {
             {...readbackStepPanelProps('evidence')}
             className={`readback-step-panel ${readbackRepairPanelClass(Boolean(repairIntent), repairPulse)}`}
           >
-            <Panel title="3. 记录执行和回读" tone={activeMissingCount ? 'blocked' : 'success'}>
+            <Panel title="3. 记录执行和回读" tone={activeMissingCount ? 'warning' : 'success'}>
               <p className="muted-line">先记录执行前值和截图，再记录执行后值和截图，最后刷新广告后台填写回读值和回读截图；三类截图不能复用。</p>
               <ReadbackContractStrip checks={contractChecks} />
               <div className="form-grid">
@@ -1896,7 +1894,7 @@ export function ReadbackPage() {
 
         {activeStep === 'verify-export' && (
           <div {...readbackStepPanelProps('verify-export')}>
-            <Panel title="4. 校验并导出证据" tone={missing.length ? 'blocked' : 'success'}>
+            <Panel title="4. 校验并导出证据" tone={missing.length ? 'warning' : 'success'}>
               <div className="checkbox-grid">
                 <label><input checked={form.executionSuccess} onChange={(event) => update({ executionSuccess: event.target.checked })} type="checkbox" /> 执行成功确认</label>
                 <label><input checked={form.executionVerified} onChange={(event) => update({ executionVerified: event.target.checked })} type="checkbox" /> 执行已核验</label>
@@ -2112,6 +2110,146 @@ export function ReadbackPage() {
           </div>
         )}
       </div>
+
+      {guardModalOpen && (
+        <div
+          className="product-config-modal-backdrop readback-guard-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setGuardModalOpen(false);
+          }}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="readback-guard-modal-title"
+            aria-modal="true"
+            className="product-config-modal readback-guard-modal"
+            onKeyDown={handleGuardModalKeyDown}
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <header className="product-config-modal-header">
+              <div>
+                <span>只读检查，不执行广告</span>
+                <h2 id="readback-guard-modal-title">安全门与当前缺口</h2>
+              </div>
+              <div className="readback-guard-modal-header-actions">
+                <StatusPill tone={missing.length ? 'blocked' : 'ready'}>{precheckCopy.statusLabel}</StatusPill>
+                <button className="secondary-button compact-button" onClick={() => setGuardModalOpen(false)} type="button">关闭</button>
+              </div>
+            </header>
+            <div className="product-config-modal-body readback-guard-modal-body">
+              <div className="readback-guard-lines">
+                <SafetyGateLine>人工执行：本页只收集审批、截图、前后值和回读证据，不自动写 Amazon Ads。</SafetyGateLine>
+                <SafetyGateLine>截图不复用：审批、执行前、执行后和回读截图必须来自不同证据。</SafetyGateLine>
+                <SafetyGateLine>时间可追溯：审批、执行前、执行动作、执行后和回读时间必须可排序。</SafetyGateLine>
+              </div>
+              {missing.length ? (
+                <div className="missing-group-grid readback-guard-missing-grid">
+                  {missingGroups.map((group) => (
+                    <div className="missing-group" key={group.title}>
+                      <strong>{group.title}</strong>
+                      <span>{group.items.join('、')}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="chip-row">
+                  <span className="chip chip-ready">{precheckCopy.chipLabel}</span>
+                </div>
+              )}
+              <ReadbackContractStrip checks={contractChecks} />
+              <p className="muted-line">{precheckCopy.helperText}</p>
+            </div>
+            <footer className="product-config-modal-footer">
+              <button className="primary-button" onClick={() => setGuardModalOpen(false)} type="button">
+                知道了
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {sourceFieldEditorOpen && (
+        <div
+          className="product-config-modal-backdrop readback-source-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSourceFieldEditorOpen(false);
+          }}
+          role="presentation"
+        >
+          <div
+            aria-labelledby="readback-source-modal-title"
+            aria-modal="true"
+            className="product-config-modal readback-source-modal"
+            role="dialog"
+          >
+            <header className="product-config-modal-header">
+              <div>
+                <span>结果核对</span>
+                <h2 id="readback-source-modal-title">修正来源字段</h2>
+              </div>
+              <button className="secondary-button compact-button" onClick={() => setSourceFieldEditorOpen(false)} type="button">
+                关闭
+              </button>
+            </header>
+            <div className="product-config-modal-body readback-source-modal-body">
+              <p className="muted-line">
+                这里只修正已载入动作的来源字段，用于本地证据导出和安全校验；不会执行广告动作。
+              </p>
+              <div className="form-grid readback-source-field-grid">
+                <ReadbackFieldCell label="店铺"><input value={form.storeName} onChange={(event) => update({ storeName: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="站点"><input value={form.marketplaceCode} onChange={(event) => update({ marketplaceCode: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="广告组合"><input value={form.portfolioName} onChange={(event) => update({ portfolioName: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="ASIN"><input value={form.asin} onChange={(event) => update({ asin: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="广告活动"><input value={form.campaignName} onChange={(event) => update({ campaignName: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="广告组"><input value={form.adGroupName} onChange={(event) => update({ adGroupName: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="对象类型"><input value={form.entityType} onChange={(event) => update({ entityType: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="对象名称"><input value={form.entityName} onChange={(event) => update({ entityName: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="动作类型"><input value={form.actionType} onChange={(event) => update({ actionType: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="来源当前值"><input value={form.currentValue} onChange={(event) => update({ currentValue: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="来源建议值"><input value={form.recommendedValue} onChange={(event) => update({ recommendedValue: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="来源批次"><input value={form.sourceBatchId} onChange={(event) => update({ sourceBatchId: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="指标日期"><input value={form.sourceMetricDate} onChange={(event) => update({ sourceMetricDate: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="来源行号"><input value={form.sourceRow} onChange={(event) => update({ sourceRow: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="解释来源"><input value={form.sourceExplanationSource} onChange={(event) => update({ sourceExplanationSource: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell label="AI 模型"><input value={form.sourceAiModel} onChange={(event) => update({ sourceAiModel: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className="form-grid-wide" label="推荐来源文件"><textarea value={form.sourceFiles} onChange={(event) => update({ sourceFiles: event.target.value })} /></ReadbackFieldCell>
+              </div>
+              {(form.productStage || form.decisionAgreement || form.aiLifecycleStage || form.quantLifecycleStage) && (
+                <div className="readback-context-grid readback-source-context-grid">
+                  <div>
+                    <span>产品阶段</span>
+                    <strong>{form.productStage || form.aiLifecycleStage || form.quantLifecycleStage || '-'}</strong>
+                    <small>
+                      目标 ACOS {form.productTargetAcos || '-'} / TACOS {form.productTargetTacos || '-'} / 净利率 {form.productTargetNetMargin || '-'} / 最低价 ${form.productMinPrice || '-'}
+                    </small>
+                  </div>
+                  <div>
+                    <span>AI 与规则关系</span>
+                    <strong>{decisionAgreementLabel(form.decisionAgreement)} / {decisionSourceLabel(form.decisionSource)}</strong>
+                    <small>{form.decisionReasons.slice(0, 2).join('；') || form.aiStrategySummary || '无来源说明'}</small>
+                  </div>
+                  <div>
+                    <span>量化阈值</span>
+                    <strong>
+                      ACOS {form.quantThresholds.targetAcos != null ? `${(form.quantThresholds.targetAcos * 100).toFixed(1)}%` : '-'}
+                      {' / '}
+                      高 ACOS {form.quantThresholds.highAcosThreshold != null ? `${(form.quantThresholds.highAcosThreshold * 100).toFixed(1)}%` : '-'}
+                    </strong>
+                    <small>{form.quantReasons.slice(0, 2).join('；') || '无规则量化说明'}</small>
+                  </div>
+                </div>
+              )}
+            </div>
+            <footer className="product-config-modal-footer">
+              <span className="muted-line">字段修改只影响本地回读证据，不会写入 Amazon Ads。</span>
+              <button className="primary-button" onClick={() => setSourceFieldEditorOpen(false)} type="button">
+                完成
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

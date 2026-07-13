@@ -20,6 +20,7 @@ import { SchedulerPage } from './pages/scheduler-page';
 import { SettingsPage } from './pages/settings-page';
 import type { AppRoute, DeliveryReadinessView } from './types';
 import { toUserFacingError } from './user-facing-error';
+import { createBrowserPreviewElectronApi } from './dev-preview-api';
 import './styles.css';
 
 interface LoginSessionInfo {
@@ -46,6 +47,18 @@ const useStore = create<AppState>((set) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   setLoginState: (isLoggedIn, store = '', loginSession = null) => set({ isLoggedIn, currentStore: store, loginSession }),
 }));
+
+function isBrowserPreviewHost(): boolean {
+  return typeof window !== 'undefined' && ['127.0.0.1', 'localhost'].includes(window.location.hostname);
+}
+
+function ensureBrowserPreviewElectronApi(username = 'SHC001') {
+  const api = (window as any).electronAPI;
+  if (!api?.getState && isBrowserPreviewHost()) {
+    (window as any).electronAPI = createBrowserPreviewElectronApi(username);
+  }
+  return (window as any).electronAPI;
+}
 
 const loginStyles: Record<string, React.CSSProperties> = {
   container: {
@@ -207,7 +220,7 @@ function LoginPage() {
   useEffect(() => {
     let cancelled = false;
     async function loadSavedCredentials() {
-      const api = (window as any).electronAPI;
+      const api = ensureBrowserPreviewElectronApi(username);
       if (!api?.getSavedLoginCredentials) return;
       try {
         const saved = await api.getSavedLoginCredentials();
@@ -239,7 +252,15 @@ function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      const session = await (window as any).electronAPI.browserLogin(username, password, rememberPassword);
+      const api = ensureBrowserPreviewElectronApi(username);
+      if (!api?.browserLogin && isBrowserPreviewHost()) {
+        (window as any).electronAPI = createBrowserPreviewElectronApi(username);
+        const previewState = await (window as any).electronAPI.getState();
+        setCredentialNotice('已进入浏览器预览模式；这里不连接真实 ERP/Ads，也不会写入本地数据库。');
+        setLoginState(true, previewState.currentStore, previewState.loginSession || null);
+        return;
+      }
+      const session = await api.browserLogin(username, password, rememberPassword);
       setLoginState(true, username, session);
     } catch (caught) {
       setError(toUserFacingError(caught, '登录失败'));
@@ -337,7 +358,8 @@ export default function App() {
   useEffect(() => {
     async function checkLoginState() {
       try {
-        const state = await (window as any).electronAPI.getState();
+        const api = ensureBrowserPreviewElectronApi();
+        const state = await api.getState();
         setLoginState(Boolean(state.isLoggedIn), state.currentStore, state.loginSession || null);
       } catch (caught) {
         console.error(caught);
@@ -413,6 +435,7 @@ export default function App() {
           <span>v1.5.0</span>
           <span className={headerReadinessClass(deliveryReadiness)}>{headerReadinessLabel(deliveryReadiness)}</span>
         </div>
+        <ScopeBar />
         <div className="topbar-right">
           <strong>{currentStore}</strong>
           <span className="session-line" title={describeLoginSession(loginSession)}>{headerSessionStatusLabel(loginSession)}</span>
@@ -427,7 +450,6 @@ export default function App() {
               转跳中...
             </div>
           )}
-          <ScopeBar />
           <BusinessRoutePage route={activeTab} />
         </main>
       </div>

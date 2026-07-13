@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { OperatorTaskAction } from '../components/operator-task-panel';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
+import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput } from '../delivery-readiness-matrix';
 import { READBACK_REPAIR_INTENT_EVENT, READBACK_REPAIR_INTENT_STORAGE_KEY, type ReadbackRepairIntent } from '../readback-repair-intent';
@@ -292,13 +292,6 @@ function statusLabel(tone: DeliveryTone): string {
 
 function readinessStatus(readiness: DeliveryReadinessView | null): string {
   return readiness?.appReady && readiness?.manifestDriven ? '可交付' : '未就绪';
-}
-
-function readinessTone(readiness: DeliveryReadinessView | null): DeliveryTone {
-  if (readiness?.appReady && readiness?.manifestDriven) return 'ready';
-  if (readiness?.exists === false || !readiness?.available) return 'blocked';
-  if (readiness.manifestDriven) return 'blocked';
-  return 'warning';
 }
 
 function evidenceFolder(data: BusinessDataPipeline | null): string {
@@ -717,7 +710,6 @@ export function DeliveryPage() {
   const collectionManifestPath = data?.collection?.fileAudit?.manifestPath || data?.collection?.latestBatch?.manifestPath || '';
   const quant = data?.quant;
   const importedRows = readNumber(data?.collection?.fileAudit?.importedRowCount, readNumber(quant?.importedRows));
-  const tone = readinessTone(readiness);
   const manifestReady = readiness?.appReady && readiness?.manifestDriven;
   const deliveryReady = canExportDeliveryBundle(readiness, deliveryEvidenceStatus?.package);
   const packageSummary = packageEvidenceSummary(deliveryEvidenceStatus?.package);
@@ -751,8 +743,7 @@ export function DeliveryPage() {
   })), [aiAvailable, aiDiagnosisRuns, approvedRecommendations, data, deliveryEvidenceStatus, needsReviewRecommendations, pendingRecommendations, readiness]);
   const topDeliveryGap = deliveryMatrix.items.find((item) => item.tone !== 'ready') || null;
   const deliveryTaskTitle = deliveryReady ? '可以交付' : '还不能交付';
-  const deliveryTaskTone: DeliveryTone = deliveryReady ? 'ready' : tone === 'ready' ? 'warning' : tone;
-  const visibleOverviewFacts = deliveryOverviewFacts.filter((fact) => fact.label !== '运营范围');
+  const deliveryDataFact = deliveryOverviewFacts.find((fact) => fact.label === '真实数据');
   const missingItems = primaryMissingItems(readiness, deliveryMatrix);
   const packageBrief = packageEvidenceBrief(deliveryEvidenceStatus?.package);
   const packagePath = deliveryEvidenceStatus?.package?.portablePath || deliveryEvidenceStatus?.package?.installerPath || '';
@@ -795,13 +786,6 @@ export function DeliveryPage() {
       onClick: copySummary,
     }),
   ].slice(0, 2);
-  const primaryTaskBusyKey: DeliveryActionKey | null = deliveryPrimaryAction.kind === 'export'
-    ? 'export-bundle'
-    : deliveryPrimaryAction.kind === 'refresh'
-      ? 'refresh-final'
-      : null;
-  const primaryTaskBusy = Boolean(primaryTaskBusyKey && deliveryActionBusy === primaryTaskBusyKey);
-
   useEffect(() => {
     let mounted = true;
     async function load() {
@@ -1262,59 +1246,46 @@ export function DeliveryPage() {
         eyebrow="系统"
         title={PAGE_HEADER_TITLES.delivery}
         description="判断当前范围能不能交付、最关键阻塞是什么、交付包在哪里，以及可复制给运营的交付摘要。"
-        primaryTask={deliveryTaskTitle}
-        nextAction={deliveryPrimaryAction.label}
-        primaryAction={{
-          label: deliveryPrimaryAction.label,
-          onClick: deliveryPrimaryAction.onClick,
-          busy: primaryTaskBusy,
-          busyLabel: primaryTaskBusyKey ? deliveryActionBusyLabel(primaryTaskBusyKey) : undefined,
-          disabled: Boolean(deliveryActionBusy && !primaryTaskBusy),
-        }}
       />
 
       <div className="business-stack delivery-prototype-stack">
-        <div className="kpi-row delivery-prototype-status-grid" aria-label="交付验收状态">
-          <KpiCard
-            label="交付状态"
-            value={deliveryTaskTitle}
-            detail={gateSummaryText}
-            tone={deliveryTaskTone}
-          />
-          <KpiCard
-            label="最终验收"
-            value={readinessStatus(readiness)}
-            detail={readiness?.path ? 'manifest 已生成' : '等待生成'}
-            tone={readinessTone(readiness)}
-          />
-          <KpiCard
-            label="交付包"
-            value={deliveryReady ? '可导出' : '阻断'}
-            detail={packageBrief}
-            tone={deliveryReady ? 'ready' : 'blocked'}
-          />
-          <KpiCard
-            label="缺口"
-            value={missingItems.length || 0}
-            detail={missingItems[0] || '无主要缺口'}
-            tone={missingItems.length ? 'warning' : 'ready'}
-          />
-        </div>
-        <Panel title="交付摘要" tone={deliveryReady ? 'success' : missingItems.length ? 'warning' : 'default'}>
-          <div className="prototype-list-stack">
-            <div className="prototype-list-item">
+        <Panel className="delivery-summary-workbench" title="交付摘要" tone={deliveryReady ? 'success' : missingItems.length ? 'warning' : 'default'}>
+          <div className="delivery-summary-hero" aria-label="交付验收结论">
+            <div className="delivery-summary-conclusion">
+              <div className="delivery-summary-status-row">
+                <StatusPill tone={deliveryReady ? 'ready' : missingItems.length ? 'warning' : 'pending'}>
+                  {deliveryReady ? '可以交付' : '当前阻断'}
+                </StatusPill>
+                <span>{gateSummaryText}</span>
+              </div>
               <strong>{deliveryTaskTitle}</strong>
               <p>{deliveryTaskDetail}</p>
             </div>
-          </div>
-          <div className="delivery-overview-grid">
-            {visibleOverviewFacts.map((fact) => (
-              <div key={fact.label}>
-                <span>{fact.label}</span>
-                <strong>{fact.value}</strong>
+            <div className="delivery-summary-side">
+              <div>
+                <span>最终验收</span>
+                <strong>{readinessStatus(readiness)}</strong>
+                <small>{readiness?.path ? 'manifest 已生成' : '等待生成'}</small>
               </div>
-            ))}
+              <div>
+                <span>交付包</span>
+                <strong>{deliveryReady ? '可导出' : '阻断'}</strong>
+                <small>{packageBrief}</small>
+              </div>
+              <div>
+                <span>缺口</span>
+                <strong>{missingItems.length || 0}</strong>
+                <small>{missingItems[0] || '无主要缺口'}</small>
+              </div>
+            </div>
           </div>
+          {deliveryDataFact && (
+            <div className="delivery-summary-data-line">
+              <span>{deliveryDataFact.label}</span>
+              <strong>{deliveryDataFact.value}</strong>
+              <small>最终能否交付仍以 manifest 驱动的最终验收和安装包证据为准。</small>
+            </div>
+          )}
           {deliveryReady ? (
             <p className="muted-line">交付包摘要：{packageBrief}</p>
           ) : (
@@ -1345,29 +1316,32 @@ export function DeliveryPage() {
       </div>
 
       <div className="business-stack delivery-details-stack">
-        <Panel title="交付判断依据" tone={evidenceGovernanceStatus === 'ready' ? 'success' : evidenceGovernanceStatus === 'blocked' ? 'blocked' : 'warning'}>
-          <div className="evidence-governance-card">
-            <div className="evidence-governance-headline">
-              <StatusPill tone={evidenceGovernanceStatus === 'ready' ? 'ready' : evidenceGovernanceStatus === 'blocked' ? 'blocked' : 'warning'}>
-                {evidenceGovernanceStatus === 'ready' ? '权威证据已绑定' : evidenceGovernanceStatus === 'blocked' ? '证据治理阻断' : '证据需复核'}
-              </StatusPill>
-              <p>{evidenceGovernanceSummary(readiness)}</p>
+        <ProgressiveDetails title="交付证据、文件与回读支持">
+        <ProgressiveDetails title="交付判断依据与证据治理">
+          <Panel title="交付判断依据" tone={evidenceGovernanceStatus === 'ready' ? 'success' : evidenceGovernanceStatus === 'blocked' ? 'blocked' : 'warning'}>
+            <div className="evidence-governance-card">
+              <div className="evidence-governance-headline">
+                <StatusPill tone={evidenceGovernanceStatus === 'ready' ? 'ready' : evidenceGovernanceStatus === 'blocked' ? 'blocked' : 'warning'}>
+                  {evidenceGovernanceStatus === 'ready' ? '权威证据已绑定' : evidenceGovernanceStatus === 'blocked' ? '证据治理阻断' : '证据需复核'}
+                </StatusPill>
+                <p>{evidenceGovernanceSummary(readiness)}</p>
+              </div>
+              <div className="delivery-meta-grid evidence-governance-grid">
+                {evidenceGovernanceFacts.map((fact) => (
+                  <div key={fact.label}>
+                    <span>{fact.label}</span>
+                    <strong>{fact.value}</strong>
+                  </div>
+                ))}
+              </div>
+              <ul className="delivery-action-list evidence-governance-rules">
+                {evidenceGovernanceRules(readiness).map((rule) => (
+                  <li key={rule}>{rule}</li>
+                ))}
+              </ul>
             </div>
-            <div className="delivery-meta-grid evidence-governance-grid">
-              {evidenceGovernanceFacts.map((fact) => (
-                <div key={fact.label}>
-                  <span>{fact.label}</span>
-                  <strong>{fact.value}</strong>
-                </div>
-              ))}
-            </div>
-            <ul className="delivery-action-list evidence-governance-rules">
-              {evidenceGovernanceRules(readiness).map((rule) => (
-                <li key={rule}>{rule}</li>
-              ))}
-            </ul>
-          </div>
-        </Panel>
+          </Panel>
+        </ProgressiveDetails>
 
         <ProgressiveDetails title="文件位置与支持入口">
           <div className="delivery-action-row">
@@ -1654,6 +1628,7 @@ export function DeliveryPage() {
               </Panel>
             ))}
           </div>
+        </ProgressiveDetails>
         </ProgressiveDetails>
 
         <ProgressiveDetails title="技术支持细节">

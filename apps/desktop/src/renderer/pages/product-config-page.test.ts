@@ -28,6 +28,7 @@ describe('productCostInputHint', () => {
       referralFeeRate: 0.15,
       storageFee: 0,
       otherCost: 0,
+      currentPrice: 0,
       minPrice: 0,
       targetNetMargin: 0.15,
       targetAcos: 0.35,
@@ -43,22 +44,25 @@ describe('productCostInputHint', () => {
       referralFeeRate: 0.15,
       storageFee: 0,
       otherCost: 0,
+      currentPrice: 49.99,
       minPrice: 29.99,
       targetNetMargin: 0.15,
       targetAcos: 0.35,
       targetTacos: 0.12,
-    })).toBe('已填写成本或最低可接受售价；保存前请确认这些数字来自当前产品。');
+    })).toBe('已填写成本、售价或最低可接受售价；保存前请确认这些数字来自当前产品。');
   });
 
   it('hydrates editable cost fields from loaded product rows', () => {
     expect(buildCostInputFromProduct({
       cost: {
         purchaseCost: 12,
+        currentPrice: 49.99,
         targetAcos: 0.28,
         minPrice: 39.99,
       },
     })).toEqual(expect.objectContaining({
       purchaseCost: 12,
+      currentPrice: 49.99,
       targetAcos: 0.28,
       minPrice: 39.99,
       referralFeeRate: 0.15,
@@ -67,6 +71,62 @@ describe('productCostInputHint', () => {
 });
 
 describe('product config task and inline save feedback', () => {
+  it('keeps product editing forms inside the modal instead of the main workbench', () => {
+    const source = readFileSync(new URL('./product-config-page.tsx', import.meta.url), 'utf8');
+    const modalStart = source.indexOf('{editorMode && (');
+    const mainStart = source.indexOf('<div className="business-stack product-config-page-stack">');
+    const mainEnd = source.indexOf('{editorMode && (');
+    const mainWorkbench = source.slice(mainStart, mainEnd);
+    const modalWorkbench = source.slice(modalStart);
+
+    expect(mainWorkbench).toContain('产品目标列表');
+    expect(mainWorkbench).toContain('product-config-action-menu');
+    expect(mainWorkbench).not.toContain('编辑利润与广告目标');
+    expect(mainWorkbench).not.toContain('编辑产品基础信息');
+    expect(mainWorkbench).not.toContain('>编辑目标<');
+    expect(modalWorkbench).toContain('编辑利润与广告目标');
+    expect(modalWorkbench).toContain('编辑产品基础信息');
+  });
+
+  it('groups product target fields inside the modal instead of rendering one long form', () => {
+    const source = readFileSync(new URL('./product-config-page.tsx', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const targetStart = source.indexOf('className="product-target-editor"');
+    const targetEditor = source.slice(targetStart);
+
+    expect(targetEditor).toContain('成本构成');
+    expect(targetEditor).toContain('售价与利润');
+    expect(targetEditor).toContain('广告目标');
+    expect(targetEditor).toContain('product-target-summary-grid');
+    expect(targetEditor).toContain('product-target-field-grid');
+    expect(styles).toContain('.product-target-field-group');
+    expect(styles).toContain('.product-target-field-cell');
+  });
+
+  it('keeps collapsed secondary actions out of the visible workbench contract', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.product-config-action-menu:not([open]) .product-config-list-actions');
+    expect(css).toContain('.folded-ops-panel:not([open]) .folded-ops-body');
+  });
+
+  it('keeps navigation actions out of the product edit modal footer', () => {
+    const source = readFileSync(new URL('./product-config-page.tsx', import.meta.url), 'utf8');
+    const modalStart = source.indexOf('<div className="product-config-modal-footer">');
+    const modalFooter = source.slice(modalStart);
+
+    expect(source).toContain('onKeyDown={handleEditorKeyDown}');
+    expect(source).toContain("event.key !== 'Escape'");
+    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain("label: '保存完整产品配置'");
+    expect(modalFooter).toContain('saveConfigButton.label');
+    expect(modalFooter).toContain('>关闭<');
+    expect(modalFooter).toContain('onClick={closeEditor}');
+    expect(modalFooter).not.toContain("navigate('ad-quant')");
+    expect(modalFooter).not.toContain("navigate('operation-events')");
+  });
+
   it('builds a first-screen task around product target maintenance', () => {
     const task = buildProductConfigTaskState({
       asin: 'B001',

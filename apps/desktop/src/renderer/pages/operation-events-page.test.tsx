@@ -129,6 +129,26 @@ describe('operation events page product/global views', () => {
     expect(operationEventInlineSaveLabel(true)).toBe('正在保存...');
   });
 
+  it('moves the new event form into a modal instead of expanding a long form in the page', () => {
+    const source = readFileSync(new URL('./operation-events-page.tsx', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const detailsStart = source.indexOf('<ProgressiveDetails title="新增/维护事件、AI 使用说明和覆盖统计">');
+    const detailsEnd = source.indexOf('</ProgressiveDetails>', detailsStart);
+    const detailsMarkup = source.slice(detailsStart, detailsEnd);
+    const modalStart = source.indexOf('className="product-config-modal operation-event-modal"');
+    const modalMarkup = source.slice(modalStart);
+
+    expect(source).toContain('eventEditorOpen');
+    expect(source).toContain('openEventEditor');
+    expect(source).toContain('operation-event-modal-backdrop');
+    expect(detailsMarkup).toContain('operation-event-create-entry');
+    expect(detailsMarkup).not.toContain('<FormTable>');
+    expect(detailsMarkup).not.toContain(OPERATION_EVENT_PAGE_COPY.timelinePanelTitle);
+    expect(modalMarkup).toContain('<FormTable>');
+    expect(styles).toContain('.operation-event-create-entry');
+    expect(styles).toContain('.operation-event-modal');
+  });
+
   it('gives the inline save button an explicit busy contract', () => {
     const saving = operationEventInlineSaveButtonView({
       saving: true,

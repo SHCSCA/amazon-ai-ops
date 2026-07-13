@@ -4,6 +4,7 @@ import {
   dataImportActionButtonView,
   dataImportBusyLabel,
   dataImportExportButtonView,
+  dataImportFileLabel,
   dataImportOpenPathButtonView,
   buildDataImportTableFeedback,
   dataImportTableFeedbackClass,
@@ -35,6 +36,19 @@ function row(overrides: Partial<DataImportReportRow>): DataImportReportRow {
 }
 
 describe('data import report table sorting', () => {
+  it('keeps report file cells readable by showing a short file name', () => {
+    expect(dataImportFileLabel(row({
+      fileName: 'campaign.xlsx',
+      filePath: 'D:/preview/reports/campaign.xlsx',
+    }))).toBe('campaign.xlsx');
+
+    expect(dataImportFileLabel(row({
+      filePath: 'D:\\preview\\reports\\user_search_term.xlsx',
+    }))).toBe('user_search_term.xlsx');
+
+    expect(dataImportFileLabel(row({}))).toBe('缺少真实文件');
+  });
+
   it('sorts report rows without mutating the original order', () => {
     const rows = [
       row({ label: '关键词报告', importedRows: 300, fileSizeBytes: 1200, status: 'imported' }),
@@ -75,6 +89,22 @@ describe('data import report table sorting', () => {
 });
 
 describe('data import table micro-feedback', () => {
+  it('keeps the first screen table-first instead of duplicating import status in KPI cards', () => {
+    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+    const firstPanelStart = source.indexOf('className="data-import-primary-panel"');
+    const firstPanelEnd = source.indexOf('className={importFeedback.className}', firstPanelStart);
+    const firstPanel = source.slice(firstPanelStart, firstPanelEnd);
+
+    expect(source).not.toContain('data-import-prototype-status-grid');
+    expect(source).not.toContain('KpiCard');
+    expect(firstPanel).toContain('data-import-title-pills');
+    expect(firstPanel).toContain('data-import-prototype-table');
+    expect(firstPanel).toContain('只以 Lingxing xlsx/xls/csv 原始表格入库');
+    expect(firstPanel).not.toContain('row.statusDisplay.detail');
+    expect(source).toContain('data-import-feedback-strip');
+    expect(source).toContain('data-import-report-folder-panel');
+  });
+
   it('summarizes the active sort and current import coverage', () => {
     expect(buildDataImportTableFeedback({
       importedRows: 2416,
@@ -124,6 +154,8 @@ describe('data import table micro-feedback', () => {
     expect(source).toContain('shortDataImportHash');
     expect(source).toContain('setTableRefreshing');
     expect(source).toContain('dataImportTableRefreshRowClass(tableRefreshing)');
+    expect(source).toContain('dataImportFileLabel(row)');
+    expect(source).toContain('title={row.filePath}');
     expect(source).toContain('}, 200)');
     expect(styles).toContain('.data-import-table-refreshing');
     expect(styles).toContain('.data-import-table-locked');

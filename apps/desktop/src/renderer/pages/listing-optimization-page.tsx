@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { ProgressiveDetails } from '../components/progressive-details';
+import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import {
   buildListingReadinessIssues,
@@ -636,6 +637,8 @@ export function ListingOptimizationPage() {
   const [readEvidence, setReadEvidence] = useState<ListingReadEvidence | null>(null);
   const [drafts, setDrafts] = useState<ListingDraftView[]>([]);
   const [keywordsText, setKeywordsText] = useState('');
+  const [keywordEditorOpen, setKeywordEditorOpen] = useState(false);
+  const [listingEditorOpen, setListingEditorOpen] = useState(false);
   const [handoffPayload, setHandoffPayload] = useState<ListingHandoffPayload | null>(null);
   const [aiStatus, setAiStatus] = useState<ListingAiStatus>(listingAiStatusFromSettings(null));
   const [activeHeatmapKeyword, setActiveHeatmapKeyword] = useState<string | null>(null);
@@ -1228,6 +1231,47 @@ export function ListingOptimizationPage() {
     }
   }
 
+  function closeKeywordEditor() {
+    setKeywordEditorOpen(false);
+  }
+
+  function closeListingEditor() {
+    if (loading === 'save-manual') return;
+    setListingEditorOpen(false);
+  }
+
+  function handleKeywordEditorKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Escape') return;
+    event.stopPropagation();
+    closeKeywordEditor();
+  }
+
+  function handleListingEditorKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Escape') return;
+    event.stopPropagation();
+    closeListingEditor();
+  }
+
+  useEffect(() => {
+    if (!keywordEditorOpen) return;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      closeKeywordEditor();
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [keywordEditorOpen]);
+
+  useEffect(() => {
+    if (!listingEditorOpen) return;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      closeListingEditor();
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [listingEditorOpen, loading]);
+
   const listingActionBusy = Boolean(loading);
   const historyRefreshButton = listingHistoryRefreshButtonView({
     active: loading === 'history',
@@ -1271,153 +1315,101 @@ export function ListingOptimizationPage() {
         eyebrow="增长"
         title={PAGE_HEADER_TITLES.listingOptimization}
         description="录入或辅助读取当前 Listing，结合关键词机会检查覆盖，生成只供本地复核和导出的草案；不会提交 Amazon，也不会改写 Lingxing。"
-        primaryTask="生成本地 Listing 草案"
-        nextAction={listing ? '生成草案并导出' : '先录入并保存 Listing'}
-        primaryAction={{
-          label: draftWorkspaceCopy.primaryActionLabel,
-          busy: loading === 'draft',
-          busyLabel: '生成中...',
-          disabled: !listingReady || loading === 'draft',
-          onClick: generateDrafts,
-        }}
       />
 
-      <div className="business-stack">
-        <div className="kpi-row listing-prototype-status-grid" aria-label="Listing 草案状态">
-          <KpiCard
-            label="目标 ASIN"
-            value={expectedAsin || '-'}
-            detail={listing ? (pageMatched ? '页面已匹配' : '待核对') : '尚未保存 Listing'}
-            tone={listing && pageMatched ? 'ready' : 'warning'}
-          />
-          <KpiCard
-            label="关键词输入"
-            value={keywords.length}
-            detail={handoffPayload ? '来自关键词机会' : '手工输入'}
-            tone={keywords.length ? 'ready' : 'pending'}
-          />
-          <KpiCard
-            label="Listing 字段"
-            value={listingReady ? '可生成' : '待补齐'}
-            detail={listingReadinessIssues.slice(0, 1).join('、') || '字段闭合'}
-            tone={listingReady ? 'ready' : 'blocked'}
-          />
-          <KpiCard
-            label="草案边界"
-            value={draftReady ? `${drafts.length} 条` : '本地保存'}
-            detail="不提交 Amazon"
-            tone={draftReady ? 'ready' : 'pending'}
-          />
-        </div>
-        <StateLightGrid
-          ariaLabel="Listing 草案红绿灯"
-          items={[
-            {
-              label: '目标 ASIN',
-              value: expectedAsin || '-',
-              detail: listing ? (pageMatched ? '页面 ASIN 已匹配' : '页面 ASIN 待核对') : '尚未保存 Listing',
-              tone: listing && pageMatched ? 'ready' : 'warning',
-            },
-            {
-              label: '关键词输入',
-              value: keywords.length,
-              detail: handoffPayload ? '来自关键词机会' : '手工输入或待带入',
-              tone: keywords.length ? 'ready' : 'pending',
-            },
-            {
-              label: 'Listing 字段',
-              value: listingReady ? '可生成' : '待补齐',
-              detail: listingReadinessIssues.slice(0, 2).join('、') || '标题、五点、后台词已闭合',
-              tone: listingReady ? 'ready' : 'blocked',
-            },
-            {
-              label: '草案边界',
-              value: draftReady ? `${drafts.length} 条` : '本地保存',
-              detail: '不提交 Amazon，不覆盖 Lingxing',
-              tone: draftReady ? 'ready' : 'pending',
-            },
-          ]}
-        />
-
-        <Panel title="本地草案工作流" tone={draftReady ? 'success' : keywords.length && listingReady ? 'warning' : 'default'}>
-          <div className="evidence-check-panel">
-            <div className="business-split">
-              <div>
-                <h3>当前草案任务</h3>
-                <p className="muted-line">{workflowSummary.headline}</p>
-              </div>
-              <StatusPill tone={workflowSummary.tone}>{workflowSummary.statusLabel}</StatusPill>
+      <div className="business-stack listing-optimization-page-stack">
+        <Panel className="listing-flow-panel" title="本地草案工作流" tone={draftReady ? 'success' : keywords.length && listingReady ? 'warning' : 'default'}>
+          <div className={`listing-task-band listing-task-band-${workflowSummary.tone}`}>
+            <div className="listing-task-band-copy" aria-live="polite" role="status">
+              <span>当前草案任务</span>
+              <strong>{workflowSummary.headline}</strong>
+              <p>{workflowSummary.blockers.length ? workflowSummary.blockers.join('；') : workflowSummary.nextAction}</p>
             </div>
-            <div className="context-summary-grid">
+            <div className="listing-task-band-metrics">
               <div>
-                <span>输入与读取</span>
-                <strong>{workflowSummary.facts.slice(0, 2).join(' / ')}</strong>
-                <p>{workflowSummary.blockers.length ? workflowSummary.blockers.join('；') : '当前输入满足下一步条件。'}</p>
+                <span>关键词</span>
+                <strong>{keywords.length ? `${keywords.length} 个` : '未录入'}</strong>
               </div>
               <div>
-                <span>AI 与数据</span>
-                <strong>{workflowSummary.facts.slice(2).join(' / ')}</strong>
-                <p>{draftWorkspaceCopy.dataGateDetail}</p>
+                <span>Listing</span>
+                <strong>{listingReady ? '可生成草案' : listingSourceStatus.label}</strong>
               </div>
               <div>
-                <span>下一步</span>
-                <strong>{workflowSummary.nextAction}</strong>
-                <p>{workflowSummary.boundary}</p>
+                <span>草案</span>
+                <strong>{draftReady ? `${drafts.length} 条` : aiStatus.label}</strong>
+              </div>
+              <div>
+                <span>边界</span>
+                <strong>仅本地</strong>
               </div>
             </div>
+            <StatusPill tone={workflowSummary.tone}>{workflowSummary.statusLabel}</StatusPill>
           </div>
-          <div className="workflow-strip workflow-strip-readonly">
-            <div className="workflow-step workflow-step-static">
-              <span>1 关键词机会</span>
-              <strong>{keywords.length ? `${keywords.length} 个关键词已进入草案输入` : '未带入关键词'}</strong>
-              <p>{handoffPayload ? '来自关键词机会页，已绑定当前业务范围。' : '可从关键词机会页带入，也可手工粘贴后复核。'}</p>
-              <StatusPill tone={keywords.length ? 'ready' : 'pending'}>{keywords.length ? '已就绪' : '待输入'}</StatusPill>
-            </div>
-            <div className="workflow-step workflow-step-static">
-              <span>2 Listing 内容录入/读取</span>
-              <strong>{listingSourceStatus.headline}</strong>
-              <p>{listing ? `当前 ASIN：${listing.asin || '-'}，目标 ASIN：${expectedAsin || '-'}` : listingProbeAttempted ? '已保留页面 URL、截图和探测状态；可继续手工补齐字段后保存版本。' : '先手工录入当前 Listing；领星读取只作为辅助填充。'}</p>
-              <StatusPill tone={listingSourceStatus.tone}>{listingSourceStatus.label}</StatusPill>
-            </div>
-            <div className="workflow-step workflow-step-static">
-              <span>3 AI / 本地规则草案</span>
-              <strong>{draftReady ? draftWorkspaceCopy.sourceLabel : aiStatus.label}</strong>
-              <p>{draftWorkspaceCopy.sourceDetail}</p>
-              <StatusPill tone={draftReady ? 'ready' : listingReady && keywords.length ? aiStatus.tone : 'blocked'}>{draftReady ? '已生成' : aiStatus.label}</StatusPill>
-            </div>
-            <div className="workflow-step workflow-step-static">
-              <span>4 导出与发布边界</span>
-              <strong>{draftReady ? `${drafts.length} 条草案可导出` : '暂无可导出内容'}</strong>
-              <p>只导出本地文件，不自动提交 Amazon，不修改 Lingxing Listing。</p>
-              <StatusPill tone={draftReady ? 'ready' : 'pending'}>{draftReady ? '可导出' : '待草案'}</StatusPill>
-            </div>
-          </div>
+          <ol className="listing-progress-rail" aria-label="Listing 草案四步进度">
+            <li className={keywords.length ? 'is-ready' : 'is-pending'}>
+              <span>1</span>
+              <strong>关键词</strong>
+              <em>{keywords.length ? '已就绪' : '待输入'}</em>
+            </li>
+            <li className={listingReady ? 'is-ready' : listingProbeAttempted || listing ? 'is-warning' : 'is-pending'}>
+              <span>2</span>
+              <strong>Listing</strong>
+              <em>{listingSourceStatus.label}</em>
+            </li>
+            <li className={draftReady ? 'is-ready' : listingReady && keywords.length ? 'is-pending' : 'is-blocked'}>
+              <span>3</span>
+              <strong>草案</strong>
+              <em>{draftReady ? '已生成' : aiStatus.label}</em>
+            </li>
+            <li className={draftReady ? 'is-ready' : 'is-pending'}>
+              <span>4</span>
+              <strong>导出</strong>
+              <em>{draftReady ? '可导出' : '待草案'}</em>
+            </li>
+          </ol>
           <p className="muted-line">当前下一步：{workflowBlocker}。本页负责 Listing 草案闭环，不承载广告审批或真实广告执行。</p>
         </Panel>
 
-        <Panel title="手工录入当前 Listing" tone={listing ? (listingReady ? 'success' : 'warning') : 'warning'}>
+        <ProgressiveDetails title="录入、辅助读取和维护当前 Listing">
+        <Panel className="listing-editor-panel listing-editor-entry-panel" title="当前 Listing 维护" tone={listing ? (listingReady ? 'success' : 'warning') : 'warning'}>
           <div className="business-split">
             <div>
               <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
-              <p className="muted-line">请录入当前线上 Listing 的标题、五点、详情/A+ 和后台搜索词。每次保存都会写入版本历史，后续可对比修改。</p>
+              <p className="muted-line">主界面只确认当前 Listing 状态；标题、五点、A+ 和后台词维护进入弹窗编辑。</p>
               <p className="blocked-line">本功能只保存本地版本，不会自动提交 Amazon，也不会改写 Lingxing。</p>
             </div>
-            <StatusPill tone="ready">主流程</StatusPill>
+            <StatusPill tone={listingReady ? 'ready' : listing ? 'warning' : 'pending'}>{listingSourceStatus.label}</StatusPill>
           </div>
-          <div className="listing-editor-table">
-            {listingManualFieldGroups().map((group) => (
-              <section className="listing-editor-section" key={group.title}>
-                <strong>{group.title}</strong>
-                <FormTable>
-                  {group.fields.map(renderManualListingField)}
-                </FormTable>
-              </section>
-            ))}
+          <div className="listing-editor-summary-grid">
+            <div>
+              <span>ASIN</span>
+              <strong>{manualListing.asin || listing?.asin || scope.asin || '-'}</strong>
+              <p>{pageMatched ? '页面 ASIN 已匹配' : expectedAsin ? `目标 ${expectedAsin}` : '待确认当前产品'}</p>
+            </div>
+            <div>
+              <span>标题</span>
+              <strong>{manualListing.title || listing?.title || '未维护'}</strong>
+              <p>{titleRead ? '已有标题内容' : '生成草案前需补齐'}</p>
+            </div>
+            <div>
+              <span>五点</span>
+              <strong>{ensureFiveBullets(manualListing.bullets || listing?.bullets).filter((item) => item.trim()).length}/5</strong>
+              <p>{bulletsRead ? '五点内容已读取或维护' : '建议补齐五点'}</p>
+            </div>
+            <div>
+              <span>后台词</span>
+              <strong>{manualListing.backendTerms || listing?.backendTerms ? '已维护' : '未维护'}</strong>
+              <p>{backendTermsRead ? '可用于覆盖检查' : '生成草案前建议补齐'}</p>
+            </div>
+            <div>
+              <span>版本历史</span>
+              <strong>{listingVersions.length}</strong>
+              <p>本地版本用于对比修改，不自动提交。</p>
+            </div>
           </div>
           <div className="action-row">
-            <button aria-busy={saveManualButton.ariaBusy} className={saveManualButton.className} disabled={saveManualButton.disabled} onClick={saveManualListing} type="button">
-              {saveManualButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{saveManualButton.label}</span>
+            <button className="primary-button" onClick={() => setListingEditorOpen(true)} type="button">
+              编辑当前 Listing
             </button>
             <button
               aria-busy={historyRefreshButton.ariaBusy}
@@ -1434,7 +1426,7 @@ export function ListingOptimizationPage() {
           </div>
         </Panel>
 
-        <Panel title="从领星辅助读取" tone={listing ? (listingReady ? 'success' : 'warning') : listingProbeAttempted ? 'warning' : 'default'}>
+        <Panel className="listing-read-panel" title="从领星辅助读取" tone={listing ? (listingReady ? 'success' : 'warning') : listingProbeAttempted ? 'warning' : 'default'}>
           <div className="business-split">
             <div>
               <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
@@ -1478,303 +1470,434 @@ export function ListingOptimizationPage() {
             <p className="warning-line">页面已探测但内容未完整读取：已保留截图和页面 URL；请确认当前页是领星 Listing 详情页，并等待 ASIN、标题、五点和后台词加载后重新读取。</p>
           )}
         </Panel>
+        </ProgressiveDetails>
 
-        <Panel title="关键词交接与发布边界" tone={keywords.length ? 'success' : 'warning'}>
-          <div className="context-summary-grid">
-            <div>
-              <span>关键词来源</span>
-              <strong>{handoffPayload ? '关键词机会页' : '手工输入/待带入'}</strong>
-              <p>{handoffPayload ? '来自当前范围真实广告指标的机会池。' : '建议先从关键词机会页按 ASIN 带入，减少跨产品误用。'}</p>
+        <ProgressiveDetails title="关键词交接与发布边界">
+          <Panel className="listing-boundary-panel" title="交接与边界详情" tone={keywords.length ? 'success' : 'warning'}>
+            <div className="context-summary-grid">
+              <div>
+                <span>关键词来源</span>
+                <strong>{handoffPayload ? '关键词机会页' : '手工输入/待带入'}</strong>
+                <p>{handoffPayload ? '来自当前范围真实广告指标的机会池。' : '建议先从关键词机会页按 ASIN 带入，减少跨产品误用。'}</p>
+              </div>
+              <div>
+                <span>带入 ASIN</span>
+                <strong>{expectedAsin || '-'}</strong>
+                <p>读取 Listing 后必须核对页面 ASIN 与该 ASIN 一致。</p>
+              </div>
+              <div>
+                <span>关键词数量</span>
+                <strong>{keywords.length}</strong>
+                <p>生成草案前应删除不相关词和竞品误匹配词。</p>
+              </div>
+              <div>
+                <span>草案来源</span>
+                <strong>{drafts.length ? draftWorkspaceCopy.sourceLabel : '未生成'}</strong>
+                <p>DeepSeek 不可用时会标记本地规则参考，不能当作 AI 已验证。</p>
+              </div>
+              <div>
+                <span>AI 连接</span>
+                <strong>{aiStatus.label}</strong>
+                <p>{aiStatus.detail}</p>
+              </div>
             </div>
-            <div>
-              <span>带入 ASIN</span>
-              <strong>{expectedAsin || '-'}</strong>
-              <p>读取 Listing 后必须核对页面 ASIN 与该 ASIN 一致。</p>
-            </div>
-            <div>
-              <span>关键词数量</span>
-              <strong>{keywords.length}</strong>
-              <p>生成草案前应删除不相关词和竞品误匹配词。</p>
-            </div>
-            <div>
-              <span>草案来源</span>
-              <strong>{drafts.length ? draftWorkspaceCopy.sourceLabel : '未生成'}</strong>
-              <p>DeepSeek 不可用时会标记本地规则参考，不能当作 AI 已验证。</p>
-            </div>
-            <div>
-              <span>AI 连接</span>
-              <strong>{aiStatus.label}</strong>
-              <p>{aiStatus.detail}</p>
-            </div>
-          </div>
-          <p className="muted-line">交接范围：{handoffScopeText}</p>
-          {handoffContext && (
-            <div className="detail-grid evidence-grid">
-              <div><span>广告组合</span><strong>{handoffContext.portfolioName || '-'}</strong></div>
-              <div><span>广告活动</span><strong>{handoffContext.campaignName || '-'}</strong></div>
-              <div><span>广告组</span><strong>{handoffContext.adGroupName || '-'}</strong></div>
-              <div><span>对象类型</span><strong>{handoffContext.entityType || '-'}</strong></div>
-              <div><span>触发关键词</span><strong>{handoffContext.keyword || '-'}</strong></div>
-              <div><span>点击/订单</span><strong>{handoffContext.clicks ?? '-'} / {handoffContext.orders ?? '-'}</strong></div>
-              <div><span>花费/销售 USD</span><strong>{handoffContext.spend ?? '-'} / {handoffContext.sales ?? '-'}</strong></div>
-              <div><span>来源文件</span><strong><code>{handoffContext.sourceFile || '-'}</code></strong></div>
-            </div>
-          )}
-          <p className="blocked-line">本页只生成本地草案和导出文件，不提交 Amazon，不修改 Lingxing Listing。</p>
-        </Panel>
+            <p className="muted-line">交接范围：{handoffScopeText}</p>
+            {handoffContext && (
+              <div className="detail-grid evidence-grid">
+                <div><span>广告组合</span><strong>{handoffContext.portfolioName || '-'}</strong></div>
+                <div><span>广告活动</span><strong>{handoffContext.campaignName || '-'}</strong></div>
+                <div><span>广告组</span><strong>{handoffContext.adGroupName || '-'}</strong></div>
+                <div><span>对象类型</span><strong>{handoffContext.entityType || '-'}</strong></div>
+                <div><span>触发关键词</span><strong>{handoffContext.keyword || '-'}</strong></div>
+                <div><span>点击/订单</span><strong>{handoffContext.clicks ?? '-'} / {handoffContext.orders ?? '-'}</strong></div>
+                <div><span>花费/销售 USD</span><strong>{handoffContext.spend ?? '-'} / {handoffContext.sales ?? '-'}</strong></div>
+                <div><span>来源文件</span><strong><code>{handoffContext.sourceFile || '-'}</code></strong></div>
+              </div>
+            )}
+            <p className="blocked-line">本页只生成本地草案和导出文件，不提交 Amazon，不修改 Lingxing Listing。</p>
+          </Panel>
+        </ProgressiveDetails>
 
-        <Panel title="核心商机词根热力图矩阵" tone={heatmapModel.summary.keywordCount ? (heatmapModel.summary.missingCount ? 'warning' : 'success') : 'warning'}>
+        <Panel className="listing-heatmap-panel" title="核心商机词根覆盖" tone={heatmapModel.summary.keywordCount ? (heatmapModel.summary.missingCount ? 'warning' : 'success') : 'warning'}>
           <div className="business-split">
             <div>
-              <p className="muted-line">左侧词根来自关键词机会或手工输入；点击任一词根后，右侧 Title、五点、后台词和详情/A+ 会即时高亮当前文本与本地草案的命中区域。</p>
+              <p className="muted-line">用关键词机会或手工词根检查标题、五点、后台词和详情/A+ 的覆盖情况；无词根时只保留录入入口。</p>
               <p className="blocked-line">热力图只做本地覆盖复核，不提交 Amazon，不自动改写 Lingxing Listing。</p>
             </div>
             <StatusPill tone={heatmapModel.summary.missingCount ? 'warning' : heatmapModel.summary.keywordCount ? 'ready' : 'pending'}>
               {heatmapModel.summary.keywordCount ? `${heatmapModel.summary.coveredCount}/${heatmapModel.summary.keywordCount} 已覆盖` : '待输入词根'}
             </StatusPill>
           </div>
-          <div className="listing-heatmap-grid">
-            <aside className="listing-heatmap-keyword-rail" aria-label="核心商机词根">
-              <div className="listing-heatmap-summary">
-                <div><span>词根</span><strong>{heatmapModel.summary.keywordCount}</strong></div>
-                <div><span>草案新增</span><strong>{heatmapModel.summary.draftGainCount}</strong></div>
-                <div><span>待融入</span><strong>{heatmapModel.summary.missingCount}</strong></div>
+          {heatmapModel.keywords.length ? (
+            <>
+              <div className="listing-heatmap-grid">
+                <aside className="listing-heatmap-keyword-rail" aria-label="核心商机词根">
+                  <div className="listing-heatmap-summary">
+                    <div><span>词根</span><strong>{heatmapModel.summary.keywordCount}</strong></div>
+                    <div><span>草案新增</span><strong>{heatmapModel.summary.draftGainCount}</strong></div>
+                    <div><span>待融入</span><strong>{heatmapModel.summary.missingCount}</strong></div>
+                  </div>
+                  {heatmapModel.keywords.map((item) => (
+                    <button
+                      aria-pressed={selectedHeatmapKeyword === item.keyword}
+                      className={listingHeatmapKeywordButtonClass(
+                        item.level,
+                        selectedHeatmapKeyword === item.keyword,
+                        pulsingHeatmapKeyword === item.keyword,
+                        heatmapPulseSerial,
+                      )}
+                      key={item.keyword}
+                      onClick={() => focusHeatmapKeyword(item.keyword)}
+                      type="button"
+                    >
+                      <span>{item.keyword}</span>
+                      <strong>{item.score}</strong>
+                      <small>{item.levelLabel} / 建议 {item.recommendedSection}</small>
+                    </button>
+                  ))}
+                </aside>
+                <div className="listing-heatmap-matrix">
+                  {heatmapModel.sections.map((section) => {
+                    const activeHit = Boolean(selectedHeatmapKeyword && (
+                      includesKeyword(section.currentText, selectedHeatmapKeyword)
+                      || includesKeyword(section.draftText, selectedHeatmapKeyword)
+                    ));
+                    const pulsingSection = Boolean(activeHit && pulsingHeatmapKeyword);
+                    const diff = buildListingTextDiffSegments(section.currentText, section.draftText);
+                    const draftLength = section.draftText.length;
+                    const draftGenerating = loading === 'draft';
+                    return (
+                      <section className={listingHeatmapSectionClass(activeHit, pulsingSection, heatmapPulseSerial)} key={section.key}>
+                        <div className="listing-heatmap-section-head">
+                          <div>
+                            <span>{section.label}</span>
+                            <strong>{section.draftHits.length ? `命中 ${section.draftHits.length} 个词根` : '未命中词根'}</strong>
+                          </div>
+                          <StatusPill tone={section.draftHits.length ? 'ready' : section.currentText ? 'warning' : 'pending'}>
+                            {activeHit ? '当前命中' : section.draftHits.length ? '有覆盖' : '待覆盖'}
+                          </StatusPill>
+                        </div>
+                        <div className="listing-heatmap-text-grid">
+                          <div>
+                            <span>线上原文</span>
+                            <p>{renderHeatmapSegments(section.currentText, selectedHeatmapKeyword, pulsingSection)}</p>
+                          </div>
+                          <div className={listingDraftPanelClass(draftGenerating)} aria-busy={draftGenerating}>
+                            <span>本地草案 / 复核文本</span>
+                            <p>{renderHeatmapSegments(section.draftText, selectedHeatmapKeyword, pulsingSection)}</p>
+                            {section.charLimit && (
+                              <small className={listingCharacterLimitClass(draftLength, section.charLimit)}>
+                                {draftLength} / {section.charLimit}
+                              </small>
+                            )}
+                          </div>
+                        </div>
+                        {renderListingDiffPreview(diff)}
+                      </section>
+                    );
+                  })}
+                </div>
               </div>
-              {heatmapModel.keywords.length ? heatmapModel.keywords.map((item) => (
-                <button
-                  aria-pressed={selectedHeatmapKeyword === item.keyword}
-                  className={listingHeatmapKeywordButtonClass(
-                    item.level,
-                    selectedHeatmapKeyword === item.keyword,
-                    pulsingHeatmapKeyword === item.keyword,
-                    heatmapPulseSerial,
-                  )}
-                  key={item.keyword}
-                  onClick={() => focusHeatmapKeyword(item.keyword)}
-                  type="button"
-                >
-                  <span>{item.keyword}</span>
-                  <strong>{item.score}</strong>
-                  <small>{item.levelLabel} / 建议 {item.recommendedSection}</small>
-                </button>
-              )) : (
-                <p className="muted-line">从关键词机会页带入，或在下方粘贴关键词后显示词根热力图。</p>
+              {selectedHeatmapKeyword && (
+                <p aria-atomic="true" aria-live="polite" className="muted-line listing-heatmap-focus-status">
+                  {heatmapFocusAnnouncement} {heatmapModel.keywords.find((item) => item.keyword === selectedHeatmapKeyword)?.evidence || '暂无命中证据。'}
+                </p>
               )}
-            </aside>
-            <div className="listing-heatmap-matrix">
-              {heatmapModel.sections.map((section) => {
-                const activeHit = Boolean(selectedHeatmapKeyword && (
-                  includesKeyword(section.currentText, selectedHeatmapKeyword)
-                  || includesKeyword(section.draftText, selectedHeatmapKeyword)
-                ));
-                const pulsingSection = Boolean(activeHit && pulsingHeatmapKeyword);
-                const diff = buildListingTextDiffSegments(section.currentText, section.draftText);
-                const draftLength = section.draftText.length;
-                const draftGenerating = loading === 'draft';
-                return (
-                  <section className={listingHeatmapSectionClass(activeHit, pulsingSection, heatmapPulseSerial)} key={section.key}>
-                    <div className="listing-heatmap-section-head">
-                      <div>
-                        <span>{section.label}</span>
-                        <strong>{section.draftHits.length ? `命中 ${section.draftHits.length} 个词根` : '未命中词根'}</strong>
-                      </div>
-                      <StatusPill tone={section.draftHits.length ? 'ready' : section.currentText ? 'warning' : 'pending'}>
-                        {activeHit ? '当前命中' : section.draftHits.length ? '有覆盖' : '待覆盖'}
-                      </StatusPill>
-                    </div>
-                    <div className="listing-heatmap-text-grid">
-                      <div>
-                        <span>线上原文</span>
-                        <p>{renderHeatmapSegments(section.currentText, selectedHeatmapKeyword, pulsingSection)}</p>
-                      </div>
-                      <div className={listingDraftPanelClass(draftGenerating)} aria-busy={draftGenerating}>
-                        <span>本地草案 / 复核文本</span>
-                        <p>{renderHeatmapSegments(section.draftText, selectedHeatmapKeyword, pulsingSection)}</p>
-                        {section.charLimit && (
-                          <small className={listingCharacterLimitClass(draftLength, section.charLimit)}>
-                            {draftLength} / {section.charLimit}
-                          </small>
-                        )}
-                      </div>
-                    </div>
-                    {renderListingDiffPreview(diff)}
-                  </section>
-                );
-              })}
+            </>
+          ) : (
+            <div className="listing-heatmap-empty" role="status" aria-live="polite">
+              <div>
+                <span>暂无词根</span>
+                <strong>先录入关键词，再看覆盖矩阵</strong>
+                <p>可以从关键词机会页带入，也可以手工粘贴；未录入前不展示空热力图，避免误以为已有 Listing 覆盖结论。</p>
+              </div>
+              <button className="primary-button" onClick={() => setKeywordEditorOpen(true)} type="button">录入关键词</button>
             </div>
-          </div>
-          {selectedHeatmapKeyword && (
-            <p aria-atomic="true" aria-live="polite" className="muted-line listing-heatmap-focus-status">
-              {heatmapFocusAnnouncement} {heatmapModel.keywords.find((item) => item.keyword === selectedHeatmapKeyword)?.evidence || '暂无命中证据。'}
-            </p>
           )}
         </Panel>
 
-        <Panel title="当前 Listing 内容">
-          <div className="detail-grid">
-            <div><span>ASIN</span><strong>{listing?.asin || '-'}</strong></div>
-            <div><span>目标 ASIN</span><strong>{expectedAsin || '-'}</strong></div>
-            <div><span>页面匹配</span><strong>{listing ? (pageMatched ? '通过' : '阻断：ASIN 不一致') : '未读取'}</strong></div>
-            <div><span>来源</span><strong>{listing?.source || '-'}</strong></div>
-            <div><span>页面 URL</span><strong>{listing?.pageUrl || '-'}</strong></div>
-            <div><span>版本</span><strong>{listing?.versionLabel || listing?.versionId || '-'}</strong></div>
-            <div><span>后台词</span><strong>{listing?.backendTerms || '-'}</strong></div>
-            <div><span>详情</span><strong>{listing?.description || '-'}</strong></div>
-            <div><span>A+</span><strong>{listing?.aPlus || '-'}</strong></div>
-            <div><span>图片文案</span><strong>{listing?.imageCopy || '-'}</strong></div>
-          </div>
-          <div className="listing-copy-block">
-            <h3>标题</h3>
-            <p>{listing?.title || '尚未读取标题。'}</p>
-            <h3>五点</h3>
-            {(listing?.bullets?.length ? listing.bullets : ['尚未读取五点。']).map((item, index) => (
-              <p key={`${index}-${item}`}>{index + 1}. {item}</p>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title="Listing 版本历史" tone={listingVersions.length ? 'success' : 'default'}>
-          {listingVersions.length ? (
-            <div className="business-card-list">
-              {listingVersions.map((version) => (
-                <div className="business-card" key={version.versionId}>
-                  <div className="business-split">
-                    <div>
-                      <strong>{version.versionLabel || `版本 #${version.versionId}`}</strong>
-                      <p className="muted-line">{version.createdAt || '-'} / {version.source || 'manual'} / {version.storeName || scope.storeName || '-'} / {version.marketplaceCode || scope.marketplaceCode || '-'}</p>
-                      <p>{version.changeSummary || '未填写修改说明'}</p>
-                    </div>
-                    <StatusPill tone="ready">#{version.versionId}</StatusPill>
-                  </div>
-                  <div className="detail-grid">
-                    <div><span>标题</span><strong>{version.title || '-'}</strong></div>
-                    <div><span>五点</span><strong>{version.bullets?.filter(Boolean).length || 0}</strong></div>
-                    <div><span>后台词</span><strong>{version.backendTerms || '-'}</strong></div>
-                    <div><span>详情/A+</span><strong>{version.description || version.aPlus || '-'}</strong></div>
-                  </div>
-                </div>
+        <ProgressiveDetails title="当前 Listing 内容与版本历史">
+          <Panel className="listing-current-panel" title="当前 Listing 内容">
+            <div className="detail-grid">
+              <div><span>ASIN</span><strong>{listing?.asin || '-'}</strong></div>
+              <div><span>目标 ASIN</span><strong>{expectedAsin || '-'}</strong></div>
+              <div><span>页面匹配</span><strong>{listing ? (pageMatched ? '通过' : '阻断：ASIN 不一致') : '未读取'}</strong></div>
+              <div><span>来源</span><strong>{listing?.source || '-'}</strong></div>
+              <div><span>页面 URL</span><strong>{listing?.pageUrl || '-'}</strong></div>
+              <div><span>版本</span><strong>{listing?.versionLabel || listing?.versionId || '-'}</strong></div>
+              <div><span>后台词</span><strong>{listing?.backendTerms || '-'}</strong></div>
+              <div><span>详情</span><strong>{listing?.description || '-'}</strong></div>
+              <div><span>A+</span><strong>{listing?.aPlus || '-'}</strong></div>
+              <div><span>图片文案</span><strong>{listing?.imageCopy || '-'}</strong></div>
+            </div>
+            <div className="listing-copy-block">
+              <h3>标题</h3>
+              <p>{listing?.title || '尚未读取标题。'}</p>
+              <h3>五点</h3>
+              {(listing?.bullets?.length ? listing.bullets : ['尚未读取五点。']).map((item, index) => (
+                <p key={`${index}-${item}`}>{index + 1}. {item}</p>
               ))}
             </div>
-          ) : (
-            <p className="muted-line">当前 ASIN 还没有版本历史。保存手工 Listing 后会在这里显示每次修改记录。</p>
-          )}
-        </Panel>
+          </Panel>
 
-        <Panel title="关键词与本地草案工作台" tone={quantReady ? 'success' : 'warning'}>
-          <div className="listing-draft-workbench" aria-label="Listing 关键词与本地草案工作台">
-            <section className="listing-draft-pane listing-draft-keyword-pane">
-              <div className="listing-draft-pane-head">
-                <div>
-                  <span>01 关键词输入</span>
-                  <strong>{handoffPayload ? '来自关键词机会' : '手工粘贴或待带入'}</strong>
-                </div>
-                <StatusPill tone={keywords.length ? 'ready' : 'pending'}>{draftWorkspaceCopy.keywordStatusLabel}</StatusPill>
-              </div>
-              <label className="textarea-label">
-                粘贴关键词机会（逗号或换行分隔）
-                <textarea
-                  value={keywordsText}
-                  onChange={(event) => setKeywordsText(event.target.value)}
-                  placeholder={draftWorkspaceCopy.keywordPlaceholder}
-                />
-              </label>
-              <p className="muted-line" aria-live="polite">
-                已输入 {keywords.length} 个关键词；生成前请删除不相关词、竞品误匹配词和跨产品词。
-              </p>
-            </section>
-
-            <section className="listing-draft-pane">
-              <div className="listing-draft-pane-head">
-                <div>
-                  <span>02 数据门槛与用途</span>
-                  <strong>{draftWorkspaceCopy.draftUseLabel}</strong>
-                </div>
-                <StatusPill tone={draftWorkspaceCopy.dataGateTone}>{draftWorkspaceCopy.dataGateLabel}</StatusPill>
-              </div>
-              <div className="listing-draft-gate-grid">
-                <div className={`listing-draft-gate listing-draft-gate-${draftWorkspaceCopy.dataGateTone}`}>
-                  <span>数据门槛</span>
-                  <strong>{draftWorkspaceCopy.dataGateLabel}</strong>
-                  <p>{draftWorkspaceCopy.dataGateDetail}</p>
-                </div>
-                <div className={`listing-draft-gate listing-draft-gate-${quantReady ? 'ready' : 'warning'}`}>
-                  <span>草案用途</span>
-                  <strong>{draftWorkspaceCopy.draftUseLabel}</strong>
-                  <p>{draftWorkspaceCopy.draftUseDetail}</p>
-                </div>
-              </div>
-            </section>
-
-            <section className="listing-draft-pane listing-draft-action-pane">
-              <div className="listing-draft-pane-head">
-                <div>
-                  <span>03 生成与导出</span>
-                  <strong>{draftWorkspaceCopy.sourceLabel}</strong>
-                </div>
-                <StatusPill tone={draftReady ? 'ready' : listingReady && keywords.length ? aiStatus.tone : 'blocked'}>
-                  {draftReady ? '草案已生成' : aiStatus.label}
-                </StatusPill>
-              </div>
-              <p className="muted-line">{draftWorkspaceCopy.sourceDetail}</p>
-              <div className="listing-draft-metrics" aria-label="Listing 草案来源统计">
-                <div><span>AI 草案</span><strong>{aiDraftCount}</strong></div>
-                <div><span>本地规则参考</span><strong>{ruleDraftCount}</strong></div>
-                <div><span>可导出草案</span><strong>{drafts.length}</strong></div>
-              </div>
-              <div className="action-row">
-                <button aria-busy={generateDraftButton.ariaBusy} className={generateDraftButton.className} disabled={generateDraftButton.disabled} onClick={generateDrafts} type="button">
-                  {generateDraftButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-                  <span>{generateDraftButton.label}</span>
-                </button>
-                <button aria-busy={exportDraftButton.ariaBusy} className={exportDraftButton.className} disabled={exportDraftButton.disabled} onClick={exportDrafts} type="button">
-                  {exportDraftButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-                  <span>{exportDraftButton.label}</span>
-                </button>
-              </div>
-            </section>
-          </div>
-          <p className="blocked-line">本地草案不会自动提交 Amazon，不修改 Lingxing Listing；缺真实广告数据时也不会进入交付证据包。</p>
-          <div className="listing-draft-table-title">
-            <div>
-              <span>草案明细</span>
-              <strong>{draftReady ? `${drafts.length} 条待人工复核` : '尚未生成草案'}</strong>
-            </div>
-            <StatusPill tone={draftReady ? 'ready' : 'pending'}>{draftReady ? '可导出' : '待草案'}</StatusPill>
-          </div>
-          <div className="table-wrap">
-            <table className="business-table">
-              <thead>
-                <tr>
-                  <th>位置</th>
-                  <th>当前文本</th>
-                  <th>草案文本</th>
-                  <th>关键词</th>
-                  <th>来源</th>
-                  <th>原因/证据</th>
-                  <th>风险</th>
-                </tr>
-              </thead>
-              <tbody>
-                {drafts.map((draft, index) => (
-                  <tr key={`${draft.section}-${index}`}>
-                    <td>{sectionLabel(draft.section)}</td>
-                    <td>{draft.currentText || '-'}</td>
-                    <td>{draft.draftedText || '-'}</td>
-                    <td>{draft.keywords?.join(', ') || '-'}</td>
-                    <td>{draftSourceLabel(draft)}{draft.aiFallbackReason ? ` / ${draft.aiFallbackReason}` : ''}</td>
-                    <td>{draft.evidence || '-'}</td>
-                    <td>{draft.riskWarnings?.join(', ') || '需人工复核'}</td>
-                  </tr>
+          <Panel className="listing-history-panel" title="Listing 版本历史" tone={listingVersions.length ? 'success' : 'default'}>
+            {listingVersions.length ? (
+              <div className="business-card-list">
+                {listingVersions.map((version) => (
+                  <div className="business-card" key={version.versionId}>
+                    <div className="business-split">
+                      <div>
+                        <strong>{version.versionLabel || `版本 #${version.versionId}`}</strong>
+                        <p className="muted-line">{version.createdAt || '-'} / {version.source || 'manual'} / {version.storeName || scope.storeName || '-'} / {version.marketplaceCode || scope.marketplaceCode || '-'}</p>
+                        <p>{version.changeSummary || '未填写修改说明'}</p>
+                      </div>
+                      <StatusPill tone="ready">#{version.versionId}</StatusPill>
+                    </div>
+                    <div className="detail-grid">
+                      <div><span>标题</span><strong>{version.title || '-'}</strong></div>
+                      <div><span>五点</span><strong>{version.bullets?.filter(Boolean).length || 0}</strong></div>
+                      <div><span>后台词</span><strong>{version.backendTerms || '-'}</strong></div>
+                      <div><span>详情/A+</span><strong>{version.description || version.aPlus || '-'}</strong></div>
+                    </div>
+                  </div>
                 ))}
-                {!drafts.length && (
+              </div>
+            ) : (
+              <p className="muted-line">当前 ASIN 还没有版本历史。保存手工 Listing 后会在这里显示每次修改记录。</p>
+            )}
+          </Panel>
+        </ProgressiveDetails>
+
+        <ProgressiveDetails title="关键词、草案生成和导出">
+          <Panel className="listing-draft-panel" title="关键词与本地草案工作台" tone={quantReady ? 'success' : 'warning'}>
+            <div className="listing-draft-workbench" aria-label="Listing 关键词与本地草案工作台">
+              <section className="listing-draft-pane listing-draft-keyword-pane">
+                <div className="listing-draft-pane-head">
+                  <div>
+                    <span>01 关键词输入</span>
+                    <strong>{handoffPayload ? '来自关键词机会' : '手工粘贴或待带入'}</strong>
+                  </div>
+                  <StatusPill tone={keywords.length ? 'ready' : 'pending'}>{draftWorkspaceCopy.keywordStatusLabel}</StatusPill>
+                </div>
+                <div className="listing-keyword-summary" aria-live="polite">
+                  <div>
+                    <span>关键词</span>
+                    <strong>{keywords.length}</strong>
+                  </div>
+                  <p>{keywords.length ? '已进入热力图和草案生成；需要修改时打开关键词编辑。' : '当前没有关键词，先从关键词机会页带入，或手工粘贴。'}</p>
+                </div>
+                <div className="action-row">
+                  <button className={keywords.length ? 'secondary-button' : 'primary-button'} onClick={() => setKeywordEditorOpen(true)} type="button">
+                    {keywords.length ? '编辑关键词' : '录入关键词'}
+                  </button>
+                </div>
+              </section>
+
+              <section className="listing-draft-pane">
+                <div className="listing-draft-pane-head">
+                  <div>
+                    <span>02 数据门槛与用途</span>
+                    <strong>{draftWorkspaceCopy.draftUseLabel}</strong>
+                  </div>
+                  <StatusPill tone={draftWorkspaceCopy.dataGateTone}>{draftWorkspaceCopy.dataGateLabel}</StatusPill>
+                </div>
+                <div className="listing-draft-gate-grid">
+                  <div className={`listing-draft-gate listing-draft-gate-${draftWorkspaceCopy.dataGateTone}`}>
+                    <span>数据门槛</span>
+                    <strong>{draftWorkspaceCopy.dataGateLabel}</strong>
+                    <p>{draftWorkspaceCopy.dataGateDetail}</p>
+                  </div>
+                  <div className={`listing-draft-gate listing-draft-gate-${quantReady ? 'ready' : 'warning'}`}>
+                    <span>草案用途</span>
+                    <strong>{draftWorkspaceCopy.draftUseLabel}</strong>
+                    <p>{draftWorkspaceCopy.draftUseDetail}</p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="listing-draft-pane listing-draft-action-pane">
+                <div className="listing-draft-pane-head">
+                  <div>
+                    <span>03 生成与导出</span>
+                    <strong>{draftWorkspaceCopy.sourceLabel}</strong>
+                  </div>
+                  <StatusPill tone={draftReady ? 'ready' : listingReady && keywords.length ? aiStatus.tone : 'blocked'}>
+                    {draftReady ? '草案已生成' : aiStatus.label}
+                  </StatusPill>
+                </div>
+                <p className="muted-line">{draftWorkspaceCopy.sourceDetail}</p>
+                <div className="listing-draft-metrics" aria-label="Listing 草案来源统计">
+                  <div><span>AI 草案</span><strong>{aiDraftCount}</strong></div>
+                  <div><span>本地规则参考</span><strong>{ruleDraftCount}</strong></div>
+                  <div><span>可导出草案</span><strong>{drafts.length}</strong></div>
+                </div>
+                <div className="action-row">
+                  <button aria-busy={generateDraftButton.ariaBusy} className={generateDraftButton.className} disabled={generateDraftButton.disabled} onClick={generateDrafts} type="button">
+                    {generateDraftButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                    <span>{generateDraftButton.label}</span>
+                  </button>
+                  <button aria-busy={exportDraftButton.ariaBusy} className={exportDraftButton.className} disabled={exportDraftButton.disabled} onClick={exportDrafts} type="button">
+                    {exportDraftButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                    <span>{exportDraftButton.label}</span>
+                  </button>
+                </div>
+              </section>
+            </div>
+            <p className="blocked-line">本地草案不会自动提交 Amazon，不修改 Lingxing Listing；缺真实广告数据时也不会进入交付证据包。</p>
+            <div className="listing-draft-table-title">
+              <div>
+                <span>草案明细</span>
+                <strong>{draftReady ? `${drafts.length} 条待人工复核` : '尚未生成草案'}</strong>
+              </div>
+              <StatusPill tone={draftReady ? 'ready' : 'pending'}>{draftReady ? '可导出' : '待草案'}</StatusPill>
+            </div>
+            <div className="table-wrap">
+              <table className="business-table">
+                <thead>
                   <tr>
-                    <td colSpan={7}>尚未生成草案。</td>
+                    <th>位置</th>
+                    <th>当前文本</th>
+                    <th>草案文本</th>
+                    <th>关键词</th>
+                    <th>来源</th>
+                    <th>原因/证据</th>
+                    <th>风险</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {drafts.map((draft, index) => (
+                    <tr key={`${draft.section}-${index}`}>
+                      <td>{sectionLabel(draft.section)}</td>
+                      <td>{draft.currentText || '-'}</td>
+                      <td>{draft.draftedText || '-'}</td>
+                      <td>{draft.keywords?.join(', ') || '-'}</td>
+                      <td>{draftSourceLabel(draft)}{draft.aiFallbackReason ? ` / ${draft.aiFallbackReason}` : ''}</td>
+                      <td>{draft.evidence || '-'}</td>
+                      <td>{draft.riskWarnings?.join(', ') || '需人工复核'}</td>
+                    </tr>
+                  ))}
+                  {!drafts.length && (
+                    <tr>
+                      <td colSpan={7}>尚未生成草案。</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        </ProgressiveDetails>
+
+        {listingEditorOpen && (
+          <div
+            className="product-config-modal-backdrop listing-editor-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeListingEditor();
+            }}
+            role="presentation"
+          >
+            <section
+              aria-labelledby="listing-editor-modal-title"
+              aria-modal="true"
+              className="product-config-modal listing-editor-modal"
+              onKeyDown={handleListingEditorKeyDown}
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+            >
+              <div className="product-config-modal-header">
+                <div>
+                  <span>{manualListing.asin || expectedAsin || '当前产品'}</span>
+                  <h2 id="listing-editor-modal-title">编辑当前 Listing</h2>
+                </div>
+                <button className="secondary-button compact-button" disabled={loading === 'save-manual'} onClick={closeListingEditor} type="button">关闭</button>
+              </div>
+              <div className="product-config-modal-body listing-editor-modal-body">
+                <div className="operation-hint">
+                  <strong>只保存本地版本</strong>
+                  <p>填写当前线上 Listing 的标题、五点、详情/A+ 和后台搜索词；保存后写入本地版本历史，不提交 Amazon，也不覆盖 Lingxing。</p>
+                </div>
+                <div className="listing-editor-table listing-editor-modal-table">
+                  {listingManualFieldGroups().map((group) => (
+                    <section className="listing-editor-section" key={group.title}>
+                      <strong>{group.title}</strong>
+                      <FormTable>
+                        {group.fields.map(renderManualListingField)}
+                      </FormTable>
+                    </section>
+                  ))}
+                </div>
+              </div>
+              <div className="product-config-modal-footer">
+                <span className="muted-line">保存只进入本地版本历史，后续用于草案对比和导出。</span>
+                <div className="action-row">
+                  <button aria-busy={saveManualButton.ariaBusy} className={saveManualButton.className} disabled={saveManualButton.disabled} onClick={saveManualListing} type="button">
+                    {saveManualButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                    <span>{saveManualButton.label}</span>
+                  </button>
+                  <button
+                    aria-busy={historyRefreshButton.ariaBusy}
+                    className={historyRefreshButton.className}
+                    disabled={historyRefreshButton.disabled}
+                    onClick={() => {
+                      void refreshListingVersions();
+                    }}
+                    type="button"
+                  >
+                    {historyRefreshButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                    <span>{historyRefreshButton.label}</span>
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
-        </Panel>
+        )}
+
+        {keywordEditorOpen && (
+          <div
+            className="product-config-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeKeywordEditor();
+            }}
+            role="presentation"
+          >
+            <section
+              aria-labelledby="listing-keyword-editor-title"
+              aria-modal="true"
+              className="product-config-modal listing-keyword-modal"
+              onKeyDown={handleKeywordEditorKeyDown}
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+            >
+              <div className="product-config-modal-header">
+                <div>
+                  <span>{expectedAsin || '当前产品'}</span>
+                  <h2 id="listing-keyword-editor-title">编辑 Listing 关键词</h2>
+                </div>
+                <button className="secondary-button compact-button" onClick={closeKeywordEditor} type="button">关闭</button>
+              </div>
+              <div className="product-config-modal-body">
+                <div className="operation-hint">
+                  <strong>{keywords.length ? `${keywords.length} 个关键词已录入` : '尚未录入关键词'}</strong>
+                  <p>关键词只用于本地热力图和草案生成，不会提交 Amazon，也不会改写 Lingxing Listing。</p>
+                </div>
+                <label className="textarea-label">
+                  粘贴关键词机会（逗号或换行分隔）
+                  <textarea
+                    value={keywordsText}
+                    onChange={(event) => setKeywordsText(event.target.value)}
+                    placeholder={draftWorkspaceCopy.keywordPlaceholder}
+                  />
+                </label>
+                <p className="muted-line" aria-live="polite">
+                  已输入 {keywords.length} 个关键词；生成前请删除不相关词、竞品误匹配词和跨产品词。
+                </p>
+              </div>
+              <div className="product-config-modal-footer">
+                <button className="primary-button" onClick={closeKeywordEditor} type="button">完成</button>
+                <button className="secondary-button" onClick={() => setKeywordsText('')} type="button" disabled={!keywordsText.trim()}>清空</button>
+              </div>
+            </section>
+          </div>
+        )}
 
         {message && <p className={message.includes('失败') || message.includes('请先') ? 'blocked-line' : 'muted-line'}>{message}</p>}
       </div>

@@ -15,6 +15,7 @@ import {
   settingsRuleConfigFieldFeedback,
   settingsRuleActionButtonView,
   settingsLocalActionButtonView,
+  storagePathDisplay,
   shouldResetAiTestForSettingsField,
 } from './settings-page';
 
@@ -75,9 +76,9 @@ describe('settings AI connection status invalidation', () => {
 
 describe('aiSettingsActionHint', () => {
   it('explains why AI settings actions are disabled', () => {
-    expect(aiSettingsActionHint({ canSaveSettings: false, keyPresent: false, canTestAi: false })).toBe('当前环境未接入设置保存接口，无法保存或清除 API Key。');
+    expect(aiSettingsActionHint({ canSaveSettings: false, keyPresent: false, canTestAi: false })).toBe('当前预览环境只能查看配置；请在桌面应用中保存或清除 API Key。');
     expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: false, canTestAi: false })).toBe('填写 API Key 后才能测试连接。');
-    expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: true, canTestAi: false })).toBe('当前环境未接入 AI 连接测试接口。');
+    expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: true, canTestAi: false })).toBe('当前预览环境不能发起 AI 连接测试。');
     expect(aiSettingsActionHint({ canSaveSettings: true, keyPresent: true, canTestAi: true })).toBe('');
   });
 });
@@ -138,14 +139,50 @@ describe('Phase 5 settings user task surface', () => {
   it('keeps support logs, paths, and troubleshooting out of the primary settings surface', () => {
     const source = readFileSync(new URL('./settings-page.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain('<Panel title="AI 服务连接">');
+    expect(source).toContain('title="AI 服务连接"');
     expect(source).toContain('<Panel title="规则阈值与动作边界">');
-    expect(source).toContain('<ProgressiveDetails title="AI 调用记录与支持信息">');
-    expect(source).toContain('<ProgressiveDetails title="本地支持路径">');
-    expect(source).toContain('<ProgressiveDetails title="支持检查工具">');
+    expect(source).toContain('<ProgressiveDetails title="高级诊断与本地支持">');
+    expect(source).toContain('<Panel title="AI 调用记录与支持信息">');
+    expect(source).toContain('<Panel title="本地支持路径">');
+    expect(source).toContain('<Panel title="支持检查工具">');
+    expect(source).not.toContain('<ProgressiveDetails title="AI 调用记录与支持信息">');
+    expect(source).not.toContain('<ProgressiveDetails title="本地支持路径">');
+    expect(source).not.toContain('<ProgressiveDetails title="支持检查工具">');
+    expect(source).not.toContain('<ProgressiveDetails title="本地接口状态">');
     expect(source).not.toContain('<Panel title="DeepSeek / OpenAI Compatible">');
     expect(source).not.toContain('<Panel title="广告表现阈值">');
     expect(source).not.toContain('<ProgressiveDetails title="诊断工具">');
+  });
+
+  it('keeps AI connection facts readable instead of squeezing four long values into one row', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.settings-ai-workbench-facts');
+    expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr));');
+    expect(css).toContain('text-overflow: ellipsis');
+  });
+
+  it('uses operator-facing support-path placeholders instead of IPC field names', () => {
+    const source = readFileSync(new URL('./settings-page.tsx', import.meta.url), 'utf8');
+
+    expect(storagePathDisplay('', '设置路径')).toBe('设置路径会在桌面应用中显示。');
+    expect(storagePathDisplay('D:/preview/reports', '下载目录')).toBe('D:/preview/reports');
+    expect(source).toContain("storagePathDisplay(storagePaths.settingsPath, '设置路径')");
+    expect(source).not.toContain('不可用：getStoragePaths 未返回 settingsPath');
+    expect(source).not.toContain('getStoragePaths 未返回 evidenceDir');
+  });
+
+  it('lets settings modals close through Escape and backdrop clicks while idle', () => {
+    const source = readFileSync(new URL('./settings-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('function closeSettingsModal()');
+    expect(source).toContain("event.key !== 'Escape' || savingAi || savingRules");
+    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain('onMouseDown={(event) => {');
+    expect(source).toContain('event.target === event.currentTarget');
+    expect(source).toContain('onMouseDown={(event) => event.stopPropagation()}');
+    expect(source).toContain('onKeyDown={handleSettingsModalKeyDown}');
   });
 });
 describe('settings rule field feedback', () => {

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute } from '../types';
@@ -274,39 +275,9 @@ export function SchedulerPage() {
         eyebrow="系统"
         title={PAGE_HEADER_TITLES.scheduler}
         description="查看和控制本地自动化任务。定时任务不能绕过真实报表、人工审批和结果核对门槛。"
-        primaryTask="管理自动化节奏"
-        nextAction={tasks.some((task) => task.enabled) ? '关注下一次运行结果' : '按需启用任务'}
-        primaryAction={{
-          label: taskPanelState.primaryActionLabel,
-          busy: taskPanelState.primaryActionBusy,
-          busyLabel: taskPanelState.primaryBusyLabel,
-          disabled: taskPanelState.primaryActionDisabled,
-          onClick: taskPanelState.mode === 'confirm-run' ? confirmRunNow : () => loadTasks(),
-        }}
       />
 
       <div className="business-stack">
-        <div className="kpi-row scheduler-prototype-status-grid" aria-label="自动任务摘要">
-          <KpiCard
-            label="启用任务"
-            value={`${enabledTaskCount}/${tasks.length}`}
-            detail={enabledTaskCount ? '按本地计划排队' : '全部停用'}
-            tone={enabledTaskCount ? 'ready' : 'pending'}
-          />
-          <KpiCard
-            label="下次运行"
-            value={nextTask ? taskLabel(nextTask.name) : '暂无'}
-            detail={nextTask?.nextRun || '等待调度'}
-            tone={nextTask ? 'ready' : 'pending'}
-          />
-          <KpiCard
-            label="最近执行"
-            value={lastTask ? taskLabel(lastTask.name) : '尚无'}
-            detail={lastTask?.lastRun || '未记录'}
-            tone={lastTask ? 'ready' : 'pending'}
-          />
-          <KpiCard label="安全边界" value="不写广告" detail="只创建本地待审建议" tone="warning" />
-        </div>
         <div
           aria-live="polite"
           className={`scheduler-task-feedback scheduler-task-feedback-${taskPanelState.feedbackTone} scheduler-prototype-feedback`}
@@ -333,88 +304,7 @@ export function SchedulerPage() {
           </div>
         )}
 
-        <Panel title="本地调度控制器" tone={enabledTaskCount ? 'success' : 'warning'}>
-          <StateLightGrid
-            items={[
-              {
-                label: '启用任务',
-                value: `${enabledTaskCount}/${tasks.length}`,
-                detail: enabledTaskCount ? '按本地计划排队' : '全部停用',
-                tone: enabledTaskCount ? 'ready' : 'warning',
-              },
-              {
-                label: '下次唤起',
-                value: nextTask ? formatDate(nextTask.nextRun) : '-',
-                detail: nextTask ? taskLabel(nextTask.name) : '暂无可见计划',
-                tone: nextTask ? 'ready' : 'pending',
-              },
-              {
-                label: '最近执行',
-                value: lastTask ? taskLabel(lastTask.name) : '-',
-                detail: lastTask ? formatDate(lastTask.lastRun) : '尚无执行记录',
-                tone: lastTask?.lastResult?.includes('失败') ? 'blocked' : lastTask ? 'ready' : 'pending',
-              },
-              {
-                label: '当前动作',
-                value: pendingRunTask ? taskLabel(pendingRunTask.name) : '等待操作',
-                detail: pendingRunTask ? '需要确认后才会触发' : '表格中控制开关或立即执行',
-                tone: pendingRunTask ? 'warning' : 'pending',
-              },
-            ]}
-          />
-          <div className="action-row">
-            <button aria-busy={refreshControlButton.ariaBusy} className={refreshControlButton.className} disabled={refreshControlButton.disabled} onClick={() => loadTasks()} type="button">
-              {refreshControlButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{refreshControlButton.label}</span>
-            </button>
-          </div>
-        </Panel>
-
-        <Panel title="自动化安全边界" tone="warning">
-          <div className="context-summary-grid">
-            <div>
-              <span>允许自动做</span>
-              <strong>下载、导入、生成本地建议</strong>
-              <p>任务只能处理真实报表、量化指标、本地报告和待处理建议池；需复核项不会自动批准。</p>
-            </div>
-            <div>
-              <span>禁止自动做</span>
-              <strong>批准或写入广告账户</strong>
-              <p>定时任务不会自动改 bid、否词、暂停投放或批量操作 Amazon Ads。</p>
-            </div>
-            <div>
-              <span>真实执行要求</span>
-              <strong>审批 + 截图 + 回读</strong>
-              <p>任何广告动作仍需绑定目标、人工审批、执行前/执行后和回读证据。</p>
-            </div>
-            <div>
-              <span>失败处理</span>
-              <strong>看最近结果</strong>
-              <p>失败不会静默通过；先处理登录、真实报表或导入指标缺口。</p>
-            </div>
-          </div>
-        </Panel>
-
-        <Panel title="任务职责">
-          <div className="context-summary-grid">
-            {tasks.map((task) => (
-              <div key={task.name}>
-                <span>{task.enabled ? '已启用' : '已停用'}</span>
-                <strong>{taskLabel(task.name)}</strong>
-                <p>{taskPurpose(task.name)}</p>
-              </div>
-            ))}
-            {!tasks.length && (
-              <div>
-                <span>暂无任务</span>
-                <strong>{loading ? '正在读取' : '未配置'}</strong>
-                <p>{loading ? '正在读取本地计划任务。' : '当前没有可显示的定时任务。'}</p>
-              </div>
-            )}
-          </div>
-        </Panel>
-
-        <Panel title="任务列表">
+        <Panel title="任务列表" tone={enabledTaskCount ? 'success' : 'warning'}>
           {pendingRunTask && (
             <div className="inline-confirmation">
               <div>
@@ -514,6 +404,111 @@ export function SchedulerPage() {
           </div>
           {message && <p className={message.includes('失败') ? 'blocked-line' : 'muted-line'}>{message}</p>}
         </Panel>
+
+        <ProgressiveDetails title="调度状态、安全边界和任务职责">
+        <div className="kpi-row scheduler-prototype-status-grid" aria-label="自动任务摘要">
+          <KpiCard
+            label="启用任务"
+            value={`${enabledTaskCount}/${tasks.length}`}
+            detail={enabledTaskCount ? '按本地计划排队' : '全部停用'}
+            tone={enabledTaskCount ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="下次运行"
+            value={nextTask ? taskLabel(nextTask.name) : '暂无'}
+            detail={nextTask?.nextRun || '等待调度'}
+            tone={nextTask ? 'ready' : 'pending'}
+          />
+          <KpiCard
+            label="最近执行"
+            value={lastTask ? taskLabel(lastTask.name) : '尚无'}
+            detail={lastTask?.lastRun || '未记录'}
+            tone={lastTask ? 'ready' : 'pending'}
+          />
+          <KpiCard label="安全边界" value="不写广告" detail="只创建本地待审建议" tone="warning" />
+        </div>
+
+        <Panel title="本地调度控制器" tone={enabledTaskCount ? 'success' : 'warning'}>
+          <StateLightGrid
+            items={[
+              {
+                label: '启用任务',
+                value: `${enabledTaskCount}/${tasks.length}`,
+                detail: enabledTaskCount ? '按本地计划排队' : '全部停用',
+                tone: enabledTaskCount ? 'ready' : 'warning',
+              },
+              {
+                label: '下次唤起',
+                value: nextTask ? formatDate(nextTask.nextRun) : '-',
+                detail: nextTask ? taskLabel(nextTask.name) : '暂无可见计划',
+                tone: nextTask ? 'ready' : 'pending',
+              },
+              {
+                label: '最近执行',
+                value: lastTask ? taskLabel(lastTask.name) : '-',
+                detail: lastTask ? formatDate(lastTask.lastRun) : '尚无执行记录',
+                tone: lastTask?.lastResult?.includes('失败') ? 'blocked' : lastTask ? 'ready' : 'pending',
+              },
+              {
+                label: '当前动作',
+                value: pendingRunTask ? taskLabel(pendingRunTask.name) : '等待操作',
+                detail: pendingRunTask ? '需要确认后才会触发' : '表格中控制开关或立即执行',
+                tone: pendingRunTask ? 'warning' : 'pending',
+              },
+            ]}
+          />
+          <div className="action-row">
+            <button aria-busy={refreshControlButton.ariaBusy} className={refreshControlButton.className} disabled={refreshControlButton.disabled} onClick={() => loadTasks()} type="button">
+              {refreshControlButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{refreshControlButton.label}</span>
+            </button>
+          </div>
+        </Panel>
+
+        <Panel title="自动化安全边界" tone="warning">
+          <div className="context-summary-grid">
+            <div>
+              <span>允许自动做</span>
+              <strong>下载、导入、生成本地建议</strong>
+              <p>任务只能处理真实报表、量化指标、本地报告和待处理建议池；需复核项不会自动批准。</p>
+            </div>
+            <div>
+              <span>禁止自动做</span>
+              <strong>批准或写入广告账户</strong>
+              <p>定时任务不会自动改 bid、否词、暂停投放或批量操作 Amazon Ads。</p>
+            </div>
+            <div>
+              <span>真实执行要求</span>
+              <strong>审批 + 截图 + 回读</strong>
+              <p>任何广告动作仍需绑定目标、人工审批、执行前/执行后和回读证据。</p>
+            </div>
+            <div>
+              <span>失败处理</span>
+              <strong>看最近结果</strong>
+              <p>失败不会静默通过；先处理登录、真实报表或导入指标缺口。</p>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel title="任务职责">
+          <div className="context-summary-grid">
+            {tasks.map((task) => (
+              <div key={task.name}>
+                <span>{task.enabled ? '已启用' : '已停用'}</span>
+                <strong>{taskLabel(task.name)}</strong>
+                <p>{taskPurpose(task.name)}</p>
+              </div>
+            ))}
+            {!tasks.length && (
+              <div>
+                <span>暂无任务</span>
+                <strong>{loading ? '正在读取' : '未配置'}</strong>
+                <p>{loading ? '正在读取本地计划任务。' : '当前没有可显示的定时任务。'}</p>
+              </div>
+            )}
+          </div>
+        </Panel>
+        </ProgressiveDetails>
       </div>
     </div>
   );

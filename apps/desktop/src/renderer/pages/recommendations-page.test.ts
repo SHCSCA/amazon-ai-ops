@@ -587,12 +587,28 @@ describe('recommendation Phase 4 user-task copy', () => {
     const { readFileSync } = await import('node:fs');
     const source = readFileSync(new URL('./recommendations-page.tsx', import.meta.url), 'utf8');
 
+    expect(source).toContain('recommendation-primary-head');
+    expect(source).toContain('recommendation-title-pills');
+    expect(source).toContain('recommendation-action-menu');
     expect(source).toContain('title="送审判断"');
     expect(source).toContain('动作、对象、当前值、建议值和真实报表来源已绑定');
     expect(source).toContain('<th>当前 → 建议</th>');
     expect(source).toContain('<th>证据状态</th>');
+    expect(source).not.toContain('recommendations-prototype-status-grid');
+    expect(source).not.toContain('展开完整建议表');
     expect(source).not.toContain('<th>批次/来源</th>');
     expect(source).not.toContain('<th>AI/规则判断</th>');
+  });
+
+  it('hides batch selection checkboxes until formal approval rows exist', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./recommendations-page.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('const showApprovalSelection = visibleFormalApprovalRecommendations.length > 0;');
+    expect(source).toContain('{showApprovalSelection && (');
+    expect(source).toContain('table-checkbox-placeholder');
+    expect(css).toContain('.table-checkbox-placeholder');
   });
 });
 

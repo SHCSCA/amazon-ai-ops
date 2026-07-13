@@ -1,16 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
-import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { formatPercent, formatUsd } from '../formatters';
 import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
 import { useScopeStore } from '../scope-store';
-import type { KeywordOpportunityView, ListingHandoffPayload } from '../types';
+import type { AppRoute, KeywordOpportunityView, ListingHandoffPayload } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
+}
+
+function navigate(route: AppRoute) {
+  window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
 
 export type KeywordOpportunitySortKey =
@@ -79,6 +83,16 @@ const keywordOpportunitySortLabels: Record<KeywordOpportunitySortKey, string> = 
   acos: 'ACOS',
   opportunityLevel: '机会等级',
   recommendedPlacement: '建议位置',
+};
+
+const EMPTY_KEYWORD_FILTERS = {
+  asin: '',
+  campaign: '',
+  adGroup: '',
+  coverageStatus: '',
+  minClicks: '',
+  minSpend: '',
+  opportunityLevel: '',
 };
 
 function isKeywordOpportunitySortKey(key: string): key is KeywordOpportunitySortKey {
@@ -208,17 +222,11 @@ export function KeywordOpportunitiesPage() {
   const [rows, setRows] = useState<KeywordOpportunityView[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [selectedOpportunityKey, setSelectedOpportunityKey] = useState<React.Key | null>(null);
+  const [opportunityDetailOpen, setOpportunityDetailOpen] = useState(false);
   const [tableRefreshing, setTableRefreshing] = useState(false);
-  const [filters, setFilters] = useState({
-    asin: '',
-    campaign: '',
-    adGroup: '',
-    coverageStatus: '',
-    minClicks: '',
-    minSpend: '',
-    opportunityLevel: '',
-  });
+  const [filters, setFilters] = useState({ ...EMPTY_KEYWORD_FILTERS });
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [sortState, setSortState] = useState<KeywordOpportunitySortState>({ key: 'opportunityLevel', direction: 'desc' });
   const quantReady = Boolean(hasRealReportCoverage(data?.collection) && data?.quant.hasImportedMetrics);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
@@ -228,7 +236,7 @@ export function KeywordOpportunitiesPage() {
   async function loadRows() {
     if (!quantReady) {
       setRows([]);
-      setExpandedKey(null);
+      setSelectedOpportunityKey(null);
       setMessage('缺少当前范围真实报表和导入指标，关键词机会保持阻断。');
       return;
     }
@@ -248,7 +256,7 @@ export function KeywordOpportunitiesPage() {
   useEffect(() => {
     if (!quantReady) {
       setRows([]);
-      setExpandedKey(null);
+      setSelectedOpportunityKey(null);
       setMessage(null);
       return;
     }
@@ -298,6 +306,51 @@ export function KeywordOpportunitiesPage() {
   const campaignCount = new Set(visibleRows.map((row) => row.campaignName).filter(Boolean)).size;
   const adGroupCount = new Set(visibleRows.map((row) => row.adGroupName).filter(Boolean)).size;
   const sourceBatchText = (scope.batchId ? [scope.batchId] : (data?.collection.sourceBatchIds?.length ? data.collection.sourceBatchIds : [batchId])).filter(Boolean).join(', ');
+
+  useEffect(() => {
+    if (!filterModalOpen) return undefined;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setFilterModalOpen(false);
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [filterModalOpen]);
+
+  useEffect(() => {
+    if (!opportunityDetailOpen) return undefined;
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpportunityDetailOpen(false);
+    }
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => window.removeEventListener('keydown', handleWindowKeyDown);
+  }, [opportunityDetailOpen]);
+
+  function closeFilterModal() {
+    setFilterModalOpen(false);
+  }
+
+  function closeOpportunityDetail() {
+    setOpportunityDetailOpen(false);
+  }
+
+  function handleOpportunityDetailKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    setOpportunityDetailOpen(false);
+  }
+
+  function handleFilterModalKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    setFilterModalOpen(false);
+  }
+
   const topOpportunity = visibleRows[0];
   const rowKey = (row: KeywordOpportunityView) => [
     row.asin || '-',
@@ -305,7 +358,25 @@ export function KeywordOpportunitiesPage() {
     row.adGroupName || '-',
     row.entityType,
     row.keyword,
+    row.coverageStatus || '-',
+    row.clicks,
+    row.orders,
+    row.spend,
+    row.sales,
   ].join('|');
+  const selectedOpportunity = visibleRows.find((row) => rowKey(row) === selectedOpportunityKey) || null;
+
+  useEffect(() => {
+    if (!visibleRows.length) {
+      setSelectedOpportunityKey(null);
+      setOpportunityDetailOpen(false);
+      return;
+    }
+    const selectedStillVisible = selectedOpportunityKey !== null && visibleRows.some((row) => rowKey(row) === selectedOpportunityKey);
+    if (!selectedStillVisible) {
+      setSelectedOpportunityKey(rowKey(visibleRows[0]));
+    }
+  }, [selectedOpportunityKey, visibleRows]);
 
   useEffect(() => {
     if (!quantReady) {
@@ -389,15 +460,50 @@ export function KeywordOpportunitiesPage() {
     setSortState((current) => nextKeywordOpportunitySort(current, key));
   }
 
+  const selectedOpportunityBar = !loading && (
+    selectedOpportunity ? (() => {
+      const importedRows = sourceImportRows(selectedOpportunity);
+      const listingHandoffButton = keywordOpportunityActionButtonView({
+        active: false,
+        baseClassName: 'compact-button primary-button',
+        busyLabel: '处理中...',
+        disabled: !quantReady,
+        groupBusy: keywordActionBusy,
+        label: '带入 Listing',
+      });
+      return (
+        <div className="keyword-opportunity-selection-bar">
+          <div className="keyword-opportunity-selection-main">
+            <div>
+              <span>已选机会</span>
+              <strong>{selectedOpportunity.keyword}</strong>
+            </div>
+            <StatusPill tone={selectedOpportunity.opportunityLevel === 'high' ? 'warning' : 'pending'}>{selectedOpportunity.opportunityLevel}</StatusPill>
+          </div>
+          <p>
+            {selectedOpportunity.asin || '-'} / {selectedOpportunity.campaignName || '-'} / {selectedOpportunity.orders > 0 || selectedOpportunity.sales > 0 ? '可复核 Listing 覆盖' : '先处理投放风险'}
+            {importedRows === null ? '' : ` / 导入 ${importedRows} 行`}
+          </p>
+          <div className="keyword-opportunity-selection-actions">
+            <button className="secondary-button compact-button" onClick={() => setOpportunityDetailOpen(true)} type="button">
+              查看来源
+            </button>
+            <button aria-busy={listingHandoffButton.ariaBusy} className={listingHandoffButton.className} disabled={listingHandoffButton.disabled} onClick={() => handoffToListing(selectedOpportunity)} type="button">
+              {listingHandoffButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+              <span>{listingHandoffButton.label}</span>
+            </button>
+          </div>
+        </div>
+      );
+    })() : null
+  );
+
   const opportunityColumns: Array<VirtualDataTableColumn<KeywordOpportunityView>> = [
     { key: 'asin', header: 'ASIN', width: '112px', sticky: 'left', sortable: true, cell: (row) => row.asin || '-' },
-    { key: 'portfolioName', header: '广告组合', width: '150px', sortable: true, cell: (row) => row.portfolioName || '-' },
-    { key: 'campaignName', header: '广告活动', width: '190px', sortable: true, cell: (row) => row.campaignName || '-' },
-    { key: 'adGroupName', header: '广告组', width: '170px', sortable: true, cell: (row) => row.adGroupName || '-' },
     {
       key: 'keyword',
-      header: '关键词/搜索词/投放对象',
-      width: 'minmax(220px, 1.3fr)',
+      header: '关键词/投放对象',
+      width: 'minmax(240px, 1.2fr)',
       sortable: true,
       sortLabel: '关键词',
       cell: (row) => (
@@ -407,41 +513,56 @@ export function KeywordOpportunitiesPage() {
         </div>
       ),
     },
-    { key: 'coverageStatus', header: '覆盖状态', width: '108px', sortable: true, cell: (row) => row.coverageStatus },
-    { key: 'clicks', header: '点击/订单', width: '96px', sortable: true, sortLabel: '点击', cell: (row) => `${row.clicks} / ${row.orders}` },
-    { key: 'spend', header: '花费/销售', width: '130px', sortable: true, sortLabel: '花费', cell: (row) => `${formatUsd(row.spend)} / ${formatUsd(row.sales)}` },
-    { key: 'acos', header: 'ACOS', width: '78px', sortable: true, cell: (row) => formatPercent(row.acos * 100) },
-    { key: 'opportunityLevel', header: '机会等级', width: '88px', sortable: true, cell: (row) => row.opportunityLevel },
-    { key: 'recommendedPlacement', header: '建议位置', width: '130px', sortable: true, cell: (row) => row.recommendedPlacement },
+    {
+      key: 'campaignName',
+      header: '广告单元',
+      width: '220px',
+      sortable: true,
+      sortLabel: '广告活动',
+      cell: (row) => (
+        <div>
+          <strong>{row.campaignName || '-'}</strong>
+          <div className="muted-cell">{row.adGroupName || '-'}</div>
+        </div>
+      ),
+    },
+    { key: 'coverageStatus', header: '覆盖', width: '92px', sortable: true, cell: (row) => row.coverageStatus },
+    { key: 'clicks', header: '点击/订单', width: '92px', sortable: true, sortLabel: '点击', cell: (row) => `${row.clicks} / ${row.orders}` },
+    {
+      key: 'spend',
+      header: '花费/销售/ACOS',
+      width: '150px',
+      sortable: true,
+      sortLabel: '花费',
+      cell: (row) => (
+        <div>
+          <strong>{formatUsd(row.spend)} / {formatUsd(row.sales)}</strong>
+          <div className="muted-cell">ACOS {formatPercent(row.acos * 100)}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'opportunityLevel',
+      header: '机会',
+      width: '112px',
+      sortable: true,
+      cell: (row) => (
+        <div>
+          <strong>{row.opportunityLevel}</strong>
+          <div className="muted-cell">{row.recommendedPlacement}</div>
+        </div>
+      ),
+    },
     {
       key: 'risk',
-      header: '风险',
+      header: '判断',
       width: '230px',
-      cell: (row) => {
-        const key = rowKey(row);
-        const listingHandoffButton = keywordOpportunityActionButtonView({
-          active: false,
-          baseClassName: 'compact-button primary-button',
-          busyLabel: '处理中...',
-          disabled: !quantReady,
-          groupBusy: keywordActionBusy,
-          label: '带入 Listing',
-        });
-        return (
-          <div>
-            <div>{row.risk}</div>
-            <div className="table-action-row">
-              <button className="compact-button secondary-button" onClick={() => setExpandedKey(expandedKey === key ? null : key)} type="button">
-                {expandedKey === key ? '收起详情' : '来源详情'}
-              </button>
-              <button aria-busy={listingHandoffButton.ariaBusy} className={listingHandoffButton.className} disabled={listingHandoffButton.disabled} onClick={() => handoffToListing(row)} type="button">
-                {listingHandoffButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-                <span>{listingHandoffButton.label}</span>
-              </button>
-            </div>
-          </div>
-        );
-      },
+      cell: (row) => (
+        <div>
+          <strong>{row.risk}</strong>
+          <div className="muted-cell">{row.orders > 0 || row.sales > 0 ? '可进入 Listing 覆盖' : '先控制投放风险'}</div>
+        </div>
+      ),
     },
   ];
 
@@ -450,236 +571,277 @@ export function KeywordOpportunitiesPage() {
       <PageHeader
         eyebrow="增长"
         title={PAGE_HEADER_TITLES.keywordOpportunities}
-        description="从当前范围真实导入的 search term / keyword / targeting 指标中去重生成机会，保留 ASIN、广告活动、广告组、搜索词和来源证据。"
-        primaryTask="复核可带入 Listing 的关键词机会"
-        nextAction={quantReady ? '复核机会并进入 Listing 覆盖' : '先完成真实报表导入'}
-        primaryAction={{
-          label: loading ? '识别中...' : '运行机会识别',
-          busy: loading,
-          busyLabel: '识别中...',
-          disabled: loading || !quantReady,
-          onClick: loadRows,
-        }}
+        description="复核可带入 Listing 的关键词机会；只从当前范围真实导入的 search term / keyword / targeting 指标中去重生成。"
       />
 
-      <div className="business-stack">
-        <div className="kpi-row keyword-prototype-status-grid" aria-label="关键词机会状态">
-          <KpiCard
-            label="真实广告事实"
-            value={`${sourceReportCount}/8`}
-            detail={`${importedMetricRows} 行指标`}
-            tone={quantReady ? 'ready' : 'blocked'}
-          />
-          <KpiCard
-            label="A级机会"
-            value={highOpportunityCount}
-            detail={`${convertingCount} 个已有转化`}
-            tone={highOpportunityCount > 0 ? 'ready' : 'pending'}
-          />
-          <KpiCard
-            label="未覆盖池"
-            value={visibleRows.length}
-            detail={`${asinCount} 个 ASIN`}
-            tone={visibleRows.length ? 'warning' : 'pending'}
-          />
-          <KpiCard
-            label="风险花费"
-            value={formatUsd(noOrderSpend)}
-            detail="有花费无订单"
-            tone={noOrderSpend > 0 ? 'blocked' : 'ready'}
-          />
-        </div>
-        <StateLightGrid
-          ariaLabel="关键词机会红绿灯"
-          items={[
-            {
-              label: '真实广告事实',
-              value: `${sourceReportCount}/8 类`,
-              detail: `${importedMetricRows} 行指标`,
-              tone: quantReady ? 'ready' : 'blocked',
-            },
-            {
-              label: '商机等级 A',
-              value: highOpportunityCount,
-              detail: `${convertingCount} 个已有订单或销售`,
-              tone: highOpportunityCount > 0 ? 'ready' : 'pending',
-            },
-            {
-              label: 'Listing 未覆盖池',
-              value: visibleRows.length,
-              detail: `${asinCount} 个 ASIN / ${campaignCount} 个活动`,
-              tone: visibleRows.length ? 'warning' : 'pending',
-            },
-            {
-              label: '风险先控',
-              value: formatUsd(noOrderSpend),
-              detail: '有花费无订单先复核投放',
-              tone: noOrderSpend > 0 ? 'blocked' : 'ready',
-            },
-          ]}
-        />
-
-        <Panel title="机会来源" tone={quantReady ? 'success' : 'blocked'}>
-          <div className="business-split">
-            <div>
-              <div className="business-scope-line"><ScopeText scope={data?.scope || scope} /></div>
-              <p className="muted-line">去重键：店铺 / 站点 / ASIN / 广告活动 / 广告组 / 对象类型 / 标准化关键词。</p>
-            </div>
-            <StatusPill tone={quantReady ? 'ready' : 'blocked'}>
-              {quantReady ? `${visibleRowCount} 个机会` : '缺真实广告数据'}
-            </StatusPill>
-          </div>
-          <div className="action-row">
-            <button aria-busy={refreshOpportunityButton.ariaBusy} className={refreshOpportunityButton.className} disabled={refreshOpportunityButton.disabled} onClick={loadRows} type="button">
-              {refreshOpportunityButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{refreshOpportunityButton.label}</span>
-            </button>
+      <div className="business-stack keyword-opportunity-page-stack">
+        <Panel title="关键词机会池" tone={quantReady ? 'success' : 'blocked'}>
+          <div className="object-workbench-header">
+            {quantReady ? (
+              <>
+                <div className="keyword-opportunity-summary-grid" aria-label="关键词机会核心状态">
+                  <div><span>真实报表</span><strong>{sourceReportCount}/8</strong><p>{importedMetricRows} 行指标</p></div>
+                  <div><span>机会</span><strong>{visibleRowCount}</strong><p>{highOpportunityCount} 个高优先级</p></div>
+                  <div><span>ASIN</span><strong>{asinCount}</strong><p>{campaignCount} 个活动 / {adGroupCount} 个广告组</p></div>
+                  <div><span>风险花费</span><strong>{formatUsd(noOrderSpend)}</strong><p>有花费无订单</p></div>
+                </div>
+                <div className="object-workbench-actions">
+                  <StatusPill tone={visibleRowCount ? 'ready' : 'pending'}>{visibleRowCount} 个机会</StatusPill>
+                  <button aria-busy={refreshOpportunityButton.ariaBusy} className={refreshOpportunityButton.className} disabled={refreshOpportunityButton.disabled} onClick={loadRows} type="button">
+                    {refreshOpportunityButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                    <span>{refreshOpportunityButton.label}</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="keyword-opportunity-blocker-strip" role="status" aria-live="polite">
+                <div>
+                  <span>关键词机会阻断</span>
+                  <strong>先完成真实报表入库</strong>
+                  <p>关键词机会只能从当前范围真实导入的 search term / keyword / targeting 指标生成；截图、HTML 或审计文件不能替代广告数据。</p>
+                </div>
+                <div className="keyword-opportunity-blocker-actions">
+                  <StatusPill tone="blocked">真实报表 {sourceReportCount}/8 · 入库 {importedMetricRows} 行</StatusPill>
+                  <button className="secondary-button compact-button" onClick={() => navigate('data-collection')} type="button">去数据采集</button>
+                  <button className="primary-button compact-button" onClick={() => navigate('data-import-validation')} type="button">去导入校验</button>
+                </div>
+              </div>
+            )}
           </div>
           {message && <p className={message.includes('失败') || message.includes('缺少') || message.includes('不能') ? 'blocked-line' : 'muted-line'}>{message}</p>}
+          {quantReady && (
+            <div className="keyword-filter-strip" aria-live="polite">
+              <div>
+                <span>当前视图</span>
+                <p className="keyword-opportunity-filter-feedback">{filterFeedback}</p>
+              </div>
+              <div className="keyword-filter-actions" aria-label="关键词机会筛选动作">
+                <StatusPill tone={activeFilterCount ? 'warning' : 'pending'}>{activeFilterCount ? `${activeFilterCount} 个筛选` : '未筛选'}</StatusPill>
+                <button className="secondary-button compact-button" onClick={() => setFilterModalOpen(true)} type="button">
+                  筛选条件
+                </button>
+                <button className="secondary-button compact-button" disabled={!activeFilterCount} onClick={() => setFilters({ ...EMPTY_KEYWORD_FILTERS })} type="button">
+                  清空筛选
+                </button>
+              </div>
+            </div>
+          )}
+          {quantReady && (visibleRows.length > 0 || loading) ? (
+            <div className={keywordOpportunityTableFeedbackClass(tableRefreshing)}>
+              {selectedOpportunityBar}
+              <VirtualDataTable
+                columns={opportunityColumns}
+                emptyMessage={quantReady ? '当前筛选条件没有可展示的关键词机会。' : '缺少真实报表和导入指标，关键词机会保持阻断。'}
+                estimateSize={72}
+                getRowKey={rowKey}
+                loading={loading}
+                minWidth="1180px"
+                onSortChange={handleSortChange}
+                onRowSelect={(row) => setSelectedOpportunityKey(rowKey(row))}
+                rowAriaLabel={(row) => `选择关键词机会 ${row.keyword}`}
+                rows={visibleRows}
+                selectedRowKey={selectedOpportunityKey}
+                sortDirection={sortState.direction}
+                sortKey={sortState.key}
+              />
+            </div>
+          ) : quantReady ? (
+            <div className="keyword-opportunity-empty-state" role="status" aria-live="polite">
+              <div>
+                <span>{quantReady ? '当前没有关键词机会' : '关键词机会阻断'}</span>
+                <strong>{activeFilterCount ? '筛选后没有结果' : quantReady ? '未识别到可带入 Listing 的对象' : '先完成真实报表入库'}</strong>
+                <p>
+                  {activeFilterCount
+                    ? '清空高级筛选后再复核全量机会。'
+                    : quantReady
+                      ? '可以刷新机会识别；如果仍为空，说明当前范围暂时没有符合规则的 search term / keyword / targeting。'
+                      : '需要先完成 8 类真实报表采集和导入校验，不能用截图或审计文件生成关键词机会。'}
+                </p>
+              </div>
+              <div className="action-row">
+                <button className="secondary-button" disabled={!activeFilterCount} onClick={() => setFilters({ ...EMPTY_KEYWORD_FILTERS })} type="button">清空筛选</button>
+                <button aria-busy={refreshOpportunityButton.ariaBusy} className={refreshOpportunityButton.className} disabled={refreshOpportunityButton.disabled} onClick={loadRows} type="button">
+                  {refreshOpportunityButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                  <span>{refreshOpportunityButton.label}</span>
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {quantReady && <p className="muted-line">筛选、排序和选中行只改变当前视图；点击“带入 Listing”后仍需在 Listing 优化页读取真实 Listing 并人工复核。</p>}
         </Panel>
 
-        <Panel title="关键词机会与 Listing 覆盖关系" tone={quantReady ? 'success' : 'blocked'}>
-          <div className="context-summary-grid">
-            <div>
-              <span>真实广告报表</span>
-              <strong>{sourceReportCount}/8 类真实报表</strong>
-              <p>只接收当前范围下载目录中的 xlsx/xls/csv；审计文件、截图和 DOM 证据不算广告数据。</p>
-            </div>
-            <div>
-              <span>导入指标行</span>
-              <strong>{importedMetricRows}</strong>
-              <p>关键词机会来自已导入广告指标，金额统一按 USD 展示。</p>
-            </div>
-            <div>
-              <span>覆盖 ASIN</span>
-              <strong>{asinCount}</strong>
-              <p>带入 Listing 时按 ASIN 聚合最多 30 个关键词，避免跨产品混用。</p>
-            </div>
-            <div>
-              <span>来源批次</span>
-              <strong>{sourceBatchText || '-'}</strong>
-              <p>生成机会不混入历史批次；切换范围后需要重新刷新机会。</p>
-            </div>
+        {filterModalOpen && (
+          <div
+            className="product-config-modal-backdrop keyword-filter-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeFilterModal();
+            }}
+            role="presentation"
+          >
+            <section
+              aria-labelledby="keyword-filter-modal-title"
+              aria-modal="true"
+              className="product-config-modal keyword-filter-modal"
+              onKeyDown={handleFilterModalKeyDown}
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+            >
+              <header className="product-config-modal-header">
+                <div>
+                  <span>只影响当前关键词机会表，不改报表、不写 Listing</span>
+                  <h2 id="keyword-filter-modal-title">筛选关键词机会</h2>
+                </div>
+                <div className="keyword-filter-modal-header-actions">
+                  <StatusPill tone={activeFilterCount ? 'warning' : 'pending'}>{activeFilterCount ? `${activeFilterCount} 个筛选` : '未筛选'}</StatusPill>
+                  <button className="secondary-button compact-button" onClick={closeFilterModal} type="button">关闭</button>
+                </div>
+              </header>
+              <div className="product-config-modal-body keyword-filter-modal-body">
+                <div className="filter-grid" aria-label="关键词机会筛选字段">
+                  <KeywordOpportunityFilterCell hint="只看某个产品的关键词机会；留空显示当前范围全部产品。" label="ASIN">
+                    <input value={filters.asin} onChange={(event) => setFilters({ ...filters, asin: event.target.value })} placeholder="B0..." />
+                  </KeywordOpportunityFilterCell>
+                  <KeywordOpportunityFilterCell hint="按广告活动名称缩小范围，不会修改导入报表。" label="广告活动">
+                    <input value={filters.campaign} onChange={(event) => setFilters({ ...filters, campaign: event.target.value })} placeholder="广告活动名称" />
+                  </KeywordOpportunityFilterCell>
+                  <KeywordOpportunityFilterCell hint="锁定具体测词单元，适合复核同词不同组表现。" label="广告组">
+                    <input value={filters.adGroup} onChange={(event) => setFilters({ ...filters, adGroup: event.target.value })} placeholder="广告组名称" />
+                  </KeywordOpportunityFilterCell>
+                  <KeywordOpportunityFilterCell hint="区分已覆盖、未覆盖和需要补入 Listing 的机会。" label="覆盖状态">
+                    <select value={filters.coverageStatus} onChange={(event) => setFilters({ ...filters, coverageStatus: event.target.value })}>
+                      <option value="">全部</option>
+                      {coverageOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </KeywordOpportunityFilterCell>
+                  <KeywordOpportunityFilterCell hint="过滤低样本对象，避免点击太少造成误判。" label="最低点击">
+                    <input min="0" type="number" value={filters.minClicks} onChange={(event) => setFilters({ ...filters, minClicks: event.target.value })} />
+                  </KeywordOpportunityFilterCell>
+                  <KeywordOpportunityFilterCell hint="单位 USD；用于优先暴露真实花费风险和高价值机会。" label="最低花费">
+                    <input min="0" step="0.01" type="number" value={filters.minSpend} onChange={(event) => setFilters({ ...filters, minSpend: event.target.value })} />
+                  </KeywordOpportunityFilterCell>
+                  <KeywordOpportunityFilterCell hint="high 优先进入标题/五点覆盖复核，low 只保留观察。" label="机会等级">
+                    <select value={filters.opportunityLevel} onChange={(event) => setFilters({ ...filters, opportunityLevel: event.target.value })}>
+                      <option value="">全部</option>
+                      <option value="high">high</option>
+                      <option value="medium">medium</option>
+                      <option value="low">low</option>
+                    </select>
+                  </KeywordOpportunityFilterCell>
+                </div>
+              </div>
+              <footer className="product-config-modal-footer">
+                <button className="secondary-button" disabled={!activeFilterCount} onClick={() => setFilters({ ...EMPTY_KEYWORD_FILTERS })} type="button">
+                  清空筛选
+                </button>
+                <button className="primary-button" onClick={closeFilterModal} type="button">
+                  应用并返回列表
+                </button>
+              </footer>
+            </section>
           </div>
-          <p className="muted-line">
-            这里是广告数据到 Listing 的交接池，不读取 Listing 页面，也不会修改 Amazon；点击“带入 Listing”后仍需在 Listing 优化页读取真实 Listing 并人工复核。
-          </p>
-        </Panel>
+        )}
 
-        <Panel title="机会复核摘要">
-          <div className="context-summary-grid">
-            <div>
-              <span>当前批次</span>
-              <strong>{batchId}</strong>
-              <p>只读取当前范围导入指标，不混入历史批次。</p>
-            </div>
-            <div>
-              <span>高优先级机会</span>
-              <strong>{highOpportunityCount}</strong>
-              <p>{convertingCount} 个词或对象已有订单/销售，可优先进入 Listing 覆盖复核。</p>
-            </div>
-            <div>
-              <span>无订单花费</span>
-              <strong>{formatUsd(noOrderSpend)}</strong>
-              <p>这部分不建议直接扩量，应先否定、降价或继续观察。</p>
-            </div>
-            <div>
-              <span>优先复核对象</span>
-              <strong>{topOpportunity?.keyword || '-'}</strong>
-              <p>{topOpportunity ? `${topOpportunity.campaignName || '-'} / ${topOpportunity.adGroupName || '-'}` : '暂无机会'}</p>
-            </div>
-          </div>
-        </Panel>
-
-        <Panel title="筛选和排序">
-          <div className="context-summary-grid compact-summary">
-            <div>
-              <span>当前日期范围</span>
-              <strong>{scope.dateFrom} ~ {scope.dateTo}</strong>
-              <p>日期在顶部“当前操作范围”统一调整。</p>
-            </div>
-            <div>
-              <span>店铺 / 站点</span>
-              <strong>{scope.storeName || '-'} / {scope.marketplaceCode || '-'}</strong>
-              <p>关键词机会不会跨店铺或跨站点混合。</p>
-            </div>
-            <div>
-              <span>广告上下文</span>
-              <strong>{campaignCount} 个活动 / {adGroupCount} 个广告组</strong>
-              <p>同一关键词在不同广告活动/广告组会拆成独立行。</p>
-            </div>
-            <div>
-              <span>数据批次</span>
-              <strong>{batchId}</strong>
-              <p>批次来自当前工作范围，不在本页修改。</p>
-            </div>
-          </div>
-          <div className="filter-grid">
-            <KeywordOpportunityFilterCell hint="只看某个产品的关键词机会；留空显示当前范围全部产品。" label="ASIN">
-              <input value={filters.asin} onChange={(event) => setFilters({ ...filters, asin: event.target.value })} placeholder="B0..." />
-            </KeywordOpportunityFilterCell>
-            <KeywordOpportunityFilterCell hint="按广告活动名称缩小范围，不会修改导入报表。" label="广告活动">
-              <input value={filters.campaign} onChange={(event) => setFilters({ ...filters, campaign: event.target.value })} placeholder="广告活动名称" />
-            </KeywordOpportunityFilterCell>
-            <KeywordOpportunityFilterCell hint="锁定具体测词单元，适合复核同词不同组表现。" label="广告组">
-              <input value={filters.adGroup} onChange={(event) => setFilters({ ...filters, adGroup: event.target.value })} placeholder="广告组名称" />
-            </KeywordOpportunityFilterCell>
-            <KeywordOpportunityFilterCell hint="区分已覆盖、未覆盖和需要补入 Listing 的机会。" label="覆盖状态">
-              <select value={filters.coverageStatus} onChange={(event) => setFilters({ ...filters, coverageStatus: event.target.value })}>
-                <option value="">全部</option>
-                {coverageOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-            </KeywordOpportunityFilterCell>
-            <KeywordOpportunityFilterCell hint="过滤低样本对象，避免点击太少造成误判。" label="最低点击">
-              <input min="0" type="number" value={filters.minClicks} onChange={(event) => setFilters({ ...filters, minClicks: event.target.value })} />
-            </KeywordOpportunityFilterCell>
-            <KeywordOpportunityFilterCell hint="单位 USD；用于优先暴露真实花费风险和高价值机会。" label="最低花费">
-              <input min="0" step="0.01" type="number" value={filters.minSpend} onChange={(event) => setFilters({ ...filters, minSpend: event.target.value })} />
-            </KeywordOpportunityFilterCell>
-            <KeywordOpportunityFilterCell hint="high 优先进入标题/五点覆盖复核，low 只保留观察。" label="机会等级">
-              <select value={filters.opportunityLevel} onChange={(event) => setFilters({ ...filters, opportunityLevel: event.target.value })}>
-                <option value="">全部</option>
-                <option value="high">high</option>
-                <option value="medium">medium</option>
-                <option value="low">low</option>
-              </select>
-            </KeywordOpportunityFilterCell>
-          </div>
-          <p className="keyword-opportunity-filter-feedback" aria-live="polite">{filterFeedback}</p>
-          <p className="muted-line">所有金额均为 USD；筛选和排序只改变当前视图，不改写导入数据。</p>
-        </Panel>
-
-        <Panel title="可带入 Listing 的机会表">
-          <div className={keywordOpportunityTableFeedbackClass(tableRefreshing)}>
-            <VirtualDataTable
-              columns={opportunityColumns}
-              emptyMessage={quantReady ? '当前筛选条件没有可展示的关键词机会。' : '缺少真实报表和导入指标，关键词机会保持阻断。'}
-              estimateSize={72}
-              expandedContent={(row) => {
-                const key = rowKey(row);
-                if (expandedKey !== key) return null;
-                const importedRows = sourceImportRows(row);
-                return (
-                  <div className="detail-grid">
-                    <div><span>数据批次</span><strong>{batchId}</strong></div>
-                    <div><span>报表类型</span><strong>{row.entityType}</strong></div>
-                    <div><span>导入行数</span><strong>{importedRows === null ? '当前文件未匹配' : importedRows}</strong></div>
-                    <div><span>来源文件</span><strong><code>{row.sourceFile || '-'}</code></strong></div>
-                    <div><span>数据口径</span><strong>店铺/站点/ASIN/广告活动/广告组/对象类型/关键词去重</strong></div>
-                    <div><span>下一步</span><strong>{row.orders > 0 || row.sales > 0 ? '进入 Listing 覆盖复核' : '先控制投放风险'}</strong></div>
-                  </div>
-                );
+        {opportunityDetailOpen && selectedOpportunity && (() => {
+          const importedRows = sourceImportRows(selectedOpportunity);
+          const listingHandoffButton = keywordOpportunityActionButtonView({
+            active: false,
+            baseClassName: 'primary-button',
+            busyLabel: '处理中...',
+            disabled: !quantReady,
+            groupBusy: keywordActionBusy,
+            label: '带入 Listing',
+          });
+          return (
+            <div
+              className="product-config-modal-backdrop keyword-opportunity-detail-backdrop"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) closeOpportunityDetail();
               }}
-              getRowKey={rowKey}
-              loading={loading}
-              minWidth="1500px"
-              onSortChange={handleSortChange}
-              rows={visibleRows}
-              sortDirection={sortState.direction}
-              sortKey={sortState.key}
-            />
+              role="presentation"
+            >
+              <section
+                aria-labelledby="keyword-opportunity-detail-title"
+                aria-modal="true"
+                className="product-config-modal keyword-opportunity-detail-modal"
+                onKeyDown={handleOpportunityDetailKeyDown}
+                onMouseDown={(event) => event.stopPropagation()}
+                role="dialog"
+              >
+                <header className="product-config-modal-header">
+                  <div>
+                    <span>来源证据只读，不写 Listing，不改广告</span>
+                    <h2 id="keyword-opportunity-detail-title">{selectedOpportunity.keyword}</h2>
+                  </div>
+                  <div className="keyword-filter-modal-header-actions">
+                    <StatusPill tone={selectedOpportunity.opportunityLevel === 'high' ? 'warning' : 'pending'}>{selectedOpportunity.opportunityLevel}</StatusPill>
+                    <button className="secondary-button compact-button" onClick={closeOpportunityDetail} type="button">关闭</button>
+                  </div>
+                </header>
+                <div className="product-config-modal-body keyword-opportunity-detail-body">
+                  <div className="keyword-opportunity-detail-grid" aria-label="关键词机会来源证据">
+                    <div><span>ASIN</span><strong>{selectedOpportunity.asin || '-'}</strong></div>
+                    <div><span>广告活动</span><strong>{selectedOpportunity.campaignName || '-'}</strong></div>
+                    <div><span>广告组</span><strong>{selectedOpportunity.adGroupName || '-'}</strong></div>
+                    <div><span>对象类型</span><strong>{selectedOpportunity.entityType}</strong></div>
+                    <div><span>覆盖状态</span><strong>{selectedOpportunity.coverageStatus || '-'}</strong></div>
+                    <div><span>点击 / 订单</span><strong>{selectedOpportunity.clicks} / {selectedOpportunity.orders}</strong></div>
+                    <div><span>花费 / 销售</span><strong>{formatUsd(selectedOpportunity.spend)} / {formatUsd(selectedOpportunity.sales)}</strong></div>
+                    <div><span>ACOS</span><strong>{formatPercent(selectedOpportunity.acos * 100)}</strong></div>
+                    <div><span>导入行数</span><strong>{importedRows === null ? '文件未匹配' : `${importedRows} 行`}</strong></div>
+                    <div><span>批次</span><strong>{batchId}</strong></div>
+                  </div>
+                  <div className="keyword-opportunity-source-block">
+                    <span>来源文件</span>
+                    <strong>{selectedOpportunity.sourceFile || '-'}</strong>
+                  </div>
+                  <div className="keyword-opportunity-next-block">
+                    <span>建议处理</span>
+                    <strong>{selectedOpportunity.orders > 0 || selectedOpportunity.sales > 0 ? '带入 Listing 覆盖复核' : '先控投放风险，再决定是否进入 Listing'}</strong>
+                    <p>{selectedOpportunity.risk}</p>
+                  </div>
+                </div>
+                <footer className="product-config-modal-footer">
+                  <button className="secondary-button" onClick={closeOpportunityDetail} type="button">关闭</button>
+                  <button aria-busy={listingHandoffButton.ariaBusy} className={listingHandoffButton.className} disabled={listingHandoffButton.disabled} onClick={() => handoffToListing(selectedOpportunity)} type="button">
+                    {listingHandoffButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
+                    <span>{listingHandoffButton.label}</span>
+                  </button>
+                </footer>
+              </section>
+            </div>
+          );
+        })()}
+
+        <details className="folded-ops-panel">
+          <summary>
+            <span>机会口径、来源和复核摘要</span>
+            <StatusPill tone={quantReady ? 'ready' : 'blocked'}>{sourceBatchText || batchId}</StatusPill>
+          </summary>
+          <div className="folded-ops-body">
+            <div className="context-summary-grid">
+              <div>
+                <span>真实广告报表</span>
+                <strong>{sourceReportCount}/8 类真实报表</strong>
+                <p>只接收当前范围下载目录中的 xlsx/xls/csv；审计文件、截图和 DOM 证据不算广告数据。</p>
+              </div>
+              <div>
+                <span>去重口径</span>
+                <strong>店铺 / 站点 / ASIN / 活动 / 组 / 对象 / 关键词</strong>
+                <p><ScopeText scope={data?.scope || scope} /></p>
+              </div>
+              <div>
+                <span>高优先级机会</span>
+                <strong>{highOpportunityCount}</strong>
+                <p>{convertingCount} 个词或对象已有订单/销售，可优先进入 Listing 覆盖复核。</p>
+              </div>
+              <div>
+                <span>优先复核对象</span>
+                <strong>{topOpportunity?.keyword || '-'}</strong>
+                <p>{topOpportunity ? `${topOpportunity.campaignName || '-'} / ${topOpportunity.adGroupName || '-'}` : '暂无机会'}</p>
+              </div>
+            </div>
           </div>
-        </Panel>
+        </details>
       </div>
     </div>
   );

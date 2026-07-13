@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
-import { KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
+import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
@@ -54,6 +54,14 @@ function fileExtension(fileName: string, filePath: string): string {
   return dotIndex >= 0 ? target.slice(dotIndex).toLowerCase() : '-';
 }
 
+export function dataImportFileLabel(row: Pick<DataImportReportRow, 'fileName' | 'filePath'>): string {
+  const explicitName = String(row.fileName || '').trim();
+  if (explicitName) return explicitName;
+  const filePath = String(row.filePath || '').trim();
+  if (!filePath) return '缺少真实文件';
+  return filePath.split(/[\\/]/).filter(Boolean).pop() || filePath;
+}
+
 function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;
@@ -104,7 +112,7 @@ export function sortDataImportReportRows(rows: DataImportReportRow[], sort: Data
 export function dataImportSortLabel(key: DataImportSortKey): string {
   const labels: Record<DataImportSortKey, string> = {
     label: '报表',
-    file: '真实文件',
+    file: '文件',
     ext: '类型',
     size: '大小',
     hash: 'SHA-256',
@@ -528,11 +536,13 @@ export function DataImportValidationPage() {
     { key: 'label', header: '报表', width: '170px', sticky: 'left', sortable: true, sortLabel: '报表', cell: (row) => row.label },
     {
       key: 'file',
-      header: '真实文件',
-      width: 'minmax(240px, 1.4fr)',
+      header: '文件',
+      width: 'minmax(160px, 0.9fr)',
       sortable: true,
-      sortLabel: '真实文件',
-      cell: (row) => row.filePath ? <code>{compactPath(row.filePath)}</code> : '缺少真实文件',
+      sortLabel: '文件',
+      cell: (row) => row.filePath
+        ? <code title={row.filePath}>{dataImportFileLabel(row)}</code>
+        : '缺少真实文件',
     },
     { key: 'ext', header: '类型', width: '72px', sortable: true, sortLabel: '类型', cell: (row) => <code>{row.filePath ? fileExtension(row.fileName, row.filePath) : '-'}</code> },
     { key: 'size', header: '大小', width: '88px', sortable: true, sortLabel: '大小', cell: (row) => formatFileSize(row.fileSizeBytes) },
@@ -692,36 +702,17 @@ export function DataImportValidationPage() {
       />
 
       <div className="business-stack data-import-prototype-stack">
-        <div className="kpi-row data-import-prototype-status-grid" aria-label="导入校验状态">
-          <KpiCard
-            label="真实报表"
-            value={`${realReportCount}/8`}
-            detail={hasRealFiles ? '目录中可导入' : '等待采集'}
-            tone={realReportCount >= 8 ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
-          />
-          <KpiCard
-            label="入库行数"
-            value={`${importedRows} 行`}
-            detail={hasImportedMetrics ? '已写入 SQLite' : '尚未入库'}
-            tone={hasImportedMetrics ? 'ready' : 'blocked'}
-          />
-          <KpiCard
-            label="异常证据"
-            value={`${rejectedEvidenceCount} 个`}
-            detail="截图/审计不算广告数据"
-            tone={rejectedEvidenceCount > 0 ? 'warning' : 'ready'}
-          />
-          <KpiCard
-            label="下一步"
-            value={hasImportedMetrics ? '广告表现' : hasRealFiles ? '导入表格' : '获取报表'}
-            detail="只按真实表格推进"
-            tone={hasImportedMetrics ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}
-          />
-        </div>
-
         <Panel
+          className="data-import-primary-panel"
           title="导入批次状态"
-          titleAccessory={<StatusPill tone={hasImportedMetrics ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>{hasImportedMetrics ? '已入库' : hasRealFiles ? '待导入' : '缺报表'}</StatusPill>}
+          titleAccessory={(
+            <div className="data-import-title-pills" aria-label="导入状态摘要">
+              <StatusPill tone={realReportCount >= 8 ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>真实报表 {realReportCount}/8</StatusPill>
+              <StatusPill tone={hasImportedMetrics ? 'ready' : 'blocked'}>入库 {importedRows} 行</StatusPill>
+              <StatusPill tone={rejectedEvidenceCount > 0 ? 'warning' : 'ready'}>异常证据 {rejectedEvidenceCount}</StatusPill>
+              <StatusPill tone={hasImportedMetrics ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>{hasImportedMetrics ? '已入库' : hasRealFiles ? '待导入' : '缺报表'}</StatusPill>
+            </div>
+          )}
           tone={hasImportedMetrics ? 'success' : hasRealFiles ? 'warning' : 'blocked'}
         >
           <div className="table-wrap">
@@ -731,7 +722,7 @@ export function DataImportValidationPage() {
                   <th>报表</th>
                   <th>入库行数</th>
                   <th>状态</th>
-                  <th>真实文件</th>
+                  <th>文件</th>
                 </tr>
               </thead>
               <tbody>
@@ -741,14 +732,15 @@ export function DataImportValidationPage() {
                     <td>{row.importedRows}</td>
                     <td>
                       <StatusPill tone={row.statusDisplay.tone}>{row.statusDisplay.label}</StatusPill>
-                      <p className="table-subtext">{row.statusDisplay.detail}</p>
+                      {row.importError && <p className="blocked-line table-subtext">{row.importError}</p>}
                     </td>
-                    <td>{row.filePath ? <code>{compactPath(row.filePath)}</code> : '缺少真实文件'}</td>
+                    <td>{row.filePath ? <code title={row.filePath}>{dataImportFileLabel(row)}</code> : '缺少真实文件'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <p className="muted-line data-import-primary-note">只以 Lingxing xlsx/xls/csv 原始表格入库；截图、HTML、审计文件只留在辅助证据区。</p>
           {loading && <p className="muted-line">正在读取当前范围文件和数据库状态...</p>}
           {error && <p className="blocked-line">读取异常：{error}</p>}
           <div className="action-row">
@@ -772,30 +764,29 @@ export function DataImportValidationPage() {
           </div>
         </Panel>
 
-        <div className={importFeedback.className}>
-          <div>
-            <span>入库反馈</span>
-            <strong>{importFeedback.title}</strong>
-            <p>{importFeedback.detail}</p>
-          </div>
-          <div className="collection-action-feedback-side">
-            <StatusPill tone={importFeedback.tone}>{importFeedback.statusLabel}</StatusPill>
-          </div>
+        <div className={`data-import-feedback-strip data-import-feedback-strip-${importFeedback.tone}`} role="status" aria-live="polite">
+          <span>入库反馈</span>
+          <strong>{importFeedback.title}</strong>
+          <p>{importFeedback.detail}</p>
+          <StatusPill tone={importFeedback.tone}>{importFeedback.statusLabel}</StatusPill>
         </div>
 
         {reportFolder && (
-          <Panel title="真实报表目录" tone="success">
-            <div className="business-split">
+          <details className="folded-ops-panel data-import-report-folder-panel">
+            <summary>
+              <span>真实报表目录</span>
+              <StatusPill tone="ready">真实报表 {realReportCount}/8</StatusPill>
+            </summary>
+            <div className="folded-ops-body business-split">
               <div>
                 <div className="business-scope-line">{compactPath(reportFolder)}</div>
                 <p className="muted-line">这里只放当前范围可导入的 Lingxing xlsx/xls/csv 原始广告报表。</p>
               </div>
               <div className="business-pill-row business-pill-row-right">
-                <StatusPill tone="ready">真实报表 {realReportCount}/8</StatusPill>
                 {renderOpenPathButton({ idleLabel: '打开报表目录', targetPath: reportFolder })}
               </div>
             </div>
-          </Panel>
+          </details>
         )}
 
         <ProgressiveDetails title="数据流程四段闭环">

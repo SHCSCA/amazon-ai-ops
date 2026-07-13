@@ -8,7 +8,7 @@ import type {
   OperationScope,
 } from '../types';
 
-const REPORT_OPTIONS: BusinessReportOptionStatus[] = [
+export const DEFAULT_BUSINESS_REPORT_OPTIONS: BusinessReportOptionStatus[] = [
   { type: 'campaign', label: '广告活动报告', status: 'missing', realFileAvailable: false, importedRows: 0 },
   { type: 'ad_group', label: '广告组报告', status: 'missing', realFileAvailable: false, importedRows: 0 },
   { type: 'placement', label: '广告位报告', status: 'missing', realFileAvailable: false, importedRows: 0 },
@@ -35,7 +35,7 @@ function emptyPipeline(scope: OperationScope, reason: string): BusinessDataPipel
       latestBatch: null,
       sourceBatchIds: [],
       availableBatches: [],
-      reportOptions: REPORT_OPTIONS,
+      reportOptions: DEFAULT_BUSINESS_REPORT_OPTIONS,
       realReportFiles: [],
       evidencePaths: [],
       fileAudit: {
@@ -45,7 +45,7 @@ function emptyPipeline(scope: OperationScope, reason: string): BusinessDataPipel
         realReportFileCount: 0,
         importedRowCount: 0,
         rejectedEvidenceFileCount: 0,
-        missingReportLabels: REPORT_OPTIONS.map((item) => item.label),
+        missingReportLabels: DEFAULT_BUSINESS_REPORT_OPTIONS.map((item) => item.label),
       },
       blockers: ['当前范围还没有可量化的真实广告数据', reason],
       audit: {

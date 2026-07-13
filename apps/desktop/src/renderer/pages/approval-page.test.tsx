@@ -393,6 +393,24 @@ describe('approvalDecisionButtonView', () => {
     expect(source).toContain('真实广告后台操作和结果核对在后续页面完成');
   });
 
+  it('keeps the per-row approval form in a modal instead of pushing the queue down inline', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./approval-page.tsx', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('className="product-config-modal-backdrop approval-decision-modal-backdrop"');
+    expect(source).toContain('aria-modal="true"');
+    expect(source).toContain('className="product-config-modal approval-decision-modal"');
+    expect(source).toContain('role="dialog"');
+    expect(source).toContain("event.key !== 'Escape'");
+    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
+    expect(source).not.toContain('<Panel title="人工审批决定">');
+
+    expect(styles).toContain('.approval-decision-modal');
+    expect(styles).toContain('.approval-decision-panel .action-row');
+  });
+
   it('gives the active approval decision button an explicit busy contract', () => {
     const approving = approvalDecisionButtonView({
       mode: 'approved',

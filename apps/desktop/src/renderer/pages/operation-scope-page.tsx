@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { scopeFieldFeedbackClass, scopeFieldFeedbackLabel, type ScopeFieldFeedbackKey } from '../components/scope-bar';
-import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
-import type { AppRoute, BusinessBatchOption, OperationScope } from '../types';
+import type { AppRoute, OperationScope } from '../types';
 
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
@@ -58,15 +57,6 @@ export function buildOperationScopeSelectOptions(current: string | undefined, ca
     });
 }
 
-function scopeDraftWithPatch(current: OperationScope, patch: Partial<OperationScope>, clearBatch = false): OperationScope {
-  return {
-    ...current,
-    ...patch,
-    batchId: clearBatch ? undefined : (patch.batchId ?? current.batchId),
-    currency: 'USD',
-  };
-}
-
 export function buildOperationScopeTaskState(input: {
   realReportCount: number;
   importedRows: number;
@@ -114,10 +104,8 @@ export function buildOperationScopeTaskState(input: {
 export function OperationScopePage() {
   const { data, scope, loading, error } = useBusinessDataPipeline();
   const setScope = useScopeStore((state) => state.setScope);
-  const [draft, setDraft] = useState<OperationScope>(scope);
   const [saveStatus, setSaveStatus] = useState<OperationScopeSaveStatus>('idle');
   const [saveError, setSaveError] = useState('');
-  const [confirmedField, setConfirmedField] = useState<{ field: ScopeFieldFeedbackKey; tick: number } | null>(null);
   const collection = data?.collection;
   const quant = data?.quant;
   const activeBatch = scope.batchId || collection?.latestBatch?.id || '';
@@ -130,47 +118,9 @@ export function OperationScopePage() {
     activeBatch,
     saveStatus,
   });
-  const availableBatches = useMemo(
-    () => collection?.availableBatches || [],
-    [collection?.availableBatches],
-  );
-  const storeOptions = useMemo(
-    () => buildOperationScopeSelectOptions(scope.storeName, [
-      collection?.latestBatch?.storeName,
-      ...availableBatches.map((batch: BusinessBatchOption) => batch.storeName),
-      'FT-US-US',
-    ]),
-    [availableBatches, collection?.latestBatch?.storeName, scope.storeName],
-  );
-  const marketplaceOptions = useMemo(
-    () => buildOperationScopeSelectOptions(scope.marketplaceCode, [
-      collection?.latestBatch?.marketplaceCode,
-      ...availableBatches.map((batch: BusinessBatchOption) => batch.marketplaceCode),
-      'US',
-    ]),
-    [availableBatches, collection?.latestBatch?.marketplaceCode, scope.marketplaceCode],
-  );
-  const confirmedFieldName = confirmedField?.field ?? null;
-
-  useEffect(() => {
-    setDraft(scope);
-  }, [scope.asin, scope.batchId, scope.currency, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
-
-  useEffect(() => {
-    if (!confirmedField) return undefined;
-    const timer = window.setTimeout(() => setConfirmedField(null), 900);
-    return () => window.clearTimeout(timer);
-  }, [confirmedField]);
-
-  const markDraftField = (field: ScopeFieldFeedbackKey, patch: Partial<OperationScope>, clearBatch = false) => {
-    setSaveStatus('idle');
-    setSaveError('');
-    setConfirmedField({ field, tick: Date.now() });
-    setDraft((current) => scopeDraftWithPatch(current, patch, clearBatch));
-  };
 
   const confirmScope = async () => {
-    const normalizedDraft = normalizeOperationScopeDraft(draft);
+    const normalizedDraft = normalizeOperationScopeDraft(scope);
     if (!normalizedDraft.dateFrom || !normalizedDraft.dateTo) {
       setSaveStatus('error');
       setSaveError('请填写开始日期和结束日期。');
@@ -198,7 +148,6 @@ export function OperationScopePage() {
       if (!api?.saveOperationScope) throw new Error('范围保存接口未暴露');
       await api.saveOperationScope(normalizedDraft);
       setScope(normalizedDraft);
-      setDraft(normalizedDraft);
       setSaveStatus('saved');
       window.dispatchEvent(new CustomEvent('business-ui:data-updated'));
     } catch (caught) {
@@ -212,9 +161,7 @@ export function OperationScopePage() {
       <PageHeader
         eyebrow="数据"
         title={PAGE_HEADER_TITLES.operationScope}
-        description="日期、店铺、站点、币种和批次。后续页面统一按这个工作范围读取。"
-        primaryTask="确认当前工作范围"
-        nextAction={canQuantify ? '查看广告表现' : realReportCount > 0 ? '导入已下载表格' : '获取真实报表'}
+        description="确认当前分析口径；全局范围条同步展示，具体修改从范围设置进入。"
         primaryAction={{
           label: taskState.primaryActionLabel,
           onClick: () => { void confirmScope(); },
@@ -224,240 +171,89 @@ export function OperationScopePage() {
       />
 
       <div className="business-stack">
-        <div className="kpi-row operation-scope-prototype-status-grid" aria-label="工作范围状态">
-          <KpiCard
-            label="真实报表"
-            value={`${Math.min(realReportCount, 8)}/8`}
-            detail={realReportCount ? '当前范围已有文件' : '保存后去采集'}
-            tone={taskState.tone}
-          />
-          <KpiCard
-            label="入库指标"
-            value={`${importedRows} 行`}
-            detail={importedRows > 0 ? '可查看广告表现' : '等待导入'}
-            tone={importedRows > 0 ? 'ready' : 'blocked'}
-          />
-          <KpiCard
-            label="数据批次"
-            value={activeBatch || '自动匹配'}
-            detail={scope.batchId ? '手动指定' : '最新完整优先'}
-            tone={activeBatch ? 'ready' : 'pending'}
-          />
-          <KpiCard label="币种" value="USD" detail="全链路统一口径" tone="pending" />
-        </div>
-        <div className={`scope-task-feedback scope-task-feedback-${saveStatus} operation-scope-prototype-feedback`} aria-live="polite">
-          <span>{taskState.title}</span>
-          <strong>{operationScopeSaveFeedbackLabel(saveStatus)}</strong>
-          <p>{saveError || taskState.detail}</p>
-        </div>
-        <div className="action-row operation-scope-prototype-actions">
-          <button className="secondary-button" onClick={openScopeEditor} type="button">编辑范围</button>
-          <button className="secondary-button" onClick={() => navigate(taskState.nextRoute)} type="button">
-            {taskState.nextActionLabel}
-          </button>
-        </div>
-
-        <Panel title="范围设置" tone={saveStatus === 'error' ? 'blocked' : 'default'}>
-          <FormTable>
-            <FormTableRow
-              label="店铺"
-              required
-              hint="选中后会先写入本页待保存范围；保存后数据采集、导入、广告表现和 AI 建议统一使用。"
-            >
-              <span className={scopeFieldFeedbackClass('storeName', confirmedFieldName, 'operation-scope-field')}>
-                <select
-                  aria-label="店铺名称"
-                  value={draft.storeName}
-                  onChange={(event) => markDraftField('storeName', { storeName: event.target.value }, true)}
-                >
-                  {storeOptions.map((storeName) => (
-                    <option key={storeName} value={storeName}>{storeName}</option>
-                  ))}
-                </select>
-                <span className="scope-field-confirmation" aria-live="polite">
-                  {confirmedFieldName === 'storeName' ? scopeFieldFeedbackLabel('storeName') : '\u00A0'}
-                </span>
-              </span>
-            </FormTableRow>
-            <FormTableRow
-              label="站点"
-              required
-              hint="当前版本按 Windows 本地 USD 计价口径解释广告花费、销售额、CPC 和 ACOS。"
-            >
-              <span className={scopeFieldFeedbackClass('marketplaceCode', confirmedFieldName, 'operation-scope-field')}>
-                <select
-                  aria-label="运营站点"
-                  value={draft.marketplaceCode}
-                  onChange={(event) => markDraftField('marketplaceCode', { marketplaceCode: event.target.value }, true)}
-                >
-                  {marketplaceOptions.map((marketplaceCode) => (
-                    <option key={marketplaceCode} value={marketplaceCode}>{marketplaceCode}</option>
-                  ))}
-                </select>
-                <span className="scope-field-confirmation" aria-live="polite">
-                  {confirmedFieldName === 'marketplaceCode' ? scopeFieldFeedbackLabel('marketplaceCode') : '\u00A0'}
-                </span>
-              </span>
-            </FormTableRow>
-            <FormTableRow label="币种" hint="固定 USD，避免多币种混入造成财务判断偏差。">
-              <input aria-label="币种" readOnly value="USD" />
-            </FormTableRow>
-            <FormTableRow
-              label="分析周期"
-              required
-              hint="修改日期会清空手动批次，避免旧批次继续绑定到新时间范围。"
-            >
-              <span className="operation-scope-date-range">
-                <span className={scopeFieldFeedbackClass('dateFrom', confirmedFieldName, 'operation-scope-field')}>
-                  <input
-                    aria-label="开始日期"
-                    type="date"
-                    value={draft.dateFrom}
-                    onChange={(event) => markDraftField('dateFrom', { dateFrom: event.target.value }, true)}
-                  />
-                  <span className="scope-field-confirmation" aria-live="polite">
-                    {confirmedFieldName === 'dateFrom' ? scopeFieldFeedbackLabel('dateFrom') : '\u00A0'}
-                  </span>
-                </span>
-                <span className={scopeFieldFeedbackClass('dateTo', confirmedFieldName, 'operation-scope-field')}>
-                  <input
-                    aria-label="结束日期"
-                    type="date"
-                    value={draft.dateTo}
-                    onChange={(event) => markDraftField('dateTo', { dateTo: event.target.value }, true)}
-                  />
-                  <span className="scope-field-confirmation" aria-live="polite">
-                    {confirmedFieldName === 'dateTo' ? scopeFieldFeedbackLabel('dateTo') : '\u00A0'}
-                  </span>
-                </span>
-              </span>
-            </FormTableRow>
-            <FormTableRow
-              label="筛选 ASIN"
-              hint="可留空表示全部产品；填写后产品管理、广告表现、事件、关键词和 Listing 都按该 ASIN 过滤。"
-            >
-              <span className={scopeFieldFeedbackClass('asin', confirmedFieldName, 'operation-scope-field')}>
-                <input
-                  aria-label="筛选 ASIN"
-                  value={draft.asin || ''}
-                  onChange={(event) => markDraftField('asin', { asin: event.target.value || undefined })}
-                  placeholder="例如 B0..."
-                />
-                <span className="scope-field-confirmation" aria-live="polite">
-                  {confirmedFieldName === 'asin' ? scopeFieldFeedbackLabel('asin') : '\u00A0'}
-                </span>
-              </span>
-            </FormTableRow>
-            <FormTableRow
-              label="数据批次"
-              hint="留空为自动匹配当前范围最新完整批次；手动指定只影响读取，不会重新下载。"
-            >
-              <span className={scopeFieldFeedbackClass('batchId', confirmedFieldName, 'operation-scope-field')}>
-                <select
-                  aria-label="数据批次"
-                  value={draft.batchId || ''}
-                  onChange={(event) => markDraftField('batchId', { batchId: event.target.value || undefined })}
-                >
-                  <option value="">自动匹配最新完整批次</option>
-                  {availableBatches.map((batch: BusinessBatchOption) => (
-                    <option key={batch.id} value={batch.id}>
-                      {batch.id} · {Math.min(batch.realReportFileCount || 0, 8)}/8 类 · {batch.importedRowCount || 0} 行
-                    </option>
-                  ))}
-                </select>
-                <span className="scope-field-confirmation" aria-live="polite">
-                  {confirmedFieldName === 'batchId' ? scopeFieldFeedbackLabel('batchId') : '\u00A0'}
-                </span>
-              </span>
-            </FormTableRow>
-          </FormTable>
-        </Panel>
-
-        <Panel title="当前范围摘要" tone={canQuantify ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}>
-          <StateLightGrid
-            items={[
-              {
-                label: '日期',
-                value: `${scope.dateFrom} 至 ${scope.dateTo}`,
-                detail: '领星报表、数据库查询和 AI 分析共用。',
-                tone: 'pending',
-              },
-              {
-                label: '店铺 / 站点',
-                value: `${scope.storeName || '-'} / ${scope.marketplaceCode || '-'}`,
-                detail: '跨境业务默认使用站点币种。',
-                tone: 'pending',
-              },
-              {
-                label: '币种',
-                value: 'USD',
-                detail: '花费、销售额、CPC 和阈值统一展示。',
-                tone: 'pending',
-              },
-              {
-                label: '数据批次',
-                value: activeBatch || '自动匹配最新完整批次',
-                detail: scope.batchId ? '手动指定批次，请确认日期、店铺和站点一致。' : '未指定时自动选择当前范围最新完整批次。',
-                tone: canQuantify ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked',
-              },
-            ]}
-          />
-          <div className="business-pill-row">
-            <StatusPill tone={realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}>报表覆盖 {realReportCount}/8 类</StatusPill>
-            <StatusPill tone={importedRows > 0 ? 'ready' : 'blocked'}>已导入 {importedRows} 行</StatusPill>
-            <StatusPill tone="pending">金额展示 USD</StatusPill>
-          </div>
-          {loading && <p className="muted-line">正在读取当前范围数据状态...</p>}
-          {error && <p className="blocked-line">范围数据读取异常：{error}</p>}
-        </Panel>
-
-        <Panel title="这个范围会影响哪些页面">
-          <div className="workflow-strip">
-            {[
-              ['数据采集', '只创建/下载这个范围的领星 8 类报表。', 'data-collection'],
-              ['数据导入与校验', '只导入这个范围的 xlsx/xls/csv，不读取审计文件。', 'data-import-validation'],
-              ['广告表现', '只计算这个范围已入库的每日广告指标。', 'ad-quant'],
-              ['优化建议', '只生成这个范围可绑定广告对象的建议。', 'recommendations'],
-            ].map(([title, description, route]) => (
-              <button className="workflow-step" key={route} onClick={() => navigate(route as AppRoute)} type="button">
-                <span>{title}</span>
-                <strong>{description}</strong>
-                <StatusPill tone="pending">进入</StatusPill>
-              </button>
-            ))}
+        <Panel
+          className="operation-scope-confirm-panel"
+          title="范围字段确认"
+          tone={canQuantify ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}
+          titleAccessory={<StatusPill tone={taskState.tone}>{operationScopeSaveFeedbackLabel(saveStatus)}</StatusPill>}
+        >
+          <div className="operation-scope-card">
+            <div className="operation-scope-fields" aria-label="当前范围字段">
+              <div className="operation-scope-field-card">
+                <span>日期</span>
+                <strong>{scope.dateFrom} ~ {scope.dateTo}</strong>
+                <p>所有报表和日级趋势按这个时间段读取。</p>
+              </div>
+              <div className="operation-scope-field-card">
+                <span>店铺 / 站点</span>
+                <strong>{scope.storeName} / {scope.marketplaceCode}</strong>
+                <p>只匹配当前店铺站点的领星广告报表。</p>
+              </div>
+              <div className="operation-scope-field-card">
+                <span>产品</span>
+                <strong>{scope.asin || '全部产品'}</strong>
+                <p>{scope.asin ? '后续页面默认锁定这个 ASIN。' : '先看全店产品，进入产品管理后再锁定。'}</p>
+              </div>
+              <div className="operation-scope-field-card">
+                <span>批次 / 币种</span>
+                <strong>{activeBatch || '自动匹配'} / USD</strong>
+                <p>{scope.batchId ? '使用手动指定批次。' : '优先使用当前范围最新完整批次。'}</p>
+              </div>
+              <div className="operation-scope-field-card">
+                <span>真实报表</span>
+                <strong>{Math.min(realReportCount, 8)}/8 类</strong>
+                <p>{realReportCount ? '当前范围已有可用文件。' : '保存后进入数据采集。'}</p>
+              </div>
+              <div className="operation-scope-field-card">
+                <span>入库指标</span>
+                <strong>{importedRows} 行</strong>
+                <p>{importedRows > 0 ? '可进入广告表现和优化建议。' : '需要先导入校验。'}</p>
+              </div>
+            </div>
+            <div className={`scope-task-feedback scope-task-feedback-${saveStatus} operation-scope-prototype-feedback`} aria-live="polite">
+              <div>
+                <span>{taskState.title}</span>
+                <strong>{saveError || taskState.detail}</strong>
+              </div>
+              <button className="secondary-button compact-button" onClick={openScopeEditor} type="button">编辑范围</button>
+            </div>
           </div>
         </Panel>
+        {loading && <p className="muted-line">正在读取当前范围数据状态...</p>}
+        {error && <p className="blocked-line">范围数据读取异常：{error}</p>}
 
-        <Panel title="推荐下一步" tone={canQuantify ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}>
-          {canQuantify ? (
-            <div className="judgment-panel">
-              <div>
-                <span>当前范围已可量化</span>
-                <strong>{importedRows} 行广告指标可用于规则和 AI 分析</strong>
-                <p>下一步查看广告表现，先看产品阶段、阈值和风险对象，再生成优化建议。</p>
+        <details className="folded-ops-panel operation-scope-impact-panel">
+          <summary>
+            <span>后续读取与影响页面</span>
+            <StatusPill tone={canQuantify ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}>
+              {taskState.nextActionLabel}
+            </StatusPill>
+          </summary>
+          <div className="folded-ops-body operation-scope-next-panel">
+            <div>
+              <span>后续读取口径</span>
+              <strong>
+                {canQuantify
+                  ? `${importedRows} 行广告指标可用于当前范围分析`
+                  : realReportCount > 0
+                    ? `${realReportCount}/8 类真实报表待导入`
+                    : '当前范围还缺少领星真实广告报表'}
+              </strong>
+              <p>
+                数据采集、导入校验、广告表现和优化建议都会按这个范围读取；范围变化后，需要重新确认数据是否覆盖。
+              </p>
+              <div className="scope-impact-tags" aria-label="当前范围影响页面">
+                <StatusPill tone="pending">数据采集</StatusPill>
+                <StatusPill tone="pending">导入校验</StatusPill>
+                <StatusPill tone="pending">广告表现</StatusPill>
+                <StatusPill tone="pending">优化建议</StatusPill>
               </div>
-              <button className="primary-button" onClick={() => navigate('ad-quant')} type="button">查看广告表现</button>
             </div>
-          ) : realReportCount > 0 ? (
-            <div className="judgment-panel">
-              <div>
-                <span>已有真实报表，尚未入库</span>
-                <strong>{realReportCount}/8 类真实报表待导入</strong>
-                <p>下一步进入数据导入与校验页，把表格写入 SQLite 每日广告事实表。</p>
-              </div>
-              <button className="primary-button" onClick={() => navigate('data-import-validation')} type="button">去导入校验</button>
-            </div>
-          ) : (
-            <div className="judgment-panel">
-              <div>
-                <span>缺少真实广告数据</span>
-                <strong>当前范围没有可用的领星原始表格</strong>
-                <p>下一步进入数据采集页，创建或下载当前范围 8 类广告报表。</p>
-              </div>
-              <button className="primary-button" onClick={() => navigate('data-collection')} type="button">去数据采集</button>
-            </div>
-          )}
-        </Panel>
+            <button className="primary-button" onClick={() => navigate(taskState.nextRoute)} type="button">
+              {taskState.nextActionLabel}
+            </button>
+          </div>
+        </details>
       </div>
     </div>
   );

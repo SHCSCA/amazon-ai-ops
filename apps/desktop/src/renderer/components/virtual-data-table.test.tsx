@@ -141,4 +141,17 @@ describe('VirtualDataTable', () => {
     expect(styles).toMatch(/\.virtual-table-status[\s\S]*border-bottom:\s*1px solid var\(--line-soft\)/);
     expect(styles).toMatch(/\.virtual-table-skeleton[\s\S]*top:\s*30px/);
   });
+
+  it('supports optional row selection without adding per-row action buttons', () => {
+    const text = source();
+    const styles = css();
+
+    expect(text).toContain('selectedRowKey');
+    expect(text).toContain('onRowSelect');
+    expect(text).toContain('rowAriaLabel');
+    expect(text).toContain('aria-selected={rowSelectable ? rowSelected : undefined}');
+    expect(text).toContain("if (event.key !== 'Enter' && event.key !== ' ') return;");
+    expect(styles).toContain('.virtual-table-row-selectable');
+    expect(styles).toContain('.virtual-table-row-selected');
+  });
 });

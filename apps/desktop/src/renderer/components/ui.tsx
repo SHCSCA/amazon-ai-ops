@@ -66,16 +66,18 @@ export function Panel({
   titleAccessory,
   children,
   tone = 'default',
+  className,
 }: {
   title?: string;
   titleAccessory?: React.ReactNode;
   children: React.ReactNode;
   tone?: 'default' | 'warning' | 'blocked' | 'success';
+  className?: string;
 }) {
   const titleId = title ? `ui-panel-${panelIdSeed(title, tone)}-title` : undefined;
 
   return (
-    <section aria-labelledby={titleId} className={`ui-panel ui-panel-${tone}`}>
+    <section aria-labelledby={titleId} className={`ui-panel ui-panel-${tone}${className ? ` ${className}` : ''}`}>
       {title && (
         <div className="panel-title-row">
           <h3 id={titleId}>{title}</h3>

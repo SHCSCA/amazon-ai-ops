@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useBusinessDataPipeline } from '../components/business-data';
+import { DEFAULT_BUSINESS_REPORT_OPTIONS, useBusinessDataPipeline } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, MicroStepper, PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildCollectionActionSummary } from '../collection-action-summary';
 import { buildDataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath } from '../formatters';
-import type { AppRoute } from '../types';
+import type { AppRoute, BusinessReportFile } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 type CollectionActionMode = 'download-existing' | 'recreate-selected' | 'recreate-full' | 'import';
@@ -111,13 +111,6 @@ function reportStatusLabel(status: string): string {
     failed: '失败',
   };
   return labels[status] || status;
-}
-
-function reportOptionTone(item: { realFileAvailable?: boolean; importedRows?: number; status?: string }): 'ready' | 'pending' | 'blocked' | 'warning' {
-  if ((item.importedRows || 0) > 0) return 'ready';
-  if (item.realFileAvailable) return 'warning';
-  if (['failed', 'import_failed', 'blocked', 'missing'].includes(item.status || '')) return 'blocked';
-  return 'pending';
 }
 
 function collectionStatusLabel(status?: string): string {
@@ -276,10 +269,10 @@ export function dataCollectionFirstViewportReportFolder(input: {
 
 export function collectionActionButtonLabel(mode: CollectionActionMode): string {
   const labels: Record<CollectionActionMode, string> = {
-    'download-existing': '下载已创建',
-    'recreate-selected': '重新获取已选',
-    'recreate-full': '重新获取完整 8 类',
-    import: '导入本地',
+    'download-existing': '下载已创建报表',
+    'recreate-selected': '重新获取已选报表',
+    'recreate-full': '重新获取完整 8 类报表',
+    import: '导入本地报表',
   };
   return labels[mode];
 }
@@ -399,6 +392,7 @@ export function collectionReportSelectionState(input: {
   totalCount: number;
   missingCount: number;
   unimportedCount: number;
+  loading?: boolean;
 }): {
   ariaStatus: string;
   countClassName: string;
@@ -411,6 +405,15 @@ export function collectionReportSelectionState(input: {
   const missingCount = Math.max(0, Number(input.missingCount || 0));
   const unimportedCount = Math.max(0, Number(input.unimportedCount || 0));
   const progressPercent = totalCount > 0 ? Math.round((selectedCount / totalCount) * 100) : 0;
+  if (input.loading) {
+    return {
+      ariaStatus: '正在读取当前范围的 8 类报表状态，返回后会显示真实文件和入库情况。',
+      countClassName: 'collection-selection-count',
+      countLabel: `读取中 / ${totalCount || 8} 类`,
+      progressPercent: 0,
+      progressStyle: { '--collection-selection-progress': '0%' } as React.CSSProperties,
+    };
+  }
   return {
     ariaStatus: selectedCount > 0
       ? `已选择 ${selectedCount} 类报表，下载和重建只会作用于这些勾选项。`
@@ -830,8 +833,11 @@ export function DataCollectionPage() {
   const [lastActionResult, setLastActionResult] = useState<LastActionResult | null>(null);
   const [lastDiagnostic, setLastDiagnostic] = useState<any | null>(null);
   const [collectionMonitorOpen, setCollectionMonitorOpen] = useState(false);
+  const [reportSelectorOpen, setReportSelectorOpen] = useState(false);
+  const [selectedReportFile, setSelectedReportFile] = useState<BusinessReportFile | null>(null);
   const collection = data?.collection;
-  const reportOptions = collection?.reportOptions || [];
+  const reportStatusLoading = loading && !collection;
+  const reportOptions = collection?.reportOptions?.length ? collection.reportOptions : DEFAULT_BUSINESS_REPORT_OPTIONS;
   const realFiles = collection?.realReportFiles || [];
   const fileAudit = collection?.fileAudit;
   const selectedCount = selectedTypes.length;
@@ -880,10 +886,6 @@ export function DataCollectionPage() {
       manifestPath: lastActionResult.manifestPath,
     })
     : null, [lastActionResult]);
-  const downloadExistingGuide = collectionActionGuide('download-existing');
-  const recreateSelectedGuide = collectionActionGuide('recreate-selected');
-  const recreateFullGuide = collectionActionGuide('recreate-full');
-  const importGuide = collectionActionGuide('import');
   const downloadExistingButton = collectionActionButtonView({ mode: 'download-existing', runningAction, selectedCount });
   const recreateSelectedButton = collectionActionButtonView({ mode: 'recreate-selected', runningAction, selectedCount });
   const recreateFullButton = collectionActionButtonView({ mode: 'recreate-full', runningAction, selectedCount });
@@ -911,6 +913,7 @@ export function DataCollectionPage() {
     totalCount: reportOptions.length,
     missingCount: missingReportTypes.length,
     unimportedCount: unimportedReportTypes.length,
+    loading: reportStatusLoading,
   });
   const dataLedger = useMemo(
     () => buildDataReadinessLedger({
@@ -1242,14 +1245,307 @@ export function DataCollectionPage() {
       <PageHeader
         eyebrow="数据"
         title={PAGE_HEADER_TITLES.dataCollection}
-        description="确认 8 类报表均已下载，审计文件、截图和页面存档不计为真实报表。"
-        primaryAction={{
-          label: '进入导入校验',
-          onClick: () => navigate('data-import-validation'),
-        }}
+        description="直接选择 8 类真实广告报表并执行下载、重建或本地导入；流程账本和技术细节放在下方辅助区。"
       />
 
       <div className="business-stack">
+        {collectionMonitorOpen && collectionMonitorState && (
+          <CollectionMonitorDrawer
+            evidencePath={collectionMonitorEvidencePath}
+            onClose={() => setCollectionMonitorOpen(false)}
+            state={collectionMonitorState}
+            steps={actionProgressSteps}
+          />
+        )}
+
+        {(runningAction || actionNotice || actionError) && (
+          <div
+            className={`collection-action-feedback ${actionError ? 'collection-action-feedback-blocked' : runningAction ? 'collection-action-feedback-running' : 'collection-action-feedback-ready'}`}
+            aria-live="polite"
+          >
+            <div>
+              <span>{runningAction ? '动作已触发' : actionError ? '动作未完成' : '最近动作'}</span>
+              <strong>{runningAction ? actionModeLabel(runningAction) : actionNotice || '采集动作已返回'}</strong>
+              {runningAction && <p>系统正在处理当前范围，请不要切换日期、店铺、站点或批次。</p>}
+              {!runningAction && actionError && <p>{actionError}</p>}
+            </div>
+            <div className="collection-action-feedback-side">
+              {runningAction && <StatusPill tone="pending">处理中</StatusPill>}
+              {!runningAction && actionError && <StatusPill tone="blocked">需处理</StatusPill>}
+              {!runningAction && !actionError && <StatusPill tone="ready">已返回</StatusPill>}
+            </div>
+          </div>
+        )}
+
+        <Panel
+          className="data-collection-primary-panel"
+          title="8 类报表工作台"
+          titleAccessory={
+            reportStatusLoading
+              ? <StatusPill tone="pending">读取中</StatusPill>
+              : <StatusPill tone={realReportCount >= 8 ? 'ready' : realReportCount > 0 ? 'warning' : 'blocked'}>{realReportCount}/8 类</StatusPill>
+          }
+          tone={reportStatusLoading ? undefined : realReportCount >= 8 ? 'success' : realReportCount > 0 ? 'warning' : 'blocked'}
+        >
+          <div className="data-collection-summary-strip" aria-label="当前报表采集摘要">
+            <div>
+              <span>报表结构</span>
+              <strong>8 类</strong>
+              <small>活动、广告组、广告位、商品、关键词和搜索词</small>
+            </div>
+            <div>
+              <span>真实报表</span>
+              <strong>{reportStatusLoading ? '读取中' : `${realReportCount}/8`}</strong>
+              <small>{reportStatusLoading ? '正在读取当前范围目录' : realReportCount >= 8 ? '当前范围已覆盖完整报表' : '缺失项在选择弹窗内处理'}</small>
+            </div>
+            <div>
+              <span>入库指标</span>
+              <strong>{reportStatusLoading ? '读取中' : `${importedRowCount} 行`}</strong>
+              <small>广告量化只读取真实表格入库数据</small>
+            </div>
+            <div className="data-collection-summary-action data-collection-summary-selection">
+              <div>
+                <span>下载范围</span>
+                <strong>{reportStatusLoading ? '读取中' : `${selectedCount}/${reportOptions.length}`}</strong>
+                <small>本次下载/重建范围</small>
+              </div>
+              <button className="secondary-button compact-button" onClick={() => setReportSelectorOpen(true)} type="button">
+                调整
+              </button>
+            </div>
+          </div>
+          <p className="collection-selection-live" aria-live="polite">{reportSelectionState.ariaStatus}</p>
+          <div className="data-collection-action-row">
+            <button
+              aria-busy={recreateFullButton.ariaBusy}
+              className={recreateFullButton.className}
+              disabled={recreateFullButton.disabled}
+              onClick={() => runDownloadAction('recreate-full')}
+              type="button"
+            >
+              <span className={recreateFullButton.ariaBusy ? 'button-content' : undefined}>
+                {recreateFullButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                {recreateFullButton.label}
+              </span>
+            </button>
+          </div>
+          <details className="data-collection-secondary-actions">
+            <summary>
+              <span>更多报表操作</span>
+              <StatusPill tone="pending">{selectedCount}/{reportOptions.length} 已选</StatusPill>
+            </summary>
+            <div className="data-collection-secondary-action-row">
+              <button
+                aria-busy={downloadExistingButton.ariaBusy}
+                className={downloadExistingButton.className}
+                disabled={downloadExistingButton.disabled}
+                onClick={() => runDownloadAction('download-existing')}
+                type="button"
+              >
+                <span className={downloadExistingButton.ariaBusy ? 'button-content' : undefined}>
+                  {downloadExistingButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                  {downloadExistingButton.label}
+                </span>
+              </button>
+              <button
+                aria-busy={recreateSelectedButton.ariaBusy}
+                className={recreateSelectedButton.className}
+                disabled={recreateSelectedButton.disabled}
+                onClick={() => runDownloadAction('recreate-selected')}
+                type="button"
+              >
+                <span className={recreateSelectedButton.ariaBusy ? 'button-content' : undefined}>
+                  {recreateSelectedButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                  {recreateSelectedButton.label}
+                </span>
+              </button>
+              <button
+                aria-busy={importButton.ariaBusy}
+                className={importButton.className}
+                disabled={importButton.disabled}
+                onClick={importLocalReports}
+                type="button"
+              >
+                <span className={importButton.ariaBusy ? 'button-content' : undefined}>
+                  {importButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                  {importButton.label}
+                </span>
+              </button>
+            </div>
+          </details>
+          {primaryReportFolder && (
+            <div className="data-collection-folder-line">
+              <span>真实报表目录</span>
+              <strong>{compactPath(primaryReportFolder)}</strong>
+              {renderOpenPathButton({ className: 'secondary-button compact-button', idleLabel: '打开目录', targetPath: primaryReportFolder })}
+            </div>
+          )}
+        </Panel>
+
+        {reportSelectorOpen && (
+          <div className="collection-selector-modal-backdrop" role="presentation">
+            <section
+              aria-labelledby="collection-selector-title"
+              aria-modal="true"
+              className="collection-selector-modal"
+              role="dialog"
+            >
+              <header className="collection-selector-modal-header">
+                <div>
+                  <span>报表选择</span>
+                  <h2 id="collection-selector-title">调整本次下载/重建的报表</h2>
+                </div>
+                <button className="secondary-button compact-button" onClick={() => setReportSelectorOpen(false)} type="button">
+                  关闭
+                </button>
+              </header>
+              <div className="collection-selector-modal-body">
+                <div className="data-collection-workbench-toolbar collection-selector-toolbar">
+                  <div>
+                    <span>当前选择</span>
+                    <strong key={reportSelectionState.countLabel} className={reportSelectionState.countClassName}>
+                      {reportSelectionState.countLabel}
+                    </strong>
+                    <p className="collection-selection-live" aria-live="polite">{reportSelectionState.ariaStatus}</p>
+                  </div>
+                  <div className="table-action-row">
+                    <button className="secondary-button compact-button" onClick={() => setSelectedTypes(reportOptions.map((item) => item.type))} type="button">
+                      全选 8 类
+                    </button>
+                    <button className="secondary-button compact-button" disabled={reportStatusLoading || missingReportTypes.length === 0} onClick={() => setSelectedTypes(missingReportTypes)} type="button">
+                      只选缺失
+                    </button>
+                    <button className="secondary-button compact-button" disabled={reportStatusLoading || unimportedReportTypes.length === 0} onClick={() => setSelectedTypes(unimportedReportTypes)} type="button">
+                      只选未入库
+                    </button>
+                    <button className="secondary-button compact-button" disabled={selectedCount === 0} onClick={() => setSelectedTypes([])} type="button">
+                      清空
+                    </button>
+                  </div>
+                </div>
+                <div className="report-option-grid data-collection-report-grid collection-selector-grid">
+                  {reportOptions.map((item) => (
+                    <label
+                      className={[
+                        'report-option',
+                        item.realFileAvailable ? 'report-option-ready' : '',
+                        selectedTypes.includes(item.type) ? 'report-option-selected' : '',
+                      ].filter(Boolean).join(' ')}
+                      key={item.type}
+                    >
+                      <input
+                        checked={selectedTypes.includes(item.type)}
+                        onChange={() => toggleReport(item.type)}
+                        type="checkbox"
+                      />
+                      <span>{item.label}</span>
+                      <strong>{reportStatusLoading ? '状态读取中' : item.realFileAvailable ? '有真实文件' : '缺真实文件'}</strong>
+                      <small>{reportStatusLoading ? '等待当前范围数据返回' : `${item.importedRows} 行导入 / ${reportStatusLabel(item.status)}`}</small>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <footer className="collection-selector-modal-footer">
+                <button className="primary-button" onClick={() => setReportSelectorOpen(false)} type="button">
+                  确认选择
+                </button>
+                <button className="secondary-button" onClick={() => setReportSelectorOpen(false)} type="button">
+                  关闭
+                </button>
+              </footer>
+            </section>
+          </div>
+        )}
+
+        {selectedReportFile && (
+          <div className="collection-selector-modal-backdrop" role="presentation">
+            <section
+              aria-labelledby="collection-file-detail-title"
+              aria-modal="true"
+              className="collection-selector-modal collection-file-modal"
+              role="dialog"
+            >
+              <header className="collection-selector-modal-header">
+                <div>
+                  <span>真实报表文件</span>
+                  <h2 id="collection-file-detail-title">{selectedReportFile.displayName}</h2>
+                </div>
+                <button className="secondary-button compact-button" onClick={() => setSelectedReportFile(null)} type="button">
+                  关闭
+                </button>
+              </header>
+              <div className="collection-selector-modal-body collection-file-modal-body">
+                <div className="collection-file-status-strip">
+                  <div>
+                    <span>入库状态</span>
+                    <strong>{selectedReportFile.importedRows > 0 ? '已入库' : selectedReportFile.importError ? '导入失败' : '未入库'}</strong>
+                  </div>
+                  <div>
+                    <span>DB 指标行数</span>
+                    <strong>{selectedReportFile.importedRows}</strong>
+                  </div>
+                  <div>
+                    <span>文件状态</span>
+                    <strong>{reportStatusLabel(selectedReportFile.status)}</strong>
+                  </div>
+                </div>
+                {selectedReportFile.importError && (
+                  <p className="blocked-line collection-file-error">{selectedReportFile.importError}</p>
+                )}
+                <div className="collection-file-detail-grid">
+                  <div>
+                    <span>文件名</span>
+                    <strong>{selectedReportFile.fileName || '-'}</strong>
+                  </div>
+                  <div>
+                    <span>扩展名</span>
+                    <strong>{getFileExtension(selectedReportFile.fileName, selectedReportFile.filePath)}</strong>
+                  </div>
+                  <div>
+                    <span>文件大小</span>
+                    <strong>{formatFileSize(selectedReportFile.fileSizeBytes)}</strong>
+                  </div>
+                  <div>
+                    <span>最近入库</span>
+                    <strong>{formatUpdatedAt(selectedReportFile.lastImportedAt || selectedReportFile.updatedAt)}</strong>
+                  </div>
+                  <div>
+                    <span>文件指纹</span>
+                    <strong>{shortHash(selectedReportFile.fileHash)}</strong>
+                  </div>
+                  <div>
+                    <span>所在目录</span>
+                    <strong>{selectedReportFile.folderPath ? compactPath(selectedReportFile.folderPath) : '-'}</strong>
+                  </div>
+                </div>
+                <div className="collection-file-path-block">
+                  <span>完整文件路径</span>
+                  <code>{selectedReportFile.filePath}</code>
+                </div>
+              </div>
+              <footer className="collection-selector-modal-footer collection-file-modal-footer">
+                {renderOpenPathButton({
+                  className: 'secondary-button',
+                  idleLabel: '打开文件',
+                  messageLabel: `打开${selectedReportFile.displayName}`,
+                  targetPath: selectedReportFile.filePath,
+                })}
+                {renderOpenPathButton({
+                  className: 'secondary-button',
+                  disabled: !selectedReportFile.folderPath,
+                  idleLabel: '打开文件夹',
+                  messageLabel: `打开${selectedReportFile.displayName}文件夹`,
+                  targetPath: selectedReportFile.folderPath || '',
+                })}
+                <button className="primary-button" onClick={() => setSelectedReportFile(null)} type="button">
+                  知道了
+                </button>
+              </footer>
+            </section>
+          </div>
+        )}
+
+        <ProgressiveDetails title="辅助采集账本、流程和技术细节">
         <div className="kpi-row data-collection-prototype-status-grid" aria-label="数据采集状态">
           <KpiCard
             label="浏览器状态"
@@ -1590,156 +1886,6 @@ export function DataCollectionPage() {
           </Panel>
         </ProgressiveDetails>
 
-        <Panel title="8 类报表选择与进度">
-          <div className="selection-toolbar">
-            <div>
-              <span>选择要创建/下载的报表</span>
-              <strong key={reportSelectionState.countLabel} className={reportSelectionState.countClassName}>
-                {reportSelectionState.countLabel}
-              </strong>
-              <div
-                className="collection-selection-progress"
-                aria-hidden="true"
-                style={reportSelectionState.progressStyle}
-              />
-              <p className="collection-selection-live" aria-live="polite">{reportSelectionState.ariaStatus}</p>
-              <p>下载和重新创建只作用于当前勾选的报表；清空后不会自动恢复全选。</p>
-            </div>
-            <div className="table-action-row">
-              <button className="secondary-button compact-button" onClick={() => setSelectedTypes(reportOptions.map((item) => item.type))} type="button">
-                全选 8 类
-              </button>
-              <button className="secondary-button compact-button" disabled={missingReportTypes.length === 0} onClick={() => setSelectedTypes(missingReportTypes)} type="button">
-                只选缺失报表
-              </button>
-              <button className="secondary-button compact-button" disabled={unimportedReportTypes.length === 0} onClick={() => setSelectedTypes(unimportedReportTypes)} type="button">
-                只选未导入
-              </button>
-              <button className="secondary-button compact-button" disabled={selectedCount === 0} onClick={() => setSelectedTypes([])} type="button">
-                清空
-              </button>
-            </div>
-          </div>
-          <MicroStepper
-            items={reportOptions.map((item) => ({
-              label: item.label,
-              meta: item.importedRows > 0 ? `${item.importedRows} 行` : item.realFileAvailable ? '待入库' : reportStatusLabel(item.status),
-              detail: item.realFileAvailable
-                ? '原始 xlsx/xls/csv 已留存；后续广告表现只读取这些真实表格。'
-                : '等待领星下载中心生成，或通过本地导入补齐。',
-              tone: reportOptionTone(item),
-            }))}
-          />
-          <div className="report-option-grid">
-            {reportOptions.map((item) => (
-              <label
-                className={[
-                  'report-option',
-                  item.realFileAvailable ? 'report-option-ready' : '',
-                  selectedTypes.includes(item.type) ? 'report-option-selected' : '',
-                ].filter(Boolean).join(' ')}
-                key={item.type}
-              >
-                <input
-                  checked={selectedTypes.includes(item.type)}
-                  onChange={() => toggleReport(item.type)}
-                  type="checkbox"
-                />
-                <span>{item.label}</span>
-                <strong>{item.realFileAvailable ? '有真实文件' : '缺真实文件'}</strong>
-                <small>{item.importedRows} 行导入 / {item.status}</small>
-              </label>
-            ))}
-          </div>
-          <div className="collection-action-grid">
-            <button
-              aria-busy={downloadExistingButton.ariaBusy}
-              className={downloadExistingButton.className}
-              disabled={downloadExistingButton.disabled}
-              onClick={() => runDownloadAction('download-existing')}
-              type="button"
-            >
-              <span className={downloadExistingButton.ariaBusy ? 'button-content' : undefined}>
-                {downloadExistingButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
-                {downloadExistingButton.label}
-              </span>
-              <small>{downloadExistingButton.detail}</small>
-            </button>
-            <button
-              aria-busy={recreateSelectedButton.ariaBusy}
-              className={recreateSelectedButton.className}
-              disabled={recreateSelectedButton.disabled}
-              onClick={() => runDownloadAction('recreate-selected')}
-              type="button"
-            >
-              <span className={recreateSelectedButton.ariaBusy ? 'button-content' : undefined}>
-                {recreateSelectedButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
-                {recreateSelectedButton.label}
-              </span>
-              <small>{recreateSelectedButton.detail}</small>
-            </button>
-            <button
-              aria-busy={recreateFullButton.ariaBusy}
-              className={recreateFullButton.className}
-              disabled={recreateFullButton.disabled}
-              onClick={() => runDownloadAction('recreate-full')}
-              type="button"
-            >
-              <span className={recreateFullButton.ariaBusy ? 'button-content' : undefined}>
-                {recreateFullButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
-                {recreateFullButton.label}
-              </span>
-              <small>{recreateFullButton.detail}</small>
-            </button>
-            <button
-              aria-busy={importButton.ariaBusy}
-              className={importButton.className}
-              disabled={importButton.disabled}
-              onClick={importLocalReports}
-              type="button"
-            >
-              <span className={importButton.ariaBusy ? 'button-content' : undefined}>
-                {importButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
-                {importButton.label}
-              </span>
-              <small>{importButton.detail}</small>
-            </button>
-          </div>
-          <ProgressiveDetails title="报表动作说明">
-            <div className="context-summary-grid">
-              {[
-                { mode: 'download-existing' as const, guide: downloadExistingGuide },
-                { mode: 'recreate-selected' as const, guide: recreateSelectedGuide },
-                { mode: 'recreate-full' as const, guide: recreateFullGuide },
-                { mode: 'import' as const, guide: importGuide },
-              ].map((item) => (
-                <div key={item.mode}>
-                  <span>{collectionActionButtonLabel(item.mode)}</span>
-                  <strong>{item.guide.whenToUse}</strong>
-                  <p>{item.guide.taskEffect}；{item.guide.result}</p>
-                </div>
-              ))}
-            </div>
-            <p className="muted-line">动作区别：下载已创建只读取 ready 行且不会创建新任务；重新获取已选只为勾选报表创建任务；重新获取完整 8 类会刷新完整报表；导入本地不访问领星下载中心。</p>
-          </ProgressiveDetails>
-          {actionProgressSteps.length > 0 && (
-            <div className="collection-progress-panel" aria-label="采集动作进度">
-              <div className="collection-progress-header">
-                <strong>{runningAction ? `正在执行：${actionModeLabel(runningAction)}` : '最近动作进度'}</strong>
-                <span>{lastActionResult ? lastActionResult.nextStep : '请保持领星页面和当前范围一致，动作完成前不要切换日期、店铺或站点。'}</span>
-              </div>
-              <MicroStepper
-                items={actionProgressSteps.map((step) => ({
-                  label: step.label,
-                  meta: step.status === 'ready' ? '已完成' : step.status === 'blocked' ? '阻断' : '进行中',
-                  detail: step.description,
-                  tone: step.status,
-                }))}
-              />
-            </div>
-          )}
-        </Panel>
-
         {lastActionResult && (
           <Panel title="本次动作结果" tone={lastActionResult.tone}>
             {lastActionSummary && (
@@ -1858,10 +2004,8 @@ export function DataCollectionPage() {
                 <thead>
                   <tr>
                     <th>报表类型</th>
-                    <th>文件路径</th>
-                    <th>扩展名</th>
+                    <th>文件</th>
                     <th>文件大小</th>
-                    <th>文件指纹</th>
                     <th>入库状态</th>
                     <th>DB 指标行数</th>
                     <th>最近入库</th>
@@ -1873,10 +2017,11 @@ export function DataCollectionPage() {
                   {realFiles.map((file) => (
                     <tr key={file.id}>
                       <td>{file.displayName}</td>
-                      <td><code>{file.filePath}</code></td>
-                      <td><code>{getFileExtension(file.fileName, file.filePath)}</code></td>
+                      <td>
+                        <strong>{file.fileName || compactPath(file.filePath)}</strong>
+                        <div className="table-subtext">{getFileExtension(file.fileName, file.filePath)}</div>
+                      </td>
                       <td>{formatFileSize(file.fileSizeBytes)}</td>
-                      <td><code>{shortHash(file.fileHash)}</code></td>
                       <td>
                         <span>{file.importedRows > 0 ? '已入库' : file.importError ? '导入失败' : '未入库'}</span>
                         {file.importError && <div className="blocked-line table-subtext">{file.importError}</div>}
@@ -1886,15 +2031,21 @@ export function DataCollectionPage() {
                       <td>{reportStatusLabel(file.status)}</td>
                       <td>
                         <div className="table-action-row">
-                          {renderOpenPathButton({ className: 'secondary-button compact-button', idleLabel: '打开文件', messageLabel: `打开${file.displayName}`, targetPath: file.filePath })}
-                          {renderOpenPathButton({ className: 'secondary-button compact-button', idleLabel: '打开文件夹', messageLabel: `打开${file.displayName}文件夹`, targetPath: file.folderPath })}
+                          <button
+                            aria-label={`查看${file.displayName}文件详情`}
+                            className="secondary-button compact-button"
+                            onClick={() => setSelectedReportFile(file)}
+                            type="button"
+                          >
+                            查看
+                          </button>
                         </div>
                       </td>
                     </tr>
                   ))}
                   {!realFiles.length && (
                     <tr>
-                      <td colSpan={10}>{hasOnlyDiagnosticFiles ? '当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能用于广告表现计算。' : '当前范围还没有可量化的真实广告数据'}</td>
+                      <td colSpan={8}>{hasOnlyDiagnosticFiles ? '当前文件夹只有诊断/审计文件，没有真实广告报表。系统不能用于广告表现计算。' : '当前范围还没有可量化的真实广告数据'}</td>
                     </tr>
                   )}
                 </tbody>
@@ -1917,6 +2068,7 @@ export function DataCollectionPage() {
               ))}
             </ul>
           </div>
+        </ProgressiveDetails>
         </ProgressiveDetails>
       </div>
     </div>

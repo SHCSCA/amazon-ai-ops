@@ -1026,13 +1026,13 @@ async function main() {
     await page.getByRole('heading', { name: heading, level: 1 }).waitFor();
     await assertGlobalGuards(page, key);
     if (key === 'product-management') {
-      await expectVisible(page, '确定要处理的 ASIN，再进入工作范围和后续广告分析。');
+      await expectVisible(page, '管理产品池、锁定当前 ASIN，再把产品上下文交给广告表现、关键词和 Listing。');
       await expectVisible(page, '产品池');
       await expectVisible(page, '当前产品');
-      await expectVisible(page, '入库指标');
+      await expectVisible(page, '数据状态');
       await expectVisible(page, '日级账本');
-      await expectVisible(page, '当前产品范围');
       await expectVisible(page, '产品列表');
+      await expectVisible(page, '搜索产品');
     }
     const screenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -1060,7 +1060,7 @@ async function main() {
   await expectVisible(page, '规则阈值');
   await expectVisible(page, '先选择或维护产品，避免不同产品的数据、事件和建议混在同一个工作流里。');
   await expectVisible(page, '选择产品');
-  await expectVisible(page, '产品工作台');
+  await expectVisible(page, '当前产品入口');
   await expectVisible(page, '未选择产品');
   await expectVisible(page, '等待数据门槛');
   await expectVisible(page, '数据门槛未闭合，先下载真实报表。');
@@ -1441,8 +1441,9 @@ async function main() {
   };
   await navigateBusinessPage(page, NAV_RE.productManagement, 'product-management');
   await page.locator('tr', { hasText: 'B0TESTASIN' }).getByRole('button', { name: '锁定' }).click();
-  await expectVisible(page, '产品信息维护');
   await expectVisible(page, 'D6 Sensor Light / B0TESTASIN');
+  await page.getByRole('button', { name: '维护产品信息' }).click();
+  await expectVisible(page, '产品信息维护');
   await navigateBusinessPage(page, NAV_RE.dashboard, 'dashboard');
   await expectVisible(page, '数据健康');
   await expectVisible(page, '8/8');

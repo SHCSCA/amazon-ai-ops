@@ -27,15 +27,15 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/dashboard-page.tsx',
-    markers: ['dashboard-prototype-kpi-strip', '风险对象', '产品工作台', '广告历史账本摘要'],
+    markers: ['dashboard-overview-panel', '风险对象', '当前产品入口', '广告历史账本摘要'],
   },
   {
     pageFile: 'pages/product-management-page.tsx',
-    markers: ['product-prototype-status-grid', '产品列表', '产品信息维护'],
+    markers: ['product-management-shell', '产品列表', '搜索产品', '当前产品'],
   },
   {
     pageFile: 'pages/operation-scope-page.tsx',
-    markers: ['operation-scope-prototype-status-grid', '范围设置', '当前范围摘要', 'FormTable'],
+    markers: ['operation-scope-confirm-panel', '范围字段确认', 'operation-scope-field-card', '后续读取与影响页面', 'openScopeEditor'],
   },
   {
     pageFile: 'pages/data-collection-page.tsx',
@@ -43,7 +43,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/data-import-validation-page.tsx',
-    markers: ['data-import-prototype-status-grid', '导入批次状态', 'data-import-prototype-table'],
+    markers: ['data-import-primary-panel', '导入批次状态', 'data-import-prototype-table', 'data-import-title-pills'],
   },
   {
     pageFile: 'pages/operation-events-page.tsx',
@@ -51,31 +51,31 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/product-config-page.tsx',
-    markers: ['product-config-prototype-status-grid', '当前范围产品配置', '产品基础信息', '利润与广告目标'],
+    markers: ['product-config-list-panel', 'product-config-target-panel', 'product-config-basic-panel', '产品目标列表'],
   },
   {
     pageFile: 'pages/ad-quant-page.tsx',
-    markers: ['ad-quant-prototype-kpi-strip', '广告表现聚焦', '当前范围', '数据来源与量化口径', '实体诊断'],
+    markers: ['ad-quant-workbench-toolbar', '广告表现阻断', '广告对象诊断', '当前范围', '数据来源与量化口径'],
   },
   {
     pageFile: 'pages/recommendations-page.tsx',
-    markers: ['recommendations-prototype-status-grid', '建议池筛选', '建议生成范围', '建议处理路径', '待处理建议'],
+    markers: ['recommendation-primary-panel', 'recommendation-primary-head', 'recommendation-title-pills', '建议生成范围', '建议处理路径', '待处理建议'],
   },
   {
     pageFile: 'pages/approval-page.tsx',
-    markers: ['approval-prototype-status-grid', '人工审批任务', '审批队列', '人工审批决定', 'DecisionActionStrip'],
+    markers: ['approval-workbench-head', '审批队列', '人工审批决定', 'DecisionActionStrip'],
   },
   {
     pageFile: 'pages/readback-page.tsx',
-    markers: ['readback-prototype-status-grid', '1. 选择已批准动作', '2. 填写审批凭证', 'SafetyGateLine'],
+    markers: ['readback-current-step-summary', 'readback-current-step-meta', '1. 选择已批准动作', '2. 填写审批凭证', 'SafetyGateLine'],
   },
   {
     pageFile: 'pages/keyword-opportunities-page.tsx',
-    markers: ['keyword-prototype-status-grid', '机会来源', '关键词机会与 Listing 覆盖关系', '可带入 Listing 的机会表'],
+    markers: ['关键词机会池', 'keyword-opportunity-summary-grid', 'keyword-opportunity-blocker-strip', '机会口径、来源和复核摘要', 'folded-ops-panel'],
   },
   {
     pageFile: 'pages/listing-optimization-page.tsx',
-    markers: ['listing-prototype-status-grid', '本地草案工作流', '核心商机词根热力图矩阵', '关键词与本地草案工作台'],
+    markers: ['listing-editor-panel', 'listing-draft-panel', '核心商机词根覆盖', '关键词与本地草案工作台'],
   },
   {
     pageFile: 'pages/scheduler-page.tsx',
@@ -83,11 +83,11 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/settings-page.tsx',
-    markers: ['settings-prototype-status-grid', 'settings-prototype-actions', 'AI 服务连接', '规则阈值与动作边界', 'FormTable'],
+    markers: ['settings-ai-workbench', 'settings-ai-contract-copy-folded', 'AI 服务连接', '规则阈值与动作边界', 'FormTable'],
   },
   {
     pageFile: 'pages/delivery-page.tsx',
-    markers: ['delivery-prototype-status-grid', '交付摘要', '交付判断依据', '业务闭环矩阵', '交付消息'],
+    markers: ['delivery-summary-workbench', '交付摘要', '交付判断依据', '业务闭环矩阵', '交付消息'],
   },
 ] as const;
 
@@ -96,9 +96,32 @@ function rendererSource(relativePath: string): string {
 }
 
 describe('prototype parity design system integration', () => {
-  it('uses the shared KPI card strip on all prototype-mapped business pages', () => {
+  it('uses a shared first-screen density contract on all prototype-mapped business pages', () => {
     for (const pageFile of PAGE_FILES) {
       const source = rendererSource(pageFile);
+
+      const tableFirstWorkbenchContracts: Partial<Record<(typeof PAGE_FILES)[number], string[]>> = {
+        'pages/dashboard-page.tsx': ['dashboard-overview-panel', 'dashboard-overview-status'],
+        'pages/product-management-page.tsx': ['product-management-topline', 'product-management-shell'],
+        'pages/operation-scope-page.tsx': ['operation-scope-confirm-panel', 'operation-scope-field-card'],
+        'pages/data-import-validation-page.tsx': ['data-import-primary-panel', 'data-import-prototype-table'],
+        'pages/product-config-page.tsx': ['product-config-page-stack', 'product-config-list-panel'],
+        'pages/ad-quant-page.tsx': ['ad-quant-workbench-toolbar', 'ad-quant-primary-panel', '广告表现阻断'],
+        'pages/recommendations-page.tsx': ['recommendation-primary-panel', 'recommendation-primary-head', 'recommendation-workbench-table'],
+        'pages/keyword-opportunities-page.tsx': ['keyword-opportunity-summary-grid', 'keyword-opportunity-blocker-strip', 'folded-ops-panel'],
+        'pages/listing-optimization-page.tsx': ['listing-optimization-page-stack', 'listing-editor-panel', 'listing-draft-panel'],
+        'pages/approval-page.tsx': ['approval-workbench-head', 'approval-table'],
+        'pages/readback-page.tsx': ['readback-current-step-summary', 'readback-step-grid'],
+        'pages/settings-page.tsx': ['settings-ai-workbench', 'settings-ai-contract-copy-folded'],
+        'pages/delivery-page.tsx': ['delivery-summary-workbench', 'delivery-summary-hero'],
+      };
+      const workbenchContract = tableFirstWorkbenchContracts[pageFile];
+      if (workbenchContract) {
+        for (const marker of workbenchContract) {
+          expect(source, `${pageFile} should include ${marker}`).toContain(marker);
+        }
+        continue;
+      }
 
       expect(source, pageFile).toContain('KpiCard');
       expect(source, pageFile).toContain('className="kpi-row');

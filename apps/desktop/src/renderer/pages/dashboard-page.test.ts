@@ -88,7 +88,7 @@ describe('dashboard product workbench', () => {
     })).toEqual({
       route: 'product-management',
       label: '选择产品',
-      title: '先选择产品工作台',
+      title: '先锁定产品上下文',
     });
   });
 });
@@ -1420,6 +1420,25 @@ describe('dashboardPrimaryTaskNavigationFeedback', () => {
     expect(source).toContain('label: primaryTaskNavigationFeedback.label');
     expect(source).toContain('onClick: () => navigatePrimaryTask(primaryTaskAction.route)');
     expect(source).not.toContain("onClick: () => navigatePrimaryTask('product-management')");
+  });
+
+  it('keeps the product context as a compact dashboard entry instead of a full workbench panel', () => {
+    const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('aria-label="当前产品入口"');
+    expect(source).toContain('dashboard-product-entry');
+    expect(source).not.toContain('title="产品工作台"');
+  });
+
+  it('keeps the dashboard overview low-noise instead of rendering KPI card walls', () => {
+    const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('dashboard-overview-panel');
+    expect(source).toContain('dashboard-overview-status');
+    expect(source).toContain('dashboard-history-summary-grid');
+    expect(source).not.toContain('KpiCard');
+    expect(source).not.toContain('dashboard-prototype-kpi-strip');
+    expect(source).not.toContain('dashboard-prototype-status-grid');
   });
 
   it('wires dashboard primary pending state into the state-light refresh rail', () => {
