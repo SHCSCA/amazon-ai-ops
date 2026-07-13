@@ -208,6 +208,14 @@ describe('readback wizard user-task copy', () => {
     expect(source).toContain('<strong>{readbackStepTabTitle(step.title)}</strong>');
     expect(source).toContain('<Panel title="1. 选择已批准动作"');
   });
+
+  it('keeps the evidence export action reachable from the fourth step', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const exportEvidenceButton = readbackActionButtonView({');
+    expect(source).toContain('label: precheckCopy.exportButtonLabel');
+    expect(source).toContain('onClick={exportEvidence}');
+  });
 });
 
 describe('readback structured field cells', () => {

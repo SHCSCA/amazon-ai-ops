@@ -1613,6 +1613,13 @@ export function ReadbackPage() {
     return () => window.removeEventListener('paste', onPaste);
   }, [activeStep, form, sessionResult?.sessionDir]);
 
+  const exportEvidenceButton = readbackActionButtonView({
+    action: 'export-evidence',
+    activeAction: readbackActionBusy,
+    baseClassName: 'primary-button',
+    busyLabel: readbackActionBusyLabel('export-evidence'),
+    label: precheckCopy.exportButtonLabel,
+  });
   const prepareSessionButton = readbackActionButtonView({
     action: 'prepare-session',
     activeAction: readbackActionBusy,
@@ -1947,6 +1954,9 @@ export function ReadbackPage() {
                   )}
                 </div>
                 <div className="action-row">
+                  <button aria-busy={exportEvidenceButton.ariaBusy} className={exportEvidenceButton.className} disabled={exportEvidenceButton.disabled} onClick={exportEvidence} type="button">
+                    {readbackActionButtonContent(exportEvidenceButton)}
+                  </button>
                   <button aria-busy={openExportButton.ariaBusy} className={openExportButton.className} disabled={openExportButton.disabled} onClick={openExport} type="button">
                     {readbackActionButtonContent(openExportButton)}
                   </button>
