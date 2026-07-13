@@ -7,6 +7,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 describe('root package smoke scripts', () => {
+  it('prepares the shared SQLite native module for Node before Vitest runs', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+    expect(packageJson.scripts['prepare:native:node']).toBe('pnpm --filter @amazon-ai-ops/local-db rebuild');
+    expect(packageJson.scripts.pretest).toBe('pnpm run prepare:native:node');
+    expect(packageJson.scripts.test).toBe('vitest run');
+  });
+
+  it('prepares the shared SQLite native module for Electron before desktop package construction', () => {
+    const desktopPackageJson = JSON.parse(fs.readFileSync(path.join(root, 'apps', 'desktop', 'package.json'), 'utf8'));
+
+    expect(desktopPackageJson.scripts['prepare:native:electron'])
+      .toBe('set npm_execpath=&& set NPM_CLI_JS=&& pnpm --filter @amazon-ai-ops/desktop exec electron-builder install-app-deps');
+    expect(desktopPackageJson.scripts.prebuild).toBe('pnpm run prepare:native:electron');
+    expect(desktopPackageJson.scripts.build).toContain('electron-builder');
+  });
+
   it('routes the legacy v1.5 UI smoke command to the current business UI suite', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 

@@ -6,6 +6,8 @@
     "dev": "pnpm --filter @amazon-ai-ops/desktop run dev",
     "build": "pnpm --filter @amazon-ai-ops/desktop run build",
     "build:win": "pnpm --filter @amazon-ai-ops/desktop run build:win",
+    "prepare:native:node": "pnpm --filter @amazon-ai-ops/local-db rebuild",
+    "pretest": "pnpm run prepare:native:node",
     "test": "vitest run",
     "typecheck": "pnpm -r run typecheck",
     "verify:v15-diagnostic": "node scripts/verify-v15-diagnostic-evidence.js",

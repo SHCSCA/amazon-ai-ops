@@ -39,7 +39,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/data-collection-page.tsx',
-    markers: ['data-collection-prototype-status-grid', '采集进度', '8 类报表选择'],
+    markers: ['data-collection-primary-panel', 'aria-label="当前报表采集摘要"', 'data-collection-workbench-toolbar', 'collection-selector-grid'],
   },
   {
     pageFile: 'pages/data-import-validation-page.tsx',

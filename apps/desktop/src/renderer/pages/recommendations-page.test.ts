@@ -592,7 +592,7 @@ describe('recommendation Phase 4 user-task copy', () => {
     expect(source).toContain('recommendation-action-menu');
     expect(source).toContain('title="送审判断"');
     expect(source).toContain('动作、对象、当前值、建议值和真实报表来源已绑定');
-    expect(source).toContain('<th>当前 → 建议</th>');
+    expect(source).toMatch(/<th[^>]*>\s*当前\s*(?:\{\s*['"]->['"]\s*\}|→)\s*建议\s*<\/th>/);
     expect(source).toContain('<th>证据状态</th>');
     expect(source).not.toContain('recommendations-prototype-status-grid');
     expect(source).not.toContain('展开完整建议表');

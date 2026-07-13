@@ -417,7 +417,7 @@ Then run final readiness against that manifest and the current packaged launch s
 pnpm run verify:v15-final-readiness --evidence-manifest output\codex-evidence15-final-readiness-evidence-manifest-1783043003005.json --package-launch-smoke output\codex-evidence\package-launch-smoke-1783043003005.json --out output\codex-evidenceinal-readiness-1783043003005.json
 ```
 
-After final readiness passes, update the README top DELIVERY line to the current evidence's `APP_READY` state. The delivery exporter refuses APP_READY bundles while the selected README still says IN_PROGRESS.
+After final readiness passes, perform the documentation handoff step: README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`. The delivery exporter refuses APP_READY bundles while the selected README still says IN_PROGRESS.
 
 Finally export the bounded handoff bundle only after confirming final-readiness JSON was produced from the current evidence manifest, records `evidenceSelection.mode=manifest`, and the README status has already been updated:
 
