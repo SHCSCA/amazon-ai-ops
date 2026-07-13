@@ -1,5 +1,157 @@
 import type { OperationScope } from './types';
 
+export const PREVIEW_SCENARIO_IDS = [
+  'missing-scope',
+  'missing-reports',
+  'pending-import',
+  'diagnosis-ready',
+  'mixed-recommendations',
+  'missing-readback-evidence',
+  'delivery-ready',
+] as const;
+
+export type PreviewScenarioId = (typeof PREVIEW_SCENARIO_IDS)[number];
+
+export interface PreviewScenarioContract {
+  id: PreviewScenarioId;
+  scopeReady: boolean;
+  reportsCollected: boolean;
+  reportsImported: boolean;
+  diagnosisReady: boolean;
+  recommendationState: 'blocked' | 'none' | 'mixed' | 'approved';
+  readbackEvidenceReady: boolean;
+  deliveryReady: boolean;
+}
+
+export const PREVIEW_SCENARIOS: Record<PreviewScenarioId, PreviewScenarioContract> = {
+  'missing-scope': {
+    id: 'missing-scope',
+    scopeReady: false,
+    reportsCollected: false,
+    reportsImported: false,
+    diagnosisReady: false,
+    recommendationState: 'blocked',
+    readbackEvidenceReady: false,
+    deliveryReady: false,
+  },
+  'missing-reports': {
+    id: 'missing-reports',
+    scopeReady: true,
+    reportsCollected: false,
+    reportsImported: false,
+    diagnosisReady: false,
+    recommendationState: 'blocked',
+    readbackEvidenceReady: false,
+    deliveryReady: false,
+  },
+  'pending-import': {
+    id: 'pending-import',
+    scopeReady: true,
+    reportsCollected: true,
+    reportsImported: false,
+    diagnosisReady: false,
+    recommendationState: 'blocked',
+    readbackEvidenceReady: false,
+    deliveryReady: false,
+  },
+  'diagnosis-ready': {
+    id: 'diagnosis-ready',
+    scopeReady: true,
+    reportsCollected: true,
+    reportsImported: true,
+    diagnosisReady: true,
+    recommendationState: 'none',
+    readbackEvidenceReady: false,
+    deliveryReady: false,
+  },
+  'mixed-recommendations': {
+    id: 'mixed-recommendations',
+    scopeReady: true,
+    reportsCollected: true,
+    reportsImported: true,
+    diagnosisReady: true,
+    recommendationState: 'mixed',
+    readbackEvidenceReady: false,
+    deliveryReady: false,
+  },
+  'missing-readback-evidence': {
+    id: 'missing-readback-evidence',
+    scopeReady: true,
+    reportsCollected: true,
+    reportsImported: true,
+    diagnosisReady: true,
+    recommendationState: 'approved',
+    readbackEvidenceReady: false,
+    deliveryReady: false,
+  },
+  'delivery-ready': {
+    id: 'delivery-ready',
+    scopeReady: true,
+    reportsCollected: true,
+    reportsImported: true,
+    diagnosisReady: true,
+    recommendationState: 'approved',
+    readbackEvidenceReady: true,
+    deliveryReady: true,
+  },
+};
+
+const DEFAULT_PREVIEW_SCENARIO: PreviewScenarioId = 'diagnosis-ready';
+
+export interface PreviewBootstrapInput {
+  dev: boolean;
+  hostname: string;
+  search: string;
+}
+
+export interface PreviewBootstrapResolution {
+  enabled: boolean;
+  scenarioId?: PreviewScenarioId;
+  warning?: string;
+}
+
+export function resolvePreviewBootstrap(input: PreviewBootstrapInput): PreviewBootstrapResolution {
+  const isLocalHost = input.hostname === 'localhost' || input.hostname === '127.0.0.1';
+  if (!input.dev || !isLocalHost) return { enabled: false };
+
+  const parameters = new URLSearchParams(input.search);
+  if (parameters.get('preview') !== '1') return { enabled: false };
+
+  const requestedScenario = parameters.get('scenario');
+  if (!requestedScenario) return { enabled: true, scenarioId: DEFAULT_PREVIEW_SCENARIO };
+  if ((PREVIEW_SCENARIO_IDS as readonly string[]).includes(requestedScenario)) {
+    return { enabled: true, scenarioId: requestedScenario as PreviewScenarioId };
+  }
+
+  return {
+    enabled: true,
+    scenarioId: DEFAULT_PREVIEW_SCENARIO,
+    warning: `未知预览场景 ${requestedScenario}；已回退到 ${DEFAULT_PREVIEW_SCENARIO}。`,
+  };
+}
+
+export function bootstrapBrowserPreview(input: {
+  dev: boolean;
+  target: {
+    electronAPI?: any;
+    location?: { hostname: string; search: string };
+  };
+  username?: string;
+}): PreviewBootstrapResolution {
+  const resolution = resolvePreviewBootstrap({
+    dev: input.dev,
+    hostname: input.target.location?.hostname || '',
+    search: input.target.location?.search || '',
+  });
+  if (resolution.enabled && !input.target.electronAPI?.getState) {
+    input.target.electronAPI = createBrowserPreviewElectronApi(
+      input.username || 'SHC001',
+      resolution.scenarioId,
+    );
+  }
+  return resolution;
+}
+
 const previewScope: OperationScope = {
   dateFrom: '2026-05-21',
   dateTo: '2026-06-23',
@@ -197,15 +349,32 @@ const previewDailyHistory = Array.from({ length: 34 }, (_, index) => {
   };
 });
 
-function previewPipeline() {
+function previewPipeline(scenario: PreviewScenarioContract) {
+  const reportOptions = scenario.reportsCollected
+    ? previewReportOptions.map((item) => ({
+        ...item,
+        status: scenario.reportsImported ? 'imported' : 'downloaded',
+        importedRows: scenario.reportsImported ? item.importedRows : 0,
+      }))
+    : previewReportOptions.map((item) => ({
+        ...item,
+        status: 'missing',
+        realFileAvailable: false,
+        importedRows: 0,
+      }));
+  const importedRows = scenario.reportsImported ? 1879 : 0;
+  const reportBlockers = scenario.scopeReady
+    ? (scenario.reportsCollected ? [] : ['预览场景：尚未采集真实报表'])
+    : ['预览场景：尚未确认运营范围'];
+
   return {
-    scope: previewScope,
+    scope: scenario.scopeReady ? previewScope : null,
     generatedAt: new Date().toISOString(),
     collection: {
-      status: 'ready',
-      latestBatch: {
+      status: scenario.reportsCollected ? 'ready' : 'blocked',
+      latestBatch: scenario.reportsCollected ? {
         id: previewScope.batchId,
-        status: 'ready',
+        status: scenario.reportsImported ? 'ready' : 'downloaded',
         dateStart: previewScope.dateFrom,
         dateEnd: previewScope.dateTo,
         storeName: previewScope.storeName,
@@ -213,9 +382,9 @@ function previewPipeline() {
         downloadDir: 'D:/preview/reports',
         manifestPath: 'D:/preview/manifest.json',
         completedAt: '2026-06-24T09:00:00Z',
-      },
-      sourceBatchIds: [previewScope.batchId],
-      availableBatches: [{
+      } : null,
+      sourceBatchIds: scenario.reportsCollected ? [previewScope.batchId] : [],
+      availableBatches: scenario.reportsCollected ? [{
         id: previewScope.batchId,
         status: 'ready',
         dateStart: previewScope.dateFrom,
@@ -226,66 +395,68 @@ function previewPipeline() {
         manifestPath: 'D:/preview/manifest.json',
         totalFileRecords: 8,
         realReportFileCount: 8,
-        importedRowCount: 1879,
+        importedRowCount: importedRows,
         missingReportLabels: [],
-      }],
-      reportOptions: previewReportOptions,
-      realReportFiles: previewReportOptions.map((item) => ({
+      }] : [],
+      reportOptions,
+      realReportFiles: scenario.reportsCollected ? reportOptions.map((item) => ({
         id: `preview-file-${item.type}`,
         reportType: item.type,
         displayName: item.label,
-        status: 'imported',
+        status: scenario.reportsImported ? 'imported' : 'downloaded',
         filePath: `D:/preview/reports/${item.type}.xlsx`,
         folderPath: 'D:/preview/reports',
         fileName: `${item.type}.xlsx`,
         fileSizeBytes: 1024,
         importedRows: item.importedRows,
-      })),
-      evidencePaths: [{ label: '浏览器预览报表目录', path: 'D:/preview/reports', kind: 'folder' }],
+      })) : [],
+      evidencePaths: scenario.reportsCollected
+        ? [{ label: '浏览器预览报表目录', path: 'D:/preview/reports', kind: 'folder' }]
+        : [],
       fileAudit: {
-        totalFileRecords: 8,
-        downloadedFileRecords: 8,
-        existingFileRecords: 8,
-        realReportFileCount: 8,
-        importedRowCount: 1879,
+        totalFileRecords: scenario.reportsCollected ? 8 : 0,
+        downloadedFileRecords: scenario.reportsCollected ? 8 : 0,
+        existingFileRecords: scenario.reportsCollected ? 8 : 0,
+        realReportFileCount: scenario.reportsCollected ? 8 : 0,
+        importedRowCount: importedRows,
         rejectedEvidenceFileCount: 0,
         missingReportLabels: [],
         downloadDir: 'D:/preview/reports',
         manifestPath: 'D:/preview/manifest.json',
       },
-      blockers: [],
+      blockers: reportBlockers,
       audit: {
-        databaseReady: true,
+        databaseReady: scenario.reportsImported,
         acceptedExtensions: ['.xlsx', '.xls', '.csv'],
         rejectedEvidenceExtensions: ['.json', '.png', '.html'],
         notes: ['浏览器预览数据只用于 UI 验证，不会写入本地数据库。'],
       },
     },
     quant: {
-      hasImportedMetrics: true,
-      importedRows: 1879,
-      canonicalRows: 1879,
-      actionableRows: 1621,
-      breakdownRows: 34,
-      summarySource: 'browser-preview',
-      totalSpend: 784.31,
-      totalSales: 1289.68,
-      totalOrders: 25,
-      totalClicks: 495,
-      totalImpressions: 27199,
-      acos: 0.6081,
-      cvr: 0.0505,
-      cpc: 1.58,
-      wastedSpend: 403.47,
-      highRiskCount: previewDiagnostics.length,
-      adObjectTimelines: previewTimelines,
-      diagnostics: previewDiagnostics,
-      blockers: [],
+      hasImportedMetrics: scenario.reportsImported,
+      importedRows,
+      canonicalRows: importedRows,
+      actionableRows: scenario.diagnosisReady ? 1621 : 0,
+      breakdownRows: scenario.diagnosisReady ? 34 : 0,
+      summarySource: scenario.reportsImported ? 'browser-preview' : 'none',
+      totalSpend: scenario.reportsImported ? 784.31 : 0,
+      totalSales: scenario.reportsImported ? 1289.68 : 0,
+      totalOrders: scenario.reportsImported ? 25 : 0,
+      totalClicks: scenario.reportsImported ? 495 : 0,
+      totalImpressions: scenario.reportsImported ? 27199 : 0,
+      acos: scenario.reportsImported ? 0.6081 : 0,
+      cvr: scenario.reportsImported ? 0.0505 : 0,
+      cpc: scenario.reportsImported ? 1.58 : 0,
+      wastedSpend: scenario.reportsImported ? 403.47 : 0,
+      highRiskCount: scenario.diagnosisReady ? previewDiagnostics.length : 0,
+      adObjectTimelines: scenario.diagnosisReady ? previewTimelines : [],
+      diagnostics: scenario.diagnosisReady ? previewDiagnostics : [],
+      blockers: scenario.diagnosisReady ? [] : ['预览场景：诊断尚未就绪'],
     },
     operations: { events: previewEvents, eventCount: previewEvents.length, notes: [] },
     productContext: { products: previewProducts, productCount: previewProducts.length, notes: [] },
     productHistory: {
-      ledgers: [{
+      ledgers: scenario.reportsImported ? [{
         asin: 'B0GTTJFQTM',
         storeName: previewScope.storeName,
         marketplaceCode: previewScope.marketplaceCode,
@@ -316,13 +487,20 @@ function previewPipeline() {
           targetNetMargin: 0.15,
           minPrice: 33.99,
         },
-      }],
+      }] : [],
     },
   };
 }
 
-export function createBrowserPreviewElectronApi(username: string) {
-  const recommendations = previewDiagnostics.map((diagnostic, index) => ({
+export function createBrowserPreviewElectronApi(
+  username: string,
+  scenarioId: PreviewScenarioId = DEFAULT_PREVIEW_SCENARIO,
+) {
+  const scenario = PREVIEW_SCENARIOS[scenarioId];
+  const recommendationSource = ['mixed', 'approved'].includes(scenario.recommendationState)
+    ? previewDiagnostics
+    : [];
+  const recommendations = recommendationSource.map((diagnostic, index) => ({
     id: `preview-rec-${index + 1}`,
     batchId: previewScope.batchId,
     asin: diagnostic.asin,
@@ -335,8 +513,12 @@ export function createBrowserPreviewElectronApi(username: string) {
     suggestedValue: index === 0 ? '0.95' : '1.20',
     reason: diagnostic.diagnosis,
     riskLevel: diagnostic.severity,
-    status: index === 0 ? 'ready_for_approval' : 'draft',
-    approvalStatus: index === 0 ? 'pending' : 'not_submitted',
+    status: scenario.recommendationState === 'approved'
+      ? 'approved'
+      : (index === 0 ? 'pending' : 'needs_review'),
+    approvalStatus: scenario.recommendationState === 'approved'
+      ? 'approved'
+      : (index === 0 ? 'pending' : 'not_submitted'),
     evidenceRefs: ['preview:metric', 'preview:timeline'],
     createdAt: '2026-06-24T09:00:00Z',
     updatedAt: '2026-06-24T09:00:00Z',
@@ -349,19 +531,21 @@ export function createBrowserPreviewElectronApi(username: string) {
       loginSession: { erpSessionReused: true, adsEntryMode: 'browser-preview', adsTitle: '浏览器预览模式' },
     }),
     browserLogout: async () => true,
-    getOperationScope: async () => previewScope,
-    saveOperationScope: async () => previewScope,
-    getBusinessUiDataPipeline: async () => previewPipeline(),
+    getOperationScope: async () => scenario.scopeReady ? previewScope : null,
+    saveOperationScope: async () => scenario.scopeReady ? previewScope : null,
+    getBusinessUiDataPipeline: async () => previewPipeline(scenario),
     getProducts: async () => previewProducts,
     saveProductConfig: async (input: unknown) => ({ ok: true, input }),
     listOperationEvents: async () => previewEvents,
     createOperationEvent: async (input: unknown) => ({ id: 'preview-event-new', input }),
     deleteOperationEvent: async () => ({ ok: true }),
-    getRecommendations: async () => recommendations,
+    getRecommendations: async (filter?: { status?: string }) => filter?.status
+      ? recommendations.filter((recommendation) => recommendation.status === filter.status)
+      : recommendations,
     generateRecommendations: async () => ({ generated: recommendations.length, recommendations }),
     approveRecommendation: async () => ({ ok: true }),
     rejectRecommendation: async () => ({ ok: true }),
-    getBusinessKeywordOpportunities: async () => previewTimelines.map((item, index) => ({
+    getBusinessKeywordOpportunities: async () => scenario.diagnosisReady ? previewTimelines.map((item, index) => ({
         asin: item.asin,
         portfolioName: '预览组合',
         keyword: item.objectName,
@@ -378,11 +562,24 @@ export function createBrowserPreviewElectronApi(username: string) {
         recommendedPlacement: index % 2 ? '五点' : '标题',
         risk: item.totals.orders > 0 ? '可带入 Listing 覆盖复核' : '有点击未出单，先复核投放风险',
         sourceFile: `D:/preview/reports/${item.objectType}.xlsx`,
-      })),
+      })) : [],
     getRuleConfig: async () => ({ targetAcos: 0.35, highAcosThreshold: 0.4, minSpend: 10, noOrderClickThreshold: 30 }),
     getSettings: async () => ({ ai: { provider: 'deepseek', model: 'deepseek-v4-flash', baseUrl: 'https://api.deepseek.com' } }),
-    getDeliveryReadiness: async () => ({ available: true, appReady: false, manifestDriven: true, blockers: ['浏览器预览不代表最终交付'] }),
-    getDeliveryEvidenceStatus: async () => ({ ready: false, missing: ['readback'] }),
+    getDeliveryReadiness: async () => ({
+      available: scenario.deliveryReady,
+      appReady: false,
+      manifestDriven: false,
+      previewOnly: true,
+      previewReady: scenario.deliveryReady,
+      blockers: scenario.deliveryReady
+        ? ['开发预览场景已走通；不代表真实 APP_READY，也不生成验收证据']
+        : ['浏览器预览不代表最终交付'],
+    }),
+    getDeliveryEvidenceStatus: async () => ({
+      ready: scenario.readbackEvidenceReady,
+      previewOnly: true,
+      missing: scenario.readbackEvidenceReady ? [] : ['readback'],
+    }),
     getScheduledTasks: async () => [{ name: 'daily-import-preview', enabled: true, cron: '0 9 * * *', lastStatus: 'success' }],
     setTaskEnabled: async () => ({ ok: true }),
     runTaskNow: async () => ({ ok: true }),

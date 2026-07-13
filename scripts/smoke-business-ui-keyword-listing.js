@@ -65,7 +65,7 @@ function startStaticServer(directory) {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const address = server.address();
-      resolve({ url: `http://127.0.0.1:${address.port}/index.html`, close: () => server.close() });
+      resolve({ url: `http://127.0.0.1:${address.port}/index.html?preview=1&scenario=diagnosis-ready`, close: () => server.close() });
     });
   });
 }
