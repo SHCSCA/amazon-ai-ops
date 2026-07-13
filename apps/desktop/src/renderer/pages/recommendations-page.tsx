@@ -10,8 +10,22 @@ import { realReportCoverageCount } from '../report-coverage';
 import { countProductsWithTargets, normalizeProductContexts, pickPrimaryProductContext } from '../product-context';
 import type { AiEvidenceDisplayItemView, AiEvidenceSufficiencyView, AiProviderSettings, AppRoute, RecommendationView, SettingsRuleConfig } from '../types';
 import { toUserFacingError } from '../user-facing-error';
+import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
+import type { WorkflowEventTarget } from '../workflow-invalidation';
 
 const APPROVAL_SELECTION_STORAGE_KEY = 'amazon-ai-ops:approval-selection';
+
+export function runRecommendationWorkflowMutation<T>(
+  action: 'generate' | 'refresh',
+  task: () => Promise<T>,
+  target?: WorkflowEventTarget,
+): Promise<T> {
+  return runWorkflowInvalidatingMutation(
+    action === 'generate' ? 'recommendations-generated' : 'recommendations-refreshed',
+    task,
+    target,
+  );
+}
 
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
@@ -1093,14 +1107,17 @@ export function RecommendationsPage() {
     limit: 100,
   }), [currentBatchId, scope.asin, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
 
-  async function loadRecommendations() {
+  async function loadRecommendations(invalidateWorkflow = false) {
     setLoading(true);
     setMessage(null);
     try {
       const getRecommendations = (window as any).electronAPI?.getRecommendations;
-      const rowGroups = typeof getRecommendations === 'function'
-        ? await Promise.all(recommendationStatusFiltersForPage().map((status) => getRecommendations({ ...filter, status })))
+      const fetchRows = async () => typeof getRecommendations === 'function'
+        ? Promise.all(recommendationStatusFiltersForPage().map((status) => getRecommendations({ ...filter, status })))
         : [];
+      const rowGroups = invalidateWorkflow && typeof getRecommendations === 'function'
+        ? await runRecommendationWorkflowMutation('refresh', fetchRows)
+        : await fetchRows();
       const byId = new Map<number | string, RecommendationView>();
       for (const rows of rowGroups) {
         for (const row of Array.isArray(rows) ? rows : []) {
@@ -1125,6 +1142,10 @@ export function RecommendationsPage() {
     }
   }
 
+  function refreshRecommendations() {
+    void loadRecommendations(true);
+  }
+
   async function generateRecommendations() {
     if (!quantReady) {
       setMessage(`建议生成被锁定：${recommendationGateIssues.length ? recommendationGateIssues.join('；') : '当前范围缺少真实原始报表文件或导入指标'}。`);
@@ -1133,7 +1154,11 @@ export function RecommendationsPage() {
     setGenerating(true);
     setMessage(null);
     try {
-      const result = await (window as any).electronAPI?.generateRecommendations?.({
+      const generateRecommendationsApi = (window as any).electronAPI?.generateRecommendations;
+      if (typeof generateRecommendationsApi !== 'function') {
+        throw new Error('建议生成接口未暴露。');
+      }
+      const result = await runRecommendationWorkflowMutation<any>('generate', () => generateRecommendationsApi({
         dateFrom: scope.dateFrom,
         dateTo: scope.dateTo,
         storeName: scope.storeName,
@@ -1141,7 +1166,7 @@ export function RecommendationsPage() {
         asin: scope.asin,
         batchId: currentBatchId,
         limit: 300,
-      });
+      }));
       await reloadPipeline();
       await loadRecommendations();
       const generated = Number(result?.generated ?? 0);
@@ -1372,7 +1397,7 @@ export function RecommendationsPage() {
                     aria-busy={refreshRecommendationsButton.ariaBusy}
                     className={refreshRecommendationsButton.className}
                     disabled={refreshRecommendationsButton.disabled}
-                    onClick={loadRecommendations}
+                    onClick={refreshRecommendations}
                     type="button"
                   >
                     {refreshRecommendationsButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
@@ -1603,7 +1628,7 @@ export function RecommendationsPage() {
               aria-busy={refreshRecommendationsButton.ariaBusy}
               className={refreshRecommendationsButton.className}
               disabled={refreshRecommendationsButton.disabled}
-              onClick={loadRecommendations}
+              onClick={refreshRecommendations}
               type="button"
             >
               {refreshRecommendationsButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}

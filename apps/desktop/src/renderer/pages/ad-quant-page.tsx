@@ -14,6 +14,8 @@ import { countProductsWithTargets, normalizeProductContexts } from '../product-c
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import type { AdStrategyDiagnosisView, AiDiagnosisRunView, AiEvidenceDisplayItemView, AppRoute, BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, SettingsRuleConfig } from '../types';
+import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
+import type { WorkflowEventTarget } from '../workflow-invalidation';
 
 const DEFAULT_QUANT_RULE_CONFIG: Pick<SettingsRuleConfig, 'targetAcos' | 'highAcosThreshold' | 'noOrderClickThreshold' | 'minSpend'> = {
   targetAcos: 0.25,
@@ -21,6 +23,13 @@ const DEFAULT_QUANT_RULE_CONFIG: Pick<SettingsRuleConfig, 'targetAcos' | 'highAc
   noOrderClickThreshold: 30,
   minSpend: 10,
 };
+
+export function runAdQuantDiagnosisWorkflowMutation<T>(
+  task: () => Promise<T>,
+  target?: WorkflowEventTarget,
+): Promise<T> {
+  return runWorkflowInvalidatingMutation('ad-quant-diagnosis', task, target);
+}
 
 export type AdQuantMetricFocus = 'all' | 'high_acos' | 'waste' | 'orders' | 'scale' | 'review';
 
@@ -925,7 +934,7 @@ export function AdQuantPage() {
       if (!api?.runAdStrategyDiagnosis) {
         throw new Error('AI 阶段诊断接口未暴露。');
       }
-      const result = await api.runAdStrategyDiagnosis({
+      const result = await runAdQuantDiagnosisWorkflowMutation<any>(() => api.runAdStrategyDiagnosis({
         dateFrom: scope.dateFrom,
         dateTo: scope.dateTo,
         storeName: scope.storeName,
@@ -933,7 +942,7 @@ export function AdQuantPage() {
         asin: scope.asin,
         batchId: scope.batchId || collection?.latestBatch?.id,
         limit: 300,
-      });
+      }));
       setStrategyDiagnosis(result);
       setStrategyLastRunAt(new Date().toISOString());
       await loadDiagnosisRuns();

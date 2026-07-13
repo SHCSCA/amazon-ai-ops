@@ -7,6 +7,8 @@ import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evide
 import { formatPercent, formatUsd } from '../formatters';
 import type { AiEvidenceDisplayItemView, RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
+import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
+import type { WorkflowEventTarget } from '../workflow-invalidation';
 
 type ApprovalTab = 'pending' | 'needs_review' | 'approved' | 'rejected';
 type ApprovalFeedbackState = 'approving' | 'approved' | 'rejecting' | 'rejected' | 'blocked';
@@ -15,6 +17,18 @@ type ApprovalQueueExitDecision = ApprovalDecisionButtonMode;
 type ApprovalQueueExitState = { id: number; decision: ApprovalQueueExitDecision } | null;
 const APPROVAL_SELECTION_STORAGE_KEY = 'amazon-ai-ops:approval-selection';
 export const APPROVAL_QUEUE_EXIT_ANIMATION_MS = 180;
+
+export function runApprovalWorkflowMutation<T>(
+  decision: 'approve' | 'reject',
+  task: () => Promise<T>,
+  target?: WorkflowEventTarget,
+): Promise<T> {
+  return runWorkflowInvalidatingMutation(
+    decision === 'approve' ? 'approval-approved' : 'approval-rejected',
+    task,
+    target,
+  );
+}
 
 const TAB_LABELS: Record<ApprovalTab, string> = {
   pending: '待审批',
@@ -702,7 +716,11 @@ export function ApprovalPage() {
       targetName,
     }));
     try {
-      await (window as any).electronAPI?.approveRecommendation?.({ id: currentSelected.id, decision: decisionPayload('approved') });
+      const approve = (window as any).electronAPI?.approveRecommendation;
+      if (typeof approve !== 'function') {
+        throw new Error('批准建议接口未暴露。');
+      }
+      await runApprovalWorkflowMutation('approve', () => approve({ id: currentSelected.id, decision: decisionPayload('approved') }));
       const approvedMessage = `已批准建议 #${currentSelected.id}，审批人和备注已写入建议证据。审批范围：${scope.storeName} / ${scope.marketplaceCode} / ${currentSelected.evidence?.campaignName || '-'} / ${currentSelected.evidence?.adGroupName || '-'} / ${targetName}。`;
       setDecisionFeedback(buildApprovalStampFeedback({
         state: 'approved',
@@ -758,7 +776,11 @@ export function ApprovalPage() {
       targetName,
     }));
     try {
-      await (window as any).electronAPI?.rejectRecommendation?.({ id: currentSelected.id, decision: decisionPayload('rejected') });
+      const reject = (window as any).electronAPI?.rejectRecommendation;
+      if (typeof reject !== 'function') {
+        throw new Error('拒绝建议接口未暴露。');
+      }
+      await runApprovalWorkflowMutation('reject', () => reject({ id: currentSelected.id, decision: decisionPayload('rejected') }));
       const rejectedMessage = `已拒绝建议 #${currentSelected.id}，拒绝原因已写入建议证据${approvalNote ? `：${approvalNote}` : ''}`;
       setDecisionFeedback(buildApprovalStampFeedback({
         state: 'rejected',

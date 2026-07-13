@@ -27,9 +27,26 @@ import {
   readbackStepTabId,
   readbackStepTabTitle,
   requiredMissing,
+  runReadbackWorkflowMutation,
   sessionCheckCopy,
 } from './readback-page';
 import { firstIncompleteReadbackStep, readbackWizardSteps } from '../readback-wizard';
+import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
+
+describe('readback workflow invalidation contract', () => {
+  it.each([
+    ['create', 'readback-created'],
+    ['verify', 'readback-verified'],
+  ] as const)('maps %s success to %s', async (action, expectedSource) => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation((detail) => sources.push(detail.source), target);
+
+    await runReadbackWorkflowMutation(action, async () => undefined, target);
+    expect(sources).toEqual([expectedSource]);
+    unsubscribe();
+  });
+});
 
 function completeForm(sourceRow = '12') {
   return {

@@ -71,6 +71,16 @@ describe('visible workspace navigation', () => {
     ]);
     expect(VISIBLE_WORKSPACES.filter((item) => item.section === 'daily')).toHaveLength(7);
     expect(VISIBLE_WORKSPACES.filter((item) => item.section === 'system')).toHaveLength(1);
+    expect(VISIBLE_WORKSPACES.map((item) => item.label)).toEqual([
+      '今日任务',
+      '产品/商品工作台',
+      '数据准备',
+      '广告诊断',
+      '建议与审批',
+      '结果核对',
+      '关键词与 Listing',
+      '系统与交付',
+    ]);
   });
 
   it('defines one valid default intent for every visible workspace', () => {

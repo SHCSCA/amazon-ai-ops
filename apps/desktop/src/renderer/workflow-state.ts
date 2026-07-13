@@ -170,7 +170,7 @@ export function deriveWorkflowEvidence(snapshot: WorkflowEvidenceSnapshot): Work
 
   const verifiedCount = Math.max(0, Number(snapshot.readback?.verifiedCount || 0));
   const latestReadbackStatus = String(snapshot.readback?.latestStatus || '').toLowerCase();
-  const explicitReadbackFailure = Boolean(latestReadbackStatus && !['verified', 'passed', 'ready'].includes(latestReadbackStatus));
+  const explicitReadbackFailure = Boolean(latestReadbackStatus && !['pass', 'passed', 'verified', 'ready'].includes(latestReadbackStatus));
 
   const readiness = snapshot.readiness;
   const smokeGate = gateByIdOrName(readiness, 'package-launch-smoke', 'Package launch smoke');

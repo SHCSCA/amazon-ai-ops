@@ -75,6 +75,11 @@ import {
   resolveBusinessReportImportState,
   selectLatestRawBusinessReportsByType,
 } from './business-report-files';
+import {
+  missingReadinessView as buildMissingReadinessView,
+  normalizeDeliveryReadiness,
+} from './delivery-readiness-view';
+import type { DeliveryReadinessView } from './delivery-readiness-view';
 
 // ============================================================================
 // App State
@@ -5202,44 +5207,6 @@ const OPEN_PATH_ALLOWED_EXTENSIONS = new Set([
   '.zip',
 ]);
 
-interface DeliveryReadinessGate {
-  name: string;
-  status?: string;
-  ok: boolean;
-  evidencePath?: string | null;
-  message?: string;
-}
-
-interface DeliveryReadinessView {
-  available: boolean;
-  path: string | null;
-  exists: boolean;
-  status: string;
-  appReady: boolean;
-  manifestDriven: boolean;
-  generatedAt?: string;
-  checkedAt?: string;
-  gates: DeliveryReadinessGate[];
-  gatesSummary: {
-    total: number;
-    passed: number;
-    failed: number;
-  };
-  missing: string[];
-  actionItems: string[];
-  recommendationReviewReasons: string[];
-  reviewBlockers: string[];
-  deliveryReviewReasons: string[];
-  finalReadinessBlockers: string[];
-  message?: string;
-}
-
-function readStringList(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map((item) => String(item || '').trim()).filter(Boolean)
-    : [];
-}
-
 function readJsonFile(filePath: string): any {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
@@ -5269,73 +5236,7 @@ function getFinalReadinessPath(): string | null {
 }
 
 function missingReadinessView(message: string): DeliveryReadinessView {
-  return {
-    available: false,
-    path: configuredFinalReadinessPath(),
-    exists: false,
-    status: 'APP_NEEDS_WORK',
-    appReady: false,
-    manifestDriven: false,
-    gates: [],
-    gatesSummary: {
-      total: 0,
-      passed: 0,
-      failed: 0,
-    },
-    missing: ['最终验收 manifest 尚未生成'],
-    actionItems: ['运行最终验收，生成 output/codex-evidence/final-readiness-*.json。'],
-    recommendationReviewReasons: [],
-    reviewBlockers: [],
-    deliveryReviewReasons: [],
-    finalReadinessBlockers: [],
-    message,
-  };
-}
-
-function normalizeDeliveryReadiness(finalReadiness: any, filePath: string): DeliveryReadinessView {
-  const gates: DeliveryReadinessGate[] = Array.isArray(finalReadiness?.gates)
-    ? finalReadiness.gates.map((gate: any) => ({
-        name: String(gate?.name || 'unknown_gate'),
-        status: typeof gate?.status === 'string' ? gate.status : undefined,
-        ok: Boolean(gate?.ok),
-        evidencePath: typeof gate?.evidencePath === 'string' ? gate.evidencePath : null,
-        message: typeof gate?.message === 'string' ? gate.message : undefined,
-      }))
-    : [];
-  const manifestDriven = finalReadiness?.evidenceSelection?.mode === 'manifest' || finalReadiness?.manifestDriven === true;
-  const allGatesPass = gates.length > 0 && gates.every((gate: DeliveryReadinessGate) => gate.ok);
-  const appReady = manifestDriven && Boolean(finalReadiness?.appReady) && allGatesPass && finalReadiness?.status === 'APP_READY';
-  const failedGates = gates.filter((gate) => !gate.ok);
-  const missing = readStringList(finalReadiness?.missing).length
-    ? readStringList(finalReadiness?.missing)
-    : failedGates.map((gate) => gate.message || `${gate.name} 未通过。`);
-  const actionItems = readStringList(finalReadiness?.actionItems).length
-    ? readStringList(finalReadiness?.actionItems)
-    : failedGates.map((gate) => gate.message || `补齐 ${gate.name} 的验收证据后重新运行最终验收。`);
-  return {
-    available: true,
-    path: filePath,
-    exists: true,
-    status: appReady ? 'APP_READY' : String(finalReadiness?.status || 'APP_NEEDS_WORK'),
-    appReady,
-    manifestDriven,
-    generatedAt: typeof finalReadiness?.generatedAt === 'string' ? finalReadiness.generatedAt : undefined,
-    checkedAt: typeof finalReadiness?.checkedAt === 'string' ? finalReadiness.checkedAt : (
-      typeof finalReadiness?.generatedAt === 'string' ? finalReadiness.generatedAt : undefined
-    ),
-    gates,
-    gatesSummary: {
-      total: gates.length,
-      passed: gates.filter((gate) => gate.ok).length,
-      failed: failedGates.length,
-    },
-    missing,
-    actionItems,
-    recommendationReviewReasons: readStringList(finalReadiness?.recommendationReviewReasons),
-    reviewBlockers: readStringList(finalReadiness?.reviewBlockers),
-    deliveryReviewReasons: readStringList(finalReadiness?.deliveryReviewReasons),
-    finalReadinessBlockers: readStringList(finalReadiness?.finalReadinessBlockers),
-  };
+  return buildMissingReadinessView(message, configuredFinalReadinessPath());
 }
 
 function sanitizeAiSettingsForRenderer(settings: Record<string, unknown>): Record<string, string | boolean> {

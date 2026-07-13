@@ -29,6 +29,8 @@ import type { NavigationIntent } from './navigation';
 import { useScopeStore } from './scope-store';
 import { deriveWorkflowEvidence, selectNextSafeAction } from './workflow-state';
 import type { WorkflowEvidence } from './workflow-state';
+import { subscribeWorkflowInvalidation } from './workflow-invalidation';
+import type { WorkflowEventTarget, WorkflowInvalidationDetail } from './workflow-invalidation';
 import { toUserFacingError } from './user-facing-error';
 import { bootstrapBrowserPreview } from './dev-preview-api';
 import './styles.css';
@@ -76,6 +78,13 @@ export function createAppNavigationEventHandler(onNavigate: (intent: NavigationI
     onNavigate(intent);
     return true;
   };
+}
+
+export function subscribeAppWorkflowInvalidation(
+  onInvalidate: (detail: WorkflowInvalidationDetail) => void,
+  target?: WorkflowEventTarget,
+): () => void {
+  return subscribeWorkflowInvalidation(onInvalidate, target);
 }
 
 function appElectronApi(username = 'SHC001') {
@@ -474,9 +483,13 @@ export default function App() {
 
     loadWorkflowState();
     window.addEventListener('business-ui:data-updated', loadWorkflowState);
+    const unsubscribeWorkflowInvalidation = subscribeAppWorkflowInvalidation(() => {
+      void loadWorkflowState();
+    });
     return () => {
       cancelled = true;
       window.removeEventListener('business-ui:data-updated', loadWorkflowState);
+      unsubscribeWorkflowInvalidation();
     };
   }, [isLoggedIn, scope]);
 

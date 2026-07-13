@@ -8,6 +8,8 @@ import { READBACK_REPAIR_INTENT_EVENT, READBACK_REPAIR_INTENT_STORAGE_KEY, type 
 import { useScopeStore } from '../scope-store';
 import type { AiDiagnosisRunView, AppRoute, BusinessDataPipeline, DeliveryEvidenceStatusView, DeliveryReadinessGate, DeliveryReadinessView, OperationScope, RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
+import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
+import type { WorkflowEventTarget } from '../workflow-invalidation';
 
 const DEFAULT_SCOPE: OperationScope = {
   dateFrom: '2026-06-01',
@@ -18,6 +20,19 @@ const DEFAULT_SCOPE: OperationScope = {
 };
 
 const DELIVERY_BUNDLE_PATH = 'output/delivery-bundles';
+
+export function runDeliveryWorkflowMutation<T>(
+  action: 'refresh' | 'create-readback' | 'verify-readback',
+  task: () => Promise<T>,
+  target?: WorkflowEventTarget,
+): Promise<T> {
+  const source = action === 'refresh'
+    ? 'delivery-refreshed'
+    : action === 'create-readback'
+      ? 'readback-created'
+      : 'readback-verified';
+  return runWorkflowInvalidatingMutation(source, task, target);
+}
 
 type DeliveryTone = 'ready' | 'pending' | 'blocked' | 'warning';
 
@@ -998,7 +1013,7 @@ export function DeliveryPage() {
     }
     await runDeliveryAction('refresh-final', async () => {
       try {
-        const result = await apiSurface.refreshFinalReadiness();
+        const result = await runDeliveryWorkflowMutation<any>('refresh', () => apiSurface.refreshFinalReadiness());
         setFinalReadinessRefresh(result || null);
         if (result?.readiness) {
           setReadiness(result.readiness);
@@ -1023,7 +1038,7 @@ export function DeliveryPage() {
     }
     await runDeliveryAction('create-readback', async () => {
       try {
-        const result = await apiSurface.prepareAdReadbackSession({ sourcePath: readbackCandidatePath });
+        const result = await runDeliveryWorkflowMutation<any>('create-readback', () => apiSurface.prepareAdReadbackSession({ sourcePath: readbackCandidatePath }));
         setReadbackSession(result || null);
         setReadbackSessionCheck(null);
         setReadbackSessionFill(null);
@@ -1085,7 +1100,7 @@ export function DeliveryPage() {
     }
     await runDeliveryAction('fill-readback-session', async () => {
       try {
-        const result = await apiSurface.fillAdReadbackSession({ sessionDir });
+        const result = await runDeliveryWorkflowMutation<any>('create-readback', () => apiSurface.fillAdReadbackSession({ sessionDir }));
         setReadbackSessionFill(result || null);
         setMessage(result?.readyForVerifier
           ? '回读证据已生成，可进入校验。'
@@ -1108,7 +1123,7 @@ export function DeliveryPage() {
     }
     await runDeliveryAction('verify-readback-evidence', async () => {
       try {
-        const result = await apiSurface.verifyAdReadbackEvidence({ evidencePath });
+        const result = await runDeliveryWorkflowMutation<any>('verify-readback', () => apiSurface.verifyAdReadbackEvidence({ evidencePath }));
         setReadbackEvidenceVerify(result || null);
         const passed = Boolean(result?.ok || result?.verified || result?.ready || result?.status === 'PASS');
         setMessage(passed
@@ -1132,7 +1147,7 @@ export function DeliveryPage() {
     }
     await runDeliveryAction('refresh-final-with-readback', async () => {
       try {
-        const result = await apiSurface.refreshFinalReadiness({ adReadbackPath: evidencePath });
+        const result = await runDeliveryWorkflowMutation<any>('refresh', () => apiSurface.refreshFinalReadiness({ adReadbackPath: evidencePath }));
         setFinalReadinessRefresh(result || null);
         if (result?.readiness) {
           setReadiness(result.readiness);

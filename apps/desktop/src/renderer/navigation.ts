@@ -78,13 +78,13 @@ export const DEFAULT_WORKSPACE_INTENTS = {
 } as const satisfies Record<PrimaryWorkspace, NavigationIntent>;
 
 export const VISIBLE_WORKSPACES: readonly VisibleWorkspaceDefinition[] = [
-  { id: 'today', label: '今日工作', description: '查看当前运营重点与下一步', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.today },
-  { id: 'product', label: '产品工作台', description: '维护产品、目标与运营事件', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.product },
+  { id: 'today', label: '今日任务', description: '查看当前运营重点与下一步', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.today },
+  { id: 'product', label: '产品/商品工作台', description: '维护产品、目标与运营事件', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.product },
   { id: 'data-preparation', label: '数据准备', description: '配置范围、采集报表并检查导入', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS['data-preparation'] },
   { id: 'diagnosis', label: '广告诊断', description: '基于真实数据检查广告表现', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.diagnosis },
-  { id: 'decisions', label: '运营决策', description: '复核建议并进入人工审批', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.decisions },
-  { id: 'readback', label: '执行回读', description: '补齐人工执行与结果证据', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.readback },
-  { id: 'growth', label: '增长优化', description: '查看关键词机会与本地 Listing 草案', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.growth },
+  { id: 'decisions', label: '建议与审批', description: '复核建议并进入人工审批', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.decisions },
+  { id: 'readback', label: '结果核对', description: '补齐人工执行与结果证据', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.readback },
+  { id: 'growth', label: '关键词与 Listing', description: '查看关键词机会与本地 Listing 草案', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.growth },
   { id: 'system', label: '系统与交付', description: '管理 AI、自动任务与交付验收', section: 'system', defaultIntent: DEFAULT_WORKSPACE_INTENTS.system },
 ];
 

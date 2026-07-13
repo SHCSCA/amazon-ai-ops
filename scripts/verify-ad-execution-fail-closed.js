@@ -34,6 +34,14 @@ function mustNotContain(source, pattern, message) {
   }
 }
 
+function mustMatch(source, pattern, message) {
+  if (pattern.test(source)) {
+    pass(message);
+  } else {
+    fail(message);
+  }
+}
+
 const mainIndex = read('apps/desktop/src/main/index.ts');
 const policy = read('apps/desktop/src/main/recommendation-execution-policy.ts');
 const rendererApp = read('apps/desktop/src/renderer/App.tsx');
@@ -168,7 +176,27 @@ mustContain(readbackPage, 'title="4. 校验并导出证据"', 'readback page sho
 mustContain(readbackPage, '复制长参数生成命令', 'readback page provides copy command affordance');
 mustContain(recommendationsPage, '建议生成范围', 'recommendations page exposes filter/generate controls');
 mustContain(recommendationsPage, '生成优化建议', 'recommendations page exposes generation action');
-mustContain(recommendationsPage, 'generateRecommendations?.({', 'renderer sends recommendation generation scope to main process');
+const scopedRecommendationGeneration = recommendationsPage.match(
+  /runRecommendationWorkflowMutation(?:<[^>]+>)?\(\s*'generate'\s*,\s*\(\)\s*=>\s*generateRecommendationsApi\(\{([\s\S]*?)\}\)\s*\)/,
+);
+mustMatch(
+  recommendationsPage,
+  /runRecommendationWorkflowMutation(?:<[^>]+>)?\(\s*'generate'/,
+  'recommendation generation invalidates workflow state after the scoped IPC succeeds',
+);
+if (scopedRecommendationGeneration && [
+  'dateFrom: scope.dateFrom',
+  'dateTo: scope.dateTo',
+  'storeName: scope.storeName',
+  'marketplaceCode: scope.marketplaceCode',
+  'asin: scope.asin',
+  'batchId: currentBatchId',
+  'limit: 300',
+].every((field) => scopedRecommendationGeneration[1].includes(field))) {
+  pass('renderer sends complete recommendation generation scope to main process');
+} else {
+  fail('renderer sends complete recommendation generation scope to main process');
+}
 mustContain(recommendationsPage, 'if (!quantReady) {', 'renderer runtime blocks recommendation generation without explicit scope');
 mustContain(recommendationsPage, 'disabled: !quantReady || pipelineLoading', 'renderer disables recommendation generation actions without explicit scope');
 mustContain(renderer, '不能声称执行完成', 'recommendations workflow warns against treating blocked audit as success');

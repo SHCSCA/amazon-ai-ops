@@ -1,6 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { deriveWorkflowEvidence, selectNextSafeAction } from './workflow-state';
 import type { WorkflowEvidence } from './workflow-state';
+import { normalizeDeliveryReadiness } from '../main/delivery-readiness-view';
+
+const mainDeliveryEvidencePassFixture = JSON.parse(readFileSync(
+  new URL('../main/fixtures/delivery-evidence-status-pass.fixture.json', import.meta.url),
+  'utf8',
+));
 
 const completeEvidence: WorkflowEvidence = {
   productSelected: true,
@@ -165,6 +172,37 @@ describe('deriveWorkflowEvidence', () => {
 
   it('derives complete evidence only from verified readback and shared evaluator package gates', () => {
     expect(deriveWorkflowEvidence(authoritativeSnapshot)).toEqual(completeEvidence);
+  });
+
+  it.each(['PASS', 'pass', 'passed', 'verified', 'ready'])('accepts verified readback status %s when verifiedCount is positive', (latestStatus) => {
+    const evidence = deriveWorkflowEvidence({
+      ...authoritativeSnapshot,
+      readback: { verifiedCount: 1, latestStatus },
+    });
+
+    expect(evidence.readback).toEqual({ verifiedCount: 1, verificationStatus: 'verified' });
+  });
+
+  it('consumes the real main delivery evidence payload fixture with PASS readback evidence', () => {
+    const readiness = normalizeDeliveryReadiness({
+      status: 'APP_READY',
+      appReady: true,
+      manifestDriven: true,
+      previewOnly: false,
+      gates: [
+        { id: 'release-package-hash', name: 'Release package hash', ok: true },
+        { id: 'package-launch-smoke', name: 'Package launch smoke', ok: true },
+      ],
+      failures: [],
+    }, 'D:/evidence/final-readiness.json');
+    const evidence = deriveWorkflowEvidence({
+      ...authoritativeSnapshot,
+      readback: mainDeliveryEvidencePassFixture.readback,
+      readiness,
+    });
+
+    expect(evidence).toEqual(completeEvidence);
+    expect(selectNextSafeAction(evidence).stage).toBe('complete');
   });
 
   it('distinguishes report files waiting for import from missing reports', () => {

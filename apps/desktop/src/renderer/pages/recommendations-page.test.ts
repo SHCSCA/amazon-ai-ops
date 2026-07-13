@@ -14,8 +14,25 @@ import {
   recommendationPrimaryTaskActionState,
   recommendationReviewExplanationText,
   recommendationWorkflowActionState,
+  runRecommendationWorkflowMutation,
   thresholdSuggestionSummary,
 } from './recommendations-page';
+import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
+
+describe('recommendation workflow invalidation contract', () => {
+  it.each([
+    ['generate', 'recommendations-generated'],
+    ['refresh', 'recommendations-refreshed'],
+  ] as const)('maps %s success to %s', async (action, expectedSource) => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation((detail) => sources.push(detail.source), target);
+
+    await runRecommendationWorkflowMutation(action, async () => undefined, target);
+    expect(sources).toEqual([expectedSource]);
+    unsubscribe();
+  });
+});
 
 function summary(overrides: Record<string, unknown>) {
   return {

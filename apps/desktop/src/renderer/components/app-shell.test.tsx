@@ -56,8 +56,8 @@ describe('Sidebar workspace navigation runtime', () => {
       onNavigate: () => undefined,
     }) as ReactElement;
     const buttons = collectElements(tree, (element) => element.type === 'button');
-    const product = buttons.find((button) => collectText(button).includes('产品工作台'));
-    const today = buttons.find((button) => collectText(button).includes('今日工作'));
+    const product = buttons.find((button) => collectText(button).includes('产品/商品工作台'));
+    const today = buttons.find((button) => collectText(button).includes('今日任务'));
 
     expect(product?.props['aria-current']).toBe('page');
     expect(product?.props['aria-busy']).toBe(true);
@@ -73,7 +73,7 @@ describe('Sidebar workspace navigation runtime', () => {
       onNavigate: (intent) => visited.push(intent),
     }) as ReactElement;
     const buttons = collectElements(tree, (element) => element.type === 'button');
-    const product = buttons.find((button) => collectText(button).includes('产品工作台'));
+    const product = buttons.find((button) => collectText(button).includes('产品/商品工作台'));
 
     expect(product?.props.type).toBe('button');
     product?.props.onClick();
@@ -90,7 +90,7 @@ describe('Sidebar workspace navigation runtime', () => {
     const lists = collectElements(tree, (element) => element.props.role === 'list');
     const listItems = collectElements(tree, (element) => element.props.role === 'listitem');
     const buttons = collectElements(tree, (element) => element.type === 'button');
-    const decisions = buttons.find((button) => collectText(button).includes('运营决策'));
+    const decisions = buttons.find((button) => collectText(button).includes('建议与审批'));
     const system = buttons.find((button) => collectText(button).includes('系统与交付'));
 
     expect(tree.type).toBe('nav');

@@ -15,8 +15,22 @@ import {
 import { firstIncompleteReadbackStep, readbackWizardSteps, type ReadbackWizardStepId } from '../readback-wizard';
 import type { RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
+import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
+import type { WorkflowEventTarget } from '../workflow-invalidation';
 
 type AiThresholdSuggestions = NonNullable<NonNullable<RecommendationView['evidence']>['aiThresholdSuggestions']>;
+
+export function runReadbackWorkflowMutation<T>(
+  action: 'create' | 'verify',
+  task: () => Promise<T>,
+  target?: WorkflowEventTarget,
+): Promise<T> {
+  return runWorkflowInvalidatingMutation(
+    action === 'create' ? 'readback-created' : 'readback-verified',
+    task,
+    target,
+  );
+}
 export type ReadbackCaptureSlot = 'approval' | 'before' | 'after' | 'readback';
 export type ReadbackContractStatus = 'ready' | 'pending' | 'blocked';
 export interface ReadbackContractCheck {
@@ -1268,6 +1282,10 @@ export function ReadbackPage() {
     await runReadbackAction('export-evidence', async () => {
       setMessage(null);
       try {
+        const exportAdReadbackEvidence = (window as any).electronAPI?.exportAdReadbackEvidence;
+        if (typeof exportAdReadbackEvidence !== 'function') {
+          throw new Error('回读证据导出接口未暴露。');
+        }
         const scopeText = [
           form.storeName,
           form.marketplaceCode,
@@ -1277,7 +1295,7 @@ export function ReadbackPage() {
           `${form.entityType}=${form.entityName}`,
           form.actionType,
         ].filter(Boolean).join(' / ');
-        const result = await (window as any).electronAPI?.exportAdReadbackEvidence?.({
+        const result = await runReadbackWorkflowMutation<any>('create', () => exportAdReadbackEvidence({
           target: {
             storeName: form.storeName,
             marketplaceCode: form.marketplaceCode,
@@ -1366,7 +1384,7 @@ export function ReadbackPage() {
             executedBy: form.executedBy,
             appExecutorUsed: false,
           },
-        });
+        }));
         setExportResult(result || null);
         setSessionResult(null);
         setSessionCheck(null);
@@ -1462,7 +1480,11 @@ export function ReadbackPage() {
     }
     await runReadbackAction('fill-session', async () => {
       try {
-        const result = await (window as any).electronAPI?.fillAdReadbackSession?.({ sessionDir });
+        const fillAdReadbackSession = (window as any).electronAPI?.fillAdReadbackSession;
+        if (typeof fillAdReadbackSession !== 'function') {
+          throw new Error('回读证据生成接口未暴露。');
+        }
+        const result = await runReadbackWorkflowMutation<any>('create', () => fillAdReadbackSession({ sessionDir }));
         setSessionFillResult(result || null);
         setSessionVerifyResult(null);
         setCopyNotice(result?.readyForVerifier ? '回读证据已生成，等待最终校验。' : '回读证据仍未就绪。');
@@ -1480,7 +1502,11 @@ export function ReadbackPage() {
     }
     await runReadbackAction('verify-evidence', async () => {
       try {
-        const result = await (window as any).electronAPI?.verifyAdReadbackEvidence?.({ evidencePath });
+        const verifyAdReadbackEvidence = (window as any).electronAPI?.verifyAdReadbackEvidence;
+        if (typeof verifyAdReadbackEvidence !== 'function') {
+          throw new Error('回读证据校验接口未暴露。');
+        }
+        const result = await runReadbackWorkflowMutation<any>('verify', () => verifyAdReadbackEvidence({ evidencePath }));
         setSessionVerifyResult(result || null);
         setCopyNotice(result?.ready ? '回读证据校验通过。' : '回读证据校验未通过。');
       } catch (caught) {

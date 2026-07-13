@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import type { RecommendationView } from '../types';
-import { aiThresholdSummary, approvalBlockers, approvalDecisionButtonView, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, parseApprovalSelectionIntent, strategyLabel } from './approval-page';
+import { aiThresholdSummary, approvalBlockers, approvalDecisionButtonView, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, parseApprovalSelectionIntent, runApprovalWorkflowMutation, strategyLabel } from './approval-page';
+import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
+
+describe('approval workflow invalidation contract', () => {
+  it.each([
+    ['approve', 'approval-approved'],
+    ['reject', 'approval-rejected'],
+  ] as const)('maps %s success to %s', async (decision, expectedSource) => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation((detail) => sources.push(detail.source), target);
+
+    await runApprovalWorkflowMutation(decision, async () => undefined, target);
+    expect(sources).toEqual([expectedSource]);
+    unsubscribe();
+  });
+});
 
 function recommendation(sourceRow: number | undefined = 12, sourceFiles = ['C:/reports/user-search-term.xlsx']): RecommendationView {
   return {

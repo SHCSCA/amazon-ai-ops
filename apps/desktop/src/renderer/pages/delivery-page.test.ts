@@ -1,6 +1,23 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryOpenPathButtonView, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy } from './delivery-page';
+import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryOpenPathButtonView, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy, runDeliveryWorkflowMutation } from './delivery-page';
+import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
+
+describe('delivery workflow invalidation contract', () => {
+  it.each([
+    ['refresh', 'delivery-refreshed'],
+    ['create-readback', 'readback-created'],
+    ['verify-readback', 'readback-verified'],
+  ] as const)('maps %s success to %s', async (action, expectedSource) => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation((detail) => sources.push(detail.source), target);
+
+    await runDeliveryWorkflowMutation(action, async () => undefined, target);
+    expect(sources).toEqual([expectedSource]);
+    unsubscribe();
+  });
+});
 
 describe('buildDeliveryOverviewFacts', () => {
   it('keeps the delivery first screen to short operator facts instead of long manifest paths', () => {

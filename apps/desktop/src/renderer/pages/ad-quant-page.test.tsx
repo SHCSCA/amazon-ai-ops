@@ -1,7 +1,20 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AiDiagnosisRunView, BusinessQuantDiagnostic, BusinessQuantTimeline } from '../types';
-import { adQuantActionButtonView, adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, buildWasteRiskSpendTile, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
+import { adQuantActionButtonView, adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, buildWasteRiskSpendTile, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, runAdQuantDiagnosisWorkflowMutation, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
+import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
+
+describe('ad quant workflow invalidation contract', () => {
+  it('invalidates workflow evidence after a successful diagnosis mutation', async () => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation((detail) => sources.push(detail.source), target);
+
+    await expect(runAdQuantDiagnosisWorkflowMutation(async () => 'diagnosed', target)).resolves.toBe('diagnosed');
+    expect(sources).toEqual(['ad-quant-diagnosis']);
+    unsubscribe();
+  });
+});
 
 describe('strategyDiagnosisSourceLabel', () => {
   it('uses Chinese fallback copy for rule-based strategy diagnosis', () => {

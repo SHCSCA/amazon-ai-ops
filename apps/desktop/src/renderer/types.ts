@@ -487,11 +487,19 @@ export interface OperationEventView {
 }
 
 export interface DeliveryReadinessGate {
+  id?: string;
   name: string;
   status?: string;
   ok: boolean;
   evidencePath?: string | null;
   message?: string;
+}
+
+export interface DeliveryReadinessFailure {
+  gateId: string;
+  code: string;
+  message: string;
+  evidencePath: string | null;
 }
 
 export interface DeliveryReadinessView {
@@ -504,6 +512,7 @@ export interface DeliveryReadinessView {
   generatedAt?: string;
   checkedAt?: string;
   gates: DeliveryReadinessGate[];
+  failures?: DeliveryReadinessFailure[];
   gatesSummary?: {
     total: number;
     passed: number;

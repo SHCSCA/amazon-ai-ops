@@ -1,0 +1,25 @@
+{
+  "listing": {
+    "readReady": true,
+    "draftReady": true,
+    "contentCount": 1,
+    "fullContentCount": 1,
+    "draftCount": 1,
+    "aiDraftCount": 1,
+    "ruleFallbackDraftCount": 0,
+    "latestAsin": "B001",
+    "latestUpdatedAt": "2026-07-07T09:00:00.000Z"
+  },
+  "readback": {
+    "verifiedCount": 1,
+    "latestStatus": "PASS",
+    "latestJsonPath": "D:/evidence/real-ad-execution-readback-pass.json",
+    "latestUpdatedAt": "2026-07-07T10:00:00.000Z"
+  },
+  "package": {
+    "installerAvailable": true,
+    "portablePath": "D:/release/AmazonAIOpsAgent-1.5.0-portable.exe",
+    "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "latestBuiltAt": "2026-07-07T11:00:00.000Z"
+  }
+}

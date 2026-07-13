@@ -20,6 +20,8 @@ describe('verify ad execution fail-closed contract', () => {
     expect(output).toContain('[PASS] readback wizard exposes semantic tab panels');
     expect(output).toContain('[PASS] readback wizard panels expose stable reciprocal ids');
     expect(output).toContain('[PASS] readback wizard panels reference their controlling tabs');
+    expect(output).toContain('[PASS] recommendation generation invalidates workflow state after the scoped IPC succeeds');
+    expect(output).toContain('[PASS] renderer sends complete recommendation generation scope to main process');
     expect(result.status).toBe(0);
   });
 });
