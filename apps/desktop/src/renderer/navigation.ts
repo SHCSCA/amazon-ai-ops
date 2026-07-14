@@ -92,8 +92,8 @@ const intentRoutes = new Map<string, AppRoute>(
   Object.entries(LEGACY_ROUTE_INTENTS).map(([route, intent]) => [intentKey(intent), route as AppRoute]),
 );
 
-// The decided subview is reserved for the later Decisions workspace migration.
-// Until that page exists, it safely lands on the existing approval page.
+// The Decisions workspace preserves the canonical decided subview while its
+// legacy route alias keeps sidebar highlighting and older deep links stable.
 intentRoutes.set(intentKey({ workspace: 'decisions', subview: 'decided' }), 'approval');
 
 function intentKey(intent: Pick<NavigationIntent, 'workspace' | 'subview'>): string {

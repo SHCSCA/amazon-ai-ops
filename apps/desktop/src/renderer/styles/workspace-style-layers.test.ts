@@ -7,6 +7,7 @@ const styleFiles = [
   'shell.css',
   'workspace.css',
   'priority-table.css',
+  'decisions.css',
   'states-motion.css',
 ] as const;
 
@@ -70,6 +71,41 @@ describe('task-first workspace style layers', () => {
     expect(css).toMatch(/\.workspace-gap-list\s*\{/);
     expect(css).toMatch(/\.workspace-technical-surface \.state-light-card\s*\{[^}]*box-shadow:\s*none/s);
     expect(css).toMatch(/\.workspace-technical-surface \.dashboard-history-summary-grid > div\s*\{[^}]*box-shadow:\s*none/s);
+  });
+
+  it('keeps the unified decisions queue dense and preserves all five columns at 1200px', () => {
+    const css = style('decisions.css');
+
+    expect(css).toMatch(/\.decisions-workspace \.priority-table\s*\{[^}]*min-width:\s*680px[^}]*table-layout:\s*fixed/s);
+    expect(css).toMatch(/\.decisions-table-cell strong,[\s\S]*text-overflow:\s*ellipsis/);
+    expect(css).toMatch(/\.decisions-selection-status\s*\{[^}]*min-height:\s*34px[^}]*background:\s*var\(--workspace-surface-subtle\)/s);
+    expect(css).toMatch(/\.decisions-selection-control\s*\{[^}]*display:\s*flex[^}]*align-items:\s*center/s);
+    expect(css).toMatch(/\.decisions-selection-checkbox:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--workspace-focus\)/s);
+    expect(css).toMatch(/\.decisions-technical-disclosure\s*\{[^}]*border-top:\s*1px solid var\(--workspace-border\)/s);
+    expect(css).toMatch(/@media\s*\(max-width:\s*1280px\)[\s\S]*\.decisions-workspace \.priority-table th:nth-child\(4\),[\s\S]*display:\s*table-cell/);
+    expect(css).toMatch(/\.decisions-table-cell--decision\[data-decision-tone="confirmed"\] strong/);
+    expect(css).toMatch(/\.decisions-table-cell--decision\[data-decision-tone="blocked"\] strong/);
+  });
+
+  it('uses an inline inspector from 1400px and a fixed, internally scrolling drawer below it', () => {
+    const css = style('decisions.css');
+
+    expect(css).toMatch(/@media\s*\(min-width:\s*1400px\)[\s\S]*\.decisions-workbench-layout:has\(\.responsive-inspector--inline\)[^{]*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(350px, 360px\)/s);
+    expect(css).toMatch(/\.responsive-inspector__backdrop\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*400[^}]*inset:\s*0/s);
+    expect(css).toMatch(/\.responsive-inspector--drawer \.responsive-inspector__body\s*\{[^}]*overflow-y:\s*auto/s);
+    expect(css).toMatch(/\.responsive-inspector--drawer \.responsive-inspector__header\s*\{[^}]*position:\s*sticky[^}]*z-index:\s*1[^}]*background:\s*var\(--workspace-surface\)/s);
+    expect(css).toMatch(/\.responsive-inspector--drawer\s*\{[^}]*width:\s*min\(460px, calc\(100vw - 32px\)\)[^}]*overflow:\s*hidden/s);
+    expect(css).toMatch(/\.responsive-inspector:focus-visible\s*\{[^}]*outline:/s);
+  });
+
+  it('makes read-only, blocked, confirmed, danger, and busy decision states visually distinct', () => {
+    const css = style('decisions.css');
+
+    expect(css).toMatch(/\.decisions-readonly-decision\s*\{[^}]*background:\s*var\(--workspace-surface-subtle\)/s);
+    expect(css).toMatch(/\.decisions-blockers\s*\{[^}]*border-left:\s*3px solid var\(--workspace-error\)/s);
+    expect(css).toMatch(/\.decisions-feedback--ready\s*\{[^}]*background:\s*var\(--workspace-confirmed-soft\)/s);
+    expect(css).toMatch(/\.decisions-decision-actions \.danger-button\s*\{[^}]*background:\s*var\(--workspace-surface\)[^}]*color:\s*var\(--workspace-error\)/s);
+    expect(css).toMatch(/\.responsive-inspector\[aria-busy="true"\]\s*\{[^}]*cursor:\s*wait/s);
   });
 
   it('uses purposeful transitions, never transition all, and provides reduced-motion fallback', () => {

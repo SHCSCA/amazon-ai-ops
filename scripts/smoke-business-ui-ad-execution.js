@@ -14,9 +14,9 @@ const NAV_RE = {
   recommendations: /优化建议草案|优化建议/,
 };
 const HEADING_RE = {
-  approval: /审批历史中心|审批中心/,
+  approval: /建议与审批/,
   readback: /结果核对|结果核对/,
-  recommendations: /优化建议草案|优化建议/,
+  recommendations: /建议与审批/,
 };
 
 function fail(message, details) {
@@ -108,11 +108,6 @@ async function clickReadbackStep(page, title) {
   await page.getByRole('tab', { name: new RegExp(escapeRegExp(label)) }).click();
 }
 
-async function clickRecommendationGeneration(page) {
-  await openEvidenceDisclosures(page);
-  await page.getByRole('button', { name: /1\. 生成解释/ }).first().click();
-}
-
 async function assertGlobalGuards(page, key) {
   const textContent = await bodyText(page);
   const scopeRangeTitle = await page.locator('.scope-compact-trigger').getAttribute('title');
@@ -128,11 +123,39 @@ async function navigateBusinessPage(page, nav, route) {
   await navigateLegacyRoute(page, route);
 }
 
-async function closeApprovalDecisionModal(page) {
-  const dialog = page.getByRole('dialog', { name: '人工审批决定' });
-  if (await dialog.isVisible().catch(() => false)) {
-    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+async function waitForDecisionsSubview(page, subview) {
+  const rootLocator = page.locator('[data-workspace="decisions"]');
+  await rootLocator.waitFor({ state: 'visible', timeout: 5000 });
+  await page.waitForFunction((expectedSubview) => (
+    document.querySelector('[data-workspace="decisions"]')?.getAttribute('data-workspace-subview') === expectedSubview
+  ), subview, { timeout: 5000 });
+  const headings = page.getByRole('heading', { name: '建议与审批', level: 1 });
+  if (await headings.count() !== 1) {
+    fail('Decisions workspace must expose exactly one h1', `subview=${subview}, count=${await headings.count()}`);
   }
+  return rootLocator;
+}
+
+async function assertNoPageHorizontalOverflow(page, context) {
+  const overflow = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  if (overflow.scrollWidth > overflow.clientWidth + 1) {
+    fail('Page has horizontal overflow', `${context}: ${JSON.stringify(overflow)}`);
+  }
+}
+
+async function captureViewportScreenshot(page, evidence, key, runId, details = {}) {
+  const screenshotPath = path.join(evidenceDir, `business-ui-ad-execution-${key}-${runId}.png`);
+  await page.screenshot({ path: screenshotPath, fullPage: false });
+  evidence.pages[key] = {
+    screenshotPath,
+    viewport: page.viewportSize(),
+    bodyTextSample: (await bodyText(page)).slice(0, 1800),
+    ...details,
+  };
+  return screenshotPath;
 }
 
 async function openReadbackSourceEditor(page) {
@@ -156,7 +179,14 @@ async function main() {
   }
   fs.mkdirSync(evidenceDir, { recursive: true });
   const runId = Date.now();
-  const evidence = { generatedAt: new Date().toISOString(), rendererIndex, pages: {}, consoleErrors: [] };
+  const evidence = {
+    generatedAt: new Date().toISOString(),
+    rendererIndex,
+    pages: {},
+    consoleErrors: [],
+    pageErrors: [],
+    tabTrajectory: [],
+  };
 
   let server;
   let browser;
@@ -167,6 +197,9 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1480, height: 1080 } });
     page.on('console', (message) => {
       if (message.type() === 'error') evidence.consoleErrors.push(message.text());
+    });
+    page.on('pageerror', (error) => {
+      evidence.pageErrors.push(String(error?.stack || error?.message || error));
     });
 
   await page.addInitScript(() => {
@@ -556,6 +589,8 @@ async function main() {
     window.__hideRecommendations = false;
     window.__mockAiConfigured = true;
     window.__mockBlockedPipeline = false;
+    window.__mockDecisionDelayMs = 0;
+    window.__mockRecommendationReadDelayMs = 0;
     window.__lastApprovalDecision = null;
     window.electronAPI = {
       getState: async () => ({
@@ -591,6 +626,9 @@ async function main() {
       }),
       getRecommendations: async (filter) => {
         window.__businessUiActionLog.push({ type: 'getRecommendations', filter });
+        if (window.__mockRecommendationReadDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, window.__mockRecommendationReadDelayMs));
+        }
         if (window.__hideRecommendations) return [];
         if (filter?.status === 'pending' && window.__mockAiNoEvidenceRecommendation) {
           return [{
@@ -784,6 +822,12 @@ async function main() {
         if (!Number.isInteger(input?.expectedRevision) || input.expectedRevision !== recommendation.revision) {
           throw new Error('Recommendation revision conflict: refresh before approving');
         }
+        if (!String(input?.decision?.approvedBy || '').trim()) {
+          throw new Error('审批被阻断：批准前必须填写审批人。');
+        }
+        if (window.__mockDecisionDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, window.__mockDecisionDelayMs));
+        }
         window.__lastApprovalDecision = input?.decision || null;
         recommendationState.set(input.id, {
           ...recommendation,
@@ -801,6 +845,15 @@ async function main() {
         }
         if (!Number.isInteger(input?.expectedRevision) || input.expectedRevision !== recommendation.revision) {
           throw new Error('Recommendation revision conflict: refresh before rejecting');
+        }
+        if (!String(input?.decision?.rejectedBy || '').trim()) {
+          throw new Error('审批被阻断：拒绝前必须填写处理人。');
+        }
+        if (!String(input?.decision?.note || '').trim()) {
+          throw new Error('审批被阻断：拒绝前必须填写拒绝原因。');
+        }
+        if (window.__mockDecisionDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, window.__mockDecisionDelayMs));
         }
         window.__lastRejectedDecision = input?.decision || null;
         recommendationState.set(input.id, {
@@ -914,413 +967,606 @@ async function main() {
   await expectInBody(page, 'manual_ad_execution_batch', 'manual batch scope value');
   await page.locator('.scope-compact-trigger').click();
 
-  const routes = [
-    { nav: NAV_RE.recommendations, heading: HEADING_RE.recommendations, label: '优化建议', key: 'recommendations' },
-    { nav: NAV_RE.approval, heading: HEADING_RE.approval, label: '审批中心', key: 'approval' },
-    { nav: NAV_RE.readback, heading: HEADING_RE.readback, label: '结果核对', key: 'readback' },
+  const legacyDecisionRoutes = [
+    {
+      route: 'recommendations',
+      subview: 'recommendations',
+      label: '旧优化建议入口',
+      key: 'legacyRecommendations',
+    },
+    {
+      route: 'approval',
+      subview: 'approval',
+      label: '旧审批中心入口',
+      key: 'legacyApproval',
+    },
   ];
-  for (const { nav, heading, label, key } of routes) {
-    await navigateBusinessPage(page, nav, key);
-    await page.getByRole('heading', { name: heading, level: 1 }).waitFor();
+  for (const { route, subview, label, key } of legacyDecisionRoutes) {
+    await navigateBusinessPage(page, NAV_RE[route], route);
+    await waitForDecisionsSubview(page, subview);
     await assertGlobalGuards(page, key);
-    const screenshotPath = path.join(evidenceDir, `business-ui-ad-execution-${key}-${runId}.png`);
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    evidence.pages[key] = {
+    await captureViewportScreenshot(page, evidence, key, runId, {
       label,
-      screenshotPath,
-      bodyTextSample: (await bodyText(page)).slice(0, 1800),
-    };
+      legacyRoute: route,
+      workspace: 'decisions',
+      subview,
+    });
   }
 
+  await navigateBusinessPage(page, NAV_RE.readback, 'readback');
+  await page.getByRole('heading', { name: HEADING_RE.readback, level: 1 }).waitFor();
+  await assertGlobalGuards(page, 'readback');
+  await captureViewportScreenshot(page, evidence, 'readback', runId, {
+    label: '结果核对',
+    legacyRoute: 'readback',
+  });
+
+  await page.setViewportSize({ width: 1200, height: 700 });
   await navigateBusinessPage(page, NAV_RE.recommendations, 'recommendations');
-  await expectVisible(page, '建议动作');
-  await expectVisible(page, '当前有 1 条可送审动作，尚未选择。');
-  await expectInBody(page, '需复核 1', 'recommendation task review count');
-  await expectInBody(page, '缺证据 0', 'recommendation task evidence blocker count');
-  await expectVisible(page, '去审批中心');
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, '建议处理路径');
-  await expectVisible(page, '1. 生成解释');
-  await expectVisible(page, '2. 审批决策');
-  await expectVisible(page, '3. 结果核对');
-  await expectVisible(page, '本页不审批、不执行广告、不写入 Amazon；真实动作必须在审批后逐条记录截图和回读证据。');
-  await expectVisible(page, '建议上下文检查');
-  await expectVisible(page, '建议决策总览');
-  await expectVisible(page, '可送审动作');
-  await expectVisible(page, '人工复核');
-  await expectVisible(page, 'AI 洞察未采纳');
-  await expectVisible(page, '证据阻断');
-  await expectInBody(page, '只把证据完整、可绑定当前广告对象的动作送入审批中心。', 'recommendation decision routing summary');
-  await expectVisible(page, 'AI 可用');
-  await expectVisible(page, 'deepseek-chat');
-  await expectInBody(page, '生成建议时会调用 AI 参与产品阶段诊断、动态阈值建议和动作解释。', 'recommendation ai readiness');
-  await expectVisible(page, '真实广告事实');
-  await expectVisible(page, '8/8 类真实报表 / 24 行 DB 指标');
-  await expectVisible(page, '只使用当前范围真实 xlsx/xls/csv 导入后的每日广告事实。');
-  await expectVisible(page, '可执行口径');
-  await expectVisible(page, '0 行 / 0 个诊断对象');
-  await expectVisible(page, '建议只绑定 keyword、search term、target 等能落到广告对象的行。');
-  await expectVisible(page, '阶段与运营上下文');
-  await expectVisible(page, '1 条时间线 / 1 条运营事件');
-  await expectVisible(page, 'AI 会结合对象生命周期、Coupon、BD、调价、库存和 Listing 变更解释波动。');
-  await expectVisible(page, '本次 AI 输入');
-  await expectVisible(page, '广告事实 + 产品配置 + 运营事件 + 规则阈值 + 广告表现');
-  await expectVisible(page, 'AI 不直接读取审计包，也不会在缺真实数据时用 0 值生成建议。');
-  await expectVisible(page, '产品配置');
-  await expectVisible(page, '1 个产品 / 1 个有目标阈值');
-  await expectInBody(page, '目标 ACOS 35.0%', 'recommendation product target ACOS');
-  await expectVisible(page, '安全边界');
-  await expectVisible(page, '生成建议池');
-  for (const text of [
-    'AI + 规则并行决策模型',
-    '硬阈值与安全边界',
-    'AI 可用',
-    '规则和 AI 一致才进入普通审批；冲突、AI 独立洞察和样本不足进入人工复核。',
-    '建议只基于当前范围真实报表、产品配置和运营事件；没有导入指标时不调用 AI 生成建议。',
-  ]) {
-    await expectInBody(page, text, 'recommendation ai-rule decision model');
+  const decisionsRoot = await waitForDecisionsSubview(page, 'recommendations');
+  await decisionsRoot.locator('.priority-table tbody tr[aria-label]').first().waitFor({ timeout: 5000 });
+
+  const fiveColumnState = await decisionsRoot.locator('.priority-table thead th').evaluateAll((nodes) => nodes.map((node) => ({
+    label: String(node.textContent || '').trim(),
+    display: getComputedStyle(node).display,
+    width: node.getBoundingClientRect().width,
+  })));
+  const expectedDecisionColumns = ['动作', '对象', '当前 → 建议', '证据', '决策'];
+  if (fiveColumnState.length !== expectedDecisionColumns.length
+    || fiveColumnState.some((column, index) => (
+      column.label !== expectedDecisionColumns[index]
+      || column.display === 'none'
+      || column.width <= 0
+    ))) {
+    fail('Decisions table did not keep all five columns visible at 1200px', JSON.stringify(fiveColumnState));
   }
-  await expectVisible(page, '当前批次');
-  await expectVisible(page, 'AI/规则合并');
-  await expectVisible(page, '规则量化');
-  await expectVisible(page, '运营事件');
-  await expectVisible(page, '1 条进入 AI 上下文');
-  await expectVisible(page, '产品目标');
-  await expectInBody(page, 'TACOS 12.0%', 'recommendation product target TACOS');
-  await expectVisible(page, '2026-06-10 / 10% Coupon started');
-  await expectInBody(page, '2 条 AI 策略诊断，2 条 AI 文本解释，0 条纯规则兜底。', 'ai strategy/text split');
-  await expectVisible(page, 'AI参与 2');
-  await expectVisible(page, 'AI解释 2');
-  await expectVisible(page, '2 浪费 / 1 需处理');
-  await expectVisible(page, 'manual_ad_execution_batch');
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, '动作');
-  await expectVisible(page, '证据状态');
-  await expectVisible(page, '当前 -> 建议');
-  await expectVisible(page, '指标依据');
-  await expectVisible(page, '证据完整，可送审');
-  await expectVisible(page, '可送审');
-  await expectVisible(page, '关键词探索');
-  await expectVisible(page, '建议优先级与判断标准');
-  await expectInBody(page, '规则阈值：目标 ACOS 25.0% / 高 ACOS 50.0% / 无订单 30 点击 / 最低花费 $10.00', 'recommendation threshold summary');
-  await expectVisible(page, '调整规则阈值');
-  await expectVisible(page, '去审批中心');
-  await clickRecommendationGeneration(page);
-  await page.getByText('已生成 1 条新建议，规则候选 1 条，AI 候选 1 条，最终可审批动作 1 条，处理 24 行广告指标。', { exact: false }).waitFor({ timeout: 5000 });
-  await page.getByText('AI 已参与广告阶段诊断、动态阈值建议和 1/1 条规则候选解释。', { exact: false }).first().waitFor({ timeout: 5000 });
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, '本次生成 AI 参与状态');
-  await expectVisible(page, 'AI 已参与');
-  await expectVisible(page, '1 新建议 / 1 可审批动作');
-  await expectInBody(page, '可送审 1', 'formal recommendation count');
-  await expectInBody(page, '人工复核 1', 'manual review recommendation count');
-  await expectInBody(page, 'AI 洞察未采纳 0', 'insight only recommendation count');
-  await expectInBody(page, '证据阻断 0', 'blocked evidence recommendation count');
-  await expectInBody(page, '规则候选 1 条，AI 候选 1 条，刷新 0 条旧建议，跳过 0 条重复建议。', 'candidate source split');
-  await expectVisible(page, '1 AI 建议解释 / 0 规则解释');
-  await expectVisible(page, '事件上下文');
-  await expectVisible(page, '1 条运营事件');
-  await expectVisible(page, '已进入广告阶段诊断和动态阈值判断。');
-  await expectVisible(page, '产品上下文');
-  await expectVisible(page, '1 个产品配置');
-  await expectVisible(page, '广告阶段诊断');
-  await expectVisible(page, '关键词探索 / AI');
-  await expectVisible(page, '动态阈值建议');
-  await expectVisible(page, '目标 ACOS 35.0% / 高 ACOS 55.0% / 无订单 18 点击 / 最低花费 $15.00');
-  await expectInBody(page, 'AI 候选 1 条，', 'strategy diagnosis AI candidate count');
-  await expectInBody(page, '产品配置 1 个进入诊断上下文。', 'strategy diagnosis product context count');
-  await expectVisible(page, 'AI/规则合并诊断');
-  await expectVisible(page, '一致 1 / 规则独立 0 / AI 独立洞察 0 / 冲突 0 / 需复核 0');
-  await expectVisible(page, '本次没有返回额外过滤原因。');
-  await expectVisible(page, '来自当前保存的 DeepSeek/OpenAI Compatible 设置。');
-  await page.evaluate(() => {
-    window.__mockAiConfigured = false;
+  await assertNoPageHorizontalOverflow(page, '1200x700 decisions queue');
+
+  const drawerTrigger = decisionsRoot.locator('.priority-table tbody tr[aria-label]').first();
+  await drawerTrigger.evaluate((node) => node.setAttribute('data-smoke-drawer-trigger', 'true'));
+  await drawerTrigger.focus();
+  await drawerTrigger.press('Enter');
+  const drawer = page.getByRole('dialog');
+  await drawer.waitFor({ state: 'visible', timeout: 5000 });
+  if (await drawer.getAttribute('aria-modal') !== 'true'
+    || await drawer.getAttribute('data-inspector-mode') !== 'drawer') {
+    fail('1200px row inspector did not open as an aria-modal drawer');
+  }
+  const inertState = await page.evaluate(() => {
+    const dialog = document.querySelector('[role="dialog"][data-inspector-mode="drawer"]');
+    const backdrop = dialog?.closest('.responsive-inspector__backdrop');
+    const immediateSiblings = backdrop?.parentElement
+      ? Array.from(backdrop.parentElement.children).filter((node) => node !== backdrop)
+      : [];
+    return {
+      inertCount: document.querySelectorAll('[inert]').length,
+      immediateSiblingCount: immediateSiblings.length,
+      immediateSiblingsInert: immediateSiblings.every((node) => node.hasAttribute('inert') && node.inert === true),
+    };
   });
-  await clickRecommendationGeneration(page);
-  await page.getByText('未配置 AI Key，建议解释使用规则引擎兜底。', { exact: false }).first().waitFor({ timeout: 5000 });
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, '未配置 AI Key');
-  await expectVisible(page, '0 AI 建议解释 / 1 规则解释');
-  await expectVisible(page, '未配置 Key 时不会伪装成 AI 策略。');
-  await expectVisible(page, '一致 0 / 规则独立 1 / AI 独立洞察 0 / 冲突 0 / 需复核 0');
-  await expectVisible(page, '1 条规则独立建议缺少 AI 确认，仍需按证据完整性审批。');
-  await page.evaluate(() => {
-    window.__mockAiConfigured = true;
-    window.__mockAiNoOutput = true;
+  if (!inertState.inertCount
+    || !inertState.immediateSiblingCount
+    || !inertState.immediateSiblingsInert) {
+    fail('Drawer background was not made inert across the active ancestor path', JSON.stringify(inertState));
+  }
+
+  const drawerLayerState = await page.evaluate(() => {
+    const backdrop = document.querySelector('.responsive-inspector__backdrop');
+    const dialog = backdrop?.querySelector('[role="dialog"]');
+    const header = dialog?.querySelector('.responsive-inspector__header');
+    const close = dialog?.querySelector('button[aria-label="关闭详情检查器"]');
+    const topbar = document.querySelector('.topbar');
+    const rect = (node) => node?.getBoundingClientRect();
+    const headerRect = rect(header);
+    const closeRect = rect(close);
+    return {
+      backdropZ: Number.parseInt(getComputedStyle(backdrop).zIndex || '0', 10),
+      topbarZ: Number.parseInt(getComputedStyle(topbar).zIndex || '0', 10),
+      headerTop: headerRect?.top ?? null,
+      headerBottom: headerRect?.bottom ?? null,
+      closeTop: closeRect?.top ?? null,
+      closeBottom: closeRect?.bottom ?? null,
+      viewportHeight: window.innerHeight,
+    };
   });
-  await clickRecommendationGeneration(page);
-  await page.getByText('已尝试调用 AI，但本次没有可用 AI 输出，建议已回落到规则引擎。原因：AI 服务超时', { exact: false }).first().waitFor({ timeout: 5000 });
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, 'AI 已转为规则兜底：AI 服务超时');
-  await expectVisible(page, '0 AI 建议解释 / 1 规则解释');
-  await expectVisible(page, '一致 0 / 规则独立 1 / AI 独立洞察 0 / 冲突 0 / 需复核 0');
-  await page.evaluate(() => {
-    window.__mockAiNoOutput = false;
-    window.__mockScopedMetricsMissing = true;
+  if (!(drawerLayerState.backdropZ > drawerLayerState.topbarZ)
+    || drawerLayerState.headerTop === null
+    || drawerLayerState.headerTop < -1
+    || drawerLayerState.headerBottom > drawerLayerState.viewportHeight + 1
+    || drawerLayerState.closeTop === null
+    || drawerLayerState.closeTop < -1
+    || drawerLayerState.closeBottom > drawerLayerState.viewportHeight + 1) {
+    fail('Drawer title and close control were obscured by the global topbar', JSON.stringify(drawerLayerState));
+  }
+
+  const drawerClose = drawer.getByRole('button', { name: '关闭详情检查器' });
+  await drawerClose.focus();
+  await page.keyboard.press('Shift+Tab');
+  const wrappedBackward = await drawer.evaluate((node) => {
+    const focusable = Array.from(node.querySelectorAll(
+      'a[href], area[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+    ));
+    return focusable.length > 1
+      && document.activeElement === focusable[focusable.length - 1]
+      && node.contains(document.activeElement);
   });
-  await clickRecommendationGeneration(page);
-  await expectInBody(page, '当前产品范围缺少可回查的日级广告指标', 'scoped metrics binding gate error');
-  await expectInBody(page, '请先在产品管理选择 ASIN，并在数据导入与校验页重新导入当前批次真实报表后再运行 AI', 'scoped metrics binding recovery guidance');
-  await page.evaluate(() => {
-    window.__mockScopedMetricsMissing = false;
+  if (!wrappedBackward) fail('Drawer Shift+Tab did not wrap focus to the last control');
+  await page.keyboard.press('Tab');
+  const wrappedForward = await drawer.evaluate((node) => (
+    node.querySelector('button[aria-label="关闭详情检查器"]') === document.activeElement
+  ));
+  if (!wrappedForward) fail('Drawer Tab did not wrap focus to the first control');
+
+  await captureViewportScreenshot(page, evidence, 'decisionsDrawer1200', runId, {
+    label: '建议与审批抽屉检查器',
+    workspace: 'decisions',
+    subview: 'recommendations',
+    inspectorMode: 'drawer',
+    fiveColumns: fiveColumnState.map((column) => column.label),
+    inertState,
+    drawerLayerState,
+    focusTrap: { backward: wrappedBackward, forward: wrappedForward },
   });
-  await expectVisible(page, '详情');
-  await expectVisible(page, '可送审');
-  await page.getByRole('button', { name: '详情', exact: true }).first().click();
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, '送审判断');
-  await expectVisible(page, '证据完整');
-  await expectVisible(page, '可以送到审批中心');
-  await expectVisible(page, '匹配当前范围');
-  await expectVisible(page, '建议动作');
-  await expectVisible(page, '广告对象');
-  await expectVisible(page, '为什么建议');
-  await expectVisible(page, '策略诊断');
-  await expectVisible(page, 'AI 动态阈值');
-  await expectVisible(page, '规则量化');
-  await expectVisible(page, '规则阈值');
-  await expectVisible(page, '产品阶段');
-  await expectVisible(page, '产品目标 ACOS / TACOS');
-  await expectVisible(page, '目标净利率 / 最低价');
-  await expectVisible(page, '复核原因');
-  await expectVisible(page, '关联运营事件');
-  await expectVisible(page, '2026-06-10 / Coupon');
-  await expectVisible(page, '10% Coupon started');
-  await expectVisible(page, 'conversion_up / B0TESTASIN');
-  await expectVisible(page, '规则量化依据');
-  await expectVisible(page, 'ACOS 72.0% 高于高风险阈值 50.0%。');
-  await expectVisible(page, '目标 ACOS 25.0% / 高风险 50.0% / 无订单 30 点击 / 止损 $10.00');
-  await expectVisible(page, '目标 ACOS 35.0% / 高 ACOS 55.0% / 无订单 18 点击 / 最低花费 $15.00');
-  await expectVisible(page, '1 条进入诊断上下文');
-  await expectVisible(page, 'AI 策略诊断');
-  await expectVisible(page, 'Coupon 背景显示该产品仍处于测词阶段，同时需要收紧无订单花费。');
-  await expectVisible(page, 'AI/规则决策摘要');
-  await expectVisible(page, '规则与 AI 一致，且已绑定可回查证据。');
-  await expectVisible(page, '可进入审批，但仍需人工确认和结果核对。');
-  await expectVisible(page, 'AI 判断依据');
-  await expectVisible(page, '引用证据详情');
-  await expectVisible(page, '报表指标');
-  await expectVisible(page, '运营事件');
-  await expectVisible(page, 'tight match target / 2026-06-12');
-  await expectInBody(page, '报表 user_search_term');
-  await expectInBody(page, '$42.18 / $58.58 / 1 单 / 32 点击');
-  await expectInBody(page, '2026-06-10 / coupon / conversion_up');
-  await expectVisible(page, '规则：高 ACOS 且已有花费。');
-  await expectVisible(page, 'AI：Coupon 未带来足够转化。');
-  await expectVisible(page, '来源文件');
-  await expectVisible(page, '来源文件 1');
-  await expectVisible(page, '来源行号');
-  await expectVisible(page, '12');
-  await expectVisible(page, 'C:/reports/source_user_search_term.xlsx');
-  await expectInBody(page, '动作、对象、当前值、建议值和真实报表来源已绑定；审批中心仍会逐条重新校验。', 'recommendation evidence readiness');
-  await expectVisible(page, '只解释和送审，不执行广告动作');
-  await expectInBody(page, 'deepseek-chat', 'recommendation detail AI model');
-  await page.evaluate(() => {
-    window.__hideRecommendations = true;
+  await page.keyboard.press('Escape');
+  await drawer.waitFor({ state: 'detached', timeout: 5000 });
+  await page.waitForTimeout(100);
+  const drawerFocusState = await page.evaluate(() => ({
+    restored: document.activeElement?.getAttribute('data-smoke-drawer-trigger') === 'true',
+    activeElement: {
+      tagName: document.activeElement?.tagName || null,
+      className: document.activeElement?.getAttribute('class') || null,
+      ariaLabel: document.activeElement?.getAttribute('aria-label') || null,
+    },
+    triggerPresent: Boolean(document.querySelector('[data-smoke-drawer-trigger="true"]')),
+  }));
+  const drawerFocusRestored = drawerFocusState.restored;
+  if (!drawerFocusRestored) {
+    fail('Drawer Escape did not restore focus to the originating row', JSON.stringify(drawerFocusState));
+  }
+  if (await page.locator('[inert]').count()) fail('Drawer close did not restore background interactivity');
+  evidence.drawerInteraction = {
+    viewport: { width: 1200, height: 700 },
+    ariaModal: true,
+    inertState,
+    focusTrap: { backward: wrappedBackward, forward: wrappedForward },
+    escapeClosed: true,
+    focusRestored: drawerFocusRestored,
+  };
+
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.waitForTimeout(50);
+  const inlineTrigger = decisionsRoot.locator('.priority-table tbody tr[aria-label]').first();
+  await inlineTrigger.focus();
+  await inlineTrigger.press('Enter');
+  const inlineInspector = page.getByRole('complementary');
+  await inlineInspector.waitFor({ state: 'visible', timeout: 5000 });
+  if (await inlineInspector.getAttribute('data-inspector-mode') !== 'inline') {
+    fail('1400px row inspector did not open inline');
+  }
+  if (await page.getByRole('dialog').count()
+    || await page.locator('.responsive-inspector__backdrop').count()) {
+    fail('1400px inline inspector unexpectedly exposed a dialog or backdrop');
+  }
+  await assertNoPageHorizontalOverflow(page, '1400x900 inline decisions inspector');
+  const inlineLayoutState = await page.evaluate(() => {
+    const tableScroll = document.querySelector('[data-workspace="decisions"] .priority-table-scroll');
+    const table = tableScroll?.querySelector('.priority-table');
+    const inspector = document.querySelector('.responsive-inspector--inline');
+    const technical = inspector?.querySelector('details.decisions-technical-disclosure');
+    const decisionForm = inspector?.querySelector('.decisions-decision-form');
+    const technicalRect = technical?.getBoundingClientRect();
+    const decisionRect = decisionForm?.getBoundingClientRect();
+    return {
+      tableClientWidth: tableScroll?.clientWidth ?? null,
+      tableScrollWidth: tableScroll?.scrollWidth ?? null,
+      tableWidth: table?.getBoundingClientRect().width ?? null,
+      technicalOpen: technical?.hasAttribute('open') ?? null,
+      decisionBeforeTechnical: Boolean(
+        decisionRect
+        && technicalRect
+        && decisionRect.top < technicalRect.top
+      ),
+    };
   });
-  await page.getByRole('button', { name: '刷新建议' }).click();
-  await page.getByText('当前范围还没有待审批或需复核建议。', { exact: true }).waitFor({ timeout: 5000 });
-  await expectVisible(page, '为什么现在没有建议');
-  await expectVisible(page, '建议池为空');
-  await expectVisible(page, '本次生成可能已经完成但当前筛选状态没有待审批或需复核建议，或建议已被处理。');
-  await expectNotInBody(page, 'C:/reports/source_user_search_term.xlsx');
+  if (inlineLayoutState.tableClientWidth === null
+    || inlineLayoutState.tableScrollWidth > inlineLayoutState.tableClientWidth + 1
+    || inlineLayoutState.technicalOpen !== false
+    || !inlineLayoutState.decisionBeforeTechnical) {
+    fail('1400px inline inspector obscured the five-column queue or exposed technical detail before the decision task', JSON.stringify(inlineLayoutState));
+  }
+  await captureViewportScreenshot(page, evidence, 'decisionsInline1400', runId, {
+    label: '建议与审批内联检查器',
+    workspace: 'decisions',
+    subview: 'recommendations',
+    inspectorMode: 'inline',
+    inlineLayoutState,
+    pageHorizontalOverflow: false,
+  });
+  await inlineInspector.getByRole('textbox', { name: /审批人|处理人/ }).fill('Transient Row Owner');
+  await inlineInspector.getByRole('textbox', { name: /审批备注|拒绝原因/ }).fill('Transient row note must not cross rows.');
+  await inlineInspector.getByRole('button', { name: '关闭详情检查器' }).click();
+  await inlineInspector.waitFor({ state: 'detached', timeout: 5000 });
+  const secondInlineTrigger = decisionsRoot.locator('.priority-table tbody tr[aria-label]').nth(1);
+  await secondInlineTrigger.focus();
+  await secondInlineTrigger.press('Enter');
+  const secondInlineInspector = page.getByRole('complementary');
+  await secondInlineInspector.waitFor({ state: 'visible', timeout: 5000 });
+  const crossRowFormValues = await secondInlineInspector.locator('input, textarea').evaluateAll((nodes) => (
+    nodes.map((node) => node.value)
+  ));
+  if (crossRowFormValues.some((value) => value !== '')) {
+    fail('Decision form values leaked across selected rows', JSON.stringify(crossRowFormValues));
+  }
+  evidence.crossRowFormReset = {
+    fromRowIndex: 0,
+    toRowIndex: 1,
+    formValues: crossRowFormValues,
+    cleared: true,
+  };
+  await secondInlineInspector.getByRole('button', { name: '关闭详情检查器' }).click();
+  await secondInlineInspector.waitFor({ state: 'detached', timeout: 5000 });
+
+  async function recordTabState(step, expectedSubview) {
+    await waitForDecisionsSubview(page, expectedSubview);
+    const state = await page.evaluate(() => {
+      const rootElement = document.querySelector('[data-workspace="decisions"]');
+      const selectedTabs = Array.from(document.querySelectorAll('.decisions-tabs [role="tab"][aria-selected="true"]'));
+      const focusedTab = document.activeElement?.closest?.('.decisions-tabs [role="tab"]');
+      const panels = Array.from(document.querySelectorAll('[data-workspace="decisions"] [role="tabpanel"]'))
+        .filter((panel) => getComputedStyle(panel).display !== 'none');
+      return {
+        subview: rootElement?.getAttribute('data-workspace-subview') || null,
+        selectedTabCount: selectedTabs.length,
+        selectedTab: String(selectedTabs[0]?.textContent || '').trim(),
+        focusedTab: String(focusedTab?.textContent || '').trim(),
+        visibleTabpanelCount: panels.length,
+        tabpanelId: panels[0]?.id || null,
+      };
+    });
+    evidence.tabTrajectory.push({ step, ...state });
+    if (state.subview !== expectedSubview
+      || state.selectedTabCount !== 1
+      || state.visibleTabpanelCount !== 1) {
+      fail('Decisions tab semantics became inconsistent', JSON.stringify({ step, expectedSubview, state }));
+    }
+    return state;
+  }
+
+  const recommendationsTab = page.getByRole('tab', { name: /待判断/ });
+  await recommendationsTab.focus();
+  await recordTabState('initial:recommendations', 'recommendations');
+  await page.keyboard.press('ArrowRight');
+  const approvalTabState = await recordTabState('ArrowRight:approval', 'approval');
+  if (!approvalTabState.focusedTab.includes('待审批')) {
+    fail('ArrowRight did not move roving focus to 待审批', JSON.stringify(approvalTabState));
+  }
+  await page.keyboard.press('End');
+  const decidedTabState = await recordTabState('End:decided', 'decided');
+  if (!decidedTabState.focusedTab.includes('已决策')) {
+    fail('End did not move roving focus to 已决策', JSON.stringify(decidedTabState));
+  }
+  await page.keyboard.press('Home');
+  const homeTabState = await recordTabState('Home:recommendations', 'recommendations');
+  if (!homeTabState.focusedTab.includes('待判断')) {
+    fail('Home did not return roving focus to 待判断', JSON.stringify(homeTabState));
+  }
+
+  const alternateBatchId = 'manual_ad_execution_batch_next';
+  await page.evaluate(() => {
+    window.__mockRecommendationReadDelayMs = 500;
+  });
+  await setManualScopeBatch(page, alternateBatchId);
+  await page.getByRole('button', { name: '保存范围' }).click();
+  await page.waitForFunction((batchId) => (
+    (window.__businessUiActionLog || []).some((item) => (
+      item.type === 'getRecommendations' && item.filter?.batchId === batchId
+    ))
+  ), alternateBatchId, { timeout: 5000 });
+  await page.waitForFunction(() => (
+    Array.from(document.querySelectorAll('.decisions-tabs button')).length === 3
+      && Array.from(document.querySelectorAll('.decisions-tabs button')).every((node) => node.disabled)
+  ), null, { timeout: 2000 });
+  const publishedQueryLock = await page.evaluate(() => ({
+    oldRowsStillVisible: document.querySelectorAll('.priority-table tbody tr[aria-label]').length,
+    tabsLocked: Array.from(document.querySelectorAll('.decisions-tabs button')).every((node) => node.disabled),
+    checkboxesLocked: Array.from(document.querySelectorAll('.decisions-selection-checkbox')).every((node) => node.disabled),
+    taskActionsLocked: Array.from(document.querySelectorAll('.task-banner__actions button')).every((node) => node.disabled),
+  }));
+  if (!publishedQueryLock.tabsLocked
+    || !publishedQueryLock.checkboxesLocked
+    || !publishedQueryLock.taskActionsLocked) {
+    fail('Scope commit did not synchronously lock the previous query rows', JSON.stringify(publishedQueryLock));
+  }
+  if (publishedQueryLock.oldRowsStillVisible > 0) {
+    const lockedOldRow = decisionsRoot.locator('.priority-table tbody tr[aria-label]').first();
+    await lockedOldRow.focus();
+    await lockedOldRow.press('Enter');
+    await page.waitForTimeout(50);
+    if (await page.getByRole('dialog').count() || await page.getByRole('complementary').count()) {
+      fail('A previous-query row opened while the new scope was still unpublished');
+    }
+  }
+  await page.waitForFunction(() => (
+    Array.from(document.querySelectorAll('.decisions-tabs button')).length === 3
+      && Array.from(document.querySelectorAll('.decisions-tabs button')).every((node) => !node.disabled)
+  ), null, { timeout: 5000 });
+
+  const originalBatchReadsBeforeRestore = await page.evaluate(() => (
+    (window.__businessUiActionLog || []).filter((item) => (
+      item.type === 'getRecommendations' && item.filter?.batchId === 'manual_ad_execution_batch'
+    )).length
+  ));
+  await page.evaluate(() => {
+    window.__mockRecommendationReadDelayMs = 0;
+  });
+  await setManualScopeBatch(page, 'manual_ad_execution_batch');
+  await page.getByRole('button', { name: '保存范围' }).click();
+  await page.waitForFunction((before) => (
+    (window.__businessUiActionLog || []).filter((item) => (
+      item.type === 'getRecommendations' && item.filter?.batchId === 'manual_ad_execution_batch'
+    )).length > before
+  ), originalBatchReadsBeforeRestore, { timeout: 5000 });
+  await page.waitForFunction(() => (
+    Array.from(document.querySelectorAll('.decisions-tabs button')).length === 3
+      && Array.from(document.querySelectorAll('.decisions-tabs button')).every((node) => !node.disabled)
+  ), null, { timeout: 5000 });
+  evidence.publishedQueryLock = {
+    alternateBatchId,
+    ...publishedQueryLock,
+    oldRowInteractionBlocked: publishedQueryLock.oldRowsStillVisible > 0,
+    oldRowsHiddenDuringLock: publishedQueryLock.oldRowsStillVisible === 0,
+    originalBatchRestored: true,
+  };
+
+  const generationBefore = await page.evaluate(() => {
+    const statuses = ['pending', 'needs_review', 'approved', 'rejected'];
+    const log = window.__businessUiActionLog || [];
+    return {
+      generateCount: log.filter((item) => item.type === 'generateRecommendations').length,
+      getCounts: Object.fromEntries(statuses.map((status) => [
+        status,
+        log.filter((item) => item.type === 'getRecommendations' && item.filter?.status === status).length,
+      ])),
+    };
+  });
   await page.evaluate(() => {
     window.__mockNoRecommendationCandidates = true;
   });
-  await page.getByRole('button', { name: '生成优化建议', exact: true }).first().click();
-  await page.getByText('已生成 0 条新建议，规则候选 0 条，AI 候选 0 条，最终可审批动作 0 条，处理 24 行广告指标。', { exact: false }).waitFor({ timeout: 5000 });
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, 'AI 已参与诊断');
-  await expectVisible(page, '0 新建议 / 0 可审批动作');
-  await expectVisible(page, '一致 0 / 规则独立 0 / AI 独立洞察 0 / 冲突 0 / 需复核 0');
-  await expectVisible(page, '规则和 AI 都没有返回可合并的候选动作。');
-  await expectVisible(page, 'AI 仅生成洞察，未进入建议池');
-  await expectVisible(page, 'AI 已运行广告阶段诊断，但没有找到可安全绑定到当前真实指标的可审批动作。');
-  await expectInBody(page, '未进入建议池原因：规则和 AI 都没有返回可合并的候选动作。', 'no-candidate blocked reason');
-  await expectInBody(page, '先补齐证据和对象绑定：确认来源行、广告活动/广告组/关键词或投放对象能回查到当前真实报表', 'no-candidate next action');
-  await expectInBody(page, 'AI 没有返回可审批动作候选。', 'no-candidate AI action explanation');
-  await expectVisible(page, 'AI 诊断已完成，但未形成正式建议');
-  await expectVisible(page, '0 建议原因分布');
-  await expectVisible(page, '规则候选 0');
-  await expectVisible(page, 'AI 候选 0');
-  await expectVisible(page, '洞察未采纳 1');
-  await expectVisible(page, '最终可审批 0');
-  await expectVisible(page, '下一步处理顺序');
-  await expectVisible(page, '先回广告表现页查看风险对象和样本量');
-  await expectVisible(page, '补充运营事件或产品配置后重新生成');
-  await expectVisible(page, '确认广告活动、广告组、关键词/搜索词/投放对象能绑定真实报表行');
-  await expectVisible(page, 'AI 诊断摘要');
-  await expectVisible(page, '当前表现相对稳定，暂时没有足够证据支持调整出价或新增否定词。');
-  await expectVisible(page, '未进入建议池的原因');
-  await expectVisible(page, '下一步补证据');
-  await expectVisible(page, '回到广告表现页复核风险对象、样本量和规则阈值；必要时补充运营事件或产品配置后重新生成。');
-  await expectVisible(page, 'AI 洞察但未采纳');
-  await expectVisible(page, 'unbound no-candidate insight');
-  await expectVisible(page, '没有可绑定到当前真实指标的广告活动/广告组/对象。');
-  await expectVisible(page, '查看广告表现');
-  await expectVisible(page, '稳定转化 / AI');
-  await page.evaluate(() => {
-    window.__mockBlockedPipeline = true;
-    window.__hideRecommendations = true;
-    window.dispatchEvent(new Event('business-ui:data-updated'));
-  });
-  await page.getByText('缺真实数据，建议生成锁定', { exact: true }).waitFor({ timeout: 5000 });
-  await expectVisible(page, '当前不能生成建议的原因');
-  await expectVisible(page, '当前范围缺少真实 xlsx/xls/csv 原始报表文件');
-  await expectVisible(page, '当前范围没有写入 DB 的广告指标行');
-  await expectVisible(page, '当前范围没有 keyword/search term/target 等可执行口径指标');
-  const blockedGenerateDisabled = await page.getByRole('button', { name: '生成优化建议', exact: true }).first().isDisabled();
-  if (!blockedGenerateDisabled) {
-    fail('Blocked recommendation generation button should stay disabled until real files and DB metrics exist');
+  const generateButton = page.locator('.task-banner').getByRole('button', { name: /生成.*建议/ });
+  if (await generateButton.count() !== 1) {
+    fail('Recommendations subview must expose one task-level generate action', String(await generateButton.count()));
   }
+  await generateButton.click();
+  await page.waitForFunction((before) => {
+    const log = window.__businessUiActionLog || [];
+    const statuses = ['pending', 'needs_review', 'approved', 'rejected'];
+    return log.filter((item) => item.type === 'generateRecommendations').length > before.generateCount
+      && statuses.every((status) => (
+        log.filter((item) => item.type === 'getRecommendations' && item.filter?.status === status).length
+          > before.getCounts[status]
+      ));
+  }, generationBefore, { timeout: 5000 });
+  const generationAuthorityReload = await page.evaluate((before) => {
+    const statuses = ['pending', 'needs_review', 'approved', 'rejected'];
+    const log = window.__businessUiActionLog || [];
+    const generationCall = log.filter((item) => item.type === 'generateRecommendations').at(-1);
+    return {
+      generationCall,
+      authorityReloadCounts: Object.fromEntries(statuses.map((status) => [
+        status,
+        log.filter((item) => item.type === 'getRecommendations' && item.filter?.status === status).length
+          - before.getCounts[status],
+      ])),
+    };
+  }, generationBefore);
+  if (!generationAuthorityReload.generationCall) {
+    fail('Zero-candidate generation did not call the production IPC contract');
+  }
+  assertScopeParams(generationAuthorityReload.generationCall.params, 'generateRecommendations zero-candidate');
+  if (Object.values(generationAuthorityReload.authorityReloadCounts).some((count) => count < 1)) {
+    fail('Zero-candidate generation did not reload all authoritative statuses', JSON.stringify(generationAuthorityReload));
+  }
+  evidence.generationAuthorityReload = generationAuthorityReload;
   await page.evaluate(() => {
     window.__mockNoRecommendationCandidates = false;
-    window.__mockBlockedPipeline = false;
   });
-  await page.evaluate(() => {
-    window.__hideRecommendations = false;
-    window.dispatchEvent(new Event('business-ui:data-updated'));
-  });
-  await page.getByRole('button', { name: '刷新建议' }).click();
-  await expectVisible(page, '详情');
+  await decisionsRoot.locator('.priority-table tbody tr[aria-label]').first().waitFor({ timeout: 5000 });
+  const authoritativeRowsAfterGeneration = await decisionsRoot.locator('.priority-table tbody tr[aria-label]').count();
+  if (authoritativeRowsAfterGeneration !== 2) {
+    fail('Zero-candidate generation replaced authoritative rows with a synthetic response', String(authoritativeRowsAfterGeneration));
+  }
 
-  await navigateBusinessPage(page, NAV_RE.approval, 'approval');
-  await expectVisible(page, '审批队列');
-  await expectVisible(page, '先选择一条动作，再批准或拒绝；本页只记录人工决策，不执行广告。');
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, '审批安全边界');
-  await expectVisible(page, '仅审批，不执行');
-  await expectVisible(page, '审批处理要求');
-  await expectVisible(page, '批准后下一步');
-  await expectVisible(page, '在结果核对页补录审批凭证、执行前/执行后截图、回读值和现场行证明。');
-  await page.getByRole('button', { name: '复核队列' }).click();
-  await openEvidenceDisclosures(page);
-  await expectInBody(page, 'AI 独立洞察不能直接批准');
-  await expectInBody(page, '规则量化要求人工复核');
-  await page.getByRole('button', { name: '处理' }).first().click();
-  await expectVisible(page, '需要复核');
-  await expectVisible(page, '暂不能批准');
-  await openEvidenceDisclosures(page);
-  await expectInBody(page, '这条建议不能走普通批准');
-  await page.getByRole('button', { name: '暂不能批准' }).evaluate((node) => {
-    if (!node.disabled) throw new Error('Blocked review recommendation approve button was not disabled');
-  });
-  await closeApprovalDecisionModal(page);
-  await page.getByRole('button', { name: '待审批' }).click();
-  await page.evaluate(() => {
-    window.__mockAiNoEvidenceRecommendation = true;
-    window.dispatchEvent(new Event('business-ui:data-updated'));
-  });
-  await page.getByRole('button', { name: '复核队列' }).click();
-  await openEvidenceDisclosures(page);
-  await expectInBody(page, 'AI 独立洞察不能直接批准');
-  await page.getByRole('button', { name: '待审批' }).click();
-  await page.waitForFunction(() => window.__businessUiActionLog?.some((item) => item.type === 'getRecommendations' && item.filter?.status === 'pending'));
-  await page.getByRole('button', { name: '处理' }).first().click();
-  await expectVisible(page, '不能普通批准');
-  await expectVisible(page, '暂不能批准');
-  await openEvidenceDisclosures(page);
-  await expectInBody(page, 'AI 建议缺少可回查证据引用');
-  await page.getByRole('button', { name: '暂不能批准' }).evaluate((node) => {
-    if (!node.disabled) throw new Error('AI recommendation without evidence refs approve button was not disabled');
-  });
-  await closeApprovalDecisionModal(page);
-  await page.evaluate(() => {
-    window.__mockAiNoEvidenceRecommendation = false;
-    window.__mockAiExplanationOnlyRecommendation = true;
-    window.dispatchEvent(new Event('business-ui:data-updated'));
-  });
-  await page.getByRole('button', { name: '复核队列' }).click();
-  await openEvidenceDisclosures(page);
-  await expectInBody(page, 'AI 独立洞察不能直接批准');
-  await page.getByRole('button', { name: '待审批' }).click();
-  await expectInBody(page, 'ai explanation only target');
-  await page.getByRole('button', { name: '处理' }).first().click();
-  await expectNotInBody(page, 'AI 建议缺少可回查证据引用');
-  await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).evaluate((node) => {
-    if (node.disabled) throw new Error('Rule recommendation with AI explanation only should remain approvable');
-  });
-  await closeApprovalDecisionModal(page);
-  await page.evaluate(() => {
-    window.__mockAiNoEvidenceRecommendation = false;
-    window.__mockAiExplanationOnlyRecommendation = false;
-    window.dispatchEvent(new Event('business-ui:data-updated'));
-  });
-  await page.getByRole('button', { name: '复核队列' }).click();
-  await openEvidenceDisclosures(page);
-  await expectInBody(page, 'AI 独立洞察不能直接批准');
-  await page.getByRole('button', { name: '待审批' }).click();
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, '广告组合');
-  await expectVisible(page, 'ASIN');
-  await expectVisible(page, 'D6 Portfolio');
-  await expectVisible(page, 'B0TESTASIN');
-  await page.getByRole('button', { name: '处理' }).first().click();
-  await expectVisible(page, '可以批准');
-  await openEvidenceDisclosures(page);
-  await expectVisible(page, '审批人、备注、范围和数据批次会写入建议证据；真实广告后台操作和审批凭证路径仍必须在“结果核对”页逐条补齐。');
-  await expectVisible(page, 'AI/规则决策摘要');
-  await expectVisible(page, '规则与 AI 一致，且已绑定可回查证据。');
-  await expectVisible(page, '可进入审批，但仍需人工确认和结果核对。');
-  await expectVisible(page, '当前值/建议值');
-  await expectVisible(page, '来源文件');
-  await expectVisible(page, '当前批次');
-  await expectVisible(page, '来源批次');
-  await expectVisible(page, '来源批次匹配');
-  await expectVisible(page, '指标日期');
-  await expectVisible(page, '对象类型');
-  await expectVisible(page, '审批预检');
-  await expectVisible(page, '通过');
-  await expectVisible(page, 'AI/规则决策关系');
-  await expectVisible(page, '规则+AI 一致');
-  await expectVisible(page, 'AI 策略诊断');
-  await expectVisible(page, 'AI 阶段诊断 / keyword_exploration');
-  await expectVisible(page, 'AI 动态阈值');
-  await expectInBody(page, '目标 ACOS 35.0% / 高 ACOS 55.0% / 无订单 18 点击 / 最低花费 $15.00', 'approval AI dynamic threshold summary');
-  await expectVisible(page, '产品阶段');
-  await expectVisible(page, '产品目标 ACOS / TACOS');
-  await expectVisible(page, '目标净利率 / 最低价');
-  await expectInBody(page, '35.0% / 12.0%', 'approval product target thresholds');
-  await expectVisible(page, 'AI/规则合并依据');
-  await expectVisible(page, '规则：高 ACOS 且已有花费。');
-  await expectVisible(page, 'AI：Coupon 未带来足够转化。');
-  await expectVisible(page, 'AI 主要问题：no_order_spend；high_acos');
-  await expectVisible(page, 'AI 判断依据');
-  await expectVisible(page, '引用证据详情');
-  await expectVisible(page, '报表指标');
-  await expectInBody(page, 'tight match target / 2026-06-12');
-  await expectInBody(page, '$42.18 / $58.58 / 1 单 / 32 点击');
-  await closeApprovalDecisionModal(page);
-  await page.getByRole('button', { name: '复核队列' }).click();
-  await page.getByRole('button', { name: '处理' }).first().click();
-  await page.getByRole('button', { name: '拒绝', exact: true }).click();
-  await page.getByText('拒绝前必须填写处理人。', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByPlaceholder('负责人姓名').fill('QA Rejector');
-  await page.getByRole('button', { name: '拒绝', exact: true }).click();
-  await page.getByText('拒绝前必须填写拒绝原因。', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByPlaceholder('记录审批范围、外部审批凭证或拒绝原因').fill('Rejected during smoke audit.');
-  await page.getByRole('button', { name: '拒绝', exact: true }).click();
-  await page.getByText('已拒绝建议 #102，拒绝原因已写入建议证据', { exact: false }).waitFor({ timeout: 5000 });
-  await page.getByRole('button', { name: '处理' }).waitFor({ state: 'detached', timeout: 5000 });
-  await page.getByRole('button', { name: '已拒绝' }).click();
-  await page.getByRole('button', { name: '处理' }).first().waitFor({ state: 'visible', timeout: 5000 });
-  if (await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).count()
-    || await page.getByRole('button', { name: '拒绝', exact: true }).count()) {
-    fail('Rejected history exposed decision actions before an explicit row selection');
+  const eligibleBatchCheckboxes = decisionsRoot.locator('.priority-table tbody input[type="checkbox"]');
+  if (await eligibleBatchCheckboxes.count() !== 1) {
+    fail('Batch selection must expose only eligibility-complete pending rows', String(await eligibleBatchCheckboxes.count()));
   }
-  await page.getByRole('button', { name: '待审批' }).click();
-  await page.getByRole('button', { name: '处理' }).first().click();
-  await page.getByPlaceholder('负责人姓名').fill('QA Approver');
-  await page.getByPlaceholder('记录审批范围、外部审批凭证或拒绝原因').fill('Approved for smoke scope only.');
-  await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).click();
-  await page.getByText('已批准建议 #101，审批人和备注已写入建议证据', { exact: false }).waitFor({ timeout: 5000 });
-  await page.getByRole('button', { name: '处理' }).waitFor({ state: 'detached', timeout: 5000 });
-  await page.getByRole('button', { name: '已批准待执行' }).click();
-  await page.getByRole('button', { name: '处理' }).first().waitFor({ state: 'visible', timeout: 5000 });
-  if (await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).count()
-    || await page.getByRole('button', { name: '拒绝', exact: true }).count()) {
-    fail('Approved history exposed decision actions before an explicit row selection');
+  await eligibleBatchCheckboxes.first().click();
+  const batchHandoffButton = page.getByRole('button', { name: /复核所选\s*1\s*项/ });
+  if (await batchHandoffButton.count() !== 1 || await batchHandoffButton.isDisabled()) {
+    fail('Selecting the eligible pending row did not enable the batch approval handoff');
   }
+  await batchHandoffButton.click();
+  await waitForDecisionsSubview(page, 'approval');
+  await page.waitForFunction(() => (
+    window.sessionStorage?.getItem('amazon-ai-ops:approval-selection') === null
+  ), null, { timeout: 2000 });
+  const handoffStorageConsumed = await page.evaluate(() => (
+    window.sessionStorage?.getItem('amazon-ai-ops:approval-selection') === null
+  ));
+  if (!handoffStorageConsumed) fail('Batch handoff sessionStorage hint was not consumed once');
+  await decisionsRoot.locator('.priority-table tbody tr[aria-label]').first().waitFor({ timeout: 5000 });
+  if (await decisionsRoot.locator('.priority-table tbody tr[aria-label]').count() !== 1) {
+    fail('Approval handoff did not show the authoritative pending row');
+  }
+  const decisionsCountAfterHandoff = await page.getByRole('tab', { name: /待判断/ }).innerText();
+  if (!/已载入\s*2/.test(decisionsCountAfterHandoff)) {
+    fail('Batch handoff hid another authoritative row from the decisions workspace', decisionsCountAfterHandoff);
+  }
+  await page.getByRole('tab', { name: /待判断/ }).click();
+  await waitForDecisionsSubview(page, 'recommendations');
+  if (await decisionsRoot.locator('.priority-table tbody tr[aria-label]').count() !== 2) {
+    fail('Batch handoff filtered the authoritative recommendation view instead of only focusing it');
+  }
+  await page.getByRole('tab', { name: /待审批/ }).click();
+  await waitForDecisionsSubview(page, 'approval');
+  evidence.batchHandoff = {
+    selectableEligiblePendingRows: 1,
+    approvalRows: 1,
+    recommendationsRowsAfterReturn: 2,
+    preservedAuthoritativeRows: true,
+    sessionStorageConsumed: handoffStorageConsumed,
+  };
+
+  await page.setViewportSize({ width: 1200, height: 700 });
+  await page.waitForTimeout(50);
+  const pendingRow = decisionsRoot.locator('.priority-table tbody tr[aria-label]').first();
+  await pendingRow.focus();
+  await pendingRow.press('Enter');
+  const approvalDrawer = page.getByRole('dialog');
+  await approvalDrawer.waitFor({ state: 'visible', timeout: 5000 });
+  const approveButton = approvalDrawer.getByRole('button', { name: '批准，进入结果核对', exact: true });
+  const approvalCallsBeforeValidation = await page.evaluate(() => (
+    (window.__businessUiActionLog || []).filter((item) => item.type === 'approveRecommendation').length
+  ));
+  await approveButton.click();
+  await expectVisible(page, '批准前必须填写审批人。');
+  const approvalCallsAfterEmptyActor = await page.evaluate(() => (
+    (window.__businessUiActionLog || []).filter((item) => item.type === 'approveRecommendation').length
+  ));
+  if (approvalCallsAfterEmptyActor !== approvalCallsBeforeValidation) {
+    fail('Empty approval actor escaped the renderer fail-closed guard');
+  }
+
+  await approvalDrawer.getByRole('textbox', { name: /审批人|处理人/ }).fill('QA Approver');
+  await approvalDrawer.getByRole('textbox', { name: /审批备注|拒绝原因/ }).fill('Approved for smoke scope only.');
+  await page.evaluate(() => {
+    window.__mockDecisionDelayMs = 500;
+  });
+  await approveButton.click();
+  await page.waitForFunction(() => (
+    document.querySelector('[role="dialog"][data-inspector-mode="drawer"]')?.getAttribute('aria-busy') === 'true'
+  ), null, { timeout: 2000 });
+  if (!await approvalDrawer.getByRole('button', { name: '关闭详情检查器' }).isDisabled()
+    || !await approvalDrawer.getByRole('button', { name: '拒绝', exact: true }).isDisabled()) {
+    fail('Decision busy state did not lock close and peer decision actions');
+  }
+  const busyTabsLocked = await page.locator('.decisions-tabs button').evaluateAll((nodes) => (
+    nodes.length === 3 && nodes.every((node) => node.disabled)
+  ));
+  const busyTaskActionsLocked = await page.locator('.task-banner__actions button').evaluateAll((nodes) => (
+    nodes.length > 0 && nodes.every((node) => node.disabled)
+  ));
+  if (!busyTabsLocked || !busyTaskActionsLocked) {
+    fail('Decision busy state did not lock tab and task-action peers', JSON.stringify({ busyTabsLocked, busyTaskActionsLocked }));
+  }
+  await page.keyboard.press('Escape');
+  if (!await approvalDrawer.isVisible()) fail('Busy decision drawer closed on Escape');
+  await page.getByText(/审批已通过 #101/).waitFor({ timeout: 5000 });
+  await expectVisible(page, '已批准，尚不代表已执行。');
+  await approvalDrawer.waitFor({ state: 'detached', timeout: 5000 });
+  await page.waitForFunction(() => (
+    document.activeElement?.getAttribute('role') === 'tab'
+      && document.activeElement?.getAttribute('aria-selected') === 'true'
+      && String(document.activeElement?.textContent || '').includes('待审批')
+  ), null, { timeout: 2000 });
+  const approvalFocusOwner = await page.evaluate(() => String(document.activeElement?.textContent || '').trim());
+  await page.evaluate(() => {
+    window.__mockDecisionDelayMs = 0;
+  });
+  if (await decisionsRoot.locator('.priority-table tbody tr[aria-label]').count()) {
+    fail('Approved row remained in the authoritative pending view after refresh');
+  }
+  evidence.busyDecisionLock = {
+    closeLocked: true,
+    peerDecisionLocked: true,
+    tabsLocked: busyTabsLocked,
+    taskActionsLocked: busyTaskActionsLocked,
+    escapeLocked: true,
+    completionFocusOwner: approvalFocusOwner,
+  };
+
+  await page.getByRole('tab', { name: /待判断/ }).click();
+  await waitForDecisionsSubview(page, 'recommendations');
+  const needsReviewRow = decisionsRoot.locator('.priority-table tbody tr[aria-label*="需复核"]').first();
+  await needsReviewRow.waitFor({ state: 'visible', timeout: 5000 });
+  await needsReviewRow.focus();
+  await needsReviewRow.press('Enter');
+  const reviewDrawer = page.getByRole('dialog');
+  await reviewDrawer.waitFor({ state: 'visible', timeout: 5000 });
+  if (await reviewDrawer.getByRole('button', { name: '批准，进入结果核对', exact: true }).count()) {
+    fail('Needs-review recommendation exposed an approve action');
+  }
+  const rejectButton = reviewDrawer.getByRole('button', { name: '拒绝', exact: true });
+  const rejectCallsBeforeValidation = await page.evaluate(() => (
+    (window.__businessUiActionLog || []).filter((item) => item.type === 'rejectRecommendation').length
+  ));
+  await rejectButton.click();
+  await expectVisible(page, '拒绝前必须填写处理人。');
+  await reviewDrawer.getByRole('textbox', { name: /处理人/ }).fill('QA Rejector');
+  await rejectButton.click();
+  await expectVisible(page, '拒绝前必须填写拒绝原因。');
+  const rejectCallsAfterEmptyFields = await page.evaluate(() => (
+    (window.__businessUiActionLog || []).filter((item) => item.type === 'rejectRecommendation').length
+  ));
+  if (rejectCallsAfterEmptyFields !== rejectCallsBeforeValidation) {
+    fail('Incomplete reject form escaped the renderer fail-closed guard');
+  }
+  await reviewDrawer.getByRole('textbox', { name: /拒绝原因|审批备注/ }).fill('Rejected during smoke audit.');
+  await rejectButton.click();
+  await page.getByText(/建议已拦截 #102/).waitFor({ timeout: 5000 });
+  await reviewDrawer.waitFor({ state: 'detached', timeout: 5000 });
+  await page.waitForFunction(() => (
+    document.activeElement?.getAttribute('role') === 'tab'
+      && document.activeElement?.getAttribute('aria-selected') === 'true'
+      && String(document.activeElement?.textContent || '').includes('待判断')
+  ), null, { timeout: 2000 });
+  evidence.rejectionCompletionFocusOwner = await page.evaluate(() => (
+    String(document.activeElement?.textContent || '').trim()
+  ));
+  if (await decisionsRoot.locator('.priority-table tbody tr[aria-label]').count()) {
+    fail('Rejected needs-review row remained in the active authoritative view after refresh');
+  }
+
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.getByRole('tab', { name: /已决策/ }).click();
+  await waitForDecisionsSubview(page, 'decided');
+  const historyRows = decisionsRoot.locator('.priority-table tbody tr[aria-label]');
+  await historyRows.first().waitFor({ state: 'visible', timeout: 5000 });
+  if (await historyRows.count() !== 2) {
+    fail('Decided history did not contain both authoritative decisions', String(await historyRows.count()));
+  }
+
+  async function assertReadOnlyHistoryRow(statusLabel, screenshotKey) {
+    const historyRow = decisionsRoot.locator('.priority-table tbody tr[aria-label*="' + statusLabel + '"]').first();
+    await historyRow.focus();
+    await historyRow.press('Enter');
+    const inspector = page.getByRole('complementary');
+    await inspector.waitFor({ state: 'visible', timeout: 5000 });
+    if (await inspector.locator('.decisions-decision-form').count()
+      || await inspector.getByRole('button', { name: '批准，进入结果核对', exact: true }).count()
+      || await inspector.getByRole('button', { name: '拒绝', exact: true }).count()
+      || await inspector.locator('input, textarea, select').count()) {
+      fail('Historical decision exposed editable decision controls', statusLabel);
+    }
+    if (statusLabel === '已批准') {
+      await inspector.getByText('已批准，尚不代表已执行。', { exact: true }).waitFor({ timeout: 5000 });
+    } else {
+      await inspector.getByText('已拒绝，当前决定只读。', { exact: true }).waitFor({ timeout: 5000 });
+    }
+    await captureViewportScreenshot(page, evidence, screenshotKey, runId, {
+      label: statusLabel + '只读历史',
+      workspace: 'decisions',
+      subview: 'decided',
+      inspectorMode: 'inline',
+      readOnly: true,
+    });
+    await inspector.getByRole('button', { name: '关闭详情检查器' }).click();
+    await inspector.waitFor({ state: 'detached', timeout: 5000 });
+  }
+
+  await assertReadOnlyHistoryRow('已批准', 'decisionsHistoryApproved1400');
+  await assertReadOnlyHistoryRow('已拒绝', 'decisionsHistoryRejected1400');
+  await assertNoPageHorizontalOverflow(page, '1400x900 decided history');
 
   const decisionStateContract = await page.evaluate(async () => {
     const scopeFilter = {
@@ -1338,31 +1584,65 @@ async function main() {
     ]);
     const guardedTransitions = [];
     for (const transition of [
-      { method: 'approveRecommendation', id: 101 },
-      { method: 'rejectRecommendation', id: 101 },
-      { method: 'approveRecommendation', id: 102 },
-      { method: 'rejectRecommendation', id: 102 },
+      {
+        method: 'approveRecommendation',
+        id: 101,
+        expectedRevision: 1,
+        decision: { approvedBy: 'Terminal Guard' },
+      },
+      {
+        method: 'rejectRecommendation',
+        id: 101,
+        expectedRevision: 1,
+        decision: { rejectedBy: 'Terminal Guard', note: 'Must stay terminal.' },
+      },
+      {
+        method: 'approveRecommendation',
+        id: 102,
+        expectedRevision: 1,
+        decision: { approvedBy: 'Terminal Guard' },
+      },
+      {
+        method: 'rejectRecommendation',
+        id: 102,
+        expectedRevision: 1,
+        decision: { rejectedBy: 'Terminal Guard', note: 'Must stay terminal.' },
+      },
     ]) {
       try {
-        await window.electronAPI[transition.method]({ id: transition.id, decision: {} });
-        guardedTransitions.push({ ...transition, rejected: false });
+        await window.electronAPI[transition.method]({
+          id: transition.id,
+          expectedRevision: transition.expectedRevision,
+          decision: transition.decision,
+        });
+        guardedTransitions.push({ method: transition.method, id: transition.id, rejected: false });
       } catch (error) {
-        guardedTransitions.push({ ...transition, rejected: true, message: String(error?.message || error) });
+        guardedTransitions.push({
+          method: transition.method,
+          id: transition.id,
+          rejected: true,
+          message: String(error?.message || error),
+        });
       }
     }
+    const compact = (rows) => rows.map((item) => ({ id: item.id, revision: item.revision }));
     return {
-      pendingIds: pending.map((item) => item.id),
-      needsReviewIds: needsReview.map((item) => item.id),
-      approvedIds: approved.map((item) => item.id),
-      rejectedIds: rejected.map((item) => item.id),
+      finalStatuses: {
+        pending: compact(pending),
+        needs_review: compact(needsReview),
+        approved: compact(approved),
+        rejected: compact(rejected),
+      },
       guardedTransitions,
     };
   });
   evidence.decisionStateContract = decisionStateContract;
-  if (decisionStateContract.pendingIds.length
-    || decisionStateContract.needsReviewIds.length
-    || decisionStateContract.approvedIds.join(',') !== '101'
-    || decisionStateContract.rejectedIds.join(',') !== '102'
+  const expectedApprovedState = JSON.stringify([{ id: 101, revision: 1 }]);
+  const expectedRejectedState = JSON.stringify([{ id: 102, revision: 1 }]);
+  if (decisionStateContract.finalStatuses.pending.length
+    || decisionStateContract.finalStatuses.needs_review.length
+    || JSON.stringify(decisionStateContract.finalStatuses.approved) !== expectedApprovedState
+    || JSON.stringify(decisionStateContract.finalStatuses.rejected) !== expectedRejectedState
     || decisionStateContract.guardedTransitions.some((transition) => !transition.rejected)) {
     fail('Recommendation decision state contract did not stay authoritative', JSON.stringify(decisionStateContract));
   }
@@ -1514,10 +1794,11 @@ async function main() {
   await expectVisible(page, '复制长参数生成命令');
   await expectNotInBody(page, 'pnpm run verify:ad-readback');
   const afterExportScreenshotPath = path.join(evidenceDir, `business-ui-ad-execution-readback-after-export-${runId}.png`);
-  await page.screenshot({ path: afterExportScreenshotPath, fullPage: true });
+  await page.screenshot({ path: afterExportScreenshotPath, fullPage: false });
   evidence.pages.readbackAfterExport = {
     label: '结果核对导出结果',
     screenshotPath: afterExportScreenshotPath,
+    viewport: page.viewportSize(),
     bodyTextSample: (await bodyText(page)).slice(0, 1800),
   };
   await clickReadbackStep(page, '3. 记录执行和回读');
@@ -1557,11 +1838,6 @@ async function main() {
   }
   for (const call of scopedPendingRecommendationCalls) assertScopeParams(call.filter, 'getRecommendations');
   for (const call of scopedReviewRecommendationCalls) assertScopeParams(call.filter, 'getRecommendations needs_review');
-  const generateCall = actionLog.find((item) => item.type === 'generateRecommendations');
-  if (!generateCall) {
-    fail('Generate recommendations IPC mock was not called', JSON.stringify(actionLog));
-  }
-  assertScopeParams(generateCall.params, 'generateRecommendations');
   const approvalCall = actionLog.find((item) => item.type === 'approveRecommendation');
   if (!approvalCall) {
     fail('Approval IPC mock was not called', JSON.stringify(actionLog));
@@ -1661,6 +1937,9 @@ async function main() {
 
     if (evidence.consoleErrors.length > 0) {
       fail('Renderer emitted console errors', evidence.consoleErrors.join('\n'));
+    }
+    if (evidence.pageErrors.length > 0) {
+      fail('Renderer emitted uncaught page errors', evidence.pageErrors.join('\n'));
     }
   } finally {
     if (browser) await browser.close().catch(() => {});

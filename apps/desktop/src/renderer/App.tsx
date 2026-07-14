@@ -3,10 +3,10 @@ import { create } from 'zustand';
 import { Sidebar } from './components/app-shell';
 import { ScopeBar } from './components/scope-bar';
 import { AdQuantPage } from './pages/ad-quant-page';
-import { ApprovalPage } from './pages/approval-page';
 import { DashboardPage } from './pages/dashboard-page';
 import { DataCollectionPage } from './pages/data-collection-page';
 import { DataImportValidationPage } from './pages/data-import-validation-page';
+import { DecisionsPage } from './pages/decisions-page';
 import { DeliveryPage } from './pages/delivery-page';
 import { KeywordOpportunitiesPage } from './pages/keyword-opportunities-page';
 import { ListingOptimizationPage } from './pages/listing-optimization-page';
@@ -15,7 +15,6 @@ import { OperationScopePage } from './pages/operation-scope-page';
 import { ProductConfigPage } from './pages/product-config-page';
 import { ProductManagementPage } from './pages/product-management-page';
 import { ReadbackPage } from './pages/readback-page';
-import { RecommendationsPage } from './pages/recommendations-page';
 import { SchedulerPage } from './pages/scheduler-page';
 import { SettingsPage } from './pages/settings-page';
 import type { AppRoute, DeliveryReadinessView } from './types';
@@ -39,6 +38,7 @@ import './styles/foundations.css';
 import './styles/shell.css';
 import './styles/workspace.css';
 import './styles/priority-table.css';
+import './styles/decisions.css';
 import './styles/states-motion.css';
 
 interface LoginSessionInfo {
@@ -365,7 +365,9 @@ function LoginPage() {
   );
 }
 
-function BusinessRoutePage({ route, nextSafeAction }: { route: AppRoute; nextSafeAction: NextSafeAction }) {
+function BusinessRoutePage({ navigation, nextSafeAction }: { navigation: NavigationIntent; nextSafeAction: NextSafeAction }) {
+  const route = resolveNavigationTarget(navigation) || 'dashboard';
+  if (navigation.workspace === 'decisions') return <DecisionsPage activeSubview={navigation.subview} />;
   if (route === 'dashboard') return <DashboardPage nextSafeAction={nextSafeAction} />;
   if (route === 'product-management') return <ProductManagementPage />;
   if (route === 'operation-scope') return <OperationScopePage />;
@@ -374,8 +376,6 @@ function BusinessRoutePage({ route, nextSafeAction }: { route: AppRoute; nextSaf
   if (route === 'operation-events') return <OperationEventsPage />;
   if (route === 'product-config') return <ProductConfigPage />;
   if (route === 'ad-quant') return <AdQuantPage />;
-  if (route === 'recommendations') return <RecommendationsPage />;
-  if (route === 'approval') return <ApprovalPage />;
   if (route === 'readback') return <ReadbackPage />;
   if (route === 'keyword-opportunities') return <KeywordOpportunitiesPage />;
   if (route === 'listing-optimization') return <ListingOptimizationPage />;
@@ -541,7 +541,7 @@ export default function App() {
               转跳中...
             </div>
           )}
-          <BusinessRoutePage route={activeTab} nextSafeAction={nextSafeAction} />
+          <BusinessRoutePage navigation={activeNavigation} nextSafeAction={nextSafeAction} />
         </main>
       </div>
     </div>

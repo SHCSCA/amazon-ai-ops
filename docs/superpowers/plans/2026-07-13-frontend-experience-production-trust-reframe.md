@@ -17,7 +17,8 @@
 | Task 3 显式开发预览 | 已完成 | 7 个预览场景只在显式 DEV 条件下启用；预览不能写证据或成为 APP_READY |
 | Task 4 工作区导航基础 | 已完成 | 8 个可见工作区、16 路由兼容、`NextSafeAction`、工作流失效刷新已落地 |
 | Task 5A 共用视觉系统、Shell 与 Today | 已完成 | 任务优先 Today、8 工作区 Shell、fail-closed 运行态证据已通过独立双评审 |
-| Task 5B–8 工作区与交付 | 待执行 | 下一步先完成审批状态机安全守卫与统一决策中心 |
+| Task 5B 建议与审批 | 已完成 | 统一权威队列、响应式检查器、批量送审重载与审批状态守卫均通过独立代码/视觉复核 |
+| Task 5C–8 工作区与交付 | 待执行 | 下一步重构结果核对工作区，并继续保持回读与 READY fail-closed 边界 |
 
 当前有效验证基线：140/140 test files（1208 passed / 2 skipped）；Task 1–5A 已分别通过独立复核。后续不得用旧 APP_READY 证据声明新 UI 已交付。
 
@@ -110,15 +111,17 @@
 
 **信息结构：** `待判断 / 待审批 / 已决策`。
 
-- [ ] 先写队列、详情 inspector、旧 approval route fallback 与状态迁移测试。
-- [ ] 1400px 使用“队列 + 详情 inspector”；1200px 使用全宽队列 + 按需 drawer。
-- [ ] 主列只保留动作、对象、当前值→建议值、证据状态、决策。
-- [ ] campaign、ad group、来源、理由和技术证据移入 inspector。
-- [ ] 已批准/已拒绝记录进入 `已决策`，并持续显示“批准不等于执行”。
-- [ ] 验证批量选择、按钮 busy/peer lock、键盘焦点和 authority reload 不回退。
-- [ ] 捕获两个 viewport 与 125% 证据，完成独立复核与提交。
+- [x] 先写队列、详情 inspector、旧 approval route fallback 与状态迁移测试。
+- [x] 1400px 使用“队列 + 详情 inspector”；1200px 使用全宽队列 + 按需 drawer。
+- [x] 主列只保留动作、对象、当前值→建议值、证据状态、决策。
+- [x] campaign、ad group、来源、理由和技术证据移入 inspector，并将来源技术明细默认折叠。
+- [x] 已批准/已拒绝记录进入 `已决策`，并持续显示“批准不等于执行”。
+- [x] 验证批量选择、按钮 busy/peer lock、键盘焦点和 authority reload 不回退。
+- [x] 捕获两个 viewport 与 125% 证据，完成独立代码与 UI/UX 复核。
 
 **闸门：** 用户无需跨页面就能判断对象、证据、风险与决策结果；审批反馈不会被误认为 Ads 已执行。
+
+**验证：** Decisions/旧 Recommendations/旧 Approval/preview/navigation/style 聚焦回归 192/192、desktop typecheck、renderer build、Ads fail-closed verifier、6/6 viewport matrix、真实 1200 drawer/1400 inline 交互 smoke 与全业务 5/5 smoke 通过。最新矩阵为 `output/codex-evidence/workspace-ui-task5b-decisions/workspace-ui-evidence-run-2026-07-14T06-13-53-172Z.json`；最新审批运行证据为 `output/codex-evidence/business-ui-ad-execution-smoke-1784009692861.json`；全业务汇总为 `output/codex-evidence/current-business-ui-smoke-1784009732378.json`。独立复核结果为 P0=0、P1=0、Critical=0、Important=0。
 
 ### Task 5C：结果核对工作区
 

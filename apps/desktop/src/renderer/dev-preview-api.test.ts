@@ -217,7 +217,385 @@ describe('preview scenario contract', () => {
     expect(await mixedApi.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
     expect(await mixedApi.getRecommendations({ status: 'approved' })).toEqual([]);
     expect(await approvedApi.getRecommendations({ status: 'pending' })).toEqual([]);
-    expect(await approvedApi.getRecommendations({ status: 'approved' })).toHaveLength(2);
+    expect(await approvedApi.getRecommendations({ status: 'approved' })).toHaveLength(1);
+    expect(await approvedApi.getRecommendations({ status: 'rejected' })).toHaveLength(1);
+  });
+
+  it('exposes complete RecommendationView fixtures backed by nested report evidence', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [recommendations, pipeline] = await Promise.all([
+      api.getRecommendations(),
+      api.getBusinessUiDataPipeline(),
+    ]);
+    const currentSourceFiles = new Set(
+      pipeline.collection.realReportFiles.map((file: { filePath: string }) => file.filePath.toLowerCase()),
+    );
+    const legalActionTypes = new Set([
+      'lower_bid',
+      'raise_bid',
+      'pause_target',
+      'resume_target',
+      'add_negative_exact',
+      'add_negative_phrase',
+      'add_negative_broad',
+      'adjust_campaign_budget',
+      'create_campaign',
+      'archive_campaign',
+    ]);
+
+    expect(recommendations).toHaveLength(2);
+    for (const recommendation of recommendations) {
+      expect(Number.isInteger(recommendation.id) && recommendation.id > 0).toBe(true);
+      expect(legalActionTypes.has(recommendation.actionType)).toBe(true);
+      expect(recommendation).toMatchObject({
+        entityName: expect.any(String),
+        currentValue: expect.any(String),
+        recommendedValue: expect.any(String),
+        reason: expect.any(String),
+        acos: expect.any(Number),
+        clicks: expect.any(Number),
+        cost: expect.any(Number),
+        confidence: expect.any(Number),
+        revision: expect.any(Number),
+        evidence: {
+          batchId: expect.any(String),
+          date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+          asin: expect.any(String),
+          campaignName: expect.any(String),
+          adGroupName: expect.any(String),
+          sourceFiles: expect.arrayContaining([expect.stringMatching(/\.(xlsx|xls|csv)$/i)]),
+          sourceRow: expect.any(Number),
+          clicks: expect.any(Number),
+          cost: expect.any(Number),
+          orders: expect.any(Number),
+          sales: expect.any(Number),
+          acos: expect.any(Number),
+          cpc: expect.any(Number),
+          cvr: expect.any(Number),
+          aiStrategySummary: expect.any(String),
+          aiEvidenceDetails: expect.any(Array),
+          decisionAgreement: expect.stringMatching(/^(aligned|rule_only|ai_only|conflict)$/),
+          decisionReasons: expect.arrayContaining([expect.any(String)]),
+        },
+      });
+      expect(recommendation.evidence.sourceRow).toBeGreaterThan(0);
+      expect(recommendation.confidence).toBeGreaterThan(0);
+      expect(recommendation.confidence).toBeLessThanOrEqual(1);
+      expect(recommendation.evidence.sourceFiles.every((file: string) => currentSourceFiles.has(file.toLowerCase()))).toBe(true);
+      const detailIds = new Set(recommendation.evidence.aiEvidenceDetails.map((detail: { evidenceId: string }) => detail.evidenceId));
+      expect(recommendation.evidence.aiEvidenceRefs.every((ref: string) => detailIds.has(ref))).toBe(true);
+      expect(recommendation).not.toHaveProperty('suggestedValue');
+      expect(recommendation).not.toHaveProperty('evidenceRefs');
+    }
+  });
+
+  it('isolates recommendation reads from caller mutation without weakening decision guards', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [pending, needsReview] = await api.getRecommendations();
+    const pendingRevision = pending.revision;
+    const reviewRevision = needsReview.revision;
+    const pendingSourceFile = pending.evidence.sourceFiles[0];
+    const pendingEvidenceCost = pending.evidence.aiEvidenceDetails[0].metrics.cost;
+
+    pending.status = 'approved';
+    pending.revision = 999;
+    pending.evidence.sourceFiles[0] = 'D:/forged/report.xlsx';
+    pending.evidence.aiEvidenceDetails[0].metrics.cost = 0;
+    pending.evidence.approvalDecision = {
+      decision: 'approved',
+      approvedBy: 'Forged Approver',
+      decidedAt: '2026-07-14T00:00:00.000Z',
+    };
+    needsReview.status = 'rejected';
+    needsReview.evidence.approvalDecision = {
+      decision: 'rejected',
+      rejectedBy: 'Forged Reviewer',
+      note: 'Forged reason',
+      decidedAt: '2026-07-14T00:00:00.000Z',
+    };
+
+    const [freshPending] = await api.getRecommendations({ status: 'pending' });
+    const [freshReview] = await api.getRecommendations({ status: 'needs_review' });
+    expect(freshPending).toMatchObject({
+      id: pending.id,
+      status: 'pending',
+      revision: pendingRevision,
+      evidence: {
+        sourceFiles: [pendingSourceFile],
+      },
+    });
+    expect(freshPending.evidence.aiEvidenceDetails[0].metrics.cost).toBe(pendingEvidenceCost);
+    expect(freshPending.evidence.approvalDecision).toBeUndefined();
+    expect(freshReview).toMatchObject({
+      id: needsReview.id,
+      status: 'needs_review',
+      revision: reviewRevision,
+    });
+    expect(freshReview.evidence.approvalDecision).toBeUndefined();
+
+    await expect(api.approveRecommendation({
+      id: pending.id,
+      expectedRevision: pending.revision,
+      decision: { approvedBy: 'Forged Approver' },
+    })).rejects.toThrow(/版本|冲突/);
+    await expect(api.rejectRecommendation({
+      id: needsReview.id,
+      expectedRevision: reviewRevision,
+      decision: { rejectedBy: '', note: 'Forged reason' },
+    })).rejects.toThrow(/处理人|审批人/);
+    await expect(api.rejectRecommendation({
+      id: needsReview.id,
+      expectedRevision: reviewRevision,
+      decision: { rejectedBy: 'Preview Reviewer', note: '' },
+    })).rejects.toThrow(/拒绝原因|原因/);
+
+    await api.approveRecommendation({
+      id: pending.id,
+      expectedRevision: pendingRevision,
+      decision: { approvedBy: 'Preview Ops' },
+    });
+    await api.rejectRecommendation({
+      id: needsReview.id,
+      expectedRevision: reviewRevision,
+      decision: { rejectedBy: 'Preview Reviewer', note: '证据冲突，暂不执行' },
+    });
+    expect(await api.getRecommendations({ status: 'approved' })).toHaveLength(1);
+    expect(await api.getRecommendations({ status: 'rejected' })).toHaveLength(1);
+  });
+
+  it('returns generation results as isolated snapshots of preview recommendation state', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const firstGeneration = await api.generateRecommendations();
+    const generatedPending = firstGeneration.recommendations[0];
+    const originalRevision = generatedPending.revision;
+    const originalSourceFile = generatedPending.evidence.sourceFiles[0];
+
+    generatedPending.status = 'approved';
+    generatedPending.revision = 777;
+    generatedPending.evidence.sourceFiles[0] = 'D:/forged/generated.xlsx';
+    firstGeneration.recommendations.pop();
+
+    const secondGeneration = await api.generateRecommendations();
+    expect(secondGeneration.generated).toBe(2);
+    expect(secondGeneration.recommendations).toHaveLength(2);
+    expect(secondGeneration.recommendations[0]).toMatchObject({
+      id: generatedPending.id,
+      status: 'pending',
+      revision: originalRevision,
+      evidence: { sourceFiles: [originalSourceFile] },
+    });
+    expect(await api.getRecommendations({ status: 'pending' })).toHaveLength(1);
+    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
+  });
+
+  it('persists an approved decision in preview memory with revision and decision evidence', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [pending] = await api.getRecommendations({ status: 'pending' });
+    const displayedRevision = pending.revision;
+
+    await api.approveRecommendation({
+      id: pending.id,
+      expectedRevision: displayedRevision,
+      decision: { approvedBy: 'Preview Ops', note: '同意本次调整' },
+    });
+
+    expect(await api.getRecommendations({ status: 'pending' })).toEqual([]);
+    const [approved] = await api.getRecommendations({ status: 'approved' });
+    expect(approved).toMatchObject({
+      id: pending.id,
+      status: 'approved',
+      revision: displayedRevision + 1,
+      evidence: {
+        approvalDecision: {
+          decision: 'approved',
+          approvedBy: 'Preview Ops',
+          note: '同意本次调整',
+          decidedAt: expect.any(String),
+        },
+      },
+    });
+    expect((await api.getRecommendations()).find((row: { id: number }) => row.id === pending.id)?.status).toBe('approved');
+  });
+
+  it('persists a rejected review decision and its required operator reason in preview memory', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+    const displayedRevision = needsReview.revision;
+
+    await api.rejectRecommendation({
+      id: needsReview.id,
+      expectedRevision: displayedRevision,
+      decision: { rejectedBy: 'Preview Reviewer', note: '证据冲突，暂不执行' },
+    });
+
+    expect(await api.getRecommendations({ status: 'needs_review' })).toEqual([]);
+    const [rejected] = await api.getRecommendations({ status: 'rejected' });
+    expect(rejected).toMatchObject({
+      id: needsReview.id,
+      status: 'rejected',
+      revision: displayedRevision + 1,
+      evidence: {
+        approvalDecision: {
+          decision: 'rejected',
+          rejectedBy: 'Preview Reviewer',
+          note: '证据冲突，暂不执行',
+          decidedAt: expect.any(String),
+        },
+      },
+    });
+  });
+
+  it('rejects a stale displayed revision without mutating preview state', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [pending] = await api.getRecommendations({ status: 'pending' });
+
+    await expect(api.approveRecommendation({
+      id: pending.id,
+      expectedRevision: pending.revision + 1,
+      decision: { approvedBy: 'Preview Ops' },
+    })).rejects.toThrow(/版本|冲突/);
+
+    expect(await api.getRecommendations({ status: 'pending' })).toHaveLength(1);
+    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
+  });
+
+  it('requires a non-empty approval operator before changing preview state', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [pending] = await api.getRecommendations({ status: 'pending' });
+
+    await expect(api.approveRecommendation({
+      id: pending.id,
+      expectedRevision: pending.revision,
+      decision: { approvedBy: '   ' },
+    })).rejects.toThrow(/审批人|处理人/);
+
+    expect(await api.getRecommendations({ status: 'pending' })).toHaveLength(1);
+  });
+
+  it('requires a non-empty rejection operator before changing preview state', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+
+    await expect(api.rejectRecommendation({
+      id: needsReview.id,
+      expectedRevision: needsReview.revision,
+      decision: { rejectedBy: '', note: '证据不足' },
+    })).rejects.toThrow(/处理人|审批人/);
+
+    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
+  });
+
+  it('requires a non-empty rejection reason before changing preview state', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+
+    await expect(api.rejectRecommendation({
+      id: needsReview.id,
+      expectedRevision: needsReview.revision,
+      decision: { rejectedBy: 'Preview Reviewer', note: '  ' },
+    })).rejects.toThrow(/拒绝原因|原因/);
+
+    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
+  });
+
+  it('rejects a stale rejection revision without mutating preview state', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+
+    await expect(api.rejectRecommendation({
+      id: needsReview.id,
+      expectedRevision: needsReview.revision + 1,
+      decision: { rejectedBy: 'Preview Reviewer', note: '证据不足' },
+    })).rejects.toThrow(/版本|冲突/);
+
+    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
+    expect(await api.getRecommendations({ status: 'rejected' })).toEqual([]);
+  });
+
+  it('does not allow a needs-review recommendation to bypass review through approval', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+
+    await expect(api.approveRecommendation({
+      id: needsReview.id,
+      expectedRevision: needsReview.revision,
+      decision: { approvedBy: 'Preview Ops' },
+    })).rejects.toThrow(/状态|不允许|复核/);
+
+    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
+  });
+
+  it('keeps approved-scenario decisions as immutable approved and rejected history', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'missing-readback-evidence');
+    const history = await api.getRecommendations();
+    const initial = history.map((row: any) => ({ id: row.id, status: row.status, revision: row.revision }));
+
+    expect(history.map((row: any) => ({
+      status: row.status,
+      decision: row.evidence?.approvalDecision?.decision,
+      operator: row.evidence?.approvalDecision?.approvedBy || row.evidence?.approvalDecision?.rejectedBy,
+    }))).toEqual([
+      { status: 'approved', decision: 'approved', operator: 'Preview Approver' },
+      { status: 'rejected', decision: 'rejected', operator: 'Preview Reviewer' },
+    ]);
+
+    for (const row of history) {
+      await expect(api.approveRecommendation({
+        id: row.id,
+        expectedRevision: row.revision,
+        decision: { approvedBy: 'Second Approver' },
+      })).rejects.toThrow(/状态|不允许/);
+      await expect(api.rejectRecommendation({
+        id: row.id,
+        expectedRevision: row.revision,
+        decision: { rejectedBy: 'Second Reviewer', note: '尝试覆盖历史' },
+      })).rejects.toThrow(/状态|不允许/);
+    }
+
+    expect((await api.getRecommendations()).map((row: any) => ({
+      id: row.id,
+      status: row.status,
+      revision: row.revision,
+    }))).toEqual(initial);
+  });
+
+  it('allows a pending recommendation to be rejected without first moving it to review', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [pending] = await api.getRecommendations({ status: 'pending' });
+
+    await api.rejectRecommendation({
+      id: pending.id,
+      expectedRevision: pending.revision,
+      decision: { rejectedBy: 'Preview Reviewer', note: '运营决定不采用' },
+    });
+
+    expect(await api.getRecommendations({ status: 'pending' })).toEqual([]);
+    expect(await api.getRecommendations({ status: 'rejected' })).toHaveLength(1);
+  });
+
+  it.each([
+    ['approveRecommendation', 'pending', undefined],
+    ['approveRecommendation', 'pending', -1],
+    ['approveRecommendation', 'pending', 0.5],
+    ['approveRecommendation', 'pending', '0'],
+    ['rejectRecommendation', 'needs_review', undefined],
+    ['rejectRecommendation', 'needs_review', -1],
+    ['rejectRecommendation', 'needs_review', 0.5],
+    ['rejectRecommendation', 'needs_review', '0'],
+  ] as const)('rejects invalid displayed revision %s / %s / %s', async (method, status, expectedRevision) => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [recommendation] = await api.getRecommendations({ status });
+    const decision = method === 'approveRecommendation'
+      ? { approvedBy: 'Preview Ops' }
+      : { rejectedBy: 'Preview Reviewer', note: '证据不足' };
+
+    await expect(api[method]({
+      id: recommendation.id,
+      expectedRevision,
+      decision,
+    })).rejects.toThrow(/版本|冲突/);
+
+    expect(await api.getRecommendations({ status })).toHaveLength(1);
   });
 
   it('keeps delivery-ready preview in memory and exposes no evidence-writing API', () => {

@@ -10,7 +10,7 @@ const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const NAV_RE = {
   adQuant: /广告表现/,
-  approval: /审批中心/,
+  approval: /建议与审批/,
   dashboard: /今日看板|仪表盘/,
   dataCollection: /数据采集/,
   dataImport: /导入校验/,
@@ -20,7 +20,7 @@ const NAV_RE = {
   operationEvents: /运营事件/,
   productManagement: /产品管理/,
   readback: /结果核对/,
-  recommendations: /优化建议/,
+  recommendations: /建议与审批/,
   scheduler: /自动任务/,
   settings: /AI与规则/,
 };
@@ -76,6 +76,43 @@ async function expectNotInBody(page, text) {
   const bodyText = await page.locator('body').innerText();
   if (bodyText.includes(text)) {
     fail(`Unexpected visible text: ${text}`);
+  }
+}
+
+async function expectWorkspaceIdentity(page, { heading, workspace, subview }) {
+  await page.getByRole('heading', { name: heading, level: 1, exact: true }).waitFor({ timeout: 5000 });
+  const root = page.locator(
+    `[data-workspace-evidence-root][data-workspace="${workspace}"][data-workspace-subview="${subview}"]`,
+  );
+  await root.waitFor({ state: 'visible', timeout: 5000 });
+  if (await root.count() !== 1) {
+    fail('Exactly one visible workspace evidence root expected', `${workspace}/${subview}`);
+  }
+}
+
+async function expectSingleActiveNavigation(page, label) {
+  const activeNavigation = page.locator('.nav-item[aria-current="page"]');
+  const activeNavCount = await activeNavigation.count();
+  if (activeNavCount !== 1) {
+    fail('Exactly one active navigation item expected', String(activeNavCount));
+  }
+  const activeLabel = (await activeNavigation.first().innerText()).replace(/\s+/g, ' ').trim();
+  if (!activeLabel.includes(label)) {
+    fail('Unexpected active navigation item', `${activeLabel}; expected ${label}`);
+  }
+}
+
+async function expectUnifiedDecisionsWorkspace(page, subview) {
+  await expectWorkspaceIdentity(page, {
+    heading: '建议与审批',
+    workspace: 'decisions',
+    subview,
+  });
+  await expectSingleActiveNavigation(page, '建议与审批');
+  for (const oldHeading of ['优化建议', '审批中心']) {
+    if (await page.getByRole('heading', { name: oldHeading, level: 1, exact: true }).count() > 0) {
+      fail('Legacy decisions page heading is still rendered', oldHeading);
+    }
   }
 }
 
@@ -252,6 +289,7 @@ async function main() {
           marketplace_code: 'US',
         },
       ],
+      getRecommendations: async () => [],
       saveProductConfig: async (payload) => {
         window.__businessShellActions.push({ type: 'saveProductConfig', payload });
         return {
@@ -297,6 +335,13 @@ async function main() {
 
   await page.goto(server.url, { waitUntil: 'networkidle' });
 
+  await expectWorkspaceIdentity(page, {
+    heading: '今日任务',
+    workspace: 'today',
+    subview: 'overview',
+  });
+  await expectSingleActiveNavigation(page, '今日任务');
+
   for (const text of [
     '运营工作台',
     '今日任务',
@@ -326,6 +371,33 @@ async function main() {
   await expectNotInBody(page, 'pnpm run verify:ai-live');
   await expectNotInBody(page, '套用已验证范围');
 
+  await page.locator('.nav-item').filter({ hasText: '建议与审批' }).click();
+  await expectUnifiedDecisionsWorkspace(page, 'recommendations');
+  evidence.pages['decisions-sidebar'] = {
+    label: '建议与审批（真实侧栏点击）',
+    workspace: 'decisions',
+    subview: 'recommendations',
+    assertion: 'PASS',
+  };
+
+  await navigateLegacyRoute(page, 'recommendations');
+  await expectUnifiedDecisionsWorkspace(page, 'recommendations');
+  evidence.pages['decisions-legacy-recommendations'] = {
+    label: 'legacy recommendations → 建议与审批 / 待判断',
+    workspace: 'decisions',
+    subview: 'recommendations',
+    assertion: 'PASS',
+  };
+
+  await navigateLegacyRoute(page, 'approval');
+  await expectUnifiedDecisionsWorkspace(page, 'approval');
+  evidence.pages['decisions-legacy-approval'] = {
+    label: 'legacy approval → 建议与审批 / 待审批',
+    workspace: 'decisions',
+    subview: 'approval',
+    assertion: 'PASS',
+  };
+
   const routes = [
     { nav: NAV_RE.dashboard, heading: /今日任务/, label: '今日任务', key: 'dashboard' },
     { nav: NAV_RE.productManagement, heading: /产品管理/, label: '产品管理', key: 'product-management' },
@@ -334,8 +406,8 @@ async function main() {
     { nav: NAV_RE.dataImport, heading: /导入校验/, label: '导入校验', key: 'data-import-validation' },
     { nav: NAV_RE.operationEvents, heading: /运营事件/, label: '运营事件', key: 'operation-events' },
     { nav: NAV_RE.adQuant, heading: /广告表现/, label: '广告表现', key: 'ad-quant' },
-    { nav: NAV_RE.recommendations, heading: /优化建议/, label: '优化建议', key: 'recommendations' },
-    { nav: NAV_RE.approval, heading: /审批中心/, label: '审批中心', key: 'approval' },
+    { nav: NAV_RE.recommendations, heading: /建议与审批/, label: '建议与审批 · 待判断', key: 'recommendations' },
+    { nav: NAV_RE.approval, heading: /建议与审批/, label: '建议与审批 · 待审批', key: 'approval' },
     { nav: NAV_RE.readback, heading: /结果核对/, label: '结果核对', key: 'readback' },
     { nav: NAV_RE.keyword, heading: /关键词机会/, label: '关键词机会', key: 'keyword-opportunities' },
     { nav: NAV_RE.listing, heading: /Listing草案/, label: 'Listing草案', key: 'listing-optimization' },
@@ -364,16 +436,8 @@ async function main() {
     if (key === 'readback' && bodyText.includes('pnpm run verify:ad-readback')) {
       fail('Readback command wall is visible in primary UI');
     }
-    if (key === 'recommendations') {
-      await expandDetails(page, '建议上下文检查');
-      const expandedBodyText = await page.locator('body').innerText();
-      for (const text of [
-        '产品配置',
-        '目标 ACOS',
-        'TACOS',
-      ]) {
-        if (!expandedBodyText.includes(text)) fail('Recommendation product context text missing', text);
-      }
+    if (key === 'recommendations' || key === 'approval') {
+      await expectUnifiedDecisionsWorkspace(page, key === 'recommendations' ? 'recommendations' : 'approval');
     }
     if (key === 'scheduler') {
       await expandDetails(page, '调度状态、安全边界和任务职责');
@@ -412,10 +476,7 @@ async function main() {
     }
   }
 
-  const activeNavCount = await page.locator('.nav-item[aria-current="page"]').count();
-  if (activeNavCount !== 1) {
-    fail('Exactly one active navigation item expected', String(activeNavCount));
-  }
+  await expectSingleActiveNavigation(page, '系统与交付');
 
   await browser.close();
   server.close();

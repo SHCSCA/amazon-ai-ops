@@ -11,13 +11,13 @@ const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const NAV_RE = {
   dashboard: /今日看板|仪表盘/,
   delivery: /最终验收就绪门|交付验收/,
-  recommendations: /优化建议草案|优化建议/,
+  recommendations: /建议与审批/,
   settings: /AI与规则|AI 与规则|设置/,
 };
 const HEADING_RE = {
   dashboard: /今日任务/,
   delivery: /最终验收就绪门|交付验收/,
-  recommendations: /优化建议草案|优化建议/,
+  recommendations: /建议与审批/,
   settings: /AI与规则|设置/,
 };
 
@@ -613,7 +613,11 @@ async function main() {
             riskLevel: 'medium',
             status: 'pending',
             confidence: 0.72,
-            evidence: { explanationSource: 'ai', aiEvidenceRefs: ['metric:delivery:keyword:1'] },
+            evidence: {
+              explanationSource: 'ai',
+              aiModel: 'deepseek-v4-flash',
+              aiEvidenceRefs: ['metric:delivery:keyword:1'],
+            },
           }];
         }
         if (filter?.status === 'approved') {
@@ -946,10 +950,12 @@ async function main() {
   await expectVisible(page, '风险对象队列');
   await navigateLegacyRoute(page, 'recommendations');
   await page.getByRole('heading', { name: HEADING_RE.recommendations, level: 1 }).waitFor();
-  await expandDetails(page, '辅助生成口径、AI 状态和证据详情');
-  await expectVisible(page, 'AI 可用');
+  await page.locator('[data-workspace="decisions"][data-workspace-subview="recommendations"]').waitFor();
+  await expectInBody(page, '批准不等于执行', 'legacy recommendations route safety boundary');
+  await page.getByRole('row', { name: /motion sensor wall light/ }).click();
+  await expectVisible(page, '来源与技术明细');
+  await page.getByText('来源与技术明细', { exact: true }).click();
   await expectVisible(page, 'deepseek-v4-flash');
-  await expectInBody(page, '生成建议时会调用 AI 参与产品阶段诊断、动态阈值建议和动作解释。', 'cross-page AI readiness after settings test');
   await navigateLegacyRoute(page, 'settings');
   await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
   await expectVisible(page, 'AI 可用');

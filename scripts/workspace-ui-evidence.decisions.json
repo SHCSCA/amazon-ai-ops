@@ -1,0 +1,50 @@
+{
+  "baseUrl": "http://127.0.0.1:4173/",
+  "outputDir": "output/codex-evidence/workspace-ui-task5b-decisions",
+  "settleMs": 500,
+  "waitFor": "[data-workspace-evidence-root]",
+  "targets": [
+    {
+      "workspace": "decisions",
+      "subview": "recommendations",
+      "scenario": "mixed-recommendations",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "decisions",
+      "subview": "recommendations",
+      "scenario": "mixed-recommendations",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "decisions",
+      "subview": "approval",
+      "scenario": "mixed-recommendations",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "decisions",
+      "subview": "approval",
+      "scenario": "mixed-recommendations",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "decisions",
+      "subview": "approval",
+      "scenario": "mixed-recommendations",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "decisions",
+      "subview": "decided",
+      "scenario": "missing-readback-evidence",
+      "viewport": "1400x900",
+      "dpr": 1
+    }
+  ]
+}

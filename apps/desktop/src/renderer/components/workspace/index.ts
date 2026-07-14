@@ -8,6 +8,15 @@ export type {
   PriorityDataTableColumnPriority,
   PriorityDataTableProps,
 } from './priority-data-table';
+export {
+  ResponsiveInspector,
+  RESPONSIVE_INSPECTOR_MEDIA_QUERY,
+  resolveResponsiveInspectorMode,
+} from './responsive-inspector';
+export type {
+  ResponsiveInspectorMode,
+  ResponsiveInspectorProps,
+} from './responsive-inspector';
 export { SummaryStrip } from './summary-strip';
 export type { SummaryStripItem, SummaryStripProps } from './summary-strip';
 export { TaskBanner } from './task-banner';

@@ -1,4 +1,4 @@
-import type { OperationScope } from './types';
+import type { OperationScope, RecommendationView } from './types';
 
 export const PREVIEW_SCENARIO_IDS = [
   'missing-scope',
@@ -492,6 +492,18 @@ function previewPipeline(scenario: PreviewScenarioContract) {
   };
 }
 
+function clonePreviewSnapshot<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => clonePreviewSnapshot(item)) as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, clonePreviewSnapshot(item)]),
+    ) as T;
+  }
+  return value;
+}
+
 export function createBrowserPreviewElectronApi(
   username: string,
   scenarioId: PreviewScenarioId = DEFAULT_PREVIEW_SCENARIO,
@@ -500,29 +512,155 @@ export function createBrowserPreviewElectronApi(
   const recommendationSource = ['mixed', 'approved'].includes(scenario.recommendationState)
     ? previewDiagnostics
     : [];
-  const recommendations = recommendationSource.map((diagnostic, index) => ({
-    id: `preview-rec-${index + 1}`,
-    batchId: previewScope.batchId,
-    asin: diagnostic.asin,
+  const recommendations: RecommendationView[] = recommendationSource.map((diagnostic, index) => ({
+    id: 10_001 + index,
     entityType: diagnostic.objectType,
     entityName: diagnostic.objectName,
-    campaignName: diagnostic.campaignName,
-    adGroupName: diagnostic.adGroupName,
-    actionType: index === 0 ? 'decrease_bid' : 'watch',
-    currentValue: '1.20',
-    suggestedValue: index === 0 ? '0.95' : '1.20',
+    actionType: index === 0 ? 'lower_bid' : 'raise_bid',
+    currentValue: index === 0 ? '1.20' : '0.88',
+    recommendedValue: index === 0 ? '0.95' : '1.02',
     reason: diagnostic.diagnosis,
-    riskLevel: diagnostic.severity,
+    acos: diagnostic.acos,
+    clicks: diagnostic.clicks,
+    cost: diagnostic.spend,
+    riskLevel: index === 0 ? 'low' : diagnostic.severity,
     status: scenario.recommendationState === 'approved'
-      ? 'approved'
+      ? (index === 0 ? 'approved' : 'rejected')
       : (index === 0 ? 'pending' : 'needs_review'),
     revision: 0,
-    approvalStatus: scenario.recommendationState === 'approved'
-      ? 'approved'
-      : (index === 0 ? 'pending' : 'not_submitted'),
-    evidenceRefs: ['preview:metric', 'preview:timeline'],
-    createdAt: '2026-06-24T09:00:00Z',
-    updatedAt: '2026-06-24T09:00:00Z',
+    confidence: index === 0 ? 0.86 : 0.72,
+    evidence: {
+      impressions: index === 0 ? 6_840 : 3_920,
+      clicks: diagnostic.clicks,
+      cost: diagnostic.spend,
+      orders: diagnostic.orders,
+      sales: diagnostic.sales,
+      acos: diagnostic.acos,
+      cpc: diagnostic.cpc,
+      cvr: diagnostic.cvr,
+      currency: 'USD',
+      batchId: previewScope.batchId,
+      date: previewScope.dateTo,
+      asin: diagnostic.asin,
+      campaignName: diagnostic.campaignName,
+      adGroupName: diagnostic.adGroupName,
+      targeting: diagnostic.objectName,
+      matchType: diagnostic.objectType,
+      sourceFiles: [
+        index === 0
+          ? 'D:/preview/reports/keyword.xlsx'
+          : 'D:/preview/reports/user_search_term.xlsx',
+      ],
+      sourceRow: 42 + index,
+      explanationSource: 'ai',
+      aiModel: 'preview-contract-model',
+      aiStrategySource: 'ai',
+      aiStrategySummary: index === 0
+        ? 'AI 与规则一致建议降低出价，保留人工批准门。'
+        : 'AI 建议谨慎提价，规则要求先人工复核。',
+      aiMainProblems: [diagnostic.diagnosis],
+      aiEvidenceRefs: [`preview:metric:${index + 1}`, `preview:timeline:${index + 1}`],
+      aiEvidenceDetails: [
+        {
+          evidenceId: `preview:metric:${index + 1}`,
+          type: 'metric',
+          label: `${diagnostic.objectName} 广告指标`,
+          dateRange: `${previewScope.dateFrom} 至 ${previewScope.dateTo}`,
+          batchId: previewScope.batchId,
+          reportType: index === 0 ? 'keyword' : 'user_search_term',
+          sourceFile: index === 0
+            ? 'D:/preview/reports/keyword.xlsx'
+            : 'D:/preview/reports/user_search_term.xlsx',
+          sourceRow: 42 + index,
+          storeName: previewScope.storeName,
+          marketplaceCode: previewScope.marketplaceCode,
+          asin: diagnostic.asin,
+          campaignName: diagnostic.campaignName,
+          adGroupName: diagnostic.adGroupName,
+          entityType: diagnostic.objectType,
+          entityName: diagnostic.objectName,
+          metrics: {
+            impressions: index === 0 ? 6_840 : 3_920,
+            clicks: diagnostic.clicks,
+            cost: diagnostic.spend,
+            orders: diagnostic.orders,
+            sales: diagnostic.sales,
+            acos: diagnostic.acos,
+            cpc: diagnostic.cpc,
+            cvr: diagnostic.cvr,
+            currency: 'USD',
+          },
+        },
+        {
+          evidenceId: `preview:timeline:${index + 1}`,
+          type: 'timeline',
+          label: `${diagnostic.objectName} 生命周期`,
+          dateRange: `${previewScope.dateFrom} 至 ${previewScope.dateTo}`,
+          batchId: previewScope.batchId,
+          storeName: previewScope.storeName,
+          marketplaceCode: previewScope.marketplaceCode,
+          asin: diagnostic.asin,
+          campaignName: diagnostic.campaignName,
+          adGroupName: diagnostic.adGroupName,
+          entityType: diagnostic.objectType,
+          entityName: diagnostic.objectName,
+          timeline: {
+            activeDays: 34,
+            firstMetricDate: previewScope.dateFrom,
+            lastMetricDate: previewScope.dateTo,
+            inferredStage: diagnostic.lifecycleStage,
+            stageReasons: [diagnostic.diagnosis],
+          },
+        },
+      ],
+      aiEvidenceSufficiency: {
+        level: 'high',
+        metricEvidenceCount: 1,
+        sampleDays: 34,
+        totalClicks: diagnostic.clicks,
+        totalCost: diagnostic.spend,
+        totalOrders: diagnostic.orders,
+        canUseForFormalActions: true,
+        blockers: [],
+        warnings: index === 0 ? [] : ['预览建议需要人工复核'],
+      },
+      decisionAgreement: index === 0 ? 'aligned' : 'conflict',
+      decisionSource: 'rule_ai',
+      decisionReasons: [diagnostic.diagnosis, diagnostic.suggestedDirection],
+      decisionRiskWarnings: index === 0 ? [] : ['AI 与规则结论存在差异'],
+      decisionRequiresReview: index !== 0,
+      quantStatus: diagnostic.quantStatus as 'waste' | 'watch',
+      quantLifecycleStage: diagnostic.lifecycleStage,
+      quantSeverity: diagnostic.severity as 'high' | 'medium',
+      quantReasons: [diagnostic.diagnosis],
+      quantThresholds: { targetAcos: 0.35 },
+      quantReviewRequired: index !== 0,
+      ...(scenario.recommendationState === 'approved' ? {
+        approvalDecision: {
+          decision: index === 0 ? 'approved' as const : 'rejected' as const,
+          approvedBy: index === 0 ? 'Preview Approver' : undefined,
+          rejectedBy: index === 0 ? undefined : 'Preview Reviewer',
+          decidedAt: '2026-06-24T10:00:00.000Z',
+          note: index === 0 ? '预览批准历史，仅用于界面验证。' : '预览拒绝历史，仅用于界面验证。',
+          batchId: previewScope.batchId,
+          sourceBatchId: previewScope.batchId,
+          metricDate: previewScope.dateTo,
+          sourceRow: 42 + index,
+          sourceFiles: [
+            index === 0
+              ? 'D:/preview/reports/keyword.xlsx'
+              : 'D:/preview/reports/user_search_term.xlsx',
+          ],
+          scope: {
+            dateFrom: previewScope.dateFrom,
+            dateTo: previewScope.dateTo,
+            storeName: previewScope.storeName,
+            marketplaceCode: previewScope.marketplaceCode,
+            asin: diagnostic.asin,
+          },
+        },
+      } : {}),
+    },
   }));
 
   return {
@@ -540,12 +678,74 @@ export function createBrowserPreviewElectronApi(
     listOperationEvents: async () => previewEvents,
     createOperationEvent: async (input: unknown) => ({ id: 'preview-event-new', input }),
     deleteOperationEvent: async () => ({ ok: true }),
-    getRecommendations: async (filter?: { status?: string }) => filter?.status
-      ? recommendations.filter((recommendation) => recommendation.status === filter.status)
-      : recommendations,
-    generateRecommendations: async () => ({ generated: recommendations.length, recommendations }),
-    approveRecommendation: async () => ({ ok: true }),
-    rejectRecommendation: async () => ({ ok: true }),
+    getRecommendations: async (filter?: { status?: string }) => clonePreviewSnapshot(
+      filter?.status
+        ? recommendations.filter((recommendation) => recommendation.status === filter.status)
+        : recommendations,
+    ),
+    generateRecommendations: async () => clonePreviewSnapshot({
+      generated: recommendations.length,
+      recommendations,
+    }),
+    approveRecommendation: async (input: {
+      id: number;
+      expectedRevision: number;
+      decision?: { approvedBy?: string; note?: string };
+    }) => {
+      const recommendation = recommendations.find((row) => row.id === input.id);
+      if (!recommendation) throw new Error('预览建议不存在，请刷新后重试。');
+      if (!Number.isInteger(input.expectedRevision) || input.expectedRevision !== recommendation.revision) {
+        throw new Error('预览审批状态冲突：建议版本已变化，请刷新后重试。');
+      }
+      if (recommendation.status !== 'pending') {
+        throw new Error(`预览审批被阻断：建议当前状态 ${recommendation.status} 不允许批准。`);
+      }
+      if (!String(input.decision?.approvedBy || '').trim()) {
+        throw new Error('预览审批被阻断：批准前必须填写审批人。');
+      }
+      recommendation.status = 'approved';
+      recommendation.revision += 1;
+      recommendation.evidence = {
+        ...recommendation.evidence,
+        approvalDecision: {
+          ...input.decision,
+          decision: 'approved',
+          decidedAt: new Date().toISOString(),
+        },
+      };
+      return { ok: true };
+    },
+    rejectRecommendation: async (input: {
+      id: number;
+      expectedRevision: number;
+      decision?: { rejectedBy?: string; note?: string };
+    }) => {
+      const recommendation = recommendations.find((row) => row.id === input.id);
+      if (!recommendation) throw new Error('预览建议不存在，请刷新后重试。');
+      if (!Number.isInteger(input.expectedRevision) || input.expectedRevision !== recommendation.revision) {
+        throw new Error('预览审批状态冲突：建议版本已变化，请刷新后重试。');
+      }
+      if (recommendation.status !== 'pending' && recommendation.status !== 'needs_review') {
+        throw new Error(`预览审批被阻断：建议当前状态 ${recommendation.status} 不允许拒绝。`);
+      }
+      if (!String(input.decision?.rejectedBy || '').trim()) {
+        throw new Error('预览审批被阻断：拒绝前必须填写处理人。');
+      }
+      if (!String(input.decision?.note || '').trim()) {
+        throw new Error('预览审批被阻断：拒绝前必须填写拒绝原因。');
+      }
+      recommendation.status = 'rejected';
+      recommendation.revision += 1;
+      recommendation.evidence = {
+        ...recommendation.evidence,
+        approvalDecision: {
+          ...input.decision,
+          decision: 'rejected',
+          decidedAt: new Date().toISOString(),
+        },
+      };
+      return { ok: true };
+    },
     getBusinessKeywordOpportunities: async () => scenario.diagnosisReady ? previewTimelines.map((item, index) => ({
         asin: item.asin,
         portfolioName: '预览组合',
