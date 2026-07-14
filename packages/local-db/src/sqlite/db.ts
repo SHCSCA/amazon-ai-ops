@@ -154,10 +154,12 @@ function runMigrations(database: Database.Database): void {
       confidence REAL DEFAULT 0,
       risk_level TEXT DEFAULT 'APPROVAL',
       status TEXT DEFAULT 'pending',
+      revision INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
+  ensureColumn(database, 'action_recommendations', 'revision', 'INTEGER NOT NULL DEFAULT 0');
 
   // action_logs
   database.exec(`

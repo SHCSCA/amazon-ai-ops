@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecommendationView } from '../types';
-import { aiThresholdSummary, approvalBlockers, approvalDecisionButtonView, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, parseApprovalSelectionIntent, runApprovalWorkflowMutation, strategyLabel } from './approval-page';
+import { aiThresholdSummary, approvalBlockers, approvalDecisionButtonView, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, buildRecommendationDecisionRequest, parseApprovalSelectionIntent, refreshedApprovalSelection, runApprovalWorkflowMutation, strategyLabel } from './approval-page';
 import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
 
 describe('approval workflow invalidation contract', () => {
@@ -32,6 +32,7 @@ function recommendation(sourceRow: number | undefined = 12, sourceFiles = ['C:/r
     cost: 42.18,
     riskLevel: 'APPROVAL',
     status: 'pending',
+    revision: 4,
     confidence: 0.8,
     evidence: {
       batchId: 'batch_1',
@@ -45,6 +46,33 @@ function recommendation(sourceRow: number | undefined = 12, sourceFiles = ['C:/r
     },
   };
 }
+
+describe('recommendation decision request revision contract', () => {
+  it('sends the revision from the row the operator reviewed', () => {
+    expect(buildRecommendationDecisionRequest(recommendation(), {
+      approvedBy: 'Ops Lead',
+    })).toEqual({
+      id: 101,
+      expectedRevision: 4,
+      decision: {
+        approvedBy: 'Ops Lead',
+      },
+    });
+  });
+
+  it('replaces a selected row with the latest refreshed revision and content', () => {
+    const current = recommendation();
+    const refreshed = {
+      ...current,
+      revision: current.revision + 1,
+      recommendedValue: '0.99',
+    };
+
+    expect(refreshedApprovalSelection(current, [refreshed])).toBe(refreshed);
+    expect(refreshedApprovalSelection(current, [])).toBeNull();
+    expect(refreshedApprovalSelection(null, [refreshed])).toBeNull();
+  });
+});
 
 describe('approvalMissing', () => {
   it('does not mark complete recommendations as missing approval source fields', () => {

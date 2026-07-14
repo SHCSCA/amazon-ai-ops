@@ -169,6 +169,9 @@ describe('preview scenario contract', () => {
       expect(pipeline.quant.hasImportedMetrics).toBe(scenario.reportsImported);
       expect(pipeline.quant.diagnostics.length > 0).toBe(scenario.diagnosisReady);
       expect(recommendations.length > 0).toBe(['mixed', 'approved'].includes(scenario.recommendationState));
+      expect(recommendations.every((recommendation: { revision?: unknown }) => (
+        Number.isInteger(recommendation.revision) && Number(recommendation.revision) >= 0
+      ))).toBe(true);
       expect(evidenceStatus.readback.verifiedCount > 0).toBe(scenario.readbackEvidenceReady);
       expect(evidenceStatus.preview.workflowComplete).toBe(scenario.deliveryReady);
       expect(evidenceStatus.package.installerAvailable).toBe(false);

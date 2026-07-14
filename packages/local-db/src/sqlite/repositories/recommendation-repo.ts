@@ -58,15 +58,26 @@ export class RecommendationRepository {
   }
 
   insertIfNoDuplicate(rec: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>): { id: number; inserted: boolean; updated?: boolean } {
-    const duplicate = this.findDuplicate(rec);
-    if (duplicate?.id) {
-      if (shouldReplaceIncompleteDuplicate(duplicate, rec)) {
-        this.updateDuplicateRecommendation(duplicate.id, rec);
-        return { id: duplicate.id, inserted: false, updated: true };
+    const insertOrRefresh = this.db.transaction(() => {
+      const duplicate = this.findDuplicate(rec);
+      if (duplicate?.id) {
+        if (shouldReplaceIncompleteDuplicate(duplicate, rec)) {
+          const updated = this.updateDuplicateRecommendation(
+            duplicate.id,
+            duplicate.status,
+            duplicate.revision ?? 0,
+            rec,
+          );
+          return updated
+            ? { id: duplicate.id, inserted: false, updated: true }
+            : { id: duplicate.id, inserted: false };
+        }
+        return { id: duplicate.id, inserted: false };
       }
-      return { id: duplicate.id, inserted: false };
-    }
-    return { id: this.insert(rec), inserted: true };
+      return { id: this.insert(rec), inserted: true };
+    });
+
+    return insertOrRefresh.immediate();
   }
 
   findDuplicate(rec: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>): ActionRecommendation | undefined {
@@ -158,7 +169,7 @@ export class RecommendationRepository {
   updateStatus(id: number, status: string): void {
     this.db.prepare(`
       UPDATE action_recommendations 
-      SET status = ?, updated_at = datetime('now')
+      SET status = ?, revision = revision + 1, updated_at = datetime('now')
       WHERE id = ?
     `).run(status, id);
   }
@@ -171,13 +182,49 @@ export class RecommendationRepository {
     };
     this.db.prepare(`
       UPDATE action_recommendations
-      SET status = ?, evidence_json = ?, updated_at = datetime('now')
+      SET status = ?,
+          evidence_json = ?,
+          revision = revision + 1,
+          updated_at = datetime('now')
       WHERE id = ?
     `).run(status, JSON.stringify(nextEvidence), id);
   }
 
-  private updateDuplicateRecommendation(id: number, rec: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>): void {
-    this.db.prepare(`
+  updateStatusWithEvidenceIfCurrent(
+    id: number,
+    expectedStatus: string,
+    expectedRevision: number,
+    status: string,
+    evidencePatch: Record<string, unknown>,
+  ): boolean {
+    const update = this.db.transaction(() => {
+      const current = this.findById(id);
+      if (!current) return false;
+      const nextEvidence = {
+        ...(current.evidence || {}),
+        ...evidencePatch,
+      };
+      const result = this.db.prepare(`
+        UPDATE action_recommendations
+        SET status = ?,
+            evidence_json = ?,
+            revision = revision + 1,
+            updated_at = datetime('now')
+        WHERE id = ? AND status = ? AND revision = ?
+      `).run(status, JSON.stringify(nextEvidence), id, expectedStatus, expectedRevision);
+      return result.changes === 1;
+    });
+
+    return update.immediate();
+  }
+
+  private updateDuplicateRecommendation(
+    id: number,
+    expectedStatus: string,
+    expectedRevision: number,
+    rec: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>,
+  ): boolean {
+    const result = this.db.prepare(`
       UPDATE action_recommendations
       SET task_id = @taskId,
           store_name = @storeName,
@@ -195,10 +242,16 @@ export class RecommendationRepository {
           confidence = @confidence,
           risk_level = @riskLevel,
           status = @status,
+          revision = revision + 1,
           updated_at = datetime('now')
       WHERE id = @id
+        AND status = @expectedStatus
+        AND revision = @expectedRevision
+        AND status IN ('pending', 'needs_review')
     `).run({
       id,
+      expectedStatus,
+      expectedRevision,
       taskId: rec.taskId,
       storeName: rec.storeName,
       marketplaceCode: rec.marketplaceCode,
@@ -216,6 +269,7 @@ export class RecommendationRepository {
       riskLevel: rec.riskLevel,
       status: rec.status,
     });
+    return result.changes === 1;
   }
 
   countByDate(date: string): number {
@@ -258,6 +312,7 @@ export class RecommendationRepository {
       confidence: row.confidence,
       riskLevel: row.risk_level,
       status: row.status,
+      revision: Number(row.revision ?? 0),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -269,6 +324,7 @@ function shouldReplaceIncompleteDuplicate(
   incoming: Omit<ActionRecommendation, 'id' | 'createdAt' | 'updatedAt'>,
 ): boolean {
   if (!['pending', 'needs_review'].includes(existing.status)) return false;
+  if (!['pending', 'needs_review'].includes(incoming.status)) return false;
   return (
     (!hasExecutionTraceability(existing) && hasExecutionTraceability(incoming))
     || hasBetterAiEvidence(existing, incoming)

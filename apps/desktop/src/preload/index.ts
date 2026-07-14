@@ -130,8 +130,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     batchId?: string;
     limit?: number;
   }) => ipcRenderer.invoke('v1_5:business-ui:ai-diagnosis-runs', params),
-  approveRecommendation: (input: number | { id: number; decision?: any }) => ipcRenderer.invoke('recommendations:approve', input),
-  rejectRecommendation: (input: number | { id: number; decision?: any }) => ipcRenderer.invoke('recommendations:reject', input),
+  approveRecommendation: (input: number | { id: number; expectedRevision: number; decision?: any }) => ipcRenderer.invoke('recommendations:approve', input),
+  rejectRecommendation: (input: number | { id: number; expectedRevision: number; decision?: any }) => ipcRenderer.invoke('recommendations:reject', input),
   executeRecommendation: (id: number) => ipcRenderer.invoke('recommendations:execute', id),
   exportAdReadbackEvidence: (input: any) =>
     ipcRenderer.invoke('recommendations:export-ad-readback-evidence', input),

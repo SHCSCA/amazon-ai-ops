@@ -22,6 +22,56 @@ afterEach(() => {
 });
 
 describe('initSqlite v1.5 schema', () => {
+  it('creates recommendation revision as a non-null zero-based decision version', () => {
+    const db = initSqlite(tempDbPath());
+    try {
+      const revisionColumn = (db.prepare('PRAGMA table_info(action_recommendations)').all() as Array<{
+        name: string;
+        notnull: number;
+        dflt_value: string | null;
+      }>).find((column) => column.name === 'revision');
+
+      expect(revisionColumn).toMatchObject({
+        name: 'revision',
+        notnull: 1,
+        dflt_value: '0',
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('upgrades legacy recommendations with revision zero without changing their decision status', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec(`
+        CREATE TABLE action_recommendations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          risk_level TEXT DEFAULT 'APPROVAL',
+          status TEXT DEFAULT 'pending'
+        );
+        INSERT INTO action_recommendations (risk_level, status)
+        VALUES ('APPROVAL', 'approved');
+      `);
+    } finally {
+      legacyDb.close();
+    }
+
+    const upgradedDb = initSqlite(dbPath);
+    try {
+      const row = upgradedDb.prepare(`
+        SELECT status, revision
+        FROM action_recommendations
+        WHERE id = 1
+      `).get() as { status: string; revision: number };
+
+      expect(row).toEqual({ status: 'approved', revision: 0 });
+    } finally {
+      upgradedDb.close();
+    }
+  });
+
   it('keeps Lingxing report batch appVersion and store/site scope for final manifest audit traceability', () => {
     const db = initSqlite(tempDbPath());
     try {

@@ -205,6 +205,7 @@ async function main() {
       cost: 42.18,
       riskLevel: 'APPROVAL',
       status: 'pending',
+      revision: 0,
       confidence: 0.82,
       evidence: {
         date: '2026-06-12',
@@ -396,6 +397,10 @@ async function main() {
         quantReviewRequired: false,
       },
     };
+    const recommendationState = new Map([
+      [recommendationBase.id, { ...recommendationBase, evidence: { ...recommendationBase.evidence } }],
+      [blockedRecommendation.id, { ...blockedRecommendation, evidence: { ...blockedRecommendation.evidence } }],
+    ]);
     const readyPipeline = {
       scope: {
         dateFrom: '2026-06-01',
@@ -587,42 +592,29 @@ async function main() {
       getRecommendations: async (filter) => {
         window.__businessUiActionLog.push({ type: 'getRecommendations', filter });
         if (window.__hideRecommendations) return [];
-        const scopedRecommendation = {
-          ...recommendationBase,
-          evidence: { ...recommendationBase.evidence, batchId: filter?.batchId || recommendationBase.evidence.batchId },
-        };
-        if (filter?.status === 'approved') {
-          return [{
-            ...scopedRecommendation,
-            status: 'approved',
-            evidence: {
-              ...scopedRecommendation.evidence,
-              approvalDecision: window.__lastApprovalDecision || undefined,
-            },
-          }];
-        }
-        if (filter?.status === 'needs_review') {
-          return [{
-            ...blockedRecommendation,
-            evidence: { ...blockedRecommendation.evidence, batchId: filter?.batchId || blockedRecommendation.evidence.batchId },
-          }];
-        }
-        if (filter?.status === 'rejected') return [];
-        if (window.__mockAiNoEvidenceRecommendation) {
+        if (filter?.status === 'pending' && window.__mockAiNoEvidenceRecommendation) {
           return [{
             ...aiNoEvidenceRecommendation,
             status: 'pending',
             evidence: { ...aiNoEvidenceRecommendation.evidence, batchId: filter?.batchId || aiNoEvidenceRecommendation.evidence.batchId },
           }];
         }
-        if (window.__mockAiExplanationOnlyRecommendation) {
+        if (filter?.status === 'pending' && window.__mockAiExplanationOnlyRecommendation) {
           return [{
             ...aiExplanationOnlyRecommendation,
             status: 'pending',
             evidence: { ...aiExplanationOnlyRecommendation.evidence, batchId: filter?.batchId || aiExplanationOnlyRecommendation.evidence.batchId },
           }];
         }
-        return [{ ...scopedRecommendation, status: 'pending' }];
+        return Array.from(recommendationState.values())
+          .filter((recommendation) => recommendation.status === filter?.status)
+          .map((recommendation) => ({
+            ...recommendation,
+            evidence: {
+              ...recommendation.evidence,
+              batchId: filter?.batchId || recommendation.evidence.batchId,
+            },
+          }));
       },
       generateRecommendations: async (params) => {
         window.__businessUiActionLog.push({ type: 'generateRecommendations', params });
@@ -785,12 +777,38 @@ async function main() {
       },
       approveRecommendation: async (input) => {
         window.__businessUiActionLog.push({ type: 'approveRecommendation', input });
+        const recommendation = recommendationState.get(input?.id);
+        if (!recommendation || recommendation.status !== 'pending') {
+          throw new Error(`Illegal recommendation transition: ${recommendation?.status || 'missing'} -> approved`);
+        }
+        if (!Number.isInteger(input?.expectedRevision) || input.expectedRevision !== recommendation.revision) {
+          throw new Error('Recommendation revision conflict: refresh before approving');
+        }
         window.__lastApprovalDecision = input?.decision || null;
+        recommendationState.set(input.id, {
+          ...recommendation,
+          status: 'approved',
+          revision: recommendation.revision + 1,
+          evidence: { ...recommendation.evidence, approvalDecision: input?.decision || undefined },
+        });
         return undefined;
       },
       rejectRecommendation: async (input) => {
         window.__businessUiActionLog.push({ type: 'rejectRecommendation', input });
+        const recommendation = recommendationState.get(input?.id);
+        if (!recommendation || !['pending', 'needs_review'].includes(recommendation.status)) {
+          throw new Error(`Illegal recommendation transition: ${recommendation?.status || 'missing'} -> rejected`);
+        }
+        if (!Number.isInteger(input?.expectedRevision) || input.expectedRevision !== recommendation.revision) {
+          throw new Error('Recommendation revision conflict: refresh before rejecting');
+        }
         window.__lastRejectedDecision = input?.decision || null;
+        recommendationState.set(input.id, {
+          ...recommendation,
+          status: 'rejected',
+          revision: recommendation.revision + 1,
+          evidence: { ...recommendation.evidence, rejectionDecision: input?.decision || undefined },
+        });
         return undefined;
       },
       exportAdReadbackEvidence: async (input) => {
@@ -1272,6 +1290,9 @@ async function main() {
   await expectVisible(page, '报表指标');
   await expectInBody(page, 'tight match target / 2026-06-12');
   await expectInBody(page, '$42.18 / $58.58 / 1 单 / 32 点击');
+  await closeApprovalDecisionModal(page);
+  await page.getByRole('button', { name: '复核队列' }).click();
+  await page.getByRole('button', { name: '处理' }).first().click();
   await page.getByRole('button', { name: '拒绝', exact: true }).click();
   await page.getByText('拒绝前必须填写处理人。', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByPlaceholder('负责人姓名').fill('QA Rejector');
@@ -1279,11 +1300,72 @@ async function main() {
   await page.getByText('拒绝前必须填写拒绝原因。', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByPlaceholder('记录审批范围、外部审批凭证或拒绝原因').fill('Rejected during smoke audit.');
   await page.getByRole('button', { name: '拒绝', exact: true }).click();
-  await page.getByText('已拒绝建议 #101，拒绝原因已写入建议证据', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('已拒绝建议 #102，拒绝原因已写入建议证据', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByRole('button', { name: '处理' }).waitFor({ state: 'detached', timeout: 5000 });
+  await page.getByRole('button', { name: '已拒绝' }).click();
+  await page.getByRole('button', { name: '处理' }).first().waitFor({ state: 'visible', timeout: 5000 });
+  if (await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).count()
+    || await page.getByRole('button', { name: '拒绝', exact: true }).count()) {
+    fail('Rejected history exposed decision actions before an explicit row selection');
+  }
+  await page.getByRole('button', { name: '待审批' }).click();
   await page.getByRole('button', { name: '处理' }).first().click();
   await page.getByPlaceholder('负责人姓名').fill('QA Approver');
   await page.getByPlaceholder('记录审批范围、外部审批凭证或拒绝原因').fill('Approved for smoke scope only.');
   await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).click();
+  await page.getByText('已批准建议 #101，审批人和备注已写入建议证据', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByRole('button', { name: '处理' }).waitFor({ state: 'detached', timeout: 5000 });
+  await page.getByRole('button', { name: '已批准待执行' }).click();
+  await page.getByRole('button', { name: '处理' }).first().waitFor({ state: 'visible', timeout: 5000 });
+  if (await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).count()
+    || await page.getByRole('button', { name: '拒绝', exact: true }).count()) {
+    fail('Approved history exposed decision actions before an explicit row selection');
+  }
+
+  const decisionStateContract = await page.evaluate(async () => {
+    const scopeFilter = {
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-12',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      batchId: 'manual_ad_execution_batch',
+    };
+    const [pending, needsReview, approved, rejected] = await Promise.all([
+      window.electronAPI.getRecommendations({ ...scopeFilter, status: 'pending' }),
+      window.electronAPI.getRecommendations({ ...scopeFilter, status: 'needs_review' }),
+      window.electronAPI.getRecommendations({ ...scopeFilter, status: 'approved' }),
+      window.electronAPI.getRecommendations({ ...scopeFilter, status: 'rejected' }),
+    ]);
+    const guardedTransitions = [];
+    for (const transition of [
+      { method: 'approveRecommendation', id: 101 },
+      { method: 'rejectRecommendation', id: 101 },
+      { method: 'approveRecommendation', id: 102 },
+      { method: 'rejectRecommendation', id: 102 },
+    ]) {
+      try {
+        await window.electronAPI[transition.method]({ id: transition.id, decision: {} });
+        guardedTransitions.push({ ...transition, rejected: false });
+      } catch (error) {
+        guardedTransitions.push({ ...transition, rejected: true, message: String(error?.message || error) });
+      }
+    }
+    return {
+      pendingIds: pending.map((item) => item.id),
+      needsReviewIds: needsReview.map((item) => item.id),
+      approvedIds: approved.map((item) => item.id),
+      rejectedIds: rejected.map((item) => item.id),
+      guardedTransitions,
+    };
+  });
+  evidence.decisionStateContract = decisionStateContract;
+  if (decisionStateContract.pendingIds.length
+    || decisionStateContract.needsReviewIds.length
+    || decisionStateContract.approvedIds.join(',') !== '101'
+    || decisionStateContract.rejectedIds.join(',') !== '102'
+    || decisionStateContract.guardedTransitions.some((transition) => !transition.rejected)) {
+    fail('Recommendation decision state contract did not stay authoritative', JSON.stringify(decisionStateContract));
+  }
 
   await navigateBusinessPage(page, NAV_RE.readback, 'readback');
   await expectVisible(page, '选择已批准动作');
@@ -1485,6 +1567,7 @@ async function main() {
     fail('Approval IPC mock was not called', JSON.stringify(actionLog));
   }
   if (approvalCall.input?.id !== 101
+    || approvalCall.input?.expectedRevision !== 0
     || approvalCall.input?.decision?.approvedBy !== 'QA Approver'
     || approvalCall.input?.decision?.note !== 'Approved for smoke scope only.'
     || approvalCall.input?.decision?.batchId !== 'manual_ad_execution_batch'
@@ -1516,7 +1599,8 @@ async function main() {
   if (!rejectCall) {
     fail('Reject IPC mock was not called after audited reject', JSON.stringify(actionLog));
   }
-  if (rejectCall.input?.id !== 101
+  if (rejectCall.input?.id !== 102
+    || rejectCall.input?.expectedRevision !== 0
     || rejectCall.input?.decision?.rejectedBy !== 'QA Rejector'
     || rejectCall.input?.decision?.note !== 'Rejected during smoke audit.'
     || rejectCall.input?.decision?.batchId !== 'manual_ad_execution_batch') {

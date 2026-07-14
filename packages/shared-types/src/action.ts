@@ -30,6 +30,7 @@ export interface ActionRecommendation {
   confidence: number;             // 0-1
   riskLevel: RiskLevel;
   status: 'pending' | 'needs_review' | 'approved' | 'rejected' | 'executed' | 'expired';
+  revision?: number;
   createdAt?: string;
   updatedAt?: string;
 }

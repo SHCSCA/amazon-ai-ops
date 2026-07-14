@@ -49,6 +49,25 @@ export function approvalRowsAfterDecision(rows: RecommendationView[], recommenda
   return rows.filter((row) => row.id !== recommendationId);
 }
 
+export function buildRecommendationDecisionRequest(
+  recommendation: Pick<RecommendationView, 'id' | 'revision'>,
+  decision: Record<string, unknown>,
+) {
+  return {
+    id: recommendation.id,
+    expectedRevision: recommendation.revision,
+    decision,
+  };
+}
+
+export function refreshedApprovalSelection(
+  current: RecommendationView | null,
+  refreshedRows: RecommendationView[],
+): RecommendationView | null {
+  if (!current) return null;
+  return refreshedRows.find((row) => row.id === current.id) ?? null;
+}
+
 export function approvalQueueRowClass(row: RecommendationView, exiting: ApprovalQueueExitState): string {
   if (!exiting || row.id !== exiting.id) return '';
   return `approval-row-exiting approval-row-exiting-${exiting.decision}`;
@@ -666,7 +685,7 @@ export function ApprovalPage() {
           pendingSelectionIntentRef.current = null;
         }
       } else {
-        setSelected((current) => (current && normalizedRows.some((row) => row.id === current.id) ? current : null));
+        setSelected((current) => refreshedApprovalSelection(current, normalizedRows));
       }
     } catch (caught) {
       setMessage(errorMessage(caught, '加载审批队列失败'));
@@ -720,7 +739,10 @@ export function ApprovalPage() {
       if (typeof approve !== 'function') {
         throw new Error('批准建议接口未暴露。');
       }
-      await runApprovalWorkflowMutation('approve', () => approve({ id: currentSelected.id, decision: decisionPayload('approved') }));
+      await runApprovalWorkflowMutation('approve', () => approve(buildRecommendationDecisionRequest(
+        currentSelected,
+        decisionPayload('approved'),
+      )));
       const approvedMessage = `已批准建议 #${currentSelected.id}，审批人和备注已写入建议证据。审批范围：${scope.storeName} / ${scope.marketplaceCode} / ${currentSelected.evidence?.campaignName || '-'} / ${currentSelected.evidence?.adGroupName || '-'} / ${targetName}。`;
       setDecisionFeedback(buildApprovalStampFeedback({
         state: 'approved',
@@ -780,7 +802,10 @@ export function ApprovalPage() {
       if (typeof reject !== 'function') {
         throw new Error('拒绝建议接口未暴露。');
       }
-      await runApprovalWorkflowMutation('reject', () => reject({ id: currentSelected.id, decision: decisionPayload('rejected') }));
+      await runApprovalWorkflowMutation('reject', () => reject(buildRecommendationDecisionRequest(
+        currentSelected,
+        decisionPayload('rejected'),
+      )));
       const rejectedMessage = `已拒绝建议 #${currentSelected.id}，拒绝原因已写入建议证据${approvalNote ? `：${approvalNote}` : ''}`;
       setDecisionFeedback(buildApprovalStampFeedback({
         state: 'rejected',

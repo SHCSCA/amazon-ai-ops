@@ -4,7 +4,15 @@ import { RecommendationRepository } from './recommendation-repo';
 
 function createRepo() {
   const rows: any[] = [];
+  let beforeDuplicateUpdate: (() => void) | undefined;
   const db = {
+    transaction<T extends (...args: any[]) => any>(fn: T) {
+      const transaction = ((...args: Parameters<T>) => fn(...args)) as T & {
+        immediate: (...args: Parameters<T>) => ReturnType<T>;
+      };
+      transaction.immediate = (...args: Parameters<T>) => fn(...args);
+      return transaction;
+    },
     prepare(sql: string) {
       if (sql.includes('INSERT INTO action_recommendations')) {
         return {
@@ -27,6 +35,7 @@ function createRepo() {
               confidence: input.confidence,
               risk_level: input.riskLevel,
               status: input.status,
+              revision: 0,
               created_at: '2026-06-17 10:00:00',
               updated_at: '2026-06-17 10:00:00',
             });
@@ -44,7 +53,14 @@ function createRepo() {
       if (sql.includes('UPDATE action_recommendations') && sql.includes('SET task_id = @taskId')) {
         return {
           run(input: any) {
-            const index = rows.findIndex((row) => row.id === input.id);
+            beforeDuplicateUpdate?.();
+            beforeDuplicateUpdate = undefined;
+            const index = rows.findIndex((row) => (
+              row.id === input.id
+              && (!sql.includes('AND status = @expectedStatus') || row.status === input.expectedStatus)
+              && (!sql.includes('AND revision = @expectedRevision') || row.revision === input.expectedRevision)
+              && (!sql.includes("status IN ('pending', 'needs_review')") || ['pending', 'needs_review'].includes(row.status))
+            ));
             if (index !== -1) {
               rows[index] = {
                 ...rows[index],
@@ -64,7 +80,59 @@ function createRepo() {
                 confidence: input.confidence,
                 risk_level: input.riskLevel,
                 status: input.status,
+                revision: sql.includes('revision = revision + 1')
+                  ? rows[index].revision + 1
+                  : rows[index].revision,
                 updated_at: '2026-06-17 10:01:00',
+              };
+            }
+            return { changes: index === -1 ? 0 : 1 };
+          },
+        };
+      }
+      if (
+        sql.includes('UPDATE action_recommendations')
+        && sql.includes('SET status = ?')
+        && sql.includes('evidence_json = ?')
+      ) {
+        return {
+          run(status: string, evidenceJson: string, id: number, expectedStatus?: string, expectedRevision?: number) {
+            const index = rows.findIndex((row) => (
+              row.id === id
+              && (!sql.includes('AND status = ?') || row.status === expectedStatus)
+              && (!sql.includes('AND revision = ?') || row.revision === expectedRevision)
+            ));
+            if (index !== -1) {
+              rows[index] = {
+                ...rows[index],
+                status,
+                evidence_json: evidenceJson,
+                revision: sql.includes('revision = revision + 1')
+                  ? rows[index].revision + 1
+                  : rows[index].revision,
+                updated_at: '2026-06-17 10:02:00',
+              };
+            }
+            return { changes: index === -1 ? 0 : 1 };
+          },
+        };
+      }
+      if (
+        sql.includes('UPDATE action_recommendations')
+        && sql.includes('SET status = ?')
+        && !sql.includes('evidence_json = ?')
+      ) {
+        return {
+          run(status: string, id: number) {
+            const index = rows.findIndex((row) => row.id === id);
+            if (index !== -1) {
+              rows[index] = {
+                ...rows[index],
+                status,
+                revision: sql.includes('revision = revision + 1')
+                  ? rows[index].revision + 1
+                  : rows[index].revision,
+                updated_at: '2026-06-17 10:03:00',
               };
             }
             return { changes: index === -1 ? 0 : 1 };
@@ -84,7 +152,25 @@ function createRepo() {
       throw new Error(`Unexpected SQL: ${sql}`);
     },
   };
-  return { repo: new RecommendationRepository(db as any) };
+  return {
+    repo: new RecommendationRepository(db as any),
+    simulateDecisionBeforeNextDuplicateUpdate(
+      id: number,
+      status: string,
+      evidencePatch: Record<string, unknown>,
+    ) {
+      beforeDuplicateUpdate = () => {
+        const row = rows.find((candidate) => candidate.id === id);
+        if (!row) return;
+        row.status = status;
+        row.revision += 1;
+        row.evidence_json = JSON.stringify({
+          ...JSON.parse(row.evidence_json || '{}'),
+          ...evidencePatch,
+        });
+      };
+    },
+  };
 }
 
 function filterRows(sql: string, rows: any[], params: any[]) {
@@ -199,6 +285,82 @@ function recommendation(overrides: Partial<ActionRecommendation> = {}): Omit<Act
 }
 
 describe('RecommendationRepository', () => {
+  it('atomically moves a pending recommendation to approved and merges decision evidence', () => {
+    const { repo } = createRepo();
+    const id = repo.insert(recommendation());
+
+    const updated = repo.updateStatusWithEvidenceIfCurrent(id, 'pending', 0, 'approved', {
+      approvalDecision: {
+        approvedBy: 'Alice',
+        decision: 'approved',
+      },
+    });
+
+    expect(updated).toBe(true);
+    expect(repo.findById(id)).toMatchObject({
+      status: 'approved',
+      revision: 1,
+      evidence: {
+        cost: 52,
+        sourceRow: 12,
+        approvalDecision: {
+          approvedBy: 'Alice',
+          decision: 'approved',
+        },
+      },
+    });
+  });
+
+  it('does not overwrite a completed decision or its evidence when a stale writer loses the CAS', () => {
+    const { repo } = createRepo();
+    const id = repo.insert(recommendation());
+
+    expect(repo.updateStatusWithEvidenceIfCurrent(id, 'pending', 0, 'approved', {
+      approvalDecision: {
+        approvedBy: 'Alice',
+        note: 'Approved from the first decision window.',
+        decision: 'approved',
+      },
+    })).toBe(true);
+
+    expect(repo.updateStatusWithEvidenceIfCurrent(id, 'pending', 0, 'rejected', {
+      approvalDecision: {
+        rejectedBy: 'Bob',
+        note: 'Stale rejection must not win.',
+        decision: 'rejected',
+      },
+    })).toBe(false);
+    expect(repo.findById(id)).toMatchObject({
+      status: 'approved',
+      revision: 1,
+      evidence: {
+        approvalDecision: {
+          approvedBy: 'Alice',
+          note: 'Approved from the first decision window.',
+          decision: 'approved',
+        },
+      },
+    });
+  });
+
+  it('advances revision for every legacy status mutation path', () => {
+    const { repo } = createRepo();
+    const id = repo.insert(recommendation());
+
+    repo.updateStatus(id, 'approved');
+    expect(repo.findById(id)).toMatchObject({ status: 'approved', revision: 1 });
+
+    repo.updateStatusWithEvidence(id, 'executed', { executionTrace: 'trace-1' });
+    expect(repo.findById(id)).toMatchObject({
+      status: 'executed',
+      revision: 2,
+      evidence: {
+        cost: 52,
+        executionTrace: 'trace-1',
+      },
+    });
+  });
+
   it('filters recommendations by ASIN without case-sensitive misses', () => {
     const { repo } = createRepo();
 
@@ -301,6 +463,115 @@ describe('RecommendationRepository', () => {
     expect(preserved?.taskId).toBe('task_approved');
     expect(preserved?.recommendedValue).toBe('');
     expect(preserved?.status).toBe('approved');
+  });
+
+  it.each(['approved', 'rejected', 'executed', 'expired'] as const)(
+    'does not let duplicate refresh write an incoming %s terminal status',
+    (incomingStatus) => {
+      const { repo } = createRepo();
+      const pendingId = repo.insert(recommendation({
+        taskId: 'task_pending',
+        recommendedValue: '',
+        status: 'pending',
+        evidence: {
+          ...recommendation().evidence,
+          sourceFiles: [],
+          sourceRow: undefined,
+        },
+      }));
+
+      const result = repo.insertIfNoDuplicate(recommendation({
+        taskId: `task_illegal_${incomingStatus}`,
+        recommendedValue: '1.08',
+        status: incomingStatus,
+      }));
+
+      expect(result).toEqual({ id: pendingId, inserted: false });
+      expect(repo.findById(pendingId)).toMatchObject({
+        taskId: 'task_pending',
+        recommendedValue: '',
+        status: 'pending',
+        revision: 0,
+      });
+    },
+  );
+
+  it('rejects a stale decision after a same-status duplicate refresh changes recommendation content', () => {
+    const { repo } = createRepo();
+    const id = repo.insert(recommendation({
+      taskId: 'task_before_refresh',
+      recommendedValue: '',
+      status: 'pending',
+      evidence: {
+        ...recommendation().evidence,
+        sourceFiles: [],
+        sourceRow: undefined,
+      },
+    }));
+    const staleDecisionRevision = repo.findById(id)?.revision ?? 0;
+
+    expect(repo.insertIfNoDuplicate(recommendation({
+      taskId: 'task_after_refresh',
+      recommendedValue: '1.08',
+      status: 'pending',
+    }))).toEqual({ id, inserted: false, updated: true });
+
+    expect(repo.updateStatusWithEvidenceIfCurrent(id, 'pending', staleDecisionRevision, 'approved', {
+      approvalDecision: {
+        approvedBy: 'Alice',
+        decision: 'approved',
+      },
+    })).toBe(false);
+    expect(repo.findById(id)).toMatchObject({
+      taskId: 'task_after_refresh',
+      recommendedValue: '1.08',
+      status: 'pending',
+      revision: 1,
+    });
+    expect(repo.findById(id)).not.toMatchObject({
+      evidence: {
+        approvalDecision: expect.anything(),
+      },
+    });
+  });
+
+  it('does not report or apply a duplicate refresh when a concurrent decision wins first', () => {
+    const { repo, simulateDecisionBeforeNextDuplicateUpdate } = createRepo();
+    const staleId = repo.insert(recommendation({
+      taskId: 'task_stale',
+      recommendedValue: '',
+      status: 'pending',
+      evidence: {
+        ...recommendation().evidence,
+        sourceFiles: [],
+        sourceRow: undefined,
+      },
+    }));
+    simulateDecisionBeforeNextDuplicateUpdate(staleId, 'approved', {
+      approvalDecision: {
+        approvedBy: 'Alice',
+        decision: 'approved',
+      },
+    });
+
+    const result = repo.insertIfNoDuplicate(recommendation({
+      taskId: 'task_refresh_that_lost',
+      recommendedValue: '1.08',
+      status: 'pending',
+    }));
+
+    expect(result).toEqual({ id: staleId, inserted: false });
+    expect(repo.findById(staleId)).toMatchObject({
+      taskId: 'task_stale',
+      recommendedValue: '',
+      status: 'approved',
+      evidence: {
+        approvalDecision: {
+          approvedBy: 'Alice',
+          decision: 'approved',
+        },
+      },
+    });
   });
 
   it('refreshes a traceable pending duplicate when regenerated AI evidence is better', () => {

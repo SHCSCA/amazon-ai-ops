@@ -4,6 +4,58 @@ export interface RecommendationApprovalPolicyOptions {
   allowedSourceFiles?: string[];
 }
 
+export type RecommendationDecisionStatus = 'approved' | 'rejected';
+
+export interface RecommendationDecisionInput {
+  [key: string]: unknown;
+  approvedBy?: unknown;
+  rejectedBy?: unknown;
+  note?: unknown;
+}
+
+export interface ApplyRecommendationDecisionInput {
+  recommendation: ActionRecommendation;
+  targetStatus: RecommendationDecisionStatus;
+  decision: RecommendationDecisionInput;
+  approvalOptions?: RecommendationApprovalPolicyOptions;
+  persist: (status: RecommendationDecisionStatus, evidencePatch: Record<string, unknown>) => void;
+}
+
+export interface RecommendationDecisionRequest {
+  id: number;
+  expectedRevision: unknown;
+  decision: RecommendationDecisionInput;
+}
+
+export function normalizeRecommendationDecisionRequest(input: unknown): RecommendationDecisionRequest {
+  if (typeof input === 'number') {
+    return { id: input, expectedRevision: undefined, decision: {} };
+  }
+  const request = input && typeof input === 'object'
+    ? input as Record<string, unknown>
+    : {};
+  return {
+    id: Number(request.id || 0),
+    expectedRevision: request.expectedRevision,
+    decision: request.decision && typeof request.decision === 'object'
+      ? request.decision as RecommendationDecisionInput
+      : {},
+  };
+}
+
+export function assertRecommendationDecisionRevision(
+  recommendation: ActionRecommendation,
+  expectedRevision: unknown,
+): number {
+  if (typeof expectedRevision !== 'number' || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
+    throw new Error('审批被阻断：缺少有效建议版本，请刷新列表后重试。');
+  }
+  if ((recommendation.revision ?? 0) !== expectedRevision) {
+    throw new Error('审批状态冲突：建议内容已更新，请刷新后重试。');
+  }
+  return expectedRevision;
+}
+
 function normalizedRiskLevel(riskLevel: unknown): string {
   return String(riskLevel || '').trim().toLowerCase();
 }
@@ -11,6 +63,41 @@ function normalizedRiskLevel(riskLevel: unknown): string {
 function nonEmpty(value: unknown): boolean {
   const text = String(value || '').trim();
   return Boolean(text && text !== '-');
+}
+
+export function assertRecommendationDecisionTransition(
+  recommendation: ActionRecommendation,
+  targetStatus: RecommendationDecisionStatus,
+  decision: RecommendationDecisionInput,
+): void {
+  if (targetStatus === 'approved' && recommendation.status !== 'pending') {
+    throw new Error(`审批被阻断：建议当前状态 ${recommendation.status} 不允许转为 ${targetStatus}。`);
+  }
+  if (targetStatus === 'rejected' && recommendation.status !== 'pending' && recommendation.status !== 'needs_review') {
+    throw new Error(`审批被阻断：建议当前状态 ${recommendation.status} 不允许转为 ${targetStatus}。`);
+  }
+  if (targetStatus === 'approved' && !nonEmpty(decision.approvedBy)) {
+    throw new Error('审批被阻断：批准前必须填写审批人。');
+  }
+  if (targetStatus === 'rejected' && !nonEmpty(decision.rejectedBy)) {
+    throw new Error('审批被阻断：拒绝前必须填写处理人。');
+  }
+  if (targetStatus === 'rejected' && !nonEmpty(decision.note)) {
+    throw new Error('审批被阻断：拒绝前必须填写拒绝原因。');
+  }
+}
+
+export function applyRecommendationDecision(input: ApplyRecommendationDecisionInput): void {
+  assertRecommendationDecisionTransition(input.recommendation, input.targetStatus, input.decision);
+  if (input.targetStatus === 'approved') {
+    assertRecommendationApprovalPolicy(input.recommendation, input.approvalOptions);
+  }
+  input.persist(input.targetStatus, {
+    approvalDecision: {
+      ...input.decision,
+      decision: input.targetStatus,
+    },
+  });
 }
 
 function positiveNumber(value: unknown): boolean {

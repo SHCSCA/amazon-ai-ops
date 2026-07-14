@@ -23,4 +23,12 @@ describe('preload business update bridge', () => {
     expect(source).toContain('saveReadbackCapture');
     expect(source).toContain("ipcRenderer.invoke('recommendations:save-readback-capture'");
   });
+
+  it('requires the displayed recommendation revision in structured decision IPC', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('{ id: number; expectedRevision: number; decision?: any }');
+    expect(source).toContain("ipcRenderer.invoke('recommendations:approve', input)");
+    expect(source).toContain("ipcRenderer.invoke('recommendations:reject', input)");
+  });
 });

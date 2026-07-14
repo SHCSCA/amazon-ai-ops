@@ -36,12 +36,13 @@ import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-pre
 import { copyDiagnosticEvidenceFileToBundle, copyReportFailureEvidenceFilesToBundle, evaluateDownloadCenterDiagnosticEvidenceFiles } from './download-center-diagnostic-evidence-files';
 import { getLatestDownloadCenterDiagnosticRowForModel } from './download-center-diagnostic-store';
 import { fillAndCommitLingxingDateRange } from './download-center-date-range';
+import { readDailyReportRecommendationSummary } from './daily-report-recommendation-summary';
 import { writeDownloadCenterPageModelEnablementAuditBundle } from './page-model-enablement-audit-export';
 import { selectorUsesDateScope, selectorUsesReportScope, validateDownloadCenterPageModel } from './download-center-page-model-validation';
 import { backupExistingDownloadCenterPageModelOverride, getDownloadCenterPageModelOverrideMetadataPath, saveDownloadCenterPageModelOverride } from './download-center-page-model-override-store';
 import { getLingxingSessionNavigationPlan, isLingxingAdsLoggedInPage } from './lingxing-session-flow';
 import { buildAdExecutionUnavailableResult, buildActionLogForExecution, getRecommendationExecutionOutcome } from './recommendation-execution-policy';
-import { assertRecommendationApprovalPolicy } from './recommendation-approval-policy';
+import { applyRecommendationDecision, assertRecommendationDecisionRevision, normalizeRecommendationDecisionRequest } from './recommendation-approval-policy';
 import { extractLingxingListingFromSnapshot, type ListingDomFieldSnapshot, type ListingExtractionResult, type ListingPageSnapshot } from './listing-lingxing-extractor';
 import { adReadbackEvidenceToMarkdown, buildAdReadbackEvidence, type AdReadbackEvidenceInput } from './ad-readback-evidence';
 import { verifyAdReadbackEvidenceFile, type VerifiedAdReadbackEvidence } from './ad-readback-evidence-verifier';
@@ -7200,47 +7201,56 @@ function assertRecommendationCurrentDataGate(recommendationId: number): {
   };
 }
 
-function normalizeRecommendationDecisionInput(input: any): { id: number; decision: Record<string, any> } {
-  if (typeof input === 'number') return { id: input, decision: {} };
-  return {
-    id: Number(input?.id || 0),
-    decision: input?.decision && typeof input.decision === 'object' ? input.decision : {},
-  };
-}
-
 async function handleApproveRecommendation(input: any): Promise<void> {
-  const { id, decision } = normalizeRecommendationDecisionInput(input);
+  const { id, expectedRevision: requestedRevision, decision } = normalizeRecommendationDecisionRequest(input);
   if (!id) throw new Error('批准建议失败：缺少 recommendation id。');
   const { recommendation, allowedSourceFiles } = assertRecommendationCurrentDataGate(id);
-  assertRecommendationApprovalPolicy(recommendation, { allowedSourceFiles });
-  if (!String(decision.approvedBy || '').trim()) {
-    throw new Error('审批被阻断：批准前必须填写审批人。');
-  }
-  if (Object.keys(decision).length > 0) {
-    state.recommendationRepo?.updateStatusWithEvidence(id, 'approved', {
-      approvalDecision: {
-        ...decision,
-        decision: 'approved',
-      },
-    });
-    return;
-  }
-  state.recommendationRepo?.updateStatus(id, 'approved');
+  const expectedRevision = assertRecommendationDecisionRevision(recommendation, requestedRevision);
+  applyRecommendationDecision({
+    recommendation,
+    targetStatus: 'approved',
+    decision,
+    approvalOptions: { allowedSourceFiles },
+    persist: (status, evidencePatch) => {
+      const updated = state.recommendationRepo?.updateStatusWithEvidenceIfCurrent(
+        id,
+        recommendation.status,
+        expectedRevision,
+        status,
+        evidencePatch,
+      );
+      if (!updated) {
+        throw new Error('审批状态冲突：建议状态已变化，请刷新后重试。');
+      }
+    },
+  });
 }
 
 async function handleRejectRecommendation(input: any): Promise<void> {
-  const { id, decision } = normalizeRecommendationDecisionInput(input);
+  const { id, expectedRevision: requestedRevision, decision } = normalizeRecommendationDecisionRequest(input);
   if (!id) throw new Error('拒绝建议失败：缺少 recommendation id。');
-  if (Object.keys(decision).length > 0) {
-    state.recommendationRepo?.updateStatusWithEvidence(id, 'rejected', {
-      approvalDecision: {
-        ...decision,
-        decision: 'rejected',
-      },
-    });
-    return;
+  const recommendation = state.recommendationRepo?.findById(id);
+  if (!recommendation) {
+    throw new Error('Recommendation not found');
   }
-  state.recommendationRepo?.updateStatus(id, 'rejected');
+  const expectedRevision = assertRecommendationDecisionRevision(recommendation, requestedRevision);
+  applyRecommendationDecision({
+    recommendation,
+    targetStatus: 'rejected',
+    decision,
+    persist: (status, evidencePatch) => {
+      const updated = state.recommendationRepo?.updateStatusWithEvidenceIfCurrent(
+        id,
+        recommendation.status,
+        expectedRevision,
+        status,
+        evidencePatch,
+      );
+      if (!updated) {
+        throw new Error('审批状态冲突：建议状态已变化，请刷新后重试。');
+      }
+    },
+  });
 }
 
 function handleGetRecommendations(filter: any = []): any[] {
@@ -7410,12 +7420,7 @@ async function runDailyReportGeneration(): Promise<void> {
       totalClicks,
       comparedToYesterday: 0,
     },
-    recommendationsSummary: {
-      total: state.recommendationRepo?.countByDate(today) || 0,
-      auto: state.recommendationRepo?.countByDateAndStatus(today, 'executed') || 0,
-      pending: state.recommendationRepo?.countByDateAndStatus(today, 'pending') || 0,
-      executed: state.recommendationRepo?.countByDateAndStatus(today, 'approved') || 0,
-    },
+    recommendationsSummary: readDailyReportRecommendationSummary(state.recommendationRepo, today),
     inventoryAlerts: {
       outOfStock: 0,
       lowStock: 0,

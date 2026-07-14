@@ -669,6 +669,7 @@ export interface RecommendationView {
   cost: number;
   riskLevel: string;
   status: string;
+  revision: number;
   confidence: number;
   evidence?: RecommendationEvidence;
 }

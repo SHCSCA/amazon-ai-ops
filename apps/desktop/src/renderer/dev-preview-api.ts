@@ -516,6 +516,7 @@ export function createBrowserPreviewElectronApi(
     status: scenario.recommendationState === 'approved'
       ? 'approved'
       : (index === 0 ? 'pending' : 'needs_review'),
+    revision: 0,
     approvalStatus: scenario.recommendationState === 'approved'
       ? 'approved'
       : (index === 0 ? 'pending' : 'not_submitted'),
