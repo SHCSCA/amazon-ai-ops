@@ -73,7 +73,7 @@ describe('visible workspace navigation', () => {
     expect(VISIBLE_WORKSPACES.filter((item) => item.section === 'system')).toHaveLength(1);
     expect(VISIBLE_WORKSPACES.map((item) => item.label)).toEqual([
       '今日任务',
-      '产品/商品工作台',
+      '产品工作台',
       '数据准备',
       '广告诊断',
       '建议与审批',

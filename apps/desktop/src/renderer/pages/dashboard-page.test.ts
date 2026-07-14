@@ -12,6 +12,7 @@ import {
   dashboardDeliveryHeadline,
   dashboardDeliveryPrimaryAction,
   dashboardDeliveryPrimaryRoute,
+  dashboardDecisionSummary,
   dashboardMetricStatusCopy,
   dashboardNormalizeDeliveryItem,
   dashboardOpenPathButtonView,
@@ -22,9 +23,12 @@ import {
   dashboardRecommendationHealthCopy,
   dashboardRecommendationHealthSummary,
   dashboardRecommendationStatusFilters,
+  dashboardRiskObjectLabel,
+  dashboardRiskObjectQueue,
   dashboardRiskObjectFallbackCopy,
   dashboardRiskObjectPrimaryAction,
   dashboardRiskObjectSecondaryAction,
+  dashboardRiskObjectTone,
   dashboardSecondaryRecommendationAction,
   dashboardTaskRecommendationMetric,
   dashboardTaskEntryStatus,
@@ -35,7 +39,130 @@ import {
   dashboardWorkflowQuantNext,
   dashboardWorkflowQuantStatus,
 } from './dashboard-page';
-import type { AiDiagnosisRunView, ProductHistoryLedgerView } from '../types';
+import type { AiDiagnosisRunView, BusinessQuantDiagnostic, ProductHistoryLedgerView } from '../types';
+
+function dashboardDiagnostic(overrides: Partial<BusinessQuantDiagnostic>): BusinessQuantDiagnostic {
+  return {
+    objectName: '测试对象',
+    spend: 10,
+    sales: 20,
+    orders: 1,
+    clicks: 5,
+    acos: 0.5,
+    cvr: 0.2,
+    cpc: 2,
+    diagnosis: '测试诊断',
+    suggestedDirection: '人工确认',
+    ...overrides,
+  };
+}
+
+describe('dashboard risk object semantics', () => {
+  it.each([
+    { row: dashboardDiagnostic({ quantStatus: 'healthy', severity: 'low' }), label: '健康', tone: 'ready' },
+    { row: dashboardDiagnostic({ quantStatus: 'scale', severity: 'low' }), label: '可扩量', tone: 'ready' },
+    { row: dashboardDiagnostic({ quantStatus: 'watch', severity: 'medium' }), label: '待复核', tone: 'warning' },
+    { row: dashboardDiagnostic({ quantStatus: 'waste', severity: 'high' }), label: '高风险', tone: 'blocked' },
+  ])('maps $label objects to their real operator-facing state', ({ row, label, tone }) => {
+    expect(dashboardRiskObjectLabel(row)).toBe(label);
+    expect(dashboardRiskObjectTone(row)).toBe(tone);
+  });
+
+  it('does not report healthy and scalable objects as red risks or review work', () => {
+    const queue = dashboardRiskObjectQueue({
+      diagnostics: [
+        dashboardDiagnostic({ objectName: '健康对象', quantStatus: 'healthy', severity: 'low', spend: 200 }),
+        dashboardDiagnostic({ objectName: '扩量对象', quantStatus: 'scale', severity: 'low', spend: 150 }),
+      ],
+      isQuantifiable: true,
+    });
+
+    expect(queue.rows).toEqual([]);
+    expect(queue.status).toEqual({ tone: 'ready', label: '暂无风险对象' });
+  });
+
+  it('filters ready objects before limiting and prioritizes real risk over spend', () => {
+    const queue = dashboardRiskObjectQueue({
+      diagnostics: [
+        dashboardDiagnostic({ objectName: '健康高花费', quantStatus: 'healthy', severity: 'low', spend: 500 }),
+        dashboardDiagnostic({ objectName: '可扩量高花费', quantStatus: 'scale', severity: 'low', spend: 400 }),
+        dashboardDiagnostic({ objectName: '普通待复核', quantStatus: 'watch', severity: 'medium', spend: 50 }),
+        dashboardDiagnostic({ objectName: '低花费高风险', quantStatus: 'waste', severity: 'high', spend: 1 }),
+      ],
+      isQuantifiable: true,
+      limit: 2,
+    });
+
+    expect(queue.rows.map((row) => row.objectName)).toEqual(['低花费高风险', '普通待复核']);
+    expect(queue.status).toEqual({ tone: 'blocked', label: '2 个待看' });
+  });
+
+  it('reports the full attention count even when the visible risk queue is limited', () => {
+    const queue = dashboardRiskObjectQueue({
+      diagnostics: Array.from({ length: 7 }, (_, index) => dashboardDiagnostic({
+        objectName: `待复核对象 ${index + 1}`,
+        quantStatus: 'watch',
+        severity: 'medium',
+        spend: index + 1,
+      })),
+      isQuantifiable: true,
+      limit: 2,
+    });
+
+    expect(queue.rows).toHaveLength(2);
+    expect(queue.status).toEqual({ tone: 'warning', label: '7 个待看' });
+  });
+});
+
+describe('dashboard decision summary', () => {
+  it('prioritizes current decisions and explains their pending and review split', () => {
+    expect(dashboardDecisionSummary({
+      actionRecommendationCount: 3,
+      reviewRecommendationCount: 1,
+      approvedRecommendationCount: 2,
+      canGenerateFormalRecommendations: true,
+    })).toEqual({
+      value: '3 条',
+      detail: '2 条待审批，1 条需人工复核',
+    });
+  });
+
+  it('does not report decided recommendations as waiting to be generated', () => {
+    expect(dashboardDecisionSummary({
+      actionRecommendationCount: 0,
+      reviewRecommendationCount: 0,
+      approvedRecommendationCount: 2,
+      canGenerateFormalRecommendations: true,
+    })).toEqual({
+      value: '0 条',
+      detail: '已决策 2 条，批准不等于执行',
+    });
+  });
+
+  it.each([
+    {
+      canGenerateFormalRecommendations: true,
+      expectedDetail: '当前数据已可生成判断',
+    },
+    {
+      canGenerateFormalRecommendations: false,
+      expectedDetail: '先完成真实数据与量化门槛',
+    },
+  ])('uses truthful generation guidance when no current or decided recommendations exist', ({
+    canGenerateFormalRecommendations,
+    expectedDetail,
+  }) => {
+    expect(dashboardDecisionSummary({
+      actionRecommendationCount: 0,
+      reviewRecommendationCount: 0,
+      approvedRecommendationCount: 0,
+      canGenerateFormalRecommendations,
+    })).toEqual({
+      value: '待生成',
+      detail: expectedDetail,
+    });
+  });
+});
 
 describe('dashboardRecommendationStatusFilters', () => {
   it('loads both approvable and review-only recommendations for the dashboard queue', () => {
@@ -1143,6 +1270,15 @@ describe('dashboardWorkflowPostQuantSteps', () => {
 });
 
 describe('dashboardRiskObjectFallbackCopy', () => {
+  it('describes a quantified all-ready queue as having no risk objects', () => {
+    expect(dashboardRiskObjectFallbackCopy({
+      isQuantifiable: true,
+      hasRealFiles: true,
+      importedRows: 96,
+      actionableRows: 7,
+    })).toBe('当前范围暂无风险对象。');
+  });
+
   it('describes imported metrics without actionable objects as a quant review gap', () => {
     const copy = dashboardRiskObjectFallbackCopy({
       isQuantifiable: false,
@@ -1410,41 +1546,45 @@ describe('dashboardPrimaryTaskNavigationFeedback', () => {
     });
   });
 
-  it('wires the page header primary action to the readiness-driven dashboard task', () => {
+  it('wires the authoritative NextSafeAction directly into the Today task banner', () => {
     const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain('const basePrimaryTaskAction = dashboardPrimaryTaskAction({');
-    expect(source).toContain('const primaryTaskAction = dashboardProductWorkbenchAction({');
-    expect(source).toContain('primaryTask={primaryTaskAction.title}');
-    expect(source).toContain('nextAction={primaryTaskAction.label}');
-    expect(source).toContain('label: primaryTaskNavigationFeedback.label');
-    expect(source).toContain('onClick: () => navigatePrimaryTask(primaryTaskAction.route)');
-    expect(source).not.toContain("onClick: () => navigatePrimaryTask('product-management')");
+    expect(source).toContain('DashboardPage({ nextSafeAction }');
+    expect(source).toContain('<TaskBanner');
+    expect(source).toContain('title={nextSafeAction.label}');
+    expect(source).toContain('description={nextSafeAction.reason}');
+    expect(source).toContain('onClick: () => navigate(nextSafeAction.intent)');
+    expect(source).not.toContain('const primaryTaskAction = dashboardProductWorkbenchAction({');
+    expect(source).not.toContain('<PageHeader');
   });
 
   it('keeps the product context as a compact dashboard entry instead of a full workbench panel', () => {
     const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain('aria-label="当前产品入口"');
-    expect(source).toContain('dashboard-product-entry');
+    expect(source).toContain('aria-label="当前产品上下文"');
+    expect(source).toContain('workbench-context-bar');
     expect(source).not.toContain('title="产品工作台"');
   });
 
   it('keeps the dashboard overview low-noise instead of rendering KPI card walls', () => {
     const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain('dashboard-overview-panel');
-    expect(source).toContain('dashboard-overview-status');
+    expect(source).toContain('<SummaryStrip');
+    expect(source).toContain('<WorkbenchPanel');
     expect(source).toContain('dashboard-history-summary-grid');
+    expect(source).not.toContain('dashboard-overview-metrics');
+    expect(source).not.toContain('dashboard-overview-status');
     expect(source).not.toContain('KpiCard');
     expect(source).not.toContain('dashboard-prototype-kpi-strip');
     expect(source).not.toContain('dashboard-prototype-status-grid');
   });
 
-  it('wires dashboard primary pending state into the state-light refresh rail', () => {
+  it('keeps one single-layer technical disclosure for secondary status and evidence', () => {
     const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
+    const disclosures = source.match(/<ProgressiveDetails\b/g) || [];
 
-    expect(source).toContain('refreshing={primaryTaskNavigationFeedback.busy}');
+    expect(disclosures).toHaveLength(1);
+    expect(source).toContain('workspace-technical-surface');
     expect(source).toContain('StateLightGrid');
   });
 });

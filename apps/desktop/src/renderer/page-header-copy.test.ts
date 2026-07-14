@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 const copyPath = new URL('./page-header-copy.ts', import.meta.url);
 
 const expectedTitles = {
-  dashboard: '今日看板',
   productManagement: '产品管理',
   operationScope: '工作范围',
   dataCollection: '数据采集',
@@ -23,7 +22,6 @@ const expectedTitles = {
 };
 
 const pageTitleBindings = [
-  ['dashboard', 'pages/dashboard-page.tsx', 'dashboard'],
   ['product management', 'pages/product-management-page.tsx', 'productManagement'],
   ['operation scope', 'pages/operation-scope-page.tsx', 'operationScope'],
   ['data collection', 'pages/data-collection-page.tsx', 'dataCollection'],
@@ -56,5 +54,13 @@ describe('page header copy contract', () => {
 
     expect(source).toContain("import { PAGE_HEADER_TITLES } from '../page-header-copy'");
     expect(source).toContain(`title={PAGE_HEADER_TITLES.${titleKey}}`);
+  });
+
+  it('uses the task-first PageFrame title for Today instead of the legacy PageHeader contract', () => {
+    const source = readFileSync(new URL('pages/dashboard-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('<PageFrame');
+    expect(source).toContain('title="今日任务"');
+    expect(source).not.toContain('<PageHeader');
   });
 });

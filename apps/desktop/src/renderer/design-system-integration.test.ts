@@ -27,7 +27,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/dashboard-page.tsx',
-    markers: ['dashboard-overview-panel', '风险对象', '当前产品入口', '广告历史账本摘要'],
+    markers: ['PageFrame', 'TaskBanner', 'SummaryStrip', '风险对象队列', '当前产品上下文'],
   },
   {
     pageFile: 'pages/product-management-page.tsx',
@@ -101,7 +101,7 @@ describe('prototype parity design system integration', () => {
       const source = rendererSource(pageFile);
 
       const tableFirstWorkbenchContracts: Partial<Record<(typeof PAGE_FILES)[number], string[]>> = {
-        'pages/dashboard-page.tsx': ['dashboard-overview-panel', 'dashboard-overview-status'],
+        'pages/dashboard-page.tsx': ['TaskBanner', 'SummaryStrip', 'WorkbenchPanel', 'PriorityDataTable'],
         'pages/product-management-page.tsx': ['product-management-topline', 'product-management-shell'],
         'pages/operation-scope-page.tsx': ['operation-scope-confirm-panel', 'operation-scope-field-card'],
         'pages/data-import-validation-page.tsx': ['data-import-primary-panel', 'data-import-prototype-table'],

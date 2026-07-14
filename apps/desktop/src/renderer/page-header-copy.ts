@@ -1,5 +1,4 @@
 export const PAGE_HEADER_TITLES = {
-  dashboard: '今日看板',
   productManagement: '产品管理',
   operationScope: '工作范围',
   dataCollection: '数据采集',

@@ -1,0 +1,43 @@
+{
+  "baseUrl": "http://127.0.0.1:4173/",
+  "outputDir": "output/codex-evidence/workspace-ui-task5a",
+  "settleMs": 300,
+  "waitFor": "[data-workspace-evidence-root]",
+  "targets": [
+    {
+      "workspace": "today",
+      "subview": "overview",
+      "scenario": "missing-scope",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "today",
+      "subview": "overview",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "today",
+      "subview": "overview",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "today",
+      "subview": "overview",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "today",
+      "subview": "overview",
+      "scenario": "delivery-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    }
+  ]
+}

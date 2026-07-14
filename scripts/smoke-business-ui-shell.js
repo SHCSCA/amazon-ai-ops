@@ -2,6 +2,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('./playwright-loader');
+const { navigateLegacyRoute } = require('./business-ui-smoke-navigation');
 
 const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
@@ -297,22 +298,25 @@ async function main() {
   await page.goto(server.url, { waitUntil: 'networkidle' });
 
   for (const text of [
-    '总览',
-    '数据',
-    '广告',
-    '增长',
+    '运营工作台',
+    '今日任务',
+    '产品工作台',
+    '数据准备',
+    '广告诊断',
+    '建议与审批',
+    '结果核对',
+    '关键词与 Listing',
     '系统',
-    '当前工作范围：',
-    '追溯批次',
+    '系统与交付',
+    '范围',
     '真实报表',
     '入库指标',
-    '产品',
     '待生成验收',
   ]) {
     await expectVisible(page, text);
   }
-  const initialBodyText = await page.locator('body').innerText();
-  if (!initialBodyText.includes('/ USD')) fail('Scope currency marker is missing from the compact range line');
+  const scopeRangeTitle = await page.locator('.scope-compact-trigger').getAttribute('title');
+  if (!scopeRangeTitle?.includes('/ USD')) fail('Scope currency marker is missing from the compact range summary');
 
   await expectNotInBody(page, 'v1.5 工作台');
   await expectNotInBody(page, 'APP_READY');
@@ -323,7 +327,7 @@ async function main() {
   await expectNotInBody(page, '套用已验证范围');
 
   const routes = [
-    { nav: NAV_RE.dashboard, heading: /今日看板/, label: '今日看板', key: 'dashboard' },
+    { nav: NAV_RE.dashboard, heading: /今日任务/, label: '今日任务', key: 'dashboard' },
     { nav: NAV_RE.productManagement, heading: /产品管理/, label: '产品管理', key: 'product-management' },
     { nav: /工作范围/, heading: /工作范围/, label: '工作范围', key: 'operation-scope' },
     { nav: NAV_RE.dataCollection, heading: /数据采集/, label: '数据采集', key: 'data-collection' },
@@ -341,7 +345,7 @@ async function main() {
   ];
 
   for (const { nav, heading, label, key } of routes) {
-    await page.locator('.app-sidebar').getByRole('button', { name: nav }).click();
+    await navigateLegacyRoute(page, key);
     await page.getByRole('heading', { name: heading, level: 1 }).waitFor();
     const screenshotPath = path.join(evidenceDir, `business-ui-shell-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -361,7 +365,7 @@ async function main() {
       fail('Readback command wall is visible in primary UI');
     }
     if (key === 'recommendations') {
-      await expandDetails(page, '生成范围、AI 配置和规则阈值');
+      await expandDetails(page, '建议上下文检查');
       const expandedBodyText = await page.locator('body').innerText();
       for (const text of [
         '产品配置',
@@ -372,6 +376,8 @@ async function main() {
       }
     }
     if (key === 'scheduler') {
+      await expandDetails(page, '调度状态、安全边界和任务职责');
+      const schedulerBodyText = await page.locator('body').innerText();
       for (const text of [
         '每日广告报表下载',
         '任务职责',
@@ -381,7 +387,7 @@ async function main() {
         '需复核项不会自动批准',
         '定时任务不会自动改 bid、否词、暂停投放或批量操作 Amazon Ads。',
       ]) {
-        if (!bodyText.includes(text)) fail('Scheduler safety boundary text missing', text);
+        if (!schedulerBodyText.includes(text)) fail('Scheduler safety boundary text missing', text);
       }
       if (bodyText.includes('daily_report_download')) {
         fail('Scheduler leaked raw daily_report_download task name instead of business label');

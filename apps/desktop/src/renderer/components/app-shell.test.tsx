@@ -56,7 +56,7 @@ describe('Sidebar workspace navigation runtime', () => {
       onNavigate: () => undefined,
     }) as ReactElement;
     const buttons = collectElements(tree, (element) => element.type === 'button');
-    const product = buttons.find((button) => collectText(button).includes('产品/商品工作台'));
+    const product = buttons.find((button) => collectText(button).includes('产品工作台'));
     const today = buttons.find((button) => collectText(button).includes('今日任务'));
 
     expect(product?.props['aria-current']).toBe('page');
@@ -73,7 +73,7 @@ describe('Sidebar workspace navigation runtime', () => {
       onNavigate: (intent) => visited.push(intent),
     }) as ReactElement;
     const buttons = collectElements(tree, (element) => element.type === 'button');
-    const product = buttons.find((button) => collectText(button).includes('产品/商品工作台'));
+    const product = buttons.find((button) => collectText(button).includes('产品工作台'));
 
     expect(product?.props.type).toBe('button');
     product?.props.onClick();

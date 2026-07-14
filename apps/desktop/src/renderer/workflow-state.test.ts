@@ -229,6 +229,27 @@ describe('deriveWorkflowEvidence', () => {
     expect(selectNextSafeAction(evidence).stage).toBe('delivery');
   });
 
+  it('accepts preview-only verified readback for layout while still blocking formal delivery', () => {
+    const evidence = deriveWorkflowEvidence({
+      ...authoritativeSnapshot,
+      readback: { verifiedCount: 1, latestStatus: 'preview-only-verified' },
+      readiness: {
+        appReady: false,
+        manifestDriven: false,
+        previewOnly: true,
+        gates: [],
+        failures: [],
+      },
+    });
+
+    expect(evidence.readback).toEqual({ verifiedCount: 1, verificationStatus: 'verified' });
+    expect(selectNextSafeAction(evidence)).toMatchObject({
+      blocked: true,
+      stage: 'delivery',
+      label: '检查交付验收',
+    });
+  });
+
   it('maps evaluator failure provenance to stale smoke and package mismatch', () => {
     const evidence = deriveWorkflowEvidence({
       ...authoritativeSnapshot,

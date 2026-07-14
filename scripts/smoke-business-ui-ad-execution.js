@@ -2,6 +2,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('./playwright-loader');
+const { navigateLegacyRoute, setManualScopeBatch } = require('./business-ui-smoke-navigation');
 
 const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
@@ -103,7 +104,8 @@ function escapeRegExp(value) {
 }
 
 async function clickReadbackStep(page, title) {
-  await page.getByRole('tab', { name: new RegExp(escapeRegExp(title)) }).click();
+  const label = title.replace(/^\d+\.\s*/, '');
+  await page.getByRole('tab', { name: new RegExp(escapeRegExp(label)) }).click();
 }
 
 async function clickRecommendationGeneration(page) {
@@ -113,7 +115,8 @@ async function clickRecommendationGeneration(page) {
 
 async function assertGlobalGuards(page, key) {
   const textContent = await bodyText(page);
-  if (!textContent.includes('USD')) fail('USD marker is missing', key);
+  const scopeRangeTitle = await page.locator('.scope-compact-trigger').getAttribute('title');
+  if (!textContent.includes('USD') && !scopeRangeTitle?.includes('/ USD')) fail('USD marker is missing', key);
   if (textContent.includes('¥')) fail('RMB marker is visible', key);
   if (textContent.includes('v1.5 工作台')) fail('Old v1.5 workbench is visible', key);
   if (textContent.includes('APP_READY')) fail('False APP_READY state is visible', key);
@@ -122,13 +125,28 @@ async function assertGlobalGuards(page, key) {
 }
 
 async function navigateBusinessPage(page, nav, route) {
-  const button = page.locator('.app-sidebar').getByRole('button', { name: nav }).first();
-  try {
-    await button.click({ timeout: 8000 });
-  } catch {
-    await page.evaluate((nextRoute) => {
-      window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: nextRoute }));
-    }, route);
+  await navigateLegacyRoute(page, route);
+}
+
+async function closeApprovalDecisionModal(page) {
+  const dialog = page.getByRole('dialog', { name: '人工审批决定' });
+  if (await dialog.isVisible().catch(() => false)) {
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  }
+}
+
+async function openReadbackSourceEditor(page) {
+  const dialog = page.getByRole('dialog', { name: '修正来源字段' });
+  if (!await dialog.isVisible().catch(() => false)) {
+    await page.getByRole('button', { name: '修正来源字段', exact: true }).click();
+  }
+  await dialog.waitFor({ state: 'visible', timeout: 5000 });
+}
+
+async function closeReadbackSourceEditor(page) {
+  const dialog = page.getByRole('dialog', { name: '修正来源字段' });
+  if (await dialog.isVisible().catch(() => false)) {
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   }
 }
 
@@ -869,14 +887,14 @@ async function main() {
   });
 
   await page.goto(server.url, { waitUntil: 'networkidle' });
-  await page.getByLabel('数据批次来源').selectOption('__manual__');
-  await page.getByRole('textbox', { name: '数据批次', exact: true }).fill('manual_ad_execution_batch');
+  await setManualScopeBatch(page, 'manual_ad_execution_batch');
   await page.getByRole('button', { name: '保存范围' }).click();
-  await page.waitForFunction(() => document.body.innerText.includes('manual_ad_execution_batch'), null, { timeout: 5000 });
-  await page.getByText('追溯批次', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.locator('.scope-compact-trigger').click();
+  await page.getByLabel('当前范围详情').getByText('批次', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('真实报表', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.waitForFunction(() => document.body.textContent?.includes('手动批次未自动校验：manual_ad_execution_batch'), null, { timeout: 5000 });
   await expectInBody(page, 'manual_ad_execution_batch', 'manual batch scope value');
+  await page.locator('.scope-compact-trigger').click();
 
   const routes = [
     { nav: NAV_RE.recommendations, heading: HEADING_RE.recommendations, label: '优化建议', key: 'recommendations' },
@@ -898,7 +916,7 @@ async function main() {
 
   await navigateBusinessPage(page, NAV_RE.recommendations, 'recommendations');
   await expectVisible(page, '建议动作');
-  await expectVisible(page, '可送审动作 1');
+  await expectVisible(page, '当前有 1 条可送审动作，尚未选择。');
   await expectInBody(page, '需复核 1', 'recommendation task review count');
   await expectInBody(page, '缺证据 0', 'recommendation task evidence blocker count');
   await expectVisible(page, '去审批中心');
@@ -913,7 +931,7 @@ async function main() {
   await expectVisible(page, '可送审动作');
   await expectVisible(page, '人工复核');
   await expectVisible(page, 'AI 洞察未采纳');
-  await expectVisible(page, '证据不足阻断');
+  await expectVisible(page, '证据阻断');
   await expectInBody(page, '只把证据完整、可绑定当前广告对象的动作送入审批中心。', 'recommendation decision routing summary');
   await expectVisible(page, 'AI 可用');
   await expectVisible(page, 'deepseek-chat');
@@ -958,11 +976,11 @@ async function main() {
   await expectVisible(page, '2 浪费 / 1 需处理');
   await expectVisible(page, 'manual_ad_execution_batch');
   await openEvidenceDisclosures(page);
-  await expectVisible(page, '动作建议');
+  await expectVisible(page, '动作');
   await expectVisible(page, '证据状态');
-  await expectVisible(page, '当前 → 建议');
-  await expectVisible(page, '原因指标');
-  await expectVisible(page, '可进入普通审批');
+  await expectVisible(page, '当前 -> 建议');
+  await expectVisible(page, '指标依据');
+  await expectVisible(page, '证据完整，可送审');
   await expectVisible(page, '可送审');
   await expectVisible(page, '关键词探索');
   await expectVisible(page, '建议优先级与判断标准');
@@ -976,10 +994,10 @@ async function main() {
   await expectVisible(page, '本次生成 AI 参与状态');
   await expectVisible(page, 'AI 已参与');
   await expectVisible(page, '1 新建议 / 1 可审批动作');
-  await expectInBody(page, '可送审动作 1', 'formal recommendation count');
+  await expectInBody(page, '可送审 1', 'formal recommendation count');
   await expectInBody(page, '人工复核 1', 'manual review recommendation count');
   await expectInBody(page, 'AI 洞察未采纳 0', 'insight only recommendation count');
-  await expectInBody(page, '证据不足阻断 0', 'blocked evidence recommendation count');
+  await expectInBody(page, '证据阻断 0', 'blocked evidence recommendation count');
   await expectInBody(page, '规则候选 1 条，AI 候选 1 条，刷新 0 条旧建议，跳过 0 条重复建议。', 'candidate source split');
   await expectVisible(page, '1 AI 建议解释 / 0 规则解释');
   await expectVisible(page, '事件上下文');
@@ -1028,9 +1046,9 @@ async function main() {
   await page.evaluate(() => {
     window.__mockScopedMetricsMissing = false;
   });
-  await expectVisible(page, '查看送审判断');
+  await expectVisible(page, '详情');
   await expectVisible(page, '可送审');
-  await page.getByRole('button', { name: '查看送审判断' }).first().click();
+  await page.getByRole('button', { name: '详情', exact: true }).first().click();
   await openEvidenceDisclosures(page);
   await expectVisible(page, '送审判断');
   await expectVisible(page, '证据完整');
@@ -1146,11 +1164,11 @@ async function main() {
     window.dispatchEvent(new Event('business-ui:data-updated'));
   });
   await page.getByRole('button', { name: '刷新建议' }).click();
-  await expectVisible(page, '查看送审判断');
+  await expectVisible(page, '详情');
 
   await navigateBusinessPage(page, NAV_RE.approval, 'approval');
-  await expectVisible(page, '选择一条待审批动作');
-  await expectVisible(page, '查看审批队列');
+  await expectVisible(page, '审批队列');
+  await expectVisible(page, '先选择一条动作，再批准或拒绝；本页只记录人工决策，不执行广告。');
   await openEvidenceDisclosures(page);
   await expectVisible(page, '审批安全边界');
   await expectVisible(page, '仅审批，不执行');
@@ -1169,6 +1187,7 @@ async function main() {
   await page.getByRole('button', { name: '暂不能批准' }).evaluate((node) => {
     if (!node.disabled) throw new Error('Blocked review recommendation approve button was not disabled');
   });
+  await closeApprovalDecisionModal(page);
   await page.getByRole('button', { name: '待审批' }).click();
   await page.evaluate(() => {
     window.__mockAiNoEvidenceRecommendation = true;
@@ -1187,6 +1206,7 @@ async function main() {
   await page.getByRole('button', { name: '暂不能批准' }).evaluate((node) => {
     if (!node.disabled) throw new Error('AI recommendation without evidence refs approve button was not disabled');
   });
+  await closeApprovalDecisionModal(page);
   await page.evaluate(() => {
     window.__mockAiNoEvidenceRecommendation = false;
     window.__mockAiExplanationOnlyRecommendation = true;
@@ -1202,6 +1222,7 @@ async function main() {
   await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).evaluate((node) => {
     if (node.disabled) throw new Error('Rule recommendation with AI explanation only should remain approvable');
   });
+  await closeApprovalDecisionModal(page);
   await page.evaluate(() => {
     window.__mockAiNoEvidenceRecommendation = false;
     window.__mockAiExplanationOnlyRecommendation = false;
@@ -1265,13 +1286,17 @@ async function main() {
   await page.getByRole('button', { name: '批准，进入结果核对', exact: true }).click();
 
   await navigateBusinessPage(page, NAV_RE.readback, 'readback');
-  await expectVisible(page, '1. 选择已批准动作');
-  await expectVisible(page, '2. 填写审批凭证');
-  await expectVisible(page, '3. 记录执行和回读');
-  await expectVisible(page, '4. 校验并导出证据');
-  await expectVisible(page, '人工执行证据，不批量写入');
-  await expectVisible(page, '执行前、执行后、回读截图不能复用');
-  await expectVisible(page, '回读值必须等于执行后值');
+  await expectVisible(page, '选择已批准动作');
+  await expectVisible(page, '填写审批凭证');
+  await expectVisible(page, '记录执行和回读');
+  await expectVisible(page, '校验并导出证据');
+  await page.getByRole('button', { name: '查看安全门', exact: true }).click();
+  await expectVisible(page, '安全门与当前缺口');
+  await expectVisible(page, '人工执行：本页只收集审批、截图、前后值和回读证据，不自动写 Amazon Ads。');
+  await expectVisible(page, '截图不复用：审批、执行前、执行后和回读截图必须来自不同证据。');
+  await expectVisible(page, '时间可追溯：审批、执行前、执行动作、执行后和回读时间必须可排序。');
+  await expectVisible(page, '回读值一致');
+  await page.getByRole('button', { name: '知道了', exact: true }).click();
   await expectVisible(page, '广告组合');
   await expectVisible(page, 'ASIN');
   await expectVisible(page, '对象类型');
@@ -1288,6 +1313,7 @@ async function main() {
   await expectVisible(page, '当前有效批次：manual_ad_execution_batch');
   await expectVisible(page, '来源批次匹配');
   await expectVisible(page, '来源批次、指标日期、来源行号、来源文件、来源当前值和建议值是回读证据的一部分；缺失或串批次时只能导出缺口草稿。');
+  await openReadbackSourceEditor(page);
   await expectVisible(page, '产品阶段');
   await expectVisible(page, 'keyword_exploration');
   await expectVisible(page, 'AI 与规则关系');
@@ -1306,6 +1332,7 @@ async function main() {
   await page.getByRole('textbox', { name: '推荐来源文件', exact: true }).evaluate((node) => {
     if (!node.value.includes('C:/reports/source_user_search_term.xlsx')) throw new Error(`Unexpected source files: ${node.value}`);
   });
+  await closeReadbackSourceEditor(page);
   await clickReadbackStep(page, '2. 填写审批凭证');
   await page.getByRole('textbox', { name: '审批人', exact: true }).evaluate((node) => {
     if (node.value !== 'QA Approver') throw new Error(`Unexpected carried approver: ${node.value}`);
@@ -1317,13 +1344,17 @@ async function main() {
     if (!String(node.value || '').includes('T')) throw new Error(`Approval time was not carried into readback: ${node.value}`);
   });
   await clickReadbackStep(page, '1. 选择已批准动作');
+  await openReadbackSourceEditor(page);
   await page.getByRole('textbox', { name: '来源批次', exact: true }).fill('stale_ad_execution_batch');
+  await closeReadbackSourceEditor(page);
   await expectVisible(page, '来源批次不一致');
   await clickReadbackStep(page, '4. 校验并导出证据');
   await expectVisible(page, '来源批次必须等于当前批次');
   await expectVisible(page, '导出缺口草稿');
   await clickReadbackStep(page, '1. 选择已批准动作');
+  await openReadbackSourceEditor(page);
   await page.getByRole('textbox', { name: '来源批次', exact: true }).fill('manual_ad_execution_batch');
+  await closeReadbackSourceEditor(page);
   await clickReadbackStep(page, '1. 选择已批准动作');
   await expectVisible(page, '来源批次匹配');
   await clickReadbackStep(page, '2. 填写审批凭证');

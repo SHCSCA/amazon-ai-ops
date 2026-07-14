@@ -79,7 +79,7 @@ export const DEFAULT_WORKSPACE_INTENTS = {
 
 export const VISIBLE_WORKSPACES: readonly VisibleWorkspaceDefinition[] = [
   { id: 'today', label: '今日任务', description: '查看当前运营重点与下一步', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.today },
-  { id: 'product', label: '产品/商品工作台', description: '维护产品、目标与运营事件', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.product },
+  { id: 'product', label: '产品工作台', description: '维护产品、目标与运营事件', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.product },
   { id: 'data-preparation', label: '数据准备', description: '配置范围、采集报表并检查导入', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS['data-preparation'] },
   { id: 'diagnosis', label: '广告诊断', description: '基于真实数据检查广告表现', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.diagnosis },
   { id: 'decisions', label: '建议与审批', description: '复核建议并进入人工审批', section: 'daily', defaultIntent: DEFAULT_WORKSPACE_INTENTS.decisions },

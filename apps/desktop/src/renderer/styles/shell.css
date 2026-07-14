@@ -1,0 +1,96 @@
+.app-shell {
+  height: 100vh;
+  overflow: hidden;
+  background: var(--workspace-bg);
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: auto minmax(360px, 1fr) auto;
+  min-height: 52px;
+  padding: var(--workspace-space-2) var(--workspace-space-4);
+  border-bottom-color: var(--workspace-border);
+  background: var(--workspace-surface);
+  color: var(--workspace-text-secondary);
+  font-size: var(--workspace-font-support);
+  line-height: var(--workspace-line-support);
+}
+
+.topbar .brand strong,
+.topbar .brand span,
+.topbar .session-line,
+.topbar .app-status,
+.topbar .scope-title-row span,
+.topbar .scope-title-row strong,
+.topbar .scope-title-row em,
+.topbar .scope-topbar-fact,
+.topbar .scope-topbar-fact b,
+.topbar .scope-fact,
+.topbar .scope-visible-warning {
+  font-size: var(--workspace-font-support);
+  line-height: var(--workspace-line-support);
+}
+
+.topbar .scope-title-row .scope-title-actions select,
+.topbar .logout-button,
+.topbar .compact-button {
+  font-size: var(--workspace-font-control);
+  line-height: var(--workspace-line-control);
+}
+
+.app-body {
+  grid-template-columns: 184px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-sidebar {
+  width: 184px;
+  min-height: 0;
+  overflow-y: auto;
+  border-right-color: var(--workspace-border);
+  background: var(--workspace-surface);
+  scrollbar-gutter: stable;
+}
+
+.app-sidebar .sidebar-brand {
+  display: none;
+}
+
+.app-sidebar .nav-group-label,
+.app-sidebar .nav-item,
+.app-sidebar .nav-item-index,
+.app-sidebar .nav-item-feedback {
+  font-size: var(--workspace-font-support);
+  line-height: var(--workspace-line-support);
+  letter-spacing: 0;
+}
+
+.app-content {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+@media (max-width: 1280px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: var(--workspace-space-1);
+  }
+
+  .topbar > .scope-bar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .app-body {
+    grid-template-columns: 176px minmax(0, 1fr);
+  }
+
+  .app-sidebar {
+    width: 176px;
+  }
+}

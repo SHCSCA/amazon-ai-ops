@@ -2,6 +2,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('./playwright-loader');
+const { navigateLegacyRoute } = require('./business-ui-smoke-navigation');
 
 const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
@@ -128,6 +129,19 @@ async function expectInViewport(page, text, label) {
   }
 }
 
+async function expectLocatorInViewport(locator, label) {
+  const inViewport = await locator.first().evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0
+      && rect.height > 0
+      && rect.bottom > 0
+      && rect.right > 0
+      && rect.top < window.innerHeight
+      && rect.left < window.innerWidth;
+  });
+  if (!inViewport) fail('Expected locator to be viewport-visible', label);
+}
+
 async function expectNotInViewport(page, text, label) {
   const matches = await viewportTextMatches(page, text);
   if (matches.length) {
@@ -137,7 +151,8 @@ async function expectNotInViewport(page, text, label) {
 
 async function assertGlobalGuards(page, key) {
   const textContent = await bodyText(page);
-  if (!textContent.includes('USD')) fail('USD currency marker is missing', key);
+  const scopeRangeTitle = await page.locator('.scope-compact-trigger').getAttribute('title');
+  if (!textContent.includes('USD') && !scopeRangeTitle?.includes('/ USD')) fail('USD currency marker is missing', key);
   if (textContent.includes('¥')) fail('RMB currency symbol is visible', key);
   if (textContent.includes('v1.5 工作台')) fail('Old v1.5 workbench is visible', key);
   if (textContent.includes('APP_READY')) fail('False APP_READY state is visible', key);
@@ -145,14 +160,7 @@ async function assertGlobalGuards(page, key) {
 }
 
 async function navigateBusinessPage(page, nav, route) {
-  const button = page.locator('.app-sidebar').getByRole('button', { name: nav }).first();
-  try {
-    await button.click({ timeout: 8000 });
-  } catch {
-    await page.evaluate((nextRoute) => {
-      window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', { detail: nextRoute }));
-    }, route);
-  }
+  await navigateLegacyRoute(page, route);
 }
 
 async function main() {
@@ -1013,7 +1021,7 @@ async function main() {
     await expectNotInBody(page, 'pnpm run verify:ad-readback');
 
   const routes = [
-    { nav: NAV_RE.dashboard, heading: /今日看板/, label: '今日看板', key: 'dashboard' },
+    { nav: NAV_RE.dashboard, heading: /今日任务/, label: '今日任务', key: 'dashboard' },
     { nav: NAV_RE.productManagement, heading: /产品管理/, label: '产品管理', key: 'product-management' },
     { nav: NAV_RE.dataCollection, heading: /数据采集/, label: '数据采集', key: 'data-collection' },
     { nav: NAV_RE.dataImport, heading: /导入校验/, label: '导入校验', key: 'data-import-validation' },
@@ -1043,37 +1051,35 @@ async function main() {
     };
     }
 
-  await expectVisible(page, '量化阻断');
+  await expectVisible(page, '广告表现阻断');
   await expectVisible(page, '没有真实报表文件和导入指标，本页不生成建议。');
   await expectNotInBody(page, '总花费');
   await expectNotInBody(page, '总销售');
 
   await navigateBusinessPage(page, NAV_RE.dashboard, 'dashboard');
+  await expectVisible(page, '今日任务');
+  await expectVisible(page, '下一安全动作');
+  await expectVisible(page, '选择运营产品');
+  await expectVisible(page, '当前产品');
+  await expectVisible(page, '待锁定');
+  await expectVisible(page, '真实数据');
+  await expectVisible(page, '0/8 类');
+  await expectVisible(page, '广告表现');
+  await expectVisible(page, '待量化');
+  await expectVisible(page, '风险对象队列');
+  await expectVisible(page, '缺少真实广告表格，无法给出风险对象。');
+  await expectVisible(page, '产品上下文');
+  await expectVisible(page, '尚未锁定产品');
+  await expectVisible(page, '数据、产品历史与交付明细');
+  await page.locator('summary').filter({ hasText: '数据、产品历史与交付明细' }).click();
   await expectVisible(page, '数据健康');
   await expectVisible(page, '数据门槛');
   await expectVisible(page, '0/8 类 · 0 行');
-  await expectVisible(page, 'AI / 数据门槛');
-  await expectVisible(page, '广告表现');
-  await expectVisible(page, '今日花费');
-  await expectVisible(page, '广告销售');
-  await expectVisible(page, 'AI 连接状态');
-  await expectVisible(page, '规则阈值');
-  await expectVisible(page, '先选择或维护产品，避免不同产品的数据、事件和建议混在同一个工作流里。');
-  await expectVisible(page, '选择产品');
-  await expectVisible(page, '当前产品入口');
-  await expectVisible(page, '未选择产品');
-  await expectVisible(page, '等待数据门槛');
-  await expectVisible(page, '数据门槛未闭合，先下载真实报表。');
-  await expectVisible(page, '风险对象');
-  await expectVisible(page, '缺少真实广告表格，无法给出风险对象。');
-  await expectVisible(page, '广告历史账本摘要');
-  await expectVisible(page, '先在产品管理中选择产品；本卡片不会再默认取第一条产品，避免看错 ASIN 的历史。');
-  await expectVisible(page, '本卡片不会再默认取第一条产品');
-  await expectVisible(page, '交付与技术明细');
-  await expectVisible(page, '完整流程入口');
-  await expectVisible(page, '交付缺口：已闭合 0/7');
-  await expectVisible(page, '行动队列：1 项');
-  await expectVisible(page, '最近证据/文件路径：2 个入口');
+  await expectVisible(page, 'AI / 建议');
+  await expectVisible(page, '广告历史摘要');
+  await expectVisible(page, '锁定产品后展示该产品的历史账本。');
+  await expectVisible(page, '交付缺口');
+  await expectVisible(page, '最近文件路径');
   await expectNotInBody(page, '总花费');
   await expectNotInBody(page, '总销售');
   await expectNotInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。');
@@ -1088,8 +1094,12 @@ async function main() {
   await expectVisible(page, '缺报表');
   await expectVisible(page, '去数据采集');
   await expectVisible(page, '导入本地报表');
+  await page.getByRole('heading', { name: '导入批次状态', level: 3 }).scrollIntoViewIfNeeded();
   await expectInViewport(page, '导入批次状态', 'initial data import first viewport');
-  await expectInViewport(page, '0/8', 'initial data import first viewport');
+  await expectLocatorInViewport(
+    page.locator('.data-import-title-pills').getByText(/真实报表\s*0\/8/),
+    'initial data import first viewport: 0/8',
+  );
   await expectInViewport(page, '去数据采集', 'initial data import first viewport');
   await expectInViewport(page, '导入本地报表', 'initial data import first viewport');
   await expectNotInViewport(page, '真实报表目录', 'initial data import first viewport');
@@ -1111,11 +1121,13 @@ async function main() {
   await expectVisible(page, '回数据采集获取真实报表');
 
   await navigateBusinessPage(page, /运营事件/, 'operation-events');
+  await page.locator('summary').filter({ hasText: '新增/维护事件、AI 使用说明和覆盖统计' }).click();
   await expectVisible(page, 'AI 与规则如何使用这些事件');
   await expectVisible(page, '解释阈值变化');
   await expectVisible(page, '判断产品推广阶段');
   await expectVisible(page, '只影响建议，不自动执行');
   await expectVisible(page, '当前事件覆盖');
+  await page.getByRole('button', { name: '新增事件', exact: true }).click();
   await expectVisible(page, 'Coupon/折扣');
   await expectVisible(page, 'BD/秒杀');
   await expectVisible(page, '大促');
@@ -1127,37 +1139,40 @@ async function main() {
   await expectVisible(page, '10% Coupon started');
   await page.getByRole('button', { name: 'BD/秒杀' }).click();
   await expectInBody(page, 'BD/秒杀会改变流量和转化基线。AI 会把活动日单独解释，避免把活动流量误判为自然稳定放量。', 'BD event hint');
-  await page.getByRole('button', { name: '记录事件' }).click();
+  await page.getByRole('button', { name: '保存到上下文' }).click();
   await page.getByText('运营事件已记录，会进入广告表现和 AI 诊断上下文。', { exact: true }).waitFor({ timeout: 5000 });
   await expectVisible(page, 'BD 活动开始');
   await expectVisible(page, '查看广告表现');
   await expectVisible(page, '生成 AI+规则建议');
 
   await navigateBusinessPage(page, /数据采集/, 'data-collection');
-  await expectInViewport(page, '浏览器状态', 'initial data collection first viewport');
-  await expectInViewport(page, '下载中心', 'initial data collection first viewport');
-  await expectInViewport(page, '0/8 类真实报表', 'initial data collection first viewport');
-  await expectInViewport(page, '采集进度', 'initial data collection first viewport');
-  await expectInViewport(page, '重新获取完整 8 类', 'initial data collection first viewport');
-  await expectInViewport(page, '导入本地报表', 'initial data collection first viewport');
+  await expectInViewport(page, '8 类报表工作台', 'initial data collection first viewport');
+  await expectInViewport(page, '真实报表', 'initial data collection first viewport');
+  await expectLocatorInViewport(
+    page.locator('.data-collection-summary-strip').getByText('0/8', { exact: true }),
+    'initial data collection first viewport: 0/8 real reports',
+  );
+  await expectInViewport(page, '入库指标', 'initial data collection first viewport');
+  await expectInViewport(page, '重新获取完整 8 类报表', 'initial data collection first viewport');
+  await expectInViewport(page, '更多报表操作', 'initial data collection first viewport');
+  await expectNotInViewport(page, '浏览器状态', 'initial data collection first viewport');
+  await expectNotInViewport(page, '采集进度', 'initial data collection first viewport');
   await expectNotInViewport(page, '真实报表目录', 'initial data collection first viewport');
   await expectNotInViewport(page, '当前范围没有可分析的 Lingxing xlsx/xls/csv', 'initial data collection first viewport');
   await expectNotInViewport(page, '系统只在四段都闭合后放行', 'initial data collection first viewport');
-  await expectVisible(page, '8 类报表选择与进度');
+  await page.locator('summary').filter({ hasText: '更多报表操作' }).click();
   for (const text of [
     '导入本地报表',
     '下载已创建',
     '重新获取已选',
     '重新获取完整 8 类',
-    '导入本地',
-    '报表动作说明',
   ]) {
     await expectInBody(page, text, 'data collection action copy');
   }
   {
     const actionButtonsScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-actions-${runId}.png`);
-    const actionButtonsText = await page.locator('.collection-action-grid').innerText({ timeout: 5000 });
-    await page.locator('.collection-action-grid').screenshot({ path: actionButtonsScreenshotPath });
+    const actionButtonsText = await page.locator('.data-collection-primary-panel').innerText({ timeout: 5000 });
+    await page.locator('.data-collection-primary-panel').screenshot({ path: actionButtonsScreenshotPath });
     evidence.pages.dataCollectionActions = {
       label: '数据采集动作按钮',
       screenshotPath: actionButtonsScreenshotPath,
@@ -1167,15 +1182,16 @@ async function main() {
   await page.evaluate(() => {
     window.__forceRecreateNeedsDiagnostic = true;
   });
-  await page.getByRole('button', { name: '重新获取完整 8 类', exact: true }).first().click();
+  await page.getByRole('button', { name: '重新获取完整 8 类报表', exact: true }).first().click();
   await expectVisible(page, '动作未完成');
   await expectVisible(page, '重新创建报表前，需要先验证当前范围的下载中心页面');
+  await page.locator('summary').filter({ hasText: '辅助采集账本、流程和技术细节' }).click();
   await expectVisible(page, '验证页面');
   await expectVisible(page, '重试获取 8 类');
   {
     const needsVerifyScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-needs-verify-${runId}.png`);
-    const needsVerifyText = await page.locator('.collection-action-feedback').innerText({ timeout: 5000 });
-    await page.locator('.collection-action-feedback').screenshot({ path: needsVerifyScreenshotPath });
+    const needsVerifyText = await page.locator('.collection-action-feedback').first().innerText({ timeout: 5000 });
+    await page.locator('.collection-action-feedback').first().screenshot({ path: needsVerifyScreenshotPath });
     evidence.pages.dataCollectionNeedsVerify = {
       label: '数据采集需要页面验证',
       screenshotPath: needsVerifyScreenshotPath,
@@ -1187,8 +1203,8 @@ async function main() {
   await expectVisible(page, '可以重新获取完整 8 类报表');
   {
     const verifyFeedbackScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-verify-feedback-${runId}.png`);
-    const verifyFeedbackText = await page.locator('.collection-action-feedback').innerText({ timeout: 5000 });
-    await page.locator('.collection-action-feedback').screenshot({ path: verifyFeedbackScreenshotPath });
+    const verifyFeedbackText = await page.locator('.collection-action-feedback').first().innerText({ timeout: 5000 });
+    await page.locator('.collection-action-feedback').first().screenshot({ path: verifyFeedbackScreenshotPath });
     evidence.pages.dataCollectionVerifyFeedback = {
       label: '数据采集页面验证反馈',
       screenshotPath: verifyFeedbackScreenshotPath,
@@ -1198,17 +1214,15 @@ async function main() {
   await page.evaluate(() => {
     window.__forceRecreateNeedsDiagnostic = false;
   });
-  await page.locator('summary').filter({ hasText: '报表动作说明' }).click();
   for (const text of [
-    '领星已经生成 ready 行时使用',
-    '不会创建新任务；下载后自动写入 DB',
-    '只补当前已选报表时使用',
-    '会创建当前勾选报表的新任务；生成完成后下载真实报表并自动写入 DB',
-    '缺少完整 8 类或需要刷新当前范围全量数据时使用',
-    '会创建完整 8 类报表的新任务；下载完整广告报表并自动写入 DB 日级广告指标',
-    '已经手动拿到领星 xlsx/xls/csv 时使用',
-    '不访问领星下载中心；复制本地文件并写入 DB 日级广告指标',
-    '动作区别：下载已创建只读取 ready 行且不会创建新任务；重新获取已选只为勾选报表创建任务；重新获取完整 8 类会刷新完整报表；导入本地不访问领星下载中心。',
+    '浏览器状态',
+    'Lingxing 会话有效',
+    '下载中心',
+    '0/8 类真实报表',
+    '采集进度',
+    '只接受 xlsx/xls/csv 原始广告报表。',
+    '截图、DOM、审计包只做证据，不参与广告表现计算。',
+    '下载完成后进入导入校验。',
   ]) {
     await expectInBody(page, text, 'data collection action copy');
   }
@@ -1229,34 +1243,31 @@ async function main() {
   await expectVisible(page, '真实报表文件检查');
   await page.locator('summary').filter({ hasText: '真实报表文件检查' }).click();
   await expectVisible(page, '文件位置与用途');
-  await expectVisible(page, '选择要创建/下载的报表');
+  await page.getByRole('button', { name: '调整', exact: true }).click();
+  await expectVisible(page, '调整本次下载/重建的报表');
   await expectVisible(page, '已选 8/8 类');
   await expectVisible(page, '已选择 8 类报表，下载和重建只会作用于这些勾选项。');
-  const initialSelectionProgress = await page.locator('.collection-selection-progress').evaluate((element) => (
-    getComputedStyle(element).getPropertyValue('--collection-selection-progress').trim()
-  ));
-  if (initialSelectionProgress !== '100%') {
-    fail('Expected full report selection progress to be 100%', initialSelectionProgress);
+  const initialSelectedReportCount = await page.locator('.collection-selector-modal input[type="checkbox"]:checked').count();
+  if (initialSelectedReportCount !== 8) {
+    fail('Expected all eight reports to be selected', String(initialSelectedReportCount));
   }
-  await expectVisible(page, '下载和重新创建只作用于当前勾选的报表；清空后不会自动恢复全选。');
   await expectVisible(page, '全选 8 类');
-  await expectVisible(page, '只选缺失报表');
-  await expectVisible(page, '只选未导入');
+  await expectVisible(page, '只选缺失');
+  await expectVisible(page, '只选未入库');
   await expectVisible(page, '清空');
   await page.getByRole('button', { name: '清空' }).click();
   await expectVisible(page, '已选 0/8 类');
   await expectVisible(page, '当前未选择报表；可一键选择 8 个缺失报表或 0 个待入库报表。');
-  const emptySelectionProgress = await page.locator('.collection-selection-progress').evaluate((element) => (
-    getComputedStyle(element).getPropertyValue('--collection-selection-progress').trim()
-  ));
-  if (emptySelectionProgress !== '0%') {
-    fail('Expected empty report selection progress to be 0%', emptySelectionProgress);
+  const emptySelectedReportCount = await page.locator('.collection-selector-modal input[type="checkbox"]:checked').count();
+  if (emptySelectedReportCount !== 0) {
+    fail('Expected report selection to be empty', String(emptySelectedReportCount));
   }
   if (!(await page.getByRole('button', { name: /下载已创建/ }).isDisabled())) {
     fail('Download-existing button should be disabled after clearing report selection');
   }
   await page.getByRole('button', { name: '全选 8 类' }).click();
   await expectVisible(page, '已选 8/8 类');
+  await page.getByRole('button', { name: '确认选择', exact: true }).click();
   await page.locator('summary').filter({ hasText: '文件位置与用途' }).click();
   await expectVisible(page, '真实广告表格');
   await expectVisible(page, '采集清单');
@@ -1283,12 +1294,12 @@ async function main() {
   await page.locator('summary').filter({ hasText: '验收审计/技术细节' }).click();
   await expectVisible(page, '数据库可读：');
   await page.getByRole('button', { name: /导入本地/ }).first().click();
-  await page.getByText('已取消本地报表选择。', { exact: true }).waitFor({ timeout: 5000 });
+  await page.getByText('已取消本地报表选择。', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.evaluate(() => {
     window.__forceDownloadExistingMissingError = true;
   });
   await page.getByRole('button', { name: /下载已创建/ }).click();
-  await page.getByText('采集动作返回，但当前范围仍未满足量化门槛', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('采集动作返回，但当前范围仍未满足量化门槛', { exact: false }).first().waitFor({ timeout: 5000 });
   await expectVisible(page, '下载并导入已创建报表未完成');
   await expectVisible(page, '批次：mock_existing_failed_batch');
   await expectVisible(page, '当前范围覆盖 0/8 类');
@@ -1302,14 +1313,14 @@ async function main() {
     window.__forceDownloadExistingMissingError = false;
   });
   await page.getByRole('button', { name: /下载已创建/ }).click();
-  await page.getByText('真实报表已下载，但自动导入未写入广告指标', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('真实报表已下载，但自动导入未写入广告指标', { exact: false }).first().waitFor({ timeout: 5000 });
   await expectVisible(page, '动作结果摘要');
   await expectVisible(page, '本次拿到了 8 个真实报表文件，但还没有写入 DB 指标。');
   await expectVisible(page, '已下载，待导入');
   await expectVisible(page, '点击“导入已下载表格”，把 xlsx/xls/csv 写入日级广告指标。');
   await expectVisible(page, '本次动作结果');
   await expectInBody(page, '已创建报表下载完成，自动导入未完成', 'download existing partial result title');
-  await expectVisible(page, '最近动作进度');
+  await expectVisible(page, '最近采集动作');
   await expectVisible(page, '1. 验证当前范围');
   await expectVisible(page, '2. 查找 ready 行');
   await expectVisible(page, '3. 下载并校验表格');
@@ -1329,7 +1340,7 @@ async function main() {
     window.__forceDownloadExistingNoNewFiles = true;
   });
   await page.getByRole('button', { name: /下载已创建/ }).click();
-  await page.getByText('本次没有新增真实原始报表文件', { exact: false }).waitFor({ timeout: 5000 });
+  await page.getByText('本次没有新增真实原始报表文件', { exact: false }).first().waitFor({ timeout: 5000 });
   await expectVisible(page, '当前范围已有 8/8 类真实报表覆盖，但本次动作没有新增下载，且还没有写入 DB 指标。');
   await expectVisible(page, '打开真实报表目录确认 xlsx/xls/csv 后，点击“导入已下载表格”。');
   await expectVisible(page, '本次新增真实下载 0');
@@ -1337,9 +1348,9 @@ async function main() {
   await page.evaluate(() => {
     window.__forceDownloadExistingNoNewFiles = false;
   });
-  await page.locator('.collection-action-grid').getByRole('button', { name: /重新获取完整 8 类/ }).click();
-  await page.getByText('真实报表已下载，但自动导入未写入广告指标', { exact: false }).waitFor({ timeout: 5000 });
-  const recreateFullFeedback = await page.locator('.collection-action-feedback').innerText({ timeout: 5000 });
+  await page.locator('.data-collection-primary-panel').getByRole('button', { name: /重新获取完整 8 类/ }).click();
+  await page.getByText('真实报表已下载，但自动导入未写入广告指标', { exact: false }).first().waitFor({ timeout: 5000 });
+  const recreateFullFeedback = await page.locator('.collection-action-feedback').first().innerText({ timeout: 5000 });
   for (const text of ['最近动作', '已返回', '真实报表已下载，但自动导入未写入广告指标']) {
     if (!recreateFullFeedback.includes(text)) {
       fail(`Top collection feedback is missing text after recreate-full: ${text}`, recreateFullFeedback);
@@ -1347,7 +1358,7 @@ async function main() {
   }
   {
     const feedbackScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-data-collection-recreate-feedback-${runId}.png`);
-    await page.locator('.collection-action-feedback').screenshot({ path: feedbackScreenshotPath });
+    await page.locator('.collection-action-feedback').first().screenshot({ path: feedbackScreenshotPath });
     evidence.pages.dataCollectionRecreateFeedback = {
       label: '数据采集动作反馈',
       screenshotPath: feedbackScreenshotPath,
@@ -1359,15 +1370,15 @@ async function main() {
     window.__forceZeroImportResult = true;
   });
   await page.getByRole('button', { name: '导入已下载表格' }).click();
-    await page.getByText('导入未完成：解析 8 个真实报表，写入 0 行广告指标，错误 1 个。', { exact: true }).waitFor({ timeout: 5000 });
-    await page.getByText('真实报表导入未形成可量化广告数据', { exact: false }).waitFor({ timeout: 5000 });
+    await page.getByText('导入未完成：解析 8 个真实报表，写入 0 行广告指标，错误 1 个。', { exact: true }).first().waitFor({ timeout: 5000 });
+    await page.getByText('真实报表导入未形成可量化广告数据', { exact: false }).first().waitFor({ timeout: 5000 });
     await expectInBody(page, '真实报表未解析出广告指标行', 'zero import error reason');
     await expectVisible(page, '当前指标 0 行');
   await page.evaluate(() => {
     window.__forceZeroImportResult = false;
   });
   await page.getByRole('button', { name: '导入已下载表格' }).click();
-    await page.getByText('导入完成：解析 8 个真实报表，写入 96 行广告指标，错误 0 个。', { exact: true }).waitFor({ timeout: 5000 });
+    await page.getByText('导入完成：解析 8 个真实报表，写入 96 行广告指标，错误 0 个。', { exact: true }).first().waitFor({ timeout: 5000 });
     await expectVisible(page, '真实报表已经入库，当前范围有 96 行日级广告指标。');
     await expectVisible(page, '可进入建议');
     await expectVisible(page, '下一步：查看广告表现，复核 ACOS、花费和订单口径。');
@@ -1383,18 +1394,23 @@ async function main() {
     await expectVisible(page, '打开当前真实报表目录');
     await expectVisible(page, 'campaign.xlsx');
     await page.locator('summary').filter({ hasText: '真实原始报表文件' }).click();
-    await expectVisible(page, 'C:/AmazonAIOps/storage/downloads/mock-batch/campaign.xlsx');
     await expectVisible(page, 'user_search_term.xlsx');
-    await page.getByRole('button', { name: /广告活动报告.*campaign\.xlsx/s }).first().click();
-    await page.getByText('已请求打开：', { exact: false }).waitFor({ timeout: 5000 });
+    await page.getByRole('button', { name: '查看广告活动报告文件详情', exact: true }).click();
+    await expectVisible(page, 'C:/AmazonAIOps/storage/downloads/mock-batch/campaign.xlsx');
+    for (const detailLabel of ['文件名', '扩展名', '文件大小', '最近入库', '文件指纹', '所在目录', '完整文件路径', '入库状态', 'DB 指标行数', '文件状态']) {
+      await expectVisible(page, detailLabel);
+    }
+    await page.getByRole('button', { name: '打开文件', exact: true }).click();
+    await page.getByText('已请求打开：', { exact: false }).first().waitFor({ timeout: 5000 });
+    await page.getByRole('button', { name: '知道了', exact: true }).click();
     await page.getByRole('button', { name: '打开本次导入目录' }).click();
-    for (const header of ['报表类型', '文件路径', '扩展名', '文件大小', '文件指纹', '入库状态', 'DB 指标行数', '最近入库', '状态', '操作']) {
+    for (const header of ['报表类型', '文件', '文件大小', '入库状态', 'DB 指标行数', '最近入库', '状态', '操作']) {
     await expectVisible(page, header);
     }
     await expectVisible(page, '.xlsx');
     await expectVisible(page, '1 KB');
     await page.getByRole('button', { name: /重新获取已选/ }).click();
-    await page.getByText('采集动作已完成：本次新增', { exact: false }).waitFor({ timeout: 5000 });
+    await page.getByText('采集动作已完成：本次新增', { exact: false }).first().waitFor({ timeout: 5000 });
     await expectInBody(page, '已自动导入 96 行广告指标', 'retry selected auto-import notice');
     await expectVisible(page, '8/8');
     await expectVisible(page, '96');
@@ -1442,40 +1458,51 @@ async function main() {
   await navigateBusinessPage(page, NAV_RE.productManagement, 'product-management');
   await page.locator('tr', { hasText: 'B0TESTASIN' }).getByRole('button', { name: '锁定' }).click();
   await expectVisible(page, 'D6 Sensor Light / B0TESTASIN');
-  await page.getByRole('button', { name: '维护产品信息' }).click();
-  await expectVisible(page, '产品信息维护');
+  await page.locator('tr', { hasText: 'B0TESTASIN' }).getByRole('button', { name: '详情' }).click();
+  await page.getByRole('button', { name: '维护', exact: true }).click();
+  await expectVisible(page, '维护产品信息');
   await navigateBusinessPage(page, NAV_RE.dashboard, 'dashboard');
-  await expectVisible(page, '数据健康');
+  await expectVisible(page, '下一安全动作');
+  await expectVisible(page, '复核优化建议');
+  await expectVisible(page, '当前阻塞');
+  await expectVisible(page, '建议中仍有高风险或需人工复核项，不能直接进入执行。');
+  await expectVisible(page, '当前产品');
+  await expectVisible(page, 'B0TESTASIN');
+  await expectVisible(page, '真实数据');
   await expectVisible(page, '8/8');
+  await expectVisible(page, '已入库 96 行');
   await expectVisible(page, '96 行');
+  await expectVisible(page, '广告表现');
+  await expectVisible(page, 'ACOS 56.6%');
+  await expectVisible(page, '花费 $170.25 · 销售 $300.50');
   await expectVisible(page, '$170.25');
   await expectVisible(page, '$300.50');
-  await expectVisible(page, '3 单');
-  await expectVisible(page, '56.6%');
-  await expectVisible(page, '今日花费');
-  await expectVisible(page, '风险对象');
-  await expectVisible(page, '1 条待审批 / 1 条需复核');
-  await expectVisible(page, '查看广告表现');
-  await expectVisible(page, '生成优化建议');
-  await expectVisible(page, '交付与技术明细');
-  await expectVisible(page, '完整流程入口');
-  await expectVisible(page, '交付缺口：已闭合 4/7');
-  await expectVisible(page, '行动队列：3 项');
-  await expectVisible(page, '最近证据/文件路径：2 个入口');
-  await expectVisible(page, 'AI / 建议');
-  await expectVisible(page, '1 条待审批，1 条需复核。');
+  await expectVisible(page, '待判断');
+  await expectVisible(page, '2 条');
+  await expectVisible(page, '1 条需人工复核');
+  await expectVisible(page, '风险对象队列');
+  await expectVisible(page, '1 个待看');
+  await expectVisible(page, '查看完整诊断');
+  await expectVisible(page, '管理当前产品');
   await expectNotInBody(page, '尚未生成最终证据');
   await expectNotInBody(page, '查看缺失证据');
-  await page.getByText('ACOS 偏高，先复核高花费/低转化对象', { exact: true }).waitFor({ timeout: 5000 });
-  await expectVisible(page, '生成优化建议');
-  await expectVisible(page, '已具备广告表现条件');
+  await expectVisible(page, '按真实花费、转化与风险判断，先处理最需要人工复核的对象。');
   await expectNotInBody(page, '任务入口会按领星任务、真实报表、DB 指标、AI+规则建议顺序推进。');
-  await expectVisible(page, '风险对象');
   await expectVisible(page, 'test search term');
   await expectVisible(page, '高风险待复核');
-  await expectVisible(page, '广告历史账本摘要');
+  await page.locator('summary').filter({ hasText: '数据、产品历史与交付明细' }).click();
+  await expectVisible(page, '数据健康');
+  await expectVisible(page, '数据门槛');
+  await expectVisible(page, '8/8 类 · 96 行');
+  await expectVisible(page, 'AI / 建议');
+  await expectVisible(page, '1 条待审批，1 条需复核。');
+  await expectVisible(page, '交付缺口');
+  await expectVisible(page, '已闭合 4/7');
+  await expectVisible(page, '最近文件路径');
+  await expectVisible(page, '2 个入口');
+  await expectVisible(page, '广告历史摘要');
   await expectVisible(page, 'ASIN B0TESTASIN · D6 Sensor Light');
-  await expectVisible(page, '阶段：测词');
+  await expectVisible(page, '阶段 测词');
   await expectVisible(page, '12 天');
   await expectNotInBody(page, '日级趋势');
   await expectNotInBody(page, '事件叠加');
@@ -1517,6 +1544,7 @@ async function main() {
     }
 
     await navigateBusinessPage(page, NAV_RE.adQuant, 'ad-quant');
+  await page.locator('summary').filter({ hasText: '辅助口径、AI 诊断和上下文' }).click();
   await page.getByText('展开当前产品实体诊断表', { exact: false }).click();
   await expectVisible(page, '广告组合');
   await expectVisible(page, '广告活动');

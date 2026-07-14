@@ -1,0 +1,111 @@
+.workspace-state {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--workspace-space-3);
+  align-items: start;
+  min-width: 0;
+  border: 1px solid var(--workspace-border);
+  border-radius: var(--workspace-radius-md);
+  background: var(--workspace-surface-subtle);
+  padding: var(--workspace-space-4);
+}
+
+.workspace-state__indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--workspace-border-strong);
+  border-radius: 999px;
+}
+
+.workspace-state--blocked {
+  border-color: #fed7aa;
+  background: var(--workspace-blocked-soft);
+}
+
+.workspace-state--blocked .workspace-state__indicator {
+  border-color: var(--workspace-blocked);
+}
+
+.workspace-state--error {
+  border-color: #fecaca;
+  background: var(--workspace-error-soft);
+}
+
+.workspace-state--error .workspace-state__indicator {
+  border-color: var(--workspace-error);
+}
+
+.workspace-state--busy,
+.workspace-state--loading {
+  border-color: #bfdbfe;
+  background: var(--workspace-action-soft);
+}
+
+.workspace-state--disabled {
+  color: var(--workspace-text-disabled);
+}
+
+.workspace-state__copy {
+  display: grid;
+  gap: var(--workspace-space-1);
+  min-width: 0;
+}
+
+.workspace-state__copy > strong {
+  color: var(--workspace-text);
+  font-size: var(--workspace-font-control);
+  line-height: var(--workspace-line-control);
+}
+
+.workspace-state__progress {
+  display: grid;
+  grid-template-columns: minmax(120px, 280px) minmax(0, 1fr);
+  gap: var(--workspace-space-2);
+  align-items: center;
+  color: var(--workspace-text-secondary);
+  font-size: var(--workspace-font-support);
+  line-height: var(--workspace-line-support);
+}
+
+.workspace-state__progress progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--workspace-action);
+}
+
+.workspace-state__action {
+  display: inline-flex;
+  gap: var(--workspace-space-2);
+  align-items: center;
+}
+
+.workspace-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: workspace-spin 720ms linear infinite;
+}
+
+@keyframes workspace-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-page-frame *,
+  .workspace-page-frame *::before,
+  .workspace-page-frame *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

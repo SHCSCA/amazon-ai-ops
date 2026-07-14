@@ -16,9 +16,10 @@
 | Task 2 统一就绪判定 | 已完成 | 桌面端与 CLI 使用同一 fail-closed evaluator；缺失、过期、哈希不匹配均失败 |
 | Task 3 显式开发预览 | 已完成 | 7 个预览场景只在显式 DEV 条件下启用；预览不能写证据或成为 APP_READY |
 | Task 4 工作区导航基础 | 已完成 | 8 个可见工作区、16 路由兼容、`NextSafeAction`、工作流失效刷新已落地 |
-| Task 5–8 界面与交付 | 待执行 | 等待本设计与计划确认后开始 |
+| Task 5A 共用视觉系统、Shell 与 Today | 已完成 | 任务优先 Today、8 工作区 Shell、fail-closed 运行态证据已通过独立双评审 |
+| Task 5B–8 工作区与交付 | 待执行 | 下一步先完成审批状态机安全守卫与统一决策中心 |
 
-当前有效验证基线：422 个测试套件、1165 个测试通过；Task 1–4 已分别提交并通过独立复核。后续不得用旧 APP_READY 证据声明新 UI 已交付。
+当前有效验证基线：140/140 test files（1208 passed / 2 skipped）；Task 1–5A 已分别通过独立复核。后续不得用旧 APP_READY 证据声明新 UI 已交付。
 
 ## 二、固定约束
 
@@ -76,7 +77,7 @@
 - [x] 成功 mutation 后触发 workflow invalidation 并回载权威证据。
 - [x] 聚焦测试 228/228、typecheck、Ads verifier、全量测试与独立复核通过。
 
-### Task 5A：共用视觉系统、Shell 与 Today
+### Task 5A：共用视觉系统、Shell 与 Today — 已完成
 
 **主要文件**
 
@@ -92,16 +93,18 @@
 
 **交付内容**
 
-- [ ] 先取得 `task-first-workspace-design.md` 的用户确认。
-- [ ] 为 `PageFrame / TaskBanner / SummaryStrip / WorkbenchPanel / PriorityDataTable / ActionMenu / WorkspaceState` 写 RED 契约。
-- [ ] 建立字体、间距、颜色、控件、状态与 120–180ms motion tokens。
-- [ ] 顶栏承载紧凑范围、连接/交付状态、账号；侧栏只保留 8 个工作区。
-- [ ] Today 按 `TaskBanner → SummaryStrip → 风险/对象队列 → 紧凑产品上下文` 重排。
-- [ ] 删除 Today 的重复 CTA、KPI 卡片墙、嵌套 disclosure 和主区内部滚动。
-- [ ] 在 1200×700、1400×900、1.25 DPR/zoom 下生成截图与 DOM 指标 JSON。
-- [ ] 完成独立 UI/UX 复核与 scoped commit。
+- [x] 先取得 `task-first-workspace-design.md` 的用户确认。
+- [x] 为 `PageFrame / TaskBanner / SummaryStrip / WorkbenchPanel / PriorityDataTable / ActionMenu / WorkspaceState` 写 RED 契约。
+- [x] 建立字体、间距、颜色、控件、状态与 120–180ms motion tokens。
+- [x] 顶栏承载紧凑范围、连接/交付状态、账号；侧栏只保留 8 个工作区。
+- [x] Today 按 `TaskBanner → SummaryStrip → 风险/对象队列 → 紧凑产品上下文` 重排。
+- [x] 删除 Today 的重复 CTA、KPI 卡片墙、嵌套 disclosure 和主区内部滚动。
+- [x] 在 1200×700、1400×900、1.25 DPR/zoom 下生成截图与 DOM 指标 JSON。
+- [x] 完成独立 UI/UX 复核、代码质量复核与 scoped commit。
 
 **闸门：** Today 首屏一眼可识别阻塞、下一动作与业务对象；无页面级水平溢出；一个纵向滚动所有者；一个主动作。
+
+**验证：** Dashboard 88/88、workspace evidence 18/18、全量串行 140/140 test files（1208 passed / 2 skipped）、desktop typecheck、renderer build、5 组业务 smoke 与 5/5 Today viewport matrix 通过；实际 workspace/subview/scenario 身份不匹配时证据生成 fail-closed。
 
 ### Task 5B：建议与审批工作区
 
@@ -158,10 +161,11 @@
 
 - [ ] 为每个迁移工作区验证：一个 `h1`、一个主动作、最多两个次动作、可见字 >=12px。
 - [ ] 验证无 `details details`、无页面级水平溢出、一个默认纵向滚动所有者。
-- [ ] 验证 menu/drawer Escape、焦点恢复、tabs、列表/表格键盘路径与 reduced motion。
+- [ ] 验证真实侧栏点击、menu/drawer Escape、焦点恢复、tabs、列表/表格键盘路径与 reduced motion。
 - [ ] 覆盖 7 个开发预览场景以及 loading、IPC error、long-task/cancel fixture。
 - [ ] 在 1200×700、1400×900 和 1.25 DPR/zoom 生成截图与 JSON 指标。
-- [ ] JSON 记录 workspace、subview、scenario、viewport、DPR、DOM metrics、时间与截图 SHA-256。
+- [ ] JSON 同时记录并校验目标/实际 workspace、subview、scenario、viewport、DPR、DOM metrics、时间与截图 SHA-256；隐藏主动作不得计入通过。
+- [ ] 验证不经滚动的真实首屏，并确保同页同名共享组件的 ARIA id 仍唯一。
 - [ ] 进行整分支 UI/UX 与代码复核，清零 P0/P1、Critical/Important。
 
 ### Task 8：重建并验证 Windows 交付

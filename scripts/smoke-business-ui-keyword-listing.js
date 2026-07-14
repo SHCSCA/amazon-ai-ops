@@ -2,6 +2,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('./playwright-loader');
+const { navigateLegacyRoute, setManualScopeBatch } = require('./business-ui-smoke-navigation');
 
 const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
@@ -90,7 +91,8 @@ async function expectInBody(page, text, details) {
 
 async function assertGlobalGuards(page, key) {
   const textContent = await bodyText(page);
-  if (!textContent.includes('USD')) fail('USD currency marker is missing', key);
+  const scopeRangeTitle = await page.locator('.scope-compact-trigger').getAttribute('title');
+  if (!textContent.includes('USD') && !scopeRangeTitle?.includes('/ USD')) fail('USD currency marker is missing', key);
   for (const forbiddenCurrencyText of ['¥', '￥', 'RMB', 'CNY', '人民币']) {
     if (textContent.includes(forbiddenCurrencyText)) fail('RMB currency marker is visible', `${key}: ${forbiddenCurrencyText}`);
   }
@@ -377,17 +379,18 @@ async function main() {
       },
     }));
   });
-  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.listing }).click();
+  await navigateLegacyRoute(page, 'listing-optimization');
   await page.getByRole('heading', { name: HEADING_RE.listing, level: 1 }).waitFor();
   await expectInBody(page, '已忽略过期关键词机会带入：数据批次不一致', 'stale handoff should be rejected in auto batch mode');
   await expectNotInBody(page, 'stale keyword should not appear');
   const staleHandoffCache = await page.evaluate(() => window.localStorage.getItem('amazon-ai-ops-listing-handoff'));
   if (staleHandoffCache !== null) fail('Stale Listing handoff cache was not cleared', staleHandoffCache);
 
-  await page.getByLabel('数据批次来源').selectOption('__manual__');
-  await page.getByRole('textbox', { name: '数据批次', exact: true }).fill('manual_keyword_listing_batch');
+  await setManualScopeBatch(page, 'manual_keyword_listing_batch');
   await page.getByRole('button', { name: '保存范围' }).click();
-  await page.waitForFunction(() => document.body.innerText.includes('manual_keyword_listing_batch'), null, { timeout: 5000 });
+  await page.locator('.scope-compact-trigger').click();
+  await page.waitForFunction(() => document.body.innerText.includes('手动批次未自动校验：manual_keyword_listing_batch'), null, { timeout: 5000 });
+  await page.locator('.scope-compact-trigger').click();
   await expectNotInBody(page, '¥');
   await expectNotInBody(page, '￥');
   await expectNotInBody(page, 'RMB');
@@ -397,37 +400,44 @@ async function main() {
   await expectNotInBody(page, 'v1.5 工作台');
   await expectNotInBody(page, 'pnpm run verify:ad-readback');
 
-  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.keyword }).click();
+  await navigateLegacyRoute(page, 'keyword-opportunities');
   await page.getByRole('heading', { name: HEADING_RE.keyword, level: 1 }).waitFor();
-  await expectVisible(page, '机会来源');
-  await expectVisible(page, '关键词机会与 Listing 覆盖关系');
+  await expectVisible(page, '关键词机会池');
+  await expectVisible(page, '真实报表');
+  await expectVisible(page, '8/8');
+  await expectVisible(page, '96 行指标');
+  await expectVisible(page, '机会');
+  await expectVisible(page, 'ASIN');
+  await expectVisible(page, '风险花费');
+  await expectVisible(page, '筛选、排序和选中行只改变当前视图；点击“带入 Listing”后仍需在 Listing 优化页读取真实 Listing 并人工复核。');
+  await page.locator('summary').filter({ hasText: '机会口径、来源和复核摘要' }).click();
   await expectVisible(page, '真实广告报表');
-  await expectVisible(page, '导入指标行');
-  await page.locator('.context-summary-grid').filter({ hasText: '导入指标行' }).getByText('96', { exact: true }).waitFor({ timeout: 5000 });
-  await expectVisible(page, '覆盖 ASIN');
-  await expectVisible(page, '这里是广告数据到 Listing 的交接池，不读取 Listing 页面，也不会修改 Amazon；点击“带入 Listing”后仍需在 Listing 优化页读取真实 Listing 并人工复核。');
-  await expectVisible(page, '机会复核摘要');
   await expectVisible(page, '高优先级机会');
-  await expectVisible(page, '无订单花费');
   await expectVisible(page, '优先复核对象');
   await expectVisible(page, 'manual_keyword_listing_batch');
-  await expectVisible(page, '筛选和排序');
-  await expectVisible(page, '当前日期范围');
-  await expectVisible(page, '店铺 / 站点');
-  await expectVisible(page, '广告上下文');
+  await expectVisible(page, '去重口径');
+  await expectVisible(page, '店铺 / 站点 / ASIN / 活动 / 组 / 对象 / 关键词');
   await expectVisible(page, '2 个活动 / 2 个广告组');
-  await expectVisible(page, '可带入 Listing 的机会表');
-  for (const text of ['ASIN', '广告组合', '广告活动', '广告组', '关键词/搜索词/投放对象', '覆盖状态', '点击/订单', '花费/销售', 'ACOS', '机会等级', '建议位置', '风险']) {
+  for (const text of ['ASIN', '关键词/投放对象', '广告单元', '覆盖', '点击/订单', '花费/销售/ACOS', '机会', '判断']) {
     await expectVisible(page, text);
   }
   await expectVisible(page, 'motion sensor wall light');
   await expectVisible(page, 'D6-ad-group');
   await expectVisible(page, 'D6-research-group');
-  const adGroupFilter = page.locator('.filter-grid').getByRole('textbox', { name: /广告组/ });
+  await page.getByRole('button', { name: '筛选条件', exact: true }).click();
+  await expectVisible(page, '筛选关键词机会');
+  await expectVisible(page, '只影响当前关键词机会表，不改报表、不写 Listing');
+  const filterDialog = page.getByRole('dialog', { name: '筛选关键词机会' });
+  const adGroupFilter = filterDialog.getByRole('textbox', { name: /广告组/ });
   await adGroupFilter.fill('D6-research-group');
+  await filterDialog.getByRole('button', { name: '应用并返回列表', exact: true }).click();
   await expectVisible(page, '同词不同广告组，需单独判断');
   await expectNotInBody(page, '36 / 4');
-  await adGroupFilter.fill('');
+  await page.getByRole('button', { name: '筛选条件', exact: true }).click();
+  const reopenedFilterDialog = page.getByRole('dialog', { name: '筛选关键词机会' });
+  const reopenedAdGroupFilter = reopenedFilterDialog.getByRole('textbox', { name: /广告组/ });
+  await reopenedAdGroupFilter.fill('');
+  await reopenedFilterDialog.getByRole('button', { name: '应用并返回列表', exact: true }).click();
   await expectVisible(page, '36 / 4');
   await assertGlobalGuards(page, 'keyword-opportunities');
   const keywordScreenshotPath = path.join(evidenceDir, `business-ui-keyword-listing-keywords-${runId}.png`);
@@ -437,39 +447,61 @@ async function main() {
     screenshotPath: keywordScreenshotPath,
     bodyTextSample: (await bodyText(page)).slice(0, 1800),
   };
-  await page.getByRole('button', { name: '来源详情' }).first().click();
-  await expectVisible(page, '数据口径');
-  await expectVisible(page, '店铺/站点/ASIN/广告活动/广告组/对象类型/关键词去重');
+  await page.getByRole('button', { name: '查看来源', exact: true }).click();
+  await expectVisible(page, '来源证据只读，不写 Listing，不改广告');
+  await page.getByLabel('关键词机会来源证据').waitFor({ state: 'visible', timeout: 5000 });
+  await expectVisible(page, '对象类型');
+  await expectVisible(page, '导入行数');
   await expectVisible(page, '来源文件');
   await expectVisible(page, 'C:/reports/keyword.xlsx');
-  await page.getByRole('button', { name: '带入 Listing' }).first().click();
+  await page.getByRole('dialog').getByRole('button', { name: '带入 Listing', exact: true }).click();
 
-  await page.locator('.app-sidebar').getByRole('button', { name: NAV_RE.listing }).click();
+  await navigateLegacyRoute(page, 'listing-optimization');
   await page.getByRole('heading', { name: HEADING_RE.listing, level: 1 }).waitFor();
   await page.waitForFunction(
-    () => Array.from(document.querySelectorAll('textarea')).some((item) => item.value.includes('motion sensor wall light')),
+    () => document.body.innerText.includes('motion sensor wall light'),
     null,
     { timeout: 5000 },
   );
-  for (const text of ['手工录入当前 Listing', '基础信息', '标题', '五点', '五点 5', '详情与搜索词', '保存为新版本', '从领星辅助读取', '关键词交接与发布边界', '关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用', '当前 Listing 内容', 'Listing 版本历史', '关键词与本地草案工作台', '01 关键词输入', '02 数据门槛与用途', '03 生成与导出', '数据门槛', '草案用途', '真实广告数据可用', '本地复核草案', '本地草案不会自动提交 Amazon，不修改 Lingxing Listing；缺真实广告数据时也不会进入交付证据包。']) {
+  for (const text of ['本地草案工作流', '当前草案任务', '关键词交接与发布边界', '录入、辅助读取和维护当前 Listing', '当前 Listing 内容与版本历史', '关键词、草案生成和导出', '核心商机词根覆盖']) {
+    await expectVisible(page, text);
+  }
+  await expectInBody(page, '不会提交 Amazon，也不会改写 Lingxing', 'listing publish boundary');
+  const listingProgressText = await page.getByLabel('Listing 草案四步进度').innerText();
+  for (const text of ['1', '关键词', '2', 'Listing', '3', '草案', '4', '导出']) {
+    if (!listingProgressText.includes(text)) fail('Listing workflow status is incomplete', text);
+  }
+  await expectVisible(page, '关键词已就绪，但 Listing 内容未达到生成草案门槛。');
+  await expectVisible(page, '尚未录入或读取 Listing 内容');
+
+  await page.getByText('关键词交接与发布边界', { exact: true }).click();
+  for (const text of ['关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用']) {
     await expectVisible(page, text);
   }
   await expectInBody(page, 'deepseek-v4-flash 已测试通过', 'listing ai readiness detail');
-  await expectInBody(page, '不会自动提交 Amazon，也不会改写 Lingxing', 'listing publish boundary');
-  for (const text of ['本地草案工作流', '1 关键词机会', '2 Listing 内容录入/读取', '3 AI / 本地规则草案', '4 导出与发布边界']) {
-    await expectInBody(page, text, 'listing workflow status');
-  }
-  await expectVisible(page, '当前草案任务');
-  await expectVisible(page, '关键词已就绪，但 Listing 内容未达到生成草案门槛。');
-  await expectVisible(page, '尚未录入或读取当前 Listing 内容');
-  for (const text of ['广告组合', 'D6 Portfolio', '广告活动', 'D6-auto-test', '广告组', 'D6-ad-group', '对象类型', 'user_search_term', '触发关键词', 'motion sensor wall light', '点击/订单', '36 / 4', '花费/销售 USD', '25.5 / 98.25', '来源文件', 'C:/reports/keyword.xlsx']) {
+  for (const text of ['广告组合', 'D6 Portfolio', '广告活动', 'D6-manual-test', '广告组', 'D6-research-group', '对象类型', 'user_search_term', '触发关键词', 'motion sensor wall light', '点击/订单', '14 / 0', '花费/销售 USD', '11.75 / 0', '来源文件', 'C:/reports/keyword.xlsx']) {
     await expectVisible(page, text);
   }
+
+  await page.getByText('录入、辅助读取和维护当前 Listing', { exact: true }).click();
+  for (const text of ['当前 Listing 维护', '编辑当前 Listing', '从领星辅助读取', 'ASIN matched/status', 'Title read', 'Bullets read', 'Backend terms read']) {
+    await expectVisible(page, text);
+  }
+  await page.getByRole('button', { name: '编辑当前 Listing', exact: true }).click();
+  const listingEditor = page.getByRole('dialog', { name: '编辑当前 Listing' });
+  await listingEditor.waitFor({ state: 'visible', timeout: 5000 });
+  for (const text of ['基础信息', '标题', '五点', '五点 5', '详情与搜索词', '保存为新版本']) {
+    await listingEditor.getByText(text, { exact: true }).first().waitFor({ timeout: 5000 });
+  }
+  await listingEditor.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByText('关键词、草案生成和导出', { exact: true }).click();
+  await expectVisible(page, '关键词与本地草案工作台');
+
   await page.evaluate(() => {
     window.__mockEvidenceOnlyListingRead = true;
   });
   await page.getByRole('button', { name: '尝试从当前领星页面填入表单' }).click();
-  await expectVisible(page, '已探测页面，但没有解析到可用 Listing 内容');
+  await expectVisible(page, '已探测页面但未形成可用 Listing 内容');
   await expectVisible(page, '已探测未解析');
   await expectInBody(page, 'no_asin', 'listing evidence-only detail probe status');
   await expectVisible(page, 'https://erp.lingxing.com/erp/listing/mock/unparsed');
@@ -485,7 +517,7 @@ async function main() {
     window.__mockPartialListingRead = true;
   });
   await page.getByRole('button', { name: '尝试从当前领星页面填入表单' }).click();
-  await expectVisible(page, '已读取 Listing 部分内容，生成草案前需补齐缺失字段');
+  await expectVisible(page, '五点缺失；后台词缺失');
   await expectVisible(page, '已读取部分内容');
   await expectVisible(page, 'Bullets read');
   await expectVisible(page, '缺失');
@@ -510,13 +542,21 @@ async function main() {
   await expectVisible(page, '当前店铺/站点');
   await expectVisible(page, '读取店铺/站点');
   await expectVisible(page, 'B0TESTASIN');
-  await expectVisible(page, '目标 ASIN');
-  await expectVisible(page, '页面匹配');
-  await expectVisible(page, '通过');
   await expectInBody(page, 'Listing 读取缺口', 'complete listing readiness section');
   await expectInBody(page, '无，当前页面已满足草案门槛。', 'complete listing no blocker message');
   await expectVisible(page, 'Rechargeable Motion Sensor Wall Light');
   await expectVisible(page, '关键词和 Listing 已就绪，可以生成本地草案。');
+
+  await page.getByText('当前 Listing 内容与版本历史', { exact: true }).click();
+  await expectVisible(page, '当前 Listing 内容');
+  await expectVisible(page, 'Listing 版本历史');
+  await expectVisible(page, '目标 ASIN');
+  await expectVisible(page, '页面匹配');
+  await expectVisible(page, '通过');
+
+  for (const text of ['关键词与本地草案工作台', '01 关键词输入', '02 数据门槛与用途', '03 生成与导出', '数据门槛', '草案用途', '真实广告数据可用', '本地复核草案', '本地草案不会自动提交 Amazon，不修改 Lingxing Listing；缺真实广告数据时也不会进入交付证据包。']) {
+    await expectVisible(page, text);
+  }
   await page.getByLabel('Listing 关键词与本地草案工作台').getByRole('button', { name: '生成本地草案' }).click();
   await page.getByText('已生成 1 条 AI 草案', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '已有 1 条本地 Listing 草案，可导出给运营复核。');
@@ -525,7 +565,6 @@ async function main() {
   await expectVisible(page, '本地规则参考');
   await expectVisible(page, '可导出草案');
   await page.locator('.listing-draft-metrics').filter({ hasText: 'AI 草案' }).getByText('1', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expectInBody(page, '条草案可导出', 'listing export readiness');
   await expectVisible(page, '标题');
   await expectVisible(page, '五点');
   await expectNotInBody(page, 'backend_terms');

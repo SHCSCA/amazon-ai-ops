@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
-import { NextSafeActionHandoff, Sidebar } from './components/app-shell';
+import { Sidebar } from './components/app-shell';
 import { ScopeBar } from './components/scope-bar';
 import { AdQuantPage } from './pages/ad-quant-page';
 import { ApprovalPage } from './pages/approval-page';
@@ -28,12 +28,18 @@ import {
 import type { NavigationIntent } from './navigation';
 import { useScopeStore } from './scope-store';
 import { deriveWorkflowEvidence, selectNextSafeAction } from './workflow-state';
-import type { WorkflowEvidence } from './workflow-state';
+import type { NextSafeAction, WorkflowEvidence } from './workflow-state';
 import { subscribeWorkflowInvalidation } from './workflow-invalidation';
 import type { WorkflowEventTarget, WorkflowInvalidationDetail } from './workflow-invalidation';
 import { toUserFacingError } from './user-facing-error';
 import { bootstrapBrowserPreview } from './dev-preview-api';
 import './styles.css';
+import './styles/tokens.css';
+import './styles/foundations.css';
+import './styles/shell.css';
+import './styles/workspace.css';
+import './styles/priority-table.css';
+import './styles/states-motion.css';
 
 interface LoginSessionInfo {
   erpSessionReused?: boolean;
@@ -359,8 +365,8 @@ function LoginPage() {
   );
 }
 
-function BusinessRoutePage({ route }: { route: AppRoute }) {
-  if (route === 'dashboard') return <DashboardPage />;
+function BusinessRoutePage({ route, nextSafeAction }: { route: AppRoute; nextSafeAction: NextSafeAction }) {
+  if (route === 'dashboard') return <DashboardPage nextSafeAction={nextSafeAction} />;
   if (route === 'product-management') return <ProductManagementPage />;
   if (route === 'operation-scope') return <OperationScopePage />;
   if (route === 'data-collection') return <DataCollectionPage />;
@@ -376,7 +382,7 @@ function BusinessRoutePage({ route }: { route: AppRoute }) {
   if (route === 'scheduler') return <SchedulerPage />;
   if (route === 'settings') return <SettingsPage />;
   if (route === 'delivery') return <DeliveryPage />;
-  return <DashboardPage />;
+  return <DashboardPage nextSafeAction={nextSafeAction} />;
 }
 
 export default function App() {
@@ -530,13 +536,12 @@ export default function App() {
       <div className="app-body">
         <Sidebar activeRoute={activeTab} pendingRoute={pendingNavigationRoute} onNavigate={requestNavigate} />
         <main ref={contentRef} className={`app-content${pendingNavigationRoute ? ' app-content-navigating' : ''}`}>
-          <NextSafeActionHandoff action={nextSafeAction} onNavigate={requestNavigate} />
           {pendingNavigationRoute && (
             <div className="route-handoff-feedback" role="status" aria-live="polite">
               转跳中...
             </div>
           )}
-          <BusinessRoutePage route={activeTab} />
+          <BusinessRoutePage route={activeTab} nextSafeAction={nextSafeAction} />
         </main>
       </div>
     </div>
