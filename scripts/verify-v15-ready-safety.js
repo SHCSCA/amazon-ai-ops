@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const { resolveBoundAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -193,6 +194,17 @@ if (fs.existsSync(bundleManifestPath)) bundleManifest = readJson(bundleManifestP
 if (fs.existsSync(readmePath)) readme = fs.readFileSync(readmePath, 'utf8');
 if (bundleReadmePath && fs.existsSync(bundleReadmePath)) bundleReadme = fs.readFileSync(bundleReadmePath, 'utf8');
 
+let authorityDbPath = '';
+try {
+  authorityDbPath = resolveBoundAdReadbackAuthorityDbPath(
+    finalReadiness.evidenceSelection?.authorityDbPath,
+    args.get('db'),
+  );
+  check(true, 'final readiness records an existing SQLite authority database identity', failures);
+} catch (error) {
+  check(false, `SQLite authority database identity is invalid: ${error instanceof Error ? error.message : String(error)}`, failures);
+}
+
 check(finalReadiness.status === 'APP_READY', 'final readiness status is APP_READY', failures);
 check(finalReadiness.appReady === true, 'final readiness appReady=true', failures);
 check(finalReadiness.evidenceSelection?.mode === 'manifest', 'final readiness uses explicit evidence manifest', failures);
@@ -209,8 +221,10 @@ const manifest = finalReadiness.evidenceSelection?.manifestPath && fs.existsSync
   : {};
 check(manifest.evidence?.adReadback?.exists === true, 'manifest selects real ad readback evidence', failures);
 check(Boolean(manifest.evidence?.adReadback?.absolutePath && fs.existsSync(manifest.evidence.adReadback.absolutePath)), 'ad readback evidence file exists', failures);
-if (manifest.evidence?.adReadback?.absolutePath && fs.existsSync(manifest.evidence.adReadback.absolutePath)) {
-  const readbackVerification = runNode('scripts/verify-ad-readback-evidence.js', [manifest.evidence.adReadback.absolutePath]);
+if (manifest.evidence?.adReadback?.absolutePath && fs.existsSync(manifest.evidence.adReadback.absolutePath) && authorityDbPath) {
+  const verifierArgs = [manifest.evidence.adReadback.absolutePath];
+  verifierArgs.push('--db', authorityDbPath);
+  const readbackVerification = runNode('scripts/verify-ad-readback-evidence.js', verifierArgs);
   check(readbackVerification.ok, 'selected ad readback evidence passes verify:ad-readback', failures);
   if (!readbackVerification.ok && readbackVerification.output) {
     console.error(readbackVerification.output.split(/\r?\n/).slice(-8).join('\n'));
@@ -249,6 +263,16 @@ function runNode(script, args = []) {
   };
 }
 check(bundleManifest.status === 'APP_READY' && bundleManifest.appReady === true, 'delivery bundle manifest is APP_READY', failures);
+let bundleAuthorityMatches = false;
+try {
+  bundleAuthorityMatches = Boolean(authorityDbPath)
+    && Boolean(bundleManifest.authorityDatabase?.sourcePath)
+    && resolveBoundAdReadbackAuthorityDbPath(authorityDbPath, bundleManifest.authorityDatabase?.sourcePath) === authorityDbPath
+    && bundleManifest.authorityDatabase?.copied === false;
+} catch {
+  bundleAuthorityMatches = false;
+}
+check(bundleAuthorityMatches, 'delivery bundle records the same non-copied SQLite authority database identity', failures);
 check(Array.isArray(bundleManifest.files) && bundleManifest.files.some((file) => file.label === 'scripts/verify-v15-ready-safety.js'), 'delivery bundle includes READY safety verifier', failures);
 check(bundleManifest.dataReconciliation?.present === true, 'delivery bundle includes current-scope data reconciliation summary', failures);
 check(Boolean(bundleManifest.dataReconciliation?.bundleJson), 'delivery bundle includes data reconciliation JSON file', failures);

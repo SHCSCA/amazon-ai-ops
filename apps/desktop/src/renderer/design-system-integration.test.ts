@@ -67,7 +67,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/readback-page.tsx',
-    markers: ['readback-current-step-summary', 'readback-current-step-meta', '1. 选择已批准动作', '2. 填写审批凭证', 'SafetyGateLine'],
+    markers: ['PageFrame', 'TaskBanner', 'readback-step-tabs', 'readbackWizardSteps', "readbackStepPanelProps('approval')", 'readback-safety-gates'],
   },
   {
     pageFile: 'pages/keyword-opportunities-page.tsx',
@@ -111,7 +111,7 @@ describe('prototype parity design system integration', () => {
         'pages/keyword-opportunities-page.tsx': ['keyword-opportunity-summary-grid', 'keyword-opportunity-blocker-strip', 'folded-ops-panel'],
         'pages/listing-optimization-page.tsx': ['listing-optimization-page-stack', 'listing-editor-panel', 'listing-draft-panel'],
         'pages/approval-page.tsx': ['approval-workbench-head', 'approval-table'],
-        'pages/readback-page.tsx': ['readback-current-step-summary', 'readback-step-grid'],
+        'pages/readback-page.tsx': ['PageFrame', 'TaskBanner', 'readback-step-tabs', 'WorkbenchPanel'],
         'pages/settings-page.tsx': ['settings-ai-workbench', 'settings-ai-contract-copy-folded'],
         'pages/delivery-page.tsx': ['delivery-summary-workbench', 'delivery-summary-hero'],
       };

@@ -9,6 +9,10 @@ export interface RefreshFinalReadinessInput {
   releaseDir: string;
   appVersion: string;
   adReadbackPath?: string;
+  validateAdReadbackAuthority: (evidencePath: string) => {
+    ok: boolean;
+    message?: string;
+  };
 }
 
 export interface RefreshedFinalReadiness {
@@ -182,7 +186,10 @@ function checkListingAiDraft(evidencePath: string | null) {
   }
 }
 
-function checkAdExecutionReadback(evidencePath: string | null) {
+function checkAdExecutionReadback(
+  evidencePath: string | null,
+  validateAuthority: RefreshFinalReadinessInput['validateAdReadbackAuthority'],
+) {
   if (!evidencePath || !fs.existsSync(evidencePath)) {
     return {
       ...gate('Real ad execution readback', false, evidencePath, 'real before/after/readback evidence is missing', 'needs_work'),
@@ -190,6 +197,32 @@ function checkAdExecutionReadback(evidencePath: string | null) {
     };
   }
   const result = verifyAdReadbackEvidenceFile(evidencePath);
+  if (result.ready) {
+    try {
+      const authority = validateAuthority(path.resolve(evidencePath));
+      if (!authority.ok) {
+        return {
+          ...gate(
+            'Real ad execution readback',
+            false,
+            evidencePath,
+            authority.message || 'database authority is no longer current',
+          ),
+          safetyFailClosed: true,
+        };
+      }
+    } catch {
+      return {
+        ...gate(
+          'Real ad execution readback',
+          false,
+          evidencePath,
+          'database authority validation failed closed',
+        ),
+        safetyFailClosed: true,
+      };
+    }
+  }
   return {
     ...gate(
       'Real ad execution readback',
@@ -253,7 +286,7 @@ export function refreshFinalReadiness(input: RefreshFinalReadinessInput): Refres
     checkAiLive(selected.aiLive.filePath),
     checkAdAiExplanation(selected.adAiExplanation.filePath),
     checkListingAiDraft(selected.listingAiDraft.filePath),
-    checkAdExecutionReadback(selected.adReadback.filePath),
+    checkAdExecutionReadback(selected.adReadback.filePath, input.validateAdReadbackAuthority),
   ];
   const packageEvaluation = evaluatePackageReadinessFromFiles({
     releaseDir: input.releaseDir,

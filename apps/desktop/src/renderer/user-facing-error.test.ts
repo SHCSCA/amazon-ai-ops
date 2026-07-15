@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toUserFacingError } from './user-facing-error';
+import { toReadbackUserFacingError, toUserFacingError } from './user-facing-error';
 
 describe('toUserFacingError', () => {
   it('does not render raw Playwright launch output to the login page', () => {
@@ -62,5 +62,25 @@ describe('toUserFacingError', () => {
 
     expect(message).toBe('当前产品范围缺少可回查的日级广告指标：请先在产品管理选择 ASIN，并在数据导入与校验页重新导入当前批次真实报表后再运行 AI。');
     expect(message).not.toContain('source_file');
+  });
+});
+
+describe('toReadbackUserFacingError', () => {
+  it.each([
+    'SQLITE_ERROR: no such table: action_recommendations',
+    'EPERM: operation not permitted, open C:\\private\\evidence.json',
+    'TypeError: Cannot read properties of undefined\n    at verify (index.ts:7420:11)',
+  ])('fails closed to stable copy for technical error: %s', (raw) => {
+    const message = toReadbackUserFacingError(new Error(raw), '校验回读证据失败。');
+
+    expect(message).toBe('校验回读证据失败。');
+    expect(message).not.toMatch(/SQLITE|EPERM|TypeError|index\.ts|private/i);
+  });
+
+  it('preserves stable readback business blockers without exposing the IPC prefix', () => {
+    expect(toReadbackUserFacingError(
+      new Error("Error invoking remote method 'export': Error: 结果核对状态冲突：建议版本已变化，请刷新后重试。"),
+      '导出回读证据失败。',
+    )).toBe('结果核对状态冲突：建议版本已变化，请刷新后重试。');
   });
 });

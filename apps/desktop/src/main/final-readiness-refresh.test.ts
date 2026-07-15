@@ -15,6 +15,99 @@ function writeJson(filePath: string, value: unknown): string {
   return filePath;
 }
 
+function writeFile(filePath: string, content = 'evidence'): string {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, 'utf8');
+  return filePath;
+}
+
+function writePassingReadbackEvidence(evidenceDir: string): string {
+  const evidencePath = path.join(evidenceDir, 'real-ad-execution-readback-authorized.json');
+  return writeJson(evidencePath, {
+    schemaVersion: 2,
+    kind: 'real-ad-execution-readback',
+    status: 'PASS',
+    authority: {
+      recommendationId: 4,
+      recommendationRevision: 3,
+      recommendationStatusAtExport: 'approved',
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-18',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
+      batchId: 'batch_1',
+      checkedAt: '2026-06-18T09:59:00.000Z',
+    },
+    realWriteApproved: true,
+    safety: {
+      full8Started: false,
+      listingAiDraftOnly: false,
+      adWriteActionsPerformed: true,
+    },
+    approval: {
+      operatorConfirmed: true,
+      scope: 'FT-US-US / US / B0TESTASIN / 2026-06-01~2026-06-18 / batch_1',
+      confirmedAt: '2026-06-18T10:00:00.000Z',
+      approverName: 'Ops Lead',
+      approvalArtifactPath: writeFile(path.join(evidenceDir, 'approval.png')),
+    },
+    target: {
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
+      campaignName: 'Campaign A',
+      adGroupName: 'Ad Group A',
+      entityType: 'target',
+      entityName: 'door lock',
+      actionType: 'lower_bid',
+    },
+    risk: {
+      level: 'low',
+      allowedByPolicy: true,
+      rationale: 'One reversible bid decrease.',
+    },
+    before: {
+      value: '1.20',
+      capturedAt: '2026-06-18T10:01:00.000Z',
+      screenshotPath: writeFile(path.join(evidenceDir, 'before.png')),
+      liveBidSourceNote: 'Read from Ads UI editable bid row.',
+    },
+    after: {
+      value: '1.08',
+      capturedAt: '2026-06-18T10:03:00.000Z',
+      screenshotPath: writeFile(path.join(evidenceDir, 'after.png')),
+    },
+    readback: {
+      verified: true,
+      method: 'Ads UI reload target row',
+      readAt: '2026-06-18T10:05:00.000Z',
+      actualValue: '1.08',
+      evidencePath: writeFile(path.join(evidenceDir, 'readback.png')),
+    },
+    execution: {
+      success: true,
+      verified: true,
+      executionId: 'manual-ads-ui-001',
+      executedAt: '2026-06-18T10:02:00.000Z',
+      channel: 'manual_ads_ui',
+      performedBy: 'Operator A',
+      appExecutorUsed: false,
+    },
+    source: {
+      recommendationId: '4',
+      recommendationRevision: 3,
+      batchId: 'batch_1',
+      sourceFiles: [writeFile(path.join(evidenceDir, 'user-search-term.xlsx'))],
+      sourceRow: 410,
+      currentValue: '1.20',
+      recommendedValue: '1.08',
+    },
+  });
+}
+
+const acceptCurrentReadbackAuthority = () => ({ ok: true as const });
+
 function sha256(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex').toUpperCase();
 }
@@ -134,6 +227,7 @@ describe('refreshFinalReadiness', () => {
       evidenceDir,
       releaseDir,
       appVersion: '1.5.0',
+      validateAdReadbackAuthority: acceptCurrentReadbackAuthority,
     });
 
     expect(fs.existsSync(result.evidenceManifestPath)).toBe(true);
@@ -162,6 +256,7 @@ describe('refreshFinalReadiness', () => {
       evidenceDir,
       releaseDir,
       appVersion: '1.5.0',
+      validateAdReadbackAuthority: acceptCurrentReadbackAuthority,
     });
     const finalReadiness = JSON.parse(fs.readFileSync(result.finalReadinessPath, 'utf8'));
 
@@ -191,6 +286,7 @@ describe('refreshFinalReadiness', () => {
       evidenceDir,
       releaseDir,
       appVersion: '1.5.0',
+      validateAdReadbackAuthority: acceptCurrentReadbackAuthority,
     });
     const finalReadiness = JSON.parse(fs.readFileSync(result.finalReadinessPath, 'utf8'));
 
@@ -221,6 +317,7 @@ describe('refreshFinalReadiness', () => {
       evidenceDir,
       releaseDir,
       appVersion: '1.5.0',
+      validateAdReadbackAuthority: acceptCurrentReadbackAuthority,
     })).not.toThrow();
 
     const finalReadinessPath = fs.readdirSync(evidenceDir)
@@ -254,6 +351,7 @@ describe('refreshFinalReadiness', () => {
       evidenceDir,
       releaseDir,
       appVersion: '1.5.0',
+      validateAdReadbackAuthority: acceptCurrentReadbackAuthority,
     });
     const finalReadiness = JSON.parse(fs.readFileSync(result.finalReadinessPath, 'utf8'));
 
@@ -265,5 +363,43 @@ describe('refreshFinalReadiness', () => {
       expect.objectContaining({ gateId: 'package-launch-smoke', code: 'PACKAGE_SMOKE_PORTABLE_HASH_MISMATCH' }),
     ]));
     expect(finalReadiness.gates.find((gate: any) => gate.id === 'package-launch-smoke')?.ok).toBe(false);
+  });
+
+  it('fails the readback and APP_READY gates when database authority is no longer current', () => {
+    const root = tempDir();
+    const evidenceDir = path.join(root, 'output', 'codex-evidence');
+    const releaseDir = path.join(root, 'apps', 'desktop', 'release');
+    const { portablePath, portableContent } = writeReleasePackages(releaseDir);
+    writeEvidenceSet(evidenceDir);
+    writePackageLaunchSmoke(evidenceDir, releaseDir, portablePath, portableContent);
+    const readbackPath = writePassingReadbackEvidence(evidenceDir);
+    const validated: string[] = [];
+
+    const result = refreshFinalReadiness({
+      repoRootDir: root,
+      evidenceDir,
+      releaseDir,
+      appVersion: '1.5.0',
+      adReadbackPath: readbackPath,
+      validateAdReadbackAuthority: (filePath) => {
+        validated.push(filePath);
+        return {
+          ok: false,
+          message: '数据库中的已批准建议或当前范围已变化，请刷新后重新导出并校验。',
+        };
+      },
+    });
+    const finalReadiness = JSON.parse(fs.readFileSync(result.finalReadinessPath, 'utf8'));
+    const readbackGate = finalReadiness.gates.find((gate: any) => gate.name === 'Real ad execution readback');
+
+    expect(validated).toEqual([path.resolve(readbackPath)]);
+    expect(readbackGate).toMatchObject({
+      ok: false,
+      status: 'needs_work',
+      safetyFailClosed: true,
+    });
+    expect(readbackGate.message).toContain('数据库中的已批准建议');
+    expect(finalReadiness.appReady).toBe(false);
+    expect(result.appReady).toBe(false);
   });
 });

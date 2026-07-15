@@ -1,8 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { ProgressiveDetails } from '../components/progressive-details';
-import { PageHeader, Panel, SafetyGateLine, StatusPill } from '../components/ui';
-import { PAGE_HEADER_TITLES } from '../page-header-copy';
+import { StatusPill } from '../components/ui';
+import {
+  PageFrame,
+  ResponsiveInspector,
+  TaskBanner,
+  WorkbenchPanel,
+} from '../components/workspace';
 import {
   parseReadbackRepairIntent,
   READBACK_REPAIR_INTENT_EVENT,
@@ -13,23 +17,47 @@ import {
   type ReadbackRepairIntent,
 } from '../readback-repair-intent';
 import { firstIncompleteReadbackStep, readbackWizardSteps, type ReadbackWizardStepId } from '../readback-wizard';
+import {
+  buildReadbackQueryKey,
+  canPublishReadbackResult,
+  readbackAuthorityForMode,
+  readbackGlobalBusyView,
+  readbackRepairBlockersForMissing,
+  readbackRepairActions,
+  resolveReadbackScreenshotRepairAction,
+  resolveReadbackExportRoute,
+  runCurrentReadbackFinalVerification,
+  runReadbackFinalVerificationWorkflow,
+  type ReadbackAuthority,
+  type ReadbackRepairAction,
+  type ReadbackRequestSnapshot,
+  type ReadbackWorkspaceActionKey,
+} from './readback-workspace-model';
 import type { RecommendationView } from '../types';
-import { toUserFacingError } from '../user-facing-error';
-import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
+import { toReadbackUserFacingError } from '../user-facing-error';
+import { notifyWorkflowInvalidated } from '../workflow-invalidation';
 import type { WorkflowEventTarget } from '../workflow-invalidation';
 
 type AiThresholdSuggestions = NonNullable<NonNullable<RecommendationView['evidence']>['aiThresholdSuggestions']>;
 
-export function runReadbackWorkflowMutation<T>(
+export function readbackVerifierPassed(value: unknown): boolean {
+  const result = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return result.ready === true && result.status === 'PASS';
+}
+
+export async function runReadbackWorkflowMutation<T>(
   action: 'create' | 'verify',
   task: () => Promise<T>,
   target?: WorkflowEventTarget,
+  shouldPublish: () => boolean = () => true,
 ): Promise<T> {
-  return runWorkflowInvalidatingMutation(
-    action === 'create' ? 'readback-created' : 'readback-verified',
-    task,
-    target,
-  );
+  const result = await task();
+  if (!shouldPublish()) return result;
+  if (action === 'create') notifyWorkflowInvalidated('readback-created', target);
+  if (action === 'verify' && readbackVerifierPassed(result)) {
+    notifyWorkflowInvalidated('readback-verified', target);
+  }
+  return result;
 }
 export type ReadbackCaptureSlot = 'approval' | 'before' | 'after' | 'readback';
 export type ReadbackContractStatus = 'ready' | 'pending' | 'blocked';
@@ -247,8 +275,9 @@ export function sessionCheckCopy(sessionCheck: Record<string, any> | null): { cl
   };
 }
 
-interface ReadbackFormState {
+export interface ReadbackFormState {
   recommendationId: string;
+  recommendationRevision: number;
   storeName: string;
   marketplaceCode: string;
   portfolioName: string;
@@ -318,6 +347,7 @@ interface ReadbackFormState {
 
 export const EMPTY_FORM: ReadbackFormState = {
   recommendationId: '',
+  recommendationRevision: 0,
   storeName: '',
   marketplaceCode: '',
   portfolioName: '',
@@ -404,8 +434,9 @@ export function decisionSourceLabel(value?: string): string {
   return labels[String(value || '').trim()] || String(value || '-');
 }
 
-function errorMessage(caught: unknown, fallback: string): string {
-  return `${fallback}: ${toUserFacingError(caught, fallback)}`;
+function readbackErrorMessage(caught: unknown, fallback: string): string {
+  console.error('[readback-workspace]', fallback, caught);
+  return toReadbackUserFacingError(caught, fallback);
 }
 
 export function captureSlotPatch(slot: ReadbackCaptureSlot, filePath: string, savedAt: string): Partial<ReadbackFormState> {
@@ -524,6 +555,7 @@ export function formFromRecommendation(rec: RecommendationView, scope: { storeNa
   return {
     ...EMPTY_FORM,
     recommendationId: String(rec.id),
+    recommendationRevision: rec.revision,
     storeName: scope.storeName,
     marketplaceCode: scope.marketplaceCode,
     portfolioName: evidence.portfolioName || '',
@@ -575,11 +607,6 @@ function executableNumber(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed || /[%％]/.test(trimmed)) return null;
   const parsed = Number(trimmed.replace(/^\$/, '').replace(/\s*usd$/i, ''));
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function maybeNumber(value: string): number | null {
-  const parsed = Number(value.trim());
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -858,6 +885,43 @@ function ReadbackContractStrip({ checks }: { checks: ReadbackContractCheck[] }) 
   );
 }
 
+export function readbackPreviewFormFromRecommendation(
+  rec: RecommendationView,
+  scope: { storeName: string; marketplaceCode: string },
+  batchId: string | undefined,
+  complete: boolean,
+): ReadbackFormState {
+  const base = formFromRecommendation(rec, scope, batchId);
+  const approvalTime = base.approvalConfirmedAt || '2026-06-24T10:00:00.000Z';
+  return {
+    ...base,
+    approverName: base.approverName || '预览审批人',
+    approvalNote: base.approvalNote || '仅开发预览的只读审批记录。',
+    approvalArtifactPath: 'D:/preview/readback/approval.png',
+    approvalConfirmedAt: approvalTime,
+    operatorConfirmed: true,
+    realWriteApproved: true,
+    allowedByPolicy: true,
+    executedBy: '预览操作员',
+    executionId: 'preview-manual-001',
+    executionExecutedAt: '2026-06-24T10:05:00.000Z',
+    beforeValue: rec.currentValue || '1.20',
+    beforeCapturedAt: '2026-06-24T10:03:00.000Z',
+    beforeScreenshotPath: complete ? 'D:/preview/readback/before.png' : '',
+    afterValue: rec.recommendedValue || '1.08',
+    afterCapturedAt: '2026-06-24T10:06:00.000Z',
+    afterScreenshotPath: complete ? 'D:/preview/readback/after.png' : '',
+    readbackActualValue: complete ? (rec.recommendedValue || '1.08') : '',
+    readbackReadAt: '2026-06-24T10:10:00.000Z',
+    readbackEvidencePath: complete ? 'D:/preview/readback/readback.png' : '',
+    liveBidSourceNote: '仅开发预览的 Ads UI 行级回读说明。',
+    riskRationale: rec.reason || '仅开发预览的受控低风险动作。',
+    executionSuccess: true,
+    executionVerified: true,
+    readbackVerified: complete,
+  };
+}
+
 function psQuote(value: string): string {
   return `'${String(value || '').replace(/'/g, "''")}'`;
 }
@@ -964,6 +1028,8 @@ function ReadbackCaptureTarget({
   previewUrl,
   onCapture,
   repairClassName = '',
+  disabled = false,
+  id,
 }: {
   slot: ReadbackCaptureSlot;
   value?: string;
@@ -971,37 +1037,43 @@ function ReadbackCaptureTarget({
   previewUrl?: string;
   onCapture: (slot: ReadbackCaptureSlot, files: File[]) => void;
   repairClassName?: string;
+  disabled?: boolean;
+  id?: string;
 }) {
   const [dragging, setDragging] = useState(false);
   const view = readbackCaptureTargetView(slot, { value, saving, dragging, previewUrl });
   const clearDragging = () => setDragging(false);
   const markDragging = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
-    if (!saving) setDragging(true);
+    if (!saving && !disabled) setDragging(true);
   };
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     clearDragging();
+    if (disabled) return;
     onCapture(slot, captureFileList(event.dataTransfer));
   };
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
     const files = captureFileList(event.clipboardData);
-    if (!files.length) return;
+    if (!files.length || disabled) return;
     event.preventDefault();
     onCapture(slot, files);
   };
   return (
     <div
       aria-label={`${CAPTURE_SLOT_LABELS[slot].title}拖拽或粘贴存证`}
+      aria-disabled={disabled || undefined}
       aria-live="polite"
       className={[view.className, repairClassName].filter(Boolean).join(' ')}
+      data-capture-slot={slot}
       onDragEnter={markDragging}
       onDragLeave={clearDragging}
       onDragOver={markDragging}
       onDrop={handleDrop}
       onPaste={handlePaste}
       role="button"
-      tabIndex={0}
+      id={id}
+      tabIndex={disabled ? -1 : 0}
     >
       <strong>{view.title}</strong>
       <span>{view.detail}</span>
@@ -1026,11 +1098,26 @@ function ReadbackCaptureTarget({
   );
 }
 
-export function ReadbackPage() {
+export interface ReadbackPageProps {
+  authority?: ReadbackAuthority;
+  previewScenarioId?: string;
+}
+
+export function ReadbackPage({
+  authority = readbackAuthorityForMode('production'),
+  previewScenarioId,
+}: ReadbackPageProps = {}) {
   const { data, scope } = useBusinessDataPipeline();
   const [approvedRows, setApprovedRows] = useState<RecommendationView[]>([]);
   const [form, setForm] = useState<ReadbackFormState>(EMPTY_FORM);
-  const [exportResult, setExportResult] = useState<{ jsonPath?: string; markdownPath?: string; status?: string; readyForVerifier?: boolean } | null>(null);
+  const [exportResult, setExportResult] = useState<{
+    jsonPath?: string;
+    markdownPath?: string;
+    sha256?: string;
+    status?: string;
+    readyForVerifier?: boolean;
+    nextAction?: 'verify' | 'prepare';
+  } | null>(null);
   const [sessionResult, setSessionResult] = useState<Record<string, any> | null>(null);
   const [sessionCheck, setSessionCheck] = useState<Record<string, any> | null>(null);
   const [sessionFillResult, setSessionFillResult] = useState<Record<string, any> | null>(null);
@@ -1041,13 +1128,30 @@ export function ReadbackPage() {
   const [activeStep, setActiveStep] = useState<ReadbackWizardStepId>('target-source');
   const [repairIntent, setRepairIntent] = useState<ReadbackRepairIntent | null>(null);
   const [repairPulse, setRepairPulse] = useState(false);
-  const [captureSavingSlot, setCaptureSavingSlot] = useState<ReadbackCaptureSlot | null>(null);
   const [capturePreviews, setCapturePreviews] = useState<Partial<Record<ReadbackCaptureSlot, string>>>({});
-  const [readbackActionBusy, setReadbackActionBusy] = useState<ReadbackActionKey | null>(null);
-  const [copyCommandBusy, setCopyCommandBusy] = useState<ReadbackCopyCommandKey | null>(null);
-  const [pathOpenKey, setPathOpenKey] = useState<string | null>(null);
-  const [sourceFieldEditorOpen, setSourceFieldEditorOpen] = useState(false);
-  const [guardModalOpen, setGuardModalOpen] = useState(false);
+  const [activeAction, setActiveAction] = useState<ReadbackWorkspaceActionKey | null>(null);
+  const [activeCaptureSlot, setActiveCaptureSlot] = useState<ReadbackCaptureSlot | null>(null);
+  const [activeCopyCommand, setActiveCopyCommand] = useState<ReadbackCopyCommandKey | null>(null);
+  const [activePathKey, setActivePathKey] = useState<string | null>(null);
+  const [technicalInspectorOpen, setTechnicalInspectorOpen] = useState(false);
+  const activeActionRef = useRef<ReadbackWorkspaceActionKey | null>(null);
+  const readbackActionBusy = activeAction as ReadbackActionKey | null;
+  const copyCommandBusy = activeAction === 'copy-command' ? activeCopyCommand : null;
+  const pathOpenKey = activeAction === 'open-path' ? activePathKey : null;
+  const captureSavingSlot = activeAction === 'capture-evidence' ? activeCaptureSlot : null;
+  const rowsRequestIdRef = useRef(0);
+  const captureRequestIdRef = useRef(0);
+  const exportRequestIdRef = useRef(0);
+  const finalRequestIdRef = useRef(0);
+  const sessionRequestIdRef = useRef(0);
+  const verifyRequestIdRef = useRef(0);
+  const formEpochRef = useRef(0);
+  const activeRowsRequestRef = useRef<ReadbackRequestSnapshot | null>(null);
+  const activeCaptureRequestRef = useRef<ReadbackRequestSnapshot | null>(null);
+  const activeExportRequestRef = useRef<ReadbackRequestSnapshot | null>(null);
+  const activeFinalRequestRef = useRef<ReadbackRequestSnapshot | null>(null);
+  const activeSessionRequestRef = useRef<ReadbackRequestSnapshot | null>(null);
+  const activeVerifyRequestRef = useRef<ReadbackRequestSnapshot | null>(null);
   const stepTabRefs = useRef<Partial<Record<ReadbackWizardStepId, HTMLButtonElement | null>>>({});
   const focusStepTab = (stepId: ReadbackWizardStepId) => {
     const focusTab = () => stepTabRefs.current[stepId]?.focus();
@@ -1062,24 +1166,39 @@ export function ReadbackPage() {
     if (focusTab) focusStepTab(stepId);
   };
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
+  const queryKey = useMemo(() => buildReadbackQueryKey({
+    dateFrom: scope.dateFrom,
+    dateTo: scope.dateTo,
+    storeName: scope.storeName,
+    marketplaceCode: scope.marketplaceCode,
+    asin: scope.asin,
+    batchId: currentBatchId,
+  }), [currentBatchId, scope.asin, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
   const missing = useMemo(() => requiredMissing(form, currentBatchId), [currentBatchId, form]);
   const sourceBatchMatches = Boolean(form.sourceBatchId && currentBatchId && form.sourceBatchId === currentBatchId);
   const missingGroups = useMemo(() => groupMissing(missing), [missing]);
   const precheckCopy = useMemo(() => readbackPrecheckCopy(missing), [missing]);
   const contractChecks = useMemo(() => readbackContractChecks(form), [form]);
   const sessionWorkflow = useMemo(() => readbackSessionWorkflow(exportResult?.jsonPath), [exportResult?.jsonPath]);
+  const exportRoute = useMemo(() => resolveReadbackExportRoute(exportResult), [exportResult]);
+  const finalVerificationPassed = readbackVerifierPassed(sessionVerifyResult);
+  const completedViaWorkPackage = finalVerificationPassed
+    && exportRoute.kind === 'prepare-session'
+    && Boolean(sessionFillResult?.jsonPath);
   const readbackStepSummaries = useMemo(() => {
     const missingSet = new Set(missing);
     return readbackWizardSteps.map((step) => {
-      const missingCount = step.fields.filter((field) => missingSet.has(field)).length;
+      const missingCount = finalVerificationPassed
+        ? 0
+        : step.fields.filter((field) => missingSet.has(field)).length;
       return {
         ...step,
         missingCount,
         status: missingCount ? 'blocked' : 'ready',
-        detail: missingCount ? `缺 ${missingCount} 项` : '已满足',
+        detail: finalVerificationPassed ? '最终核对通过' : missingCount ? `缺 ${missingCount} 项` : '已满足',
       };
     });
-  }, [missing]);
+  }, [finalVerificationPassed, missing]);
   const activeStepSummary = readbackStepSummaries.find((step) => step.id === activeStep) || readbackStepSummaries[0];
   const activeStepIndex = Math.max(0, readbackWizardSteps.findIndex((step) => step.id === activeStep));
   const readbackStepRailStyle = {
@@ -1093,9 +1212,13 @@ export function ReadbackPage() {
     form.afterScreenshotPath,
     form.readbackEvidencePath,
   ].filter((value) => value.trim()).length;
-  const activeStepDetail = activeMissingCount
-    ? `当前步骤还有 ${activeMissingCount} 项待补；所有安全缺口仍由本地校验决定。`
-    : '当前步骤已满足；进入下一步前仍保留最终导出校验。';
+  const activeStepDetail = finalVerificationPassed
+    ? '最终证据已核对通过；批准记录、报表批次与现场证据保持一致。'
+    : activeMissingCount
+      ? `当前步骤还有 ${activeMissingCount} 项待补；所有安全缺口仍由本地校验决定。`
+      : activeStep === 'verify-export'
+        ? '当前步骤已满足；请运行最终校验，核对批准记录、报表批次与现场证据。'
+        : '当前步骤已满足；继续下一步前仍保留最终导出校验。';
   const sourceFieldCount = [
     form.storeName,
     form.marketplaceCode,
@@ -1112,35 +1235,75 @@ export function ReadbackPage() {
     form.sourceRow,
     form.sourceFiles,
   ].filter((value) => value.trim()).length;
+  const firstScreenshotRepairSlot: ReadbackCaptureSlot | null = !form.approvalArtifactPath.trim()
+    ? 'approval'
+    : !form.beforeScreenshotPath.trim()
+      ? 'before'
+      : !form.afterScreenshotPath.trim()
+        ? 'after'
+        : !form.readbackEvidencePath.trim()
+          ? 'readback'
+          : missing.some((item) => item.includes('证据文件不能复用')) ? 'before' : null;
   const sourceFilesCount = sourceFileLines(form.sourceFiles).length;
   const repairIntentStep = readbackRepairIntentStep(repairIntent);
   const exportOpenPath = exportResult?.jsonPath || exportResult?.markdownPath || '';
   const openExportButton = readbackOpenPathButtonView({
     activePathKey: pathOpenKey,
-    disabled: !exportOpenPath,
+    disabled: authority.previewOnly || !exportOpenPath || Boolean(activeAction && activeAction !== 'open-path'),
     idleLabel: '打开导出文件',
     pathKey: readbackPathActionKey('打开导出文件', exportOpenPath),
   });
   const openSessionPacketButton = readbackOpenPathButtonView({
     activePathKey: pathOpenKey,
-    disabled: !sessionResult?.sessionDir,
+    disabled: authority.previewOnly || !sessionResult?.sessionDir || Boolean(activeAction && activeAction !== 'open-path'),
     idleLabel: '打开工作包',
     pathKey: readbackPathActionKey('打开工作包', sessionResult?.sessionDir),
   });
   const openSessionInputFileButton = readbackOpenPathButtonView({
     activePathKey: pathOpenKey,
-    disabled: !sessionResult?.sessionInputPath,
+    disabled: authority.previewOnly || !sessionResult?.sessionInputPath || Boolean(activeAction && activeAction !== 'open-path'),
     idleLabel: '打开填写文件',
     pathKey: readbackPathActionKey('打开填写文件', sessionResult?.sessionInputPath),
   });
   const openSessionInputGuideButton = readbackOpenPathButtonView({
     activePathKey: pathOpenKey,
-    disabled: !sessionResult?.sessionInputGuidePath,
+    disabled: authority.previewOnly || !sessionResult?.sessionInputGuidePath || Boolean(activeAction && activeAction !== 'open-path'),
     idleLabel: '打开填写说明',
     pathKey: readbackPathActionKey('打开填写说明', sessionResult?.sessionInputGuidePath),
   });
 
   function update(patch: Partial<ReadbackFormState>, options: { preserveSession?: boolean } = {}) {
+    formEpochRef.current += 1;
+    activeExportRequestRef.current = {
+      kind: 'export',
+      requestId: ++exportRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeCaptureRequestRef.current = {
+      kind: 'capture',
+      requestId: ++captureRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeFinalRequestRef.current = {
+      kind: 'final',
+      requestId: ++finalRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeVerifyRequestRef.current = {
+      kind: 'verify',
+      requestId: ++verifyRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeSessionRequestRef.current = {
+      kind: 'session',
+      requestId: ++sessionRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
     setForm((current) => ({ ...current, ...patch }));
     setExportResult(null);
     if (!options.preserveSession) {
@@ -1164,7 +1327,7 @@ export function ReadbackPage() {
       setRepairPulse(true);
       setMessage(readbackRepairIntentMessage(intent));
       if (clearPulseTimer) window.clearTimeout(clearPulseTimer);
-      clearPulseTimer = window.setTimeout(() => setRepairPulse(false), 1800);
+      clearPulseTimer = window.setTimeout(() => setRepairPulse(false), 150);
     }
     function handleRepairIntent(event: Event) {
       applyIntent((event as CustomEvent<ReadbackRepairIntent>).detail || null);
@@ -1185,34 +1348,11 @@ export function ReadbackPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!sourceFieldEditorOpen) return;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setSourceFieldEditorOpen(false);
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [sourceFieldEditorOpen]);
-
-  useEffect(() => {
-    if (!guardModalOpen) return;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setGuardModalOpen(false);
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [guardModalOpen]);
-
-  function handleGuardModalKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    setGuardModalOpen(false);
-  }
-
   async function captureEvidence(slot: ReadbackCaptureSlot, files: File[]) {
+    if (!authority.capabilities.captureEvidence) {
+      setCopyNotice('仅开发预览为只读布局，不能写入截图证据。');
+      return;
+    }
     const file = firstImageFile(files);
     if (!file) {
       setCopyNotice('请粘贴或拖入 PNG/JPG/WebP 截图。');
@@ -1223,30 +1363,50 @@ export function ReadbackPage() {
       setCopyNotice('当前运行环境不支持截图存证。');
       return;
     }
-    setCaptureSavingSlot(slot);
-    setCopyNotice(`${CAPTURE_SLOT_LABELS[slot].title}正在存证...`);
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      const result = await api.saveReadbackCapture({
-        slot,
-        dataUrl,
-        fileName: file.name,
-        sessionDir: sessionResult?.sessionDir,
-      });
-      update(captureSlotPatch(slot, result.filePath, result.savedAt), { preserveSession: true });
-      setCapturePreviews((current) => ({ ...current, [slot]: dataUrl }));
-      setSessionCheck(null);
-      setSessionFillResult(null);
-      setSessionVerifyResult(null);
-      setCopyNotice(`${CAPTURE_SLOT_LABELS[slot].title}已保存到本地证据目录。`);
-    } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, `${CAPTURE_SLOT_LABELS[slot].title}存证失败。`));
-    } finally {
-      setCaptureSavingSlot(null);
-    }
+    await runWorkspaceAction('capture-evidence', async () => {
+      const request: ReadbackRequestSnapshot = {
+        kind: 'capture',
+        requestId: ++captureRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeCaptureRequestRef.current = request;
+      setActiveCaptureSlot(slot);
+      setCopyNotice(`${CAPTURE_SLOT_LABELS[slot].title}正在存证...`);
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        if (!activeCaptureRequestRef.current || !canPublishReadbackResult(request, activeCaptureRequestRef.current)) return;
+        const result = await api.saveReadbackCapture({
+          slot,
+          dataUrl,
+          fileName: file.name,
+          sessionDir: sessionResult?.sessionDir,
+        });
+        if (!activeCaptureRequestRef.current || !canPublishReadbackResult(request, activeCaptureRequestRef.current)) return;
+        update(captureSlotPatch(slot, result.filePath, result.savedAt), { preserveSession: true });
+        setCapturePreviews((current) => ({ ...current, [slot]: dataUrl }));
+        setSessionCheck(null);
+        setSessionFillResult(null);
+        setSessionVerifyResult(null);
+        setCopyNotice(`${CAPTURE_SLOT_LABELS[slot].title}已保存到本地证据目录。`);
+      } catch (caught) {
+        if (activeCaptureRequestRef.current && canPublishReadbackResult(request, activeCaptureRequestRef.current)) {
+          setCopyNotice(readbackErrorMessage(caught, `${CAPTURE_SLOT_LABELS[slot].title}存证失败。`));
+        }
+      } finally {
+        setActiveCaptureSlot(null);
+      }
+    });
   }
 
   async function loadApprovedRows() {
+    const request: ReadbackRequestSnapshot = {
+      kind: 'rows',
+      requestId: ++rowsRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeRowsRequestRef.current = request;
     setLoading(true);
     setMessage(null);
     try {
@@ -1260,157 +1420,163 @@ export function ReadbackPage() {
         status: 'approved',
         limit: 100,
       });
-      setApprovedRows(Array.isArray(rows) ? rows : []);
+      if (activeRowsRequestRef.current && canPublishReadbackResult(request, activeRowsRequestRef.current)) {
+        const nextRows = Array.isArray(rows) ? rows : [];
+        setApprovedRows(nextRows);
+        if (authority.previewOnly && nextRows[0] && (previewScenarioId === 'missing-readback-evidence' || previewScenarioId === 'delivery-ready')) {
+          const complete = previewScenarioId === 'delivery-ready';
+          const previewForm = readbackPreviewFormFromRecommendation(nextRows[0], scope, currentBatchId, complete);
+          formEpochRef.current += 1;
+          setForm(previewForm);
+          setActiveStep(complete ? 'verify-export' : 'evidence');
+          if (complete) {
+            setExportResult({
+              jsonPath: 'D:/preview/readback/readback-pass.json',
+              markdownPath: 'D:/preview/readback/readback-pass.md',
+              sha256: 'PREVIEW_ONLY_NOT_A_REAL_HASH',
+              status: 'PASS',
+              readyForVerifier: true,
+              nextAction: 'verify',
+            });
+            setSessionVerifyResult({
+              evidencePath: 'D:/preview/readback/readback-pass.json',
+              ready: true,
+              status: 'PASS',
+              issues: [],
+              previewOnly: true,
+            });
+          }
+        }
+      }
     } catch (caught) {
-      setMessage(errorMessage(caught, '加载已批准动作失败'));
+      if (activeRowsRequestRef.current && canPublishReadbackResult(request, activeRowsRequestRef.current)) {
+        setMessage(readbackErrorMessage(caught, '加载已批准动作失败。'));
+      }
     } finally {
-      setLoading(false);
+      if (activeRowsRequestRef.current && canPublishReadbackResult(request, activeRowsRequestRef.current)) {
+        setLoading(false);
+      }
     }
   }
 
-  async function runReadbackAction(action: ReadbackActionKey, task: () => Promise<void>) {
-    if (readbackActionBusy) return;
-    setReadbackActionBusy(action);
+  async function runWorkspaceAction<T>(
+    action: ReadbackWorkspaceActionKey,
+    task: () => Promise<T>,
+  ): Promise<T | undefined> {
+    if (activeActionRef.current) return undefined;
+    activeActionRef.current = action;
+    setActiveAction(action);
     try {
-      await task();
+      return await task();
     } finally {
-      setReadbackActionBusy(null);
+      if (activeActionRef.current === action) activeActionRef.current = null;
+      setActiveAction((current) => current === action ? null : current);
     }
   }
 
-  async function exportEvidence() {
-    await runReadbackAction('export-evidence', async () => {
+  async function exportEvidence(options: { withinActiveAction?: boolean } = {}) {
+    if (!authority.capabilities.exportEvidence) {
+      setMessage('仅开发预览为只读布局，不能导出真实回读证据，也不代表正式交付就绪。');
+      return;
+    }
+    const task = async () => {
+      const request: ReadbackRequestSnapshot = {
+        kind: 'export',
+        requestId: ++exportRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeExportRequestRef.current = request;
       setMessage(null);
       try {
         const exportAdReadbackEvidence = (window as any).electronAPI?.exportAdReadbackEvidence;
         if (typeof exportAdReadbackEvidence !== 'function') {
           throw new Error('回读证据导出接口未暴露。');
         }
-        const scopeText = [
-          form.storeName,
-          form.marketplaceCode,
-          form.asin,
-          form.campaignName,
-          form.adGroupName,
-          `${form.entityType}=${form.entityName}`,
-          form.actionType,
-        ].filter(Boolean).join(' / ');
         const result = await runReadbackWorkflowMutation<any>('create', () => exportAdReadbackEvidence({
-          target: {
-            storeName: form.storeName,
-            marketplaceCode: form.marketplaceCode,
-            portfolioName: form.portfolioName,
-            asin: form.asin,
-            metricDate: form.sourceMetricDate,
-            campaignName: form.campaignName,
-            adGroupName: form.adGroupName,
-            entityType: form.entityType,
-            entityName: form.entityName,
-            actionType: form.actionType,
+          recommendationId: Number(form.recommendationId),
+          expectedRevision: form.recommendationRevision,
+          scope: {
+            dateFrom: scope.dateFrom,
+            dateTo: scope.dateTo,
+            storeName: scope.storeName,
+            marketplaceCode: scope.marketplaceCode,
+            asin: scope.asin || form.asin,
+            batchId: currentBatchId || '',
           },
-          source: {
-            recommendationId: form.recommendationId,
-            batchId: form.sourceBatchId,
-            metricDate: form.sourceMetricDate,
-            sourceRow: maybeNumber(form.sourceRow),
-            sourceFiles: form.sourceFiles.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
-            explanationSource: form.sourceExplanationSource,
-            aiModel: form.sourceAiModel,
-            entityType: form.entityType,
-            currentValue: form.currentValue,
-            recommendedValue: form.recommendedValue,
-            decisionAgreement: form.decisionAgreement,
-            decisionSource: form.decisionSource,
-            decisionReasons: form.decisionReasons,
-            decisionRiskWarnings: form.decisionRiskWarnings,
-            aiStrategySource: form.aiStrategySource,
-            aiLifecycleStage: form.aiLifecycleStage,
-            aiStrategySummary: form.aiStrategySummary,
-            aiStrategyFallbackReason: form.aiStrategyFallbackReason,
-            aiActionFallbackReason: form.aiActionFallbackReason,
-            aiMainProblems: form.aiMainProblems,
-            aiThresholdSuggestions: form.aiThresholdSuggestions,
-            aiStrategyRiskWarnings: form.aiStrategyRiskWarnings,
-            quantStatus: form.quantStatus,
-            quantLifecycleStage: form.quantLifecycleStage,
-            quantReasons: form.quantReasons,
-            quantThresholds: form.quantThresholds,
-            quantReviewRequired: form.quantReviewRequired,
-            operationEventCount: form.operationEventCount,
-            productContextCount: form.productContextCount,
-            productStage: form.productStage,
-            productTargetAcos: maybeNumber(form.productTargetAcos),
-            productTargetTacos: maybeNumber(form.productTargetTacos),
-            productTargetNetMargin: maybeNumber(form.productTargetNetMargin),
-            productMinPrice: maybeNumber(form.productMinPrice),
+          operatorEvidence: {
+            approval: {
+              operatorConfirmed: form.operatorConfirmed,
+              realWriteApproved: form.realWriteApproved,
+              approvalArtifactPath: form.approvalArtifactPath,
+            },
+            risk: {
+              allowedByPolicy: form.allowedByPolicy,
+            },
+            before: {
+              value: form.beforeValue,
+              capturedAt: form.beforeCapturedAt,
+              screenshotPath: form.beforeScreenshotPath,
+              liveBidSourceNote: form.liveBidSourceNote,
+            },
+            after: {
+              value: form.afterValue,
+              capturedAt: form.afterCapturedAt,
+              screenshotPath: form.afterScreenshotPath,
+            },
+            readback: {
+              verified: form.readbackVerified,
+              method: 'Ads UI reload',
+              readAt: form.readbackReadAt,
+              actualValue: form.readbackActualValue,
+              evidencePath: form.readbackEvidencePath,
+            },
+            execution: {
+              success: form.executionSuccess,
+              verified: form.executionVerified,
+              executionId: form.executionId,
+              executedAt: form.executionExecutedAt,
+              channel: 'manual_ads_ui',
+              executedBy: form.executedBy,
+              appExecutorUsed: false,
+            },
           },
-          approval: {
-            operatorConfirmed: form.operatorConfirmed,
-            realWriteApproved: form.realWriteApproved,
-            scope: scopeText,
-            confirmedAt: form.approvalConfirmedAt,
-            approverName: form.approverName,
-            note: form.approvalNote,
-            approvalArtifactPath: form.approvalArtifactPath,
-          },
-          risk: {
-            allowedByPolicy: form.allowedByPolicy,
-            rationale: form.riskRationale,
-          },
-          before: {
-            value: form.beforeValue,
-            capturedAt: form.beforeCapturedAt,
-            screenshotPath: form.beforeScreenshotPath,
-            liveBidSourceNote: form.liveBidSourceNote,
-          },
-          after: {
-            value: form.afterValue,
-            capturedAt: form.afterCapturedAt,
-            screenshotPath: form.afterScreenshotPath,
-          },
-          readback: {
-            verified: form.readbackVerified,
-            method: 'Ads UI reload',
-            readAt: form.readbackReadAt,
-            actualValue: form.readbackActualValue,
-            evidencePath: form.readbackEvidencePath,
-          },
-          execution: {
-            success: form.executionSuccess,
-            verified: form.executionVerified,
-            executionId: form.executionId,
-            executedAt: form.executionExecutedAt,
-            channel: 'manual_ads_ui',
-            executedBy: form.executedBy,
-            appExecutorUsed: false,
-          },
-        }));
+        }), undefined, () => Boolean(
+          activeExportRequestRef.current
+          && canPublishReadbackResult(request, activeExportRequestRef.current)
+        ));
+        if (!activeExportRequestRef.current || !canPublishReadbackResult(request, activeExportRequestRef.current)) return;
         setExportResult(result || null);
         setSessionResult(null);
         setSessionCheck(null);
         setSessionFillResult(null);
         setSessionVerifyResult(null);
         setMessage(result?.readyForVerifier ? '回读证据已导出，字段完整，等待最终验收。' : '回读证据已导出，但仍存在缺失项，不能作为最终就绪证据。');
+        return result;
       } catch (caught) {
-        setMessage(errorMessage(caught, '导出回读证据失败'));
+        if (activeExportRequestRef.current && canPublishReadbackResult(request, activeExportRequestRef.current)) {
+          setMessage(readbackErrorMessage(caught, '导出回读证据失败。'));
+        }
       }
-    });
+    };
+    return options.withinActiveAction ? task() : runWorkspaceAction('export-evidence', task);
   }
 
   async function openReadbackPath(targetPath?: string, label = '打开路径') {
     if (!targetPath) return;
-    if (pathOpenKey) return;
     const key = readbackPathActionKey(label, targetPath);
-    setPathOpenKey(key);
-    setCopyNotice(`${label}打开中...`);
-    try {
-      await (window as any).electronAPI?.openReportPath?.(targetPath);
-      setCopyNotice(`${label}已请求打开。`);
-    } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, `${label}打开失败。`));
-    } finally {
-      setPathOpenKey(null);
-    }
+    await runWorkspaceAction('open-path', async () => {
+      setActivePathKey(key);
+      setCopyNotice(`${label}打开中...`);
+      try {
+        await (window as any).electronAPI?.openReportPath?.(targetPath);
+        setCopyNotice(`${label}已请求打开。`);
+      } catch (caught) {
+        setCopyNotice(readbackErrorMessage(caught, `${label}打开失败。`));
+      } finally {
+        setActivePathKey(null);
+      }
+    });
   }
 
   async function openExport() {
@@ -1418,21 +1584,37 @@ export function ReadbackPage() {
   }
 
   async function prepareSessionPacket() {
-    const sourcePath = exportResult?.jsonPath;
-    if (!sourcePath) {
-      setCopyNotice('请先导出回读证据，再创建回读工作包。');
+    if (!authority.capabilities.prepareSession) {
+      setCopyNotice('仅开发预览为只读布局，不能创建真实回读工作包。');
       return;
     }
-    await runReadbackAction('prepare-session', async () => {
+    if (exportRoute.kind !== 'prepare-session') {
+      setCopyNotice(exportRoute.kind === 'direct-verify'
+        ? '当前证据已完整，请直接运行最终校验，无需创建工作包。'
+        : '当前导出合同无效，请刷新已批准动作后重新导出。');
+      return;
+    }
+    const sourcePath = exportRoute.sourcePath;
+    await runWorkspaceAction('prepare-session', async () => {
+      const request: ReadbackRequestSnapshot = {
+        kind: 'session',
+        requestId: ++sessionRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeSessionRequestRef.current = request;
       try {
         const result = await (window as any).electronAPI?.prepareAdReadbackSession?.({ sourcePath });
+        if (!activeSessionRequestRef.current || !canPublishReadbackResult(request, activeSessionRequestRef.current)) return;
         setSessionResult(result || null);
         setSessionCheck(null);
         setSessionFillResult(null);
         setSessionVerifyResult(null);
         setCopyNotice('回读工作包已创建。');
       } catch (caught) {
-        setCopyNotice(toUserFacingError(caught, '创建回读工作包失败。'));
+        if (activeSessionRequestRef.current && canPublishReadbackResult(request, activeSessionRequestRef.current)) {
+          setCopyNotice(readbackErrorMessage(caught, '创建回读工作包失败。'));
+        }
       }
     });
   }
@@ -1450,14 +1632,26 @@ export function ReadbackPage() {
   }
 
   async function verifySessionPacket() {
+    if (!authority.capabilities.verifySession) {
+      setCopyNotice('仅开发预览为只读布局，不能检查真实回读工作包。');
+      return;
+    }
     const sessionDir = sessionResult?.sessionDir;
     if (!sessionDir) {
       setCopyNotice('请先创建回读工作包，再检查工作包。');
       return;
     }
-    await runReadbackAction('verify-session', async () => {
+    await runWorkspaceAction('verify-session', async () => {
+      const request: ReadbackRequestSnapshot = {
+        kind: 'session',
+        requestId: ++sessionRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeSessionRequestRef.current = request;
       try {
         const result = await (window as any).electronAPI?.verifyAdReadbackSession?.({ sessionDir });
+        if (!activeSessionRequestRef.current || !canPublishReadbackResult(request, activeSessionRequestRef.current)) return;
         setSessionCheck(result || null);
         if (result?.ready && result?.captureReady) {
           setCopyNotice('工作包结构和现场证据均已通过。');
@@ -1467,52 +1661,193 @@ export function ReadbackPage() {
           setCopyNotice('工作包结构检查未通过。');
         }
       } catch (caught) {
-        setCopyNotice(toUserFacingError(caught, '检查回读工作包失败。'));
+        if (activeSessionRequestRef.current && canPublishReadbackResult(request, activeSessionRequestRef.current)) {
+          setCopyNotice(readbackErrorMessage(caught, '检查回读工作包失败。'));
+        }
       }
     });
   }
 
   async function fillSessionPacket() {
+    if (!authority.capabilities.fillSession) {
+      setCopyNotice('仅开发预览为只读布局，不能生成真实回读证据。');
+      return;
+    }
     const sessionDir = sessionResult?.sessionDir;
     if (!sessionDir) {
       setCopyNotice('请先创建回读工作包，再生成回读证据。');
       return;
     }
-    await runReadbackAction('fill-session', async () => {
+    await runWorkspaceAction('fill-session', async () => {
+      const request: ReadbackRequestSnapshot = {
+        kind: 'session',
+        requestId: ++sessionRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeSessionRequestRef.current = request;
       try {
         const fillAdReadbackSession = (window as any).electronAPI?.fillAdReadbackSession;
         if (typeof fillAdReadbackSession !== 'function') {
           throw new Error('回读证据生成接口未暴露。');
         }
-        const result = await runReadbackWorkflowMutation<any>('create', () => fillAdReadbackSession({ sessionDir }));
+        const result = await runReadbackWorkflowMutation<any>(
+          'create',
+          () => fillAdReadbackSession({ sessionDir }),
+          undefined,
+          () => Boolean(
+            activeSessionRequestRef.current
+              && canPublishReadbackResult(request, activeSessionRequestRef.current)
+          ),
+        );
+        if (!activeSessionRequestRef.current || !canPublishReadbackResult(request, activeSessionRequestRef.current)) return;
         setSessionFillResult(result || null);
         setSessionVerifyResult(null);
+        if (result?.readyForVerifier) setSessionCheck(null);
         setCopyNotice(result?.readyForVerifier ? '回读证据已生成，等待最终校验。' : '回读证据仍未就绪。');
       } catch (caught) {
-        setCopyNotice(toUserFacingError(caught, '生成回读证据失败。'));
+        if (activeSessionRequestRef.current && canPublishReadbackResult(request, activeSessionRequestRef.current)) {
+          setCopyNotice(readbackErrorMessage(caught, '生成回读证据失败。'));
+        }
       }
     });
   }
 
-  async function verifyReadbackEvidence() {
-    const evidencePath = sessionFillResult?.jsonPath;
-    if (!evidencePath) {
-      setCopyNotice('请先生成回读证据，再运行最终校验。');
+  async function verifyReadbackEvidence(options: { evidencePath?: string; withinActiveAction?: boolean } = {}) {
+    if (!authority.capabilities.verifyEvidence) {
+      setCopyNotice('仅开发预览为只读布局，不能运行真实回读校验，也不代表正式交付就绪。');
       return;
     }
-    await runReadbackAction('verify-evidence', async () => {
+    const evidencePath = options.evidencePath || (exportRoute.kind === 'direct-verify'
+      ? exportRoute.evidencePath
+      : sessionFillResult?.jsonPath);
+    if (!evidencePath) {
+      setCopyNotice(exportRoute.kind === 'prepare-session'
+        ? '请先补齐工作包并生成回读证据，再运行最终校验。'
+        : '请先导出当前已批准动作的回读证据，再运行最终校验。');
+      return;
+    }
+    const task = async () => {
+      const request: ReadbackRequestSnapshot = {
+        kind: 'verify',
+        requestId: ++verifyRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeVerifyRequestRef.current = request;
       try {
         const verifyAdReadbackEvidence = (window as any).electronAPI?.verifyAdReadbackEvidence;
         if (typeof verifyAdReadbackEvidence !== 'function') {
           throw new Error('回读证据校验接口未暴露。');
         }
-        const result = await runReadbackWorkflowMutation<any>('verify', () => verifyAdReadbackEvidence({ evidencePath }));
+        const result = await runReadbackWorkflowMutation<any>(
+          'verify',
+          () => verifyAdReadbackEvidence({ evidencePath }),
+          undefined,
+          () => Boolean(
+            activeVerifyRequestRef.current
+            && canPublishReadbackResult(request, activeVerifyRequestRef.current)
+          ),
+        );
+        if (!activeVerifyRequestRef.current || !canPublishReadbackResult(request, activeVerifyRequestRef.current)) return;
         setSessionVerifyResult(result || null);
-        setCopyNotice(result?.ready ? '回读证据校验通过。' : '回读证据校验未通过。');
+        if (readbackVerifierPassed(result)) {
+          setActiveStep('verify-export');
+          setMessage(null);
+          setCopyNotice('最终证据已校验通过。');
+        } else {
+          setCopyNotice('回读证据校验未通过。');
+        }
+        return result;
       } catch (caught) {
-        setCopyNotice(toUserFacingError(caught, '校验回读证据失败。'));
+        if (activeVerifyRequestRef.current && canPublishReadbackResult(request, activeVerifyRequestRef.current)) {
+          setCopyNotice(readbackErrorMessage(caught, '校验回读证据失败。'));
+        }
+      }
+    };
+    return options.withinActiveAction ? task() : runWorkspaceAction('verify-evidence', task);
+  }
+
+  async function runFinalVerification() {
+    if (!authority.capabilities.exportEvidence || !authority.capabilities.verifyEvidence) {
+      setCopyNotice('仅开发预览为只读布局，不能运行真实回读校验，也不代表正式交付就绪。');
+      return;
+    }
+    activateReadbackStep('verify-export');
+    await runWorkspaceAction('final-verification', async () => {
+      const request: ReadbackRequestSnapshot = {
+        kind: 'final',
+        requestId: ++finalRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeFinalRequestRef.current = request;
+      setMessage('正在绑定当前已批准动作并导出权威回读证据...');
+      setCopyNotice(null);
+      try {
+        await runCurrentReadbackFinalVerification(
+          () => runReadbackFinalVerificationWorkflow({
+            exportEvidence: async () => {
+              const result = await exportEvidence({ withinActiveAction: true });
+              if (!result) throw new Error('导出结果已过期或为空，请重新运行最终校验。');
+              return result;
+            },
+            verifyEvidence: async (evidencePath) => {
+              const result = await verifyReadbackEvidence({ evidencePath, withinActiveAction: true });
+              if (!result) throw new Error('校验结果已过期或为空，请重新运行最终校验。');
+              return result;
+            },
+          }),
+          () => Boolean(
+            activeFinalRequestRef.current
+            && canPublishReadbackResult(request, activeFinalRequestRef.current)
+          ),
+          (outcome) => {
+            if (outcome.kind === 'verification-result') {
+              const passed = readbackVerifierPassed(outcome.verifyResult);
+              setMessage(passed
+                ? '最终校验通过：权威动作、现场证据和回读结果一致。'
+                : '最终校验未通过，请按校验缺口修复后重试。');
+              if (!passed) setTechnicalInspectorOpen(true);
+              return;
+            }
+            if (outcome.kind === 'needs-work') {
+              setMessage('证据仍需补齐；请在技术详情中创建工作包补证，系统不会自动代填。');
+              setTechnicalInspectorOpen(true);
+              return;
+            }
+            setMessage('导出合同不一致，已停止校验；请刷新当前已批准动作后重试。');
+            setTechnicalInspectorOpen(true);
+          },
+        );
+      } catch (caught) {
+        if (activeFinalRequestRef.current && canPublishReadbackResult(request, activeFinalRequestRef.current)) {
+          setMessage(readbackErrorMessage(caught, '运行最终校验失败。'));
+          setTechnicalInspectorOpen(true);
+        }
       }
     });
+  }
+
+  function focusRepairTarget(action: ReadbackRepairAction) {
+    activateReadbackStep(action.stepId);
+    const focusTarget = () => {
+      const target = document.getElementById(action.focusTarget);
+      const reducedMotion = typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      target?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
+      target?.focus({ preventScroll: true });
+    };
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(focusTarget);
+      return;
+    }
+    focusTarget();
+  }
+
+  function activateRepairAction(action: ReadbackRepairAction) {
+    focusRepairTarget(action);
+    if (action.blocker === 'verification') void runFinalVerification();
   }
 
   async function copyFillCommand() {
@@ -1521,17 +1856,18 @@ export function ReadbackPage() {
       setCopyNotice('请先导出回读证据，再复制备用命令。');
       return;
     }
-    if (copyCommandBusy) return;
-    setCopyCommandBusy('long-fill');
-    setCopyNotice('正在复制长参数生成命令...');
-    try {
-      await navigator.clipboard.writeText(buildFillAdReadbackCommand(form, sourcePath));
-      setCopyNotice('长参数生成命令已复制。');
-    } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, '复制生成命令失败。'));
-    } finally {
-      setCopyCommandBusy(null);
-    }
+    await runWorkspaceAction('copy-command', async () => {
+      setActiveCopyCommand('long-fill');
+      setCopyNotice('正在复制长参数生成命令...');
+      try {
+        await navigator.clipboard.writeText(buildFillAdReadbackCommand(form, sourcePath));
+        setCopyNotice('长参数生成命令已复制。');
+      } catch (caught) {
+        setCopyNotice(readbackErrorMessage(caught, '复制生成命令失败。'));
+      } finally {
+        setActiveCopyCommand(null);
+      }
+    });
   }
 
   async function copySessionCommand(kind: 'prepare' | 'verify' | 'fill') {
@@ -1540,7 +1876,6 @@ export function ReadbackPage() {
       setCopyNotice('请先导出回读证据，再复制工作包命令。');
       return;
     }
-    if (copyCommandBusy) return;
     const builders = {
       prepare: buildPrepareAdReadbackSessionCommand,
       verify: buildVerifyAdReadbackSessionCommand,
@@ -1556,50 +1891,125 @@ export function ReadbackPage() {
       verify: '正在复制检查工作包命令...',
       fill: '正在复制生成回读证据命令...',
     };
-    setCopyCommandBusy(kind);
-    setCopyNotice(runningLabels[kind]);
-    try {
-      await navigator.clipboard.writeText(builders[kind](sourcePath));
-      setCopyNotice(labels[kind]);
-    } catch (caught) {
-      setCopyNotice(toUserFacingError(caught, '复制工作包命令失败。'));
-    } finally {
-      setCopyCommandBusy(null);
-    }
+    await runWorkspaceAction('copy-command', async () => {
+      setActiveCopyCommand(kind);
+      setCopyNotice(runningLabels[kind]);
+      try {
+        await navigator.clipboard.writeText(builders[kind](sourcePath));
+        setCopyNotice(labels[kind]);
+      } catch (caught) {
+        setCopyNotice(readbackErrorMessage(caught, '复制工作包命令失败。'));
+      } finally {
+        setActiveCopyCommand(null);
+      }
+    });
   }
 
   useEffect(() => {
+    formEpochRef.current += 1;
+    activeRowsRequestRef.current = {
+      kind: 'rows',
+      requestId: ++rowsRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeExportRequestRef.current = {
+      kind: 'export',
+      requestId: ++exportRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeCaptureRequestRef.current = {
+      kind: 'capture',
+      requestId: ++captureRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeFinalRequestRef.current = {
+      kind: 'final',
+      requestId: ++finalRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeVerifyRequestRef.current = {
+      kind: 'verify',
+      requestId: ++verifyRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    activeSessionRequestRef.current = {
+      kind: 'session',
+      requestId: ++sessionRequestIdRef.current,
+      queryKey,
+      formEpoch: formEpochRef.current,
+    };
+    setApprovedRows([]);
+    setForm(EMPTY_FORM);
+    setExportResult(null);
+    setSessionResult(null);
+    setSessionCheck(null);
+    setSessionFillResult(null);
+    setSessionVerifyResult(null);
+    setCapturePreviews({});
+    setCopyNotice(null);
+    setActiveStep('target-source');
     if (!currentBatchId) {
-      setApprovedRows([]);
-      setForm(EMPTY_FORM);
-      setExportResult(null);
-      setSessionResult(null);
-      setSessionCheck(null);
-      setSessionFillResult(null);
-      setSessionVerifyResult(null);
-      setActiveStep('target-source');
+      setLoading(false);
       return;
     }
-    loadApprovedRows();
-  }, [currentBatchId, scope.asin, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
+    void loadApprovedRows();
+  }, [queryKey]);
 
   useEffect(() => {
     if (!form.recommendationId) return;
     const stillApproved = approvedRows.some((row) => String(row.id) === form.recommendationId);
     if (!stillApproved) {
+      formEpochRef.current += 1;
+      activeSessionRequestRef.current = {
+        kind: 'session',
+        requestId: ++sessionRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeCaptureRequestRef.current = {
+        kind: 'capture',
+        requestId: ++captureRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeFinalRequestRef.current = {
+        kind: 'final',
+        requestId: ++finalRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeExportRequestRef.current = {
+        kind: 'export',
+        requestId: ++exportRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
+      activeVerifyRequestRef.current = {
+        kind: 'verify',
+        requestId: ++verifyRequestIdRef.current,
+        queryKey,
+        formEpoch: formEpochRef.current,
+      };
       setForm(EMPTY_FORM);
       setExportResult(null);
       setSessionResult(null);
       setSessionCheck(null);
       setSessionFillResult(null);
       setSessionVerifyResult(null);
+      setCapturePreviews({});
+      setCopyNotice(null);
       setActiveStep('target-source');
       setMessage('已清空结果核对表单：当前范围不再包含该已批准动作。');
     }
   }, [approvedRows, form.recommendationId]);
 
   useEffect(() => {
-    if (activeStep !== 'evidence') return undefined;
+    if (activeStep !== 'evidence' || !authority.capabilities.captureEvidence) return undefined;
     const onPaste = (event: ClipboardEvent) => {
       const target = event.target as HTMLElement | null;
       const tagName = target?.tagName?.toLowerCase();
@@ -1611,21 +2021,14 @@ export function ReadbackPage() {
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [activeStep, form, sessionResult?.sessionDir]);
+  }, [activeStep, authority.capabilities.captureEvidence, form, sessionResult?.sessionDir]);
 
-  const exportEvidenceButton = readbackActionButtonView({
-    action: 'export-evidence',
-    activeAction: readbackActionBusy,
-    baseClassName: 'primary-button',
-    busyLabel: readbackActionBusyLabel('export-evidence'),
-    label: precheckCopy.exportButtonLabel,
-  });
   const prepareSessionButton = readbackActionButtonView({
     action: 'prepare-session',
     activeAction: readbackActionBusy,
     baseClassName: 'primary-button',
     busyLabel: readbackActionBusyLabel('prepare-session'),
-    disabled: !exportResult?.jsonPath,
+    disabled: !authority.capabilities.prepareSession || exportRoute.kind !== 'prepare-session',
     label: '创建回读工作包',
   });
   const verifySessionButton = readbackActionButtonView({
@@ -1633,7 +2036,7 @@ export function ReadbackPage() {
     activeAction: readbackActionBusy,
     baseClassName: 'secondary-button',
     busyLabel: readbackActionBusyLabel('verify-session'),
-    disabled: !sessionResult?.sessionDir,
+    disabled: !authority.capabilities.verifySession || !sessionResult?.sessionDir,
     label: '检查工作包',
   });
   const fillSessionButton = readbackActionButtonView({
@@ -1641,7 +2044,7 @@ export function ReadbackPage() {
     activeAction: readbackActionBusy,
     baseClassName: 'primary-button',
     busyLabel: readbackActionBusyLabel('fill-session'),
-    disabled: !sessionResult?.sessionDir,
+    disabled: !authority.capabilities.fillSession || !sessionResult?.sessionDir,
     label: '生成回读证据',
   });
   const verifyEvidenceButton = readbackActionButtonView({
@@ -1649,10 +2052,11 @@ export function ReadbackPage() {
     activeAction: readbackActionBusy,
     baseClassName: 'primary-button',
     busyLabel: readbackActionBusyLabel('verify-evidence'),
-    disabled: !sessionFillResult?.jsonPath,
-    label: '校验回读证据',
+    disabled: !authority.capabilities.verifyEvidence
+      || (exportRoute.kind !== 'direct-verify' && !sessionFillResult?.jsonPath),
+    label: '校验证据文件',
   });
-  const canCopyCommands = Boolean(exportResult?.jsonPath);
+  const canCopyCommands = exportRoute.kind === 'prepare-session';
   const prepareCopyCommandButton = readbackCopyCommandButtonView({
     activeCommand: copyCommandBusy,
     command: 'prepare',
@@ -1677,47 +2081,105 @@ export function ReadbackPage() {
     disabled: !canCopyCommands || Boolean(readbackActionBusy),
     label: '复制长参数生成命令',
   });
+  const repairActions = readbackRepairActions(readbackRepairBlockersForMissing(missing))
+    .map((action) => resolveReadbackScreenshotRepairAction(action, form));
+  const primaryRepairAction = repairActions[0];
+  const secondaryRepairActions = repairActions.slice(1, 2);
+  const finalVerificationView = readbackGlobalBusyView({
+    action: 'final-verification',
+    activeAction,
+    disabled: !authority.capabilities.verifyEvidence || !form.recommendationId,
+  });
+  const technicalInspectorLocked = Boolean(activeAction);
+  const taskBannerAction = (action: ReadbackRepairAction) => ({
+    label: action.label,
+    ariaLabel: action.label,
+    busy: action.blocker === 'verification' && finalVerificationView.showSpinner,
+    busyLabel: action.blocker === 'verification' ? '正在导出并校验...' : undefined,
+    disabled: authority.previewOnly || Boolean(activeAction) || !form.recommendationId,
+    disabledReason: authority.previewOnly
+      ? '仅开发预览为只读布局，不代表正式交付就绪。'
+      : !form.recommendationId ? '请先选择一条已批准动作。' : undefined,
+    onClick: () => activateRepairAction(action),
+  });
+  const passedTaskAction = {
+    label: '查看核对详情',
+    ariaLabel: '查看核对详情',
+    disabled: Boolean(activeAction),
+    onClick: () => setTechnicalInspectorOpen(true),
+  };
 
   return (
-    <div>
-      <PageHeader
-        eyebrow="广告"
-        title={PAGE_HEADER_TITLES.readback}
-        description="选择已批准动作，保存审批凭证、执行前后截图和刷新后的回读值，再导出本地证据。"
-      />
-
-      <div className="business-stack">
-        <div className={`readback-current-step-summary ${activeMissingCount ? 'readback-current-step-warning' : 'readback-current-step-ready'}`}>
-          <div>
-            <span>步骤 {activeStepIndex + 1}/4</span>
-            <strong>{activeStepSummary.title}</strong>
-            <p>{activeStepDetail}</p>
-            <div className="readback-current-step-meta" aria-label="结果核对摘要">
-              <span>已批准动作 {approvedRows.length}</span>
-              <span>{form.recommendationId ? `已选择 #${form.recommendationId}` : '等待选择动作'}</span>
-              <span>当前缺口 {activeMissingCount}</span>
-              <span>截图 {capturedEvidenceCount}/4</span>
-            </div>
+    <div
+      className={authority.previewOnly ? 'readback-page readback-page-preview-readonly' : 'readback-page'}
+      data-readback-mode={authority.mode}
+      data-preview-scenario={authority.previewOnly ? previewScenarioId : undefined}
+      data-workspace="readback"
+      data-workspace-evidence-root="true"
+      data-workspace-subview="evidence"
+      onBeforeInputCapture={(event) => {
+        if (!authority.previewOnly) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onChangeCapture={(event) => {
+        if (!authority.previewOnly) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClickCapture={(event) => {
+        if (!authority.previewOnly) return;
+        const target = event.target as HTMLElement;
+        if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
+      <PageFrame
+        pageId="readback"
+        title="结果核对"
+        description="选择已批准动作，保存审批凭证、执行前后截图和刷新后的回读值；最终校验会重新核对后台批准记录与当前报表批次。"
+        task={(
+          <div data-action={finalVerificationPassed ? 'review-readback-result' : `repair-${primaryRepairAction.blocker}`} id="readback-verify-evidence" tabIndex={-1}>
+            <TaskBanner
+              eyebrow="当前主任务"
+              title={finalVerificationPassed ? '结果核对已通过' : primaryRepairAction.label}
+              description={finalVerificationPassed
+                ? '最终证据已核对通过；可在详情中查看本地证据路径与校验记录。'
+                : primaryRepairAction.blocker === 'verification'
+                  ? '字段已具备，运行一次最终校验；证据完整时直接进入最终验收，仍有缺口时只打开补证流程，不会自动填写。'
+                  : '先修复当前最靠前的现场证据缺口；动作会切换到对应步骤并把焦点送到唯一修复目标。'}
+              tone={finalVerificationPassed ? 'confirmed' : missing.length ? 'attention' : 'neutral'}
+              status={(
+                <StatusPill tone={finalVerificationPassed ? 'ready' : missing.length ? 'blocked' : 'pending'}>
+                  {finalVerificationPassed ? '校验通过' : precheckCopy.statusLabel}
+                </StatusPill>
+              )}
+              meta={<span>{form.recommendationId ? `已选择建议 #${form.recommendationId} · 建议版本 ${form.recommendationRevision}` : '尚未选择已批准动作'} · {finalVerificationPassed ? '最终证据已收齐' : `截图 ${capturedEvidenceCount}/4`}</span>}
+              primaryAction={finalVerificationPassed ? passedTaskAction : taskBannerAction(primaryRepairAction)}
+              secondaryActions={finalVerificationPassed ? [] : secondaryRepairActions.map(taskBannerAction)}
+            />
           </div>
-          <div className="readback-current-step-actions">
-            <div className="chip-row readback-safety-row">
-              <span className="chip chip-warning">人工执行</span>
-              <span className="chip chip-warning">截图不复用</span>
-              <span className="chip chip-warning">回读值一致</span>
-              <span className="chip chip-warning">时间可追溯</span>
-            </div>
-            <button className="secondary-button compact-button" onClick={() => setGuardModalOpen(true)} type="button">
-              查看安全门
-            </button>
-          </div>
+        )}
+      >
+      {authority.previewOnly && (
+        <div className="readback-preview-only-banner" role="status" aria-live="polite">
+          <strong>仅开发预览，不代表正式交付就绪</strong>
+          <span>{previewScenarioId ? `场景：${previewScenarioId}。` : ''} 当前仅展示只读结果核对布局，所有证据写入与真实校验均已锁定。</span>
         </div>
-
+      )}
+      <div className="business-stack">
         {repairIntent && (
           <div className="readback-repair-banner" role="status" aria-live="polite">
             <strong>交付验收直达修复</strong>
             <span>{readbackRepairIntentMessage(repairIntent)}</span>
           </div>
         )}
+
+        <div className="readback-repair-actions" role="status" aria-live="polite">
+          <strong>当前步骤 {activeStepIndex + 1}/4 · {activeStepSummary.title}</strong>
+          <span>{activeStepDetail}</span>
+        </div>
 
         <div className="readback-step-grid readback-step-tabs" role="tablist" aria-label="结果核对步骤" style={readbackStepRailStyle}>
           {readbackStepSummaries.map((step, index) => (
@@ -1748,9 +2210,32 @@ export function ReadbackPage() {
           ))}
         </div>
 
-        {activeStep === 'target-source' && (
+        <WorkbenchPanel
+          className="readback-workbench"
+          title={activeStepSummary.title}
+          description={activeStepDetail}
+          status={<StatusPill tone={activeMissingCount ? 'blocked' : 'ready'}>{activeMissingCount ? `缺 ${activeMissingCount} 项` : '本步骤已满足'}</StatusPill>}
+          toolbar={(
+            <button
+              aria-label="查看技术与证据详情"
+              className="workspace-button workspace-button--secondary"
+              data-action="open-technical-inspector"
+              disabled={technicalInspectorLocked}
+              onClick={() => setTechnicalInspectorOpen(true)}
+              type="button"
+            >
+              查看技术与证据详情
+            </button>
+          )}
+        >
+        <fieldset
+          aria-disabled={authority.previewOnly || Boolean(activeAction)}
+          className="readback-workbench-fieldset"
+          disabled={authority.previewOnly || Boolean(activeAction)}
+        >
+        <div hidden={activeStep !== 'target-source'}>
           <div {...readbackStepPanelProps('target-source')}>
-            <Panel title="1. 选择已批准动作" tone={activeMissingCount ? 'warning' : 'success'}>
+            <section aria-label="已批准动作与来源" className="readback-workbench-section" data-readback-authority-source="main-derived">
             <div className="business-split">
               <div>
                 <div className="business-scope-line">当前有效批次：{currentBatchId || '暂无'}</div>
@@ -1764,35 +2249,65 @@ export function ReadbackPage() {
               <table className="business-table approval-table">
                 <thead>
                   <tr>
-                    <th>动作</th>
-                    <th>广告组合</th>
-                    <th>广告活动</th>
-                    <th>广告组</th>
-                    <th>ASIN</th>
-                    <th>对象类型</th>
                     <th>对象</th>
-                    <th>当前/建议</th>
+                    <th>位置</th>
+                    <th>动作与值</th>
+                    <th>审批版本</th>
                     <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {approvedRows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.actionType}</td>
-                      <td>{row.evidence?.portfolioName || '-'}</td>
-                      <td>{row.evidence?.campaignName || '-'}</td>
-                      <td>{row.evidence?.adGroupName || '-'}</td>
-                      <td>{row.evidence?.asin || '-'}</td>
-                      <td>{row.entityType || row.evidence?.matchType || '-'}</td>
-                      <td>{objectName(row) || '-'}</td>
-                      <td>{row.currentValue || '-'} {'→'} {row.recommendedValue || '-'}</td>
+                      <td><strong>{objectName(row) || row.evidence?.asin || '-'}</strong><small>{row.evidence?.asin || '-'} · {row.entityType || row.evidence?.matchType || '-'}</small></td>
+                      <td><strong>{row.evidence?.campaignName || '-'}</strong><small>{row.evidence?.portfolioName || '-'} / {row.evidence?.adGroupName || '-'}</small></td>
+                      <td><strong>{row.actionType}</strong><small>{row.currentValue || '-'} {'→'} {row.recommendedValue || '-'}</small></td>
+                      <td><strong>#{row.id}</strong><small>版本 {row.revision}</small></td>
                       <td>
                         <button
                           className="secondary-button compact-button"
                           onClick={() => {
                             const nextForm = formFromRecommendation(row, scope, currentBatchId);
+                            formEpochRef.current += 1;
+                            activeExportRequestRef.current = {
+                              kind: 'export',
+                              requestId: ++exportRequestIdRef.current,
+                              queryKey,
+                              formEpoch: formEpochRef.current,
+                            };
+                            activeCaptureRequestRef.current = {
+                              kind: 'capture',
+                              requestId: ++captureRequestIdRef.current,
+                              queryKey,
+                              formEpoch: formEpochRef.current,
+                            };
+                            activeFinalRequestRef.current = {
+                              kind: 'final',
+                              requestId: ++finalRequestIdRef.current,
+                              queryKey,
+                              formEpoch: formEpochRef.current,
+                            };
+                            activeVerifyRequestRef.current = {
+                              kind: 'verify',
+                              requestId: ++verifyRequestIdRef.current,
+                              queryKey,
+                              formEpoch: formEpochRef.current,
+                            };
+                            activeSessionRequestRef.current = {
+                              kind: 'session',
+                              requestId: ++sessionRequestIdRef.current,
+                              queryKey,
+                              formEpoch: formEpochRef.current,
+                            };
                             setForm(nextForm);
                             setExportResult(null);
+                            setSessionResult(null);
+                            setSessionCheck(null);
+                            setSessionFillResult(null);
+                            setSessionVerifyResult(null);
+                            setCapturePreviews({});
+                            setMessage(null);
+                            setCopyNotice(null);
                             setActiveStep(firstIncompleteReadbackStep(requiredMissing(nextForm, currentBatchId)));
                           }}
                           type="button"
@@ -1804,7 +2319,7 @@ export function ReadbackPage() {
                   ))}
                   {!approvedRows.length && (
                     <tr>
-                      <td colSpan={9}>{loading ? '加载中...' : '当前范围没有已批准待执行动作。'}</td>
+                      <td colSpan={5}>{loading ? '加载中...' : '当前范围没有已批准待执行动作。'}</td>
                     </tr>
                   )}
                 </tbody>
@@ -1836,26 +2351,25 @@ export function ReadbackPage() {
                   <strong>{sourceBatchMatches ? '匹配' : form.sourceBatchId ? '不一致' : '待载入'}</strong>
                 </div>
               </div>
-              <button className="secondary-button" onClick={() => setSourceFieldEditorOpen(true)} type="button">
-                修正来源字段
-              </button>
+              <span className="readback-authority-lock">由后台按已批准建议、版本、范围与报表批次重新读取；页面不可修改。</span>
             </div>
-            </Panel>
+            </section>
           </div>
-        )}
+        </div>
 
-        {activeStep === 'approval' && (
+        <div hidden={activeStep !== 'approval'}>
           <div {...readbackStepPanelProps('approval')}>
-            <Panel title="2. 填写审批凭证" tone={activeMissingCount ? 'warning' : 'success'}>
-            <div className="form-grid">
-              <ReadbackFieldCell label="审批人"><input value={form.approverName} onChange={(event) => update({ approverName: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="审批备注"><input value={form.approvalNote} onChange={(event) => update({ approvalNote: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="审批凭证"><input value={form.approvalArtifactPath} onChange={(event) => update({ approvalArtifactPath: event.target.value })} /></ReadbackFieldCell>
-              <ReadbackFieldCell label="审批时间"><input value={form.approvalConfirmedAt} onChange={(event) => update({ approvalConfirmedAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
-            </div>
+            <section aria-label="审批凭证内容" className="readback-workbench-section">
+            <dl className="readback-authority-grid" data-readback-approval-authority="main-derived">
+              <div><dt>审批人</dt><dd>{form.approverName || '-'}</dd></div>
+              <div><dt>审批时间</dt><dd>{form.approvalConfirmedAt || '-'}</dd></div>
+              <div><dt>审批备注</dt><dd>{form.approvalNote || '无补充备注'}</dd></div>
+            </dl>
             <div className="readback-capture-grid readback-capture-grid-single">
               <ReadbackCaptureTarget
                 onCapture={(slot, files) => { void captureEvidence(slot, files); }}
+                disabled={authority.previewOnly || Boolean(activeAction)}
+                id={firstScreenshotRepairSlot === 'approval' ? 'readback-first-missing-screenshot' : undefined}
                 previewUrl={capturePreviews.approval}
                 saving={captureSavingSlot === 'approval'}
                 slot="approval"
@@ -1868,16 +2382,16 @@ export function ReadbackPage() {
               <label><input checked={form.allowedByPolicy} onChange={(event) => update({ allowedByPolicy: event.target.checked })} type="checkbox" /> 低风险策略允许</label>
             </div>
             <p className="muted-line">审批允许只开放人工已批准的低风险动作；没有审批凭证、审批时间和明确允许时不能声称执行完成。</p>
-            </Panel>
+            </section>
           </div>
-        )}
+        </div>
 
-        {activeStep === 'evidence' && (
+        <div hidden={activeStep !== 'evidence'}>
           <div
             {...readbackStepPanelProps('evidence')}
             className={`readback-step-panel ${readbackRepairPanelClass(Boolean(repairIntent), repairPulse)}`}
           >
-            <Panel title="3. 记录执行和回读" tone={activeMissingCount ? 'warning' : 'success'}>
+            <section aria-label="执行与回读内容" className="readback-workbench-section">
               <p className="muted-line">先记录执行前值和截图，再记录执行后值和截图，最后刷新广告后台填写回读值和回读截图；三类截图不能复用。</p>
               <ReadbackContractStrip checks={contractChecks} />
               <div className="form-grid">
@@ -1885,18 +2399,17 @@ export function ReadbackPage() {
                 <ReadbackFieldCell className={repairFieldClass('执行编号')} label="执行编号"><input value={form.executionId} onChange={(event) => update({ executionId: event.target.value })} /></ReadbackFieldCell>
                 <ReadbackFieldCell className={repairFieldClass('执行时间')} label="执行时间"><input value={form.executionExecutedAt} onChange={(event) => update({ executionExecutedAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
                 <ReadbackFieldCell className={repairFieldClass('执行前值')} label="执行前值"><input value={form.beforeValue} onChange={(event) => update({ beforeValue: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell className={repairFieldClass('执行前截图')} label="执行前截图"><input value={form.beforeScreenshotPath} onChange={(event) => update({ beforeScreenshotPath: event.target.value })} /></ReadbackFieldCell>
                 <ReadbackFieldCell className={repairFieldClass('执行前时间')} label="执行前时间"><input value={form.beforeCapturedAt} onChange={(event) => update({ beforeCapturedAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
                 <ReadbackFieldCell className={repairFieldClass('执行后值')} label="执行后值"><input value={form.afterValue} onChange={(event) => update({ afterValue: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell className={repairFieldClass('执行后截图')} label="执行后截图"><input value={form.afterScreenshotPath} onChange={(event) => update({ afterScreenshotPath: event.target.value })} /></ReadbackFieldCell>
                 <ReadbackFieldCell className={repairFieldClass('执行后时间')} label="执行后时间"><input value={form.afterCapturedAt} onChange={(event) => update({ afterCapturedAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
-                <ReadbackFieldCell className={repairFieldClass('回读值')} label="回读值"><input value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell className={repairFieldClass('回读证据')} label="回读证据"><input value={form.readbackEvidencePath} onChange={(event) => update({ readbackEvidencePath: event.target.value })} /></ReadbackFieldCell>
+                <ReadbackFieldCell className={repairFieldClass('回读值')} label="回读值"><input id="readback-actual-value" value={form.readbackActualValue} onChange={(event) => update({ readbackActualValue: event.target.value })} /></ReadbackFieldCell>
                 <ReadbackFieldCell className={repairFieldClass('回读时间')} label="回读时间"><input value={form.readbackReadAt} onChange={(event) => update({ readbackReadAt: event.target.value })} placeholder="ISO 时间" /></ReadbackFieldCell>
                 <ReadbackFieldCell className={repairFieldClass('现场行证明', 'form-grid-wide')} label="现场行证明"><textarea value={form.liveBidSourceNote} onChange={(event) => update({ liveBidSourceNote: event.target.value })} /></ReadbackFieldCell>
               </div>
               <div className="readback-capture-grid">
                 <ReadbackCaptureTarget
+                  disabled={authority.previewOnly || Boolean(activeAction)}
+                  id={firstScreenshotRepairSlot === 'before' ? 'readback-first-missing-screenshot' : undefined}
                   onCapture={(slot, files) => { void captureEvidence(slot, files); }}
                   previewUrl={capturePreviews.before}
                   repairClassName={repairFieldClass('执行前截图')}
@@ -1905,6 +2418,8 @@ export function ReadbackPage() {
                   value={form.beforeScreenshotPath}
                 />
                 <ReadbackCaptureTarget
+                  disabled={authority.previewOnly || Boolean(activeAction)}
+                  id={firstScreenshotRepairSlot === 'after' ? 'readback-first-missing-screenshot' : undefined}
                   onCapture={(slot, files) => { void captureEvidence(slot, files); }}
                   previewUrl={capturePreviews.after}
                   repairClassName={repairFieldClass('执行后截图')}
@@ -1913,6 +2428,8 @@ export function ReadbackPage() {
                   value={form.afterScreenshotPath}
                 />
                 <ReadbackCaptureTarget
+                  disabled={authority.previewOnly || Boolean(activeAction)}
+                  id={firstScreenshotRepairSlot === 'readback' ? 'readback-first-missing-screenshot' : undefined}
                   onCapture={(slot, files) => { void captureEvidence(slot, files); }}
                   previewUrl={capturePreviews.readback}
                   repairClassName={repairFieldClass('回读证据')}
@@ -1921,13 +2438,13 @@ export function ReadbackPage() {
                   value={form.readbackEvidencePath}
                 />
               </div>
-            </Panel>
+            </section>
           </div>
-        )}
+        </div>
 
-        {activeStep === 'verify-export' && (
+        <div hidden={activeStep !== 'verify-export'}>
           <div {...readbackStepPanelProps('verify-export')}>
-            <Panel title="4. 校验并导出证据" tone={missing.length ? 'warning' : 'success'}>
+            <section aria-label="最终校验内容" className="readback-workbench-section">
               <div className="checkbox-grid">
                 <label><input checked={form.executionSuccess} onChange={(event) => update({ executionSuccess: event.target.checked })} type="checkbox" /> 执行成功确认</label>
                 <label><input checked={form.executionVerified} onChange={(event) => update({ executionVerified: event.target.checked })} type="checkbox" /> 执行已核验</label>
@@ -1935,10 +2452,14 @@ export function ReadbackPage() {
               </div>
               <div className="business-split">
                 <div>
-                  <StatusPill tone={missing.length ? 'blocked' : 'ready'}>
-                    {precheckCopy.statusLabel}
+                  <StatusPill tone={finalVerificationPassed || !missing.length ? 'ready' : 'blocked'}>
+                    {finalVerificationPassed ? '最终校验通过' : precheckCopy.statusLabel}
                   </StatusPill>
-                  {missing.length ? (
+                  {finalVerificationPassed ? (
+                    <div className="chip-row">
+                      <span className="chip chip-ready">最终证据已核对</span>
+                    </div>
+                  ) : missing.length ? (
                     <div className="missing-group-grid">
                       {missingGroups.map((group) => (
                         <div className="missing-group" key={group.title}>
@@ -1953,27 +2474,37 @@ export function ReadbackPage() {
                     </div>
                   )}
                 </div>
-                <div className="action-row">
-                  <button aria-busy={exportEvidenceButton.ariaBusy} className={exportEvidenceButton.className} disabled={exportEvidenceButton.disabled} onClick={exportEvidence} type="button">
-                    {readbackActionButtonContent(exportEvidenceButton)}
-                  </button>
-                  <button aria-busy={openExportButton.ariaBusy} className={openExportButton.className} disabled={openExportButton.disabled} onClick={openExport} type="button">
-                    {readbackActionButtonContent(openExportButton)}
-                  </button>
-                </div>
               </div>
               <p className="muted-line">
-                {precheckCopy.helperText}
+                {finalVerificationPassed
+                  ? '最终证据已通过后台批准记录、当前报表批次与现场证据核对。'
+                  : precheckCopy.helperText}
               </p>
               {message && <p className={message.includes('失败') ? 'blocked-line' : 'muted-line'}>{message}</p>}
-            </Panel>
+            </section>
+          </div>
+        </div>
+        </fieldset>
+        </WorkbenchPanel>
 
-            <ProgressiveDetails title="导出结果和证据路径">
+        <ResponsiveInspector
+          open={technicalInspectorOpen}
+          title="技术与证据详情"
+          description="只在需要追踪本地证据、verifier 或 NEEDS_WORK 工作包时查看；此处不会自动执行广告或代填证据。"
+          busy={technicalInspectorLocked}
+          dismissDisabled={technicalInspectorLocked}
+          onClose={() => setTechnicalInspectorOpen(false)}
+        >
+          <div className="readback-technical-drawer">
+            <section className="readback-technical-section" aria-labelledby="readback-technical-export-title">
+              <h3 id="readback-technical-export-title">导出结果与权威路径</h3>
               {exportResult ? (
                 <div className="export-result-card">
                   <div>
                     <span>导出状态</span>
-                    <strong>{exportResult.readyForVerifier ? '可进入最终验收' : '已导出但仍需补证据'}</strong>
+                    <strong>{completedViaWorkPackage
+                      ? '初始缺口已由工作包补齐并通过校验'
+                      : exportResult.readyForVerifier ? '可进入最终验收' : '已导出但仍需补证据'}</strong>
                   </div>
                   <div>
                     <span>执行范围</span>
@@ -1987,35 +2518,36 @@ export function ReadbackPage() {
                     <span>说明文件</span>
                     <code>{exportResult.markdownPath || '-'}</code>
                   </div>
-                  <p>该导出只写入本地证据文件，不会提交 Amazon。下一步：补齐缺失项后重新导出，或到“交付验收”查看最终缺口。</p>
+                  <div>
+                    <span>SHA-256</span>
+                    <code>{exportResult.sha256 || '-'}</code>
+                  </div>
+                  <p>{completedViaWorkPackage
+                    ? '初始缺口已通过工作包补齐；该流程只写入本地证据文件，不会提交 Amazon。'
+                    : '该导出只写入本地证据文件，不会提交 Amazon。下一步：补齐缺失项后重新导出，或到“交付验收”查看最终缺口。'}</p>
+                  <button aria-busy={openExportButton.ariaBusy} className={openExportButton.className} disabled={openExportButton.disabled} onClick={openExport} type="button">
+                    {readbackActionButtonContent(openExportButton)}
+                  </button>
                 </div>
               ) : (
                 <p className="muted-line">导出后这里显示本地证据文件和说明文件路径。</p>
               )}
-            </ProgressiveDetails>
+            </section>
 
-            <ProgressiveDetails title="回读工作包流程">
+            <section className="readback-technical-section" aria-labelledby="readback-technical-session-title">
+              <h3 id="readback-technical-session-title">NEEDS_WORK 工作包</h3>
               <div className="business-split">
                 <div>
-                  <div className="business-scope-line">工作包状态：{readbackSessionSummary(exportResult?.jsonPath)}</div>
+                  <div className="business-scope-line">工作包状态：{completedViaWorkPackage ? '已补齐并通过最终校验' : readbackSessionSummary(exportResult?.jsonPath)}</div>
                   <p className="muted-line">真实广告动作只按单个已批准建议处理；工作包用于把审批、执行前、执行后和刷新回读证据分目录收齐。</p>
                 </div>
-                <StatusPill tone={exportResult?.jsonPath ? 'pending' : 'blocked'}>
-                  {exportResult?.jsonPath ? '可创建工作包' : '先导出回读证据'}
+                <StatusPill tone={completedViaWorkPackage ? 'ready' : exportResult?.jsonPath ? 'pending' : 'blocked'}>
+                  {completedViaWorkPackage ? '补证完成' : exportResult?.jsonPath ? '可创建工作包' : '先导出回读证据'}
                 </StatusPill>
               </div>
               <div className="action-row">
                 <button aria-busy={prepareSessionButton.ariaBusy} className={prepareSessionButton.className} disabled={prepareSessionButton.disabled} onClick={prepareSessionPacket} type="button">
                   {readbackActionButtonContent(prepareSessionButton)}
-                </button>
-                <button aria-busy={openSessionPacketButton.ariaBusy} className={openSessionPacketButton.className} disabled={openSessionPacketButton.disabled} onClick={openSessionPacket} type="button">
-                  {readbackActionButtonContent(openSessionPacketButton)}
-                </button>
-                <button aria-busy={openSessionInputFileButton.ariaBusy} className={openSessionInputFileButton.className} disabled={openSessionInputFileButton.disabled} onClick={openSessionInputFile} type="button">
-                  {readbackActionButtonContent(openSessionInputFileButton)}
-                </button>
-                <button aria-busy={openSessionInputGuideButton.ariaBusy} className={openSessionInputGuideButton.className} disabled={openSessionInputGuideButton.disabled} onClick={openSessionInputGuide} type="button">
-                  {readbackActionButtonContent(openSessionInputGuideButton)}
                 </button>
                 <button aria-busy={verifySessionButton.ariaBusy} className={verifySessionButton.className} disabled={verifySessionButton.disabled} onClick={verifySessionPacket} type="button">
                   {readbackActionButtonContent(verifySessionButton)}
@@ -2023,11 +2555,12 @@ export function ReadbackPage() {
                 <button aria-busy={fillSessionButton.ariaBusy} className={fillSessionButton.className} disabled={fillSessionButton.disabled} onClick={fillSessionPacket} type="button">
                   {readbackActionButtonContent(fillSessionButton)}
                 </button>
-                <button aria-busy={verifyEvidenceButton.ariaBusy} className={verifyEvidenceButton.className} disabled={verifyEvidenceButton.disabled} onClick={verifyReadbackEvidence} type="button">
+                <button aria-busy={verifyEvidenceButton.ariaBusy} className={verifyEvidenceButton.className} disabled={verifyEvidenceButton.disabled} onClick={() => { void verifyReadbackEvidence(); }} type="button">
                   {readbackActionButtonContent(verifyEvidenceButton)}
                 </button>
               </div>
-              <ProgressiveDetails title="工作包内要做什么">
+              <section className="readback-technical-subsection" aria-labelledby="readback-session-steps-title">
+                <h4 id="readback-session-steps-title">工作包内要做什么</h4>
                 <div className="business-scope-line">工作包目录：{sessionWorkflow.sessionDir}</div>
                 <ol className="readback-session-list">
                   {sessionWorkflow.steps.map((step, index) => (
@@ -2038,9 +2571,10 @@ export function ReadbackPage() {
                   ))}
                 </ol>
                 <p className="muted-line">{sessionWorkflow.warning}</p>
-              </ProgressiveDetails>
+              </section>
               {sessionResult && (
-                <ProgressiveDetails title="查看工作包路径">
+                <section className="readback-technical-subsection" aria-labelledby="readback-session-paths-title">
+                  <h4 id="readback-session-paths-title">工作包路径</h4>
                   <div className="readback-session-result">
                     <div>
                       <span>工作包目录</span>
@@ -2063,7 +2597,18 @@ export function ReadbackPage() {
                       <code>{sessionResult.passEvidencePath || '-'}</code>
                     </div>
                   </div>
-                </ProgressiveDetails>
+                  <div className="action-row">
+                    <button aria-busy={openSessionPacketButton.ariaBusy} className={openSessionPacketButton.className} disabled={openSessionPacketButton.disabled} onClick={openSessionPacket} type="button">
+                      {readbackActionButtonContent(openSessionPacketButton)}
+                    </button>
+                    <button aria-busy={openSessionInputFileButton.ariaBusy} className={openSessionInputFileButton.className} disabled={openSessionInputFileButton.disabled} onClick={openSessionInputFile} type="button">
+                      {readbackActionButtonContent(openSessionInputFileButton)}
+                    </button>
+                    <button aria-busy={openSessionInputGuideButton.ariaBusy} className={openSessionInputGuideButton.className} disabled={openSessionInputGuideButton.disabled} onClick={openSessionInputGuide} type="button">
+                      {readbackActionButtonContent(openSessionInputGuideButton)}
+                    </button>
+                  </div>
+                </section>
               )}
               {sessionCheck && (
                 <div className={`readback-session-check ${sessionCheckCopy(sessionCheck).className}`}>
@@ -2081,8 +2626,10 @@ export function ReadbackPage() {
               )}
               {sessionFillResult && (
                 <div className={`readback-session-check ${sessionFillResult.readyForVerifier ? 'readback-session-check-ready' : 'readback-session-check-blocked'}`}>
-                  <strong>{sessionFillResult.readyForVerifier ? '回读证据已生成，待最终校验' : '回读证据仍未就绪'}</strong>
-                  <span>{sessionFillResult.readyForVerifier ? '已根据填写文件生成证据文件；最终可交付仍必须通过本地回读证据校验和最终验收汇总。' : '填写文件或证据文件仍有缺口，不能进入最终验收。'}</span>
+                  <strong>{completedViaWorkPackage ? '回读证据已生成并通过校验' : sessionFillResult.readyForVerifier ? '回读证据已生成，待最终校验' : '回读证据仍未就绪'}</strong>
+                  <span>{completedViaWorkPackage
+                    ? '已根据填写文件生成证据，并通过最终校验；最终交付状态仍由最终验收汇总决定。'
+                    : sessionFillResult.readyForVerifier ? '已根据填写文件生成证据文件；最终可交付仍必须通过本地回读证据校验和最终验收汇总。' : '填写文件或证据文件仍有缺口，不能进入最终验收。'}</span>
                   <div className="readback-session-result readback-session-result-embedded">
                     <div>
                       <span>证据文件</span>
@@ -2101,9 +2648,9 @@ export function ReadbackPage() {
                 </div>
               )}
               {sessionVerifyResult && (
-                <div className={`readback-session-check ${sessionVerifyResult.ready ? 'readback-session-check-ready' : 'readback-session-check-blocked'}`}>
-                  <strong>{sessionVerifyResult.ready ? '回读证据校验已通过' : '回读证据校验未通过'}</strong>
-                  <span>{sessionVerifyResult.ready ? '这份证据已通过本地回读证据校验；最终可交付仍需进入最终验收汇总。' : '这份证据还不能进入最终验收汇总，请按下列缺口补证据后重新生成或重新校验。'}</span>
+                <div className={`readback-session-check ${readbackVerifierPassed(sessionVerifyResult) ? 'readback-session-check-ready' : 'readback-session-check-blocked'}`}>
+                  <strong>{readbackVerifierPassed(sessionVerifyResult) ? '回读证据校验已通过' : '回读证据校验未通过'}</strong>
+                  <span>{readbackVerifierPassed(sessionVerifyResult) ? '这份证据已通过本地回读证据校验；最终可交付仍需进入最终验收汇总。' : '这份证据还不能进入最终验收汇总，请按下列缺口补证据后重新生成或重新校验。'}</span>
                   <div className="readback-session-result readback-session-result-embedded">
                     <div>
                       <span>校验文件</span>
@@ -2111,10 +2658,10 @@ export function ReadbackPage() {
                     </div>
                     <div>
                       <span>状态</span>
-                      <strong>{sessionVerifyResult.ready ? '通过' : '需补证据'}</strong>
+                      <strong>{readbackVerifierPassed(sessionVerifyResult) ? '通过' : '需补证据'}</strong>
                     </div>
                   </div>
-                  {!sessionVerifyResult.ready && Array.isArray(sessionVerifyResult.issues) && sessionVerifyResult.issues.length > 0 && (
+                  {!readbackVerifierPassed(sessionVerifyResult) && Array.isArray(sessionVerifyResult.issues) && sessionVerifyResult.issues.length > 0 && (
                     <ul>
                       {sessionVerifyResult.issues.map((issue: string) => <li key={issue}>{issue}</li>)}
                     </ul>
@@ -2122,9 +2669,15 @@ export function ReadbackPage() {
                 </div>
               )}
               {copyNotice && <p className="muted-line">{copyNotice}</p>}
-            </ProgressiveDetails>
+            </section>
 
-            <ProgressiveDetails title="命令备用入口和技术验收说明">
+            <section className="readback-technical-section" aria-labelledby="readback-technical-verifier-title">
+              <h3 id="readback-technical-verifier-title">Verifier、哈希与备用命令</h3>
+              <ul className="readback-safety-gates" aria-label="最终校验安全门">
+                <li>仅 Main 可从 approved recommendation、revision、scope 与 batch 派生权威身份。</li>
+                <li>审批、执行前、执行后与回读截图必须独立，时间顺序必须可追溯。</li>
+                <li>只有 verifier 返回 ready=true 且 status=PASS 才广播回读已验证。</li>
+              </ul>
               <p>最终验收仍以本地证据文件、截图路径、时间顺序和最终验收汇总为准；业务页不展示长命令块。</p>
               <p>真实执行路径保持 fail-closed：没有审批、执行前、执行后、回读证据时不能声称执行完成。</p>
               <div className="action-row">
@@ -2142,150 +2695,12 @@ export function ReadbackPage() {
                 </button>
               </div>
               {copyNotice && <p className="muted-line">{copyNotice}</p>}
-            </ProgressiveDetails>
+            </section>
           </div>
-        )}
+        </ResponsiveInspector>
       </div>
 
-      {guardModalOpen && (
-        <div
-          className="product-config-modal-backdrop readback-guard-modal-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setGuardModalOpen(false);
-          }}
-          role="presentation"
-        >
-          <section
-            aria-labelledby="readback-guard-modal-title"
-            aria-modal="true"
-            className="product-config-modal readback-guard-modal"
-            onKeyDown={handleGuardModalKeyDown}
-            onMouseDown={(event) => event.stopPropagation()}
-            role="dialog"
-          >
-            <header className="product-config-modal-header">
-              <div>
-                <span>只读检查，不执行广告</span>
-                <h2 id="readback-guard-modal-title">安全门与当前缺口</h2>
-              </div>
-              <div className="readback-guard-modal-header-actions">
-                <StatusPill tone={missing.length ? 'blocked' : 'ready'}>{precheckCopy.statusLabel}</StatusPill>
-                <button className="secondary-button compact-button" onClick={() => setGuardModalOpen(false)} type="button">关闭</button>
-              </div>
-            </header>
-            <div className="product-config-modal-body readback-guard-modal-body">
-              <div className="readback-guard-lines">
-                <SafetyGateLine>人工执行：本页只收集审批、截图、前后值和回读证据，不自动写 Amazon Ads。</SafetyGateLine>
-                <SafetyGateLine>截图不复用：审批、执行前、执行后和回读截图必须来自不同证据。</SafetyGateLine>
-                <SafetyGateLine>时间可追溯：审批、执行前、执行动作、执行后和回读时间必须可排序。</SafetyGateLine>
-              </div>
-              {missing.length ? (
-                <div className="missing-group-grid readback-guard-missing-grid">
-                  {missingGroups.map((group) => (
-                    <div className="missing-group" key={group.title}>
-                      <strong>{group.title}</strong>
-                      <span>{group.items.join('、')}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="chip-row">
-                  <span className="chip chip-ready">{precheckCopy.chipLabel}</span>
-                </div>
-              )}
-              <ReadbackContractStrip checks={contractChecks} />
-              <p className="muted-line">{precheckCopy.helperText}</p>
-            </div>
-            <footer className="product-config-modal-footer">
-              <button className="primary-button" onClick={() => setGuardModalOpen(false)} type="button">
-                知道了
-              </button>
-            </footer>
-          </section>
-        </div>
-      )}
-
-      {sourceFieldEditorOpen && (
-        <div
-          className="product-config-modal-backdrop readback-source-modal-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setSourceFieldEditorOpen(false);
-          }}
-          role="presentation"
-        >
-          <div
-            aria-labelledby="readback-source-modal-title"
-            aria-modal="true"
-            className="product-config-modal readback-source-modal"
-            role="dialog"
-          >
-            <header className="product-config-modal-header">
-              <div>
-                <span>结果核对</span>
-                <h2 id="readback-source-modal-title">修正来源字段</h2>
-              </div>
-              <button className="secondary-button compact-button" onClick={() => setSourceFieldEditorOpen(false)} type="button">
-                关闭
-              </button>
-            </header>
-            <div className="product-config-modal-body readback-source-modal-body">
-              <p className="muted-line">
-                这里只修正已载入动作的来源字段，用于本地证据导出和安全校验；不会执行广告动作。
-              </p>
-              <div className="form-grid readback-source-field-grid">
-                <ReadbackFieldCell label="店铺"><input value={form.storeName} onChange={(event) => update({ storeName: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="站点"><input value={form.marketplaceCode} onChange={(event) => update({ marketplaceCode: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="广告组合"><input value={form.portfolioName} onChange={(event) => update({ portfolioName: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="ASIN"><input value={form.asin} onChange={(event) => update({ asin: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="广告活动"><input value={form.campaignName} onChange={(event) => update({ campaignName: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="广告组"><input value={form.adGroupName} onChange={(event) => update({ adGroupName: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="对象类型"><input value={form.entityType} onChange={(event) => update({ entityType: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="对象名称"><input value={form.entityName} onChange={(event) => update({ entityName: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="动作类型"><input value={form.actionType} onChange={(event) => update({ actionType: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="来源当前值"><input value={form.currentValue} onChange={(event) => update({ currentValue: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="来源建议值"><input value={form.recommendedValue} onChange={(event) => update({ recommendedValue: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="来源批次"><input value={form.sourceBatchId} onChange={(event) => update({ sourceBatchId: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="指标日期"><input value={form.sourceMetricDate} onChange={(event) => update({ sourceMetricDate: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="来源行号"><input value={form.sourceRow} onChange={(event) => update({ sourceRow: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="解释来源"><input value={form.sourceExplanationSource} onChange={(event) => update({ sourceExplanationSource: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell label="AI 模型"><input value={form.sourceAiModel} onChange={(event) => update({ sourceAiModel: event.target.value })} /></ReadbackFieldCell>
-                <ReadbackFieldCell className="form-grid-wide" label="推荐来源文件"><textarea value={form.sourceFiles} onChange={(event) => update({ sourceFiles: event.target.value })} /></ReadbackFieldCell>
-              </div>
-              {(form.productStage || form.decisionAgreement || form.aiLifecycleStage || form.quantLifecycleStage) && (
-                <div className="readback-context-grid readback-source-context-grid">
-                  <div>
-                    <span>产品阶段</span>
-                    <strong>{form.productStage || form.aiLifecycleStage || form.quantLifecycleStage || '-'}</strong>
-                    <small>
-                      目标 ACOS {form.productTargetAcos || '-'} / TACOS {form.productTargetTacos || '-'} / 净利率 {form.productTargetNetMargin || '-'} / 最低价 ${form.productMinPrice || '-'}
-                    </small>
-                  </div>
-                  <div>
-                    <span>AI 与规则关系</span>
-                    <strong>{decisionAgreementLabel(form.decisionAgreement)} / {decisionSourceLabel(form.decisionSource)}</strong>
-                    <small>{form.decisionReasons.slice(0, 2).join('；') || form.aiStrategySummary || '无来源说明'}</small>
-                  </div>
-                  <div>
-                    <span>量化阈值</span>
-                    <strong>
-                      ACOS {form.quantThresholds.targetAcos != null ? `${(form.quantThresholds.targetAcos * 100).toFixed(1)}%` : '-'}
-                      {' / '}
-                      高 ACOS {form.quantThresholds.highAcosThreshold != null ? `${(form.quantThresholds.highAcosThreshold * 100).toFixed(1)}%` : '-'}
-                    </strong>
-                    <small>{form.quantReasons.slice(0, 2).join('；') || '无规则量化说明'}</small>
-                  </div>
-                </div>
-              )}
-            </div>
-            <footer className="product-config-modal-footer">
-              <span className="muted-line">字段修改只影响本地回读证据，不会写入 Amazon Ads。</span>
-              <button className="primary-button" onClick={() => setSourceFieldEditorOpen(false)} type="button">
-                完成
-              </button>
-            </footer>
-          </div>
-        </div>
-      )}
+      </PageFrame>
     </div>
   );
 }

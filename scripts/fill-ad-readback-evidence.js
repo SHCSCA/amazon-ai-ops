@@ -62,11 +62,13 @@ function numericBid(value, key) {
   return text;
 }
 
-function runVerifier(evidencePath) {
-  return spawnSync(process.execPath, [
+function runVerifier(evidencePath, dbPath) {
+  const verifierArgs = [
     path.join(__dirname, 'verify-ad-readback-evidence.js'),
     evidencePath,
-  ], {
+  ];
+  if (dbPath) verifierArgs.push('--db', dbPath);
+  return spawnSync(process.execPath, verifierArgs, {
     cwd: path.resolve(__dirname, '..'),
     encoding: 'utf8',
   });
@@ -156,7 +158,7 @@ function main() {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
 
-  const verification = runVerifier(outPath);
+  const verification = runVerifier(outPath, args.db);
   if (verification.stdout) process.stdout.write(verification.stdout);
   if (verification.stderr) process.stderr.write(verification.stderr);
   if (verification.status !== 0) {

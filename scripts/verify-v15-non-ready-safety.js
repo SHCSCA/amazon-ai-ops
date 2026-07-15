@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const { resolveBoundAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -206,14 +207,26 @@ function main() {
   if (historicalReadyFinalReadiness) {
     check(adReadback && adReadback.ok === true && adReadback.status === 'passed', 'historical real ad readback gate is baseline only', failures);
     const readbackPath = selectedAdReadbackPath(finalReadiness);
-    if (readbackPath && fs.existsSync(path.resolve(readbackPath))) {
-      const readbackVerification = runNode('scripts/verify-ad-readback-evidence.js', [path.resolve(readbackPath)]);
+    let authorityDbPath = '';
+    try {
+      authorityDbPath = resolveBoundAdReadbackAuthorityDbPath(
+        finalReadiness.evidenceSelection?.authorityDbPath,
+        args.db,
+      );
+      check(true, 'historical APP_READY records an existing SQLite authority database identity', failures);
+    } catch (error) {
+      check(false, `historical SQLite authority database identity is invalid: ${error instanceof Error ? error.message : String(error)}`, failures);
+    }
+    if (readbackPath && fs.existsSync(path.resolve(readbackPath)) && authorityDbPath) {
+      const verifierArgs = [path.resolve(readbackPath)];
+      verifierArgs.push('--db', authorityDbPath);
+      const readbackVerification = runNode('scripts/verify-ad-readback-evidence.js', verifierArgs);
       if (readbackVerification.ok) {
         check(true, 'historical real ad readback baseline passes verify:ad-readback', failures);
       } else if (hasOnlyLegacySourceTraceabilityFailure(readbackVerification.output)) {
         check(false, 'historical real ad readback baseline lacks current source report traceability only', failures);
       } else {
-        check(false, 'historical real ad readback baseline passes verify:ad-readback', failures);
+        check(false, 'historical real ad readback baseline fails current verify:ad-readback', failures);
       }
       if (!readbackVerification.ok && readbackVerification.output && !hasOnlyLegacySourceTraceabilityFailure(readbackVerification.output)) {
         console.error(readbackVerification.output.split(/\r?\n/).slice(-8).join('\n'));

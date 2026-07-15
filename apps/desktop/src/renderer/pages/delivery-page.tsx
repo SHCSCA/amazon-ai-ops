@@ -8,7 +8,7 @@ import { READBACK_REPAIR_INTENT_EVENT, READBACK_REPAIR_INTENT_STORAGE_KEY, type 
 import { useScopeStore } from '../scope-store';
 import type { AiDiagnosisRunView, AppRoute, BusinessDataPipeline, DeliveryEvidenceStatusView, DeliveryReadinessGate, DeliveryReadinessView, OperationScope, RecommendationView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
-import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
+import { notifyWorkflowInvalidated } from '../workflow-invalidation';
 import type { WorkflowEventTarget } from '../workflow-invalidation';
 
 const DEFAULT_SCOPE: OperationScope = {
@@ -21,7 +21,12 @@ const DEFAULT_SCOPE: OperationScope = {
 
 const DELIVERY_BUNDLE_PATH = 'output/delivery-bundles';
 
-export function runDeliveryWorkflowMutation<T>(
+export function deliveryReadbackVerifierPassed(value: unknown): boolean {
+  const result = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return result.ready === true && result.status === 'PASS';
+}
+
+export async function runDeliveryWorkflowMutation<T>(
   action: 'refresh' | 'create-readback' | 'verify-readback',
   task: () => Promise<T>,
   target?: WorkflowEventTarget,
@@ -31,7 +36,11 @@ export function runDeliveryWorkflowMutation<T>(
     : action === 'create-readback'
       ? 'readback-created'
       : 'readback-verified';
-  return runWorkflowInvalidatingMutation(source, task, target);
+  const result = await task();
+  if (action !== 'verify-readback' || deliveryReadbackVerifierPassed(result)) {
+    notifyWorkflowInvalidated(source, target);
+  }
+  return result;
 }
 
 type DeliveryTone = 'ready' | 'pending' | 'blocked' | 'warning';
@@ -1125,7 +1134,7 @@ export function DeliveryPage() {
       try {
         const result = await runDeliveryWorkflowMutation<any>('verify-readback', () => apiSurface.verifyAdReadbackEvidence({ evidencePath }));
         setReadbackEvidenceVerify(result || null);
-        const passed = Boolean(result?.ok || result?.verified || result?.ready || result?.status === 'PASS');
+        const passed = deliveryReadbackVerifierPassed(result);
         setMessage(passed
           ? '回读证据校验通过。'
           : compactDeliveryMessage(`回读证据仍未通过：${(result?.issues || result?.blockers || []).slice(0, 2).join('；')}`));

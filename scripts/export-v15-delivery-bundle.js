@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const { resolveBoundAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -85,7 +86,7 @@ function assertManifestDrivenFinalReadiness(finalReadiness, finalReadinessPath) 
   }
 }
 
-function assertSelectedReadbackPassesVerifier(finalReadiness) {
+function assertSelectedReadbackPassesVerifier(finalReadiness, dbPath) {
   if (finalReadiness.status !== 'APP_READY' && finalReadiness.appReady !== true) return;
   const manifestPath = path.resolve(finalReadiness.evidenceSelection?.manifestPath || '');
   const evidenceManifest = readJson(manifestPath);
@@ -93,7 +94,9 @@ function assertSelectedReadbackPassesVerifier(finalReadiness) {
   if (!readbackPath || !fs.existsSync(path.resolve(readbackPath))) {
     throw new Error('Refusing to export APP_READY delivery bundle because manifest-selected ad readback evidence is missing.');
   }
-  const verification = runNode('scripts/verify-ad-readback-evidence.js', [path.resolve(readbackPath)]);
+  const verifierArgs = [path.resolve(readbackPath)];
+  if (dbPath) verifierArgs.push('--db', dbPath);
+  const verification = runNode('scripts/verify-ad-readback-evidence.js', verifierArgs);
   if (!verification.ok) {
     throw new Error(
       'Refusing to export APP_READY delivery bundle because manifest-selected ad readback evidence failed verify:ad-readback.\n'
@@ -623,7 +626,10 @@ function main() {
   const finalReadiness = readJson(finalReadinessPath);
   finalReadiness.__path = finalReadinessPath;
   assertManifestDrivenFinalReadiness(finalReadiness, finalReadinessPath);
-  assertSelectedReadbackPassesVerifier(finalReadiness);
+  const authorityDbPath = finalReadiness.status === 'APP_READY' || finalReadiness.appReady === true
+    ? resolveBoundAdReadbackAuthorityDbPath(finalReadiness.evidenceSelection?.authorityDbPath, args.db)
+    : null;
+  assertSelectedReadbackPassesVerifier(finalReadiness, authorityDbPath);
   const readmePath = path.resolve(args.readme || path.join(root, 'README.md'));
   assertAppReadyReadmeState(finalReadiness, readmePath);
 
@@ -655,6 +661,12 @@ function main() {
       'installer EXE',
       'API keys and passwords',
     ],
+    authorityDatabase: {
+      sourcePath: authorityDbPath,
+      existsAtExport: Boolean(authorityDbPath && fs.existsSync(authorityDbPath)),
+      copied: false,
+      policy: 'SQLite authority database identity is recorded for revalidation and the database file is never copied.',
+    },
     files: [],
     missing: [],
     dataReconciliation: {
@@ -723,6 +735,7 @@ function main() {
     'scripts/verify-ad-readback-session.js',
     'scripts/fill-ad-readback-session.js',
     'scripts/fill-ad-readback-evidence.js',
+    'scripts/ad-readback-authority-db.js',
     'scripts/verify-ad-readback-evidence.js',
     'scripts/reconcile-lingxing-full8-data.js',
   ]) {

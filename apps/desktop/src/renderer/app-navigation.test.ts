@@ -54,9 +54,15 @@ describe('App unified Decisions workspace routing', () => {
   it('passes the full active navigation intent into BusinessRoutePage', () => {
     const source = appSource();
 
-    expect(source).toContain('function BusinessRoutePage({ navigation, nextSafeAction }');
+    expect(source).toContain('function BusinessRoutePage({');
+    expect(source).toContain('navigation,');
+    expect(source).toContain('nextSafeAction,');
+    expect(source).toContain('readbackAuthority,');
     expect(source).toContain('navigation: NavigationIntent');
-    expect(source).toContain('<BusinessRoutePage navigation={activeNavigation} nextSafeAction={nextSafeAction} />');
+    expect(source).toContain('<BusinessRoutePage');
+    expect(source).toContain('navigation={activeNavigation}');
+    expect(source).toContain('nextSafeAction={nextSafeAction}');
+    expect(source).toContain('readbackAuthority={readbackAuthority}');
   });
 
   it('renders every Decisions subview through one DecisionsPage and preserves legacy route sidebar state', () => {

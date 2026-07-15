@@ -793,6 +793,7 @@ async function main() {
       verifyAdReadbackEvidence: async (input) => {
         const result = {
           status: 'PASS',
+          ready: true,
           ok: true,
           verified: true,
           issues: [],

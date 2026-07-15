@@ -279,6 +279,11 @@ async function collectWorkspaceDomMetrics(page, options = {}) {
       });
     }
 
+    const pageUrl = window.location.href;
+    const urlScenario = new URL(pageUrl).searchParams.get('scenario');
+    const previewScenario = requestedRoot?.getAttribute('data-preview-scenario')?.trim() || null;
+    const readbackMode = requestedRoot?.getAttribute('data-readback-mode')?.trim() || null;
+
     return {
       actions: {
         primaryLabels: visiblePrimaryActions.map(compactText),
@@ -296,9 +301,13 @@ async function collectWorkspaceDomMetrics(page, options = {}) {
         labels: h1Elements.map(compactText),
       },
       identity: {
-        pageUrl: window.location.href,
-        scenario: new URL(window.location.href).searchParams.get('scenario'),
+        pageUrl,
+        previewScenario,
+        readbackMode,
+        scenario: previewScenario || urlScenario,
+        scenarioSource: previewScenario ? 'dom' : 'url',
         subview: requestedRoot ? requestedRoot.getAttribute('data-workspace-subview') : null,
+        urlScenario,
         workspace: requestedRoot ? requestedRoot.getAttribute('data-workspace') : null,
       },
       horizontalOverflow: {
@@ -399,6 +408,8 @@ function normalizeWorkspaceEvidenceConfig(config) {
       viewport: normalizeConfigViewport(source.viewport, index + 1),
       workspace: source.workspace,
     };
+    const readbackMode = source.readbackMode === undefined ? config.readbackMode : source.readbackMode;
+    if (typeof readbackMode === 'string' && readbackMode.trim()) target.readbackMode = readbackMode.trim();
     validateCaptureTarget(target);
 
     const sourceUrl = source.url || config.baseUrl;
@@ -448,6 +459,16 @@ async function captureWorkspaceEvidence({ outputDir, page, target, timestamp = n
     if (metrics.identity[field] !== target[field]) {
       identityMismatches.push(`${field} actual ${metrics.identity[field] || '(missing)'} target ${target[field]}`);
     }
+  }
+  if (target.readbackMode && metrics.identity.previewScenario !== target.scenario) {
+    identityMismatches.push(
+      `preview scenario actual ${metrics.identity.previewScenario || '(missing)'} target ${target.scenario}`,
+    );
+  }
+  if (target.readbackMode && metrics.identity.readbackMode !== target.readbackMode) {
+    identityMismatches.push(
+      `readback mode actual ${metrics.identity.readbackMode || '(missing)'} target ${target.readbackMode}`,
+    );
   }
   if (identityMismatches.length > 0) {
     throw new Error(`Runtime workspace identity does not match target: ${identityMismatches.join('; ')}.`);
@@ -519,12 +540,12 @@ async function runWorkspaceEvidenceTargets({ browser, generatedAt = new Date(), 
     const page = await context.newPage();
     try {
       await page.goto(target.url, { waitUntil: target.waitUntil || 'networkidle' });
-      if (target.waitFor) await page.locator(target.waitFor).first().waitFor({ state: 'visible' });
       await page.evaluate(({ subview, workspace }) => {
         window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', {
           detail: { subview, workspace },
         }));
       }, { subview: target.subview, workspace: target.workspace });
+      if (target.waitFor) await page.locator(target.waitFor).first().waitFor({ state: 'visible' });
       await page.waitForTimeout(target.settleMs === undefined ? 250 : target.settleMs);
       const timestamp = new Date(generatedAt.getTime() + index);
       const captured = await captureWorkspaceEvidence({ outputDir: absoluteOutputDir, page, target, timestamp });

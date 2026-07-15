@@ -63,7 +63,7 @@ function startStaticServer(directory) {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const address = server.address();
-      resolve({ url: `http://127.0.0.1:${address.port}/index.html?preview=1&scenario=mixed-recommendations`, close: () => server.close() });
+      resolve({ url: `http://127.0.0.1:${address.port}/index.html?smoke=ad-execution-authoritative`, close: () => server.close() });
     });
   });
 }
@@ -108,6 +108,28 @@ async function clickReadbackStep(page, title) {
   await page.getByRole('tab', { name: new RegExp(escapeRegExp(label)) }).click();
 }
 
+async function pasteReadbackCapture(page, slot, fileName) {
+  const target = page.locator(`[data-capture-slot="${slot}"]`);
+  await target.waitFor({ state: 'visible', timeout: 5000 });
+  const priorCount = await page.evaluate((expectedSlot) => (window.__businessUiActionLog || [])
+    .filter((item) => item.type === 'saveReadbackCapture' && item.input?.slot === expectedSlot).length, slot);
+  await target.evaluate((node, input) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.items.add(new File(['smoke-capture'], input.fileName, { type: 'image/png' }));
+    node.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData,
+    }));
+  }, { fileName });
+  await page.waitForFunction(({ expectedSlot, expectedCount }) => (window.__businessUiActionLog || [])
+    .filter((item) => item.type === 'saveReadbackCapture' && item.input?.slot === expectedSlot).length > expectedCount, {
+    expectedSlot: slot,
+    expectedCount: priorCount,
+  }, { timeout: 5000 });
+  await target.getByText(/已安全固定/, { exact: false }).first().waitFor({ state: 'visible', timeout: 5000 });
+}
+
 async function assertGlobalGuards(page, key) {
   const textContent = await bodyText(page);
   const scopeRangeTitle = await page.locator('.scope-compact-trigger').getAttribute('title');
@@ -146,6 +168,88 @@ async function assertNoPageHorizontalOverflow(page, context) {
   }
 }
 
+function assertPassReadbackBranch(actionLog, startIndex) {
+  const branch = actionLog.slice(startIndex);
+  const exports = branch.filter((item) => item.type === 'exportAdReadbackEvidence');
+  const verifications = branch.filter((item) => item.type === 'verifyAdReadbackEvidence');
+  const workPackageActions = branch.filter((item) => [
+    'prepareAdReadbackSession',
+    'verifyAdReadbackSession',
+    'fillAdReadbackSession',
+  ].includes(item.type));
+  if (exports.length !== 1
+    || exports[0].result?.status !== 'PASS'
+    || exports[0].result?.readyForVerifier !== true
+    || exports[0].result?.nextAction !== 'verify') {
+    fail('PASS readback branch did not publish the strict direct-verify export result', JSON.stringify(branch));
+  }
+  if (verifications.length !== 1
+    || verifications[0].input?.evidencePath !== exports[0].result?.jsonPath
+    || verifications[0].result?.status !== 'PASS'
+    || verifications[0].result?.ready !== true) {
+    fail('PASS readback branch did not directly verify the exported evidence', JSON.stringify(branch));
+  }
+  if (workPackageActions.length > 0) {
+    fail('PASS readback branch used a work-package action', JSON.stringify(workPackageActions));
+  }
+  if (branch.indexOf(verifications[0]) < branch.indexOf(exports[0])) {
+    fail('PASS readback branch verified before export completed', JSON.stringify(branch));
+  }
+  return {
+    exportCount: exports.length,
+    verifyCount: verifications.length,
+    prepareCount: 0,
+    checkCount: 0,
+    fillCount: 0,
+    exportPath: exports[0].result.jsonPath,
+  };
+}
+
+function assertNeedsWorkReadbackBranch(actionLog, startIndex) {
+  const branch = actionLog.slice(startIndex);
+  const relevant = branch.filter((item) => [
+    'exportAdReadbackEvidence',
+    'prepareAdReadbackSession',
+    'verifyAdReadbackSession',
+    'fillAdReadbackSession',
+    'verifyAdReadbackEvidence',
+  ].includes(item.type));
+  const expectedOrder = [
+    'exportAdReadbackEvidence',
+    'prepareAdReadbackSession',
+    'verifyAdReadbackSession',
+    'fillAdReadbackSession',
+    'verifyAdReadbackEvidence',
+  ];
+  if (JSON.stringify(relevant.map((item) => item.type)) !== JSON.stringify(expectedOrder)) {
+    fail('NEEDS_WORK readback branch did not preserve strict action order', JSON.stringify(relevant));
+  }
+  const [exportCall, prepareCall, checkCall, fillCall, verifyCall] = relevant;
+  if (exportCall.result?.status !== 'NEEDS_WORK'
+    || exportCall.result?.readyForVerifier !== false
+    || exportCall.result?.nextAction !== 'prepare') {
+    fail('NEEDS_WORK readback branch did not publish the strict prepare result', JSON.stringify(exportCall));
+  }
+  if (prepareCall.input?.sourcePath !== exportCall.result?.jsonPath
+    || !prepareCall.result?.sessionDir
+    || checkCall.input?.sessionDir !== prepareCall.result.sessionDir
+    || fillCall.input?.sessionDir !== prepareCall.result.sessionDir
+    || verifyCall.input?.evidencePath !== fillCall.result?.jsonPath
+    || verifyCall.result?.status !== 'PASS'
+    || verifyCall.result?.ready !== true) {
+    fail('NEEDS_WORK readback branch did not carry authoritative paths through the work package', JSON.stringify(relevant));
+  }
+  return {
+    exportCount: 1,
+    prepareCount: 1,
+    checkCount: 1,
+    fillCount: 1,
+    verifyCount: 1,
+    sourcePath: exportCall.result.jsonPath,
+    finalEvidencePath: fillCall.result.jsonPath,
+  };
+}
+
 async function captureViewportScreenshot(page, evidence, key, runId, details = {}) {
   const screenshotPath = path.join(evidenceDir, `business-ui-ad-execution-${key}-${runId}.png`);
   await page.screenshot({ path: screenshotPath, fullPage: false });
@@ -156,21 +260,6 @@ async function captureViewportScreenshot(page, evidence, key, runId, details = {
     ...details,
   };
   return screenshotPath;
-}
-
-async function openReadbackSourceEditor(page) {
-  const dialog = page.getByRole('dialog', { name: '修正来源字段' });
-  if (!await dialog.isVisible().catch(() => false)) {
-    await page.getByRole('button', { name: '修正来源字段', exact: true }).click();
-  }
-  await dialog.waitFor({ state: 'visible', timeout: 5000 });
-}
-
-async function closeReadbackSourceEditor(page) {
-  const dialog = page.getByRole('dialog', { name: '修正来源字段' });
-  if (await dialog.isVisible().catch(() => false)) {
-    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
-  }
 }
 
 async function main() {
@@ -434,6 +523,32 @@ async function main() {
       [recommendationBase.id, { ...recommendationBase, evidence: { ...recommendationBase.evidence } }],
       [blockedRecommendation.id, { ...blockedRecommendation, evidence: { ...blockedRecommendation.evidence } }],
     ]);
+    const assertRendererReadbackExportRequest = (input) => {
+      const allowedKeys = ['expectedRevision', 'operatorEvidence', 'recommendationId', 'scope'];
+      const inputKeys = Object.keys(input || {}).sort();
+      if (JSON.stringify(inputKeys) !== JSON.stringify(allowedKeys)) {
+        throw new Error(`Renderer submitted non-authoritative readback export fields: ${inputKeys.join(', ')}`);
+      }
+      if (input.recommendationId !== 101 || input.expectedRevision !== 1) {
+        throw new Error(`Readback export did not bind approved recommendation #101 revision 1: ${JSON.stringify(input)}`);
+      }
+      const expectedScope = {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        asin: 'B0TESTASIN',
+        batchId: 'manual_ad_execution_batch',
+      };
+      for (const [key, value] of Object.entries(expectedScope)) {
+        if (input.scope?.[key] !== value) {
+          throw new Error(`Readback export scope mismatch for ${key}: ${JSON.stringify(input.scope)}`);
+        }
+      }
+      if (!input.operatorEvidence || typeof input.operatorEvidence !== 'object') {
+        throw new Error('Readback export omitted operatorEvidence');
+      }
+    };
     const readyPipeline = {
       scope: {
         dateFrom: '2026-06-01',
@@ -591,6 +706,7 @@ async function main() {
     window.__mockBlockedPipeline = false;
     window.__mockDecisionDelayMs = 0;
     window.__mockRecommendationReadDelayMs = 0;
+    window.__forceReadbackNeedsWork = false;
     window.__lastApprovalDecision = null;
     window.electronAPI = {
       getState: async () => ({
@@ -865,32 +981,80 @@ async function main() {
         return undefined;
       },
       exportAdReadbackEvidence: async (input) => {
-        window.__businessUiActionLog.push({ type: 'exportAdReadbackEvidence', input });
-        const readyForVerifier = Boolean(
-          input?.approval?.approverName
-            && input?.approval?.approvalArtifactPath
-            && input?.approval?.confirmedAt
-            && input?.execution?.executedBy
-            && input?.execution?.executionId
-            && input?.execution?.executedAt
-            && input?.before?.capturedAt
-            && input?.after?.capturedAt
-            && input?.readback?.readAt
-            && input?.readback?.actualValue === input?.after?.value
-            && input?.execution?.success
-            && input?.execution?.verified
-            && input?.readback?.verified
+        assertRendererReadbackExportRequest(input);
+        const recommendation = recommendationState.get(input.recommendationId);
+        if (!recommendation || recommendation.status !== 'approved' || recommendation.revision !== input.expectedRevision) {
+          throw new Error('Readback export authority row is no longer approved at the expected revision');
+        }
+        const approvalDecision = recommendation.evidence?.approvalDecision;
+        if (!approvalDecision
+          || approvalDecision.batchId !== input.scope.batchId
+          || approvalDecision.sourceBatchId !== input.scope.batchId
+          || approvalDecision.asin !== input.scope.asin) {
+          throw new Error('Readback export authority row no longer matches the current scope and batch');
+        }
+        const operatorEvidence = input.operatorEvidence || {};
+        const readyForVerifier = !window.__forceReadbackNeedsWork && Boolean(
+          operatorEvidence.approval?.operatorConfirmed
+            && operatorEvidence.approval?.realWriteApproved
+            && operatorEvidence.approval?.approvalArtifactPath
+            && operatorEvidence.risk?.allowedByPolicy
+            && operatorEvidence.execution?.executedBy
+            && operatorEvidence.execution?.executionId
+            && operatorEvidence.execution?.executedAt
+            && operatorEvidence.before?.value
+            && operatorEvidence.before?.capturedAt
+            && operatorEvidence.before?.screenshotPath
+            && operatorEvidence.after?.value
+            && operatorEvidence.after?.capturedAt
+            && operatorEvidence.after?.screenshotPath
+            && operatorEvidence.readback?.readAt
+            && operatorEvidence.readback?.evidencePath
+            && operatorEvidence.readback?.actualValue === operatorEvidence.after?.value
+            && operatorEvidence.execution?.success
+            && operatorEvidence.execution?.verified
+            && operatorEvidence.readback?.verified
         );
-        return {
-          jsonPath: 'C:/evidence/readback.json',
-          markdownPath: 'C:/evidence/readback.md',
+        const result = {
+          jsonPath: readyForVerifier ? 'C:/evidence/readback-pass.json' : 'C:/evidence/readback-needs-work.json',
+          markdownPath: readyForVerifier ? 'C:/evidence/readback-pass.md' : 'C:/evidence/readback-needs-work.md',
+          sha256: readyForVerifier ? 'SMOKE_PASS_SHA256' : 'SMOKE_NEEDS_WORK_SHA256',
           status: readyForVerifier ? 'PASS' : 'NEEDS_WORK',
           readyForVerifier,
+          nextAction: readyForVerifier ? 'verify' : 'prepare',
+          authority: {
+            recommendationId: recommendation.id,
+            revision: recommendation.revision,
+            batchId: approvalDecision.batchId,
+          },
         };
+        window.__businessUiActionLog.push({
+          type: 'exportAdReadbackEvidence',
+          input,
+          result,
+          authoritySource: {
+            recommendationId: recommendation.id,
+            revision: recommendation.revision,
+            status: recommendation.status,
+            target: {
+              asin: recommendation.evidence?.asin,
+              entityType: recommendation.entityType,
+              entityName: recommendation.entityName,
+            },
+            source: {
+              batchId: approvalDecision.sourceBatchId,
+              metricDate: approvalDecision.metricDate,
+              sourceRow: approvalDecision.sourceRow,
+              sourceFiles: recommendation.evidence?.sourceFiles,
+            },
+            approval: approvalDecision,
+            riskLevel: recommendation.riskLevel,
+          },
+        });
+        return result;
       },
       prepareAdReadbackSession: async (input) => {
-        window.__businessUiActionLog.push({ type: 'prepareAdReadbackSession', input });
-        return {
+        const result = {
           sessionDir: 'C:/evidence/readback-session',
           sourceCandidatePath: input?.sourcePath,
           passEvidencePath: 'C:/evidence/readback-session/real-ad-execution-readback-pass.json',
@@ -904,10 +1068,11 @@ async function main() {
           fillScriptPath: 'C:/evidence/readback-session/fill-ad-readback.ps1',
           sourceReportsCopied: false,
         };
+        window.__businessUiActionLog.push({ type: 'prepareAdReadbackSession', input, result });
+        return result;
       },
       verifyAdReadbackSession: async (input) => {
-        window.__businessUiActionLog.push({ type: 'verifyAdReadbackSession', input });
-        return {
+        const result = {
           sessionDir: input?.sessionDir,
           ready: true,
           captureReady: false,
@@ -925,10 +1090,11 @@ async function main() {
           ],
           captureIssues: ['填写文件仍有未填写项：审批/审批人、执行前/现场出价、执行后/现场出价、回读/刷新回读截图文件'],
         };
+        window.__businessUiActionLog.push({ type: 'verifyAdReadbackSession', input, result });
+        return result;
       },
       fillAdReadbackSession: async (input) => {
-        window.__businessUiActionLog.push({ type: 'fillAdReadbackSession', input });
-        return {
+        const result = {
           sessionDir: input?.sessionDir,
           jsonPath: 'C:/evidence/readback-session/real-ad-execution-readback-pass.json',
           markdownPath: 'C:/evidence/readback-session/real-ad-execution-readback-pass.md',
@@ -936,10 +1102,33 @@ async function main() {
           readyForVerifier: true,
           issues: [],
         };
+        window.__businessUiActionLog.push({ type: 'fillAdReadbackSession', input, result });
+        return result;
+      },
+      saveReadbackCapture: async (input) => {
+        const savedAtBySlot = {
+          approval: '2026-06-12T10:00:00.000Z',
+          before: '2026-06-12T10:03:00.000Z',
+          after: '2026-06-12T10:06:00.000Z',
+          readback: '2026-06-12T10:10:00.000Z',
+        };
+        if (!Object.prototype.hasOwnProperty.call(savedAtBySlot, input?.slot)
+          || !String(input?.dataUrl || '').startsWith('data:image/png;base64,')) {
+          throw new Error(`Invalid readback capture input: ${JSON.stringify(input)}`);
+        }
+        const result = {
+          slot: input.slot,
+          filePath: `C:/evidence/${input.slot}.png`,
+          directory: 'C:/evidence',
+          mimeType: 'image/png',
+          byteLength: 13,
+          savedAt: savedAtBySlot[input.slot],
+        };
+        window.__businessUiActionLog.push({ type: 'saveReadbackCapture', input, result });
+        return result;
       },
       verifyAdReadbackEvidence: async (input) => {
-        window.__businessUiActionLog.push({ type: 'verifyAdReadbackEvidence', input });
-        return {
+        const result = {
           evidencePath: input?.evidencePath,
           ready: true,
           status: 'PASS',
@@ -949,6 +1138,8 @@ async function main() {
           ],
           issues: [],
         };
+        window.__businessUiActionLog.push({ type: 'verifyAdReadbackEvidence', input, result });
+        return result;
       },
       openReportPath: async (targetPath) => {
         window.__businessUiActionLog.push({ type: 'openReportPath', targetPath });
@@ -1648,20 +1839,21 @@ async function main() {
   }
 
   await navigateBusinessPage(page, NAV_RE.readback, 'readback');
+  const readbackWorkspace = page.locator('[data-workspace-evidence-root="true"]');
+  await readbackWorkspace.waitFor({ state: 'visible', timeout: 5000 });
+  if (await readbackWorkspace.getAttribute('data-workspace') !== 'readback'
+    || await readbackWorkspace.getAttribute('data-workspace-subview') !== 'evidence'
+    || await readbackWorkspace.getAttribute('data-readback-mode') !== 'production') {
+    fail('Readback workspace did not expose the production evidence-root contract');
+  }
   await expectVisible(page, '选择已批准动作');
   await expectVisible(page, '填写审批凭证');
   await expectVisible(page, '记录执行和回读');
   await expectVisible(page, '校验并导出证据');
-  await page.getByRole('button', { name: '查看安全门', exact: true }).click();
-  await expectVisible(page, '安全门与当前缺口');
-  await expectVisible(page, '人工执行：本页只收集审批、截图、前后值和回读证据，不自动写 Amazon Ads。');
-  await expectVisible(page, '截图不复用：审批、执行前、执行后和回读截图必须来自不同证据。');
-  await expectVisible(page, '时间可追溯：审批、执行前、执行动作、执行后和回读时间必须可排序。');
-  await expectVisible(page, '回读值一致');
-  await page.getByRole('button', { name: '知道了', exact: true }).click();
-  await expectVisible(page, '广告组合');
-  await expectVisible(page, 'ASIN');
-  await expectVisible(page, '对象类型');
+  await expectVisible(page, '对象');
+  await expectVisible(page, '位置');
+  await expectVisible(page, '动作与值');
+  await expectVisible(page, '审批版本');
   await expectVisible(page, 'D6 Portfolio');
   await expectVisible(page, 'B0TESTASIN');
   await expectVisible(page, 'target');
@@ -1675,54 +1867,39 @@ async function main() {
   await expectVisible(page, '当前有效批次：manual_ad_execution_batch');
   await expectVisible(page, '来源批次匹配');
   await expectVisible(page, '来源批次、指标日期、来源行号、来源文件、来源当前值和建议值是回读证据的一部分；缺失或串批次时只能导出缺口草稿。');
-  await openReadbackSourceEditor(page);
-  await expectVisible(page, '产品阶段');
-  await expectVisible(page, 'keyword_exploration');
-  await expectVisible(page, 'AI 与规则关系');
-  await expectVisible(page, '规则+AI 一致 / 规则+AI 合并');
-  await expectVisible(page, '量化阈值');
-  await expectVisible(page, 'ACOS 25.0% / 高 ACOS 50.0%');
-  await page.getByRole('textbox', { name: '来源批次', exact: true }).evaluate((node) => {
-    if (node.value !== 'manual_ad_execution_batch') throw new Error(`Unexpected source batch: ${node.value}`);
-  });
-  await page.getByRole('textbox', { name: '指标日期', exact: true }).evaluate((node) => {
-    if (node.value !== '2026-06-12') throw new Error(`Unexpected metric date: ${node.value}`);
-  });
-  await page.getByRole('textbox', { name: '来源行号', exact: true }).evaluate((node) => {
-    if (node.value !== '12') throw new Error(`Unexpected source row: ${node.value}`);
-  });
-  await page.getByRole('textbox', { name: '推荐来源文件', exact: true }).evaluate((node) => {
-    if (!node.value.includes('C:/reports/source_user_search_term.xlsx')) throw new Error(`Unexpected source files: ${node.value}`);
-  });
-  await closeReadbackSourceEditor(page);
+  const authoritySource = readbackWorkspace.locator('[data-readback-authority-source="main-derived"]');
+  await authoritySource.waitFor({ state: 'visible', timeout: 5000 });
+  if (await authoritySource.getAttribute('aria-label') !== '已批准动作与来源') {
+    fail('Main-derived readback authority section is missing its operator-facing accessible name');
+  }
+  const authoritySourceState = await authoritySource.evaluate((node) => ({
+    hasEditableControl: Boolean(node.querySelector('input, textarea, select, [contenteditable="true"]')),
+    text: node.textContent || '',
+  }));
+  if (authoritySourceState.hasEditableControl
+    || !authoritySourceState.text.includes('manual_ad_execution_batch')
+    || !authoritySourceState.text.includes('2026-06-12')
+    || !authoritySourceState.text.includes('来源行 12')
+    || !authoritySourceState.text.includes('来源文件')
+    || !authoritySourceState.text.includes('1 个')
+    || !authoritySourceState.text.includes('页面不可修改')) {
+    fail('Main-derived readback authority was not rendered as complete read-only content', JSON.stringify(authoritySourceState));
+  }
+  if (await readbackWorkspace.getByRole('button', { name: '修正来源字段', exact: true }).count() > 0) {
+    fail('Readback workspace still exposes an authority-source editor');
+  }
   await clickReadbackStep(page, '2. 填写审批凭证');
-  await page.getByRole('textbox', { name: '审批人', exact: true }).evaluate((node) => {
-    if (node.value !== 'QA Approver') throw new Error(`Unexpected carried approver: ${node.value}`);
-  });
-  await page.getByRole('textbox', { name: '审批备注', exact: true }).evaluate((node) => {
-    if (node.value !== 'Approved for smoke scope only.') throw new Error(`Unexpected carried approval note: ${node.value}`);
-  });
-  await page.getByRole('textbox', { name: '审批时间', exact: true }).evaluate((node) => {
-    if (!String(node.value || '').includes('T')) throw new Error(`Approval time was not carried into readback: ${node.value}`);
-  });
-  await clickReadbackStep(page, '1. 选择已批准动作');
-  await openReadbackSourceEditor(page);
-  await page.getByRole('textbox', { name: '来源批次', exact: true }).fill('stale_ad_execution_batch');
-  await closeReadbackSourceEditor(page);
-  await expectVisible(page, '来源批次不一致');
-  await clickReadbackStep(page, '4. 校验并导出证据');
-  await expectVisible(page, '来源批次必须等于当前批次');
-  await expectVisible(page, '导出缺口草稿');
-  await clickReadbackStep(page, '1. 选择已批准动作');
-  await openReadbackSourceEditor(page);
-  await page.getByRole('textbox', { name: '来源批次', exact: true }).fill('manual_ad_execution_batch');
-  await closeReadbackSourceEditor(page);
-  await clickReadbackStep(page, '1. 选择已批准动作');
-  await expectVisible(page, '来源批次匹配');
-  await clickReadbackStep(page, '2. 填写审批凭证');
-  await page.getByRole('textbox', { name: '审批人', exact: true }).fill('QA Approver');
-  await page.getByRole('textbox', { name: '审批凭证', exact: true }).fill('C:/evidence/approval.png');
-  await page.getByRole('textbox', { name: '审批时间', exact: true }).fill('2026-06-12T10:00:00.000Z');
+  const approvalPanel = readbackWorkspace.getByRole('tabpanel', { name: /填写审批凭证/ });
+  await approvalPanel.getByText('QA Approver', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+  await approvalPanel.getByText('Approved for smoke scope only.', { exact: true }).waitFor({ state: 'visible', timeout: 5000 });
+  const approvalAuthorityText = await approvalPanel.locator('dl').innerText();
+  if (!/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(approvalAuthorityText)) {
+    fail('Main-derived approval time was not rendered as read-only ISO evidence', approvalAuthorityText);
+  }
+  if (await approvalPanel.getByRole('textbox', { name: /审批人|审批备注|审批时间|审批凭证/ }).count() > 0) {
+    fail('Main-derived approval identity or capture path remained editable');
+  }
+  await pasteReadbackCapture(page, 'approval', 'approval-smoke.png');
   for (const label of ['审批人确认范围', '外部审批允许', '低风险策略允许']) {
     await page.getByLabel(label).check();
   }
@@ -1731,67 +1908,39 @@ async function main() {
   await page.getByRole('textbox', { name: '执行编号', exact: true }).fill('manual-smoke-001');
   await page.getByRole('textbox', { name: '执行时间', exact: true }).fill('2026-06-12T10:05:00.000Z');
   await page.getByRole('textbox', { name: '执行前值', exact: true }).fill('1.20');
-  await page.getByRole('textbox', { name: '执行前截图', exact: true }).fill('C:/evidence/before.png');
-  await page.getByRole('textbox', { name: '执行前时间', exact: true }).fill('2026-06-12T10:03:00.000Z');
   await page.getByRole('textbox', { name: '执行后值', exact: true }).fill('1.08');
-  await page.getByRole('textbox', { name: '执行后截图', exact: true }).fill('C:/evidence/after.png');
-  await page.getByRole('textbox', { name: '执行后时间', exact: true }).fill('2026-06-12T10:06:00.000Z');
   await page.getByRole('textbox', { name: '回读值', exact: true }).fill('1.08');
-  await page.getByRole('textbox', { name: '回读证据', exact: true }).fill('C:/evidence/readback.png');
-  await page.getByRole('textbox', { name: '回读时间', exact: true }).fill('2026-06-12T10:10:00.000Z');
   await page.getByRole('textbox', { name: '现场行证明', exact: true }).fill('广告后台行已刷新，目标出价保持在 1.08。');
+  if (await readbackWorkspace.getByRole('textbox', { name: /执行前截图|执行后截图|回读证据/ }).count() > 0) {
+    fail('Capture paths remained editable');
+  }
+  await pasteReadbackCapture(page, 'before', 'before-smoke.png');
+  await pasteReadbackCapture(page, 'after', 'after-smoke.png');
+  await pasteReadbackCapture(page, 'readback', 'readback-smoke.png');
+  await expectVisible(page, '截图不复用');
+  await expectVisible(page, '回读值一致');
   await clickReadbackStep(page, '4. 校验并导出证据');
   for (const label of ['执行成功确认', '执行已核验', '回读已核验']) {
     await page.getByLabel(label).check();
   }
   await expectVisible(page, '字段已填写，待导出校验');
   await expectVisible(page, '字段已填写时仍需导出证据文件和说明文件，并由后端校验截图、真实报表和回读证据文件是否存在。');
-  await page.getByRole('button', { name: '导出回读证据' }).click();
-  await page.getByText('导出结果和证据路径', { exact: true }).click();
-  await page.getByText('导出状态', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('可进入最终验收', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('C:/evidence/readback.json', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('C:/evidence/readback.md', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('该导出只写入本地证据文件，不会提交 Amazon。', { exact: false }).waitFor({ timeout: 5000 });
-  await page.getByText('回读工作包流程', { exact: true }).click();
-  await expectVisible(page, '工作包状态：创建工作包后，按清单补审批、执行前、执行后和回读截图。');
-  await page.getByText('工作包内要做什么', { exact: true }).click();
-  await expectVisible(page, '工作包目录：C:/evidence/readback-session');
-  await expectVisible(page, '填写现场信息后生成可进入最终验收的回读证据。');
-  await expectVisible(page, '检查工作包只证明目录和文件结构安全，不等于最终验收通过；最终仍以生成后的回读证据校验和最终验收汇总为准。');
-  await expectVisible(page, '创建回读工作包');
-  await page.getByRole('button', { name: '创建回读工作包', exact: true }).click();
-  await page.getByText('回读工作包已创建。', { exact: true }).first().waitFor({ timeout: 5000 });
-  await page.getByText('查看工作包路径', { exact: true }).click();
-  await expectVisible(page, '工作包目录');
-  await expectVisible(page, 'C:/evidence/readback-session/session-input.json');
-  await expectVisible(page, 'C:/evidence/readback-session/session-input-guide.md');
-  await expectVisible(page, 'C:/evidence/readback-session/operator-checklist.md');
-  await expectVisible(page, 'C:/evidence/readback-session/real-ad-execution-readback-pass.json');
-  await expectVisible(page, '检查工作包');
-  await page.getByRole('button', { name: '打开填写文件', exact: true }).click();
-  await page.getByRole('button', { name: '打开填写说明', exact: true }).click();
-  await page.getByRole('button', { name: '检查工作包', exact: true }).click();
-  await page.getByText('工作包结构检查通过，现场证据仍待填写。', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expectVisible(page, '工作包结构通过，现场证据待填写');
-  await expectVisible(page, '还需填写：审批/审批人、执行前/现场出价、执行后/现场出价、回读/刷新回读截图文件');
-  await expectVisible(page, '检查工作包只证明目录和文件结构安全；还必须填写现场信息并生成最终证据后，才可能进入最终验收。');
-  await expectVisible(page, '生成回读证据');
-  await page.getByRole('button', { name: '生成回读证据', exact: true }).click();
-  await page.getByText('回读证据已生成，等待最终校验。', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expectVisible(page, '回读证据已生成，待最终校验');
-  await expectInBody(page, '最终可交付仍必须通过本地回读证据校验和最终验收汇总。');
-  await expectVisible(page, 'C:/evidence/readback-session/real-ad-execution-readback-pass.json');
-  await expectVisible(page, '校验回读证据');
-  await page.getByRole('button', { name: '校验回读证据', exact: true }).click();
-  await page.getByText('回读证据校验通过。', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expectVisible(page, '回读证据校验已通过');
-  await expectVisible(page, '这份证据已通过本地回读证据校验；最终可交付仍需进入最终验收汇总。');
-  await page.getByText('命令备用入口和技术验收说明', { exact: true }).click();
-  await expectVisible(page, '复制创建工作包命令');
-  await expectVisible(page, '复制检查工作包命令');
-  await expectVisible(page, '复制生成回读证据命令');
-  await expectVisible(page, '复制长参数生成命令');
+  const passBranchStart = await page.evaluate(() => window.__businessUiActionLog.length);
+  const finalVerifyAction = readbackWorkspace.getByRole('button', { name: '运行最终校验', exact: true });
+  if (await finalVerifyAction.count() !== 1) fail('Readback workspace must expose exactly one final verification action');
+  await finalVerifyAction.click();
+  await page.waitForFunction((startIndex) => {
+    const branch = (window.__businessUiActionLog || []).slice(startIndex);
+    const exportCall = branch.find((item) => item.type === 'exportAdReadbackEvidence');
+    const verifyCall = branch.find((item) => item.type === 'verifyAdReadbackEvidence');
+    return exportCall?.result?.status === 'PASS'
+      && exportCall?.result?.nextAction === 'verify'
+      && verifyCall?.input?.evidencePath === exportCall?.result?.jsonPath
+      && verifyCall?.result?.ready === true;
+  }, passBranchStart, { timeout: 5000 });
+  const passBranchLog = await page.evaluate(() => window.__businessUiActionLog || []);
+  evidence.readbackPassBranch = assertPassReadbackBranch(passBranchLog, passBranchStart);
+  await expectVisible(page, '最终校验通过：权威动作、现场证据和回读结果一致。');
   await expectNotInBody(page, 'pnpm run verify:ad-readback');
   const afterExportScreenshotPath = path.join(evidenceDir, `business-ui-ad-execution-readback-after-export-${runId}.png`);
   await page.screenshot({ path: afterExportScreenshotPath, fullPage: false });
@@ -1801,16 +1950,68 @@ async function main() {
     viewport: page.viewportSize(),
     bodyTextSample: (await bodyText(page)).slice(0, 1800),
   };
-  await clickReadbackStep(page, '3. 记录执行和回读');
-  await page.getByRole('textbox', { name: '执行后值', exact: true }).fill('');
-  await page.getByRole('textbox', { name: '执行后值', exact: true }).fill('1.07');
-  await page.waitForTimeout(50);
-  await page.getByRole('textbox', { name: '回读值', exact: true }).fill('1.07');
-  await page.getByRole('textbox', { name: '回读值', exact: true }).evaluate((node) => {
-    if (node.value !== '1.07') throw new Error(`Readback value was not editable after after-value change: ${node.value}`);
+  await page.evaluate(() => {
+    window.__forceReadbackNeedsWork = true;
   });
-  await expectNotInBody(page, 'C:/evidence/readback.json');
-  await expectNotInBody(page, 'C:/evidence/readback.md');
+  await page.getByLabel('回读已核验').uncheck();
+  await page.getByLabel('回读已核验').check();
+  const needsWorkFinalVerifyAction = readbackWorkspace.getByRole('button', { name: '运行最终校验', exact: true });
+  await needsWorkFinalVerifyAction.waitFor({ state: 'visible', timeout: 5000 });
+  const needsWorkBranchStart = await page.evaluate(() => window.__businessUiActionLog.length);
+  await needsWorkFinalVerifyAction.click();
+  await page.waitForFunction((startIndex) => {
+    const branch = (window.__businessUiActionLog || []).slice(startIndex);
+    const exportCall = branch.find((item) => item.type === 'exportAdReadbackEvidence');
+    return exportCall?.result?.status === 'NEEDS_WORK'
+      && exportCall?.result?.readyForVerifier === false
+      && exportCall?.result?.nextAction === 'prepare';
+  }, needsWorkBranchStart, { timeout: 5000 });
+  const beforeWorkPackageLog = await page.evaluate(() => window.__businessUiActionLog || []);
+  if (beforeWorkPackageLog.slice(needsWorkBranchStart).some((item) => [
+    'prepareAdReadbackSession',
+    'verifyAdReadbackSession',
+    'fillAdReadbackSession',
+    'verifyAdReadbackEvidence',
+  ].includes(item.type))) {
+    fail('NEEDS_WORK main action performed work-package or verification steps automatically');
+  }
+  const technicalInspector = page.locator('.responsive-inspector').filter({ hasText: '技术与证据详情' });
+  if (!await technicalInspector.isVisible().catch(() => false)) {
+    await readbackWorkspace.locator('[data-action="open-technical-inspector"]').click();
+  }
+  await technicalInspector.waitFor({ state: 'visible', timeout: 5000 });
+  const technicalInspectorMode = await technicalInspector.getAttribute('data-inspector-mode');
+  if (!['inline', 'drawer'].includes(technicalInspectorMode)) {
+    fail('Readback technical inspector did not expose a responsive mode', String(technicalInspectorMode));
+  }
+  await technicalInspector.getByRole('button', { name: '创建回读工作包', exact: true }).click();
+  await page.waitForFunction((startIndex) => (window.__businessUiActionLog || []).slice(startIndex)
+    .some((item) => item.type === 'prepareAdReadbackSession'), needsWorkBranchStart, { timeout: 5000 });
+  await technicalInspector.getByRole('button', { name: '检查工作包', exact: true }).click();
+  await page.waitForFunction((startIndex) => (window.__businessUiActionLog || []).slice(startIndex)
+    .some((item) => item.type === 'verifyAdReadbackSession'), needsWorkBranchStart, { timeout: 5000 });
+  await technicalInspector.getByRole('button', { name: '生成回读证据', exact: true }).click();
+  await page.waitForFunction((startIndex) => (window.__businessUiActionLog || []).slice(startIndex)
+    .some((item) => item.type === 'fillAdReadbackSession'), needsWorkBranchStart, { timeout: 5000 });
+  await technicalInspector.getByRole('button', { name: '校验证据文件', exact: true }).click();
+  await page.waitForFunction((startIndex) => (window.__businessUiActionLog || []).slice(startIndex)
+    .some((item) => item.type === 'verifyAdReadbackEvidence' && item.result?.ready === true), needsWorkBranchStart, { timeout: 5000 });
+  const needsWorkBranchLog = await page.evaluate(() => window.__businessUiActionLog || []);
+  evidence.readbackNeedsWorkBranch = assertNeedsWorkReadbackBranch(needsWorkBranchLog, needsWorkBranchStart);
+  await expectVisible(page, '结果核对已通过');
+  await expectVisible(page, '最终证据已收齐');
+  await expectVisible(page, '初始缺口已由工作包补齐并通过校验');
+  await expectNotInBody(page, '证据仍需补齐；请在技术详情中创建工作包补证，系统不会自动代填。');
+  await expectNotInBody(page, '工作包结构通过，现场证据待填写');
+  await expectNotInBody(page, '还必须填写现场信息并生成最终证据后');
+  const needsWorkScreenshotPath = path.join(evidenceDir, `business-ui-ad-execution-readback-needs-work-${runId}.png`);
+  await page.screenshot({ path: needsWorkScreenshotPath, fullPage: false });
+  evidence.pages.readbackNeedsWork = {
+    label: '结果核对 NEEDS_WORK 补证链',
+    screenshotPath: needsWorkScreenshotPath,
+    viewport: page.viewportSize(),
+    bodyTextSample: (await bodyText(page)).slice(0, 1800),
+  };
 
   const actionLog = await page.evaluate(() => window.__businessUiActionLog || []);
   evidence.actionLog = actionLog;
@@ -1821,12 +2022,6 @@ async function main() {
   }
   if (!reviewRecommendationCalls.length) {
     fail('Needs-review recommendations IPC mock was not called', JSON.stringify(actionLog));
-  }
-  if (!actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/evidence/readback-session/session-input.json')) {
-    fail('Open readback session input did not call openReportPath', JSON.stringify(actionLog));
-  }
-  if (!actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/evidence/readback-session/session-input-guide.md')) {
-    fail('Open readback session input guide did not call openReportPath', JSON.stringify(actionLog));
   }
   const scopedPendingRecommendationCalls = pendingRecommendationCalls.filter((call) => call.filter?.batchId === 'manual_ad_execution_batch');
   const scopedReviewRecommendationCalls = reviewRecommendationCalls.filter((call) => call.filter?.batchId === 'manual_ad_execution_batch');
@@ -1882,57 +2077,31 @@ async function main() {
     || rejectCall.input?.decision?.batchId !== 'manual_ad_execution_batch') {
     fail('Reject IPC did not include rejection metadata', JSON.stringify(rejectCall.input));
   }
-  const readbackExport = actionLog.find((item) => item.type === 'exportAdReadbackEvidence');
-  if (!readbackExport) {
-    fail('Readback export IPC mock was not called', JSON.stringify(actionLog));
+  const readbackExports = actionLog.filter((item) => item.type === 'exportAdReadbackEvidence');
+  if (readbackExports.length !== 2
+    || readbackExports[0].result?.status !== 'PASS'
+    || readbackExports[1].result?.status !== 'NEEDS_WORK') {
+    fail('Readback smoke did not exercise exactly one PASS export and one NEEDS_WORK export', JSON.stringify(readbackExports));
   }
-  const readbackSession = actionLog.find((item) => item.type === 'prepareAdReadbackSession');
-  if (!readbackSession || readbackSession.input?.sourcePath !== 'C:/evidence/readback.json') {
-    fail('Readback session IPC mock was not called with exported JSON path', JSON.stringify(actionLog));
-  }
-  const readbackSessionVerify = actionLog.find((item) => item.type === 'verifyAdReadbackSession');
-  if (!readbackSessionVerify || readbackSessionVerify.input?.sessionDir !== 'C:/evidence/readback-session') {
-    fail('Readback session verify IPC mock was not called with session directory', JSON.stringify(actionLog));
-  }
-  const readbackSessionFill = actionLog.find((item) => item.type === 'fillAdReadbackSession');
-  if (!readbackSessionFill || readbackSessionFill.input?.sessionDir !== 'C:/evidence/readback-session') {
-    fail('Readback session fill IPC mock was not called with session directory', JSON.stringify(actionLog));
-  }
-  const readbackEvidenceVerify = actionLog.find((item) => item.type === 'verifyAdReadbackEvidence');
-  if (!readbackEvidenceVerify || readbackEvidenceVerify.input?.evidencePath !== 'C:/evidence/readback-session/real-ad-execution-readback-pass.json') {
-    fail('Readback evidence verification IPC mock was not called with pass evidence path', JSON.stringify(actionLog));
-  }
-  if (readbackExport.input?.source?.batchId !== 'manual_ad_execution_batch'
-    || readbackExport.input?.source?.metricDate !== '2026-06-12'
-    || readbackExport.input?.source?.sourceRow !== 12
-    || readbackExport.input?.source?.entityType !== 'target'
-    || readbackExport.input?.source?.aiModel !== 'deepseek-chat'
-    || readbackExport.input?.source?.decisionAgreement !== 'aligned'
-    || readbackExport.input?.source?.decisionSource !== 'rule_ai'
-    || !readbackExport.input?.source?.decisionReasons?.includes('AI：Coupon 未带来足够转化。')
-    || readbackExport.input?.source?.aiStrategySource !== 'ai'
-    || readbackExport.input?.source?.aiLifecycleStage !== 'keyword_exploration'
-    || readbackExport.input?.source?.aiThresholdSuggestions?.targetAcos?.value !== 0.35
-    || readbackExport.input?.source?.quantThresholds?.targetAcos !== 0.25
-    || readbackExport.input?.source?.productStage !== 'keyword_exploration'
-    || readbackExport.input?.source?.productTargetAcos !== 0.35
-    || readbackExport.input?.source?.productTargetTacos !== 0.12
-    || readbackExport.input?.source?.productTargetNetMargin !== 0.22
-    || readbackExport.input?.source?.productMinPrice !== 29.99
-    || readbackExport.input?.target?.portfolioName !== 'D6 Portfolio'
-    || readbackExport.input?.target?.asin !== 'B0TESTASIN'
-    || readbackExport.input?.target?.entityType !== 'target'
-    || readbackExport.input?.approval?.note !== 'Approved for smoke scope only.'
-    || readbackExport.input?.approval?.confirmedAt !== '2026-06-12T10:00:00.000Z'
-    || readbackExport.input?.execution?.executedBy !== 'QA Operator'
-    || readbackExport.input?.execution?.executionId !== 'manual-smoke-001'
-    || readbackExport.input?.execution?.executedAt !== '2026-06-12T10:05:00.000Z'
-    || readbackExport.input?.before?.capturedAt !== '2026-06-12T10:03:00.000Z'
-    || readbackExport.input?.after?.capturedAt !== '2026-06-12T10:06:00.000Z'
-    || readbackExport.input?.readback?.readAt !== '2026-06-12T10:10:00.000Z'
-    || !Array.isArray(readbackExport.input?.source?.sourceFiles)
-    || !readbackExport.input.source.sourceFiles.includes('C:/reports/source_user_search_term.xlsx')) {
-    fail('Readback export did not include full source, execution, and readback binding', JSON.stringify(readbackExport.input));
+  for (const readbackExport of readbackExports) {
+    if (JSON.stringify(Object.keys(readbackExport.input || {}).sort()) !== JSON.stringify(['expectedRevision', 'operatorEvidence', 'recommendationId', 'scope'])
+      || readbackExport.input?.recommendationId !== 101
+      || readbackExport.input?.expectedRevision !== 1
+      || readbackExport.input?.scope?.batchId !== 'manual_ad_execution_batch'
+      || readbackExport.input?.scope?.asin !== 'B0TESTASIN'
+      || !readbackExport.input?.operatorEvidence
+      || readbackExport.authoritySource?.recommendationId !== 101
+      || readbackExport.authoritySource?.revision !== 1
+      || readbackExport.authoritySource?.status !== 'approved'
+      || readbackExport.authoritySource?.source?.batchId !== 'manual_ad_execution_batch'
+      || readbackExport.authoritySource?.source?.metricDate !== '2026-06-12'
+      || readbackExport.authoritySource?.source?.sourceRow !== 12
+      || !readbackExport.authoritySource?.source?.sourceFiles?.includes('C:/reports/source_user_search_term.xlsx')
+      || readbackExport.authoritySource?.target?.asin !== 'B0TESTASIN'
+      || readbackExport.authoritySource?.approval?.note !== 'Approved for smoke scope only.'
+      || readbackExport.authoritySource?.riskLevel !== 'APPROVAL') {
+      fail('Readback export did not bind renderer operator evidence to the internal approved authority row', JSON.stringify(readbackExport));
+    }
   }
 
     if (evidence.consoleErrors.length > 0) {

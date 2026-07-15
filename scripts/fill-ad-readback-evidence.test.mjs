@@ -4,6 +4,7 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
+import { writeAdReadbackAuthorityDb } from './ad-readback-authority-db.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -27,9 +28,22 @@ function writeReport(filePath) {
 
 function candidateEvidence(dir) {
   return {
+    schemaVersion: 2,
     kind: 'real-ad-execution-readback',
     status: 'NEEDS_WORK',
     createdAt: '2026-06-17T16:05:43.065Z',
+    authority: {
+      recommendationId: 4,
+      recommendationRevision: 2,
+      recommendationStatusAtExport: 'approved',
+      dateFrom: '2026-06-17',
+      dateTo: '2026-06-17',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0GTTJFQTM',
+      batchId: 'batch_2026-06-17',
+      checkedAt: '2026-06-17T16:05:43.000Z',
+    },
     realWriteApproved: false,
     safety: {
       full8Started: false,
@@ -38,7 +52,7 @@ function candidateEvidence(dir) {
     },
     approval: {
       operatorConfirmed: false,
-      scope: 'FT-US-US / US / Campaign A / Ad Group A / editable target=door lock / lower_bid',
+      scope: 'FT-US-US / US / B0GTTJFQTM / 2026-06-17~2026-06-17 / batch_2026-06-17',
       confirmedAt: 'FILL: approval timestamp in ISO format',
       approverName: 'FILL: external approver or responsible owner',
       approvalArtifactPath: 'FILL: approval screenshot path, ticket id, or chat record reference',
@@ -47,6 +61,7 @@ function candidateEvidence(dir) {
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
       asin: 'B0GTTJFQTM',
+      metricDate: '2026-06-17',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
       entityType: 'target',
@@ -87,10 +102,13 @@ function candidateEvidence(dir) {
     },
     source: {
       recommendationId: '4',
+      recommendationRevision: 2,
+      batchId: 'batch_2026-06-17',
+      metricDate: '2026-06-17',
       sourceFiles: [writeReport(path.join(dir, 'keyword.xlsx'))],
       sourceRow: 410,
       evidencePath: 'output/codex-evidence/installed-ad-ai-explanation-packaged-final-20260617.json',
-      entityType: 'search_term',
+      entityType: 'target',
       currentValue: '1.63',
       recommendedValue: '1.46',
     },
@@ -105,11 +123,20 @@ describe('fill ad readback evidence', () => {
     const before = writePng(path.join(dir, 'before.png'));
     const after = writePng(path.join(dir, 'after.png'));
     const readback = writePng(path.join(dir, 'readback.png'));
-    fs.writeFileSync(source, JSON.stringify(candidateEvidence(dir), null, 2), 'utf8');
+    const candidate = candidateEvidence(dir);
+    fs.writeFileSync(source, JSON.stringify(candidate, null, 2), 'utf8');
+    const authorityEvidence = structuredClone(candidate);
+    authorityEvidence.approval = {
+      ...authorityEvidence.approval,
+      confirmedAt: '2026-06-17T16:10:00.000Z',
+      approverName: 'Ops Owner',
+    };
+    const dbPath = writeAdReadbackAuthorityDb(path.join(dir, 'authority-db'), authorityEvidence);
 
     const result = runNode('scripts/fill-ad-readback-evidence.js', [
       '--source', source,
       '--out', out,
+      '--db', dbPath,
       '--approver-name', 'Ops Owner',
       '--approval-artifact', 'approval-ticket-123',
       '--approval-confirmed-at', '2026-06-17T16:10:00.000Z',
@@ -130,12 +157,24 @@ describe('fill ad readback evidence', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('AD_READBACK_EVIDENCE verified');
     const evidence = JSON.parse(fs.readFileSync(out, 'utf8'));
+    expect(evidence.schemaVersion).toBe(2);
+    expect(evidence.authority).toMatchObject({
+      recommendationId: 4,
+      recommendationRevision: 2,
+      recommendationStatusAtExport: 'approved',
+      batchId: 'batch_2026-06-17',
+    });
     expect(evidence.status).toBe('PASS');
     expect(evidence.realWriteApproved).toBe(true);
     expect(evidence.safety.adWriteActionsPerformed).toBe(true);
     expect(evidence.approval.operatorConfirmed).toBe(true);
     expect(evidence.target.entityName).toBe('door lock');
     expect(evidence.source.sourceRow).toBe(410);
+    expect(evidence.source).toMatchObject({
+      recommendationId: '4',
+      recommendationRevision: 2,
+      batchId: 'batch_2026-06-17',
+    });
     expect(evidence.before.value).toBe('1.63');
     expect(evidence.after.value).toBe('1.46');
     expect(evidence.readback.actualValue).toBe('1.46');

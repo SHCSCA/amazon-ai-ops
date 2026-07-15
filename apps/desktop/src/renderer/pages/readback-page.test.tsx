@@ -19,6 +19,7 @@ import {
   readbackOpenPathButtonView,
   readbackRepairFieldClass,
   readbackPrecheckCopy,
+  readbackVerifierPassed,
   readbackSessionSummary,
   readbackSessionWorkflow,
   readbackStepFromKeyboard,
@@ -34,17 +35,180 @@ import { firstIncompleteReadbackStep, readbackWizardSteps } from '../readback-wi
 import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
 
 describe('readback workflow invalidation contract', () => {
-  it.each([
-    ['create', 'readback-created'],
-    ['verify', 'readback-verified'],
-  ] as const)('maps %s success to %s', async (action, expectedSource) => {
+  it('publishes readback-created after a successful evidence export', async () => {
     const target = new EventTarget();
     const sources: string[] = [];
     const unsubscribe = subscribeWorkflowInvalidation((detail) => sources.push(detail.source), target);
 
-    await runReadbackWorkflowMutation(action, async () => undefined, target);
-    expect(sources).toEqual([expectedSource]);
+    await runReadbackWorkflowMutation('create', async () => ({ status: 'NEEDS_WORK' }), target);
+    expect(sources).toEqual(['readback-created']);
     unsubscribe();
+  });
+
+  it('publishes readback-verified only when the authoritative verifier is ready and PASS', async () => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation((detail) => sources.push(detail.source), target);
+
+    await runReadbackWorkflowMutation('verify', async () => ({ ready: false, status: 'NEEDS_WORK' }), target);
+    await runReadbackWorkflowMutation('verify', async () => ({ ready: true, status: 'NEEDS_WORK' }), target);
+    await runReadbackWorkflowMutation('verify', async () => ({ ready: true, status: 'PASS' }), target);
+
+    expect(readbackVerifierPassed({ ready: false, status: 'PASS' })).toBe(false);
+    expect(readbackVerifierPassed({ ready: true, status: 'PASS' })).toBe(true);
+    expect(sources).toEqual(['readback-verified']);
+    unsubscribe();
+  });
+
+  it('suppresses workflow publication when the completed request is no longer current', async () => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation((detail) => sources.push(detail.source), target);
+
+    await runReadbackWorkflowMutation(
+      'create',
+      async () => ({ status: 'NEEDS_WORK' }),
+      target,
+      () => false,
+    );
+    await runReadbackWorkflowMutation(
+      'verify',
+      async () => ({ ready: true, status: 'PASS' }),
+      target,
+      () => false,
+    );
+
+    expect(sources).toEqual([]);
+    unsubscribe();
+  });
+});
+
+describe('readback task-first workspace frame', () => {
+  it('exposes the evidence workspace identity and uses one task banner, workbench, and technical inspector', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('<PageFrame');
+    expect(source).toContain('<TaskBanner');
+    expect(source).toContain('<WorkbenchPanel');
+    expect(source.match(/<ResponsiveInspector/g)).toHaveLength(1);
+    expect(source).toContain('data-workspace="readback"');
+    expect(source).toContain('data-workspace-subview="evidence"');
+    expect(source).toContain('data-workspace-evidence-root="true"');
+    expect(source).toContain('data-preview-scenario={authority.previewOnly ? previewScenarioId : undefined}');
+    expect(source).not.toContain('<PageHeader');
+    expect(source).not.toContain('<ProgressiveDetails');
+  });
+
+  it('keeps preview capture targets natively inert and removes raw screenshot path editors', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('data-capture-slot={slot}');
+    expect(source).toContain('aria-disabled={disabled || undefined}');
+    expect(source).toContain('tabIndex={disabled ? -1 : 0}');
+    expect(source).toContain('disabled={authority.previewOnly || Boolean(activeAction)}');
+    expect(source).not.toMatch(/<input[^>]+value=\{form\.(approvalArtifactPath|beforeScreenshotPath|afterScreenshotPath|readbackEvidencePath)\}/);
+  });
+
+  it('treats loading another approved action as a complete evidence-session boundary', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const loadHandler = source.slice(
+      source.indexOf('const nextForm = formFromRecommendation(row, scope, currentBatchId);'),
+      source.indexOf('setActiveStep(firstIncompleteReadbackStep', source.indexOf('const nextForm = formFromRecommendation(row, scope, currentBatchId);')) + 140,
+    );
+
+    expect(loadHandler).toContain('setExportResult(null)');
+    expect(loadHandler).toContain('setSessionResult(null)');
+    expect(loadHandler).toContain('setSessionCheck(null)');
+    expect(loadHandler).toContain('setSessionFillResult(null)');
+    expect(loadHandler).toContain('setSessionVerifyResult(null)');
+    expect(loadHandler).toContain('setMessage(null)');
+    expect(loadHandler).toContain('setCopyNotice(null)');
+  });
+
+  it('publishes prepare, check, and fill results only for the current work-package request', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const sessionFlow = source.slice(
+      source.indexOf('async function prepareSessionPacket()'),
+      source.indexOf('async function verifyReadbackEvidence('),
+    );
+
+    expect(source).toContain("const activeSessionRequestRef = useRef<ReadbackRequestSnapshot | null>(null)");
+    expect(sessionFlow.match(/kind: 'session'/g)).toHaveLength(3);
+    expect(sessionFlow.match(/canPublishReadbackResult\(request, activeSessionRequestRef\.current\)/g)?.length).toBeGreaterThanOrEqual(6);
+    expect(sessionFlow).toContain("runReadbackWorkflowMutation<any>(\n          'create'");
+    expect(sessionFlow).toContain('activeSessionRequestRef.current\n              && canPublishReadbackResult(request, activeSessionRequestRef.current)');
+    expect(sessionFlow).toContain('if (result?.readyForVerifier) setSessionCheck(null);');
+  });
+
+  it('does not attach a screenshot save that completes after the current scope or form changes', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const captureFlow = source.slice(
+      source.indexOf('async function captureEvidence('),
+      source.indexOf('async function loadApprovedRows()'),
+    );
+
+    expect(source).toContain('const activeCaptureRequestRef = useRef<ReadbackRequestSnapshot | null>(null)');
+    expect(captureFlow).toContain("kind: 'capture'");
+    expect(captureFlow.match(/canPublishReadbackResult\(request, activeCaptureRequestRef\.current\)/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(captureFlow.indexOf('canPublishReadbackResult(request, activeCaptureRequestRef.current)'))
+      .toBeLessThan(captureFlow.indexOf('update(captureSlotPatch'));
+  });
+
+  it('uses the strict readback error boundary for every workflow catch', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain("import { toReadbackUserFacingError } from '../user-facing-error'");
+    expect(source).not.toContain('toUserFacingError(');
+    expect(source).toContain("console.error('[readback-workspace]'");
+  });
+
+  it('keeps first-screen copy operator-facing and shows one coherent passed state', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const firstScreen = source.slice(source.indexOf('<PageFrame'), source.indexOf('<ResponsiveInspector'));
+
+    expect(source).toContain('const finalVerificationPassed = readbackVerifierPassed(sessionVerifyResult)');
+    expect(firstScreen).toContain("finalVerificationPassed ? '结果核对已通过'");
+    expect(source).toContain("label: '查看核对详情'");
+    expect(firstScreen).toContain('建议版本');
+    expect(firstScreen).not.toContain('PASS');
+    expect(firstScreen).not.toContain('NEEDS_WORK');
+    expect(firstScreen).not.toContain('verifier');
+    expect(firstScreen).not.toContain('Main 进程');
+    expect(firstScreen).not.toContain('APP_READY');
+  });
+
+  it('uses a five-column authority table and a reduced-motion-safe repair handoff', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('<th>对象</th>');
+    expect(source).toContain('<th>位置</th>');
+    expect(source).toContain('<th>动作与值</th>');
+    expect(source).toContain('<th>审批版本</th>');
+    expect(source).toContain('<td colSpan={5}>');
+    expect(source).toContain("window.matchMedia('(prefers-reduced-motion: reduce)').matches");
+    expect(source).toContain("behavior: reducedMotion ? 'auto' : 'smooth'");
+  });
+
+  it('contains the task-first workspace at 1200px and 125% zoom without shrinking copy below 12px', () => {
+    const stylesheet = readFileSync(new URL('../styles/readback.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toMatch(/\.readback-page\s*{[\s\S]*overflow-x:\s*clip/);
+    expect(stylesheet).toMatch(/\.readback-page \.approval-table\s*{[\s\S]*table-layout:\s*fixed/);
+    expect(stylesheet).toContain('@media (max-width: 1199px)');
+    expect(stylesheet).toContain('@media (max-width: 980px)');
+    expect(stylesheet).toMatch(/\.readback-page :is\(small, code, \.muted-line\)[\s\S]*font-size:\s*12px/);
+    expect(stylesheet).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*animation:\s*none/);
+  });
+
+  it('overrides legacy readback step and status labels to at least 12px', () => {
+    const stylesheet = readFileSync(new URL('../styles/readback.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toMatch(
+      /\.readback-page \.readback-step > span,[\s\S]*\.readback-page \.readback-step strong,[\s\S]*\.readback-page \.readback-step small\s*{[\s\S]*font-size:\s*12px/,
+    );
+    expect(stylesheet).toMatch(
+      /\.readback-page \.readback-contract-card > span,[\s\S]*\.readback-page \.status-pill,[\s\S]*\.readback-page \.chip\s*{[\s\S]*font-size:\s*12px/,
+    );
   });
 });
 
@@ -200,21 +364,24 @@ describe('readback wizard user-task copy', () => {
     expect(source).toContain('先记录执行前值和截图，再记录执行后值和截图，最后刷新广告后台填写回读值和回读截图');
   });
 
-  it('removes duplicate step numbers from the tab label while keeping numbered panel titles', () => {
+  it('removes duplicate step numbers and does not repeat the workbench title inside the active panel', () => {
     const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
 
     expect(readbackStepTabTitle('1. 选择已批准动作')).toBe('选择已批准动作');
     expect(readbackStepTabTitle('4. 校验并导出证据')).toBe('校验并导出证据');
     expect(source).toContain('<strong>{readbackStepTabTitle(step.title)}</strong>');
-    expect(source).toContain('<Panel title="1. 选择已批准动作"');
+    expect(source).toContain('<section aria-label="审批凭证内容" className="readback-workbench-section">');
+    expect(source).not.toContain('<h3 id="readback-approval-title">2. 填写审批凭证</h3>');
+    expect(source).not.toContain('<h3 id="readback-verify-title">4. 校验并导出证据</h3>');
   });
 
-  it('keeps the evidence export action reachable from the fourth step', () => {
+  it('runs export and direct verification only through the blocker-derived task action', () => {
     const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
 
-    expect(source).toContain('const exportEvidenceButton = readbackActionButtonView({');
-    expect(source).toContain('label: precheckCopy.exportButtonLabel');
-    expect(source).toContain('onClick={exportEvidence}');
+    expect(source).toContain('runReadbackFinalVerificationWorkflow({');
+    expect(source).toContain('primaryAction={finalVerificationPassed ? passedTaskAction : taskBannerAction(primaryRepairAction)}');
+    expect(source).toContain("activeActionRef.current = action");
+    expect(source).not.toContain('const exportEvidenceButton = readbackActionButtonView({');
   });
 });
 
@@ -233,33 +400,28 @@ describe('readback structured field cells', () => {
     expect(stylesheet).toMatch(/\.readback-field-cell-label\s*{[\s\S]*background:\s*#fff/);
   });
 
-  it('keeps loaded source correction behind a modal instead of an inline page form', () => {
+  it('keeps Main-derived source and approval identity read-only without a renderer editor', () => {
     const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
-    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
     expect(source).toContain('className="readback-source-summary"');
-    expect(source).toContain('setSourceFieldEditorOpen(true)');
-    expect(source).toContain('aria-modal="true"');
-    expect(source).toContain('className="product-config-modal readback-source-modal"');
-    expect(source).not.toContain('<ProgressiveDetails title="查看或修正载入后的来源字段"');
-    expect(stylesheet).toMatch(/\.readback-source-summary\s*{[\s\S]*grid-template-columns:/);
-    expect(stylesheet).toMatch(/\.readback-source-field-grid\s*{[\s\S]*repeat\(4, minmax\(0, 1fr\)\)/);
+    expect(source).toContain('data-readback-authority-source="main-derived"');
+    expect(source).toContain('data-readback-approval-authority="main-derived"');
+    expect(source).toContain('<dl className="readback-authority-grid"');
+    expect(source).not.toContain('setSourceFieldEditorOpen');
+    expect(source).not.toMatch(/<input[^>]+value=\{form\.(approverName|approvalNote|approvalConfirmedAt|approvalArtifactPath)\}/);
   });
 
-  it('keeps readback safety gate details behind a compact modal entry', () => {
+  it('keeps verifier paths, hash, work package, and safety gates in one technical inspector', () => {
     const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
-    const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
-    expect(source).toContain('guardModalOpen');
-    expect(source).toContain('查看安全门');
-    expect(source).toContain('className="product-config-modal readback-guard-modal"');
-    expect(source).toContain('安全门与当前缺口');
-    expect(source).toContain('readback-guard-lines');
-    expect(source).toContain('<ReadbackContractStrip checks={contractChecks} />');
-    expect(stylesheet).toMatch(/\.readback-current-step-summary\s*{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto/);
-    expect(stylesheet).toContain('.readback-current-step-actions');
-    expect(stylesheet).toContain('.readback-guard-modal');
-    expect(stylesheet).toContain('.readback-guard-lines');
+    expect(source.match(/<ResponsiveInspector/g)).toHaveLength(1);
+    expect(source).toContain('title="技术与证据详情"');
+    expect(source).toContain('data-action="open-technical-inspector"');
+    expect(source).toContain('<span>SHA-256</span>');
+    expect(source).toContain('<h3 id="readback-technical-session-title">NEEDS_WORK 工作包</h3>');
+    expect(source).toContain('className="readback-safety-gates"');
+    expect(source).not.toContain('guardModalOpen');
+    expect(source).not.toContain('<ProgressiveDetails');
   });
 });
 

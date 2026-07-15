@@ -44,7 +44,12 @@ import { getLingxingSessionNavigationPlan, isLingxingAdsLoggedInPage } from './l
 import { buildAdExecutionUnavailableResult, buildActionLogForExecution, getRecommendationExecutionOutcome } from './recommendation-execution-policy';
 import { applyRecommendationDecision, assertRecommendationDecisionRevision, normalizeRecommendationDecisionRequest } from './recommendation-approval-policy';
 import { extractLingxingListingFromSnapshot, type ListingDomFieldSnapshot, type ListingExtractionResult, type ListingPageSnapshot } from './listing-lingxing-extractor';
-import { adReadbackEvidenceToMarkdown, buildAdReadbackEvidence, type AdReadbackEvidenceInput } from './ad-readback-evidence';
+import { adReadbackEvidenceToMarkdown, buildAdReadbackEvidence } from './ad-readback-evidence';
+import {
+  assertCurrentAdReadbackEvidenceAuthority,
+  buildAuthorizedAdReadbackEvidenceInput,
+  type ExportAuthorizedAdReadbackEvidenceRequest,
+} from './ad-readback-authority';
 import { verifyAdReadbackEvidenceFile, type VerifiedAdReadbackEvidence } from './ad-readback-evidence-verifier';
 import { fillAdReadbackSession, prepareAdReadbackSession, verifyAdReadbackSession, type FilledAdReadbackSession, type PreparedAdReadbackSession, type VerifiedAdReadbackSession } from './ad-readback-session';
 import { saveReadbackCaptureFile, type ReadbackCaptureSlot, type SavedReadbackCapture } from './ad-readback-capture';
@@ -6907,6 +6912,45 @@ function recordAdStrategyAiCallLog(
   }
 }
 
+function validateCurrentAdReadbackEvidenceAuthority(
+  evidencePath: string,
+  stage: 'verify' | 'final-readiness',
+): { ok: true } | { ok: false; message: string } {
+  let evidence: Record<string, any> = {};
+  try {
+    evidence = JSON.parse(fs.readFileSync(path.resolve(evidencePath), 'utf8')) as Record<string, any>;
+    const authority = evidence.authority || {};
+    const gate = getBusinessRecommendationGate(authority);
+    assertCurrentAdReadbackEvidenceAuthority({
+      evidence,
+      recommendation: state.recommendationRepo?.findById(Number(authority.recommendationId)),
+      resolvedScope: {
+        dateFrom: gate.scope.dateFrom,
+        dateTo: gate.scope.dateTo,
+        storeName: gate.scope.storeName,
+        marketplaceCode: gate.scope.marketplaceCode,
+        asin: gate.scope.asin,
+        batchId: gate.scope.batchId || '',
+      },
+      allowedSourceFiles: gate.metricSource.sourceFiles,
+    });
+    return { ok: true };
+  } catch (caught) {
+    const authority = evidence.authority || {};
+    console.warn('[AdReadbackAuthority]', {
+      stage,
+      recommendationId: Number(authority.recommendationId) || null,
+      revision: Number(authority.recommendationRevision) || 0,
+      batchId: String(authority.batchId || ''),
+      reason: caught instanceof Error ? caught.message : 'authority check failed',
+    });
+    return {
+      ok: false,
+      message: '数据库中的已批准建议或当前范围已变化，请刷新后重新导出并校验。',
+    };
+  }
+}
+
 function handleRefreshFinalReadiness(input?: { adReadbackPath?: string }): { success: boolean; evidenceManifestPath: string; finalReadinessPath: string; readiness: DeliveryReadinessView } {
   const result = refreshFinalReadiness({
     repoRootDir: REPO_ROOT_DIR,
@@ -6914,6 +6958,7 @@ function handleRefreshFinalReadiness(input?: { adReadbackPath?: string }): { suc
     releaseDir: path.join(REPO_ROOT_DIR, 'apps', 'desktop', 'release'),
     appVersion: APP_VERSION,
     adReadbackPath: typeof input?.adReadbackPath === 'string' && input.adReadbackPath.trim() ? input.adReadbackPath : undefined,
+    validateAdReadbackAuthority: (evidencePath) => validateCurrentAdReadbackEvidenceAuthority(evidencePath, 'final-readiness'),
   });
   return {
     success: true,
@@ -7298,20 +7343,62 @@ function handleGetRecommendations(filter: any = []): any[] {
   return [];
 }
 
-function handleExportAdReadbackEvidence(input: AdReadbackEvidenceInput): { jsonPath: string; markdownPath: string; status: string; readyForVerifier: boolean } {
-  const evidence = buildAdReadbackEvidence(input || {});
+function handleExportAdReadbackEvidence(input: ExportAuthorizedAdReadbackEvidenceRequest): {
+  jsonPath: string;
+  markdownPath: string;
+  sha256: string;
+  status: string;
+  readyForVerifier: boolean;
+  nextAction: 'verify' | 'prepare';
+  authority: { recommendationId: number; revision: number; batchId: string };
+} {
+  const request = input || {} as ExportAuthorizedAdReadbackEvidenceRequest;
+  let gate: ReturnType<typeof getBusinessRecommendationGate>;
+  try {
+    gate = getBusinessRecommendationGate(request.scope);
+  } catch (caught) {
+    console.warn('[AdReadbackAuthority]', {
+      stage: 'export-gate',
+      recommendationId: Number(request.recommendationId) || null,
+      reason: caught instanceof Error ? caught.message : String(caught || '当前范围不可用'),
+    });
+    throw new Error('结果核对被阻断：当前范围无法绑定真实报表批次，请刷新范围后重试。');
+  }
+  const evidenceInput = buildAuthorizedAdReadbackEvidenceInput({
+    request,
+    recommendation: state.recommendationRepo?.findById(Number(request.recommendationId)),
+    resolvedScope: {
+      dateFrom: gate.scope.dateFrom,
+      dateTo: gate.scope.dateTo,
+      storeName: gate.scope.storeName,
+      marketplaceCode: gate.scope.marketplaceCode,
+      asin: gate.scope.asin,
+      batchId: gate.scope.batchId || '',
+    },
+    allowedSourceFiles: gate.metricSource.sourceFiles,
+  });
+  const evidence = buildAdReadbackEvidence(evidenceInput);
   const exportDir = path.join(EXPORTS_DIR, 'ad-readback-evidence');
   fs.mkdirSync(exportDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const jsonPath = path.join(exportDir, `real-ad-execution-readback-${stamp}.json`);
   const markdownPath = jsonPath.replace(/\.json$/i, '.md');
-  fs.writeFileSync(jsonPath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+  const jsonContent = `${JSON.stringify(evidence, null, 2)}\n`;
+  fs.writeFileSync(jsonPath, jsonContent, 'utf8');
   fs.writeFileSync(markdownPath, adReadbackEvidenceToMarkdown(evidence, jsonPath), 'utf8');
+  const readyForVerifier = evidence.status === 'PASS';
   return {
     jsonPath,
     markdownPath,
+    sha256: crypto.createHash('sha256').update(jsonContent, 'utf8').digest('hex').toUpperCase(),
     status: evidence.status,
-    readyForVerifier: evidence.status === 'PASS',
+    readyForVerifier,
+    nextAction: readyForVerifier ? 'verify' : 'prepare',
+    authority: {
+      recommendationId: request.recommendationId,
+      revision: request.expectedRevision,
+      batchId: gate.scope.batchId || '',
+    },
   };
 }
 
@@ -7331,7 +7418,30 @@ function handleFillAdReadbackSession(input: { sessionDir?: string }): FilledAdRe
 }
 
 function handleVerifyAdReadbackEvidence(input: { evidencePath?: string }): VerifiedAdReadbackEvidence {
-  return verifyAdReadbackEvidenceFile(String(input?.evidencePath || ''));
+  const result = verifyAdReadbackEvidenceFile(String(input?.evidencePath || ''));
+  if (!result.ready) return result;
+
+  const authority = validateCurrentAdReadbackEvidenceAuthority(result.evidencePath, 'verify');
+  if (authority.ok) {
+    return {
+      ...result,
+      checks: [
+        ...result.checks,
+        { label: 'database authority is still approved and current', passed: true },
+      ],
+    };
+  }
+
+  return {
+    ...result,
+    ready: false,
+    status: 'NEEDS_WORK',
+    checks: [
+      ...result.checks,
+      { label: 'database authority is still approved and current', passed: false, details: authority.message },
+    ],
+    issues: [...result.issues, authority.message],
+  };
 }
 
 function handleSaveReadbackCapture(input: {

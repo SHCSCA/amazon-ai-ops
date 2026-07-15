@@ -9,3 +9,4 @@ export * from './browser';
 export * from './common';
 export * from './v1_5';
 export * from './operation-event';
+export * from './ad-readback';

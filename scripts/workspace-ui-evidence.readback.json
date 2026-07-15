@@ -1,0 +1,51 @@
+{
+  "baseUrl": "http://127.0.0.1:4173/",
+  "outputDir": "output/codex-evidence/workspace-ui-task5c-readback",
+  "readbackMode": "preview-readonly",
+  "settleMs": 500,
+  "waitFor": "[data-workspace-evidence-root][data-readback-mode=\"preview-readonly\"][data-preview-scenario]",
+  "targets": [
+    {
+      "workspace": "readback",
+      "subview": "evidence",
+      "scenario": "missing-readback-evidence",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "readback",
+      "subview": "evidence",
+      "scenario": "missing-readback-evidence",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "readback",
+      "subview": "evidence",
+      "scenario": "missing-readback-evidence",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "readback",
+      "subview": "evidence",
+      "scenario": "delivery-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "readback",
+      "subview": "evidence",
+      "scenario": "delivery-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "readback",
+      "subview": "evidence",
+      "scenario": "delivery-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    }
+  ]
+}

@@ -159,6 +159,36 @@ export interface ActionEvidence {
   sourceFiles?: string[];
   sourceRow?: number;
   currency?: 'USD';
+  approvalDecision?: {
+    [key: string]: unknown;
+    decision?: 'approved' | 'rejected';
+    approvedBy?: string;
+    rejectedBy?: string;
+    decidedAt?: string;
+    note?: string;
+    recommendationId?: number;
+    actionType?: string;
+    portfolioName?: string;
+    campaignName?: string;
+    adGroupName?: string;
+    asin?: string;
+    entityType?: string;
+    entityName?: string;
+    currentValue?: string;
+    recommendedValue?: string;
+    batchId?: string;
+    sourceBatchId?: string;
+    metricDate?: string;
+    sourceRow?: number;
+    sourceFiles?: string[];
+    scope?: {
+      dateFrom?: string;
+      dateTo?: string;
+      storeName?: string;
+      marketplaceCode?: string;
+      asin?: string;
+    };
+  };
 }
 
 export interface ActionLog {

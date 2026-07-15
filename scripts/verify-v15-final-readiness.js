@@ -5,6 +5,7 @@ const {
   evaluatePackageReadinessFromFiles,
   evaluateReadinessContract,
 } = require('../apps/desktop/src/main/final-readiness-package-evaluator.js');
+const { resolveAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -197,10 +198,22 @@ function checkAdAiExplanation(evidencePath) {
   return checkWithVerifier('Ad recommendation AI explanation', 'scripts/verify-ad-ai-explanation-evidence.js', evidencePath);
 }
 
-function checkAdExecutionReadback(evidencePath) {
+function checkAdExecutionReadback(evidencePath, dbPath, dbResolutionError) {
   const failClosed = runNode('scripts/verify-ad-execution-fail-closed.js');
   if (evidencePath && fs.existsSync(evidencePath)) {
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    if (dbResolutionError) {
+      return {
+        name: 'Real ad execution readback',
+        status: 'needs_work',
+        ok: false,
+        evidencePath,
+        message: `SQLite authority database resolution failed: ${dbResolutionError}`,
+        safetyFailClosed: failClosed.ok,
+      };
+    }
+    const verifierArgs = [evidencePath];
+    if (dbPath) verifierArgs.push('--db', dbPath);
+    const result = runNode('scripts/verify-ad-readback-evidence.js', verifierArgs);
     return {
       name: 'Real ad execution readback',
       status: result.ok ? 'passed' : 'needs_work',
@@ -238,6 +251,21 @@ const aiLiveEvidence = resolveMaybe(args['ai-live'] || resolveManifestEvidencePa
 const adAiExplanationEvidence = resolveMaybe(args['ad-ai-explanation'] || resolveManifestEvidencePath(evidenceManifest, 'adAiExplanation') || latestEvidence(/^(installed-)?ad-ai-explanation-.*\.json$/i));
 const listingAiEvidence = resolveMaybe(args['listing-ai-draft'] || resolveManifestEvidencePath(evidenceManifest, 'listingAiDraft') || latestEvidence(/^(installed-listing-ai-draft|listing-ai-draft).*\.json$/i));
 const adReadbackEvidence = args['ad-readback'] ? path.resolve(args['ad-readback']) : resolveManifestEvidencePath(evidenceManifest, 'adReadback');
+let authorityDbPath = null;
+let authorityDbSelectedBy = null;
+let authorityDbResolutionError = null;
+if (adReadbackEvidence || args.db || process.env.AMAZON_AI_OPS_DB_PATH) {
+  try {
+    authorityDbPath = resolveAdReadbackAuthorityDbPath(args.db);
+    authorityDbSelectedBy = args.db
+      ? 'explicit-arg'
+      : process.env.AMAZON_AI_OPS_DB_PATH
+        ? 'env-override'
+        : 'default-discovery';
+  } catch (error) {
+    authorityDbResolutionError = error instanceof Error ? error.message : String(error);
+  }
+}
 const packageLaunchSmokePath = args['package-launch-smoke']
   ? path.resolve(args['package-launch-smoke'])
   : latestEvidence(packageLaunchSmokePattern);
@@ -253,7 +281,7 @@ const businessGates = [
   checkAiLive(aiLiveEvidence),
   checkAdAiExplanation(adAiExplanationEvidence),
   checkListingAiDraft(listingAiEvidence),
-  checkAdExecutionReadback(adReadbackEvidence),
+  checkAdExecutionReadback(adReadbackEvidence, authorityDbPath, authorityDbResolutionError),
 ];
 const manifestDriven = Boolean(evidenceManifest);
 const readiness = evaluateReadinessContract({ businessGates, packageEvaluation, manifestDriven });
@@ -283,6 +311,9 @@ const summary = {
   evidenceSelection: {
     mode: evidenceManifest ? 'manifest' : 'latest-fallback',
     manifestPath: evidenceManifestPath || null,
+    authorityDbPath,
+    authorityDbSelectedBy,
+    authorityDbResolutionError,
   },
   manifestDriven,
   status: appReady ? 'APP_READY' : reportReady && listingReady ? 'APP_NEEDS_WORK' : 'REPORT_COLLECTION_NEEDS_WORK',

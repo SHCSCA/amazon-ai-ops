@@ -18,9 +18,10 @@
 | Task 4 工作区导航基础 | 已完成 | 8 个可见工作区、16 路由兼容、`NextSafeAction`、工作流失效刷新已落地 |
 | Task 5A 共用视觉系统、Shell 与 Today | 已完成 | 任务优先 Today、8 工作区 Shell、fail-closed 运行态证据已通过独立双评审 |
 | Task 5B 建议与审批 | 已完成 | 统一权威队列、响应式检查器、批量送审重载与审批状态守卫均通过独立代码/视觉复核 |
-| Task 5C–8 工作区与交付 | 待执行 | 下一步重构结果核对工作区，并继续保持回读与 READY fail-closed 边界 |
+| Task 5C 结果核对 | 已完成 | v2 权威合同、PASS/NEEDS_WORK 分流、异步防串、只读预览和任务优先核对工作区均通过独立 Runtime、QA 与 UI/Product 复核 |
+| Task 6–8 工作区与交付 | 待执行 | 继续迁移其余五个工作区，完成全工作区验收后再重建并声明新的 Windows READY 交付 |
 
-当前有效验证基线：140/140 test files（1208 passed / 2 skipped）；Task 1–5A 已分别通过独立复核。后续不得用旧 APP_READY 证据声明新 UI 已交付。
+当前有效验证基线：148/148 test files（1465 passed / 2 skipped）；Task 1–5C 已分别通过独立复核。后续不得用旧 APP_READY 证据声明新 UI 已交付。
 
 ## 二、固定约束
 
@@ -125,15 +126,29 @@
 
 ### Task 5C：结果核对工作区
 
-- [ ] 保留四个语义步骤和 tab/tabpanel 键盘契约，只展开当前步骤。
-- [ ] 首屏只显示 TaskBanner、紧凑步骤摘要和当前核对工作区。
-- [ ] 工作包、路径、命令、哈希、verifier 细节集中到一个技术抽屉。
-- [ ] 缺截图、缺值、未校验各提供一个明确修复动作。
-- [ ] 保留 evidence write、readback verify、export 与 APP_READY 全部 fail-closed 边界。
-- [ ] 验证 preview 只能展示只读成功布局，不能写证据或解锁真实导出。
-- [ ] 完成运行态证据、独立复核与提交。
+#### 2026-07-14 运行合同决议
+
+三个独立只读角色（Backend Runtime、Frontend/UX、QA/Acceptance）一致判定旧实现为 `BLOCK`。Task 5C 在下列合同全部转绿前不得进入视觉验收，也不得继承旧 `APP_READY`：
+
+1. **API boundary**：renderer 只提交 `recommendationId + expectedRevision + 当前 scope/batch + operatorEvidence`。Main 必须重新读取数据库中的建议，确认仍为 `approved` 且 revision、店铺、站点、ASIN、日期范围、批次和真实来源文件一致；目标、来源、动作和审批身份全部由 Main 派生。
+2. **Data contract**：回读证据升级为 v2，顶层携带 Main 生成的 `authority`（建议 id/revision、导出时状态、scope、batch、checkedAt）。无 authority、authority 被修改、旧 revision 或非 approved 行均不能通过 verifier/READY。
+3. **Task/event flow**：`PASS` 导出直接校验 `exportResult.jsonPath`，绝不创建工作包；只有 `NEEDS_WORK` 才允许 `prepare -> check -> fill -> verify`。只有 verifier 返回 `ready=true` 才广播 `readback-verified`。
+4. **Frontend integration**：scope/batch 生成稳定 query key；行加载、选择、表单、导出和校验都绑定 query key/request id/form epoch，旧异步结果不得发布。Preview 权限由 App 显式下发，即使注入写 API 也不能截图存证、导出、建包、填充或校验。
+5. **Error/logging**：IPC 保持 Promise 兼容，但只向 UI 返回稳定中文可行动错误；SQL、堆栈和原始异常不得进入首屏。路径、命令、哈希和 verifier 细节只进入技术抽屉。
+6. **Verification**：必须覆盖 authority 单测与临时真实数据库集成、PASS 直验、NEEDS_WORK 工作包、`ready=false` 不广播、scope/form race、恶意 preview 注入零写入、四个稳定 tabpanel、三个唯一修复动作及 1200/1400/125% 运行矩阵。
+7. **Blockers**：P0/P1、UX Critical/Important、workspace evidence contract violation 任一非零时保持阻断；现有把 `PASS -> prepare` 当作成功的浏览器 mock smoke 必须改为与真实后端同构。
+
+- [x] 保留四个语义步骤和 tab/tabpanel 键盘契约，只展开当前步骤。
+- [x] 首屏只显示 TaskBanner、紧凑步骤摘要和当前核对工作区。
+- [x] 工作包、路径、命令、哈希、verifier 细节集中到一个技术抽屉。
+- [x] 缺截图、缺值、未校验各提供一个明确修复动作。
+- [x] 保留 evidence write、readback verify、export 与 APP_READY 全部 fail-closed 边界。
+- [x] 验证 preview 只能展示只读成功布局，不能写证据或解锁真实导出。
+- [x] 完成运行态证据、独立复核与提交。
 
 **闸门：** 用户首先看到“还缺什么、去哪里补”；技术路径不再占据首屏；真实核对与预览视觉明确区分。
+
+**验证：** authority/READY/bundle 68/68、fill/preview/workspace broader 39/39、全仓 148/148 test files（1465 passed / 2 skipped）、全仓 typecheck、Main/Preload/Renderer 与 Windows installer/portable 构建均通过。最新业务 smoke 为 `output/codex-evidence/business-ui-ad-execution-smoke-1784081512998.json`；最新补证截图为 `output/codex-evidence/business-ui-ad-execution-readback-needs-work-1784081512998.png`；1200/1400/125% 视觉矩阵 6/6 通过。独立终审为 PASS，P0=0、P1=0；当前构建仍只是后续 Task 6–8 的中间候选，不声明新的 `APP_READY`。
 
 ### Task 6A：产品工作台与数据准备
 

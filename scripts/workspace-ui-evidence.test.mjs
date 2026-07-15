@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,11 +23,11 @@ let browser;
 
 beforeAll(async () => {
   browser = await chromium.launch({ headless: true });
-});
+}, 60_000);
 
 afterAll(async () => {
   await browser?.close();
-});
+}, 60_000);
 
 function validPageMarkup(extra = '') {
   return `
@@ -157,6 +157,72 @@ describe('workspace UI evidence CLI contract', () => {
     ]));
   });
 
+  it('ships the explicit readback preview matrix used by Task 5C', () => {
+    const config = JSON.parse(readFileSync('scripts/workspace-ui-evidence.readback.json', 'utf8'));
+    const normalized = normalizeWorkspaceEvidenceConfig(config);
+
+    expect(normalized.targets.map(({
+      dpr,
+      readbackMode,
+      scenario,
+      subview,
+      viewport,
+      workspace,
+    }) => ({ dpr, readbackMode, scenario, subview, viewport, workspace }))).toEqual([
+      {
+        dpr: 1,
+        readbackMode: 'preview-readonly',
+        scenario: 'missing-readback-evidence',
+        subview: 'evidence',
+        viewport: { height: 700, width: 1200 },
+        workspace: 'readback',
+      },
+      {
+        dpr: 1,
+        readbackMode: 'preview-readonly',
+        scenario: 'missing-readback-evidence',
+        subview: 'evidence',
+        viewport: { height: 900, width: 1400 },
+        workspace: 'readback',
+      },
+      {
+        dpr: 1.25,
+        readbackMode: 'preview-readonly',
+        scenario: 'missing-readback-evidence',
+        subview: 'evidence',
+        viewport: { height: 700, width: 1200 },
+        workspace: 'readback',
+      },
+      {
+        dpr: 1,
+        readbackMode: 'preview-readonly',
+        scenario: 'delivery-ready',
+        subview: 'evidence',
+        viewport: { height: 700, width: 1200 },
+        workspace: 'readback',
+      },
+      {
+        dpr: 1,
+        readbackMode: 'preview-readonly',
+        scenario: 'delivery-ready',
+        subview: 'evidence',
+        viewport: { height: 900, width: 1400 },
+        workspace: 'readback',
+      },
+      {
+        dpr: 1.25,
+        readbackMode: 'preview-readonly',
+        scenario: 'delivery-ready',
+        subview: 'evidence',
+        viewport: { height: 700, width: 1200 },
+        workspace: 'readback',
+      },
+    ]);
+    expect(new Set(normalized.targets.map((target) => target.waitFor))).toEqual(new Set([
+      '[data-workspace-evidence-root][data-readback-mode="preview-readonly"][data-preview-scenario]',
+    ]));
+  });
+
   it('normalizes matrix targets onto an explicit development-preview URL', () => {
     const normalized = normalizeWorkspaceEvidenceConfig({
       baseUrl: 'http://127.0.0.1:4173/index.html',
@@ -218,6 +284,35 @@ describe('workspace UI evidence CLI contract', () => {
 });
 
 describe('workspace UI DOM contract', () => {
+  it('reads the actual readback preview mode and scenario from the workspace DOM', async () => {
+    const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
+    const page = await context.newPage();
+    const readbackMarkup = validPageMarkup()
+      .replace('data-workspace="today"', 'data-workspace="readback"')
+      .replace('data-workspace-subview="overview"', 'data-workspace-subview="evidence"')
+      .replace('data-workspace-evidence-root', 'data-workspace-evidence-root data-readback-mode="preview-readonly" data-preview-scenario="delivery-ready"');
+    await loadMarkupAtUrl(
+      page,
+      readbackMarkup,
+      'http://workspace-evidence.test/?preview=1&scenario=delivery-ready',
+    );
+
+    const metrics = await collectWorkspaceDomMetrics(page);
+
+    expect(metrics.identity).toEqual({
+      pageUrl: 'http://workspace-evidence.test/?preview=1&scenario=delivery-ready',
+      previewScenario: 'delivery-ready',
+      readbackMode: 'preview-readonly',
+      scenario: 'delivery-ready',
+      scenarioSource: 'dom',
+      subview: 'evidence',
+      urlScenario: 'delivery-ready',
+      workspace: 'readback',
+    });
+
+    await context.close();
+  });
+
   it('fails closed when the requested workspace evidence root is missing', async () => {
     const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
     const page = await context.newPage();
@@ -312,6 +407,72 @@ describe('workspace UI DOM contract', () => {
 });
 
 describe('workspace UI screenshot evidence', () => {
+  it('rejects readback capture when the DOM readback mode is not preview-readonly', async () => {
+    const outputDir = mkdtempSync(join(tmpdir(), 'amazon-ai-ops-readback-dom-mode-drift-'));
+    const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
+    const page = await context.newPage();
+    const readbackMarkup = validPageMarkup()
+      .replace('data-workspace="today"', 'data-workspace="readback"')
+      .replace('data-workspace-subview="overview"', 'data-workspace-subview="evidence"')
+      .replace('data-workspace-evidence-root', 'data-workspace-evidence-root data-readback-mode="production" data-preview-scenario="delivery-ready"');
+    await loadMarkupAtUrl(
+      page,
+      readbackMarkup,
+      'http://workspace-evidence.test/?preview=1&scenario=delivery-ready',
+    );
+
+    try {
+      await expect(captureWorkspaceEvidence({
+        outputDir,
+        page,
+        target: {
+          dpr: 1,
+          readbackMode: 'preview-readonly',
+          scenario: 'delivery-ready',
+          subview: 'evidence',
+          viewport: { height: 700, width: 1200 },
+          workspace: 'readback',
+        },
+      })).rejects.toThrow(/readback mode.*production.*preview-readonly/i);
+    } finally {
+      await context.close();
+      rmSync(outputDir, { force: true, recursive: true });
+    }
+  });
+
+  it('rejects readback capture when the DOM preview scenario disagrees with the matching URL query', async () => {
+    const outputDir = mkdtempSync(join(tmpdir(), 'amazon-ai-ops-readback-dom-scenario-drift-'));
+    const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
+    const page = await context.newPage();
+    const readbackMarkup = validPageMarkup()
+      .replace('data-workspace="today"', 'data-workspace="readback"')
+      .replace('data-workspace-subview="overview"', 'data-workspace-subview="evidence"')
+      .replace('data-workspace-evidence-root', 'data-workspace-evidence-root data-readback-mode="preview-readonly" data-preview-scenario="missing-readback-evidence"');
+    await loadMarkupAtUrl(
+      page,
+      readbackMarkup,
+      'http://workspace-evidence.test/?preview=1&scenario=delivery-ready',
+    );
+
+    try {
+      await expect(captureWorkspaceEvidence({
+        outputDir,
+        page,
+        target: {
+          dpr: 1,
+          readbackMode: 'preview-readonly',
+          scenario: 'delivery-ready',
+          subview: 'evidence',
+          viewport: { height: 700, width: 1200 },
+          workspace: 'readback',
+        },
+      })).rejects.toThrow(/preview scenario.*missing-readback-evidence.*delivery-ready/i);
+    } finally {
+      await context.close();
+      rmSync(outputDir, { force: true, recursive: true });
+    }
+  });
+
   it('rejects capture when the actual workspace and subview do not match the target identity', async () => {
     const outputDir = mkdtempSync(join(tmpdir(), 'amazon-ai-ops-workspace-identity-drift-'));
     const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
@@ -437,8 +598,12 @@ describe('workspace UI screenshot evidence', () => {
       expect(saved.domMetrics.contract.passed).toBe(true);
       expect(saved.domMetrics.identity).toEqual({
         pageUrl: 'http://workspace-evidence.test/?preview=1&scenario=diagnosis-ready',
+        previewScenario: null,
+        readbackMode: null,
         scenario: 'diagnosis-ready',
+        scenarioSource: 'url',
         subview: 'overview',
+        urlScenario: 'diagnosis-ready',
         workspace: 'today',
       });
       expect(saved.screenshot.sha256).toBe(expectedHash);
@@ -498,6 +663,80 @@ describe('workspace UI screenshot evidence', () => {
       });
     } finally {
       await server.close();
+      rmSync(outputDir, { force: true, recursive: true });
+    }
+  });
+
+  it('dispatches target navigation before waiting for the target-only evidence root', async () => {
+    const outputDir = mkdtempSync(join(tmpdir(), 'amazon-ai-ops-workspace-wait-order-'));
+    const url = 'http://workspace-evidence.test/?preview=1&scenario=delivery-ready';
+    const calls = [];
+    let navigated = false;
+    const page = {
+      evaluate: async (_callback, input) => {
+        if (input?.workspace === 'readback' && input?.subview === 'evidence') {
+          calls.push('navigate');
+          navigated = true;
+          return undefined;
+        }
+        calls.push('metrics');
+        return {
+          contract: { passed: true, violations: [] },
+          dpr: 1,
+          identity: {
+            pageUrl: url,
+            previewScenario: 'delivery-ready',
+            readbackMode: 'preview-readonly',
+            scenario: 'delivery-ready',
+            scenarioSource: 'dom',
+            subview: 'evidence',
+            urlScenario: 'delivery-ready',
+            workspace: 'readback',
+          },
+          viewport: { height: 700, width: 1200 },
+        };
+      },
+      goto: async () => calls.push('goto'),
+      locator: () => ({
+        first: () => ({
+          waitFor: async () => {
+            calls.push('wait-for-root');
+            if (!navigated) throw new Error('target root was awaited before navigation');
+          },
+        }),
+      }),
+      screenshot: async ({ path }) => writeFileSync(path, 'fake-png'),
+      url: () => url,
+      waitForTimeout: async () => calls.push('settle'),
+    };
+    const fakeBrowser = {
+      newContext: async () => ({
+        close: async () => calls.push('close'),
+        newPage: async () => page,
+      }),
+    };
+
+    try {
+      const result = await runWorkspaceEvidenceTargets({
+        browser: fakeBrowser,
+        generatedAt: new Date('2026-07-13T08:10:01.000Z'),
+        outputDir,
+        targets: [{
+          dpr: 1,
+          readbackMode: 'preview-readonly',
+          scenario: 'delivery-ready',
+          settleMs: 0,
+          subview: 'evidence',
+          url,
+          viewport: { height: 700, width: 1200 },
+          waitFor: '[data-workspace-evidence-root][data-preview-scenario="delivery-ready"]',
+          workspace: 'readback',
+        }],
+      });
+
+      expect(result.passed).toBe(true);
+      expect(calls).toEqual(['goto', 'navigate', 'wait-for-root', 'settle', 'metrics', 'close']);
+    } finally {
       rmSync(outputDir, { force: true, recursive: true });
     }
   });

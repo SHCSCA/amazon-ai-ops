@@ -1,13 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryOpenPathButtonView, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy, runDeliveryWorkflowMutation } from './delivery-page';
+import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryOpenPathButtonView, deliveryReadbackVerifierPassed, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy, runDeliveryWorkflowMutation } from './delivery-page';
 import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
 
 describe('delivery workflow invalidation contract', () => {
   it.each([
     ['refresh', 'delivery-refreshed'],
     ['create-readback', 'readback-created'],
-    ['verify-readback', 'readback-verified'],
   ] as const)('maps %s success to %s', async (action, expectedSource) => {
     const target = new EventTarget();
     const sources: string[] = [];
@@ -15,6 +14,19 @@ describe('delivery workflow invalidation contract', () => {
 
     await runDeliveryWorkflowMutation(action, async () => undefined, target);
     expect(sources).toEqual([expectedSource]);
+    unsubscribe();
+  });
+
+  it('publishes readback-verified only for a ready PASS verifier result', async () => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeWorkflowInvalidation((detail) => sources.push(detail.source), target);
+
+    await runDeliveryWorkflowMutation('verify-readback', async () => ({ ready: false, status: 'NEEDS_WORK' }), target);
+    await runDeliveryWorkflowMutation('verify-readback', async () => ({ ready: true, status: 'PASS' }), target);
+
+    expect(deliveryReadbackVerifierPassed({ ready: true, status: 'NEEDS_WORK' })).toBe(false);
+    expect(sources).toEqual(['readback-verified']);
     unsubscribe();
   });
 });

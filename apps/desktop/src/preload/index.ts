@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { ExportAdReadbackEvidenceRequest } from '@amazon-ai-ops/shared-types';
 
 ipcRenderer.on('business-ui:data-updated', () => {
   window.dispatchEvent(new Event('business-ui:data-updated'));
@@ -133,7 +134,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   approveRecommendation: (input: number | { id: number; expectedRevision: number; decision?: any }) => ipcRenderer.invoke('recommendations:approve', input),
   rejectRecommendation: (input: number | { id: number; expectedRevision: number; decision?: any }) => ipcRenderer.invoke('recommendations:reject', input),
   executeRecommendation: (id: number) => ipcRenderer.invoke('recommendations:execute', id),
-  exportAdReadbackEvidence: (input: any) =>
+  exportAdReadbackEvidence: (input: ExportAdReadbackEvidenceRequest) =>
     ipcRenderer.invoke('recommendations:export-ad-readback-evidence', input),
   prepareAdReadbackSession: (input: { sourcePath: string; outDir?: string }) =>
     ipcRenderer.invoke('recommendations:prepare-ad-readback-session', input),

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { assertCurrentAdReadbackDbAuthority } = require('./ad-readback-authority-db');
 
 const LOW_RISK_ACTIONS = new Set([
   'lower_bid',
@@ -16,6 +17,27 @@ function pass(message) {
 function fail(message) {
   console.error(`[FAIL] ${message}`);
   process.exitCode = 1;
+}
+
+function parseArgs(argv) {
+  let evidencePath = '';
+  let dbPath = '';
+  for (let index = 2; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === '--db') {
+      const value = argv[index + 1];
+      if (!value || value.startsWith('--')) throw new Error('Missing value for --db');
+      dbPath = value;
+      index += 1;
+    } else if (token.startsWith('--')) {
+      throw new Error(`Unexpected argument: ${token}`);
+    } else if (!evidencePath) {
+      evidencePath = token;
+    } else {
+      throw new Error(`Unexpected argument: ${token}`);
+    }
+  }
+  return { evidencePath, dbPath };
 }
 
 function readEvidence(inputPath) {
@@ -202,13 +224,34 @@ function assertNoSecretLeak(serialized) {
   }
 }
 
-const { path: evidencePath, data: evidence } = readEvidence(process.argv[2]);
+const cli = parseArgs(process.argv);
+const { path: evidencePath, data: evidence } = readEvidence(cli.evidencePath);
 const serialized = JSON.stringify(evidence);
 
 if (evidence.kind === 'real-ad-execution-readback') {
   pass('evidence kind is real-ad-execution-readback');
 } else {
   fail(`unexpected evidence kind: ${evidence.kind}`);
+}
+
+const authority = evidence.authority || {};
+const authorityReady = evidence.schemaVersion === 2
+  && Number.isInteger(authority.recommendationId)
+  && authority.recommendationId > 0
+  && Number.isInteger(authority.recommendationRevision)
+  && authority.recommendationRevision >= 0
+  && authority.recommendationStatusAtExport === 'approved'
+  && hasRealText(authority.dateFrom)
+  && hasRealText(authority.dateTo)
+  && hasRealText(authority.storeName)
+  && hasRealText(authority.marketplaceCode)
+  && hasRealText(authority.asin)
+  && hasRealText(authority.batchId)
+  && isIsoDate(authority.checkedAt);
+if (authorityReady) {
+  pass('evidence carries a complete v2 authority record');
+} else {
+  fail('v2 authority record is missing or incomplete');
 }
 
 if (evidence.status === 'PASS' && evidence.realWriteApproved === true) {
@@ -250,7 +293,21 @@ if (
   fail('target context is incomplete');
 }
 
-checkSourceReportTraceability(evidence.source || {});
+const source = evidence.source || {};
+const authorityMatchesEvidence = authorityReady
+  && String(source.recommendationId || '') === String(authority.recommendationId)
+  && Number(source.recommendationRevision) === Number(authority.recommendationRevision)
+  && String(source.batchId || '') === String(authority.batchId)
+  && String(target.storeName || '').trim().toLowerCase() === String(authority.storeName || '').trim().toLowerCase()
+  && String(target.marketplaceCode || '').trim().toLowerCase() === String(authority.marketplaceCode || '').trim().toLowerCase()
+  && String(target.asin || '').trim().toUpperCase() === String(authority.asin || '').trim().toUpperCase();
+if (authorityMatchesEvidence) {
+  pass('v2 authority matches target and source identity');
+} else {
+  fail('v2 authority does not match target/source recommendation, revision, batch, store, site, or ASIN');
+}
+
+checkSourceReportTraceability(source);
 
 if (LOW_RISK_ACTIONS.has(target.actionType) && evidence.risk?.level === 'low' && evidence.risk?.allowedByPolicy === true && hasRealText(evidence.risk?.rationale)) {
   pass('action is low-risk and policy-allowed');
@@ -330,6 +387,13 @@ checkTimestampOrder([
 ]);
 
 assertNoSecretLeak(serialized);
+
+try {
+  const dbAuthority = assertCurrentAdReadbackDbAuthority(evidence, { dbPath: cli.dbPath });
+  pass(`current approved recommendation matches SQLite authority: ${dbAuthority.dbPath}`);
+} catch (error) {
+  fail(`SQLite authority check failed: ${error instanceof Error ? error.message : String(error)}`);
+}
 
 if (process.exitCode) {
   console.error('\nNEEDS_WORK: Real ad execution readback evidence is incomplete.');

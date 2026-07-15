@@ -89,6 +89,7 @@ function main() {
   validateInput(input);
 
   const fillArgs = [];
+  pushArg(fillArgs, '--db', args.db);
   pushArg(fillArgs, '--source', paths.sourceCandidatePath);
   pushArg(fillArgs, '--out', paths.passEvidencePath);
   pushArg(fillArgs, '--approver-name', input.approverName);

@@ -146,6 +146,25 @@ export function verifyAdReadbackEvidenceFile(inputPath: string): VerifiedAdReadb
   }
 
   addCheck('evidence kind is real-ad-execution-readback', evidence.kind === 'real-ad-execution-readback', String(evidence.kind || '<missing>'));
+  const authority = evidence.authority || {};
+  const authorityReady = evidence.schemaVersion === 2
+    && Number.isInteger(authority.recommendationId)
+    && authority.recommendationId > 0
+    && Number.isInteger(authority.recommendationRevision)
+    && authority.recommendationRevision >= 0
+    && authority.recommendationStatusAtExport === 'approved'
+    && hasRealText(authority.dateFrom)
+    && hasRealText(authority.dateTo)
+    && hasRealText(authority.storeName)
+    && hasRealText(authority.marketplaceCode)
+    && hasRealText(authority.asin)
+    && hasRealText(authority.batchId)
+    && isIsoDate(authority.checkedAt);
+  addCheck(
+    'evidence carries a complete v2 authority record',
+    authorityReady,
+    authorityReady ? undefined : 'schemaVersion=2 and approved recommendation id/revision/scope/batch are required',
+  );
   addCheck('status is PASS and real write was explicitly approved', evidence.status === 'PASS' && evidence.realWriteApproved === true);
   addCheck(
     'safety flags isolate a real ad action from full8/listing AI flows',
@@ -177,6 +196,18 @@ export function verifyAdReadbackEvidenceFile(inputPath: string): VerifiedAdReadb
 
   const source = evidence.source || {};
   const sourceFiles = Array.isArray(source.sourceFiles) ? source.sourceFiles : [];
+  const authorityMatchesEvidence = authorityReady
+    && String(source.recommendationId || '') === String(authority.recommendationId)
+    && Number(source.recommendationRevision) === Number(authority.recommendationRevision)
+    && String(source.batchId || '') === String(authority.batchId)
+    && String(target.storeName || '').trim().toLowerCase() === String(authority.storeName || '').trim().toLowerCase()
+    && String(target.marketplaceCode || '').trim().toLowerCase() === String(authority.marketplaceCode || '').trim().toLowerCase()
+    && String(target.asin || '').trim().toUpperCase() === String(authority.asin || '').trim().toUpperCase();
+  addCheck(
+    'v2 authority matches target and source identity',
+    authorityMatchesEvidence,
+    authorityMatchesEvidence ? undefined : 'recommendation id/revision, batch, store, site, or ASIN mismatch',
+  );
   addCheck(
     'source report traceability includes real spreadsheet file(s) and row number',
     sourceFiles.length > 0 && sourceFiles.every(isRealReportFile) && isPositiveNumber(source.sourceRow),

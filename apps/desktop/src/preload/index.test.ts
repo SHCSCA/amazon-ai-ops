@@ -31,4 +31,12 @@ describe('preload business update bridge', () => {
     expect(source).toContain("ipcRenderer.invoke('recommendations:approve', input)");
     expect(source).toContain("ipcRenderer.invoke('recommendations:reject', input)");
   });
+
+  it('exposes the readback export through the shared authority request instead of an untyped renderer payload', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain("import type { ExportAdReadbackEvidenceRequest } from '@amazon-ai-ops/shared-types'");
+    expect(source).toContain('exportAdReadbackEvidence: (input: ExportAdReadbackEvidenceRequest) =>');
+    expect(source).not.toContain('exportAdReadbackEvidence: (input: any)');
+  });
 });

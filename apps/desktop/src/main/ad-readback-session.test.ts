@@ -12,8 +12,21 @@ function writeCandidate(dir: string, patch: Record<string, any> = {}): string {
   const reportPath = path.join(dir, 'source-user-search-term.xlsx');
   fs.writeFileSync(reportPath, 'fake spreadsheet bytes');
   const candidate = {
+    schemaVersion: 2,
     kind: 'real-ad-execution-readback',
     status: 'NEEDS_WORK',
+    authority: {
+      recommendationId: 4,
+      recommendationRevision: 3,
+      recommendationStatusAtExport: 'approved',
+      dateFrom: '2026-06-18',
+      dateTo: '2026-06-18',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
+      batchId: 'batch_1',
+      checkedAt: '2026-06-18T09:59:00.000Z',
+    },
     target: {
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
@@ -25,6 +38,8 @@ function writeCandidate(dir: string, patch: Record<string, any> = {}): string {
       actionType: 'lower_bid',
     },
     source: {
+      recommendationId: '4',
+      recommendationRevision: 3,
       batchId: 'batch_1',
       metricDate: '2026-06-18',
       currentValue: '1.20',
@@ -247,10 +262,22 @@ describe('fillAdReadbackSession', () => {
     expect(fs.existsSync(result.jsonPath)).toBe(true);
     expect(fs.existsSync(result.markdownPath)).toBe(true);
     const evidence = JSON.parse(fs.readFileSync(result.jsonPath, 'utf8'));
+    expect(evidence.schemaVersion).toBe(2);
+    expect(evidence.authority).toMatchObject({
+      recommendationId: 4,
+      recommendationRevision: 3,
+      recommendationStatusAtExport: 'approved',
+      batchId: 'batch_1',
+    });
     expect(evidence.execution.channel).toBe('manual_ads_ui');
     expect(evidence.execution.appExecutorUsed).toBe(false);
     expect(evidence.readback.actualValue).toBe('1.08');
     expect(evidence.source.sourceRow).toBe(12);
+    expect(evidence.source).toMatchObject({
+      recommendationId: '4',
+      recommendationRevision: 3,
+      batchId: 'batch_1',
+    });
   });
 
   it('does not produce ready evidence when session-input still has placeholders', () => {

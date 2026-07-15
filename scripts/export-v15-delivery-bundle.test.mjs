@@ -4,6 +4,10 @@ import crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
+import {
+  createValidAdReadbackEvidence,
+  writeAdReadbackAuthorityDb,
+} from './ad-readback-authority-db.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -22,6 +26,18 @@ function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
   cleanupPaths.push(filePath);
+}
+
+function writeValidReadbackWithDb(runDir, evidencePath) {
+  const evidence = createValidAdReadbackEvidence(runDir);
+  writeJson(evidencePath, evidence);
+  return writeAdReadbackAuthorityDb(path.join(runDir, 'authority-db'), evidence);
+}
+
+function writeAuthorityDbForInvalidReadback(runDir) {
+  const fixtureDir = path.join(runDir, 'authority-fixture');
+  const evidence = createValidAdReadbackEvidence(fixtureDir);
+  return writeAdReadbackAuthorityDb(path.join(fixtureDir, 'authority-db'), evidence);
 }
 
 function writePng(filePath) {
@@ -85,9 +101,22 @@ function packageIndexFromArtifacts(artifacts) {
 function validReadbackEvidence(runDir) {
   const now = '2026-06-10T00:00:00.000Z';
   return {
+    schemaVersion: 2,
     kind: 'real-ad-execution-readback',
     status: 'PASS',
     createdAt: now,
+    authority: {
+      recommendationId: 1,
+      recommendationRevision: 1,
+      recommendationStatusAtExport: 'approved',
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-10',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
+      batchId: 'batch_1',
+      checkedAt: now,
+    },
     realWriteApproved: true,
     safety: {
       full8Started: false,
@@ -104,6 +133,7 @@ function validReadbackEvidence(runDir) {
     target: {
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
       entityType: 'target',
@@ -143,7 +173,9 @@ function validReadbackEvidence(runDir) {
       appExecutorUsed: false,
     },
     source: {
-      recommendationId: 'rec-1',
+      recommendationId: '1',
+      recommendationRevision: 1,
+      batchId: 'batch_1',
       sourceFiles: [writeReport(path.join(runDir, 'user-search-term.xlsx'))],
       sourceRow: 12,
       evidencePath: 'output/codex-evidence/installed-ad-ai-explanation.json',
@@ -169,6 +201,7 @@ describe('export v15 delivery bundle', () => {
     const evidenceManifest = path.join(runDir, 'evidence-manifest.json');
     const badReadback = path.join(runDir, 'real-ad-execution-readback-bad.json');
     const outDir = path.join(runDir, 'bundle');
+    const dbPath = writeAuthorityDbForInvalidReadback(runDir);
 
     writeJson(badReadback, {
       kind: 'real-ad-execution-readback',
@@ -190,6 +223,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: badReadback },
@@ -226,7 +260,7 @@ describe('export v15 delivery bundle', () => {
       { kind: 'portable', filePath: portablePath, content: portableContent },
     ]);
 
-    writeJson(readback, validReadbackEvidence(runDir));
+    const dbPath = writeValidReadbackWithDb(runDir, readback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -242,6 +276,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: readback },
@@ -286,7 +321,7 @@ describe('export v15 delivery bundle', () => {
     const readyReadme = writeReadme(path.join(runDir, 'README.md'), 'APP_READY');
     const reportPath = writeReport(path.join(runDir, 'user-search-term.xlsx'));
 
-    writeJson(readback, validReadbackEvidence(runDir));
+    const dbPath = writeValidReadbackWithDb(runDir, readback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -302,6 +337,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: readback },
@@ -343,7 +379,7 @@ describe('export v15 delivery bundle', () => {
     const readyReadme = writeReadme(path.join(runDir, 'README.md'), 'APP_READY');
     const reportPath = writeReport(path.join(runDir, 'user-search-term.xlsx'));
 
-    writeJson(readback, validReadbackEvidence(runDir));
+    const dbPath = writeValidReadbackWithDb(runDir, readback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -359,6 +395,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: readback },
@@ -409,7 +446,7 @@ describe('export v15 delivery bundle', () => {
       { kind: 'portable', filePath: portablePath, content: portableContent },
     ]);
 
-    writeJson(readback, validReadbackEvidence(runDir));
+    const dbPath = writeValidReadbackWithDb(runDir, readback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -425,6 +462,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: readback },
@@ -458,6 +496,11 @@ describe('export v15 delivery bundle', () => {
       copyPolicy: expect.stringContaining('not copied'),
     });
     expect(manifest.packageIndex.bundleJson).toBeTruthy();
+    expect(manifest.authorityDatabase).toMatchObject({
+      sourcePath: fs.realpathSync.native(dbPath),
+      existsAtExport: true,
+      copied: false,
+    });
     const packageIndex = JSON.parse(fs.readFileSync(path.join(outDir, manifest.packageIndex.bundleJson), 'utf8'));
     expect(packageIndex.packages).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -473,6 +516,7 @@ describe('export v15 delivery bundle', () => {
     ]));
     for (const file of manifest.files) {
       expect(file.bundlePath).not.toMatch(/\.exe$/i);
+      expect(file.bundlePath).not.toMatch(/\.db$/i);
     }
     const bundledReadme = fs.readFileSync(path.join(outDir, 'docs', 'README.md'), 'utf8');
     expect(bundledReadme).toContain('**DELIVERY: APP_READY.');
@@ -484,6 +528,19 @@ describe('export v15 delivery bundle', () => {
     ]));
     const bundledAgents = fs.readFileSync(path.join(outDir, 'docs', 'AGENTS.md'), 'utf8');
     expect(bundledAgents).toContain('Amazon AI Ops Agent - Agent Instructions');
+
+    const otherDbPath = writeAdReadbackAuthorityDb(
+      path.join(runDir, 'other-authority-db'),
+      JSON.parse(fs.readFileSync(readback, 'utf8')),
+    );
+    const mismatch = runNode('scripts/export-v15-delivery-bundle.js', [
+      '--final-readiness', finalReadiness,
+      '--db', otherDbPath,
+      '--skip-latest-extras', 'true',
+      '--out', path.join(runDir, 'mismatch-bundle'),
+    ]);
+    expect(mismatch.status).not.toBe(0);
+    expect(`${mismatch.stdout}${mismatch.stderr}`).toContain('SQLite authority database mismatch');
   });
 
   it('does not treat basename text or UI smoke mock source files as real report index entries', () => {
@@ -508,7 +565,7 @@ describe('export v15 delivery bundle', () => {
       { kind: 'portable', filePath: portablePath, content: portableContent },
     ]);
 
-    writeJson(readback, validReadbackEvidence(runDir));
+    const dbPath = writeValidReadbackWithDb(runDir, readback);
     writeJson(uiSmoke, {
       kind: 'business-ui-ad-execution-smoke',
       actionLog: [
@@ -537,6 +594,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: readback },
@@ -603,7 +661,7 @@ describe('export v15 delivery bundle', () => {
       { kind: 'portable', filePath: portablePath, content: portableContent },
     ]);
 
-    writeJson(readback, validReadbackEvidence(runDir));
+    const dbPath = writeValidReadbackWithDb(runDir, readback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -619,6 +677,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: readback },
@@ -661,7 +720,7 @@ describe('export v15 delivery bundle', () => {
     writeReleaseFile(path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0.exe'), 'installer artifact\n');
     writeReleaseFile(path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0-portable.exe'), 'portable artifact\n');
 
-    writeJson(readback, validReadbackEvidence(runDir));
+    const dbPath = writeValidReadbackWithDb(runDir, readback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -677,6 +736,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: readback },
@@ -720,7 +780,7 @@ describe('export v15 delivery bundle', () => {
       { kind: 'installer', filePath: installerPath, content: installerContent },
     ]);
 
-    writeJson(readback, validReadbackEvidence(runDir));
+    const dbPath = writeValidReadbackWithDb(runDir, readback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -736,6 +796,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: readback },

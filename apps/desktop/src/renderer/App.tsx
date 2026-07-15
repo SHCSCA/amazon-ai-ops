@@ -32,6 +32,7 @@ import { subscribeWorkflowInvalidation } from './workflow-invalidation';
 import type { WorkflowEventTarget, WorkflowInvalidationDetail } from './workflow-invalidation';
 import { toUserFacingError } from './user-facing-error';
 import { bootstrapBrowserPreview } from './dev-preview-api';
+import { readbackAuthorityForMode, type ReadbackAuthority } from './pages/readback-workspace-model';
 import './styles.css';
 import './styles/tokens.css';
 import './styles/foundations.css';
@@ -39,6 +40,7 @@ import './styles/shell.css';
 import './styles/workspace.css';
 import './styles/priority-table.css';
 import './styles/decisions.css';
+import './styles/readback.css';
 import './styles/states-motion.css';
 
 interface LoginSessionInfo {
@@ -365,7 +367,17 @@ function LoginPage() {
   );
 }
 
-function BusinessRoutePage({ navigation, nextSafeAction }: { navigation: NavigationIntent; nextSafeAction: NextSafeAction }) {
+function BusinessRoutePage({
+  navigation,
+  nextSafeAction,
+  readbackAuthority,
+  previewScenarioId,
+}: {
+  navigation: NavigationIntent;
+  nextSafeAction: NextSafeAction;
+  readbackAuthority: ReadbackAuthority;
+  previewScenarioId?: string;
+}) {
   const route = resolveNavigationTarget(navigation) || 'dashboard';
   if (navigation.workspace === 'decisions') return <DecisionsPage activeSubview={navigation.subview} />;
   if (route === 'dashboard') return <DashboardPage nextSafeAction={nextSafeAction} />;
@@ -376,7 +388,7 @@ function BusinessRoutePage({ navigation, nextSafeAction }: { navigation: Navigat
   if (route === 'operation-events') return <OperationEventsPage />;
   if (route === 'product-config') return <ProductConfigPage />;
   if (route === 'ad-quant') return <AdQuantPage />;
-  if (route === 'readback') return <ReadbackPage />;
+  if (route === 'readback') return <ReadbackPage authority={readbackAuthority} previewScenarioId={previewScenarioId} />;
   if (route === 'keyword-opportunities') return <KeywordOpportunitiesPage />;
   if (route === 'listing-optimization') return <ListingOptimizationPage />;
   if (route === 'scheduler') return <SchedulerPage />;
@@ -394,6 +406,9 @@ export default function App() {
   const [pendingNavigationIntent, setPendingNavigationIntent] = useState<NavigationIntent | null>(null);
   const pendingNavigationRoute = resolveNavigationTarget(pendingNavigationIntent);
   const nextSafeAction = selectNextSafeAction(workflowEvidence);
+  const readbackAuthority = readbackAuthorityForMode(
+    browserPreviewBootstrap.enabled ? 'preview-readonly' : 'production',
+  );
   const contentRef = useRef<HTMLElement | null>(null);
   const navigationTimerRef = useRef<number | null>(null);
 
@@ -541,7 +556,12 @@ export default function App() {
               转跳中...
             </div>
           )}
-          <BusinessRoutePage navigation={activeNavigation} nextSafeAction={nextSafeAction} />
+          <BusinessRoutePage
+            navigation={activeNavigation}
+            nextSafeAction={nextSafeAction}
+            previewScenarioId={'scenarioId' in browserPreviewBootstrap ? browserPreviewBootstrap.scenarioId : undefined}
+            readbackAuthority={readbackAuthority}
+          />
         </main>
       </div>
     </div>

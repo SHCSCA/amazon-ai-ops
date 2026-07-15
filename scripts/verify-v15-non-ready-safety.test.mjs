@@ -5,6 +5,10 @@ import crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
+import {
+  createValidAdReadbackEvidence,
+  writeAdReadbackAuthorityDb,
+} from './ad-readback-authority-db.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -21,6 +25,12 @@ function runNode(script, args = []) {
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function writeValidReadbackWithDb(fixtureDir, evidencePath) {
+  const evidence = createValidAdReadbackEvidence(fixtureDir);
+  writeJson(evidencePath, evidence);
+  return writeAdReadbackAuthorityDb(path.join(fixtureDir, 'authority-db'), evidence);
 }
 
 function writeReadme(filePath, status = 'IN_PROGRESS') {
@@ -111,9 +121,22 @@ function validPackageLaunchSmoke(dir) {
 function validReadbackEvidence(dir) {
   const now = '2026-06-10T00:00:00.000Z';
   return {
+    schemaVersion: 2,
     kind: 'real-ad-execution-readback',
     status: 'PASS',
     createdAt: now,
+    authority: {
+      recommendationId: 1,
+      recommendationRevision: 1,
+      recommendationStatusAtExport: 'approved',
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-10',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
+      batchId: 'batch_1',
+      checkedAt: now,
+    },
     realWriteApproved: true,
     safety: {
       full8Started: false,
@@ -130,6 +153,7 @@ function validReadbackEvidence(dir) {
     target: {
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
       entityType: 'target',
@@ -169,7 +193,9 @@ function validReadbackEvidence(dir) {
       appExecutorUsed: false,
     },
     source: {
-      recommendationId: 'rec-1',
+      recommendationId: '1',
+      recommendationRevision: 1,
+      batchId: 'batch_1',
       sourceFiles: [writeReport(path.join(dir, 'user-search-term.xlsx'))],
       sourceRow: 12,
       evidencePath: 'output/codex-evidence/installed-ad-ai-explanation.json',
@@ -336,10 +362,11 @@ describe('verify v15 non-ready safety', () => {
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
     const readme = path.join(bundleDir, 'README.md');
     const packageIndex = finalPackageIndex(path.dirname(finalReadiness));
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-history-authority-'));
 
     try {
       writeReadme(readme);
-      writeJson(adReadback, validReadbackEvidence(path.dirname(adReadback)));
+      const dbPath = writeValidReadbackWithDb(fixtureDir, adReadback);
       writeJson(evidenceManifest, {
         kind: 'v15-final-readiness-evidence-manifest',
         evidence: {
@@ -357,6 +384,7 @@ describe('verify v15 non-ready safety', () => {
         evidenceSelection: {
           mode: 'manifest',
           manifestPath: evidenceManifest,
+          authorityDbPath: dbPath,
         },
         gates: [
           { name: 'AI live provider', ok: true, status: 'passed' },
@@ -379,11 +407,25 @@ describe('verify v15 non-ready safety', () => {
       expect(result.stdout).toContain('historical APP_READY final readiness is baseline only');
       expect(result.stdout).toContain('historical APP_READY delivery bundle is baseline only');
       expect(result.stdout).toContain('README top-level delivery line is non-ready');
+
+      const otherDbPath = writeAdReadbackAuthorityDb(
+        path.join(fixtureDir, 'other-authority-db'),
+        JSON.parse(fs.readFileSync(adReadback, 'utf8')),
+      );
+      const mismatch = runNode('scripts/verify-v15-non-ready-safety.js', [
+        '--final-readiness', finalReadiness,
+        '--bundle-manifest', bundleManifest,
+        '--readme', readme,
+        '--db', otherDbPath,
+      ]);
+      expect(mismatch.status).not.toBe(0);
+      expect(`${mismatch.stdout}${mismatch.stderr}`).toContain('SQLite authority database mismatch');
     } finally {
       for (const filePath of [evidenceManifest, finalReadiness, adReadback]) {
         if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
       }
       if (fs.existsSync(bundleDir)) fs.rmSync(bundleDir, { recursive: true, force: true });
+      if (fs.existsSync(fixtureDir)) fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
 
@@ -395,10 +437,11 @@ describe('verify v15 non-ready safety', () => {
     const bundleDir = path.join(bundleRoot, `v15-non-ready-safety-historical-no-package-${runId}`);
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
     const readme = path.join(bundleDir, 'README.md');
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-no-package-authority-'));
 
     try {
       writeReadme(readme);
-      writeJson(adReadback, validReadbackEvidence(path.dirname(adReadback)));
+      const dbPath = writeValidReadbackWithDb(fixtureDir, adReadback);
       writeJson(evidenceManifest, {
         kind: 'v15-final-readiness-evidence-manifest',
         evidence: {
@@ -416,6 +459,7 @@ describe('verify v15 non-ready safety', () => {
         evidenceSelection: {
           mode: 'manifest',
           manifestPath: evidenceManifest,
+          authorityDbPath: dbPath,
         },
         gates: [
           { name: 'AI live provider', ok: true, status: 'passed' },
@@ -445,6 +489,7 @@ describe('verify v15 non-ready safety', () => {
         if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
       }
       if (fs.existsSync(bundleDir)) fs.rmSync(bundleDir, { recursive: true, force: true });
+      if (fs.existsSync(fixtureDir)) fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
 
@@ -459,7 +504,7 @@ describe('verify v15 non-ready safety', () => {
     const readme = writeReadme(path.join(dir, 'README.md'));
 
     try {
-      writeJson(adReadback, validReadbackEvidence(path.dirname(adReadback)));
+      const dbPath = writeValidReadbackWithDb(dir, adReadback);
       writeJson(packageSmoke, validPackageLaunchSmoke(path.join(dir, 'release')));
       writeJson(evidenceManifest, {
         kind: 'v15-final-readiness-evidence-manifest',
@@ -478,6 +523,7 @@ describe('verify v15 non-ready safety', () => {
         evidenceSelection: {
           mode: 'manifest',
           manifestPath: evidenceManifest,
+          authorityDbPath: dbPath,
         },
         gates: [
           { name: 'AI live provider', ok: true, status: 'passed' },
@@ -524,7 +570,7 @@ describe('verify v15 non-ready safety', () => {
     }
   });
 
-  it('rejects historical APP_READY baseline when old readback evidence lacks current source report traceability', () => {
+  it('rejects historical APP_READY baseline when old readback evidence lacks current source report authority', () => {
     const runId = Date.now();
     const evidenceManifest = path.join(evidenceDir, `v15-final-readiness-evidence-manifest-legacy-readback-${runId}.json`);
     const finalReadiness = path.join(evidenceDir, 'final-readiness-2099-01-04.json');
@@ -533,10 +579,12 @@ describe('verify v15 non-ready safety', () => {
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
     const readme = path.join(bundleDir, 'README.md');
     const packageIndex = finalPackageIndex(path.dirname(finalReadiness));
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-legacy-authority-'));
 
     try {
       writeReadme(readme);
-      const legacyReadback = validReadbackEvidence(path.dirname(adReadback));
+      const legacyReadback = createValidAdReadbackEvidence(fixtureDir);
+      const dbPath = writeAdReadbackAuthorityDb(path.join(fixtureDir, 'authority-db'), legacyReadback);
       delete legacyReadback.source.sourceFiles;
       delete legacyReadback.source.sourceRow;
       writeJson(adReadback, legacyReadback);
@@ -557,6 +605,7 @@ describe('verify v15 non-ready safety', () => {
         evidenceSelection: {
           mode: 'manifest',
           manifestPath: evidenceManifest,
+          authorityDbPath: dbPath,
         },
         gates: [
           { name: 'AI live provider', ok: true, status: 'passed' },
@@ -577,12 +626,13 @@ describe('verify v15 non-ready safety', () => {
 
       expect(result.status).not.toBe(0);
       expect(`${result.stdout}${result.stderr}`).toContain('NEEDS_WORK');
-      expect(`${result.stdout}${result.stderr}`).toContain('historical real ad readback baseline lacks current source report traceability only');
+      expect(`${result.stdout}${result.stderr}`).toContain('historical real ad readback baseline fails current verify:ad-readback');
     } finally {
       for (const filePath of [evidenceManifest, finalReadiness, adReadback]) {
         if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
       }
       if (fs.existsSync(bundleDir)) fs.rmSync(bundleDir, { recursive: true, force: true });
+      if (fs.existsSync(fixtureDir)) fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
 
@@ -595,9 +645,11 @@ describe('verify v15 non-ready safety', () => {
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
     const readme = path.join(bundleDir, 'README.md');
     const packageIndex = finalPackageIndex(path.dirname(finalReadiness));
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-bad-authority-'));
 
     try {
       writeReadme(readme);
+      const dbPath = writeValidReadbackWithDb(fixtureDir, adReadback);
       writeJson(adReadback, { kind: 'real-ad-execution-readback', status: 'PASS', readback: { verified: true } });
       writeJson(evidenceManifest, {
         kind: 'v15-final-readiness-evidence-manifest',
@@ -616,6 +668,7 @@ describe('verify v15 non-ready safety', () => {
         evidenceSelection: {
           mode: 'manifest',
           manifestPath: evidenceManifest,
+          authorityDbPath: dbPath,
         },
         gates: [
           { name: 'AI live provider', ok: true, status: 'passed' },
@@ -635,12 +688,13 @@ describe('verify v15 non-ready safety', () => {
       const result = runNode('scripts/verify-v15-non-ready-safety.js', ['--readme', readme]);
 
       expect(result.status).not.toBe(0);
-      expect(`${result.stdout}${result.stderr}`).toContain('historical real ad readback baseline passes verify:ad-readback');
+      expect(`${result.stdout}${result.stderr}`).toContain('historical real ad readback baseline fails current verify:ad-readback');
     } finally {
       for (const filePath of [evidenceManifest, finalReadiness, adReadback]) {
         if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
       }
       if (fs.existsSync(bundleDir)) fs.rmSync(bundleDir, { recursive: true, force: true });
+      if (fs.existsSync(fixtureDir)) fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
 });

@@ -4,14 +4,19 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
+import {
+  executeAdReadbackAuthorityDb,
+  writeAdReadbackAuthorityDb as writeAuthorityDb,
+} from './ad-readback-authority-db.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
-function runNode(script, args = []) {
+function runNode(script, args = [], options = {}) {
   return spawnSync(process.execPath, [path.join(root, script), ...args], {
     cwd: root,
     encoding: 'utf8',
+    env: { ...process.env, ...(options.env || {}) },
   });
 }
 
@@ -28,9 +33,22 @@ function writeReport(filePath) {
 function validEvidence(dir, overrides = {}) {
   const now = '2026-06-10T00:00:00.000Z';
   return {
+    schemaVersion: 2,
     kind: 'real-ad-execution-readback',
     status: 'PASS',
     createdAt: now,
+    authority: {
+      recommendationId: 1,
+      recommendationRevision: 4,
+      recommendationStatusAtExport: 'approved',
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-10',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
+      batchId: 'batch_1',
+      checkedAt: now,
+    },
     realWriteApproved: true,
     safety: {
       full8Started: false,
@@ -39,7 +57,7 @@ function validEvidence(dir, overrides = {}) {
     },
     approval: {
       operatorConfirmed: true,
-      scope: 'FT-US-US / US / Campaign A / Ad Group A / close match / lower_bid',
+      scope: 'FT-US-US / US / B0TESTASIN / 2026-06-01~2026-06-10 / batch_1',
       confirmedAt: now,
       approverName: 'Ops Owner',
       approvalArtifactPath: 'approval-ticket-123',
@@ -47,6 +65,8 @@ function validEvidence(dir, overrides = {}) {
     target: {
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
+      metricDate: '2026-06-10',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
       entityType: 'target',
@@ -86,11 +106,14 @@ function validEvidence(dir, overrides = {}) {
       appExecutorUsed: false,
     },
     source: {
-      recommendationId: 'rec-1',
+      recommendationId: '1',
+      recommendationRevision: 4,
+      batchId: 'batch_1',
+      metricDate: '2026-06-10',
       sourceFiles: [writeReport(path.join(dir, 'user-search-term.xlsx'))],
       sourceRow: 12,
       evidencePath: 'output/codex-evidence/installed-ad-ai-explanation.json',
-      entityType: 'search_term',
+      entityType: 'target',
       currentValue: '2.40',
       recommendedValue: '2.16',
     },
@@ -98,17 +121,255 @@ function validEvidence(dir, overrides = {}) {
   };
 }
 
+function runVerifierWithTempDb(dir, evidencePath, approvedEvidence, rowOverrides = {}) {
+  const dbDir = path.join(dir, 'authority-db');
+  fs.mkdirSync(dbDir, { recursive: true });
+  const dbPath = writeAuthorityDb(dbDir, approvedEvidence, rowOverrides);
+  return runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+}
+
 describe('verify ad readback evidence', () => {
   it('accepts scoped manual Ads UI readback evidence', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-pass-'));
+    const evidence = validEvidence(dir);
     const evidencePath = path.join(dir, 'readback.json');
-    fs.writeFileSync(evidencePath, JSON.stringify(validEvidence(dir), null, 2), 'utf8');
+    const dbPath = writeAuthorityDb(dir, evidence);
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
 
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain('current approved recommendation matches SQLite authority');
     expect(result.stdout).toContain('execution result is successful, verified, and scoped to manual Ads UI operation');
     expect(result.stdout).toContain('AD_READBACK_EVIDENCE verified');
+  });
+
+  it('rejects a target field that no longer matches the approved SQLite recommendation', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-target-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    evidence.target.campaignName = 'Tampered Campaign';
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('target.campaignName');
+  });
+
+  it('rejects a source value that no longer matches the approved SQLite recommendation', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-source-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    evidence.source.currentValue = '9.99';
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('source.currentValue');
+  });
+
+  it('rejects approval identity that no longer matches the SQLite approval decision', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-approval-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    evidence.approval.approverName = 'Tampered Approver';
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('approval.approverName');
+  });
+
+  it('rejects a risk rationale that no longer matches the approved recommendation', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-risk-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    evidence.risk.rationale = 'Tampered rationale';
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('risk.rationale');
+  });
+
+  it('rejects checkedAt when it no longer matches the SQLite recommendation update time', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-checked-at-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    evidence.authority.checkedAt = '2026-06-10T00:00:01.000Z';
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('authority.checkedAt');
+  });
+
+  it('rejects evidence when the SQLite recommendation revision has advanced', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-stale-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence, { revision: 5 });
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('revision is 5, evidence expects 4');
+  });
+
+  it('rejects evidence when the SQLite recommendation is no longer approved', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-status-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence, { status: 'executed' });
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('is executed, not approved');
+  });
+
+  it('rejects evidence when its approved batch is no longer present in SQLite', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-batch-missing-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    executeAdReadbackAuthorityDb(dbPath, 'DELETE FROM lingxing_report_batches WHERE id = ?', [evidence.authority.batchId]);
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('current report batch does not exist');
+  });
+
+  it('rejects evidence when its source file is no longer a current batch report', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-report-missing-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    executeAdReadbackAuthorityDb(dbPath, 'DELETE FROM lingxing_report_files WHERE batch_id = ?', [evidence.authority.batchId]);
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('current real report files');
+  });
+
+  it('rejects evidence when the current batch has no imported actionable metrics', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-metrics-missing-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    executeAdReadbackAuthorityDb(dbPath, 'DELETE FROM ad_daily_metrics WHERE batch_id = ?', [evidence.authority.batchId]);
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('imported actionable metrics');
+  });
+
+  it('rejects an explicit SQLite authority path that does not exist', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-missing-'));
+    const evidence = validEvidence(dir);
+    const evidencePath = path.join(dir, 'readback.json');
+    const missingDbPath = path.join(dir, 'missing-amazon-ai-ops.db');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', missingDbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('SQLite authority database does not exist');
+  });
+
+  it('discovers the production AppData SQLite authority database by default', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-default-'));
+    const appData = path.join(dir, 'AppData', 'Roaming');
+    const dbDir = path.join(appData, '@amazon-ai-ops', 'desktop');
+    fs.mkdirSync(dbDir, { recursive: true });
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dbDir, evidence);
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath], {
+      env: {
+        APPDATA: appData,
+        USERPROFILE: path.join(dir, 'profile'),
+        AMAZON_AI_OPS_DB_PATH: '',
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(fs.realpathSync.native(dbPath));
+  });
+
+  it('fails closed when default SQLite authority discovery finds no database', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-default-missing-'));
+    const evidence = validEvidence(dir);
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath], {
+      env: {
+        APPDATA: path.join(dir, 'empty-appdata'),
+        USERPROFILE: path.join(dir, 'empty-profile'),
+        AMAZON_AI_OPS_DB_PATH: '',
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('SQLite authority database was not found');
+  });
+
+  it('fails closed when default discovery finds multiple authority databases', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-db-ambiguous-'));
+    const appData = path.join(dir, 'AppData', 'Roaming');
+    const evidence = validEvidence(dir);
+    writeAuthorityDb(path.join(appData, '@amazon-ai-ops', 'desktop'), evidence);
+    writeAuthorityDb(path.join(appData, 'AmazonAIOpsAgent'), evidence);
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath], {
+      env: {
+        APPDATA: appData,
+        USERPROFILE: path.join(dir, 'empty-profile'),
+        AMAZON_AI_OPS_DB_PATH: '',
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('multiple SQLite authority databases');
+    expect(`${result.stdout}${result.stderr}`).toContain('Pass --db');
+  });
+
+  it('rejects legacy evidence without the v2 authority record', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-v1-'));
+    const evidence = validEvidence(dir);
+    const approvedEvidence = structuredClone(evidence);
+    delete evidence.schemaVersion;
+    delete evidence.authority;
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runVerifierWithTempDb(dir, evidencePath, approvedEvidence);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('v2 authority');
   });
 
   it('rejects evidence that claims the app executor performed the manual readback action', () => {
@@ -118,7 +379,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('execution result is not proven successful, verified, and manually performed outside the app executor');
@@ -131,7 +392,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('operator approval proof is incomplete');
@@ -144,7 +405,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('before/after values do not prove a live Ads UI change');
@@ -159,7 +420,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('lower_bid action did not lower the bid value');
@@ -172,7 +433,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('source current value is present');
@@ -181,11 +442,12 @@ describe('verify ad readback evidence', () => {
   it('rejects readback evidence when the source current value is missing', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-source-current-missing-'));
     const evidence = validEvidence(dir);
+    const approvedEvidence = structuredClone(evidence);
     delete evidence.source.currentValue;
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, approvedEvidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('source current value is missing');
@@ -198,7 +460,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('source recommended value is present');
@@ -207,11 +469,12 @@ describe('verify ad readback evidence', () => {
   it('rejects readback evidence when the source recommended value is missing', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-source-recommended-missing-'));
     const evidence = validEvidence(dir);
+    const approvedEvidence = structuredClone(evidence);
     delete evidence.source.recommendedValue;
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, approvedEvidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('source recommended value is missing');
@@ -226,7 +489,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('readback verified the after value');
@@ -244,7 +507,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('source recommendation values are present');
@@ -263,7 +526,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('before/after values do not prove a live Ads UI change');
@@ -276,7 +539,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('readback evidence path missing');
@@ -289,7 +552,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('before, after, and readback evidence files must be distinct');
@@ -302,7 +565,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('before, after, and readback evidence files must be distinct');
@@ -315,7 +578,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('execution.executedAt timestamp is earlier than before.capturedAt');
@@ -324,11 +587,12 @@ describe('verify ad readback evidence', () => {
   it('rejects readback evidence without a traceable source report row', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-source-row-'));
     const evidence = validEvidence(dir);
+    const approvedEvidence = structuredClone(evidence);
     delete evidence.source.sourceRow;
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, approvedEvidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('source report traceability is incomplete');
@@ -338,6 +602,7 @@ describe('verify ad readback evidence', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-source-file-'));
     const auditFile = path.join(dir, 'acceptance-audit.json');
     fs.writeFileSync(auditFile, '{}\n', 'utf8');
+    const approvedEvidence = validEvidence(dir);
     const evidence = validEvidence(dir, {
       source: {
         recommendationId: 'rec-1',
@@ -352,7 +617,7 @@ describe('verify ad readback evidence', () => {
     const evidencePath = path.join(dir, 'readback.json');
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
 
-    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath]);
+    const result = runVerifierWithTempDb(dir, evidencePath, approvedEvidence);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('source report traceability is incomplete');

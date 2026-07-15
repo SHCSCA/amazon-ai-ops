@@ -1,0 +1,343 @@
+.readback-page {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.readback-page *,
+.readback-page *::before,
+.readback-page *::after {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.readback-page .workspace-page-frame__content,
+.readback-page .business-stack,
+.readback-page .workbench-panel,
+.readback-page .workbench-panel__body,
+.readback-page .readback-step-panel {
+  width: 100%;
+  min-width: 0;
+}
+
+.readback-preview-only-banner {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  border: 1px solid #f2c46d;
+  border-radius: var(--radius-md, 10px);
+  background: #fff8e8;
+  padding: 10px 12px;
+  color: #6f4b00;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.readback-preview-only-banner strong,
+.readback-preview-only-banner span {
+  font-size: 12px;
+}
+
+.readback-page-preview-readonly input,
+.readback-page-preview-readonly textarea,
+.readback-page-preview-readonly select {
+  background: #f6f8fb;
+  color: var(--aao-ink-2, #475569);
+  cursor: not-allowed;
+}
+
+.readback-page :is(small, code, .muted-line),
+.readback-page .readback-step small,
+.readback-page .readback-field-cell-label,
+.readback-page .readback-session-result span {
+  font-size: 12px;
+}
+
+/* The legacy readback rail/status rules in styles.css use 9px/11px copy. */
+.readback-page .readback-step > span,
+.readback-page .readback-step strong,
+.readback-page .readback-step small {
+  font-size: 12px;
+}
+
+.readback-page .readback-contract-card > span,
+.readback-page .status-pill,
+.readback-page .chip {
+  font-size: 12px;
+}
+
+.readback-page [hidden] {
+  display: none !important;
+}
+
+.readback-repair-actions {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #d9e2ef;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 9px 12px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.readback-repair-actions strong {
+  color: #172033;
+  font-size: 12px;
+}
+
+.readback-step-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.readback-step-tabs .readback-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 2px 8px;
+  width: 100%;
+  min-height: 58px;
+  min-width: 0;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.readback-step-tabs .readback-step > span {
+  grid-row: 1 / span 2;
+}
+
+.readback-step-tabs .readback-step strong,
+.readback-step-tabs .readback-step small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.readback-workbench-fieldset {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.readback-workbench-fieldset[disabled] {
+  opacity: 0.78;
+}
+
+.readback-workbench-section {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+}
+
+.readback-workbench-section > h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.readback-authority-lock {
+  max-width: 34rem;
+  color: #526175;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.readback-authority-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.readback-authority-grid > div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dce4ef;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.readback-authority-grid dt {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.readback-authority-grid dd {
+  margin: 0;
+  color: #172033;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.readback-page .table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.readback-page .approval-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.readback-page .approval-table th:nth-child(1) { width: 23%; }
+.readback-page .approval-table th:nth-child(2) { width: 27%; }
+.readback-page .approval-table th:nth-child(3) { width: 20%; }
+.readback-page .approval-table th:nth-child(4) { width: 15%; }
+.readback-page .approval-table th:nth-child(5) { width: 15%; }
+
+.readback-page .approval-table :is(th, td) {
+  min-width: 0;
+  padding: 9px 8px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.readback-page .approval-table td > strong,
+.readback-page .approval-table td > small {
+  display: block;
+}
+
+.readback-page .approval-table td > small {
+  margin-top: 3px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.readback-page .form-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.readback-page .readback-capture-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.readback-page .readback-capture-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 560px;
+}
+
+.readback-capture-target[aria-disabled="true"] {
+  border-style: solid;
+  background: #f1f5f9;
+  cursor: not-allowed;
+  filter: saturate(0.7);
+}
+
+.readback-technical-drawer {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.readback-technical-section,
+.readback-technical-subsection {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #dce4ef;
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px;
+}
+
+.readback-technical-section > :is(h3, p),
+.readback-technical-subsection > :is(h4, p) {
+  margin: 0;
+}
+
+.readback-technical-section h3 {
+  font-size: 14px;
+}
+
+.readback-technical-subsection h4 {
+  font-size: 13px;
+}
+
+.readback-technical-drawer code,
+.readback-technical-drawer .business-scope-line {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.readback-technical-drawer .action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.readback-safety-gates {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.readback-step-repair-pulse,
+.readback-repair-target-pulse,
+.readback-repair-field-pulse {
+  animation-duration: 150ms !important;
+}
+
+@media (max-width: 1199px) {
+  .readback-page .form-grid,
+  .readback-authority-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .readback-page .approval-table th:nth-child(1) { width: 24%; }
+  .readback-page .approval-table th:nth-child(2) { width: 25%; }
+  .readback-page .approval-table th:nth-child(3) { width: 21%; }
+  .readback-page .approval-table th:nth-child(4) { width: 16%; }
+  .readback-page .approval-table th:nth-child(5) { width: 14%; }
+}
+
+@media (max-width: 980px) {
+  .readback-step-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .readback-page .readback-capture-grid,
+  .readback-page .form-grid,
+  .readback-authority-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .readback-repair-actions {
+    display: grid;
+  }
+
+  .readback-authority-lock {
+    max-width: none;
+    text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readback-page *,
+  .readback-page *::before,
+  .readback-page *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+}

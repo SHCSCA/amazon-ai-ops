@@ -31,7 +31,6 @@ const pageTitleBindings = [
   ['ad quant', 'pages/ad-quant-page.tsx', 'adQuant'],
   ['recommendations', 'pages/recommendations-page.tsx', 'recommendations'],
   ['approval', 'pages/approval-page.tsx', 'approval'],
-  ['readback', 'pages/readback-page.tsx', 'readback'],
   ['keyword opportunities', 'pages/keyword-opportunities-page.tsx', 'keywordOpportunities'],
   ['listing optimization', 'pages/listing-optimization-page.tsx', 'listingOptimization'],
   ['delivery', 'pages/delivery-page.tsx', 'delivery'],
@@ -61,6 +60,14 @@ describe('page header copy contract', () => {
 
     expect(source).toContain('<PageFrame');
     expect(source).toContain('title="今日任务"');
+    expect(source).not.toContain('<PageHeader');
+  });
+
+  it('uses the task-first PageFrame title for readback instead of the legacy PageHeader contract', () => {
+    const source = readFileSync(new URL('pages/readback-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('<PageFrame');
+    expect(source).toContain('title="结果核对"');
     expect(source).not.toContain('<PageHeader');
   });
 });

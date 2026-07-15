@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import type { AdReadbackAuthorityRecord } from '@amazon-ai-ops/shared-types';
 
 export type AdReadbackEvidenceInput = {
+  authority?: AdReadbackAuthorityRecord;
   target?: Record<string, any>;
   source?: Record<string, any>;
   approval?: Record<string, any>;
@@ -93,6 +95,7 @@ function objectOrEmpty(value: unknown): Record<string, any> {
 
 export function buildAdReadbackEvidence(input: AdReadbackEvidenceInput): Record<string, any> {
   const now = new Date().toISOString();
+  const authority = objectOrEmpty(input.authority);
   const target = input.target || {};
   const before = input.before || {};
   const after = input.after || {};
@@ -107,7 +110,19 @@ export function buildAdReadbackEvidence(input: AdReadbackEvidenceInput): Record<
   const sourceRow = numberOrNull(source.sourceRow);
   const sourceFiles = stringArray(source.sourceFiles);
   const complete = Boolean(
-    approval.operatorConfirmed === true
+    authority.recommendationStatusAtExport === 'approved'
+      && Number.isInteger(authority.recommendationId)
+      && authority.recommendationId > 0
+      && Number.isInteger(authority.recommendationRevision)
+      && authority.recommendationRevision >= 0
+      && hasOperatorText(authority.dateFrom)
+      && hasOperatorText(authority.dateTo)
+      && hasOperatorText(authority.storeName)
+      && hasOperatorText(authority.marketplaceCode)
+      && hasOperatorText(authority.asin)
+      && hasOperatorText(authority.batchId)
+      && Number.isFinite(timestampMs(authority.checkedAt))
+      && approval.operatorConfirmed === true
       && input.approval?.realWriteApproved === true
       && risk.allowedByPolicy === true
       && execution.success === true
@@ -156,9 +171,26 @@ export function buildAdReadbackEvidence(input: AdReadbackEvidenceInput): Record<
   );
 
   return {
+    schemaVersion: 2,
     kind: 'real-ad-execution-readback',
     status: complete ? 'PASS' : 'NEEDS_WORK',
     createdAt: now,
+    authority: {
+      recommendationId: numberOrNull(authority.recommendationId),
+      recommendationRevision: typeof authority.recommendationRevision === 'number'
+        && Number.isInteger(authority.recommendationRevision)
+        && authority.recommendationRevision >= 0
+        ? authority.recommendationRevision
+        : null,
+      recommendationStatusAtExport: String(authority.recommendationStatusAtExport || ''),
+      dateFrom: String(authority.dateFrom || ''),
+      dateTo: String(authority.dateTo || ''),
+      storeName: String(authority.storeName || ''),
+      marketplaceCode: String(authority.marketplaceCode || ''),
+      asin: String(authority.asin || ''),
+      batchId: String(authority.batchId || ''),
+      checkedAt: String(authority.checkedAt || ''),
+    },
     realWriteApproved: input.approval?.realWriteApproved === true,
     safety: {
       full8Started: false,
@@ -219,6 +251,11 @@ export function buildAdReadbackEvidence(input: AdReadbackEvidenceInput): Record<
     },
     source: {
       recommendationId: String(source.recommendationId || ''),
+      recommendationRevision: typeof source.recommendationRevision === 'number'
+        && Number.isInteger(source.recommendationRevision)
+        && source.recommendationRevision >= 0
+        ? source.recommendationRevision
+        : null,
       batchId: String(source.batchId || ''),
       metricDate: String(source.metricDate || ''),
       sourceFiles,
@@ -269,6 +306,14 @@ export function adReadbackEvidenceToMarkdown(evidence: Record<string, any>, json
     `Status: ${evidence.status}`,
     '',
     `Evidence JSON: \`${jsonPath}\``,
+    '',
+    '## Authority',
+    '',
+    `- Schema: v${evidence.schemaVersion || ''}`,
+    `- Recommendation: #${evidence.authority?.recommendationId || ''} / revision ${evidence.authority?.recommendationRevision ?? ''} / ${evidence.authority?.recommendationStatusAtExport || ''}`,
+    `- Scope: ${evidence.authority?.storeName || ''} / ${evidence.authority?.marketplaceCode || ''} / ${evidence.authority?.asin || ''} / ${evidence.authority?.dateFrom || ''}~${evidence.authority?.dateTo || ''}`,
+    `- Batch: ${evidence.authority?.batchId || ''}`,
+    `- Checked at: ${evidence.authority?.checkedAt || ''}`,
     '',
     '## Scope',
     '',

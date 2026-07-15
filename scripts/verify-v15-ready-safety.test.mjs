@@ -5,6 +5,10 @@ import crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
+import {
+  createValidAdReadbackEvidence,
+  writeAdReadbackAuthorityDb,
+} from './ad-readback-authority-db.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -19,6 +23,10 @@ function runNode(script, args = []) {
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
 function writePng(filePath) {
@@ -128,9 +136,22 @@ function writeBundleReadme(bundleManifestPath, status = 'APP_READY') {
 function validReadbackEvidence(dir) {
   const now = '2026-06-10T00:00:00.000Z';
   return {
+    schemaVersion: 2,
     kind: 'real-ad-execution-readback',
     status: 'PASS',
     createdAt: now,
+    authority: {
+      recommendationId: 1,
+      recommendationRevision: 1,
+      recommendationStatusAtExport: 'approved',
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-10',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
+      batchId: 'batch_1',
+      checkedAt: now,
+    },
     realWriteApproved: true,
     safety: {
       full8Started: false,
@@ -147,6 +168,7 @@ function validReadbackEvidence(dir) {
     target: {
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
       entityType: 'target',
@@ -186,7 +208,9 @@ function validReadbackEvidence(dir) {
       appExecutorUsed: false,
     },
     source: {
-      recommendationId: 'rec-1',
+      recommendationId: '1',
+      recommendationRevision: 1,
+      batchId: 'batch_1',
       sourceFiles: [writeReport(path.join(dir, 'user-search-term.xlsx'))],
       sourceRow: 12,
       evidencePath: 'output/codex-evidence/installed-ad-ai-explanation.json',
@@ -195,6 +219,12 @@ function validReadbackEvidence(dir) {
       recommendedValue: '2.16',
     },
   };
+}
+
+function writeValidReadbackWithDb(dir, evidencePath) {
+  const evidence = createValidAdReadbackEvidence(dir);
+  writeJson(evidencePath, evidence);
+  return writeAdReadbackAuthorityDb(path.join(dir, 'authority-db'), evidence);
 }
 
 describe('verify v15 ready safety', () => {
@@ -208,7 +238,7 @@ describe('verify v15 ready safety', () => {
     const readme = path.join(dir, 'README.md');
     const packageIndex = finalPackageIndex(dir);
 
-    writeJson(adReadback, validReadbackEvidence(dir));
+    const dbPath = writeValidReadbackWithDb(dir, adReadback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -224,6 +254,7 @@ describe('verify v15 ready safety', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Report collection', ok: true },
@@ -249,6 +280,10 @@ describe('verify v15 ready safety', () => {
     writeJson(bundleManifest, {
       status: 'APP_READY',
       appReady: true,
+      authorityDatabase: {
+        sourcePath: dbPath,
+        copied: false,
+      },
       files: [{ label: 'scripts/verify-v15-ready-safety.js' }],
       dataReconciliation: {
         present: true,
@@ -281,6 +316,20 @@ describe('verify v15 ready safety', () => {
     expect(result.stdout).toContain('current business UI smoke summary passed');
     expect(result.stdout).toContain('V15_READY_SAFETY verified');
     expect(result.stderr).not.toContain('UI smoke contains APP_READY state');
+
+    const otherDbPath = writeAdReadbackAuthorityDb(
+      path.join(dir, 'other-authority-db'),
+      readJson(adReadback),
+    );
+    const mismatch = runNode('scripts/verify-v15-ready-safety.js', [
+      '--final-readiness', finalReadiness,
+      '--ui-smoke', smoke,
+      '--bundle-manifest', bundleManifest,
+      '--readme', readme,
+      '--db', otherDbPath,
+    ]);
+    expect(mismatch.status).not.toBe(0);
+    expect(`${mismatch.stdout}${mismatch.stderr}`).toContain('SQLite authority database mismatch');
   });
 
   it('rejects APP_READY evidence when the delivery bundle README still says IN_PROGRESS', () => {
@@ -293,7 +342,7 @@ describe('verify v15 ready safety', () => {
     const readme = path.join(dir, 'README.md');
     const packageIndex = finalPackageIndex(dir);
 
-    writeJson(adReadback, validReadbackEvidence(dir));
+    const dbPath = writeValidReadbackWithDb(dir, adReadback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -360,6 +409,7 @@ describe('verify v15 ready safety', () => {
       '--ui-smoke', smoke,
       '--bundle-manifest', bundleManifest,
       '--readme', readme,
+      '--db', dbPath,
     ]);
 
     expect(result.status).not.toBe(0);
@@ -376,6 +426,7 @@ describe('verify v15 ready safety', () => {
     const readme = path.join(dir, 'README.md');
     const packageIndex = finalPackageIndex(dir);
 
+    const dbPath = writeValidReadbackWithDb(dir, adReadback);
     writeJson(adReadback, { kind: 'real-ad-execution-readback', status: 'PASS', readback: { verified: true } });
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
@@ -392,6 +443,7 @@ describe('verify v15 ready safety', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       gates: [
         { name: 'Report collection', ok: true },
@@ -443,6 +495,7 @@ describe('verify v15 ready safety', () => {
       '--ui-smoke', smoke,
       '--bundle-manifest', bundleManifest,
       '--readme', readme,
+      '--db', dbPath,
     ]);
 
     expect(result.status).not.toBe(0);
@@ -459,7 +512,7 @@ describe('verify v15 ready safety', () => {
     const readme = path.join(dir, 'README.md');
     const packageIndex = finalPackageIndex(dir);
 
-    writeJson(adReadback, validReadbackEvidence(dir));
+    const dbPath = writeValidReadbackWithDb(dir, adReadback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -526,6 +579,7 @@ describe('verify v15 ready safety', () => {
       '--ui-smoke', smoke,
       '--bundle-manifest', bundleManifest,
       '--readme', readme,
+      '--db', dbPath,
     ]);
 
     expect(result.status).not.toBe(0);
@@ -541,7 +595,7 @@ describe('verify v15 ready safety', () => {
     const bundleManifest = path.join(dir, 'delivery-bundle-manifest.json');
     const readme = path.join(dir, 'README.md');
 
-    writeJson(adReadback, validReadbackEvidence(dir));
+    const dbPath = writeValidReadbackWithDb(dir, adReadback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -605,6 +659,7 @@ describe('verify v15 ready safety', () => {
       '--ui-smoke', smoke,
       '--bundle-manifest', bundleManifest,
       '--readme', readme,
+      '--db', dbPath,
     ]);
 
     expect(result.status).not.toBe(0);
@@ -622,7 +677,7 @@ describe('verify v15 ready safety', () => {
     const readme = path.join(dir, 'README.md');
     const packageIndex = finalPackageIndex(dir);
 
-    writeJson(adReadback, validReadbackEvidence(dir));
+    const dbPath = writeValidReadbackWithDb(dir, adReadback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -695,6 +750,7 @@ describe('verify v15 ready safety', () => {
       '--ui-smoke', smoke,
       '--bundle-manifest', bundleManifest,
       '--readme', readme,
+      '--db', dbPath,
     ]);
 
     expect(result.status).not.toBe(0);
@@ -712,7 +768,7 @@ describe('verify v15 ready safety', () => {
     const packageIndex = finalPackageIndex(dir);
     packageIndex.packages[0].sha256 = 'C'.repeat(64);
 
-    writeJson(adReadback, validReadbackEvidence(dir));
+    const dbPath = writeValidReadbackWithDb(dir, adReadback);
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
       evidence: {
@@ -779,6 +835,7 @@ describe('verify v15 ready safety', () => {
       '--ui-smoke', smoke,
       '--bundle-manifest', bundleManifest,
       '--readme', readme,
+      '--db', dbPath,
     ]);
 
     expect(result.status).not.toBe(0);

@@ -6,15 +6,20 @@ import { spawnSync } from 'child_process';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
 import packageReadinessEvaluator from '../apps/desktop/src/main/final-readiness-package-evaluator.js';
+import {
+  createValidAdReadbackEvidence,
+  writeAdReadbackAuthorityDb,
+} from './ad-readback-authority-db.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const { collectPackageIndex, evaluatePackageReadinessFromFiles } = packageReadinessEvaluator;
 
-function runNode(script, args = []) {
+function runNode(script, args = [], options = {}) {
   return spawnSync(process.execPath, [path.join(root, script), ...args], {
     cwd: root,
     encoding: 'utf8',
+    env: { ...process.env, ...(options.env || {}) },
   });
 }
 
@@ -255,6 +260,73 @@ describe('verify v15 final readiness', () => {
       status: 'needs_work',
     });
     expect(packageGate.message).toContain('portable no-install package hash evidence is missing');
+  });
+
+  it('passes the explicit SQLite authority database through the real ad readback gate', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-final-readiness-readback-db-'));
+    const manifestPath = path.join(dir, 'evidence-manifest.json');
+    const readbackPath = path.join(dir, 'readback.json');
+    const outPath = path.join(dir, 'final-readiness.json');
+    const evidence = createValidAdReadbackEvidence(dir);
+    const dbPath = writeAdReadbackAuthorityDb(path.join(dir, 'db'), evidence);
+    writeJson(readbackPath, evidence);
+    writeJson(manifestPath, {
+      kind: 'v15-final-readiness-evidence-manifest',
+      evidence: {
+        adReadback: { exists: true, absolutePath: readbackPath },
+      },
+    });
+
+    const result = runNode('scripts/verify-v15-final-readiness.js', [
+      '--evidence-manifest', manifestPath,
+      '--ad-readback', readbackPath,
+      '--db', dbPath,
+      '--release-dir', path.join(dir, 'missing-release'),
+      '--out', outPath,
+    ]);
+
+    expect(result.status).not.toBe(0);
+    const summary = readJson(outPath);
+    expect(summary.evidenceSelection.authorityDbPath).toBe(path.resolve(dbPath));
+    expect(summary.evidenceSelection.authorityDbSelectedBy).toBe('explicit-arg');
+    expect(summary.gates.find((gate) => gate.name === 'Real ad execution readback')).toMatchObject({
+      ok: true,
+      status: 'passed',
+    });
+  });
+
+  it('records the resolved SQLite authority database selected by the environment override', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-final-readiness-readback-env-db-'));
+    const manifestPath = path.join(dir, 'evidence-manifest.json');
+    const readbackPath = path.join(dir, 'readback.json');
+    const outPath = path.join(dir, 'final-readiness.json');
+    const evidence = createValidAdReadbackEvidence(dir);
+    const dbPath = writeAdReadbackAuthorityDb(path.join(dir, 'db'), evidence);
+    writeJson(readbackPath, evidence);
+    writeJson(manifestPath, {
+      kind: 'v15-final-readiness-evidence-manifest',
+      evidence: {
+        adReadback: { exists: true, absolutePath: readbackPath },
+      },
+    });
+
+    const result = runNode('scripts/verify-v15-final-readiness.js', [
+      '--evidence-manifest', manifestPath,
+      '--ad-readback', readbackPath,
+      '--release-dir', path.join(dir, 'missing-release'),
+      '--out', outPath,
+    ], {
+      env: { AMAZON_AI_OPS_DB_PATH: dbPath },
+    });
+
+    expect(result.status).not.toBe(0);
+    const summary = readJson(outPath);
+    expect(summary.evidenceSelection).toMatchObject({
+      authorityDbPath: fs.realpathSync.native(dbPath),
+      authorityDbSelectedBy: 'env-override',
+      authorityDbResolutionError: null,
+    });
+    expect(summary.gates.find((gate) => gate.name === 'Real ad execution readback')?.ok).toBe(true);
   });
 
   it('passes package launch smoke when it matches the current portable package hash', () => {

@@ -4,6 +4,7 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
+import { writeAdReadbackAuthorityDb } from './ad-readback-authority-db.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -20,8 +21,21 @@ function makeCandidate(dir) {
   const source = path.join(dir, 'candidate.json');
   fs.writeFileSync(report, 'fake report placeholder\n', 'utf8');
   fs.writeFileSync(source, JSON.stringify({
+    schemaVersion: 2,
     kind: 'real-ad-execution-readback',
     status: 'NEEDS_WORK',
+    authority: {
+      recommendationId: 4,
+      recommendationRevision: 2,
+      recommendationStatusAtExport: 'approved',
+      dateFrom: '2026-06-17',
+      dateTo: '2026-06-17',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0GTTJFQTM',
+      batchId: 'batch_2026-06-17',
+      checkedAt: '2026-06-17T09:59:00.000Z',
+    },
     realWriteApproved: false,
     safety: {
       full8Started: false,
@@ -31,6 +45,8 @@ function makeCandidate(dir) {
     target: {
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
+      asin: 'B0GTTJFQTM',
+      metricDate: '2026-06-17',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group B',
       entityType: 'target',
@@ -38,14 +54,19 @@ function makeCandidate(dir) {
       actionType: 'lower_bid',
     },
     source: {
+      recommendationId: '4',
+      recommendationRevision: 2,
+      batchId: 'batch_2026-06-17',
+      metricDate: '2026-06-17',
       currentValue: '1.63',
       recommendedValue: '1.46',
       sourceFiles: [report],
       sourceRow: 410,
+      entityType: 'target',
     },
     approval: {
       operatorConfirmed: false,
-      scope: 'FT-US-US / US / Campaign A / Ad Group B / target=door lock / lower_bid',
+      scope: 'FT-US-US / US / B0GTTJFQTM / 2026-06-17~2026-06-17 / batch_2026-06-17',
     },
     risk: {
       rationale: 'Lowering one target bid is bounded and reversible.',
@@ -94,17 +115,38 @@ describe('fill ad readback evidence from a session input file', () => {
     });
     fs.writeFileSync(path.join(session, 'session-input.json'), `${JSON.stringify(input, null, 2)}\n`, 'utf8');
 
-    const result = runNode('scripts/fill-ad-readback-session.js', ['--session', session]);
+    const authorityEvidence = JSON.parse(fs.readFileSync(source, 'utf8'));
+    authorityEvidence.approval = {
+      ...authorityEvidence.approval,
+      confirmedAt: input.approvalConfirmedAt,
+      approverName: input.approverName,
+    };
+    authorityEvidence.risk.rationale = input.riskRationale;
+    const dbPath = writeAdReadbackAuthorityDb(path.join(dir, 'authority-db'), authorityEvidence);
+
+    const result = runNode('scripts/fill-ad-readback-session.js', ['--session', session, '--db', dbPath]);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('AD_READBACK_EVIDENCE verified');
     expect(result.stdout).toContain('Filled ad readback session evidence written');
     expect(fs.existsSync(paths.passEvidencePath)).toBe(true);
     const evidence = JSON.parse(fs.readFileSync(paths.passEvidencePath, 'utf8'));
+    expect(evidence.schemaVersion).toBe(2);
+    expect(evidence.authority).toMatchObject({
+      recommendationId: 4,
+      recommendationRevision: 2,
+      recommendationStatusAtExport: 'approved',
+      batchId: 'batch_2026-06-17',
+    });
     expect(evidence.status).toBe('PASS');
     expect(evidence.before.value).toBe('1.63');
     expect(evidence.after.value).toBe('1.46');
     expect(evidence.readback.actualValue).toBe('1.46');
+    expect(evidence.source).toMatchObject({
+      recommendationId: '4',
+      recommendationRevision: 2,
+      batchId: 'batch_2026-06-17',
+    });
   });
 
   it('fails before calling the fill helper when session-input placeholders are not replaced', () => {

@@ -172,7 +172,7 @@ mustContain(
   "'aria-labelledby': readbackStepTabId(stepId)",
   'readback wizard panels reference their controlling tabs',
 );
-mustContain(readbackPage, 'title="4. 校验并导出证据"', 'readback page shows ad readback evidence panel');
+mustContain(readbackPage, "readbackStepPanelProps('verify-export')", 'readback page shows ad readback evidence panel');
 mustContain(readbackPage, '复制长参数生成命令', 'readback page provides copy command affordance');
 mustContain(recommendationsPage, '建议生成范围', 'recommendations page exposes filter/generate controls');
 mustContain(recommendationsPage, '生成优化建议', 'recommendations page exposes generation action');

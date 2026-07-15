@@ -25,6 +25,18 @@ function writeReport(filePath: string): string {
 function completeInput(): AdReadbackEvidenceInput {
   const dir = makeTempDir();
   return {
+    authority: {
+      recommendationId: 101,
+      recommendationRevision: 4,
+      recommendationStatusAtExport: 'approved',
+      dateFrom: '2026-06-01',
+      dateTo: '2026-06-10',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0TESTASIN',
+      batchId: 'manual_ad_execution_batch',
+      checkedAt: '2026-06-10T10:00:30.000Z',
+    },
     approval: {
       operatorConfirmed: true,
       realWriteApproved: true,
@@ -75,6 +87,7 @@ function completeInput(): AdReadbackEvidenceInput {
     },
     source: {
       recommendationId: '101',
+      recommendationRevision: 4,
       batchId: 'manual_ad_execution_batch',
       metricDate: '2026-06-10',
       sourceFiles: [writeReport(path.join(dir, 'user_search_term.xlsx'))],
@@ -137,6 +150,13 @@ describe('ad readback evidence builder', () => {
     const evidence = buildAdReadbackEvidence(completeInput());
 
     expect(evidence.status).toBe('PASS');
+    expect(evidence.schemaVersion).toBe(2);
+    expect(evidence.authority).toMatchObject({
+      recommendationId: 101,
+      recommendationRevision: 4,
+      recommendationStatusAtExport: 'approved',
+      batchId: 'manual_ad_execution_batch',
+    });
     expect(evidence.realWriteApproved).toBe(true);
     expect(evidence.safety).toMatchObject({
       full8Started: false,

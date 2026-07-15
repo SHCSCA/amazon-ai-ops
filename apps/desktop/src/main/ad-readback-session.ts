@@ -492,6 +492,7 @@ export function fillAdReadbackSession(sessionDir: string): FilledAdReadbackSessi
   const candidate = readJson(String(paths.sourceCandidatePath || ''));
   const afterValue = String(input.afterValue || '');
   const evidence = buildAdReadbackEvidence({
+    authority: candidate.authority || {},
     target: candidate.target || {},
     source: candidate.source || {},
     approval: {
