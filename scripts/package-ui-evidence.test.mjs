@@ -26,18 +26,24 @@ const {
   PACKAGE_UI_WIDE_PROFILE,
   READ_ONLY_INTERACTION_PLAN,
   buildAppContentManifest,
+  buildProcessIsolationEvidence,
   buildProtectedFileEvidence,
   buildProductionBuildContentManifest,
+  appendRendererDiagnostic,
   captureViewportScreenshot,
   collectElectronIdentity,
   collectMatchingPackageProcesses,
+  collectMatchingProfileBrowserProcesses,
   evaluatePackageViewportContract,
   evaluatePackageUiEvidenceCompleteness,
   evaluateProfileDatabaseProvenance,
+  executeEvidenceRunWithIsolation,
+  extractProfileUserDataDirectories,
   isWorkspaceProbeAbsenceError,
   isRetryableLoginNavigationError,
   latestProductionSourceWatermark,
   parsePackageUiEvidenceArgs,
+  sanitizeDiagnosticText,
   validateOverlayKeyboardEvidence,
   validateOverlayTriggerContract,
   validatePackageIdentity,
@@ -46,7 +52,9 @@ const {
   validateObjectWorkspaceExperienceEvidence,
   validateObjectInspectorEvidence,
   validateWorkspaceRuntimeMetrics,
+  validRunDiagnostics,
   waitForPackageProcessCleanup,
+  waitForProfileBrowserProcessCleanup,
   waitForRendererComposite,
   waitForWorkspaceSettled,
 } = evidenceModule;
@@ -307,6 +315,31 @@ describe('durable protected-state evidence', () => {
       stderr: '',
     }));
     expect(running).toEqual(expect.objectContaining({ matchingCount: 1, observedCount: 1, passed: true }));
+    expect(running.unresolved).toEqual([]);
+
+    const unresolved = collectMatchingPackageProcesses(executablePath, () => ({
+      status: 0,
+      stdout: JSON.stringify([{
+        ExecutablePath: null,
+        Name: 'AmazonAIOpsAgent.exe',
+        ParentProcessId: 12,
+        ProcessId: 13,
+      }]),
+      stderr: '',
+    }));
+    expect(unresolved).toEqual(expect.objectContaining({
+      matching: [],
+      matchingCount: 0,
+      observedCount: 1,
+      passed: false,
+      unresolvedCount: 1,
+    }));
+    expect(unresolved.unresolved[0]).toEqual({
+      executablePath: null,
+      name: 'AmazonAIOpsAgent.exe',
+      parentProcessId: 12,
+      processId: 13,
+    });
 
     let calls = 0;
     const cleanup = await waitForPackageProcessCleanup(executablePath, {
@@ -316,10 +349,172 @@ describe('durable protected-state evidence', () => {
         calls += 1;
         return calls === 1
           ? { matchingCount: 1, passed: true }
-          : { matching: [], matchingCount: 0, observedCount: 0, passed: true, unresolvedCount: 0 };
+          : { error: null, matching: [], matchingCount: 0, observedCount: 0, passed: true, unresolved: [], unresolvedCount: 0 };
       },
     });
     expect(cleanup).toEqual(expect.objectContaining({ attempts: 2, matchingCount: 0, passed: true }));
+  });
+
+  it('matches only Chrome, Chromium, or Edge processes bound to the exact isolated profile without persisting command lines', async () => {
+    const profilePath = path.join(USER_DATA_DIR, 'storage', 'browser-data');
+    expect(extractProfileUserDataDirectories(
+      `"C:\\browser\\chrome.exe" --user-data-dir="${profilePath}" --type=browser`,
+    )).toContain(profilePath);
+    expect(extractProfileUserDataDirectories(
+      `"C:\\browser\\chromium.exe" "--user-data-dir=${profilePath}" --type=renderer`,
+    )).toContain(profilePath);
+
+    const snapshot = collectMatchingProfileBrowserProcesses(profilePath, () => ({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          CommandLine: `"C:\\browser\\chrome.exe" --user-data-dir="${profilePath}" --type=browser`,
+          ExecutablePath: 'C:\\browser\\chrome.exe',
+          Name: 'chrome.exe',
+          ParentProcessId: 10,
+          ProcessId: 11,
+        },
+        {
+          CommandLine: '"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe" --user-data-dir="D:\\Other\\edge-profile"',
+          ExecutablePath: 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+          Name: 'msedge.exe',
+          ParentProcessId: 20,
+          ProcessId: 21,
+        },
+      ]),
+      stderr: '',
+    }));
+
+    expect(snapshot).toEqual(expect.objectContaining({ matchingCount: 1, observedCount: 2, passed: true }));
+    expect(snapshot.matching[0]).toEqual({
+      executablePath: 'C:\\browser\\chrome.exe',
+      name: 'chrome.exe',
+      parentProcessId: 10,
+      processId: 11,
+      profileMatched: true,
+    });
+    expect(JSON.stringify(snapshot)).not.toContain('CommandLine');
+    expect(JSON.stringify(snapshot)).not.toContain('--user-data-dir');
+
+    let calls = 0;
+    const cleanup = await waitForProfileBrowserProcessCleanup(profilePath, {
+      attempts: 2,
+      intervalMs: 0,
+      collect: () => {
+        calls += 1;
+        return calls === 1
+          ? { matchingCount: 1, passed: true }
+          : validProcessSnapshot();
+      },
+    });
+    expect(cleanup).toEqual(expect.objectContaining({ attempts: 2, matchingCount: 0, passed: true }));
+  });
+
+  it('fails closed when any candidate profile browser command line cannot be read', () => {
+    const profilePath = path.join(USER_DATA_DIR, 'storage', 'browser-data');
+    const snapshot = collectMatchingProfileBrowserProcesses(profilePath, () => ({
+      status: 0,
+      stdout: JSON.stringify([{
+        CommandLine: null,
+        ExecutablePath: 'C:\\browser\\chrome.exe',
+        Name: 'chrome.exe',
+        ParentProcessId: 10,
+        ProcessId: 11,
+      }]),
+      stderr: '',
+    }));
+    expect(snapshot).toEqual(expect.objectContaining({
+      matchingCount: 0,
+      passed: false,
+      unresolvedCount: 1,
+    }));
+    expect(snapshot.unresolved[0]).toEqual(expect.objectContaining({
+      name: 'chrome.exe',
+      processId: 11,
+      profileMatched: false,
+    }));
+  });
+
+  it('returns a bounded structured failed run with sanitized diagnostics and both isolation attestations', async () => {
+    const zero = validProcessSnapshot();
+    const result = await executeEvidenceRunWithIsolation({
+      baseEvidence: { scalePercent: 100, screenshots: [], workspaceChecks: [] },
+      options: { executablePath: 'D:\\App\\AmazonAIOpsAgent.exe', userDataDir: USER_DATA_DIR },
+      processApi: {
+        collectPackage: () => zero,
+        collectProfile: () => zero,
+        waitPackage: async () => ({ ...zero, attempts: 1 }),
+        waitProfile: async () => ({ ...zero, attempts: 1 }),
+      },
+      profileId: '100-compact',
+      run: async (diagnostics) => {
+        diagnostics.phase = 'viewport';
+        diagnostics.timeline.push({ at: new Date().toISOString(), phase: 'viewport' });
+        try {
+          throw new Error([
+            '--username operator@example.com --password hunter2',
+            'Authorization: Bearer abcdef123456',
+            'Cookie: sid=cookie-secret; session_token=session-secret',
+            'api_key=sk-secretvalue',
+            'x'.repeat(5_000),
+          ].join('\n'));
+        } finally {
+          diagnostics.phase = 'electron-close';
+          diagnostics.timeline.push({ at: new Date().toISOString(), phase: 'electron-close' });
+        }
+      },
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.packageProcessIsolation.passed).toBe(true);
+    expect(result.profileProcessIsolation.passed).toBe(true);
+    expect(result.diagnostics).toEqual(expect.objectContaining({
+      completedAt: expect.any(String),
+      failure: expect.objectContaining({ phase: 'viewport' }),
+      login: expect.objectContaining({ attempts: [], outcome: 'not-reached' }),
+      phase: 'failed',
+      startedAt: expect.any(String),
+    }));
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('operator@example.com');
+    expect(serialized).not.toContain('hunter2');
+    expect(serialized).not.toContain('abcdef123456');
+    expect(serialized).not.toContain('cookie-secret');
+    expect(serialized).not.toContain('session-secret');
+    expect(serialized).not.toContain('sk-secretvalue');
+    expect(result.failure.message.length).toBeLessThanOrEqual(2_000);
+    expect(sanitizeDiagnosticText('password=hunter2 token=abc123')).toBe('password=[REDACTED] token=[REDACTED]');
+    expect(sanitizeDiagnosticText('--password hunter2 --username operator@example.com')).toBe('--password [REDACTED] --username [REDACTED]');
+    expect(sanitizeDiagnosticText('Authorization: Bearer abcdef123456')).toBe('Authorization: [REDACTED]');
+    expect(sanitizeDiagnosticText('Cookie: sid=cookie-secret; session_token=session-secret')).toBe('Cookie: [REDACTED]');
+    expect(sanitizeDiagnosticText('session_token=session-secret')).toBe('session_token=[REDACTED]');
+    expect(validRunDiagnostics(result.diagnostics, result)).toBe(false);
+  });
+
+  it('caps renderer diagnostics and records dropped entries without growing the manifest arrays', async () => {
+    const zero = validProcessSnapshot();
+    const result = await executeEvidenceRunWithIsolation({
+      baseEvidence: { scalePercent: 100 },
+      options: { executablePath: 'D:\\App\\AmazonAIOpsAgent.exe', userDataDir: USER_DATA_DIR },
+      processApi: {
+        collectPackage: () => zero,
+        collectProfile: () => zero,
+        waitPackage: async () => ({ ...zero, attempts: 1 }),
+        waitProfile: async () => ({ ...zero, attempts: 1 }),
+      },
+      profileId: '100-compact',
+      run: async (diagnostics) => {
+        for (let index = 0; index < 105; index += 1) {
+          appendRendererDiagnostic(diagnostics, 'consoleErrors', { message: `error-${index}` });
+        }
+        return { passed: true };
+      },
+    });
+
+    expect(result.diagnostics.renderer.consoleErrors).toHaveLength(100);
+    expect(result.diagnostics.renderer.droppedCount).toEqual({ consoleErrors: 5, pageErrors: 0 });
+    expect(result.diagnostics.renderer.limits).toEqual({ consoleErrors: 100, pageErrors: 100 });
+    expect(validRunDiagnostics(result.diagnostics, result)).toBe(false);
   });
 });
 
@@ -351,10 +546,57 @@ function validMetrics(expected, overrides = {}) {
   };
 }
 
+function validProcessSnapshot(overrides = {}) {
+  return {
+    error: null,
+    matching: [],
+    matchingCount: 0,
+    observedCount: 0,
+    passed: true,
+    unresolved: [],
+    unresolvedCount: 0,
+    ...overrides,
+  };
+}
+
+function validProcessIsolation() {
+  return buildProcessIsolationEvidence(validProcessSnapshot(), validProcessSnapshot({ attempts: 1 }));
+}
+
+function validDiagnostics(profileId) {
+  return {
+    cleanupErrors: [],
+    completedAt: '2026-07-17T06:00:01.000Z',
+    failure: null,
+    login: {
+      attempts: [],
+      completedAt: '2026-07-17T06:00:00.500Z',
+      outcome: 'existing-authenticated-session',
+      savedCredentials: null,
+      startedAt: '2026-07-17T06:00:00.100Z',
+    },
+    phase: 'completed',
+    profileId,
+    renderer: {
+      consoleErrors: [],
+      droppedCount: { consoleErrors: 0, pageErrors: 0 },
+      limits: { consoleErrors: 100, pageErrors: 100 },
+      pageErrors: [],
+    },
+    schemaVersion: 'package-ui-run-diagnostics/v1',
+    startedAt: '2026-07-17T06:00:00.000Z',
+    timeline: [
+      { at: '2026-07-17T06:00:00.000Z', phase: 'created' },
+      { at: '2026-07-17T06:00:01.000Z', phase: 'completed' },
+    ],
+  };
+}
+
 function validRun(scale) {
   return {
     actualDeviceScaleFactor: scale.deviceScaleFactor,
     consoleErrors: [],
+    diagnostics: validDiagnostics(`${scale.scalePercent}-compact`),
     identity: { passed: true },
     overlayChecks: EXPECTED_OVERLAY_CHECK_IDS.map((id) => ({
       compositeEvidence: { passed: true },
@@ -365,6 +607,7 @@ function validRun(scale) {
       screenshot: { path: `${id}-${scale.scalePercent}.png`, sha256: HASH_B },
     })),
     pageErrors: [],
+    packageProcessIsolation: validProcessIsolation(),
     scalePercent: scale.scalePercent,
     screenshots: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
       path: `${workspace.workspace}-${scale.scalePercent}.png`,
@@ -372,6 +615,7 @@ function validRun(scale) {
       workspace: workspace.workspace,
     })),
     viewport: { height: 700, width: 1200 },
+    profileProcessIsolation: validProcessIsolation(),
     workspaceChecks: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => {
       const objectWorkspace = workspace.workspace === 'product' || workspace.workspace === 'diagnosis';
       return {
@@ -394,14 +638,17 @@ function validWideRun() {
   return {
     actualDeviceScaleFactor: 1,
     consoleErrors: [],
+    diagnostics: validDiagnostics(PACKAGE_UI_WIDE_PROFILE.id),
     identity: { passed: true },
     pageErrors: [],
+    packageProcessIsolation: validProcessIsolation(),
     profileId: PACKAGE_UI_WIDE_PROFILE.id,
     screenshots: ['product', 'diagnosis'].map((workspace) => ({
       path: `${workspace}-wide.png`,
       sha256: HASH_A,
       workspace,
     })),
+    profileProcessIsolation: validProcessIsolation(),
     viewport: { height: 900, width: 1400 },
     workspaceChecks: ['product', 'diagnosis'].map((workspace) => ({
       experienceEvidence: { passed: true },
@@ -1208,17 +1455,63 @@ describe('read-only interactions and evidence completeness', () => {
   it('requires protected state, process cleanup, 100% and 125%, eight workspaces, three overlay checks and hashed screenshots', () => {
     const valid = {
       artifactHashesStable: true,
-      packageProcessIsolation: {
-        before: { matchingCount: 0, passed: true },
-        after: { matchingCount: 0, passed: true },
-        passed: true,
-      },
+      schemaVersion: 5,
+      packageProcessIsolation: validProcessIsolation(),
       profileDatabaseProvenance: { passed: true },
+      profileProcessIsolation: validProcessIsolation(),
       protectedDatabase: { passed: true },
       runs: EXPECTED_PACKAGE_UI_SCALES.map(validRun),
       wideProfile: validWideRun(),
     };
     expect(evaluatePackageUiEvidenceCompleteness(valid)).toEqual({ passed: true, violations: [] });
+
+    const legacySchema = evaluatePackageUiEvidenceCompleteness({ ...valid, schemaVersion: 4 });
+    expect(legacySchema.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'PACKAGE_UI_SCHEMA_V5_REQUIRED' }),
+    ]));
+
+    const missingTopLevelProfileIsolation = structuredClone(valid);
+    delete missingTopLevelProfileIsolation.profileProcessIsolation;
+    expect(evaluatePackageUiEvidenceCompleteness(missingTopLevelProfileIsolation).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'PROFILE_PROCESS_CLEANUP_FAILED' }),
+    ]));
+
+    const incompleteTopLevelProcessSnapshot = structuredClone(valid);
+    incompleteTopLevelProcessSnapshot.packageProcessIsolation.before = {
+      error: null,
+      matchingCount: 0,
+      passed: true,
+      unresolvedCount: 0,
+    };
+    expect(evaluatePackageUiEvidenceCompleteness(incompleteTopLevelProcessSnapshot).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'PACKAGE_PROCESS_CLEANUP_FAILED' }),
+    ]));
+
+    const leakedScaleProfile = structuredClone(valid);
+    leakedScaleProfile.runs[0].profileProcessIsolation.after.matchingCount = 1;
+    leakedScaleProfile.runs[0].profileProcessIsolation.passed = false;
+    expect(evaluatePackageUiEvidenceCompleteness(leakedScaleProfile).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCALE_PROFILE_PROCESS_ISOLATION_FAILED' }),
+    ]));
+
+    const missingScaleDiagnostics = structuredClone(valid);
+    delete missingScaleDiagnostics.runs[0].diagnostics;
+    expect(evaluatePackageUiEvidenceCompleteness(missingScaleDiagnostics).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCALE_DIAGNOSTICS_MISSING_OR_FAILED' }),
+    ]));
+
+    const droppedScaleDiagnostics = structuredClone(valid);
+    droppedScaleDiagnostics.runs[0].diagnostics.renderer.droppedCount.consoleErrors = 1;
+    expect(evaluatePackageUiEvidenceCompleteness(droppedScaleDiagnostics).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCALE_DIAGNOSTICS_MISSING_OR_FAILED' }),
+    ]));
+
+    const leakedWideProduct = structuredClone(valid);
+    leakedWideProduct.wideProfile.packageProcessIsolation.after.matchingCount = 1;
+    leakedWideProduct.wideProfile.packageProcessIsolation.passed = false;
+    expect(evaluatePackageUiEvidenceCompleteness(leakedWideProduct).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'WIDE_PACKAGE_PROCESS_ISOLATION_FAILED' }),
+    ]));
 
     const missingScale = evaluatePackageUiEvidenceCompleteness({
       artifactHashesStable: true,
@@ -1253,8 +1546,8 @@ describe('read-only interactions and evidence completeness', () => {
     const leakedProcess = evaluatePackageUiEvidenceCompleteness({
       ...valid,
       packageProcessIsolation: {
-        before: { matchingCount: 0, passed: true },
-        after: { matchingCount: 1, passed: true },
+        ...validProcessIsolation(),
+        after: validProcessSnapshot({ matching: [{ processId: 1 }], matchingCount: 1 }),
         passed: false,
       },
     });

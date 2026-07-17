@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
+import vitestConfig from '../vitest.config';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -13,6 +14,16 @@ describe('root package smoke scripts', () => {
     expect(packageJson.scripts['prepare:native:node']).toBe('pnpm --filter @amazon-ai-ops/local-db rebuild');
     expect(packageJson.scripts.pretest).toBe('pnpm run prepare:native:node');
     expect(packageJson.scripts.test).toBe('vitest run');
+  });
+
+  it('uses isolated fork workers for direct and package-script Vitest runs', () => {
+    expect(vitestConfig).toMatchObject({
+      test: {
+        pool: 'forks',
+        maxWorkers: 4,
+        minWorkers: 1,
+      },
+    });
   });
 
   it('prepares the shared SQLite native module for Electron before desktop package construction', () => {

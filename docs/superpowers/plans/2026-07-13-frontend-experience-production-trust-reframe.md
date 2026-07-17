@@ -25,10 +25,12 @@
 | Task 7 全工作区运行体验验收 | 已完成 | 8 个工作区、43 个目标和 5 组业务 smoke 已通过；P0=0、P1=0（开发/运行态） |
 | Task 6D 产品与诊断对象工作台纠偏 | 已完成 | 产品与诊断均已改为固定虚拟队列 + 响应式 Inspector；查看/保存/锁定、筛选/正式资格和阻断主动作语义已分离并通过独立 Product/QA/Reviewer 验收 |
 | Task 7R 纠偏后运行体验复验 | 已完成 | 新 43/43 运行矩阵、1200 drawer、1400 inline、125%、全量测试、typecheck、renderer build 与 5/5 业务 smoke 已通过；完整对象身份绑定和首屏 AI 四态反馈已通过独立验收，P0=0、P1=0 |
-| Task 8A 本地 NON_READY candidate | 已完成 | 当前 Windows candidate、package UI、哈希、smoke、7/8 readiness、NON_READY bundle 与 17/17 safety 已固定；Product/UX 8.6、QA 9.0、Reviewer 8.8，P0=0、P1=0 |
+| Task 8A 本地 NON_READY candidate | 历史基线已完成 | 旧 Task 8A Windows candidate、bundle 与 17/17 safety 保留为历史证据，已被 UI P2 候选取代 |
+| Task 8A-P2 UI 与生产证据硬化 | 本地 NON_READY 已完成 | UI、运行矩阵、全量、Windows package、schema v5 package UI、哈希、7/8 readiness、新 NON_READY bundle 与 strict safety 17/17 已完成 |
+| 外部分发 P1 硬化 | 未完成 | 正式 8 gates 之外仍需 navigation/redirect allowlist、`openExternal` protocol allowlist、legacy plaintext credential migration；预计 4–6 小时 |
 | Task 8B 外部真实 Ads v2 APP_READY | 外部证据待补 | 需要新的真实审批、Ads UI 执行、独立截图、reload 回读以及正整数 recommendationId/SQLite authority 校验 |
 
-当前源码验收基线：最终全量测试 170/170 files、575/575 suites、1920/1920 tests 通过（`output/codex-evidence/task8a-full-vitest-20260717-final.json`）；工作区证据 43/43 通过（`output/codex-evidence/workspace-ui-task6/workspace-ui-evidence-run-2026-07-17T04-25-13-089Z.json`）；业务 smoke 5/5 通过（`output/codex-evidence/current-business-ui-smoke-1784262294451.json`）。最新批次 `batch_20260625013151957_ajw0nb` 已 8/8 类逐类入库，共 6827 行；产品页 1879 行是当前 ASIN 指标，不是全库总量。当前 Windows NON_READY candidate 已完成重建、包体 UI、哈希、smoke、7/8 readiness、bundle 与严格 NON_READY safety 17/17；唯一失败门为 `real-ad-execution-readback`。2026-07-16 及更早证据均为历史候选。Task 8B 外部真实 Ads v2 authority 门仍未完成。
+当前 UI P2 源码验收基线：代码冻结后的唯一一次最终全量测试 170/170 files、576/576 suites、1950/1950 tests 通过（`output/codex-evidence/ui-p2-full-vitest-20260717-final.json`）；工作区证据 46/46 通过（`output/codex-evidence/workspace-ui-task6/workspace-ui-evidence-run-2026-07-17T06-23-26-823Z.json`），包含 error/retry、AI busy 与 reduced-motion 状态；业务 smoke 5/5 通过（`output/codex-evidence/current-business-ui-smoke-1784270629248.json`）。package launch smoke `output/codex-evidence/package-launch-smoke-1784269772321.json` PASS；schema v5 package UI `output/codex-evidence/package-ui-evidence/2026-07-17T06-33-01-390Z/manifest.json` PASS，30 PNG、0 console/page/dropped diagnostics，且每轮 product/profile-browser process isolation 通过。`output/codex-evidence/final-readiness-20260717-ui-p2-non-ready.json` 为 `APP_NEEDS_WORK`、7/8；唯一正式失败门为 `real-ad-execution-readback`。新 NON_READY bundle 已导出到 `output/delivery-bundles/v15-delivery-bundle-20260717-ui-p2-non-ready/delivery-bundle-manifest.json`，manifest 状态为 `APP_NEEDS_WORK`，严格 `verify:v15-non-ready-safety` 17/17 PASS；该结果属于当前 UI P2 候选，不复用旧 Task 8A bundle/safety。
 
 ## 二、固定约束
 
@@ -37,7 +39,7 @@
 - 可见导航固定为：`今日任务 / 产品工作台 / 数据准备 / 广告诊断 / 建议与审批 / 结果核对 / 关键词与 Listing / 系统与交付`。
 - 所有主业务文案使用亚马逊运营语言；action code、batch id、JSON、命令、路径、哈希和 verifier 术语进入技术抽屉。
 - 首屏恰好一个 `h1`、一个可见主动作、不超过两个次动作；可见文字不得小于 12px。
-- `.app-content` 是默认纵向滚动所有者；只有明确标记的虚拟表格可以拥有局部纵向滚动。
+- `.app-content` 是默认纵向滚动所有者；只有明确标记的虚拟表格/队列与响应式 Inspector 抽屉可以拥有有界局部纵向滚动。
 - 运行态必须验证 1200×700、1400×900 与 125% 缩放；页面级不得横向溢出。
 - 预览截图只证明布局；只有新包、package smoke、匹配哈希、final readiness、READY bundle、文档和安全检查同时一致，才可声明 APP_READY。
 
@@ -51,7 +53,7 @@
 | UX/QA 复核代理 | 信息层级、交互状态、键盘行为、缩放与可访问性独立复核 |
 | Delivery 复核代理 | Windows 包、smoke、哈希、READY 证据与文档一致性复核 |
 
-每个实施任务遵循：失败测试或可复现基线 → 实现 → 聚焦验证 → 运行界面证据 → 独立复核 → 单独提交。未解决的 P0/P1 或 Critical/Important 问题阻止进入下一阶段。
+每个实施任务遵循：失败测试或可复现基线 → 实现 → 聚焦验证 → 运行界面证据 → 独立复核 → 单独提交。实现轮次只运行增量/聚焦测试；全部代码冻结后只运行一次最终全量测试。UI P2 的交付全量证据固定为 `ui-p2-full-vitest-20260717-final.json`；一次由独立 orchestrator 审计自行触发的中途 broad suite 不作为交付证据。未解决的 P0/P1 或 Critical/Important 问题阻止对应交付边界进入下一阶段。
 
 ## 四、执行计划
 
@@ -216,9 +218,9 @@
 - [x] 验证不经滚动的真实首屏，并确保同页同名共享组件的 ARIA id 仍唯一。
 - [x] 进行整分支 UI/UX 与代码复核，清零 P0/P1、Critical/Important。
 
-**当前 Task 8A 证据：** 43/43 工作区目标见 `output/codex-evidence/workspace-ui-task6/workspace-ui-evidence-run-2026-07-17T04-25-13-089Z.json`；5/5 业务 smoke 见 `output/codex-evidence/current-business-ui-smoke-1784262294451.json`；170/170 files、575/575 suites、1920/1920 tests 见 `output/codex-evidence/task8a-full-vitest-20260717-final.json`；包体 UI 见 `output/codex-evidence/package-ui-evidence/2026-07-17T04-16-32-110Z/manifest.json`；readiness 见 `output/codex-evidence/final-readiness-20260717-task8a-non-ready.json`。
+**历史 Task 8A 证据：** 43/43 工作区目标见 `output/codex-evidence/workspace-ui-task6/workspace-ui-evidence-run-2026-07-17T04-25-13-089Z.json`；5/5 业务 smoke 见 `output/codex-evidence/current-business-ui-smoke-1784262294451.json`；170/170 files、575/575 suites、1920/1920 tests 见 `output/codex-evidence/task8a-full-vitest-20260717-final.json`；包体 UI 见 `output/codex-evidence/package-ui-evidence/2026-07-17T04-16-32-110Z/manifest.json`；readiness 见 `output/codex-evidence/final-readiness-20260717-task8a-non-ready.json`。上述已被后续 UI P2 证据取代，仅供追溯。
 
-### Task 8A：本地 Windows NON_READY candidate — 已完成
+### Task 8A：本地 Windows NON_READY candidate — 历史基线已完成
 
 - [x] 完成最终全量复跑：170/170 files、575/575 suites、1920/1920 tests、43/43 工作区证据和 5/5 业务 UI smoke 通过；其后只运行增量检查。
 - [x] 确认最新批次 `batch_20260625013151957_ajw0nb` 已有 8/8 imported report types 和 6827 imported total rows；产品页 1879 是当前 ASIN 指标，不得再解释为全库总量或导入阻断。
@@ -233,6 +235,20 @@
 
 历史候选仅供追溯：2026-07-16 installer `8B8479D6D40E37D1F20D14D63107FF3EC1C1EBA68BB6FCA6D2CC6D9FD0455818`、portable `1FB7CDCE0B0FE0E76DB6D0BF795A293C9DD3CF03559A81CA48B83D1F956D966F`、package-launch smoke `output/codex-evidence/package-launch-smoke-1784189230056.json`、package UI `output/codex-evidence/package-ui-evidence/2026-07-16T09-04-21-298Z/manifest.json`、readiness `output/codex-evidence/final-readiness-2026-07-16T08-35-package-isolation.json`。这些证据早于 Task 6D/7R，不能代表当前源码，也不得用于声明 `APP_READY`。
 
+### Task 8A-P2：UI 可读性、状态证据与生产可信性硬化 — 本地 NON_READY 已完成
+
+- [x] Diagnosis Inspector 使用诊断专用双列 fact strip；日期 token 不拆分，趋势说明限制为可扫读行数，辅助文字改用可读对比度，避免紧凑 drawer 与宽屏 inline Inspector 出现碎片化换行。
+- [x] 工作区矩阵新增显式 error + retry、AI busy、AI busy + reduced-motion 三类证据；global spinner 在 reduced motion 下保留静态状态提示。
+- [x] Package UI 升级到 schema v5：顶层及每轮运行都记录严格 product/profile-browser before/after snapshots，profile 绑定指定路径，不保存完整 CommandLine；诊断采用固定 cap + `droppedCount`，敏感 CLI、Authorization、Cookie/session 内容脱敏，成功证据要求 0 console/page/dropped diagnostics。
+- [x] Vitest 默认切换到 `forks`，避免 Windows threads/native teardown 假失败；shutdown 顺序固定为 scheduler → browser → DB，并对资源清理增加有界超时、错误报告和继续清理语义。
+- [x] 修复 CRLF 敏感测试 fixture 与 business smoke assertion token split，防止换行形式或组合 token 造成非业务失败。
+- [x] 冻结后只运行一次最终全量测试：`output/codex-evidence/ui-p2-full-vitest-20260717-final.json`，170/170 files、576/576 suites、1950/1950 tests；另一次独立 orchestrator 中途 broad suite 不纳入交付证据。
+- [x] 46/46 工作区矩阵、5/5 业务 smoke、package launch smoke 与 schema v5 package UI 通过；当前 installer `B5358B497FDABB956152EA2CAE419D82B612BC92736433FF9BD6B1DDA36CD5D9`，portable `CE41FCF95EF592B839CFF3660B1C9DB11A2F546FB7F38D0CDD7160CA27E51B48`，win-unpacked `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`，app content `7C6BC0BA9EE2E99D7B02256143E7044757C11135ACFD3F1CE5059F6437511F8E`，authority DB `9E82065E780B38A4D3348F4EE723DDF1A50142F3900192E612730CC1C8017439`。
+- [x] 当前 final readiness 为 `output/codex-evidence/final-readiness-20260717-ui-p2-non-ready.json`：`APP_NEEDS_WORK`、7/8，唯一正式失败门仍是 `real-ad-execution-readback`。
+- [x] 已导出 `output/delivery-bundles/v15-delivery-bundle-20260717-ui-p2-non-ready/delivery-bundle-manifest.json`，manifest 状态为 `APP_NEEDS_WORK`；严格 `verify:v15-non-ready-safety` 已通过 17/17。
+
+**正式 gates 之外的外部分发 P1：** navigation/redirect destination allowlist、`openExternal` protocol allowlist、legacy plaintext credential migration。三项不改变 7/8 readiness 计算，但修复前候选仅限内部 NON_READY 使用；预计实现与聚焦验证共 4–6 小时。评估/审计临时产物清理属于非阻断收尾。
+
 ### Task 8B：外部真实 Ads v2 APP_READY — 外部证据待补
 
 - [ ] 选择一条当前 SQLite 中 `approved` 且具有正整数 `recommendationId`、当前 revision/scope/batch 的低风险建议。
@@ -240,6 +256,8 @@
 - [ ] 让 v2 readback 通过 `verify:ad-readback --db <当前 authority DB>`，且 final-readiness 八门全部通过。
 - [ ] README 顶部切换为 `APP_READY` 后导出新的 READY bundle，并运行 READY safety。
 - [ ] 完成独立 Delivery 复核，确认包哈希、smoke、readiness、bundle、文档和 SQLite authority 完全一致。
+
+**预计时间：** 当前真实 approved recommendation、人工 Ads UI 权限及独立截图条件齐备后，执行、回读、verifier、final-readiness 与 READY 证据刷新预计 30–60 分钟；外部前置条件未满足时无法用本地测试替代。
 
 ## 五、统一验收矩阵
 
@@ -254,13 +272,13 @@
 
 ## 六、完成定义
 
-源码重构、运行态验收、Windows 包体候选、NON_READY bundle、safety 与独立复核均已完成；Task 8A 的以下 1–6 条全部满足：
+历史 Task 8A 的源码重构、运行态验收、Windows 包体候选、NON_READY bundle、safety 与独立复核均已完成；其 1–6 条在历史候选上全部满足。当前 UI P2 候选已重新完成 1–5，包括匹配的 `APP_NEEDS_WORK` 7/8 readiness、NON_READY bundle 和严格 safety 17/17；第 6 条仍必须把三个门外 P1 作为外部分发阻断保留：
 
 1. 8 个工作区全部使用任务优先结构，旧 16 路由兼容仍通过；
 2. 首屏可见性、滚动、缩放、键盘与状态矩阵全部通过；
 3. 所有业务安全边界与 fail-closed readiness 未被削弱；
 4. 新 Windows portable/installer 构建、启动和包体 UI 检查通过；
-5. EXE 哈希、package smoke、`APP_NEEDS_WORK` final readiness、NON_READY bundle 与文档完全一致，并通过当前 NON_READY safety；
-6. 全分支代码、UI/UX 和 Delivery 独立复核无阻断问题。
+5. EXE 哈希、package smoke、`APP_NEEDS_WORK` final readiness、NON_READY bundle 与文档完全一致，并通过当前 NON_READY safety 17/17；
+6. 全分支代码、UI/UX 和 Delivery 独立复核无对应交付边界的阻断问题（外部分发仍被 allowlist 与凭据迁移三项 P1 阻断）。
 
-`APP_READY` 是第二层外部完成条件：在上述本地条件之外，还必须补齐当前真实 Ads v2 SQLite authority 回读，使 final-readiness 八门全部通过，再导出 READY bundle、运行 READY safety 并完成独立复核。在 Task 8B 完成前，状态只能表述为 `APP_NEEDS_WORK`，不得沿用旧包或历史回读的 APP_READY 结论描述新界面。
+`APP_READY` 是第二层外部完成条件：UI P2 NON_READY bundle/safety 已完成；下一步先完成外部分发 P1 硬化，再补齐当前真实 Ads v2 SQLite authority 回读，使 final-readiness 八门全部通过，导出 READY bundle、运行 READY safety 并完成独立复核。在 Task 8B 完成前，状态只能表述为 `APP_NEEDS_WORK`，不得沿用旧包或历史回读的 APP_READY 结论描述新界面。

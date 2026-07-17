@@ -661,4 +661,15 @@ describe('ad quant task-first surface', () => {
     expect(source).toContain('label: workspaceModel.primaryAction.label');
     expect(blockedStateSource).not.toContain('action={');
   });
+
+  it('marks timeline and product evidence as diagnosis-specific compact summaries', () => {
+    const source = readFileSync(new URL('./ad-quant-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('diagnosis-inspector-summary--timeline');
+    expect(source).toContain('diagnosis-inspector-summary--product');
+    expect(source).toContain('className="diagnosis-inspector-date-range"');
+    expect(source).toContain('<time dateTime={selectedTimeline.dateFrom}>');
+    expect(source).toContain('<time dateTime={selectedTimeline.dateTo}>');
+    expect(source.match(/diagnosis-inspector-trend__item/g)).toHaveLength(2);
+  });
 });

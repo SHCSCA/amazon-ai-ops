@@ -145,6 +145,19 @@ describe('task-first workspace style layers', () => {
     expect(css).toMatch(/\.diagnosis-workspace > \.progressive-details\[open\]\s*\{[^}]*max-height:\s*calc\(100vh - 120px\)[^}]*overflow-y:\s*auto/s);
   });
 
+  it('keeps Diagnosis Inspector facts two-column, readable, and free of nested cards', () => {
+    const css = style('object-workspace.css');
+
+    expect(css).toMatch(/\.diagnosis-inspector-stack \.diagnosis-inspector-summary\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)[^}]*gap:\s*0[^}]*overflow:\s*hidden/s);
+    expect(css).toMatch(/\.diagnosis-inspector-stack \.diagnosis-inspector-summary > div\s*\{[^}]*min-height:\s*0[^}]*border:\s*0[^}]*border-radius:\s*0[^}]*box-shadow:\s*none/s);
+    expect(css).toMatch(/\.diagnosis-inspector-stack \.diagnosis-inspector-summary > div \+ div\s*\{[^}]*border-left:\s*1px solid var\(--workspace-border\)/s);
+    expect(css).toMatch(/\.diagnosis-inspector-stack \.diagnosis-inspector-summary > div > span,[\s\S]*\.diagnosis-inspector-stack \.ui-panel p:not\(\.warning-line\):not\(\.blocked-line\)\s*\{[^}]*color:\s*var\(--workspace-text-secondary\)/s);
+    expect(css).toMatch(/\.diagnosis-inspector-stack \.ui-panel p:not\(\.warning-line\):not\(\.blocked-line\) > strong\s*\{[^}]*color:\s*var\(--workspace-text\)/s);
+    expect(css).toMatch(/\.diagnosis-inspector-stack \.diagnosis-inspector-summary > div > strong\s*\{[^}]*color:\s*var\(--workspace-text\)[^}]*font-size:\s*var\(--workspace-font-body\)[^}]*line-height:\s*var\(--workspace-line-body\)/s);
+    expect(css).toMatch(/\.diagnosis-inspector-stack \.diagnosis-inspector-date-range,[\s\S]*\.diagnosis-inspector-stack \.diagnosis-inspector-trend\s*\{[^}]*display:\s*flex[^}]*flex-wrap:\s*wrap/s);
+    expect(css).toMatch(/\.diagnosis-inspector-date-range time,[\s\S]*\.diagnosis-inspector-date-range \.diagnosis-inspector-date-range__end,[\s\S]*\.diagnosis-inspector-trend \.diagnosis-inspector-trend__item\s*\{[^}]*font-size:\s*inherit[^}]*white-space:\s*nowrap/s);
+  });
+
   it('makes read-only, blocked, confirmed, danger, and busy decision states visually distinct', () => {
     const css = style('decisions.css');
 
@@ -164,5 +177,11 @@ describe('task-first workspace style layers', () => {
     expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
     expect(css).toMatch(/animation-duration:\s*0\.01ms/);
     expect(css).not.toMatch(/linear-gradient|radial-gradient|filter:\s*drop-shadow/);
+  });
+
+  it('stops shared busy spinners globally when reduced motion is requested', () => {
+    const css = style('states-motion.css');
+
+    expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.workspace-spinner\s*\{[^}]*animation:\s*none/s);
   });
 });

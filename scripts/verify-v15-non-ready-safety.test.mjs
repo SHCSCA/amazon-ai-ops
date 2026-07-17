@@ -135,6 +135,53 @@ function validPackageLaunchSmoke(dir, portablePackage) {
   };
 }
 
+function validProcessIsolation(profilePath = null) {
+  const snapshot = {
+    error: null,
+    matching: [],
+    matchingCount: 0,
+    observedCount: 0,
+    passed: true,
+    unresolved: [],
+    unresolvedCount: 0,
+    ...(profilePath ? { profilePath } : {}),
+  };
+  return {
+    before: snapshot,
+    after: { ...snapshot, attempts: 1 },
+    passed: true,
+  };
+}
+
+function validRunDiagnostics(profileId) {
+  return {
+    cleanupErrors: [],
+    completedAt: '2026-07-16T08:08:20.000Z',
+    failure: null,
+    login: {
+      attempts: [],
+      completedAt: '2026-07-16T08:08:10.000Z',
+      outcome: 'existing-authenticated-session',
+      savedCredentials: null,
+      startedAt: '2026-07-16T08:08:09.000Z',
+    },
+    phase: 'completed',
+    profileId,
+    renderer: {
+      consoleErrors: [],
+      droppedCount: { consoleErrors: 0, pageErrors: 0 },
+      limits: { consoleErrors: 100, pageErrors: 100 },
+      pageErrors: [],
+    },
+    schemaVersion: 'package-ui-run-diagnostics/v1',
+    startedAt: '2026-07-16T08:08:00.000Z',
+    timeline: [
+      { at: '2026-07-16T08:08:00.000Z', phase: 'created' },
+      { at: '2026-07-16T08:08:20.000Z', phase: 'completed' },
+    ],
+  };
+}
+
 function validPackageUiEvidence(dir, smoke, authorityDbPath) {
   const protectedDbStat = fs.statSync(authorityDbPath);
   const protectedDatabaseArtifact = {
@@ -146,6 +193,7 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
   };
   const appContentPath = path.join(dir, 'release', 'win-unpacked', 'resources', 'app');
   const profileDatabasePath = path.join(dir, 'profile', 'amazon-ai-ops.db');
+  const profileBrowserUserDataDir = path.join(path.dirname(profileDatabasePath), 'storage', 'browser-data');
   fs.mkdirSync(path.dirname(profileDatabasePath), { recursive: true });
   fs.copyFileSync(authorityDbPath, profileDatabasePath);
   const profileDatabaseArtifact = {
@@ -164,9 +212,12 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
   const run = (scalePercent, deviceScaleFactor) => ({
     actualDeviceScaleFactor: deviceScaleFactor,
     consoleErrors: [],
+    diagnostics: validRunDiagnostics(`${scalePercent}-compact`),
     overlayChecks: Array.from({ length: 3 }, (_, index) => ({ id: `overlay-${index + 1}`, passed: true })),
+    packageProcessIsolation: validProcessIsolation(),
     pageErrors: [],
     passed: true,
+    profileProcessIsolation: validProcessIsolation(profileBrowserUserDataDir),
     scalePercent,
     screenshots: Array.from({ length: 8 }, (_, index) => ({ workspace: `workspace-${index + 1}` })),
     viewport: { width: 1200, height: 700 },
@@ -185,7 +236,7 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
   });
   return {
     kind: 'package-ui-evidence',
-    schemaVersion: 4,
+    schemaVersion: 5,
     generatedAt: '2026-07-16T08:08:00.000Z',
     completedAt: '2026-07-16T08:09:00.000Z',
     passed: true,
@@ -197,6 +248,7 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
       expectedExeSha256: smoke.artifacts.unpacked.sha256,
       evidenceMode: 'package-ui',
       protectedDatabasePath: authorityDbPath,
+      profileBrowserUserDataDir,
       userDataDir: path.dirname(profileDatabasePath),
       scales: [
         { scalePercent: 100, deviceScaleFactor: 1 },
@@ -213,10 +265,13 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
     wideProfile: {
       actualDeviceScaleFactor: 1,
       consoleErrors: [],
+      diagnostics: validRunDiagnostics('wide-1400x900-100'),
       identity: { passed: true, violations: [] },
+      packageProcessIsolation: validProcessIsolation(),
       pageErrors: [],
       passed: true,
       profileId: 'wide-1400x900-100',
+      profileProcessIsolation: validProcessIsolation(profileBrowserUserDataDir),
       screenshots: [
         { workspace: 'product', sha256: 'E'.repeat(64) },
         { workspace: 'diagnosis', sha256: 'F'.repeat(64) },
@@ -240,11 +295,8 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
       sizeMatches: true,
       violations: [],
     },
-    packageProcessIsolation: {
-      before: { passed: true, matchingCount: 0, unresolvedCount: 0, error: null },
-      after: { passed: true, matchingCount: 0, unresolvedCount: 0, error: null },
-      passed: true,
-    },
+    packageProcessIsolation: validProcessIsolation(),
+    profileProcessIsolation: validProcessIsolation(profileBrowserUserDataDir),
     artifactsBefore: {
       exe: smoke.artifacts.unpacked,
       appContent: appContentArtifact,
@@ -655,6 +707,11 @@ describe('verify v15 non-ready safety', () => {
   });
 
   it.each([
+    ['schema is older than v5', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.schemaVersion = 4;
+      });
+    }],
     ['EXE hash is not bound to package smoke', (context) => {
       const alternateExe = path.join(context.dir, 'alternate-unpacked.exe');
       const content = 'alternate unpacked executable\n';
@@ -679,6 +736,75 @@ describe('verify v15 non-ready safety', () => {
     ['package process isolation is not preserved', (context) => {
       mutatePackageUiFixture(context, (packageUi) => {
         packageUi.packageProcessIsolation.after.matchingCount = 1;
+      });
+    }],
+    ['package process isolation omits strict v5 snapshot fields', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.packageProcessIsolation.before = {
+          error: null,
+          matchingCount: 0,
+          passed: true,
+          unresolvedCount: 0,
+        };
+      });
+    }],
+    ['package process isolation reports inconsistent snapshot counts', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[0].packageProcessIsolation.after.matching = [{ processId: 42 }];
+      });
+    }],
+    ['top-level profile browser isolation is not preserved', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.profileProcessIsolation.after.matchingCount = 1;
+      });
+    }],
+    ['per-scale profile browser isolation is not preserved', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[0].profileProcessIsolation.before.unresolvedCount = 1;
+      });
+    }],
+    ['wide product process isolation is not preserved', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.wideProfile.packageProcessIsolation.after.passed = false;
+      });
+    }],
+    ['per-run structured diagnostics are missing', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        delete packageUi.runs[1].diagnostics;
+      });
+    }],
+    ['diagnostics retain a raw credential', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.wideProfile.diagnostics.login.failureMessage = 'password=hunter2';
+      });
+    }],
+    ['diagnostics retain raw CLI credentials', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[0].diagnostics.login.failureMessage = '--username operator@example.com --password hunter2';
+      });
+    }],
+    ['diagnostics retain raw authorization, cookie, or session tokens', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[1].diagnostics.login.failureMessage = [
+          'Authorization: Bearer abcdef123456',
+          'Cookie: sid=cookie-secret',
+          'session_token=session-secret',
+        ].join('\n');
+      });
+    }],
+    ['renderer diagnostics report dropped errors', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.wideProfile.diagnostics.renderer.droppedCount.consoleErrors = 1;
+      });
+    }],
+    ['profile browser path is not bound to the isolated user data directory', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.requested.profileBrowserUserDataDir = path.join(context.dir, 'other-browser-profile');
+      });
+    }],
+    ['profile browser isolation persists a command line', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.profileProcessIsolation.after.CommandLine = '--user-data-dir=D:\\secret-profile';
       });
     }],
     ['profile database provenance is not preserved', (context) => {

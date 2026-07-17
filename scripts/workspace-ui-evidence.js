@@ -5,6 +5,12 @@ const path = require('node:path');
 const DEFAULT_OUTPUT_DIR = 'output/workspace-ui-evidence';
 const DEFAULT_VIEWPORT = { width: 1400, height: 900 };
 const MIN_VISIBLE_FONT_SIZE_PX = 12;
+const VISUAL_STATE_IDS = new Set([
+  'workspace-error-retry',
+  'diagnosis-ai-running-with-inspector',
+]);
+const MOTION_PREFERENCES = new Set(['no-preference', 'reduce']);
+const STATE_EVIDENCE_SCHEMA_VERSION = 'workspace-ui-state-evidence/v1';
 const DEFAULT_EXPERIENCE_CONTRACT = Object.freeze({
   maxPageOverflowPx: 24,
   maxPageOverflowRatio: 1.05,
@@ -48,6 +54,26 @@ function validatePreviewUrl(value, scenario, label = 'Workspace evidence URL') {
   const urlScenario = url.searchParams.get('scenario');
   if (urlScenario !== scenario) {
     throw new Error(`${label} scenario ${urlScenario || '(missing)'} does not match recorded scenario ${scenario}.`);
+  }
+}
+
+function validateVisualStateTarget(target, label = 'Workspace evidence target') {
+  if (target.visualState === undefined && target.motionPreference === undefined) return;
+  if (!VISUAL_STATE_IDS.has(target.visualState)) {
+    throw new Error(`${label} visualState must be one of ${Array.from(VISUAL_STATE_IDS).join(', ')}.`);
+  }
+  if (!MOTION_PREFERENCES.has(target.motionPreference)) {
+    throw new Error(`${label} motionPreference must be one of ${Array.from(MOTION_PREFERENCES).join(', ')}.`);
+  }
+  if (target.workspace !== 'diagnosis' || target.subview !== 'analysis' || target.scenario !== 'diagnosis-ready') {
+    throw new Error(`${label} visual state evidence is restricted to diagnosis/analysis with scenario diagnosis-ready.`);
+  }
+  if (target.visualState === 'diagnosis-ai-running-with-inspector' && target.viewport?.width < 1400) {
+    throw new Error(`${label} diagnosis-ai-running-with-inspector requires a viewport at least 1400px wide.`);
+  }
+  const url = new URL(target.url || 'http://127.0.0.1/');
+  if (target.url && (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname))) {
+    throw new Error(`${label} visual state evidence is development-preview-only and requires a local HTTP URL.`);
   }
 }
 
@@ -123,7 +149,8 @@ function parseWorkspaceEvidenceArgs(argv) {
 async function collectWorkspaceDomMetrics(page, options = {}) {
   const rootSelector = options.rootSelector || '[data-workspace-evidence-root]';
   const defaultScrollOwnerSelector = options.defaultScrollOwnerSelector || '.app-content';
-  const scrollExceptionSelector = options.scrollExceptionSelector || '[data-scroll-owner="virtual-table"]';
+  const scrollExceptionSelector = options.scrollExceptionSelector
+    || '[data-scroll-owner="virtual-table"], .responsive-inspector[data-inspector-mode] > .responsive-inspector__body';
   const experienceContract = options.experienceContract;
 
   return page.evaluate(async (settings) => {
@@ -493,7 +520,7 @@ async function collectWorkspaceDomMetrics(page, options = {}) {
       });
     }
     if (unlabelledActiveOwners.length > 0) {
-      violation('UNLABELLED_SCROLL_OWNER', '内部纵向滚动必须是显式标记的虚拟表格例外。', {
+      violation('UNLABELLED_SCROLL_OWNER', '内部纵向滚动必须是虚拟表格或响应式检查器的受控例外。', {
         owners: unlabelledActiveOwners,
       });
     }
@@ -573,6 +600,255 @@ async function collectWorkspaceDomMetrics(page, options = {}) {
   });
 }
 
+async function prepareWorkspaceVisualState(page, target) {
+  if (!target.visualState) return;
+  validateVisualStateTarget(target, 'Runtime workspace evidence target');
+
+  const preview = await page.evaluate(() => {
+    const banner = Array.from(document.querySelectorAll('.app-status'))
+      .find((element) => (element.textContent || '').includes('仅开发预览'));
+    return {
+      banner: (banner?.textContent || '').replace(/\s+/g, ' ').trim(),
+      hasApi: Boolean(window.electronAPI?.getBusinessUiDataPipeline),
+    };
+  });
+  if (!preview.banner || !preview.hasApi) {
+    throw new Error('Visual state evidence requires the explicit local development-preview banner and preview API.');
+  }
+
+  if (target.visualState === 'workspace-error-retry') {
+    await page.evaluate(() => {
+      const api = window.electronAPI;
+      const original = api.getBusinessUiDataPipeline.bind(api);
+      const control = { failPipeline: true, original };
+      Object.defineProperty(window, '__AMAZON_AI_OPS_WORKSPACE_EVIDENCE__', {
+        configurable: true,
+        value: control,
+      });
+      api.getBusinessUiDataPipeline = (...args) => (
+        control.failPipeline
+          ? Promise.reject(new Error('开发预览：模拟当前范围数据读取失败，请重新读取。'))
+          : original(...args)
+      );
+      window.dispatchEvent(new Event('business-ui:data-updated'));
+    });
+    await page.locator('[data-workspace-state="error"][role="alert"]').first().waitFor({ state: 'visible' });
+    await page.locator('[data-workspace-state="error"] .workspace-state__action').first().waitFor({ state: 'visible' });
+    return;
+  }
+
+  await page.evaluate(() => {
+    const api = window.electronAPI;
+    api.runAdStrategyDiagnosis = () => new Promise(() => {});
+  });
+  const firstRow = page.locator('[data-workspace-row]').first();
+  await firstRow.waitFor({ state: 'visible' });
+  await firstRow.click();
+  await page.locator('.responsive-inspector--inline[data-inspector-mode="inline"]').first().waitFor({ state: 'visible' });
+  const runButton = page
+    .locator('.task-banner__actions button[data-action-priority="secondary"]')
+    .filter({ hasText: '运行 AI 阶段分析' })
+    .first();
+  await runButton.waitFor({ state: 'visible' });
+  await runButton.click();
+  await page.locator('#ai-strategy-run-feedback[aria-busy="true"][data-ai-run-tone="pending"]').first().waitFor({ state: 'visible' });
+  await page.locator('.task-banner__actions button[aria-busy="true"]').first().waitFor({ state: 'visible' });
+}
+
+async function collectWorkspaceStateEvidence(page, target) {
+  if (!target.visualState) return null;
+
+  return page.evaluate((settings) => {
+    function rendered(element) {
+      if (!(element instanceof Element) || !element.isConnected) return false;
+      const style = window.getComputedStyle(element);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) {
+        return false;
+      }
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && element.getClientRects().length > 0;
+    }
+
+    function compactText(element) {
+      return (element?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+    }
+
+    const violations = [];
+    function violation(code, message, details = {}) {
+      violations.push({ code, details, message });
+    }
+
+    const previewBanner = Array.from(document.querySelectorAll('.app-status'))
+      .find((element) => rendered(element) && compactText(element).includes('仅开发预览'));
+    const errorState = document.querySelector('[data-workspace-state="error"]');
+    const retryAction = errorState?.querySelector('.workspace-state__action') || null;
+    const aiRun = document.querySelector('#ai-strategy-run-feedback');
+    const actionButtons = Array.from(document.querySelectorAll('.task-banner__actions button'))
+      .filter(rendered);
+    const busyAction = actionButtons.find((button) => button.getAttribute('aria-busy') === 'true') || null;
+    const peerActions = actionButtons.filter((button) => button !== busyAction).map((button) => ({
+      ariaBusy: button.getAttribute('aria-busy') === 'true',
+      disabled: Boolean(button.disabled),
+      label: compactText(button),
+    }));
+    const inspector = document.querySelector('.responsive-inspector[data-inspector-mode]');
+    const visibleSpinners = Array.from(document.querySelectorAll('.workspace-spinner')).filter(rendered);
+    const spinners = visibleSpinners.map((spinner) => {
+      const style = window.getComputedStyle(spinner);
+      return {
+        animationDuration: style.animationDuration,
+        animationIterationCount: style.animationIterationCount,
+        animationName: style.animationName,
+      };
+    });
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const observed = {
+      aiRun: {
+        ariaBusy: aiRun?.getAttribute('aria-busy') === 'true',
+        label: compactText(aiRun),
+        tone: aiRun?.getAttribute('data-ai-run-tone') || null,
+        visible: rendered(aiRun),
+      },
+      busyAction: busyAction ? {
+        ariaBusy: busyAction.getAttribute('aria-busy') === 'true',
+        disabled: Boolean(busyAction.disabled),
+        label: compactText(busyAction),
+        visible: rendered(busyAction),
+      } : null,
+      inspector: inspector ? {
+        label: compactText(inspector.querySelector('h2')),
+        mode: inspector.getAttribute('data-inspector-mode'),
+        role: inspector.getAttribute('role'),
+        visible: rendered(inspector),
+      } : null,
+      motion: {
+        prefersReducedMotion,
+        spinnerCount: visibleSpinners.length,
+        spinners,
+      },
+      peerActions,
+      previewBanner: compactText(previewBanner),
+      retryAction: retryAction ? {
+        ariaBusy: retryAction.getAttribute('aria-busy') === 'true',
+        disabled: Boolean(retryAction.disabled),
+        label: compactText(retryAction),
+        visible: rendered(retryAction),
+      } : null,
+      workspaceState: errorState ? {
+        kind: errorState.getAttribute('data-workspace-state'),
+        role: errorState.getAttribute('role'),
+        title: compactText(errorState.querySelector('.workspace-state__copy > strong')),
+        visible: rendered(errorState),
+      } : null,
+    };
+
+    if (!previewBanner) {
+      violation('DEV_PREVIEW_BANNER_MISSING', 'Synthetic visual-state evidence must remain visibly marked as development preview.');
+    }
+    const expectsReducedMotion = settings.motionPreference === 'reduce';
+    if (prefersReducedMotion !== expectsReducedMotion) {
+      violation('MOTION_PREFERENCE_MISMATCH', 'Runtime prefers-reduced-motion does not match the requested evidence target.', {
+        actual: prefersReducedMotion ? 'reduce' : 'no-preference',
+        expected: settings.motionPreference,
+      });
+    }
+
+    if (settings.visualState === 'workspace-error-retry') {
+      if (!observed.workspaceState?.visible || observed.workspaceState.kind !== 'error' || observed.workspaceState.role !== 'alert') {
+        violation('WORKSPACE_ERROR_STATE_MISSING', 'Workspace error evidence requires a visible alert state.');
+      }
+      if (!observed.retryAction?.visible || observed.retryAction.disabled || observed.retryAction.ariaBusy
+        || !observed.retryAction.label.includes('重新读取')) {
+        violation('WORKSPACE_RETRY_ACTION_MISSING', 'Workspace error evidence requires a visible enabled retry action.', {
+          retryAction: observed.retryAction,
+        });
+      }
+    } else {
+      if (!observed.aiRun.visible || !observed.aiRun.ariaBusy || observed.aiRun.tone !== 'pending'
+        || !observed.aiRun.label.includes('AI 阶段分析运行中')) {
+        violation('DIAGNOSIS_RUNNING_STATUS_MISSING', 'Diagnosis running evidence requires the visible pending live status.', {
+          aiRun: observed.aiRun,
+        });
+      }
+      if (!observed.busyAction?.visible || !observed.busyAction.disabled || !observed.busyAction.ariaBusy
+        || observed.busyAction.label !== 'AI 分析中...') {
+        violation('DIAGNOSIS_BUSY_ACTION_MISSING', 'Diagnosis running evidence requires exactly one visible disabled busy action.', {
+          busyAction: observed.busyAction,
+        });
+      }
+      if (!observed.inspector?.visible || observed.inspector.mode !== 'inline') {
+        violation('DIAGNOSIS_INLINE_INSPECTOR_MISSING', 'Diagnosis running evidence must keep the selected inline inspector visible.', {
+          inspector: observed.inspector,
+        });
+      }
+      if (observed.peerActions.length < 1 || observed.peerActions.some((action) => !action.disabled || action.ariaBusy)) {
+        violation('DIAGNOSIS_PEER_LOCK_MISSING', 'Peer task actions must lock without impersonating the active busy action.', {
+          peerActions: observed.peerActions,
+        });
+      }
+      if (visibleSpinners.length < 1) {
+        violation('DIAGNOSIS_BUSY_SPINNER_MISSING', 'Diagnosis running evidence requires a visible busy spinner.');
+      }
+      if (expectsReducedMotion && spinners.some((spinner) => spinner.animationName !== 'none')) {
+        violation('REDUCED_MOTION_SPINNER_ACTIVE', 'Visible busy spinners must not animate under prefers-reduced-motion.', {
+          spinners,
+        });
+      }
+    }
+
+    return {
+      id: settings.visualState,
+      observed,
+      passed: violations.length === 0,
+      postCapture: {
+        retryAttempted: false,
+        retryRecovered: settings.visualState === 'workspace-error-retry' ? false : null,
+      },
+      previewOnly: true,
+      requested: {
+        inspectorMode: settings.visualState === 'diagnosis-ai-running-with-inspector' ? 'inline' : null,
+        motionPreference: settings.motionPreference,
+      },
+      schemaVersion: settings.schemaVersion,
+      syntheticTrigger: settings.visualState === 'workspace-error-retry'
+        ? 'pipeline-read-failure'
+        : 'ai-promise-pending',
+      violations,
+    };
+  }, {
+    motionPreference: target.motionPreference,
+    schemaVersion: STATE_EVIDENCE_SCHEMA_VERSION,
+    visualState: target.visualState,
+  });
+}
+
+async function verifyWorkspaceStatePostCapture(page, target, stateEvidence) {
+  if (!stateEvidence || target.visualState !== 'workspace-error-retry') return stateEvidence;
+
+  stateEvidence.postCapture.retryAttempted = true;
+  try {
+    await page.evaluate(() => {
+      const control = window.__AMAZON_AI_OPS_WORKSPACE_EVIDENCE__;
+      if (!control) throw new Error('Workspace evidence retry controller is missing.');
+      control.failPipeline = false;
+    });
+    await page.locator('[data-workspace-state="error"] .workspace-state__action').first().click();
+    await page.locator('[data-workspace-state="error"]').first().waitFor({ state: 'hidden' });
+    await page.locator('[data-workspace-row]').first().waitFor({ state: 'visible' });
+    stateEvidence.postCapture.retryRecovered = true;
+  } catch (error) {
+    stateEvidence.postCapture.retryRecovered = false;
+    stateEvidence.violations.push({
+      code: 'WORKSPACE_RETRY_RECOVERY_FAILED',
+      details: { error: error && error.message ? error.message : String(error) },
+      message: 'The visible workspace retry action did not recover the diagnosis queue after capture.',
+    });
+  }
+  stateEvidence.passed = stateEvidence.violations.length === 0 && stateEvidence.postCapture.retryRecovered === true;
+  return stateEvidence;
+}
+
 function safeSegment(value) {
   return String(value || 'unknown')
     .trim()
@@ -600,6 +876,7 @@ function validateCaptureTarget(target) {
   if (target.experienceContract !== undefined) {
     normalizeExperienceContract(target.experienceContract, 'programmatic');
   }
+  validateVisualStateTarget(target, 'Workspace evidence target');
 }
 
 function normalizeConfigViewport(value, targetNumber) {
@@ -680,6 +957,8 @@ function normalizeWorkspaceEvidenceConfig(config) {
       viewport: normalizeConfigViewport(source.viewport, index + 1),
       workspace: source.workspace,
     };
+    if (source.visualState !== undefined) target.visualState = source.visualState;
+    if (source.motionPreference !== undefined) target.motionPreference = source.motionPreference;
     const experienceContract = normalizeExperienceContract(source.experienceContract, index + 1);
     if (experienceContract) target.experienceContract = experienceContract;
     const readbackMode = source.readbackMode === undefined ? config.readbackMode : source.readbackMode;
@@ -698,6 +977,7 @@ function normalizeWorkspaceEvidenceConfig(config) {
     url.searchParams.set('scenario', target.scenario);
     target.url = url.toString();
     validatePreviewUrl(target.url, target.scenario, `Workspace evidence target ${index + 1} URL`);
+    validateVisualStateTarget(target, `Workspace evidence target ${index + 1}`);
 
     for (const field of ['rootSelector', 'waitFor']) {
       const value = source[field] === undefined ? config[field] : source[field];
@@ -757,22 +1037,29 @@ async function captureWorkspaceEvidence({ outputDir, page, target, timestamp = n
   if (Math.abs(metrics.dpr - target.dpr) > 0.001) {
     throw new Error(`Runtime DPR ${metrics.dpr} does not match target ${target.dpr}.`);
   }
+  let stateEvidence = await collectWorkspaceStateEvidence(page, target);
 
   const absoluteOutputDir = path.resolve(outputDir);
   fs.mkdirSync(absoluteOutputDir, { recursive: true });
-  const baseName = [
+  const baseNameParts = [
     safeSegment(target.workspace),
     safeSegment(target.subview),
     safeSegment(target.scenario),
     `${target.viewport.width}x${target.viewport.height}`,
     `dpr-${String(target.dpr).replace('.', '_')}`,
-    timestampSegment(timestamp),
-  ].join('--');
+  ];
+  if (target.visualState) {
+    baseNameParts.push(`state-${safeSegment(target.visualState)}`);
+    baseNameParts.push(`motion-${safeSegment(target.motionPreference)}`);
+  }
+  baseNameParts.push(timestampSegment(timestamp));
+  const baseName = baseNameParts.join('--');
   const screenshotPath = path.join(absoluteOutputDir, `${baseName}.png`);
   const jsonPath = path.join(absoluteOutputDir, `${baseName}.json`);
 
   await page.screenshot({ fullPage: false, path: screenshotPath });
   const screenshotSha256 = createHash('sha256').update(fs.readFileSync(screenshotPath)).digest('hex').toUpperCase();
+  stateEvidence = await verifyWorkspaceStatePostCapture(page, target, stateEvidence);
   const evidence = {
     capturedAt: timestamp.toISOString(),
     domMetrics: metrics,
@@ -790,6 +1077,7 @@ async function captureWorkspaceEvidence({ outputDir, page, target, timestamp = n
     viewport: metrics.viewport,
     workspace: target.workspace,
   };
+  if (stateEvidence) evidence.stateEvidence = stateEvidence;
   fs.writeFileSync(jsonPath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
 
   return { evidence, jsonPath, screenshotPath };
@@ -811,10 +1099,12 @@ async function runWorkspaceEvidenceTargets({ browser, generatedAt = new Date(), 
       throw new Error(`Workspace evidence target ${index + 1} requires url.`);
     }
     validatePreviewUrl(target.url, target.scenario, `Workspace evidence target ${index + 1} URL`);
-    const context = await browser.newContext({
+    const contextOptions = {
       deviceScaleFactor: target.dpr,
       viewport: target.viewport,
-    });
+    };
+    if (target.motionPreference) contextOptions.reducedMotion = target.motionPreference;
+    const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
     try {
       await page.goto(target.url, { waitUntil: target.waitUntil || 'networkidle' });
@@ -824,6 +1114,7 @@ async function runWorkspaceEvidenceTargets({ browser, generatedAt = new Date(), 
         }));
       }, { subview: target.subview, workspace: target.workspace });
       if (target.waitFor) await page.locator(target.waitFor).first().waitFor({ state: 'visible' });
+      await prepareWorkspaceVisualState(page, target);
       await page.waitForTimeout(target.settleMs === undefined ? 250 : target.settleMs);
       const timestamp = new Date(generatedAt.getTime() + index);
       const captured = await captureWorkspaceEvidence({ outputDir: absoluteOutputDir, page, target, timestamp });
@@ -845,20 +1136,26 @@ async function runWorkspaceEvidenceTargets({ browser, generatedAt = new Date(), 
         contractPassed: false,
         dpr: target.dpr,
         error: result.error,
+        motionPreference: target.motionPreference,
         scenario: target.scenario,
         subview: target.subview,
+        visualState: target.visualState,
         viewport: target.viewport,
         workspace: target.workspace,
       };
     }
     return {
-      contractPassed: result.evidence.domMetrics.contract.passed,
+      contractPassed: result.evidence.domMetrics.contract.passed
+        && (!result.evidence.stateEvidence || result.evidence.stateEvidence.passed),
       dpr: result.evidence.dpr,
       jsonPath: result.jsonPath,
+      motionPreference: target.motionPreference,
       scenario: result.evidence.scenario,
       screenshot: result.evidence.screenshot,
+      stateEvidence: result.evidence.stateEvidence,
       subview: result.evidence.subview,
       violations: result.evidence.domMetrics.contract.violations,
+      visualState: target.visualState,
       viewport: result.evidence.viewport,
       workspace: result.evidence.workspace,
     };
@@ -883,7 +1180,9 @@ async function runWorkspaceEvidenceTargets({ browser, generatedAt = new Date(), 
 module.exports = {
   captureWorkspaceEvidence,
   collectWorkspaceDomMetrics,
+  collectWorkspaceStateEvidence,
   normalizeWorkspaceEvidenceConfig,
   parseWorkspaceEvidenceArgs,
+  prepareWorkspaceVisualState,
   runWorkspaceEvidenceTargets,
 };

@@ -31,10 +31,62 @@ export interface AppResources {
 export type AppResourceName = keyof AppResources;
 export type AppResourceCleanupErrorReporter = (resource: AppResourceName, error: unknown) => void;
 
+export const DEFAULT_RESOURCE_CLEANUP_TIMEOUT_MS = 5_000;
+
+export interface AppResourceCleanupOptions {
+  timeoutMs?: number;
+}
+
+export class AppResourceCleanupTimeoutError extends Error {
+  readonly resource: AppResourceName;
+  readonly timeoutMs: number;
+
+  constructor(resource: AppResourceName, timeoutMs: number) {
+    super(`Timed out cleaning up ${resource} after ${timeoutMs}ms.`);
+    this.name = 'AppResourceCleanupTimeoutError';
+    this.resource = resource;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+function cleanupTimeoutMs(value: number | undefined): number {
+  const timeoutMs = value ?? DEFAULT_RESOURCE_CLEANUP_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError('App resource cleanup timeout must be a positive finite number.');
+  }
+  return timeoutMs;
+}
+
+async function runResourceCleanup(
+  resource: AppResourceName,
+  cleanup: () => unknown,
+  timeoutMs: number,
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(new AppResourceCleanupTimeoutError(resource, timeoutMs));
+    }, timeoutMs);
+  });
+
+  try {
+    await Promise.race([
+      Promise.resolve().then(cleanup),
+      timeoutPromise,
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 export async function cleanupAppResources(
   resources: AppResources,
   reportError: AppResourceCleanupErrorReporter,
+  options: AppResourceCleanupOptions = {},
 ): Promise<void> {
+  const timeoutMs = cleanupTimeoutMs(options.timeoutMs);
   const browserController = resources.browserController;
   const scheduler = resources.scheduler;
   const db = resources.db;
@@ -44,8 +96,8 @@ export async function cleanupAppResources(
   resources.db = null;
 
   const cleanupSteps: Array<[AppResourceName, (() => unknown) | null]> = [
-    ['browserController', browserController ? () => browserController.close() : null],
     ['scheduler', scheduler ? () => scheduler.stop() : null],
+    ['browserController', browserController ? () => browserController.close() : null],
     ['db', db ? () => db.close() : null],
   ];
 
@@ -55,7 +107,7 @@ export async function cleanupAppResources(
     }
 
     try {
-      await cleanup();
+      await runResourceCleanup(resource, cleanup, timeoutMs);
     } catch (error) {
       reportError(resource, error);
     }

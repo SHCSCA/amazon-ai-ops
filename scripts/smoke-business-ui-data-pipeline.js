@@ -1603,7 +1603,8 @@ async function main() {
   await expectVisible(page, 'ACOS 高于 40.0%');
   await expectVisible(page, '对象时间线');
   await expectVisible(page, '2026-06-01 至 2026-06-12');
-  await expectVisible(page, '花费上升 / 销售平稳');
+  await expectVisible(page, '花费上升 /');
+  await expectVisible(page, '销售平稳');
   await expectVisible(page, 'mock smoke: exact report identity timeline.');
   await expectNotInBody(page, 'collision candidate: wrong report identity');
   await expectNotInBody(page, 'collision candidate: wrong object type');

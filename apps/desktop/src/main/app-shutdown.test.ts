@@ -37,11 +37,12 @@ describe('before-quit coordinator', () => {
   it('prevents repeated quit attempts while the same cleanup is still running', async () => {
     const cleanup = deferred();
     const cleanupAction = vi.fn(() => cleanup.promise);
+    const requestQuit = vi.fn();
     const firstPreventDefault = vi.fn();
     const repeatedPreventDefault = vi.fn();
     const handleBeforeQuit = createBeforeQuitCoordinator({
       cleanup: cleanupAction,
-      requestQuit: vi.fn(),
+      requestQuit,
       reportError: vi.fn(),
     });
 
@@ -55,6 +56,8 @@ describe('before-quit coordinator', () => {
 
     cleanup.resolve();
     await firstCompletion;
+
+    expect(requestQuit).toHaveBeenCalledOnce();
   });
 
   it('lets the controlled second before-quit event proceed without restarting cleanup', async () => {
@@ -98,15 +101,17 @@ describe('before-quit coordinator', () => {
 });
 
 describe('app resource cleanup', () => {
-  it('releases each resource reference and continues closing after an earlier failure', async () => {
+  it('stops the scheduler before closing the browser and database, then continues after a failure', async () => {
     const browserError = new Error('browser close failed');
+    const cleanupOrder: string[] = [];
     const browserController = {
       close: vi.fn(async () => {
+        cleanupOrder.push('browserController');
         throw browserError;
       }),
     };
-    const scheduler = { stop: vi.fn() };
-    const db = { close: vi.fn() };
+    const scheduler = { stop: vi.fn(() => { cleanupOrder.push('scheduler'); }) };
+    const db = { close: vi.fn(() => { cleanupOrder.push('db'); }) };
     const resources = { browserController, scheduler, db };
     const reportError = vi.fn();
 
@@ -123,6 +128,48 @@ describe('app resource cleanup', () => {
     expect(browserController.close).toHaveBeenCalledOnce();
     expect(scheduler.stop).toHaveBeenCalledOnce();
     expect(db.close).toHaveBeenCalledOnce();
+    expect(cleanupOrder).toEqual(['scheduler', 'browserController', 'db']);
     expect(reportError).toHaveBeenCalledWith('browserController', browserError);
+  });
+
+  it('reports a resource timeout and continues to the database without waiting forever', async () => {
+    vi.useFakeTimers();
+    try {
+      const browserClose = deferred();
+      const cleanupOrder: string[] = [];
+      const browserController = {
+        close: vi.fn(() => {
+          cleanupOrder.push('browserController');
+          return browserClose.promise;
+        }),
+      };
+      const scheduler = { stop: vi.fn(() => { cleanupOrder.push('scheduler'); }) };
+      const db = { close: vi.fn(() => { cleanupOrder.push('db'); }) };
+      const reportError = vi.fn();
+      const completion = cleanupAppResources(
+        { browserController, scheduler, db },
+        reportError,
+        { timeoutMs: 100 },
+      );
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      const databaseClosedBeforeBrowserResolved = db.close.mock.calls.length === 1;
+      const timeoutReportBeforeBrowserResolved = reportError.mock.calls[0];
+      browserClose.resolve();
+      await completion;
+
+      expect(databaseClosedBeforeBrowserResolved).toBe(true);
+      expect(cleanupOrder).toEqual(['scheduler', 'browserController', 'db']);
+      expect(timeoutReportBeforeBrowserResolved?.[0]).toBe('browserController');
+      expect(timeoutReportBeforeBrowserResolved?.[1]).toMatchObject({
+        name: 'AppResourceCleanupTimeoutError',
+        resource: 'browserController',
+        timeoutMs: 100,
+      });
+      expect(reportError).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

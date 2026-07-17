@@ -9,6 +9,7 @@ const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const bundleRoot = path.join(root, 'output', 'delivery-bundles');
 const finalReadinessPattern = /^final-readiness-(?:\d{4}-\d{2}-\d{2}|\d{10,})\.json$/i;
 const packageLaunchSmokePattern = /^package-launch-smoke-\d+\.json$/i;
+const DIAGNOSTIC_RENDERER_ENTRY_LIMIT = 100;
 const expectedNonReadyGateIds = new Set([
   'report-collection-delivery',
   'lingxing-listing-full-read',
@@ -320,6 +321,135 @@ function viewportMatchesBoundedContract(run, requestedViewport, expectedDeviceSc
     && Math.abs(actualDeviceScaleFactor - expectedDeviceScaleFactor) <= scaleTolerance;
 }
 
+function processSnapshotIsStrictlyZero(snapshot, expectedProfilePath, requireAttempts = false) {
+  if (snapshot?.passed !== true
+    || !Number.isInteger(snapshot?.observedCount)
+    || snapshot.observedCount < 0
+    || !Array.isArray(snapshot?.matching)
+    || snapshot?.matchingCount !== 0
+    || snapshot.matchingCount !== snapshot.matching.length
+    || !Array.isArray(snapshot?.unresolved)
+    || snapshot?.unresolvedCount !== 0
+    || snapshot.unresolvedCount !== snapshot.unresolved.length
+    || snapshot.observedCount < snapshot.matchingCount + snapshot.unresolvedCount
+    || snapshot?.error !== null
+    || (requireAttempts && (!Number.isInteger(snapshot?.attempts) || snapshot.attempts < 1))) {
+    return false;
+  }
+  if (expectedProfilePath && !samePath(snapshot.profilePath, expectedProfilePath)) return false;
+  return true;
+}
+
+function containsCommandLineField(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some((item) => containsCommandLineField(item));
+  return Object.entries(value).some(([key, item]) => (
+    /^commandline$/i.test(key) || containsCommandLineField(item)
+  ));
+}
+
+function processIsolationIsStrictlyValid(evidence, expectedProfilePath = null) {
+  return evidence?.passed === true
+    && processSnapshotIsStrictlyZero(evidence.before, expectedProfilePath)
+    && processSnapshotIsStrictlyZero(evidence.after, expectedProfilePath, true)
+    && (!expectedProfilePath || !containsCommandLineField(evidence));
+}
+
+function redactDiagnosticSecrets(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gi, '[REDACTED_API_KEY]')
+    .replace(/([?&](?:api[_-]?key|access[_-]?token|authorization|cookie|password|pwd|secret|session(?:[_-]?(?:id|key|token))?|token|username|user[_-]?name|account)=)[^&#\s]*/gi, '$1[REDACTED]')
+    .replace(/(--(?:api[-_]?key|access[-_]?token|authorization|cookie|password|passwd|pwd|secret|session(?:[-_]?(?:id|key|token))?|token|username|user[-_]?name|account))(\s*=\s*|\s+)(?:"[^"]*"|'[^']*'|[^\s]+)/gi, '$1$2[REDACTED]')
+    .replace(/(\b(?:authorization|proxy-authorization)\s*[:=])[^\r\n]*/gi, '$1 [REDACTED]')
+    .replace(/(\b(?:cookie|set-cookie)\s*:)[^\r\n]*/gi, '$1 [REDACTED]')
+    .replace(/(\bbearer\s+)[A-Za-z0-9._~+/-]{6,}/gi, '$1[REDACTED]')
+    .replace(/((?:api[_ -]?key|access[_ -]?token|authorization|cookie|password|passwd|pwd|secret|session(?:[_ -]?(?:id|key|token))?|token|username|user_name|account)\s*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,]+)/gi, '$1[REDACTED]');
+}
+
+function diagnosticValueIsSanitized(value, depth = 0) {
+  if (depth > 12) return false;
+  if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'number') return true;
+  if (typeof value === 'string') {
+    if (value.length > 4_000) return false;
+    return redactDiagnosticSecrets(value) === value;
+  }
+  if (Array.isArray(value)) return value.every((item) => diagnosticValueIsSanitized(item, depth + 1));
+  if (typeof value !== 'object') return false;
+  return Object.entries(value).every(([entryKey, item]) => (
+    !/^(?:api[_-]?key|password|passwd|pwd|secret|token|access[_-]?token|authorization|cookie|set-cookie|session(?:[_-]?(?:id|key|token))?|username|user_name|account|commandline)$/i.test(entryKey)
+    && diagnosticValueIsSanitized(item, depth + 1)
+  ));
+}
+
+function runDiagnosticsAreStrictlyValid(diagnostics, run, expectedProfileId) {
+  const startedAt = Date.parse(diagnostics?.startedAt);
+  const completedAt = Date.parse(diagnostics?.completedAt);
+  const loginStartedAt = Date.parse(diagnostics?.login?.startedAt);
+  const loginCompletedAt = Date.parse(diagnostics?.login?.completedAt);
+  const timeline = diagnostics?.timeline;
+  const loginAttempts = diagnostics?.login?.attempts;
+  const renderer = diagnostics?.renderer;
+  const successfulLoginOutcomes = new Set([
+    'existing-authenticated-session',
+    'saved-credentials-auto-login',
+    'saved-credentials-login',
+  ]);
+  const timelineValid = Array.isArray(timeline)
+    && timeline.length >= 2
+    && timeline.every((item) => (
+      Number.isFinite(Date.parse(item?.at))
+      && Date.parse(item.at) >= startedAt
+      && Date.parse(item.at) <= completedAt
+      && typeof item?.phase === 'string'
+      && item.phase.length > 0
+      && item.phase.length <= 160
+    ))
+    && timeline.at(-1)?.phase === 'completed';
+  const loginAttemptsValid = Array.isArray(loginAttempts)
+    && loginAttempts.every((attempt) => (
+      Number.isInteger(attempt?.attempt)
+      && attempt.attempt >= 1
+      && Number.isFinite(Date.parse(attempt?.startedAt))
+      && Number.isFinite(Date.parse(attempt?.completedAt))
+      && Date.parse(attempt.completedAt) >= Date.parse(attempt.startedAt)
+      && typeof attempt?.outcome === 'string'
+      && attempt.outcome !== 'in-progress'
+      && typeof attempt?.retryable === 'boolean'
+      && (attempt.message === null || typeof attempt.message === 'string')
+    ));
+  return diagnostics?.schemaVersion === 'package-ui-run-diagnostics/v1'
+    && diagnostics?.profileId === expectedProfileId
+    && Number.isFinite(startedAt)
+    && Number.isFinite(completedAt)
+    && completedAt >= startedAt
+    && diagnostics.phase === 'completed'
+    && diagnostics.failure === null
+    && Array.isArray(diagnostics.cleanupErrors)
+    && diagnostics.cleanupErrors.length === 0
+    && timelineValid
+    && renderer?.limits?.consoleErrors === DIAGNOSTIC_RENDERER_ENTRY_LIMIT
+    && renderer?.limits?.pageErrors === DIAGNOSTIC_RENDERER_ENTRY_LIMIT
+    && renderer?.droppedCount?.consoleErrors === 0
+    && renderer?.droppedCount?.pageErrors === 0
+    && Array.isArray(renderer?.consoleErrors)
+    && renderer.consoleErrors.length <= DIAGNOSTIC_RENDERER_ENTRY_LIMIT
+    && renderer.consoleErrors.length === 0
+    && Array.isArray(renderer?.pageErrors)
+    && renderer.pageErrors.length <= DIAGNOSTIC_RENDERER_ENTRY_LIMIT
+    && renderer.pageErrors.length === 0
+    && Array.isArray(run?.consoleErrors)
+    && run.consoleErrors.length === 0
+    && Array.isArray(run?.pageErrors)
+    && run.pageErrors.length === 0
+    && Number.isFinite(loginStartedAt)
+    && Number.isFinite(loginCompletedAt)
+    && loginCompletedAt >= loginStartedAt
+    && successfulLoginOutcomes.has(diagnostics?.login?.outcome)
+    && loginAttemptsValid
+    && diagnosticValueIsSanitized(diagnostics);
+}
+
 function packageUiEvidenceIsStrictlyValid({
   filePath,
   finalReadiness,
@@ -332,6 +462,13 @@ function packageUiEvidenceIsStrictlyValid({
     const packageUi = readJson(filePath);
     const runs = Array.isArray(packageUi.runs) ? packageUi.runs : [];
     const expectedScales = new Map([[100, 1], [125, 1.25]]);
+    const requestedProfileBrowserPath = packageUi.requested?.profileBrowserUserDataDir;
+    const expectedProfileBrowserPath = packageUi.requested?.userDataDir
+      ? path.join(packageUi.requested.userDataDir, 'storage', 'browser-data')
+      : null;
+    const profileBrowserPathBound = Boolean(requestedProfileBrowserPath)
+      && Boolean(expectedProfileBrowserPath)
+      && samePath(requestedProfileBrowserPath, expectedProfileBrowserPath);
     const runsComplete = runs.length === expectedScales.size
       && new Set(runs.map((run) => run?.scalePercent)).size === expectedScales.size
       && runs.every((run) => (
@@ -342,6 +479,9 @@ function packageUiEvidenceIsStrictlyValid({
           expectedScales.get(run.scalePercent),
         )
         && run?.passed === true
+        && processIsolationIsStrictlyValid(run?.packageProcessIsolation)
+        && processIsolationIsStrictlyValid(run?.profileProcessIsolation, requestedProfileBrowserPath)
+        && runDiagnosticsAreStrictlyValid(run?.diagnostics, run, `${run.scalePercent}-compact`)
         && Array.isArray(run?.consoleErrors)
         && run.consoleErrors.length === 0
         && Array.isArray(run?.pageErrors)
@@ -370,6 +510,9 @@ function packageUiEvidenceIsStrictlyValid({
       && Number(wideProfile?.actualDeviceScaleFactor) === 1
       && wideProfile?.viewportContract?.passed === true
       && wideProfile?.identity?.passed === true
+      && processIsolationIsStrictlyValid(wideProfile?.packageProcessIsolation)
+      && processIsolationIsStrictlyValid(wideProfile?.profileProcessIsolation, requestedProfileBrowserPath)
+      && runDiagnosticsAreStrictlyValid(wideProfile?.diagnostics, wideProfile, 'wide-1400x900-100')
       && Array.isArray(wideProfile?.consoleErrors)
       && wideProfile.consoleErrors.length === 0
       && Array.isArray(wideProfile?.pageErrors)
@@ -436,16 +579,14 @@ function packageUiEvidenceIsStrictlyValid({
       && String(profileDatabaseProvenance?.protectedDatabase?.sha256 || '').toUpperCase() === String(dbBefore?.sha256 || '').toUpperCase()
       && Number(profileDatabaseProvenance?.profileDatabase?.sizeBytes || 0) === Number(dbBefore?.sizeBytes || 0)
       && Number(profileDatabaseProvenance?.protectedDatabase?.sizeBytes || 0) === Number(dbBefore?.sizeBytes || 0);
-    const processIsolated = packageUi.packageProcessIsolation?.passed === true
-      && packageUi.packageProcessIsolation?.before?.passed === true
-      && packageUi.packageProcessIsolation?.before?.matchingCount === 0
-      && packageUi.packageProcessIsolation?.after?.passed === true
-      && packageUi.packageProcessIsolation?.after?.matchingCount === 0;
+    const processIsolated = processIsolationIsStrictlyValid(packageUi.packageProcessIsolation);
+    const profileProcessIsolated = profileBrowserPathBound
+      && processIsolationIsStrictlyValid(packageUi.profileProcessIsolation, requestedProfileBrowserPath);
     const bundled = manifest.uiEvidence?.packageUiManifest?.present === true
       && samePath(manifest.uiEvidence?.packageUiManifest?.sourcePath, filePath)
       && bundleSourceFileMatches(manifest, bundleManifestPath, filePath);
     return packageUi.kind === 'package-ui-evidence'
-      && Number(packageUi.schemaVersion || 0) >= 4
+      && Number(packageUi.schemaVersion || 0) >= 5
       && packageUi.passed === true
       && Array.isArray(packageUi.violations)
       && packageUi.violations.length === 0
@@ -466,6 +607,7 @@ function packageUiEvidenceIsStrictlyValid({
       && databaseIsolated
       && profileDatabaseProvenanceValid
       && processIsolated
+      && profileProcessIsolated
       && bundled;
   } catch {
     return false;

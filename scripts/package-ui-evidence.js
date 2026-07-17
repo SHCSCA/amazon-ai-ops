@@ -37,6 +37,10 @@ const DEFAULT_APP_CONTENT_PATH = path.join(
 const EXPECTED_RENDERER_ENTRY_PATH = path.join(DEFAULT_APP_CONTENT_PATH, 'dist', 'renderer', 'index.html');
 const DEFAULT_OUTPUT_DIR = 'output/codex-evidence/package-ui-evidence';
 const PACKAGE_PROCESS_NAME = path.basename(DEFAULT_EXECUTABLE_PATH);
+const PROFILE_BROWSER_PROCESS_NAMES = Object.freeze(['chrome.exe', 'chromium.exe', 'msedge.exe']);
+const DIAGNOSTIC_MESSAGE_LIMIT = 2_000;
+const DIAGNOSTIC_STACK_LIMIT = 4_000;
+const DIAGNOSTIC_RENDERER_ENTRY_LIMIT = 100;
 const REQUIRED_APP_CONTENT_ENTRIES = Object.freeze([
   'package.json',
   'dist/main/index.js',
@@ -305,6 +309,298 @@ function evaluateProfileDatabaseProvenance({ profileDatabase, protectedDatabase 
   };
 }
 
+function redactDiagnosticSecrets(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gi, '[REDACTED_API_KEY]')
+    .replace(/([?&](?:api[_-]?key|access[_-]?token|authorization|cookie|password|pwd|secret|session(?:[_-]?(?:id|key|token))?|token|username|user[_-]?name|account)=)[^&#\s]*/gi, '$1[REDACTED]')
+    .replace(/(--(?:api[-_]?key|access[-_]?token|authorization|cookie|password|passwd|pwd|secret|session(?:[-_]?(?:id|key|token))?|token|username|user[-_]?name|account))(\s*=\s*|\s+)(?:"[^"]*"|'[^']*'|[^\s]+)/gi, '$1$2[REDACTED]')
+    .replace(/(\b(?:authorization|proxy-authorization)\s*[:=])[^\r\n]*/gi, '$1 [REDACTED]')
+    .replace(/(\b(?:cookie|set-cookie)\s*:)[^\r\n]*/gi, '$1 [REDACTED]')
+    .replace(/(\bbearer\s+)[A-Za-z0-9._~+/-]{6,}/gi, '$1[REDACTED]')
+    .replace(/((?:api[_ -]?key|access[_ -]?token|authorization|cookie|password|passwd|pwd|secret|session(?:[_ -]?(?:id|key|token))?|token|username|user_name|account)\s*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,]+)/gi, '$1[REDACTED]');
+}
+
+function sanitizeDiagnosticText(value, maximumLength = DIAGNOSTIC_MESSAGE_LIMIT) {
+  const boundedMaximum = Number.isInteger(maximumLength) && maximumLength > 0
+    ? maximumLength
+    : DIAGNOSTIC_MESSAGE_LIMIT;
+  return redactDiagnosticSecrets(value)
+    .slice(0, boundedMaximum);
+}
+
+function createStructuredFailure(error, phase = 'unknown') {
+  const source = error instanceof Error ? error : new Error(String(error || 'Unknown failure'));
+  return {
+    at: new Date().toISOString(),
+    message: sanitizeDiagnosticText(source.message, DIAGNOSTIC_MESSAGE_LIMIT),
+    name: sanitizeDiagnosticText(source.name || 'Error', 120),
+    phase: sanitizeDiagnosticText(phase || 'unknown', 160),
+    stack: sanitizeDiagnosticText(source.stack || '', DIAGNOSTIC_STACK_LIMIT),
+  };
+}
+
+function createRunDiagnostics(profileId, startedAt = new Date()) {
+  const timestamp = startedAt instanceof Date ? startedAt.toISOString() : new Date(startedAt).toISOString();
+  return {
+    cleanupErrors: [],
+    completedAt: null,
+    failure: null,
+    login: {
+      attempts: [],
+      completedAt: null,
+      outcome: 'not-started',
+      savedCredentials: null,
+      startedAt: null,
+    },
+    phase: 'created',
+    profileId,
+    renderer: {
+      consoleErrors: [],
+      droppedCount: {
+        consoleErrors: 0,
+        pageErrors: 0,
+      },
+      limits: {
+        consoleErrors: DIAGNOSTIC_RENDERER_ENTRY_LIMIT,
+        pageErrors: DIAGNOSTIC_RENDERER_ENTRY_LIMIT,
+      },
+      pageErrors: [],
+    },
+    schemaVersion: 'package-ui-run-diagnostics/v1',
+    startedAt: timestamp,
+    timeline: [{ at: timestamp, phase: 'created' }],
+  };
+}
+
+function appendRendererDiagnostic(diagnostics, kind, record) {
+  const renderer = diagnostics?.renderer;
+  const entries = renderer?.[kind];
+  const limit = renderer?.limits?.[kind];
+  if (!Array.isArray(entries)
+    || !Number.isInteger(limit)
+    || limit < 1
+    || !Number.isInteger(renderer?.droppedCount?.[kind])) {
+    return false;
+  }
+  if (entries.length < limit) {
+    entries.push(record);
+    return true;
+  }
+  renderer.droppedCount[kind] += 1;
+  return false;
+}
+
+function setRunDiagnosticPhase(diagnostics, phase) {
+  if (!diagnostics) return;
+  const safePhase = sanitizeDiagnosticText(phase || 'unknown', 160);
+  diagnostics.phase = safePhase;
+  diagnostics.timeline.push({ at: new Date().toISOString(), phase: safePhase });
+}
+
+function recordRunDiagnosticFailure(diagnostics, error, phase = diagnostics?.phase || 'unknown') {
+  const failure = createStructuredFailure(error, phase);
+  if (diagnostics && !diagnostics.failure) diagnostics.failure = failure;
+  return failure;
+}
+
+function diagnosticFailurePhase(diagnostics) {
+  const cleanupPhases = new Set(['electron-close', 'process-cleanup-attestation', 'completed', 'failed']);
+  if (diagnostics?.phase && !cleanupPhases.has(diagnostics.phase)) return diagnostics.phase;
+  const timeline = Array.isArray(diagnostics?.timeline) ? diagnostics.timeline : [];
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const phase = timeline[index]?.phase;
+    if (phase && !cleanupPhases.has(phase)) return phase;
+  }
+  return 'unknown';
+}
+
+function completeRunDiagnostics(diagnostics, passed) {
+  if (!diagnostics) return;
+  diagnostics.phase = passed ? 'completed' : 'failed';
+  diagnostics.completedAt = new Date().toISOString();
+  diagnostics.timeline.push({ at: diagnostics.completedAt, phase: diagnostics.phase });
+}
+
+function validRunDiagnostics(diagnostics, run = {}) {
+  const startedAt = Date.parse(diagnostics?.startedAt);
+  const completedAt = Date.parse(diagnostics?.completedAt);
+  const consoleErrors = diagnostics?.renderer?.consoleErrors;
+  const pageErrors = diagnostics?.renderer?.pageErrors;
+  const timeline = diagnostics?.timeline;
+  const login = diagnostics?.login;
+  const renderer = diagnostics?.renderer;
+  return diagnostics?.schemaVersion === 'package-ui-run-diagnostics/v1'
+    && Number.isFinite(startedAt)
+    && Number.isFinite(completedAt)
+    && completedAt >= startedAt
+    && diagnostics.phase === 'completed'
+    && diagnostics.failure === null
+    && Array.isArray(diagnostics.cleanupErrors)
+    && diagnostics.cleanupErrors.length === 0
+    && Array.isArray(timeline)
+    && timeline.length > 0
+    && renderer?.limits?.consoleErrors === DIAGNOSTIC_RENDERER_ENTRY_LIMIT
+    && renderer?.limits?.pageErrors === DIAGNOSTIC_RENDERER_ENTRY_LIMIT
+    && renderer?.droppedCount?.consoleErrors === 0
+    && renderer?.droppedCount?.pageErrors === 0
+    && Array.isArray(consoleErrors)
+    && consoleErrors.length <= DIAGNOSTIC_RENDERER_ENTRY_LIMIT
+    && consoleErrors.length === 0
+    && Array.isArray(pageErrors)
+    && pageErrors.length <= DIAGNOSTIC_RENDERER_ENTRY_LIMIT
+    && pageErrors.length === 0
+    && Array.isArray(run.consoleErrors)
+    && run.consoleErrors.length === 0
+    && Array.isArray(run.pageErrors)
+    && run.pageErrors.length === 0
+    && Array.isArray(login?.attempts)
+    && typeof login?.outcome === 'string'
+    && login.outcome !== 'not-started';
+}
+
+function extractProfileUserDataDirectories(commandLine) {
+  const source = String(commandLine || '');
+  const values = [];
+  const patterns = [
+    /"--user-data-dir=([^"]+)"/gi,
+    /--user-data-dir\s*=\s*"([^"]+)"/gi,
+    /--user-data-dir\s*=\s*'([^']+)'/gi,
+    /--user-data-dir\s*=\s*([^\s"]+)/gi,
+    /"--user-data-dir"\s+"([^"]+)"/gi,
+    /--user-data-dir\s+"([^"]+)"/gi,
+    /--user-data-dir\s+'([^']+)'/gi,
+    /--user-data-dir\s+([^\s"]+)/gi,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(source)) !== null) {
+      if (match[1]) values.push(match[1]);
+    }
+  }
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function browserProcessRecord(item, profileMatched) {
+  return {
+    executablePath: item.ExecutablePath || null,
+    name: item.Name || null,
+    parentProcessId: Number(item.ParentProcessId),
+    processId: Number(item.ProcessId),
+    profileMatched: Boolean(profileMatched),
+  };
+}
+
+function collectMatchingProfileBrowserProcesses(profilePath, run = spawnSync) {
+  const expectedProfilePath = normalizedWindowsPath(profilePath);
+  const names = PROFILE_BROWSER_PROCESS_NAMES.map((name) => `'${name.replace(/'/g, "''")}'`).join(',');
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    `$names = @(${names})`,
+    '$items = @(Get-CimInstance Win32_Process | Where-Object { $names -contains $_.Name } | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine)',
+    'ConvertTo-Json -InputObject $items -Compress',
+  ].join('; ');
+  const result = run('powershell.exe', ['-NoProfile', '-Command', command], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    return {
+      error: sanitizeDiagnosticText(result.stderr || result.error?.message || `PowerShell exited ${result.status}`),
+      matching: [],
+      matchingCount: null,
+      observedCount: null,
+      passed: false,
+      profilePath: path.resolve(profilePath),
+      unresolved: [],
+      unresolvedCount: null,
+    };
+  }
+  let observed;
+  try {
+    const parsed = JSON.parse(String(result.stdout || '').trim() || '[]');
+    observed = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+  } catch (error) {
+    return {
+      error: sanitizeDiagnosticText(`Could not parse profile browser process snapshot: ${error instanceof Error ? error.message : String(error)}`),
+      matching: [],
+      matchingCount: null,
+      observedCount: null,
+      passed: false,
+      profilePath: path.resolve(profilePath),
+      unresolved: [],
+      unresolvedCount: null,
+    };
+  }
+  const unresolvedItems = observed.filter((item) => !item.CommandLine);
+  const matchingItems = observed.filter((item) => (
+    extractProfileUserDataDirectories(item.CommandLine)
+      .some((candidate) => normalizedWindowsPath(candidate) === expectedProfilePath)
+  ));
+  return {
+    error: null,
+    matching: matchingItems.map((item) => browserProcessRecord(item, true)),
+    matchingCount: matchingItems.length,
+    observedCount: observed.length,
+    passed: unresolvedItems.length === 0,
+    profilePath: path.resolve(profilePath),
+    unresolved: unresolvedItems.map((item) => browserProcessRecord(item, false)),
+    unresolvedCount: unresolvedItems.length,
+  };
+}
+
+async function waitForProfileBrowserProcessCleanup(profilePath, options = {}) {
+  const collect = options.collect || collectMatchingProfileBrowserProcesses;
+  const attempts = Number.isInteger(options.attempts) ? options.attempts : 20;
+  const intervalMs = Number.isInteger(options.intervalMs) ? options.intervalMs : 250;
+  let snapshot = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    snapshot = collect(profilePath);
+    if (snapshot.passed === true && snapshot.matchingCount === 0) {
+      return { ...snapshot, attempts: attempt, passed: true };
+    }
+    if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return { ...snapshot, attempts, passed: false };
+}
+
+function processSnapshotEvidencePassed(snapshot) {
+  return snapshot?.passed === true
+    && snapshot.error === null
+    && Number.isInteger(snapshot.observedCount)
+    && snapshot.observedCount >= 0
+    && Array.isArray(snapshot.matching)
+    && Number.isInteger(snapshot.matchingCount)
+    && snapshot.matchingCount === snapshot.matching.length
+    && Array.isArray(snapshot.unresolved)
+    && Number.isInteger(snapshot.unresolvedCount)
+    && snapshot.unresolvedCount === snapshot.unresolved.length
+    && snapshot.observedCount >= snapshot.matchingCount + snapshot.unresolvedCount;
+}
+
+function buildProcessIsolationEvidence(before, after) {
+  return {
+    after,
+    before,
+    passed: processSnapshotEvidencePassed(before)
+      && before?.matchingCount === 0
+      && before?.unresolvedCount === 0
+      && processSnapshotEvidencePassed(after)
+      && after?.matchingCount === 0
+      && after?.unresolvedCount === 0,
+  };
+}
+
+function processIsolationEvidencePassed(evidence) {
+  return evidence?.passed === true
+    && processSnapshotEvidencePassed(evidence.before)
+    && evidence.before?.matchingCount === 0
+    && evidence.before?.unresolvedCount === 0
+    && processSnapshotEvidencePassed(evidence.after)
+    && evidence.after?.matchingCount === 0
+    && evidence.after?.unresolvedCount === 0;
+}
+
 function collectMatchingPackageProcesses(executablePath, run = spawnSync) {
   const command = [
     "$ErrorActionPreference = 'Stop'",
@@ -322,6 +618,7 @@ function collectMatchingPackageProcesses(executablePath, run = spawnSync) {
       matchingCount: null,
       observedCount: null,
       passed: false,
+      unresolved: [],
       unresolvedCount: null,
     };
   }
@@ -336,6 +633,7 @@ function collectMatchingPackageProcesses(executablePath, run = spawnSync) {
       matchingCount: null,
       observedCount: null,
       passed: false,
+      unresolved: [],
       unresolvedCount: null,
     };
   }
@@ -355,6 +653,12 @@ function collectMatchingPackageProcesses(executablePath, run = spawnSync) {
     matchingCount: matching.length,
     observedCount: observed.length,
     passed: unresolved.length === 0,
+    unresolved: unresolved.map((item) => ({
+      executablePath: null,
+      name: item.Name || null,
+      parentProcessId: Number(item.ParentProcessId),
+      processId: Number(item.ProcessId),
+    })),
     unresolvedCount: unresolved.length,
   };
 }
@@ -917,6 +1221,9 @@ function validateOverlayKeyboardEvidence({ backwardFocus, focusableCount, forwar
 
 function evaluatePackageUiEvidenceCompleteness(input) {
   const violations = [];
+  if (Number(input.schemaVersion || 0) < 5) {
+    violations.push(violation('PACKAGE_UI_SCHEMA_V5_REQUIRED', 'Package UI evidence must use schema v5 or newer.'));
+  }
   if (input.artifactHashesStable !== true) {
     violations.push(violation('ARTIFACT_CHANGED_DURING_RUN', 'EXE or unpacked app content changed while evidence was being captured.'));
   }
@@ -934,21 +1241,27 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       input.profileDatabaseProvenance,
     ));
   }
-  if (input.packageProcessIsolation?.before?.passed !== true
-    || input.packageProcessIsolation?.before?.matchingCount !== 0) {
+  if (!processSnapshotEvidencePassed(input.packageProcessIsolation?.before)
+    || input.packageProcessIsolation?.before?.matchingCount !== 0
+    || input.packageProcessIsolation?.before?.unresolvedCount !== 0) {
     violations.push(violation(
       'PACKAGE_PROCESS_PREEXISTING_OR_UNRESOLVED',
       'No matching packaged process may be running before evidence capture.',
       input.packageProcessIsolation?.before,
     ));
   }
-  if (input.packageProcessIsolation?.after?.passed !== true
-    || input.packageProcessIsolation?.after?.matchingCount !== 0
-    || input.packageProcessIsolation?.passed !== true) {
+  if (!processIsolationEvidencePassed(input.packageProcessIsolation)) {
     violations.push(violation(
       'PACKAGE_PROCESS_CLEANUP_FAILED',
       'All matching packaged processes must be gone after evidence capture.',
       input.packageProcessIsolation?.after,
+    ));
+  }
+  if (!processIsolationEvidencePassed(input.profileProcessIsolation)) {
+    violations.push(violation(
+      'PROFILE_PROCESS_CLEANUP_FAILED',
+      'The exact isolated browser profile must have zero Chrome, Chromium, or Edge processes before and after evidence capture.',
+      input.profileProcessIsolation,
     ));
   }
   const runs = Array.isArray(input.runs) ? input.runs : [];
@@ -973,6 +1286,15 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     }
     if (run.identity?.passed !== true) {
       violations.push(violation('SCALE_IDENTITY_FAILED', `The ${scale.scalePercent}% packaged identity check failed.`, run.identity?.violations));
+    }
+    if (!processIsolationEvidencePassed(run.packageProcessIsolation)) {
+      violations.push(violation('SCALE_PACKAGE_PROCESS_ISOLATION_FAILED', `The ${scale.scalePercent}% product process isolation evidence is missing or failed.`, run.packageProcessIsolation));
+    }
+    if (!processIsolationEvidencePassed(run.profileProcessIsolation)) {
+      violations.push(violation('SCALE_PROFILE_PROCESS_ISOLATION_FAILED', `The ${scale.scalePercent}% profile browser isolation evidence is missing or failed.`, run.profileProcessIsolation));
+    }
+    if (!validRunDiagnostics(run.diagnostics, run)) {
+      violations.push(violation('SCALE_DIAGNOSTICS_MISSING_OR_FAILED', `The ${scale.scalePercent}% structured run diagnostics are missing or invalid.`, run.diagnostics));
     }
     if ((run.consoleErrors || []).length > 0) {
       violations.push(violation('RENDERER_CONSOLE_ERROR', `The ${scale.scalePercent}% packaged renderer emitted console errors.`, run.consoleErrors));
@@ -1035,6 +1357,15 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     }
     if (wideRun.identity?.passed !== true) {
       violations.push(violation('WIDE_PROFILE_IDENTITY_FAILED', 'The wide package profile did not retain packaged runtime identity.', wideRun.identity));
+    }
+    if (!processIsolationEvidencePassed(wideRun.packageProcessIsolation)) {
+      violations.push(violation('WIDE_PACKAGE_PROCESS_ISOLATION_FAILED', 'The wide profile product process isolation evidence is missing or failed.', wideRun.packageProcessIsolation));
+    }
+    if (!processIsolationEvidencePassed(wideRun.profileProcessIsolation)) {
+      violations.push(violation('WIDE_PROFILE_PROCESS_ISOLATION_FAILED', 'The wide profile browser isolation evidence is missing or failed.', wideRun.profileProcessIsolation));
+    }
+    if (!validRunDiagnostics(wideRun.diagnostics, wideRun)) {
+      violations.push(violation('WIDE_DIAGNOSTICS_MISSING_OR_FAILED', 'The wide profile structured run diagnostics are missing or invalid.', wideRun.diagnostics));
     }
     if ((wideRun.consoleErrors || []).length > 0 || (wideRun.pageErrors || []).length > 0) {
       violations.push(violation('WIDE_PROFILE_RENDERER_ERROR', 'The wide package profile emitted renderer errors.', {
@@ -1718,7 +2049,23 @@ async function hasAuthenticatedWorkspace(page, timeoutMs = 0) {
   }
 }
 
+function beginLoginDiagnostics(diagnostics) {
+  const login = diagnostics?.login;
+  if (!login) return null;
+  if (!login.startedAt) login.startedAt = new Date().toISOString();
+  login.outcome = 'in-progress';
+  return login;
+}
+
+function completeLoginDiagnostics(login, outcome, extra = {}) {
+  if (!login) return;
+  login.completedAt = new Date().toISOString();
+  login.outcome = outcome;
+  Object.assign(login, extra);
+}
+
 async function ensureAuthenticatedWorkspace(page, options) {
+  const loginDiagnostics = beginLoginDiagnostics(options.diagnostics);
   await page.waitForFunction(() => Boolean(
     document.querySelector('nav[aria-label="主业务导航"]')
     || document.querySelector('button.login-submit-button')
@@ -1726,9 +2073,11 @@ async function ensureAuthenticatedWorkspace(page, options) {
   ), undefined, { timeout: 30_000 });
 
   if (await hasAuthenticatedWorkspace(page)) {
+    completeLoginDiagnostics(loginDiagnostics, 'existing-authenticated-session');
     return { mode: 'existing-authenticated-session', savedCredentialsLoginUsed: false };
   }
   if (!options.allowSavedLogin) {
+    completeLoginDiagnostics(loginDiagnostics, 'blocked-login-screen');
     fail('Package opened on the login screen. Re-run with --allow-saved-login only after confirming the app already holds valid saved credentials.');
   }
 
@@ -1752,6 +2101,9 @@ async function ensureAuthenticatedWorkspace(page, options) {
     } catch (error) {
       if (!isRetryableLoginNavigationError(error?.message || error)) throw error;
       if (await hasAuthenticatedWorkspace(page, 2_000)) {
+        completeLoginDiagnostics(loginDiagnostics, 'saved-credentials-auto-login', {
+          savedCredentials: { passwordAvailable: true, rememberPassword: null, usernameAvailable: true },
+        });
         return { mode: 'saved-credentials-auto-login', savedCredentialsLoginUsed: true };
       }
       if (attempt === 3) throw error;
@@ -1759,12 +2111,25 @@ async function ensureAuthenticatedWorkspace(page, options) {
     }
   }
   if (!savedCredentialState.usernameAvailable || !savedCredentialState.passwordAvailable) {
+    completeLoginDiagnostics(loginDiagnostics, 'saved-credentials-incomplete', {
+      savedCredentials: savedCredentialState,
+    });
     fail('Saved credentials are incomplete; package UI evidence refuses to read environment credentials or type secrets.');
   }
+  if (loginDiagnostics) loginDiagnostics.savedCredentials = savedCredentialState;
 
   const loginButton = page.getByRole('button', { name: '登录并进入 Ads', exact: true });
   let lastLoginError = 'no visible login error';
   for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const attemptEvidence = {
+      attempt,
+      completedAt: null,
+      message: null,
+      outcome: 'in-progress',
+      retryable: false,
+      startedAt: new Date().toISOString(),
+    };
+    loginDiagnostics?.attempts.push(attemptEvidence);
     await loginButton.waitFor({ state: 'visible', timeout: 10_000 });
     await loginButton.click();
     await page.waitForTimeout(250);
@@ -1778,25 +2143,48 @@ async function ensureAuthenticatedWorkspace(page, options) {
         return null;
       }, undefined, { timeout: options.loginTimeoutMs });
       const value = await outcome.jsonValue();
-      if (value?.kind === 'workspace') break;
+      if (value?.kind === 'workspace') {
+        attemptEvidence.outcome = 'workspace-reached';
+        attemptEvidence.completedAt = new Date().toISOString();
+        break;
+      }
       lastLoginError = 'saved-session browser navigation replaced its execution context';
+      attemptEvidence.outcome = 'retryable-navigation';
+      attemptEvidence.retryable = true;
+      attemptEvidence.message = sanitizeDiagnosticText(lastLoginError, 500);
+      attemptEvidence.completedAt = new Date().toISOString();
       if (attempt < 2) {
         await page.waitForTimeout(1_000);
         continue;
       }
     } catch (error) {
-      if (await hasAuthenticatedWorkspace(page, 2_000)) break;
+      if (await hasAuthenticatedWorkspace(page, 2_000)) {
+        attemptEvidence.outcome = 'workspace-reached-after-navigation';
+        attemptEvidence.completedAt = new Date().toISOString();
+        break;
+      }
       lastLoginError = await page.locator('[role="alert"]').first().innerText().catch(() => String(error?.message || error));
+      attemptEvidence.message = sanitizeDiagnosticText(lastLoginError, 500);
+      attemptEvidence.retryable = isRetryableLoginNavigationError(lastLoginError);
+      attemptEvidence.outcome = attemptEvidence.retryable ? 'retryable-navigation' : 'failed';
+      attemptEvidence.completedAt = new Date().toISOString();
       if (attempt < 2 && isRetryableLoginNavigationError(lastLoginError)) {
         await page.waitForTimeout(1_000);
         continue;
       }
     }
+    completeLoginDiagnostics(loginDiagnostics, 'failed', {
+      failureMessage: sanitizeDiagnosticText(lastLoginError, 500),
+    });
     fail('Saved-credential session establishment did not reach the workspace shell', lastLoginError.slice(0, 500));
   }
   if (!await hasAuthenticatedWorkspace(page)) {
+    completeLoginDiagnostics(loginDiagnostics, 'failed', {
+      failureMessage: sanitizeDiagnosticText(lastLoginError, 500),
+    });
     fail('Saved-credential session establishment did not reach the workspace shell', lastLoginError.slice(0, 500));
   }
+  completeLoginDiagnostics(loginDiagnostics, 'saved-credentials-login');
   return {
     mode: 'saved-credentials-login',
     savedCredentialsLoginUsed: true,
@@ -2272,11 +2660,49 @@ async function readElectronViewport(page) {
   }));
 }
 
-async function runScaleEvidence(options, scale, artifacts, runDir) {
-  const consoleErrors = [];
-  const pageErrors = [];
+function attachRendererDiagnostics(page, diagnostics, attachedPages) {
+  if (!page || attachedPages.has(page)) return;
+  attachedPages.add(page);
+  page.on('console', (message) => {
+    if (message.type() !== 'error') return;
+    let location = null;
+    try {
+      const source = message.location();
+      location = source ? {
+        columnNumber: Number(source.columnNumber) || 0,
+        lineNumber: Number(source.lineNumber) || 0,
+        url: sanitizeDiagnosticText(source.url || '', 1_000),
+      } : null;
+    } catch {
+      location = null;
+    }
+    appendRendererDiagnostic(diagnostics, 'consoleErrors', {
+      at: new Date().toISOString(),
+      kind: 'console-error',
+      location,
+      message: sanitizeDiagnosticText(message.text(), DIAGNOSTIC_MESSAGE_LIMIT),
+      phase: diagnostics.phase,
+    });
+  });
+  page.on('pageerror', (error) => {
+    appendRendererDiagnostic(diagnostics, 'pageErrors', {
+      at: new Date().toISOString(),
+      kind: 'page-error',
+      message: sanitizeDiagnosticText(error?.message || error, DIAGNOSTIC_MESSAGE_LIMIT),
+      name: sanitizeDiagnosticText(error?.name || 'Error', 120),
+      phase: diagnostics.phase,
+      stack: sanitizeDiagnosticText(error?.stack || '', DIAGNOSTIC_STACK_LIMIT),
+    });
+  });
+}
+
+async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnostics) {
+  const consoleErrors = diagnostics.renderer.consoleErrors;
+  const pageErrors = diagnostics.renderer.pageErrors;
+  const attachedPages = new WeakSet();
   let electronApp;
   try {
+    setRunDiagnosticPhase(diagnostics, 'electron-launch');
     electronApp = await _electron.launch({
       executablePath: options.executablePath,
       args: [`--force-device-scale-factor=${scale.deviceScaleFactor}`],
@@ -2288,11 +2714,13 @@ async function runScaleEvidence(options, scale, artifacts, runDir) {
       },
       timeout: 60_000,
     });
+    const attachPage = (candidate) => attachRendererDiagnostics(candidate, diagnostics, attachedPages);
+    electronApp.on('window', attachPage);
+    for (const existingPage of electronApp.windows()) attachPage(existingPage);
+    setRunDiagnosticPhase(diagnostics, 'first-window');
     const page = await electronApp.firstWindow({ timeout: 60_000 });
-    page.on('console', (message) => {
-      if (message.type() === 'error') consoleErrors.push(message.text().slice(0, 2_000));
-    });
-    page.on('pageerror', (error) => pageErrors.push(String(error?.stack || error?.message || error).slice(0, 4_000)));
+    attachPage(page);
+    setRunDiagnosticPhase(diagnostics, 'viewport');
     await setElectronViewport(electronApp, PACKAGE_UI_VIEWPORT);
     const viewportWait = {
       width: PACKAGE_UI_VIEWPORT.width,
@@ -2336,6 +2764,7 @@ async function runScaleEvidence(options, scale, artifacts, runDir) {
       fail('Packaged viewport contract failed after settling', JSON.stringify(viewportContract));
     }
 
+    setRunDiagnosticPhase(diagnostics, 'identity');
     const actualIdentity = await collectElectronIdentity(electronApp, page);
     const identity = validatePackageIdentity({
       ...actualIdentity,
@@ -2350,10 +2779,12 @@ async function runScaleEvidence(options, scale, artifacts, runDir) {
     });
     if (!identity.passed) fail('Packaged runtime identity failed', JSON.stringify(identity.violations));
 
-    const session = await ensureAuthenticatedWorkspace(page, options);
+    setRunDiagnosticPhase(diagnostics, 'login');
+    const session = await ensureAuthenticatedWorkspace(page, { ...options, diagnostics });
     const workspaceChecks = [];
     const screenshots = [];
     for (const workspace of EXPECTED_PACKAGE_UI_WORKSPACES) {
+      setRunDiagnosticPhase(diagnostics, `workspace:${workspace.workspace}/${workspace.subview}`);
       const settleEvidence = await navigateToWorkspace(page, workspace, options.settleMs);
       const workspaceRoot = page.locator(
         `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`,
@@ -2426,6 +2857,7 @@ async function runScaleEvidence(options, scale, artifacts, runDir) {
       }
     }
 
+    setRunDiagnosticPhase(diagnostics, 'overlays');
     const overlayChecks = await runOverlayChecks(page, {
       electronApp,
       runDir,
@@ -2451,16 +2883,25 @@ async function runScaleEvidence(options, scale, artifacts, runDir) {
       workspaceChecks,
     };
   } finally {
-    await electronApp?.close().catch(() => undefined);
+    if (electronApp) {
+      setRunDiagnosticPhase(diagnostics, 'electron-close');
+      try {
+        await electronApp.close();
+      } catch (error) {
+        diagnostics.cleanupErrors.push(createStructuredFailure(error, 'electron-close'));
+      }
+    }
   }
 }
 
-async function runWideProfileEvidence(options, artifacts, runDir) {
+async function runWideProfileEvidenceCore(options, artifacts, runDir, diagnostics) {
   const profile = PACKAGE_UI_WIDE_PROFILE;
-  const consoleErrors = [];
-  const pageErrors = [];
+  const consoleErrors = diagnostics.renderer.consoleErrors;
+  const pageErrors = diagnostics.renderer.pageErrors;
+  const attachedPages = new WeakSet();
   let electronApp;
   try {
+    setRunDiagnosticPhase(diagnostics, 'electron-launch');
     electronApp = await _electron.launch({
       executablePath: options.executablePath,
       args: [`--force-device-scale-factor=${profile.deviceScaleFactor}`],
@@ -2472,11 +2913,13 @@ async function runWideProfileEvidence(options, artifacts, runDir) {
       },
       timeout: 60_000,
     });
+    const attachPage = (candidate) => attachRendererDiagnostics(candidate, diagnostics, attachedPages);
+    electronApp.on('window', attachPage);
+    for (const existingPage of electronApp.windows()) attachPage(existingPage);
+    setRunDiagnosticPhase(diagnostics, 'first-window');
     const page = await electronApp.firstWindow({ timeout: 60_000 });
-    page.on('console', (message) => {
-      if (message.type() === 'error') consoleErrors.push(message.text().slice(0, 2_000));
-    });
-    page.on('pageerror', (error) => pageErrors.push(String(error?.stack || error?.message || error).slice(0, 4_000)));
+    attachPage(page);
+    setRunDiagnosticPhase(diagnostics, 'viewport');
     await setElectronViewport(electronApp, profile.viewport);
     await page.waitForFunction(({ viewport, dpr, tolerance }) => (
       Math.abs(window.innerWidth - viewport.width) <= tolerance.width
@@ -2495,6 +2938,7 @@ async function runWideProfileEvidence(options, artifacts, runDir) {
       requested: profile.viewport,
     });
     if (!viewportContract.passed) fail('Wide packaged viewport contract failed', JSON.stringify(viewportContract));
+    setRunDiagnosticPhase(diagnostics, 'identity');
     const actualIdentity = await collectElectronIdentity(electronApp, page);
     const identity = validatePackageIdentity({
       ...actualIdentity,
@@ -2508,10 +2952,12 @@ async function runWideProfileEvidence(options, artifacts, runDir) {
       expectedVersion: DESKTOP_PACKAGE.version,
     });
     if (!identity.passed) fail('Wide packaged runtime identity failed', JSON.stringify(identity.violations));
-    const session = await ensureAuthenticatedWorkspace(page, options);
+    setRunDiagnosticPhase(diagnostics, 'login');
+    const session = await ensureAuthenticatedWorkspace(page, { ...options, diagnostics });
     const workspaceChecks = [];
     const screenshots = [];
     for (const workspace of profile.workspaces) {
+      setRunDiagnosticPhase(diagnostics, `workspace:${workspace.workspace}/${workspace.subview}`);
       const settleEvidence = await navigateToWorkspace(page, workspace, options.settleMs);
       const rootSelector = `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`;
       const workspaceRoot = page.locator(rootSelector);
@@ -2589,8 +3035,146 @@ async function runWideProfileEvidence(options, artifacts, runDir) {
       workspaceChecks,
     };
   } finally {
-    await electronApp?.close().catch(() => undefined);
+    if (electronApp) {
+      setRunDiagnosticPhase(diagnostics, 'electron-close');
+      try {
+        await electronApp.close();
+      } catch (error) {
+        diagnostics.cleanupErrors.push(createStructuredFailure(error, 'electron-close'));
+      }
+    }
   }
+}
+
+async function executeEvidenceRunWithIsolation({
+  baseEvidence,
+  options,
+  processApi = {},
+  profileId,
+  run,
+}) {
+  const diagnostics = createRunDiagnostics(profileId);
+  const profileBrowserPath = path.join(options.userDataDir, 'storage', 'browser-data');
+  setRunDiagnosticPhase(diagnostics, 'process-preflight');
+  const collectPackage = processApi.collectPackage || collectMatchingPackageProcesses;
+  const collectProfile = processApi.collectProfile || collectMatchingProfileBrowserProcesses;
+  const waitPackage = processApi.waitPackage || waitForPackageProcessCleanup;
+  const waitProfile = processApi.waitProfile || waitForProfileBrowserProcessCleanup;
+  const packageProcessesBefore = collectPackage(options.executablePath);
+  const profileProcessesBefore = collectProfile(profileBrowserPath);
+  let coreEvidence = null;
+
+  try {
+    if (packageProcessesBefore.passed !== true || packageProcessesBefore.matchingCount !== 0) {
+      fail('A matching packaged process was already running or unresolved before this evidence profile', JSON.stringify(packageProcessesBefore));
+    }
+    if (profileProcessesBefore.passed !== true || profileProcessesBefore.matchingCount !== 0) {
+      fail('A Chromium profile process was already running or unresolved before this evidence profile', JSON.stringify(profileProcessesBefore));
+    }
+    coreEvidence = await run(diagnostics);
+  } catch (error) {
+    recordRunDiagnosticFailure(diagnostics, error, diagnosticFailurePhase(diagnostics));
+  }
+
+  setRunDiagnosticPhase(diagnostics, 'process-cleanup-attestation');
+  let packageProcessesAfter;
+  let profileProcessesAfter;
+  try {
+    [packageProcessesAfter, profileProcessesAfter] = await Promise.all([
+      waitPackage(options.executablePath),
+      waitProfile(profileBrowserPath),
+    ]);
+  } catch (error) {
+    recordRunDiagnosticFailure(diagnostics, error, 'process-cleanup-attestation');
+    packageProcessesAfter ||= {
+      attempts: null,
+      error: sanitizeDiagnosticText(error?.message || error),
+      matching: [],
+      matchingCount: null,
+      observedCount: null,
+      passed: false,
+      unresolved: [],
+      unresolvedCount: null,
+    };
+    profileProcessesAfter ||= {
+      attempts: null,
+      error: sanitizeDiagnosticText(error?.message || error),
+      matching: [],
+      matchingCount: null,
+      observedCount: null,
+      passed: false,
+      profilePath: profileBrowserPath,
+      unresolved: [],
+      unresolvedCount: null,
+    };
+  }
+  const packageProcessIsolation = buildProcessIsolationEvidence(packageProcessesBefore, packageProcessesAfter);
+  const profileProcessIsolation = buildProcessIsolationEvidence(profileProcessesBefore, profileProcessesAfter);
+  if (diagnostics.cleanupErrors.length > 0 && !diagnostics.failure) {
+    recordRunDiagnosticFailure(
+      diagnostics,
+      new Error('Electron close reported one or more cleanup errors.'),
+      'electron-close',
+    );
+  }
+  if ((!packageProcessIsolation.passed || !profileProcessIsolation.passed) && !diagnostics.failure) {
+    recordRunDiagnosticFailure(
+      diagnostics,
+      new Error('Packaged product or profile browser process isolation failed.'),
+      'process-cleanup-attestation',
+    );
+  }
+  const passed = coreEvidence?.passed === true
+    && diagnostics.failure === null
+    && diagnostics.cleanupErrors.length === 0
+    && packageProcessIsolation.passed
+    && profileProcessIsolation.passed;
+  if (diagnostics.login.outcome === 'not-started') diagnostics.login.outcome = 'not-reached';
+  if (diagnostics.login.outcome === 'in-progress') diagnostics.login.outcome = passed ? 'completed' : 'failed-before-outcome';
+  completeRunDiagnostics(diagnostics, passed);
+
+  return {
+    ...baseEvidence,
+    ...(coreEvidence || {}),
+    consoleErrors: diagnostics.renderer.consoleErrors,
+    diagnostics,
+    failure: diagnostics.failure,
+    packageProcessIsolation,
+    pageErrors: diagnostics.renderer.pageErrors,
+    passed,
+    profileProcessIsolation,
+  };
+}
+
+async function runScaleEvidence(options, scale, artifacts, runDir) {
+  return executeEvidenceRunWithIsolation({
+    baseEvidence: {
+      actualDeviceScaleFactor: null,
+      overlayChecks: [],
+      scalePercent: scale.scalePercent,
+      screenshots: [],
+      viewport: { ...PACKAGE_UI_VIEWPORT },
+      workspaceChecks: [],
+    },
+    options,
+    profileId: `${scale.scalePercent}-compact`,
+    run: (diagnostics) => runScaleEvidenceCore(options, scale, artifacts, runDir, diagnostics),
+  });
+}
+
+async function runWideProfileEvidence(options, artifacts, runDir) {
+  return executeEvidenceRunWithIsolation({
+    baseEvidence: {
+      actualDeviceScaleFactor: null,
+      profileId: PACKAGE_UI_WIDE_PROFILE.id,
+      screenshots: [],
+      viewport: { ...PACKAGE_UI_WIDE_PROFILE.viewport },
+      workspaceChecks: [],
+    },
+    options,
+    profileId: PACKAGE_UI_WIDE_PROFILE.id,
+    run: (diagnostics) => runWideProfileEvidenceCore(options, artifacts, runDir, diagnostics),
+  });
 }
 
 function writeJson(filePath, value) {
@@ -2608,7 +3192,7 @@ async function runPackageUiEvidence(options) {
   const summaryPath = path.join(outputDir, `package-ui-evidence-${runId}.json`);
   const manifest = {
     kind: 'package-ui-evidence',
-    schemaVersion: 4,
+    schemaVersion: 5,
     generatedAt: new Date().toISOString(),
     runId,
     requested: {
@@ -2619,6 +3203,7 @@ async function runPackageUiEvidence(options) {
       expectedExeSha256: options.expectedExeSha256,
       evidenceMode: PACKAGE_UI_EVIDENCE_MODE,
       protectedDatabasePath: options.protectedDatabasePath,
+      profileBrowserUserDataDir: path.join(options.userDataDir, 'storage', 'browser-data'),
       scales: EXPECTED_PACKAGE_UI_SCALES,
       userDataDir: options.userDataDir,
       viewport: PACKAGE_UI_VIEWPORT,
@@ -2668,13 +3253,24 @@ async function runPackageUiEvidence(options) {
       ));
     }
     const packageProcessesBefore = collectMatchingPackageProcesses(options.executablePath);
+    const profileBrowserProcessesBefore = collectMatchingProfileBrowserProcesses(
+      manifest.requested.profileBrowserUserDataDir,
+    );
     manifest.packageProcessIsolation = {
       before: packageProcessesBefore,
       after: null,
       passed: false,
     };
+    manifest.profileProcessIsolation = {
+      before: profileBrowserProcessesBefore,
+      after: null,
+      passed: false,
+    };
     if (packageProcessesBefore.passed !== true || packageProcessesBefore.matchingCount !== 0) {
       fail('A matching packaged process was already running or could not be resolved before evidence capture', JSON.stringify(packageProcessesBefore));
+    }
+    if (profileBrowserProcessesBefore.passed !== true || profileBrowserProcessesBefore.matchingCount !== 0) {
+      fail('A Chromium profile process was already running or could not be resolved before evidence capture', JSON.stringify(profileBrowserProcessesBefore));
     }
 
     const artifacts = {
@@ -2701,8 +3297,20 @@ async function runPackageUiEvidence(options) {
     for (const scale of EXPECTED_PACKAGE_UI_SCALES) {
       const run = await runScaleEvidence(options, scale, artifacts, runDir);
       manifest.runs.push(run);
+      if (!run.passed) {
+        fail(`Packaged UI ${scale.scalePercent}% evidence profile failed`, JSON.stringify(run.failure || {
+          packageProcessIsolation: run.packageProcessIsolation,
+          profileProcessIsolation: run.profileProcessIsolation,
+        }));
+      }
     }
     manifest.wideProfile = await runWideProfileEvidence(options, artifacts, runDir);
+    if (!manifest.wideProfile.passed) {
+      fail('Packaged UI wide evidence profile failed', JSON.stringify(manifest.wideProfile.failure || {
+        packageProcessIsolation: manifest.wideProfile.packageProcessIsolation,
+        profileProcessIsolation: manifest.wideProfile.profileProcessIsolation,
+      }));
+    }
 
     const artifactsAfter = {
       exe: artifactInfo(options.executablePath),
@@ -2713,15 +3321,15 @@ async function runPackageUiEvidence(options) {
       && artifacts.appContent.sha256 === artifactsAfter.appContent.sha256;
     const protectedDatabaseAfter = artifactInfo(options.protectedDatabasePath);
     manifest.protectedDatabase = buildProtectedFileEvidence(protectedDatabaseBefore, protectedDatabaseAfter);
-    const packageProcessesAfter = await waitForPackageProcessCleanup(options.executablePath);
-    manifest.packageProcessIsolation = {
-      before: packageProcessesBefore,
-      after: packageProcessesAfter,
-      passed: packageProcessesBefore.passed === true
-        && packageProcessesBefore.matchingCount === 0
-        && packageProcessesAfter.passed === true
-        && packageProcessesAfter.matchingCount === 0,
-    };
+    const [packageProcessesAfter, profileBrowserProcessesAfter] = await Promise.all([
+      waitForPackageProcessCleanup(options.executablePath),
+      waitForProfileBrowserProcessCleanup(manifest.requested.profileBrowserUserDataDir),
+    ]);
+    manifest.packageProcessIsolation = buildProcessIsolationEvidence(packageProcessesBefore, packageProcessesAfter);
+    manifest.profileProcessIsolation = buildProcessIsolationEvidence(
+      profileBrowserProcessesBefore,
+      profileBrowserProcessesAfter,
+    );
     const completeness = evaluatePackageUiEvidenceCompleteness(manifest);
     manifest.completeness = completeness;
     manifest.passed = completeness.passed;
@@ -2729,10 +3337,7 @@ async function runPackageUiEvidence(options) {
     if (!manifest.passed) fail('Package UI evidence completeness failed', JSON.stringify(completeness.violations));
   } catch (error) {
     manifest.passed = false;
-    manifest.failure = {
-      message: String(error?.message || error),
-      stack: String(error?.stack || '').split('\n').slice(0, 12).join('\n'),
-    };
+    manifest.failure = createStructuredFailure(error, 'package-ui-evidence');
     manifest.violations = manifest.violations || [];
     manifest.violations.push(violation('RUN_FAILED', 'Packaged UI evidence stopped fail-closed.', manifest.failure.message));
   } finally {
@@ -2740,18 +3345,30 @@ async function runPackageUiEvidence(options) {
     if (manifest.packageProcessIsolation?.before && !manifest.packageProcessIsolation.after) {
       try {
         const packageProcessesAfter = await waitForPackageProcessCleanup(options.executablePath);
-        manifest.packageProcessIsolation = {
-          before: manifest.packageProcessIsolation.before,
-          after: packageProcessesAfter,
-          passed: manifest.packageProcessIsolation.before.passed === true
-            && manifest.packageProcessIsolation.before.matchingCount === 0
-            && packageProcessesAfter.passed === true
-            && packageProcessesAfter.matchingCount === 0,
-        };
+        manifest.packageProcessIsolation = buildProcessIsolationEvidence(
+          manifest.packageProcessIsolation.before,
+          packageProcessesAfter,
+        );
       } catch (error) {
         postRunAttestationErrors.push({
           check: 'package-process-isolation',
           message: String(error?.message || error),
+        });
+      }
+    }
+    if (manifest.profileProcessIsolation?.before && !manifest.profileProcessIsolation.after) {
+      try {
+        const profileProcessesAfter = await waitForProfileBrowserProcessCleanup(
+          manifest.requested.profileBrowserUserDataDir,
+        );
+        manifest.profileProcessIsolation = buildProcessIsolationEvidence(
+          manifest.profileProcessIsolation.before,
+          profileProcessesAfter,
+        );
+      } catch (error) {
+        postRunAttestationErrors.push({
+          check: 'profile-process-isolation',
+          message: sanitizeDiagnosticText(error?.message || error),
         });
       }
     }
@@ -2797,24 +3414,30 @@ module.exports = {
   PACKAGE_OBJECT_EXPERIENCE_CONTRACTS,
   PACKAGE_OBJECT_WORKSPACES,
   READ_ONLY_INTERACTION_PLAN,
+  appendRendererDiagnostic,
   buildAppContentManifest,
+  buildProcessIsolationEvidence,
   buildProtectedFileEvidence,
   buildProductionBuildContentManifest,
   captureViewportScreenshot,
   collectElectronIdentity,
   collectMatchingPackageProcesses,
+  collectMatchingProfileBrowserProcesses,
   collectWorkspaceSettleSnapshot,
   evaluatePackageViewportContract,
   collectFixedPackageHashes,
   collectPackageWorkspaceMetrics,
   evaluatePackageUiEvidenceCompleteness,
   evaluateProfileDatabaseProvenance,
+  executeEvidenceRunWithIsolation,
+  extractProfileUserDataDirectories,
   latestProductionSourceWatermark,
   isWorkspaceProbeAbsenceError,
   isRetryableLoginNavigationError,
   parsePackageUiEvidenceArgs,
   readPngDimensions,
   runPackageUiEvidence,
+  sanitizeDiagnosticText,
   screenshotRecord,
   sha256Buffer,
   sha256File,
@@ -2826,7 +3449,9 @@ module.exports = {
   validateObjectWorkspaceExperienceEvidence,
   validateObjectInspectorEvidence,
   validateWorkspaceRuntimeMetrics,
+  validRunDiagnostics,
   waitForPackageProcessCleanup,
+  waitForProfileBrowserProcessCleanup,
   waitForRendererComposite,
   waitForWorkspaceSettled,
 };

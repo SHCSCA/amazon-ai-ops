@@ -1468,15 +1468,23 @@ export function AdQuantPage() {
               <Panel title="对象时间线" tone={selectedTimeline ? 'success' : 'warning'}>
                 {selectedTimeline ? (
                   <>
-                    <div className="context-summary-grid compact-summary">
+                    <div className="context-summary-grid compact-summary diagnosis-inspector-summary diagnosis-inspector-summary--timeline">
                       <div>
                         <span>日期范围</span>
-                        <strong>{selectedTimeline.dateFrom} 至 {selectedTimeline.dateTo}</strong>
+                        <strong className="diagnosis-inspector-date-range">
+                          <time dateTime={selectedTimeline.dateFrom}>{selectedTimeline.dateFrom}</time>
+                          <span className="diagnosis-inspector-date-range__end">
+                            至 <time dateTime={selectedTimeline.dateTo}>{selectedTimeline.dateTo}</time>
+                          </span>
+                        </strong>
                         <p>{selectedTimeline.daysActive} 个活跃日</p>
                       </div>
                       <div>
                         <span>趋势</span>
-                        <strong>花费{trendLabel(selectedTimeline.trend.spend)} / 销售{trendLabel(selectedTimeline.trend.sales)}</strong>
+                        <strong className="diagnosis-inspector-trend">
+                          <span className="diagnosis-inspector-trend__item">花费{trendLabel(selectedTimeline.trend.spend)} /</span>
+                          <span className="diagnosis-inspector-trend__item">销售{trendLabel(selectedTimeline.trend.sales)}</span>
+                        </strong>
                         <p>{selectedTimeline.totals.orders} 单 / {selectedTimeline.totals.clicks} 点击</p>
                       </div>
                     </div>
@@ -1494,7 +1502,7 @@ export function AdQuantPage() {
 
               <Panel title="产品上下文与历史" tone={selectedProductContext || selectedLedger ? 'success' : 'warning'}>
                 {selectedProductContext ? (
-                  <div className="context-summary-grid compact-summary">
+                  <div className="context-summary-grid compact-summary diagnosis-inspector-summary diagnosis-inspector-summary--product">
                     <div>
                       <span>产品</span>
                       <strong>{selectedProductContext.title || selectedProductContext.asin}</strong>

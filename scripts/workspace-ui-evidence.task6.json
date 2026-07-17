@@ -334,6 +334,33 @@
       "scenario": "missing-readback-evidence",
       "viewport": "1200x700",
       "dpr": 1
+    },
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1,
+      "visualState": "workspace-error-retry",
+      "motionPreference": "no-preference"
+    },
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1,
+      "visualState": "diagnosis-ai-running-with-inspector",
+      "motionPreference": "no-preference"
+    },
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1,
+      "visualState": "diagnosis-ai-running-with-inspector",
+      "motionPreference": "reduce"
     }
   ]
 }

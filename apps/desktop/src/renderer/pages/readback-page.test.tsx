@@ -154,7 +154,7 @@ describe('readback task-first workspace frame', () => {
   });
 
   it('publishes prepare, check, and fill results only for the current work-package request', () => {
-    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
     const sessionFlow = source.slice(
       source.indexOf('async function prepareSessionPacket()'),
       source.indexOf('async function verifyReadbackEvidence('),

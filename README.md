@@ -4,7 +4,7 @@
 
 它把领星广告报表采集、产品级广告量化、关键词与 Listing 优化、AI + 规则建议、人工审批、Ads UI 执行回读和最终交付验收串成一个可审计的本地闭环。
 
-**DELIVERY: APP_NEEDS_WORK.** 当前 v1.5 已完成任务优先的 8 个可见工作区重构、Windows installer/portable 重建、受控异步退出清理、包体启动 smoke、100%/125% 紧凑窗口与 1400×900 宽屏包体 UI 验收、哈希固定和 manifest-driven final-readiness。最新真实批次 `batch_20260625013151957_ajw0nb` 已有 8/8 类报表逐类入库，共 6827 条导入指标；产品页显示的 1879 条是当前 ASIN 指标，不是全库总量，因此正式分析入口当前不再受导入完整性门禁阻断。当前 8 个 readiness gates 中 7 个通过；唯一 `APP_READY` 阻断是 `real-ad-execution-readback`，仍需新的真实 Ads v2 审批、人工执行、独立截图、reload 回读和当前 SQLite authority 校验。应用内广告写入继续保持 fail-closed；在该证据通过前不得声明 `APP_READY`。
+**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY ONLY.** 当前 v1.5 已完成任务优先的 8 个可见工作区重构、本轮 UI P2 可读性与状态证据加固、Windows installer/portable 重建、受控有界异步退出清理、包体启动 smoke、100%/125% 紧凑窗口与 1400×900 宽屏包体 UI 验收、哈希固定和 manifest-driven final-readiness。最新真实批次 `batch_20260625013151957_ajw0nb` 已有 8/8 类报表逐类入库，共 6827 条导入指标；产品页显示的 1879 条是当前 ASIN 指标，不是全库总量，因此正式分析入口当前不再受导入完整性门禁阻断。正式 8 个 readiness gates 中 7 个通过，唯一失败门是 `real-ad-execution-readback`；但独立安全审计还发现 3 个不在这 8 门内的基线 P1：导航/重定向 allowlist、`openExternal` 的 `http(s)` allowlist、旧版明文凭证迁移。它们不改变 7/8 计数，却共同阻止对外分发。应用内广告写入继续保持 fail-closed；在真实 Ads v2 回读与这 3 个外部分发 P1 都关闭前，不得声明 `APP_READY` 或把本包对外发布。
 
 ## 当前交付
 
@@ -12,25 +12,25 @@
 |---|---|
 | 产品形态 | Windows 本地优先 Electron 桌面应用 |
 | 当前版本 | `1.5.0` |
-| 当前状态 | `APP_NEEDS_WORK`（本地最终候选、包体 UI、哈希、smoke 与 7/8 readiness 已固定；唯一失败门为真实 Ads v2 回读） |
+| 当前状态 | `APP_NEEDS_WORK`（内部 NON_READY 候选；正式 8 门仅真实 Ads v2 回读失败，另有 3 个门外 P1 阻止对外分发） |
 | 无安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe` |
 | 安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
-| 无安装版 SHA-256 | `413209648DDB33906360833B7BEC0759CABBA12E935CD2A0444D07F717EB7C9E` |
-| 安装版 SHA-256 | `3BCC87F4A2FD25ECB47E450D04D215D7C0A546CB121438F0B4CB22D3B5492426` |
+| 无安装版 SHA-256 | `CE41FCF95EF592B839CFF3660B1C9DB11A2F546FB7F38D0CDD7160CA27E51B48` |
+| 安装版 SHA-256 | `B5358B497FDABB956152EA2CAE419D82B612BC92736433FF9BD6B1DDA36CD5D9` |
 | win-unpacked EXE SHA-256 | `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` |
-| app content SHA-256 | `505AF5AB0B9F63B3C970A00475D29BBC57478357932CC6228BB26CE633595BC0` |
+| app content SHA-256 | `7C6BC0BA9EE2E99D7B02256143E7044757C11135ACFD3F1CE5059F6437511F8E` |
 | SQLite authority DB 快照 SHA-256 | `9E82065E780B38A4D3348F4EE723DDF1A50142F3900192E612730CC1C8017439` |
-| 证据选择 manifest | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260717-task8a-non-ready.json` |
-| 最终验收证据 | `output\codex-evidence\final-readiness-20260717-task8a-non-ready.json`（`APP_NEEDS_WORK`；7/8 gates passed） |
-| Package launch smoke | `output\codex-evidence\package-launch-smoke-1784261752633.json`（win-unpacked + portable PASS） |
-| Package UI evidence | `output\codex-evidence\package-ui-evidence\2026-07-17T04-16-32-110Z\manifest.json`（2 个紧凑缩放档 + 1 个宽屏档、30 PNG、DB/process isolation PASS） |
-| 本轮 NON_READY bundle | `output\delivery-bundles\v15-delivery-bundle-20260717-task8a-non-ready`（已导出；当前 manifest 已通过严格 NON_READY safety） |
+| 证据选择 manifest | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260717-ui-p2-non-ready.json` |
+| 最终验收证据 | `output\codex-evidence\final-readiness-20260717-ui-p2-non-ready.json`（`APP_NEEDS_WORK`；7/8 gates passed） |
+| Package launch smoke | `output\codex-evidence\package-launch-smoke-1784269772321.json`（win-unpacked + portable PASS） |
+| Package UI evidence | `output\codex-evidence\package-ui-evidence\2026-07-17T06-33-01-390Z\manifest.json`（schema v5；2 个紧凑缩放档 + 1 个宽屏档、30 PNG、DB/process/diagnostics PASS） |
+| 本轮 NON_READY bundle | `output\delivery-bundles\v15-delivery-bundle-20260717-ui-p2-non-ready`（已导出；`delivery-bundle-manifest.json` 状态为 `APP_NEEDS_WORK`，严格 NON_READY safety 17/17 PASS） |
 
 > 注意：`output/`、`storage/`、AppData DB、raw 领星报表、release EXE 和密钥都是本地交付/运行产物，不进入 Git 提交。
 >
 > 发布事实源：README 与用户指南只展示摘要；交付状态以 manifest-driven final readiness、当前安装包索引、交付包 manifest 和与状态匹配的 READY/NON_READY safety 校验结果为准。
 >
-> 历史候选（已取代，不能作为当前交付事实）：2026-07-15、2026-07-16 及 `2026-07-17T04-02-25-468Z` 之前的包体 UI 运行都只保留为修复过程记录。其旧哈希、smoke、readiness 和 bundle 不得替代当前 `2026-07-17T04-16-32-110Z` 包体证据。
+> 历史候选（已取代，不能作为当前交付事实）：2026-07-15、2026-07-16、Task 8A 的 `2026-07-17T04-16-32-110Z` 包体 UI 及其旧哈希、smoke、readiness、bundle 只保留为修复过程记录，不得替代当前 schema v5 的 `2026-07-17T06-33-01-390Z` 包体证据。
 
 ## 能做什么
 
@@ -52,7 +52,8 @@
 | 页面结构 | `App Shell -> 8 个可见工作区 -> 子视图导航 -> 当前主任务 -> 业务明细` |
 | 8 个工作区 | 今日任务、产品工作台、数据准备、广告诊断、建议与审批、结果核对、关键词与 Listing、系统与交付；旧 16 路由仍由兼容层承接 |
 | 首屏任务 | 每个核心子视图先展示当前状态、唯一主动作和安全边界，技术依据与长明细下沉到辅助区 |
-| UI 证据 | 开发/运行态 43/43 目标通过；最终包 100% 与 125% 两轮均覆盖 8/8 工作区、3/3 overlays，另有 1400×900 的产品/诊断宽屏双栏；合计 30 张 PNG、0 console/page errors；真实 DB 前后哈希不变且成品/profile Chromium 进程最终均为 0 |
+| UI 证据 | 开发/运行态 46/46 目标通过，其中 3 个 DEV-only 状态靶点覆盖错误/重试、AI 忙碌与 reduced-motion；最终包 100% 与 125% 两轮均覆盖 8/8 工作区、3/3 overlays，另有 1400×900 的产品/诊断宽屏双栏；合计 30 张 PNG、0 console/page/dropped diagnostics；schema v5 逐轮证明成品进程与目标 profile Chromium 前后均为 0，真实 DB 前后哈希不变 |
+| 本轮体验修复 | Diagnosis Inspector 的日期、趋势与支撑文本改为局部双列事实带和可读对比度，消除紧凑/宽屏下日期碎裂与空白失衡；错误重试、AI 忙碌及 reduced-motion 状态已有显式运行态证据 |
 | 当前数据事实 | 最新批次 `batch_20260625013151957_ajw0nb` 为 8/8 类逐类入库、6827 条导入指标；产品页 1879 条仅代表当前 ASIN |
 | 产品字段 | 已明确为产品成本、FBA 费用、当前售价、最低可接受售价、目标 ACOS、目标 TACOS、目标净利率 |
 | 原型清单 | `docs\design\prototype-reference-index.md`、`docs\design\prototype-parity-checklist.md` |
@@ -86,22 +87,36 @@
 | 广告执行 | 桌面端执行保持 fail-closed；低风险动作也必须逐条人工审批、截图、执行、reload 回读和 verifier 通过。 |
 | 密钥与凭证 | 登录凭证和 AI Key 由本地安全存储处理，UI 不展示明文，仓库不保存密钥。 |
 
+## 外部分发阻断与剩余工作
+
+正式 final-readiness 仍准确记录为 7/8：只有真实 Ads v2 执行回读未通过。以下 3 项来自独立安全审计，位于正式 8 门之外，因此不能用“7/8 只差回读”推导为可对外分发：
+
+| 优先级 | 未完成项 | 当前边界 | 预计工时 |
+|---|---|---|---|
+| P1 | 导航/重定向目标 allowlist | 需要限制可导航目标并覆盖拒绝路径；完成前阻止外部分发 | 合计聚焦工程约 4–6 小时（与下两项合计） |
+| P1 | `openExternal` 的 `http(s)` allowlist | 需要限制协议与允许目标，拒绝非预期外链；完成前阻止外部分发 | 计入上述 4–6 小时 |
+| P1 | 旧版明文凭证迁移 | 当前 authority DB 已有加密 key，且未发现 legacy 明文 key；仍需实现旧安装升级时的迁移/清除路径 | 计入上述 4–6 小时 |
+| 外部门 | 真实 Ads v2 执行回读 | 需先具备当前正向 recommendation、人工批准与 Ads 访问，再完成执行、前后/reload 截图及 authority 校验 | 前置条件满足后约 30–60 分钟 |
+| 非阻断 | eval/历史证据清理 | 不影响当前内部 NON_READY 验收，可在交付后整理 | 约 0.5–1.5 小时 |
+
+因此当前包只允许内部验证和受控交接，不能作为外部分发版本。
+
 ## 当前验证状态
 
 | 验证门 | 状态 | 证据 |
 |---|---|---|
-| 全量测试 | 通过 | `output\codex-evidence\task8a-full-vitest-20260717-final.json`；170/170 文件、575/575 suites、1920/1920 tests，0 failed/pending |
+| 全量测试 | 通过 | `output\codex-evidence\ui-p2-full-vitest-20260717-final.json`；170/170 文件、576/576 suites、1950/1950 tests，0 failed/pending；默认 Vitest pool 已固定为 forks，避免 Windows threads teardown 假失败 |
 | TypeScript | 通过 | 最终 Windows 候选前门禁已完成 |
 | Renderer build | 通过 | 统一正式数据门、任务摘要与关键词阻断状态已进入当前包体 |
-| 当前业务 UI smoke | 5/5 通过 | `output\codex-evidence\current-business-ui-smoke-1784262294451.json` |
-| 工作区 UI 证据 | 43/43 通过 | `output\codex-evidence\workspace-ui-task6\workspace-ui-evidence-run-2026-07-17T04-25-13-089Z.json` |
+| 当前业务 UI smoke | 5/5 通过 | `output\codex-evidence\current-business-ui-smoke-1784270629248.json` |
+| 工作区 UI 证据 | 46/46 通过 | `output\codex-evidence\workspace-ui-task6\workspace-ui-evidence-run-2026-07-17T06-23-26-823Z.json`；含 3 个 DEV preview 状态靶点 |
 | 广告执行 fail-closed | 通过 | `pnpm run verify:ad-execution` |
 | Windows 打包 | 通过 | 当前 installer、portable、win-unpacked 与 app content 哈希已固定 |
-| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1784261752633.json` |
-| Final readiness | `APP_NEEDS_WORK` | `output\codex-evidence\final-readiness-20260717-task8a-non-ready.json`；7/8 gates passed，唯一失败门是 `real-ad-execution-readback`；authority DB 为 `C:\Users\wz\AppData\Roaming\@amazon-ai-ops\desktop\amazon-ai-ops.db` |
-| 打包 UI 证据 | 3 个视口档通过 | `output\codex-evidence\package-ui-evidence\2026-07-17T04-16-32-110Z\manifest.json`；100%/125% 各覆盖 8/8 工作区、3/3 overlays，1400×900 覆盖产品/诊断宽屏双栏，共 30 PNG，0 console/page errors，DB/process isolation PASS |
+| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1784269772321.json` |
+| Final readiness | `APP_NEEDS_WORK` | `output\codex-evidence\final-readiness-20260717-ui-p2-non-ready.json`；7/8 gates passed，唯一失败门是 `real-ad-execution-readback`；这不覆盖上述 3 个门外 P1；authority DB 为 `C:\Users\wz\AppData\Roaming\@amazon-ai-ops\desktop\amazon-ai-ops.db` |
+| 打包 UI 证据 | schema v5 / 3 个视口档通过 | `output\codex-evidence\package-ui-evidence\2026-07-17T06-33-01-390Z\manifest.json`；100%/125% 各覆盖 8/8 工作区、3/3 overlays，1400×900 覆盖产品/诊断宽屏双栏，共 30 PNG；每轮成品/profile browser 前后为 0，0 console/page/dropped diagnostics，受保护 DB 不变 |
 | 当前数据导入 | 通过 | 最新批次 `batch_20260625013151957_ajw0nb`：8/8 imported report types，6827 imported total rows；1879 是当前 ASIN 指标，不是全库总量 |
-| NON_READY 交付安全门 | 17/17 通过 | `output\delivery-bundles\v15-delivery-bundle-20260717-task8a-non-ready\delivery-bundle-manifest.json` 已与当前 readiness、显式 package smoke、package UI、authority DB 和 README 完成严格绑定；当前状态仍为 `APP_NEEDS_WORK`，不得运行或宣称 READY safety |
+| NON_READY 交付包/安全门 | 17/17 通过 | `output\delivery-bundles\v15-delivery-bundle-20260717-ui-p2-non-ready\delivery-bundle-manifest.json` 已导出，状态为 `APP_NEEDS_WORK`；严格 `verify:v15-non-ready-safety` 17/17 PASS。它只授权内部 NON_READY 交接，不代表 `APP_READY` 或允许外部分发 |
 
 ## 开发环境
 

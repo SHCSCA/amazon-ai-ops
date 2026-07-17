@@ -14,6 +14,7 @@ const { chromium } = require('./playwright-loader.js');
 const {
   captureWorkspaceEvidence,
   collectWorkspaceDomMetrics,
+  collectWorkspaceStateEvidence,
   normalizeWorkspaceEvidenceConfig,
   parseWorkspaceEvidenceArgs,
   runWorkspaceEvidenceTargets,
@@ -345,6 +346,81 @@ describe('workspace UI evidence CLI contract', () => {
     expect(normalized.targets.filter((target) => !target.experienceContract)).toHaveLength(normalized.targets.length - 6);
   });
 
+  it('ships the three allowlisted P2-B visual-state targets without expanding the incremental runtime run', () => {
+    const focusedConfig = JSON.parse(readFileSync('scripts/workspace-ui-evidence.p2b.json', 'utf8'));
+    const focused = normalizeWorkspaceEvidenceConfig(focusedConfig);
+    const task6 = normalizeWorkspaceEvidenceConfig(
+      JSON.parse(readFileSync('scripts/workspace-ui-evidence.task6.json', 'utf8')),
+    );
+    const expected = [
+      {
+        motionPreference: 'no-preference',
+        viewport: { height: 700, width: 1200 },
+        visualState: 'workspace-error-retry',
+      },
+      {
+        motionPreference: 'no-preference',
+        viewport: { height: 900, width: 1400 },
+        visualState: 'diagnosis-ai-running-with-inspector',
+      },
+      {
+        motionPreference: 'reduce',
+        viewport: { height: 900, width: 1400 },
+        visualState: 'diagnosis-ai-running-with-inspector',
+      },
+    ];
+
+    expect(focused.targets.map(({ motionPreference, viewport, visualState }) => ({
+      motionPreference,
+      viewport,
+      visualState,
+    }))).toEqual(expected);
+    expect(task6.targets.slice(-3).map(({ motionPreference, viewport, visualState }) => ({
+      motionPreference,
+      viewport,
+      visualState,
+    }))).toEqual(expected);
+    expect(focused.targets.every((target) => (
+      target.workspace === 'diagnosis'
+      && target.subview === 'analysis'
+      && target.scenario === 'diagnosis-ready'
+    ))).toBe(true);
+  });
+
+  it.each([
+    [{ visualState: 'arbitrary-javascript', motionPreference: 'no-preference' }, 'visualState'],
+    [{ visualState: 'workspace-error-retry', motionPreference: 'auto' }, 'motionPreference'],
+    [{ visualState: 'diagnosis-ai-running-with-inspector', motionPreference: 'reduce', viewport: '1200x700' }, '1400px'],
+  ])('rejects unsafe or incoherent visual-state targets: %o', (override, expectedMessage) => {
+    expect(() => normalizeWorkspaceEvidenceConfig({
+      baseUrl: 'http://127.0.0.1:4174/',
+      targets: [{
+        dpr: 1,
+        motionPreference: 'no-preference',
+        scenario: 'diagnosis-ready',
+        subview: 'analysis',
+        viewport: '1400x900',
+        visualState: 'workspace-error-retry',
+        workspace: 'diagnosis',
+        ...override,
+      }],
+    })).toThrow(new RegExp(expectedMessage, 'i'));
+  });
+
+  it('rejects visual-state injection outside the local development-preview URL', () => {
+    expect(() => normalizeWorkspaceEvidenceConfig({
+      baseUrl: 'https://example.com/',
+      targets: [{
+        motionPreference: 'no-preference',
+        scenario: 'diagnosis-ready',
+        subview: 'analysis',
+        viewport: '1200x700',
+        visualState: 'workspace-error-retry',
+        workspace: 'diagnosis',
+      }],
+    })).toThrow(/development-preview-only.*local HTTP URL/i);
+  });
+
   it('normalizes matrix targets onto an explicit development-preview URL', () => {
     const normalized = normalizeWorkspaceEvidenceConfig({
       baseUrl: 'http://127.0.0.1:4173/index.html',
@@ -558,6 +634,29 @@ describe('workspace UI DOM contract', () => {
     await context.close();
   });
 
+  it('accepts only the responsive inspector body as the second controlled internal scroll owner', async () => {
+    const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    const page = await context.newPage();
+    await loadMarkupAtUrl(page, validPageMarkup(`
+      <aside class="responsive-inspector" data-inspector-mode="inline">
+        <div class="responsive-inspector__body" style="height: 80px; overflow-y: auto;">
+          <div style="height: 220px;">受控检查器内容</div>
+        </div>
+      </aside>
+    `));
+
+    const metrics = await collectWorkspaceDomMetrics(page);
+
+    expect(metrics.scrollOwnership.unlabelledActiveOwners).toEqual([]);
+    expect(metrics.scrollOwnership.explicitExceptions.map((owner) => owner.selector)).toEqual([
+      '.virtual-table',
+      '.responsive-inspector__body',
+    ]);
+    expect(metrics.contract).toEqual({ passed: true, violations: [] });
+
+    await context.close();
+  });
+
   it('accepts a compact virtual object queue and records its initial and middle-scroll experience metrics', async () => {
     const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
     const page = await context.newPage();
@@ -757,6 +856,111 @@ describe('workspace UI DOM contract', () => {
     expect(metrics.contract.passed).toBe(false);
 
     await context.close();
+  });
+});
+
+describe('workspace UI visual-state evidence', () => {
+  it('records a visible workspace error and enabled retry CTA as preview-only synthetic evidence', async () => {
+    const context = await browser.newContext({
+      reducedMotion: 'no-preference',
+      viewport: { width: 1200, height: 700 },
+    });
+    const page = await context.newPage();
+    try {
+      await loadMarkupAtUrl(page, `
+        <style>
+          .app-status, .workspace-state { display: block; padding: 12px; }
+          .workspace-state__action { width: 100px; height: 32px; }
+        </style>
+        <div class="app-status">仅开发预览 · diagnosis-ready</div>
+        <section data-workspace="diagnosis" data-workspace-subview="analysis" data-workspace-evidence-root>
+          <h1>广告诊断</h1>
+          <div class="workspace-state workspace-state--error" data-workspace-state="error" role="alert">
+            <div class="workspace-state__copy"><strong>诊断数据读取失败</strong></div>
+            <button class="workspace-state__action" type="button">重新读取</button>
+          </div>
+        </section>
+      `);
+
+      const stateEvidence = await collectWorkspaceStateEvidence(page, {
+        motionPreference: 'no-preference',
+        visualState: 'workspace-error-retry',
+      });
+
+      expect(stateEvidence).toMatchObject({
+        id: 'workspace-error-retry',
+        passed: true,
+        previewOnly: true,
+        schemaVersion: 'workspace-ui-state-evidence/v1',
+        syntheticTrigger: 'pipeline-read-failure',
+        observed: {
+          retryAction: { disabled: false, label: '重新读取', visible: true },
+          workspaceState: { kind: 'error', role: 'alert', visible: true },
+        },
+      });
+      expect(stateEvidence.violations).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it('fails closed unless Diagnosis busy remains visible with an inline inspector, peer lock, and static reduced-motion spinners', async () => {
+    const context = await browser.newContext({
+      reducedMotion: 'reduce',
+      viewport: { width: 1400, height: 900 },
+    });
+    const page = await context.newPage();
+    try {
+      await loadMarkupAtUrl(page, `
+        <style>
+          .app-status, #ai-strategy-run-feedback, .responsive-inspector { display: block; padding: 12px; }
+          .task-banner__actions { display: flex; gap: 8px; }
+          .task-banner__actions button { width: 160px; height: 36px; }
+          .workspace-spinner { display: inline-block; width: 14px; height: 14px; animation: none; }
+          .responsive-inspector { width: 360px; min-height: 180px; }
+        </style>
+        <div class="app-status">仅开发预览 · diagnosis-ready</div>
+        <section data-workspace="diagnosis" data-workspace-subview="analysis" data-workspace-evidence-root>
+          <h1>广告诊断</h1>
+          <div id="ai-strategy-run-feedback" aria-busy="true" data-ai-run-tone="pending">
+            <span class="workspace-spinner"></span>
+            AI 阶段分析运行中 · 正在校验证据引用
+          </div>
+          <div class="task-banner__actions">
+            <button data-action-priority="secondary" aria-busy="true" disabled>
+              <span class="workspace-spinner"></span>AI 分析中...
+            </button>
+            <button data-action-priority="secondary" disabled>补充运营事件</button>
+          </div>
+          <aside class="responsive-inspector responsive-inspector--inline" data-inspector-mode="inline" role="complementary">
+            <h2>door lock bedroom</h2>
+          </aside>
+        </section>
+      `);
+
+      const stateEvidence = await collectWorkspaceStateEvidence(page, {
+        motionPreference: 'reduce',
+        visualState: 'diagnosis-ai-running-with-inspector',
+      });
+
+      expect(stateEvidence).toMatchObject({
+        id: 'diagnosis-ai-running-with-inspector',
+        passed: true,
+        previewOnly: true,
+        requested: { inspectorMode: 'inline', motionPreference: 'reduce' },
+        observed: {
+          aiRun: { ariaBusy: true, tone: 'pending', visible: true },
+          busyAction: { ariaBusy: true, disabled: true, label: 'AI 分析中...', visible: true },
+          inspector: { mode: 'inline', visible: true },
+          motion: { prefersReducedMotion: true, spinnerCount: 2 },
+          peerActions: [{ ariaBusy: false, disabled: true, label: '补充运营事件' }],
+        },
+      });
+      expect(stateEvidence.observed.motion.spinners.every((spinner) => spinner.animationName === 'none')).toBe(true);
+      expect(stateEvidence.violations).toEqual([]);
+    } finally {
+      await context.close();
+    }
   });
 });
 

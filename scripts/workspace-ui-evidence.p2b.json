@@ -1,0 +1,35 @@
+{
+  "baseUrl": "http://127.0.0.1:4174/",
+  "outputDir": "output/codex-evidence/workspace-ui-p2b",
+  "settleMs": 250,
+  "waitFor": "[data-workspace-evidence-root]",
+  "targets": [
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1,
+      "visualState": "workspace-error-retry",
+      "motionPreference": "no-preference"
+    },
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1,
+      "visualState": "diagnosis-ai-running-with-inspector",
+      "motionPreference": "no-preference"
+    },
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1,
+      "visualState": "diagnosis-ai-running-with-inspector",
+      "motionPreference": "reduce"
+    }
+  ]
+}
