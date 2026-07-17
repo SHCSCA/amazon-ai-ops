@@ -47,6 +47,46 @@ export interface VisibleWorkspaceDefinition {
   defaultIntent: NavigationIntent;
 }
 
+type WorkspaceWithSubviewTabs = 'product' | 'data-preparation' | 'diagnosis' | 'growth' | 'system';
+
+export type WorkspaceSubviewFor<TWorkspace extends PrimaryWorkspace> = Extract<
+  NavigationIntent,
+  { workspace: TWorkspace }
+>['subview'];
+
+export interface WorkspaceSubviewTabDefinition<TWorkspace extends PrimaryWorkspace> {
+  id: WorkspaceSubviewFor<TWorkspace>;
+  label: string;
+  description: string;
+}
+
+export const WORKSPACE_SUBVIEW_TABS = {
+  product: [
+    { id: 'products', label: '产品', description: '选择并锁定当前运营产品' },
+    { id: 'targets', label: '目标与成本', description: '维护利润边界与广告目标' },
+    { id: 'events', label: '运营事件', description: '记录影响判断的运营上下文' },
+  ],
+  'data-preparation': [
+    { id: 'scope', label: '工作范围', description: '确认日期、店铺、站点与产品范围' },
+    { id: 'reports', label: '报表采集', description: '获取完整八类真实业务报表' },
+    { id: 'import-check', label: '导入检查', description: '核对逐类入库与指标口径' },
+  ],
+  diagnosis: [
+    { id: 'analysis', label: '广告诊断', description: '检查真实广告对象的风险与机会' },
+  ],
+  growth: [
+    { id: 'keywords', label: '关键词机会', description: '筛选可行动的真实关键词机会' },
+    { id: 'listing', label: 'Listing 草案', description: '生成并导出仅本地使用的 Listing 草案' },
+  ],
+  system: [
+    { id: 'settings', label: 'AI 与规则', description: '配置 AI 连接与本地运营规则' },
+    { id: 'scheduler', label: '定时任务', description: '检查自动任务状态与最近结果' },
+    { id: 'delivery', label: '交付验收', description: '核对当前候选包与正式交付门槛' },
+  ],
+} as const satisfies {
+  [TWorkspace in WorkspaceWithSubviewTabs]: readonly WorkspaceSubviewTabDefinition<TWorkspace>[];
+};
+
 export const LEGACY_ROUTE_INTENTS = {
   dashboard: { workspace: 'today', subview: 'overview' },
   'product-management': { workspace: 'product', subview: 'products' },

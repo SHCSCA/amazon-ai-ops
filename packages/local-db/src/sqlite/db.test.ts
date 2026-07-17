@@ -22,6 +22,130 @@ afterEach(() => {
 });
 
 describe('initSqlite v1.5 schema', () => {
+  it('creates product current price as a persisted product cost field', () => {
+    const db = initSqlite(tempDbPath());
+    try {
+      const columns = db.prepare('PRAGMA table_info(product_costs)').all() as Array<{
+        name: string;
+        dflt_value: string | null;
+      }>;
+
+      expect(columns).toContainEqual(expect.objectContaining({
+        name: 'current_price',
+        dflt_value: '0',
+      }));
+    } finally {
+      db.close();
+    }
+  });
+
+  it('adds current price when upgrading a legacy product costs table', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec(`
+        CREATE TABLE products (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          marketplace_code TEXT,
+          store_name TEXT,
+          asin TEXT
+        );
+        CREATE TABLE product_costs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_id INTEGER,
+          purchase_cost REAL DEFAULT 0
+        );
+        INSERT INTO products (id, marketplace_code, store_name, asin)
+        VALUES (1, 'US', 'FT-US-US', 'B001');
+        INSERT INTO product_costs (product_id, purchase_cost)
+        VALUES (1, 12.5);
+      `);
+    } finally {
+      legacyDb.close();
+    }
+
+    const upgradedDb = initSqlite(dbPath);
+    try {
+      const currentPriceColumn = (upgradedDb.prepare('PRAGMA table_info(product_costs)').all() as Array<{
+        name: string;
+        dflt_value: string | null;
+      }>).find((column) => column.name === 'current_price');
+      const row = upgradedDb.prepare(`
+        SELECT purchase_cost AS purchaseCost, current_price AS currentPrice
+        FROM product_costs
+        WHERE product_id = 1
+      `).get() as { purchaseCost: number; currentPrice: number };
+
+      expect(currentPriceColumn).toMatchObject({ name: 'current_price', dflt_value: '0' });
+      expect(row).toEqual({ purchaseCost: 12.5, currentPrice: 0 });
+    } finally {
+      upgradedDb.close();
+    }
+  });
+
+  it('keeps current price after save, close, reopen, and product reload', () => {
+    const dbPath = tempDbPath();
+    const db = initSqlite(dbPath);
+    try {
+      const productRepo = new ProductRepository(db);
+      const productId = productRepo.insert({
+        marketplace_code: 'US',
+        store_name: 'FT-US-US',
+        asin: 'B001',
+        parent_asin: '',
+        msku: 'MSKU-1',
+        sku: 'SKU-1',
+        title: 'Current price persistence product',
+        product_stage: 'scaling',
+        status: 'active',
+      });
+      productRepo.updateCost(productId, {
+        productId,
+        currentPrice: 39.99,
+        purchaseCost: 12.5,
+      });
+    } finally {
+      db.close();
+    }
+
+    const reopenedDb = initSqlite(dbPath);
+    try {
+      const products = new ProductRepository(reopenedDb).findAllWithCosts('FT-US-US');
+
+      expect(products).toEqual([
+        expect.objectContaining({
+          asin: 'B001',
+          cost: expect.objectContaining({
+            currentPrice: 39.99,
+            purchaseCost: 12.5,
+          }),
+        }),
+      ]);
+    } finally {
+      reopenedDb.close();
+    }
+  });
+
+  it('rolls back every target ACOS update when one product in the batch is invalid', () => {
+    const db = initSqlite(tempDbPath());
+    try {
+      const productRepo = new ProductRepository(db);
+      const productId = productRepo.insert({
+        marketplace_code: 'US', store_name: 'FT-US-US', asin: 'B001', parent_asin: '', msku: '', sku: '',
+        title: 'Atomic batch product', product_stage: 'scaling', status: 'active',
+      });
+      productRepo.updateCost(productId, { productId, targetAcos: 0.25 });
+
+      expect(() => productRepo.updateTargetAcosMany([
+        { asin: 'B001', storeName: 'FT-US-US', marketplaceCode: 'US', targetAcos: 0.35 },
+        { asin: 'MISSING', storeName: 'FT-US-US', marketplaceCode: 'US', targetAcos: 0.35 },
+      ])).toThrow('MISSING');
+      expect(productRepo.getCost(productId)?.targetAcos).toBe(0.25);
+    } finally {
+      db.close();
+    }
+  });
+
   it('creates recommendation revision as a non-null zero-based decision version', () => {
     const db = initSqlite(tempDbPath());
     try {

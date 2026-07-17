@@ -59,6 +59,8 @@ export class RecommendationGenerator {
       quantThresholds: quant.thresholds,
       quantReviewRequired: quant.reviewRequired,
       batchId: metrics.batchId,
+      reportType: metrics.reportType,
+      sourceFile: metrics.sourceFile,
       sourceFiles: metrics.sourceFile ? [metrics.sourceFile] : undefined,
       sourceRow: metrics.sourceRow,
     };
@@ -166,6 +168,8 @@ export class RecommendationGenerator {
       quantThresholds: timeline.thresholdSuggestion,
       quantReviewRequired: timeline.reviewRequired,
       batchId: latestMetric?.batchId || firstMetric?.batchId,
+      reportType: latestMetric?.reportType || firstMetric?.reportType,
+      sourceFile: latestMetric?.sourceFile || firstMetric?.sourceFile,
       sourceFiles: sourceFiles.length ? sourceFiles : undefined,
       sourceRow: latestMetric?.sourceRow,
       currency: 'USD' as const,

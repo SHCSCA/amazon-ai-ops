@@ -37,6 +37,7 @@
     "smoke:listing-draft-renderer": "node scripts/smoke-listing-draft-renderer.js",
     "smoke:business-ui-current": "node scripts/smoke-current-business-ui.js",
     "evidence:workspace-ui": "node scripts/run-workspace-ui-evidence.js",
+    "evidence:package-ui": "node scripts/run-package-ui-evidence.js",
     "smoke:package-launch": "node scripts/smoke-package-launch.js",
     "smoke:v15-product-readiness-ui": "pnpm run smoke:business-ui-current",
     "verify:v15-delivery": "node scripts/verify-ad-execution-fail-closed.js && node scripts/verify-v15-delivery-evidence.js",

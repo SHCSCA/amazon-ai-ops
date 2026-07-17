@@ -5,6 +5,7 @@ describe('buildDeliveryReadinessMatrix', () => {
   it('marks the delivery matrix ready only when every business proof gate is closed', () => {
     const matrix = buildDeliveryReadinessMatrix({
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 2416,
       actionableRows: 180,
       aiAvailable: true,
@@ -32,6 +33,7 @@ describe('buildDeliveryReadinessMatrix', () => {
   it('keeps the ready headline and primary matrix copy business-facing', () => {
     const matrix = buildDeliveryReadinessMatrix({
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 2416,
       actionableRows: 180,
       aiAvailable: true,
@@ -65,6 +67,7 @@ describe('buildDeliveryReadinessMatrix', () => {
   it('uses operator-facing wording for readback and package proof details', () => {
     const matrix = buildDeliveryReadinessMatrix({
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 2416,
       actionableRows: 180,
       aiAvailable: true,
@@ -93,6 +96,7 @@ describe('buildDeliveryReadinessMatrix', () => {
   it('blocks formal delivery when real reports or imported daily metrics are missing', () => {
     const matrix = buildDeliveryReadinessMatrix({
       realReportCount: 0,
+      importedReportTypeCount: 0,
       importedRows: 0,
       actionableRows: 0,
       aiAvailable: false,
@@ -118,9 +122,33 @@ describe('buildDeliveryReadinessMatrix', () => {
     expect(matrix.items.find((item) => item.key === 'aiEvidence')?.detail).not.toContain('fallback');
   });
 
+  it('blocks formal delivery when all report files exist but only some report types are imported', () => {
+    const matrix = buildDeliveryReadinessMatrix({
+      realReportCount: 8,
+      importedReportTypeCount: 5,
+      importedRows: 1879,
+      actionableRows: 34,
+      aiAvailable: true,
+      aiSuccessCount: 1,
+      operationEventCount: 1,
+      productContextCount: 1,
+      listingReadReady: true,
+      listingDraftReady: true,
+      pendingRecommendationCount: 1,
+      approvedRecommendationCount: 0,
+      readbackVerifiedCount: 0,
+      installerAvailable: true,
+      deliveryManifestReady: true,
+    });
+
+    expect(matrix.status).toBe('blocked');
+    expect(matrix.items.find((item) => item.key === 'data')?.tone).toBe('blocked');
+  });
+
   it('keeps delivery in needs work when data and AI are ready but readback and package proof are missing', () => {
     const matrix = buildDeliveryReadinessMatrix({
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
       aiAvailable: true,
@@ -148,6 +176,7 @@ describe('buildDeliveryReadinessMatrix', () => {
   it('routes missing product context repair to product management instead of the legacy product config page', () => {
     const matrix = buildDeliveryReadinessMatrix({
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
       aiAvailable: true,
@@ -172,6 +201,7 @@ describe('buildDeliveryReadinessMatrix', () => {
   it('does not mark review-only recommendations as directly approvable', () => {
     const matrix = buildDeliveryReadinessMatrix({
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
       aiAvailable: true,
@@ -266,6 +296,11 @@ describe('buildDeliveryReadinessMatrix', () => {
         collection: {
           fileAudit: { realReportFileCount: 8, importedRowCount: 96 },
           realReportFiles: Array.from({ length: 8 }, (_, index) => ({ id: String(index) })),
+          reportOptions: Array.from({ length: 8 }, (_, index) => ({
+            type: `report_${index}`,
+            realFileAvailable: true,
+            importedRows: 12,
+          })),
         },
         quant: { importedRows: 80, actionableRows: 12 },
         operations: { eventCount: 2, events: [], notes: [] },
@@ -308,6 +343,7 @@ describe('buildDeliveryReadinessMatrix', () => {
 
     expect(input).toMatchObject({
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
       aiAvailable: true,

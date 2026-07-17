@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { DEFAULT_BUSINESS_REPORT_OPTIONS, useBusinessDataPipeline } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, MicroStepper, PageHeader, Panel, StatusPill } from '../components/ui';
+import { TaskBanner } from '../components/workspace';
+import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scope';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildCollectionActionSummary } from '../collection-action-summary';
-import { buildDataReadinessLedger } from '../data-readiness-ledger';
+import { buildDataReadinessLedger, type DataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath } from '../formatters';
 import type { AppRoute, BusinessReportFile } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -432,24 +434,30 @@ export function buildDataCollectionTaskState({
   importedRowCount,
   primaryReportFolder,
   runningAction,
+  readiness,
 }: {
   realReportCount: number;
   importedRowCount: number;
   primaryReportFolder?: string;
   runningAction: RunningCollectionActionMode | null;
+  readiness: Pick<DataReadinessLedger, 'status' | 'canEnterDiagnosis' | 'nextStep'>;
 }): DataCollectionTaskState {
   const reportCount = Math.max(0, Math.min(8, Number(realReportCount) || 0));
   const rowCount = Math.max(0, Number(importedRowCount) || 0);
-  const isComplete = reportCount >= 8 && rowCount > 0;
+  const isComplete = readiness.canEnterDiagnosis;
   return {
     title: `真实报表 ${reportCount}/8，已导入 ${rowCount} 行`,
     detail: isComplete
       ? '真实报表和日级指标已闭合，可以查看广告表现。'
+      : readiness.nextStep === 'import'
+        ? '真实报表仍有类型未形成日级指标；逐类入库完成前不能进入正式诊断。'
       : reportCount > 0
         ? '先补齐完整 8 类报表；已有本地表格时可从目录确认或导入。'
         : '当前范围缺少真实报表，先获取完整 8 类或导入本地表格。',
     primaryActionLabel: isComplete
       ? '查看广告表现'
+      : readiness.nextStep === 'import'
+        ? runningAction === 'import' ? '正在导入已下载表格...' : '导入已下载表格'
       : runningAction === 'verify-page'
         ? '正在验证下载中心页面...'
       : runningAction === 'recreate-full'
@@ -543,8 +551,20 @@ export function CollectionMonitorDrawer({
   evidencePath?: string;
   onClose: () => void;
 }) {
+  const monitorDrawerFocus = useOverlayFocusScope<HTMLElement, HTMLElement>({
+    dismissDisabled: !state.canClose,
+    modal: false,
+    onDismiss: onClose,
+    open: true,
+  });
+
   return (
-    <aside className={`collection-monitor-drawer collection-monitor-${state.tone}`} aria-live="polite" aria-label="自动数据采集监控">
+    <aside
+      aria-label="自动数据采集监控"
+      aria-live="polite"
+      className={`collection-monitor-drawer collection-monitor-${state.tone}`}
+      ref={monitorDrawerFocus.surfaceRef}
+    >
       <div className="collection-monitor-header">
         <div>
           <span>{state.title}</span>
@@ -560,12 +580,10 @@ export function CollectionMonitorDrawer({
       <p className="collection-monitor-detail">{state.detail}</p>
       <div className="collection-monitor-preview" aria-label="下载中心监控预览">
         <div className="collection-monitor-preview-screen">
-          <canvas
-            aria-label="可见浏览器画面预览"
+          <div
+            aria-label="采集流程状态与最近证据"
             className="collection-monitor-preview-canvas"
-            height={180}
-            role="img"
-            width={320}
+            role="status"
           />
           <div className="collection-monitor-preview-overlay">
             <span className="collection-monitor-scanline" />
@@ -727,12 +745,53 @@ export async function runCollectionDownloadAction(input: {
   }
 }
 
+export function collectionActionNextStep(input: {
+  canEnterDiagnosis: boolean;
+  failedWithoutFiles: boolean;
+  importedRows: number;
+  realFileCount: number;
+}): string {
+  if (input.failedWithoutFiles) {
+    return '下一步：查看失败原因和本次采集清单，确认领星 ready 行、页面模型、日期/店铺/站点后再重试。';
+  }
+  if (input.canEnterDiagnosis) {
+    return '下一步：查看广告表现，复核 ACOS、花费和订单口径。';
+  }
+  if (input.importedRows > 0) {
+    return '下一步：刷新当前范围数据账本；只有完整 8 类逐类入库后才会放行正式诊断。';
+  }
+  if (input.realFileCount > 0) {
+    return '下一步：点击“导入已下载表格”，把本地表格写入广告指标。';
+  }
+  return '下一步：检查下载中心页面、报表 ready 状态或失败报表后重试。';
+}
+
+function buildPipelineReadiness(
+  pipeline: any,
+  fallbackReportOptions: typeof DEFAULT_BUSINESS_REPORT_OPTIONS,
+  realFileCount: number,
+  importedRows: number,
+): DataReadinessLedger {
+  const collection = pipeline?.collection;
+  const pipelineReportOptions = Array.isArray(collection?.reportOptions) && collection.reportOptions.length > 0
+    ? collection.reportOptions
+    : fallbackReportOptions;
+  return buildDataReadinessLedger({
+    requiredReportCount: 8,
+    reportOptions: pipelineReportOptions,
+    realReportFileCount: realFileCount,
+    importedRowCount: importedRows,
+    rejectedEvidenceFileCount: Number(collection?.fileAudit?.rejectedEvidenceFileCount || 0),
+  });
+}
+
 function buildLastActionResult(
   mode: CollectionActionMode,
   results: any[],
   realFileCount: number,
   importedRows: number,
   fallbackPaths?: { downloadDir?: string; manifestPath?: string },
+  canEnterDiagnosis = false,
 ): LastActionResult {
   const files = results.flatMap((result) => Array.isArray(result?.files) ? result.files : []);
   const batchIds = Array.from(new Set(results.map((result) => result?.batch?.id).filter(Boolean)));
@@ -765,13 +824,12 @@ function buildLastActionResult(
   const actionRealDownloadCount = actionDownloadedFiles.length;
   const failedCount = failedFiles.length;
   const firstBatch = results.find((result) => result?.batch)?.batch;
-  const nextStep = failedFiles.length > 0 && actionDownloadedFiles.length === 0
-    ? '下一步：查看失败原因和本次采集清单，确认领星 ready 行、页面模型、日期/店铺/站点后再重试。'
-    : importedRows > 0
-      ? '下一步：查看广告表现，复核 ACOS、花费和订单口径。'
-      : realFileCount > 0
-        ? '下一步：点击“导入已下载表格”，把本地表格写入广告指标。'
-        : '下一步：检查下载中心页面、报表 ready 状态或失败报表后重试。';
+  const nextStep = collectionActionNextStep({
+    canEnterDiagnosis,
+    failedWithoutFiles: failedFiles.length > 0 && actionDownloadedFiles.length === 0,
+    importedRows,
+    realFileCount,
+  });
   const tone: LastActionResult['tone'] = failedCount > 0
     ? 'blocked'
     : mode === 'import'
@@ -835,6 +893,14 @@ export function DataCollectionPage() {
   const [collectionMonitorOpen, setCollectionMonitorOpen] = useState(false);
   const [reportSelectorOpen, setReportSelectorOpen] = useState(false);
   const [selectedReportFile, setSelectedReportFile] = useState<BusinessReportFile | null>(null);
+  const reportSelectorDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    onDismiss: () => setReportSelectorOpen(false),
+    open: reportSelectorOpen,
+  });
+  const reportFileDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    onDismiss: () => setSelectedReportFile(null),
+    open: Boolean(selectedReportFile),
+  });
   const collection = data?.collection;
   const reportStatusLoading = loading && !collection;
   const reportOptions = collection?.reportOptions?.length ? collection.reportOptions : DEFAULT_BUSINESS_REPORT_OPTIONS;
@@ -925,6 +991,19 @@ export function DataCollectionPage() {
     }),
     [importedRowCount, realReportCount, rejectedEvidenceCount, reportOptions],
   );
+  const taskState = buildDataCollectionTaskState({
+    realReportCount,
+    importedRowCount,
+    primaryReportFolder,
+    runningAction,
+    readiness: dataLedger,
+  });
+  const primaryTaskBusy = taskState.isComplete
+    ? false
+    : dataLedger.nextStep === 'import'
+      ? runningAction === 'import'
+      : runningAction === 'recreate-full';
+  const importedReadinessStage = dataLedger.stages.find((stage) => stage.key === 'imported');
   const collectionMonitorState = buildCollectionMonitorState({
     runningAction,
     actionNotice,
@@ -1073,10 +1152,11 @@ export function DataCollectionPage() {
       window.dispatchEvent(new Event('business-ui:data-updated'));
       const realFileCount = refreshed?.collection?.realReportFiles?.length ?? 0;
       const importedRows = refreshed?.collection?.fileAudit?.importedRowCount ?? refreshed?.quant?.importedRows ?? 0;
+      const refreshedReadiness = buildPipelineReadiness(refreshed, reportOptions, realFileCount, importedRows);
       const actionResult = buildLastActionResult(mode, actionResults, realFileCount, importedRows, {
         downloadDir: refreshed?.collection?.fileAudit?.downloadDir,
         manifestPath: refreshed?.collection?.fileAudit?.manifestPath,
-      });
+      }, refreshedReadiness.canEnterDiagnosis);
       setLastActionResult(actionResult);
       setActionNotice(collectionCompletionNotice(actionResult));
     } catch (caught) {
@@ -1110,10 +1190,11 @@ export function DataCollectionPage() {
       const errors = result?.metricsImport?.errors?.length ?? 0;
       const realFileCount = result?.pipeline?.collection?.fileAudit?.realReportFileCount ?? result?.pipeline?.collection?.realReportFiles?.length ?? realReportCount;
       const importedRows = result?.pipeline?.collection?.fileAudit?.importedRowCount ?? result?.pipeline?.quant?.importedRows ?? inserted;
+      const refreshedReadiness = buildPipelineReadiness(result?.pipeline, reportOptions, realFileCount, importedRows);
       setLastActionResult(buildLastActionResult('import', [result], realFileCount, importedRows, {
         downloadDir: result?.pipeline?.collection?.fileAudit?.downloadDir,
         manifestPath: result?.pipeline?.collection?.fileAudit?.manifestPath,
-      }));
+      }, refreshedReadiness.canEnterDiagnosis));
       if (importedRows <= 0 || inserted <= 0 || errors > 0) {
         const reason = errors > 0
           ? `有 ${errors} 个报表解析失败`
@@ -1156,10 +1237,11 @@ export function DataCollectionPage() {
       const errors = result?.metricsImport?.errors?.length ?? 0;
       const realFileCount = result?.pipeline?.collection?.realReportFiles?.length ?? result?.files?.length ?? 0;
       const importedRows = result?.pipeline?.collection?.fileAudit?.importedRowCount ?? result?.pipeline?.quant?.importedRows ?? inserted;
+      const refreshedReadiness = buildPipelineReadiness(result?.pipeline, reportOptions, realFileCount, importedRows);
       setLastActionResult(buildLastActionResult('import', [result], realFileCount, importedRows, {
         downloadDir: result?.pipeline?.collection?.fileAudit?.downloadDir || result?.batch?.downloadDir,
         manifestPath: result?.pipeline?.collection?.fileAudit?.manifestPath || result?.batch?.manifestPath,
-      }));
+      }, refreshedReadiness.canEnterDiagnosis));
       if (importedRows <= 0 || inserted <= 0 || errors > 0) {
         const reason = errors > 0
           ? `有 ${errors} 个本地报表解析失败`
@@ -1248,6 +1330,35 @@ export function DataCollectionPage() {
         description="直接选择 8 类真实广告报表并执行下载、重建或本地导入；流程账本和技术细节放在下方辅助区。"
       />
 
+      <TaskBanner
+        description={taskState.detail}
+        meta={`${selectedCount}/${reportOptions.length} 类已选 · ${importedRowCount} 行已入库`}
+        primaryAction={{
+          label: taskState.primaryActionLabel,
+          busy: primaryTaskBusy,
+          busyLabel: taskState.primaryActionLabel,
+          disabled: Boolean(runningAction),
+          onClick: taskState.isComplete
+            ? () => navigate('ad-quant')
+            : dataLedger.nextStep === 'import'
+              ? () => { void importCurrentReports(); }
+              : () => { void runDownloadAction('recreate-full'); },
+        }}
+        secondaryActions={[
+          {
+            label: taskState.secondaryActionLabel,
+            disabled: Boolean(runningAction || openingPathKey),
+            onClick: primaryReportFolder
+              ? () => { void openPath(primaryReportFolder, '打开报表目录'); }
+              : () => { void importLocalReports(); },
+          },
+          { label: '调整报表范围', onClick: () => setReportSelectorOpen(true), disabled: Boolean(runningAction) },
+        ]}
+        status={dataLedger.status === 'ready' ? '数据已闭合' : dataLedger.status === 'partial' ? '部分可用' : '数据阻断'}
+        title={taskState.title}
+        tone={dataLedger.status === 'ready' ? 'confirmed' : dataLedger.status === 'partial' ? 'attention' : 'blocked'}
+      />
+
       <div className="business-stack">
         {collectionMonitorOpen && collectionMonitorState && (
           <CollectionMonitorDrawer
@@ -1315,20 +1426,6 @@ export function DataCollectionPage() {
             </div>
           </div>
           <p className="collection-selection-live" aria-live="polite">{reportSelectionState.ariaStatus}</p>
-          <div className="data-collection-action-row">
-            <button
-              aria-busy={recreateFullButton.ariaBusy}
-              className={recreateFullButton.className}
-              disabled={recreateFullButton.disabled}
-              onClick={() => runDownloadAction('recreate-full')}
-              type="button"
-            >
-              <span className={recreateFullButton.ariaBusy ? 'button-content' : undefined}>
-                {recreateFullButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
-                {recreateFullButton.label}
-              </span>
-            </button>
-          </div>
           <details className="data-collection-secondary-actions">
             <summary>
               <span>更多报表操作</span>
@@ -1375,20 +1472,26 @@ export function DataCollectionPage() {
           </details>
           {primaryReportFolder && (
             <div className="data-collection-folder-line">
-              <span>真实报表目录</span>
-              <strong>{compactPath(primaryReportFolder)}</strong>
+              <span>当前范围原始报表目录</span>
+              <strong>已创建，可打开</strong>
               {renderOpenPathButton({ className: 'secondary-button compact-button', idleLabel: '打开目录', targetPath: primaryReportFolder })}
             </div>
           )}
         </Panel>
 
         {reportSelectorOpen && (
-          <div className="collection-selector-modal-backdrop" role="presentation">
+          <div
+            className="collection-selector-modal-backdrop"
+            ref={reportSelectorDialogFocus.overlayRootRef}
+            role="presentation"
+          >
             <section
               aria-labelledby="collection-selector-title"
               aria-modal="true"
               className="collection-selector-modal"
+              ref={reportSelectorDialogFocus.surfaceRef}
               role="dialog"
+              tabIndex={-1}
             >
               <header className="collection-selector-modal-header">
                 <div>
@@ -1458,12 +1561,18 @@ export function DataCollectionPage() {
         )}
 
         {selectedReportFile && (
-          <div className="collection-selector-modal-backdrop" role="presentation">
+          <div
+            className="collection-selector-modal-backdrop"
+            ref={reportFileDialogFocus.overlayRootRef}
+            role="presentation"
+          >
             <section
               aria-labelledby="collection-file-detail-title"
               aria-modal="true"
               className="collection-selector-modal collection-file-modal"
+              ref={reportFileDialogFocus.surfaceRef}
               role="dialog"
+              tabIndex={-1}
             >
               <header className="collection-selector-modal-header">
                 <div>
@@ -1545,7 +1654,6 @@ export function DataCollectionPage() {
           </div>
         )}
 
-        <ProgressiveDetails title="辅助采集账本、流程和技术细节">
         <div className="kpi-row data-collection-prototype-status-grid" aria-label="数据采集状态">
           <KpiCard
             label="浏览器状态"
@@ -1561,15 +1669,15 @@ export function DataCollectionPage() {
           />
           <KpiCard
             label="报表目录"
-            value={primaryReportFolder ? '可写' : '待创建'}
-            detail={primaryReportFolder ? compactPath(primaryReportFolder) : 'storage/reports/ 待生成'}
+            value={primaryReportFolder ? '可打开' : '待创建'}
+            detail={primaryReportFolder ? '当前范围原始报表目录已创建' : '等待首次真实报表落盘'}
             tone={primaryReportFolder ? 'ready' : 'pending'}
           />
           <KpiCard
             label="入库指标"
             value={`${importedRowCount} 行`}
-            detail={importedRowCount > 0 ? '已写入本地 DB' : '等待导入'}
-            tone={importedRowCount > 0 ? 'ready' : 'blocked'}
+            detail={importedReadinessStage?.status === 'complete' ? '8 类已逐类写入本地 DB' : importedRowCount > 0 ? '仅部分类型已入库' : '等待导入'}
+            tone={importedReadinessStage?.status === 'complete' ? 'ready' : importedRowCount > 0 ? 'warning' : 'blocked'}
           />
         </div>
 
@@ -1597,8 +1705,8 @@ export function DataCollectionPage() {
               {
                 label: '入库',
                 meta: `${importedRowCount} 行`,
-                detail: importedRowCount > 0 ? '指标已写入本地数据库。' : '下载完成后进入导入校验。',
-                tone: importedRowCount > 0 ? 'ready' : 'pending',
+                detail: importedReadinessStage?.status === 'complete' ? '8 类指标已逐类写入本地数据库。' : importedRowCount > 0 ? '部分类型已入库，仍需补齐。' : '下载完成后进入导入校验。',
+                tone: importedReadinessStage?.status === 'complete' ? 'ready' : 'pending',
               },
             ]}
           />
@@ -1627,15 +1735,6 @@ export function DataCollectionPage() {
           {loading && <p className="muted-line">正在读取采集状态...</p>}
           {error && <p className="blocked-line">读取接口异常：{error}</p>}
         </Panel>
-
-        {collectionMonitorOpen && collectionMonitorState && (
-          <CollectionMonitorDrawer
-            evidencePath={collectionMonitorEvidencePath}
-            onClose={() => setCollectionMonitorOpen(false)}
-            state={collectionMonitorState}
-            steps={actionProgressSteps}
-          />
-        )}
 
         {(runningAction || actionNotice || actionError) && (
           <div
@@ -1707,7 +1806,7 @@ export function DataCollectionPage() {
           <Panel title="真实报表目录" tone="success">
             <div className="business-split">
               <div>
-                <div className="business-scope-line">{compactPath(primaryReportFolder)}</div>
+                <div className="business-scope-line">当前范围原始报表目录已创建，可直接打开</div>
                 <p className="muted-line">这里只放当前范围可用于后续广告表现的 Lingxing xlsx/xls/csv 原始报表。</p>
               </div>
               <div className="business-pill-row business-pill-row-right">
@@ -1903,7 +2002,7 @@ export function DataCollectionPage() {
                   <div>
                     <span>真实数据状态</span>
                     <strong>{lastActionSummary.facts.slice(0, 2).join(' / ')}</strong>
-                    <p>{lastActionSummary.blockers.length ? lastActionSummary.blockers.join('；') : '真实报表和 DB 指标已闭合。'}</p>
+                    <p>{lastActionSummary.blockers.length ? lastActionSummary.blockers.join('；') : '动作已返回；以当前范围数据账本的逐类入库状态作为最终放行依据。'}</p>
                   </div>
                   <div>
                     <span>导入状态</span>
@@ -2068,7 +2167,6 @@ export function DataCollectionPage() {
               ))}
             </ul>
           </div>
-        </ProgressiveDetails>
         </ProgressiveDetails>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  buildListingTaskModel,
   buildListingHeatmapModel,
   buildListingHeatmapFocusAnnouncement,
   buildListingTextDiffSegments,
@@ -16,6 +17,71 @@ import {
   listingLocalActionButtonView,
   listingManualFieldGroups,
 } from './listing-optimization-page';
+
+describe('ListingOptimizationPage dialog focus contracts', () => {
+  it('uses shared focus scopes for local Listing and keyword editors', () => {
+    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const listingEditorDialogFocus = useOverlayFocusScope');
+    expect(source).toContain("dismissDisabled: loading === 'save-manual'");
+    expect(source).toContain('open: listingEditorOpen');
+    expect(source).toContain('const listingKeywordDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('open: keywordEditorOpen');
+    expect(source).toContain('ref={listingEditorDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={listingEditorDialogFocus.surfaceRef}');
+    expect(source).toContain('ref={listingKeywordDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={listingKeywordDialogFocus.surfaceRef}');
+    expect(source).not.toContain('onKeyDown={handleListingEditorKeyDown}');
+    expect(source).not.toContain('onKeyDown={handleKeywordEditorKeyDown}');
+  });
+});
+
+describe('Listing task-first model', () => {
+  it('asks for keywords before Listing or draft actions', () => {
+    expect(buildListingTaskModel({
+      keywordCount: 0,
+      listingReady: false,
+      draftCount: 0,
+      quantReady: false,
+      loading: null,
+    })).toMatchObject({
+      primaryIntent: 'edit-keywords',
+      primaryLabel: '打开关键词录入',
+      secondaryIntents: ['keyword-opportunities', 'edit-listing'],
+      publishBoundary: '仅本地，不提交 Amazon，不改写 Lingxing。',
+    });
+  });
+
+  it('keeps missing-ad-data generation explicitly local preview only', () => {
+    expect(buildListingTaskModel({
+      keywordCount: 8,
+      listingReady: true,
+      draftCount: 0,
+      quantReady: false,
+      loading: null,
+    })).toMatchObject({
+      tone: 'attention',
+      primaryIntent: 'generate-draft',
+      primaryLabel: '开始生成本地预览草案',
+      statusLabel: '仅本地预览',
+    });
+  });
+
+  it('exports only after a local draft exists and exposes at most two secondary actions', () => {
+    const model = buildListingTaskModel({
+      keywordCount: 8,
+      listingReady: true,
+      draftCount: 2,
+      quantReady: true,
+      loading: null,
+    });
+
+    expect(model.primaryIntent).toBe('export-draft');
+    expect(model.primaryLabel).toBe('导出本地草案');
+    expect(model.secondaryIntents.length).toBeLessThanOrEqual(2);
+    expect(model.publishBoundary).toContain('不提交 Amazon');
+  });
+});
 
 function cssRule(css: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -299,13 +365,23 @@ describe('Listing Phase 5 local draft surface', () => {
     const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('function closeKeywordEditor()');
-    expect(source).toContain("event.key !== 'Escape'");
-    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
-    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain('const listingKeywordDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('onDismiss: closeKeywordEditor');
     expect(source).toContain('onMouseDown={(event) => {');
     expect(source).toContain('event.target === event.currentTarget');
     expect(source).toContain('onMouseDown={(event) => event.stopPropagation()}');
-    expect(source).toContain('onKeyDown={handleKeywordEditorKeyDown}');
+    expect(source).not.toContain('onKeyDown={handleKeywordEditorKeyDown}');
+  });
+
+  it('uses one TaskBanner and keeps the technical boundary disclosure unnested', () => {
+    const source = readFileSync(new URL('./listing-optimization-page.tsx', import.meta.url), 'utf8');
+    const technicalStart = source.indexOf('<ProgressiveDetails title="关键词交接与发布边界"');
+    const technicalEnd = source.indexOf('</ProgressiveDetails>', technicalStart);
+
+    expect(source.match(/<TaskBanner\b/g) || []).toHaveLength(1);
+    expect(technicalStart).toBeGreaterThan(-1);
+    expect(technicalEnd).toBeGreaterThan(technicalStart);
+    expect(source.slice(technicalStart, technicalEnd)).not.toMatch(/<details\b/);
   });
 });
 describe('Listing draft diff and feedback contract', () => {

@@ -1,4 +1,5 @@
 import type { NavigationIntent } from './navigation';
+import { hasFormalReportCoverage } from './report-coverage';
 
 export type WorkflowStage =
   | 'product-selection'
@@ -49,6 +50,11 @@ export interface WorkflowEvidenceSnapshot {
     collection?: {
       status?: string;
       fileAudit?: { missingReportLabels?: readonly string[]; realReportFileCount?: number };
+      reportOptions?: Array<{
+        type?: string;
+        realFileAvailable?: boolean;
+        importedRows?: number;
+      }>;
     };
     quant?: { hasImportedMetrics?: boolean; diagnostics?: readonly unknown[] };
   } | null;
@@ -151,7 +157,8 @@ export function deriveWorkflowEvidence(snapshot: WorkflowEvidenceSnapshot): Work
   const reportsReady = collection?.status === 'ready'
     && Number(collection.fileAudit?.realReportFileCount || 0) > 0
     && missingReports.length === 0;
-  const importedMetricsReady = quant?.hasImportedMetrics === true;
+  const importedMetricsReady = quant?.hasImportedMetrics === true
+    && hasFormalReportCoverage(collection);
   const importState: WorkflowEvidence['importState'] = importedMetricsReady
     ? 'ready'
     : reportsReady

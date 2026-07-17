@@ -2,12 +2,13 @@ import React from 'react';
 import type { WorkspaceAction, WorkspaceTone } from './types';
 
 export type TaskBannerProps = {
+  compact?: boolean;
   eyebrow?: string;
   title: string;
   description?: React.ReactNode;
   tone?: WorkspaceTone;
   status?: React.ReactNode;
-  primaryAction: WorkspaceAction;
+  primaryAction?: WorkspaceAction;
   secondaryActions?: WorkspaceAction[];
   meta?: React.ReactNode;
   children?: React.ReactNode;
@@ -48,6 +49,7 @@ function renderActionButton({
         aria-describedby={reasonId}
         aria-label={action.ariaLabel}
         className={`workspace-button workspace-button--${priority}${action.busy ? ' workspace-button--busy' : ''}`}
+        data-action-id={action.actionId}
         data-action-priority={priority}
         disabled={disabled}
         onClick={action.onClick}
@@ -64,6 +66,7 @@ function renderActionButton({
 }
 
 export function TaskBanner({
+  compact = false,
   eyebrow = '当前主任务',
   title,
   description,
@@ -78,13 +81,15 @@ export function TaskBanner({
   const titleId = `task-banner-${seed}-title`;
   const descriptionId = description ? `task-banner-${seed}-description` : undefined;
   const visibleSecondaryActions = secondaryActions.slice(0, 2);
-  const groupBusy = Boolean(primaryAction.busy || visibleSecondaryActions.some((action) => action.busy));
+  const groupBusy = Boolean(primaryAction?.busy || visibleSecondaryActions.some((action) => action.busy));
+  const hasActions = Boolean(primaryAction || visibleSecondaryActions.length > 0);
 
   return (
     <section
       aria-describedby={descriptionId}
       aria-labelledby={titleId}
-      className={`task-banner task-banner--${tone}`}
+      className={`task-banner task-banner--${tone}${compact ? ' task-banner--compact' : ''}`}
+      data-task-density={compact ? 'compact' : 'standard'}
       data-task-tone={tone}
     >
       <div className="task-banner__copy">
@@ -97,20 +102,22 @@ export function TaskBanner({
         {children}
         {meta && <div className="task-banner__meta">{meta}</div>}
       </div>
-      <div aria-label="首屏任务动作" className="task-banner__actions" role="group">
-        {renderActionButton({ action: primaryAction, groupBusy, index: 0, priority: 'primary', seed })}
-        {visibleSecondaryActions.map((action, index) => (
-          <React.Fragment key={`${action.label}-${index}`}>
-            {renderActionButton({
-              action,
-              groupBusy,
-              index,
-              priority: 'secondary',
-              seed,
-            })}
-          </React.Fragment>
-        ))}
-      </div>
+      {hasActions && (
+        <div aria-label="首屏任务动作" className="task-banner__actions" role="group">
+          {primaryAction && renderActionButton({ action: primaryAction, groupBusy, index: 0, priority: 'primary', seed })}
+          {visibleSecondaryActions.map((action, index) => (
+            <React.Fragment key={`${action.label}-${index}`}>
+              {renderActionButton({
+                action,
+                groupBusy,
+                index,
+                priority: 'secondary',
+                seed,
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

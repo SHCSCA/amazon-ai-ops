@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { TaskBanner } from '../components/workspace';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
-import { buildDataReadinessLedger } from '../data-readiness-ledger';
+import { buildDataReadinessLedger, type DataReadinessLedger } from '../data-readiness-ledger';
 import { compactPath, formatUsd } from '../formatters';
 import { toUserFacingError } from '../user-facing-error';
 
@@ -290,6 +291,7 @@ export function buildDataImportFeedback(input: {
   runningImport: ImportMode | null;
   notice?: string;
   importError?: string;
+  readiness: Pick<DataReadinessLedger, 'status' | 'canEnterDiagnosis' | 'nextStep'>;
 }): DataImportFeedback {
   const importNotice = input.notice?.includes('导入') ? input.notice : '';
   if (input.runningImport === 'current') {
@@ -319,13 +321,22 @@ export function buildDataImportFeedback(input: {
       className: feedbackClassName('blocked'),
     };
   }
-  if (Number(input.importedRows || 0) > 0) {
+  if (input.readiness.canEnterDiagnosis) {
     return {
       title: '当前范围已入库',
       detail: importNotice || `SQLite 已有 ${input.importedRows} 行日级广告指标；如果重新下载过表格，可再次导入刷新。`,
       statusLabel: '已入库',
       tone: 'ready',
       className: feedbackClassName('ready'),
+    };
+  }
+  if (Number(input.importedRows || 0) > 0) {
+    return {
+      title: '部分指标已入库',
+      detail: importNotice || `SQLite 已有 ${input.importedRows} 行日级广告指标，但尚未覆盖全部 8 类真实报表，不能进入正式诊断。`,
+      statusLabel: '待补齐',
+      tone: 'warning',
+      className: feedbackClassName('warning'),
     };
   }
   if (Number(input.realReportCount || 0) > 0) {
@@ -392,23 +403,27 @@ export function buildDataImportTaskState({
   realReportCount,
   importedRows,
   reportFolder,
+  readiness,
 }: {
   realReportCount: number;
   importedRows: number;
   reportFolder?: string;
+  readiness: Pick<DataReadinessLedger, 'status' | 'canEnterDiagnosis' | 'nextStep'>;
 }): DataImportTaskState {
   const reportCount = Math.max(0, Math.min(8, Number(realReportCount) || 0));
   const rowCount = Math.max(0, Number(importedRows) || 0);
   const hasRealReports = reportCount > 0;
-  const hasRows = rowCount > 0;
+  const isReady = readiness.canEnterDiagnosis;
   return {
     title: `真实报表 ${reportCount}/8，已导入 ${rowCount} 行`,
-    detail: hasRows
-      ? '日级广告指标已写入 SQLite；重导入同批同文件会先清旧行再写入。'
+    detail: isReady
+      ? '完整 8 类日级广告指标已写入 SQLite；重导入同批同文件会先清旧行再写入。'
+      : readiness.nextStep === 'import' && rowCount > 0
+        ? '已有部分日级指标，但仍有报表类型未入库；补齐前不能进入正式诊断。'
       : hasRealReports
         ? '真实报表已下载但未入库，下一步把广告指标写入 SQLite。'
         : '当前范围缺少真实报表，先回数据采集获取或导入本地表格。',
-    primaryActionLabel: hasRows ? '查看广告表现' : hasRealReports ? '导入已下载表格' : '去数据采集',
+    primaryActionLabel: isReady ? '查看广告表现' : readiness.nextStep === 'import' ? '导入已下载表格' : '去数据采集',
     secondaryActionLabel: reportFolder ? '打开报表目录' : '导入本地报表',
   };
 }
@@ -457,6 +472,13 @@ export function DataImportValidationPage() {
     importedRowCount: importedRows,
     rejectedEvidenceFileCount: rejectedEvidenceCount,
   }), [importedRows, realReportCount, rejectedEvidenceCount, reportOptions]);
+  const isDataReady = dataLedger.canEnterDiagnosis;
+  const taskState = buildDataImportTaskState({
+    realReportCount,
+    importedRows,
+    reportFolder,
+    readiness: dataLedger,
+  });
   useEffect(() => () => {
     if (refreshTimerRef.current) {
       window.clearTimeout(refreshTimerRef.current);
@@ -500,6 +522,7 @@ export function DataImportValidationPage() {
     runningImport,
     notice,
     importError,
+    readiness: dataLedger,
   });
   const currentImportButton = dataImportActionButtonView({ mode: 'current', runningImport, hasRealFiles });
   const localImportButton = dataImportActionButtonView({ mode: 'local', runningImport, hasRealFiles });
@@ -686,19 +709,35 @@ export function DataImportValidationPage() {
         eyebrow="数据"
         title={PAGE_HEADER_TITLES.dataImportValidation}
         description="只处理真实 Lingxing xlsx/xls/csv 表格入库和口径校验。审计文件、截图、HTML 和采集清单不会被当作广告数据。"
-        primaryTask="把真实报表写入每日广告数据库"
-        nextAction={hasImportedMetrics ? '查看广告表现' : hasRealFiles ? '导入已下载表格' : '先到数据采集获取报表'}
+      />
+
+      <TaskBanner
+        description={taskState.detail}
+        meta={`${realReportCount}/8 类真实报表 · ${importedRows} 行日级指标`}
         primaryAction={{
-          label: hasImportedMetrics ? '查看广告表现' : hasRealFiles ? '导入已下载表格' : '去数据采集',
+          label: taskState.primaryActionLabel,
           busy: Boolean(runningImport),
           busyLabel: dataImportBusyLabel(runningImport),
           disabled: Boolean(runningImport),
-          onClick: hasImportedMetrics
+          onClick: isDataReady
             ? () => navigateTo('ad-quant')
-            : hasRealFiles
+            : dataLedger.nextStep === 'import'
               ? () => runImport('current')
               : () => navigateTo('data-collection'),
         }}
+        secondaryActions={[
+          {
+            label: taskState.secondaryActionLabel,
+            disabled: Boolean(runningImport || openingPathKey),
+            onClick: reportFolder
+              ? () => { void openPath(reportFolder, '打开报表目录'); }
+              : () => { void runImport('local'); },
+          },
+          { label: '回到数据采集', onClick: () => navigateTo('data-collection'), disabled: Boolean(runningImport) },
+        ]}
+        status={isDataReady ? '已闭合' : hasImportedMetrics ? '部分入库' : hasRealFiles ? '待入库' : '缺报表'}
+        title={taskState.title}
+        tone={isDataReady ? 'confirmed' : hasRealFiles || hasImportedMetrics ? 'attention' : 'blocked'}
       />
 
       <div className="business-stack data-import-prototype-stack">
@@ -708,12 +747,12 @@ export function DataImportValidationPage() {
           titleAccessory={(
             <div className="data-import-title-pills" aria-label="导入状态摘要">
               <StatusPill tone={realReportCount >= 8 ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>真实报表 {realReportCount}/8</StatusPill>
-              <StatusPill tone={hasImportedMetrics ? 'ready' : 'blocked'}>入库 {importedRows} 行</StatusPill>
+              <StatusPill tone={isDataReady ? 'ready' : hasImportedMetrics ? 'warning' : 'blocked'}>入库 {importedRows} 行</StatusPill>
               <StatusPill tone={rejectedEvidenceCount > 0 ? 'warning' : 'ready'}>异常证据 {rejectedEvidenceCount}</StatusPill>
-              <StatusPill tone={hasImportedMetrics ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>{hasImportedMetrics ? '已入库' : hasRealFiles ? '待导入' : '缺报表'}</StatusPill>
+              <StatusPill tone={isDataReady ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>{isDataReady ? '已闭合' : hasImportedMetrics ? '部分入库' : hasRealFiles ? '待导入' : '缺报表'}</StatusPill>
             </div>
           )}
-          tone={hasImportedMetrics ? 'success' : hasRealFiles ? 'warning' : 'blocked'}
+          tone={isDataReady ? 'success' : hasRealFiles ? 'warning' : 'blocked'}
         >
           <div className="table-wrap">
             <table className="business-table data-import-prototype-table">
@@ -744,17 +783,20 @@ export function DataImportValidationPage() {
           {loading && <p className="muted-line">正在读取当前范围文件和数据库状态...</p>}
           {error && <p className="blocked-line">读取异常：{error}</p>}
           <div className="action-row">
-            <button aria-busy={currentImportButton.ariaBusy} className={currentImportButton.className} disabled={currentImportButton.disabled} onClick={() => runImport('current')} type="button">
-              <span className={currentImportButton.ariaBusy ? 'button-content' : undefined}>
-                {currentImportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
-                {currentImportButton.label}
-              </span>
-            </button>
-            {renderOpenPathButton({
-              disabled: Boolean(runningImport || openingPathKey || !reportFolder),
-              idleLabel: reportFolder ? '打开报表目录' : '导入本地表格',
-              targetPath: reportFolder,
-            })}
+            {reportFolder
+              ? renderOpenPathButton({
+                  disabled: Boolean(runningImport || openingPathKey),
+                  idleLabel: '打开报表目录',
+                  targetPath: reportFolder,
+                })
+              : (
+                <button aria-busy={localImportButton.ariaBusy} className={localImportButton.className} disabled={localImportButton.disabled} onClick={() => runImport('local')} type="button">
+                  <span className={localImportButton.ariaBusy ? 'button-content' : undefined}>
+                    {localImportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
+                    {localImportButton.label}
+                  </span>
+                </button>
+              )}
             <button aria-busy={exportButton.ariaBusy} className={exportButton.className} disabled={exportButton.disabled} onClick={exportReconciliation} type="button">
               <span className={exportButton.ariaBusy ? 'button-content' : undefined}>
                 {exportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
@@ -793,8 +835,8 @@ export function DataImportValidationPage() {
           <Panel title="数据流程四段闭环" tone={dataLedger.status === 'ready' ? 'success' : dataLedger.status === 'partial' ? 'warning' : 'blocked'}>
             <div className="judgment-panel">
               <div>
-                <span>{hasRealFiles && hasImportedMetrics ? '数据链已闭合' : '数据链未闭合'}</span>
-                <strong>{hasRealFiles && hasImportedMetrics ? '可以查看广告表现' : hasRealFiles ? '先完成指标入库' : '先获取真实广告报表'}</strong>
+                <span>{isDataReady ? '数据链已闭合' : '数据链未闭合'}</span>
+                <strong>{isDataReady ? '可以查看广告表现' : dataLedger.nextStep === 'import' ? '先完成逐类指标入库' : '先补齐真实广告报表'}</strong>
                 <p>导入页只负责把真实报表变成日级广告事实；审计证据不能替代广告数据。</p>
               </div>
             </div>
@@ -809,18 +851,18 @@ export function DataImportValidationPage() {
                 </div>
               ))}
             </div>
-            <p className={hasImportedMetrics ? 'muted-line' : 'warning-line'}>
-              {hasImportedMetrics
+            <p className={isDataReady ? 'muted-line' : 'warning-line'}>
+              {isDataReady
                 ? '下一步：查看广告表现，复核 ACOS、花费、订单和产品阶段。'
                 : hasRealFiles
                   ? '下一步：点击“导入已下载表格”，把真实报表写入 SQLite 日级指标。'
-                  : '下一步：回到数据采集页下载已创建报表、重新创建下载，或导入本地报表。'}
+                  : '下一步：到“数据准备 → 报表采集”下载已创建报表、重新创建下载，或导入本地报表。'}
             </p>
           </Panel>
         </ProgressiveDetails>
 
         <ProgressiveDetails title="文件位置与用途">
-          <Panel title="广告数据现在在哪" tone={hasImportedMetrics ? 'success' : hasRealFiles ? 'warning' : 'blocked'}>
+          <Panel title="广告数据现在在哪" tone={isDataReady ? 'success' : hasRealFiles ? 'warning' : 'blocked'}>
             <div className="context-summary-grid">
             <div>
               <span>原始表格目录</span>
@@ -830,7 +872,7 @@ export function DataImportValidationPage() {
             <div>
               <span>SQLite 日级指标</span>
               <strong>{importedRows} 行可用</strong>
-              <p>{hasImportedMetrics ? '广告表现、AI 证据包和优化建议会读取这些日级广告事实。' : '未导入前数据库没有可用于广告表现的每日指标。'}</p>
+              <p>{isDataReady ? '广告表现、AI 证据包和优化建议会读取这些日级广告事实。' : hasImportedMetrics ? '已有部分日级指标，但完整 8 类逐类入库前不会放行正式诊断。' : '未导入前数据库没有可用于广告表现的每日指标。'}</p>
             </div>
             <div>
               <span>审计文件不参与计算</span>
@@ -839,8 +881,8 @@ export function DataImportValidationPage() {
             </div>
             <div>
               <span>下一步</span>
-              <strong>{hasImportedMetrics ? '下一步查看广告表现' : hasRealFiles ? '导入已下载表格' : '回数据采集获取真实报表'}</strong>
-              <p>{hasImportedMetrics ? '复核 ACOS、花费、订单、产品阶段和 AI 证据链。' : hasRealFiles ? '把真实报表解析并写入 SQLite 后才能生成建议。' : '先下载已创建报表、重新创建下载，或导入本地真实报表。'}</p>
+              <strong>{isDataReady ? '下一步查看广告表现' : dataLedger.nextStep === 'import' ? '导入已下载表格' : '回数据采集补齐真实报表'}</strong>
+              <p>{isDataReady ? '复核 ACOS、花费、订单、产品阶段和 AI 证据链。' : dataLedger.nextStep === 'import' ? '把每类真实报表解析并写入 SQLite 后才能进入正式诊断。' : '先下载已创建报表、重新创建下载，或导入本地真实报表。'}</p>
             </div>
             </div>
             <div className="action-row">
@@ -851,7 +893,7 @@ export function DataImportValidationPage() {
                   {exportButton.label}
                 </span>
               </button>
-              <button className="secondary-button" disabled={!hasImportedMetrics} onClick={() => navigateTo('ad-quant')} type="button">查看广告表现</button>
+              <button className="secondary-button" disabled={!isDataReady} onClick={() => navigateTo('ad-quant')} type="button">查看广告表现</button>
             </div>
             {reconciliation && (
               <div className="evidence-check-panel">
@@ -892,7 +934,7 @@ export function DataImportValidationPage() {
                     ? `当前 DB 已有 ${importedRows} 行指标；如果重新下载过表格，可再次导入刷新。`
                     : hasRealFiles
                       ? '把当前范围下载目录中的真实报表解析并写入 SQLite，每天的广告数据会沉淀到数据库。'
-                      : '当前没有真实报表，不能导入。请先到数据采集页下载或重新创建报表。'}
+                      : '当前没有真实报表，不能导入。请先到“数据准备 → 报表采集”下载或重新创建报表。'}
                 </p>
               </div>
               <div className="table-action-row">
@@ -915,7 +957,7 @@ export function DataImportValidationPage() {
           </Panel>
         </ProgressiveDetails>
 
-        {hasImportedMetrics && (
+        {isDataReady && (
           <Panel title="量化前口径快照" tone="success">
             <div className="context-summary-grid">
               <div><span>广告花费</span><strong>{formatUsd(totalSpend)}</strong><p>来自当前范围已导入指标。</p></div>

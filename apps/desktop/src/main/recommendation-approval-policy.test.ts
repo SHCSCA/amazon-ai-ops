@@ -39,8 +39,25 @@ function recommendation(overrides: Partial<ActionRecommendation> = {}): ActionRe
       adGroupName: 'Main',
       targeting: 'tight match target',
       batchId: 'batch_1',
-      sourceFiles: ['C:/reports/user-search-term.xlsx'],
+      reportType: 'keyword',
+      sourceFile: 'C:/reports/keyword.xlsx',
+      sourceFiles: ['C:/reports/keyword.xlsx'],
       sourceRow: 12,
+      writableTarget: {
+        entityType: 'keyword',
+        entityId: 'amzn-keyword-opaque-123',
+        entityName: 'tight match target',
+        campaignName: 'SP exact',
+        adGroupName: 'Main',
+        metricDate: '2026-06-12',
+        sourceFile: 'C:/reports/keyword.xlsx',
+        sourceRow: 12,
+        identitySource: 'ads_ui',
+        verifiedBy: 'Alice',
+        verifiedAt: '2026-06-12T09:55:00.000Z',
+        verificationNote: 'Matched the current editable keyword row.',
+        identityProofPath: 'C:/evidence/keyword-identity.png',
+      },
       decisionAgreement: 'aligned',
       decisionRequiresReview: false,
       quantReviewRequired: false,
@@ -50,6 +67,54 @@ function recommendation(overrides: Partial<ActionRecommendation> = {}): ActionRe
     status: 'pending',
     ...overrides,
   };
+}
+
+const sourceAuthority = {
+  reportType: 'keyword',
+  entityName: 'tight match target',
+  campaignName: 'SP exact',
+  adGroupName: 'Main',
+  metricDate: '2026-06-12',
+  sourceFile: 'C:/reports/keyword.xlsx',
+  sourceRow: 12,
+};
+
+const approvalOptions = {
+  allowedSourceFiles: ['C:/reports/keyword.xlsx'],
+  sourceAuthority,
+};
+
+function reviewedRecommendation(): ActionRecommendation {
+  const current = recommendation({ revision: 3 });
+  current.evidence = {
+    ...current.evidence,
+    quantReviewRequired: true,
+    reviewResolution: {
+      schemaVersion: 1,
+      fromStatus: 'needs_review',
+      fromRevision: 2,
+      resolvedRevision: 3,
+      reviewedBy: 'Review Owner',
+      reviewedAt: '2026-06-12T09:57:00.000Z',
+      rationale: 'Confirmed one bounded keyword bid decrease.',
+      resolvedBlockers: ['quant_review_required'],
+      scope: {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        asin: 'B0TESTASIN',
+        batchId: 'batch_1',
+      },
+      metricSource: {
+        batchId: 'batch_1',
+        sourceFiles: ['C:/reports/keyword.xlsx'],
+        sourceRow: 12,
+      },
+      writableTarget: { ...current.evidence.writableTarget! },
+    },
+  };
+  return current;
 }
 
 const READ_ONLY_RECOMMENDATION_STATUSES = ['approved', 'rejected', 'executed', 'expired'] as const;
@@ -118,6 +183,7 @@ describe('recommendation approval policy', () => {
       recommendation: recommendation({ status: 'pending' }),
       targetStatus: 'approved',
       decision: { approvedBy: 'Alice', note: 'Evidence checked.' },
+      approvalOptions,
       persist,
     });
 
@@ -246,8 +312,16 @@ describe('recommendation approval policy', () => {
     const rec = recommendation();
 
     expect(getRecommendationApprovalMissingFields(rec)).toEqual([]);
-    expect(getRecommendationApprovalBlockers(rec)).toEqual([]);
-    expect(() => assertRecommendationApprovalPolicy(rec)).not.toThrow();
+    expect(getRecommendationApprovalBlockers(rec, approvalOptions)).toEqual([]);
+    expect(() => assertRecommendationApprovalPolicy(rec, approvalOptions)).not.toThrow();
+  });
+
+  it('fails closed when ordinary approval has no current DB source authority', () => {
+    expect(getRecommendationApprovalBlockers(recommendation())).toContain(
+      'Ads 可写对象不属于当前建议：缺少当前数据库来源权威，不能确认 Ads 可写对象归属',
+    );
+    expect(() => assertRecommendationApprovalPolicy(recommendation()))
+      .toThrow(/缺少当前数据库来源权威/);
   });
 
   it('blocks recommendations that cannot be bound to a concrete ads UI action', () => {
@@ -483,5 +557,26 @@ describe('recommendation approval policy', () => {
     expect(() => assertRecommendationApprovalPolicy(recommendation({
       riskLevel: 'FORBIDDEN',
     }))).toThrow(/高风险或禁止执行风险等级/);
+  });
+
+  it('blocks approval when the canonical writable row belongs to another object in the same ad group', () => {
+    const current = recommendation();
+    current.evidence.writableTarget = {
+      ...current.evidence.writableTarget!,
+      entityName: 'another target',
+    };
+
+    expect(getRecommendationApprovalBlockers(current, approvalOptions)).toContain(
+      'Ads 可写对象不属于当前建议：核验到的 Ads 对象名称与当前建议对象不一致',
+    );
+    expect(() => assertRecommendationApprovalPolicy(current, approvalOptions)).toThrow(/Ads 可写对象不属于当前建议/);
+  });
+
+  it('accepts a current quant-review resolution but rejects identity-proof tampering after review', () => {
+    const reviewed = reviewedRecommendation();
+    expect(getRecommendationApprovalBlockers(reviewed)).not.toContain('规则量化要求人工复核');
+
+    reviewed.evidence.reviewResolution!.writableTarget.identityProofPath = 'C:/evidence/forged-proof.png';
+    expect(getRecommendationApprovalBlockers(reviewed)).toContain('规则量化要求人工复核');
   });
 });

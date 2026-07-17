@@ -31,7 +31,9 @@ describe('RecommendationGenerator', () => {
       quantLifecycleStage: 'keyword_exploration',
       quantReviewRequired: true,
       batchId: 'batch_1',
-      sourceFiles: ['C:/reports/search-term.xlsx'],
+      reportType: 'keyword',
+      sourceFile: 'C:/reports/01_keyword.xlsx',
+      sourceFiles: ['C:/reports/01_keyword.xlsx'],
       sourceRow: 18,
     });
   });
@@ -58,6 +60,7 @@ describe('RecommendationGenerator', () => {
         orders: 7,
         sales: 484.92,
         cpc: 1.69,
+        sourceFile: 'C:/reports/02_keyword.xlsx',
         sourceRow: 12,
       }),
     ], {
@@ -75,6 +78,7 @@ describe('RecommendationGenerator', () => {
       actionType: 'lower_bid',
       currentValue: '1.69',
       recommendedValue: '1.52',
+      status: 'pending',
     });
     expect(recommendations[0].reason).toContain('ACOS 52.3%');
     expect(recommendations[0].evidence).toMatchObject({
@@ -86,10 +90,13 @@ describe('RecommendationGenerator', () => {
       acos: 0.52289,
       cpc: 1.6904,
       batchId: 'batch_1',
-      sourceFiles: ['C:/reports/search-term.xlsx'],
+      reportType: 'keyword',
+      sourceFile: 'C:/reports/02_keyword.xlsx',
+      sourceFiles: ['C:/reports/01_keyword.xlsx', 'C:/reports/02_keyword.xlsx'],
       sourceRow: 12,
       quantStatus: 'waste',
       quantLifecycleStage: 'declining_repair',
+      quantReviewRequired: false,
     });
   });
 });
@@ -107,7 +114,8 @@ function metric(patch: Partial<AdDailyMetrics>): AdDailyMetrics {
     searchTerm: '',
     matchType: 'exact',
     batchId: 'batch_1',
-    sourceFile: 'C:/reports/search-term.xlsx',
+    reportType: 'keyword',
+    sourceFile: 'C:/reports/01_keyword.xlsx',
     sourceRow: 18,
     impressions: 1000,
     clicks: 0,

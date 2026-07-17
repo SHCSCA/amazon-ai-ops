@@ -1,7 +1,12 @@
 import type { ActionRecommendation } from '@amazon-ai-ops/shared-types';
+import {
+  getRecommendationWritableTargetOwnershipBlockers,
+  type RecommendationMetricSourceAuthority,
+} from './recommendation-writable-target-policy';
 
 export interface RecommendationApprovalPolicyOptions {
   allowedSourceFiles?: string[];
+  sourceAuthority?: RecommendationMetricSourceAuthority;
 }
 
 export type RecommendationDecisionStatus = 'approved' | 'rejected';
@@ -58,6 +63,10 @@ export function assertRecommendationDecisionRevision(
 
 function normalizedRiskLevel(riskLevel: unknown): string {
   return String(riskLevel || '').trim().toLowerCase();
+}
+
+function normalizedText(value: unknown): string {
+  return String(value || '').trim().toLowerCase();
 }
 
 function nonEmpty(value: unknown): boolean {
@@ -128,6 +137,64 @@ function normalizeSourceFile(filePath: unknown): string {
   return String(filePath || '').trim().replace(/\\/g, '/').toLowerCase();
 }
 
+function sameSourceFiles(left: unknown, right: unknown): boolean {
+  const normalize = (value: unknown) => Array.isArray(value)
+    ? Array.from(new Set(value.map(normalizeSourceFile).filter(Boolean))).sort()
+    : [];
+  const leftFiles = normalize(left);
+  const rightFiles = normalize(right);
+  return leftFiles.length === rightFiles.length
+    && leftFiles.every((filePath, index) => filePath === rightFiles[index]);
+}
+
+function sameTimestamp(left: unknown, right: unknown): boolean {
+  const leftTimestamp = Date.parse(String(left || '').trim());
+  const rightTimestamp = Date.parse(String(right || '').trim());
+  return Number.isFinite(leftTimestamp)
+    && Number.isFinite(rightTimestamp)
+    && leftTimestamp === rightTimestamp;
+}
+
+function sameWritableTarget(left: ActionRecommendation['evidence']['writableTarget'], right: ActionRecommendation['evidence']['writableTarget']): boolean {
+  if (!left || !right) return false;
+  return left.entityType === right.entityType
+    && left.entityId === right.entityId
+    && normalizedText(left.entityName) === normalizedText(right.entityName)
+    && normalizedText(left.campaignName) === normalizedText(right.campaignName)
+    && normalizedText(left.adGroupName) === normalizedText(right.adGroupName)
+    && String(left.metricDate || '').trim() === String(right.metricDate || '').trim()
+    && normalizeSourceFile(left.sourceFile) === normalizeSourceFile(right.sourceFile)
+    && Number(left.sourceRow) === Number(right.sourceRow)
+    && left.identitySource === right.identitySource
+    && String(left.verifiedBy || '').trim() === String(right.verifiedBy || '').trim()
+    && sameTimestamp(left.verifiedAt, right.verifiedAt)
+    && String(left.verificationNote || '').trim() === String(right.verificationNote || '').trim()
+    && normalizeSourceFile(left.identityProofPath) === normalizeSourceFile(right.identityProofPath);
+}
+
+function hasCurrentQuantReviewResolution(recommendation: ActionRecommendation): boolean {
+  const resolution = recommendation.evidence?.reviewResolution;
+  const writableTarget = recommendation.evidence?.writableTarget;
+  if (!resolution || !writableTarget) return false;
+  return resolution.schemaVersion === 1
+    && resolution.fromStatus === 'needs_review'
+    && resolution.fromRevision + 1 === resolution.resolvedRevision
+    && resolution.resolvedRevision === (recommendation.revision ?? 0)
+    && resolution.resolvedBlockers.length === 1
+    && resolution.resolvedBlockers[0] === 'quant_review_required'
+    && nonEmpty(resolution.reviewedBy)
+    && nonEmpty(resolution.reviewedAt)
+    && nonEmpty(resolution.rationale)
+    && normalizedText(resolution.scope.storeName) === normalizedText(recommendation.storeName)
+    && normalizedText(resolution.scope.marketplaceCode) === normalizedText(recommendation.marketplaceCode)
+    && String(resolution.scope.asin || '').trim().toUpperCase() === String(recommendation.asin || recommendation.evidence?.asin || '').trim().toUpperCase()
+    && String(resolution.scope.batchId || '').trim() === String(recommendation.evidence?.batchId || '').trim()
+    && String(resolution.metricSource.batchId || '').trim() === String(recommendation.evidence?.batchId || '').trim()
+    && Number(resolution.metricSource.sourceRow) === Number(recommendation.evidence?.sourceRow)
+    && sameSourceFiles(resolution.metricSource.sourceFiles, recommendation.evidence?.sourceFiles)
+    && sameWritableTarget(resolution.writableTarget, writableTarget);
+}
+
 export function getRecommendationApprovalMissingFields(recommendation: ActionRecommendation): string[] {
   const missing: string[] = [];
   const requireField = (value: unknown, label: string) => {
@@ -150,6 +217,20 @@ export function getRecommendationApprovalMissingFields(recommendation: ActionRec
   if (!sourceFiles.length) missing.push('来源文件');
   if (sourceFiles.length && !sourceFiles.every(isRealReportSourceFile)) missing.push('真实来源报表');
   if (!positiveNumber(recommendation.evidence?.sourceRow)) missing.push('来源行号');
+  const writableTarget = recommendation.evidence?.writableTarget;
+  if (!writableTarget) {
+    missing.push('Ads 可写对象');
+  } else {
+    requireField(writableTarget.entityType, '可写对象类型');
+    requireField(writableTarget.entityId, '可写对象 ID');
+    requireField(writableTarget.entityName, '可写对象名称');
+    requireField(writableTarget.campaignName, '可写对象广告活动');
+    requireField(writableTarget.adGroupName, '可写对象广告组');
+    requireField(writableTarget.sourceFile, '可写对象来源文件');
+    if (!positiveNumber(writableTarget.sourceRow)) missing.push('可写对象来源行号');
+    requireField(writableTarget.identitySource, '可写对象身份来源');
+    requireField(writableTarget.identityProofPath, '可写对象身份凭证');
+  }
 
   return missing;
 }
@@ -164,6 +245,17 @@ export function getRecommendationApprovalBlockers(
   const blockers: string[] = [];
   const missingFields = getRecommendationApprovalMissingFields(recommendation);
   if (missingFields.length > 0) blockers.push(`缺少审批字段：${missingFields.join('、')}`);
+  const writableTarget = recommendation.evidence?.writableTarget;
+  if (writableTarget) {
+    const ownershipBlockers = getRecommendationWritableTargetOwnershipBlockers(
+      recommendation,
+      writableTarget,
+      options.sourceAuthority,
+    );
+    if (ownershipBlockers.length > 0) {
+      blockers.push(`Ads 可写对象不属于当前建议：${ownershipBlockers.join('、')}`);
+    }
+  }
   blockers.push(...getExecutableValueBlockers(recommendation));
   if (recommendation.status === 'needs_review') blockers.push('建议已进入复核队列');
   if (agreement === 'ai_only') blockers.push('AI-only 建议');
@@ -196,7 +288,9 @@ export function getRecommendationApprovalBlockers(
   }
   if (recommendation.evidence?.decisionRequiresReview === true) blockers.push('AI/规则合并标记需复核');
   if (aiActionParticipated && recommendation.evidence?.aiLifecycleStageRequiresReview === true) blockers.push('AI 阶段判断需要人工复核');
-  if (recommendation.evidence?.quantReviewRequired === true) blockers.push('规则量化要求人工复核');
+  if (recommendation.evidence?.quantReviewRequired === true && !hasCurrentQuantReviewResolution(recommendation)) {
+    blockers.push('规则量化要求人工复核');
+  }
   if (riskLevel === 'forbidden' || riskLevel === 'high' || riskLevel.includes('forbidden')) {
     blockers.push('高风险或禁止执行风险等级');
   }

@@ -78,6 +78,117 @@ export interface AiEvidenceDisplayItem {
   };
 }
 
+export type WritableAdEntityType = 'keyword' | 'auto_targeting' | 'product_targeting';
+
+export interface WritableAdTargetEvidence {
+  entityType: WritableAdEntityType;
+  entityId: string;
+  entityName: string;
+  campaignName: string;
+  adGroupName: string;
+  metricDate: string;
+  sourceFile: string;
+  sourceRow: number;
+  identitySource: 'ads_ui' | 'ads_api';
+  verifiedBy: string;
+  verifiedAt: string;
+  verificationNote: string;
+  identityProofPath: string;
+}
+
+export interface RecommendationReviewScope {
+  dateFrom: string;
+  dateTo: string;
+  storeName: string;
+  marketplaceCode: string;
+  asin: string;
+  batchId: string;
+}
+
+export interface WritableAdTargetReviewInput {
+  entityType: WritableAdEntityType;
+  entityId: string;
+  sourceFile: string;
+  sourceRow: number;
+  identitySource: 'ads_ui' | 'ads_api';
+  identityProofPath: string;
+  verificationNote: string;
+}
+
+export interface ResolveRecommendationReviewRequest {
+  recommendationId: number;
+  expectedRevision: number;
+  scope: RecommendationReviewScope;
+  review: {
+    reviewedBy: string;
+    rationale: string;
+    writableTarget: WritableAdTargetReviewInput;
+  };
+}
+
+export interface ResolveRecommendationReviewResult {
+  ok: true;
+  recommendationId: number;
+  previousStatus: 'needs_review';
+  status: 'pending';
+  revision: number;
+  reviewedAt: string;
+  resolvedBlockers: ['quant_review_required'];
+}
+
+export interface RecommendationReviewResolution {
+  schemaVersion: 1;
+  fromStatus: 'needs_review';
+  fromRevision: number;
+  resolvedRevision: number;
+  reviewedBy: string;
+  reviewedAt: string;
+  rationale: string;
+  resolvedBlockers: ['quant_review_required'];
+  scope: RecommendationReviewScope;
+  metricSource: {
+    batchId: string;
+    sourceFiles: string[];
+    sourceRow: number;
+  };
+  writableTarget: WritableAdTargetEvidence;
+}
+
+export interface BindRecommendationWritableTargetRequest {
+  recommendationId: number;
+  expectedRevision: number;
+  scope: RecommendationReviewScope;
+  binding: {
+    boundBy: string;
+    note: string;
+    writableTarget: WritableAdTargetReviewInput;
+  };
+}
+
+export interface BindRecommendationWritableTargetResult {
+  ok: true;
+  recommendationId: number;
+  status: 'pending';
+  revision: number;
+  boundAt: string;
+}
+
+export interface WritableAdTargetBinding {
+  schemaVersion: 1;
+  fromRevision: number;
+  boundRevision: number;
+  boundBy: string;
+  boundAt: string;
+  note: string;
+  scope: RecommendationReviewScope;
+  metricSource: {
+    batchId: string;
+    sourceFiles: string[];
+    sourceRow: number;
+  };
+  writableTarget: WritableAdTargetEvidence;
+}
+
 export interface AiEvidenceSufficiency {
   level: 'none' | 'low' | 'medium' | 'high';
   metricEvidenceCount: number;
@@ -155,7 +266,12 @@ export interface ActionEvidence {
   quantReasons?: string[];
   quantThresholds?: Record<string, number>;
   quantReviewRequired?: boolean;
+  writableTarget?: WritableAdTargetEvidence;
+  reviewResolution?: RecommendationReviewResolution;
+  writableTargetBinding?: WritableAdTargetBinding;
   batchId?: string;
+  reportType?: string;
+  sourceFile?: string;
   sourceFiles?: string[];
   sourceRow?: number;
   currency?: 'USD';

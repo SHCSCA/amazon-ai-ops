@@ -54,12 +54,25 @@ describe('PageFrame', () => {
 });
 
 describe('TaskBanner', () => {
+  it('exposes an explicit compact density contract for queue-first workspaces', () => {
+    const tree = TaskBanner({
+      compact: true,
+      title: '核对产品队列',
+      description: '先查看对象，再明确锁定经营范围。',
+    }) as ReactElement;
+
+    const banner = collectElements(tree, (element) => hasClass(element, 'task-banner'))[0];
+
+    expect(hasClass(banner, 'task-banner--compact')).toBe(true);
+    expect(banner.props['data-task-density']).toBe('compact');
+  });
+
   it('renders exactly one primary action and limits secondary actions to two', () => {
     const tree = TaskBanner({
       eyebrow: '下一安全动作',
       title: '补齐真实报表',
       description: '当前范围缺少广告活动报告。',
-      primaryAction: { label: '前往数据准备', onClick: vi.fn() },
+      primaryAction: { actionId: 'open-data-preparation', label: '前往数据准备', onClick: vi.fn() },
       secondaryActions: [
         { label: '查看缺失项', onClick: vi.fn() },
         { label: '打开说明', onClick: vi.fn() },
@@ -72,6 +85,7 @@ describe('TaskBanner', () => {
 
     expect(primary).toHaveLength(1);
     expect(primary[0].props.type).toBe('button');
+    expect(primary[0].props['data-action-id']).toBe('open-data-preparation');
     expect(textContent(primary[0])).toBe('前往数据准备');
     expect(secondary).toHaveLength(2);
     expect(textContent(tree)).not.toContain('不应出现');
@@ -106,6 +120,16 @@ describe('TaskBanner', () => {
     expect(peer.props['aria-busy']).toBeUndefined();
     expect(textContent(peer)).toBe('重新选择文件');
     expect(textContent(peerReason)).toBe('等待当前导入完成');
+  });
+
+  it('omits the task action group when an inspector owns the current primary action', () => {
+    const tree = TaskBanner({
+      title: '核验当前建议',
+      description: '决定动作已移入右侧检查器。',
+    }) as ReactElement;
+
+    expect(collectElements(tree, (element) => element.props['aria-label'] === '首屏任务动作')).toHaveLength(0);
+    expect(collectElements(tree, (element) => element.type === 'button')).toHaveLength(0);
   });
 });
 

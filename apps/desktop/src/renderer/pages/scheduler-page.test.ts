@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildSchedulerTaskPanelState, formatCronForOperator, schedulerActionButtonView, taskPurpose } from './scheduler-page';
 
@@ -73,6 +74,20 @@ describe('buildSchedulerTaskPanelState', () => {
       feedbackDetail: '立即执行失败：浏览器未登录。',
       feedbackTone: 'blocked',
     });
+  });
+});
+
+describe('scheduler first-screen task surface', () => {
+  it('renders one state-driven task banner without a duplicate confirmation surface', () => {
+    const source = readFileSync(new URL('./scheduler-page.tsx', import.meta.url), 'utf8');
+
+    expect(source.match(/<TaskBanner\b/g)).toHaveLength(1);
+    expect(source).not.toContain('scheduler-prototype-feedback');
+    expect(source).not.toContain('className="inline-confirmation"');
+    expect(source.match(/<ProgressiveDetails\b/g)).toHaveLength(1);
+    expect(source).not.toContain('<details');
+    const pageHeader = source.match(/<PageHeader[\s\S]*?\/>/)?.[0] || '';
+    expect(pageHeader).not.toContain('primaryAction=');
   });
 });
 

@@ -10,7 +10,7 @@ const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const NAV_RE = {
   dashboard: /今日看板|仪表盘/,
-  productManagement: /产品管理/,
+  productManagement: /产品工作台|产品管理/,
   dataCollection: /数据采集/,
   dataImport: /导入校验/,
   adQuant: /广告表现/,
@@ -159,6 +159,16 @@ async function assertGlobalGuards(page, key) {
   if (textContent.includes('pnpm run verify:ad-readback')) fail('Readback command wall is visible', key);
 }
 
+async function expectProductObjectWorkspace(page) {
+  const queue = page.locator('[data-workspace-queue="products"]');
+  await queue.waitFor({ state: 'visible', timeout: 5000 });
+  await queue.locator('[data-workspace-queue-scroll]').waitFor({ state: 'visible', timeout: 5000 });
+  await page.getByRole('heading', { name: '产品对象队列', level: 2, exact: true }).waitFor({ timeout: 5000 });
+  await page.getByRole('textbox', { name: '搜索产品', exact: true }).waitFor({ timeout: 5000 });
+  const h1Count = await page.getByRole('heading', { level: 1 }).count();
+  if (h1Count !== 1) fail('Product workspace must expose exactly one h1', String(h1Count));
+}
+
 async function navigateBusinessPage(page, nav, route) {
   await navigateLegacyRoute(page, route);
 }
@@ -249,6 +259,67 @@ async function main() {
       const nextRealFiles = hasRealFiles
         ? realReportFiles.map((file) => ({ ...file, importedRows }))
         : [];
+      const exactObjectKey = 'B0TESTASIN|d6-auto-test|d6-ad-group|user_search_term|search_term|test search term';
+      const exactTimeline = {
+        objectKey: exactObjectKey,
+        objectType: 'search_term',
+        objectName: 'test search term',
+        asin: 'B0TESTASIN',
+        campaignName: 'D6-auto-test',
+        adGroupName: 'D6-ad-group',
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        daysActive: 12,
+        lifecycleStage: 'keyword_exploration',
+        quantStatus: 'waste',
+        recommendedAction: 'lower_bid',
+        recommendedValue: '1.70',
+        trend: { spend: 'up', sales: 'flat' },
+        totals: {
+          impressions: 1000,
+          clicks: 88,
+          cost: 170.25,
+          orders: 3,
+          sales: 300.5,
+          acos: 0.566,
+          cpc: 1.93,
+          cvr: 0.034,
+          currency: 'USD',
+        },
+        thresholds: {
+          targetAcos: 0.25,
+          highAcosThreshold: 0.4,
+          noOrderClickThreshold: 30,
+          minSpend: 10,
+          bidAdjustPercent: 0.1,
+        },
+        reasons: ['mock smoke: exact report identity timeline.'],
+        reviewRequired: true,
+      };
+      const collisionTimelines = [
+        {
+          ...exactTimeline,
+          objectKey: 'B0TESTASIN|d6-auto-test|d6-ad-group|keyword|search_term|test search term',
+          dateFrom: '2026-05-01',
+          dateTo: '2026-05-02',
+          reasons: ['collision candidate: wrong report identity'],
+        },
+        {
+          ...exactTimeline,
+          objectType: 'target',
+          dateFrom: '2026-04-01',
+          dateTo: '2026-04-02',
+          reasons: ['collision candidate: wrong object type'],
+        },
+        {
+          ...exactTimeline,
+          objectKey: '',
+          dateFrom: '2026-03-01',
+          dateTo: '2026-03-02',
+          reasons: ['collision candidate: missing object key'],
+        },
+        exactTimeline,
+      ];
       return {
       scope: {
         dateFrom: '2026-06-01',
@@ -309,48 +380,14 @@ async function main() {
         cpc: importedRows > 0 ? 1.93 : 0,
         wastedSpend: null,
         highRiskCount: importedRows > 0 ? 1 : 0,
-        adObjectTimelines: importedRows > 0 ? [{
-          objectKey: 'B0TESTASIN|d6-auto-test|d6-ad-group|search_term|test search term',
-          objectType: 'search_term',
-          objectName: 'test search term',
-          asin: 'B0TESTASIN',
-          campaignName: 'D6-auto-test',
-          adGroupName: 'D6-ad-group',
-          dateFrom: '2026-06-01',
-          dateTo: '2026-06-12',
-          daysActive: 12,
-          lifecycleStage: 'keyword_exploration',
-          quantStatus: 'waste',
-          recommendedAction: 'lower_bid',
-          recommendedValue: '1.70',
-          trend: { spend: 'up', sales: 'flat' },
-          totals: {
-            impressions: 1000,
-            clicks: 88,
-            cost: 170.25,
-            orders: 3,
-            sales: 300.5,
-            acos: 0.566,
-            cpc: 1.93,
-            cvr: 0.034,
-            currency: 'USD',
-          },
-          thresholds: {
-            targetAcos: 0.25,
-            highAcosThreshold: 0.4,
-            noOrderClickThreshold: 30,
-            minSpend: 10,
-            bidAdjustPercent: 0.1,
-          },
-          reasons: ['mock smoke: object timeline uses imported daily facts.'],
-          reviewRequired: true,
-        }] : [],
+        adObjectTimelines: importedRows > 0 ? collisionTimelines : [],
         diagnostics: importedRows > 0 ? [{
           portfolioName: 'D6 Portfolio',
           campaignName: 'D6-auto-test',
           adGroupName: 'D6-ad-group',
           asin: 'B0TESTASIN',
-          objectType: 'user_search_term',
+          objectKey: exactObjectKey,
+          objectType: 'search_term',
           objectName: 'test search term',
           spend: 170.25,
           sales: 300.5,
@@ -643,6 +680,12 @@ async function main() {
       runAdStrategyDiagnosis: async (params) => {
         window.__businessUiActionLog = window.__businessUiActionLog || [];
         window.__businessUiActionLog.push({ type: 'runAdStrategyDiagnosis', params });
+        if (window.__mockAdQuantAiDelay) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        if (window.__mockAdQuantAiError) {
+          throw new Error('mock smoke: AI provider timeout；未生成任何正式建议。');
+        }
         if (window.__mockAdQuantAiFallback) {
           return {
             configured: false,
@@ -1022,11 +1065,11 @@ async function main() {
 
   const routes = [
     { nav: NAV_RE.dashboard, heading: /今日任务/, label: '今日任务', key: 'dashboard' },
-    { nav: NAV_RE.productManagement, heading: /产品管理/, label: '产品管理', key: 'product-management' },
-    { nav: NAV_RE.dataCollection, heading: /数据采集/, label: '数据采集', key: 'data-collection' },
-    { nav: NAV_RE.dataImport, heading: /导入校验/, label: '导入校验', key: 'data-import-validation' },
+    { nav: NAV_RE.productManagement, heading: /产品工作台/, label: '产品工作台', key: 'product-management' },
+    { nav: NAV_RE.dataCollection, heading: /报表采集/, label: '报表采集', key: 'data-collection' },
+    { nav: NAV_RE.dataImport, heading: /导入检查/, label: '导入检查', key: 'data-import-validation' },
     { nav: /运营事件/, heading: /运营事件/, label: '运营事件', key: 'operation-events' },
-    { nav: NAV_RE.adQuant, heading: /广告表现/, label: '广告表现', key: 'ad-quant' },
+    { nav: NAV_RE.adQuant, heading: /广告诊断/, label: '广告诊断', key: 'ad-quant' },
   ];
 
     for (const { nav, heading, label, key } of routes) {
@@ -1034,13 +1077,7 @@ async function main() {
     await page.getByRole('heading', { name: heading, level: 1 }).waitFor();
     await assertGlobalGuards(page, key);
     if (key === 'product-management') {
-      await expectVisible(page, '管理产品池、锁定当前 ASIN，再把产品上下文交给广告表现、关键词和 Listing。');
-      await expectVisible(page, '产品池');
-      await expectVisible(page, '当前产品');
-      await expectVisible(page, '数据状态');
-      await expectVisible(page, '日级账本');
-      await expectVisible(page, '产品列表');
-      await expectVisible(page, '搜索产品');
+      await expectProductObjectWorkspace(page);
     }
     const screenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -1062,8 +1099,9 @@ async function main() {
   await expectVisible(page, '选择运营产品');
   await expectVisible(page, '当前产品');
   await expectVisible(page, '待锁定');
-  await expectVisible(page, '真实数据');
+  await expectVisible(page, '逐类入库');
   await expectVisible(page, '0/8 类');
+  await expectVisible(page, '报表文件 0/8 类 · 先下载真实报表');
   await expectVisible(page, '广告表现');
   await expectVisible(page, '待量化');
   await expectVisible(page, '风险对象队列');
@@ -1118,7 +1156,7 @@ async function main() {
   await expectVisible(page, 'SQLite 日级指标');
   await expectVisible(page, '0 行可用');
   await expectVisible(page, '审计文件不参与计算');
-  await expectVisible(page, '回数据采集获取真实报表');
+  await expectVisible(page, '回到数据采集');
 
   await navigateBusinessPage(page, /运营事件/, 'operation-events');
   await page.locator('summary').filter({ hasText: '新增/维护事件、AI 使用说明和覆盖统计' }).click();
@@ -1127,7 +1165,7 @@ async function main() {
   await expectVisible(page, '判断产品推广阶段');
   await expectVisible(page, '只影响建议，不自动执行');
   await expectVisible(page, '当前事件覆盖');
-  await page.getByRole('button', { name: '新增事件', exact: true }).click();
+  await page.getByRole('button', { name: '新增运营事件', exact: true }).click();
   await expectVisible(page, 'Coupon/折扣');
   await expectVisible(page, 'BD/秒杀');
   await expectVisible(page, '大促');
@@ -1155,8 +1193,8 @@ async function main() {
   await expectInViewport(page, '入库指标', 'initial data collection first viewport');
   await expectInViewport(page, '重新获取完整 8 类报表', 'initial data collection first viewport');
   await expectInViewport(page, '更多报表操作', 'initial data collection first viewport');
-  await expectNotInViewport(page, '浏览器状态', 'initial data collection first viewport');
-  await expectNotInViewport(page, '采集进度', 'initial data collection first viewport');
+  await expectInViewport(page, '浏览器状态', 'initial data collection first viewport');
+  await expectInViewport(page, '采集进度', 'initial data collection first viewport');
   await expectNotInViewport(page, '真实报表目录', 'initial data collection first viewport');
   await expectNotInViewport(page, '当前范围没有可分析的 Lingxing xlsx/xls/csv', 'initial data collection first viewport');
   await expectNotInViewport(page, '系统只在四段都闭合后放行', 'initial data collection first viewport');
@@ -1185,7 +1223,6 @@ async function main() {
   await page.getByRole('button', { name: '重新获取完整 8 类报表', exact: true }).first().click();
   await expectVisible(page, '动作未完成');
   await expectVisible(page, '重新创建报表前，需要先验证当前范围的下载中心页面');
-  await page.locator('summary').filter({ hasText: '辅助采集账本、流程和技术细节' }).click();
   await expectVisible(page, '验证页面');
   await expectVisible(page, '重试获取 8 类');
   {
@@ -1348,7 +1385,7 @@ async function main() {
   await page.evaluate(() => {
     window.__forceDownloadExistingNoNewFiles = false;
   });
-  await page.locator('.data-collection-primary-panel').getByRole('button', { name: /重新获取完整 8 类/ }).click();
+  await page.getByRole('button', { name: '重新获取完整 8 类报表', exact: true }).first().click();
   await page.getByText('真实报表已下载，但自动导入未写入广告指标', { exact: false }).first().waitFor({ timeout: 5000 });
   const recreateFullFeedback = await page.locator('.collection-action-feedback').first().innerText({ timeout: 5000 });
   for (const text of ['最近动作', '已返回', '真实报表已下载，但自动导入未写入广告指标']) {
@@ -1369,7 +1406,7 @@ async function main() {
   await page.evaluate(() => {
     window.__forceZeroImportResult = true;
   });
-  await page.getByRole('button', { name: '导入已下载表格' }).click();
+  await page.getByRole('button', { name: '导入已下载表格' }).first().click();
     await page.getByText('导入未完成：解析 8 个真实报表，写入 0 行广告指标，错误 1 个。', { exact: true }).first().waitFor({ timeout: 5000 });
     await page.getByText('真实报表导入未形成可量化广告数据', { exact: false }).first().waitFor({ timeout: 5000 });
     await expectInBody(page, '真实报表未解析出广告指标行', 'zero import error reason');
@@ -1377,7 +1414,7 @@ async function main() {
   await page.evaluate(() => {
     window.__forceZeroImportResult = false;
   });
-  await page.getByRole('button', { name: '导入已下载表格' }).click();
+  await page.getByRole('button', { name: '导入已下载表格' }).first().click();
     await page.getByText('导入完成：解析 8 个真实报表，写入 96 行广告指标，错误 0 个。', { exact: true }).first().waitFor({ timeout: 5000 });
     await expectVisible(page, '真实报表已经入库，当前范围有 96 行日级广告指标。');
     await expectVisible(page, '可进入建议');
@@ -1456,11 +1493,11 @@ async function main() {
       bodyTextSample: (await bodyText(page)).slice(0, 1800),
   };
   await navigateBusinessPage(page, NAV_RE.productManagement, 'product-management');
-  await page.locator('tr', { hasText: 'B0TESTASIN' }).getByRole('button', { name: '锁定' }).click();
-  await expectVisible(page, 'D6 Sensor Light / B0TESTASIN');
-  await page.locator('tr', { hasText: 'B0TESTASIN' }).getByRole('button', { name: '详情' }).click();
-  await page.getByRole('button', { name: '维护', exact: true }).click();
-  await expectVisible(page, '维护产品信息');
+  await page.getByRole('row', { name: /B0TESTASIN/ }).getByRole('button', { name: '锁定', exact: true }).click();
+  await expectVisible(page, '已锁定产品上下文');
+  await page.getByRole('row', { name: /B0TESTASIN/ }).click();
+  await page.getByRole('tab', { name: '维护', exact: true }).click();
+  await page.getByRole('button', { name: '保存产品信息', exact: true }).waitFor();
   await navigateBusinessPage(page, NAV_RE.dashboard, 'dashboard');
   await expectVisible(page, '下一安全动作');
   await expectVisible(page, '复核优化建议');
@@ -1468,9 +1505,9 @@ async function main() {
   await expectVisible(page, '建议中仍有高风险或需人工复核项，不能直接进入执行。');
   await expectVisible(page, '当前产品');
   await expectVisible(page, 'B0TESTASIN');
-  await expectVisible(page, '真实数据');
-  await expectVisible(page, '8/8');
-  await expectVisible(page, '已入库 96 行');
+  await expectVisible(page, '逐类入库');
+  await expectVisible(page, '8/8 类');
+  await expectVisible(page, '报表文件 8/8 类 · 96 行');
   await expectVisible(page, '96 行');
   await expectVisible(page, '广告表现');
   await expectVisible(page, 'ACOS 56.6%');
@@ -1543,180 +1580,116 @@ async function main() {
       fail('Selected retry smoke should call retry for all selected report types without losing full-8 state', JSON.stringify(actionLog));
     }
 
-    await navigateBusinessPage(page, NAV_RE.adQuant, 'ad-quant');
-  await page.locator('summary').filter({ hasText: '辅助口径、AI 诊断和上下文' }).click();
-  await page.getByText('展开当前产品实体诊断表', { exact: false }).click();
-  await expectVisible(page, '广告组合');
-  await expectVisible(page, '广告活动');
-  await expectVisible(page, '广告组');
-  await expectVisible(page, '产品/ASIN');
-  await expectVisible(page, '对象类型');
-  await expectVisible(page, '关键词/搜索词/投放对象');
-  await expectVisible(page, '花费');
-  await expectVisible(page, '销售');
-  await expectVisible(page, '订单');
-  await expectVisible(page, '点击');
-  await expectVisible(page, 'ACOS');
-  await expectVisible(page, 'CVR');
-  await expectVisible(page, 'CPC');
-  await expectVisible(page, '诊断');
-  await expectVisible(page, '建议方向');
+  await navigateBusinessPage(page, NAV_RE.adQuant, 'ad-quant');
+  await page.locator('summary').filter({ hasText: '技术依据与诊断上下文' }).click();
+  await expectVisible(page, '广告对象诊断');
+  await expectVisible(page, '筛选仅改变当前队列视图；正式资格仍按未筛选的 1 个对象计算。');
+  await page.locator('[data-workspace-queue-scroll]').waitFor();
+  await page.getByRole('row', { name: /复核 test search term/ }).waitFor();
   await expectVisible(page, '数据来源与量化口径');
-  await expectVisible(page, '真实原始报表');
-  await expectVisible(page, '导入指标行');
-  await expectVisible(page, '量化口径');
+  await expectVisible(page, '真实报表 8/8');
+  await expectVisible(page, '逐类入库 8/8');
+  await expectVisible(page, '指标 96 行');
   await expectVisible(page, '搜索词总盘口径');
-  await expectVisible(page, '实体诊断');
-  await expectVisible(page, '对象时间线');
-  await expectVisible(page, '阈值与策略来源');
-  await expectVisible(page, '规则量化');
-  await expectVisible(page, '当前页先用确定性规则打底');
+  await expectVisible(page, '可加总 12 行 / 可行动 12 行 / 分解明细 72 行 / 产品配置 1/1。');
+  await expectVisible(page, 'AI 与规则诊断依据');
   await expectVisible(page, '最近 AI 诊断记录');
-  await page.getByText('展开最近 AI 诊断记录', { exact: false }).click();
-  await expectVisible(page, 'deepseek-chat');
-  await expectVisible(page, 'AI 调用成功');
-  await expectVisible(page, 'AI 调用失败');
-  await expectVisible(page, 'AI 输出格式错误：legacy_strategy_v0');
-  await expectVisible(page, '正式建议 1');
-  await expectVisible(page, '洞察 1');
   await expectVisible(page, '证据包 5 条');
-  await expectVisible(page, '历史证据明细');
-  await expectInBody(page, 'historical test search term / 2026-06-12');
-  await expectInBody(page, '行 19');
-  await expectVisible(page, '2026-06-12T11:00:00.000Z');
-  await expectVisible(page, 'AI 阶段诊断');
-  await expectVisible(page, 'DeepSeek 会结合每日广告事实、运营事件、产品配置和规则结果，给出动态阈值和解释，不写入广告账户。');
-  await expectVisible(page, '人工覆盖');
-  await expectVisible(page, '执行边界');
-  await expectVisible(page, '量化不直接改广告');
-  await expectVisible(page, '调整规则阈值');
-  await expectVisible(page, '记录运营事件');
-  await expectVisible(page, '生成规则建议');
-  await expectVisible(page, '建议输入检查');
-  await expectVisible(page, '真实报表');
-  await expectVisible(page, '8/8');
-  await expectVisible(page, '指标');
-  await expectVisible(page, '96 行');
-  await expectVisible(page, '可建议对象');
-  await expectVisible(page, '诊断');
-  await expectVisible(page, '对象时间线');
-  await expectVisible(page, '产品目标');
-  await expectVisible(page, '运营事件');
-  await expectVisible(page, '规则阈值');
-  await expectVisible(page, '建议入口：可生成规则建议。按钮不会执行广告动作，只进入建议页等待审批。');
-  await expectVisible(page, '输入明细和判断依据');
-  await page.locator('summary').filter({ hasText: '输入明细和判断依据' }).click();
-  await expectVisible(page, '真实数据输入');
-  await expectVisible(page, '8/8 类真实报表 / 96 行指标');
-  await expectVisible(page, '只读取当前范围真实 xlsx/xls/csv 和 DB 指标，不使用审计文件代替广告数据。');
-  await expectVisible(page, '可行动对象');
-  await expectVisible(page, '1 个诊断 / 12 行可建议');
-  await expectVisible(page, '只有 keyword、search term、target 等可执行口径会进入建议生成。');
-  await expectVisible(page, '产品阶段线索');
-  await expectVisible(page, '1 条对象时间线 / 1 个产品配置');
-  await expectVisible(page, 'AI 会结合对象生命周期、产品阶段、成本目标和趋势判断当前推广阶段。');
-  await expectVisible(page, '运营事件');
-  await expectInBody(page, '2 条事件');
-  await expectVisible(page, 'Coupon、BD、调价、库存和 Listing 事件会进入 AI 上下文。');
-  await expectVisible(page, '规则阈值');
   await expectVisible(page, '目标 ACOS 25.0% / 高风险 40.0% / 无订单 30 点击 / 最低花费 $10.00');
-  await expectVisible(page, '产品目标');
-  await expectVisible(page, '1 个产品有目标阈值');
-  await expectVisible(page, '目标 ACOS、TACOS、净利率和最低价会约束 AI 阈值建议。');
-  await expectVisible(page, '批次 1');
-  await expectVisible(page, '真实文件 8/8');
-  await expectVisible(page, 'DB 指标 96');
-  await expectInBody(page, '运营事件 2');
-  await expectVisible(page, '可建议对象 12');
-  await expectVisible(page, '补充运营事件');
-  await expectVisible(page, '生成规则建议');
-  await expectVisible(page, '批次：mock_batch_scope');
-  await expectVisible(page, '产品广告历史账本');
-  await page.getByText('展开当前产品广告历史账本', { exact: false }).click();
-  await expectVisible(page, 'B0TESTASIN');
-  await expectVisible(page, '活跃 12 天');
-  await expectInBody(page, '$170.25 / $300.50 / 3 单');
-  await expectVisible(page, '日级趋势');
-  await expectVisible(page, '2026-06-01');
-  await expectVisible(page, '2026-06-12');
-  await expectVisible(page, '事件叠加');
-  await expectVisible(page, '10% Coupon started');
-  await expectVisible(page, '测词');
-  await expectVisible(page, '产品/广告对象阶段时间线');
-  await page.getByText('展开当前产品对象时间线', { exact: false }).click();
-  await expectVisible(page, '浪费风险');
-  await expectInBody(page, '趋势：花费上升 / 销售平稳');
-  await expectInBody(page, '阈值：目标 ACOS 25.0% / 高风险 40.0% / 无订单 30 点击 / 止损 $10.00');
-  await expectInBody(page, '来源：当前规则配置；AI 动态阈值在“优化建议”生成时结合运营事件、产品阶段和每日趋势复核。');
-  await expectVisible(page, '主要问题摘要');
-  await expectVisible(page, '无订单花费');
-  await expectVisible(page, '复核队列');
-  await expectVisible(page, '风险 ACOS 40.0%');
-  await expectVisible(page, '#1 ACOS 高于 40.0%');
-  await expectVisible(page, '复核队列只用于决定先看哪几行；真正的广告动作仍需进入优化建议、审批和结果核对。');
-  await page.getByRole('button', { name: '运行 AI 阶段分析', exact: true }).first().click();
-  await expectVisible(page, 'AI 动态阈值建议');
-  await expectVisible(page, 'AI 与规则诊断状态');
-  await expectVisible(page, 'AI 判断当前处于测词，可用于动态阈值复核。');
-  await expectVisible(page, '可生成 AI+规则建议');
-  await expectVisible(page, '可以进入优化建议，但正式动作仍需审批和结果核对。');
-  await expectVisible(page, '模型：deepseek-chat；输入 96 行广告指标、1 条规则候选、2 条运营事件、1 个产品配置。');
-  await expectInBody(page, '引用证据包：共 5 条，其中报表指标 1、对象时间线 1、运营事件 1、产品配置 1、规则候选 1。');
-  await expectVisible(page, 'Coupon 和 BD 背景显示该产品仍处于测词阶段，同时需要收紧高 ACOS 浪费对象。');
-  await expectInBody(page, 'AI 阶段判断：测词。为什么这么判断：搜索词花费和促销事件显示仍处于测词阶段。 引用证据 1 条。');
-  await expectVisible(page, 'AI 已参与');
-  await expectVisible(page, 'AI 候选 1');
-  await expectVisible(page, '洞察未采纳 1');
-  await expectVisible(page, '产品配置 1');
-  await expectVisible(page, 'AI 判断依据');
-  await expectInBody(page, '阶段证据：对象时间线 / product B0TESTASIN / keyword_exploration / 12 days');
-  await expectInBody(page, '$170.25 / $300.50 / 3 单 / 88 点击');
-  await expectVisible(page, 'AI 证据明细');
-  await expectVisible(page, '引用状态');
-  await expectVisible(page, '已被 AI 引用');
-  await expectVisible(page, '报表指标');
-  await expectInBody(page, 'test search term / 2026-06-12');
-  await expectInBody(page, '$170.25 / $300.50 / 3 单 / 88 点击');
+  await expectVisible(page, '当前总盘只读取 mock_batch_scope');
+  await page.locator('summary').filter({ hasText: '技术依据与诊断上下文' }).click();
+  await page.getByRole('row', { name: /复核 test search term/ }).click();
+  await expectVisible(page, '当前规则判断');
+  await expectVisible(page, 'ACOS 高于 40.0%');
   await expectVisible(page, '对象时间线');
-  await expectVisible(page, 'product B0TESTASIN / keyword_exploration / 12 days');
-  await expectVisible(page, '阶段 测词 / 活跃 12 天 / 2026-06-01 至 2026-06-12');
-  await expectInBody(page, '最近日级：2026-06-01 $22.50 / 0 单；2026-06-08 $63.20 / 1 单；2026-06-12 $84.55 / 2 单');
-  await expectVisible(page, '运营事件');
+  await expectVisible(page, '2026-06-01 至 2026-06-12');
+  await expectVisible(page, '花费上升 / 销售平稳');
+  await expectVisible(page, 'mock smoke: exact report identity timeline.');
+  await expectNotInBody(page, 'collision candidate: wrong report identity');
+  await expectNotInBody(page, 'collision candidate: wrong object type');
+  await expectNotInBody(page, 'collision candidate: missing object key');
+  await expectVisible(page, '产品上下文与历史');
+  await expectVisible(page, 'D6 Sensor Light');
+  await expectVisible(page, '目标 ACOS 35.0%');
   await expectVisible(page, '10% Coupon started');
-  await expectVisible(page, '产品配置');
-  await expectVisible(page, 'B0TESTASIN / keyword_exploration');
-  await expectVisible(page, '目标 ACOS 对比');
-  await expectVisible(page, '规则 25.0% / AI 35.0%');
-  await expectInBody(page, 'AI 更宽松 10.0%。AI 理由：产品目标 ACOS 和探索阶段允许更高容忍度。 引用证据 2 条。');
-  await expectVisible(page, '高风险 ACOS 对比');
-  await expectVisible(page, '规则 40.0% / AI 55.0%');
-  await expectInBody(page, '复核原因：AI 阈值建议缺少指标或对象时间线证据。');
-  await expectVisible(page, '无订单点击 对比');
-  await expectVisible(page, '规则 30 点击 / AI 18 点击');
-  await expectVisible(page, '最低花费 对比');
-  await expectVisible(page, '规则 $10.00 / AI $15.00');
-  await expectVisible(page, 'AI 洞察但未采纳的候选动作');
-  await expectVisible(page, '未绑定洞察词');
-  await expectInBody(page, '未进入优化建议池');
-  await expectVisible(page, '最终采用方式');
-  await expectInBody(page, '规则阈值继续作为确定性安全边界；AI 阈值只作为当前范围的阶段诊断建议。');
+  await expectVisible(page, '范围级 AI 总结');
+  await expectVisible(page, '执行安全边界');
+  await expectVisible(page, '本页只做诊断和证据复核，不写入 Amazon Ads。任何动作仍需进入优化建议、人工审批，并完成执行回读证据。');
+  await page.getByRole('button', { name: '关闭详情检查器', exact: true }).click();
+  const technicalSummary = page.locator('summary').filter({ hasText: '技术依据与诊断上下文' });
+  const technicalDetails = technicalSummary.locator('..');
+  const aiRunFeedback = page.locator('#ai-strategy-run-feedback');
+  const assertTechnicalFeedbackClosedAndVisible = async (label) => {
+    if (await technicalDetails.getAttribute('open') !== null) {
+      fail(`${label}: technical disclosure should remain closed`);
+    }
+    if (await aiRunFeedback.count() !== 1) {
+      fail(`${label}: expected exactly one visible AI run feedback node`);
+    }
+    const geometry = await aiRunFeedback.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        display: getComputedStyle(element).display,
+        top: rect.top,
+        bottom: rect.bottom,
+        viewportHeight: window.innerHeight,
+      };
+    });
+    if (geometry.display === 'none' || geometry.top < 0 || geometry.bottom > geometry.viewportHeight) {
+      fail(`${label}: AI run feedback is not fully visible in the viewport`, JSON.stringify(geometry));
+    }
+  };
+  await page.evaluate(() => {
+    window.__mockAdQuantAiDelay = true;
+  });
+  await page.getByRole('button', { name: '运行 AI 阶段分析', exact: true }).first().click();
+  await expectVisible(page, 'AI 阶段分析运行中');
+  await assertTechnicalFeedbackClosedAndVisible('AI loading');
+  await expectVisible(page, 'AI 阶段分析已完成');
+  await expectVisible(page, 'AI 已完成');
+  await assertTechnicalFeedbackClosedAndVisible('AI success');
+  await expectNotInBody(page, 'AI 阶段分析运行中');
+  await page.evaluate(() => {
+    window.__mockAdQuantAiDelay = false;
+  });
+  await technicalSummary.click();
+  await expectVisible(page, '已采纳');
+  await expectVisible(page, '可生成 AI+规则建议');
+  await expectInBody(page, '模型 deepseek-chat 已返回 1 条 AI 候选、1 条仅洞察，引用 5 条证据');
+  await expectVisible(page, 'AI 判断当前处于测词，可用于动态阈值复核。');
+  await expectVisible(page, '搜索词花费和促销事件显示仍处于测词阶段。');
+  await expectVisible(page, '可以进入优化建议，但正式动作仍需审批和结果核对。');
+  await technicalSummary.click();
   await page.evaluate(() => {
     window.__mockAdQuantAiFallback = true;
   });
   await page.getByRole('button', { name: '运行 AI 阶段分析', exact: true }).first().click();
-  await expectVisible(page, '规则兜底阈值建议');
+  await expectVisible(page, 'AI 阶段分析已完成，当前使用规则兜底');
   await expectVisible(page, '规则兜底');
-  await expectVisible(page, 'AI 未连接：当前只使用规则量化。可在设置页测试 DeepSeek 后重新分析。');
+  await assertTechnicalFeedbackClosedAndVisible('AI fallback');
+  await expectVisible(page, '未配置 AI Key，广告阶段诊断使用规则兜底');
+  await technicalSummary.click();
+  await expectVisible(page, 'AI 未采纳，当前使用规则量化兜底。');
+  await technicalSummary.click();
+  await page.evaluate(() => {
+    window.__mockAdQuantAiFallback = false;
+    window.__mockAdQuantAiError = true;
+  });
+  await page.getByRole('button', { name: '运行 AI 阶段分析', exact: true }).first().click();
+  await expectVisible(page, 'AI 阶段分析失败');
+  await expectVisible(page, 'mock smoke: AI provider timeout；未生成任何正式建议。');
+  await expectVisible(page, '重新运行 AI');
+  await expectVisible(page, '检查 AI 设置');
+  await assertTechnicalFeedbackClosedAndVisible('AI failure');
+  await expectNotInBody(page, 'AI 阶段分析已完成，当前使用规则兜底');
   const adQuantActionLog = await page.evaluate(() => window.__businessUiActionLog || []);
-  if (adQuantActionLog.filter((item) => item.type === 'runAdStrategyDiagnosis').length < 2) {
-    fail('Ad quant smoke did not call AI strategy diagnosis for success and fallback states', JSON.stringify(adQuantActionLog));
+  if (adQuantActionLog.filter((item) => item.type === 'runAdStrategyDiagnosis').length < 3) {
+    fail('Ad quant smoke did not call AI strategy diagnosis for success, fallback, and error states', JSON.stringify(adQuantActionLog));
   }
   if (!adQuantActionLog.some((item) => item.type === 'listAiDiagnosisRuns' && item.params?.limit === 5)) {
     fail('Ad quant smoke did not request recent AI diagnosis runs', JSON.stringify(adQuantActionLog));
   }
-  await expectVisible(page, '量化后动作');
-  await expectVisible(page, '可以进入优化建议，但仍需人工审批和回读。');
-  await expectVisible(page, '去生成优化建议');
+  await technicalSummary.click();
   await page.getByText('总盘使用搜索词报表汇总，避免广告活动/广告组/投放位置等报表重复累加。', { exact: false }).first().waitFor({ timeout: 5000 });
   await expectVisible(page, 'test search term');
   const adQuantAfterImportScreenshotPath = path.join(evidenceDir, `business-ui-data-pipeline-ad-quant-after-import-${runId}.png`);

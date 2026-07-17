@@ -30,3 +30,5 @@ export type {
   WorkspaceStateKind,
   WorkspaceStateProps,
 } from './workspace-state';
+export { WorkspaceSubviewShell, workspaceSubviewIndexFromKey } from './workspace-subview-shell';
+export type { WorkspaceSubviewShellProps, WorkspaceSubviewTab } from './workspace-subview-shell';

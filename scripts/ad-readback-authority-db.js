@@ -185,23 +185,130 @@ function assertEqual(actual, expected, label, normalize = text) {
   }
 }
 
-function recommendationObjectName(row, recommendationEvidence) {
-  return text(recommendationEvidence.searchTerm)
-    || text(recommendationEvidence.targeting)
-    || text(row.entity_name);
+const WRITABLE_AD_ENTITY_TYPES = new Set(['keyword', 'auto_targeting', 'product_targeting']);
+
+function requireVerifiedWritableTarget(recommendationEvidence, syntheticRecommendationEntityId) {
+  const writableTarget = objectOrEmpty(recommendationEvidence.writableTarget);
+  const entityType = normalizedText(writableTarget.entityType);
+  const entityId = text(writableTarget.entityId);
+  const entityName = text(writableTarget.entityName);
+  const campaignName = text(writableTarget.campaignName);
+  const adGroupName = text(writableTarget.adGroupName);
+  const metricDate = text(writableTarget.metricDate);
+  const sourceFile = text(writableTarget.sourceFile);
+  const sourceRow = Number(writableTarget.sourceRow);
+  const verifiedAt = timestampMs(writableTarget.verifiedAt);
+  const identityProofPath = text(writableTarget.identityProofPath);
+
+  if (
+    !WRITABLE_AD_ENTITY_TYPES.has(entityType)
+    || !entityId
+    || normalizedText(entityId) === normalizedText(syntheticRecommendationEntityId)
+    || !entityName
+    || !campaignName
+    || !adGroupName
+    || !metricDate
+    || !sourceFile
+    || !Number.isInteger(sourceRow)
+    || sourceRow <= 0
+    || !text(writableTarget.verifiedBy)
+    || !['ads_ui', 'ads_api'].includes(normalizedText(writableTarget.identitySource))
+    || !Number.isFinite(verifiedAt)
+    || !text(writableTarget.verificationNote)
+    || !identityProofPath
+    || normalizedText(campaignName) !== normalizedText(recommendationEvidence.campaignName)
+    || normalizedText(adGroupName) !== normalizedText(recommendationEvidence.adGroupName)
+  ) {
+    throw new Error('SQLite authority requires an independently verified writable Ads target.');
+  }
+
+  return {
+    entityType,
+    entityId,
+    entityName,
+    campaignName,
+    adGroupName,
+    metricDate,
+    sourceFile,
+    sourceRow,
+    identityProofPath,
+  };
+}
+
+function sameWritableTarget(leftValue, rightValue) {
+  const left = objectOrEmpty(leftValue);
+  const right = objectOrEmpty(rightValue);
+  return normalizedText(left.entityType) === normalizedText(right.entityType)
+    && text(left.entityId) === text(right.entityId)
+    && normalizedText(left.entityName) === normalizedText(right.entityName)
+    && normalizedText(left.campaignName) === normalizedText(right.campaignName)
+    && normalizedText(left.adGroupName) === normalizedText(right.adGroupName)
+    && text(left.metricDate) === text(right.metricDate)
+    && normalizedPath(left.sourceFile) === normalizedPath(right.sourceFile)
+    && Number(left.sourceRow) === Number(right.sourceRow)
+    && normalizedText(left.identitySource) === normalizedText(right.identitySource)
+    && text(left.verifiedBy) === text(right.verifiedBy)
+    && timestampMs(left.verifiedAt) === timestampMs(right.verifiedAt)
+    && text(left.verificationNote) === text(right.verificationNote)
+    && normalizedPath(left.identityProofPath) === normalizedPath(right.identityProofPath);
+}
+
+function assertApprovedQuantReviewResolution(recommendationEvidence, row, authority) {
+  if (recommendationEvidence.quantReviewRequired !== true) return;
+  const resolution = objectOrEmpty(recommendationEvidence.reviewResolution);
+  const metricSource = objectOrEmpty(resolution.metricSource);
+  const scope = objectOrEmpty(resolution.scope);
+  const decision = objectOrEmpty(recommendationEvidence.approvalDecision);
+  const blockers = Array.isArray(resolution.resolvedBlockers)
+    ? resolution.resolvedBlockers.map(text).filter(Boolean)
+    : [];
+  const fromRevision = Number(resolution.fromRevision);
+  const resolvedRevision = Number(resolution.resolvedRevision);
+  const reviewedAt = timestampMs(resolution.reviewedAt);
+  const approvedAt = timestampMs(decision.decidedAt);
+  const valid = Number(resolution.schemaVersion) === 1
+    && resolution.fromStatus === 'needs_review'
+    && Number.isInteger(fromRevision)
+    && fromRevision >= 0
+    && Number.isInteger(resolvedRevision)
+    && resolvedRevision === fromRevision + 1
+    && resolvedRevision + 1 === Number(row.revision)
+    && blockers.length === 1
+    && blockers[0] === 'quant_review_required'
+    && Boolean(text(resolution.reviewedBy))
+    && Boolean(text(resolution.rationale))
+    && Number.isFinite(reviewedAt)
+    && Number.isFinite(approvedAt)
+    && reviewedAt <= approvedAt
+    && text(scope.dateFrom) === text(authority.dateFrom)
+    && text(scope.dateTo) === text(authority.dateTo)
+    && normalizedText(scope.storeName) === normalizedText(authority.storeName)
+    && normalizedText(scope.marketplaceCode) === normalizedText(authority.marketplaceCode)
+    && normalizedAsin(scope.asin) === normalizedAsin(authority.asin)
+    && text(scope.batchId) === text(authority.batchId)
+    && text(metricSource.batchId) === text(recommendationEvidence.batchId)
+    && samePathSet(stringArray(metricSource.sourceFiles), stringArray(recommendationEvidence.sourceFiles))
+    && Number(metricSource.sourceRow) === Number(recommendationEvidence.sourceRow)
+    && sameWritableTarget(resolution.writableTarget, recommendationEvidence.writableTarget);
+  if (!valid) {
+    throw new Error('SQLite authority requires a matching prior-revision review resolution for quant-review approval.');
+  }
 }
 
 function assertTargetMatches(evidence, row, recommendationEvidence) {
   const target = objectOrEmpty(evidence.target);
+  const writableTarget = requireVerifiedWritableTarget(recommendationEvidence, row.entity_id);
   assertEqual(target.storeName, row.store_name, 'target.storeName', normalizedText);
   assertEqual(target.marketplaceCode, row.marketplace_code, 'target.marketplaceCode', normalizedText);
   assertEqual(target.asin, row.asin || recommendationEvidence.asin, 'target.asin', normalizedAsin);
   assertEqual(target.portfolioName, recommendationEvidence.portfolioName, 'target.portfolioName');
-  assertEqual(target.metricDate, recommendationEvidence.date, 'target.metricDate');
-  assertEqual(target.campaignName, recommendationEvidence.campaignName, 'target.campaignName');
-  assertEqual(target.adGroupName, recommendationEvidence.adGroupName, 'target.adGroupName');
-  assertEqual(target.entityType, row.entity_type, 'target.entityType');
-  assertEqual(target.entityName, recommendationObjectName(row, recommendationEvidence), 'target.entityName');
+  assertEqual(target.metricDate, writableTarget.metricDate, 'target.metricDate');
+  assertEqual(target.campaignName, writableTarget.campaignName, 'target.campaignName');
+  assertEqual(target.adGroupName, writableTarget.adGroupName, 'target.adGroupName');
+  assertEqual(target.entityType, writableTarget.entityType, 'target.entityType');
+  assertEqual(target.entityId, writableTarget.entityId, 'target.entityId');
+  assertEqual(target.entityName, writableTarget.entityName, 'target.entityName');
+  assertEqual(target.identityProofPath, writableTarget.identityProofPath, 'target.identityProofPath');
   assertEqual(target.actionType, row.action_type, 'target.actionType');
 }
 
@@ -326,6 +433,57 @@ function assertCurrentPipelineAuthority(db, evidence, authority) {
     throw new Error('SQLite authority mismatch: source files are not current real report files.');
   }
 
+  const recommendationId = Number(evidence.authority?.recommendationId);
+  const row = db.prepare('SELECT entity_id, evidence_json FROM action_recommendations WHERE id = ?').get(recommendationId);
+  const recommendationEvidence = parseRecommendationEvidence(row);
+  const writableTarget = requireVerifiedWritableTarget(recommendationEvidence, row.entity_id);
+  if (!allowed.has(normalizedPath(writableTarget.sourceFile))) {
+    throw new Error('SQLite authority mismatch: writable Ads target source file is not in the current batch.');
+  }
+  const identityProofPath = path.resolve(writableTarget.identityProofPath);
+  if (!fs.existsSync(identityProofPath) || !fs.statSync(identityProofPath).isFile()) {
+    throw new Error('SQLite authority mismatch: writable Ads target identity proof is missing.');
+  }
+  const writableSourceCandidates = metricSourceCandidates([writableTarget.sourceFile]);
+  const writableSourcePlaceholders = writableSourceCandidates.map(() => '?').join(', ');
+  const writableMetrics = db.prepare(`
+    SELECT
+      date,
+      campaign_name,
+      ad_group_name,
+      targeting,
+      source_file,
+      source_row
+    FROM ad_daily_metrics
+    WHERE batch_id = ?
+      AND report_type = ?
+      AND date >= ?
+      AND date <= ?
+      AND COALESCE(store_name, '') = COALESCE(?, '')
+      AND COALESCE(marketplace_code, '') = COALESCE(?, '')
+      AND upper(COALESCE(asin, '')) = upper(?)
+      AND source_file IN (${writableSourcePlaceholders})
+      AND source_row = ?
+  `).all(
+    text(authority.batchId),
+    writableTarget.entityType,
+    text(authority.dateFrom),
+    text(authority.dateTo),
+    text(authority.storeName),
+    text(authority.marketplaceCode),
+    text(authority.asin),
+    ...writableSourceCandidates,
+    writableTarget.sourceRow,
+  );
+  if (writableMetrics.length !== 1) {
+    throw new Error('SQLite authority mismatch: writable Ads target does not map to exactly one current imported metric row.');
+  }
+  const writableMetric = writableMetrics[0];
+  assertEqual(writableMetric.date, writableTarget.metricDate, 'writable target metricDate');
+  assertEqual(writableMetric.campaign_name, writableTarget.campaignName, 'writable target campaignName', normalizedText);
+  assertEqual(writableMetric.ad_group_name, writableTarget.adGroupName, 'writable target adGroupName', normalizedText);
+  assertEqual(writableMetric.targeting, writableTarget.entityName, 'writable target entityName', normalizedText);
+
   const sourcePlaceholders = allowedSourceFiles.map(() => '?').join(', ');
   const reportPlaceholders = ACTIONABLE_REPORT_TYPES.map(() => '?').join(', ');
   const nullTypePatterns = [
@@ -407,9 +565,13 @@ function assertCurrentAdReadbackDbAuthority(evidence, options = {}) {
 
     const recommendationEvidence = parseRecommendationEvidence(row);
     assertEqual(recommendationEvidence.batchId, authority.batchId, 'authority.batchId');
+    if (text(row.action_type) !== 'lower_bid') {
+      throw new Error(`SQLite recommendation #${recommendationId} is not a bounded lower_bid action.`);
+    }
     assertTargetMatches(evidence, row, recommendationEvidence);
     assertSourceMatches(evidence, row, recommendationEvidence, authority);
     assertApprovalMatches(evidence, recommendationEvidence, authority);
+    assertApprovedQuantReviewResolution(recommendationEvidence, row, authority);
     assertEqual(evidence.risk?.rationale, row.reason, 'risk.rationale');
     const riskLevel = normalizedText(row.risk_level);
     if (riskLevel === 'high' || riskLevel === 'forbidden' || riskLevel.includes('forbidden')) {

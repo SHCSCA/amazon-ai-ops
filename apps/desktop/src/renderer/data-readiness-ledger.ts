@@ -10,6 +10,8 @@ export interface DataReadinessLedgerInput {
 
 export interface DataReadinessLedger {
   status: 'ready' | 'partial' | 'blocked';
+  canEnterDiagnosis: boolean;
+  nextStep: 'collect' | 'import' | 'diagnose';
   headline: string;
   detail: string;
   nextAction: string;
@@ -27,12 +29,20 @@ export interface DataReadinessStage {
 
 export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataReadinessLedger {
   const requiredReportCount = Math.max(1, input.requiredReportCount);
-  const realReportFileCount = Math.max(0, input.realReportFileCount);
+  const reportedRealFileCount = Math.max(0, input.realReportFileCount);
   const importedRowCount = Math.max(0, input.importedRowCount);
+  const realReportTypeCount = new Set(input.reportOptions
+    .filter((item) => item.realFileAvailable)
+    .map((item) => item.type)).size;
+  const importedReportTypeCount = new Set(input.reportOptions
+    .filter((item) => item.realFileAvailable && Number(item.importedRows || 0) > 0)
+    .map((item) => item.type)).size;
+  // The per-report option ledger is the authority for coverage. A global row total
+  // cannot prove that every required report type has been imported.
+  const realReportFileCount = Math.min(requiredReportCount, reportedRealFileCount, realReportTypeCount);
+  const importedReportCount = Math.min(realReportFileCount, importedReportTypeCount);
   const missingReportCount = Math.max(0, requiredReportCount - realReportFileCount);
-  const realFilesWithoutRows = input.reportOptions
-    .filter((item) => item.realFileAvailable && Number(item.importedRows || 0) <= 0)
-    .length;
+  const realFilesWithoutRows = Math.max(0, realReportFileCount - importedReportCount);
   const gaps: string[] = [];
 
   if (missingReportCount > 0) {
@@ -50,12 +60,18 @@ export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataR
     requiredReportCount,
     realReportFileCount,
     importedRowCount,
+    importedReportCount,
     realFilesWithoutRows,
   });
 
-  if (realReportFileCount >= requiredReportCount && importedRowCount > 0 && realFilesWithoutRows === 0) {
+  if (realReportFileCount >= requiredReportCount
+    && importedReportCount >= requiredReportCount
+    && importedRowCount > 0
+    && realFilesWithoutRows === 0) {
     return {
       status: 'ready',
+      canEnterDiagnosis: true,
+      nextStep: 'diagnose',
       headline: '真实报表和 DB 日级指标已闭合',
       detail: `${realReportFileCount}/${requiredReportCount} 类报表已落盘，${importedRowCount} 行日级广告指标可用于广告表现、AI 证据包和优化建议。`,
       nextAction: '查看广告表现',
@@ -64,9 +80,24 @@ export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataR
     };
   }
 
+  if (realReportFileCount >= requiredReportCount) {
+    return {
+      status: 'blocked',
+      canEnterDiagnosis: false,
+      nextStep: 'import',
+      headline: '完整报表仍有入库缺口',
+      detail: `${realReportFileCount}/${requiredReportCount} 类真实报表已落盘，但仅 ${importedReportCount}/${requiredReportCount} 类形成 DB 日级指标，不能进入正式诊断。`,
+      nextAction: '导入已下载表格',
+      gaps,
+      stages,
+    };
+  }
+
   if (realReportFileCount > 0 && importedRowCount <= 0) {
     return {
       status: 'blocked',
+      canEnterDiagnosis: false,
+      nextStep: 'import',
       headline: '已有真实报表，等待导入',
       detail: `${realReportFileCount}/${requiredReportCount} 类报表已落盘，但 DB 还没有可分析的日级广告指标。`,
       nextAction: '导入已下载表格',
@@ -76,11 +107,14 @@ export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataR
   }
 
   if (realReportFileCount > 0) {
+    const nextStep = realFilesWithoutRows > 0 ? 'import' : 'collect';
     return {
       status: 'partial',
+      canEnterDiagnosis: false,
+      nextStep,
       headline: '部分数据可用，仍有缺口',
-      detail: `${realReportFileCount}/${requiredReportCount} 类报表已落盘，${importedRowCount} 行日级广告指标已入库；缺口补齐前建议只做诊断，不做正式建议。`,
-      nextAction: realFilesWithoutRows > 0 ? '导入已下载表格' : '补齐缺失报表',
+      detail: `${realReportFileCount}/${requiredReportCount} 类报表已落盘，${importedRowCount} 行日级广告指标已入库；缺口补齐前仅用于核对已有事实，不生成正式诊断或建议。`,
+      nextAction: nextStep === 'import' ? '导入已下载表格' : '补齐缺失报表',
       gaps,
       stages,
     };
@@ -88,6 +122,8 @@ export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataR
 
   return {
     status: 'blocked',
+    canEnterDiagnosis: false,
+    nextStep: 'collect',
     headline: '没有真实广告报表',
     detail: '当前范围没有可分析的 Lingxing xlsx/xls/csv，系统不能生成广告表现、AI 结论或优化建议。',
     nextAction: '下载或导入真实报表',
@@ -100,6 +136,7 @@ function buildReadinessStages(input: DataReadinessLedgerInput & {
   requiredReportCount: number;
   realReportFileCount: number;
   importedRowCount: number;
+  importedReportCount: number;
   realFilesWithoutRows: number;
 }): DataReadinessStage[] {
   const createdReportCount = Math.min(
@@ -132,10 +169,12 @@ function buildReadinessStages(input: DataReadinessLedgerInput & {
     {
       key: 'imported',
       title: '日级指标已入库',
-      status: input.importedRowCount > 0 ? 'complete' : 'blocked',
-      value: input.importedRowCount > 0 ? `${input.importedRowCount} 行` : '0 行',
-      detail: input.importedRowCount > 0
-        ? 'SQLite 已形成每日广告事实，后续分析只读取入库指标。'
+      status: countStatus(input.importedReportCount, input.requiredReportCount),
+      value: `${input.importedReportCount}/${input.requiredReportCount} 类 · ${input.importedRowCount} 行`,
+      detail: input.importedReportCount >= input.requiredReportCount && input.importedRowCount > 0
+        ? '每类真实报表都已形成每日广告事实，后续分析只读取入库指标。'
+        : input.importedRowCount > 0
+          ? '已有部分日级广告事实，但尚未覆盖全部必需报表类型。'
         : '真实报表尚未形成可分析的日级指标。',
     },
     {

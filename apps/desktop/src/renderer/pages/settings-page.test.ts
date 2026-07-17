@@ -6,6 +6,7 @@ import {
   aiAuditLogTitle,
   aiAuditPurposeText,
   aiSettingsActionHint,
+  buildSettingsTaskBannerState,
   settingsAiConnectionFeedback,
   settingsAiContractPrimaryCopy,
   settingsAiContractTags,
@@ -18,6 +19,20 @@ import {
   storagePathDisplay,
   shouldResetAiTestForSettingsField,
 } from './settings-page';
+
+describe('SettingsPage dialog focus contract', () => {
+  it('uses the shared modal scope for all settings modes and locks dismissal while saving', () => {
+    const source = readFileSync(new URL('./settings-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const settingsDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('dismissDisabled: savingAi || savingRules');
+    expect(source).toContain('open: Boolean(settingsModal)');
+    expect(source).toContain('ref={settingsDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={settingsDialogFocus.surfaceRef}');
+    expect(source).toContain('tabIndex={-1}');
+    expect(source).not.toContain('onKeyDown={handleSettingsModalKeyDown}');
+  });
+});
 
 describe('settings AI audit copy', () => {
   it('uses operator-facing output-format wording instead of schema or prompt jargon', () => {
@@ -125,6 +140,63 @@ describe('settings AI task feedback', () => {
       tone: 'blocked',
     });
   });
+
+  it('maps the real AI connection state to one primary task and at most two secondary actions', () => {
+    const unconfigured = buildSettingsTaskBannerState({
+      canSaveSettings: true,
+      canTestAi: true,
+      keyPresent: false,
+      loading: false,
+      message: '',
+      saving: false,
+      status: 'unconfigured',
+    });
+    expect(unconfigured).toMatchObject({
+      title: '先填写 API Key 并保存',
+      tone: 'attention',
+      primaryAction: {
+        kind: 'edit-connection',
+        label: '填写并保存 AI 设置',
+        disabled: false,
+      },
+    });
+    expect(unconfigured.secondaryActions).toEqual([
+      expect.objectContaining({ kind: 'open-contract', label: '查看输出合同' }),
+    ]);
+
+    const pendingTest = buildSettingsTaskBannerState({
+      canSaveSettings: true,
+      canTestAi: true,
+      keyPresent: true,
+      loading: false,
+      message: '',
+      saving: false,
+      status: 'pending_test',
+    });
+    expect(pendingTest.primaryAction).toMatchObject({
+      kind: 'test-connection',
+      label: '测试当前连接',
+      disabled: false,
+    });
+    expect(pendingTest.secondaryActions).toHaveLength(2);
+
+    const available = buildSettingsTaskBannerState({
+      canSaveSettings: true,
+      canTestAi: true,
+      keyPresent: true,
+      loading: false,
+      message: 'AI 连接测试通过',
+      saving: false,
+      status: 'available',
+    });
+    expect(available).toMatchObject({
+      tone: 'confirmed',
+      primaryAction: {
+        kind: 'test-connection',
+        label: '重新测试当前连接',
+      },
+    });
+  });
 });
 
 describe('settings secondary status message', () => {
@@ -136,6 +208,16 @@ describe('settings secondary status message', () => {
 });
 
 describe('Phase 5 settings user task surface', () => {
+  it('uses one task banner and one progressive technical evidence layer', () => {
+    const source = readFileSync(new URL('./settings-page.tsx', import.meta.url), 'utf8');
+
+    expect(source.match(/<TaskBanner\b/g)).toHaveLength(1);
+    expect(source.match(/<ProgressiveDetails\b/g)).toHaveLength(1);
+    expect(source).not.toContain('<details');
+    const pageHeader = source.match(/<PageHeader[\s\S]*?\/>/)?.[0] || '';
+    expect(pageHeader).not.toContain('primaryAction=');
+  });
+
   it('keeps support logs, paths, and troubleshooting out of the primary settings surface', () => {
     const source = readFileSync(new URL('./settings-page.tsx', import.meta.url), 'utf8');
 
@@ -176,13 +258,12 @@ describe('Phase 5 settings user task surface', () => {
     const source = readFileSync(new URL('./settings-page.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('function closeSettingsModal()');
-    expect(source).toContain("event.key !== 'Escape' || savingAi || savingRules");
-    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
-    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain('const settingsDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('dismissDisabled: savingAi || savingRules');
     expect(source).toContain('onMouseDown={(event) => {');
     expect(source).toContain('event.target === event.currentTarget');
     expect(source).toContain('onMouseDown={(event) => event.stopPropagation()}');
-    expect(source).toContain('onKeyDown={handleSettingsModalKeyDown}');
+    expect(source).not.toContain('onKeyDown={handleSettingsModalKeyDown}');
   });
 });
 describe('settings rule field feedback', () => {

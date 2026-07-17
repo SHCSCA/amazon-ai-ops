@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import React, { type ReactElement, type ReactNode } from 'react';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import * as dataCollectionPage from './data-collection-page';
 import {
@@ -10,6 +11,7 @@ import {
   collectionActionButtonView,
   collectionActionError,
   collectionActionGuide,
+  collectionActionNextStep,
   collectionCompletionNotice,
   collectionFeedbackActionButtonView,
   collectionOpenPathButtonView,
@@ -20,13 +22,62 @@ import {
 } from './data-collection-page';
 import { buildDataImportFeedback, buildDataImportTaskState, buildReportImportStatusDisplay, dataImportFirstViewportReportFolder } from './data-import-validation-page';
 
-function collectElements(node: ReactNode, predicate: (element: ReactElement) => boolean): ReactElement[] {
-  if (node === null || node === undefined || typeof node === 'boolean') return [];
-  if (Array.isArray(node)) return node.flatMap((child) => collectElements(child, predicate));
-  if (!React.isValidElement(node)) return [];
-  const matches = predicate(node) ? [node] : [];
-  return matches.concat(collectElements(node.props.children, predicate));
-}
+describe('DataCollectionPage overlay focus contracts', () => {
+  it('wires both modal dialogs to independent shared focus scopes', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const reportSelectorDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('open: reportSelectorOpen');
+    expect(source).toContain('const reportFileDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('open: Boolean(selectedReportFile)');
+    expect(source).toContain('ref={reportSelectorDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={reportSelectorDialogFocus.surfaceRef}');
+    expect(source).toContain('ref={reportFileDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={reportFileDialogFocus.surfaceRef}');
+  });
+
+  it('keeps the monitor non-modal and renders it once', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const monitorDrawerFocus = useOverlayFocusScope');
+    expect(source).toContain('modal: false');
+    expect(source).toContain('dismissDisabled: !state.canClose');
+    expect(source).toContain('ref={monitorDrawerFocus.surfaceRef}');
+    expect(source.match(/<CollectionMonitorDrawer/g)).toHaveLength(1);
+  });
+});
+
+describe('DataCollectionPage first-screen path disclosure', () => {
+  it('uses business labels while keeping the primary report folder openable', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('compactPath(primaryReportFolder)');
+    expect(source).toContain('当前范围原始报表目录');
+    expect(source).toContain('已创建，可打开');
+    expect(source).toContain("idleLabel: '打开目录', targetPath: primaryReportFolder");
+    expect(source).toContain("idleLabel: '打开报表目录', targetPath: primaryReportFolder");
+  });
+});
+
+describe('collectionActionNextStep', () => {
+  it('routes a fully proven 8-type import to ad performance', () => {
+    expect(collectionActionNextStep({
+      canEnterDiagnosis: true,
+      failedWithoutFiles: false,
+      importedRows: 96,
+      realFileCount: 8,
+    })).toBe('下一步：查看广告表现，复核 ACOS、花费和订单口径。');
+  });
+
+  it('does not treat a non-zero global row total as full per-type readiness', () => {
+    expect(collectionActionNextStep({
+      canEnterDiagnosis: false,
+      failedWithoutFiles: false,
+      importedRows: 96,
+      realFileCount: 8,
+    })).toContain('只有完整 8 类逐类入库后');
+  });
+});
 
 describe('collectionCompletionNotice', () => {
   it('does not claim a download action completed when no real file was produced by this action', () => {
@@ -230,15 +281,8 @@ describe('task-first data page helpers', () => {
     expect(monitor?.canClose).toBe(true);
   });
 
-  it('renders a canvas browser preview inside the monitor drawer', () => {
-    const Drawer = (dataCollectionPage as {
-      CollectionMonitorDrawer?: (props: {
-        state: NonNullable<ReturnType<typeof buildCollectionMonitorState>>;
-        steps: Array<{ label: string; description: string; status: 'ready' | 'pending' | 'blocked' }>;
-        evidencePath?: string;
-        onClose: () => void;
-      }) => ReactElement;
-    }).CollectionMonitorDrawer;
+  it('renders an honest process-and-evidence state instead of an empty browser canvas', () => {
+    const Drawer = dataCollectionPage.CollectionMonitorDrawer;
     expect(typeof Drawer).toBe('function');
     if (!Drawer) return;
 
@@ -253,20 +297,17 @@ describe('task-first data page helpers', () => {
     });
     expect(state).toBeTruthy();
 
-    const tree = Drawer({
+    const markup = renderToStaticMarkup(React.createElement(Drawer, {
       state: state!,
       steps: [{ label: '1. 验证当前范围', description: '检查日期和店铺。', status: 'pending' }],
       evidencePath: 'C:/evidence/download-center.png',
       onClose: vi.fn(),
-    });
-    const canvases = collectElements(tree, (element) => element.type === 'canvas');
+    }));
     const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
-    expect(canvases).toHaveLength(1);
-    expect(canvases[0].props.className).toBe('collection-monitor-preview-canvas');
-    expect(canvases[0].props['aria-label']).toBe('可见浏览器画面预览');
-    expect(canvases[0].props.width).toBe(320);
-    expect(canvases[0].props.height).toBe(180);
+    expect(markup).not.toContain('<canvas');
+    expect(markup).toContain('aria-label="采集流程状态与最近证据"');
+    expect(markup).toContain('role="status"');
     expect(css).toContain('.collection-monitor-preview-canvas');
     expect(css).toContain('.collection-monitor-preview-overlay');
   });
@@ -283,6 +324,7 @@ describe('task-first data page helpers', () => {
       importedRowCount: 0,
       primaryReportFolder: firstViewportFolder,
       runningAction: null,
+      readiness: { status: 'blocked', canEnterDiagnosis: false, nextStep: 'collect' },
     });
 
     expect(firstViewportFolder).toBeUndefined();
@@ -297,11 +339,40 @@ describe('task-first data page helpers', () => {
       importedRowCount: 96,
       primaryReportFolder: 'C:/AmazonAIOps/storage/downloads/mock-batch',
       runningAction: null,
+      readiness: { status: 'ready', canEnterDiagnosis: true, nextStep: 'diagnose' },
     });
 
     expect(task.title).toBe('真实报表 8/8，已导入 96 行');
     expect(task.primaryActionLabel).toBe('查看广告表现');
     expect(task.secondaryActionLabel).toBe('打开报表目录');
+  });
+
+  it('keeps the collection task blocked when one of eight report types has no imported rows', () => {
+    const task = buildDataCollectionTaskState({
+      realReportCount: 8,
+      importedRowCount: 96,
+      primaryReportFolder: 'C:/AmazonAIOps/storage/downloads/mock-batch',
+      runningAction: null,
+      readiness: { status: 'blocked', canEnterDiagnosis: false, nextStep: 'import' },
+    });
+
+    expect(task.isComplete).toBe(false);
+    expect(task.primaryActionLabel).toBe('导入已下载表格');
+    expect(task.detail).not.toContain('已闭合');
+  });
+
+  it('wires the collection task model into one first-screen TaskBanner', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+    const header = source.slice(source.indexOf('<PageHeader'), source.indexOf('/>', source.indexOf('<PageHeader')) + 2);
+    const primaryPanel = source.slice(source.indexOf('className="data-collection-primary-panel"'), source.indexOf('data-collection-secondary-actions'));
+
+    expect(source).toContain('const taskState = buildDataCollectionTaskState({');
+    expect(source.match(/<TaskBanner/g)).toHaveLength(1);
+    expect(source).toContain('title={taskState.title}');
+    expect(source).toContain('description={taskState.detail}');
+    expect(source).toContain('label: taskState.primaryActionLabel');
+    expect(header).not.toContain('primaryAction=');
+    expect(primaryPanel).not.toContain('className={runningAction ? \'primary-button button-loading\' : \'primary-button\'}');
   });
 
   it('shortens 8-report chooser action labels without changing action modes', () => {
@@ -322,9 +393,17 @@ describe('task-first data page helpers', () => {
     expect(source).toContain('data-collection-secondary-action-row');
     expect(source).not.toContain('8 类报表选择与进度');
     expect(source).not.toContain('collection-action-grid');
-    expect(source.indexOf('aria-busy={recreateFullButton.ariaBusy}')).toBeLessThan(source.indexOf('data-collection-secondary-actions'));
+    expect(source.indexOf('label: taskState.primaryActionLabel')).toBeLessThan(source.indexOf('data-collection-secondary-actions'));
     expect(css).toContain('.data-collection-secondary-actions');
     expect(css).toContain('.data-collection-secondary-action-row');
+  });
+
+  it('keeps collection evidence drawers at one disclosure level', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('<ProgressiveDetails title="辅助采集账本、流程和技术细节">');
+    expect(source).toContain('<ProgressiveDetails title="当前范围数据账本">');
+    expect(source).toContain('<ProgressiveDetails title="验收审计/技术细节">');
   });
 
   it('gives collection action buttons an explicit busy contract while a report action runs', () => {
@@ -466,10 +545,13 @@ describe('task-first data page helpers', () => {
     });
 
     expect(firstViewportFolder).toBeUndefined();
-    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder }).primaryActionLabel).toBe('去数据采集');
-    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder }).secondaryActionLabel).toBe('导入本地报表');
-    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 0, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('导入已下载表格');
-    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 96, reportFolder: 'C:/reports' }).primaryActionLabel).toBe('查看广告表现');
+    const collectReadiness = { status: 'blocked' as const, canEnterDiagnosis: false, nextStep: 'collect' as const };
+    const importReadiness = { status: 'blocked' as const, canEnterDiagnosis: false, nextStep: 'import' as const };
+    const readyReadiness = { status: 'ready' as const, canEnterDiagnosis: true, nextStep: 'diagnose' as const };
+    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder, readiness: collectReadiness }).primaryActionLabel).toBe('去数据采集');
+    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder, readiness: collectReadiness }).secondaryActionLabel).toBe('导入本地报表');
+    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 0, reportFolder: 'C:/reports', readiness: importReadiness }).primaryActionLabel).toBe('导入已下载表格');
+    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 96, reportFolder: 'C:/reports', readiness: readyReadiness }).primaryActionLabel).toBe('查看广告表现');
   });
 
   it('makes downloaded report files explicitly wait for DB import', () => {
@@ -489,14 +571,27 @@ describe('task-first data page helpers', () => {
       realReportCount: 8,
       importedRows: 0,
       runningImport: 'current',
+      readiness: { status: 'blocked', canEnterDiagnosis: false, nextStep: 'import' },
     }).title).toBe('正在写入 SQLite');
 
     const ready = buildDataImportFeedback({
       realReportCount: 8,
       importedRows: 96,
       runningImport: null,
+      readiness: { status: 'ready', canEnterDiagnosis: true, nextStep: 'diagnose' },
     });
     expect(ready.statusLabel).toBe('已入库');
     expect(ready.detail).toContain('96 行日级广告指标');
+
+    const partial = buildDataImportFeedback({
+      realReportCount: 8,
+      importedRows: 72,
+      runningImport: null,
+      readiness: { status: 'blocked', canEnterDiagnosis: false, nextStep: 'import' },
+    });
+    expect(partial.title).toBe('部分指标已入库');
+    expect(partial.statusLabel).toBe('待补齐');
+    expect(partial.tone).toBe('warning');
+    expect(partial.detail).toContain('不能进入正式诊断');
   });
 });

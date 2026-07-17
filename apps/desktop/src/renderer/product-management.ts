@@ -1,6 +1,7 @@
 import type {
   BusinessQuantDiagnostic,
   OperationEventView,
+  OperationScope,
   ProductHistoryLedgerView,
   ProductStrategyContextView,
 } from './types';
@@ -21,6 +22,9 @@ export interface ProductManagementSummary {
   acos: number;
   cvr: number;
   cpc: number;
+  activeDays: number;
+  lastMetricDate?: string;
+  targetAcos?: number;
   diagnosticCount: number;
   highRiskCount: number;
   productEventCount: number;
@@ -40,6 +44,86 @@ export interface ProductCanonicalSummary {
   sales?: number;
   orders?: number;
   clicks?: number;
+}
+
+const PRODUCT_CONTEXT_COST_KEYS = [
+  'purchaseCost',
+  'firstLegCost',
+  'fbaFee',
+  'referralFeeRate',
+  'storageFee',
+  'otherCost',
+  'currentPrice',
+  'minPrice',
+  'targetNetMargin',
+  'targetAcos',
+  'targetTacos',
+] as const;
+
+export function normalizeProductPortfolioRows(
+  rows: unknown,
+  scope: Pick<OperationScope, 'storeName' | 'marketplaceCode'>,
+): ProductStrategyContextView[] {
+  if (!Array.isArray(rows)) return [];
+  const expectedStore = normalizedMatchValue(scope.storeName);
+  const expectedMarketplace = normalizedMatchValue(scope.marketplaceCode);
+  if (!expectedStore || !expectedMarketplace) return [];
+
+  return rows.flatMap((value) => {
+    if (!value || typeof value !== 'object') return [];
+    const row = value as Record<string, unknown>;
+    const storeName = normalizedMatchValue(row.store_name ?? row.storeName);
+    const marketplaceCode = normalizedMatchValue(row.marketplace_code ?? row.marketplaceCode);
+    if (storeName !== expectedStore) return [];
+    if (marketplaceCode !== expectedMarketplace) return [];
+
+    const asin = normalizeAsin(String(row.asin || ''));
+    if (!asin) return [];
+    const rawCost = row.cost && typeof row.cost === 'object'
+      ? row.cost as Record<string, unknown>
+      : undefined;
+    const cost = rawCost
+      ? Object.fromEntries(PRODUCT_CONTEXT_COST_KEYS.flatMap((key) => {
+          const numeric = Number(rawCost[key]);
+          return Number.isFinite(numeric) ? [[key, numeric]] : [];
+        })) as ProductStrategyContextView['cost']
+      : undefined;
+
+    return [{
+      asin,
+      parentAsin: clean(String(row.parentAsin ?? row.parent_asin ?? '')) || undefined,
+      msku: clean(String(row.msku ?? '')) || undefined,
+      sku: clean(String(row.sku ?? '')) || undefined,
+      title: clean(String(row.title ?? '')) || undefined,
+      productStage: clean(String(row.productStage ?? row.product_stage ?? '')) || undefined,
+      status: clean(String(row.status ?? '')) || undefined,
+      cost,
+    }];
+  });
+}
+
+export function mergeProductStrategyContexts(
+  ...groups: ProductStrategyContextView[][]
+): ProductStrategyContextView[] {
+  const merged = new Map<string, ProductStrategyContextView>();
+  for (const group of groups) {
+    for (const product of group || []) {
+      const asin = normalizeAsin(product.asin);
+      if (!asin) continue;
+      const existing = merged.get(asin);
+      const next: ProductStrategyContextView = existing ? { ...existing } : { asin };
+      for (const [key, value] of Object.entries(product)) {
+        if (key === 'cost' || key === 'asin' || value === undefined) continue;
+        (next as unknown as Record<string, unknown>)[key] = value;
+      }
+      if (existing?.cost || product.cost) {
+        next.cost = { ...(existing?.cost || {}), ...(product.cost || {}) };
+      }
+      next.asin = asin;
+      merged.set(asin, next);
+    }
+  }
+  return [...merged.values()];
 }
 
 export function buildProductManagementSummaries(input: {
@@ -70,6 +154,7 @@ export function buildProductManagementSummaries(input: {
       acos: 0,
       cvr: 0,
       cpc: 0,
+      activeDays: 0,
       diagnosticCount: 0,
       highRiskCount: 0,
       productEventCount: 0,
@@ -92,6 +177,7 @@ export function buildProductManagementSummaries(input: {
       .join(' / ') || '-';
     summary.stage = product.productStage;
     summary.status = product.status;
+    summary.targetAcos = optionalNumber(product.cost?.targetAcos);
   }
 
   for (const diagnostic of input.diagnostics || []) {
@@ -114,6 +200,10 @@ export function buildProductManagementSummaries(input: {
     summary.sales = Math.max(summary.sales, numberValue(ledger.totals.sales));
     summary.orders = Math.max(summary.orders, numberValue(ledger.totals.orders));
     summary.clicks = Math.max(summary.clicks, numberValue(ledger.totals.clicks));
+    summary.activeDays = Math.max(summary.activeDays, numberValue(ledger.activeDays));
+    if (ledger.lastMetricDate && (!summary.lastMetricDate || ledger.lastMetricDate > summary.lastMetricDate)) {
+      summary.lastMetricDate = ledger.lastMetricDate;
+    }
     summary.stage = summary.stage || ledger.inferredStage;
   }
 
@@ -201,8 +291,17 @@ function clean(value?: string): string {
   return String(value || '').trim();
 }
 
+function normalizedMatchValue(value: unknown): string {
+  return String(value || '').trim().toUpperCase();
+}
+
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : undefined;
 }
 
 function roundMoney(value: number): number {

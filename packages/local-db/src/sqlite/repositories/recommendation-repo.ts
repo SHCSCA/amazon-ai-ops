@@ -218,6 +218,41 @@ export class RecommendationRepository {
     return update.immediate();
   }
 
+  bindWritableTargetIfCurrent(
+    id: number,
+    expectedRevision: number,
+    evidencePatch: Record<string, unknown>,
+  ): boolean {
+    const bind = this.db.transaction(() => {
+      const current = this.findById(id);
+      if (
+        !current
+        || current.status !== 'pending'
+        || current.evidence?.writableTarget
+        || current.evidence?.writableTargetBinding
+      ) return false;
+      const nextEvidence = {
+        ...(current.evidence || {}),
+        ...evidencePatch,
+      };
+      const result = this.db.prepare(`
+        UPDATE action_recommendations
+        SET status = 'pending',
+            evidence_json = ?,
+            revision = revision + 1,
+            updated_at = datetime('now')
+        WHERE id = ?
+          AND status = 'pending'
+          AND revision = ?
+          AND json_type(evidence_json, '$.writableTarget') IS NULL
+          AND json_type(evidence_json, '$.writableTargetBinding') IS NULL
+      `).run(JSON.stringify(nextEvidence), id, expectedRevision);
+      return result.changes === 1;
+    });
+
+    return bind.immediate();
+  }
+
   private updateDuplicateRecommendation(
     id: number,
     expectedStatus: string,
@@ -325,10 +360,86 @@ function shouldReplaceIncompleteDuplicate(
 ): boolean {
   if (!['pending', 'needs_review'].includes(existing.status)) return false;
   if (!['pending', 'needs_review'].includes(incoming.status)) return false;
+  if (hasCurrentReviewResolution(existing) || hasCurrentWritableTargetBinding(existing)) return false;
   return (
     (!hasExecutionTraceability(existing) && hasExecutionTraceability(incoming))
     || hasBetterAiEvidence(existing, incoming)
   );
+}
+
+function hasCurrentReviewResolution(recommendation: ActionRecommendation): boolean {
+  const resolution = recommendation.evidence?.reviewResolution;
+  return recommendation.status === 'pending'
+    && resolution?.schemaVersion === 1
+    && resolution.fromStatus === 'needs_review'
+    && resolution.fromRevision + 1 === resolution.resolvedRevision
+    && resolution.resolvedRevision === (recommendation.revision ?? 0);
+}
+
+function hasCurrentWritableTargetBinding(recommendation: ActionRecommendation): boolean {
+  const binding = recommendation.evidence?.writableTargetBinding;
+  const target = recommendation.evidence?.writableTarget;
+  const boundTarget = binding?.writableTarget;
+  const sourceFiles = recommendation.evidence?.sourceFiles || [];
+  const boundSourceFiles = binding?.metricSource?.sourceFiles || [];
+  const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
+  const normalizePath = (value: unknown) => normalize(value).replace(/\\/g, '/');
+  const sameTarget = Boolean(target && boundTarget)
+    && target?.entityType === boundTarget?.entityType
+    && normalize(target?.entityId) === normalize(boundTarget?.entityId)
+    && normalize(target?.entityName) === normalize(boundTarget?.entityName)
+    && normalize(target?.campaignName) === normalize(boundTarget?.campaignName)
+    && normalize(target?.adGroupName) === normalize(boundTarget?.adGroupName)
+    && normalizePath(target?.sourceFile) === normalizePath(boundTarget?.sourceFile)
+    && Number(target?.sourceRow) === Number(boundTarget?.sourceRow)
+    && target?.identitySource === boundTarget?.identitySource
+    && normalizePath(target?.identityProofPath) === normalizePath(boundTarget?.identityProofPath);
+  const targetComplete = Boolean(target)
+    && ['keyword', 'auto_targeting', 'product_targeting'].includes(String(target?.entityType || ''))
+    && [
+      target?.entityId,
+      target?.entityName,
+      target?.campaignName,
+      target?.adGroupName,
+      target?.metricDate,
+      target?.sourceFile,
+      target?.verifiedBy,
+      target?.verifiedAt,
+      target?.verificationNote,
+      target?.identityProofPath,
+    ].every(hasText)
+    && Number.isInteger(Number(target?.sourceRow))
+    && Number(target?.sourceRow) > 0
+    && ['ads_ui', 'ads_api'].includes(String(target?.identitySource || ''));
+  const scopeMatches = Boolean(binding)
+    && hasText(binding?.scope?.dateFrom)
+    && hasText(binding?.scope?.dateTo)
+    && normalize(binding?.scope?.storeName) === normalize(recommendation.storeName)
+    && normalize(binding?.scope?.marketplaceCode) === normalize(recommendation.marketplaceCode)
+    && normalize(binding?.scope?.asin) === normalize(recommendation.asin || recommendation.evidence?.asin)
+    && normalize(binding?.scope?.batchId) === normalize(recommendation.evidence?.batchId);
+  const sourceMatches = sourceFiles.length > 0
+    && sourceFiles.length === boundSourceFiles.length
+    && sourceFiles.every((filePath, index) => normalizePath(filePath) === normalizePath(boundSourceFiles[index]))
+    && normalize(binding?.metricSource?.batchId) === normalize(recommendation.evidence?.batchId)
+    && Number(binding?.metricSource?.sourceRow) === Number(recommendation.evidence?.sourceRow)
+    && Number.isInteger(Number(binding?.metricSource?.sourceRow))
+    && Number(binding?.metricSource?.sourceRow) > 0;
+
+  return recommendation.status === 'pending'
+    && binding?.schemaVersion === 1
+    && Number.isInteger(binding.fromRevision)
+    && binding.fromRevision >= 0
+    && binding.fromRevision + 1 === binding.boundRevision
+    && binding.boundRevision === (recommendation.revision ?? 0)
+    && hasText(binding.boundBy)
+    && hasText(binding.boundAt)
+    && Number.isFinite(Date.parse(binding.boundAt))
+    && hasText(binding.note)
+    && targetComplete
+    && sameTarget
+    && scopeMatches
+    && sourceMatches;
 }
 
 function hasExecutionTraceability(rec: Pick<ActionRecommendation, 'currentValue' | 'recommendedValue' | 'evidence'>): boolean {

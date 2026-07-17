@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AiDiagnosisRunView, BusinessQuantDiagnostic, BusinessQuantTimeline } from '../types';
-import { adQuantActionButtonView, adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, buildWasteRiskSpendTile, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, runAdQuantDiagnosisWorkflowMutation, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
+import { adQuantActionButtonView, adQuantBlockerDetail, adQuantDiagnosticMatchesFocus, adQuantFocusLabel, adQuantScopeKey, adQuantTimelineMatchesFocus, buildAdQuantDecisionStatus, buildAiDiagnosisRunsRequest, buildQuantAccountingLine, buildStrategyRunFeedback, buildWasteRiskSpendTile, createAdQuantScopeRequestGate, diagnosisRunEvidenceLabel, diagnosisRunInsightPreview, diagnosisRunSummaryText, diagnosisTimelineMatchesDiagnostic, runAdQuantDiagnosisWorkflowMutation, strategyDiagnosisSourceLabel, strategyThresholdTitle, thresholdEvidenceReviewLine } from './ad-quant-page';
 import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
 
 describe('ad quant workflow invalidation contract', () => {
@@ -13,6 +13,31 @@ describe('ad quant workflow invalidation contract', () => {
     await expect(runAdQuantDiagnosisWorkflowMutation(async () => 'diagnosed', target)).resolves.toBe('diagnosed');
     expect(sources).toEqual(['ad-quant-diagnosis']);
     unsubscribe();
+  });
+});
+
+describe('ad quant async scope authority', () => {
+  it('publishes only the latest request for the currently active scope', () => {
+    const gate = createAdQuantScopeRequestGate();
+    const scopeA = adQuantScopeKey({
+      dateFrom: '2026-06-01', dateTo: '2026-06-07', storeName: 'A', marketplaceCode: 'US', asin: 'B0AAA', batchId: 'batch-a',
+    });
+    const scopeB = adQuantScopeKey({
+      dateFrom: '2026-06-08', dateTo: '2026-06-14', storeName: 'B', marketplaceCode: 'US', asin: 'B0BBB', batchId: 'batch-b',
+    });
+
+    gate.activate(scopeA);
+    const firstA = gate.begin(scopeA);
+    const secondA = gate.begin(scopeA);
+    expect(gate.isCurrent(firstA)).toBe(false);
+    expect(gate.isCurrent(secondA)).toBe(true);
+
+    gate.activate(scopeB);
+    expect(gate.isCurrent(secondA)).toBe(false);
+    expect(gate.isCurrent(gate.begin(scopeA))).toBe(false);
+
+    const currentB = gate.begin(scopeB);
+    expect(gate.isCurrent(currentB)).toBe(true);
   });
 });
 
@@ -153,6 +178,22 @@ describe('thresholdEvidenceReviewLine', () => {
 });
 
 describe('buildStrategyRunFeedback', () => {
+  it('routes complete report files with partial per-type imports to import validation', () => {
+    const feedback = buildStrategyRunFeedback({
+      canDiagnose: false,
+      loading: false,
+      realReportCount: 8,
+      importedReportTypeCount: 5,
+      requiredReportCount: 8,
+    });
+
+    expect(feedback.detail).toContain('逐类入库 5/8');
+    expect(feedback.primaryAction).toEqual({
+      label: '补齐逐类入库',
+      target: 'data-import-validation',
+    });
+  });
+
   it('shows an explicit running state while AI diagnosis is pending', () => {
     const feedback = buildStrategyRunFeedback({
       canDiagnose: true,
@@ -254,6 +295,81 @@ describe('buildStrategyRunFeedback', () => {
     expect(feedback.primaryAction?.label).toBe('重新运行 AI');
     expect(feedback.secondaryAction?.label).toBe('检查 AI 设置');
   });
+
+  it('summarizes a successful AI run with model, candidates, and evidence', () => {
+    const feedback = buildStrategyRunFeedback({
+      canDiagnose: true,
+      loading: false,
+      lastRunAt: '2026-06-25T10:30:00.000Z',
+      diagnosis: {
+        configured: true,
+        invoked: true,
+        model: 'deepseek-chat',
+        metrics: 120,
+        ruleCandidateCount: 3,
+        summary: {
+          source: 'ai',
+          lifecycleStage: 'keyword_exploration',
+          summary: 'AI diagnosis completed.',
+          lifecycleStageReason: 'Evidence supports exploration.',
+          lifecycleStageEvidenceRefs: ['timeline:1'],
+          mainProblems: [],
+          riskWarnings: [],
+          thresholdSuggestions: {
+            targetAcos: { value: 0.25, reason: '', evidenceRefs: ['metric:1'] },
+            highAcosThreshold: { value: 0.4, reason: '', evidenceRefs: ['metric:1'] },
+            noOrderClickThreshold: { value: 30, reason: '', evidenceRefs: ['metric:1'] },
+            minSpend: { value: 10, reason: '', evidenceRefs: ['metric:1'] },
+          },
+          aiCandidateCount: 2,
+          insightOnlyCandidateCount: 1,
+          operationEventCount: 0,
+          productContextCount: 1,
+          evidencePackSummary: { total: 8, metric: 5, timeline: 1, operationEvent: 1, productContext: 1, ruleCandidate: 0 },
+        },
+      },
+    });
+
+    expect(feedback.title).toBe('AI 阶段分析已完成');
+    expect(feedback.statusLabel).toBe('AI 已完成');
+    expect(feedback.detail).toContain('模型 deepseek-chat');
+    expect(feedback.detail).toContain('2 条 AI 候选');
+    expect(feedback.detail).toContain('引用 8 条证据');
+  });
+
+  it('keeps the original safe failure reason and both recovery actions', () => {
+    const feedback = buildStrategyRunFeedback({
+      canDiagnose: true,
+      loading: false,
+      error: 'AI provider timeout；未生成任何正式建议。',
+    });
+
+    expect(feedback.title).toBe('AI 阶段分析失败');
+    expect(feedback.statusLabel).toBe('需处理');
+    expect(feedback.detail).toBe('AI provider timeout；未生成任何正式建议。');
+    expect(feedback.primaryAction).toEqual({ label: '重新运行 AI', target: 'run-ai' });
+    expect(feedback.secondaryAction).toEqual({ label: '检查 AI 设置', target: 'settings' });
+  });
+});
+
+describe('adQuantBlockerDetail', () => {
+  it('names the remaining per-type imports when all report files already exist', () => {
+    expect(adQuantBlockerDetail({
+      realReportCount: 8,
+      importedReportTypeCount: 5,
+      requiredReportCount: 8,
+      fallback: '请先完成 8 类真实报表采集并导入 DB。',
+    })).toBe('报表文件 8/8 已齐，当前仅 5/8 类逐类入库；请到导入检查补齐剩余 3 类。截图、审计文件和空报表不作为广告数据。');
+  });
+
+  it('preserves a specific upstream blocker outside the partial-import branch', () => {
+    expect(adQuantBlockerDetail({
+      realReportCount: 3,
+      importedReportTypeCount: 2,
+      requiredReportCount: 8,
+      fallback: '还缺 5 类真实报表。',
+    })).toBe('还缺 5 类真实报表。');
+  });
 });
 
 describe('buildQuantAccountingLine', () => {
@@ -348,6 +464,7 @@ describe('ad quant metric focus filters', () => {
       campaignName: 'campaign',
       adGroupName: 'ad group',
       asin: 'B0TEST',
+      objectKey: 'B0TEST|campaign|ad group|user_search_term|search_term|door lock',
       objectType: 'search_term',
       objectName: 'door lock',
       spend: 0,
@@ -365,9 +482,12 @@ describe('ad quant metric focus filters', () => {
 
   function timeline(overrides: Partial<BusinessQuantTimeline>): BusinessQuantTimeline {
     return {
-      objectKey: 'search_term:door lock',
+      objectKey: 'B0TEST|campaign|ad group|user_search_term|search_term|door lock',
       objectType: 'search_term',
       objectName: 'door lock',
+      asin: 'B0TEST',
+      campaignName: 'campaign',
+      adGroupName: 'ad group',
       dateFrom: '2026-06-01',
       dateTo: '2026-06-12',
       daysActive: 12,
@@ -428,6 +548,20 @@ describe('ad quant metric focus filters', () => {
     expect(rows.filter((row) => adQuantTimelineMatchesFocus(row, 'scale', ruleConfig)).map((row) => row.objectName)).toEqual(['timeline-scale']);
     expect(rows.filter((row) => adQuantTimelineMatchesFocus(row, 'review', ruleConfig)).map((row) => row.objectName)).toEqual(['timeline-review']);
     expect(adQuantFocusLabel('waste')).toBe('无订单浪费对象');
+  });
+
+  it('binds timeline evidence only when the complete object identity matches', () => {
+    const exactKey = 'B0TEST|campaign|ad group|user_search_term|search_term|door lock';
+    const row = diagnostic({ objectKey: exactKey });
+
+    expect(diagnosisTimelineMatchesDiagnostic(timeline({ objectKey: exactKey }), row)).toBe(true);
+    expect(diagnosisTimelineMatchesDiagnostic(
+      timeline({ objectKey: 'B0TEST|campaign|ad group|keyword|search_term|door lock' }),
+      row,
+    )).toBe(false);
+    expect(diagnosisTimelineMatchesDiagnostic(timeline({ objectKey: exactKey, objectType: 'target' }), row)).toBe(false);
+    expect(diagnosisTimelineMatchesDiagnostic(timeline({ objectKey: exactKey }), diagnostic({ objectKey: undefined }))).toBe(false);
+    expect(diagnosisTimelineMatchesDiagnostic(timeline({ objectKey: '' }), row)).toBe(false);
   });
 });
 
@@ -514,5 +648,17 @@ describe('buildAdQuantDecisionStatus', () => {
     expect(status.aiLabel).toBe('未调用');
     expect(status.ruleLabel).toBe('待数据');
     expect(status.primaryActionLabel).toBe('补齐数据后再生成');
+  });
+});
+
+describe('ad quant task-first surface', () => {
+  it('uses the shared task banner as the only first-screen primary action', () => {
+    const source = readFileSync(new URL('./ad-quant-page.tsx', import.meta.url), 'utf8');
+    const blockedStateSource = source.match(/\) : !canDiagnose \? \([\s\S]*?\) : diagnosticCount <= 0 \? \(/)?.[0] || '';
+
+    expect(source.match(/<TaskBanner/g)).toHaveLength(1);
+    expect(source).not.toContain('data-diagnosis-primary-action');
+    expect(source).toContain('label: workspaceModel.primaryAction.label');
+    expect(blockedStateSource).not.toContain('action={');
   });
 });

@@ -45,6 +45,37 @@ export function readbackVerifierPassed(value: unknown): boolean {
   return result.ready === true && result.status === 'PASS';
 }
 
+export function readbackPrimaryTaskCopy(input: {
+  recommendationId?: string;
+  finalVerificationPassed: boolean;
+  primaryRepairAction: ReadbackRepairAction;
+}) {
+  if (input.finalVerificationPassed) {
+    return {
+      dataAction: 'review-readback-result',
+      title: '结果核对已通过',
+      description: '最终证据已核对通过；可在详情中查看本地证据路径与校验记录。',
+      statusLabel: '校验通过',
+    };
+  }
+  if (!input.recommendationId) {
+    return {
+      dataAction: 'select-approved-action',
+      title: '选择已批准动作',
+      description: '先在第 1 步载入一条当前范围内的已批准动作，再补审批凭证、执行截图和回读值。',
+      statusLabel: '待选择动作',
+    };
+  }
+  return {
+    dataAction: `repair-${input.primaryRepairAction.blocker}`,
+    title: input.primaryRepairAction.label,
+    description: input.primaryRepairAction.blocker === 'verification'
+      ? '字段已具备，运行一次最终校验；证据完整时直接进入最终验收，仍有缺口时只打开补证流程，不会自动填写。'
+      : '先修复当前最靠前的现场证据缺口；动作会切换到对应步骤并把焦点送到唯一修复目标。',
+    statusLabel: '',
+  };
+}
+
 export async function runReadbackWorkflowMutation<T>(
   action: 'create' | 'verify',
   task: () => Promise<T>,
@@ -2085,6 +2116,11 @@ export function ReadbackPage({
     .map((action) => resolveReadbackScreenshotRepairAction(action, form));
   const primaryRepairAction = repairActions[0];
   const secondaryRepairActions = repairActions.slice(1, 2);
+  const primaryTaskCopy = readbackPrimaryTaskCopy({
+    recommendationId: form.recommendationId,
+    finalVerificationPassed,
+    primaryRepairAction,
+  });
   const finalVerificationView = readbackGlobalBusyView({
     action: 'final-verification',
     activeAction,
@@ -2107,6 +2143,18 @@ export function ReadbackPage({
     ariaLabel: '查看核对详情',
     disabled: Boolean(activeAction),
     onClick: () => setTechnicalInspectorOpen(true),
+  };
+  const selectApprovedActionTaskAction = {
+    label: '选择已批准动作',
+    ariaLabel: '选择已批准动作',
+    disabled: authority.previewOnly || Boolean(activeAction) || approvedRows.length === 0,
+    disabledReason: authority.previewOnly
+      ? '仅开发预览为只读布局，不代表正式交付就绪。'
+      : approvedRows.length === 0 ? '当前范围没有已批准待执行动作。' : undefined,
+    onClick: () => {
+      activateReadbackStep('target-source');
+      window.requestAnimationFrame(() => document.getElementById('readback-approved-actions')?.focus());
+    },
   };
 
   return (
@@ -2140,24 +2188,22 @@ export function ReadbackPage({
         title="结果核对"
         description="选择已批准动作，保存审批凭证、执行前后截图和刷新后的回读值；最终校验会重新核对后台批准记录与当前报表批次。"
         task={(
-          <div data-action={finalVerificationPassed ? 'review-readback-result' : `repair-${primaryRepairAction.blocker}`} id="readback-verify-evidence" tabIndex={-1}>
+          <div data-action={primaryTaskCopy.dataAction} id="readback-verify-evidence" tabIndex={-1}>
             <TaskBanner
               eyebrow="当前主任务"
-              title={finalVerificationPassed ? '结果核对已通过' : primaryRepairAction.label}
-              description={finalVerificationPassed
-                ? '最终证据已核对通过；可在详情中查看本地证据路径与校验记录。'
-                : primaryRepairAction.blocker === 'verification'
-                  ? '字段已具备，运行一次最终校验；证据完整时直接进入最终验收，仍有缺口时只打开补证流程，不会自动填写。'
-                  : '先修复当前最靠前的现场证据缺口；动作会切换到对应步骤并把焦点送到唯一修复目标。'}
+              title={primaryTaskCopy.title}
+              description={primaryTaskCopy.description}
               tone={finalVerificationPassed ? 'confirmed' : missing.length ? 'attention' : 'neutral'}
               status={(
                 <StatusPill tone={finalVerificationPassed ? 'ready' : missing.length ? 'blocked' : 'pending'}>
-                  {finalVerificationPassed ? '校验通过' : precheckCopy.statusLabel}
+                  {primaryTaskCopy.statusLabel || precheckCopy.statusLabel}
                 </StatusPill>
               )}
               meta={<span>{form.recommendationId ? `已选择建议 #${form.recommendationId} · 建议版本 ${form.recommendationRevision}` : '尚未选择已批准动作'} · {finalVerificationPassed ? '最终证据已收齐' : `截图 ${capturedEvidenceCount}/4`}</span>}
-              primaryAction={finalVerificationPassed ? passedTaskAction : taskBannerAction(primaryRepairAction)}
-              secondaryActions={finalVerificationPassed ? [] : secondaryRepairActions.map(taskBannerAction)}
+              primaryAction={finalVerificationPassed
+                ? passedTaskAction
+                : form.recommendationId ? taskBannerAction(primaryRepairAction) : selectApprovedActionTaskAction}
+              secondaryActions={finalVerificationPassed || !form.recommendationId ? [] : secondaryRepairActions.map(taskBannerAction)}
             />
           </div>
         )}
@@ -2235,7 +2281,7 @@ export function ReadbackPage({
         >
         <div hidden={activeStep !== 'target-source'}>
           <div {...readbackStepPanelProps('target-source')}>
-            <section aria-label="已批准动作与来源" className="readback-workbench-section" data-readback-authority-source="main-derived">
+            <section aria-label="已批准动作与来源" className="readback-workbench-section" data-readback-authority-source="main-derived" id="readback-approved-actions" tabIndex={-1}>
             <div className="business-split">
               <div>
                 <div className="business-scope-line">当前有效批次：{currentBatchId || '暂无'}</div>

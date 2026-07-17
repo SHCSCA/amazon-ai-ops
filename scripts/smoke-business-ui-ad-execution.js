@@ -459,8 +459,25 @@ async function main() {
           bidAdjustPercent: 0.1,
         },
         quantReviewRequired: false,
+        writableTarget: {
+          entityType: 'auto_targeting',
+          entityId: 'amzn-auto-target-opaque-101',
+          entityName: 'tight match target',
+          campaignName: 'D6-auto-test',
+          adGroupName: 'D6-ad-group',
+          metricDate: '2026-06-12',
+          sourceFile: 'C:/reports/auto_targeting.xlsx',
+          sourceRow: 12,
+          identitySource: 'ads_ui',
+          verifiedBy: 'Smoke Operator',
+          verifiedAt: '2026-06-12T10:05:00.000Z',
+          verificationNote: 'Smoke fixture: matched the authenticated Ads UI target row.',
+          identityProofPath: 'C:/evidence/auto-target-101.png',
+        },
         batchId: 'batch_mock_ready',
-        sourceFiles: ['C:/reports/source_user_search_term.xlsx'],
+        reportType: 'auto_targeting',
+        sourceFile: 'C:/reports/auto_targeting.xlsx',
+        sourceFiles: ['C:/reports/auto_targeting.xlsx'],
         sourceRow: 12,
         impressions: 1200,
         acos: 0.72,
@@ -483,6 +500,43 @@ async function main() {
         quantReviewRequired: true,
         quantReasons: ['规则量化要求人工复核，不能直接进入执行。'],
       },
+    };
+    const unboundRecommendationEvidence = {
+      ...recommendationBase.evidence,
+      batchId: 'manual_ad_execution_batch',
+      targeting: 'unbound smoke target',
+      aiLifecycleStageEvidenceRefs: (recommendationBase.evidence.aiLifecycleStageEvidenceRefs || [])
+        .map((reference) => String(reference).replace(/batch_mock_ready/g, 'manual_ad_execution_batch')),
+      aiLifecycleStageEvidenceDetails: (recommendationBase.evidence.aiLifecycleStageEvidenceDetails || [])
+        .map((detail) => detail.type === 'metric' ? {
+          ...detail,
+          evidenceId: String(detail.evidenceId || '').replace(/batch_mock_ready/g, 'manual_ad_execution_batch'),
+          label: 'unbound smoke target / 2026-06-12',
+          batchId: 'manual_ad_execution_batch',
+          entityName: 'unbound smoke target',
+        } : { ...detail }),
+      aiEvidenceRefs: (recommendationBase.evidence.aiEvidenceRefs || [])
+        .map((reference) => String(reference).replace(/batch_mock_ready/g, 'manual_ad_execution_batch')),
+      aiEvidenceDetails: (recommendationBase.evidence.aiEvidenceDetails || [])
+        .map((detail) => detail.type === 'metric' ? {
+          ...detail,
+          evidenceId: String(detail.evidenceId || '').replace(/batch_mock_ready/g, 'manual_ad_execution_batch'),
+          label: 'unbound smoke target / 2026-06-12',
+          batchId: 'manual_ad_execution_batch',
+          entityName: 'unbound smoke target',
+        } : { ...detail }),
+      aiReasoningSteps: (recommendationBase.evidence.aiReasoningSteps || [])
+        .map((step) => String(step).replace(/tight match target/g, 'unbound smoke target')),
+    };
+    delete unboundRecommendationEvidence.writableTarget;
+    delete unboundRecommendationEvidence.writableTargetBinding;
+    const unboundRecommendation = {
+      ...recommendationBase,
+      id: 105,
+      entityName: 'unbound smoke target',
+      revision: 0,
+      status: 'pending',
+      evidence: unboundRecommendationEvidence,
     };
     const aiNoEvidenceRecommendation = {
       ...recommendationBase,
@@ -522,6 +576,7 @@ async function main() {
     const recommendationState = new Map([
       [recommendationBase.id, { ...recommendationBase, evidence: { ...recommendationBase.evidence } }],
       [blockedRecommendation.id, { ...blockedRecommendation, evidence: { ...blockedRecommendation.evidence } }],
+      [unboundRecommendation.id, { ...unboundRecommendation, evidence: { ...unboundRecommendation.evidence } }],
     ]);
     const assertRendererReadbackExportRequest = (input) => {
       const allowedKeys = ['expectedRevision', 'operatorEvidence', 'recommendationId', 'scope'];
@@ -702,6 +757,7 @@ async function main() {
     };
     window.__businessUiActionLog = [];
     window.__hideRecommendations = false;
+    window.__mockUnboundRecommendation = false;
     window.__mockAiConfigured = true;
     window.__mockBlockedPipeline = false;
     window.__mockDecisionDelayMs = 0;
@@ -761,12 +817,17 @@ async function main() {
           }];
         }
         return Array.from(recommendationState.values())
-          .filter((recommendation) => recommendation.status === filter?.status)
+          .filter((recommendation) => (
+            recommendation.status === filter?.status
+              && (recommendation.id !== unboundRecommendation.id || window.__mockUnboundRecommendation)
+          ))
           .map((recommendation) => ({
             ...recommendation,
             evidence: {
               ...recommendation.evidence,
-              batchId: filter?.batchId || recommendation.evidence.batchId,
+              batchId: recommendation.id === unboundRecommendation.id
+                ? recommendation.evidence.batchId
+                : (filter?.batchId || recommendation.evidence.batchId),
             },
           }));
       },
@@ -928,6 +989,160 @@ async function main() {
             },
           },
         };
+      },
+      bindRecommendationWritableTarget: async (input) => {
+        const recommendation = recommendationState.get(input?.recommendationId);
+        if (!recommendation || recommendation.status !== 'pending') {
+          throw new Error(`Illegal recommendation target-binding transition: ${recommendation?.status || 'missing'} -> pending`);
+        }
+        if (!Number.isInteger(input?.expectedRevision) || input.expectedRevision !== recommendation.revision) {
+          throw new Error('Ads 对象核验状态冲突：建议内容已更新，请刷新后重试。');
+        }
+        if (recommendation.evidence?.writableTarget || recommendation.evidence?.writableTargetBinding) {
+          throw new Error('Ads 对象核验被阻断：当前建议已经存在 Ads 可写对象或绑定审计。');
+        }
+        const rawTarget = input?.binding?.writableTarget || {};
+        const expectedScope = {
+          dateFrom: '2026-06-01',
+          dateTo: '2026-06-12',
+          storeName: 'FT-US-US',
+          marketplaceCode: 'US',
+          asin: recommendation.evidence?.asin,
+          batchId: recommendation.evidence?.batchId,
+        };
+        if (recommendation.id !== unboundRecommendation.id
+          || recommendation.evidence?.batchId !== 'manual_ad_execution_batch'
+          || recommendation.evidence?.asin !== 'B0TESTASIN'
+          || recommendation.evidence?.targeting !== 'unbound smoke target'
+          || recommendation.evidence?.date !== '2026-06-12'
+          || recommendation.evidence?.reportType !== 'auto_targeting'
+          || recommendation.evidence?.sourceFile !== 'C:/reports/auto_targeting.xlsx'
+          || JSON.stringify(recommendation.evidence).includes('batch_mock_ready')) {
+          throw new Error(`Target-binding request escaped the isolated fixture authority: ${JSON.stringify(recommendation)}`);
+        }
+        for (const [key, value] of Object.entries(expectedScope)) {
+          if (input?.scope?.[key] !== value) {
+            throw new Error(`Target-binding fixture scope mismatch for ${key}: ${JSON.stringify(input?.scope)}`);
+          }
+        }
+        const fixtureMetricSourceFiles = [...(recommendation.evidence?.sourceFiles || [])];
+        const knownReportFiles = new Map(fullReportFiles.map((report) => [
+          String(report.filePath || '').replace(/\\/g, '/').toLowerCase(),
+          report.reportType,
+        ]));
+        if (fixtureMetricSourceFiles.length !== 1
+          || fixtureMetricSourceFiles[0] !== 'C:/reports/auto_targeting.xlsx'
+          || !fixtureMetricSourceFiles.every((filePath) => knownReportFiles.has(String(filePath).replace(/\\/g, '/').toLowerCase()))
+          || recommendation.evidence?.sourceRow !== 12) {
+          throw new Error(`Target-binding fixture metric source is not authoritative: ${JSON.stringify({
+            batchId: recommendation.evidence?.batchId,
+            sourceFiles: fixtureMetricSourceFiles,
+            sourceRow: recommendation.evidence?.sourceRow,
+          })}`);
+        }
+        const normalizedTargetSourceFile = String(rawTarget.sourceFile || '').replace(/\\/g, '/').toLowerCase();
+        if (input?.binding?.boundBy !== 'Smoke Binder'
+          || input?.binding?.note !== 'Smoke fixture verified the unique Ads target and keeps the recommendation pending.'
+          || rawTarget.entityType !== 'auto_targeting'
+          || rawTarget.entityId !== 'amzn-auto-target-unbound-105'
+          || knownReportFiles.get(normalizedTargetSourceFile) !== rawTarget.entityType
+          || rawTarget.sourceRow !== recommendation.evidence?.sourceRow
+          || rawTarget.identitySource !== 'ads_ui'
+          || rawTarget.identityProofPath !== 'C:/evidence/unbound-target-105.png'
+          || rawTarget.verificationNote !== 'Matched campaign, ad group, target name, and immutable Ads object ID.') {
+          throw new Error(`Target-binding fixture writable identity mismatch: ${JSON.stringify(input?.binding)}`);
+        }
+        const actionEntry = {
+          type: 'bindRecommendationWritableTarget',
+          input,
+          fixtureAuthority: {
+            recommendationId: recommendation.id,
+            status: recommendation.status,
+            revision: recommendation.revision,
+            batchId: recommendation.evidence?.batchId,
+            asin: recommendation.evidence?.asin,
+            reportType: recommendation.evidence?.reportType,
+            sourceFile: recommendation.evidence?.sourceFile,
+            sourceFiles: fixtureMetricSourceFiles,
+            sourceRow: recommendation.evidence?.sourceRow,
+          },
+        };
+        window.__businessUiActionLog.push(actionEntry);
+        const boundAt = '2026-07-16T05:30:00.000Z';
+        const writableTarget = {
+          entityType: rawTarget.entityType,
+          entityId: rawTarget.entityId,
+          entityName: recommendation.evidence?.targeting || recommendation.entityName,
+          campaignName: recommendation.evidence?.campaignName,
+          adGroupName: recommendation.evidence?.adGroupName,
+          metricDate: recommendation.evidence?.date,
+          sourceFile: rawTarget.sourceFile,
+          sourceRow: rawTarget.sourceRow,
+          identitySource: rawTarget.identitySource,
+          verifiedBy: input?.binding?.boundBy,
+          verifiedAt: boundAt,
+          verificationNote: rawTarget.verificationNote,
+          identityProofPath: rawTarget.identityProofPath,
+        };
+        const fromRevision = recommendation.revision;
+        const boundRevision = fromRevision + 1;
+        const writableTargetBinding = {
+          schemaVersion: 1,
+          fromRevision,
+          boundRevision,
+          boundBy: input?.binding?.boundBy,
+          boundAt,
+          note: input?.binding?.note,
+          scope: { ...input.scope },
+          metricSource: {
+            batchId: recommendation.evidence?.batchId,
+            sourceFiles: [...(recommendation.evidence?.sourceFiles || [])],
+            sourceRow: recommendation.evidence?.sourceRow,
+          },
+          writableTarget,
+        };
+        const persistedRecommendation = {
+          ...recommendation,
+          revision: boundRevision,
+          evidence: {
+            ...recommendation.evidence,
+            writableTarget,
+            writableTargetBinding,
+          },
+        };
+        recommendationState.set(input.recommendationId, persistedRecommendation);
+        const result = {
+          ok: true,
+          recommendationId: input.recommendationId,
+          status: 'pending',
+          revision: boundRevision,
+          boundAt,
+        };
+        actionEntry.result = result;
+        actionEntry.persisted = {
+          recommendationId: persistedRecommendation.id,
+          status: persistedRecommendation.status,
+          revision: persistedRecommendation.revision,
+          evidence: {
+            batchId: persistedRecommendation.evidence?.batchId,
+            asin: persistedRecommendation.evidence?.asin,
+            reportType: persistedRecommendation.evidence?.reportType,
+            sourceFile: persistedRecommendation.evidence?.sourceFile,
+            sourceFiles: [...(persistedRecommendation.evidence?.sourceFiles || [])],
+            sourceRow: persistedRecommendation.evidence?.sourceRow,
+            writableTarget: { ...persistedRecommendation.evidence?.writableTarget },
+            writableTargetBinding: {
+              ...persistedRecommendation.evidence?.writableTargetBinding,
+              scope: { ...persistedRecommendation.evidence?.writableTargetBinding?.scope },
+              metricSource: {
+                ...persistedRecommendation.evidence?.writableTargetBinding?.metricSource,
+                sourceFiles: [...(persistedRecommendation.evidence?.writableTargetBinding?.metricSource?.sourceFiles || [])],
+              },
+              writableTarget: { ...persistedRecommendation.evidence?.writableTargetBinding?.writableTarget },
+            },
+          },
+        };
+        return result;
       },
       approveRecommendation: async (input) => {
         window.__businessUiActionLog.push({ type: 'approveRecommendation', input });
@@ -1150,10 +1365,11 @@ async function main() {
 
   await page.goto(server.url, { waitUntil: 'networkidle' });
   await setManualScopeBatch(page, 'manual_ad_execution_batch');
+  await page.getByRole('textbox', { name: 'ASIN', exact: true }).fill('B0TESTASIN');
   await page.getByRole('button', { name: '保存范围' }).click();
   await page.locator('.scope-compact-trigger').click();
   await page.getByLabel('当前范围详情').getByText('批次', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('真实报表', { exact: true }).first().waitFor({ timeout: 5000 });
+  await page.getByText('报表文件', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.waitForFunction(() => document.body.textContent?.includes('手动批次未自动校验：manual_ad_execution_batch'), null, { timeout: 5000 });
   await expectInBody(page, 'manual_ad_execution_batch', 'manual batch scope value');
   await page.locator('.scope-compact-trigger').click();
@@ -1273,15 +1489,27 @@ async function main() {
   const drawerClose = drawer.getByRole('button', { name: '关闭详情检查器' });
   await drawerClose.focus();
   await page.keyboard.press('Shift+Tab');
-  const wrappedBackward = await drawer.evaluate((node) => {
+  const backwardFocusState = await drawer.evaluate((node) => {
     const focusable = Array.from(node.querySelectorAll(
-      'a[href], area[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+      'a[href], area[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => (
+      element.getClientRects().length > 0
+      && !element.matches(':disabled, [aria-hidden="true"], [inert]')
     ));
-    return focusable.length > 1
-      && document.activeElement === focusable[focusable.length - 1]
-      && node.contains(document.activeElement);
+    return {
+      activeElement: document.activeElement?.tagName || null,
+      activeText: String(document.activeElement?.textContent || '').trim(),
+      focusable: focusable.map((element) => ({
+        tagName: element.tagName,
+        text: String(element.textContent || '').trim(),
+      })),
+      wrapped: focusable.length > 1
+        && document.activeElement === focusable[focusable.length - 1]
+        && node.contains(document.activeElement),
+    };
   });
-  if (!wrappedBackward) fail('Drawer Shift+Tab did not wrap focus to the last control');
+  const wrappedBackward = backwardFocusState.wrapped;
+  if (!wrappedBackward) fail('Drawer Shift+Tab did not wrap focus to the last control', JSON.stringify(backwardFocusState));
   await page.keyboard.press('Tab');
   const wrappedForward = await drawer.evaluate((node) => (
     node.querySelector('button[aria-label="关闭详情检查器"]') === document.activeElement
@@ -1396,6 +1624,186 @@ async function main() {
   };
   await secondInlineInspector.getByRole('button', { name: '关闭详情检查器' }).click();
   await secondInlineInspector.waitFor({ state: 'detached', timeout: 5000 });
+
+  await page.setViewportSize({ width: 1200, height: 700 });
+  await page.evaluate(() => {
+    window.__mockUnboundRecommendation = true;
+  });
+  await navigateBusinessPage(page, NAV_RE.readback, 'readback');
+  await navigateBusinessPage(page, NAV_RE.recommendations, 'recommendations');
+  await waitForDecisionsSubview(page, 'recommendations');
+  const unboundRow = decisionsRoot.locator('.priority-table tbody tr[aria-label]').filter({ hasText: 'unbound smoke target' });
+  if (await unboundRow.count() !== 1) {
+    fail('Target-binding fixture did not expose exactly one pending unbound row', String(await unboundRow.count()));
+  }
+  await unboundRow.focus();
+  await unboundRow.press('Enter');
+  const targetBindingDrawer = page.getByRole('dialog');
+  await targetBindingDrawer.waitFor({ state: 'visible', timeout: 5000 });
+  await targetBindingDrawer.getByRole('heading', { name: '核验 Ads 对象，保持待审批', exact: true }).waitFor({ timeout: 5000 });
+  await targetBindingDrawer.getByText(
+    '此步骤只绑定当前建议对应的唯一 Ads 可写对象并生成不可覆盖的审计记录；不会批准建议，也不会执行 Ads 动作。',
+    { exact: true },
+  ).waitFor({ timeout: 5000 });
+  if (await targetBindingDrawer.getByRole('button', { name: '批准建议（不执行 Ads）', exact: true }).count()) {
+    fail('Pending unbound recommendation exposed approval before Ads target verification');
+  }
+  const inspectorTaskActionIsolation = await decisionsRoot.evaluate((root) => {
+    const actionGroup = root.querySelector('.task-banner__actions');
+    const actionButtons = actionGroup?.querySelectorAll('button') ?? [];
+    const actionGroupStyle = actionGroup ? window.getComputedStyle(actionGroup) : null;
+    return {
+      inspectorOpen: root.getAttribute('data-inspector-open') === 'true',
+      actionGroupMounted: Boolean(actionGroup),
+      actionButtonCount: actionButtons.length,
+      actionGroupDisplay: actionGroupStyle?.display ?? null,
+      actionGroupHasLayoutBox: actionGroup ? actionGroup.getClientRects().length > 0 : null,
+      actionGroupContainsFocus: actionGroup ? actionGroup.contains(document.activeElement) : null,
+    };
+  });
+  if (!inspectorTaskActionIsolation.inspectorOpen
+    || !inspectorTaskActionIsolation.actionGroupMounted
+    || inspectorTaskActionIsolation.actionButtonCount < 1
+    || inspectorTaskActionIsolation.actionGroupDisplay !== 'none'
+    || inspectorTaskActionIsolation.actionGroupHasLayoutBox !== false
+    || inspectorTaskActionIsolation.actionGroupContainsFocus !== false) {
+    fail(
+      'Inspector-open state did not preserve the focus-return trigger as a hidden, non-competing task action',
+      JSON.stringify(inspectorTaskActionIsolation),
+    );
+  }
+  await targetBindingDrawer.getByRole('textbox', { name: '核验人', exact: true }).fill('Smoke Binder');
+  await targetBindingDrawer.getByRole('textbox', { name: '对象绑定说明', exact: true }).fill('Smoke fixture verified the unique Ads target and keeps the recommendation pending.');
+  await targetBindingDrawer.getByRole('combobox', { name: '可写对象类型', exact: true }).selectOption('auto_targeting');
+  await targetBindingDrawer.getByRole('textbox', { name: 'Ads 对象 ID', exact: true }).fill('amzn-auto-target-unbound-105');
+  await targetBindingDrawer.getByRole('combobox', { name: '来源文件', exact: true }).selectOption('C:/reports/auto_targeting.xlsx');
+  await targetBindingDrawer.getByRole('spinbutton', { name: '唯一来源行', exact: true }).fill('12');
+  await targetBindingDrawer.getByRole('combobox', { name: '身份核验来源', exact: true }).selectOption('ads_ui');
+  await targetBindingDrawer.getByRole('textbox', { name: '身份核验证据路径', exact: true }).fill('C:/evidence/unbound-target-105.png');
+  await targetBindingDrawer.getByRole('textbox', { name: '身份核验说明', exact: true }).fill('Matched campaign, ad group, target name, and immutable Ads object ID.');
+  await targetBindingDrawer.getByRole('heading', { name: '核验 Ads 对象，保持待审批', exact: true }).scrollIntoViewIfNeeded();
+  await page.evaluate(() => {
+    document.querySelector('[data-smoke-fixture-evidence-label]')?.remove();
+    const label = document.createElement('div');
+    label.setAttribute('data-smoke-fixture-evidence-label', 'true');
+    label.setAttribute('role', 'note');
+    label.textContent = '隔离 Smoke Fixture｜非生产数据｜不写真实 Ads｜未触发批准';
+    Object.assign(label.style, {
+      position: 'fixed',
+      left: '188px',
+      bottom: '12px',
+      zIndex: '2147483647',
+      border: '2px solid #c2410c',
+      borderRadius: '6px',
+      background: '#fff7ed',
+      padding: '8px 12px',
+      color: '#9a3412',
+      font: '700 13px/18px system-ui, sans-serif',
+      boxShadow: '0 4px 16px rgba(154, 52, 18, 0.2)',
+      pointerEvents: 'none',
+    });
+    document.body.append(label);
+  });
+  const targetBindingVisualProof = await page.evaluate(() => {
+    const inViewport = (element) => {
+      if (!element) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0
+        && rect.height > 0
+        && rect.bottom > 0
+        && rect.right > 0
+        && rect.top < window.innerHeight
+        && rect.left < window.innerWidth;
+    };
+    const elements = Array.from(document.querySelectorAll('h1, h2, h3, p, div'));
+    const heading = elements.find((element) => String(element.textContent || '').trim() === '核验 Ads 对象，保持待审批');
+    const safetyCopy = elements.find((element) => String(element.textContent || '').trim()
+      === '此步骤只绑定当前建议对应的唯一 Ads 可写对象并生成不可覆盖的审计记录；不会批准建议，也不会执行 Ads 动作。');
+    const badge = document.querySelector('[data-smoke-fixture-evidence-label]');
+    return {
+      headingVisible: inViewport(heading),
+      safetyCopyVisible: inViewport(safetyCopy),
+      fixtureBadgeVisible: inViewport(badge),
+      fixtureBadgeText: String(badge?.textContent || '').trim(),
+    };
+  });
+  if (!targetBindingVisualProof.headingVisible
+    || !targetBindingVisualProof.safetyCopyVisible
+    || !targetBindingVisualProof.fixtureBadgeVisible
+    || targetBindingVisualProof.fixtureBadgeText !== '隔离 Smoke Fixture｜非生产数据｜不写真实 Ads｜未触发批准') {
+    fail('Target-binding screenshot did not visibly prove fixture isolation and the safe verification boundary', JSON.stringify(targetBindingVisualProof));
+  }
+  await captureViewportScreenshot(page, evidence, 'decisionsTargetBindingBefore1200', runId, {
+    label: '待审批未绑定对象核验表单（隔离 smoke fixture）',
+    workspace: 'decisions',
+    subview: 'recommendations',
+    inspectorMode: 'drawer',
+    fixtureOnly: true,
+    writesRealAds: false,
+    visualProof: targetBindingVisualProof,
+  });
+  const targetBindingCountsBefore = await page.evaluate(() => ({
+    binding: (window.__businessUiActionLog || []).filter((item) => item.type === 'bindRecommendationWritableTarget').length,
+    approval: (window.__businessUiActionLog || []).filter((item) => item.type === 'approveRecommendation' && item.input?.id === 105).length,
+  }));
+  await targetBindingDrawer.getByRole('button', { name: '确认对象绑定（仍待审批）', exact: true }).click();
+  await targetBindingDrawer.getByText('对象已核验 · 仍待审批 #105', { exact: true }).waitFor({ timeout: 5000 });
+  await targetBindingDrawer.getByRole('heading', { name: '人工决定', exact: true }).waitFor({ timeout: 5000 });
+  await targetBindingDrawer.getByRole('button', { name: '批准建议（不执行 Ads）', exact: true }).waitFor({ timeout: 5000 });
+  const targetBindingCountsAfter = await page.evaluate(() => ({
+    binding: (window.__businessUiActionLog || []).filter((item) => item.type === 'bindRecommendationWritableTarget').length,
+    approval: (window.__businessUiActionLog || []).filter((item) => item.type === 'approveRecommendation' && item.input?.id === 105).length,
+  }));
+  if (targetBindingCountsAfter.binding !== targetBindingCountsBefore.binding + 1
+    || targetBindingCountsAfter.approval !== targetBindingCountsBefore.approval) {
+    fail('Target-binding success did not remain isolated from approval', JSON.stringify({ targetBindingCountsBefore, targetBindingCountsAfter }));
+  }
+  const targetBindingAudit = await page.evaluate(() => {
+    const calls = (window.__businessUiActionLog || []).filter((item) => item.type === 'bindRecommendationWritableTarget');
+    return calls[calls.length - 1] || null;
+  });
+  if (targetBindingAudit?.persisted?.status !== 'pending'
+    || targetBindingAudit?.persisted?.revision !== 1
+    || targetBindingAudit?.persisted?.evidence?.batchId !== 'manual_ad_execution_batch'
+    || targetBindingAudit?.persisted?.evidence?.writableTargetBinding?.scope?.batchId !== 'manual_ad_execution_batch'
+    || targetBindingAudit?.persisted?.evidence?.writableTargetBinding?.metricSource?.batchId !== 'manual_ad_execution_batch') {
+    fail('Target-binding fixture did not persist the pending same-batch audit contract', JSON.stringify(targetBindingAudit));
+  }
+  await captureViewportScreenshot(page, evidence, 'decisionsTargetBindingSuccess1200', runId, {
+    label: '对象已核验且仍待审批（隔离 smoke fixture）',
+    workspace: 'decisions',
+    subview: 'recommendations',
+    inspectorMode: 'drawer',
+    fixtureOnly: true,
+    status: 'pending',
+    writesRealAds: false,
+  });
+  evidence.targetBindingFixture = {
+    recommendationId: 105,
+    statusAfterBinding: 'pending',
+    bindingCalls: targetBindingCountsAfter.binding - targetBindingCountsBefore.binding,
+    approvalCalls: targetBindingCountsAfter.approval - targetBindingCountsBefore.approval,
+    requestScope: targetBindingAudit.input?.scope,
+    fixtureAuthority: targetBindingAudit.fixtureAuthority,
+    persistedBinding: targetBindingAudit.persisted?.evidence?.writableTargetBinding,
+    visualProof: targetBindingVisualProof,
+    fixtureOnly: true,
+    writesRealAds: false,
+  };
+  await targetBindingDrawer.getByRole('button', { name: '关闭详情检查器' }).click();
+  await targetBindingDrawer.waitFor({ state: 'detached', timeout: 5000 });
+  await page.evaluate(() => {
+    document.querySelector('[data-smoke-fixture-evidence-label]')?.remove();
+    window.__mockUnboundRecommendation = false;
+  });
+  await navigateBusinessPage(page, NAV_RE.readback, 'readback');
+  await navigateBusinessPage(page, NAV_RE.recommendations, 'recommendations');
+  await waitForDecisionsSubview(page, 'recommendations');
+  if (await decisionsRoot.locator('.priority-table tbody tr[aria-label]').count() !== 2) {
+    fail('Target-binding fixture leaked into the normal authoritative smoke queue');
+  }
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.waitForTimeout(50);
 
   async function recordTabState(step, expectedSubview) {
     await waitForDecisionsSubview(page, expectedSubview);
@@ -1615,7 +2023,7 @@ async function main() {
   await pendingRow.press('Enter');
   const approvalDrawer = page.getByRole('dialog');
   await approvalDrawer.waitFor({ state: 'visible', timeout: 5000 });
-  const approveButton = approvalDrawer.getByRole('button', { name: '批准，进入结果核对', exact: true });
+  const approveButton = approvalDrawer.getByRole('button', { name: '批准建议（不执行 Ads）', exact: true });
   const approvalCallsBeforeValidation = await page.evaluate(() => (
     (window.__businessUiActionLog || []).filter((item) => item.type === 'approveRecommendation').length
   ));
@@ -1638,17 +2046,17 @@ async function main() {
     document.querySelector('[role="dialog"][data-inspector-mode="drawer"]')?.getAttribute('aria-busy') === 'true'
   ), null, { timeout: 2000 });
   if (!await approvalDrawer.getByRole('button', { name: '关闭详情检查器' }).isDisabled()
-    || !await approvalDrawer.getByRole('button', { name: '拒绝', exact: true }).isDisabled()) {
+    || !await approvalDrawer.getByRole('button', { name: '拒绝建议', exact: true }).isDisabled()) {
     fail('Decision busy state did not lock close and peer decision actions');
   }
   const busyTabsLocked = await page.locator('.decisions-tabs button').evaluateAll((nodes) => (
     nodes.length === 3 && nodes.every((node) => node.disabled)
   ));
-  const busyTaskActionsLocked = await page.locator('.task-banner__actions button').evaluateAll((nodes) => (
-    nodes.length > 0 && nodes.every((node) => node.disabled)
+  const busyTaskActionsSafe = await page.locator('.task-banner__actions button').evaluateAll((nodes) => (
+    nodes.length === 0 || nodes.every((node) => node.disabled)
   ));
-  if (!busyTabsLocked || !busyTaskActionsLocked) {
-    fail('Decision busy state did not lock tab and task-action peers', JSON.stringify({ busyTabsLocked, busyTaskActionsLocked }));
+  if (!busyTabsLocked || !busyTaskActionsSafe) {
+    fail('Decision busy state did not lock tabs or hide/lock competing task actions', JSON.stringify({ busyTabsLocked, busyTaskActionsSafe }));
   }
   await page.keyboard.press('Escape');
   if (!await approvalDrawer.isVisible()) fail('Busy decision drawer closed on Escape');
@@ -1671,7 +2079,7 @@ async function main() {
     closeLocked: true,
     peerDecisionLocked: true,
     tabsLocked: busyTabsLocked,
-    taskActionsLocked: busyTaskActionsLocked,
+    taskActionsHiddenOrLocked: busyTaskActionsSafe,
     escapeLocked: true,
     completionFocusOwner: approvalFocusOwner,
   };
@@ -1684,16 +2092,16 @@ async function main() {
   await needsReviewRow.press('Enter');
   const reviewDrawer = page.getByRole('dialog');
   await reviewDrawer.waitFor({ state: 'visible', timeout: 5000 });
-  if (await reviewDrawer.getByRole('button', { name: '批准，进入结果核对', exact: true }).count()) {
+  if (await reviewDrawer.getByRole('button', { name: '批准建议（不执行 Ads）', exact: true }).count()) {
     fail('Needs-review recommendation exposed an approve action');
   }
-  const rejectButton = reviewDrawer.getByRole('button', { name: '拒绝', exact: true });
+  const rejectButton = reviewDrawer.getByRole('button', { name: '拒绝建议', exact: true });
   const rejectCallsBeforeValidation = await page.evaluate(() => (
     (window.__businessUiActionLog || []).filter((item) => item.type === 'rejectRecommendation').length
   ));
   await rejectButton.click();
   await expectVisible(page, '拒绝前必须填写处理人。');
-  await reviewDrawer.getByRole('textbox', { name: /处理人/ }).fill('QA Rejector');
+  await reviewDrawer.getByRole('textbox', { name: /复核人/ }).fill('QA Rejector');
   await rejectButton.click();
   await expectVisible(page, '拒绝前必须填写拒绝原因。');
   const rejectCallsAfterEmptyFields = await page.evaluate(() => (
@@ -1702,7 +2110,7 @@ async function main() {
   if (rejectCallsAfterEmptyFields !== rejectCallsBeforeValidation) {
     fail('Incomplete reject form escaped the renderer fail-closed guard');
   }
-  await reviewDrawer.getByRole('textbox', { name: /拒绝原因|审批备注/ }).fill('Rejected during smoke audit.');
+  await reviewDrawer.getByRole('textbox', { name: /复核依据|拒绝原因/ }).fill('Rejected during smoke audit.');
   await rejectButton.click();
   await page.getByText(/建议已拦截 #102/).waitFor({ timeout: 5000 });
   await reviewDrawer.waitFor({ state: 'detached', timeout: 5000 });
@@ -1734,8 +2142,8 @@ async function main() {
     const inspector = page.getByRole('complementary');
     await inspector.waitFor({ state: 'visible', timeout: 5000 });
     if (await inspector.locator('.decisions-decision-form').count()
-      || await inspector.getByRole('button', { name: '批准，进入结果核对', exact: true }).count()
-      || await inspector.getByRole('button', { name: '拒绝', exact: true }).count()
+      || await inspector.getByRole('button', { name: '批准建议（不执行 Ads）', exact: true }).count()
+      || await inspector.getByRole('button', { name: '拒绝建议', exact: true }).count()
       || await inspector.locator('input, textarea, select').count()) {
       fail('Historical decision exposed editable decision controls', statusLabel);
     }
@@ -2077,6 +2485,59 @@ async function main() {
     || rejectCall.input?.decision?.batchId !== 'manual_ad_execution_batch') {
     fail('Reject IPC did not include rejection metadata', JSON.stringify(rejectCall.input));
   }
+  const targetBindingCalls = actionLog.filter((item) => item.type === 'bindRecommendationWritableTarget');
+  const targetBindingCall = targetBindingCalls[0];
+  const targetBindingScope = targetBindingCall?.input?.scope;
+  const targetBindingInput = targetBindingCall?.input?.binding;
+  const targetBindingTarget = targetBindingInput?.writableTarget;
+  const persistedTargetBinding = targetBindingCall?.persisted?.evidence?.writableTargetBinding;
+  if (targetBindingCalls.length !== 1
+    || targetBindingCall?.input?.recommendationId !== 105
+    || targetBindingCall?.input?.expectedRevision !== 0
+    || targetBindingScope?.dateFrom !== '2026-06-01'
+    || targetBindingScope?.dateTo !== '2026-06-12'
+    || targetBindingScope?.storeName !== 'FT-US-US'
+    || targetBindingScope?.marketplaceCode !== 'US'
+    || targetBindingScope?.asin !== 'B0TESTASIN'
+    || targetBindingScope?.batchId !== 'manual_ad_execution_batch'
+    || targetBindingInput?.boundBy !== 'Smoke Binder'
+    || targetBindingInput?.note !== 'Smoke fixture verified the unique Ads target and keeps the recommendation pending.'
+    || targetBindingTarget?.entityType !== 'auto_targeting'
+    || targetBindingTarget?.entityId !== 'amzn-auto-target-unbound-105'
+    || targetBindingTarget?.sourceFile !== 'C:/reports/auto_targeting.xlsx'
+    || targetBindingTarget?.sourceRow !== 12
+    || targetBindingTarget?.identitySource !== 'ads_ui'
+    || targetBindingTarget?.identityProofPath !== 'C:/evidence/unbound-target-105.png'
+    || targetBindingCall?.fixtureAuthority?.batchId !== 'manual_ad_execution_batch'
+    || targetBindingCall?.fixtureAuthority?.asin !== 'B0TESTASIN'
+    || targetBindingCall?.fixtureAuthority?.reportType !== 'auto_targeting'
+    || targetBindingCall?.fixtureAuthority?.sourceFile !== 'C:/reports/auto_targeting.xlsx'
+    || JSON.stringify(targetBindingCall?.fixtureAuthority?.sourceFiles) !== JSON.stringify(['C:/reports/auto_targeting.xlsx'])
+    || targetBindingCall?.fixtureAuthority?.sourceRow !== 12
+    || targetBindingCall?.result?.status !== 'pending'
+    || targetBindingCall?.result?.revision !== 1
+    || targetBindingCall?.persisted?.status !== 'pending'
+    || targetBindingCall?.persisted?.revision !== 1
+    || targetBindingCall?.persisted?.evidence?.batchId !== 'manual_ad_execution_batch'
+    || targetBindingCall?.persisted?.evidence?.asin !== 'B0TESTASIN'
+    || targetBindingCall?.persisted?.evidence?.reportType !== 'auto_targeting'
+    || targetBindingCall?.persisted?.evidence?.sourceFile !== 'C:/reports/auto_targeting.xlsx'
+    || JSON.stringify(targetBindingCall?.persisted?.evidence?.sourceFiles) !== JSON.stringify(['C:/reports/auto_targeting.xlsx'])
+    || targetBindingCall?.persisted?.evidence?.sourceRow !== 12
+    || persistedTargetBinding?.fromRevision !== 0
+    || persistedTargetBinding?.boundRevision !== 1
+    || persistedTargetBinding?.boundBy !== 'Smoke Binder'
+    || persistedTargetBinding?.scope?.batchId !== 'manual_ad_execution_batch'
+    || persistedTargetBinding?.scope?.asin !== 'B0TESTASIN'
+    || persistedTargetBinding?.metricSource?.batchId !== 'manual_ad_execution_batch'
+    || JSON.stringify(persistedTargetBinding?.metricSource?.sourceFiles) !== JSON.stringify(['C:/reports/auto_targeting.xlsx'])
+    || persistedTargetBinding?.metricSource?.sourceRow !== 12
+    || persistedTargetBinding?.writableTarget?.entityId !== 'amzn-auto-target-unbound-105') {
+    fail('Target-binding smoke did not submit the isolated immutable Ads identity contract', JSON.stringify(targetBindingCalls));
+  }
+  if (actionLog.some((item) => item.type === 'approveRecommendation' && item.input?.id === 105)) {
+    fail('Target-binding smoke fixture incorrectly approved recommendation #105');
+  }
   const readbackExports = actionLog.filter((item) => item.type === 'exportAdReadbackEvidence');
   if (readbackExports.length !== 2
     || readbackExports[0].result?.status !== 'PASS'
@@ -2096,7 +2557,7 @@ async function main() {
       || readbackExport.authoritySource?.source?.batchId !== 'manual_ad_execution_batch'
       || readbackExport.authoritySource?.source?.metricDate !== '2026-06-12'
       || readbackExport.authoritySource?.source?.sourceRow !== 12
-      || !readbackExport.authoritySource?.source?.sourceFiles?.includes('C:/reports/source_user_search_term.xlsx')
+      || !readbackExport.authoritySource?.source?.sourceFiles?.includes('C:/reports/auto_targeting.xlsx')
       || readbackExport.authoritySource?.target?.asin !== 'B0TESTASIN'
       || readbackExport.authoritySource?.approval?.note !== 'Approved for smoke scope only.'
       || readbackExport.authoritySource?.riskLevel !== 'APPROVAL') {

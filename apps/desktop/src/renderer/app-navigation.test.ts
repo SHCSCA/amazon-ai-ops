@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createAppNavigationEventHandler, subscribeAppWorkflowInvalidation } from './App';
+import { createAppNavigationEventHandler, createLatestWorkflowLoadGuard, resetWorkspaceScrollPosition, subscribeAppWorkflowInvalidation } from './App';
 import type { NavigationIntent } from './navigation';
 import { notifyWorkflowInvalidated } from './workflow-invalidation';
 
@@ -50,6 +50,31 @@ describe('App runtime navigation event compatibility', () => {
   });
 });
 
+describe('App workspace scroll restoration', () => {
+  it('resets the shared workspace scroll owner to the top-left on navigation', () => {
+    const calls: ScrollToOptions[] = [];
+    const owner = {
+      scrollLeft: 42,
+      scrollTop: 680,
+      scrollTo: (options: ScrollToOptions) => calls.push(options),
+    };
+
+    expect(resetWorkspaceScrollPosition(owner)).toBe(true);
+    expect(owner.scrollTop).toBe(0);
+    expect(owner.scrollLeft).toBe(0);
+    expect(calls).toEqual([{ top: 0, left: 0, behavior: 'auto' }]);
+    expect(resetWorkspaceScrollPosition(null)).toBe(false);
+  });
+
+  it('uses a layout-timed reset and one repaint guard for every workspace/subview change', () => {
+    const source = appSource();
+
+    expect(source).toContain('useLayoutEffect(() =>');
+    expect(source).toContain('resetWorkspaceScrollPosition(content)');
+    expect(source).toContain('window.requestAnimationFrame');
+  });
+});
+
 describe('App unified Decisions workspace routing', () => {
   it('passes the full active navigation intent into BusinessRoutePage', () => {
     const source = appSource();
@@ -79,6 +104,33 @@ describe('App unified Decisions workspace routing', () => {
   });
 });
 
+describe('App remaining workspace shell routing', () => {
+  it('uses the shared shell only for multi-subview workspaces and renders diagnosis directly', () => {
+    const source = appSource();
+
+    expect(source).toContain("import { WorkspaceSubviewShell } from './components/workspace';");
+    expect(source).toContain('WORKSPACE_SUBVIEW_TABS,');
+    expect(source).toContain('onNavigate: (intent: NavigationIntent) => void');
+    expect(source).toContain('onNavigate={requestNavigate}');
+    expect(source).toContain("navigation.workspace === 'product'");
+    expect(source).toContain("navigation.workspace === 'data-preparation'");
+    expect(source).toContain("navigation.workspace === 'diagnosis'");
+    expect(source).toContain("navigation.workspace === 'growth'");
+    expect(source).toContain("navigation.workspace === 'system'");
+    expect(source).toContain("if (navigation.workspace === 'diagnosis') return <AdQuantPage />;");
+    expect(source.match(/<WorkspaceSubviewShell/g)).toHaveLength(4);
+    expect(source).toContain("ownsPageHeading={navigation.subview === 'products'}");
+  });
+
+  it('shows one workspace-level preview warning across every System subview', () => {
+    const source = appSource();
+
+    expect(source).toContain('previewMode: boolean');
+    expect(source).toContain('previewMode={browserPreviewBootstrap.enabled}');
+    expect(source).toContain('仅开发预览，不代表 APP_READY');
+  });
+});
+
 describe('App workflow invalidation subscription', () => {
   it('reloads workflow state for runtime invalidations and cleans up without polling', () => {
     const target = new EventTarget();
@@ -91,5 +143,17 @@ describe('App workflow invalidation subscription', () => {
     unsubscribe();
     notifyWorkflowInvalidated('readback-verified', target);
     expect(sources).toEqual(['approval-approved']);
+  });
+
+  it('keeps only the newest overlapping workflow reload authoritative', () => {
+    const guard = createLatestWorkflowLoadGuard();
+    const first = guard.begin();
+    const second = guard.begin();
+
+    expect(guard.isCurrent(first)).toBe(false);
+    expect(guard.isCurrent(second)).toBe(true);
+
+    guard.invalidate();
+    expect(guard.isCurrent(second)).toBe(false);
   });
 });

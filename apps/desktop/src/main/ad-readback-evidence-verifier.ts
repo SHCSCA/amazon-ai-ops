@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -99,8 +100,25 @@ function checkOwnedEvidenceFile(filePath: unknown): { ok: boolean; details?: str
 
 function evidenceFilesAreDistinct(files: Array<{ label: string; filePath: unknown }>): boolean {
   if (!files.every((item) => hasRealText(item.filePath))) return false;
-  const resolved = files.map((item) => path.resolve(String(item.filePath).trim()).toLowerCase());
-  return new Set(resolved).size === resolved.length;
+  const resolved = files.map((item) => path.resolve(String(item.filePath).trim()));
+  if (!resolved.every((filePath) => fs.existsSync(filePath) && fs.statSync(filePath).isFile())) return false;
+  const canonical = resolved.map((filePath) => fs.realpathSync.native(filePath));
+  const pathIdentities = canonical.map((filePath) => filePath.toLowerCase());
+  if (new Set(pathIdentities).size !== pathIdentities.length) return false;
+  const contentHashes = canonical.map((filePath) => crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(filePath))
+    .digest('hex'));
+  return new Set(contentHashes).size === contentHashes.length;
+}
+
+function isExistingTargetIdentityProof(filePath: unknown): boolean {
+  if (!hasRealText(filePath)) return false;
+  const resolved = path.resolve(String(filePath).trim());
+  const ext = path.extname(resolved).toLowerCase();
+  return ['.png', '.jpg', '.jpeg', '.webp', '.json'].includes(ext)
+    && fs.existsSync(resolved)
+    && fs.statSync(resolved).isFile();
 }
 
 function containsSecret(serialized: string): boolean {
@@ -184,13 +202,15 @@ export function verifyAdReadbackEvidenceFile(inputPath: string): VerifiedAdReadb
 
   const target = evidence.target || {};
   addCheck(
-    'target context includes store/site/campaign/ad group/entity/action',
+    'target context includes store/site/campaign/ad group/entity id/identity proof/action',
     hasText(target.storeName)
       && hasText(target.marketplaceCode)
       && hasRealText(target.campaignName)
       && hasRealText(target.adGroupName)
       && hasText(target.entityType)
+      && hasRealText(target.entityId)
       && hasRealText(target.entityName)
+      && isExistingTargetIdentityProof(target.identityProofPath)
       && hasText(target.actionType),
   );
 
@@ -261,7 +281,7 @@ export function verifyAdReadbackEvidenceFile(inputPath: string): VerifiedAdReadb
   );
   const readbackFile = checkOwnedEvidenceFile(readback.evidencePath || readback.screenshotPath);
   addCheck('readback evidence file exists', readbackFile.ok, readbackFile.details);
-  addCheck('before, after, and readback evidence files are distinct', evidenceFilesAreDistinct([
+  addCheck('before, after, and readback evidence files are distinct paths and have distinct SHA-256 content', evidenceFilesAreDistinct([
     { label: 'before screenshot', filePath: before.screenshotPath },
     { label: 'after screenshot', filePath: after.screenshotPath },
     { label: 'readback evidence', filePath: readback.evidencePath || readback.screenshotPath },

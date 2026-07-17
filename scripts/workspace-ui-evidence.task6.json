@@ -1,0 +1,339 @@
+{
+  "baseUrl": "http://127.0.0.1:4174/",
+  "outputDir": "output/codex-evidence/workspace-ui-task6",
+  "settleMs": 500,
+  "waitFor": "[data-workspace-evidence-root]",
+  "targets": [
+    {
+      "workspace": "product",
+      "subview": "products",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1,
+      "experienceContract": {
+        "maxWorkSurfaceTopPx": 300,
+        "minQueueViewportHeightPx": 360,
+        "minFullyVisibleRows": 5
+      }
+    },
+    {
+      "workspace": "product",
+      "subview": "products",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1,
+      "experienceContract": {
+        "maxWorkSurfaceTopPx": 320,
+        "minQueueViewportHeightPx": 500,
+        "minFullyVisibleRows": 8
+      }
+    },
+    {
+      "workspace": "product",
+      "subview": "products",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25,
+      "experienceContract": {
+        "maxWorkSurfaceTopPx": 300,
+        "minQueueViewportHeightPx": 360,
+        "minFullyVisibleRows": 5
+      }
+    },
+    {
+      "workspace": "product",
+      "subview": "targets",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "product",
+      "subview": "targets",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "product",
+      "subview": "targets",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "product",
+      "subview": "events",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "product",
+      "subview": "events",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "product",
+      "subview": "events",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "scope",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "scope",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "scope",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "reports",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "reports",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "reports",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "import-check",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "import-check",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "import-check",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1,
+      "experienceContract": {
+        "maxWorkSurfaceTopPx": 300,
+        "minQueueViewportHeightPx": 360,
+        "minFullyVisibleRows": 5
+      }
+    },
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1,
+      "experienceContract": {
+        "maxWorkSurfaceTopPx": 320,
+        "minQueueViewportHeightPx": 500,
+        "minFullyVisibleRows": 8
+      }
+    },
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25,
+      "experienceContract": {
+        "maxWorkSurfaceTopPx": 300,
+        "minQueueViewportHeightPx": 360,
+        "minFullyVisibleRows": 5
+      }
+    },
+    {
+      "workspace": "growth",
+      "subview": "keywords",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "growth",
+      "subview": "keywords",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "growth",
+      "subview": "keywords",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "growth",
+      "subview": "listing",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "growth",
+      "subview": "listing",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "growth",
+      "subview": "listing",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "system",
+      "subview": "settings",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "system",
+      "subview": "settings",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "system",
+      "subview": "settings",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "system",
+      "subview": "scheduler",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "system",
+      "subview": "scheduler",
+      "scenario": "diagnosis-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "system",
+      "subview": "scheduler",
+      "scenario": "diagnosis-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "system",
+      "subview": "delivery",
+      "scenario": "delivery-ready",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "system",
+      "subview": "delivery",
+      "scenario": "delivery-ready",
+      "viewport": "1400x900",
+      "dpr": 1
+    },
+    {
+      "workspace": "system",
+      "subview": "delivery",
+      "scenario": "delivery-ready",
+      "viewport": "1200x700",
+      "dpr": 1.25
+    },
+    {
+      "workspace": "product",
+      "subview": "products",
+      "scenario": "missing-scope",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "scope",
+      "scenario": "missing-scope",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "reports",
+      "scenario": "missing-reports",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "data-preparation",
+      "subview": "import-check",
+      "scenario": "pending-import",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "diagnosis",
+      "subview": "analysis",
+      "scenario": "pending-import",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "growth",
+      "subview": "keywords",
+      "scenario": "missing-reports",
+      "viewport": "1200x700",
+      "dpr": 1
+    },
+    {
+      "workspace": "system",
+      "subview": "delivery",
+      "scenario": "missing-readback-evidence",
+      "viewport": "1200x700",
+      "dpr": 1
+    }
+  ]
+}

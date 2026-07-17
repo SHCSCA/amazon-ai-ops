@@ -151,6 +151,7 @@ export class ReportParser {
     const acos = sales > 0 ? cost / sales : 0;
     const cpc = clicks > 0 ? cost / clicks : 0;
     const cvr = clicks > 0 ? orders / clicks : 0;
+    const reportType = options.reportType || inferReportType(sourceFile);
 
     return {
       date,
@@ -162,7 +163,7 @@ export class ReportParser {
       campaignName: String(getValue('campaignName') || getValue('广告活动') || ''),
       adGroupName: String(getValue('adGroupName') || getValue('广告组') || ''),
       targeting: String(getValue('targeting') || getValue('关键词') || ''),
-      searchTerm: String(getValue('searchTerm') || getValue('搜索词') || getValue('targeting') || ''),
+      searchTerm: String(getValue('searchTerm') || getValue('搜索词') || ''),
       matchType: (String(getValue('matchType') || getValue('匹配方式') || 'exact') as 'broad' | 'phrase' | 'exact' | 'auto'),
       impressions,
       clicks,
@@ -175,7 +176,7 @@ export class ReportParser {
       cvr,
       sourceFile,
       sourceRow,
-      reportType: options.reportType || inferReportType(sourceFile),
+      reportType,
     };
   }
 

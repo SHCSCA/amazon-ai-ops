@@ -17,7 +17,15 @@ This closeout followed the repository's `.codex/agents/agents-orchestrator.toml`
 
 Earlier delivery work also used orchestrator/product/UX/QA roles to reject premature READY claims until live Lingxing full-8 collection, Listing read, DeepSeek, Listing AI, ad AI explanation, and real ad readback evidence existed.
 
-## Historical Readiness
+## Current 2026-07-17 Status
+
+The task-first reframe exposes 8 visible workspaces while preserving all 16 legacy routes as compatibility inputs. Final full regression passes 170/170 files, 575/575 suites, and 1920/1920 tests. Current runtime evidence is 43/43 workspace targets at `output\codex-evidence\workspace-ui-task6\workspace-ui-evidence-run-2026-07-17T04-25-13-089Z.json` and 5/5 business smoke scripts at `output\codex-evidence\current-business-ui-smoke-1784262294451.json`. The final Windows candidate passed package launch smoke and isolated package UI at `output\codex-evidence\package-ui-evidence\2026-07-17T04-16-32-110Z\manifest.json`: 100%/125% compact runs each cover 8 workspaces and 3 overlays, while the 1400×900 run verifies Product/Diagnosis 8-row capacity and inline inspectors. The 30 PNGs have zero console/page errors, the protected DB is unchanged, and product/profile-browser processes are clear after the controlled async shutdown chain. Latest batch `batch_20260625013151957_ajw0nb` has 8/8 imported report types and 6827 rows. Delivery remains `APP_NEEDS_WORK`: exactly 7/8 readiness gates pass and only `real-ad-execution-readback` fails against authority DB `C:\Users\wz\AppData\Roaming\@amazon-ai-ops\desktop\amazon-ai-ops.db`. The bounded NON_READY bundle is exported and passes the current strict safety gate 17/17; Task 8B separately requires the new real Ads v2 authority readback before `APP_READY`.
+
+Independent Task 8A signoff is complete: Product/UX PASS 8.6/10, QA PASS 9.0/10, and Delivery Reviewer PASS 8.8/10, with P0=0 and P1=0. This signs the local Windows NON_READY handoff only; it does not sign Task 8B or authorize an `APP_READY` claim.
+
+## Historical Readiness — not current delivery authority
+
+The following package hashes, READY bundles, safety results, and uses of “current” describe their dated historical snapshots only. They do not authorize the current eight-workspace package, current DB snapshot, or a new Ads action.
 
 This document records the 2026-06-10 closeout and later package refreshes. The current delivery state is recorded in `README.md`; as of the 2026-07-03 prototype-parity package refresh the packaged state is `APP_READY` for manifest-driven final-readiness `output\codex-evidence\final-readiness-1783043003005.json`, package launch smoke `output\codex-evidence\package-launch-smoke-1783043003005.json`, READY bundle `output\delivery-bundles\v15-delivery-bundle-2026-07-03T01-43-56-prototype-parity`, and matching `verify:v15-ready-safety` result. This includes 17 prototype-mapped pages with short operator-facing page titles and shared first-screen KPI rows, light-theme-only offline production tokens, explicit product field labels for current price/minimum acceptable price/targets, AI output contract tags, compact metric tags with focus dimming, business-domain navigation with active glow bar, Listing table editing, Listing local action busy feedback, Listing keyword heatmap and draft diff/skeleton/limit feedback, ad-quant metric focus filters, keyword-opportunity sortable headers and filter-axis feedback, approval decision feedback, data-collection and data-import busy feedback, OperatorTaskPanel shimmer/loading feedback, ProgressiveDetails summary feedback, global typography/button micro-response, FormTable focus feedback, scheduler/operation-scope/product-management/product-config/operation-event feedback, data-collection monitor drawer, delivery/readback evidence workflow feedback, live AI strategy JSON-contract fix, encrypted local remember-account/password support, readback screenshot capture, visible readback time/value safety contract cards, canonical daily metric accounting, and the dashboard product-selection gate. Live strategy evidence `output\codex-evidence\ad-strategy-live-1782358641101.json` returned `source=ai` with no fallback on the current DB scope. Product-centered context remains the intended operator entry for ASIN-specific analysis: select the product in `产品管理`, let it populate `scope.asin`, then continue into ad quantification, recommendations, operation events, keywords, and Listing from that context. Historical manifest-driven final-readiness files, including `output\codex-evidence\final-readiness-1782964997320.json`, `output\codex-evidence\final-readiness-20260701095536.json` and `output\codex-evidence\final-readiness-2026-06-18-portable-fix.json`, remain baseline evidence only.
 
@@ -122,10 +130,17 @@ Authoritative evidence:
 
 | Gate | Evidence |
 | --- | --- |
-| Final readiness | `output\codex-evidence\final-readiness-1783043003005.json` |
-| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-1783043003005.json` |
-| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-2026-07-03T01-43-56-prototype-parity` |
-| Current package launch smoke | `output\codex-evidence\package-launch-smoke-1783043003005.json` |
+| Final readiness | `output\codex-evidence\final-readiness-20260717-task8a-non-ready.json`（`APP_NEEDS_WORK`，7/8 gates passed；唯一失败门为 `real-ad-execution-readback`） |
+| Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260717-task8a-non-ready.json` |
+| Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260717-task8a-non-ready`（已导出并绑定当前证据） |
+| NON_READY safety | 17/17 PASS；readiness、显式 package smoke/package UI、README、authority DB 与 bundle manifest 一致 |
+| Package launch smoke | `output\codex-evidence\package-launch-smoke-1784261752633.json`（win-unpacked + portable PASS） |
+| Package UI evidence | `output\codex-evidence\package-ui-evidence\2026-07-17T04-16-32-110Z\manifest.json`（100%/125% + 1400×900 PASS；30 PNG、0 console/page errors；DB/process/shutdown isolation PASS） |
+| Workspace UI evidence | `output\codex-evidence\workspace-ui-task6\workspace-ui-evidence-run-2026-07-17T04-25-13-089Z.json`（43/43） |
+| Business UI smoke | `output\codex-evidence\current-business-ui-smoke-1784262294451.json`（5/5） |
+| Full regression | `output\codex-evidence\task8a-full-vitest-20260717-final.json`（170/170 files，575/575 suites，1920/1920 tests） |
+| Current report/import authority | `batch_20260625013151957_ajw0nb`（8/8 imported report types，6827 imported total rows；产品页 1879 为当前 ASIN） |
+| Authority DB snapshot SHA-256 | `9E82065E780B38A4D3348F4EE723DDF1A50142F3900192E612730CC1C8017439` |
 | Live ad strategy diagnosis | `output\codex-evidence\ad-strategy-live-1782358641101.json` |
 | Historical 2026-06-10 bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z\delivery-bundle-manifest.json` |
 | Product UI smoke | `output\codex-evidence\v15-product-readiness-ui-smoke-1781072779324.json` |
@@ -135,12 +150,16 @@ Final package artifacts:
 
 | Field | Value |
 | --- | --- |
-| Installer SHA-256 | `3CAB193DE243D53ADB3348569FF5506B1C5A2FE7D237C7590B849A3FFC44D89B` |
-| Installer size | `73976506` bytes |
-| Installer last write | `2026-07-03 09:43:00` |
-| Portable/no-install SHA-256 | `849E5C11D5F4742C936FB4A532E1435B3D33B76187E561CB912A08FA6F673CB9` |
-| Portable/no-install size | `73810755` bytes |
-| Portable/no-install last write | `2026-07-03 09:43:01` |
+| Installer SHA-256 | `3BCC87F4A2FD25ECB47E450D04D215D7C0A546CB121438F0B4CB22D3B5492426` |
+| Installer size | `80,933,450` bytes |
+| Installer last write | `2026-07-17T04:15:37Z` |
+| Portable/no-install SHA-256 | `413209648DDB33906360833B7BEC0759CABBA12E935CD2A0444D07F717EB7C9E` |
+| Portable/no-install size | `80,767,697` bytes |
+| Portable/no-install last write | `2026-07-17T04:15:39Z` |
+| win-unpacked SHA-256 | `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` |
+| App content SHA-256 | `505AF5AB0B9F63B3C970A00475D29BBC57478357932CC6228BB26CE633595BC0` |
+
+Superseded pre-drawer-layout package facts (historical only): installer `4104B07DAED970CEB7C805225C642CF3284FAE3C6535715201524A0CEFD19693`, portable `FA1D315F478CE751A301F5ED7B07111E8D012620C2B8BB0332E748CAF4CC9A31`, win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`, app content `43DB54D577CAD1C5144B8262E0B85402CD411846BB81EC98613A8098AFB6B903`, smoke `output\codex-evidence\package-launch-smoke-1784098235751.json`, evidence manifest `output\codex-evidence\v15-final-readiness-evidence-manifest-2026-07-15T06-51-17-826Z.json`, and final readiness `output\codex-evidence\final-readiness-2026-07-15T06-51-27-719Z.json`. These values cannot be used for the final candidate.
 
 ## Verification Snapshot
 
@@ -148,14 +167,17 @@ Completed final-node checks:
 
 | Check | Result |
 | --- | --- |
-| `pnpm test` | Passed, 37 test files / 191 passed / 2 skipped |
-| `pnpm -r run typecheck` | Passed |
-| `pnpm --filter @amazon-ai-ops/desktop run build:win` | Passed |
-| Packaged smoke | `win-unpacked\AmazonAIOpsAgent.exe` stayed alive for 8 seconds and stopped with no remaining process |
-| `pnpm run smoke:v15-product-readiness-ui` | Passed |
-| `pnpm run verify:v15-ready-safety` | Passed |
+| Final full Vitest | 170/170 files, 575/575 suites, and 1920/1920 tests passed at `output\codex-evidence\task8a-full-vitest-20260717-final.json` |
+| `pnpm -r run typecheck` | Passed for the final Windows candidate |
+| Workspace UI evidence | Passed 43/43 |
+| Current business UI smoke | Passed 5/5 |
+| `pnpm --filter @amazon-ai-ops/desktop run build:win` | Passed; final installer and portable hashes recorded above |
+| Packaged UI 100%/125% + wide | Passed at `output\codex-evidence\package-ui-evidence\2026-07-17T04-16-32-110Z\manifest.json`; compact runs each have 8/8 workspaces and 3/3 overlays, wide Product/Diagnosis verifies 8-row capacity and inline inspectors, 30 PNGs total, 0 console/page errors, unchanged protected DB, and no residual product/profile-browser process |
+| Current data authority | Passed: `batch_20260625013151957_ajw0nb` has 8/8 imported report types and 6827 total rows; product page 1879 is current-ASIN only |
+| Package launch smoke | Passed at `output\codex-evidence\package-launch-smoke-1784261752633.json` |
+| Delivery safety | Current NON_READY bundle passes strict safety 17/17; READY safety remains externally blocked by Task 8B |
 
-Post-audit fix:
+Historical 2026-06-10 post-audit fix:
 
 - The stale delivery bundle found by `testing-reality-checker` was re-exported.
 - The new bundle is `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z`.
@@ -166,7 +188,7 @@ Post-audit fix:
 
 The app is deliverable with the following explicit boundary:
 
-- Current real ad execution readiness is proven by one user-approved, low-risk manual Ads UI sample on a paused FT-US keyword row `door lock`, with live bid `1.30 -> 1.17`, before/after/reload screenshots, real spreadsheet source traceability, and `verify:ad-readback`. The historical paused target sample `1.20 -> 1.08` remains baseline only.
+- Historical real ad execution readiness was demonstrated by one user-approved, low-risk manual Ads UI sample on a paused FT-US keyword row `door lock`, with live bid `1.30 -> 1.17`. It is baseline evidence only and does not satisfy the current v2 positive recommendation id/revision and SQLite authority contract.
 - The app-side ad execution button remains fail-closed. It does not batch-write ads.
 - The `执行回读` time/value contract cards are pre-export UX checks only; they help operators see blockers early but do not replace distinct screenshots, valid time ordering, before/after value change, readback equality, and `verify:ad-readback`.
 - Future ad changes must each bind their own store, marketplace, portfolio, campaign, ad group, ASIN, entity type, entity name, action type, source recommendation, real source report file(s), original source row, live before value, live after value, approval proof, screenshots, and readback evidence.

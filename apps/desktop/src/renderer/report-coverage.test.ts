@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { realReportCoverageCount, hasRealReportCoverage } from './report-coverage';
+import {
+  hasFormalReportCoverage,
+  hasRealReportCoverage,
+  importedReportTypeCoverageCount,
+  realReportCoverageCount,
+} from './report-coverage';
 
 describe('report coverage helpers', () => {
   it('prefers audited unique report-type coverage over raw file count', () => {
@@ -18,5 +23,27 @@ describe('report coverage helpers', () => {
     };
 
     expect(realReportCoverageCount(collection)).toBe(2);
+  });
+
+  it('keeps file coverage separate from per-type SQLite import coverage', () => {
+    const collection = {
+      fileAudit: { realReportFileCount: 8 },
+      reportOptions: Array.from({ length: 8 }, (_, index) => ({
+        type: `report-${index}`,
+        realFileAvailable: true,
+        importedRows: index < 5 ? 12 : 0,
+      })),
+    };
+
+    expect(realReportCoverageCount(collection)).toBe(8);
+    expect(importedReportTypeCoverageCount(collection)).toBe(5);
+    expect(hasFormalReportCoverage(collection)).toBe(false);
+
+    const fullyImported = {
+      ...collection,
+      reportOptions: collection.reportOptions.map((report) => ({ ...report, importedRows: 12 })),
+    };
+    expect(importedReportTypeCoverageCount(fullyImported)).toBe(8);
+    expect(hasFormalReportCoverage(fullyImported)).toBe(true);
   });
 });

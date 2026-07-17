@@ -21,7 +21,10 @@ function runNode(script, args = [], options = {}) {
 }
 
 function writePng(filePath) {
-  fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  fs.writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(path.basename(filePath), 'utf8'),
+  ]));
   return filePath;
 }
 
@@ -69,8 +72,10 @@ function validEvidence(dir, overrides = {}) {
       metricDate: '2026-06-10',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'keyword-1',
       entityName: 'close match',
+      identityProofPath: writePng(path.join(dir, 'target-identity.png')),
       actionType: 'lower_bid',
     },
     risk: {
@@ -142,6 +147,34 @@ describe('verify ad readback evidence', () => {
     expect(result.stdout).toContain('current approved recommendation matches SQLite authority');
     expect(result.stdout).toContain('execution result is successful, verified, and scoped to manual Ads UI operation');
     expect(result.stdout).toContain('AD_READBACK_EVIDENCE verified');
+  });
+
+  it('rejects v2 target context without an opaque writable entity id', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-target-id-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    evidence.target.entityId = '';
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('target context is incomplete');
+  });
+
+  it('rejects v2 target context when the identity proof file is missing', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-target-proof-'));
+    const evidence = validEvidence(dir);
+    const dbPath = writeAuthorityDb(dir, evidence);
+    fs.rmSync(evidence.target.identityProofPath);
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('target context is incomplete');
   });
 
   it('rejects a target field that no longer matches the approved SQLite recommendation', () => {
@@ -279,7 +312,7 @@ describe('verify ad readback evidence', () => {
     const result = runNode('scripts/verify-ad-readback-evidence.js', [evidencePath, '--db', dbPath]);
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain('imported actionable metrics');
+    expect(`${result.stdout}${result.stderr}`).toContain('writable Ads target does not map to exactly one current imported metric row');
   });
 
   it('rejects an explicit SQLite authority path that does not exist', () => {
@@ -569,6 +602,21 @@ describe('verify ad readback evidence', () => {
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('before, after, and readback evidence files must be distinct');
+  });
+
+  it('rejects distinct screenshot paths whose SHA-256 content is reused', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-verifier-duplicate-content-'));
+    const evidence = validEvidence(dir);
+    const reusedContent = fs.readFileSync(evidence.before.screenshotPath);
+    fs.writeFileSync(evidence.after.screenshotPath, reusedContent);
+    fs.writeFileSync(evidence.readback.evidencePath, reusedContent);
+    const evidencePath = path.join(dir, 'readback.json');
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
+
+    const result = runVerifierWithTempDb(dir, evidencePath, evidence);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('SHA-256');
   });
 
   it('rejects out-of-order evidence timestamps', () => {

@@ -43,6 +43,18 @@ describe('resolveResponsiveInspectorMode', () => {
 });
 
 describe('ResponsiveInspector', () => {
+  it('registers one topmost keyboard layer while open', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./responsive-inspector.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('registerOverlayKeyboardLayer');
+    expect(source).toContain('isTopOverlayKeyboardLayer');
+    expect(source).toContain('unregisterKeyboardLayer()');
+    expect(source).toContain("modeRef.current === 'drawer'");
+    expect(source).toContain('dismissLockedRef.current');
+    expect(source).toContain('onCloseRef.current()');
+  });
+
   it('does not expose an inspector surface while closed', () => {
     const markup = renderToStaticMarkup(createElement(ResponsiveInspector, {
       open: false,
@@ -195,6 +207,21 @@ describe('ResponsiveInspector keyboard and focus helpers', () => {
     expect(focus).toHaveBeenCalledTimes(1);
   });
 
+  it('restores the same connected trigger after its owner reveals it during close', () => {
+    let hidden = true;
+    const focus = vi.fn(() => {
+      if (hidden) throw new Error('trigger is still hidden');
+    });
+    const trigger = { focus, isConnected: true };
+    const callbacks: Array<() => void> = [];
+
+    scheduleResponsiveInspectorFocusRestore(trigger, (callback) => callbacks.push(callback));
+    hidden = false;
+    callbacks[0]?.();
+
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
   it('lets the owning page override the removed row with one connected focus target', () => {
     const trigger = { focus: vi.fn(), isConnected: false };
     const fallback = { focus: vi.fn(), isConnected: true };
@@ -265,6 +292,26 @@ describe('ResponsiveInspector keyboard and focus helpers', () => {
     )).toBe(true);
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(last.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('wraps Shift+Tab to a visible details summary and skips controls hidden by collapsed details', () => {
+    const first = { focus: vi.fn(), getClientRects: () => [{ width: 1 }] };
+    const summary = { focus: vi.fn(), getClientRects: () => [{ width: 1 }] };
+    const collapsedDetailsControl = { focus: vi.fn(), getClientRects: () => [] };
+    const preventDefault = vi.fn();
+    const surface = {
+      focus: vi.fn(),
+      querySelectorAll: vi.fn(() => [first, summary, collapsedDetailsControl]),
+    };
+
+    expect(trapResponsiveInspectorTab(
+      { key: 'Tab', shiftKey: true, preventDefault },
+      surface,
+      first,
+    )).toBe(true);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(summary.focus).toHaveBeenCalledTimes(1);
+    expect(collapsedDetailsControl.focus).not.toHaveBeenCalled();
   });
 
   it('keeps focus on the drawer surface when no controls are available', () => {

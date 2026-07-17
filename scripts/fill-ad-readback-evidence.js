@@ -95,7 +95,7 @@ function main() {
   const readbackReadAt = ensureIso(requireArg(args, 'readback-read-at'), 'readback-read-at');
   const beforeValue = numericBid(requireArg(args, 'before-value'), 'before-value');
   const afterValue = numericBid(requireArg(args, 'after-value'), 'after-value');
-  const readbackActualValue = numericBid(optionalArg(args, 'readback-actual-value', afterValue), 'readback-actual-value');
+  const readbackActualValue = numericBid(requireArg(args, 'readback-actual-value'), 'readback-actual-value');
 
   const evidence = {
     ...candidate,

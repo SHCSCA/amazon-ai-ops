@@ -1,7 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import type { RecommendationView } from '../types';
-import { aiThresholdSummary, approvalBlockers, approvalDecisionButtonView, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, buildRecommendationDecisionRequest, parseApprovalSelectionIntent, refreshedApprovalSelection, runApprovalWorkflowMutation, strategyLabel } from './approval-page';
+import { aiThresholdSummary, approvalBlockers, approvalDecisionButtonView, approvalDecisionFocusReturnTarget, approvalDecisionState, approvalMissing, approvalQueueRowClass, approvalRowsAfterDecision, approvalSubmitBlockers, buildApprovalDecisionPayload, buildApprovalStampFeedback, buildRecommendationDecisionRequest, hasCurrentRecommendationReviewResolution, parseApprovalSelectionIntent, refreshedApprovalSelection, runApprovalWorkflowMutation, strategyLabel } from './approval-page';
 import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
+
+describe('ApprovalPage dialog focus contract', () => {
+  it('prefers the stable queue target after a completed decision', () => {
+    const trigger = { id: 'row-action' };
+    const queue = { id: 'approval-queue' };
+
+    expect(approvalDecisionFocusReturnTarget(trigger, queue)).toBe(queue);
+    expect(approvalDecisionFocusReturnTarget(trigger, null)).toBe(trigger);
+  });
+
+  it('delegates initial focus, tab wrapping, Escape locking, and focus restoration to the shared scope', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./approval-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const approvalDecisionDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('dismissDisabled: Boolean(submittingDecision)');
+    expect(source).toContain('open: Boolean(selected)');
+    expect(source).toContain('resolveFocusReturnTarget:');
+    expect(source).toContain('ref={approvalQueueFocusRef}');
+    expect(source).toContain('completedDecisionFocusTargetRef.current = approvalQueueFocusRef.current');
+    expect(source).toContain('ref={approvalDecisionDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={approvalDecisionDialogFocus.surfaceRef}');
+    expect(source).toContain('data-overlay-initial-focus');
+    expect(source).toContain('tabIndex={-1}');
+    expect(source).not.toContain('onKeyDown={handleApprovalDecisionModalKeyDown}');
+  });
+});
 
 describe('approval workflow invalidation contract', () => {
   it.each([
@@ -43,6 +70,21 @@ function recommendation(sourceRow: number | undefined = 12, sourceFiles = ['C:/r
       targeting: 'tight match target',
       sourceFiles,
       sourceRow,
+      writableTarget: {
+        entityType: 'keyword',
+        entityId: 'amzn-keyword-101',
+        entityName: 'tight match target',
+        campaignName: 'D6-auto-test',
+        adGroupName: 'D6-ad-group',
+        metricDate: '2026-06-12',
+        sourceFile: sourceFiles[0] || '',
+        sourceRow: sourceRow || 12,
+        identitySource: 'ads_ui',
+        verifiedBy: 'Alice',
+        verifiedAt: '2026-07-16T04:30:00.000Z',
+        verificationNote: 'Matched the editable keyword row.',
+        identityProofPath: 'D:/proof/keyword-101.png',
+      },
     },
   };
 }
@@ -117,6 +159,16 @@ describe('approvalMissing', () => {
       storeName: 'FT-US-US',
       marketplaceCode: 'US',
     }, 'batch_1')).toContain('ASIN');
+  });
+
+  it('requires a verified writable Ads target before ordinary pending approval', () => {
+    const pending = recommendation();
+    delete pending.evidence?.writableTarget;
+
+    expect(approvalMissing(pending, {
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+    }, 'batch_1')).toContain('Ads 可写对象');
   });
 });
 
@@ -249,6 +301,46 @@ describe('approvalBlockers', () => {
       currentValue: '1.20',
       recommendedValue: '1.10',
     })).toContain('提价动作的建议出价必须高于当前出价');
+  });
+
+  it('does not keep a current, fully matched quant review resolution permanently blocked', () => {
+    const resolved = recommendation();
+    const writableTarget = resolved.evidence!.writableTarget!;
+    resolved.evidence = {
+      ...resolved.evidence,
+      quantReviewRequired: true,
+      reviewResolution: {
+        schemaVersion: 1,
+        fromStatus: 'needs_review',
+        fromRevision: 3,
+        resolvedRevision: 4,
+        reviewedBy: 'Alice',
+        reviewedAt: '2026-07-16T04:30:00.000Z',
+        rationale: 'Verified against the authenticated Ads row.',
+        resolvedBlockers: ['quant_review_required'],
+        scope: {
+          dateFrom: '2026-05-21',
+          dateTo: '2026-06-12',
+          storeName: 'FT-US-US',
+          marketplaceCode: 'US',
+          asin: 'B0TESTASIN',
+          batchId: 'batch_1',
+        },
+        metricSource: {
+          batchId: 'batch_1',
+          sourceFiles: ['C:/reports/user-search-term.xlsx'],
+          sourceRow: 12,
+        },
+        writableTarget,
+      },
+    };
+
+    expect(hasCurrentRecommendationReviewResolution(resolved)).toBe(true);
+    expect(approvalBlockers(resolved)).not.toContain('规则量化要求人工复核');
+
+    resolved.revision = 5;
+    expect(hasCurrentRecommendationReviewResolution(resolved)).toBe(false);
+    expect(approvalBlockers(resolved)).toContain('规则量化要求人工复核');
   });
 });
 
@@ -446,9 +538,9 @@ describe('approvalDecisionButtonView', () => {
     expect(source).toContain('aria-modal="true"');
     expect(source).toContain('className="product-config-modal approval-decision-modal"');
     expect(source).toContain('role="dialog"');
-    expect(source).toContain("event.key !== 'Escape'");
-    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
-    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain('const approvalDecisionDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('dismissDisabled: Boolean(submittingDecision)');
+    expect(source).toContain('ref={approvalDecisionDialogFocus.surfaceRef}');
     expect(source).not.toContain('<Panel title="人工审批决定">');
 
     expect(styles).toContain('.approval-decision-modal');

@@ -15,21 +15,26 @@ function cleanCount(value: unknown): number | null {
 
 function formatReportCoverage(batch: Partial<BusinessBatchOption>): string {
   const coverage = cleanCount(batch.realReportFileCount);
-  if (coverage === null) return '报表覆盖待校验';
+  if (coverage === null) return '待校验';
   const cappedCoverage = Math.min(REQUIRED_REPORT_COUNT, coverage);
   const fileCount = cleanCount(batch.totalFileRecords);
   const fileSuffix = fileCount !== null && fileCount > cappedCoverage ? ` · ${fileCount} 个文件` : '';
-  return `${cappedCoverage}/${REQUIRED_REPORT_COUNT} 类真实报表${fileSuffix}`;
+  return `${cappedCoverage}/${REQUIRED_REPORT_COUNT} 类${fileSuffix}`;
 }
 
-function formatImportedRows(value: unknown, importedSuffix = ' 行已导入'): string {
-  const rows = cleanCount(value);
-  if (rows === null) return '指标待校验';
-  return rows > 0 ? `${rows}${importedSuffix}` : '未导入';
+function formatImportedCoverage(batch: Partial<BusinessBatchOption>): string {
+  const coverage = cleanCount(batch.importedReportTypeCount);
+  if (coverage === null) return '待校验';
+  const cappedCoverage = Math.min(REQUIRED_REPORT_COUNT, coverage);
+  const rows = cleanCount(batch.importedRowCount);
+  const rowsSuffix = rows === null ? '' : ` · ${rows} 行`;
+  return `${cappedCoverage}/${REQUIRED_REPORT_COUNT} 类${rowsSuffix}`;
 }
 
 export function formatBatchOption(batch: BusinessBatchOption): string {
-  return `${batch.id} · ${formatReportCoverage(batch)} · ${formatImportedRows(batch.importedRowCount)}`;
+  const reportCoverage = formatReportCoverage(batch);
+  const importedCoverage = formatImportedCoverage(batch);
+  return `${batch.id} · ${reportCoverage === '待校验' ? '报表文件待校验' : `报表文件 ${reportCoverage}`} · ${importedCoverage === '待校验' ? '逐类入库待校验' : `逐类入库 ${importedCoverage}`}`;
 }
 
 type ScopeSummaryFact = {
@@ -59,8 +64,8 @@ export function buildScopeSummaryFacts(input: {
 }): ScopeSummaryFact[] {
   return [
     { label: '产品', value: input.productLabel || input.asin?.trim() || '全部产品' },
-    { label: '真实报表', value: input.reportCoverage },
-    { label: '入库指标', value: input.importedRows },
+    { label: '报表文件', value: input.reportCoverage },
+    { label: '逐类入库', value: input.importedRows },
     {
       label: '追溯批次',
       value: input.batchId || '自动匹配',
@@ -374,14 +379,14 @@ export function ScopeBar() {
     ? formatReportCoverage(activeBatch)
     : manualBatchUnmatched ? '手动批次待校验'
     : loadingBatches ? '正在读取批次...' : '暂无匹配批次';
-  const importedLabel = selectedBatch
-    ? formatImportedRows(selectedBatch.importedRowCount, ' 行')
-    : activeBatch ? formatImportedRows(activeBatch.importedRowCount, ' 行') : manualBatchUnmatched ? '待校验' : '0 行';
+  const importedLabel = activeBatch
+    ? formatImportedCoverage(activeBatch)
+    : manualBatchUnmatched ? '待校验' : '0/8 类 · 0 行';
   const scopeHelperText = activeBatch
     ? `当前数据批次：${activeBatch.id}。批次只决定读取哪批真实报表和入库指标，不会自动重新下载。`
     : manualBatchUnmatched
       ? `当前使用手动批次：${scope.batchId}。该批次不在当前范围自动匹配列表中，后续页面会按这个 ID 尝试读取；如不确定，请切回“自动”。`
-      : '当前未匹配到数据批次；需要先在数据采集页下载并导入真实广告表格。';
+      : '当前未匹配到数据批次；需要先到“数据准备 → 报表采集”下载真实广告表格，再到“导入检查”完成入库。';
   const activeProduct = products.find((product) =>
     String(product.asin || '').trim().toUpperCase() === String(scope.asin || '').trim().toUpperCase()
     && (!(product.store_name || product.storeName) || (product.store_name || product.storeName) === scope.storeName)
@@ -443,7 +448,7 @@ export function ScopeBar() {
   const scopeRangeLabel = buildScopeCompactRangeLabel(scope);
   const scopeContextLabel = buildScopeCompactContextLabel(scope);
   const scopeFullLine = `${scopeRangeLabel} / ${scope.storeName || '未选店铺'} / ${scope.marketplaceCode || '未选站点'} / USD${scope.asin?.trim() ? ` / ASIN ${scope.asin.trim()}` : ' / 全部产品'}`;
-  const topbarFacts = summaryFacts.filter((fact) => fact.label === '真实报表' || fact.label === '入库指标');
+  const topbarFacts = summaryFacts.filter((fact) => fact.label === '报表文件' || fact.label === '逐类入库');
 
   return (
     <section className="scope-bar" aria-label="当前工作范围">

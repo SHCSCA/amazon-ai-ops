@@ -18,7 +18,7 @@ const HEADING_RE = {
   dashboard: /今日任务/,
   delivery: /最终验收就绪门|交付验收/,
   recommendations: /建议与审批/,
-  settings: /AI与规则|设置/,
+  settings: /AI 与规则|设置/,
 };
 
 function fail(message, details) {
@@ -131,7 +131,11 @@ async function assertDeliveryMessageHasNoLongPath(page, key) {
 }
 
 async function assertBlockedDeliveryExportButton(page, key) {
-  const state = await page.getByRole('button', { name: '导出交付包' }).evaluate((element) => {
+  const exportButton = page.getByRole('button', { name: '导出交付包' });
+  if (await exportButton.count() === 0) {
+    return;
+  }
+  const state = await exportButton.first().evaluate((element) => {
     const button = element;
     return {
       ariaDisabled: button.getAttribute('aria-disabled'),
@@ -449,9 +453,11 @@ async function main() {
       status: 'APP_READY',
       appReady: true,
       manifestDriven: true,
+      previewOnly: false,
       generatedAt: '2026-06-12T10:15:00.000Z',
       checkedAt: '2026-06-12T10:16:00.000Z',
       gatesSummary: { total: 2, passed: 2, failed: 0 },
+      failures: [],
       missing: [],
       actionItems: [],
       gates: [
@@ -915,7 +921,6 @@ async function main() {
   await expectVisible(page, '草案证据 1 条');
   await expectVisible(page, '成功');
   await expectVisible(page, '失败');
-  await page.getByText('查看诊断覆盖项', { exact: true }).click();
   await page.getByText('AI 连接：确认 Provider、Base URL、模型和脱敏 Key 状态。', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: '编辑连接', exact: true }).click();
   const aiConnectionDialog = page.getByRole('dialog', { name: '编辑 AI 连接和输出参数' });
@@ -960,7 +965,7 @@ async function main() {
   await navigateLegacyRoute(page, 'settings');
   await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
   await expectVisible(page, 'AI 可用');
-  await page.getByRole('button', { name: '输出合同', exact: true }).click();
+  await page.getByRole('button', { name: '查看输出合同', exact: true }).click();
   await expectVisible(page, '广告诊断 v1');
   await expectVisible(page, '系统固定');
   await assertAbsent(page, 'ad_strategy_diagnosis_v1', 'settings-advanced-contract-tags');
@@ -1060,7 +1065,6 @@ async function main() {
   ]) {
     await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
   }
-  await expandDetails(page, '交付证据、文件与回读支持');
   await expandDetails(page, '文件位置与支持入口');
   await expandDetails(page, '广告回读补证');
   await expandDetails(page, '业务闭环矩阵');
@@ -1137,7 +1141,6 @@ async function main() {
   await page.getByRole('button', { name: '创建回读工作包' }).click();
   await page.getByText('回读工作包已创建', { exact: false }).waitFor({ timeout: 5000 });
   await assertDeliveryMessageHasNoLongPath(page, 'delivery-create-readback-work-package');
-  await expandDetails(page, '回读工作包路径');
   await expectVisible(page, 'C:/final/readback-missing-session');
   await expectVisible(page, 'C:/final/readback-missing-session/session-input.json');
   await expectVisible(page, 'C:/final/readback-missing-session/session-input-guide.md');
@@ -1299,7 +1302,6 @@ async function main() {
   await navigateLegacyRoute(page, 'settings');
   await navigateLegacyRoute(page, 'delivery');
   await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
-  await expandDetails(page, '交付证据、文件与回读支持');
   await expandDetails(page, '文件位置与支持入口');
   await page.getByText('最终验收汇总尚未生成', { exact: false }).first().waitFor({ timeout: 5000 });
   await page.getByRole('button', { name: '打开最终验收汇总' }).click();
@@ -1313,7 +1315,6 @@ async function main() {
   await navigateLegacyRoute(page, 'delivery');
   await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
   await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expandDetails(page, '交付证据、文件与回读支持');
   await expandDetails(page, '完整业务证据项');
   await page.getByText('最终验收未通过，不能声明可交付。', { exact: true }).waitFor({ timeout: 5000 });
   await assertGlobalGuards(page, 'delivery-fake-ready');
@@ -1325,7 +1326,6 @@ async function main() {
   await navigateLegacyRoute(page, 'delivery');
   await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
   await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expandDetails(page, '交付证据、文件与回读支持');
   await expandDetails(page, '完整业务证据项');
   await expandDetails(page, '最终证据清单');
   await page.getByText('最终验收汇总不是本次验收来源，不能声明可交付。', { exact: true }).first().waitFor({ timeout: 5000 });
@@ -1351,16 +1351,37 @@ async function main() {
   await page.getByText('可以交付', { exact: true }).first().waitFor({ timeout: 5000 });
   await page.getByText('交付包摘要', { exact: false }).waitFor({ timeout: 5000 });
   await page.getByText('AmazonAIOpsAgent-1.5.0-portable.exe / SHA-256 D9C181C09B32...', { exact: false }).first().waitFor({ timeout: 5000 });
-  await expandDetails(page, '交付证据、文件与回读支持');
   await expandDetails(page, '最终证据清单');
   await page.getByText('C:/final/readback-pass.json', { exact: true }).waitFor({ timeout: 5000 });
   await page.getByText('真实广告回读验收通过。', { exact: true }).first().waitFor({ timeout: 5000 });
   await expandDetails(page, '文件位置与支持入口');
-  await page.getByRole('button', { name: '导出交付包' }).click();
+  await page.waitForTimeout(250);
+  const exportBundleState = await page.evaluate(() => {
+    const element = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === '导出交付包');
+    return element ? {
+      className: element.className,
+      disabled: element.disabled,
+      text: element.textContent?.trim() || '',
+      title: element.getAttribute('title') || '',
+    } : null;
+  });
+  if (!exportBundleState || exportBundleState.disabled) {
+    fail('Ready delivery workspace is missing its primary export action', JSON.stringify({
+      mode: await page.evaluate(() => window.__deliveryReadinessMode),
+      exportBundleState,
+      buttons: await page.evaluate(() => Array.from(document.querySelectorAll('button')).map((button) => ({
+        disabled: button.disabled,
+        text: button.textContent?.trim() || '',
+      }))),
+      deliveryCalls: (await page.evaluate(() => window.__businessUiActionLog || [])).filter((item) => (
+        item.type === 'getDeliveryReadiness' || item.type === 'getDeliveryEvidenceStatus'
+      )),
+    }, null, 2));
+  }
+  await page.locator('button').filter({ hasText: /^导出交付包$/ }).first().click();
   await page.getByText('交付包已导出', { exact: false }).waitFor({ timeout: 5000 });
   await page.getByText('已包含当前范围数据口径核对', { exact: false }).waitFor({ timeout: 5000 });
   await assertDeliveryMessageHasNoLongPath(page, 'delivery-pass-export-bundle');
-  await expandDetails(page, '交付证据、文件与回读支持');
   await expectVisible(page, '数据口径导出结果');
   await expandDetails(page, '数据口径导出结果');
   await expectVisible(page, '用户搜索词权威口径');

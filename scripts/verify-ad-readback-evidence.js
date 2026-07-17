@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { assertCurrentAdReadbackDbAuthority } = require('./ad-readback-authority-db');
@@ -123,14 +124,32 @@ function checkDistinctEvidenceFiles(files) {
   if (usableFiles.length !== files.length) return;
   const resolvedFiles = usableFiles.map((item) => ({
     label: item.label,
-    path: path.resolve(String(item.filePath).trim()).toLowerCase(),
+    path: path.resolve(String(item.filePath).trim()),
   }));
-  const uniquePaths = new Set(resolvedFiles.map((item) => item.path));
-  if (uniquePaths.size === resolvedFiles.length) {
-    pass('before, after, and readback evidence files are distinct');
-  } else {
-    fail('before, after, and readback evidence files must be distinct');
+  const uniquePaths = new Set(resolvedFiles.map((item) => item.path.toLowerCase()));
+  if (uniquePaths.size !== resolvedFiles.length) {
+    fail('before, after, and readback evidence files must be distinct paths and have distinct SHA-256 content');
+    return;
   }
+  if (!resolvedFiles.every((item) => fs.existsSync(item.path) && fs.statSync(item.path).isFile())) return;
+  const contentHashes = resolvedFiles.map((item) => crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(fs.realpathSync.native(item.path)))
+    .digest('hex'));
+  if (new Set(contentHashes).size !== contentHashes.length) {
+    fail('before, after, and readback evidence files must be distinct paths and have distinct SHA-256 content');
+    return;
+  }
+  pass('before, after, and readback evidence files are distinct paths and have distinct SHA-256 content');
+}
+
+function isExistingTargetIdentityProof(filePath) {
+  if (!hasRealText(filePath)) return false;
+  const resolved = path.resolve(String(filePath).trim());
+  const ext = path.extname(resolved).toLowerCase();
+  return ['.png', '.jpg', '.jpeg', '.webp', '.json'].includes(ext)
+    && fs.existsSync(resolved)
+    && fs.statSync(resolved).isFile();
 }
 
 function isPositiveNumber(value) {
@@ -285,10 +304,12 @@ if (
   && hasRealText(target.campaignName)
   && hasRealText(target.adGroupName)
   && hasText(target.entityType)
+  && hasRealText(target.entityId)
   && hasRealText(target.entityName)
+  && isExistingTargetIdentityProof(target.identityProofPath)
   && hasText(target.actionType)
 ) {
-  pass('target context includes store/site/campaign/ad group/entity/action');
+  pass('target context includes store/site/campaign/ad group/entity id/identity proof/action');
 } else {
   fail('target context is incomplete');
 }

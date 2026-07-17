@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AdDailyMetrics } from '@amazon-ai-ops/shared-types';
-import { AdQuantifier } from './quantification';
+import { AdQuantifier, buildAdMetricObjectIdentity } from './quantification';
 import { DEFAULT_RULE_CONFIG } from './types';
 
 describe('AdQuantifier', () => {
@@ -130,6 +130,128 @@ describe('AdQuantifier', () => {
     }));
     expect(timelines[0].reasons.join('\n')).toContain('USD 44.00');
   });
+
+  it('does not escalate an aggregate lower-bid action because one daily sample is only watch-level noise', () => {
+    const quantifier = new AdQuantifier(DEFAULT_RULE_CONFIG);
+
+    const [timeline] = quantifier.quantifyTimeline([
+      metric({
+        date: '2026-06-01',
+        targeting: 'broad target',
+        clicks: 14,
+        cost: 23.04,
+        orders: 0,
+        sales: 0,
+        cpc: 1.65,
+        sourceRow: 2,
+      }),
+      metric({
+        date: '2026-06-02',
+        targeting: 'broad target',
+        clicks: 136,
+        cost: 230.52,
+        orders: 7,
+        sales: 484.92,
+        cpc: 1.69,
+        sourceRow: 12,
+      }),
+    ]);
+
+    expect(timeline.recommendedAction).toBe('lower_bid');
+    expect(timeline.daily[0]).toMatchObject({
+      status: 'watch',
+      recommendedAction: undefined,
+      reviewRequired: true,
+    });
+    expect(timeline.reviewRequired).toBe(false);
+  });
+
+  it('keeps aggregate lower-bid actions in review when a daily sample recommends a conflicting action', () => {
+    const quantifier = new AdQuantifier(DEFAULT_RULE_CONFIG);
+
+    const [timeline] = quantifier.quantifyTimeline([
+      metric({
+        date: '2026-06-01',
+        targeting: 'mixed target',
+        clicks: 10,
+        cost: 4,
+        orders: 1,
+        sales: 80,
+        cpc: 0.4,
+        sourceRow: 2,
+      }),
+      metric({
+        date: '2026-06-02',
+        targeting: 'mixed target',
+        clicks: 20,
+        cost: 50,
+        orders: 1,
+        sales: 20,
+        cpc: 2.5,
+        sourceRow: 3,
+      }),
+    ]);
+
+    expect(timeline.recommendedAction).toBe('lower_bid');
+    expect(timeline.daily.map((item) => item.recommendedAction)).toEqual(['raise_bid', 'lower_bid']);
+    expect(timeline.reviewRequired).toBe(true);
+  });
+
+  it('keeps identical object names from different report types in separate timelines', () => {
+    const quantifier = new AdQuantifier(DEFAULT_RULE_CONFIG);
+    const timelines = quantifier.quantifyTimeline([
+      metric({
+        date: '2026-06-01',
+        reportType: 'keyword',
+        sourceFile: 'D:/reports/01_2026-07-keyword.xlsx',
+        searchTerm: '',
+        targeting: 'same target',
+        clicks: 12,
+        cost: 12,
+      }),
+      metric({
+        date: '2026-06-01',
+        reportType: 'product_targeting',
+        sourceFile: 'D:/reports/02_2026-07-product-targeting.xlsx',
+        searchTerm: '',
+        targeting: 'same target',
+        clicks: 14,
+        cost: 14,
+      }),
+    ]);
+
+    expect(timelines).toHaveLength(2);
+    expect(timelines.map((timeline) => timeline.daily[0].metric.reportType).sort())
+      .toEqual(['keyword', 'product_targeting']);
+    expect(timelines.every((timeline) => timeline.daily.length === 1)).toBe(true);
+    expect(timelines.map((timeline) => timeline.objectType)).toEqual(['target', 'target']);
+    expect(timelines.every((timeline) => timeline.objectKey.length > 0)).toBe(true);
+    expect(new Set(timelines.map((timeline) => timeline.objectKey)).size).toBe(2);
+    expect(timelines.map((timeline) => timeline.objectKey)).toEqual(expect.arrayContaining([
+      'B001|sp exact|main|keyword|target|same target',
+      'B001|sp exact|main|product_targeting|target|same target',
+    ]));
+  });
+
+  it('builds the same complete identity used by timeline grouping and evidence binding', () => {
+    const source = metric({
+      asin: 'b0mixed',
+      campaignName: 'Campaign A',
+      adGroupName: 'Group A',
+      reportType: 'USER_SEARCH_TERM',
+      searchTerm: 'Door Lock',
+    });
+    const identity = buildAdMetricObjectIdentity(source);
+    const [timeline] = new AdQuantifier(DEFAULT_RULE_CONFIG).quantifyTimeline([source]);
+
+    expect(identity).toEqual({
+      key: 'B0MIXED|campaign a|group a|user_search_term|search_term|door lock',
+      objectType: 'search_term',
+      objectName: 'Door Lock',
+    });
+    expect(timeline.objectKey).toBe(identity.key);
+    expect(timeline.objectType).toBe(identity.objectType);
+  });
 });
 
 function metric(patch: Partial<AdDailyMetrics>): AdDailyMetrics {
@@ -144,6 +266,7 @@ function metric(patch: Partial<AdDailyMetrics>): AdDailyMetrics {
     targeting: '',
     searchTerm: '',
     matchType: 'exact',
+    reportType: 'search_term',
     sourceFile: 'C:/reports/search-term.xlsx',
     currency: 'USD',
     impressions: 1000,

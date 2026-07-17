@@ -17,8 +17,10 @@ function runNode(script, args = []) {
 
 function makeCandidate(dir) {
   const report = path.join(dir, 'source-report.xlsx');
+  const identityProof = path.join(dir, 'target-identity-proof.json');
   const source = path.join(dir, 'candidate.json');
   fs.writeFileSync(report, 'fake report placeholder\n', 'utf8');
+  fs.writeFileSync(identityProof, '{"verified":true}\n', 'utf8');
   fs.writeFileSync(source, JSON.stringify({
     kind: 'real-ad-execution-readback',
     status: 'NEEDS_WORK',
@@ -28,7 +30,9 @@ function makeCandidate(dir) {
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group B',
       entityType: 'target',
+      entityId: 'target-id-410',
       entityName: 'door lock',
+      identityProofPath: identityProof,
       actionType: 'lower_bid',
     },
     source: {
@@ -56,9 +60,27 @@ describe('verify ad readback session packet', () => {
     expect(verify.stdout).toContain('CAPTURE_NEEDS_WORK');
     expect(verify.stdout).toContain('审批/审批人');
     expect(verify.stdout).toContain('执行前/执行前 Ads UI live bid');
+    expect(verify.stdout).toContain('回读/刷新回读实际值');
     expect(verify.stdout).toContain('session input guide exists');
     expect(verify.stdout).toContain('source candidate is NEEDS_WORK');
+    expect(verify.stdout).toContain('source candidate target.entityId exists');
+    expect(verify.stdout).toContain('target identity proof file exists');
     expect(verify.stdout).toContain('raw report files are not copied into session');
+  });
+
+  it('fails when target identity proof disappears after session prepare', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-session-proof-'));
+    const source = makeCandidate(dir);
+    const candidate = JSON.parse(fs.readFileSync(source, 'utf8'));
+    const session = path.join(dir, 'session');
+    const prepare = runNode('scripts/prepare-ad-readback-session.js', ['--source', source, '--out', session]);
+    expect(prepare.status).toBe(0);
+    fs.rmSync(candidate.target.identityProofPath, { force: true });
+
+    const verify = runNode('scripts/verify-ad-readback-session.js', [session]);
+
+    expect(verify.status).not.toBe(0);
+    expect(`${verify.stdout}${verify.stderr}`).toContain('target identity proof file exists');
   });
 
   it('fails when the session accidentally contains raw spreadsheet reports', () => {

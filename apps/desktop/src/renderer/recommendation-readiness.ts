@@ -2,6 +2,7 @@ export interface RecommendationGateIssueInput {
   requiredReportCount?: number;
   realReportFileCount: number;
   realReportFilesLength: number;
+  importedReportTypeCount: number;
   importedRowCount: number;
   quantImportedRows: number;
   hasImportedMetrics: boolean;
@@ -28,12 +29,17 @@ export function buildRecommendationGateIssues(input: RecommendationGateIssueInpu
   const issues = new Set<string>();
   const requiredReportCount = Math.max(1, Number(input.requiredReportCount || DEFAULT_REQUIRED_REPORT_COUNT));
   const realReportFileCount = Math.max(0, Number(input.realReportFileCount || input.realReportFilesLength || 0));
+  const importedReportTypeCount = Math.max(0, Number(input.importedReportTypeCount || 0));
   const importedRowCount = Math.max(0, Number(input.importedRowCount || input.quantImportedRows || 0));
 
   if (realReportFileCount <= 0) {
     issues.add('当前范围缺少真实 xlsx/xls/csv 原始报表文件');
   } else if (realReportFileCount < requiredReportCount) {
     issues.add(`当前范围只完成 ${realReportFileCount}/${requiredReportCount} 类真实广告报表，需补齐 8 类后才能生成正式建议`);
+  }
+
+  if (importedReportTypeCount < requiredReportCount) {
+    issues.add(`当前范围只完成 ${importedReportTypeCount}/${requiredReportCount} 类逐类入库，需补齐 8 类后才能生成正式建议`);
   }
 
   if (importedRowCount <= 0) {

@@ -41,7 +41,10 @@ function writeReadme(filePath, status = 'IN_PROGRESS') {
 
 function writePng(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  fs.writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(path.basename(filePath), 'utf8'),
+  ]));
   return filePath;
 }
 
@@ -55,18 +58,29 @@ function sha256Text(content) {
   return crypto.createHash('sha256').update(Buffer.from(content, 'utf8')).digest('hex').toUpperCase();
 }
 
+function sha256File(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').toUpperCase();
+}
+
 function finalPackageIndex(dir) {
+  fs.mkdirSync(dir, { recursive: true });
   const installerContent = 'installer package fixture\n';
   const portableContent = 'portable package fixture\n';
   const installerPath = path.join(dir, 'AmazonAIOpsAgent-1.5.0.exe');
   const portablePath = path.join(dir, 'AmazonAIOpsAgent-1.5.0-portable.exe');
   fs.writeFileSync(installerPath, installerContent, 'utf8');
   fs.writeFileSync(portablePath, portableContent, 'utf8');
+  const installerStat = fs.statSync(installerPath);
+  const portableStat = fs.statSync(portablePath);
   return {
+    generatedAt: '2026-07-16T08:06:00.000Z',
     present: true,
     count: 2,
     existingCount: 2,
     missingCount: 0,
+    releaseDir: dir,
+    error: null,
+    copyPolicy: 'Installer and portable EXE binaries are not copied into readiness evidence; this index records local paths, existence, size, and SHA-256.',
     packages: [
       {
         kind: 'installer',
@@ -75,6 +89,7 @@ function finalPackageIndex(dir) {
         exists: true,
         sizeBytes: Buffer.byteLength(installerContent, 'utf8'),
         sha256: sha256Text(installerContent),
+        modifiedAt: installerStat.mtime.toISOString(),
       },
       {
         kind: 'portable',
@@ -83,21 +98,23 @@ function finalPackageIndex(dir) {
         exists: true,
         sizeBytes: Buffer.byteLength(portableContent, 'utf8'),
         sha256: sha256Text(portableContent),
+        modifiedAt: portableStat.mtime.toISOString(),
       },
     ],
   };
 }
 
-function validPackageLaunchSmoke(dir) {
+function validPackageLaunchSmoke(dir, portablePackage) {
   const unpackedContent = 'unpacked exe fixture\n';
   const portableContent = 'portable exe fixture\n';
   const unpackedPath = path.join(dir, 'win-unpacked', 'AmazonAIOpsAgent.exe');
-  const portablePath = path.join(dir, 'AmazonAIOpsAgent-1.5.0-portable.exe');
+  const portablePath = portablePackage?.sourcePath || path.join(dir, 'AmazonAIOpsAgent-1.5.0-portable.exe');
   fs.mkdirSync(path.dirname(unpackedPath), { recursive: true });
   fs.writeFileSync(unpackedPath, unpackedContent, 'utf8');
-  fs.writeFileSync(portablePath, portableContent, 'utf8');
+  if (!portablePackage) fs.writeFileSync(portablePath, portableContent, 'utf8');
   return {
     kind: 'package-launch-smoke',
+    generatedAt: '2026-07-16T08:07:10.078Z',
     passed: true,
     artifacts: {
       unpacked: {
@@ -107,8 +124,8 @@ function validPackageLaunchSmoke(dir) {
       },
       portable: {
         path: portablePath,
-        sizeBytes: Buffer.byteLength(portableContent, 'utf8'),
-        sha256: sha256Text(portableContent),
+        sizeBytes: portablePackage?.sizeBytes || Buffer.byteLength(portableContent, 'utf8'),
+        sha256: portablePackage?.sha256 || sha256Text(portableContent),
       },
     },
     checks: [
@@ -116,6 +133,293 @@ function validPackageLaunchSmoke(dir) {
       { kind: 'portable', ok: true, appChildCount: 1 },
     ],
   };
+}
+
+function validPackageUiEvidence(dir, smoke, authorityDbPath) {
+  const protectedDbStat = fs.statSync(authorityDbPath);
+  const protectedDatabaseArtifact = {
+    path: authorityDbPath,
+    sha256: sha256File(authorityDbPath),
+    sizeBytes: protectedDbStat.size,
+    mtime: protectedDbStat.mtime.toISOString(),
+    mtimeMs: protectedDbStat.mtimeMs,
+  };
+  const appContentPath = path.join(dir, 'release', 'win-unpacked', 'resources', 'app');
+  const profileDatabasePath = path.join(dir, 'profile', 'amazon-ai-ops.db');
+  fs.mkdirSync(path.dirname(profileDatabasePath), { recursive: true });
+  fs.copyFileSync(authorityDbPath, profileDatabasePath);
+  const profileDatabaseArtifact = {
+    path: profileDatabasePath,
+    sha256: sha256File(profileDatabasePath),
+    sizeBytes: fs.statSync(profileDatabasePath).size,
+  };
+  const appContentSha256 = 'A'.repeat(64);
+  const appContentArtifact = {
+    kind: 'unpacked-app-content-manifest',
+    rootPath: appContentPath,
+    fileCount: 1,
+    totalSizeBytes: 1,
+    sha256: appContentSha256,
+  };
+  const run = (scalePercent, deviceScaleFactor) => ({
+    actualDeviceScaleFactor: deviceScaleFactor,
+    consoleErrors: [],
+    overlayChecks: Array.from({ length: 3 }, (_, index) => ({ id: `overlay-${index + 1}`, passed: true })),
+    pageErrors: [],
+    passed: true,
+    scalePercent,
+    screenshots: Array.from({ length: 8 }, (_, index) => ({ workspace: `workspace-${index + 1}` })),
+    viewport: { width: 1200, height: 700 },
+    viewportContract: { passed: true, violations: [] },
+    workspaceChecks: Array.from({ length: 8 }, (_, index) => ({ workspace: `workspace-${index + 1}`, passed: true })),
+  });
+  const wideWorkspaceCheck = (workspace) => ({
+    workspace,
+    passed: true,
+    experienceEvidence: { passed: true },
+    inspectorEvidence: {
+      passed: true,
+      inspector: { mode: 'inline', ariaModal: null },
+      screenshot: { sha256: 'D'.repeat(64) },
+    },
+  });
+  return {
+    kind: 'package-ui-evidence',
+    schemaVersion: 4,
+    generatedAt: '2026-07-16T08:08:00.000Z',
+    completedAt: '2026-07-16T08:09:00.000Z',
+    passed: true,
+    violations: [],
+    requested: {
+      appContentPath,
+      executablePath: smoke.artifacts.unpacked.path,
+      expectedAppContentSha256: appContentSha256,
+      expectedExeSha256: smoke.artifacts.unpacked.sha256,
+      evidenceMode: 'package-ui',
+      protectedDatabasePath: authorityDbPath,
+      userDataDir: path.dirname(profileDatabasePath),
+      scales: [
+        { scalePercent: 100, deviceScaleFactor: 1 },
+        { scalePercent: 125, deviceScaleFactor: 1.25 },
+      ],
+      viewport: { width: 1200, height: 700 },
+      wideProfile: {
+        id: 'wide-1400x900-100',
+        viewport: { width: 1400, height: 900 },
+        deviceScaleFactor: 1,
+      },
+    },
+    runs: [run(100, 1), run(125, 1.25)],
+    wideProfile: {
+      actualDeviceScaleFactor: 1,
+      consoleErrors: [],
+      identity: { passed: true, violations: [] },
+      pageErrors: [],
+      passed: true,
+      profileId: 'wide-1400x900-100',
+      screenshots: [
+        { workspace: 'product', sha256: 'E'.repeat(64) },
+        { workspace: 'diagnosis', sha256: 'F'.repeat(64) },
+      ],
+      viewport: { width: 1400, height: 900 },
+      viewportContract: { passed: true, violations: [] },
+      workspaceChecks: [wideWorkspaceCheck('product'), wideWorkspaceCheck('diagnosis')],
+    },
+    protectedDatabase: {
+      before: protectedDatabaseArtifact,
+      after: protectedDatabaseArtifact,
+      passed: true,
+      unchanged: true,
+    },
+    profileDatabaseProvenance: {
+      hashMatches: true,
+      passed: true,
+      pathsDistinct: true,
+      profileDatabase: profileDatabaseArtifact,
+      protectedDatabase: protectedDatabaseArtifact,
+      sizeMatches: true,
+      violations: [],
+    },
+    packageProcessIsolation: {
+      before: { passed: true, matchingCount: 0, unresolvedCount: 0, error: null },
+      after: { passed: true, matchingCount: 0, unresolvedCount: 0, error: null },
+      passed: true,
+    },
+    artifactsBefore: {
+      exe: smoke.artifacts.unpacked,
+      appContent: appContentArtifact,
+    },
+    artifactsAfter: {
+      exe: smoke.artifacts.unpacked,
+      appContent: appContentArtifact,
+    },
+    artifactHashesStable: true,
+    freshness: { passed: true, violations: [] },
+    completeness: { passed: true, violations: [] },
+  };
+}
+
+const strictNonReadyGates = () => [
+  { id: 'report-collection-delivery', name: 'Report collection delivery', ok: true, status: 'passed' },
+  { id: 'lingxing-listing-full-read', name: 'Lingxing Listing full read', ok: true, status: 'passed' },
+  { id: 'ai-live-provider', name: 'AI live provider', ok: true, status: 'passed' },
+  { id: 'ad-recommendation-ai-explanation', name: 'Ad recommendation AI explanation', ok: true, status: 'passed' },
+  { id: 'listing-ai-draft', name: 'Listing AI draft', ok: true, status: 'passed' },
+  { id: 'real-ad-execution-readback', name: 'Real ad execution readback', ok: false, status: 'needs_work' },
+  { id: 'release-package-hash', name: 'Release package hash', ok: true, status: 'passed' },
+  { id: 'package-launch-smoke', name: 'Package launch smoke', ok: true, status: 'passed' },
+];
+
+function writeStrictNonReadyFixture(options) {
+  const {
+    artifactDir,
+    evidenceManifest,
+    finalReadiness,
+    packageSmoke,
+    packageUiManifest = path.join(artifactDir, 'package-ui-manifest.json'),
+    bundleManifest,
+    readme,
+    mutateFinalReadiness = () => {},
+  } = options;
+  fs.mkdirSync(artifactDir, { recursive: true });
+  const packageIndex = finalPackageIndex(path.join(artifactDir, 'release'));
+  const portablePackage = packageIndex.packages.find((item) => item.kind === 'portable');
+  const smoke = validPackageLaunchSmoke(path.join(artifactDir, 'release'), portablePackage);
+  const authorityDbPath = path.join(artifactDir, 'authority.db');
+  fs.writeFileSync(authorityDbPath, 'authority database identity fixture\n', 'utf8');
+  writeReadme(readme);
+  writeJson(evidenceManifest, { kind: 'v15-final-readiness-evidence-manifest', evidence: {} });
+  writeJson(packageSmoke, smoke);
+  const packageUi = validPackageUiEvidence(artifactDir, smoke, authorityDbPath);
+  writeJson(packageUiManifest, packageUi);
+  const finalReadinessJson = {
+    status: 'APP_NEEDS_WORK',
+    appReady: false,
+    reportCollectionReady: true,
+    listingReadReady: true,
+    evidenceSelection: {
+      mode: 'manifest',
+      manifestPath: evidenceManifest,
+      authorityDbPath,
+    },
+    packageIndex,
+    packageLaunchSmoke: {
+      present: true,
+      evidencePath: packageSmoke,
+      selectedBy: 'explicit-arg',
+      generatedAt: smoke.generatedAt,
+      passed: true,
+      artifacts: smoke.artifacts,
+      checks: smoke.checks,
+    },
+    gates: strictNonReadyGates(),
+  };
+  finalReadinessJson.gates.find((gate) => gate.id === 'package-launch-smoke').evidencePath = packageSmoke;
+  mutateFinalReadiness(finalReadinessJson);
+  writeJson(finalReadiness, finalReadinessJson);
+  const bundlePackageIndexPath = path.join(path.dirname(bundleManifest), 'evidence', 'release-package-index.json');
+  const bundledPackageUiManifestPath = path.join(path.dirname(bundleManifest), 'evidence', 'package-ui-manifest.json');
+  writeJson(bundlePackageIndexPath, {
+    generatedAt: packageIndex.generatedAt,
+    releaseDir: packageIndex.releaseDir,
+    copyPolicy: 'Installer and portable EXE binaries are not copied into the delivery bundle; this index records local paths, existence, size, and SHA-256.',
+    packages: packageIndex.packages,
+  });
+  writeJson(bundledPackageUiManifestPath, packageUi);
+  writeJson(bundleManifest, {
+    status: 'APP_NEEDS_WORK',
+    appReady: false,
+    warning: 'Do not present this bundle as final READY until every gate passes.',
+    authorityDatabase: {
+      sourcePath: authorityDbPath,
+      existsAtExport: true,
+      copied: false,
+    },
+    files: [
+      {
+        label: 'release-package-index',
+        sourcePath: 'generated',
+        bundlePath: path.relative(path.dirname(bundleManifest), bundlePackageIndexPath),
+        sizeBytes: fs.statSync(bundlePackageIndexPath).size,
+        sha256: sha256File(bundlePackageIndexPath),
+      },
+      {
+        label: 'evidence:package-ui-manifest.json',
+        sourcePath: packageUiManifest,
+        bundlePath: path.relative(path.dirname(bundleManifest), bundledPackageUiManifestPath),
+        sizeBytes: fs.statSync(bundledPackageUiManifestPath).size,
+        sha256: sha256File(bundledPackageUiManifestPath),
+      },
+    ],
+    packageIndex: {
+      present: true,
+      count: packageIndex.count,
+      existingCount: packageIndex.existingCount,
+      missingCount: packageIndex.missingCount,
+      bundleJson: path.relative(path.dirname(bundleManifest), bundlePackageIndexPath),
+    },
+    uiEvidence: {
+      packageUiManifest: {
+        sourcePath: packageUiManifest,
+        present: true,
+      },
+    },
+  });
+  return {
+    authorityDbPath,
+    bundledPackageUiManifestPath,
+    bundlePackageIndexPath,
+    packageIndex,
+    packageUi,
+    packageUiManifest,
+    smoke,
+  };
+}
+
+function runStrictNonReadySafetyFixture(options = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-strict-'));
+  const paths = {
+    evidenceManifest: path.join(dir, 'evidence-manifest.json'),
+    finalReadiness: path.join(dir, 'final-readiness.json'),
+    packageSmoke: path.join(dir, 'package-launch-smoke.json'),
+    packageUiManifest: path.join(dir, 'package-ui-manifest.json'),
+    bundleManifest: path.join(dir, 'delivery-bundle-manifest.json'),
+    readme: path.join(dir, 'README.md'),
+  };
+  try {
+    const fixture = writeStrictNonReadyFixture({
+      artifactDir: dir,
+      ...paths,
+      mutateFinalReadiness: options.mutateFinalReadiness,
+    });
+    const context = { dir, paths, fixture };
+    options.mutateAfterWrite?.(context);
+    const extraArgs = typeof options.extraArgs === 'function'
+      ? options.extraArgs(context)
+      : options.extraArgs || [];
+    return runNode('scripts/verify-v15-non-ready-safety.js', [
+      '--final-readiness', paths.finalReadiness,
+      '--bundle-manifest', paths.bundleManifest,
+      '--package-launch-smoke', paths.packageSmoke,
+      ...(options.omitPackageUiManifest ? [] : ['--package-ui-manifest', paths.packageUiManifest]),
+      '--readme', paths.readme,
+      ...extraArgs,
+    ]);
+  } finally {
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function mutatePackageUiFixture(context, mutate) {
+  const packageUi = JSON.parse(fs.readFileSync(context.paths.packageUiManifest, 'utf8'));
+  mutate(packageUi);
+  writeJson(context.paths.packageUiManifest, packageUi);
+  writeJson(context.fixture.bundledPackageUiManifestPath, packageUi);
+  const bundle = JSON.parse(fs.readFileSync(context.paths.bundleManifest, 'utf8'));
+  const packageUiFile = bundle.files.find((file) => file.sourcePath === context.paths.packageUiManifest);
+  packageUiFile.sizeBytes = fs.statSync(context.fixture.bundledPackageUiManifestPath).size;
+  packageUiFile.sha256 = sha256File(context.fixture.bundledPackageUiManifestPath);
+  writeJson(context.paths.bundleManifest, bundle);
 }
 
 function validReadbackEvidence(dir) {
@@ -156,8 +460,10 @@ function validReadbackEvidence(dir) {
       asin: 'B0TESTASIN',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'keyword-123',
       entityName: 'close match',
+      identityProofPath: writePng(path.join(dir, 'target-identity.png')),
       actionType: 'lower_bid',
     },
     risk: {
@@ -211,41 +517,309 @@ describe('verify v15 non-ready safety', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-safety-'));
     const evidenceManifest = path.join(dir, 'evidence-manifest.json');
     const finalReadiness = path.join(dir, 'final-readiness.json');
+    const packageSmoke = path.join(dir, 'package-launch-smoke.json');
+    const packageUiManifest = path.join(dir, 'package-ui-manifest.json');
     const bundleManifest = path.join(dir, 'delivery-bundle-manifest.json');
-    const readme = writeReadme(path.join(dir, 'README.md'));
+    const readme = path.join(dir, 'README.md');
 
-    writeJson(evidenceManifest, { kind: 'v15-final-readiness-evidence-manifest', evidence: {} });
-    writeJson(finalReadiness, {
-      status: 'APP_NEEDS_WORK',
-      appReady: false,
-      reportCollectionReady: true,
-      listingReadReady: true,
-      evidenceSelection: {
-        mode: 'manifest',
-        manifestPath: evidenceManifest,
-      },
-      gates: [
-        { name: 'AI live provider', ok: true, status: 'passed' },
-        { name: 'Ad recommendation AI explanation', ok: true, status: 'passed' },
-        { name: 'Listing AI draft', ok: true, status: 'passed' },
-        { name: 'Real ad execution readback', ok: false, status: 'needs_work' },
-      ],
-    });
-    writeJson(bundleManifest, {
-      status: 'APP_NEEDS_WORK',
-      appReady: false,
-      warning: 'Do not present this bundle as final READY until every gate passes.',
+    writeStrictNonReadyFixture({
+      artifactDir: dir,
+      evidenceManifest,
+      finalReadiness,
+      packageSmoke,
+      packageUiManifest,
+      bundleManifest,
+      readme,
     });
 
     const result = runNode('scripts/verify-v15-non-ready-safety.js', [
       '--final-readiness', finalReadiness,
       '--bundle-manifest', bundleManifest,
+      '--package-launch-smoke', packageSmoke,
+      '--package-ui-manifest', packageUiManifest,
       '--readme', readme,
     ]);
 
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain('final readiness has exactly 8 gates, 7 passed, and only real-ad-execution-readback needs work');
     expect(result.stdout).toContain('README top-level delivery line is non-ready');
     expect(result.stdout).toContain('NON_READY_SAFETY verified');
+  });
+
+  it('accepts a 125% package UI viewport within the recorded two-pixel tolerance', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite(context) {
+        mutatePackageUiFixture(context, (packageUi) => {
+          const run125 = packageUi.runs.find((run) => run.scalePercent === 125);
+          run125.viewport.height = 702;
+          run125.viewportContract = {
+            actual: { width: 1200, height: 702, deviceScaleFactor: 1.25 },
+            delta: { width: 0, height: 2, deviceScaleFactor: 0 },
+            passed: true,
+            requested: { width: 1200, height: 700, deviceScaleFactor: 1.25 },
+            tolerance: { width: 2, height: 2, deviceScaleFactor: 0.02 },
+            violations: [],
+          };
+        });
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('NON_READY_SAFETY verified');
+  });
+
+  it('rejects a package UI viewport outside the recorded two-pixel tolerance', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite(context) {
+        mutatePackageUiFixture(context, (packageUi) => {
+          const run125 = packageUi.runs.find((run) => run.scalePercent === 125);
+          run125.viewport.height = 703;
+          run125.viewportContract = {
+            actual: { width: 1200, height: 703, deviceScaleFactor: 1.25 },
+            delta: { width: 0, height: 3, deviceScaleFactor: 0 },
+            passed: true,
+            requested: { width: 1200, height: 700, deviceScaleFactor: 1.25 },
+            tolerance: { width: 2, height: 2, deviceScaleFactor: 0.02 },
+            violations: [],
+          };
+        });
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('explicit package UI evidence is fresh, complete, hash-bound, DB-safe, process-isolated, and bundled');
+  });
+
+  it('rejects strict APP_NEEDS_WORK verification without an explicit package UI manifest', () => {
+    const result = runStrictNonReadySafetyFixture({ omitPackageUiManifest: true });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('strict APP_NEEDS_WORK requires an explicit package UI manifest');
+  });
+
+  it('rejects APP_NEEDS_WORK when release package hash evidence is stale', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateFinalReadiness(finalReadiness) {
+        const portable = finalReadiness.packageIndex.packages.find((item) => item.kind === 'portable');
+        portable.sha256 = '0'.repeat(64);
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('release-package-hash gate is passed with current package index evidence');
+    expect(`${result.stdout}${result.stderr}`).toContain('NEEDS_WORK');
+  });
+
+  it('rejects APP_NEEDS_WORK when the bundled release package index differs from final readiness', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite({ paths, fixture }) {
+        const bundleIndex = JSON.parse(fs.readFileSync(fixture.bundlePackageIndexPath, 'utf8'));
+        bundleIndex.packages.find((item) => item.kind === 'portable').modifiedAt = '2000-01-01T00:00:00.000Z';
+        writeJson(fixture.bundlePackageIndexPath, bundleIndex);
+        const bundle = JSON.parse(fs.readFileSync(paths.bundleManifest, 'utf8'));
+        const indexFile = bundle.files.find((file) => file.label === 'release-package-index');
+        indexFile.sizeBytes = fs.statSync(fixture.bundlePackageIndexPath).size;
+        indexFile.sha256 = sha256File(fixture.bundlePackageIndexPath);
+        writeJson(paths.bundleManifest, bundle);
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('bundle release-package-index exactly matches final readiness and current package files');
+  });
+
+  it('rejects APP_NEEDS_WORK when explicit package UI freshness failed', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite(context) {
+        mutatePackageUiFixture(context, (packageUi) => {
+          packageUi.freshness = { passed: false, violations: [{ code: 'STALE_BUILD' }] };
+        });
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('explicit package UI evidence is fresh, complete, hash-bound, DB-safe, process-isolated, and bundled');
+  });
+
+  it('rejects APP_NEEDS_WORK when explicit package UI completeness failed', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite(context) {
+        mutatePackageUiFixture(context, (packageUi) => {
+          packageUi.completeness = { passed: false, violations: [{ code: 'SCALE_RUN_MISSING' }] };
+        });
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('explicit package UI evidence is fresh, complete, hash-bound, DB-safe, process-isolated, and bundled');
+  });
+
+  it.each([
+    ['EXE hash is not bound to package smoke', (context) => {
+      const alternateExe = path.join(context.dir, 'alternate-unpacked.exe');
+      const content = 'alternate unpacked executable\n';
+      fs.writeFileSync(alternateExe, content, 'utf8');
+      const artifact = {
+        path: alternateExe,
+        sizeBytes: Buffer.byteLength(content, 'utf8'),
+        sha256: sha256Text(content),
+      };
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.requested.executablePath = alternateExe;
+        packageUi.requested.expectedExeSha256 = artifact.sha256;
+        packageUi.artifactsBefore.exe = artifact;
+        packageUi.artifactsAfter.exe = artifact;
+      });
+    }],
+    ['authority DB isolation is not preserved', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.protectedDatabase.unchanged = false;
+      });
+    }],
+    ['package process isolation is not preserved', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.packageProcessIsolation.after.matchingCount = 1;
+      });
+    }],
+    ['profile database provenance is not preserved', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.profileDatabaseProvenance.passed = false;
+        packageUi.profileDatabaseProvenance.hashMatches = false;
+      });
+    }],
+    ['wide Product/Diagnosis profile is incomplete', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.wideProfile.workspaceChecks.find((item) => item.workspace === 'diagnosis').passed = false;
+      });
+    }],
+  ])('rejects APP_NEEDS_WORK when package UI %s', (_label, mutate) => {
+    const result = runStrictNonReadySafetyFixture({ mutateAfterWrite: mutate });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('explicit package UI evidence is fresh, complete, hash-bound, DB-safe, process-isolated, and bundled');
+  });
+
+  it('rejects APP_NEEDS_WORK when bundle package UI sourcePath does not match the explicit manifest', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite({ paths }) {
+        const bundle = JSON.parse(fs.readFileSync(paths.bundleManifest, 'utf8'));
+        bundle.uiEvidence.packageUiManifest.sourcePath = path.join(path.dirname(paths.packageUiManifest), 'other-package-ui.json');
+        writeJson(paths.bundleManifest, bundle);
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('explicit package UI evidence is fresh, complete, hash-bound, DB-safe, process-isolated, and bundled');
+  });
+
+  it('does not allow explicit strict verification to substitute historical APP_READY records', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateFinalReadiness(finalReadiness) {
+        finalReadiness.status = 'APP_READY';
+        finalReadiness.appReady = true;
+      },
+      mutateAfterWrite({ paths }) {
+        const bundle = JSON.parse(fs.readFileSync(paths.bundleManifest, 'utf8'));
+        bundle.status = 'APP_READY';
+        bundle.appReady = true;
+        bundle.warning = 'APP_READY evidence bundle.';
+        writeJson(paths.bundleManifest, bundle);
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('final readiness remains APP_NEEDS_WORK with appReady=false');
+    expect(result.stdout).not.toContain('historical APP_READY final readiness is baseline only');
+  });
+
+  it('rejects APP_NEEDS_WORK when explicit package launch smoke is invalid', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite({ paths }) {
+        const smoke = JSON.parse(fs.readFileSync(paths.packageSmoke, 'utf8'));
+        smoke.checks = smoke.checks.map((check) => (
+          check.kind === 'portable' ? { ...check, ok: false } : check
+        ));
+        writeJson(paths.packageSmoke, smoke);
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('package-launch-smoke gate is passed with explicit current evidence matching final readiness and package index');
+    expect(`${result.stdout}${result.stderr}`).toContain('NEEDS_WORK');
+  });
+
+  it('rejects APP_NEEDS_WORK when explicit package launch smoke does not match its final readiness record', () => {
+    let alternateSmokePath = '';
+    const result = runStrictNonReadySafetyFixture({
+      mutateFinalReadiness(finalReadiness) {
+        alternateSmokePath = path.join(path.dirname(finalReadiness.evidenceSelection.manifestPath), 'other-package-launch-smoke.json');
+        finalReadiness.packageLaunchSmoke.evidencePath = alternateSmokePath;
+        finalReadiness.gates.find((gate) => gate.id === 'package-launch-smoke').evidencePath = alternateSmokePath;
+      },
+      mutateAfterWrite({ paths }) {
+        fs.copyFileSync(paths.packageSmoke, alternateSmokePath);
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('package-launch-smoke gate is passed with explicit current evidence matching final readiness and package index');
+  });
+
+  it('rejects APP_NEEDS_WORK when any gate besides real ad readback also fails', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateFinalReadiness(finalReadiness) {
+        const aiGate = finalReadiness.gates.find((gate) => gate.id === 'ai-live-provider');
+        aiGate.ok = false;
+        aiGate.status = 'needs_work';
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('final readiness has exactly 8 gates, 7 passed, and only real-ad-execution-readback needs work');
+  });
+
+  it('rejects APP_NEEDS_WORK when the recorded authority database path no longer exists', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite({ fixture }) {
+        fs.rmSync(fixture.authorityDbPath, { force: true });
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('bind the same existing SQLite authority database identity');
+  });
+
+  it('rejects APP_NEEDS_WORK when explicit --db selects another existing database without leaking its path', () => {
+    let otherDbPath = '';
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite({ dir }) {
+        otherDbPath = path.join(dir, 'other-authority.db');
+        fs.writeFileSync(otherDbPath, 'other authority database identity fixture\n', 'utf8');
+      },
+      extraArgs() {
+        return ['--db', otherDbPath];
+      },
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status).not.toBe(0);
+    expect(output).toContain('bind the same existing SQLite authority database identity');
+    expect(output).not.toContain(otherDbPath);
+  });
+
+  it('rejects APP_NEEDS_WORK when the delivery bundle records another authority database', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite({ dir, paths }) {
+        const otherDbPath = path.join(dir, 'bundle-authority.db');
+        fs.writeFileSync(otherDbPath, 'bundle authority database identity fixture\n', 'utf8');
+        const bundle = JSON.parse(fs.readFileSync(paths.bundleManifest, 'utf8'));
+        bundle.authorityDatabase.sourcePath = otherDbPath;
+        writeJson(paths.bundleManifest, bundle);
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('bind the same existing SQLite authority database identity');
   });
 
   it('ignores newer smoke final-readiness files when selecting default evidence', () => {
@@ -256,25 +830,19 @@ describe('verify v15 non-ready safety', () => {
     const bundleDir = path.join(bundleRoot, `v15-non-ready-safety-smoke-${runId}`);
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
     const readme = path.join(bundleDir, 'README.md');
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-default-smoke-'));
+    const packageSmoke = path.join(fixtureDir, 'package-launch-smoke.json');
+    const packageUiManifest = path.join(fixtureDir, 'package-ui-manifest.json');
 
     try {
-      writeReadme(readme);
-      writeJson(evidenceManifest, { kind: 'v15-final-readiness-evidence-manifest', evidence: {} });
-      writeJson(finalReadiness, {
-        status: 'APP_NEEDS_WORK',
-        appReady: false,
-        reportCollectionReady: true,
-        listingReadReady: true,
-        evidenceSelection: {
-          mode: 'manifest',
-          manifestPath: evidenceManifest,
-        },
-        gates: [
-          { name: 'AI live provider', ok: true, status: 'passed' },
-          { name: 'Ad recommendation AI explanation', ok: true, status: 'passed' },
-          { name: 'Listing AI draft', ok: true, status: 'passed' },
-          { name: 'Real ad execution readback', ok: false, status: 'needs_work' },
-        ],
+      writeStrictNonReadyFixture({
+        artifactDir: fixtureDir,
+        evidenceManifest,
+        finalReadiness,
+        packageSmoke,
+        packageUiManifest,
+        bundleManifest,
+        readme,
       });
       writeJson(smokeReadiness, {
         status: 'APP_READY',
@@ -282,13 +850,11 @@ describe('verify v15 non-ready safety', () => {
         evidenceSelection: { mode: 'smoke' },
         gates: [],
       });
-      writeJson(bundleManifest, {
-        status: 'APP_NEEDS_WORK',
-        appReady: false,
-        warning: 'Do not present this bundle as final READY until every gate passes.',
-      });
-
-      const result = runNode('scripts/verify-v15-non-ready-safety.js', ['--readme', readme]);
+      const result = runNode('scripts/verify-v15-non-ready-safety.js', [
+        '--package-launch-smoke', packageSmoke,
+        '--package-ui-manifest', packageUiManifest,
+        '--readme', readme,
+      ]);
 
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('NON_READY_SAFETY verified');
@@ -297,6 +863,7 @@ describe('verify v15 non-ready safety', () => {
         if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
       }
       if (fs.existsSync(bundleDir)) fs.rmSync(bundleDir, { recursive: true, force: true });
+      if (fs.existsSync(fixtureDir)) fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
 
@@ -308,25 +875,19 @@ describe('verify v15 non-ready safety', () => {
     const bundleDir = path.join(bundleRoot, `v15-non-ready-safety-timestamp-default-${runId}`);
     const bundleManifest = path.join(bundleDir, 'delivery-bundle-manifest.json');
     const readme = path.join(bundleDir, 'README.md');
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-timestamp-default-'));
+    const packageSmoke = path.join(fixtureDir, 'package-launch-smoke.json');
+    const packageUiManifest = path.join(fixtureDir, 'package-ui-manifest.json');
 
     try {
-      writeReadme(readme);
-      writeJson(evidenceManifest, { kind: 'v15-final-readiness-evidence-manifest', evidence: {} });
-      writeJson(finalReadiness, {
-        status: 'APP_NEEDS_WORK',
-        appReady: false,
-        reportCollectionReady: true,
-        listingReadReady: true,
-        evidenceSelection: {
-          mode: 'manifest',
-          manifestPath: evidenceManifest,
-        },
-        gates: [
-          { name: 'AI live provider', ok: true, status: 'passed' },
-          { name: 'Ad recommendation AI explanation', ok: true, status: 'passed' },
-          { name: 'Listing AI draft', ok: true, status: 'passed' },
-          { name: 'Real ad execution readback', ok: false, status: 'needs_work' },
-        ],
+      writeStrictNonReadyFixture({
+        artifactDir: fixtureDir,
+        evidenceManifest,
+        finalReadiness,
+        packageSmoke,
+        packageUiManifest,
+        bundleManifest,
+        readme,
       });
       writeJson(smokeReadiness, {
         status: 'APP_READY',
@@ -334,22 +895,21 @@ describe('verify v15 non-ready safety', () => {
         evidenceSelection: { mode: 'smoke' },
         gates: [],
       });
-      writeJson(bundleManifest, {
-        status: 'APP_NEEDS_WORK',
-        appReady: false,
-        warning: 'Do not present this bundle as final READY until every gate passes.',
-      });
-
-      const result = runNode('scripts/verify-v15-non-ready-safety.js', ['--readme', readme]);
+      const result = runNode('scripts/verify-v15-non-ready-safety.js', [
+        '--package-launch-smoke', packageSmoke,
+        '--package-ui-manifest', packageUiManifest,
+        '--readme', readme,
+      ]);
 
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain('final readiness status remains APP_NEEDS_WORK');
+      expect(result.stdout).toContain('final readiness remains APP_NEEDS_WORK with appReady=false');
       expect(result.stdout).toContain('NON_READY_SAFETY verified');
     } finally {
       for (const filePath of [evidenceManifest, finalReadiness, smokeReadiness]) {
         if (fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
       }
       if (fs.existsSync(bundleDir)) fs.rmSync(bundleDir, { recursive: true, force: true });
+      if (fs.existsSync(fixtureDir)) fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
 

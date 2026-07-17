@@ -4,7 +4,6 @@ export interface RecommendationMetricsGateInput {
   metricsLength: number;
   realReportFileCount: number;
   requiredReportCount?: number;
-  requireFullReportCoverage?: boolean;
   sourceFileCount: number;
   sourceRowCount: number;
   sourceFileRowCount?: number;
@@ -22,10 +21,8 @@ export function filterFormalRecommendationMetrics(metrics: AdDailyMetrics[], sco
 
 export function assertRecommendationMetricsLoaded(input: RecommendationMetricsGateInput): void {
   const requiredReportCount = Math.max(0, Number(input.requiredReportCount || 0));
-  const requireFullReportCoverage = input.requireFullReportCoverage !== false;
   if (
-    requireFullReportCoverage
-    && requiredReportCount > 0
+    requiredReportCount > 0
     && input.realReportFileCount > 0
     && input.realReportFileCount < requiredReportCount
   ) {

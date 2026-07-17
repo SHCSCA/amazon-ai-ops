@@ -21,7 +21,65 @@ function writeReport(filePath, options = {}) {
   return filePath;
 }
 
+function verifiedWritableTarget(input) {
+  const identityProofPath = path.join(input.dir, `identity-${input.entityId}.png`);
+  fs.writeFileSync(identityProofPath, `identity proof for ${input.entityId}\n`, 'utf8');
+  return {
+    entityType: input.entityType || 'keyword',
+    entityId: input.entityId,
+    entityName: input.entityName,
+    campaignName: input.campaignName,
+    adGroupName: input.adGroupName,
+    metricDate: input.metricDate,
+    sourceFile: input.sourceFile,
+    sourceRow: input.sourceRow,
+    identitySource: 'ads_ui',
+    verifiedBy: 'Ops Reviewer',
+    verifiedAt: '2026-06-12T09:00:00.000Z',
+    verificationNote: 'Matched the current editable Ads object before candidate creation.',
+    identityProofPath,
+  };
+}
+
 describe('ad readback candidate from recommendation evidence', () => {
+  it('refuses an analysis-only recommendation that lacks a verified writable target even when its report name looks writable', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-candidate-unverified-target-'));
+    const source = path.join(dir, 'source.json');
+    const out = path.join(dir, 'candidate.json');
+    const sourceReport = writeReport(path.join(dir, 'keyword.xlsx'));
+    fs.writeFileSync(source, JSON.stringify({
+      kind: 'installed-ad-ai-explanation',
+      recommendations: [{
+        id: 99,
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        asin: 'B0TESTASIN',
+        entityType: 'search_term',
+        entityId: 'Campaign_Ad Group_close match',
+        entityName: 'close match',
+        actionType: 'lower_bid',
+        currentValue: '2.40',
+        recommendedValue: '2.16',
+        evidence: {
+          campaignName: 'Campaign',
+          adGroupName: 'Ad Group',
+          sourceFiles: [sourceReport],
+          sourceRow: 18,
+        },
+      }],
+    }, null, 2), 'utf8');
+
+    const result = runNode('scripts/create-ad-readback-candidate-from-recommendation.js', [
+      '--source', source,
+      '--recommendation-id', '99',
+      '--out', out,
+    ]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('verified writable Ads target');
+    expect(fs.existsSync(out)).toBe(false);
+  });
+
   it('creates a non-passing keyword-scoped candidate without treating CPC as live bid', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-candidate-'));
     const source = path.join(dir, 'source.json');
@@ -32,6 +90,16 @@ describe('ad readback candidate from recommendation evidence', () => {
       campaignName: 'Test Campaign',
       adGroupName: 'Test Ad Group',
       entityName: '紧密匹配',
+    });
+    const writableTarget = verifiedWritableTarget({
+      dir,
+      entityId: 'keyword-opaque-1',
+      entityName: '紧密匹配',
+      campaignName: 'Test Campaign',
+      adGroupName: 'Test Ad Group',
+      metricDate: '2026-05-23',
+      sourceFile: sourceReport,
+      sourceRow: 18,
     });
     fs.writeFileSync(source, JSON.stringify({
       kind: 'installed-ad-ai-explanation',
@@ -54,6 +122,7 @@ describe('ad readback candidate from recommendation evidence', () => {
           adGroupName: 'Test Ad Group',
           sourceFiles: [sourceReport],
           sourceRow: 18,
+          writableTarget,
         },
       }],
     }, null, 2), 'utf8');
@@ -70,6 +139,8 @@ describe('ad readback candidate from recommendation evidence', () => {
     expect(candidate.status).toBe('NEEDS_WORK');
     expect(candidate.realWriteApproved).toBe(false);
     expect(candidate.target.entityType).toBe('keyword');
+    expect(candidate.target.entityId).toBe('keyword-opaque-1');
+    expect(candidate.target.identityProofPath).toBe(writableTarget.identityProofPath);
     expect(candidate.source.entityType).toBe('search_term');
     expect(candidate.source.sourceFiles).toEqual([sourceReport]);
     expect(candidate.source.sourceRow).toBe(18);
@@ -101,6 +172,16 @@ describe('ad readback candidate from recommendation evidence', () => {
       adGroupName: 'D6-自动-卧室室内-挖词 - 5/18/2026',
       entityName: '紧密匹配',
     });
+    const writableTarget = verifiedWritableTarget({
+      dir,
+      entityId: 'keyword-opaque-summary-1',
+      entityName: '紧密匹配',
+      campaignName: 'D6-自动-低价探索 - 5/18/2026',
+      adGroupName: 'D6-自动-卧室室内-挖词 - 5/18/2026',
+      metricDate: '2026-05-23',
+      sourceFile: sourceReport,
+      sourceRow: 18,
+    });
     fs.writeFileSync(source, JSON.stringify({
       kind: 'installed-ad-ai-explanation',
       request: { storeName: 'FT-US-US', marketplaceCode: 'US' },
@@ -116,6 +197,7 @@ describe('ad readback candidate from recommendation evidence', () => {
         currentValue: '2.40',
         recommendedValue: '2.16',
         metricDate: '2026-05-23',
+        evidence: { writableTarget },
       }],
     }, null, 2), 'utf8');
 
@@ -142,11 +224,12 @@ describe('ad readback candidate from recommendation evidence', () => {
     expect(candidate.source.sourceRow).toBe(18);
     expect(candidate.before.value).toBe('FILL: value before write');
     expect(candidate.after.value).toBe('FILL: value after write');
-    expect(candidate.readback.actualValue).toBe('FILL: must equal after.value');
+    expect(candidate.readback.actualValue).toBe('FILL: independently observe after reload; must equal after.value');
     expect(JSON.stringify(candidate.before)).not.toContain('2.40');
     expect(JSON.stringify(candidate.after)).not.toContain('2.16');
     expect(candidate.risk.rationale).toContain('source values are recommendation inputs, not proven live Ads bid values');
-    expect(candidate.risk.rationale).toContain('entityId fallback');
+    expect(candidate.target.entityId).toBe('keyword-opaque-summary-1');
+    expect(candidate.risk.rationale).not.toContain('entityId fallback');
 
     const checklist = fs.readFileSync(mdOut, 'utf8');
     expect(checklist).toContain('D6-自动-低价探索 - 5/18/2026');
@@ -169,6 +252,16 @@ describe('ad readback candidate from recommendation evidence', () => {
       adGroupName: 'Ad Group Name',
       entityName: '紧密匹配',
     });
+    const writableTarget = verifiedWritableTarget({
+      dir,
+      entityId: 'keyword-opaque-override-1',
+      entityName: '紧密匹配',
+      campaignName: 'Campaign Name',
+      adGroupName: 'Ad Group Name',
+      metricDate: '2026-05-23',
+      sourceFile: sourceReport,
+      sourceRow: 23,
+    });
     fs.writeFileSync(source, JSON.stringify({
       kind: 'installed-ad-ai-explanation',
       request: { storeName: 'FT-US-US', marketplaceCode: 'US' },
@@ -181,6 +274,7 @@ describe('ad readback candidate from recommendation evidence', () => {
         entityName: '紧密匹配',
         actionType: 'lower_bid',
         metricDate: '2026-05-23',
+        evidence: { writableTarget },
       }],
     }, null, 2), 'utf8');
 
@@ -313,6 +407,16 @@ describe('ad readback candidate from recommendation evidence', () => {
       adGroupName: 'Test Ad Group',
       entityName: '紧密匹配',
     });
+    const writableTarget = verifiedWritableTarget({
+      dir,
+      entityId: 'keyword-opaque-fallback-1',
+      entityName: '紧密匹配',
+      campaignName: 'Test Campaign',
+      adGroupName: 'Test Ad Group',
+      metricDate: '2026-05-23',
+      sourceFile: sourceReport,
+      sourceRow: 18,
+    });
     fs.writeFileSync(source, JSON.stringify({
       kind: 'installed-ad-ai-explanation',
       request: { storeName: 'FT-US-US', marketplaceCode: 'US' },
@@ -331,6 +435,7 @@ describe('ad readback candidate from recommendation evidence', () => {
           adGroupName: 'Test Ad Group',
           sourceFiles: [sourceReport],
           sourceRow: 18,
+          writableTarget,
           aiStrategyFallbackReason: 'AI 策略诊断 schemaVersion 错误，已回退规则。',
           aiActionFallbackReason: 'AI 单条解释无法解析 JSON，使用规则解释。',
         },

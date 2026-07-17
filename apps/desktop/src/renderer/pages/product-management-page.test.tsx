@@ -9,9 +9,55 @@ import {
   buildProductManagementPageModel,
   buildProductManagementTaskState,
   productManagementActionRoutes,
+  productInspectorTabTarget,
   productTimelineScopeLabel,
 } from './product-management-page';
 import type { BusinessDataPipeline } from '../types';
+
+describe('ProductManagementPage workspace contract', () => {
+  it('keeps product browsing read-only inside a virtual queue and responsive inspector', () => {
+    const source = readFileSync(new URL('./product-management-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain("useBusinessDataPipeline({ mode: 'portfolio' })");
+    expect(source).toContain('electronAPI?.getProducts?.()');
+    expect(source).toContain('const lockedAsin =');
+    expect(source).toContain('const [focusedAsin, setFocusedAsin]');
+    expect(source).toMatch(/function openProductInspector\([\s\S]*?setFocusedAsin\(asin\);[\s\S]*?setInspectorTab\(panel\);[\s\S]*?\n  }/);
+    expect(source.match(/function openProductInspector\([\s\S]*?\n  }/)?.[0]).not.toContain('setScope');
+    expect(source).toContain('<VirtualDataTable');
+    expect(source).toContain('estimateSize={54}');
+    expect(source).toContain('<WorkbenchPanel');
+    expect(source).toContain('<ResponsiveInspector');
+    expect(source).toContain('data-workspace-work-surface');
+    expect(source).toContain('data-workspace-queue');
+    expect(source).toContain('role="tablist"');
+    expect(source).toContain('role="tabpanel"');
+    expect(source).not.toContain('<PageHeader');
+    expect(source).not.toContain('PAGE_HEADER_TITLES');
+    expect(source).toContain('className="business-stack product-management-page-stack"');
+    expect(source).not.toContain('product-config-modal-backdrop product-management-modal-backdrop');
+    expect(source).not.toContain('useOverlayFocusScope');
+  });
+
+  it('keeps save separate from the explicit global product lock', () => {
+    const source = readFileSync(new URL('./product-management-page.tsx', import.meta.url), 'utf8');
+    const saveProductSource = source.match(/async function saveProduct\(\) \{[\s\S]*?\n  \}/)?.[0] || '';
+
+    expect(saveProductSource).not.toContain('setScope');
+    expect(source).toContain('保存只更新本地产品配置；全局 ASIN 仅由显式锁定动作更新。');
+    expect(source).toContain('如需切换请使用“锁定为当前产品”');
+  });
+});
+
+describe('ProductManagementPage inspector tabs', () => {
+  it('supports arrow, Home, and End keyboard navigation without changing on unrelated keys', () => {
+    expect(productInspectorTabTarget('detail', 'ArrowRight')).toBe('edit');
+    expect(productInspectorTabTarget('detail', 'ArrowLeft')).toBe('timeline');
+    expect(productInspectorTabTarget('daily', 'Home')).toBe('detail');
+    expect(productInspectorTabTarget('edit', 'End')).toBe('timeline');
+    expect(productInspectorTabTarget('edit', 'Enter')).toBe('edit');
+  });
+});
 
 describe('ProductManagementPage model', () => {
   it('selects the scoped product and exposes product identity, ad summary, and timeline tags', () => {
@@ -94,6 +140,44 @@ describe('ProductManagementPage model', () => {
       orders: 25,
       clicks: 495,
       highRiskCount: 1,
+    });
+  });
+
+  it('supplements the portfolio while applying scoped canonical totals only to the locked ASIN', () => {
+    const portfolioData = {
+      ...pipeline(),
+      scope: { ...pipeline().scope, asin: undefined },
+      quant: {
+        ...pipeline().quant,
+        totalSpend: 999,
+        totalSales: 1998,
+      },
+    };
+
+    const model = buildProductManagementPageModel({
+      data: portfolioData,
+      scopeAsin: 'B001',
+      authoritativeData: pipeline(),
+      supplementalProducts: [{ asin: 'B002', title: 'Configured only product', productStage: 'cold_start' }],
+    });
+
+    expect(model.products.map((product) => product.asin)).toEqual(['B001', 'B002']);
+    expect(model.selectedProduct).toMatchObject({
+      asin: 'B001',
+      cost: 80,
+      sales: 160,
+    });
+
+    const viewedOnlyModel = buildProductManagementPageModel({
+      data: portfolioData,
+      scopeAsin: 'B002',
+      authoritativeData: pipeline(),
+      supplementalProducts: [{ asin: 'B002', title: 'Configured only product' }],
+    });
+    expect(viewedOnlyModel.selectedProduct).toMatchObject({
+      asin: 'B002',
+      cost: 0,
+      sales: 0,
     });
   });
 
@@ -181,6 +265,34 @@ describe('ProductManagementPage model', () => {
       feedbackTone: 'warning',
     });
     expect(taskState.detail).toContain('当前缺少导入广告指标');
+  });
+
+  it('keeps AI quantification out of the primary path while only some report types are imported', () => {
+    const model = buildProductManagementPageModel({
+      data: pipeline(),
+      scopeAsin: 'B001',
+    });
+
+    const taskState = buildProductManagementTaskState({
+      model,
+      loading: false,
+      error: '',
+      saving: false,
+      importedRows: 1879,
+      hasImportedMetrics: true,
+      importedReportTypeCount: 5,
+      formalDataReady: false,
+    });
+
+    expect(taskState).toMatchObject({
+      title: '当前产品：D6 Smart Lock',
+      primaryActionLabel: '补齐逐类入库',
+      primaryRoute: 'data-import-validation',
+      feedbackLabel: '正式数据门未闭合',
+      feedbackTone: 'warning',
+    });
+    expect(taskState.detail).toContain('当前仅 5/8 类逐类入库');
+    expect(taskState.feedbackDetail).toContain('1879 行指标来自 5/8 类报表');
   });
 
   it('keeps save feedback in the product task state', () => {
@@ -317,6 +429,16 @@ describe('ProductManagementPage model', () => {
     expect(summary.detail).toContain('login-credentials 已托管至 Main 物理加密区');
     expect(summary.detail).toContain('不保存账号或密码明文');
     expect(JSON.stringify(summary)).not.toContain('operator@example.com');
+  });
+
+  it('renders the computed product task state through one task-first banner', () => {
+    const source = readFileSync(new URL('./product-management-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain("import { ResponsiveInspector, TaskBanner, WorkbenchPanel } from '../components/workspace';");
+    expect(source.match(/<TaskBanner/g)).toHaveLength(1);
+    expect(source).toContain('label: taskState.primaryActionLabel');
+    expect(source).toContain('taskState.secondaryActions.slice(0, 2)');
+    expect(source).not.toContain("label: '打开完整配置',\n          onClick: () => navigate(routes.productConfig)");
   });
 });
 

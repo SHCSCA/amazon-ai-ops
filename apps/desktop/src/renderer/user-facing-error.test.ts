@@ -50,7 +50,7 @@ describe('toUserFacingError', () => {
       'AI 阶段分析失败',
     );
 
-    expect(message).toBe('当前产品范围缺少已导入的日级广告指标：请先在数据采集页重新获取完整 8 类报表，并在数据导入与校验页导入当前批次后再运行 AI。');
+    expect(message).toBe('当前产品范围缺少已导入的日级广告指标：请先到“数据准备 → 报表采集”重新获取完整 8 类报表，再到“数据准备 → 导入检查”导入当前批次后运行 AI。');
     expect(message).not.toContain('Error invoking remote method');
   });
 
@@ -60,8 +60,27 @@ describe('toUserFacingError', () => {
       '生成优化建议失败',
     );
 
-    expect(message).toBe('当前产品范围缺少可回查的日级广告指标：请先在产品管理选择 ASIN，并在数据导入与校验页重新导入当前批次真实报表后再运行 AI。');
+    expect(message).toBe('当前产品范围缺少可回查的日级广告指标：请先在“产品工作台”选择 ASIN，并到“数据准备 → 导入检查”重新导入当前批次真实报表后再运行 AI。');
     expect(message).not.toContain('source_file');
+  });
+
+  it('turns keyword opportunity coverage blockers into a safe data-preparation action', () => {
+    const message = toUserFacingError(
+      new Error("Error invoking remote method 'v1_5:business-ui:keyword-opportunities': Error: 读取关键词机会被阻断：仅有 5/8 类真实报表形成 DB 日级指标；未入库 campaign、placement、product_targeting。"),
+      '读取关键词机会失败',
+    );
+
+    expect(message).toBe('关键词机会暂不可用：当前范围仅覆盖 5/8 类报表。请到“数据准备”补齐并导入缺失报表后重试。');
+    expect(message).not.toMatch(/remote method|\bDB\b|campaign|placement|product_targeting/i);
+  });
+
+  it('does not swallow ordinary keyword opportunity errors', () => {
+    const message = toUserFacingError(
+      new Error('读取关键词机会失败：网络连接已断开'),
+      '读取关键词机会失败',
+    );
+
+    expect(message).toBe('读取关键词机会失败：网络连接已断开');
   });
 });
 

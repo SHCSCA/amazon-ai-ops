@@ -94,6 +94,40 @@
   line-height: var(--workspace-line-support);
 }
 
+.decisions-selection-status > span {
+  flex: 1 1 auto;
+}
+
+.decisions-selection-action {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border: 1px solid var(--workspace-border-strong);
+  border-radius: var(--workspace-radius-sm);
+  background: var(--workspace-surface);
+  padding: 5px 9px;
+  color: var(--workspace-text);
+  font-size: var(--workspace-font-support);
+  font-weight: 700;
+  line-height: var(--workspace-line-support);
+}
+
+.decisions-selection-action:hover:not(:disabled) {
+  border-color: var(--workspace-action);
+  color: var(--workspace-action-hover);
+}
+
+.decisions-selection-action:focus-visible {
+  outline: 2px solid var(--workspace-focus);
+  outline-offset: 1px;
+}
+
+.decisions-selection-action:disabled {
+  border-color: var(--workspace-border);
+  background: var(--workspace-surface-subtle);
+  color: var(--workspace-text-disabled);
+  cursor: not-allowed;
+}
+
 .decisions-workspace .priority-table {
   min-width: 680px;
   table-layout: fixed;
@@ -509,6 +543,120 @@
   cursor: not-allowed;
 }
 
+.decisions-review-safety-note {
+  border-left: 3px solid var(--workspace-attention);
+  background: var(--workspace-attention-soft);
+  padding: var(--workspace-space-2) var(--workspace-space-3);
+  color: var(--workspace-text) !important;
+}
+
+.decisions-review-scope {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border-top: 1px solid var(--workspace-border);
+}
+
+.decisions-review-scope > div {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.34fr) minmax(0, 1fr);
+  gap: var(--workspace-space-2);
+  border-bottom: 1px solid var(--workspace-border);
+  padding: 6px 0;
+}
+
+.decisions-review-scope dt,
+.decisions-review-scope dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--workspace-font-support);
+  line-height: var(--workspace-line-support);
+}
+
+.decisions-review-scope dt {
+  color: var(--workspace-text-secondary);
+  font-weight: 650;
+}
+
+.decisions-review-scope dd {
+  color: var(--workspace-text);
+}
+
+.decisions-review-form {
+  display: grid;
+  gap: var(--workspace-space-3);
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.decisions-review-form legend {
+  margin-bottom: var(--workspace-space-2);
+  padding: 0;
+  color: var(--workspace-text);
+  font-size: var(--workspace-font-support);
+  font-weight: 720;
+}
+
+.decisions-review-form label {
+  display: grid;
+  gap: var(--workspace-space-1);
+  min-width: 0;
+  color: var(--workspace-text-secondary);
+  font-size: var(--workspace-font-support);
+  font-weight: 650;
+  line-height: var(--workspace-line-support);
+}
+
+.decisions-review-form input,
+.decisions-review-form select,
+.decisions-review-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--workspace-border-strong);
+  border-radius: var(--workspace-radius-sm);
+  background: var(--workspace-surface);
+  padding: 7px 10px;
+  color: var(--workspace-text);
+  font-size: var(--workspace-font-control);
+  line-height: var(--workspace-line-control);
+  resize: vertical;
+}
+
+.decisions-review-form input:focus-visible,
+.decisions-review-form select:focus-visible,
+.decisions-review-form textarea:focus-visible {
+  border-color: var(--workspace-focus);
+  outline: 2px solid #bfdbfe;
+  outline-offset: 1px;
+}
+
+.decisions-review-form:disabled,
+.decisions-review-form :disabled {
+  cursor: not-allowed;
+}
+
+.decisions-review-form :disabled {
+  border-color: var(--workspace-border);
+  background: var(--workspace-surface-subtle);
+  color: var(--workspace-text-disabled);
+}
+
+.decisions-review-blockers {
+  display: grid;
+  gap: var(--workspace-space-1);
+  border-left: 3px solid var(--workspace-attention);
+  background: var(--workspace-attention-soft);
+  padding: var(--workspace-space-2) var(--workspace-space-3);
+  color: var(--workspace-attention);
+}
+
+.decisions-review-blockers ul {
+  color: inherit;
+}
+
 .decisions-feedback {
   display: grid;
   gap: 2px;
@@ -601,6 +749,10 @@
   opacity: 1;
 }
 
+.decisions-workspace[data-inspector-open="true"] .task-banner__actions {
+  display: none;
+}
+
 .responsive-inspector__backdrop {
   position: fixed;
   z-index: 400;
@@ -682,6 +834,9 @@
   .responsive-inspector__close,
   .decisions-decision-form input,
   .decisions-decision-form textarea,
+  .decisions-review-form input,
+  .decisions-review-form select,
+  .decisions-review-form textarea,
   .decisions-decision-actions .primary-button,
   .decisions-decision-actions .secondary-button {
     transition-duration: 0.01ms;

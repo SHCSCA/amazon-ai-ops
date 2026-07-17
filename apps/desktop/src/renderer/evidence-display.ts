@@ -137,7 +137,7 @@ export function buildDecisionEvidenceSummary(
     return {
       statusLabel: '正式建议',
       tone: 'ready',
-      headline: '规则与 AI 一致，且已绑定可回查证据。',
+      headline: '规则与 AI 一致，且报表证据可追溯。',
       reasons: firstNonEmptyArray(
         safeEvidence.aiReasoningSteps,
         safeEvidence.decisionReasons,

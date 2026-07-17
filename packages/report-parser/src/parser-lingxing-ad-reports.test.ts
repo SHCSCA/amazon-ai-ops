@@ -79,7 +79,7 @@ describe('ReportParser Lingxing ad report rows', () => {
         campaignName: 'Campaign A',
         adGroupName: 'Ad Group A',
         targeting: 'smart lock',
-        searchTerm: 'smart lock',
+        searchTerm: '',
         impressions: 100,
         clicks: 10,
         cost: 12.5,
@@ -92,6 +92,7 @@ describe('ReportParser Lingxing ad report rows', () => {
       expect(result.data[1]).toMatchObject({
         date: '2026-05-02',
         targeting: 'keypad lock',
+        searchTerm: '',
         cost: 8.25,
         orders: 0,
         sales: 0,

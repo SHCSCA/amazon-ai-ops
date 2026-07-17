@@ -4,6 +4,8 @@ import { aiContractPrimaryCopy, aiOutputContracts, aiOutputContractTags } from '
 import { ProgressiveDetails } from '../components/progressive-details';
 import { TagMetricGroup, type TagMetricItem } from '../components/tag-metric-group';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { TaskBanner } from '../components/workspace';
+import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scope';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AiCallLogView, AiConnectionStatus, AiProviderSettings, SettingsRuleConfig, StoragePathsView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -310,6 +312,82 @@ export function settingsAiConnectionFeedback(input: {
   };
 }
 
+type SettingsTaskActionKind = 'edit-connection' | 'test-connection' | 'open-contract';
+
+export function buildSettingsTaskBannerState(input: {
+  canSaveSettings: boolean;
+  canTestAi: boolean;
+  keyPresent: boolean;
+  loading: boolean;
+  message?: string;
+  saving: boolean;
+  status: AiConnectionStatus;
+}) {
+  const feedback = settingsAiConnectionFeedback({
+    status: input.status,
+    keyPresent: input.keyPresent,
+    saving: input.saving,
+    message: input.message,
+  });
+  const needsConnection = !input.keyPresent || input.status === 'unconfigured';
+  const busy = input.loading || input.saving || input.status === 'testing';
+  const primaryAction: {
+    kind: SettingsTaskActionKind;
+    label: string;
+    busy: boolean;
+    busyLabel: string;
+    disabled: boolean;
+    disabledReason?: string;
+  } = needsConnection
+    ? {
+        kind: 'edit-connection',
+        label: '填写并保存 AI 设置',
+        busy,
+        busyLabel: input.loading ? '正在读取设置...' : '正在保存...',
+        disabled: !input.canSaveSettings,
+        disabledReason: input.canSaveSettings ? undefined : '当前预览环境不能保存 AI 设置，请在桌面应用中操作。',
+      }
+    : {
+        kind: 'test-connection',
+        label: input.status === 'available' ? '重新测试当前连接' : '测试当前连接',
+        busy,
+        busyLabel: input.loading ? '正在读取设置...' : input.saving ? '正在保存...' : '正在测试...',
+        disabled: !input.canTestAi,
+        disabledReason: input.canTestAi ? undefined : '当前环境不能发起 AI 连接测试。',
+      };
+  const secondaryActions: Array<{
+    kind: SettingsTaskActionKind;
+    label: string;
+    disabled?: boolean;
+    disabledReason?: string;
+  }> = [];
+  if (!needsConnection) {
+    secondaryActions.push({
+      kind: 'edit-connection',
+      label: '编辑连接',
+      disabled: !input.canSaveSettings,
+      disabledReason: input.canSaveSettings ? undefined : '当前预览环境不能保存 AI 设置。',
+    });
+  }
+  secondaryActions.push({ kind: 'open-contract', label: '查看输出合同' });
+
+  return {
+    title: input.loading ? '正在读取 AI 设置' : settingsAiTaskTitle({ status: input.status, keyPresent: input.keyPresent }),
+    description: input.loading ? '正在从主进程读取 AI 连接、模型和脱敏 Key 状态。' : feedback.detail,
+    statusLabel: input.loading ? '读取中' : feedback.label,
+    statusTone: input.loading ? 'pending' as const : feedback.tone,
+    tone: input.loading
+      ? 'neutral' as const
+      : feedback.tone === 'ready'
+        ? 'confirmed' as const
+        : feedback.tone === 'blocked'
+          ? 'blocked' as const
+          : 'attention' as const,
+    primaryAction,
+    secondaryActions: secondaryActions.slice(0, 2),
+  };
+}
+
 export function settingsSecondaryStatusMessage(message: string): string {
   const text = message.trim();
   if (!text) return '';
@@ -539,21 +617,11 @@ export function SettingsPage() {
     setSettingsModal(null);
   }
 
-  function handleSettingsModalKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key !== 'Escape' || savingAi || savingRules) return;
-    event.stopPropagation();
-    closeSettingsModal();
-  }
-
-  useEffect(() => {
-    if (!settingsModal) return;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape' || savingAi || savingRules) return;
-      closeSettingsModal();
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [settingsModal, savingAi, savingRules]);
+  const settingsDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    dismissDisabled: savingAi || savingRules,
+    onDismiss: closeSettingsModal,
+    open: Boolean(settingsModal),
+  });
 
   async function refreshAiSettingsFromStore(): Promise<AiProviderSettings | null> {
     if (!canLoadSettings) return null;
@@ -628,6 +696,18 @@ export function SettingsPage() {
       message,
     }),
     [aiStatus, keyPresent, message, savingAi],
+  );
+  const settingsTaskBannerState = useMemo(
+    () => buildSettingsTaskBannerState({
+      canSaveSettings,
+      canTestAi: canRunAiTest,
+      keyPresent,
+      loading,
+      message,
+      saving: savingAi,
+      status: aiStatus,
+    }),
+    [aiStatus, canRunAiTest, canSaveSettings, keyPresent, loading, message, savingAi],
   );
   const secondaryStatusMessage = useMemo(
     () => settingsSecondaryStatusMessage(message),
@@ -783,6 +863,14 @@ export function SettingsPage() {
     }
   }
 
+  function runSettingsTaskAction(kind: SettingsTaskActionKind) {
+    if (kind === 'test-connection') {
+      void testAiSettings();
+      return;
+    }
+    setSettingsModal(kind === 'open-contract' ? 'ai-contract' : 'ai-connection');
+  }
+
   return (
     <div>
       <PageHeader
@@ -792,16 +880,34 @@ export function SettingsPage() {
       />
 
       <div className="business-stack">
+        <TaskBanner
+          eyebrow="AI 与规则"
+          title={settingsTaskBannerState.title}
+          description={settingsTaskBannerState.description}
+          tone={settingsTaskBannerState.tone}
+          status={<StatusPill tone={settingsTaskBannerState.statusTone}>{settingsTaskBannerState.statusLabel}</StatusPill>}
+          primaryAction={{
+            label: settingsTaskBannerState.primaryAction.label,
+            busy: settingsTaskBannerState.primaryAction.busy,
+            busyLabel: settingsTaskBannerState.primaryAction.busyLabel,
+            disabled: settingsTaskBannerState.primaryAction.disabled,
+            disabledReason: settingsTaskBannerState.primaryAction.disabledReason,
+            onClick: () => runSettingsTaskAction(settingsTaskBannerState.primaryAction.kind),
+          }}
+          secondaryActions={settingsTaskBannerState.secondaryActions.map((action) => ({
+            label: action.label,
+            disabled: action.disabled,
+            disabledReason: action.disabledReason,
+            onClick: () => runSettingsTaskAction(action.kind),
+          }))}
+          meta="API Key 仅由主进程本机安全存储；AI 输出仍受固定合同和人工审批边界约束。"
+        />
+
         <Panel
           title="AI 服务连接"
           titleAccessory={<StatusPill tone={displayAiStatusTone(aiStatus, keyPresent)}>{displayAiStatusLabel(aiStatus, keyPresent)}</StatusPill>}
         >
           <div className={`settings-ai-workbench settings-ai-workbench-${aiConnectionFeedback.tone}`}>
-            <div className="settings-ai-workbench-task" aria-live="polite" role="status">
-              <span>{settingsAiTaskTitle({ status: aiStatus, keyPresent })}</span>
-              <strong>{aiConnectionFeedback.label}</strong>
-              <p>{aiConnectionFeedback.detail}</p>
-            </div>
             <div className="settings-ai-workbench-facts">
               {aiStatusItems.map((item) => (
                 <div key={item.label}>
@@ -809,24 +915,6 @@ export function SettingsPage() {
                   <strong>{item.value}</strong>
                 </div>
               ))}
-            </div>
-            <div className="settings-ai-workbench-actions">
-              <button
-                aria-busy={aiStatus === 'testing' || undefined}
-                className={aiStatus === 'testing' ? 'primary-button button-loading' : 'primary-button'}
-                disabled={!canRunAiTest || aiStatus === 'testing'}
-                onClick={testAiSettings}
-                type="button"
-              >
-                {aiStatus === 'testing' && <span className="button-spinner" aria-hidden="true" />}
-                <span>{aiStatus === 'testing' ? '测试中...' : '测试当前连接'}</span>
-              </button>
-              <button className="secondary-button" disabled={savingAi} onClick={() => setSettingsModal('ai-connection')} type="button">
-                编辑连接
-              </button>
-              <button className="secondary-button" onClick={() => setSettingsModal('ai-contract')} type="button">
-                输出合同
-              </button>
             </div>
           </div>
           <div className="settings-section-header">
@@ -973,8 +1061,8 @@ export function SettingsPage() {
                   {settingsLocalActionButtonContent(copyDiagnosticsButton)}
                 </button>
               </div>
-              <details className="details-panel inline-details">
-                <summary>查看诊断覆盖项</summary>
+              <div className="details-panel inline-details">
+                <strong>诊断覆盖项</strong>
                 <div className="details-content">
                   <ul className="business-list">
                     {DIAGNOSTIC_CHECKS.map((item) => (
@@ -982,7 +1070,7 @@ export function SettingsPage() {
                     ))}
                   </ul>
                 </div>
-              </details>
+              </div>
               {copyNotice && <p className="muted-line">{copyNotice}</p>}
             </Panel>
 
@@ -998,15 +1086,17 @@ export function SettingsPage() {
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeSettingsModal();
             }}
+            ref={settingsDialogFocus.overlayRootRef}
             role="presentation"
           >
             <section
               aria-labelledby="settings-modal-title"
               aria-modal="true"
               className="settings-modal"
-              onKeyDown={handleSettingsModalKeyDown}
               onMouseDown={(event) => event.stopPropagation()}
+              ref={settingsDialogFocus.surfaceRef}
               role="dialog"
+              tabIndex={-1}
             >
               <header className="settings-modal-header">
                 <div>

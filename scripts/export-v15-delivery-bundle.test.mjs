@@ -42,7 +42,10 @@ function writeAuthorityDbForInvalidReadback(runDir) {
 
 function writePng(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  fs.writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(path.basename(filePath), 'utf8'),
+  ]));
   cleanupPaths.push(filePath);
   return filePath;
 }
@@ -75,6 +78,32 @@ function writeReadme(filePath, status = 'APP_READY') {
   );
   cleanupPaths.push(filePath);
   return filePath;
+}
+
+function writeText(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, value, 'utf8');
+  cleanupPaths.push(filePath);
+  return filePath;
+}
+
+function writeNonReadyFinalReadiness(runDir) {
+  const evidenceManifest = path.join(runDir, 'evidence-manifest.json');
+  const finalReadiness = path.join(runDir, 'final-readiness.json');
+  writeJson(evidenceManifest, {
+    kind: 'v15-final-readiness-evidence-manifest',
+    evidence: {},
+  });
+  writeJson(finalReadiness, {
+    status: 'APP_NEEDS_WORK',
+    appReady: false,
+    evidenceSelection: {
+      mode: 'manifest',
+      manifestPath: evidenceManifest,
+    },
+    gates: [],
+  });
+  return { evidenceManifest, finalReadiness };
 }
 
 function sha256Text(content) {
@@ -136,8 +165,10 @@ function validReadbackEvidence(runDir) {
       asin: 'B0TESTASIN',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'keyword-123',
       entityName: 'close match',
+      identityProofPath: writePng(path.join(runDir, 'target-identity.png')),
       actionType: 'lower_bid',
     },
     risk: {
@@ -255,6 +286,28 @@ describe('export v15 delivery bundle', () => {
     const portableContent = 'portable artifact for missing report test\n';
     const installerPath = writeReleaseFile(path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0.exe'), installerContent);
     const portablePath = writeReleaseFile(path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0-portable.exe'), portableContent);
+    const packageUiScreenshot = path.join(runDir, 'package-ui.png');
+    const workspaceUiScreenshot = path.join(runDir, 'workspace-ui.png');
+    const workspaceTargetJson = path.join(runDir, 'workspace-target.json');
+    fs.writeFileSync(packageUiScreenshot, 'package ui screenshot');
+    fs.writeFileSync(workspaceUiScreenshot, 'workspace ui screenshot');
+    writeJson(workspaceTargetJson, { passed: true });
+    const packageUiManifest = path.join(runDir, 'package-ui-manifest.json');
+    const workspaceUiManifest = path.join(runDir, 'workspace-ui-manifest.json');
+    writeJson(packageUiManifest, {
+      passed: true,
+      runs: [{
+        screenshots: [{ path: packageUiScreenshot }],
+        overlayChecks: [{ screenshot: { path: packageUiScreenshot } }],
+      }],
+    });
+    writeJson(workspaceUiManifest, {
+      passed: true,
+      targets: [{
+        screenshot: { path: workspaceUiScreenshot },
+        jsonPath: workspaceTargetJson,
+      }],
+    });
     const releasePackageIndex = packageIndexFromArtifacts([
       { kind: 'installer', filePath: installerPath, content: installerContent },
       { kind: 'portable', filePath: portablePath, content: portableContent },
@@ -301,6 +354,8 @@ describe('export v15 delivery bundle', () => {
       '--data-reconciliation', dataReconciliation,
       '--release-dir', releaseDir,
       '--readme', readyReadme,
+      '--package-ui-manifest', packageUiManifest,
+      '--workspace-ui-manifest', workspaceUiManifest,
       '--skip-latest-extras', 'true',
       '--out', outDir,
     ]);
@@ -441,6 +496,28 @@ describe('export v15 delivery bundle', () => {
     const portableContent = 'portable artifact for package index\n';
     const installerPath = writeReleaseFile(path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0.exe'), installerContent);
     const portablePath = writeReleaseFile(path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0-portable.exe'), portableContent);
+    const packageUiScreenshot = path.join(runDir, 'package-ui.png');
+    const workspaceUiScreenshot = path.join(runDir, 'workspace-ui.png');
+    const workspaceTargetJson = path.join(runDir, 'workspace-target.json');
+    fs.writeFileSync(packageUiScreenshot, 'package ui screenshot');
+    fs.writeFileSync(workspaceUiScreenshot, 'workspace ui screenshot');
+    writeJson(workspaceTargetJson, { passed: true });
+    const packageUiManifest = path.join(runDir, 'package-ui-manifest.json');
+    const workspaceUiManifest = path.join(runDir, 'workspace-ui-manifest.json');
+    writeJson(packageUiManifest, {
+      passed: true,
+      runs: [{
+        screenshots: [{ path: packageUiScreenshot }],
+        overlayChecks: [{ screenshot: { path: packageUiScreenshot } }],
+      }],
+    });
+    writeJson(workspaceUiManifest, {
+      passed: true,
+      targets: [{
+        screenshot: { path: workspaceUiScreenshot },
+        jsonPath: workspaceTargetJson,
+      }],
+    });
     const releasePackageIndex = packageIndexFromArtifacts([
       { kind: 'installer', filePath: installerPath, content: installerContent },
       { kind: 'portable', filePath: portablePath, content: portableContent },
@@ -466,7 +543,7 @@ describe('export v15 delivery bundle', () => {
       },
       gates: [
         { name: 'Real ad execution readback', ok: true, evidencePath: readback },
-        { name: 'Release package hash', ok: true, status: 'passed' },
+        { name: 'Release package hash', ok: true, status: 'passed', evidencePath: releaseDir },
       ],
       packageIndex: releasePackageIndex,
     });
@@ -482,6 +559,8 @@ describe('export v15 delivery bundle', () => {
       '--data-reconciliation', dataReconciliation,
       '--release-dir', releaseDir,
       '--readme', readyReadme,
+      '--package-ui-manifest', packageUiManifest,
+      '--workspace-ui-manifest', workspaceUiManifest,
       '--skip-latest-extras', 'true',
       '--out', outDir,
     ]);
@@ -494,6 +573,10 @@ describe('export v15 delivery bundle', () => {
       existingCount: 2,
       missingCount: 0,
       copyPolicy: expect.stringContaining('not copied'),
+    });
+    expect(manifest.missing).not.toContainEqual({
+      label: 'evidence:release',
+      sourcePath: releaseDir,
     });
     expect(manifest.packageIndex.bundleJson).toBeTruthy();
     expect(manifest.authorityDatabase).toMatchObject({
@@ -520,14 +603,21 @@ describe('export v15 delivery bundle', () => {
     }
     const bundledReadme = fs.readFileSync(path.join(outDir, 'docs', 'README.md'), 'utf8');
     expect(bundledReadme).toContain('**DELIVERY: APP_READY.');
-    expect(manifest.files).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        label: 'AGENTS.md',
-        bundlePath: path.join('docs', 'AGENTS.md'),
-      }),
+    expect(manifest.files).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'AGENTS.md' }),
     ]));
-    const bundledAgents = fs.readFileSync(path.join(outDir, 'docs', 'AGENTS.md'), 'utf8');
-    expect(bundledAgents).toContain('Amazon AI Ops Agent - Agent Instructions');
+    expect(fs.existsSync(path.join(outDir, 'docs', 'AGENTS.md'))).toBe(false);
+    expect(manifest.uiEvidence).toMatchObject({
+      packageUiManifest: { sourcePath: packageUiManifest, present: true },
+      workspaceUiManifest: { sourcePath: workspaceUiManifest, present: true },
+    });
+    expect(manifest.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourcePath: packageUiManifest }),
+      expect.objectContaining({ sourcePath: packageUiScreenshot }),
+      expect.objectContaining({ sourcePath: workspaceUiManifest }),
+      expect.objectContaining({ sourcePath: workspaceUiScreenshot }),
+      expect.objectContaining({ sourcePath: workspaceTargetJson }),
+    ]));
 
     const otherDbPath = writeAdReadbackAuthorityDb(
       path.join(runDir, 'other-authority-db'),
@@ -629,13 +719,14 @@ describe('export v15 delivery bundle', () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'delivery-bundle-manifest.json'), 'utf8'));
     expect(manifest.realReportIndex).toMatchObject({
       present: true,
-      count: 1,
-      existingCount: 1,
+      count: 2,
+      existingCount: 2,
       missingCount: 0,
     });
     const realReportIndex = JSON.parse(fs.readFileSync(path.join(outDir, manifest.realReportIndex.bundleJson), 'utf8'));
     const sourcePaths = realReportIndex.reports.map((item) => item.sourcePath);
     expect(sourcePaths).toContain(reportPath);
+    expect(sourcePaths).toContain(path.join(runDir, 'keyword.xlsx'));
     expect(sourcePaths).not.toContain(path.resolve('C:/reports/mock-user-search-term.xlsx'));
     expect(sourcePaths).not.toContain(path.resolve('AAO_20260601_20260612_search_term.xlsx'));
   });
@@ -824,6 +915,102 @@ describe('export v15 delivery bundle', () => {
     expect(`${result.stdout}${result.stderr}`).toContain('portable no-install package hash evidence is missing');
   });
 
+  it('excludes smoke and test fixture reconciliation files from default discovery', () => {
+    const runId = `${Date.now()}-${process.pid}`;
+    const runDir = path.join(evidenceDir, `export-bundle-reconciliation-discovery-${runId}`);
+    cleanupPaths.push(runDir);
+    const { finalReadiness } = writeNonReadyFinalReadiness(runDir);
+    const outDir = path.join(runDir, 'bundle');
+    const releaseDir = path.join(runDir, 'release');
+    const productionJson = path.join(evidenceDir, `data-reconciliation-live-${runId}.json`);
+    const productionMarkdown = path.join(evidenceDir, `data-reconciliation-live-${runId}.md`);
+    const smokeJson = path.join(evidenceDir, `data-reconciliation-export-bundle-smoke-${runId}.json`);
+    const smokeMarkdown = path.join(evidenceDir, `data-reconciliation-export-bundle-smoke-${runId}.md`);
+    const fixtureJson = path.join(evidenceDir, `data-reconciliation-test-fixture-${runId}.json`);
+    const fixtureMarkdown = path.join(evidenceDir, `data-reconciliation-test-fixture-${runId}.md`);
+
+    writeJson(productionJson, {
+      canonicalSource: 'current-live-scope',
+      canonical: { spend: 125.5 },
+      blockers: [],
+    });
+    writeText(productionMarkdown, '# Current live reconciliation\n');
+    writeJson(smokeJson, {
+      canonicalSource: 'smoke-fixture',
+      canonical: { spend: 999 },
+      blockers: [],
+    });
+    writeText(smokeMarkdown, '# Smoke fixture\n');
+    writeJson(fixtureJson, {
+      canonicalSource: 'test-fixture',
+      canonical: { spend: 888 },
+      blockers: [],
+    });
+    writeText(fixtureMarkdown, '# Test fixture\n');
+
+    const productionTime = new Date('2099-01-01T00:00:00.000Z');
+    const smokeTime = new Date('2099-01-02T00:00:00.000Z');
+    const fixtureTime = new Date('2099-01-03T00:00:00.000Z');
+    for (const filePath of [productionJson, productionMarkdown]) fs.utimesSync(filePath, productionTime, productionTime);
+    for (const filePath of [smokeJson, smokeMarkdown]) fs.utimesSync(filePath, smokeTime, smokeTime);
+    for (const filePath of [fixtureJson, fixtureMarkdown]) fs.utimesSync(filePath, fixtureTime, fixtureTime);
+
+    const result = runNode('scripts/export-v15-delivery-bundle.js', [
+      '--final-readiness', finalReadiness,
+      '--release-dir', releaseDir,
+      '--skip-latest-extras', 'true',
+      '--out', outDir,
+    ]);
+
+    expect(result.status).toBe(0);
+    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'delivery-bundle-manifest.json'), 'utf8'));
+    expect(manifest.dataReconciliation).toMatchObject({
+      sourceJsonPath: productionJson,
+      sourceMarkdownPath: productionMarkdown,
+      canonicalSource: 'current-live-scope',
+    });
+  });
+
+  it('does not pair an explicit reconciliation JSON with an unrelated latest Markdown', () => {
+    const runId = `${Date.now()}-${process.pid}`;
+    const runDir = path.join(evidenceDir, `export-bundle-explicit-reconciliation-${runId}`);
+    cleanupPaths.push(runDir);
+    const { finalReadiness } = writeNonReadyFinalReadiness(runDir);
+    const outDir = path.join(runDir, 'bundle');
+    const releaseDir = path.join(runDir, 'release');
+    const explicitJson = path.join(runDir, 'selected-reconciliation.json');
+    const unrelatedMarkdown = path.join(evidenceDir, `data-reconciliation-unrelated-${runId}.md`);
+
+    writeJson(explicitJson, {
+      canonicalSource: 'explicit-current-scope',
+      canonical: { spend: 321.5 },
+      blockers: [],
+    });
+    writeText(unrelatedMarkdown, '# Unrelated latest reconciliation\n');
+    const futureTime = new Date('2099-01-04T00:00:00.000Z');
+    fs.utimesSync(unrelatedMarkdown, futureTime, futureTime);
+
+    const result = runNode('scripts/export-v15-delivery-bundle.js', [
+      '--final-readiness', finalReadiness,
+      '--data-reconciliation', explicitJson,
+      '--release-dir', releaseDir,
+      '--skip-latest-extras', 'true',
+      '--out', outDir,
+    ]);
+
+    expect(result.status).toBe(0);
+    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'delivery-bundle-manifest.json'), 'utf8'));
+    expect(manifest.dataReconciliation).toMatchObject({
+      sourceJsonPath: explicitJson,
+      sourceMarkdownPath: null,
+      canonicalSource: 'explicit-current-scope',
+      bundleMarkdown: null,
+    });
+    expect(manifest.files).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourcePath: unrelatedMarkdown }),
+    ]));
+  });
+
   it('preserves final-readiness blockers in APP_NEEDS_WORK bundle manifest', () => {
     const runId = Date.now();
     const runDir = path.join(evidenceDir, `export-bundle-blocker-summary-test-${runId}`);
@@ -832,6 +1019,9 @@ describe('export v15 delivery bundle', () => {
     const evidenceManifest = path.join(runDir, 'evidence-manifest.json');
     const dataReconciliation = path.join(runDir, 'data-reconciliation.json');
     const outDir = path.join(runDir, 'bundle');
+    const dbPath = path.join(runDir, 'amazon-ai-ops.db');
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(dbPath, 'non-ready-authority-identity-only');
 
     writeJson(evidenceManifest, {
       kind: 'v15-final-readiness-evidence-manifest',
@@ -843,6 +1033,7 @@ describe('export v15 delivery bundle', () => {
       evidenceSelection: {
         mode: 'manifest',
         manifestPath: evidenceManifest,
+        authorityDbPath: dbPath,
       },
       missing: [
         'AI 阶段判断引用的指标证据缺少产品 ASIN。',
@@ -878,11 +1069,110 @@ describe('export v15 delivery bundle', () => {
     expect(result.status).toBe(0);
     const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'delivery-bundle-manifest.json'), 'utf8'));
     expect(manifest.appReady).toBe(false);
+    expect(manifest.authorityDatabase).toMatchObject({
+      sourcePath: fs.realpathSync.native(dbPath),
+      existsAtExport: true,
+      copied: false,
+    });
     expect(manifest.finalReadinessBlockers).toEqual(expect.arrayContaining([
       'AI 阶段判断引用的指标证据缺少产品 ASIN。',
       '补齐真实广告报表 sourceFile/sourceRow 后重新生成建议。',
       'AI 候选动作无法绑定当前范围内的真实广告对象。',
       'Recommendations review blockers: 当前范围指标证据缺少真实广告报表 sourceFile/sourceRow，不能用于正式 AI 动作。',
     ]));
+  });
+
+  it('always bundles the manifest selected by final readiness when latest extras are skipped', () => {
+    const runId = `${Date.now()}-${process.pid}`;
+    const runDir = path.join(evidenceDir, `export-bundle-selected-manifest-${runId}`);
+    cleanupPaths.push(runDir);
+    const { evidenceManifest, finalReadiness } = writeNonReadyFinalReadiness(runDir);
+    const outDir = path.join(runDir, 'bundle');
+
+    const result = runNode('scripts/export-v15-delivery-bundle.js', [
+      '--final-readiness', finalReadiness,
+      '--release-dir', path.join(runDir, 'release'),
+      '--skip-latest-extras', 'true',
+      '--out', outDir,
+    ]);
+
+    expect(result.status).toBe(0);
+    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'delivery-bundle-manifest.json'), 'utf8'));
+    const selectedManifestFile = manifest.files.find((file) => file.sourcePath === evidenceManifest);
+    expect(selectedManifestFile).toBeTruthy();
+    expect(JSON.parse(fs.readFileSync(path.join(outDir, selectedManifestFile.bundlePath), 'utf8'))).toMatchObject({
+      kind: 'v15-final-readiness-evidence-manifest',
+    });
+  });
+
+  it('bundles explicitly selected workspace, business smoke, and full-test evidence when latest extras are skipped', () => {
+    const runId = `${Date.now()}-${process.pid}`;
+    const runDir = path.join(evidenceDir, `export-bundle-explicit-source-evidence-${runId}`);
+    cleanupPaths.push(runDir);
+    const { finalReadiness } = writeNonReadyFinalReadiness(runDir);
+    const workspaceUiManifest = path.join(runDir, 'workspace-ui-manifest.json');
+    const businessUiSmoke = path.join(runDir, 'current-business-ui-smoke.json');
+    const fullTestEvidence = path.join(runDir, 'full-vitest.json');
+    const outDir = path.join(runDir, 'bundle');
+    writeJson(workspaceUiManifest, { kind: 'workspace-ui-evidence', passed: true, targets: [] });
+    writeJson(businessUiSmoke, { kind: 'current-business-ui-smoke-summary', passed: true, scripts: [] });
+    writeJson(fullTestEvidence, { kind: 'vitest-json-report', success: true, numPassedTests: 1882 });
+
+    const result = runNode('scripts/export-v15-delivery-bundle.js', [
+      '--final-readiness', finalReadiness,
+      '--workspace-ui-manifest', workspaceUiManifest,
+      '--business-ui-smoke', businessUiSmoke,
+      '--full-test-evidence', fullTestEvidence,
+      '--release-dir', path.join(runDir, 'release'),
+      '--skip-latest-extras', 'true',
+      '--out', outDir,
+    ]);
+
+    expect(result.status).toBe(0);
+    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'delivery-bundle-manifest.json'), 'utf8'));
+    expect(manifest.uiEvidence.workspaceUiManifest).toMatchObject({ sourcePath: workspaceUiManifest, present: true });
+    expect(manifest.sourceEvidence).toMatchObject({
+      businessUiSmoke: { sourcePath: businessUiSmoke, present: true },
+      fullTestEvidence: { sourcePath: fullTestEvidence, present: true },
+    });
+    for (const sourcePath of [workspaceUiManifest, businessUiSmoke, fullTestEvidence]) {
+      const copied = manifest.files.find((file) => file.sourcePath === sourcePath);
+      expect(copied).toBeTruthy();
+      expect(fs.existsSync(path.join(outDir, copied.bundlePath))).toBe(true);
+    }
+  });
+
+  it('bundles regular and wide object-inspector screenshots referenced by explicit package UI evidence', () => {
+    const runId = `${Date.now()}-${process.pid}`;
+    const runDir = path.join(evidenceDir, `export-bundle-package-ui-wide-${runId}`);
+    cleanupPaths.push(runDir);
+    const { finalReadiness } = writeNonReadyFinalReadiness(runDir);
+    const packageUiManifest = path.join(runDir, 'package-ui-manifest.json');
+    const regularInspector = writePng(path.join(runDir, 'regular-product-inspector.png'));
+    const wideWorkspace = writePng(path.join(runDir, 'wide-diagnosis.png'));
+    const wideInspector = writePng(path.join(runDir, 'wide-diagnosis-inspector.png'));
+    const outDir = path.join(runDir, 'bundle');
+    writeJson(packageUiManifest, {
+      kind: 'package-ui-evidence',
+      runs: [{ workspaceChecks: [{ inspectorEvidence: { screenshot: { path: regularInspector } } }] }],
+      wideProfile: {
+        screenshots: [{ path: wideWorkspace }],
+        workspaceChecks: [{ inspectorEvidence: { screenshot: { path: wideInspector } } }],
+      },
+    });
+
+    const result = runNode('scripts/export-v15-delivery-bundle.js', [
+      '--final-readiness', finalReadiness,
+      '--package-ui-manifest', packageUiManifest,
+      '--release-dir', path.join(runDir, 'release'),
+      '--skip-latest-extras', 'true',
+      '--out', outDir,
+    ]);
+
+    expect(result.status).toBe(0);
+    const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'delivery-bundle-manifest.json'), 'utf8'));
+    for (const sourcePath of [regularInspector, wideWorkspace, wideInspector]) {
+      expect(manifest.files).toEqual(expect.arrayContaining([expect.objectContaining({ sourcePath })]));
+    }
   });
 });

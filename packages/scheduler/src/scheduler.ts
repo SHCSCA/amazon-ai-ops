@@ -11,9 +11,14 @@ export interface ScheduledTask {
   cron: string;         // cron 表达式
   enabled: boolean;
   lastRun?: string;
+  lastStatus?: 'success' | 'failed';
+  lastResult?: string;
+  duration?: number;
   nextRun?: string;
   callback: () => Promise<void>;
 }
+
+export type ScheduledTaskView = Omit<ScheduledTask, 'callback'>;
 
 export interface SchedulerConfig {
   timezone?: string;    // 默认 'Asia/Shanghai'
@@ -101,7 +106,9 @@ export class LocalScheduler extends EventEmitter {
    */
   setTaskEnabled(taskName: TaskName, enabled: boolean): void {
     const task = this.tasks.get(taskName);
-    if (!task) return;
+    if (!task) {
+      throw new Error(`Task ${taskName} not found`);
+    }
 
     task.enabled = enabled;
     if (!enabled) {
@@ -118,8 +125,8 @@ export class LocalScheduler extends EventEmitter {
   /**
    * 获取所有任务状态
    */
-  getTasks(): ScheduledTask[] {
-    return Array.from(this.tasks.values());
+  getTasks(): ScheduledTaskView[] {
+    return Array.from(this.tasks.values(), ({ callback: _callback, ...task }) => ({ ...task }));
   }
 
   private scheduleTask(taskName: TaskName): void {
@@ -132,9 +139,14 @@ export class LocalScheduler extends EventEmitter {
     const delay = nextRun.getTime() - Date.now();
     
     const timer = setTimeout(async () => {
-      await this.executeTask(taskName, task);
-      if (this.running && task.enabled) {
-        this.scheduleTask(taskName);
+      try {
+        await this.executeTask(taskName, task);
+      } catch {
+        // Timed runs report failures through task:error/onTaskError; only manual callers receive the rejection.
+      } finally {
+        if (this.running && task.enabled) {
+          this.scheduleTask(taskName);
+        }
       }
     }, Math.max(0, delay));
 
@@ -150,11 +162,21 @@ export class LocalScheduler extends EventEmitter {
       await task.callback();
       const duration = Date.now() - startTime;
       task.lastRun = new Date().toISOString();
+      task.lastStatus = 'success';
+      task.lastResult = '执行成功';
+      task.duration = duration;
       this.config.onTaskComplete(taskName, duration);
       this.emit('task:complete', taskName, duration);
     } catch (error) {
-      this.config.onTaskError(taskName, error as Error);
-      this.emit('task:error', taskName, error);
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      const duration = Date.now() - startTime;
+      task.lastRun = new Date().toISOString();
+      task.lastStatus = 'failed';
+      task.lastResult = `失败：${normalizedError.message}`;
+      task.duration = duration;
+      this.config.onTaskError(taskName, normalizedError);
+      this.emit('task:error', taskName, normalizedError);
+      throw normalizedError;
     }
   }
 

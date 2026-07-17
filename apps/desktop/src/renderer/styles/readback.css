@@ -244,6 +244,31 @@
   min-width: 0;
 }
 
+.readback-technical-drawer .business-split {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.readback-technical-drawer .business-split > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.readback-technical-drawer .business-split .status-pill {
+  justify-self: start;
+  align-self: start;
+  width: fit-content;
+  max-width: 100%;
+  text-align: left;
+  white-space: normal;
+}
+
+.readback-technical-drawer .business-split :is(p, .business-scope-line) {
+  min-width: 0;
+  text-align: left;
+  white-space: normal;
+}
+
 .readback-technical-section,
 .readback-technical-subsection {
   display: grid;

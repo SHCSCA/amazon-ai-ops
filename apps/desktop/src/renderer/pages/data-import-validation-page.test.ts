@@ -13,6 +13,7 @@ import {
   nextDataImportSort,
   sortDataImportReportRows,
   type DataImportReportRow,
+  buildDataImportTaskState,
 } from './data-import-validation-page';
 
 function row(overrides: Partial<DataImportReportRow>): DataImportReportRow {
@@ -36,6 +37,32 @@ function row(overrides: Partial<DataImportReportRow>): DataImportReportRow {
 }
 
 describe('data import report table sorting', () => {
+  it('does not expose diagnosis when imported rows do not cover every required report type', () => {
+    const state = buildDataImportTaskState({
+      realReportCount: 8,
+      importedRows: 96,
+      reportFolder: 'C:/reports',
+      readiness: { status: 'blocked', canEnterDiagnosis: false, nextStep: 'import' },
+    });
+
+    expect(state.primaryActionLabel).toBe('导入已下载表格');
+    expect(state.detail).not.toContain('已写入 SQLite');
+  });
+
+  it('wires the import task model and ledger gate into one first-screen task banner', () => {
+    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+    const header = source.slice(source.indexOf('<PageHeader'), source.indexOf('/>', source.indexOf('<PageHeader')) + 2);
+    const primaryPanel = source.slice(source.indexOf('className="data-import-primary-panel"'), source.indexOf('</Panel>', source.indexOf('className="data-import-primary-panel"')));
+
+    expect(source).toContain('const taskState = buildDataImportTaskState({');
+    expect(source.match(/<TaskBanner/g)).toHaveLength(1);
+    expect(source).toContain('title={taskState.title}');
+    expect(source).toContain('description={taskState.detail}');
+    expect(source).toContain('label: taskState.primaryActionLabel');
+    expect(header).not.toContain('primaryAction=');
+    expect(primaryPanel).not.toContain("className={runningImport ? 'primary-button button-loading' : 'primary-button'}");
+  });
+
   it('keeps report file cells readable by showing a short file name', () => {
     expect(dataImportFileLabel(row({
       fileName: 'campaign.xlsx',

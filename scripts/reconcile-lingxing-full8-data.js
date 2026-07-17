@@ -6,11 +6,18 @@ const repoRoot = path.resolve(__dirname, '..');
 const XLSX = createRequire(path.join(repoRoot, 'packages', 'report-parser', 'package.json'))('xlsx');
 const LOCAL_DB_PACKAGE = path.join(repoRoot, 'packages', 'local-db', 'package.json');
 
+const CANONICAL_REPORT_PRIORITY = Object.freeze([
+  { reportType: 'advertised_product', summarySource: 'canonical_advertised_product' },
+  { reportType: 'ad_group', summarySource: 'canonical_ad_group' },
+  { reportType: 'user_search_term', summarySource: 'canonical_user_search_term' },
+  { reportType: 'search_term', summarySource: 'canonical_search_term' },
+]);
+
 const REPORT_GROUPS = {
   accountSummaryDuplicate: new Set(['campaign', 'ad_group', 'placement', 'advertised_product']),
   optimizationExecutable: new Set(['keyword', 'product_targeting', 'auto_targeting', 'user_search_term', 'search_term']),
   targetingBreakdown: new Set(['keyword', 'product_targeting', 'auto_targeting']),
-  canonicalTotal: 'user_search_term',
+  canonicalPriority: CANONICAL_REPORT_PRIORITY.map(({ reportType }) => reportType),
 };
 
 function readJson(filePath) {
@@ -105,19 +112,18 @@ function addTotals(items) {
 
 function chooseCanonicalSummary(summaries) {
   const byType = new Map(summaries.map((summary) => [summary.reportType, summary]));
-  return byType.get('advertised_product')
-    || byType.get('ad_group')
-    || byType.get('user_search_term')
-    || byType.get('search_term')
-    || null;
+  return REPORT_GROUPS.canonicalPriority
+    .map((reportType) => byType.get(reportType))
+    .find(Boolean) || null;
 }
 
 function chooseDbCanonicalReportTypes(reportTypes) {
   const available = new Set(reportTypes.filter(Boolean));
-  if (available.has('advertised_product')) return { reportTypes: ['advertised_product'], summarySource: 'canonical_advertised_product', approximate: false };
-  if (available.has('ad_group')) return { reportTypes: ['ad_group'], summarySource: 'canonical_ad_group', approximate: false };
-  if (available.has('user_search_term')) return { reportTypes: ['user_search_term'], summarySource: 'canonical_user_search_term', approximate: false };
-  if (available.has('search_term')) return { reportTypes: ['search_term'], summarySource: 'canonical_search_term', approximate: false };
+  for (const { reportType, summarySource } of CANONICAL_REPORT_PRIORITY) {
+    if (available.has(reportType)) {
+      return { reportTypes: [reportType], summarySource, approximate: false };
+    }
+  }
   const fallback = ['keyword', 'product_targeting', 'auto_targeting'].filter((type) => available.has(type));
   if (fallback.length) return { reportTypes: fallback, summarySource: 'actionable_fallback', approximate: true };
   return { reportTypes: [], summarySource: 'none', approximate: false };
@@ -293,7 +299,8 @@ function reconcile(evidencePath, options = {}) {
       executableRowsNaiveSum: addTotals(executableRows),
     },
     interpretation: {
-      canonicalTotalReport: REPORT_GROUPS.canonicalTotal,
+      canonicalTotalReport: canonical?.reportType || null,
+      canonicalTotalSource: canonical ? `raw_${canonical.reportType}` : 'none',
       nonAdditiveReports: [...REPORT_GROUPS.accountSummaryDuplicate],
       executableReports: [...REPORT_GROUPS.optimizationExecutable],
       targetingBreakdownReports: [...REPORT_GROUPS.targetingBreakdown],
@@ -301,6 +308,8 @@ function reconcile(evidencePath, options = {}) {
     },
   };
   result.db = reconcileDb(options.dbPath, result.batch, scope, canonical);
+  result.interpretation.dbCanonicalTotalReports = result.db?.canonical?.reportTypes || [];
+  result.interpretation.dbCanonicalTotalSource = result.db?.canonical?.summarySource || null;
   return result;
 }
 

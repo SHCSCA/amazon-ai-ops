@@ -60,25 +60,55 @@ describe('root package smoke scripts', () => {
       .toBeLessThan(exporter.indexOf('scripts/fill-ad-readback-evidence.js'));
   });
 
-  it('documents the current final handoff order: build packages, verify final readiness, update README, export bundle, then run READY safety', () => {
+  it('documents the independent readback value and stable target identity inputs', () => {
+    const runbook = fs.readFileSync(path.join(root, 'docs', 'REAL_AD_READBACK_RUNBOOK.md'), 'utf8');
+    const userGuide = fs.readFileSync(path.join(root, 'docs', 'USER_GUIDE_v1_5.md'), 'utf8');
+
+    expect(runbook).toContain('--readback-actual-value "<independently observed reload value>"');
+    expect(userGuide).toContain('--entity-id "<opaque Ads UI/API writable object id>"');
+    expect(userGuide).toContain('--identity-proof "C:\\path\\to\\target-identity-proof.json"');
+    expect(userGuide).toContain('target.identityProofPath');
+  });
+
+  it('documents the current final handoff order with matching READY and NON_READY safety branches', () => {
     const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
     const userGuide = fs.readFileSync(path.join(root, 'docs', 'USER_GUIDE_v1_5.md'), 'utf8');
-    const readmeReadyMarker = 'README 顶部 DELIVERY 行切到当前证据对应的 `APP_READY`';
+    const nonReadyMarker = '如果最终验收为 `APP_NEEDS_WORK`，README 顶部 DELIVERY 行必须保持非 READY';
+    const readyMarker = '只有最终验收为 `APP_READY` 时，README 顶部 DELIVERY 行才切到 `APP_READY`';
 
     for (const doc of [readme, userGuide]) {
       expect(doc).toContain('pnpm --filter @amazon-ai-ops/desktop run build:win');
-      expect(doc).toContain(readmeReadyMarker);
-      const buildIndex = doc.indexOf('pnpm --filter @amazon-ai-ops/desktop run build:win');
-      const finalReadinessIndex = doc.indexOf('pnpm run verify:v15-final-readiness', buildIndex);
-      const readmeMarkerIndex = doc.indexOf(readmeReadyMarker, finalReadinessIndex);
-      const exportIndex = doc.indexOf('pnpm run export:v15-delivery-bundle', readmeMarkerIndex);
-      const readySafetyIndex = doc.indexOf('pnpm run verify:v15-ready-safety', exportIndex);
+      expect(doc).toContain(nonReadyMarker);
+      expect(doc).toContain(readyMarker);
+      const handoffStart = Math.max(
+        doc.indexOf('生产交付顺序固定为'),
+        doc.indexOf('### Release order'),
+      );
+      expect(handoffStart).toBeGreaterThanOrEqual(0);
+      const handoff = doc.slice(handoffStart);
+      const buildIndex = handoff.indexOf('pnpm --filter @amazon-ai-ops/desktop run build:win');
+      const finalReadinessIndex = handoff.indexOf('pnpm run verify:v15-final-readiness', buildIndex);
+      const nonReadyMarkerIndex = handoff.indexOf(nonReadyMarker, finalReadinessIndex);
+      const nonReadyExportIndex = handoff.indexOf('pnpm run export:v15-delivery-bundle', nonReadyMarkerIndex);
+      const nonReadySafetyIndex = handoff.indexOf('pnpm run verify:v15-non-ready-safety', nonReadyExportIndex);
+      const readyMarkerIndex = handoff.indexOf(readyMarker, nonReadySafetyIndex);
+      const readyExportIndex = handoff.indexOf('pnpm run export:v15-delivery-bundle', readyMarkerIndex);
+      const readySafetyIndex = handoff.indexOf('pnpm run verify:v15-ready-safety', readyExportIndex);
 
       expect(buildIndex).toBeGreaterThanOrEqual(0);
       expect(finalReadinessIndex).toBeGreaterThan(buildIndex);
-      expect(readmeMarkerIndex).toBeGreaterThan(finalReadinessIndex);
-      expect(exportIndex).toBeGreaterThan(readmeMarkerIndex);
-      expect(readySafetyIndex).toBeGreaterThan(exportIndex);
+      expect(nonReadyMarkerIndex).toBeGreaterThan(finalReadinessIndex);
+      expect(nonReadyExportIndex).toBeGreaterThan(nonReadyMarkerIndex);
+      expect(nonReadySafetyIndex).toBeGreaterThan(nonReadyExportIndex);
+      expect(readyMarkerIndex).toBeGreaterThan(nonReadySafetyIndex);
+      expect(readyExportIndex).toBeGreaterThan(readyMarkerIndex);
+      expect(readySafetyIndex).toBeGreaterThan(readyExportIndex);
     }
+
+    const nonReadySafetyCommand = userGuide
+      .split(/\r?\n/)
+      .find((line) => line.includes('pnpm run verify:v15-non-ready-safety'));
+    expect(nonReadySafetyCommand).toContain('--package-launch-smoke');
+    expect(nonReadySafetyCommand).not.toContain('--ui-smoke');
   });
 });

@@ -1,12 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
+import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { TaskBanner } from '../components/workspace';
+import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scope';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { formatPercent, formatUsd } from '../formatters';
-import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
+import {
+  hasFormalReportCoverage,
+  hasRealReportCoverage,
+  importedReportTypeCoverageCount,
+  realReportCoverageCount,
+} from '../report-coverage';
 import { useScopeStore } from '../scope-store';
-import type { AppRoute, KeywordOpportunityView, ListingHandoffPayload } from '../types';
+import type { AppRoute, KeywordOpportunityView, ListingHandoffPayload, OperationScope } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 function errorMessage(caught: unknown, fallback: string): string {
@@ -180,6 +188,93 @@ export interface KeywordOpportunityActionButtonView {
   showSpinner: boolean;
 }
 
+export type KeywordOpportunityTaskIntent =
+  | 'import-validation'
+  | 'data-collection'
+  | 'refresh'
+  | 'review-first'
+  | 'handoff-listing'
+  | 'show-source'
+  | 'filter';
+
+export interface KeywordOpportunityTaskModel {
+  tone: 'neutral' | 'attention' | 'blocked' | 'confirmed';
+  title: string;
+  description: string;
+  statusLabel: string;
+  primaryIntent: KeywordOpportunityTaskIntent;
+  primaryLabel: string;
+  primaryBusy: boolean;
+  secondaryIntents: KeywordOpportunityTaskIntent[];
+}
+
+export function buildKeywordOpportunityTaskModel(input: {
+  quantReady: boolean;
+  loading: boolean;
+  rowCount: number;
+  selectedKeyword?: string | null;
+}): KeywordOpportunityTaskModel {
+  if (!input.quantReady) {
+    return {
+      tone: 'blocked',
+      title: '先闭合真实广告数据，再识别关键词机会',
+      description: '当前不生成或交接关键词机会；截图、HTML 和审计文件不能替代真实广告报表与 DB 指标。',
+      statusLabel: '真实数据未就绪',
+      primaryIntent: 'import-validation',
+      primaryLabel: '去导入校验',
+      primaryBusy: false,
+      secondaryIntents: ['data-collection'],
+    };
+  }
+  if (input.loading) {
+    return {
+      tone: 'attention',
+      title: '正在刷新当前范围关键词机会',
+      description: '只读取当前范围真实导入的 search term、keyword 和 targeting 指标。',
+      statusLabel: '刷新中',
+      primaryIntent: 'refresh',
+      primaryLabel: '重新识别机会',
+      primaryBusy: true,
+      secondaryIntents: ['filter'],
+    };
+  }
+  const selectedKeyword = input.selectedKeyword?.trim();
+  if (selectedKeyword) {
+    return {
+      tone: 'confirmed',
+      title: '复核所选机会并交接到 Listing',
+      description: '交接只写入本地 Listing 工作区；仍需核对 ASIN、来源行和 Listing 相关性。',
+      statusLabel: `已选 ${selectedKeyword}`,
+      primaryIntent: 'handoff-listing',
+      primaryLabel: '带入 Listing',
+      primaryBusy: false,
+      secondaryIntents: ['show-source', 'filter'],
+    };
+  }
+  if (input.rowCount > 0) {
+    return {
+      tone: 'attention',
+      title: '先复核最高优先级关键词机会',
+      description: `当前范围已有 ${input.rowCount} 个机会；先核对来源与对象绑定，再决定是否交接。`,
+      statusLabel: `${input.rowCount} 个机会`,
+      primaryIntent: 'review-first',
+      primaryLabel: '复核首个机会',
+      primaryBusy: false,
+      secondaryIntents: ['filter', 'refresh'],
+    };
+  }
+  return {
+    tone: 'neutral',
+    title: '刷新当前范围关键词机会',
+    description: '真实数据已就绪，但当前尚无可展示机会；刷新后仍为空即表示本范围暂未命中规则。',
+    statusLabel: '暂无机会',
+    primaryIntent: 'refresh',
+    primaryLabel: '重新识别机会',
+    primaryBusy: false,
+    secondaryIntents: ['filter'],
+  };
+}
+
 function KeywordOpportunityFilterCell({
   children,
   hint,
@@ -215,11 +310,49 @@ export function keywordOpportunityActionButtonView({
   };
 }
 
+export function keywordOpportunityScopeKey(scope: Partial<OperationScope>): string {
+  return [
+    scope.dateFrom,
+    scope.dateTo,
+    scope.storeName,
+    scope.marketplaceCode,
+    scope.asin,
+    scope.batchId,
+  ].map((value) => String(value || '').trim()).join('|');
+}
+
+export function createKeywordOpportunityRequestGate() {
+  let activeScopeKey = '';
+  let sequence = 0;
+  return {
+    activate(scopeKey: string) {
+      if (scopeKey !== activeScopeKey) {
+        activeScopeKey = scopeKey;
+        sequence += 1;
+      }
+    },
+    begin(scopeKey: string) {
+      if (scopeKey !== activeScopeKey) {
+        activeScopeKey = scopeKey;
+        sequence += 1;
+      }
+      sequence += 1;
+      return { scopeKey, sequence };
+    },
+    isCurrent(request: { scopeKey: string; sequence: number }) {
+      return request.scopeKey === activeScopeKey && request.sequence === sequence;
+    },
+  };
+}
+
 export function KeywordOpportunitiesPage() {
   const { data, scope } = useBusinessDataPipeline();
   const setScope = useScopeStore((state) => state.setScope);
   const didMountFilterFeedback = useRef(false);
+  const requestGateRef = useRef(createKeywordOpportunityRequestGate());
+  const rowsAuthorityScopeRef = useRef<OperationScope | null>(null);
   const [rows, setRows] = useState<KeywordOpportunityView[]>([]);
+  const [rowsScopeKey, setRowsScopeKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [selectedOpportunityKey, setSelectedOpportunityKey] = useState<React.Key | null>(null);
@@ -228,42 +361,59 @@ export function KeywordOpportunitiesPage() {
   const [filters, setFilters] = useState({ ...EMPTY_KEYWORD_FILTERS });
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [sortState, setSortState] = useState<KeywordOpportunitySortState>({ key: 'opportunityLevel', direction: 'desc' });
-  const quantReady = Boolean(hasRealReportCoverage(data?.collection) && data?.quant.hasImportedMetrics);
+  const quantReady = Boolean(hasFormalReportCoverage(data?.collection) && data?.quant.hasImportedMetrics);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const batchId = currentBatchId || '-';
-  const requestScope = { ...scope, batchId: currentBatchId };
+  const requestScope: OperationScope = { ...scope, batchId: currentBatchId };
+  const requestScopeKey = keywordOpportunityScopeKey(requestScope);
+  requestGateRef.current.activate(requestScopeKey);
 
   async function loadRows() {
+    const requestedScope = { ...requestScope };
+    const request = requestGateRef.current.begin(requestScopeKey);
     if (!quantReady) {
       setRows([]);
+      setRowsScopeKey(null);
+      rowsAuthorityScopeRef.current = null;
       setSelectedOpportunityKey(null);
       setMessage('缺少当前范围真实报表和导入指标，关键词机会保持阻断。');
+      setLoading(false);
       return;
     }
     setLoading(true);
     setMessage(null);
     try {
-      const result = await (window as any).electronAPI?.getBusinessKeywordOpportunities?.(requestScope);
+      const result = await (window as any).electronAPI?.getBusinessKeywordOpportunities?.(requestedScope);
+      if (!requestGateRef.current.isCurrent(request)) return;
+      rowsAuthorityScopeRef.current = requestedScope;
+      setRowsScopeKey(request.scopeKey);
       setRows(Array.isArray(result) ? result : []);
     } catch (caught) {
+      if (!requestGateRef.current.isCurrent(request)) return;
+      rowsAuthorityScopeRef.current = null;
+      setRowsScopeKey(null);
       setRows([]);
       setMessage(errorMessage(caught, '加载关键词机会失败'));
     } finally {
-      setLoading(false);
+      if (requestGateRef.current.isCurrent(request)) setLoading(false);
     }
   }
 
   useEffect(() => {
     if (!quantReady) {
       setRows([]);
+      setRowsScopeKey(null);
+      rowsAuthorityScopeRef.current = null;
       setSelectedOpportunityKey(null);
       setMessage(null);
+      setLoading(false);
       return;
     }
     loadRows();
-  }, [currentBatchId, quantReady, scope.asin, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
+  }, [quantReady, requestScopeKey]);
 
-  const filteredRows = useMemo(() => rows.filter((row) => {
+  const rowsBelongToCurrentScope = rowsScopeKey === requestScopeKey;
+  const filteredRows = useMemo(() => (rowsBelongToCurrentScope ? rows : []).filter((row) => {
     const minClicks = Number(filters.minClicks || 0);
     const minSpend = Number(filters.minSpend || 0);
     return (
@@ -275,12 +425,12 @@ export function KeywordOpportunitiesPage() {
       row.clicks >= minClicks &&
       row.spend >= minSpend
     );
-  }), [filters, rows]);
+  }), [filters, rows, rowsBelongToCurrentScope]);
 
-  const coverageOptions = quantReady ? Array.from(new Set(rows.map((row) => row.coverageStatus).filter(Boolean))) : [];
+  const coverageOptions = quantReady && rowsBelongToCurrentScope ? Array.from(new Set(rows.map((row) => row.coverageStatus).filter(Boolean))) : [];
   const sortedRows = useMemo(() => sortKeywordOpportunities(filteredRows, sortState), [filteredRows, sortState]);
-  const visibleRows = quantReady ? sortedRows : [];
-  const visibleRowCount = quantReady ? rows.length : 0;
+  const visibleRows = quantReady && rowsBelongToCurrentScope ? sortedRows : [];
+  const visibleRowCount = quantReady && rowsBelongToCurrentScope ? rows.length : 0;
   const activeFilterCount = Object.values(filters).filter((value) => String(value).trim().length > 0).length;
   const filterFeedback = buildKeywordOpportunityFilterFeedback({
     activeFilterCount,
@@ -301,33 +451,12 @@ export function KeywordOpportunitiesPage() {
   const convertingCount = visibleRows.filter((row) => row.orders > 0 || row.sales > 0).length;
   const noOrderSpend = visibleRows.filter((row) => row.spend > 0 && row.orders === 0).reduce((sum, row) => sum + row.spend, 0);
   const sourceReportCount = realReportCoverageCount(data?.collection);
+  const importedReportTypeCount = importedReportTypeCoverageCount(data?.collection);
   const importedMetricRows = data?.collection.fileAudit?.importedRowCount ?? data?.quant.importedRows ?? 0;
   const asinCount = new Set(visibleRows.map((row) => row.asin).filter(Boolean)).size;
   const campaignCount = new Set(visibleRows.map((row) => row.campaignName).filter(Boolean)).size;
   const adGroupCount = new Set(visibleRows.map((row) => row.adGroupName).filter(Boolean)).size;
   const sourceBatchText = (scope.batchId ? [scope.batchId] : (data?.collection.sourceBatchIds?.length ? data.collection.sourceBatchIds : [batchId])).filter(Boolean).join(', ');
-
-  useEffect(() => {
-    if (!filterModalOpen) return undefined;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setFilterModalOpen(false);
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [filterModalOpen]);
-
-  useEffect(() => {
-    if (!opportunityDetailOpen) return undefined;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setOpportunityDetailOpen(false);
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [opportunityDetailOpen]);
 
   function closeFilterModal() {
     setFilterModalOpen(false);
@@ -337,19 +466,14 @@ export function KeywordOpportunitiesPage() {
     setOpportunityDetailOpen(false);
   }
 
-  function handleOpportunityDetailKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    setOpportunityDetailOpen(false);
-  }
-
-  function handleFilterModalKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
-    setFilterModalOpen(false);
-  }
+  const keywordFilterDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    onDismiss: closeFilterModal,
+    open: filterModalOpen,
+  });
+  const opportunityDetailDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    onDismiss: closeOpportunityDetail,
+    open: opportunityDetailOpen,
+  });
 
   const topOpportunity = visibleRows[0];
   const rowKey = (row: KeywordOpportunityView) => [
@@ -365,6 +489,57 @@ export function KeywordOpportunitiesPage() {
     row.sales,
   ].join('|');
   const selectedOpportunity = visibleRows.find((row) => rowKey(row) === selectedOpportunityKey) || null;
+  const keywordTaskModel = buildKeywordOpportunityTaskModel({
+    quantReady,
+    loading,
+    rowCount: visibleRows.length,
+    selectedKeyword: selectedOpportunity?.keyword,
+  });
+
+  function runKeywordTaskIntent(intent: KeywordOpportunityTaskIntent) {
+    if (intent === 'import-validation') {
+      navigate('data-import-validation');
+      return;
+    }
+    if (intent === 'data-collection') {
+      navigate('data-collection');
+      return;
+    }
+    if (intent === 'refresh') {
+      void loadRows();
+      return;
+    }
+    if (intent === 'filter') {
+      setFilterModalOpen(true);
+      return;
+    }
+    if (intent === 'show-source') {
+      if (selectedOpportunity) setOpportunityDetailOpen(true);
+      return;
+    }
+    if (intent === 'review-first') {
+      if (!topOpportunity) return;
+      setSelectedOpportunityKey(rowKey(topOpportunity));
+      setOpportunityDetailOpen(true);
+      return;
+    }
+    if (intent === 'handoff-listing' && selectedOpportunity) {
+      handoffToListing(selectedOpportunity);
+    }
+  }
+
+  const keywordSecondaryActions = keywordTaskModel.secondaryIntents.map((intent) => ({
+    label: {
+      'data-collection': '去数据采集',
+      filter: '调整筛选',
+      refresh: '重新读取机会',
+      'show-source': '复核来源证据',
+      'import-validation': '去导入校验',
+      'review-first': '复核首个机会',
+      'handoff-listing': '带入 Listing',
+    }[intent],
+    onClick: () => runKeywordTaskIntent(intent),
+  }));
 
   useEffect(() => {
     if (!visibleRows.length) {
@@ -423,6 +598,11 @@ export function KeywordOpportunitiesPage() {
       setMessage('缺少当前范围真实报表和导入指标，不能带入 Listing 优化。');
       return;
     }
+    const authoritativeScope = rowsAuthorityScopeRef.current;
+    if (rowsScopeKey !== requestScopeKey || !authoritativeScope) {
+      setMessage('关键词机会已因范围变化失效，请先刷新当前范围后再带入 Listing。');
+      return;
+    }
     const sameAsinRows = filteredRows.filter((item) => (row.asin ? item.asin === row.asin : item.asin === row.asin));
     const keywords = Array.from(new Set([row.keyword, ...sameAsinRows.map((item) => item.keyword)].filter(Boolean))).slice(0, 30);
     const payload: ListingHandoffPayload = {
@@ -431,11 +611,11 @@ export function KeywordOpportunitiesPage() {
       source: 'keyword-opportunities',
       createdAt: new Date().toISOString(),
       scope: {
-        dateFrom: scope.dateFrom,
-        dateTo: scope.dateTo,
-        storeName: scope.storeName,
-        marketplaceCode: scope.marketplaceCode,
-        batchId: currentBatchId,
+        dateFrom: authoritativeScope.dateFrom,
+        dateTo: authoritativeScope.dateTo,
+        storeName: authoritativeScope.storeName,
+        marketplaceCode: authoritativeScope.marketplaceCode,
+        batchId: authoritativeScope.batchId,
       },
       context: {
         portfolioName: row.portfolioName,
@@ -469,7 +649,7 @@ export function KeywordOpportunitiesPage() {
         busyLabel: '处理中...',
         disabled: !quantReady,
         groupBusy: keywordActionBusy,
-        label: '带入 Listing',
+        label: '交接到 Listing',
       });
       return (
         <div className="keyword-opportunity-selection-bar">
@@ -575,6 +755,20 @@ export function KeywordOpportunitiesPage() {
       />
 
       <div className="business-stack keyword-opportunity-page-stack">
+        <TaskBanner
+          description={keywordTaskModel.description}
+          primaryAction={{
+            busy: keywordTaskModel.primaryBusy,
+            busyLabel: '刷新中...',
+            label: keywordTaskModel.primaryLabel,
+            onClick: () => runKeywordTaskIntent(keywordTaskModel.primaryIntent),
+          }}
+          secondaryActions={keywordSecondaryActions}
+          status={<StatusPill tone={keywordTaskModel.tone === 'confirmed' ? 'ready' : keywordTaskModel.tone === 'blocked' ? 'blocked' : 'pending'}>{keywordTaskModel.statusLabel}</StatusPill>}
+          title={keywordTaskModel.title}
+          tone={keywordTaskModel.tone}
+        />
+
         <Panel title="关键词机会池" tone={quantReady ? 'success' : 'blocked'}>
           <div className="object-workbench-header">
             {quantReady ? (
@@ -601,9 +795,7 @@ export function KeywordOpportunitiesPage() {
                   <p>关键词机会只能从当前范围真实导入的 search term / keyword / targeting 指标生成；截图、HTML 或审计文件不能替代广告数据。</p>
                 </div>
                 <div className="keyword-opportunity-blocker-actions">
-                  <StatusPill tone="blocked">真实报表 {sourceReportCount}/8 · 入库 {importedMetricRows} 行</StatusPill>
-                  <button className="secondary-button compact-button" onClick={() => navigate('data-collection')} type="button">去数据采集</button>
-                  <button className="primary-button compact-button" onClick={() => navigate('data-import-validation')} type="button">去导入校验</button>
+                  <StatusPill tone="blocked">报表文件 {sourceReportCount}/8 · 逐类入库 {importedReportTypeCount}/8 · {importedMetricRows} 行</StatusPill>
                 </div>
               </div>
             )}
@@ -676,15 +868,17 @@ export function KeywordOpportunitiesPage() {
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeFilterModal();
             }}
+            ref={keywordFilterDialogFocus.overlayRootRef}
             role="presentation"
           >
             <section
               aria-labelledby="keyword-filter-modal-title"
               aria-modal="true"
               className="product-config-modal keyword-filter-modal"
-              onKeyDown={handleFilterModalKeyDown}
               onMouseDown={(event) => event.stopPropagation()}
+              ref={keywordFilterDialogFocus.surfaceRef}
               role="dialog"
+              tabIndex={-1}
             >
               <header className="product-config-modal-header">
                 <div>
@@ -757,15 +951,17 @@ export function KeywordOpportunitiesPage() {
               onMouseDown={(event) => {
                 if (event.target === event.currentTarget) closeOpportunityDetail();
               }}
+              ref={opportunityDetailDialogFocus.overlayRootRef}
               role="presentation"
             >
               <section
                 aria-labelledby="keyword-opportunity-detail-title"
                 aria-modal="true"
                 className="product-config-modal keyword-opportunity-detail-modal"
-                onKeyDown={handleOpportunityDetailKeyDown}
                 onMouseDown={(event) => event.stopPropagation()}
+                ref={opportunityDetailDialogFocus.surfaceRef}
                 role="dialog"
+                tabIndex={-1}
               >
                 <header className="product-config-modal-header">
                   <div>
@@ -812,12 +1008,13 @@ export function KeywordOpportunitiesPage() {
           );
         })()}
 
-        <details className="folded-ops-panel">
-          <summary>
-            <span>机会口径、来源和复核摘要</span>
-            <StatusPill tone={quantReady ? 'ready' : 'blocked'}>{sourceBatchText || batchId}</StatusPill>
-          </summary>
-          <div className="folded-ops-body">
+        <ProgressiveDetails title="机会口径、来源和复核摘要">
+          <div className="keyword-opportunity-evidence-block">
+            <div className="business-split">
+              <h3>技术依据与机会口径</h3>
+              <StatusPill tone={quantReady ? 'ready' : 'blocked'}>{sourceBatchText || batchId}</StatusPill>
+            </div>
+            <div className="folded-ops-body">
             <div className="context-summary-grid">
               <div>
                 <span>真实广告报表</span>
@@ -841,7 +1038,8 @@ export function KeywordOpportunitiesPage() {
               </div>
             </div>
           </div>
-        </details>
+          </div>
+        </ProgressiveDetails>
       </div>
     </div>
   );

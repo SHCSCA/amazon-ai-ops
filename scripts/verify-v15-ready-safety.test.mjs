@@ -30,7 +30,10 @@ function readJson(filePath) {
 }
 
 function writePng(filePath) {
-  fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  fs.writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(path.basename(filePath), 'utf8'),
+  ]));
   return filePath;
 }
 
@@ -171,8 +174,10 @@ function validReadbackEvidence(dir) {
       asin: 'B0TESTASIN',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'keyword-123',
       entityName: 'close match',
+      identityProofPath: writePng(path.join(dir, 'target-identity.png')),
       actionType: 'lower_bid',
     },
     risk: {

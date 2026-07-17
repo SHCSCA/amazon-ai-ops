@@ -1,3 +1,9 @@
+import type {
+  RecommendationReviewResolution,
+  WritableAdTargetEvidence,
+  WritableAdTargetBinding,
+} from '@amazon-ai-ops/shared-types';
+
 export type AppRoute =
   | 'dashboard'
   | 'product-management'
@@ -95,6 +101,7 @@ export interface BusinessBatchOption {
   completedAt?: string;
   totalFileRecords: number;
   realReportFileCount: number;
+  importedReportTypeCount?: number;
   importedRowCount: number;
   missingReportLabels: string[];
 }
@@ -142,6 +149,7 @@ export interface BusinessQuantDiagnostic {
   campaignName?: string;
   adGroupName?: string;
   asin?: string;
+  objectKey?: string;
   objectType?: string;
   objectName?: string;
   spend: number;
@@ -394,6 +402,7 @@ export interface ProductStrategyContextView {
     referralFeeRate?: number;
     storageFee?: number;
     otherCost?: number;
+    currentPrice?: number;
     minPrice?: number;
     targetNetMargin?: number;
     targetAcos?: number;
@@ -626,6 +635,9 @@ export interface RecommendationEvidence {
   quantReasons?: string[];
   quantThresholds?: Record<string, number>;
   quantReviewRequired?: boolean;
+  writableTarget?: WritableAdTargetEvidence;
+  reviewResolution?: RecommendationReviewResolution;
+  writableTargetBinding?: WritableAdTargetBinding;
   batchId?: string;
   sourceFiles?: string[];
   sourceRow?: number;
@@ -660,6 +672,7 @@ export interface RecommendationView {
   id: number;
   actionType: string;
   entityType?: string;
+  entityId?: string;
   entityName: string;
   currentValue?: string;
   recommendedValue?: string;

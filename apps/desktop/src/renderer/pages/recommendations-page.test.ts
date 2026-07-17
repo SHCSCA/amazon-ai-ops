@@ -52,6 +52,24 @@ function summary(overrides: Record<string, unknown>) {
   };
 }
 
+function writableTargetEvidence(sourceFile = 'C:/reports/user_search_term.xlsx') {
+  return {
+    entityType: 'keyword' as const,
+    entityId: 'amzn-keyword-101',
+    entityName: 'smart lock',
+    campaignName: 'SP exact',
+    adGroupName: 'Main',
+    metricDate: '2026-06-12',
+    sourceFile,
+    sourceRow: 12,
+    identitySource: 'ads_ui' as const,
+    verifiedBy: 'Alice',
+    verifiedAt: '2026-07-16T04:30:00.000Z',
+    verificationNote: 'Matched the editable keyword row.',
+    identityProofPath: 'D:/proof/keyword-101.png',
+  };
+}
+
 describe('generateAiStatus', () => {
   it('shows explicit fallback reason in operator-facing Chinese instead of a vague no-output status', () => {
     expect(generateAiStatus(summary({
@@ -164,6 +182,28 @@ describe('recommendation operator copy', () => {
 });
 
 describe('recommendation evidence gate', () => {
+  it('does not send an ordinary pending recommendation to approval before an Ads target is verified', () => {
+    const recommendation = {
+      status: 'pending',
+      entityName: 'smart lock',
+      currentValue: '1.20',
+      recommendedValue: '1.08',
+      evidence: {
+        batchId: 'batch_1',
+        date: '2026-06-12',
+        sourceFiles: ['C:/reports/keyword.xlsx'],
+        sourceRow: 12,
+        campaignName: 'SP exact',
+        adGroupName: 'Main',
+        targeting: 'smart lock',
+        decisionAgreement: 'rule_only',
+      },
+    } as any;
+
+    expect(recommendationHasEvidenceBlocker(recommendation, 'batch_1')).toBe(true);
+    expect(recommendationCanEnterFormalApproval(recommendation, 'batch_1')).toBe(false);
+  });
+
   it('blocks formal approval when AI evidence refs have no displayable details', () => {
     const recommendation = {
       status: 'pending',
@@ -206,6 +246,7 @@ describe('recommendation evidence gate', () => {
         decisionAgreement: 'rule_only',
         aiStrategySource: 'ai',
         aiStrategySummary: 'AI ran batch-level diagnosis but did not produce this action.',
+        writableTarget: writableTargetEvidence(),
       },
     } as any;
 
@@ -231,6 +272,7 @@ describe('recommendation evidence gate', () => {
         aiStrategySource: 'ai',
         aiLifecycleStageRequiresReview: true,
         aiLifecycleStageInvalidReasons: ['AI 阶段判断引用了不可用证据：missing_ref。'],
+        writableTarget: writableTargetEvidence(),
       },
     } as any;
 
@@ -337,6 +379,7 @@ describe('recommendation evidence gate', () => {
       campaignName: 'SP exact',
       adGroupName: 'Main',
       searchTerm: 'smart lock',
+      writableTarget: writableTargetEvidence(),
     };
     const aiOnly = {
       status: 'pending',
@@ -392,6 +435,7 @@ describe('recommendationMatchesBucketFilter', () => {
         adGroupName: 'Main',
         searchTerm: 'smart lock',
         decisionAgreement: 'rule_only',
+        writableTarget: writableTargetEvidence(),
       },
       ...overrides,
     } as any;

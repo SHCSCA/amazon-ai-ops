@@ -17,6 +17,16 @@ const scope: AdReadbackAuthorityScope = {
   batchId: 'batch_1',
 };
 
+const sourceAuthority = {
+  reportType: 'keyword',
+  entityName: 'tight match target',
+  campaignName: 'SP exact',
+  adGroupName: 'Main',
+  metricDate: '2026-06-12',
+  sourceFile: 'C:/reports/keyword.xlsx',
+  sourceRow: 12,
+};
+
 function approvedRecommendation(overrides: Partial<ActionRecommendation> = {}): ActionRecommendation {
   return {
     id: 101,
@@ -47,8 +57,25 @@ function approvedRecommendation(overrides: Partial<ActionRecommendation> = {}): 
       adGroupName: 'Main',
       targeting: 'tight match target',
       batchId: scope.batchId,
-      sourceFiles: ['C:/reports/user-search-term.xlsx'],
+      reportType: 'keyword',
+      sourceFile: 'C:/reports/keyword.xlsx',
+      sourceFiles: ['C:/reports/keyword.xlsx'],
       sourceRow: 12,
+      writableTarget: {
+        entityType: 'keyword',
+        entityId: 'keyword-123',
+        entityName: 'tight match target',
+        campaignName: 'SP exact',
+        adGroupName: 'Main',
+        metricDate: '2026-06-12',
+        sourceFile: 'C:/reports/keyword.xlsx',
+        sourceRow: 12,
+        identitySource: 'ads_ui',
+        verifiedBy: 'Alice',
+        verifiedAt: '2026-06-12T09:55:00.000Z',
+        verificationNote: 'Matched the editable keyword row before approval.',
+        identityProofPath: 'C:/evidence/writable-keyword.png',
+      },
       explanationSource: 'ai',
       aiModel: 'deepseek-chat',
       decisionAgreement: 'aligned',
@@ -63,7 +90,7 @@ function approvedRecommendation(overrides: Partial<ActionRecommendation> = {}): 
         sourceBatchId: scope.batchId,
         metricDate: '2026-06-12',
         sourceRow: 12,
-        sourceFiles: ['C:/reports/user-search-term.xlsx'],
+        sourceFiles: ['C:/reports/keyword.xlsx'],
         scope: {
           dateFrom: scope.dateFrom,
           dateTo: scope.dateTo,
@@ -129,7 +156,8 @@ function build(input = request(), recommendation = approvedRecommendation()) {
     request: input,
     recommendation,
     resolvedScope: scope,
-    allowedSourceFiles: ['C:/reports/user-search-term.xlsx'],
+    allowedSourceFiles: ['C:/reports/keyword.xlsx'],
+    sourceAuthority,
   });
 }
 
@@ -144,15 +172,17 @@ describe('ad readback export authority', () => {
       portfolioName: 'D6 Portfolio',
       campaignName: 'SP exact',
       adGroupName: 'Main',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'keyword-123',
       entityName: 'tight match target',
+      identityProofPath: 'C:/evidence/writable-keyword.png',
       actionType: 'lower_bid',
     });
     expect(result.source).toMatchObject({
       recommendationId: '101',
       batchId: scope.batchId,
       sourceRow: 12,
-      sourceFiles: ['C:/reports/user-search-term.xlsx'],
+      sourceFiles: ['C:/reports/keyword.xlsx'],
       currentValue: '1.20',
       recommendedValue: '1.08',
       aiModel: 'deepseek-chat',
@@ -218,7 +248,84 @@ describe('ad readback export authority', () => {
       recommendation: approvedRecommendation(),
       resolvedScope: scope,
       allowedSourceFiles: ['C:/reports/current-campaign.xlsx'],
+      sourceAuthority,
     })).toThrow(/来源文件不属于当前数据批次/);
+  });
+
+  it('rejects an approved recommendation without a verified writable Ads target', () => {
+    const recommendation = approvedRecommendation();
+    delete recommendation.evidence.writableTarget;
+
+    expect(() => build(request(), recommendation)).toThrow(/可写对象/);
+  });
+
+  it('rejects a writable row for another object even inside the same campaign and ad group', () => {
+    const recommendation = approvedRecommendation();
+    recommendation.evidence.writableTarget = {
+      ...recommendation.evidence.writableTarget!,
+      entityName: 'another target',
+    };
+
+    expect(() => build(request(), recommendation)).toThrow(/Ads 可写对象不属于当前建议.*名称/);
+  });
+
+  it('rejects an approved quant-review recommendation without the review resolution that authorized approval', () => {
+    const recommendation = approvedRecommendation();
+    recommendation.evidence.quantReviewRequired = true;
+
+    expect(() => build(request(), recommendation)).toThrow(/复核记录/);
+  });
+
+  it('accepts an approved quant-review recommendation only when the prior pending revision carries a matching resolution', () => {
+    const recommendation = approvedRecommendation();
+    recommendation.evidence.quantReviewRequired = true;
+    recommendation.evidence.reviewResolution = {
+      schemaVersion: 1,
+      fromStatus: 'needs_review',
+      fromRevision: 2,
+      resolvedRevision: 3,
+      reviewedBy: 'Review Owner',
+      reviewedAt: '2026-06-12T09:57:00.000Z',
+      rationale: 'Confirmed one bounded keyword bid decrease against the current Ads target.',
+      resolvedBlockers: ['quant_review_required'],
+      scope: { ...scope, asin: scope.asin! },
+      metricSource: {
+        batchId: scope.batchId,
+        sourceFiles: ['C:/reports/keyword.xlsx'],
+        sourceRow: 12,
+      },
+      writableTarget: { ...recommendation.evidence.writableTarget! },
+    };
+
+    expect(() => build(request(), recommendation)).not.toThrow();
+
+    recommendation.evidence.reviewResolution.writableTarget.identityProofPath = 'C:/evidence/forged-proof.png';
+    expect(() => build(request(), recommendation)).toThrow(/复核记录/);
+  });
+
+  it.each([
+    ['read-only search term type', { entityType: 'search_term' }],
+    ['missing entity id', { entityId: '' }],
+    ['synthetic recommendation id', { entityId: 'target_1' }],
+    ['invalid source row', { sourceRow: 0 }],
+    ['foreign source file', { sourceFile: 'C:/reports/foreign.xlsx' }],
+    ['missing identity proof', { identityProofPath: '' }],
+    ['missing identity source', { identitySource: '' }],
+  ])('rejects a writable target with %s', (_label, writableTargetOverride) => {
+    const recommendation = approvedRecommendation();
+    recommendation.evidence.writableTarget = {
+      ...recommendation.evidence.writableTarget!,
+      ...writableTargetOverride,
+    } as typeof recommendation.evidence.writableTarget;
+
+    expect(() => build(request(), recommendation)).toThrow(/可写对象/);
+  });
+
+  it('keeps the first real readback contract limited to a bounded bid reduction', () => {
+    expect(() => build(request(), approvedRecommendation({
+      actionType: 'raise_bid',
+      recommendedValue: '1.40',
+    }))).toThrow(/仅允许.*降低竞价/);
   });
 
   it('wires Main export through the authority binder before the evidence builder', () => {
@@ -229,6 +336,8 @@ describe('ad readback export authority', () => {
     );
 
     expect(handler).toContain('buildAuthorizedAdReadbackEvidenceInput({');
+    expect(handler).toContain('assertRecommendationWritableTargetCurrent(');
+    expect(handler).toContain('sourceAuthority,');
     expect(handler).toContain('state.recommendationRepo?.findById');
     expect(handler).toContain('getBusinessRecommendationGate');
     expect(handler.indexOf('buildAuthorizedAdReadbackEvidenceInput({')).toBeLessThan(handler.indexOf('buildAdReadbackEvidence('));
@@ -260,6 +369,7 @@ describe('ad readback export authority', () => {
     );
 
     expect(helper).toContain('assertCurrentAdReadbackEvidenceAuthority({');
+    expect(helper).toContain('assertRecommendationWritableTargetCurrent(');
     expect(helper).toContain("stage: 'verify' | 'final-readiness'");
     expect(handler).toContain('validateAdReadbackAuthority:');
     expect(handler).toContain("validateCurrentAdReadbackEvidenceAuthority(evidencePath, 'final-readiness')");
@@ -272,7 +382,8 @@ describe('ad readback export authority', () => {
       evidence,
       recommendation: approvedRecommendation(),
       resolvedScope: scope,
-      allowedSourceFiles: ['C:/reports/user-search-term.xlsx'],
+      allowedSourceFiles: ['C:/reports/keyword.xlsx'],
+      sourceAuthority,
     })).not.toThrow();
   });
 
@@ -283,13 +394,15 @@ describe('ad readback export authority', () => {
       evidence,
       recommendation: approvedRecommendation({ revision: 5 }),
       resolvedScope: scope,
-      allowedSourceFiles: ['C:/reports/user-search-term.xlsx'],
+      allowedSourceFiles: ['C:/reports/keyword.xlsx'],
+      sourceAuthority,
     })).toThrow(/建议版本已变化/);
     expect(() => assertCurrentAdReadbackEvidenceAuthority({
       evidence,
       recommendation: approvedRecommendation({ status: 'executed' }),
       resolvedScope: scope,
-      allowedSourceFiles: ['C:/reports/user-search-term.xlsx'],
+      allowedSourceFiles: ['C:/reports/keyword.xlsx'],
+      sourceAuthority,
     })).toThrow(/当前状态 executed/);
   });
 
@@ -301,7 +414,8 @@ describe('ad readback export authority', () => {
       evidence,
       recommendation: approvedRecommendation(),
       resolvedScope: scope,
-      allowedSourceFiles: ['C:/reports/user-search-term.xlsx'],
+      allowedSourceFiles: ['C:/reports/keyword.xlsx'],
+      sourceAuthority,
     })).toThrow(/权威字段已被修改/);
   });
 
@@ -317,7 +431,8 @@ describe('ad readback export authority', () => {
       evidence,
       recommendation: approvedRecommendation(),
       resolvedScope: scope,
-      allowedSourceFiles: ['C:/reports/user-search-term.xlsx'],
+      allowedSourceFiles: ['C:/reports/keyword.xlsx'],
+      sourceAuthority,
     })).toThrow(/权威字段已被修改/);
   });
 });

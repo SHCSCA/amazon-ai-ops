@@ -21,6 +21,30 @@ export const DEFAULT_BUSINESS_REPORT_OPTIONS: BusinessReportOptionStatus[] = [
 
 export const BUSINESS_PIPELINE_SCOPE_DEBOUNCE_MS = 300;
 
+export type BusinessPipelineMode = 'scope' | 'portfolio';
+
+export function businessPipelineRequestScope(
+  scope: OperationScope,
+  mode: BusinessPipelineMode = 'scope',
+): OperationScope {
+  if (mode === 'scope') return scope;
+  return { ...scope, asin: undefined };
+}
+
+export function businessPipelineScopeKey(
+  scope: OperationScope,
+  mode: BusinessPipelineMode = 'scope',
+): string {
+  return [
+    scope.dateFrom,
+    scope.dateTo,
+    scope.storeName,
+    scope.marketplaceCode,
+    mode === 'portfolio' ? '' : scope.asin || '',
+    scope.batchId || '',
+  ].join('|');
+}
+
 export function businessPipelineLoadDelay(input: { firstLoad: boolean; reloadChanged: boolean }): number {
   if (input.firstLoad || input.reloadChanged) return 0;
   return BUSINESS_PIPELINE_SCOPE_DEBOUNCE_MS;
@@ -86,8 +110,9 @@ function emptyPipeline(scope: OperationScope, reason: string): BusinessDataPipel
   };
 }
 
-export function useBusinessDataPipeline() {
+export function useBusinessDataPipeline(options: { mode?: BusinessPipelineMode } = {}) {
   const scope = useScopeStore((state) => state.scope);
+  const mode = options.mode ?? 'scope';
   const [data, setData] = useState<BusinessDataPipeline | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,8 +121,15 @@ export function useBusinessDataPipeline() {
   const previousReloadTokenRef = useRef(reloadToken);
 
   const scopeKey = useMemo(
-    () => [scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode, scope.asin || '', scope.batchId || ''].join('|'),
-    [scope.asin, scope.batchId, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName],
+    () => businessPipelineScopeKey(scope, mode),
+    [mode, scope.asin, scope.batchId, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName],
+  );
+  // In portfolio mode the request scope intentionally remains stable when only
+  // the globally locked ASIN changes. The hook still returns the live global
+  // scope below so callers never lose the authoritative selection context.
+  const requestScope = useMemo(
+    () => businessPipelineRequestScope(scope, mode),
+    [mode, scopeKey],
   );
 
   useEffect(() => {
@@ -115,13 +147,13 @@ export function useBusinessDataPipeline() {
         if (!api?.getBusinessUiDataPipeline) {
           throw new Error('只读数据接口未暴露');
         }
-        const nextData = await api.getBusinessUiDataPipeline(scope);
+        const nextData = await api.getBusinessUiDataPipeline(requestScope);
         let operationEvents: OperationEventView[] | null = null;
         let operationNotes = nextData?.operations?.notes || [];
         // Product-scoped pipeline events already include global events; ASIN list queries do not.
-        if (api.listOperationEvents && !scope.asin) {
+        if (api.listOperationEvents && !requestScope.asin) {
           try {
-            const rows = await api.listOperationEvents({ ...scope, limit: 300 });
+            const rows = await api.listOperationEvents({ ...requestScope, limit: 300 });
             operationEvents = Array.isArray(rows) ? rows : [];
           } catch (caught) {
             operationNotes = [
@@ -145,7 +177,7 @@ export function useBusinessDataPipeline() {
         const message = toUserFacingError(caught, '读取当前运营范围数据失败。');
         if (!cancelled) {
           setError(message);
-          setData(emptyPipeline(scope, message));
+          setData(emptyPipeline(requestScope, message));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -159,7 +191,7 @@ export function useBusinessDataPipeline() {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [scope, scopeKey, reloadToken]);
+  }, [requestScope, scopeKey, reloadToken]);
 
   useEffect(() => {
     const refresh = () => setReloadToken((current) => current + 1);

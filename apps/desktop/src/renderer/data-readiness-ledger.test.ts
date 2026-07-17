@@ -34,7 +34,7 @@ describe('buildDataReadinessLedger', () => {
         key: 'imported',
         status: 'complete',
         title: '日级指标已入库',
-        value: '2416 行',
+        value: '8/8 类 · 2416 行',
       }),
       expect.objectContaining({
         key: 'usable',
@@ -65,10 +65,84 @@ describe('buildDataReadinessLedger', () => {
     expect(ledger.stages.map((stage) => [stage.key, stage.status, stage.value])).toEqual([
       ['created', 'partial', '2/8'],
       ['downloaded', 'partial', '1/8'],
-      ['imported', 'complete', '30 行'],
+      ['imported', 'partial', '1/8 类 · 30 行'],
       ['usable', 'blocked', '未放行'],
     ]);
     expect(ledger.stages[3].detail).toContain('补齐真实报表和导入缺口后才会放行');
+  });
+
+  it('keeps one imported report out of eight partial and blocks diagnosis', () => {
+    const ledger = buildDataReadinessLedger({
+      requiredReportCount: 8,
+      reportOptions: [
+        { type: 'campaign', label: '广告活动报告', status: 'imported', realFileAvailable: true, importedRows: 30 },
+        ...Array.from({ length: 7 }, (_, index) => ({
+          type: `missing_${index}`,
+          label: `缺失报表 ${index + 1}`,
+          status: 'missing',
+          realFileAvailable: false,
+          importedRows: 0,
+        })),
+      ],
+      realReportFileCount: 1,
+      importedRowCount: 30,
+      rejectedEvidenceFileCount: 0,
+    });
+
+    expect(ledger.status).toBe('partial');
+    expect(ledger.canEnterDiagnosis).toBe(false);
+    expect(ledger.nextStep).toBe('collect');
+    expect(ledger.headline).not.toContain('已闭合');
+    expect(ledger.stages.find((stage) => stage.key === 'imported')).toMatchObject({
+      status: 'partial',
+      value: '1/8 类 · 30 行',
+    });
+  });
+
+  it('blocks diagnosis when all eight files exist but one report type has zero imported rows', () => {
+    const ledger = buildDataReadinessLedger({
+      requiredReportCount: 8,
+      reportOptions: Array.from({ length: 8 }, (_, index) => ({
+        type: `report_${index}`,
+        label: `报表 ${index + 1}`,
+        status: index === 7 ? 'downloaded' : 'imported',
+        realFileAvailable: true,
+        importedRows: index === 7 ? 0 : index + 1,
+      })),
+      realReportFileCount: 8,
+      importedRowCount: 28,
+      rejectedEvidenceFileCount: 0,
+    });
+
+    expect(ledger.status).toBe('blocked');
+    expect(ledger.canEnterDiagnosis).toBe(false);
+    expect(ledger.nextStep).toBe('import');
+    expect(ledger.nextAction).toBe('导入已下载表格');
+    expect(ledger.gaps).toContain('已有 1 类真实报表未形成 DB 日级指标');
+    expect(ledger.stages.find((stage) => stage.key === 'usable')).toMatchObject({
+      status: 'blocked',
+      value: '未放行',
+    });
+  });
+
+  it('allows diagnosis only when every required report type has imported rows', () => {
+    const ledger = buildDataReadinessLedger({
+      requiredReportCount: 8,
+      reportOptions: Array.from({ length: 8 }, (_, index) => ({
+        type: `report_${index}`,
+        label: `报表 ${index + 1}`,
+        status: 'imported',
+        realFileAvailable: true,
+        importedRows: index + 1,
+      })),
+      realReportFileCount: 8,
+      importedRowCount: 36,
+      rejectedEvidenceFileCount: 0,
+    });
+
+    expect(ledger.status).toBe('ready');
+    expect(ledger.canEnterDiagnosis).toBe(true);
+    expect(ledger.nextStep).toBe('diagnose');
   });
 
   it('tells the operator to import when real files exist but DB rows are missing', () => {

@@ -28,9 +28,10 @@ describe('formatBatchOption', () => {
       marketplaceCode: 'US',
       totalFileRecords: 8,
       realReportFileCount: 8,
+      importedReportTypeCount: 8,
       importedRowCount: 96,
       missingReportLabels: [],
-    })).toBe('batch_20260612 · 8/8 类真实报表 · 96 行已导入');
+    })).toBe('batch_20260612 · 报表文件 8/8 类 · 逐类入库 8/8 类 · 96 行');
   });
 
   it('does not leak undefined when batch counters are missing', () => {
@@ -47,7 +48,7 @@ describe('formatBatchOption', () => {
       missingReportLabels: [],
     } as any);
 
-    expect(label).toBe('batch_incomplete · 报表覆盖待校验 · 指标待校验');
+    expect(label).toBe('batch_incomplete · 报表文件待校验 · 逐类入库待校验');
     expect(label).not.toContain('undefined');
   });
 
@@ -61,9 +62,10 @@ describe('formatBatchOption', () => {
       marketplaceCode: 'US',
       totalFileRecords: 16,
       realReportFileCount: 16,
+      importedReportTypeCount: 5,
       importedRowCount: 120,
       missingReportLabels: [],
-    } as any)).toBe('batch_duplicate_files · 8/8 类真实报表 · 16 个文件 · 120 行已导入');
+    } as any)).toBe('batch_duplicate_files · 报表文件 8/8 类 · 16 个文件 · 逐类入库 5/8 类 · 120 行');
   });
 });
 
@@ -78,7 +80,7 @@ describe('buildScopeSummaryFacts', () => {
     });
 
     expect(facts).toHaveLength(4);
-    expect(facts.map((fact) => fact.label)).toEqual(['产品', '真实报表', '入库指标', '追溯批次']);
+    expect(facts.map((fact) => fact.label)).toEqual(['产品', '报表文件', '逐类入库', '追溯批次']);
   });
 
   it('keeps the always-visible scope bar to four compact facts', () => {
@@ -90,8 +92,8 @@ describe('buildScopeSummaryFacts', () => {
       asin: 'B0TESTASIN',
     })).toEqual([
       { label: '产品', value: 'B0TESTASIN' },
-      { label: '真实报表', value: '8/8 类真实报表' },
-      { label: '入库指标', value: '96 行' },
+      { label: '报表文件', value: '8/8 类真实报表' },
+      { label: '逐类入库', value: '96 行' },
       { label: '追溯批次', value: 'batch_20260612', title: '自动使用当前范围最新完整批次' },
     ]);
   });
@@ -127,6 +129,13 @@ describe('compact scope labels', () => {
     })).toBe('2026-05-21 ~ 2026-06-23');
 
     expect(buildScopeCompactRangeLabel({})).toBe('日期待设置');
+  });
+
+  it('reserves enough topbar width to keep imported row facts visible', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    const factRule = cssRuleBody(css, '.topbar .scope-topbar-fact');
+
+    expect(factRule).toMatch(/max-width\s*:\s*184px\s*;/);
   });
 
   it('keeps store, marketplace, and product context separate from the date range', () => {

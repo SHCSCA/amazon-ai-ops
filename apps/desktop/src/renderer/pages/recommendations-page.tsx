@@ -6,12 +6,13 @@ import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
 import { buildRecommendationGateIssues, resolveRecommendationBatchId } from '../recommendation-readiness';
-import { realReportCoverageCount } from '../report-coverage';
+import { importedReportTypeCoverageCount, realReportCoverageCount } from '../report-coverage';
 import { countProductsWithTargets, normalizeProductContexts, pickPrimaryProductContext } from '../product-context';
 import type { AiEvidenceDisplayItemView, AiEvidenceSufficiencyView, AiProviderSettings, AppRoute, RecommendationView, SettingsRuleConfig } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 import { runWorkflowInvalidatingMutation } from '../workflow-invalidation';
 import type { WorkflowEventTarget } from '../workflow-invalidation';
+import { hasCurrentRecommendationReviewResolution } from './approval-page';
 
 const APPROVAL_SELECTION_STORAGE_KEY = 'amazon-ai-ops:approval-selection';
 
@@ -325,6 +326,22 @@ function recommendationEvidenceIssues(rec: RecommendationView, currentBatchId?: 
   if (!rec.evidence?.campaignName) issues.push('缺广告活动');
   if (!rec.evidence?.adGroupName) issues.push('缺广告组');
   if (!recommendationObject(rec) || recommendationObject(rec) === '-') issues.push('缺关键词/搜索词/投放对象');
+  const writableTarget = rec.evidence?.writableTarget;
+  if (!writableTarget) {
+    issues.push('缺 Ads 可写对象');
+  } else if (
+    !writableTarget.entityType
+    || !writableTarget.entityId
+    || !writableTarget.entityName
+    || !writableTarget.campaignName
+    || !writableTarget.adGroupName
+    || !writableTarget.sourceFile
+    || !hasPositiveSourceRow(writableTarget.sourceRow)
+    || !writableTarget.identitySource
+    || !writableTarget.identityProofPath
+  ) {
+    issues.push('Ads 可写对象核验不完整');
+  }
   return [...issues, ...aiEvidenceDetailIssues(rec), ...aiLifecycleReviewIssues(rec)];
 }
 
@@ -340,7 +357,8 @@ export function recommendationHasEvidenceBlocker(rec: RecommendationView, curren
 function recommendationRequiresManualReview(rec: RecommendationView, currentBatchId?: string, allowedSourceFiles?: string[]): boolean {
   if (recommendationHasEvidenceBlocker(rec, currentBatchId, allowedSourceFiles)) return false;
   if (rec.status === 'needs_review') return true;
-  if (rec.evidence?.decisionRequiresReview || rec.evidence?.quantReviewRequired) return true;
+  if (rec.evidence?.decisionRequiresReview) return true;
+  if (rec.evidence?.quantReviewRequired && !hasCurrentRecommendationReviewResolution(rec)) return true;
   if (rec.evidence?.decisionAgreement === 'conflict' || rec.evidence?.decisionAgreement === 'ai_only') return true;
   return false;
 }
@@ -845,7 +863,7 @@ export function emptyRecommendationReason(
       detail: gateIssues.length
         ? `当前阻断：${gateIssues.slice(0, 3).join('；')}。`
         : '当前范围没有真实报表文件或导入指标，系统不会调用 AI，也不会用 0 值生成建议。',
-      nextStep: '回到数据采集页，确认 xlsx/xls/csv 文件存在并完成导入。',
+      nextStep: '到“数据准备 → 报表采集”确认 xlsx/xls/csv 文件存在，再到“导入检查”完成入库。',
       tone: 'blocked',
     };
   }
@@ -927,6 +945,7 @@ export function RecommendationsPage() {
   });
   const importedRowCount = data?.collection.fileAudit?.importedRowCount ?? data?.quant.importedRows ?? 0;
   const realReportCount = realReportCoverageCount(data?.collection);
+  const importedReportTypeCount = importedReportTypeCoverageCount(data?.collection);
   const currentRealReportSourceFiles = useMemo(
     () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
     [data?.collection.realReportFiles],
@@ -944,6 +963,7 @@ export function RecommendationsPage() {
       requiredReportCount: 8,
       realReportFileCount: realReportCount,
       realReportFilesLength: data.collection.realReportFiles.length,
+      importedReportTypeCount,
       importedRowCount,
       quantImportedRows: data.quant.importedRows,
       hasImportedMetrics: data.quant.hasImportedMetrics,
@@ -951,7 +971,7 @@ export function RecommendationsPage() {
       collectionBlockers: data.collection.blockers || [],
       quantBlockers: data.quant.blockers || [],
     });
-  }, [currentBatchId, data, importedRowCount, realReportCount]);
+  }, [currentBatchId, data, importedReportTypeCount, importedRowCount, realReportCount]);
   const quantReady = Boolean(data && recommendationGateIssues.length === 0);
   const operationEvents = data?.operations?.events || [];
   const productContexts = normalizeProductContexts(data?.productContext?.products);

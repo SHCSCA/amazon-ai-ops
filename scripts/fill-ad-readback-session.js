@@ -50,12 +50,10 @@ function validateInput(input) {
     'executionId',
     'readbackReadAt',
     'readbackEvidencePath',
+    'readbackActualValue',
     'riskRationale',
   ];
   const missing = required.filter((key) => unresolved(input[key]));
-  if (input.readbackActualValue && /<[^>]+>/.test(String(input.readbackActualValue))) {
-    missing.push('readbackActualValue');
-  }
   if (missing.length > 0) {
     throw new Error(`session-input.json has unresolved fields: ${missing.join(', ')}`);
   }

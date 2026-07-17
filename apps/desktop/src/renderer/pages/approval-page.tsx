@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { DecisionActionStrip, FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scope';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDecisionEvidenceSummary, formatEvidenceRefSummary } from '../evidence-display';
 import { formatPercent, formatUsd } from '../formatters';
@@ -49,6 +50,13 @@ export function approvalRowsAfterDecision(rows: RecommendationView[], recommenda
   return rows.filter((row) => row.id !== recommendationId);
 }
 
+export function approvalDecisionFocusReturnTarget<T>(
+  trigger: T | null,
+  completedDecisionTarget: T | null,
+): T | null {
+  return completedDecisionTarget ?? trigger;
+}
+
 export function buildRecommendationDecisionRequest(
   recommendation: Pick<RecommendationView, 'id' | 'revision'>,
   decision: Record<string, unknown>,
@@ -83,6 +91,69 @@ function isRealReportSourceFile(filePath: unknown): boolean {
 
 function normalizeSourceFile(filePath: unknown): string {
   return String(filePath || '').trim().replace(/\\/g, '/').toLowerCase();
+}
+
+function sameSourceFiles(left: unknown, right: unknown): boolean {
+  const normalize = (value: unknown) => Array.isArray(value)
+    ? Array.from(new Set(value.map(normalizeSourceFile).filter(Boolean))).sort()
+    : [];
+  const leftFiles = normalize(left);
+  const rightFiles = normalize(right);
+  return leftFiles.length === rightFiles.length
+    && leftFiles.every((filePath, index) => filePath === rightFiles[index]);
+}
+
+function sameTimestamp(left: unknown, right: unknown): boolean {
+  const leftTimestamp = Date.parse(String(left || '').trim());
+  const rightTimestamp = Date.parse(String(right || '').trim());
+  return Number.isFinite(leftTimestamp)
+    && Number.isFinite(rightTimestamp)
+    && leftTimestamp === rightTimestamp;
+}
+
+function sameWritableTarget(
+  left: NonNullable<RecommendationView['evidence']>['writableTarget'],
+  right: NonNullable<RecommendationView['evidence']>['writableTarget'],
+): boolean {
+  if (!left || !right) return false;
+  const normalizedText = (value: unknown) => String(value || '').trim().toLowerCase();
+  return left.entityType === right.entityType
+    && left.entityId === right.entityId
+    && normalizedText(left.entityName) === normalizedText(right.entityName)
+    && normalizedText(left.campaignName) === normalizedText(right.campaignName)
+    && normalizedText(left.adGroupName) === normalizedText(right.adGroupName)
+    && String(left.metricDate || '').trim() === String(right.metricDate || '').trim()
+    && normalizeSourceFile(left.sourceFile) === normalizeSourceFile(right.sourceFile)
+    && Number(left.sourceRow) === Number(right.sourceRow)
+    && left.identitySource === right.identitySource
+    && String(left.verifiedBy || '').trim() === String(right.verifiedBy || '').trim()
+    && sameTimestamp(left.verifiedAt, right.verifiedAt)
+    && String(left.verificationNote || '').trim() === String(right.verificationNote || '').trim()
+    && normalizeSourceFile(left.identityProofPath) === normalizeSourceFile(right.identityProofPath);
+}
+
+export function hasCurrentRecommendationReviewResolution(rec: RecommendationView): boolean {
+  const resolution = rec.evidence?.reviewResolution;
+  const writableTarget = rec.evidence?.writableTarget;
+  if (rec.status !== 'pending' || !resolution || !writableTarget) return false;
+  const nonEmpty = (value: unknown) => Boolean(String(value || '').trim());
+  return resolution.schemaVersion === 1
+    && resolution.fromStatus === 'needs_review'
+    && Number.isInteger(resolution.fromRevision)
+    && resolution.fromRevision >= 0
+    && resolution.fromRevision + 1 === resolution.resolvedRevision
+    && resolution.resolvedRevision === rec.revision
+    && resolution.resolvedBlockers.length === 1
+    && resolution.resolvedBlockers[0] === 'quant_review_required'
+    && nonEmpty(resolution.reviewedBy)
+    && Number.isFinite(Date.parse(String(resolution.reviewedAt || '').trim()))
+    && nonEmpty(resolution.rationale)
+    && String(resolution.scope.asin || '').trim().toUpperCase() === String(rec.evidence?.asin || '').trim().toUpperCase()
+    && String(resolution.scope.batchId || '').trim() === String(rec.evidence?.batchId || '').trim()
+    && String(resolution.metricSource.batchId || '').trim() === String(rec.evidence?.batchId || '').trim()
+    && Number(resolution.metricSource.sourceRow) === Number(rec.evidence?.sourceRow)
+    && sameSourceFiles(resolution.metricSource.sourceFiles, rec.evidence?.sourceFiles)
+    && sameWritableTarget(resolution.writableTarget, writableTarget);
 }
 
 function parseExecutableNumber(value: unknown): number | undefined {
@@ -134,6 +205,24 @@ export function approvalMissing(
   requireValue(rec.actionType, '动作');
   requireValue(rec.currentValue, '当前值');
   requireValue(rec.recommendedValue, '建议值');
+  const writableTarget = rec.evidence?.writableTarget;
+  if (!writableTarget) {
+    missing.push('Ads 可写对象');
+  } else {
+    requireValue(writableTarget.entityType, '可写对象类型');
+    requireValue(writableTarget.entityId, '可写对象 ID');
+    requireValue(writableTarget.entityName, '可写对象名称');
+    requireValue(writableTarget.campaignName, '可写对象广告活动');
+    requireValue(writableTarget.adGroupName, '可写对象广告组');
+    requireValue(writableTarget.metricDate, '可写对象指标日期');
+    requireValue(writableTarget.sourceFile, '可写对象来源文件');
+    requirePositiveNumber(writableTarget.sourceRow, '可写对象来源行号');
+    requireValue(writableTarget.identitySource, '可写对象身份来源');
+    requireValue(writableTarget.verifiedBy, '可写对象核验人');
+    requireValue(writableTarget.verifiedAt, '可写对象核验时间');
+    requireValue(writableTarget.verificationNote, '可写对象核验说明');
+    requireValue(writableTarget.identityProofPath, '可写对象身份凭证');
+  }
   return missing;
 }
 
@@ -164,7 +253,9 @@ export function approvalBlockers(rec: RecommendationView | null): string[] {
     blockers.push('AI 阶段判断需要人工复核');
     blockers.push(...(rec.evidence.aiLifecycleStageInvalidReasons || []).filter(Boolean));
   }
-  if (rec.evidence?.quantReviewRequired === true) blockers.push('规则量化要求人工复核');
+  if (rec.evidence?.quantReviewRequired === true && !hasCurrentRecommendationReviewResolution(rec)) {
+    blockers.push('规则量化要求人工复核');
+  }
   if (riskRequiresDedicatedReview(rec.riskLevel)) blockers.push('高风险或禁止执行风险等级');
   return blockers;
 }
@@ -224,7 +315,7 @@ export function approvalDecisionState(input: {
     || selected.evidence?.decisionAgreement === 'conflict'
     || selected.evidence?.decisionAgreement === 'ai_only'
     || selected.evidence?.decisionRequiresReview === true
-    || selected.evidence?.quantReviewRequired === true
+    || (selected.evidence?.quantReviewRequired === true && !hasCurrentRecommendationReviewResolution(selected))
     || riskRequiresDedicatedReview(selected.riskLevel);
 
   if (blockers.length > 0 && requiresReview) {
@@ -572,6 +663,8 @@ export function ApprovalPage() {
   const [batchSelectionHint, setBatchSelectionHint] = useState<string | null>(null);
   const pendingSelectionIntentRef = useRef<ReturnType<typeof parseApprovalSelectionIntent>>(null);
   const exitTimerRef = useRef<number | null>(null);
+  const approvalQueueFocusRef = useRef<HTMLDivElement | null>(null);
+  const completedDecisionFocusTargetRef = useRef<HTMLElement | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const currentRealReportSourceFiles = useMemo(
     () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
@@ -751,6 +844,7 @@ export function ApprovalPage() {
       }));
       setMessage(approvedMessage);
       scheduleDecisionQueueExit(currentSelected.id, 'approved');
+      completedDecisionFocusTargetRef.current = approvalQueueFocusRef.current;
       setSelected(null);
       setApproverName('');
       setApprovalNote('');
@@ -814,6 +908,7 @@ export function ApprovalPage() {
       }));
       setMessage(rejectedMessage);
       scheduleDecisionQueueExit(currentSelected.id, 'rejected');
+      completedDecisionFocusTargetRef.current = approvalQueueFocusRef.current;
       setSelected(null);
       setApproverName('');
       setApprovalNote('');
@@ -852,21 +947,19 @@ export function ApprovalPage() {
     setApprovalNote('');
   }
 
-  function handleApprovalDecisionModalKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== 'Escape' || submittingDecision) return;
-    event.stopPropagation();
-    closeApprovalDecisionModal();
-  }
-
-  useEffect(() => {
-    if (!selected) return;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape' || submittingDecision) return;
-      closeApprovalDecisionModal();
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [selected, submittingDecision]);
+  const approvalDecisionDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    dismissDisabled: Boolean(submittingDecision),
+    onDismiss: closeApprovalDecisionModal,
+    open: Boolean(selected),
+    resolveFocusReturnTarget: (trigger) => {
+      const target = approvalDecisionFocusReturnTarget(
+        trigger,
+        completedDecisionFocusTargetRef.current,
+      );
+      completedDecisionFocusTargetRef.current = null;
+      return target;
+    },
+  });
 
   useEffect(() => {
     if (!currentBatchId) {
@@ -886,7 +979,7 @@ export function ApprovalPage() {
       />
 
       <div className="business-stack">
-        <div id="approval-queue-panel">
+        <div id="approval-queue-panel" ref={approvalQueueFocusRef} tabIndex={-1}>
         <Panel title="审批队列" tone={rows.length ? 'warning' : 'blocked'}>
           <div className="approval-workbench-head">
             <div>
@@ -967,6 +1060,7 @@ export function ApprovalPage() {
                       <button
                         className="secondary-button compact-button"
                         onClick={() => {
+                          completedDecisionFocusTargetRef.current = null;
                           setSelected(row);
                           setApproverName('');
                           setApprovalNote('');
@@ -1033,15 +1127,17 @@ export function ApprovalPage() {
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeApprovalDecisionModal();
             }}
+            ref={approvalDecisionDialogFocus.overlayRootRef}
             role="presentation"
           >
             <section
               aria-labelledby="approval-decision-modal-title"
               aria-modal="true"
               className="product-config-modal approval-decision-modal"
-              onKeyDown={handleApprovalDecisionModalKeyDown}
               onMouseDown={(event) => event.stopPropagation()}
+              ref={approvalDecisionDialogFocus.surfaceRef}
               role="dialog"
+              tabIndex={-1}
             >
               <header className="product-config-modal-header">
                 <div>
@@ -1266,7 +1362,12 @@ export function ApprovalPage() {
             <div id="approval-form">
               <FormTable>
                 <FormTableRow label="审批/处理人" required>
-                <input value={approverName} onChange={(event) => setApproverName(event.target.value)} placeholder="负责人姓名" />
+                <input
+                  data-overlay-initial-focus
+                  onChange={(event) => setApproverName(event.target.value)}
+                  placeholder="负责人姓名"
+                  value={approverName}
+                />
                 </FormTableRow>
                 <FormTableRow label="审批时间">
                 <input readOnly value={new Date().toISOString()} />

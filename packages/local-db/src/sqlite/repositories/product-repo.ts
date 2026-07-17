@@ -20,6 +20,13 @@ export interface ProductWithCost extends Product {
   cost?: ProductCost;
 }
 
+export interface ProductTargetAcosUpdate {
+  asin: string;
+  storeName: string;
+  marketplaceCode: string;
+  targetAcos: number;
+}
+
 export class ProductRepository {
   constructor(private db: Database) {}
 
@@ -88,12 +95,39 @@ export class ProductRepository {
       referralFeeRate: Number(row.referral_fee_rate || 0),
       storageFee: Number(row.storage_fee || 0),
       otherCost: Number(row.other_cost || 0),
+      currentPrice: Number(row.current_price || 0),
       minPrice: Number(row.min_price || 0),
       targetNetMargin: Number(row.target_net_margin || 0),
       targetAcos: Number(row.target_acos || 0),
       targetTacos: Number(row.target_tacos || 0),
       updatedAt: String(row.updated_at || ''),
     };
+  }
+
+  updateTargetAcosMany(updates: ProductTargetAcosUpdate[]): ProductWithCost[] {
+    const updateMany = this.db.transaction((targets: ProductTargetAcosUpdate[]) => targets.map((target) => {
+      const asin = String(target.asin || '').trim();
+      const storeName = String(target.storeName || '').trim();
+      const marketplaceCode = String(target.marketplaceCode || '').trim();
+      const targetAcos = Number(target.targetAcos);
+      if (!asin || !storeName || !marketplaceCode) {
+        throw new Error('批量目标 ACOS 更新需要 ASIN、店铺和站点。');
+      }
+      if (!Number.isFinite(targetAcos) || targetAcos <= 0 || targetAcos > 1) {
+        throw new Error(`产品 ${asin} 的目标 ACOS 必须大于 0 且不超过 100%。`);
+      }
+      const product = this.findByAsin(asin, storeName, marketplaceCode);
+      if (!product?.id) {
+        throw new Error(`未找到产品 ${asin}，批量更新已回滚。`);
+      }
+      this.updateCost(product.id, { productId: product.id, targetAcos });
+      return {
+        ...product,
+        cost: this.getCost(product.id),
+      };
+    }));
+
+    return updateMany(updates);
   }
 
   // Desktop 主进程使用的方法

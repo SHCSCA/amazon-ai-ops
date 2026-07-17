@@ -2,12 +2,95 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { KeywordOpportunityView } from '../types';
 import {
+  buildKeywordOpportunityTaskModel,
   buildKeywordOpportunityFilterFeedback,
+  createKeywordOpportunityRequestGate,
+  keywordOpportunityScopeKey,
   keywordOpportunityActionButtonView,
   keywordOpportunityTableFeedbackClass,
   nextKeywordOpportunitySort,
   sortKeywordOpportunities,
 } from './keyword-opportunities-page';
+
+describe('KeywordOpportunitiesPage dialog focus contracts', () => {
+  it('uses independent shared focus scopes for filters and source details', () => {
+    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const keywordFilterDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('open: filterModalOpen');
+    expect(source).toContain('const opportunityDetailDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('open: opportunityDetailOpen');
+    expect(source).toContain('ref={keywordFilterDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={keywordFilterDialogFocus.surfaceRef}');
+    expect(source).toContain('ref={opportunityDetailDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={opportunityDetailDialogFocus.surfaceRef}');
+    expect(source).not.toContain('onKeyDown={handleFilterModalKeyDown}');
+    expect(source).not.toContain('onKeyDown={handleOpportunityDetailKeyDown}');
+  });
+});
+
+describe('keyword opportunity scope authority', () => {
+  it('ignores late keyword results after the active scope changes', () => {
+    const gate = createKeywordOpportunityRequestGate();
+    const scopeA = keywordOpportunityScopeKey({
+      dateFrom: '2026-06-01', dateTo: '2026-06-07', storeName: 'A', marketplaceCode: 'US', batchId: 'batch-a',
+    });
+    const scopeB = keywordOpportunityScopeKey({
+      dateFrom: '2026-06-08', dateTo: '2026-06-14', storeName: 'B', marketplaceCode: 'US', batchId: 'batch-b',
+    });
+
+    gate.activate(scopeA);
+    const requestA = gate.begin(scopeA);
+    gate.activate(scopeB);
+    const requestB = gate.begin(scopeB);
+
+    expect(gate.isCurrent(requestA)).toBe(false);
+    expect(gate.isCurrent(requestB)).toBe(true);
+  });
+
+  it('prevents cross-scope Listing handoff in the rendered page contract', () => {
+    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('rowsScopeKey !== requestScopeKey');
+    expect(source).toContain('const authoritativeScope = rowsAuthorityScopeRef.current');
+    expect(source).toContain('dateFrom: authoritativeScope.dateFrom');
+    expect(source).toContain('batchId: authoritativeScope.batchId');
+  });
+});
+
+describe('keyword opportunity task-first model', () => {
+  it('routes missing real data to import validation without exposing Listing handoff', () => {
+    expect(buildKeywordOpportunityTaskModel({
+      quantReady: false,
+      loading: false,
+      rowCount: 0,
+      selectedKeyword: '',
+    })).toMatchObject({
+      tone: 'blocked',
+      primaryIntent: 'import-validation',
+      primaryLabel: '去导入校验',
+      secondaryIntents: ['data-collection'],
+    });
+  });
+
+  it('makes the selected real-data opportunity the only primary handoff', () => {
+    const model = buildKeywordOpportunityTaskModel({
+      quantReady: true,
+      loading: false,
+      rowCount: 12,
+      selectedKeyword: 'wide toe box',
+    });
+
+    expect(model).toMatchObject({
+      tone: 'confirmed',
+      primaryIntent: 'handoff-listing',
+      primaryLabel: '带入 Listing',
+      statusLabel: '已选 wide toe box',
+    });
+    expect(model.secondaryIntents).toEqual(['show-source', 'filter']);
+    expect(model.secondaryIntents).toHaveLength(2);
+  });
+});
 
 function row(overrides: Partial<KeywordOpportunityView>): KeywordOpportunityView {
   return {
@@ -115,9 +198,10 @@ describe('keyword opportunity filter micro-feedback', () => {
     expect(source).toContain('filterModalOpen');
     expect(source).toContain('筛选条件');
     expect(source).not.toContain('keyword-filter-details');
-    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
-    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
-    expect(source).toContain('onKeyDown={handleFilterModalKeyDown}');
+    expect(source).toContain('const keywordFilterDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('ref={keywordFilterDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={keywordFilterDialogFocus.surfaceRef}');
+    expect(source).not.toContain('onKeyDown={handleFilterModalKeyDown}');
     expect(source).toContain('onClick={closeFilterModal}');
     expect(filterMarkup).toContain('<KeywordOpportunityFilterCell');
     expect(filterMarkup).not.toMatch(/<label>\s*(ASIN|Campaign|Ad Group|覆盖状态|最低点击|最低花费 USD|机会等级)/);
@@ -172,6 +256,7 @@ describe('Phase 5 keyword opportunity user task surface', () => {
     expect(source).toContain('关键词机会池');
     expect(source).toContain('keyword-opportunity-summary-grid');
     expect(source).toContain('keyword-opportunity-blocker-strip');
+    expect(source).toContain('报表文件 {sourceReportCount}/8 · 逐类入库 {importedReportTypeCount}/8 · {importedMetricRows} 行');
     expect(source).not.toContain('KpiCard');
     expect(source).toContain('selectedRowKey={selectedOpportunityKey}');
     expect(source).toContain('onRowSelect={(row) => setSelectedOpportunityKey(rowKey(row))}');
@@ -181,9 +266,21 @@ describe('Phase 5 keyword opportunity user task surface', () => {
     expect(source).not.toContain('查看处理');
     expect(source).not.toContain('收起处理');
     expect(source).toContain('机会口径、来源和复核摘要');
-    expect(source).toContain('folded-ops-panel');
+    expect(source).toContain('<ProgressiveDetails title="机会口径、来源和复核摘要"');
+    expect(source).not.toContain('<details className="folded-ops-panel"');
     expect(source).toContain('审计文件、截图和 DOM 证据不算广告数据');
     expect(styles).toContain('.keyword-opportunity-page-stack .virtual-table-row-selected');
     expect(styles).toContain('inset 4px 0 0 var(--color-accent)');
+  });
+
+  it('uses one TaskBanner and one unnested technical disclosure', () => {
+    const source = readFileSync(new URL('./keyword-opportunities-page.tsx', import.meta.url), 'utf8');
+    const technicalStart = source.indexOf('<ProgressiveDetails title="机会口径、来源和复核摘要"');
+    const technicalEnd = source.indexOf('</ProgressiveDetails>', technicalStart);
+
+    expect(source.match(/<TaskBanner\b/g) || []).toHaveLength(1);
+    expect(technicalStart).toBeGreaterThan(-1);
+    expect(technicalEnd).toBeGreaterThan(technicalStart);
+    expect(source.slice(technicalStart, technicalEnd)).not.toMatch(/<details\b/);
   });
 });

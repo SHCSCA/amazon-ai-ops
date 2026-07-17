@@ -4,6 +4,8 @@ import {
   buildProductTimeline,
   classifyOperationEventScope,
   formatScopeProductLabel,
+  mergeProductStrategyContexts,
+  normalizeProductPortfolioRows,
 } from './product-management';
 import type {
   BusinessQuantDiagnostic,
@@ -13,6 +15,83 @@ import type {
 } from './types';
 
 describe('product management renderer model', () => {
+  it('normalizes configured products for the active store and marketplace only', () => {
+    const products = normalizeProductPortfolioRows([
+      {
+        id: 1,
+        asin: ' b001 ',
+        store_name: 'FT-US-US',
+        marketplace_code: 'us',
+        parent_asin: ' parent-1 ',
+        msku: 'D6-MSKU',
+        sku: 'D6-SKU',
+        title: ' D6 Smart Lock ',
+        product_stage: 'keyword_exploration',
+        status: 'active',
+        cost: { purchaseCost: 103, currentPrice: 49.99, targetAcos: 0.35 },
+      },
+      {
+        id: 2,
+        asin: 'B002',
+        store_name: 'OTHER-STORE',
+        marketplace_code: 'US',
+        title: 'Other store product',
+      },
+      { id: 3, asin: ' ', store_name: 'FT-US-US', marketplace_code: 'US' },
+    ], {
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+    });
+
+    expect(products).toEqual([{
+      asin: 'B001',
+      parentAsin: 'parent-1',
+      msku: 'D6-MSKU',
+      sku: 'D6-SKU',
+      title: 'D6 Smart Lock',
+      productStage: 'keyword_exploration',
+      status: 'active',
+      cost: { purchaseCost: 103, currentPrice: 49.99, targetAcos: 0.35 },
+    }]);
+  });
+
+  it('fails closed when the product portfolio scope is incomplete', () => {
+    const rows = [{
+      asin: 'B001',
+      store_name: 'FT-US-US',
+      marketplace_code: 'US',
+      title: 'D6 Smart Lock',
+    }];
+
+    expect(normalizeProductPortfolioRows(rows, {
+      storeName: '',
+      marketplaceCode: 'US',
+    })).toEqual([]);
+    expect(normalizeProductPortfolioRows(rows, {
+      storeName: 'FT-US-US',
+      marketplaceCode: '',
+    })).toEqual([]);
+  });
+
+  it('supplements portfolio contexts without duplicating normalized ASINs', () => {
+    expect(mergeProductStrategyContexts(
+      [{ asin: 'b001', title: 'Metric title', sku: 'D6-SKU' }],
+      [
+        { asin: ' B001 ', title: 'Configured title', productStage: 'scaling', cost: { targetAcos: 0.3 } },
+        { asin: 'B002', title: 'Configured only' },
+      ],
+    )).toEqual([
+      {
+        asin: 'B001',
+        title: 'Configured title',
+        sku: 'D6-SKU',
+        productStage: 'scaling',
+        cost: { targetAcos: 0.3 },
+      },
+      { asin: 'B002', title: 'Configured only' },
+    ]);
+  });
+
   it('combines product identity, ad metrics, ledgers, and event counts by ASIN', () => {
     const products: ProductStrategyContextView[] = [
       {
@@ -50,6 +129,9 @@ describe('product management renderer model', () => {
       sales: 160,
       orders: 4,
       clicks: 40,
+      activeDays: 2,
+      lastMetricDate: '2026-06-12',
+      targetAcos: 0.35,
       highRiskCount: 1,
       productEventCount: 1,
       globalEventCount: 1,
@@ -126,6 +208,7 @@ function ledger(patch: Partial<ProductHistoryLedgerView> & { asin: string; cost?
     dateFrom: '2026-06-01',
     dateTo: '2026-06-12',
     activeDays: 2,
+    lastMetricDate: '2026-06-12',
     inferredStage: patch.inferredStage || 'unknown',
     stageReasons: [],
     daily: [],

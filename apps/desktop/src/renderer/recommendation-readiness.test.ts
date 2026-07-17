@@ -7,6 +7,7 @@ describe('buildRecommendationGateIssues', () => {
       requiredReportCount: 8,
       realReportFileCount: 4,
       realReportFilesLength: 4,
+      importedReportTypeCount: 4,
       importedRowCount: 512,
       quantImportedRows: 512,
       hasImportedMetrics: true,
@@ -16,6 +17,24 @@ describe('buildRecommendationGateIssues', () => {
     });
 
     expect(issues).toContain('当前范围只完成 4/8 类真实广告报表，需补齐 8 类后才能生成正式建议');
+    expect(issues).toContain('当前范围只完成 4/8 类逐类入库，需补齐 8 类后才能生成正式建议');
+  });
+
+  it('blocks formal recommendations when files are complete but only some report types are imported', () => {
+    const issues = buildRecommendationGateIssues({
+      requiredReportCount: 8,
+      realReportFileCount: 8,
+      realReportFilesLength: 8,
+      importedReportTypeCount: 5,
+      importedRowCount: 1879,
+      quantImportedRows: 1879,
+      hasImportedMetrics: true,
+      currentBatchId: 'batch_partial_import',
+      collectionBlockers: [],
+      quantBlockers: [],
+    });
+
+    expect(issues).toContain('当前范围只完成 5/8 类逐类入库，需补齐 8 类后才能生成正式建议');
   });
 
   it('allows recommendation generation when full report coverage and imported metrics are present', () => {
@@ -23,6 +42,7 @@ describe('buildRecommendationGateIssues', () => {
       requiredReportCount: 8,
       realReportFileCount: 8,
       realReportFilesLength: 8,
+      importedReportTypeCount: 8,
       importedRowCount: 1694,
       quantImportedRows: 1694,
       hasImportedMetrics: true,

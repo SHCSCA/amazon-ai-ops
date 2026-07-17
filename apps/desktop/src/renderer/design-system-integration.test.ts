@@ -31,7 +31,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/product-management-page.tsx',
-    markers: ['product-management-shell', '产品列表', '搜索产品', '当前产品'],
+    markers: ['TaskBanner', 'WorkbenchPanel', 'VirtualDataTable', 'ResponsiveInspector', 'data-workspace-queue="products"', '产品对象队列'],
   },
   {
     pageFile: 'pages/operation-scope-page.tsx',
@@ -55,7 +55,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/ad-quant-page.tsx',
-    markers: ['ad-quant-workbench-toolbar', '广告表现阻断', '广告对象诊断', '当前范围', '数据来源与量化口径'],
+    markers: ['TaskBanner', 'data-diagnosis-summary-boundary', '广告表现阻断', '广告对象诊断', '数据来源与量化口径'],
   },
   {
     pageFile: 'pages/recommendations-page.tsx',
@@ -71,7 +71,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/keyword-opportunities-page.tsx',
-    markers: ['关键词机会池', 'keyword-opportunity-summary-grid', 'keyword-opportunity-blocker-strip', '机会口径、来源和复核摘要', 'folded-ops-panel'],
+    markers: ['TaskBanner', '关键词机会池', 'keyword-opportunity-summary-grid', 'keyword-opportunity-blocker-strip', '机会口径、来源和复核摘要', 'keyword-opportunity-evidence-block'],
   },
   {
     pageFile: 'pages/listing-optimization-page.tsx',
@@ -102,13 +102,13 @@ describe('prototype parity design system integration', () => {
 
       const tableFirstWorkbenchContracts: Partial<Record<(typeof PAGE_FILES)[number], string[]>> = {
         'pages/dashboard-page.tsx': ['TaskBanner', 'SummaryStrip', 'WorkbenchPanel', 'PriorityDataTable'],
-        'pages/product-management-page.tsx': ['product-management-topline', 'product-management-shell'],
+        'pages/product-management-page.tsx': ['TaskBanner', 'WorkbenchPanel', 'VirtualDataTable', 'ResponsiveInspector', 'data-workspace-work-surface'],
         'pages/operation-scope-page.tsx': ['operation-scope-confirm-panel', 'operation-scope-field-card'],
         'pages/data-import-validation-page.tsx': ['data-import-primary-panel', 'data-import-prototype-table'],
         'pages/product-config-page.tsx': ['product-config-page-stack', 'product-config-list-panel'],
-        'pages/ad-quant-page.tsx': ['ad-quant-workbench-toolbar', 'ad-quant-primary-panel', '广告表现阻断'],
+        'pages/ad-quant-page.tsx': ['TaskBanner', 'data-diagnosis-summary-boundary', 'ad-quant-primary-panel', '广告表现阻断'],
         'pages/recommendations-page.tsx': ['recommendation-primary-panel', 'recommendation-primary-head', 'recommendation-workbench-table'],
-        'pages/keyword-opportunities-page.tsx': ['keyword-opportunity-summary-grid', 'keyword-opportunity-blocker-strip', 'folded-ops-panel'],
+        'pages/keyword-opportunities-page.tsx': ['TaskBanner', 'keyword-opportunity-summary-grid', 'keyword-opportunity-blocker-strip', 'keyword-opportunity-evidence-block'],
         'pages/listing-optimization-page.tsx': ['listing-optimization-page-stack', 'listing-editor-panel', 'listing-draft-panel'],
         'pages/approval-page.tsx': ['approval-workbench-head', 'approval-table'],
         'pages/readback-page.tsx': ['PageFrame', 'TaskBanner', 'readback-step-tabs', 'WorkbenchPanel'],

@@ -449,6 +449,7 @@ describe('dashboardDataGateAction', () => {
       hasRealFiles: true,
       hasMetrics: false,
       realReportCount: 8,
+      importedReportTypeCount: 0,
       importedRows: 0,
       actionableRows: 0,
     });
@@ -456,7 +457,7 @@ describe('dashboardDataGateAction', () => {
     expect(action).toMatchObject({
       route: 'data-import-validation',
       label: '导入广告指标',
-      title: '不可分析：广告指标未入库',
+      title: '数据门槛未闭合：当前仅 0/8 类逐类入库',
     });
     expect(action.title).not.toContain('真实报表未入库');
   });
@@ -467,6 +468,7 @@ describe('dashboardDataGateAction', () => {
       hasRealFiles: true,
       hasMetrics: false,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     })).toMatchObject({
@@ -481,6 +483,7 @@ describe('dashboardDataGateAction', () => {
       hasRealFiles: true,
       hasMetrics: false,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
     })).toMatchObject({
@@ -528,9 +531,10 @@ describe('dashboardDataGateDetail', () => {
       isQuantifiable: true,
       hasRealFiles: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
-    })).toBe('8/8 类真实报表，96 行广告指标，其中 12 行可生成建议。');
+    })).toBe('8/8 类报表文件、8/8 类逐类入库，共 96 行广告指标，其中 12 行可生成建议。');
   });
 
   it('uses the same report-type coverage wording before metrics are imported', () => {
@@ -553,13 +557,15 @@ describe('dashboardDataGateDetail', () => {
       canGenerateFormalRecommendations: false,
       hasRealFiles: true,
       realReportCount: 8,
+      importedReportTypeCount: 0,
       importedRows: 0,
-    })).toBe('不可分析：广告指标未入库');
+    })).toBe('数据门槛未闭合：当前仅 0/8 类逐类入库');
   });
 
   it('does not describe partial report coverage with imported metrics as formal recommendation ready', () => {
     expect(dashboardCanGenerateFormalRecommendations({
       realReportCount: 3,
+      importedReportTypeCount: 3,
       importedRows: 512,
       actionableRows: 12,
       hasImportedMetrics: true,
@@ -623,12 +629,37 @@ describe('dashboardDataGateDetail', () => {
     });
   });
 
+  it('does not treat 8/8 files with only 5/8 imported report types as formal recommendation ready', () => {
+    expect(dashboardCanGenerateFormalRecommendations({
+      realReportCount: 8,
+      importedReportTypeCount: 5,
+      importedRows: 1879,
+      actionableRows: 34,
+      hasImportedMetrics: true,
+    })).toBe(false);
+
+    expect(dashboardDataGateAction({
+      canGenerateFormalRecommendations: false,
+      hasRealFiles: true,
+      hasMetrics: true,
+      realReportCount: 8,
+      importedReportTypeCount: 5,
+      importedRows: 1879,
+      actionableRows: 34,
+    })).toMatchObject({
+      route: 'data-import-validation',
+      label: '补齐逐类入库',
+      title: '数据门槛未闭合：当前仅 5/8 类逐类入库',
+    });
+  });
+
   it('keeps action queue on quant review when imported metrics have no actionable rows', () => {
     const blocker = dashboardDataActionQueueBlocker({
       canGenerateFormalRecommendations: false,
       hasRealFiles: true,
       hasMetrics: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     });
@@ -645,6 +676,7 @@ describe('dashboardDataGateDetail', () => {
       hasRealFiles: true,
       hasMetrics: false,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     });
@@ -656,6 +688,7 @@ describe('dashboardDataGateDetail', () => {
   it('describes imported metrics with no actionable rows as a quantification gap instead of missing reports', () => {
     expect(dashboardCanGenerateFormalRecommendations({
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
       hasImportedMetrics: true,
@@ -665,6 +698,7 @@ describe('dashboardDataGateDetail', () => {
       isQuantifiable: false,
       hasRealFiles: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     })).toBe('8/8 类真实报表已导入 96 行指标，但未形成可行动对象；需复核量化口径。');
@@ -674,6 +708,7 @@ describe('dashboardDataGateDetail', () => {
       hasRealFiles: true,
       hasMetrics: false,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     })).toBe('复核量化口径');
@@ -685,6 +720,7 @@ describe('dashboardDataGateDetail', () => {
       hasRealFiles: true,
       hasMetrics: false,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
     });
@@ -738,6 +774,7 @@ describe('dashboardMetricStatusCopy', () => {
       canGenerateFormalRecommendations: false,
       hasRealFiles: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
       hasMetrics: false,
@@ -811,6 +848,7 @@ describe('dashboardWorkflowQuantNext', () => {
       hasMetrics: true,
       hasRealFiles: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     })).toEqual({
@@ -825,6 +863,7 @@ describe('dashboardWorkflowQuantNext', () => {
       hasMetrics: false,
       hasRealFiles: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     })).toEqual({
@@ -840,6 +879,7 @@ describe('dashboardNormalizeDeliveryItem', () => {
       canGenerateFormalRecommendations: false,
       hasRealFiles: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     };
@@ -869,6 +909,7 @@ describe('dashboardNormalizeDeliveryItem', () => {
       canGenerateFormalRecommendations: false,
       hasRealFiles: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     };
@@ -915,6 +956,7 @@ describe('dashboardNormalizeDeliveryItem', () => {
       canGenerateFormalRecommendations: false,
       hasRealFiles: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
     });
@@ -1433,6 +1475,7 @@ describe('dashboardPrimaryTaskAction', () => {
       hasRealFiles: true,
       hasMetrics: false,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
       pendingRecommendationCount: 2,
@@ -1462,6 +1505,7 @@ describe('dashboardPrimaryTaskAction', () => {
       hasRealFiles: true,
       hasMetrics: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 0,
       pendingRecommendationCount: 2,
@@ -1479,6 +1523,7 @@ describe('dashboardPrimaryTaskAction', () => {
       hasRealFiles: true,
       hasMetrics: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
       pendingRecommendationCount: 0,
@@ -1492,6 +1537,7 @@ describe('dashboardPrimaryTaskAction', () => {
       hasRealFiles: true,
       hasMetrics: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
       pendingRecommendationCount: 2,
@@ -1503,6 +1549,7 @@ describe('dashboardPrimaryTaskAction', () => {
       hasRealFiles: true,
       hasMetrics: true,
       realReportCount: 8,
+      importedReportTypeCount: 8,
       importedRows: 96,
       actionableRows: 12,
       pendingRecommendationCount: 0,
@@ -1570,6 +1617,10 @@ describe('dashboardPrimaryTaskNavigationFeedback', () => {
     const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('<SummaryStrip');
+    expect(source).toContain("label: '逐类入库'");
+    expect(source).toContain('value: `${importedReportTypeCount}/8 类`');
+    expect(source).toContain('`报表文件 ${realReportCount}/8 类 · ${importedRows} 行`');
+    expect(source).not.toContain("label: '真实数据',\n                value: `${realReportCount}/8 类`");
     expect(source).toContain('<WorkbenchPanel');
     expect(source).toContain('dashboard-history-summary-grid');
     expect(source).not.toContain('dashboard-overview-metrics');

@@ -18,8 +18,10 @@ function runNode(script, args = []) {
 
 function makeCandidate(dir) {
   const report = path.join(dir, 'source-report.xlsx');
+  const identityProof = path.join(dir, 'target-identity-proof.json');
   const source = path.join(dir, 'candidate.json');
   fs.writeFileSync(report, 'fake report placeholder\n', 'utf8');
+  fs.writeFileSync(identityProof, '{"verified":true}\n', 'utf8');
   fs.writeFileSync(source, JSON.stringify({
     schemaVersion: 2,
     kind: 'real-ad-execution-readback',
@@ -49,8 +51,10 @@ function makeCandidate(dir) {
       metricDate: '2026-06-17',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group B',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'target-id-4',
       entityName: 'door lock',
+      identityProofPath: identityProof,
       actionType: 'lower_bid',
     },
     source: {
@@ -62,7 +66,7 @@ function makeCandidate(dir) {
       recommendedValue: '1.46',
       sourceFiles: [report],
       sourceRow: 410,
-      entityType: 'target',
+      entityType: 'keyword',
     },
     approval: {
       operatorConfirmed: false,
@@ -147,6 +151,16 @@ describe('fill ad readback evidence from a session input file', () => {
       recommendationRevision: 2,
       batchId: 'batch_2026-06-17',
     });
+
+    input.readbackActualValue = '';
+    fs.writeFileSync(path.join(session, 'session-input.json'), `${JSON.stringify(input, null, 2)}\n`, 'utf8');
+    fs.rmSync(paths.passEvidencePath, { force: true });
+
+    const missingIndependentValue = runNode('scripts/fill-ad-readback-session.js', ['--session', session, '--db', dbPath]);
+    expect(missingIndependentValue.status).not.toBe(0);
+    expect(`${missingIndependentValue.stdout}${missingIndependentValue.stderr}`)
+      .toContain('session-input.json has unresolved fields: readbackActualValue');
+    expect(fs.existsSync(paths.passEvidencePath)).toBe(false);
   });
 
   it('fails before calling the fill helper when session-input placeholders are not replaced', () => {

@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { ExportAdReadbackEvidenceRequest } from '@amazon-ai-ops/shared-types';
+import type {
+  BindRecommendationWritableTargetRequest,
+  BindRecommendationWritableTargetResult,
+  ExportAdReadbackEvidenceRequest,
+  ResolveRecommendationReviewRequest,
+  ResolveRecommendationReviewResult,
+} from '@amazon-ai-ops/shared-types';
 
 ipcRenderer.on('business-ui:data-updated', () => {
   window.dispatchEvent(new Event('business-ui:data-updated'));
@@ -133,6 +139,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }) => ipcRenderer.invoke('v1_5:business-ui:ai-diagnosis-runs', params),
   approveRecommendation: (input: number | { id: number; expectedRevision: number; decision?: any }) => ipcRenderer.invoke('recommendations:approve', input),
   rejectRecommendation: (input: number | { id: number; expectedRevision: number; decision?: any }) => ipcRenderer.invoke('recommendations:reject', input),
+  resolveRecommendationReview: (input: ResolveRecommendationReviewRequest): Promise<ResolveRecommendationReviewResult> =>
+    ipcRenderer.invoke('recommendations:resolve-review', input),
+  bindRecommendationWritableTarget: (input: BindRecommendationWritableTargetRequest): Promise<BindRecommendationWritableTargetResult> =>
+    ipcRenderer.invoke('recommendations:bind-writable-target', input),
   executeRecommendation: (id: number) => ipcRenderer.invoke('recommendations:execute', id),
   exportAdReadbackEvidence: (input: ExportAdReadbackEvidenceRequest) =>
     ipcRenderer.invoke('recommendations:export-ad-readback-evidence', input),
@@ -157,6 +167,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProducts: () => ipcRenderer.invoke('products:get'),
   addProduct: (product: any) => ipcRenderer.invoke('products:add', product),
   saveProductConfig: (input: any) => ipcRenderer.invoke('products:save-config', input),
+  bulkUpdateProductTargetAcos: (input: any) => ipcRenderer.invoke('products:bulk-update-target-acos', input),
 
   // Logs
   getLogs: (params: { dateFrom: string; dateTo: string; limit?: number }) =>

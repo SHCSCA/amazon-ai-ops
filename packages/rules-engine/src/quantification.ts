@@ -73,6 +73,12 @@ export interface DailyAdTimeline {
   reviewRequired: boolean;
 }
 
+export interface AdMetricObjectIdentity {
+  key: string;
+  objectType: DailyAdTimeline['objectType'];
+  objectName: string;
+}
+
 export class AdQuantifier {
   constructor(private config: RuleConfig) {}
 
@@ -174,7 +180,7 @@ export class AdQuantifier {
       const lifecycleStage = options.lifecycleStage || inferTimelineLifecycleStage(sorted, thresholds);
       const aggregate = aggregateTimelineMetric(sorted);
       const aggregateQuant = this.quantify(aggregate, { ...options, lifecycleStage });
-      const identity = metricIdentity(sorted[0]);
+      const identity = buildAdMetricObjectIdentity(sorted[0]);
       const daily = sorted.map((metric) => this.quantify(metric, { ...options, lifecycleStage }));
       timelines.push({
         objectKey: identity.key,
@@ -205,7 +211,7 @@ export class AdQuantifier {
         trend: inferTimelineTrend(sorted),
         daily,
         reasons: aggregateQuant.reasons,
-        reviewRequired: aggregateQuant.reviewRequired || daily.some((item) => item.reviewRequired),
+        reviewRequired: requiresTimelineReview(aggregateQuant, daily),
       });
     }
     return timelines.sort((a, b) => {
@@ -258,6 +264,20 @@ function buildQuant(
     confidence,
     reviewRequired,
   };
+}
+
+function requiresTimelineReview(
+  aggregate: QuantifiedAdMetric,
+  daily: QuantifiedAdMetric[],
+): boolean {
+  if (aggregate.reviewRequired) return true;
+
+  // A no-action daily watch/blocked state is context, not a competing decision.
+  // Keep review fail-closed whenever a daily sample proposes an executable action
+  // that itself requires review or conflicts with the aggregate action.
+  return daily.some((item) => item.recommendedAction !== undefined && (
+    item.reviewRequired || item.recommendedAction !== aggregate.recommendedAction
+  ));
 }
 
 function inferLifecycleStage(metric: AdDailyMetrics, thresholds: QuantifiedAdMetric['thresholds']): AdLifecycleStage {
@@ -319,7 +339,7 @@ function aggregateTimelineMetric(metrics: AdDailyMetrics[]): AdDailyMetrics {
 function groupMetricsByAdObject(metrics: AdDailyMetrics[]): Map<string, AdDailyMetrics[]> {
   const groups = new Map<string, AdDailyMetrics[]>();
   for (const metric of metrics) {
-    const identity = metricIdentity(metric);
+    const identity = buildAdMetricObjectIdentity(metric);
     const group = groups.get(identity.key) ?? [];
     group.push(metric);
     groups.set(identity.key, group);
@@ -327,11 +347,7 @@ function groupMetricsByAdObject(metrics: AdDailyMetrics[]): Map<string, AdDailyM
   return groups;
 }
 
-function metricIdentity(metric: AdDailyMetrics): {
-  key: string;
-  objectType: DailyAdTimeline['objectType'];
-  objectName: string;
-} {
+export function buildAdMetricObjectIdentity(metric: AdDailyMetrics): AdMetricObjectIdentity {
   const searchTerm = (metric.searchTerm || '').trim();
   const targeting = (metric.targeting || '').trim();
   const adGroupName = (metric.adGroupName || '').trim();
@@ -344,10 +360,14 @@ function metricIdentity(metric: AdDailyMetrics): {
         ? 'ad_group'
         : 'campaign';
   const objectName = searchTerm || targeting || adGroupName || campaignName || 'unknown';
+  const reportIdentity = String(metric.reportType || '').trim().toLowerCase()
+    || String(metric.sourceFile || '').trim().replace(/\\/g, '/').toLowerCase()
+    || 'unknown-report';
   const key = [
     (metric.asin || '').toUpperCase(),
     campaignName.toLowerCase(),
     adGroupName.toLowerCase(),
+    reportIdentity,
     objectType,
     objectName.toLowerCase(),
   ].join('|');

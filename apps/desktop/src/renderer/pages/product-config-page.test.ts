@@ -19,6 +19,19 @@ import {
   productCostInputHint,
 } from './product-config-page';
 
+describe('ProductConfigPage dialog focus contract', () => {
+  it('routes every editor mode through the shared modal focus scope', () => {
+    const source = readFileSync(new URL('./product-config-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const productConfigDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('open: Boolean(editorMode)');
+    expect(source).toContain('ref={productConfigDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={productConfigDialogFocus.surfaceRef}');
+    expect(source).not.toContain("window.addEventListener('keydown', handleWindowKeyDown)");
+    expect(source).not.toContain('onKeyDown={handleEditorKeyDown}');
+  });
+});
+
 describe('productCostInputHint', () => {
   it('warns when cost fields still look like the default template', () => {
     expect(productCostInputHint({
@@ -115,10 +128,11 @@ describe('product config task and inline save feedback', () => {
     const modalStart = source.indexOf('<div className="product-config-modal-footer">');
     const modalFooter = source.slice(modalStart);
 
-    expect(source).toContain('onKeyDown={handleEditorKeyDown}');
-    expect(source).toContain("event.key !== 'Escape'");
-    expect(source).toContain("window.addEventListener('keydown', handleWindowKeyDown)");
-    expect(source).toContain("window.removeEventListener('keydown', handleWindowKeyDown)");
+    expect(source).toContain('const productConfigDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('dismissDisabled: editorBusy');
+    expect(source).toContain('ref={productConfigDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={productConfigDialogFocus.surfaceRef}');
+    expect(source).not.toContain("window.addEventListener('keydown', handleWindowKeyDown)");
     expect(source).toContain("label: '保存完整产品配置'");
     expect(modalFooter).toContain('saveConfigButton.label');
     expect(modalFooter).toContain('>关闭<');
@@ -137,7 +151,7 @@ describe('product config task and inline save feedback', () => {
 
     expect(task.title).toContain('B001');
     expect(task.detail).toContain('2416');
-    expect(task.primaryActionLabel).toBe('保存目标配置');
+    expect(task.primaryActionLabel).toBe('编辑当前产品目标');
     expect(task.primaryActionDisabled).toBe(false);
     expect(task.secondaryActionLabel).toBe('查看广告表现');
   });
@@ -151,8 +165,17 @@ describe('product config task and inline save feedback', () => {
     });
 
     expect(task.title).toContain('先填写 ASIN');
-    expect(task.primaryActionDisabled).toBe(true);
-    expect(task.primaryActionLabel).toBe('先填写 ASIN');
+    expect(task.primaryActionDisabled).toBe(false);
+    expect(task.primaryActionLabel).toBe('新建产品配置');
+  });
+
+  it('renders the product target task model through one task-first banner', () => {
+    const source = readFileSync(new URL('./product-config-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain("import { TaskBanner } from '../components/workspace';");
+    expect(source.match(/<TaskBanner/g)).toHaveLength(1);
+    expect(source).toContain('label: taskState.primaryActionLabel');
+    expect(source).toContain("setEditorMode(draft.asin ? 'target' : 'product')");
   });
 
   it('identifies cost and target fields that autosave on blur or Enter', () => {
@@ -443,5 +466,14 @@ describe('product config bulk ACOS apply', () => {
       targetAcos: 0.35,
       targetTacos: 0.12,
     });
+  });
+
+  it('uses one atomic IPC request for bulk target ACOS instead of sequential saves', () => {
+    const source = readFileSync(new URL('./product-config-page.tsx', import.meta.url), 'utf8');
+    const bulkApply = source.slice(source.indexOf('async function applyBulkTargetAcos()'), source.indexOf('\n  function updateCost', source.indexOf('async function applyBulkTargetAcos()')));
+
+    expect(bulkApply).toContain('bulkUpdateProductTargetAcos');
+    expect(bulkApply).not.toContain('for (const product of selectedRows)');
+    expect(bulkApply).toContain('result.updatedCount !== selectedRows.length');
   });
 });

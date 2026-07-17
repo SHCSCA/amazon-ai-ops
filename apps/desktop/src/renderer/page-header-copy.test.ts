@@ -4,25 +4,24 @@ import { describe, expect, it } from 'vitest';
 const copyPath = new URL('./page-header-copy.ts', import.meta.url);
 
 const expectedTitles = {
-  productManagement: '产品管理',
+  productManagement: '产品',
   operationScope: '工作范围',
-  dataCollection: '数据采集',
-  dataImportValidation: '导入校验',
+  dataCollection: '报表采集',
+  dataImportValidation: '导入检查',
   operationEvents: '运营事件',
-  productConfig: '成本目标',
-  adQuant: '广告表现',
-  recommendations: '优化建议',
-  approval: '审批中心',
+  productConfig: '目标与成本',
+  adQuant: '广告诊断',
+  recommendations: '待判断',
+  approval: '待审批',
   readback: '结果核对',
   keywordOpportunities: '关键词机会',
-  listingOptimization: 'Listing草案',
+  listingOptimization: 'Listing 草案',
   delivery: '交付验收',
-  scheduler: '自动任务',
-  settings: 'AI与规则',
+  scheduler: '定时任务',
+  settings: 'AI 与规则',
 };
 
 const pageTitleBindings = [
-  ['product management', 'pages/product-management-page.tsx', 'productManagement'],
   ['operation scope', 'pages/operation-scope-page.tsx', 'operationScope'],
   ['data collection', 'pages/data-collection-page.tsx', 'dataCollection'],
   ['data import validation', 'pages/data-import-validation-page.tsx', 'dataImportValidation'],
@@ -53,6 +52,16 @@ describe('page header copy contract', () => {
 
     expect(source).toContain("import { PAGE_HEADER_TITLES } from '../page-header-copy'");
     expect(source).toContain(`title={PAGE_HEADER_TITLES.${titleKey}}`);
+  });
+
+  it('lets the product workspace shell own the single page heading', () => {
+    const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const pageSource = readFileSync(new URL('pages/product-management-page.tsx', import.meta.url), 'utf8');
+
+    expect(appSource).toContain("ownsPageHeading={navigation.subview === 'products'}");
+    expect(appSource).toContain('workspaceLabel="产品工作台"');
+    expect(pageSource).not.toContain('<PageHeader');
+    expect(pageSource).not.toContain('PAGE_HEADER_TITLES');
   });
 
   it('uses the task-first PageFrame title for Today instead of the legacy PageHeader contract', () => {

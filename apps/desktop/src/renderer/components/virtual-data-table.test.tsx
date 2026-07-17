@@ -4,6 +4,7 @@ import {
   virtualColumnSortAria,
   virtualColumnStickyClass,
   virtualColumnTemplate,
+  virtualRowSelectionAllowed,
   virtualTableStatusText,
   virtualRowParityClass,
   virtualSortHeaderClass,
@@ -32,6 +33,7 @@ describe('VirtualDataTable', () => {
     expect(text).toContain('getVirtualItems');
     expect(text).toContain('getTotalSize');
     expect(text).toContain('measureElement');
+    expect(text).toContain('data-scroll-owner="virtual-table"');
   });
 
   it('builds an explicit grid template so dense columns cannot reflow unpredictably', () => {
@@ -153,5 +155,29 @@ describe('VirtualDataTable', () => {
     expect(text).toContain("if (event.key !== 'Enter' && event.key !== ' ') return;");
     expect(styles).toContain('.virtual-table-row-selectable');
     expect(styles).toContain('.virtual-table-row-selected');
+  });
+
+  it('does not let nested controls masquerade as a row-selection gesture', () => {
+    const row = {};
+    const nestedButton = { closest: () => ({ tagName: 'BUTTON' }) };
+    const plainCell = { closest: () => null };
+
+    expect(virtualRowSelectionAllowed(row, row)).toBe(true);
+    expect(virtualRowSelectionAllowed(plainCell, row)).toBe(true);
+    expect(virtualRowSelectionAllowed(nestedButton, row)).toBe(false);
+
+    const text = source();
+    expect(text).toContain('event.target !== event.currentTarget');
+    expect(text).toContain('virtualRowSelectionAllowed(event.target, event.currentTarget)');
+  });
+
+  it('exposes stable queue, sticky-header, row-index, and row-key evidence markers', () => {
+    const text = source();
+
+    expect(text).toContain('data-workspace-queue-scroll');
+    expect(text).toContain('data-workspace-queue-header');
+    expect(text).toContain('data-workspace-row');
+    expect(text).toContain('data-row-index={virtualRow.index}');
+    expect(text).toContain('data-row-key={String(key)}');
   });
 });

@@ -8,6 +8,7 @@ type MetricLike = {
   orders?: number;
   clicks?: number;
   riskLevel?: string;
+  severity?: string;
 };
 
 type TimelineLike = {
@@ -97,7 +98,9 @@ export function buildAdQuantProductGroups(input: {
     group.orders += numberValue(row.orders);
     group.clicks += numberValue(row.clicks);
     group.diagnosticCount += 1;
-    if (String(row.riskLevel || '').toLowerCase() === 'high') group.highRiskCount += 1;
+    if ([row.riskLevel, row.severity].some((value) => String(value || '').toLowerCase() === 'high')) {
+      group.highRiskCount += 1;
+    }
   }
 
   for (const row of input.timelines || []) {
@@ -140,7 +143,7 @@ export function buildAdQuantProductGroups(input: {
 
   return {
     groups: groupsSorted,
-    selectedProductKey: groupsSorted[0]?.productKey || '',
+    selectedProductKey: scopedAsin && groups.has(scopedAsin) ? scopedAsin : '',
   };
 }
 

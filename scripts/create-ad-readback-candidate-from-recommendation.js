@@ -80,39 +80,6 @@ function sourceRowForRecommendation(args, rec) {
   return Number.isFinite(number) ? number : undefined;
 }
 
-function reportTypeFromFilePath(filePath) {
-  const name = path.basename(String(filePath || '')).toLowerCase();
-  if (/auto[_-]?targeting/.test(name)) return 'auto_targeting';
-  if (/product[_-]?targeting/.test(name)) return 'product_targeting';
-  if (/search[_-]?term|user[_-]?search/.test(name)) return 'search_term';
-  if (/keyword/.test(name)) return 'keyword';
-  return '';
-}
-
-function resolveWritableEntity(rec, sourceFiles, sourceRow, context) {
-  if (rec.entityType && rec.entityType !== 'search_term') {
-    return { entityType: rec.entityType, entityName: context.entityName, sourceReportType: '' };
-  }
-
-  const sourceReportTypes = sourceFiles.map(reportTypeFromFilePath).filter(Boolean);
-  if (sourceReportTypes.includes('keyword')) {
-    return { entityType: 'keyword', entityName: context.entityName, sourceReportType: 'keyword' };
-  }
-  if (sourceReportTypes.includes('auto_targeting')) {
-    return { entityType: 'target', entityName: context.entityName, sourceReportType: 'auto_targeting' };
-  }
-  if (sourceReportTypes.includes('product_targeting')) {
-    return { entityType: 'target', entityName: context.entityName, sourceReportType: 'product_targeting' };
-  }
-
-  const reportTypes = sourceFiles.map((filePath) => `${reportTypeFromFilePath(filePath) || 'unknown'}:${path.basename(filePath)}`).join(', ');
-  throw new Error([
-    `Search-term lower_bid recommendation cannot be converted into an Ads UI write target from sourceRow ${sourceRow}.`,
-    'A formal readback candidate must bind to a writable keyword, auto-targeting, or product-targeting source report.',
-    reportTypes ? `Source report types: ${reportTypes}.` : 'No writable source report type was found.',
-  ].join(' '));
-}
-
 function isRealReportFile(filePath) {
   if (!hasText(filePath)) return false;
   const extension = path.extname(String(filePath).trim()).toLowerCase();
@@ -148,6 +115,40 @@ function requireSourceRecommendationValues(currentValue, recommendedValue) {
     `Recommendation evidence lacks executable source recommendation values: missing ${missing.join(' and ')}.`,
     'Rerun recommendation generation so currentValue/recommendedValue are persisted, or pass --source-current-value and --source-recommended-value from the approved recommendation.',
   ].join(' '));
+}
+
+const WRITABLE_ENTITY_TYPES = new Set(['keyword', 'auto_targeting', 'product_targeting']);
+
+function requireVerifiedWritableTarget(rec) {
+  const target = rec.evidence?.writableTarget;
+  const entityId = String(target?.entityId || '').trim();
+  const sourceFile = String(target?.sourceFile || '').trim();
+  const sourceRow = Number(target?.sourceRow);
+  const proofPath = path.resolve(String(target?.identityProofPath || ''));
+  const valid = target
+    && WRITABLE_ENTITY_TYPES.has(String(target.entityType || '').trim())
+    && entityId
+    && entityId.toLowerCase() !== String(rec.entityId || '').trim().toLowerCase()
+    && hasText(target.entityName)
+    && hasText(target.campaignName)
+    && hasText(target.adGroupName)
+    && hasText(target.metricDate)
+    && isRealReportFile(sourceFile)
+    && Number.isInteger(sourceRow)
+    && sourceRow > 0
+    && ['ads_ui', 'ads_api'].includes(String(target.identitySource || '').trim())
+    && hasText(target.verifiedBy)
+    && !Number.isNaN(Date.parse(String(target.verifiedAt || '')))
+    && hasText(target.verificationNote)
+    && fs.existsSync(proofPath)
+    && fs.statSync(proofPath).isFile();
+  if (!valid) {
+    throw new Error([
+      'Recommendation evidence lacks a verified writable Ads target.',
+      'Create the candidate only after Main has bound an opaque Ads UI/API entity id, current writable report row, and identity proof.',
+    ].join(' '));
+  }
+  return target;
 }
 
 function contextFromEntityId(entityId) {
@@ -234,9 +235,6 @@ function main() {
   if (rec.actionType !== 'lower_bid') {
     throw new Error(`Refusing to create first readback candidate for unsupported actionType: ${rec.actionType}`);
   }
-  if (!hasText(context.campaignName) || !hasText(context.adGroupName) || !hasText(context.entityName)) {
-    throw new Error('Recommendation evidence lacks campaign/ad group/entity context.');
-  }
 
   const sourceEntityType = sourceValue(args, rec, 'entityType', rec.entityType || '');
   const sourceCurrentValue = sourceValue(args, rec, 'currentValue', rec.currentValue || '');
@@ -247,28 +245,28 @@ function main() {
   const sourceRow = sourceRowForRecommendation(args, rec);
   requireTraceableSourceReport(sourceFiles, sourceRow);
   requireSourceRecommendationValues(sourceCurrentValue, sourceRecommendedValue);
-  const writableEntity = resolveWritableEntity(rec, sourceFiles, sourceRow, context);
-  const writeEntityType = writableEntity.entityType;
-  const writeEntityName = writableEntity.entityName || context.entityName;
+  const writableTarget = requireVerifiedWritableTarget(rec);
+  const writeEntityType = writableTarget.entityType;
+  const writeEntityName = writableTarget.entityName;
   const riskRationale = [
     `Candidate is only low risk if Ads UI exposes an editable ${writeEntityType} bid row for ${writeEntityName}.`,
     'Lowering one bid is bounded and reversible, does not increase budget or expand traffic,',
     'and still requires operator approval plus before/after readback.',
     `Source recommendation came from ${sourceEntityType || 'unknown'} evidence; source values are recommendation inputs, not proven live Ads bid values.`,
-    writableEntity.sourceReportType ? `Writable Ads UI object was bound from ${writableEntity.sourceReportType} source row ${sourceRow}.` : '',
-    context.hasFallback
-      ? 'Campaign/ad group/entity context was completed from entityId fallback and must be re-confirmed in the live Ads UI before approval.'
-      : '',
+    `Writable Ads UI object was bound from ${path.basename(writableTarget.sourceFile)} row ${writableTarget.sourceRow}.`,
   ].join(' ');
 
   const target = {
     storeName: context.storeName,
     marketplaceCode: context.marketplaceCode,
     portfolioName: context.portfolioName,
-    campaignName: context.campaignName,
-    adGroupName: context.adGroupName,
+    metricDate: writableTarget.metricDate,
+    campaignName: writableTarget.campaignName,
+    adGroupName: writableTarget.adGroupName,
     entityType: writeEntityType,
+    entityId: writableTarget.entityId,
     entityName: writeEntityName,
+    identityProofPath: writableTarget.identityProofPath,
     actionType: rec.actionType,
   };
 
@@ -279,11 +277,13 @@ function main() {
   pushArg(templateArgs, '--marketplace', context.marketplaceCode);
   pushArg(templateArgs, '--portfolio', context.portfolioName);
   pushArg(templateArgs, '--asin', context.asin);
-  pushArg(templateArgs, '--metric-date', context.metricDate);
-  pushArg(templateArgs, '--campaign', context.campaignName, { required: true });
-  pushArg(templateArgs, '--ad-group', context.adGroupName, { required: true });
+  pushArg(templateArgs, '--metric-date', writableTarget.metricDate, { required: true });
+  pushArg(templateArgs, '--campaign', writableTarget.campaignName, { required: true });
+  pushArg(templateArgs, '--ad-group', writableTarget.adGroupName, { required: true });
   pushArg(templateArgs, '--entity-type', writeEntityType, { required: true });
+  pushArg(templateArgs, '--entity-id', writableTarget.entityId, { required: true });
   pushArg(templateArgs, '--entity', writeEntityName, { required: true });
+  pushArg(templateArgs, '--identity-proof', writableTarget.identityProofPath, { required: true });
   pushArg(templateArgs, '--action', rec.actionType, { required: true });
   pushArg(templateArgs, '--recommendation-id', recommendationId, { required: true });
   pushArg(templateArgs, '--source-evidence', path.relative(root, sourcePath));

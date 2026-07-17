@@ -66,13 +66,13 @@ function createFixture(): AuthorityFixture {
   `);
 
   const repo = new RecommendationRepository(db);
-  const reportPath = path.join(dir, 'user-search-term.xlsx');
+  const reportPath = path.join(dir, 'keyword.xlsx');
   const approvalPath = path.join(dir, 'approval.png');
   const beforePath = path.join(dir, 'before.png');
   const afterPath = path.join(dir, 'after.png');
   const readbackPath = path.join(dir, 'readback.png');
   for (const filePath of [reportPath, approvalPath, beforePath, afterPath, readbackPath]) {
-    fs.writeFileSync(filePath, 'integration-evidence', 'utf8');
+    fs.writeFileSync(filePath, path.basename(filePath), 'utf8');
   }
 
   const scope: AdReadbackAuthorityScope = {
@@ -111,8 +111,25 @@ function createFixture(): AuthorityFixture {
       adGroupName: 'Main',
       targeting: 'tight match target',
       batchId: scope.batchId,
+      reportType: 'keyword',
+      sourceFile: reportPath,
       sourceFiles: [reportPath],
       sourceRow: 12,
+      writableTarget: {
+        entityType: 'keyword',
+        entityId: 'keyword-integration-1',
+        entityName: 'tight match target',
+        campaignName: 'SP exact',
+        adGroupName: 'Main',
+        metricDate: '2026-06-12',
+        sourceFile: reportPath,
+        sourceRow: 12,
+        identitySource: 'ads_ui',
+        verifiedBy: 'Alice',
+        verifiedAt: '2026-06-12T09:55:00.000Z',
+        verificationNote: 'Matched the editable keyword row before approval.',
+        identityProofPath: approvalPath,
+      },
       explanationSource: 'ai',
       aiModel: 'deepseek-chat',
       decisionAgreement: 'aligned',
@@ -206,12 +223,25 @@ function createFixture(): AuthorityFixture {
   return fixture;
 }
 
+function sourceAuthorityFor(fixture: AuthorityFixture) {
+  return {
+    reportType: 'keyword',
+    entityName: 'tight match target',
+    campaignName: 'SP exact',
+    adGroupName: 'Main',
+    metricDate: '2026-06-12',
+    sourceFile: fixture.reportPath,
+    sourceRow: 12,
+  };
+}
+
 function exportEvidence(fixture: AuthorityFixture): Record<string, any> {
   const authorizedInput = buildAuthorizedAdReadbackEvidenceInput({
     request: fixture.request,
     recommendation: fixture.repo.findById(fixture.recommendationId),
     resolvedScope: fixture.scope,
     allowedSourceFiles: [fixture.reportPath],
+    sourceAuthority: sourceAuthorityFor(fixture),
   });
   const evidence = buildAdReadbackEvidence(authorizedInput);
   fs.writeFileSync(fixture.evidencePath, JSON.stringify(evidence, null, 2), 'utf8');
@@ -224,6 +254,7 @@ function reverify(fixture: AuthorityFixture, evidence: Record<string, any>): voi
     recommendation: fixture.repo.findById(fixture.recommendationId),
     resolvedScope: fixture.scope,
     allowedSourceFiles: [fixture.reportPath],
+    sourceAuthority: sourceAuthorityFor(fixture),
   });
 }
 

@@ -72,6 +72,7 @@ function runMigrations(database: Database.Database): void {
       referral_fee_rate REAL DEFAULT 0.15,
       storage_fee REAL DEFAULT 0,
       other_cost REAL DEFAULT 0,
+      current_price REAL DEFAULT 0,
       min_price REAL DEFAULT 0,
       target_net_margin REAL DEFAULT 0,
       target_acos REAL DEFAULT 0,
@@ -80,6 +81,7 @@ function runMigrations(database: Database.Database): void {
       FOREIGN KEY (product_id) REFERENCES products(id)
     )
   `);
+  ensureColumn(database, 'product_costs', 'current_price', 'REAL DEFAULT 0');
 
   // ad_daily_metrics
   database.exec(`

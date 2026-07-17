@@ -3,7 +3,12 @@ import type {
   AdReadbackAuthorityRecord,
   AdReadbackAuthorityScope,
   ExportAdReadbackEvidenceRequest,
+  WritableAdTargetEvidence,
 } from '@amazon-ai-ops/shared-types';
+import {
+  getRecommendationWritableTargetOwnershipBlockers,
+  type RecommendationMetricSourceAuthority,
+} from './recommendation-writable-target-policy';
 import type { AdReadbackEvidenceInput } from './ad-readback-evidence';
 
 export type ExportAuthorizedAdReadbackEvidenceRequest = ExportAdReadbackEvidenceRequest;
@@ -14,6 +19,7 @@ export interface BuildAuthorizedAdReadbackEvidenceInput {
   recommendation: ActionRecommendation | undefined;
   resolvedScope: AdReadbackAuthorityScope;
   allowedSourceFiles: string[];
+  sourceAuthority: RecommendationMetricSourceAuthority;
 }
 
 export interface AssertCurrentAdReadbackEvidenceAuthorityInput {
@@ -21,6 +27,7 @@ export interface AssertCurrentAdReadbackEvidenceAuthorityInput {
   recommendation: ActionRecommendation | undefined;
   resolvedScope: AdReadbackAuthorityScope;
   allowedSourceFiles: string[];
+  sourceAuthority: RecommendationMetricSourceAuthority;
 }
 
 function text(value: unknown): string {
@@ -106,10 +113,134 @@ function assertSourceFilesAllowed(sourceFiles: string[], allowedSourceFiles: str
   }
 }
 
-function recommendationObjectName(recommendation: ActionRecommendation): string {
-  return text(recommendation.evidence?.searchTerm)
-    || text(recommendation.evidence?.targeting)
-    || text(recommendation.entityName);
+const WRITABLE_AD_ENTITY_TYPES = new Set(['keyword', 'auto_targeting', 'product_targeting']);
+
+function requireVerifiedWritableTarget(
+  recommendation: ActionRecommendation,
+  allowedSourceFiles: string[],
+  sourceAuthority: RecommendationMetricSourceAuthority,
+): {
+  entityType: string;
+  entityId: string;
+  entityName: string;
+  campaignName: string;
+  adGroupName: string;
+  metricDate: string;
+  identityProofPath: string;
+} {
+  const evidence = recommendation.evidence || {};
+  const writableTarget = objectOrEmpty(evidence.writableTarget);
+  const entityType = normalizedText(writableTarget.entityType);
+  const entityId = text(writableTarget.entityId);
+  const entityName = text(writableTarget.entityName);
+  const campaignName = text(writableTarget.campaignName);
+  const adGroupName = text(writableTarget.adGroupName);
+  const metricDate = text(writableTarget.metricDate);
+  const sourceFile = text(writableTarget.sourceFile);
+  const targetSourceRow = positiveInteger(writableTarget.sourceRow);
+  const verifiedAt = Date.parse(text(writableTarget.verifiedAt));
+  const sourceFileSet = new Set(allowedSourceFiles.map(normalizedPath));
+
+  if (
+    !WRITABLE_AD_ENTITY_TYPES.has(entityType)
+    || !entityId
+    || normalizedText(entityId) === normalizedText(recommendation.entityId)
+    || !entityName
+    || !campaignName
+    || !adGroupName
+    || !metricDate
+    || !sourceFile
+    || !sourceFileSet.has(normalizedPath(sourceFile))
+    || targetSourceRow === null
+    || !text(writableTarget.verifiedBy)
+    || !['ads_ui', 'ads_api'].includes(normalizedText(writableTarget.identitySource))
+    || !Number.isFinite(verifiedAt)
+    || !text(writableTarget.verificationNote)
+    || !text(writableTarget.identityProofPath)
+    || normalizedText(campaignName) !== normalizedText(evidence.campaignName)
+    || normalizedText(adGroupName) !== normalizedText(evidence.adGroupName)
+  ) {
+    throw new Error('结果核对被阻断：建议缺少经人工核验且可追溯的 Ads 可写对象，请先完成专门复核。');
+  }
+
+  const ownershipBlockers = getRecommendationWritableTargetOwnershipBlockers(
+    recommendation,
+    writableTarget as unknown as WritableAdTargetEvidence,
+    sourceAuthority,
+  );
+  if (ownershipBlockers.length > 0) {
+    throw new Error(`结果核对被阻断：Ads 可写对象不属于当前建议：${ownershipBlockers.join('、')}。`);
+  }
+
+  return {
+    entityType,
+    entityId,
+    entityName,
+    campaignName,
+    adGroupName,
+    metricDate,
+    identityProofPath: text(writableTarget.identityProofPath),
+  };
+}
+
+function sameWritableTarget(leftValue: unknown, rightValue: unknown): boolean {
+  const left = objectOrEmpty(leftValue);
+  const right = objectOrEmpty(rightValue);
+  return normalizedText(left.entityType) === normalizedText(right.entityType)
+    && text(left.entityId) === text(right.entityId)
+    && normalizedText(left.entityName) === normalizedText(right.entityName)
+    && normalizedText(left.campaignName) === normalizedText(right.campaignName)
+    && normalizedText(left.adGroupName) === normalizedText(right.adGroupName)
+    && text(left.metricDate) === text(right.metricDate)
+    && normalizedPath(left.sourceFile) === normalizedPath(right.sourceFile)
+    && positiveInteger(left.sourceRow) === positiveInteger(right.sourceRow)
+    && normalizedText(left.identitySource) === normalizedText(right.identitySource)
+    && text(left.verifiedBy) === text(right.verifiedBy)
+    && sameTimestamp(left.verifiedAt, right.verifiedAt)
+    && text(left.verificationNote) === text(right.verificationNote)
+    && normalizedPath(left.identityProofPath) === normalizedPath(right.identityProofPath);
+}
+
+function assertApprovedQuantReviewResolution(input: {
+  recommendation: ActionRecommendation;
+  resolvedScope: AdReadbackAuthorityScope;
+  sourceFiles: string[];
+  sourceRow: number | null;
+  approvalDecidedAt: unknown;
+}): void {
+  const evidence = input.recommendation.evidence || {};
+  if (evidence.quantReviewRequired !== true) return;
+
+  const resolution = objectOrEmpty(evidence.reviewResolution);
+  const metricSource = objectOrEmpty(resolution.metricSource);
+  const resolvedBlockers = Array.isArray(resolution.resolvedBlockers)
+    ? resolution.resolvedBlockers.map(text).filter(Boolean)
+    : [];
+  const fromRevision = nonNegativeInteger(resolution.fromRevision);
+  const resolvedRevision = nonNegativeInteger(resolution.resolvedRevision);
+  const reviewedAt = Date.parse(text(resolution.reviewedAt));
+  const approvedAt = Date.parse(text(input.approvalDecidedAt));
+  const valid = Number(resolution.schemaVersion) === 1
+    && resolution.fromStatus === 'needs_review'
+    && fromRevision !== null
+    && resolvedRevision !== null
+    && resolvedRevision === fromRevision + 1
+    && resolvedRevision + 1 === (input.recommendation.revision ?? 0)
+    && resolvedBlockers.length === 1
+    && resolvedBlockers[0] === 'quant_review_required'
+    && Boolean(text(resolution.reviewedBy))
+    && Boolean(text(resolution.rationale))
+    && Number.isFinite(reviewedAt)
+    && Number.isFinite(approvedAt)
+    && reviewedAt <= approvedAt
+    && sameScope(objectOrEmpty(resolution.scope) as AdReadbackAuthorityScope, input.resolvedScope)
+    && text(metricSource.batchId) === text(evidence.batchId)
+    && samePathSet(stringArray(metricSource.sourceFiles), input.sourceFiles)
+    && positiveInteger(metricSource.sourceRow) === input.sourceRow
+    && sameWritableTarget(resolution.writableTarget, evidence.writableTarget);
+  if (!valid) {
+    throw new Error('结果核对被阻断：规则量化建议缺少与批准前版本一致的人工复核记录。');
+  }
 }
 
 function authoritativeScopeCopy(scope: AdReadbackAuthorityScope): AdReadbackAuthorityScope {
@@ -190,6 +321,22 @@ export function buildAuthorizedAdReadbackEvidenceInput(
   }
   assertSourceFilesAllowed(sourceFiles, input.allowedSourceFiles);
 
+  if (recommendation.actionType !== 'lower_bid') {
+    throw new Error('结果核对被阻断：首个真实回读仅允许有界的降低竞价动作。');
+  }
+  const writableTarget = requireVerifiedWritableTarget(
+    recommendation,
+    input.allowedSourceFiles,
+    input.sourceAuthority,
+  );
+  assertApprovedQuantReviewResolution({
+    recommendation,
+    resolvedScope,
+    sourceFiles,
+    sourceRow,
+    approvalDecidedAt: approvalDecision.decidedAt,
+  });
+
   const riskLevel = normalizedText(recommendation.riskLevel);
   if (riskLevel === 'high' || riskLevel === 'forbidden' || riskLevel.includes('forbidden')) {
     throw new Error('结果核对被阻断：高风险或禁止执行建议不能进入普通回读导出。');
@@ -217,11 +364,13 @@ export function buildAuthorizedAdReadbackEvidenceInput(
       marketplaceCode: recommendation.marketplaceCode,
       portfolioName: text(evidence.portfolioName),
       asin: recommendation.asin || text(evidence.asin),
-      metricDate: text(evidence.date),
-      campaignName: text(evidence.campaignName),
-      adGroupName: text(evidence.adGroupName),
-      entityType: recommendation.entityType,
-      entityName: recommendationObjectName(recommendation),
+      metricDate: writableTarget.metricDate,
+      campaignName: writableTarget.campaignName,
+      adGroupName: writableTarget.adGroupName,
+      entityType: writableTarget.entityType,
+      entityId: writableTarget.entityId,
+      entityName: writableTarget.entityName,
+      identityProofPath: writableTarget.identityProofPath,
       actionType: recommendation.actionType,
     },
     source: {
@@ -324,7 +473,9 @@ function authoritySensitiveFieldsMatch(
     && sameText(actualTarget.campaignName, expectedTarget.campaignName)
     && sameText(actualTarget.adGroupName, expectedTarget.adGroupName)
     && sameText(actualTarget.entityType, expectedTarget.entityType)
+    && sameText(actualTarget.entityId, expectedTarget.entityId)
     && sameText(actualTarget.entityName, expectedTarget.entityName)
+    && sameText(actualTarget.identityProofPath, expectedTarget.identityProofPath)
     && sameText(actualTarget.actionType, expectedTarget.actionType);
 
   const actualSource = objectOrEmpty(evidence.source);
@@ -381,6 +532,7 @@ export function assertCurrentAdReadbackEvidenceAuthority(
     recommendation: input.recommendation,
     resolvedScope: input.resolvedScope,
     allowedSourceFiles: input.allowedSourceFiles,
+    sourceAuthority: input.sourceAuthority,
   });
 
   if (!authoritySensitiveFieldsMatch(input.evidence, canonical)) {

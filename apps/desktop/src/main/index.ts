@@ -5,7 +5,7 @@ import * as crypto from 'crypto';
 import { BrowserController } from '@amazon-ai-ops/browser-worker';
 import { LocalScheduler } from '@amazon-ai-ops/scheduler';
 import { AuditLogger, ScreenshotManager, TraceManager, CleanupManager } from '@amazon-ai-ops/audit-log';
-import { AdQuantifier, RecommendationGenerator, DEFAULT_RULE_CONFIG, mergeAdDecisions } from '@amazon-ai-ops/rules-engine';
+import { AdQuantifier, RecommendationGenerator, DEFAULT_RULE_CONFIG, buildAdMetricObjectIdentity, mergeAdDecisions } from '@amazon-ai-ops/rules-engine';
 import { ReportParser, keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics, parseListingContent } from '@amazon-ai-ops/report-parser';
 import { AdActionReasonExplainer, AdStrategyDiagnoser, OpenAICompatibleProvider, DailyReportGenerator, assessAdEvidenceSufficiency, type AdStrategyDiagnosisOutput, type AiEvidenceItem, type AiReasonedDecision, type ProductStrategyContext } from '@amazon-ai-ops/ai-adapter';
 import { initSqlite, getSqliteDb } from '@amazon-ai-ops/local-db/src/sqlite/db';
@@ -30,8 +30,17 @@ import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSugg
 import type { RuleConfig } from '@amazon-ai-ops/rules-engine';
 import type { TaskName } from '@amazon-ai-ops/scheduler';
 import type { ActionRecommendation, AdDailyMetrics, CreateOperationEventInput, DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingContentVersion, ListingDraft, ListingSuggestion, OperationEventFilter, UpdateOperationEventInput } from '@amazon-ai-ops/shared-types';
+import type {
+  BindRecommendationWritableTargetRequest,
+  BindRecommendationWritableTargetResult,
+  ResolveRecommendationReviewRequest,
+  ResolveRecommendationReviewResult,
+} from '@amazon-ai-ops/shared-types';
 import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithinRealDirectory, isSafeManifestPath, readLingxingManifestForAudit, safeFileSegment } from './acceptance-audit-export';
+import { cleanupAppResources, createBeforeQuitCoordinator } from './app-shutdown';
 import { summarizeBusinessReportCoverage } from './business-report-coverage';
+import { countImportedRowsForReportFile } from './business-report-import-coverage';
+import { configureEvidenceUserDataPath } from './evidence-user-data-path';
 import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-preflight-export';
 import { copyDiagnosticEvidenceFileToBundle, copyReportFailureEvidenceFilesToBundle, evaluateDownloadCenterDiagnosticEvidenceFiles } from './download-center-diagnostic-evidence-files';
 import { getLatestDownloadCenterDiagnosticRowForModel } from './download-center-diagnostic-store';
@@ -51,21 +60,39 @@ import {
   type ExportAuthorizedAdReadbackEvidenceRequest,
 } from './ad-readback-authority';
 import { verifyAdReadbackEvidenceFile, type VerifiedAdReadbackEvidence } from './ad-readback-evidence-verifier';
+import { assertCurrentWritableAdTargetAuthority, resolveWritableAdTargetAuthority } from './writable-ad-target-resolution';
+import { resolveRecommendationReview } from './recommendation-review-resolution';
+import { bindRecommendationWritableTarget } from './recommendation-writable-target-binding';
+import {
+  getRecommendationWritableTargetOwnershipBlockers,
+  type RecommendationMetricSourceAuthority,
+} from './recommendation-writable-target-policy';
+import { assertRecommendationMetricSourceAuthority } from './recommendation-metric-source-authority';
 import { fillAdReadbackSession, prepareAdReadbackSession, verifyAdReadbackSession, type FilledAdReadbackSession, type PreparedAdReadbackSession, type VerifiedAdReadbackSession } from './ad-readback-session';
 import { saveReadbackCaptureFile, type ReadbackCaptureSlot, type SavedReadbackCapture } from './ad-readback-capture';
 import { refreshFinalReadiness } from './final-readiness-refresh';
-import { getDeliveryEvidenceStatus } from './delivery-evidence-status';
+import { getDeliveryEvidenceStatus, getPackageEvidenceStatus } from './delivery-evidence-status';
 import { annotateRecommendationsWithStrategy, bindRecommendationsToScopeAsin, buildAdStrategyDiagnosisInput, createAiOnlyRecommendationsFromDecisions } from './ad-recommendation-ai-context';
 import { buildAdAiEvidencePack, summarizeAiEvidencePack } from './ad-ai-evidence-pack';
 import { validateAiDiagnosisEvidence } from './ad-ai-evidence-validator';
 import { buildAdProductHistoryLedger } from './ad-product-history-ledger';
 import { filterBusinessPipelineOperationEvents } from './operation-event-scope';
 import { assertRecommendationMetricsLoaded, filterFormalRecommendationMetrics } from './recommendation-generation-gate';
+import {
+  assertFormalBusinessWorkflowReady,
+  type FormalBusinessWorkflow,
+} from './formal-business-data-gate';
 import { buildListingAiCallLogInput, buildListingRewritePrompt, parseAiDraftResponse } from './listing-ai-draft';
 import { normalizeManualListingContent } from './listing-manual-content';
 import { buildAdActionReasonAiCallLogInput, type AdActionExplanationForLog } from './ad-action-ai-call-log';
 import { mergeAdActionExplanationEvidence } from './ad-action-explanation-merge';
 import { readSavedLoginCredentials, saveLoginCredentials, type LoginCredentialCipher } from './login-credentials';
+import {
+  resolveAiSettingsWithPersistedKey,
+  savePersistedAiApiKey,
+  stripPersistedAiApiKeyFields,
+  type AiKeyCipher,
+} from './ai-key-persistence';
 import {
   normalizeAiSettingsForSaveInput,
   normalizeAiSettingsForTestInput,
@@ -82,6 +109,7 @@ import {
   selectLatestRawBusinessReportsByType,
 } from './business-report-files';
 import {
+  deliveryReadinessAllowsExport,
   missingReadinessView as buildMissingReadinessView,
   normalizeDeliveryReadiness,
 } from './delivery-readiness-view';
@@ -131,6 +159,7 @@ const state: AppState = {
 // Paths
 // ============================================================================
 
+configureEvidenceUserDataPath(app);
 const USER_DATA_DIR = app.getPath('userData');
 const STORAGE_DIR = path.join(USER_DATA_DIR, 'storage');
 const SCREENSHOTS_DIR = path.join(STORAGE_DIR, 'screenshots');
@@ -190,6 +219,7 @@ interface BusinessBatchOptionView {
   completedAt?: string;
   totalFileRecords: number;
   realReportFileCount: number;
+  importedReportTypeCount: number;
   importedRowCount: number;
   missingReportLabels: string[];
 }
@@ -298,6 +328,7 @@ async function initApp(): Promise<void> {
   state.reportFileRepo = new ReportFileRepository(state.db);
   state.aiCallLogRepo = new AiCallLogRepository(state.db);
   state.aiDiagnosisRunRepo = new AiDiagnosisRunRepository(state.db);
+  readAiSettingsForMain();
   console.log('[App] init:repositories-ready');
 
   // Init audit/trace/screenshot managers
@@ -332,7 +363,7 @@ async function initApp(): Promise<void> {
     cron: '0 9 * * *',
     enabled: false,
     callback: async () => {
-      await runRecommendationGeneration();
+      await runRecommendationGeneration(handleGetOperationScope());
     },
   });
 
@@ -377,7 +408,7 @@ type AdsSessionResult = {
   adsTitle: string;
 };
 
-const electronLoginCredentialCipher: LoginCredentialCipher = {
+const electronLoginCredentialCipher: LoginCredentialCipher & AiKeyCipher = {
   isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
   encrypt: (value: string) => `safe:${safeStorage.encryptString(value).toString('base64')}`,
   decrypt: (value: string) => {
@@ -385,6 +416,35 @@ const electronLoginCredentialCipher: LoginCredentialCipher = {
     return safeStorage.decryptString(Buffer.from(payload, 'base64'));
   },
 };
+
+function readAiSettingsForMain(): Record<string, string> {
+  const repo = state.settingsRepo;
+  if (!repo) return normalizeAiSettingsRecord({});
+  return normalizeAiSettingsRecord(
+    resolveAiSettingsWithPersistedKey(repo.getAll(), repo, electronLoginCredentialCipher),
+  );
+}
+
+function persistAiSettingsForMain(
+  settings: Record<string, string>,
+  options: { clearApiKey?: boolean } = {},
+): void {
+  const repo = state.settingsRepo;
+  if (!repo) return;
+  const apiKey = String(settings.ai_api_key || settings.aiApiKey || '').trim();
+  if (options.clearApiKey) {
+    savePersistedAiApiKey(repo, '', electronLoginCredentialCipher);
+  } else if (apiKey) {
+    savePersistedAiApiKey(repo, apiKey, electronLoginCredentialCipher);
+  }
+  repo.save(stripPersistedAiApiKeyFields(settings));
+}
+
+function inputRequestsAiKeyClear(input: Record<string, unknown>): boolean {
+  const value = input.clearAiKey ?? input.clear_ai_key;
+  if (typeof value === 'boolean') return value;
+  return typeof value === 'string' && ['true', '1', 'yes'].includes(value.trim().toLowerCase());
+}
 
 function handleGetSavedLoginCredentials() {
   if (!state.settingsRepo) {
@@ -1122,9 +1182,12 @@ function composeBusinessBatchForScope(scope: NormalizedBusinessUiScope): Busines
 
 function summarizeBusinessBatchOption(scope: NormalizedBusinessUiScope, batchResult: BusinessBatchResult): BusinessBatchOptionView {
   const realFiles = batchResult.files.filter((file) => isExistingRawBusinessReportFile(file, batchResult.batch));
+  const importedReportTypes = new Set<string>();
   const importedRowCount = realFiles.reduce((sum, file) => {
     if (!file.filePath) return sum;
-    return sum + countImportedRowsForFile(scope, canonicalizeExistingPath(file.filePath), file.batchId || batchResult.batch.id);
+    const importedRows = countImportedRowsForFile(scope, canonicalizeExistingPath(file.filePath), file.batchId || batchResult.batch.id);
+    if (importedRows > 0) importedReportTypes.add(file.reportType);
+    return sum + importedRows;
   }, 0);
   const coverage = summarizeBusinessReportCoverage({
     expectedTypes: LINGXING_AD_REPORTS.map((report) => report.type),
@@ -1144,6 +1207,7 @@ function summarizeBusinessBatchOption(scope: NormalizedBusinessUiScope, batchRes
     completedAt: batchResult.batch.completedAt,
     totalFileRecords: batchResult.files.length,
     realReportFileCount: coverage.realReportFileCount,
+    importedReportTypeCount: importedReportTypes.size,
     importedRowCount,
     missingReportLabels: LINGXING_AD_REPORTS
       .filter((report) => coverage.missingReportTypes.includes(report.type))
@@ -1169,29 +1233,11 @@ function metricSourceFileCandidates(filePath: string): string[] {
 
 function countImportedRowsForFile(scope: NormalizedBusinessUiScope, filePath: string, batchId?: string): number {
   if (!state.db) return 0;
-  const candidates = metricSourceFileCandidates(filePath);
-  let sql = `
-    date >= ?
-    AND date <= ?
-    AND COALESCE(store_name, '') = COALESCE(?, '')
-    AND COALESCE(marketplace_code, '') = COALESCE(?, '')
-    AND source_file IN (${candidates.map(() => '?').join(', ')})
-  `;
-  const params: (string | number)[] = [scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode, ...candidates];
-  if (scope.asin) {
-    sql += ' AND upper(COALESCE(asin, \'\')) = upper(?)';
-    params.push(scope.asin);
-  }
-  if (batchId) {
-    sql += ' AND batch_id = ?';
-    params.push(batchId);
-  }
-  const row = state.db.prepare(`
-    SELECT COUNT(*) AS count
-    FROM ad_daily_metrics
-    WHERE ${sql}
-  `).get(...params) as { count?: number } | undefined;
-  return Number(row?.count || 0);
+  return countImportedRowsForReportFile(state.db, {
+    scope,
+    sourceFiles: metricSourceFileCandidates(filePath),
+    batchId,
+  });
 }
 
 function readBusinessMetricSummary(sql: string, params: (string | number)[]) {
@@ -1366,7 +1412,7 @@ function loadBusinessQuantSummary(scope: NormalizedBusinessUiScope, realReportFi
     const rowAcos = sales > 0 ? spend / sales : 0;
     const rowCvr = clicks > 0 ? orders / clicks : 0;
     const rowCpc = clicks > 0 ? spend / clicks : 0;
-    const quant = quantifier.quantify({
+    const metric: AdDailyMetrics = {
       date: row.metricDate || scope.dateTo,
       storeName: scope.storeName,
       marketplaceCode: scope.marketplaceCode,
@@ -1386,14 +1432,18 @@ function loadBusinessQuantSummary(scope: NormalizedBusinessUiScope, realReportFi
       cpc: rowCpc,
       cvr: rowCvr,
       sourceFile: '',
-    });
+      reportType: row.reportType || '',
+    };
+    const quant = quantifier.quantify(metric);
+    const identity = buildAdMetricObjectIdentity(metric);
     return {
       portfolioName: row.portfolioName || undefined,
       campaignName: row.campaignName || undefined,
       adGroupName: row.adGroupName || undefined,
       asin: row.asin || undefined,
-      objectType: row.reportType || 'metric',
-      objectName: row.objectName || '-',
+      objectKey: identity.key,
+      objectType: identity.objectType,
+      objectName: identity.objectName,
       spend,
       sales,
       orders,
@@ -1538,18 +1588,20 @@ function countMetricsWithAsin(metrics: AdDailyMetrics[]): number {
   return metrics.filter((metric) => String(metric.asin || '').trim().length > 0).length;
 }
 
-function getBusinessRecommendationGate(input: unknown): {
+function getBusinessRecommendationGate(input: unknown, workflow: FormalBusinessWorkflow): {
   scope: NormalizedBusinessUiScope;
   pipeline: ReturnType<typeof handleGetBusinessUiDataPipeline>;
   metricSource: BusinessMetricSource;
 } {
   const scope = normalizeBusinessUiScope(input);
   const pipeline = handleGetBusinessUiDataPipeline(scope);
-  if (!pipeline.collection.realReportFiles.length) {
-    throw new Error('生成优化建议被阻断：当前范围没有真实 .xlsx/.xls/.csv 原始报表文件。');
-  }
+  assertFormalBusinessWorkflowReady({
+    workflow,
+    requiredReportTypes: LINGXING_AD_REPORTS.map((report) => report.type),
+    realReportFiles: pipeline.collection.realReportFiles,
+  });
   if (!pipeline.quant.hasImportedMetrics || pipeline.quant.importedRows <= 0) {
-    throw new Error('生成优化建议被阻断：当前范围没有由真实报表导入的广告指标行。');
+    throw new Error('正式业务分析被阻断：当前范围没有由真实报表导入的广告指标行。');
   }
   const batchId = pipeline.collection.latestBatch?.id;
   const realReportBatchIds = Array.from(new Set(
@@ -1572,7 +1624,7 @@ function getBusinessRecommendationGate(input: unknown): {
 }
 
 function handleGetBusinessKeywordOpportunities(input: unknown): BusinessKeywordOpportunityRow[] {
-  const gate = getBusinessRecommendationGate(input);
+  const gate = getBusinessRecommendationGate(input, 'keyword-opportunities');
   const { sql, params } = businessMetricsWhere(gate.scope, gate.metricSource);
   if (!state.db) return [];
   const rows = state.db.prepare(`
@@ -4882,7 +4934,7 @@ async function handleGenerateListingDrafts(suggestions: ListingSuggestion[]): Pr
   }
 
   let drafts = buildRuleBasedListingDrafts(suggestions, { appVersion: APP_VERSION });
-  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const settings = readAiSettingsForMain();
   const aiApiKey = settings.aiApiKey;
 
   if (aiApiKey) {
@@ -5003,7 +5055,7 @@ async function handleTestAiSettings(settings: Record<string, unknown>) {
   const config = buildAiProviderConfig(settings || {});
   function persistTestStatus(status: 'available' | 'failed', message: string) {
     const testedAt = new Date().toISOString();
-    state.settingsRepo?.save({
+    persistAiSettingsForMain({
       aiApiKey: config.apiKey,
       ai_api_key: config.apiKey,
       aiBaseUrl: config.baseUrl,
@@ -5250,11 +5302,11 @@ function sanitizeAiSettingsForRenderer(settings: Record<string, unknown>): Recor
 }
 
 function normalizeAiSettingsForSave(incoming: Record<string, unknown>): Record<string, string> {
-  return normalizeAiSettingsForSaveInput(incoming, state.settingsRepo?.getAll() ?? {});
+  return normalizeAiSettingsForSaveInput(incoming, readAiSettingsForMain());
 }
 
 function normalizeAiSettingsForTest(incoming: Record<string, unknown>): Record<string, string> {
-  return normalizeAiSettingsForTestInput(incoming, state.settingsRepo?.getAll() ?? {});
+  return normalizeAiSettingsForTestInput(incoming, readAiSettingsForMain());
 }
 
 function handleGetDeliveryReadiness(): DeliveryReadinessView {
@@ -5266,7 +5318,9 @@ function handleGetDeliveryReadiness(): DeliveryReadinessView {
     return missingReadinessView(`最终验收 manifest 尚未生成：${finalReadinessPath}`);
   }
   try {
-    return normalizeDeliveryReadiness(readJsonFile(finalReadinessPath), finalReadinessPath);
+    return normalizeDeliveryReadiness(readJsonFile(finalReadinessPath), finalReadinessPath, {
+      currentPackage: getPackageEvidenceStatus(path.join(REPO_ROOT_DIR, 'apps', 'desktop', 'release')),
+    });
   } catch (error) {
     return {
       ...missingReadinessView(`最终验收 manifest 读取失败：${error instanceof Error ? error.message : String(error)}`),
@@ -5369,7 +5423,7 @@ function handleExportDeliveryBundle(input?: unknown) {
       actionItems: ['先运行 write:v15-evidence-manifest，再用该 manifest 运行 verify:v15-final-readiness。'],
     };
   }
-  if (!readiness.appReady) {
+  if (!deliveryReadinessAllowsExport(readiness)) {
     return {
       success: false,
       status: readiness.status,
@@ -6275,7 +6329,7 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
     throw new Error('生成优化建议需要明确当前运营范围，并且必须先完成真实报表采集和导入。');
   }
 
-  const gate = getBusinessRecommendationGate(scope);
+  const gate = getBusinessRecommendationGate(scope, 'recommendation');
   const metricsBackfill = undefined;
   const metrics = filterFormalRecommendationMetrics(
     loadBusinessRecommendationMetrics(gate.scope, gate.metricSource, Math.max(limit, RECOMMENDATION_METRIC_LOAD_LIMIT)),
@@ -6319,7 +6373,7 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   recommendations = strategyDiagnosisResult.recommendations;
   recommendations = await enrichAdRecommendationsWithAiExplanations(recommendations);
   const aiCount = recommendations.filter((rec) => rec.evidence?.aiStrategySource === 'ai' || rec.evidence?.explanationSource === 'ai').length;
-  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const settings = readAiSettingsForMain();
   const aiInvoked = metrics.length > 0 && Boolean(settings.aiApiKey);
   const aiFallbackReason = recommendations
     .map((rec) => rec.evidence?.aiFallbackReason)
@@ -6557,7 +6611,7 @@ async function enrichAdRecommendationsWithAiExplanations(
 ): Promise<ActionRecommendation[]> {
   if (recommendations.length === 0) return recommendations;
 
-  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const settings = readAiSettingsForMain();
   const aiApiKey = settings.aiApiKey;
   if (!aiApiKey) {
     return recommendations.map((rec) => mergeAdActionExplanationEvidence({
@@ -6700,7 +6754,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     recommendations,
     evidencePack,
   });
-  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const settings = readAiSettingsForMain();
   const diagnosis = settings.aiApiKey
     ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings)), {
         persona: settings.aiPersona,
@@ -6912,6 +6966,46 @@ function recordAdStrategyAiCallLog(
   }
 }
 
+function assertRecommendationWritableTargetCurrent(
+  recommendation: ActionRecommendation | undefined,
+  scope: {
+    dateFrom: string;
+    dateTo: string;
+    storeName: string;
+    marketplaceCode: string;
+    asin?: string;
+    batchId: string;
+  },
+  allowedSourceFiles: string[],
+): RecommendationMetricSourceAuthority {
+  if (!state.db || !recommendation?.evidence?.writableTarget) {
+    throw new Error('结果核对被阻断：当前建议没有经验证的 Ads 可写对象。');
+  }
+  const sourceAuthority = assertRecommendationMetricSourceAuthority(state.db, {
+    recommendation,
+    scope: {
+      ...scope,
+      asin: scope.asin || '',
+    },
+    allowedSourceFiles,
+  });
+  const canonicalTarget = assertCurrentWritableAdTargetAuthority(state.db, {
+    scope,
+    target: recommendation.evidence.writableTarget,
+    allowedSourceFiles,
+    syntheticRecommendationEntityId: recommendation.entityId,
+  });
+  const ownershipBlockers = getRecommendationWritableTargetOwnershipBlockers(
+    recommendation,
+    canonicalTarget,
+    sourceAuthority,
+  );
+  if (ownershipBlockers.length > 0) {
+    throw new Error(`结果核对被阻断：Ads 可写对象不属于当前建议：${ownershipBlockers.join('、')}。`);
+  }
+  return sourceAuthority;
+}
+
 function validateCurrentAdReadbackEvidenceAuthority(
   evidencePath: string,
   stage: 'verify' | 'final-readiness',
@@ -6920,10 +7014,23 @@ function validateCurrentAdReadbackEvidenceAuthority(
   try {
     evidence = JSON.parse(fs.readFileSync(path.resolve(evidencePath), 'utf8')) as Record<string, any>;
     const authority = evidence.authority || {};
-    const gate = getBusinessRecommendationGate(authority);
+    const gate = getBusinessRecommendationGate(authority, 'readback');
+    const recommendation = state.recommendationRepo?.findById(Number(authority.recommendationId));
+    const sourceAuthority = assertRecommendationWritableTargetCurrent(
+      recommendation,
+      {
+        dateFrom: gate.scope.dateFrom,
+        dateTo: gate.scope.dateTo,
+        storeName: gate.scope.storeName,
+        marketplaceCode: gate.scope.marketplaceCode,
+        asin: gate.scope.asin,
+        batchId: gate.scope.batchId || '',
+      },
+      gate.metricSource.sourceFiles,
+    );
     assertCurrentAdReadbackEvidenceAuthority({
       evidence,
-      recommendation: state.recommendationRepo?.findById(Number(authority.recommendationId)),
+      recommendation,
       resolvedScope: {
         dateFrom: gate.scope.dateFrom,
         dateTo: gate.scope.dateTo,
@@ -6933,6 +7040,7 @@ function validateCurrentAdReadbackEvidenceAuthority(
         batchId: gate.scope.batchId || '',
       },
       allowedSourceFiles: gate.metricSource.sourceFiles,
+      sourceAuthority,
     });
     return { ok: true };
   } catch (caught) {
@@ -6964,7 +7072,9 @@ function handleRefreshFinalReadiness(input?: { adReadbackPath?: string }): { suc
     success: true,
     evidenceManifestPath: result.evidenceManifestPath,
     finalReadinessPath: result.finalReadinessPath,
-    readiness: normalizeDeliveryReadiness(readJsonFile(result.finalReadinessPath), result.finalReadinessPath),
+    readiness: normalizeDeliveryReadiness(readJsonFile(result.finalReadinessPath), result.finalReadinessPath, {
+      currentPackage: getPackageEvidenceStatus(path.join(REPO_ROOT_DIR, 'apps', 'desktop', 'release')),
+    }),
   };
 }
 
@@ -7074,7 +7184,7 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     throw new Error('AI 阶段诊断需要明确当前操作范围：开始日期、结束日期、店铺和站点。');
   }
 
-  const gate = getBusinessRecommendationGate(scope);
+  const gate = getBusinessRecommendationGate(scope, 'diagnosis');
   const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(1000, Number(request.limit))) : 300;
   const metrics = filterFormalRecommendationMetrics(
     loadBusinessRecommendationMetrics(gate.scope, gate.metricSource, Math.max(limit, RECOMMENDATION_METRIC_LOAD_LIMIT)),
@@ -7084,7 +7194,6 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     metricsLength: metrics.length,
     realReportFileCount: gate.pipeline.collection.fileAudit.realReportFileCount,
     requiredReportCount: LINGXING_AD_REPORTS.length,
-    requireFullReportCoverage: false,
     sourceFileCount: gate.metricSource.sourceFiles.length,
     sourceRowCount: countMetricsWithSourceRow(metrics),
     sourceFileRowCount: countMetricsWithSourceFileAndRow(metrics),
@@ -7141,7 +7250,7 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     recommendations: ruleCandidates,
     evidencePack,
   });
-  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
+  const settings = readAiSettingsForMain();
   const fallbackDiagnosis: AdStrategyDiagnosisOutput = {
     schemaVersion: 'ad_strategy_diagnosis_v1',
     evidenceSufficiency: assessAdEvidenceSufficiency(diagnosisInput),
@@ -7216,10 +7325,11 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
 function assertRecommendationCurrentDataGate(recommendationId: number): {
   recommendation: ActionRecommendation;
   allowedSourceFiles: string[];
+  sourceAuthority: RecommendationMetricSourceAuthority;
 } {
   const recommendation = state.recommendationRepo?.findById(recommendationId);
   if (!recommendation) {
-    throw new Error('Recommendation not found');
+    throw new Error('审批被阻断：建议不存在，请刷新后重试。');
   }
   const batchId = recommendation.evidence?.batchId;
   if (!batchId) {
@@ -7239,23 +7349,119 @@ function assertRecommendationCurrentDataGate(recommendationId: number): {
     asin: recommendation.asin,
     batchId,
   };
-  const gate = getBusinessRecommendationGate(scope);
+  const gate = getBusinessRecommendationGate(scope, 'approval');
+  const sourceAuthority = assertRecommendationWritableTargetCurrent(
+    recommendation,
+    scope,
+    gate.metricSource.sourceFiles,
+  );
   return {
     recommendation,
     allowedSourceFiles: gate.metricSource.sourceFiles,
+    sourceAuthority,
   };
+}
+
+function handleBindRecommendationWritableTarget(
+  input: BindRecommendationWritableTargetRequest,
+): BindRecommendationWritableTargetResult {
+  const request = input || {} as BindRecommendationWritableTargetRequest;
+  if (!Number.isInteger(request.recommendationId) || request.recommendationId <= 0) {
+    throw new Error('Ads 对象核验被阻断：缺少有效 recommendation id。');
+  }
+  if (!state.db || !state.recommendationRepo) {
+    throw new Error('Ads 对象核验被阻断：本地权威数据库尚未初始化。');
+  }
+  const recommendation = state.recommendationRepo.findById(request.recommendationId);
+  if (!recommendation) {
+    throw new Error('Ads 对象核验被阻断：建议不存在，请刷新后重试。');
+  }
+  const gate = getBusinessRecommendationGate(request.scope, 'approval');
+  const sourceAuthority = assertRecommendationMetricSourceAuthority(state.db, {
+    recommendation,
+    scope: request.scope,
+    allowedSourceFiles: gate.metricSource.sourceFiles,
+  });
+  const boundAt = new Date().toISOString();
+  const result = bindRecommendationWritableTarget({
+    recommendation,
+    request,
+    allowedSourceFiles: gate.metricSource.sourceFiles,
+    sourceAuthority,
+    boundAt,
+    resolveWritableTarget: (candidate, context) => resolveWritableAdTargetAuthority(state.db!, {
+      scope: request.scope,
+      candidate,
+      allowedSourceFiles: gate.metricSource.sourceFiles,
+      syntheticRecommendationEntityId: recommendation.entityId,
+      verifiedBy: context.boundBy,
+      verifiedAt: context.boundAt,
+    }),
+    persist: (evidencePatch) => state.recommendationRepo!.bindWritableTargetIfCurrent(
+      request.recommendationId,
+      request.expectedRevision,
+      evidencePatch,
+    ),
+  });
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return result;
+}
+
+function handleResolveRecommendationReview(input: ResolveRecommendationReviewRequest): ResolveRecommendationReviewResult {
+  const request = input || {} as ResolveRecommendationReviewRequest;
+  if (!Number.isInteger(request.recommendationId) || request.recommendationId <= 0) {
+    throw new Error('复核被阻断：缺少有效 recommendation id。');
+  }
+  if (!state.db || !state.recommendationRepo) {
+    throw new Error('复核被阻断：本地权威数据库尚未初始化。');
+  }
+  const recommendation = state.recommendationRepo.findById(request.recommendationId);
+  if (!recommendation) {
+    throw new Error('复核被阻断：建议不存在，请刷新后重试。');
+  }
+  const gate = getBusinessRecommendationGate(request.scope, 'approval');
+  const sourceAuthority = assertRecommendationMetricSourceAuthority(state.db, {
+    recommendation,
+    scope: request.scope,
+    allowedSourceFiles: gate.metricSource.sourceFiles,
+  });
+  const reviewedAt = new Date().toISOString();
+  const result = resolveRecommendationReview({
+    recommendation,
+    request,
+    allowedSourceFiles: gate.metricSource.sourceFiles,
+    sourceAuthority,
+    reviewedAt,
+    resolveWritableTarget: (candidate, context) => resolveWritableAdTargetAuthority(state.db!, {
+      scope: request.scope,
+      candidate,
+      allowedSourceFiles: gate.metricSource.sourceFiles,
+      syntheticRecommendationEntityId: recommendation.entityId,
+      verifiedBy: context.reviewedBy,
+      verifiedAt: context.reviewedAt,
+    }),
+    persist: (status, evidencePatch) => state.recommendationRepo!.updateStatusWithEvidenceIfCurrent(
+      request.recommendationId,
+      'needs_review',
+      request.expectedRevision,
+      status,
+      evidencePatch,
+    ),
+  });
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return result;
 }
 
 async function handleApproveRecommendation(input: any): Promise<void> {
   const { id, expectedRevision: requestedRevision, decision } = normalizeRecommendationDecisionRequest(input);
   if (!id) throw new Error('批准建议失败：缺少 recommendation id。');
-  const { recommendation, allowedSourceFiles } = assertRecommendationCurrentDataGate(id);
+  const { recommendation, allowedSourceFiles, sourceAuthority } = assertRecommendationCurrentDataGate(id);
   const expectedRevision = assertRecommendationDecisionRevision(recommendation, requestedRevision);
   applyRecommendationDecision({
     recommendation,
     targetStatus: 'approved',
     decision,
-    approvalOptions: { allowedSourceFiles },
+    approvalOptions: { allowedSourceFiles, sourceAuthority },
     persist: (status, evidencePatch) => {
       const updated = state.recommendationRepo?.updateStatusWithEvidenceIfCurrent(
         id,
@@ -7276,7 +7482,7 @@ async function handleRejectRecommendation(input: any): Promise<void> {
   if (!id) throw new Error('拒绝建议失败：缺少 recommendation id。');
   const recommendation = state.recommendationRepo?.findById(id);
   if (!recommendation) {
-    throw new Error('Recommendation not found');
+    throw new Error('拒绝建议失败：建议不存在，请刷新后重试。');
   }
   const expectedRevision = assertRecommendationDecisionRevision(recommendation, requestedRevision);
   applyRecommendationDecision({
@@ -7321,7 +7527,7 @@ function handleGetRecommendations(filter: any = []): any[] {
       marketplaceCode: request.marketplaceCode,
       asin: request.asin,
       batchId: request.batchId,
-    });
+    }, 'recommendation-list');
   } catch {
     return [];
   }
@@ -7355,7 +7561,7 @@ function handleExportAdReadbackEvidence(input: ExportAuthorizedAdReadbackEvidenc
   const request = input || {} as ExportAuthorizedAdReadbackEvidenceRequest;
   let gate: ReturnType<typeof getBusinessRecommendationGate>;
   try {
-    gate = getBusinessRecommendationGate(request.scope);
+    gate = getBusinessRecommendationGate(request.scope, 'readback');
   } catch (caught) {
     console.warn('[AdReadbackAuthority]', {
       stage: 'export-gate',
@@ -7364,9 +7570,22 @@ function handleExportAdReadbackEvidence(input: ExportAuthorizedAdReadbackEvidenc
     });
     throw new Error('结果核对被阻断：当前范围无法绑定真实报表批次，请刷新范围后重试。');
   }
+  const recommendation = state.recommendationRepo?.findById(Number(request.recommendationId));
+  const sourceAuthority = assertRecommendationWritableTargetCurrent(
+    recommendation,
+    {
+      dateFrom: gate.scope.dateFrom,
+      dateTo: gate.scope.dateTo,
+      storeName: gate.scope.storeName,
+      marketplaceCode: gate.scope.marketplaceCode,
+      asin: gate.scope.asin,
+      batchId: gate.scope.batchId || '',
+    },
+    gate.metricSource.sourceFiles,
+  );
   const evidenceInput = buildAuthorizedAdReadbackEvidenceInput({
     request,
-    recommendation: state.recommendationRepo?.findById(Number(request.recommendationId)),
+    recommendation,
     resolvedScope: {
       dateFrom: gate.scope.dateFrom,
       dateTo: gate.scope.dateTo,
@@ -7376,6 +7595,7 @@ function handleExportAdReadbackEvidence(input: ExportAuthorizedAdReadbackEvidenc
       batchId: gate.scope.batchId || '',
     },
     allowedSourceFiles: gate.metricSource.sourceFiles,
+    sourceAuthority,
   });
   const evidence = buildAdReadbackEvidence(evidenceInput);
   const exportDir = path.join(EXPORTS_DIR, 'ad-readback-evidence');
@@ -7466,11 +7686,11 @@ function handleSaveReadbackCapture(input: {
 async function handleExecuteRecommendation(recommendationId: number): Promise<void> {
   const recommendation = state.recommendationRepo?.findById(recommendationId);
   if (!recommendation) {
-    throw new Error('Recommendation not found');
+    throw new Error('执行被阻断：建议不存在，请刷新后重试。');
   }
 
   if (recommendation.status !== 'approved') {
-    throw new Error('Recommendation must be approved before execution');
+    throw new Error('执行被阻断：建议必须先完成人工批准。');
   }
 
   const executionResult = buildAdExecutionUnavailableResult(
@@ -7539,20 +7759,22 @@ async function runDailyReportGeneration(): Promise<void> {
   };
 
   // Generate AI report if configured
-  const settings = normalizeAiSettings(state.settingsRepo?.getAll() ?? {});
-  if (settings.aiApiKey) {
-    try {
-      const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
-      const reportGen = new DailyReportGenerator(provider);
-      const report = await reportGen.generate(summary);
+  const settings = readAiSettingsForMain();
+  if (!settings.aiApiKey) {
+    throw new Error('AI Key 未配置，无法生成每日运营报告。');
+  }
+  try {
+    const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
+    const reportGen = new DailyReportGenerator(provider);
+    const report = await reportGen.generate(summary);
 
-      // Save report
-      const reportPath = path.join(REPORTS_DIR, `daily_${today}.json`);
-      fs.writeFileSync(reportPath, report);
-      console.log(`[Scheduler] Daily report generated: ${reportPath}`);
-    } catch (err) {
-      console.error('[Scheduler] AI report generation failed:', err);
-    }
+    // Save report
+    const reportPath = path.join(REPORTS_DIR, `daily_${today}.json`);
+    fs.writeFileSync(reportPath, report);
+    console.log(`[Scheduler] Daily report generated: ${reportPath}`);
+  } catch (err) {
+    console.error('[Scheduler] AI report generation failed:', err);
+    throw err;
   }
 }
 
@@ -7569,11 +7791,16 @@ function registerIpcHandlers(): void {
   }));
 
   // Settings
-  ipcMain.handle('settings:get', () => sanitizeAiSettingsForRenderer(state.settingsRepo?.getAll() ?? {}));
+  ipcMain.handle('settings:get', () => sanitizeAiSettingsForRenderer(readAiSettingsForMain()));
   ipcMain.handle('settings:save', (_, settings) => {
-    state.settingsRepo?.save(normalizeAiSettingsForSave(settings || {}));
-    if (settings.ruleConfig) {
-      state.ruleConfig = settings.ruleConfig;
+    const incoming = settings && typeof settings === 'object'
+      ? settings as Record<string, unknown>
+      : {};
+    persistAiSettingsForMain(normalizeAiSettingsForSave(incoming), {
+      clearApiKey: inputRequestsAiKeyClear(incoming),
+    });
+    if (incoming.ruleConfig) {
+      state.ruleConfig = incoming.ruleConfig as RuleConfig;
     }
     mainWindow?.webContents.send('business-ui:data-updated');
     return { success: true };
@@ -7712,6 +7939,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle('recommendations:generate', (_, filter) => runRecommendationGeneration(filter));
   ipcMain.handle('v1_5:business-ui:ad-strategy-diagnosis', (_, filter) => handleRunAdStrategyDiagnosis(filter));
   ipcMain.handle('v1_5:business-ui:ai-diagnosis-runs', (_, filter) => handleListAiDiagnosisRuns(filter));
+  ipcMain.handle('recommendations:bind-writable-target', (_, input) => handleBindRecommendationWritableTarget(input));
+  ipcMain.handle('recommendations:resolve-review', (_, input) => handleResolveRecommendationReview(input));
   ipcMain.handle('recommendations:approve', (_, id) => handleApproveRecommendation(id));
   ipcMain.handle('recommendations:reject', (_, id) => handleRejectRecommendation(id));
   ipcMain.handle('recommendations:execute', (_, id) => handleExecuteRecommendation(id));
@@ -7765,6 +7994,7 @@ function registerIpcHandlers(): void {
       };
       state.productRepo.updateCost(saved.id, {
         productId: saved.id,
+        currentPrice: toNumber(input.cost.currentPrice),
         purchaseCost: toNumber(input.cost.purchaseCost),
         firstLegCost: toNumber(input.cost.firstLegCost),
         fbaFee: toNumber(input.cost.fbaFee),
@@ -7782,6 +8012,39 @@ function registerIpcHandlers(): void {
       success: true,
       product: state.productRepo.findByAsin(asin, storeName, marketplaceCode),
       cost: state.productRepo.getCost(saved.id),
+    };
+  });
+
+  ipcMain.handle('products:bulk-update-target-acos', (_, input) => {
+    if (!state.productRepo) throw new Error('Product repository is not initialized');
+    const targetAcos = Number(input?.targetAcos);
+    const products = Array.isArray(input?.products) ? input.products : [];
+    if (!Number.isFinite(targetAcos) || targetAcos <= 0 || targetAcos > 1) {
+      throw new Error('批量目标 ACOS 必须大于 0 且不超过 100%。');
+    }
+    if (products.length === 0 || products.length > 500) {
+      throw new Error('请选择 1 到 500 个产品后再批量更新目标 ACOS。');
+    }
+    const identities = new Set<string>();
+    const updates = products.map((product: any) => {
+      const asin = String(product?.asin || '').trim();
+      const storeName = String(product?.storeName || product?.store_name || '').trim();
+      const marketplaceCode = String(product?.marketplaceCode || product?.marketplace_code || '').trim();
+      if (!asin || !storeName || !marketplaceCode) {
+        throw new Error('批量目标 ACOS 更新需要 ASIN、店铺和站点。');
+      }
+      const identity = `${storeName}\u0000${marketplaceCode}\u0000${asin}`.toUpperCase();
+      if (identities.has(identity)) throw new Error(`产品 ${asin} 在批量更新中重复。`);
+      identities.add(identity);
+      return { asin, storeName, marketplaceCode, targetAcos };
+    });
+    const updatedProducts = state.productRepo.updateTargetAcosMany(updates);
+    mainWindow?.webContents.send('business-ui:data-updated');
+    return {
+      success: true,
+      targetAcos,
+      updatedCount: updatedProducts.length,
+      products: updatedProducts,
     };
   });
 
@@ -7886,15 +8149,14 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', async () => {
-  // Cleanup
-  if (state.browserController) {
-    await state.browserController.close();
-  }
-  if (state.scheduler) {
-    state.scheduler.stop();
-  }
-  if (state.db) {
-    state.db.close();
-  }
+const handleBeforeQuit = createBeforeQuitCoordinator({
+  cleanup: () => cleanupAppResources(state, (resource, error) => {
+    console.error(`[App] shutdown ${resource} cleanup failed:`, error);
+  }),
+  requestQuit: () => app.quit(),
+  reportError: (error) => {
+    console.error('[App] shutdown cleanup failed:', error);
+  },
 });
+
+app.on('before-quit', handleBeforeQuit);

@@ -9,6 +9,16 @@ const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const bundleRoot = path.join(root, 'output', 'delivery-bundles');
 const finalReadinessPattern = /^final-readiness-(?:\d{4}-\d{2}-\d{2}|\d{10,})\.json$/i;
 const packageLaunchSmokePattern = /^package-launch-smoke-\d+\.json$/i;
+const expectedNonReadyGateIds = new Set([
+  'report-collection-delivery',
+  'lingxing-listing-full-read',
+  'ai-live-provider',
+  'ad-recommendation-ai-explanation',
+  'listing-ai-draft',
+  'real-ad-execution-readback',
+  'release-package-hash',
+  'package-launch-smoke',
+]);
 
 function latestEvidence(pattern) {
   if (!fs.existsSync(evidenceDir)) return null;
@@ -72,8 +82,49 @@ function gateByName(finalReadiness, name) {
   return (finalReadiness.gates || []).find((gate) => gate.name === name);
 }
 
+function gateById(finalReadiness, id) {
+  return (finalReadiness.gates || []).find((gate) => gate.id === id);
+}
+
 function sha256(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').toUpperCase();
+}
+
+function normalizedPath(filePath) {
+  if (!filePath || typeof filePath !== 'string') return '';
+  const resolved = path.resolve(filePath);
+  let canonical = resolved;
+  try {
+    canonical = fs.realpathSync.native(resolved);
+  } catch {
+    // Callers separately validate existence where it is required.
+  }
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+}
+
+function samePath(left, right) {
+  const normalizedLeft = normalizedPath(left);
+  return Boolean(normalizedLeft && normalizedLeft === normalizedPath(right));
+}
+
+function validArtifact(artifact) {
+  if (!artifact?.path || !fs.existsSync(artifact.path)) return false;
+  try {
+    const stat = fs.statSync(artifact.path);
+    if (!stat.isFile() || Number(artifact.sizeBytes || 0) <= 0) return false;
+    if (stat.size !== Number(artifact.sizeBytes || 0)) return false;
+    return /^[A-F0-9]{64}$/.test(String(artifact.sha256 || ''))
+      && sha256(artifact.path) === String(artifact.sha256 || '').toUpperCase();
+  } catch {
+    return false;
+  }
+}
+
+function artifactsMatch(left, right) {
+  return Boolean(left && right)
+    && samePath(left.path, right.path)
+    && Number(left.sizeBytes || 0) === Number(right.sizeBytes || 0)
+    && String(left.sha256 || '').toUpperCase() === String(right.sha256 || '').toUpperCase();
 }
 
 function check(condition, message, failures) {
@@ -110,7 +161,8 @@ function hasOnlyLegacySourceTraceabilityFailure(output) {
 }
 
 function hasCurrentPackageHashEvidence(finalReadiness) {
-  const releasePackageGate = gateByName(finalReadiness, 'Release package hash');
+  const releasePackageGate = gateById(finalReadiness, 'release-package-hash')
+    || gateByName(finalReadiness, 'Release package hash');
   const index = finalReadiness.packageIndex;
   if (!releasePackageGate || releasePackageGate.ok !== true || releasePackageGate.status !== 'passed') return false;
   if (index?.present !== true) return false;
@@ -118,17 +170,309 @@ function hasCurrentPackageHashEvidence(finalReadiness) {
   if (Number(index.existingCount || 0) !== Number(index.count || 0)) return false;
   if (Number(index.missingCount || 0) !== 0) return false;
   if (!Array.isArray(index.packages)) return false;
+  if (index.packages.length !== Number(index.count || 0)) return false;
   if (!index.packages.some((item) => item.kind === 'installer')) return false;
   if (!index.packages.some((item) => item.kind === 'portable')) return false;
   return index.packages.every((item) => {
-    if (!item?.sourcePath || !fs.existsSync(item.sourcePath) || !fs.statSync(item.sourcePath).isFile()) return false;
-    if (Number(item.sizeBytes || 0) <= 0 || fs.statSync(item.sourcePath).size !== Number(item.sizeBytes || 0)) return false;
-    return /^[A-F0-9]{64}$/.test(String(item.sha256 || ''))
-      && sha256(item.sourcePath) === String(item.sha256 || '').toUpperCase();
+    if (item?.exists !== true || !item?.sourcePath || !item?.fileName) return false;
+    return validArtifact({
+      path: item.sourcePath,
+      sizeBytes: item.sizeBytes,
+      sha256: item.sha256,
+    });
   });
 }
 
-function hasValidPackageLaunchSmoke(filePath) {
+function packageIdentity(item) {
+  return [
+    String(item?.kind || ''),
+    normalizedPath(item?.sourcePath),
+    String(item?.fileName || ''),
+  ].join('\u0000');
+}
+
+function packageEvidenceRecord(item) {
+  return {
+    kind: String(item?.kind || ''),
+    sourcePath: normalizedPath(item?.sourcePath),
+    fileName: String(item?.fileName || ''),
+    exists: item?.exists === true,
+    sizeBytes: Number(item?.sizeBytes || 0),
+    sha256: String(item?.sha256 || '').toUpperCase(),
+    modifiedAt: String(item?.modifiedAt || ''),
+  };
+}
+
+function packageEvidenceListsMatch(leftPackages, rightPackages) {
+  if (!Array.isArray(leftPackages) || !Array.isArray(rightPackages)) return false;
+  if (leftPackages.length !== rightPackages.length) return false;
+  const left = [...leftPackages].sort((a, b) => packageIdentity(a).localeCompare(packageIdentity(b)));
+  const right = [...rightPackages].sort((a, b) => packageIdentity(a).localeCompare(packageIdentity(b)));
+  return left.every((item, index) => (
+    JSON.stringify(packageEvidenceRecord(item)) === JSON.stringify(packageEvidenceRecord(right[index]))
+  ));
+}
+
+function pathIsInside(filePath, parentDir) {
+  const relative = path.relative(normalizedPath(parentDir), normalizedPath(filePath));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function bundleFileRecordMatches(manifest, bundleManifestPath, label, expectedPath) {
+  const record = Array.isArray(manifest.files)
+    ? manifest.files.find((item) => item?.label === label && item?.bundlePath)
+    : null;
+  if (!record) return false;
+  const recordedPath = path.resolve(path.dirname(bundleManifestPath), record.bundlePath);
+  if (!samePath(recordedPath, expectedPath) || !pathIsInside(recordedPath, path.dirname(bundleManifestPath))) return false;
+  return validArtifact({
+    path: recordedPath,
+    sizeBytes: record.sizeBytes,
+    sha256: record.sha256,
+  });
+}
+
+function bundlePackageIndexMatchesFinalReadiness(finalReadiness, manifest, bundleManifestPath) {
+  const summary = manifest.packageIndex;
+  const finalIndex = finalReadiness.packageIndex;
+  if (summary?.present !== true || !summary.bundleJson || !finalIndex) return false;
+  if (Number(summary.count || 0) !== Number(finalIndex.count || 0)) return false;
+  if (Number(summary.existingCount || 0) !== Number(finalIndex.existingCount || 0)) return false;
+  if (Number(summary.missingCount || 0) !== Number(finalIndex.missingCount || 0)) return false;
+  const indexPath = path.resolve(path.dirname(bundleManifestPath), summary.bundleJson);
+  if (!pathIsInside(indexPath, path.dirname(bundleManifestPath))) return false;
+  if (!fs.existsSync(indexPath) || !fs.statSync(indexPath).isFile()) return false;
+  if (!bundleFileRecordMatches(manifest, bundleManifestPath, 'release-package-index', indexPath)) return false;
+  let bundleIndex;
+  try {
+    bundleIndex = readJson(indexPath);
+  } catch {
+    return false;
+  }
+  if (!samePath(bundleIndex.releaseDir, finalIndex.releaseDir)) return false;
+  if (!packageEvidenceListsMatch(bundleIndex.packages, finalIndex.packages)) return false;
+  const packages = Array.isArray(bundleIndex.packages) ? bundleIndex.packages : [];
+  if (packages.length !== Number(summary.count || 0)) return false;
+  return packages.every((item) => item?.exists === true && validArtifact({
+    path: item.sourcePath,
+    sizeBytes: item.sizeBytes,
+    sha256: item.sha256,
+  }));
+}
+
+function bundleSourceFileMatches(manifest, bundleManifestPath, sourcePath) {
+  const record = Array.isArray(manifest.files)
+    ? manifest.files.find((item) => samePath(item?.sourcePath, sourcePath) && item?.bundlePath)
+    : null;
+  if (!record) return false;
+  const bundledPath = path.resolve(path.dirname(bundleManifestPath), record.bundlePath);
+  if (!pathIsInside(bundledPath, path.dirname(bundleManifestPath))) return false;
+  if (!validArtifact({ path: bundledPath, sizeBytes: record.sizeBytes, sha256: record.sha256 })) return false;
+  return fs.statSync(sourcePath).size === Number(record.sizeBytes || 0)
+    && sha256(sourcePath) === String(record.sha256 || '').toUpperCase();
+}
+
+function viewportMatchesBoundedContract(run, requestedViewport, expectedDeviceScaleFactor) {
+  const actualWidth = Number(run?.viewport?.width);
+  const actualHeight = Number(run?.viewport?.height);
+  const requestedWidth = Number(requestedViewport?.width);
+  const requestedHeight = Number(requestedViewport?.height);
+  const actualDeviceScaleFactor = Number(run?.actualDeviceScaleFactor);
+  const contract = run?.viewportContract;
+  if (!Number.isFinite(actualWidth)
+    || !Number.isFinite(actualHeight)
+    || !Number.isFinite(requestedWidth)
+    || !Number.isFinite(requestedHeight)
+    || !Number.isFinite(actualDeviceScaleFactor)
+    || actualDeviceScaleFactor !== expectedDeviceScaleFactor
+    || contract?.passed !== true
+    || (Array.isArray(contract?.violations) && contract.violations.length > 0)) {
+    return false;
+  }
+
+  if (actualWidth === requestedWidth && actualHeight === requestedHeight) return true;
+
+  const contractRequested = contract?.requested;
+  const contractActual = contract?.actual;
+  const tolerance = contract?.tolerance;
+  const widthTolerance = Number(tolerance?.width);
+  const heightTolerance = Number(tolerance?.height);
+  const scaleTolerance = Number(tolerance?.deviceScaleFactor);
+  const boundedTolerance = Number.isFinite(widthTolerance)
+    && Number.isFinite(heightTolerance)
+    && Number.isFinite(scaleTolerance)
+    && widthTolerance >= 0
+    && heightTolerance >= 0
+    && scaleTolerance >= 0
+    && widthTolerance <= 2
+    && heightTolerance <= 2
+    && scaleTolerance <= 0.02;
+
+  return boundedTolerance
+    && Number(contractRequested?.width) === requestedWidth
+    && Number(contractRequested?.height) === requestedHeight
+    && Number(contractRequested?.deviceScaleFactor) === expectedDeviceScaleFactor
+    && Number(contractActual?.width) === actualWidth
+    && Number(contractActual?.height) === actualHeight
+    && Number(contractActual?.deviceScaleFactor) === actualDeviceScaleFactor
+    && Math.abs(actualWidth - requestedWidth) <= widthTolerance
+    && Math.abs(actualHeight - requestedHeight) <= heightTolerance
+    && Math.abs(actualDeviceScaleFactor - expectedDeviceScaleFactor) <= scaleTolerance;
+}
+
+function packageUiEvidenceIsStrictlyValid({
+  filePath,
+  finalReadiness,
+  manifest,
+  bundleManifestPath,
+  smoke,
+}) {
+  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
+  try {
+    const packageUi = readJson(filePath);
+    const runs = Array.isArray(packageUi.runs) ? packageUi.runs : [];
+    const expectedScales = new Map([[100, 1], [125, 1.25]]);
+    const runsComplete = runs.length === expectedScales.size
+      && new Set(runs.map((run) => run?.scalePercent)).size === expectedScales.size
+      && runs.every((run) => (
+        expectedScales.has(run?.scalePercent)
+        && viewportMatchesBoundedContract(
+          run,
+          packageUi.requested?.viewport,
+          expectedScales.get(run.scalePercent),
+        )
+        && run?.passed === true
+        && Array.isArray(run?.consoleErrors)
+        && run.consoleErrors.length === 0
+        && Array.isArray(run?.pageErrors)
+        && run.pageErrors.length === 0
+        && Array.isArray(run?.screenshots)
+        && run.screenshots.length >= 8
+        && Array.isArray(run?.workspaceChecks)
+        && run.workspaceChecks.length >= 8
+        && run.workspaceChecks.every((item) => item?.passed === true)
+        && Array.isArray(run?.overlayChecks)
+        && run.overlayChecks.length >= 3
+        && run.overlayChecks.every((item) => item?.passed === true)
+      ));
+    const wideProfile = packageUi.wideProfile;
+    const wideWorkspaceNames = new Set(['product', 'diagnosis']);
+    const wideWorkspaceChecks = Array.isArray(wideProfile?.workspaceChecks) ? wideProfile.workspaceChecks : [];
+    const wideScreenshots = Array.isArray(wideProfile?.screenshots) ? wideProfile.screenshots : [];
+    const wideProfileComplete = packageUi.requested?.wideProfile?.id === 'wide-1400x900-100'
+      && packageUi.requested?.wideProfile?.viewport?.width === 1400
+      && packageUi.requested?.wideProfile?.viewport?.height === 900
+      && Number(packageUi.requested?.wideProfile?.deviceScaleFactor) === 1
+      && wideProfile?.profileId === 'wide-1400x900-100'
+      && wideProfile?.passed === true
+      && wideProfile?.viewport?.width === 1400
+      && wideProfile?.viewport?.height === 900
+      && Number(wideProfile?.actualDeviceScaleFactor) === 1
+      && wideProfile?.viewportContract?.passed === true
+      && wideProfile?.identity?.passed === true
+      && Array.isArray(wideProfile?.consoleErrors)
+      && wideProfile.consoleErrors.length === 0
+      && Array.isArray(wideProfile?.pageErrors)
+      && wideProfile.pageErrors.length === 0
+      && wideWorkspaceChecks.length === wideWorkspaceNames.size
+      && new Set(wideWorkspaceChecks.map((item) => item?.workspace)).size === wideWorkspaceNames.size
+      && wideWorkspaceChecks.every((item) => (
+        wideWorkspaceNames.has(item?.workspace)
+        && item?.passed === true
+        && item?.experienceEvidence?.passed === true
+        && item?.inspectorEvidence?.passed === true
+        && item?.inspectorEvidence?.inspector?.mode === 'inline'
+        && item?.inspectorEvidence?.inspector?.ariaModal !== 'true'
+        && /^[A-F0-9]{64}$/.test(String(item?.inspectorEvidence?.screenshot?.sha256 || ''))
+      ))
+      && wideScreenshots.length === wideWorkspaceNames.size
+      && new Set(wideScreenshots.map((item) => item?.workspace)).size === wideWorkspaceNames.size
+      && wideScreenshots.every((item) => (
+        wideWorkspaceNames.has(item?.workspace)
+        && /^[A-F0-9]{64}$/.test(String(item?.sha256 || ''))
+      ));
+    const generatedAt = Date.parse(packageUi.generatedAt);
+    const completedAt = Date.parse(packageUi.completedAt);
+    const smokeGeneratedAt = Date.parse(smoke?.generatedAt);
+    const exeBefore = packageUi.artifactsBefore?.exe;
+    const exeAfter = packageUi.artifactsAfter?.exe;
+    const appContentBefore = packageUi.artifactsBefore?.appContent;
+    const appContentAfter = packageUi.artifactsAfter?.appContent;
+    const requested = packageUi.requested || {};
+    const protectedDatabase = packageUi.protectedDatabase;
+    const profileDatabaseProvenance = packageUi.profileDatabaseProvenance;
+    const dbBefore = protectedDatabase?.before;
+    const dbAfter = protectedDatabase?.after;
+    const authorityDbPath = finalReadiness.evidenceSelection?.authorityDbPath;
+    const packageHashesValid = packageUi.artifactHashesStable === true
+      && validArtifact(exeBefore)
+      && validArtifact(exeAfter)
+      && artifactsMatch(exeBefore, smoke?.artifacts?.unpacked)
+      && artifactsMatch(exeAfter, smoke?.artifacts?.unpacked)
+      && samePath(requested.executablePath, smoke?.artifacts?.unpacked?.path)
+      && String(requested.expectedExeSha256 || '').toUpperCase() === String(smoke?.artifacts?.unpacked?.sha256 || '').toUpperCase()
+      && String(requested.expectedAppContentSha256 || '').toUpperCase() === String(appContentBefore?.sha256 || '').toUpperCase()
+      && String(appContentBefore?.sha256 || '').toUpperCase() === String(appContentAfter?.sha256 || '').toUpperCase()
+      && samePath(requested.appContentPath, appContentBefore?.rootPath)
+      && samePath(appContentBefore?.rootPath, appContentAfter?.rootPath);
+    const databaseIsolated = protectedDatabase?.passed === true
+      && protectedDatabase?.unchanged === true
+      && samePath(requested.protectedDatabasePath, authorityDbPath)
+      && samePath(dbBefore?.path, authorityDbPath)
+      && samePath(dbAfter?.path, authorityDbPath)
+      && String(dbBefore?.sha256 || '').toUpperCase() === String(dbAfter?.sha256 || '').toUpperCase()
+      && Number(dbBefore?.sizeBytes || 0) === Number(dbAfter?.sizeBytes || 0)
+      && Number(dbBefore?.mtimeMs || 0) === Number(dbAfter?.mtimeMs || 0)
+      && validArtifact(dbAfter);
+    const profileDatabaseProvenanceValid = profileDatabaseProvenance?.passed === true
+      && profileDatabaseProvenance?.hashMatches === true
+      && profileDatabaseProvenance?.sizeMatches === true
+      && profileDatabaseProvenance?.pathsDistinct === true
+      && Array.isArray(profileDatabaseProvenance?.violations)
+      && profileDatabaseProvenance.violations.length === 0
+      && !samePath(profileDatabaseProvenance?.profileDatabase?.path, authorityDbPath)
+      && samePath(profileDatabaseProvenance?.protectedDatabase?.path, authorityDbPath)
+      && String(profileDatabaseProvenance?.profileDatabase?.sha256 || '').toUpperCase() === String(dbBefore?.sha256 || '').toUpperCase()
+      && String(profileDatabaseProvenance?.protectedDatabase?.sha256 || '').toUpperCase() === String(dbBefore?.sha256 || '').toUpperCase()
+      && Number(profileDatabaseProvenance?.profileDatabase?.sizeBytes || 0) === Number(dbBefore?.sizeBytes || 0)
+      && Number(profileDatabaseProvenance?.protectedDatabase?.sizeBytes || 0) === Number(dbBefore?.sizeBytes || 0);
+    const processIsolated = packageUi.packageProcessIsolation?.passed === true
+      && packageUi.packageProcessIsolation?.before?.passed === true
+      && packageUi.packageProcessIsolation?.before?.matchingCount === 0
+      && packageUi.packageProcessIsolation?.after?.passed === true
+      && packageUi.packageProcessIsolation?.after?.matchingCount === 0;
+    const bundled = manifest.uiEvidence?.packageUiManifest?.present === true
+      && samePath(manifest.uiEvidence?.packageUiManifest?.sourcePath, filePath)
+      && bundleSourceFileMatches(manifest, bundleManifestPath, filePath);
+    return packageUi.kind === 'package-ui-evidence'
+      && Number(packageUi.schemaVersion || 0) >= 4
+      && packageUi.passed === true
+      && Array.isArray(packageUi.violations)
+      && packageUi.violations.length === 0
+      && packageUi.freshness?.passed === true
+      && Array.isArray(packageUi.freshness?.violations)
+      && packageUi.freshness.violations.length === 0
+      && packageUi.completeness?.passed === true
+      && Array.isArray(packageUi.completeness?.violations)
+      && packageUi.completeness.violations.length === 0
+      && runsComplete
+      && wideProfileComplete
+      && Number.isFinite(generatedAt)
+      && Number.isFinite(completedAt)
+      && Number.isFinite(smokeGeneratedAt)
+      && generatedAt >= smokeGeneratedAt
+      && completedAt >= generatedAt
+      && packageHashesValid
+      && databaseIsolated
+      && profileDatabaseProvenanceValid
+      && processIsolated
+      && bundled;
+  } catch {
+    return false;
+  }
+}
+
+function readValidPackageLaunchSmoke(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return false;
   try {
     const smoke = readJson(filePath);
@@ -136,20 +480,59 @@ function hasValidPackageLaunchSmoke(filePath) {
     const portable = smoke.artifacts?.portable;
     const checks = Array.isArray(smoke.checks) ? smoke.checks : [];
     const hasCheck = (kind) => checks.some((item) => item?.kind === kind && item.ok === true);
-    const hasValidArtifact = (artifact) => {
-      if (!artifact?.path || !fs.existsSync(artifact.path) || !fs.statSync(artifact.path).isFile()) return false;
-      if (Number(artifact.sizeBytes || 0) <= 0) return false;
-      if (fs.statSync(artifact.path).size !== Number(artifact.sizeBytes || 0)) return false;
-      return /^[A-F0-9]{64}$/.test(String(artifact.sha256 || ''))
-        && sha256(artifact.path) === String(artifact.sha256 || '').toUpperCase();
-    };
 
-    return smoke.kind === 'package-launch-smoke'
+    const valid = smoke.kind === 'package-launch-smoke'
       && smoke.passed === true
-      && hasValidArtifact(unpacked)
-      && hasValidArtifact(portable)
+      && Number.isFinite(Date.parse(smoke.generatedAt))
+      && validArtifact(unpacked)
+      && validArtifact(portable)
       && hasCheck('win-unpacked')
       && hasCheck('portable');
+    return valid ? smoke : null;
+  } catch {
+    return null;
+  }
+}
+
+function packageLaunchSmokeMatchesFinalReadiness(finalReadiness, filePath, smoke) {
+  const recorded = finalReadiness.packageLaunchSmoke;
+  if (!recorded || !smoke) return false;
+  const recordedChecks = Array.isArray(recorded.checks) ? recorded.checks : [];
+  const hasRecordedCheck = (kind) => recordedChecks.some((item) => item?.kind === kind && item.ok === true);
+  return recorded.present === true
+    && recorded.passed === true
+    && recorded.selectedBy === 'explicit-arg'
+    && samePath(recorded.evidencePath, filePath)
+    && String(recorded.generatedAt || '') === String(smoke.generatedAt || '')
+    && artifactsMatch(recorded.artifacts?.unpacked, smoke.artifacts?.unpacked)
+    && artifactsMatch(recorded.artifacts?.portable, smoke.artifacts?.portable)
+    && hasRecordedCheck('win-unpacked')
+    && hasRecordedCheck('portable');
+}
+
+function packageLaunchSmokeMatchesPackageIndex(finalReadiness, smoke) {
+  if (!smoke || !Array.isArray(finalReadiness.packageIndex?.packages)) return false;
+  const portablePackages = finalReadiness.packageIndex.packages.filter((item) => item?.kind === 'portable');
+  if (portablePackages.length !== 1) return false;
+  const portablePackage = portablePackages[0];
+  return artifactsMatch(smoke.artifacts?.portable, {
+    path: portablePackage.sourcePath,
+    sizeBytes: portablePackage.sizeBytes,
+    sha256: portablePackage.sha256,
+  });
+}
+
+function hasBoundExistingAuthorityDb(finalReadiness, manifest, explicitPath) {
+  const bundleAuthority = manifest.authorityDatabase;
+  if (!bundleAuthority?.sourcePath || bundleAuthority.existsAtExport !== true || bundleAuthority.copied !== false) return false;
+  try {
+    const recordedPath = resolveBoundAdReadbackAuthorityDbPath(
+      finalReadiness.evidenceSelection?.authorityDbPath,
+      explicitPath,
+    );
+    return fs.statSync(recordedPath).isFile()
+      && fs.statSync(bundleAuthority.sourcePath).isFile()
+      && samePath(recordedPath, bundleAuthority.sourcePath);
   } catch {
     return false;
   }
@@ -176,11 +559,14 @@ function main() {
   const adAiExplanation = gateByName(finalReadiness, 'Ad recommendation AI explanation');
   const listingAiDraft = gateByName(finalReadiness, 'Listing AI draft');
   const adReadback = gateByName(finalReadiness, 'Real ad execution readback');
+  const releasePackageHash = gateById(finalReadiness, 'release-package-hash');
+  const packageLaunchSmokeGate = gateById(finalReadiness, 'package-launch-smoke');
   const readmeNonReady = readmeStatesNonReady(readme);
-  const historicalReadyFinalReadiness = readmeNonReady && finalReadiness.status === 'APP_READY' && finalReadiness.appReady === true;
-  const historicalReadyBundle = readmeNonReady && manifest.status === 'APP_READY' && manifest.appReady === true;
+  const explicitStrictNonReady = Boolean(args['package-ui-manifest']);
+  const historicalReadyFinalReadiness = !explicitStrictNonReady && readmeNonReady && finalReadiness.status === 'APP_READY' && finalReadiness.appReady === true;
+  const historicalReadyBundle = !explicitStrictNonReady && readmeNonReady && manifest.status === 'APP_READY' && manifest.appReady === true;
   const currentPackageHashEvidence = hasCurrentPackageHashEvidence(finalReadiness);
-  const currentPackageLaunchSmoke = hasValidPackageLaunchSmoke(packageLaunchSmokePath);
+  const currentPackageLaunchSmoke = readValidPackageLaunchSmoke(packageLaunchSmokePath);
 
   check(finalReadiness.evidenceSelection?.mode === 'manifest', 'final readiness uses manifest evidence selection', failures);
   check(
@@ -191,13 +577,76 @@ function main() {
   if (historicalReadyFinalReadiness) {
     check(true, 'historical APP_READY final readiness is baseline only because README is non-ready', failures);
     check(
-      currentPackageHashEvidence || currentPackageLaunchSmoke,
+      currentPackageHashEvidence || Boolean(currentPackageLaunchSmoke),
       'historical APP_READY baseline has current package hash or launch smoke evidence',
       failures,
     );
   } else {
-    check(finalReadiness.status === 'APP_NEEDS_WORK', 'final readiness status remains APP_NEEDS_WORK', failures);
-    check(finalReadiness.appReady === false, 'final readiness appReady is false', failures);
+    check(
+      Boolean(args['package-ui-manifest']),
+      'strict APP_NEEDS_WORK requires an explicit package UI manifest',
+      failures,
+    );
+    check(
+      packageUiEvidenceIsStrictlyValid({
+        filePath: args['package-ui-manifest'] ? path.resolve(args['package-ui-manifest']) : '',
+        finalReadiness,
+        manifest,
+        bundleManifestPath,
+        smoke: currentPackageLaunchSmoke,
+      }),
+      'explicit package UI evidence is fresh, complete, hash-bound, DB-safe, process-isolated, and bundled',
+      failures,
+    );
+    check(
+      finalReadiness.status === 'APP_NEEDS_WORK' && finalReadiness.appReady === false,
+      'final readiness remains APP_NEEDS_WORK with appReady=false',
+      failures,
+    );
+    const gates = Array.isArray(finalReadiness.gates) ? finalReadiness.gates : [];
+    const gateIds = gates.map((gate) => gate?.id);
+    const passedGates = gates.filter((gate) => gate?.ok === true && gate?.status === 'passed');
+    const failedGates = gates.filter((gate) => gate?.ok === false && gate?.status === 'needs_work');
+    check(
+      gates.length === expectedNonReadyGateIds.size
+        && new Set(gateIds).size === expectedNonReadyGateIds.size
+        && gateIds.every((id) => expectedNonReadyGateIds.has(id))
+        && passedGates.length === 7
+        && failedGates.length === 1
+        && passedGates.length + failedGates.length === gates.length
+        && failedGates[0]?.id === 'real-ad-execution-readback',
+      'final readiness has exactly 8 gates, 7 passed, and only real-ad-execution-readback needs work',
+      failures,
+    );
+    check(
+      releasePackageHash?.ok === true
+        && releasePackageHash?.status === 'passed'
+        && currentPackageHashEvidence,
+      'release-package-hash gate is passed with current package index evidence',
+      failures,
+    );
+    check(
+      bundlePackageIndexMatchesFinalReadiness(finalReadiness, manifest, bundleManifestPath),
+      'bundle release-package-index exactly matches final readiness and current package files',
+      failures,
+    );
+    check(
+      packageLaunchSmokeGate?.ok === true
+        && packageLaunchSmokeGate?.status === 'passed'
+        && Boolean(args['package-launch-smoke'])
+        && Boolean(currentPackageLaunchSmoke)
+        && packageLaunchSmokeGate?.evidencePath
+        && samePath(packageLaunchSmokeGate.evidencePath, packageLaunchSmokePath)
+        && packageLaunchSmokeMatchesFinalReadiness(finalReadiness, packageLaunchSmokePath, currentPackageLaunchSmoke)
+        && packageLaunchSmokeMatchesPackageIndex(finalReadiness, currentPackageLaunchSmoke),
+      'package-launch-smoke gate is passed with explicit current evidence matching final readiness and package index',
+      failures,
+    );
+    check(
+      hasBoundExistingAuthorityDb(finalReadiness, manifest, args.db),
+      'final readiness, explicit selection, and delivery bundle bind the same existing SQLite authority database identity',
+      failures,
+    );
   }
   check(finalReadiness.reportCollectionReady === true, 'report collection ready remains true', failures);
   check(finalReadiness.listingReadReady === true, 'Listing read ready remains true', failures);
@@ -234,16 +683,18 @@ function main() {
     } else {
       check(false, 'historical real ad readback baseline has manifest-selected evidence file', failures);
     }
-  } else {
-    check(adReadback && adReadback.ok === false && adReadback.status === 'needs_work', 'real ad readback gate remains the only READY blocker', failures);
   }
 
   if (historicalReadyBundle) {
     check(true, 'historical APP_READY delivery bundle is baseline only because README is non-ready', failures);
   } else {
-    check(manifest.status === 'APP_NEEDS_WORK', 'delivery bundle manifest status remains APP_NEEDS_WORK', failures);
-    check(manifest.appReady === false, 'delivery bundle manifest appReady is false', failures);
-    check(/Do not present this bundle as final READY/.test(manifest.warning || ''), 'delivery bundle warning blocks READY claims', failures);
+    check(
+      manifest.status === 'APP_NEEDS_WORK'
+        && manifest.appReady === false
+        && /Do not present this bundle as final READY/.test(manifest.warning || ''),
+      'delivery bundle remains APP_NEEDS_WORK and blocks READY claims',
+      failures,
+    );
   }
   check(readmeNonReady, 'README top-level delivery line is non-ready', failures);
 

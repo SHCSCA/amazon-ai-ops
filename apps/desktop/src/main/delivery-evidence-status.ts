@@ -120,7 +120,7 @@ function getReadbackEvidenceStatus(readbackDir: string, scope: DeliveryEvidenceS
   };
 }
 
-function getPackageEvidenceStatus(releaseDir: string): DeliveryEvidenceStatus['package'] {
+export function getPackageEvidenceStatus(releaseDir: string): DeliveryEvidenceStatus['package'] {
   const installerPath = latestReleaseFile(releaseDir, /^AmazonAIOpsAgent-.*(?<!portable)\.exe$/i);
   const portablePath = latestReleaseFile(releaseDir, /^AmazonAIOpsAgent-.*portable\.exe$/i);
   const hashTarget = portablePath || installerPath;
@@ -133,7 +133,7 @@ function getPackageEvidenceStatus(releaseDir: string): DeliveryEvidenceStatus['p
     .sort()
     .pop();
   return {
-    installerAvailable: true,
+    installerAvailable: Boolean(installerPath),
     installerPath: installerPath || undefined,
     portablePath: portablePath || undefined,
     sha256: sha256(hashTarget),
@@ -251,7 +251,13 @@ function isEvidenceImagePath(filePath: unknown): boolean {
 function evidenceImagePathsAreDistinct(...filePaths: unknown[]): boolean {
   if (!filePaths.every(isEvidenceImagePath)) return false;
   const canonical = filePaths.map((filePath) => canonicalizePath(String(filePath)).toLowerCase());
-  return new Set(canonical).size === canonical.length;
+  if (new Set(canonical).size !== canonical.length) return false;
+  try {
+    const contentHashes = canonical.map((filePath) => sha256(filePath));
+    return new Set(contentHashes).size === contentHashes.length;
+  } catch {
+    return false;
+  }
 }
 
 function canonicalizePath(filePath: string): string {

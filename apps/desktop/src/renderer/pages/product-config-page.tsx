@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { TaskBanner } from '../components/workspace';
+import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scope';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { formatPercent, formatUsd } from '../formatters';
 import { useScopeStore } from '../scope-store';
@@ -278,10 +280,10 @@ export function buildProductConfigTaskState(input: {
     detail: hasAsin
       ? `当前范围已有 ${input.importedRows} 行广告指标，${input.configuredProducts} 个产品配置；成本、最低价、目标 ACOS/TACOS 会进入 AI 阈值判断。`
       : '产品目标必须先绑定 ASIN，否则广告表现只能按全局默认阈值解释 ACOS 和花费。',
-    primaryActionLabel: input.saving ? '保存中...' : hasAsin ? '保存目标配置' : '先填写 ASIN',
+    primaryActionLabel: input.saving ? '保存中...' : hasAsin ? '编辑当前产品目标' : '新建产品配置',
     primaryActionBusy: input.saving,
     primaryActionBusyLabel: '保存中...',
-    primaryActionDisabled: input.saving || !hasAsin,
+    primaryActionDisabled: input.saving,
     secondaryActionLabel: '查看广告表现',
   };
 }
@@ -475,27 +477,14 @@ export function ProductConfigPage() {
   ));
   const loadedProductRowKey = loadedProduct ? productConfigProductKey(loadedProduct) : '';
   const editorBusy = saving || bulkApplying;
-
-  useEffect(() => {
-    if (!editorMode) return undefined;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape' || editorBusy) return;
-      event.preventDefault();
-      setEditorMode(null);
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [editorBusy, editorMode]);
+  const productConfigDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    dismissDisabled: editorBusy,
+    onDismiss: closeEditor,
+    open: Boolean(editorMode),
+  });
 
   function closeEditor() {
     if (editorBusy) return;
-    setEditorMode(null);
-  }
-
-  function handleEditorKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key !== 'Escape' || editorBusy) return;
-    event.preventDefault();
-    event.stopPropagation();
     setEditorMode(null);
   }
 
@@ -652,11 +641,18 @@ export function ProductConfigPage() {
     setBulkFeedbackTone('warning');
     setError('');
     try {
-      for (const product of selectedRows) {
-        const result = await (window as any).electronAPI?.saveProductConfig?.(
-          buildProductConfigBulkSaveInput(product, scope, targetAcos),
-        );
-        if (!result?.success) throw new Error(`产品 ${product.asin || '-'} 保存失败。`);
+      const api = (window as any).electronAPI;
+      if (!api?.bulkUpdateProductTargetAcos) throw new Error('批量目标 ACOS 保存接口未暴露。');
+      const result = await api.bulkUpdateProductTargetAcos({
+        targetAcos,
+        products: selectedRows.map((product) => ({
+          asin: product.asin,
+          storeName: product.store_name || scope.storeName,
+          marketplaceCode: product.marketplace_code || scope.marketplaceCode,
+        })),
+      });
+      if (!result?.success || result.updatedCount !== selectedRows.length) {
+        throw new Error('批量目标 ACOS 未完整写入，事务已回滚。');
       }
       if (selectedRows.some((product) => String(product.asin || '').toUpperCase() === draft.asin.trim().toUpperCase())) {
         setCost((current) => ({ ...current, targetAcos }));
@@ -737,11 +733,25 @@ export function ProductConfigPage() {
         eyebrow="数据"
         title={PAGE_HEADER_TITLES.productConfig}
         description="查看当前范围内产品的成本、售价边界和目标 ACOS；编辑动作进入弹窗，不把表单常驻在工作台。"
+      />
+
+      <TaskBanner
+        description={taskState.detail}
+        meta={`${currentScopeProducts.length} 个产品配置 · ${importedRows} 行当前范围指标`}
         primaryAction={{
-          label: draft.asin ? '编辑当前产品目标' : '新建产品配置',
-          disabled: saving,
+          label: taskState.primaryActionLabel,
+          disabled: taskState.primaryActionDisabled,
+          busy: taskState.primaryActionBusy,
+          busyLabel: taskState.primaryActionBusyLabel,
           onClick: () => setEditorMode(draft.asin ? 'target' : 'product'),
         }}
+        secondaryActions={[
+          { label: taskState.secondaryActionLabel, onClick: () => navigate('ad-quant'), disabled: saving },
+          { label: '补充运营事件', onClick: () => navigate('operation-events'), disabled: saving },
+        ]}
+        status={draft.asin ? `当前 ${draft.asin}` : '待创建产品'}
+        title={taskState.title}
+        tone={draft.asin ? 'confirmed' : 'attention'}
       />
 
       <div className="business-stack product-config-page-stack">
@@ -871,13 +881,22 @@ export function ProductConfigPage() {
       </div>
 
       {editorMode && (
-        <div className="product-config-modal-backdrop" role="presentation">
+        <div
+          className="product-config-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeEditor();
+          }}
+          ref={productConfigDialogFocus.overlayRootRef}
+          role="presentation"
+        >
           <section
             aria-labelledby="product-config-editor-title"
             aria-modal="true"
             className={`product-config-modal ${editorMode === 'target' ? 'product-config-target-panel' : editorMode === 'bulk' ? 'product-config-bulk-panel' : 'product-config-basic-panel'}`}
-            onKeyDown={handleEditorKeyDown}
+            onMouseDown={(event) => event.stopPropagation()}
+            ref={productConfigDialogFocus.surfaceRef}
             role="dialog"
+            tabIndex={-1}
           >
             <div className="product-config-modal-header">
               <div>

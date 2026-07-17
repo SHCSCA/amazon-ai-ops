@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AdReadbackAuthorityRecord } from '@amazon-ai-ops/shared-types';
@@ -35,10 +36,25 @@ function isEvidenceImagePath(value: unknown): boolean {
   return ['.png', '.jpg', '.jpeg', '.webp'].includes(ext) && fs.existsSync(resolved) && fs.statSync(resolved).isFile();
 }
 
+function isTargetIdentityProofPath(value: unknown): boolean {
+  if (!hasOperatorText(value)) return false;
+  const resolved = path.resolve(String(value));
+  const ext = path.extname(resolved).toLowerCase();
+  return ['.png', '.jpg', '.jpeg', '.webp', '.json'].includes(ext)
+    && fs.existsSync(resolved)
+    && fs.statSync(resolved).isFile();
+}
+
 function evidenceImagePathsAreDistinct(...values: unknown[]): boolean {
   if (!values.every(isEvidenceImagePath)) return false;
-  const resolved = values.map((value) => canonicalizeExistingPath(String(value)).toLowerCase());
-  return new Set(resolved).size === resolved.length;
+  const resolved = values.map((value) => canonicalizeExistingPath(String(value)));
+  const pathIdentities = resolved.map((filePath) => filePath.toLowerCase());
+  if (new Set(pathIdentities).size !== pathIdentities.length) return false;
+  const contentHashes = resolved.map((filePath) => crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(filePath))
+    .digest('hex'));
+  return new Set(contentHashes).size === contentHashes.length;
 }
 
 function timestampMs(value: unknown): number {
@@ -138,7 +154,9 @@ export function buildAdReadbackEvidence(input: AdReadbackEvidenceInput): Record<
       && hasOperatorText(target.campaignName)
       && hasOperatorText(target.adGroupName)
       && hasOperatorText(target.entityType)
+      && hasOperatorText(target.entityId)
       && hasOperatorText(target.entityName)
+      && isTargetIdentityProofPath(target.identityProofPath)
       && hasOperatorText(target.actionType)
       && hasOperatorText(source.batchId)
       && hasOperatorText(source.metricDate)
@@ -214,7 +232,9 @@ export function buildAdReadbackEvidence(input: AdReadbackEvidenceInput): Record<
       campaignName: String(target.campaignName || ''),
       adGroupName: String(target.adGroupName || ''),
       entityType: String(target.entityType || 'target'),
+      entityId: String(target.entityId || ''),
       entityName: String(target.entityName || ''),
+      identityProofPath: normalizeReadbackPath(target.identityProofPath || ''),
       actionType: String(target.actionType || 'lower_bid'),
     },
     risk: {

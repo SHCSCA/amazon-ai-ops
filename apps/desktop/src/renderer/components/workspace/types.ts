@@ -3,6 +3,7 @@ import type React from 'react';
 export type WorkspaceTone = 'neutral' | 'attention' | 'blocked' | 'confirmed';
 
 export type WorkspaceAction = {
+  actionId?: string;
   label: string;
   onClick: () => void;
   ariaLabel?: string;

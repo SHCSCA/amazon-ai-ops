@@ -45,6 +45,15 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
+function unresolved(value) {
+  const text = String(value ?? '').trim();
+  return text.length === 0 || /<[^>]+>/.test(text);
+}
+
+function isFile(filePath) {
+  return Boolean(filePath && fs.existsSync(filePath) && fs.statSync(filePath).isFile());
+}
+
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
   return dir;
@@ -72,7 +81,7 @@ function buildFillCommand(paths, candidate) {
     '--execution-id "<manual action id>"',
     '--readback-read-at "<ISO time>"',
     `--readback-evidence ${psQuote(path.join(paths.readbackScreenshotsDir, '<readback.png>'))}`,
-    '--readback-actual-value "<reload value, defaults to after value if omitted>"',
+    '--readback-actual-value "<independently observed reload value>"',
     `--risk-rationale ${psQuote(riskRationale)}`,
   ].join(' ');
 }
@@ -114,7 +123,9 @@ function buildChecklist(candidate, paths) {
 | 广告活动 | ${markdownEscape(target.campaignName || '')} |
 | 广告组 | ${markdownEscape(target.adGroupName || '')} |
 | 对象类型 | ${markdownEscape(target.entityType || '')} |
+| 对象 ID | ${markdownEscape(target.entityId || '')} |
 | 对象名称 | ${markdownEscape(target.entityName || '')} |
+| 对象身份证明 | ${markdownEscape(target.identityProofPath || '')} |
 | 动作类型 | ${markdownEscape(target.actionType || '')} |
 | 建议来源当前值 | ${markdownEscape(source.currentValue || '')} |
 | 建议来源推荐值 | ${markdownEscape(source.recommendedValue || '')} |
@@ -183,7 +194,9 @@ function buildLocatorGuide(candidate, paths) {
 | 广告活动 | ${markdownEscape(target.campaignName || '')} |
 | 广告组 | ${markdownEscape(target.adGroupName || '')} |
 | 对象类型 | ${markdownEscape(target.entityType || '')} |
+| 对象 ID | ${markdownEscape(target.entityId || '')} |
 | 对象名称 | ${markdownEscape(target.entityName || '')} |
+| 对象身份证明 | ${markdownEscape(target.identityProofPath || '')} |
 | 动作 | ${markdownEscape(target.actionType || '')} |
 | 建议来源当前值 | ${markdownEscape(source.currentValue || '')} |
 | 建议来源推荐值 | ${markdownEscape(source.recommendedValue || '')} |
@@ -250,7 +263,7 @@ function buildSessionInputGuide(candidate, paths) {
     ['executionId', '执行记录/执行编号或记录 ID', '工单、聊天记录编号或人工动作编号', 'manual-action-001'],
     ['readbackReadAt', '回读/刷新回读时间', '刷新或重新打开 Ads UI 后读取值的时间', '2026-06-18T10:05:00.000Z'],
     ['readbackEvidencePath', '回读/刷新回读截图文件', `保存到 ${paths.readbackScreenshotsDir}`, path.join(paths.readbackScreenshotsDir, 'readback.png')],
-    ['readbackActualValue', '回读/刷新回读实际值', '刷新后看到的实际值；通常应等于 afterValue', '1.08'],
+    ['readbackActualValue', '回读/刷新回读实际值', '必须从刷新后的 Ads UI 独立读取；校验时应等于 afterValue', '1.08'],
     ['riskRationale', '风控/低风险执行说明', '说明为什么本次动作低风险、可回滚、已审批', '一次已审批的低风险 Ads UI 人工动作，具备 before/after/readback 证据。'],
   ];
   return `# session-input.json 填写指南
@@ -268,7 +281,9 @@ function buildSessionInputGuide(candidate, paths) {
 | 广告活动 | ${markdownEscape(target.campaignName || '')} |
 | 广告组 | ${markdownEscape(target.adGroupName || '')} |
 | 对象类型 | ${markdownEscape(target.entityType || '')} |
+| 对象 ID | ${markdownEscape(target.entityId || '')} |
 | 对象名称 | ${markdownEscape(target.entityName || '')} |
+| 对象身份证明 | ${markdownEscape(target.identityProofPath || '')} |
 | 动作 | ${markdownEscape(target.actionType || '')} |
 | 来源当前值 | ${markdownEscape(source.currentValue || '')} |
 | 来源建议值 | ${markdownEscape(source.recommendedValue || '')} |
@@ -314,6 +329,16 @@ function main() {
   }
 
   const target = candidate.target || {};
+  if (unresolved(target.entityId)) {
+    throw new Error('Candidate target.entityId is required before preparing a readback session.');
+  }
+  if (unresolved(target.identityProofPath)) {
+    throw new Error('Candidate target.identityProofPath is required before preparing a readback session.');
+  }
+  const identityProofPath = path.resolve(String(target.identityProofPath).trim());
+  if (!isFile(identityProofPath)) {
+    throw new Error(`Candidate target identity proof file does not exist: ${identityProofPath}`);
+  }
   const defaultName = [
     'ad-readback-session',
     target.storeName,

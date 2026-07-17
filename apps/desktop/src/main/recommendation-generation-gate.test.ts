@@ -107,17 +107,16 @@ describe('recommendation generation gate', () => {
     })).toThrow(/当前范围只找到 4\/8 类真实广告报表/);
   });
 
-  it('allows diagnosis-only AI analysis with partial real report coverage when metrics remain traceable', () => {
+  it('does not allow a caller to disable full report coverage for formal analysis', () => {
     expect(() => assertRecommendationMetricsLoaded({
       metricsLength: 12,
       realReportFileCount: 4,
       requiredReportCount: 8,
-      requireFullReportCoverage: false,
       sourceFileCount: 4,
       sourceRowCount: 12,
       sourceFileRowCount: 12,
       importedRows: 512,
-    })).not.toThrow();
+    })).toThrow(/当前范围只找到 4\/8 类真实广告报表/);
   });
 
   it('filters out unbound metrics before formal recommendation generation when scope ASIN is not selected', () => {

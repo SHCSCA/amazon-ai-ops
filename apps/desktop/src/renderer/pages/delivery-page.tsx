@@ -351,6 +351,14 @@ export function DeliveryPreviewNotice({ state }: { state: DeliveryPreviewState |
   );
 }
 
+export function deliverySummaryStatusLabel(input: {
+  deliveryReady: boolean;
+  previewOnly: boolean;
+}): string {
+  if (input.deliveryReady) return '可以交付';
+  return input.previewOnly ? '开发预览' : '当前阻断';
+}
+
 function evidenceFolder(data: BusinessDataPipeline | null): string {
   const paths = data?.collection?.evidencePaths || [];
   return paths.find((item) => item.kind === 'folder')?.path || data?.collection?.latestBatch?.downloadDir || DELIVERY_BUNDLE_PATH;
@@ -397,7 +405,24 @@ export function canExportDeliveryBundle(
   readiness: DeliveryReadinessView | null,
   packageEvidence: DeliveryEvidenceStatusView['package'] | null | undefined,
 ): boolean {
-  return Boolean(readiness?.appReady && readiness?.manifestDriven && packageEvidence?.installerAvailable);
+  const portablePath = String(packageEvidence?.portablePath || '').trim();
+  const portableSha256 = String(packageEvidence?.sha256 || '').trim();
+  return Boolean(
+    readiness?.available
+    && readiness.exists === true
+    && readiness.status === 'APP_READY'
+    && readiness.appReady
+    && readiness.manifestDriven
+    && readiness.previewOnly !== true
+    && Array.isArray(readiness.gates)
+    && readiness.gates.length > 0
+    && readiness.gates.every((gate) => gate.ok === true)
+    && Array.isArray(readiness.failures)
+    && readiness.failures.length === 0
+    && packageEvidence?.installerAvailable === true
+    && portablePath
+    && /^[A-F0-9]{64}$/i.test(portableSha256)
+  );
 }
 
 function compactDeliveryPath(value: string): string {
@@ -990,6 +1015,10 @@ export function DeliveryPage() {
   }
 
   async function exportBundle() {
+    if (!deliveryReady) {
+      setMessage('交付包未导出：最终验收、非预览门禁或当前免安装包校验码尚未全部通过。');
+      return;
+    }
     if (typeof apiSurface.exportDeliveryBundle !== 'function') {
       setMessage('导出交付包能力未连接。请先生成最终验收汇总，再运行交付包导出。');
       return;
@@ -1271,6 +1300,30 @@ export function DeliveryPage() {
     disabled: !(readbackSessionFill?.jsonPath || readbackSession?.passEvidencePath),
     idleLabel: '用回读证据刷新最终验收',
   });
+  const deliveryPrimaryButtonBase = deliveryPrimaryAction.kind === 'export'
+    ? {
+      ...exportBundleButton,
+      className: exportBundleButton.className.replace('secondary-button', 'primary-button'),
+    }
+    : deliveryPrimaryAction.kind === 'refresh'
+      ? deliveryActionButtonView({
+        action: 'refresh-final',
+        activeAction: deliveryActionBusy,
+        baseClassName: 'primary-button',
+        busyLabel: deliveryActionBusyLabel('refresh-final'),
+        idleLabel: deliveryPrimaryAction.label,
+      })
+      : {
+        ariaBusy: undefined,
+        className: 'primary-button',
+        disabled: Boolean(deliveryActionBusy),
+        label: deliveryPrimaryAction.label,
+        showSpinner: false,
+      };
+  const deliveryPrimaryButton = {
+    ...deliveryPrimaryButtonBase,
+    disabled: Boolean(deliveryPrimaryButtonBase.disabled || copySummaryBusy),
+  };
 
   function renderOpenPathButton(input: {
     className?: string;
@@ -1316,7 +1369,7 @@ export function DeliveryPage() {
             <div className="delivery-summary-conclusion">
               <div className="delivery-summary-status-row">
                 <StatusPill tone={deliveryReady ? 'ready' : missingItems.length ? 'warning' : 'pending'}>
-                  {deliveryReady ? '可以交付' : '当前阻断'}
+                  {deliverySummaryStatusLabel({ deliveryReady, previewOnly: Boolean(previewState) })}
                 </StatusPill>
                 <span>{gateSummaryText}</span>
               </div>
@@ -1357,6 +1410,19 @@ export function DeliveryPage() {
               ))}
             </ul>
           )}
+          <div className="action-row delivery-prototype-actions">
+            <button
+              aria-busy={deliveryPrimaryButton.ariaBusy}
+              className={deliveryPrimaryButton.className}
+              data-action-priority="primary"
+              disabled={deliveryPrimaryButton.disabled}
+              onClick={deliveryPrimaryAction.onClick}
+              type="button"
+            >
+              {deliveryPrimaryButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+              <span>{deliveryPrimaryButton.label}</span>
+            </button>
+          </div>
           {secondaryTaskActions.length > 0 && (
             <div className="action-row delivery-prototype-actions">
               {secondaryTaskActions.map((action) => (
@@ -1378,7 +1444,6 @@ export function DeliveryPage() {
       </div>
 
       <div className="business-stack delivery-details-stack">
-        <ProgressiveDetails title="交付证据、文件与回读支持">
         <ProgressiveDetails title="交付判断依据与证据治理">
           <Panel title="交付判断依据" tone={evidenceGovernanceStatus === 'ready' ? 'success' : evidenceGovernanceStatus === 'blocked' ? 'blocked' : 'warning'}>
             <div className="evidence-governance-card">
@@ -1408,18 +1473,6 @@ export function DeliveryPage() {
         <ProgressiveDetails title="文件位置与支持入口">
           <div className="delivery-action-row">
             {renderOpenPathButton({ idleLabel: '打开交付包', targetPath: deliveryBundleOpenPath })}
-            <button
-              aria-busy={exportBundleButton.ariaBusy}
-              aria-disabled={!deliveryReady || undefined}
-              className={exportBundleButton.className}
-              disabled={exportBundleButton.disabled}
-              onClick={exportBundle}
-              title={deliveryReady ? '导出当前 READY 交付包' : '最终验收通过且安装包证据已记录后才能导出交付包'}
-              type="button"
-            >
-              {exportBundleButton.showSpinner && <span aria-hidden="true" className="button-spinner" />}
-              <span>{exportBundleButton.label}</span>
-            </button>
             {renderOpenPathButton({ idleLabel: '打开证据目录', targetPath: reportFolder })}
             {renderOpenPathButton({ disabled: !packageDirectory, idleLabel: '打开安装包目录', targetPath: packageDirectory })}
             {renderOpenPathButton({ idleLabel: '打开最终验收汇总', targetPath: finalManifestPath })}
@@ -1506,7 +1559,7 @@ export function DeliveryPage() {
               </div>
             </div>
             {readbackSession && (
-              <ProgressiveDetails title="回读工作包路径">
+              <Panel title="回读工作包路径">
                 <div className="delivery-meta-grid">
                   <div>
                     <span>工作包目录</span>
@@ -1533,7 +1586,7 @@ export function DeliveryPage() {
                     <strong>{readbackSession.passEvidencePath || '-'}</strong>
                   </div>
                 </div>
-              </ProgressiveDetails>
+              </Panel>
             )}
             {readbackSession?.sessionDir && (
               <div className="delivery-action-row">
@@ -1690,7 +1743,6 @@ export function DeliveryPage() {
               </Panel>
             ))}
           </div>
-        </ProgressiveDetails>
         </ProgressiveDetails>
 
         <ProgressiveDetails title="技术支持细节">

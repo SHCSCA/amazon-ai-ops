@@ -39,6 +39,27 @@ export function virtualRowParityClass(index: number): string {
   return index % 2 === 0 ? 'virtual-table-row-even' : 'virtual-table-row-odd';
 }
 
+const VIRTUAL_ROW_INTERACTIVE_SELECTOR = [
+  'a',
+  'button',
+  'input',
+  'select',
+  'textarea',
+  'summary',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="checkbox"]',
+  '[role="menuitem"]',
+  '[data-row-interaction]',
+].join(',');
+
+export function virtualRowSelectionAllowed(target: unknown, currentTarget: unknown): boolean {
+  if (target === currentTarget) return true;
+  const candidate = target as { closest?: (selector: string) => unknown } | null | undefined;
+  if (typeof candidate?.closest !== 'function') return true;
+  return !candidate.closest(VIRTUAL_ROW_INTERACTIVE_SELECTOR);
+}
+
 export function virtualTableStatusText({ loading, rowCount, columnCount }: { loading: boolean; rowCount: number; columnCount: number }): string {
   if (loading && rowCount > 0) return `表格正在加载，当前暂存 ${rowCount} 行 / ${columnCount} 列。`;
   if (loading) return `表格正在加载，保留 ${columnCount} 列结构。`;
@@ -103,6 +124,8 @@ export function VirtualDataTable<T>({
     <div
       aria-busy={loading}
       className={`virtual-table-wrap ${loading ? 'virtual-table-loading' : ''} ${className}`.trim()}
+      data-scroll-owner="virtual-table"
+      data-workspace-queue-scroll={true}
       ref={parentRef}
     >
       <div className="virtual-table-status" id={statusId} role="status" aria-live="polite" aria-atomic="true">
@@ -116,7 +139,7 @@ export function VirtualDataTable<T>({
         </div>
       )}
       <div aria-colcount={columns.length} aria-describedby={statusId} aria-rowcount={rows.length} className="virtual-table" role="table" style={{ minWidth }}>
-        <div className="virtual-table-head" role="rowgroup">
+        <div className="virtual-table-head" data-workspace-queue-header={true} role="rowgroup">
           <div className="virtual-table-row virtual-table-header-row" role="row" style={{ gridTemplateColumns }}>
             {columns.map((column) => {
               const active = column.key === sortKey;
@@ -168,8 +191,15 @@ export function VirtualDataTable<T>({
                     aria-label={rowAriaLabel?.(row, virtualRow.index)}
                     aria-selected={rowSelectable ? rowSelected : undefined}
                     className={`virtual-table-row virtual-table-body-row ${virtualRowParityClass(virtualRow.index)} ${rowSelectable ? 'virtual-table-row-selectable' : ''} ${rowSelected ? 'virtual-table-row-selected' : ''} ${rowClassName?.(row, virtualRow.index) || ''}`.trim()}
-                    onClick={rowSelectable ? () => onRowSelect?.(row, virtualRow.index) : undefined}
+                    data-row-index={virtualRow.index}
+                    data-row-key={String(key)}
+                    data-workspace-row={true}
+                    onClick={rowSelectable ? (event) => {
+                      if (!virtualRowSelectionAllowed(event.target, event.currentTarget)) return;
+                      onRowSelect?.(row, virtualRow.index);
+                    } : undefined}
                     onKeyDown={rowSelectable ? (event) => {
+                      if (event.target !== event.currentTarget) return;
                       if (event.key !== 'Enter' && event.key !== ' ') return;
                       event.preventDefault();
                       onRowSelect?.(row, virtualRow.index);

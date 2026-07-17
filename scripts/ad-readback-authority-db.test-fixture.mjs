@@ -10,7 +10,10 @@ const Database = requireLocalDb('better-sqlite3');
 
 function writePng(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  fs.writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(path.basename(filePath), 'utf8'),
+  ]));
   return filePath;
 }
 
@@ -61,8 +64,10 @@ export function createValidAdReadbackEvidence(dir, overrides = {}) {
       metricDate: '2026-06-10',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'keyword-123',
       entityName: 'close match',
+      identityProofPath: writePng(path.join(dir, 'target-identity.png')),
       actionType: 'lower_bid',
     },
     risk: {
@@ -102,10 +107,10 @@ export function createValidAdReadbackEvidence(dir, overrides = {}) {
       recommendationRevision: 1,
       batchId: 'batch_1',
       metricDate: '2026-06-10',
-      sourceFiles: [writeReport(path.join(dir, 'user-search-term.xlsx'))],
+      sourceFiles: [writeReport(path.join(dir, 'keyword.xlsx'))],
       sourceRow: 12,
       evidencePath: 'output/codex-evidence/installed-ad-ai-explanation.json',
-      entityType: 'target',
+      entityType: 'search_term',
       currentValue: '2.40',
       recommendedValue: '2.16',
     },
@@ -189,6 +194,7 @@ export function writeAdReadbackAuthorityDb(dir, evidence, overrides = {}) {
   `);
   const {
     recommendationEvidence: recommendationEvidenceOverrides,
+    writableTargetSourceRow,
     omitBatch,
     omitReportFiles,
     omitMetrics,
@@ -206,8 +212,8 @@ export function writeAdReadbackAuthorityDb(dir, evidence, overrides = {}) {
     storeName: evidence.target.storeName,
     marketplaceCode: evidence.target.marketplaceCode,
     asin: evidence.target.asin,
-    entityType: evidence.target.entityType,
-    entityId: 'target-1',
+    entityType: evidence.source.entityType,
+    entityId: 'source-metric-1',
     entityName: evidence.target.entityName,
     actionType: evidence.target.actionType,
     currentValue: evidence.source.currentValue,
@@ -228,6 +234,21 @@ export function writeAdReadbackAuthorityDb(dir, evidence, overrides = {}) {
     batchId: evidence.authority.batchId,
     sourceFiles: evidence.source.sourceFiles,
     sourceRow: evidence.source.sourceRow,
+    writableTarget: {
+      entityType: evidence.target.entityType,
+      entityId: evidence.target.entityId,
+      entityName: evidence.target.entityName,
+      campaignName: evidence.target.campaignName,
+      adGroupName: evidence.target.adGroupName,
+      metricDate: evidence.target.metricDate,
+      sourceFile: evidence.source.sourceFiles[0],
+      sourceRow: writableTargetSourceRow ?? evidence.source.sourceRow,
+      identitySource: 'ads_ui',
+      verifiedBy: evidence.approval.approverName,
+      verifiedAt: evidence.approval.confirmedAt,
+      verificationNote: 'Matched against the current editable Ads target before approval.',
+      identityProofPath: evidence.target.identityProofPath,
+    },
     approvalDecision: {
       decision: 'approved',
       approvedBy: evidence.approval.approverName,
@@ -280,7 +301,7 @@ export function writeAdReadbackAuthorityDb(dir, evidence, overrides = {}) {
     const insertFile = db.prepare(`
       INSERT INTO lingxing_report_files (
         id, batch_id, report_type, display_name, status, file_path, file_size_bytes
-      ) VALUES (?, ?, 'user_search_term', '用户搜索词', 'imported', ?, ?)
+      ) VALUES (?, ?, 'keyword', '关键词', 'imported', ?, ?)
     `);
     sourceFiles.forEach((filePath, index) => {
       const resolved = path.resolve(filePath);
@@ -293,28 +314,35 @@ export function writeAdReadbackAuthorityDb(dir, evidence, overrides = {}) {
     });
   }
   if (!omitMetrics) {
+    const writableTarget = recommendationEvidence.writableTarget || {
+      metricDate: evidence.source.metricDate,
+      campaignName: evidence.target.campaignName,
+      adGroupName: evidence.target.adGroupName,
+      entityName: evidence.target.entityName,
+      sourceRow: evidence.source.sourceRow,
+    };
     const insertMetric = db.prepare(`
       INSERT INTO ad_daily_metrics (
         batch_id, report_type, date, store_name, marketplace_code, asin,
         campaign_name, ad_group_name, targeting,
         impressions, clicks, cost, orders, sales, source_file, source_row
       ) VALUES (
-        @batchId, 'user_search_term', @metricDate, @storeName, @marketplaceCode, @asin,
+        @batchId, 'keyword', @metricDate, @storeName, @marketplaceCode, @asin,
         @campaignName, @adGroupName, @targeting,
         1000, 30, 40, 1, 60, @sourceFile, @sourceRow
       )
     `);
     sourceFiles.forEach((filePath) => insertMetric.run({
       batchId: evidence.authority.batchId,
-      metricDate: evidence.source.metricDate,
+      metricDate: writableTarget.metricDate,
       storeName: evidence.authority.storeName,
       marketplaceCode: evidence.authority.marketplaceCode,
       asin: evidence.authority.asin,
-      campaignName: evidence.target.campaignName,
-      adGroupName: evidence.target.adGroupName,
-      targeting: evidence.target.entityName,
+      campaignName: writableTarget.campaignName,
+      adGroupName: writableTarget.adGroupName,
+      targeting: writableTarget.entityName,
       sourceFile: path.resolve(filePath),
-      sourceRow: evidence.source.sourceRow,
+      sourceRow: writableTarget.sourceRow,
     }));
   }
   db.close();

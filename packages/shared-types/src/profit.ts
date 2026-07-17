@@ -7,6 +7,7 @@ export interface ProductCost {
   referralFeeRate: number;         // 推荐费比率
   storageFee: number;             // 仓储费
   otherCost: number;               // 其他成本
+  currentPrice: number;            // 当前售价
   minPrice: number;               // 最低价
   targetNetMargin: number;         // 目标净利润率
   targetAcos: number;             // 目标 ACOS

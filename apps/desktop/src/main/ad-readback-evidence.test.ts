@@ -13,7 +13,10 @@ function makeTempDir(): string {
 }
 
 function writePng(filePath: string): string {
-  fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  fs.writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(path.basename(filePath), 'utf8'),
+  ]));
   return filePath;
 }
 
@@ -53,7 +56,9 @@ function completeInput(): AdReadbackEvidenceInput {
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
       entityType: 'target',
+      entityId: 'target-id-123',
       entityName: 'close match',
+      identityProofPath: writePng(path.join(dir, 'identity-proof.png')),
       actionType: 'lower_bid',
     },
     risk: {
@@ -171,6 +176,8 @@ describe('ad readback evidence builder', () => {
       appExecutorUsed: false,
     });
     expect(evidence.approval.note).toBe('Approved only for the selected target and metric batch.');
+    expect(evidence.target.entityId).toBe('target-id-123');
+    expect(evidence.target.identityProofPath).toMatch(/identity-proof\.png$/);
     expect(evidence.source).toMatchObject({
       recommendationId: '101',
       batchId: 'manual_ad_execution_batch',
@@ -299,6 +306,17 @@ describe('ad readback evidence builder', () => {
     expect(evidence.safety.adWriteActionsPerformed).toBe(true);
   });
 
+  it('does not derive a missing readback actual value from the after value', () => {
+    const input = completeInput();
+    delete input.readback!.actualValue;
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.readback.actualValue).toContain('FILL:');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(false);
+  });
+
   it('does not mark evidence complete when before and after values are numerically unchanged with different USD formatting', () => {
     const input = completeInput();
     input.target!.actionType = 'pause_target';
@@ -346,6 +364,26 @@ describe('ad readback evidence builder', () => {
     expect(evidence.before.capturedAt).toContain('FILL:');
   });
 
+  it('does not mark evidence complete without a writable Ads entity id', () => {
+    const input = completeInput();
+    input.target!.entityId = '';
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.target.entityId).toBe('');
+  });
+
+  it('does not mark evidence complete without an existing target identity proof file', () => {
+    const input = completeInput();
+    input.target!.identityProofPath = path.join(makeTempDir(), 'missing-target-identity.json');
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(false);
+  });
+
   it('does not mark evidence complete when before and after screenshots reuse the same file', () => {
     const input = completeInput();
     input.after!.screenshotPath = input.before!.screenshotPath;
@@ -359,6 +397,23 @@ describe('ad readback evidence builder', () => {
   it('does not mark evidence complete when readback proof reuses the after screenshot file', () => {
     const input = completeInput();
     input.readback!.evidencePath = input.after!.screenshotPath;
+
+    const evidence = buildAdReadbackEvidence(input);
+
+    expect(evidence.status).toBe('NEEDS_WORK');
+    expect(evidence.safety.adWriteActionsPerformed).toBe(false);
+  });
+
+  it('does not mark evidence complete when distinct screenshot paths reuse the same image content', () => {
+    const input = completeInput();
+    fs.copyFileSync(String(input.before!.screenshotPath), String(input.after!.screenshotPath));
+    fs.copyFileSync(String(input.before!.screenshotPath), String(input.readback!.evidencePath));
+
+    expect(new Set([
+      input.before!.screenshotPath,
+      input.after!.screenshotPath,
+      input.readback!.evidencePath,
+    ]).size).toBe(3);
 
     const evidence = buildAdReadbackEvidence(input);
 

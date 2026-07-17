@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { Sidebar } from './components/app-shell';
 import { ScopeBar } from './components/scope-bar';
+import { WorkspaceSubviewShell } from './components/workspace';
 import { AdQuantPage } from './pages/ad-quant-page';
 import { DashboardPage } from './pages/dashboard-page';
 import { DataCollectionPage } from './pages/data-collection-page';
@@ -23,6 +24,7 @@ import {
   navigationIntentsEqual,
   normalizeNavigationTarget,
   resolveNavigationTarget,
+  WORKSPACE_SUBVIEW_TABS,
 } from './navigation';
 import type { NavigationIntent } from './navigation';
 import { useScopeStore } from './scope-store';
@@ -40,6 +42,7 @@ import './styles/shell.css';
 import './styles/workspace.css';
 import './styles/priority-table.css';
 import './styles/decisions.css';
+import './styles/object-workspace.css';
 import './styles/readback.css';
 import './styles/states-motion.css';
 
@@ -77,6 +80,20 @@ function bootstrapAppBrowserPreview(username = 'SHC001') {
   });
 }
 
+interface WorkspaceScrollOwner {
+  scrollLeft: number;
+  scrollTop: number;
+  scrollTo: (options: ScrollToOptions) => void;
+}
+
+export function resetWorkspaceScrollPosition(owner: WorkspaceScrollOwner | null): boolean {
+  if (!owner) return false;
+  owner.scrollTop = 0;
+  owner.scrollLeft = 0;
+  owner.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  return true;
+}
+
 const browserPreviewBootstrap = bootstrapAppBrowserPreview();
 
 export function createAppNavigationEventHandler(onNavigate: (intent: NavigationIntent) => void) {
@@ -93,6 +110,22 @@ export function subscribeAppWorkflowInvalidation(
   target?: WorkflowEventTarget,
 ): () => void {
   return subscribeWorkflowInvalidation(onInvalidate, target);
+}
+
+export function createLatestWorkflowLoadGuard() {
+  let sequence = 0;
+  return {
+    begin() {
+      sequence += 1;
+      return sequence;
+    },
+    invalidate() {
+      sequence += 1;
+    },
+    isCurrent(requestSequence: number) {
+      return requestSequence === sequence;
+    },
+  };
 }
 
 function appElectronApi(username = 'SHC001') {
@@ -370,30 +403,102 @@ function LoginPage() {
 function BusinessRoutePage({
   navigation,
   nextSafeAction,
+  onNavigate,
+  previewMode,
   readbackAuthority,
   previewScenarioId,
 }: {
   navigation: NavigationIntent;
   nextSafeAction: NextSafeAction;
+  onNavigate: (intent: NavigationIntent) => void;
+  previewMode: boolean;
   readbackAuthority: ReadbackAuthority;
   previewScenarioId?: string;
 }) {
   const route = resolveNavigationTarget(navigation) || 'dashboard';
   if (navigation.workspace === 'decisions') return <DecisionsPage activeSubview={navigation.subview} />;
+  if (navigation.workspace === 'readback') {
+    return <ReadbackPage authority={readbackAuthority} previewScenarioId={previewScenarioId} />;
+  }
+  if (navigation.workspace === 'today') return <DashboardPage nextSafeAction={nextSafeAction} />;
+  if (navigation.workspace === 'product') {
+    const content = navigation.subview === 'products'
+      ? <ProductManagementPage />
+      : navigation.subview === 'targets'
+        ? <ProductConfigPage />
+        : <OperationEventsPage />;
+    return (
+      <WorkspaceSubviewShell
+        description="锁定当前产品，维护经营目标，并记录会影响判断的运营事件。"
+        onNavigate={(subview) => onNavigate({ workspace: 'product', subview })}
+        ownsPageHeading={navigation.subview === 'products'}
+        subview={navigation.subview}
+        tabs={WORKSPACE_SUBVIEW_TABS.product}
+        workspace="product"
+        workspaceLabel="产品工作台"
+      >
+        {content}
+      </WorkspaceSubviewShell>
+    );
+  }
+  if (navigation.workspace === 'data-preparation') {
+    const content = navigation.subview === 'scope'
+      ? <OperationScopePage />
+      : navigation.subview === 'reports'
+        ? <DataCollectionPage />
+        : <DataImportValidationPage />;
+    return (
+      <WorkspaceSubviewShell
+        description="确认工作范围，补齐八类真实报表，并核对逐类入库结果。"
+        onNavigate={(subview) => onNavigate({ workspace: 'data-preparation', subview })}
+        subview={navigation.subview}
+        tabs={WORKSPACE_SUBVIEW_TABS['data-preparation']}
+        workspace="data-preparation"
+        workspaceLabel="数据准备"
+      >
+        {content}
+      </WorkspaceSubviewShell>
+    );
+  }
+  if (navigation.workspace === 'diagnosis') return <AdQuantPage />;
+  if (navigation.workspace === 'growth') {
+    const content = navigation.subview === 'keywords'
+      ? <KeywordOpportunitiesPage />
+      : <ListingOptimizationPage />;
+    return (
+      <WorkspaceSubviewShell
+        description="从真实关键词机会进入仅本地使用的 Listing 草案流程。"
+        onNavigate={(subview) => onNavigate({ workspace: 'growth', subview })}
+        subview={navigation.subview}
+        tabs={WORKSPACE_SUBVIEW_TABS.growth}
+        workspace="growth"
+        workspaceLabel="关键词与 Listing"
+      >
+        {content}
+      </WorkspaceSubviewShell>
+    );
+  }
+  if (navigation.workspace === 'system') {
+    const content = navigation.subview === 'settings'
+      ? <SettingsPage />
+      : navigation.subview === 'scheduler'
+        ? <SchedulerPage />
+        : <DeliveryPage />;
+    return (
+      <WorkspaceSubviewShell
+        description="管理 AI 与规则、自动任务，并核对当前候选包的交付状态。"
+        onNavigate={(subview) => onNavigate({ workspace: 'system', subview })}
+        previewNotice={previewMode ? '仅开发预览，不代表 APP_READY。预览动作不形成正式交付证据。' : undefined}
+        subview={navigation.subview}
+        tabs={WORKSPACE_SUBVIEW_TABS.system}
+        workspace="system"
+        workspaceLabel="系统与交付"
+      >
+        {content}
+      </WorkspaceSubviewShell>
+    );
+  }
   if (route === 'dashboard') return <DashboardPage nextSafeAction={nextSafeAction} />;
-  if (route === 'product-management') return <ProductManagementPage />;
-  if (route === 'operation-scope') return <OperationScopePage />;
-  if (route === 'data-collection') return <DataCollectionPage />;
-  if (route === 'data-import-validation') return <DataImportValidationPage />;
-  if (route === 'operation-events') return <OperationEventsPage />;
-  if (route === 'product-config') return <ProductConfigPage />;
-  if (route === 'ad-quant') return <AdQuantPage />;
-  if (route === 'readback') return <ReadbackPage authority={readbackAuthority} previewScenarioId={previewScenarioId} />;
-  if (route === 'keyword-opportunities') return <KeywordOpportunitiesPage />;
-  if (route === 'listing-optimization') return <ListingOptimizationPage />;
-  if (route === 'scheduler') return <SchedulerPage />;
-  if (route === 'settings') return <SettingsPage />;
-  if (route === 'delivery') return <DeliveryPage />;
   return <DashboardPage nextSafeAction={nextSafeAction} />;
 }
 
@@ -452,14 +557,19 @@ export default function App() {
     if (navigationTimerRef.current) window.clearTimeout(navigationTimerRef.current);
   }, []);
 
-  useEffect(() => {
-    contentRef.current?.scrollTo({ top: 0, left: 0 });
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    resetWorkspaceScrollPosition(content);
+    const repaintFrame = window.requestAnimationFrame(() => resetWorkspaceScrollPosition(content));
+    return () => window.cancelAnimationFrame(repaintFrame);
   }, [activeNavigation.subview, activeNavigation.workspace]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
     let cancelled = false;
+    const workflowLoadGuard = createLatestWorkflowLoadGuard();
     async function loadWorkflowState() {
+      const loadSequence = workflowLoadGuard.begin();
       try {
         const api = (window as any).electronAPI;
         const pipeline = await api?.getBusinessUiDataPipeline?.(scope);
@@ -480,7 +590,7 @@ export default function App() {
           api?.getDeliveryEvidenceStatus?.(filter) || null,
           api?.getDeliveryReadiness?.() || null,
         ]);
-        if (!cancelled) {
+        if (!cancelled && workflowLoadGuard.isCurrent(loadSequence)) {
           setDeliveryReadiness(readiness || null);
           setWorkflowEvidence(deriveWorkflowEvidence({
             scope,
@@ -495,7 +605,7 @@ export default function App() {
           }));
         }
       } catch {
-        if (!cancelled) {
+        if (!cancelled && workflowLoadGuard.isCurrent(loadSequence)) {
           setDeliveryReadiness(null);
           setWorkflowEvidence(deriveWorkflowEvidence({ scope }));
         }
@@ -509,6 +619,7 @@ export default function App() {
     });
     return () => {
       cancelled = true;
+      workflowLoadGuard.invalidate();
       window.removeEventListener('business-ui:data-updated', loadWorkflowState);
       unsubscribeWorkflowInvalidation();
     };
@@ -559,6 +670,8 @@ export default function App() {
           <BusinessRoutePage
             navigation={activeNavigation}
             nextSafeAction={nextSafeAction}
+            onNavigate={requestNavigate}
+            previewMode={browserPreviewBootstrap.enabled}
             previewScenarioId={'scenarioId' in browserPreviewBootstrap ? browserPreviewBootstrap.scenarioId : undefined}
             readbackAuthority={readbackAuthority}
           />

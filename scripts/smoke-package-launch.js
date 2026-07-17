@@ -2,12 +2,21 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const {
+  PACKAGE_LAUNCH_SMOKE_MODE,
+  buildEvidenceUserDataEnv,
+  inspectPackagedUserDataOverrideContract,
+  readEvidenceUserDataRuntimeMarker,
+  validateEvidenceUserDataIdentity,
+  validateEvidenceUserDataPath,
+} = require('./evidence-user-data');
 
 const root = path.resolve(__dirname, '..');
 const releaseDir = path.join(root, 'apps', 'desktop', 'release');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const desktopPackage = JSON.parse(fs.readFileSync(path.join(root, 'apps', 'desktop', 'package.json'), 'utf8'));
 const runId = Date.now();
+const isolatedUserDataRoot = path.join('D:\\Temp', 'amazon-ai-ops-package-launch-smoke', String(runId));
 
 function fail(message, details) {
   throw new Error(details ? `${message}: ${details}` : message);
@@ -15,6 +24,28 @@ function fail(message, details) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function prepareIsolatedUserData(kind) {
+  const userDataDir = path.join(isolatedUserDataRoot, kind);
+  fs.mkdirSync(userDataDir, { recursive: true });
+  return validateEvidenceUserDataPath(userDataDir);
+}
+
+function collectUserDataEvidence(userDataDir) {
+  const runtime = readEvidenceUserDataRuntimeMarker(userDataDir);
+  const identity = validateEvidenceUserDataIdentity({
+    actualUserDataDir: runtime.marker?.userDataDir,
+    evidenceMode: runtime.marker?.mode,
+    expectedMode: PACKAGE_LAUNCH_SMOKE_MODE,
+    expectedUserDataDir: userDataDir,
+  });
+  return {
+    ...identity,
+    marker: runtime.marker,
+    markerError: runtime.error || null,
+    markerPath: runtime.markerPath,
+  };
 }
 
 function sha256(filePath) {
@@ -77,7 +108,7 @@ $all | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine |
   }
 }
 
-async function launchUnpacked(exePath) {
+async function launchUnpacked(exePath, userDataDir) {
   const stdout = [];
   const stderr = [];
   const stdoutPath = path.join(evidenceDir, `package-launch-unpacked-${runId}.stdout.log`);
@@ -85,7 +116,7 @@ async function launchUnpacked(exePath) {
   const child = spawn(exePath, [], {
     cwd: path.dirname(exePath),
     env: {
-      ...process.env,
+      ...buildEvidenceUserDataEnv(process.env, PACKAGE_LAUNCH_SMOKE_MODE, userDataDir),
       ELECTRON_ENABLE_LOGGING: '1',
       ELECTRON_ENABLE_STACK_DUMPING: '1',
     },
@@ -100,11 +131,12 @@ async function launchUnpacked(exePath) {
     const deadline = Date.now() + 20000;
     while (Date.now() < deadline) {
       const text = stdout.join('');
-      if (text.includes('[App] window-created')) {
+      const userDataEvidence = collectUserDataEvidence(userDataDir);
+      if (text.includes('[App] window-created') && userDataEvidence.passed) {
         marker = '[App] window-created';
         break;
       }
-      if (text.includes('[App] ipc-ready')) {
+      if (text.includes('[App] ipc-ready') && userDataEvidence.passed) {
         marker = '[App] ipc-ready';
         break;
       }
@@ -120,9 +152,10 @@ async function launchUnpacked(exePath) {
 
   const stdoutText = stdout.join('');
   const stderrText = stderr.join('');
+  const userDataEvidence = collectUserDataEvidence(userDataDir);
   return {
     kind: 'win-unpacked',
-    ok: Boolean(marker),
+    ok: Boolean(marker) && userDataEvidence.passed,
     marker,
     pid: child.pid,
     exitCode: child.exitCode,
@@ -130,10 +163,11 @@ async function launchUnpacked(exePath) {
     stderrPath,
     stdoutTail: stdoutText.slice(-2000),
     stderrTail: stderrText.slice(-2000),
+    userDataEvidence,
   };
 }
 
-async function launchPortable(exePath) {
+async function launchPortable(exePath, userDataDir) {
   const stdout = [];
   const stderr = [];
   const stdoutPath = path.join(evidenceDir, `package-launch-portable-${runId}.stdout.log`);
@@ -141,7 +175,7 @@ async function launchPortable(exePath) {
   const child = spawn(exePath, [], {
     cwd: path.dirname(exePath),
     env: {
-      ...process.env,
+      ...buildEvidenceUserDataEnv(process.env, PACKAGE_LAUNCH_SMOKE_MODE, userDataDir),
       ELECTRON_ENABLE_LOGGING: '1',
       ELECTRON_ENABLE_STACK_DUMPING: '1',
     },
@@ -157,7 +191,8 @@ async function launchPortable(exePath) {
     while (Date.now() < deadline) {
       descendantSnapshot = windowsDescendants(child.pid);
       const appChildren = descendantSnapshot.processes.filter((item) => /AmazonAIOpsAgent\.exe/i.test(String(item.Name || '')));
-      if (appChildren.length > 0) break;
+      const userDataEvidence = collectUserDataEvidence(userDataDir);
+      if (appChildren.length > 0 && userDataEvidence.passed) break;
       if (child.exitCode !== null) break;
       await sleep(500);
     }
@@ -169,9 +204,10 @@ async function launchPortable(exePath) {
   }
 
   const appChildren = descendantSnapshot.processes.filter((item) => /AmazonAIOpsAgent\.exe/i.test(String(item.Name || '')));
+  const userDataEvidence = collectUserDataEvidence(userDataDir);
   return {
     kind: 'portable',
-    ok: appChildren.length > 0,
+    ok: appChildren.length > 0 && userDataEvidence.passed,
     launcherPid: child.pid,
     launcherExitCode: child.exitCode,
     descendantCount: descendantSnapshot.processes.length,
@@ -182,6 +218,7 @@ async function launchPortable(exePath) {
     stderrPath,
     stdoutTail: stdout.join('').slice(-2000),
     stderrTail: stderr.join('').slice(-2000),
+    userDataEvidence,
   };
 }
 
@@ -192,10 +229,20 @@ async function main() {
   fs.mkdirSync(evidenceDir, { recursive: true });
   const unpackedExe = path.join(releaseDir, 'win-unpacked', 'AmazonAIOpsAgent.exe');
   const portableExe = path.join(releaseDir, `AmazonAIOpsAgent-${desktopPackage.version}-portable.exe`);
+  const userDataOverrideBundleContract = inspectPackagedUserDataOverrideContract(
+    path.join(releaseDir, 'win-unpacked', 'resources', 'app', 'dist', 'main', 'index.js'),
+  );
+  const isolatedUserData = {
+    unpacked: prepareIsolatedUserData('win-unpacked'),
+    portable: prepareIsolatedUserData('portable'),
+  };
   const evidence = {
     kind: 'package-launch-smoke',
     generatedAt: new Date().toISOString(),
     releaseDir,
+    evidenceMode: PACKAGE_LAUNCH_SMOKE_MODE,
+    isolatedUserData,
+    userDataOverrideBundleContract,
     artifacts: {
       unpacked: fileInfo(unpackedExe),
       portable: fileInfo(portableExe),
@@ -204,8 +251,14 @@ async function main() {
     passed: false,
   };
 
-  evidence.checks.push(await launchUnpacked(unpackedExe));
-  evidence.checks.push(await launchPortable(portableExe));
+  if (!userDataOverrideBundleContract.passed) {
+    fail('Package launch smoke refused to start a package without the userData override contract', JSON.stringify(
+      userDataOverrideBundleContract.violations,
+    ));
+  }
+
+  evidence.checks.push(await launchUnpacked(unpackedExe, isolatedUserData.unpacked));
+  evidence.checks.push(await launchPortable(portableExe, isolatedUserData.portable));
   evidence.passed = evidence.checks.every((check) => check.ok);
 
   const evidencePath = path.join(evidenceDir, `package-launch-smoke-${runId}.json`);

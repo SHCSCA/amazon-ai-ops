@@ -1,17 +1,21 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
+import {
+  captureOverlayFocusTarget,
+  handleOverlayEscape,
+  isTopOverlayKeyboardLayer,
+  makeOverlayBackgroundInert,
+  overlayDismissLocked,
+  registerOverlayKeyboardLayer,
+  resolveOverlayFocusReturnTarget,
+  restoreOverlayFocus,
+  scheduleOverlayFocusRestore,
+  trapOverlayTab,
+  type OverlayFocusSurface,
+  type OverlayFocusTarget,
+  type OverlayInertRoot,
+} from './overlay-focus-scope';
 
 export const RESPONSIVE_INSPECTOR_MEDIA_QUERY = '(max-width: 1399px)';
-
-const RESPONSIVE_INSPECTOR_FOCUSABLE_SELECTOR = [
-  'a[href]',
-  'area[href]',
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[contenteditable="true"]',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
 
 export type ResponsiveInspectorMode = 'inline' | 'drawer';
 
@@ -20,10 +24,7 @@ export type ResponsiveInspectorViewport = {
   matchMedia?: (query: string) => { matches: boolean };
 };
 
-export type ResponsiveInspectorFocusTarget = {
-  focus: () => void;
-  isConnected?: boolean;
-};
+export type ResponsiveInspectorFocusTarget = OverlayFocusTarget;
 
 export type ResponsiveInspectorProps = {
   open: boolean;
@@ -38,25 +39,8 @@ export type ResponsiveInspectorProps = {
   children: React.ReactNode;
 };
 
-type ResponsiveInspectorFocusScope = ResponsiveInspectorFocusTarget & {
-  querySelectorAll: (selector: string) => ArrayLike<unknown>;
-};
-
-type ResponsiveInspectorInertTarget = {
-  inert: boolean;
-  hasAttribute: (name: string) => boolean;
-  setAttribute: (name: string, value: string) => void;
-  removeAttribute: (name: string) => void;
-};
-
-type ResponsiveInspectorInertParent = {
-  children: ArrayLike<unknown>;
-  parentElement?: ResponsiveInspectorInertParent | null;
-};
-
-type ResponsiveInspectorInertRoot = ResponsiveInspectorInertTarget & {
-  parentElement?: ResponsiveInspectorInertParent | null;
-};
+type ResponsiveInspectorFocusScope = OverlayFocusSurface;
+type ResponsiveInspectorInertRoot = OverlayInertRoot;
 
 export function resolveResponsiveInspectorMode(
   viewport: ResponsiveInspectorViewport | undefined,
@@ -81,27 +65,20 @@ export function resolveResponsiveInspectorMode(
 export function captureResponsiveInspectorTrigger(
   activeElement: unknown,
 ): ResponsiveInspectorFocusTarget | null {
-  if (!activeElement || typeof (activeElement as { focus?: unknown }).focus !== 'function') {
-    return null;
-  }
-  return activeElement as ResponsiveInspectorFocusTarget;
+  return captureOverlayFocusTarget(activeElement);
 }
 
 export function restoreResponsiveInspectorFocus(
   trigger: ResponsiveInspectorFocusTarget | null,
 ): void {
-  trigger?.focus();
+  restoreOverlayFocus(trigger);
 }
 
 export function scheduleResponsiveInspectorFocusRestore(
   trigger: ResponsiveInspectorFocusTarget | null,
   schedule: (callback: () => void) => void,
 ): void {
-  if (!trigger) return;
-  schedule(() => {
-    if (trigger.isConnected === false) return;
-    restoreResponsiveInspectorFocus(trigger);
-  });
+  scheduleOverlayFocusRestore(trigger, schedule);
 }
 
 export function resolveResponsiveInspectorFocusReturnTarget(
@@ -110,7 +87,7 @@ export function resolveResponsiveInspectorFocusReturnTarget(
     trigger: ResponsiveInspectorFocusTarget | null,
   ) => ResponsiveInspectorFocusTarget | null,
 ): ResponsiveInspectorFocusTarget | null {
-  return resolver ? resolver(trigger) : trigger;
+  return resolveOverlayFocusReturnTarget(trigger, resolver);
 }
 
 export function focusResponsiveInspectorEntry(
@@ -126,7 +103,7 @@ export function responsiveInspectorDismissLocked(
   dismissDisabled = false,
   busy = false,
 ): boolean {
-  return dismissDisabled || busy;
+  return overlayDismissLocked(dismissDisabled, busy);
 }
 
 export function handleResponsiveInspectorEscape(
@@ -134,10 +111,7 @@ export function handleResponsiveInspectorEscape(
   onClose: () => void,
   dismissLocked = false,
 ): boolean {
-  if (event.key !== 'Escape' || dismissLocked) return false;
-  event.preventDefault();
-  onClose();
-  return true;
+  return handleOverlayEscape(event, onClose, dismissLocked);
 }
 
 export function trapResponsiveInspectorTab(
@@ -145,89 +119,13 @@ export function trapResponsiveInspectorTab(
   surface: ResponsiveInspectorFocusScope | null,
   activeElement: unknown,
 ): boolean {
-  if (event.key !== 'Tab' || !surface) return false;
-
-  const focusable = Array.from(surface.querySelectorAll(RESPONSIVE_INSPECTOR_FOCUSABLE_SELECTOR))
-    .map((element) => captureResponsiveInspectorTrigger(element))
-    .filter((element): element is ResponsiveInspectorFocusTarget => element !== null);
-
-  if (focusable.length === 0) {
-    event.preventDefault();
-    surface.focus();
-    return true;
-  }
-
-  const current = captureResponsiveInspectorTrigger(activeElement);
-  const currentIndex = current ? focusable.indexOf(current) : -1;
-  const shouldWrapBackward = event.shiftKey && currentIndex <= 0;
-  const shouldWrapForward = !event.shiftKey
-    && (currentIndex < 0 || currentIndex === focusable.length - 1);
-
-  if (!shouldWrapBackward && !shouldWrapForward) return false;
-
-  event.preventDefault();
-  focusable[shouldWrapBackward ? focusable.length - 1 : 0]?.focus();
-  return true;
-}
-
-function asResponsiveInspectorInertTarget(value: unknown): ResponsiveInspectorInertTarget | null {
-  if (!value || typeof value !== 'object') return null;
-  const candidate = value as Partial<ResponsiveInspectorInertTarget>;
-  if (
-    typeof candidate.hasAttribute !== 'function'
-    || typeof candidate.setAttribute !== 'function'
-    || typeof candidate.removeAttribute !== 'function'
-  ) {
-    return null;
-  }
-  return candidate as ResponsiveInspectorInertTarget;
+  return trapOverlayTab(event, surface, activeElement);
 }
 
 export function makeResponsiveInspectorBackgroundInert(
   root: ResponsiveInspectorInertRoot | null,
 ): () => void {
-  if (!root?.parentElement) return () => undefined;
-
-  const snapshots: Array<{
-    element: ResponsiveInspectorInertTarget;
-    inert: boolean;
-    hadAttribute: boolean;
-  }> = [];
-  const captured = new Set<ResponsiveInspectorInertTarget>();
-  let activePathNode: unknown = root;
-  let parent: ResponsiveInspectorInertParent | null | undefined = root.parentElement;
-
-  while (parent) {
-    for (const sibling of Array.from(parent.children)) {
-      if (sibling === activePathNode) continue;
-      const element = asResponsiveInspectorInertTarget(sibling);
-      if (!element || captured.has(element)) continue;
-      captured.add(element);
-      snapshots.push({
-        element,
-        inert: Boolean(element.inert),
-        hadAttribute: element.hasAttribute('inert'),
-      });
-    }
-    activePathNode = parent;
-    parent = parent.parentElement;
-  }
-
-  for (const { element } of snapshots) {
-    element.inert = true;
-    element.setAttribute('inert', '');
-  }
-
-  let restored = false;
-  return () => {
-    if (restored) return;
-    restored = true;
-    for (const snapshot of snapshots) {
-      snapshot.element.inert = snapshot.inert;
-      if (snapshot.hadAttribute) snapshot.element.setAttribute('inert', '');
-      else snapshot.element.removeAttribute('inert');
-    }
-  };
+  return makeOverlayBackgroundInert(root);
 }
 
 function currentViewport(): ResponsiveInspectorViewport | undefined {
@@ -287,9 +185,16 @@ export function ResponsiveInspector({
   const drawerRootRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const triggerRef = useRef<ResponsiveInspectorFocusTarget | null>(null);
+  const keyboardLayerRef = useRef(Symbol('responsive-inspector-keyboard-layer'));
   const focusReturnResolverRef = useRef(resolveFocusReturnTarget);
+  const dismissLockedRef = useRef(false);
+  const modeRef = useRef(mode);
+  const onCloseRef = useRef(onClose);
   focusReturnResolverRef.current = resolveFocusReturnTarget;
   const dismissLocked = responsiveInspectorDismissLocked(dismissDisabled, busy);
+  dismissLockedRef.current = dismissLocked;
+  modeRef.current = mode;
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open || typeof document === 'undefined') return undefined;
@@ -323,19 +228,25 @@ export function ResponsiveInspector({
 
   useEffect(() => {
     if (!open || typeof document === 'undefined') return undefined;
+    const keyboardLayer = keyboardLayerRef.current;
+    const unregisterKeyboardLayer = registerOverlayKeyboardLayer(keyboardLayer);
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (mode === 'drawer' && trapResponsiveInspectorTab(
+      if (!isTopOverlayKeyboardLayer(keyboardLayer)) return;
+      if (modeRef.current === 'drawer' && trapResponsiveInspectorTab(
         event,
         surfaceRef.current,
         document.activeElement,
       )) {
         return;
       }
-      handleResponsiveInspectorEscape(event, onClose, dismissLocked);
+      handleResponsiveInspectorEscape(event, () => onCloseRef.current(), dismissLockedRef.current);
     };
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [dismissLocked, mode, onClose, open]);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      unregisterKeyboardLayer();
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open || mode !== 'drawer') return undefined;

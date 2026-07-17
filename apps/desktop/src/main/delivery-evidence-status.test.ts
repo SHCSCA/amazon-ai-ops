@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import crypto from 'crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { getDeliveryEvidenceStatus } from './delivery-evidence-status';
 
@@ -125,6 +126,53 @@ describe('getDeliveryEvidenceStatus', () => {
       sha256: expect.stringMatching(/^[A-F0-9]{64}$/),
     });
     expect(status.package?.latestBuiltAt).toBeTruthy();
+  });
+
+  it('uses the newest portable artifact as the current package authority', () => {
+    const db = createDb({ listingContent: [], listingDrafts: [] });
+    const releaseDir = makeTempDir();
+    const installerPath = path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0.exe');
+    const stalePortablePath = path.join(releaseDir, 'AmazonAIOpsAgent-1.4.9-portable.exe');
+    const currentPortablePath = path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0-portable.exe');
+    fs.writeFileSync(installerPath, 'installer-binary\n', 'utf8');
+    fs.writeFileSync(stalePortablePath, 'stale-portable\n', 'utf8');
+    fs.writeFileSync(currentPortablePath, 'current-portable\n', 'utf8');
+    const staleTime = new Date('2026-06-01T00:00:00.000Z');
+    const currentTime = new Date('2026-06-02T00:00:00.000Z');
+    fs.utimesSync(stalePortablePath, staleTime, staleTime);
+    fs.utimesSync(currentPortablePath, currentTime, currentTime);
+
+    const status = getDeliveryEvidenceStatus({
+      db,
+      readbackDir: makeTempDir(),
+      releaseDir,
+      scope: {},
+    });
+
+    expect(status.package.portablePath).toBe(currentPortablePath);
+    expect(status.package.sha256).toBe(
+      crypto.createHash('sha256').update('current-portable\n').digest('hex').toUpperCase(),
+    );
+  });
+
+  it('reports installer unavailable when the release contains only a portable executable', () => {
+    const releaseDir = makeTempDir();
+    const portablePath = path.join(releaseDir, 'AmazonAIOpsAgent-1.5.0-portable.exe');
+    fs.writeFileSync(portablePath, 'portable-only\n', 'utf8');
+
+    const status = getDeliveryEvidenceStatus({
+      db: createDb({ listingContent: [], listingDrafts: [] }),
+      readbackDir: makeTempDir(),
+      releaseDir,
+      scope: {},
+    });
+
+    expect(status.package).toMatchObject({
+      installerAvailable: false,
+      installerPath: undefined,
+      portablePath,
+      sha256: expect.stringMatching(/^[A-F0-9]{64}$/),
+    });
   });
 
   it('does not count incomplete listing content, rule fallback drafts or out-of-scope readback files', () => {
@@ -359,6 +407,65 @@ describe('getDeliveryEvidenceStatus', () => {
     expect(status.readback.latestStatus).toBe('PASS');
   });
 
+  it('does not count PASS readback evidence when distinct screenshot paths reuse the same bytes', () => {
+    const db = createDb({ listingContent: [], listingDrafts: [] });
+    const readbackDir = makeTempDir();
+    const sourceFile = writeFixtureFile(readbackDir, 'user-search-term.xlsx');
+    const beforeScreenshot = path.join(readbackDir, 'before.png');
+    const afterScreenshot = path.join(readbackDir, 'after.png');
+    const readbackScreenshot = path.join(readbackDir, 'readback.png');
+    for (const screenshotPath of [beforeScreenshot, afterScreenshot, readbackScreenshot]) {
+      fs.writeFileSync(screenshotPath, 'reused-screenshot-bytes\n', 'utf8');
+    }
+    writeReadback(readbackDir, {
+      status: 'PASS',
+      target: {
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        asin: 'B0TESTASIN',
+        metricDate: '2026-06-12',
+        actionType: 'lower_bid',
+      },
+      source: {
+        batchId: 'batch_current',
+        metricDate: '2026-06-12',
+        sourceFiles: [sourceFile],
+        sourceRow: 12,
+        currentValue: '2.40',
+        recommendedValue: '2.16',
+      },
+      before: {
+        value: '2.40',
+        screenshotPath: beforeScreenshot,
+      },
+      after: {
+        value: '2.16',
+        screenshotPath: afterScreenshot,
+      },
+      readback: {
+        verified: true,
+        actualValue: '2.16',
+        evidencePath: readbackScreenshot,
+      },
+    });
+
+    const status = getDeliveryEvidenceStatus({
+      db,
+      readbackDir,
+      scope: {
+        dateFrom: '2026-06-01',
+        dateTo: '2026-06-12',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        asin: 'B0TESTASIN',
+        batchId: 'batch_current',
+      },
+    });
+
+    expect(status.readback.verifiedCount).toBe(0);
+    expect(status.readback.latestStatus).toBe('PASS');
+  });
+
   it('does not mark listing evidence ready when the current scope has no ASIN to match', () => {
     const db = createDb({
       listingContent: [{
@@ -469,6 +576,6 @@ function writeReadback(dir: string, payload: Record<string, unknown>) {
 
 function writeFixtureFile(dir: string, name: string): string {
   const filePath = path.join(dir, name);
-  fs.writeFileSync(filePath, 'fixture\n', 'utf8');
+  fs.writeFileSync(filePath, `fixture:${name}\n`, 'utf8');
   return filePath;
 }

@@ -13,21 +13,28 @@ export function toUserFacingError(error: unknown, fallback: string): string {
   }
   if (/生成优化建议被阻断/.test(message)) {
     if (/缺少可绑定的日级广告指标/.test(message)) {
-      return '当前产品范围缺少可回查的日级广告指标：请先在产品管理选择 ASIN，并在数据导入与校验页重新导入当前批次真实报表后再运行 AI。';
+      return '当前产品范围缺少可回查的日级广告指标：请先在“产品工作台”选择 ASIN，并到“数据准备 → 导入检查”重新导入当前批次真实报表后再运行 AI。';
     }
     if (/没有由真实报表导入的广告指标行|缺少导入后的日级广告指标|没有真实报表文件和导入指标/.test(message)) {
-      return '当前产品范围缺少已导入的日级广告指标：请先在数据采集页重新获取完整 8 类报表，并在数据导入与校验页导入当前批次后再运行 AI。';
+      return '当前产品范围缺少已导入的日级广告指标：请先到“数据准备 → 报表采集”重新获取完整 8 类报表，再到“数据准备 → 导入检查”导入当前批次后运行 AI。';
     }
     if (/没有真实 \.xlsx\/\.xls\/\.csv 原始报表文件|缺少真实广告报表文件|只找到 \d+\/\d+ 类真实广告报表/.test(message)) {
-      return '当前产品范围缺少完整真实广告报表：请先回到数据采集页重新获取完整 8 类报表，再导入当前批次。';
+      return '当前产品范围缺少完整真实广告报表：请先到“数据准备 → 报表采集”重新获取完整 8 类报表，再到“导入检查”导入当前批次。';
     }
     if (/缺少可绑定产品 ASIN/.test(message)) {
-      return '当前广告指标缺少可绑定产品 ASIN：请先在产品管理选择 ASIN，或重新导入包含 ASIN 的真实报表。';
+      return '当前广告指标缺少可绑定产品 ASIN：请先在“产品工作台”选择 ASIN，或重新导入包含 ASIN 的真实报表。';
     }
     return '当前产品范围的数据证据不足，AI 不会生成正式建议：请先补齐真实报表、导入指标和产品 ASIN 后重试。';
   }
+  if (/读取关键词机会被阻断/.test(message)) {
+    const coverage = message.match(/(\d+)\s*\/\s*8\s*类/);
+    const coverageSummary = coverage
+      ? `当前范围仅覆盖 ${coverage[1]}/8 类报表。`
+      : '当前范围缺少完整报表。';
+    return `关键词机会暂不可用：${coverageSummary}请到“数据准备”补齐并导入缺失报表后重试。`;
+  }
   if (/missing|not found/i.test(message) && /report|file|path|batch/i.test(message)) {
-    return '当前范围缺少可用文件或数据批次：请先在数据采集页确认真实报表文件存在并完成导入。';
+    return '当前范围缺少可用文件或数据批次：请先到“数据准备 → 报表采集”确认真实报表文件存在，再到“导入检查”完成导入。';
   }
   if (/requires manual verification|manual verification/i.test(message)) {
     return '页面模型仍在人工复核状态：需完成 8 类单报表验证和启用审计后再放行完整采集。';

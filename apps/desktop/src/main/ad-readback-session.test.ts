@@ -10,7 +10,9 @@ function tempDir(): string {
 
 function writeCandidate(dir: string, patch: Record<string, any> = {}): string {
   const reportPath = path.join(dir, 'source-user-search-term.xlsx');
+  const identityProofPath = path.join(dir, 'target-identity-proof.json');
   fs.writeFileSync(reportPath, 'fake spreadsheet bytes');
+  fs.writeFileSync(identityProofPath, '{"verified":true}\n', 'utf8');
   const candidate = {
     schemaVersion: 2,
     kind: 'real-ad-execution-readback',
@@ -33,8 +35,10 @@ function writeCandidate(dir: string, patch: Record<string, any> = {}): string {
       asin: 'B0TESTASIN',
       campaignName: 'D6 campaign',
       adGroupName: 'D6 ad group',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'target-id-4',
       entityName: 'door lock',
+      identityProofPath,
       actionType: 'lower_bid',
     },
     source: {
@@ -95,10 +99,13 @@ describe('prepareAdReadbackSession', () => {
     expect(sessionInput.riskRationale).toBe('Lowering one paused target bid is bounded and reversible.');
 
     const locatorGuide = fs.readFileSync(result.locatorGuidePath, 'utf8');
+    const candidate = JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
     expect(locatorGuide).toContain('Ads UI 定位单');
     expect(locatorGuide).toContain('D6 campaign');
     expect(locatorGuide).toContain('D6 ad group');
     expect(locatorGuide).toContain('door lock');
+    expect(locatorGuide).toContain('target-id-4');
+    expect(locatorGuide).toContain(candidate.target.identityProofPath);
     expect(locatorGuide).toContain('来源报表行号 | 12');
 
     const inputGuide = fs.readFileSync(result.sessionInputGuidePath, 'utf8');
@@ -107,6 +114,12 @@ describe('prepareAdReadbackSession', () => {
     expect(inputGuide).toContain('执行前/执行前 Ads UI live bid');
     expect(inputGuide).toContain('回读/刷新回读截图文件');
     expect(inputGuide).toContain('D6 campaign');
+    expect(inputGuide).toContain('target-id-4');
+    expect(inputGuide).toContain(candidate.target.identityProofPath);
+
+    const checklist = fs.readFileSync(result.checklistPath, 'utf8');
+    expect(checklist).toContain('target-id-4');
+    expect(checklist).toContain(candidate.target.identityProofPath);
 
     const fillScript = fs.readFileSync(result.fillScriptPath, 'utf8');
     expect(fillScript).toContain('pnpm run fill:ad-readback-session -- --session');
@@ -130,6 +143,42 @@ describe('prepareAdReadbackSession', () => {
 
     expect(() => prepareAdReadbackSession({ sourcePath: candidatePath, outDir: path.join(dir, 'session') }))
       .toThrow('only prepares NEEDS_WORK candidates');
+  });
+
+  it('refuses candidates without a stable target entity id before creating a session', () => {
+    const dir = tempDir();
+    const candidatePath = writeCandidate(dir);
+    const candidate = JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
+    delete candidate.target.entityId;
+    fs.writeFileSync(candidatePath, `${JSON.stringify(candidate, null, 2)}\n`, 'utf8');
+
+    expect(() => prepareAdReadbackSession({ sourcePath: candidatePath, outDir: path.join(dir, 'session') }))
+      .toThrow(/target\.entityId/);
+    expect(fs.existsSync(path.join(dir, 'session'))).toBe(false);
+  });
+
+  it('refuses candidates without a target identity proof path before creating a session', () => {
+    const dir = tempDir();
+    const candidatePath = writeCandidate(dir);
+    const candidate = JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
+    delete candidate.target.identityProofPath;
+    fs.writeFileSync(candidatePath, `${JSON.stringify(candidate, null, 2)}\n`, 'utf8');
+
+    expect(() => prepareAdReadbackSession({ sourcePath: candidatePath, outDir: path.join(dir, 'session') }))
+      .toThrow(/target\.identityProofPath/);
+    expect(fs.existsSync(path.join(dir, 'session'))).toBe(false);
+  });
+
+  it('refuses candidates whose target identity proof file does not exist', () => {
+    const dir = tempDir();
+    const candidatePath = writeCandidate(dir);
+    const candidate = JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
+    candidate.target.identityProofPath = path.join(dir, 'missing-target-identity-proof.json');
+    fs.writeFileSync(candidatePath, `${JSON.stringify(candidate, null, 2)}\n`, 'utf8');
+
+    expect(() => prepareAdReadbackSession({ sourcePath: candidatePath, outDir: path.join(dir, 'session') }))
+      .toThrow(/identity proof file does not exist/);
+    expect(fs.existsSync(path.join(dir, 'session'))).toBe(false);
   });
 });
 
@@ -183,6 +232,20 @@ describe('verifyAdReadbackSession', () => {
     expect(result.issues.join('\n')).toContain('raw report files are not copied into session');
   });
 
+  it('fails structural verification when the target identity proof disappears after prepare', () => {
+    const dir = tempDir();
+    const candidatePath = writeCandidate(dir);
+    const candidate = JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
+    const outDir = path.join(dir, 'session');
+    prepareAdReadbackSession({ sourcePath: candidatePath, outDir });
+    fs.rmSync(candidate.target.identityProofPath, { force: true });
+
+    const result = verifyAdReadbackSession(outDir);
+
+    expect(result.ready).toBe(false);
+    expect(result.issues.join('\n')).toContain('target identity proof file exists');
+  });
+
   it('marks capture as ready only after session-input has live evidence values', () => {
     const dir = tempDir();
     const candidatePath = writeCandidate(dir);
@@ -219,6 +282,14 @@ describe('verifyAdReadbackSession', () => {
     expect(result.unresolvedFields).toEqual([]);
     expect(result.captureMissingFields).toEqual([]);
     expect(result.captureIssues).toEqual([]);
+
+    const withoutIndependentReadbackValue = JSON.parse(fs.readFileSync(session.sessionInputPath, 'utf8'));
+    withoutIndependentReadbackValue.readbackActualValue = '';
+    fs.writeFileSync(session.sessionInputPath, `${JSON.stringify(withoutIndependentReadbackValue, null, 2)}\n`, 'utf8');
+
+    const incomplete = verifyAdReadbackSession(outDir);
+    expect(incomplete.captureReady).toBe(false);
+    expect(incomplete.unresolvedFields).toContain('readbackActualValue');
   });
 });
 
@@ -233,7 +304,7 @@ describe('fillAdReadbackSession', () => {
     const afterPath = path.join(session.afterScreenshotsDir, 'after.png');
     const readbackPath = path.join(session.readbackScreenshotsDir, 'readback.png');
     for (const filePath of [approvalPath, beforePath, afterPath, readbackPath]) {
-      fs.writeFileSync(filePath, 'image placeholder');
+      fs.writeFileSync(filePath, `image placeholder:${path.basename(filePath)}`);
     }
     fs.writeFileSync(session.sessionInputPath, `${JSON.stringify({
       approverName: 'Ops Lead',

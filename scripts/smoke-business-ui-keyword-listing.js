@@ -10,11 +10,11 @@ const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const NAV_RE = {
   keyword: /关键词机会/,
-  listing: /Listing草案|Listing 优化/,
+  listing: /Listing 草案|Listing 优化/,
 };
 const HEADING_RE = {
   keyword: /关键词机会/,
-  listing: /Listing草案|Listing 优化/,
+  listing: /Listing 草案|Listing 优化/,
 };
 
 function fail(message, details) {
@@ -123,6 +123,16 @@ async function main() {
     });
 
   await page.addInitScript(() => {
+    const formalReportTypes = [
+      'campaign',
+      'ad_group',
+      'keyword',
+      'product_targeting',
+      'auto_targeting',
+      'user_search_term',
+      'placement',
+      'advertised_product',
+    ];
     const readyPipeline = {
       scope: {
         dateFrom: '2026-06-01',
@@ -145,12 +155,19 @@ async function main() {
           storeName: 'FT-US-US',
           marketplaceCode: 'US',
           downloadDir: 'C:/reports',
-          totalFileRecords: 1,
-          realReportFileCount: 1,
-          importedRowCount: 42,
+          totalFileRecords: 8,
+          realReportFileCount: 8,
+          importedReportTypeCount: 8,
+          importedRowCount: 96,
           missingReportLabels: [],
         }],
-        reportOptions: [],
+        reportOptions: formalReportTypes.map((type) => ({
+          type,
+          label: `${type} report`,
+          status: 'imported',
+          realFileAvailable: true,
+          importedRows: 12,
+        })),
         fileAudit: {
           totalFileRecords: 8,
           downloadedFileRecords: 8,
@@ -162,26 +179,24 @@ async function main() {
           downloadDir: 'C:/reports',
           manifestPath: 'C:/reports/manifest.json',
         },
-        realReportFiles: [
-          {
-            id: 'file_keyword',
-            reportType: 'keyword',
-            displayName: '关键词报告',
+        realReportFiles: formalReportTypes.map((type) => ({
+            id: `file_${type}`,
+            reportType: type,
+            displayName: `${type} report`,
             status: 'downloaded',
-            filePath: 'C:/reports/keyword.xlsx',
+            filePath: `C:/reports/${type}.xlsx`,
             folderPath: 'C:/reports',
-            fileName: 'keyword.xlsx',
+            fileName: `${type}.xlsx`,
             fileSizeBytes: 2048,
-            importedRows: 42,
-          },
-        ],
+            importedRows: 12,
+          })),
         evidencePaths: [],
         blockers: [],
         audit: { databaseReady: true, acceptedExtensions: ['.xlsx', '.csv'], rejectedEvidenceExtensions: ['.json', '.png', '.html'], notes: [] },
       },
       quant: {
         hasImportedMetrics: true,
-        importedRows: 42,
+        importedRows: 96,
         totalSpend: 128.45,
         totalSales: 310.9,
         totalOrders: 9,
@@ -403,8 +418,8 @@ async function main() {
   await navigateLegacyRoute(page, 'keyword-opportunities');
   await page.getByRole('heading', { name: HEADING_RE.keyword, level: 1 }).waitFor();
   await expectVisible(page, '关键词机会池');
-  await expectVisible(page, '真实报表');
-  await expectVisible(page, '8/8');
+  await expectVisible(page, '报表文件');
+  await page.waitForFunction(() => document.body.innerText.includes('8/8'), null, { timeout: 5000 });
   await expectVisible(page, '96 行指标');
   await expectVisible(page, '机会');
   await expectVisible(page, 'ASIN');
@@ -463,16 +478,17 @@ async function main() {
     null,
     { timeout: 5000 },
   );
-  for (const text of ['本地草案工作流', '当前草案任务', '关键词交接与发布边界', '录入、辅助读取和维护当前 Listing', '当前 Listing 内容与版本历史', '关键词、草案生成和导出', '核心商机词根覆盖']) {
+  for (const text of ['本地草案工作流', '关键词交接与发布边界', '录入、辅助读取和维护当前 Listing', '当前 Listing 内容与版本历史', '关键词、草案生成和导出', '核心商机词根覆盖']) {
     await expectVisible(page, text);
   }
+  await page.getByText(/^当前草案任务：/).first().waitFor({ state: 'visible', timeout: 5000 });
   await expectInBody(page, '不会提交 Amazon，也不会改写 Lingxing', 'listing publish boundary');
   const listingProgressText = await page.getByLabel('Listing 草案四步进度').innerText();
   for (const text of ['1', '关键词', '2', 'Listing', '3', '草案', '4', '导出']) {
     if (!listingProgressText.includes(text)) fail('Listing workflow status is incomplete', text);
   }
   await expectVisible(page, '关键词已就绪，但 Listing 内容未达到生成草案门槛。');
-  await expectVisible(page, '尚未录入或读取 Listing 内容');
+  await expectVisible(page, 'Listing 待闭合');
 
   await page.getByText('关键词交接与发布边界', { exact: true }).click();
   for (const text of ['关键词来源', '带入 ASIN', '草案来源', 'AI 连接', 'Listing AI 可用']) {
@@ -501,7 +517,6 @@ async function main() {
     window.__mockEvidenceOnlyListingRead = true;
   });
   await page.getByRole('button', { name: '尝试从当前领星页面填入表单' }).click();
-  await expectVisible(page, '已探测页面但未形成可用 Listing 内容');
   await expectVisible(page, '已探测未解析');
   await expectInBody(page, 'no_asin', 'listing evidence-only detail probe status');
   await expectVisible(page, 'https://erp.lingxing.com/erp/listing/mock/unparsed');
@@ -517,7 +532,7 @@ async function main() {
     window.__mockPartialListingRead = true;
   });
   await page.getByRole('button', { name: '尝试从当前领星页面填入表单' }).click();
-  await expectVisible(page, '五点缺失；后台词缺失');
+  await expectVisible(page, '生成草案前需补齐：五点缺失、后台词缺失。');
   await expectVisible(page, '已读取部分内容');
   await expectVisible(page, 'Bullets read');
   await expectVisible(page, '缺失');
@@ -560,7 +575,7 @@ async function main() {
   await page.getByLabel('Listing 关键词与本地草案工作台').getByRole('button', { name: '生成本地草案' }).click();
   await page.getByText('已生成 1 条 AI 草案', { exact: false }).waitFor({ timeout: 5000 });
   await expectVisible(page, '已有 1 条本地 Listing 草案，可导出给运营复核。');
-  await expectVisible(page, '导出草案并人工复核，不自动提交 Amazon 或改写 Lingxing Listing。');
+  await expectInBody(page, '导出草案并人工复核，不自动提交 Amazon 或改写 Lingxing Listing。', 'listing export next action');
   await expectVisible(page, 'AI 草案');
   await expectVisible(page, '本地规则参考');
   await expectVisible(page, '可导出草案');

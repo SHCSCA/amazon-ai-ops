@@ -17,6 +17,20 @@ import {
 } from './operation-events-page';
 import type { OperationEventView, OperationScope } from '../types';
 
+describe('OperationEventsPage dialog focus contract', () => {
+  it('delegates modal focus, dismissal, and background isolation to the shared scope', () => {
+    const source = readFileSync(new URL('./operation-events-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('const operationEventDialogFocus = useOverlayFocusScope');
+    expect(source).toContain('open: eventEditorOpen');
+    expect(source).toContain('dismissDisabled: saving');
+    expect(source).toContain('ref={operationEventDialogFocus.overlayRootRef}');
+    expect(source).toContain('ref={operationEventDialogFocus.surfaceRef}');
+    expect(source).toContain('tabIndex={-1}');
+    expect(source).not.toContain("window.addEventListener('keydown', handleWindowKeyDown)");
+  });
+});
+
 describe('operation events page product/global views', () => {
   const scope: OperationScope = {
     dateFrom: '2026-06-01',
@@ -87,6 +101,29 @@ describe('operation events page product/global views', () => {
     expect(task.primaryActionDisabled).toBe(false);
     expect(task.primaryActionBusy).toBe(false);
     expect(task.secondaryActionLabel).toBe('查看广告表现');
+  });
+
+  it('keeps the task action available to open an empty event editor', () => {
+    const task = buildOperationEventTaskState({
+      visibleEventCount: 0,
+      totalEventCount: 0,
+      specificEventCount: 0,
+      viewMode: 'global',
+      canSave: false,
+      saving: false,
+    });
+
+    expect(task.primaryActionLabel).toBe('记录事件');
+    expect(task.primaryActionDisabled).toBe(false);
+  });
+
+  it('renders the event task model through one task-first banner', () => {
+    const source = readFileSync(new URL('./operation-events-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain("import { TaskBanner } from '../components/workspace';");
+    expect(source.match(/<TaskBanner/g)).toHaveLength(1);
+    expect(source).toContain('label: taskState.primaryActionLabel');
+    expect(source).toContain('onClick: openEventEditor');
   });
 
   it('anchors the page copy on the operation-event timeline marking job', () => {

@@ -17,7 +17,10 @@ function runNode(script, args = []) {
 }
 
 function writePng(filePath) {
-  fs.writeFileSync(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  fs.writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(path.basename(filePath), 'utf8'),
+  ]));
   return filePath;
 }
 
@@ -27,6 +30,7 @@ function writeReport(filePath) {
 }
 
 function candidateEvidence(dir) {
+  const identityProofPath = writePng(path.join(dir, 'target-identity.png'));
   return {
     schemaVersion: 2,
     kind: 'real-ad-execution-readback',
@@ -64,8 +68,10 @@ function candidateEvidence(dir) {
       metricDate: '2026-06-17',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'keyword-4',
       entityName: 'door lock',
+      identityProofPath,
       actionType: 'lower_bid',
     },
     risk: {
@@ -116,6 +122,29 @@ function candidateEvidence(dir) {
 }
 
 describe('fill ad readback evidence', () => {
+  it('requires an independently supplied readback value instead of copying the after value', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-fill-independent-value-'));
+    const source = path.join(dir, 'candidate.json');
+    const out = path.join(dir, 'readback-pass.json');
+    fs.writeFileSync(source, JSON.stringify(candidateEvidence(dir), null, 2), 'utf8');
+
+    const result = runNode('scripts/fill-ad-readback-evidence.js', [
+      '--source', source,
+      '--out', out,
+      '--approval-confirmed-at', '2026-06-17T16:10:00.000Z',
+      '--before-captured-at', '2026-06-17T16:11:00.000Z',
+      '--executed-at', '2026-06-17T16:12:00.000Z',
+      '--after-captured-at', '2026-06-17T16:13:00.000Z',
+      '--readback-read-at', '2026-06-17T16:14:00.000Z',
+      '--before-value', '1.63',
+      '--after-value', '1.46',
+    ]);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('Missing required --readback-actual-value');
+    expect(fs.existsSync(out)).toBe(false);
+  });
+
   it('finalizes a current candidate and verifies it without mutating the source candidate', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-fill-'));
     const source = path.join(dir, 'candidate.json');
@@ -152,6 +181,7 @@ describe('fill ad readback evidence', () => {
       '--execution-id', 'manual-ads-ui-4',
       '--readback-read-at', '2026-06-17T16:14:00.000Z',
       '--readback-evidence', readback,
+      '--readback-actual-value', '1.46',
     ]);
 
     expect(result.status).toBe(0);

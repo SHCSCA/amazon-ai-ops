@@ -153,7 +153,15 @@ describe('deriveWorkflowEvidence', () => {
       dateFrom: '2026-07-01', dateTo: '2026-07-07', storeName: 'FT-US-US', marketplaceCode: 'US', asin: 'B001',
     },
     pipeline: {
-      collection: { status: 'ready', fileAudit: { missingReportLabels: [], realReportFileCount: 8 } },
+      collection: {
+        status: 'ready',
+        fileAudit: { missingReportLabels: [], realReportFileCount: 8 },
+        reportOptions: Array.from({ length: 8 }, (_, index) => ({
+          type: `report-${index}`,
+          realFileAvailable: true,
+          importedRows: 12,
+        })),
+      },
       quant: { hasImportedMetrics: true, diagnostics: [{ diagnosis: '高 ACOS' }] },
     },
     recommendations: { pending: 0, needsReview: 0, approved: 2 },
@@ -217,6 +225,31 @@ describe('deriveWorkflowEvidence', () => {
     expect(evidence.reportsReady).toBe(true);
     expect(evidence.importState).toBe('pending');
     expect(evidence.diagnosisReady).toBe(false);
+  });
+
+  it('keeps the next safe action on import validation when files are 8/8 but only 5/8 types are imported', () => {
+    const evidence = deriveWorkflowEvidence({
+      ...authoritativeSnapshot,
+      pipeline: {
+        collection: {
+          ...authoritativeSnapshot.pipeline.collection,
+          reportOptions: authoritativeSnapshot.pipeline.collection.reportOptions.map((report, index) => ({
+            ...report,
+            importedRows: index < 5 ? 12 : 0,
+          })),
+        },
+        quant: { hasImportedMetrics: true, diagnostics: [{ diagnosis: '历史诊断不可放行' }] },
+      },
+    });
+
+    expect(evidence.reportsReady).toBe(true);
+    expect(evidence.importState).toBe('pending');
+    expect(evidence.diagnosisReady).toBe(false);
+    expect(selectNextSafeAction(evidence)).toMatchObject({
+      stage: 'import-validation',
+      label: '检查导入结果',
+      intent: { workspace: 'data-preparation', subview: 'import-check' },
+    });
   });
 
   it('keeps preview-only readiness blocked even when preview flags claim the workflow is complete', () => {

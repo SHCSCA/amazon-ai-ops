@@ -23,11 +23,11 @@ let browser;
 
 beforeAll(async () => {
   browser = await chromium.launch({ headless: true });
-}, 60_000);
+}, 120_000);
 
 afterAll(async () => {
   await browser?.close();
-}, 60_000);
+}, 120_000);
 
 function validPageMarkup(extra = '') {
   return `
@@ -53,6 +53,97 @@ function validPageMarkup(extra = '') {
             <div class="virtual-table-inner">显式虚拟表格滚动例外</div>
           </div>
           ${extra}
+        </section>
+      </main>
+    </div>
+  `;
+}
+
+function validExperiencePageMarkup(extra = '', advanceVirtualWindow = true) {
+  const rows = Array.from({ length: 8 }, (_, index) => `
+    <div data-row-index="${index}" data-row-key="row-${index}" data-workspace-row>对象 ${index + 1}</div>
+  `).join('');
+  const virtualWindowScript = advanceVirtualWindow ? `
+    <script>
+      document.querySelector('[data-scroll-owner="virtual-table"]').addEventListener('scroll', () => {
+        document.querySelectorAll('[data-workspace-row]').forEach((row, index) => {
+          row.setAttribute('data-row-index', String(index + 56));
+          row.setAttribute('data-row-key', 'row-' + String(index + 56));
+        });
+      }, { once: true });
+    </script>
+  ` : '';
+  return `
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+      body { font: 14px/21px Arial, sans-serif; }
+      .app-shell { width: 100vw; height: 100vh; overflow: hidden; }
+      .app-content { width: 100%; height: 100%; overflow-y: auto; overflow-x: hidden; }
+      .workspace { height: 100%; padding: 16px; }
+      .work-surface { height: 430px; margin-top: 12px; }
+      .queue-region { height: 400px; }
+      .queue-scroll { height: 380px; overflow-y: auto; border: 1px solid #ddd; }
+      .queue-table { position: relative; min-height: 1800px; }
+      .queue-header { position: sticky; z-index: 2; top: 0; height: 36px; background: white; }
+      [data-workspace-row] { height: 50px; padding: 8px; }
+    </style>
+    <div class="app-shell">
+      <main class="app-content">
+        <section class="workspace" data-workspace="product" data-workspace-subview="products" data-workspace-evidence-root>
+          <h1>产品</h1>
+          <button data-action-priority="primary">处理当前产品</button>
+          <div class="work-surface" data-workspace-work-surface>
+            <div class="queue-region" data-workspace-queue-scroll>
+              <div class="queue-scroll" data-scroll-owner="virtual-table">
+                <div class="queue-table" role="table" aria-rowcount="120">
+                  <div class="queue-header" data-workspace-queue-header>对象队列表头</div>
+                  ${rows}
+                </div>
+              </div>
+            </div>
+          </div>
+          ${virtualWindowScript}
+          ${extra}
+        </section>
+      </main>
+    </div>
+  `;
+}
+
+function invalidExperiencePageMarkup() {
+  const rows = Array.from({ length: 31 }, (_, index) => `
+    <div data-row-index="${index}" data-row-key="duplicate-key" data-workspace-row>对象 ${index + 1}</div>
+  `).join('');
+  return `
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+      body { font: 14px/21px Arial, sans-serif; }
+      .app-shell { width: 100vw; height: 100vh; overflow: hidden; }
+      .app-content { width: 100%; height: 400px; overflow-y: auto; overflow-x: hidden; }
+      .workspace { min-height: 1200px; padding: 16px; }
+      .work-surface { height: 500px; margin-top: 330px; }
+      .queue-scroll { height: 120px; overflow-y: hidden; border: 1px solid #ddd; }
+      .queue-table { min-height: 1800px; }
+      .queue-header { position: static; height: 36px; background: white; }
+      [data-workspace-row] { height: 50px; padding: 8px; }
+    </style>
+    <div class="app-shell">
+      <main class="app-content">
+        <section class="workspace" data-workspace="product" data-workspace-subview="products" data-workspace-evidence-root>
+          <h1>产品</h1>
+          <button data-action-priority="primary">处理当前产品</button>
+          <div class="work-surface" data-workspace-work-surface>
+            <div data-workspace-queue-scroll>
+              <div class="queue-scroll" data-scroll-owner="virtual-table" onscroll="document.querySelector('.app-content').scrollTop = 80">
+                <div class="queue-table" role="table" aria-rowcount="20">
+                  <div class="queue-header" data-workspace-queue-header>对象队列表头</div>
+                  ${rows}
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
       </main>
     </div>
@@ -223,6 +314,37 @@ describe('workspace UI evidence CLI contract', () => {
     ]));
   });
 
+  it('enables the object-queue experience contract only for the six Product and Diagnosis ready targets', () => {
+    const config = JSON.parse(readFileSync('scripts/workspace-ui-evidence.task6.json', 'utf8'));
+    const normalized = normalizeWorkspaceEvidenceConfig(config);
+    const contracted = normalized.targets.filter((target) => target.experienceContract);
+
+    expect(contracted.map(({ dpr, subview, viewport, workspace }) => ({ dpr, subview, viewport, workspace }))).toEqual([
+      { dpr: 1, subview: 'products', viewport: { height: 700, width: 1200 }, workspace: 'product' },
+      { dpr: 1, subview: 'products', viewport: { height: 900, width: 1400 }, workspace: 'product' },
+      { dpr: 1.25, subview: 'products', viewport: { height: 700, width: 1200 }, workspace: 'product' },
+      { dpr: 1, subview: 'analysis', viewport: { height: 700, width: 1200 }, workspace: 'diagnosis' },
+      { dpr: 1, subview: 'analysis', viewport: { height: 900, width: 1400 }, workspace: 'diagnosis' },
+      { dpr: 1.25, subview: 'analysis', viewport: { height: 700, width: 1200 }, workspace: 'diagnosis' },
+    ]);
+    for (const target of contracted) {
+      const compact = target.viewport.width === 1200;
+      expect(target.experienceContract).toMatchObject({
+        maxPageOverflowPx: 24,
+        maxPageOverflowRatio: 1.05,
+        maxPageScrollLeakPx: 1,
+        maxRenderedRows: 30,
+        maxStickyHeaderOffsetPx: 2,
+        maxWorkSurfaceTopPx: compact ? 300 : 320,
+        minAriaRowCount: 100,
+        minFullyVisibleRows: compact ? 5 : 8,
+        minQueueViewportHeightPx: compact ? 360 : 500,
+        scrollProbeRatio: 0.5,
+      });
+    }
+    expect(normalized.targets.filter((target) => !target.experienceContract)).toHaveLength(normalized.targets.length - 6);
+  });
+
   it('normalizes matrix targets onto an explicit development-preview URL', () => {
     const normalized = normalizeWorkspaceEvidenceConfig({
       baseUrl: 'http://127.0.0.1:4173/index.html',
@@ -248,6 +370,62 @@ describe('workspace UI evidence CLI contract', () => {
         workspace: 'today',
       }],
     });
+  });
+
+  it('normalizes an optional object-queue experience contract without changing legacy targets', () => {
+    const normalized = normalizeWorkspaceEvidenceConfig({
+      baseUrl: 'http://127.0.0.1:4173/index.html',
+      targets: [{
+        dpr: 1,
+        experienceContract: {
+          maxWorkSurfaceTopPx: 300,
+          minQueueViewportHeightPx: 360,
+          minFullyVisibleRows: 5,
+        },
+        scenario: 'diagnosis-ready',
+        subview: 'products',
+        viewport: '1200x700',
+        workspace: 'product',
+      }, {
+        dpr: 1,
+        scenario: 'diagnosis-ready',
+        subview: 'overview',
+        viewport: '1200x700',
+        workspace: 'today',
+      }],
+    });
+
+    expect(normalized.targets[0].experienceContract).toEqual({
+      maxPageOverflowPx: 24,
+      maxPageOverflowRatio: 1.05,
+      maxPageScrollLeakPx: 1,
+      maxRenderedRows: 30,
+      maxStickyHeaderOffsetPx: 2,
+      maxWorkSurfaceTopPx: 300,
+      minAriaRowCount: 100,
+      minFullyVisibleRows: 5,
+      minQueueViewportHeightPx: 360,
+      scrollProbeRatio: 0.5,
+    });
+    expect(normalized.targets[1]).not.toHaveProperty('experienceContract');
+  });
+
+  it.each([
+    [{ maxRenderedRows: 0 }, 'maxRenderedRows'],
+    [{ scrollProbeRatio: 1 }, 'scrollProbeRatio'],
+    [{ maxWorkSurfaceTopPx: '300' }, 'maxWorkSurfaceTopPx'],
+    [{ maxVisibleRowsTypo: 5 }, 'maxVisibleRowsTypo'],
+  ])('rejects malformed experience contract fields fail-closed: %o', (experienceContract, field) => {
+    expect(() => normalizeWorkspaceEvidenceConfig({
+      baseUrl: 'http://127.0.0.1:4173/index.html',
+      targets: [{
+        experienceContract,
+        scenario: 'diagnosis-ready',
+        subview: 'products',
+        viewport: '1200x700',
+        workspace: 'product',
+      }],
+    })).toThrow(new RegExp(`experienceContract.*${field}|${field}.*experienceContract`, 'i'));
   });
 
   it('does not silently replace malformed configured viewport dimensions', () => {
@@ -277,6 +455,33 @@ describe('workspace UI evidence CLI contract', () => {
           workspace: 'today',
         }],
       })).rejects.toThrow(/URL scenario.*diagnosis-ready/);
+    } finally {
+      rmSync(outputDir, { force: true, recursive: true });
+    }
+  });
+
+  it('rejects malformed programmatic experience contracts before browser navigation', async () => {
+    const outputDir = mkdtempSync(join(tmpdir(), 'amazon-ai-ops-workspace-programmatic-contract-'));
+    const fakeBrowser = {
+      newContext: async () => {
+        throw new Error('browser navigation must not start');
+      },
+    };
+
+    try {
+      await expect(runWorkspaceEvidenceTargets({
+        browser: fakeBrowser,
+        outputDir,
+        targets: [{
+          dpr: 1,
+          experienceContract: { maxRenderedRows: 0 },
+          scenario: 'diagnosis-ready',
+          subview: 'products',
+          url: 'http://127.0.0.1:4173/?preview=1&scenario=diagnosis-ready',
+          viewport: { height: 700, width: 1200 },
+          workspace: 'product',
+        }],
+      })).rejects.toThrow(/experienceContract.*maxRenderedRows/i);
     } finally {
       rmSync(outputDir, { force: true, recursive: true });
     }
@@ -353,6 +558,153 @@ describe('workspace UI DOM contract', () => {
     await context.close();
   });
 
+  it('accepts a compact virtual object queue and records its initial and middle-scroll experience metrics', async () => {
+    const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
+    const page = await context.newPage();
+    await loadMarkupAtUrl(page, validExperiencePageMarkup());
+
+    const metrics = await collectWorkspaceDomMetrics(page, {
+      experienceContract: {
+        maxPageOverflowPx: 24,
+        maxPageOverflowRatio: 1.05,
+        maxPageScrollLeakPx: 1,
+        maxRenderedRows: 30,
+        maxStickyHeaderOffsetPx: 2,
+        maxWorkSurfaceTopPx: 300,
+        minAriaRowCount: 100,
+        minFullyVisibleRows: 5,
+        minQueueViewportHeightPx: 360,
+        scrollProbeRatio: 0.5,
+      },
+    });
+
+    expect(metrics.contract).toEqual({ passed: true, violations: [] });
+    expect(metrics.experience).toMatchObject({
+      enabled: true,
+      initial: {
+        ariaRowCount: 120,
+        fullyVisibleRowCount: 6,
+        renderedRowCount: 8,
+        rowKeysUnique: true,
+      },
+      probe: {
+        pageScrollLeakPx: 0,
+        renderedRowCount: 8,
+      },
+      queue: {
+        overflowY: 'auto',
+        scrollOwnerLabel: 'virtual-table',
+      },
+    });
+    expect(metrics.experience.probe.scrollTop).toBeGreaterThan(0);
+    expect(metrics.experience.probe.stickyHeaderOffsetPx).toBeLessThanOrEqual(2);
+    expect(metrics.experience.probe.restoredScrollTop).toBe(0);
+    expect(await page.locator('[data-workspace-queue-scroll]').evaluate((element) => element.scrollTop)).toBe(0);
+
+    await context.close();
+  });
+
+  it('reports every object-queue experience breach with stable machine-readable codes', async () => {
+    const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
+    const page = await context.newPage();
+    await loadMarkupAtUrl(page, invalidExperiencePageMarkup());
+
+    const metrics = await collectWorkspaceDomMetrics(page, {
+      experienceContract: {
+        maxPageOverflowPx: 24,
+        maxPageOverflowRatio: 1.05,
+        maxPageScrollLeakPx: 1,
+        maxRenderedRows: 30,
+        maxStickyHeaderOffsetPx: 2,
+        maxWorkSurfaceTopPx: 300,
+        minAriaRowCount: 100,
+        minFullyVisibleRows: 5,
+        minQueueViewportHeightPx: 360,
+        scrollProbeRatio: 0.5,
+      },
+    });
+    const codes = metrics.contract.violations.map((violation) => violation.code);
+
+    expect(codes).toEqual(expect.arrayContaining([
+      'WORK_SURFACE_BELOW_FOLD',
+      'QUEUE_VIEWPORT_TOO_SHORT',
+      'QUEUE_VISIBLE_ROWS',
+      'QUEUE_ARIA_ROWCOUNT',
+      'QUEUE_RENDERED_ROW_LIMIT',
+      'PAGE_VERTICAL_OVERFLOW',
+      'QUEUE_SCROLL_OWNER',
+      'QUEUE_STICKY_HEADER',
+      'QUEUE_SCROLL_LEAK',
+      'QUEUE_ROW_KEY_UNIQUE',
+    ]));
+    expect(metrics.contract.passed).toBe(false);
+
+    await context.close();
+  });
+
+  it('fails when virtual row keys become duplicated after the middle-scroll probe', async () => {
+    const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
+    const page = await context.newPage();
+    await loadMarkupAtUrl(page, validExperiencePageMarkup(`
+      <script>
+        document.querySelector('[data-scroll-owner="virtual-table"]').addEventListener('scroll', () => {
+          document.querySelectorAll('[data-workspace-row]').forEach((row) => row.setAttribute('data-row-key', 'probe-duplicate'));
+        }, { once: true });
+      </script>
+    `));
+
+    const metrics = await collectWorkspaceDomMetrics(page, {
+      experienceContract: {
+        maxPageOverflowPx: 24,
+        maxPageOverflowRatio: 1.05,
+        maxPageScrollLeakPx: 1,
+        maxRenderedRows: 30,
+        maxStickyHeaderOffsetPx: 2,
+        maxWorkSurfaceTopPx: 300,
+        minAriaRowCount: 100,
+        minFullyVisibleRows: 5,
+        minQueueViewportHeightPx: 360,
+        scrollProbeRatio: 0.5,
+      },
+    });
+
+    expect(metrics.experience.initial.rowKeysUnique).toBe(true);
+    expect(metrics.experience.probe.rowKeysUnique).toBe(false);
+    expect(metrics.contract.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'QUEUE_ROW_KEY_UNIQUE' }),
+    ]));
+
+    await context.close();
+  });
+
+  it('fails when scrolling to the middle does not advance the rendered virtual window', async () => {
+    const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
+    const page = await context.newPage();
+    await loadMarkupAtUrl(page, validExperiencePageMarkup('', false));
+
+    const metrics = await collectWorkspaceDomMetrics(page, {
+      experienceContract: {
+        maxPageOverflowPx: 24,
+        maxPageOverflowRatio: 1.05,
+        maxPageScrollLeakPx: 1,
+        maxRenderedRows: 30,
+        maxStickyHeaderOffsetPx: 2,
+        maxWorkSurfaceTopPx: 300,
+        minAriaRowCount: 100,
+        minFullyVisibleRows: 5,
+        minQueueViewportHeightPx: 360,
+        scrollProbeRatio: 0.5,
+      },
+    });
+
+    expect(metrics.experience.probe.virtualWindowAdvanced).toBe(false);
+    expect(metrics.contract.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'QUEUE_VIRTUAL_WINDOW_STALE' }),
+    ]));
+
+    await context.close();
+  });
+
   it('reports every task-first contract breach with stable machine-readable codes', async () => {
     const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
     const page = await context.newPage();
@@ -378,6 +730,7 @@ describe('workspace UI DOM contract', () => {
             <button data-action-priority="secondary">次动作二</button>
             <button data-action-priority="secondary">次动作三</button>
             <p class="tiny">过小文字</p>
+            <span class="scope-visible-warning">范围待处理</span>
             <details open><summary>外层</summary><details><summary>内层</summary></details></details>
             <div class="rogue-scroll"><div>未标记的内部滚动</div></div>
           </section>
@@ -398,6 +751,7 @@ describe('workspace UI DOM contract', () => {
       'HORIZONTAL_OVERFLOW',
       'DEFAULT_SCROLL_OWNER',
       'UNLABELLED_SCROLL_OWNER',
+      'UNEXPECTED_SCOPE_WARNING',
     ]));
     expect(new Set(activeOwnerSelectors).size).toBe(activeOwnerSelectors.length);
     expect(metrics.contract.passed).toBe(false);
@@ -596,6 +950,7 @@ describe('workspace UI screenshot evidence', () => {
         workspace: 'today',
       });
       expect(saved.domMetrics.contract.passed).toBe(true);
+      expect(saved.domMetrics.experience).toEqual({ enabled: false });
       expect(saved.domMetrics.identity).toEqual({
         pageUrl: 'http://workspace-evidence.test/?preview=1&scenario=diagnosis-ready',
         previewScenario: null,
@@ -609,6 +964,53 @@ describe('workspace UI screenshot evidence', () => {
       expect(saved.screenshot.sha256).toBe(expectedHash);
       expect(saved.screenshot.fullPage).toBe(false);
       expect(result.evidence).toEqual(saved);
+    } finally {
+      await context.close();
+      rmSync(outputDir, { force: true, recursive: true });
+    }
+  });
+
+  it('applies and persists a target experience contract during capture', async () => {
+    const outputDir = mkdtempSync(join(tmpdir(), 'amazon-ai-ops-workspace-experience-evidence-'));
+    const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
+    const page = await context.newPage();
+    await loadMarkupAtUrl(page, validExperiencePageMarkup());
+
+    try {
+      const result = await captureWorkspaceEvidence({
+        outputDir,
+        page,
+        target: {
+          dpr: 1,
+          experienceContract: {
+            maxPageOverflowPx: 24,
+            maxPageOverflowRatio: 1.05,
+            maxPageScrollLeakPx: 1,
+            maxRenderedRows: 30,
+            maxStickyHeaderOffsetPx: 2,
+            maxWorkSurfaceTopPx: 300,
+            minAriaRowCount: 100,
+            minFullyVisibleRows: 5,
+            minQueueViewportHeightPx: 360,
+            scrollProbeRatio: 0.5,
+          },
+          scenario: 'diagnosis-ready',
+          subview: 'products',
+          viewport: { height: 700, width: 1200 },
+          workspace: 'product',
+        },
+      });
+      const saved = JSON.parse(readFileSync(result.jsonPath, 'utf8'));
+
+      expect(saved.domMetrics.experience.enabled).toBe(true);
+      expect(saved.domMetrics.experience.contract).toMatchObject({
+        maxRenderedRows: 30,
+        maxWorkSurfaceTopPx: 300,
+        minFullyVisibleRows: 5,
+        minQueueViewportHeightPx: 360,
+      });
+      expect(saved.domMetrics.experience.probe.scrollTop).toBeGreaterThan(0);
+      expect(saved.domMetrics.contract).toEqual({ passed: true, violations: [] });
     } finally {
       await context.close();
       rmSync(outputDir, { force: true, recursive: true });

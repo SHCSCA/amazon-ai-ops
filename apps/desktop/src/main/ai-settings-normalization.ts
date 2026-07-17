@@ -127,7 +127,7 @@ export function normalizeAiSettingsForSaveInput(
   const incomingStatus = stringSetting(incoming.aiLastTestStatus) || stringSetting(incoming.ai_last_test_status);
   const savedTestStillMatches =
     !shouldClearKey
-    !incomingStatus
+    && !incomingStatus
     && !incomingKey
     && Boolean(saved.aiLastTestStatus)
     && normalizeBaseUrl(saved.aiLastTestBaseUrl) === normalizeBaseUrl(normalized.aiBaseUrl)

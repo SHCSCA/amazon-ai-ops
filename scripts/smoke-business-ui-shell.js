@@ -18,7 +18,7 @@ const NAV_RE = {
   keyword: /关键词机会/,
   listing: /Listing草案/,
   operationEvents: /运营事件/,
-  productManagement: /产品管理/,
+  productManagement: /产品工作台|产品管理/,
   readback: /结果核对/,
   recommendations: /建议与审批/,
   scheduler: /自动任务/,
@@ -77,6 +77,16 @@ async function expectNotInBody(page, text) {
   if (bodyText.includes(text)) {
     fail(`Unexpected visible text: ${text}`);
   }
+}
+
+async function expectProductObjectWorkspace(page) {
+  const queue = page.locator('[data-workspace-queue="products"]');
+  await queue.waitFor({ state: 'visible', timeout: 5000 });
+  await queue.locator('[data-workspace-queue-scroll]').waitFor({ state: 'visible', timeout: 5000 });
+  await page.getByRole('heading', { name: '产品对象队列', level: 2, exact: true }).waitFor({ timeout: 5000 });
+  await page.getByRole('textbox', { name: '搜索产品', exact: true }).waitFor({ timeout: 5000 });
+  const h1Count = await page.getByRole('heading', { level: 1 }).count();
+  if (h1Count !== 1) fail('Product workspace must expose exactly one h1', String(h1Count));
 }
 
 async function expectWorkspaceIdentity(page, { heading, workspace, subview }) {
@@ -354,8 +364,8 @@ async function main() {
     '系统',
     '系统与交付',
     '范围',
-    '真实报表',
-    '入库指标',
+    '报表文件',
+    '逐类入库',
     '待生成验收',
   ]) {
     await expectVisible(page, text);
@@ -400,25 +410,26 @@ async function main() {
 
   const routes = [
     { nav: NAV_RE.dashboard, heading: /今日任务/, label: '今日任务', key: 'dashboard' },
-    { nav: NAV_RE.productManagement, heading: /产品管理/, label: '产品管理', key: 'product-management' },
+    { nav: NAV_RE.productManagement, heading: /产品工作台/, label: '产品工作台', key: 'product-management' },
     { nav: /工作范围/, heading: /工作范围/, label: '工作范围', key: 'operation-scope' },
-    { nav: NAV_RE.dataCollection, heading: /数据采集/, label: '数据采集', key: 'data-collection' },
-    { nav: NAV_RE.dataImport, heading: /导入校验/, label: '导入校验', key: 'data-import-validation' },
+    { nav: NAV_RE.dataCollection, heading: /报表采集/, label: '报表采集', key: 'data-collection' },
+    { nav: NAV_RE.dataImport, heading: /导入检查/, label: '导入检查', key: 'data-import-validation' },
     { nav: NAV_RE.operationEvents, heading: /运营事件/, label: '运营事件', key: 'operation-events' },
-    { nav: NAV_RE.adQuant, heading: /广告表现/, label: '广告表现', key: 'ad-quant' },
+    { nav: NAV_RE.adQuant, heading: /广告诊断/, label: '广告诊断', key: 'ad-quant' },
     { nav: NAV_RE.recommendations, heading: /建议与审批/, label: '建议与审批 · 待判断', key: 'recommendations' },
     { nav: NAV_RE.approval, heading: /建议与审批/, label: '建议与审批 · 待审批', key: 'approval' },
     { nav: NAV_RE.readback, heading: /结果核对/, label: '结果核对', key: 'readback' },
     { nav: NAV_RE.keyword, heading: /关键词机会/, label: '关键词机会', key: 'keyword-opportunities' },
-    { nav: NAV_RE.listing, heading: /Listing草案/, label: 'Listing草案', key: 'listing-optimization' },
-    { nav: NAV_RE.scheduler, heading: /自动任务/, label: '自动任务', key: 'scheduler' },
-    { nav: NAV_RE.settings, heading: /AI与规则/, label: 'AI与规则', key: 'settings' },
+    { nav: NAV_RE.listing, heading: /Listing 草案/, label: 'Listing 草案', key: 'listing-optimization' },
+    { nav: NAV_RE.scheduler, heading: /定时任务/, label: '定时任务', key: 'scheduler' },
+    { nav: NAV_RE.settings, heading: /AI 与规则/, label: 'AI 与规则', key: 'settings' },
     { nav: NAV_RE.delivery, heading: /交付验收/, label: '交付验收', key: 'delivery' },
   ];
 
   for (const { nav, heading, label, key } of routes) {
     await navigateLegacyRoute(page, key);
     await page.getByRole('heading', { name: heading, level: 1 }).waitFor();
+    if (key === 'product-management') await expectProductObjectWorkspace(page);
     const screenshotPath = path.join(evidenceDir, `business-ui-shell-${key}-${runId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
     const bodyText = await page.locator('body').innerText();
@@ -458,16 +469,16 @@ async function main() {
       }
 
       await page.getByRole('button', { name: '立即执行' }).first().click();
-      await expectVisible(page, '确认立即执行');
-      await expectVisible(page, '确认触发');
+      await expectVisible(page, '确认触发：每日广告报表下载');
+      await expectVisible(page, '执行本地任务');
       const afterFirstClickActions = await page.evaluate(() => window.__businessShellActions || []);
       if (afterFirstClickActions.some((action) => action.type === 'runTaskNow')) {
         fail('Scheduler run-now action executed before confirmation');
       }
-      await page.getByRole('button', { name: '取消' }).click();
+      await page.getByRole('button', { name: '返回任务列表', exact: true }).click();
       await page.getByRole('button', { name: '立即执行' }).first().click();
-      await page.getByRole('button', { name: '确认触发' }).click();
-      await expectVisible(page, '每日广告报表下载 已触发。真实报表、审批和回读门槛仍然生效。');
+      await page.getByRole('button', { name: '执行本地任务', exact: true }).click();
+      await expectVisible(page, '每日广告报表下载 已执行完成。真实报表、审批和回读门槛仍然生效。');
       const afterConfirmActions = await page.evaluate(() => window.__businessShellActions || []);
       if (!afterConfirmActions.some((action) => action.type === 'runTaskNow' && action.name === 'daily_report_download')) {
         fail('Scheduler run-now action did not execute after confirmation');

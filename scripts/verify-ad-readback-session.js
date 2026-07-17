@@ -82,12 +82,10 @@ function unresolvedSessionInputFields(input) {
     'executionId',
     'readbackReadAt',
     'readbackEvidencePath',
+    'readbackActualValue',
     'riskRationale',
   ];
   const missing = required.filter((key) => unresolved(input[key]));
-  if (input.readbackActualValue && /<[^>]+>/.test(String(input.readbackActualValue))) {
-    missing.push('readbackActualValue');
-  }
   return missing;
 }
 
@@ -145,6 +143,17 @@ function verifySession(sessionDir) {
       pass('source candidate is NEEDS_WORK');
     } else {
       fail('source candidate is NEEDS_WORK', `kind=${candidate.kind || '<missing>'}, status=${candidate.status || '<missing>'}`);
+    }
+    const target = candidate.target || {};
+    if (unresolved(target.entityId)) {
+      fail('source candidate target.entityId exists', '<missing>');
+    } else {
+      pass('source candidate target.entityId exists', String(target.entityId));
+    }
+    if (unresolved(target.identityProofPath)) {
+      fail('target identity proof file exists', '<missing target.identityProofPath>');
+    } else {
+      requireFile(path.resolve(String(target.identityProofPath).trim()), 'target identity proof file');
     }
   }
 

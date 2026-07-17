@@ -25,10 +25,10 @@ function parseArgs(argv) {
   return args;
 }
 
-function latestEvidence(pattern) {
+function latestEvidence(pattern, predicate = () => true) {
   if (!fs.existsSync(evidenceDir)) return null;
   const files = fs.readdirSync(evidenceDir)
-    .filter((name) => pattern.test(name))
+    .filter((name) => pattern.test(name) && predicate(name))
     .map((name) => {
       const filePath = path.join(evidenceDir, name);
       return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
@@ -41,10 +41,10 @@ function latestFinalReadinessEvidence() {
   return latestEvidence(/^final-readiness-(?:\d{4}-\d{2}-\d{2}|\d{10,})\.json$/i);
 }
 
-function latestFileInDir(dir, pattern) {
+function latestFileInDir(dir, pattern, predicate = () => true) {
   if (!dir || !fs.existsSync(dir)) return null;
   const files = fs.readdirSync(dir)
-    .filter((name) => pattern.test(name))
+    .filter((name) => pattern.test(name) && predicate(name))
     .map((name) => {
       const filePath = path.join(dir, name);
       return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
@@ -54,8 +54,8 @@ function latestFileInDir(dir, pattern) {
   return files[0]?.filePath || null;
 }
 
-function latestAppDataExport(pattern) {
-  return latestFileInDir(appDataStorageRoot ? path.join(appDataStorageRoot, 'exports') : '', pattern);
+function latestAppDataExport(pattern, predicate) {
+  return latestFileInDir(appDataStorageRoot ? path.join(appDataStorageRoot, 'exports') : '', pattern, predicate);
 }
 
 function readJson(filePath) {
@@ -182,10 +182,11 @@ function assertAllowedSource(sourcePath, label) {
 }
 
 function copyFile(sourcePath, destinationDir, label, manifest) {
-  if (!sourcePath || !fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+  if (!sourcePath || !fs.existsSync(sourcePath)) {
     manifest.missing.push({ label, sourcePath: sourcePath || null });
     return null;
   }
+  if (!fs.statSync(sourcePath).isFile()) return null;
   const resolved = path.resolve(sourcePath);
   assertAllowedSource(resolved, label);
   assertNoObviousSecret(resolved);
@@ -235,6 +236,10 @@ function siblingMarkdownPath(jsonPath) {
   if (!jsonPath) return null;
   const markdownPath = jsonPath.replace(/\.json$/i, '.md');
   return fs.existsSync(markdownPath) && fs.statSync(markdownPath).isFile() ? markdownPath : null;
+}
+
+function isProductionDataReconciliationName(fileName) {
+  return !/(?:^|[-_.])(smoke|test|fixture)(?:[-_.]|$)/i.test(path.basename(fileName));
 }
 
 function summarizeDataReconciliation(jsonPath, markdownPath) {
@@ -470,13 +475,15 @@ function resolveDataReconciliationEvidence(args) {
   const explicitJson = explicitFileArg(args, 'data-reconciliation');
   const explicitMarkdown = explicitFileArg(args, 'data-reconciliation-md');
   const jsonPath = explicitJson
-    || latestEvidence(/^data-reconciliation-.*\.json$/i)
-    || latestAppDataExport(/^data-reconciliation-.*\.json$/i)
-    || latestEvidence(/^full8-data-reconciliation-.*\.json$/i);
+    || latestEvidence(/^data-reconciliation-.*\.json$/i, isProductionDataReconciliationName)
+    || latestAppDataExport(/^data-reconciliation-.*\.json$/i, isProductionDataReconciliationName)
+    || latestEvidence(/^full8-data-reconciliation-.*\.json$/i, isProductionDataReconciliationName);
   const markdownPath = explicitMarkdown
     || siblingMarkdownPath(jsonPath)
-    || latestEvidence(/^data-reconciliation-.*\.md$/i)
-    || latestAppDataExport(/^data-reconciliation-.*\.md$/i);
+    || (!explicitJson
+      ? latestEvidence(/^data-reconciliation-.*\.md$/i, isProductionDataReconciliationName)
+        || latestAppDataExport(/^data-reconciliation-.*\.md$/i, isProductionDataReconciliationName)
+      : null);
   return summarizeDataReconciliation(jsonPath, markdownPath);
 }
 
@@ -484,9 +491,45 @@ function collectEvidencePaths(finalReadiness, options = {}) {
   const includeLatestExtras = options.includeLatestExtras !== false;
   const paths = new Set();
   paths.add(finalReadiness.__path);
+  paths.add(finalReadiness.evidenceSelection?.manifestPath);
   for (const gate of finalReadiness.gates || []) {
     if (gate.evidencePath) paths.add(gate.evidencePath);
   }
+  if (options.packageUiManifest) {
+    paths.add(options.packageUiManifest);
+    const packageUi = readJson(options.packageUiManifest);
+    for (const run of packageUi.runs || []) {
+      for (const screenshot of run.screenshots || []) {
+        if (screenshot?.path) paths.add(path.resolve(screenshot.path));
+      }
+      for (const overlay of run.overlayChecks || []) {
+        if (overlay?.screenshot?.path) paths.add(path.resolve(overlay.screenshot.path));
+      }
+      for (const workspace of run.workspaceChecks || []) {
+        if (workspace?.inspectorEvidence?.screenshot?.path) {
+          paths.add(path.resolve(workspace.inspectorEvidence.screenshot.path));
+        }
+      }
+    }
+    for (const screenshot of packageUi.wideProfile?.screenshots || []) {
+      if (screenshot?.path) paths.add(path.resolve(screenshot.path));
+    }
+    for (const workspace of packageUi.wideProfile?.workspaceChecks || []) {
+      if (workspace?.inspectorEvidence?.screenshot?.path) {
+        paths.add(path.resolve(workspace.inspectorEvidence.screenshot.path));
+      }
+    }
+  }
+  if (options.workspaceUiManifest) {
+    paths.add(options.workspaceUiManifest);
+    const workspaceUi = readJson(options.workspaceUiManifest);
+    for (const target of workspaceUi.targets || []) {
+      if (target?.screenshot?.path) paths.add(path.resolve(target.screenshot.path));
+      if (target?.jsonPath) paths.add(path.resolve(target.jsonPath));
+    }
+  }
+  if (options.businessUiSmoke) paths.add(options.businessUiSmoke);
+  if (options.fullTestEvidence) paths.add(options.fullTestEvidence);
   if (includeLatestExtras) {
     const addSmokeEvidence = (smoke) => {
       if (!smoke) return;
@@ -626,11 +669,17 @@ function main() {
   const finalReadiness = readJson(finalReadinessPath);
   finalReadiness.__path = finalReadinessPath;
   assertManifestDrivenFinalReadiness(finalReadiness, finalReadinessPath);
-  const authorityDbPath = finalReadiness.status === 'APP_READY' || finalReadiness.appReady === true
-    ? resolveBoundAdReadbackAuthorityDbPath(finalReadiness.evidenceSelection?.authorityDbPath, args.db)
+  const claimsAppReady = finalReadiness.status === 'APP_READY' || finalReadiness.appReady === true;
+  const recordedAuthorityDbPath = finalReadiness.evidenceSelection?.authorityDbPath;
+  const authorityDbPath = recordedAuthorityDbPath || claimsAppReady
+    ? resolveBoundAdReadbackAuthorityDbPath(recordedAuthorityDbPath, args.db)
     : null;
   assertSelectedReadbackPassesVerifier(finalReadiness, authorityDbPath);
   const readmePath = path.resolve(args.readme || path.join(root, 'README.md'));
+  const packageUiManifestPath = explicitFileArg(args, 'package-ui-manifest');
+  const workspaceUiManifestPath = explicitFileArg(args, 'workspace-ui-manifest');
+  const businessUiSmokePath = explicitFileArg(args, 'business-ui-smoke');
+  const fullTestEvidencePath = explicitFileArg(args, 'full-test-evidence');
   assertAppReadyReadmeState(finalReadiness, readmePath);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -696,12 +745,33 @@ function main() {
       bundleJson: null,
       copyPolicy: 'Installer and portable EXE binaries are not copied into the delivery bundle.',
     },
+    uiEvidence: {
+      packageUiManifest: {
+        sourcePath: packageUiManifestPath,
+        present: Boolean(packageUiManifestPath),
+      },
+      workspaceUiManifest: {
+        sourcePath: workspaceUiManifestPath,
+        present: Boolean(workspaceUiManifestPath),
+      },
+      copyPolicy: 'Explicit package/workspace UI manifests and every referenced screenshot/target JSON are copied into the bundle.',
+    },
+    sourceEvidence: {
+      businessUiSmoke: {
+        sourcePath: businessUiSmokePath,
+        present: Boolean(businessUiSmokePath),
+      },
+      fullTestEvidence: {
+        sourcePath: fullTestEvidencePath,
+        present: Boolean(fullTestEvidencePath),
+      },
+      copyPolicy: 'Explicit source-level smoke and full-test evidence are copied into the bundle without latest-file discovery.',
+    },
   };
 
   const docsDir = path.join(bundleDir, 'docs');
   copyFile(readmePath, docsDir, 'README.md', manifest);
   for (const relativePath of [
-    'AGENTS.md',
     'package.json',
     'docs/V1_5_PROGRESS_REPORT.md',
     'docs/V1_5_ACCEPTANCE_MATRIX.md',
@@ -769,7 +839,13 @@ function main() {
     throw new Error('Refusing to export APP_READY delivery bundle because data reconciliation has no positive canonical ad spend.');
   }
 
-  const evidencePaths = collectEvidencePaths(finalReadiness, { includeLatestExtras: args['skip-latest-extras'] !== 'true' });
+  const evidencePaths = collectEvidencePaths(finalReadiness, {
+    includeLatestExtras: args['skip-latest-extras'] !== 'true',
+    packageUiManifest: packageUiManifestPath,
+    workspaceUiManifest: workspaceUiManifestPath,
+    businessUiSmoke: businessUiSmokePath,
+    fullTestEvidence: fullTestEvidencePath,
+  });
   const packageIndex = buildPackageIndex(path.resolve(args['release-dir'] || path.join(root, 'apps', 'desktop', 'release')));
   assertAppReadyFinalReadinessHasPackageEvidence(finalReadiness, packageIndex);
   const packageIndexPath = writePackageIndex(bundleDir, evidenceOutDir, manifest, packageIndex);

@@ -1,10 +1,12 @@
 import type { AiDiagnosisRunView, AppRoute, BusinessDataPipeline, DeliveryEvidenceStatusView, DeliveryReadinessView, RecommendationView } from './types';
+import { importedReportTypeCoverageCount } from './report-coverage';
 
 export type DeliveryMatrixStatus = 'ready' | 'needs_work' | 'blocked';
 export type DeliveryMatrixTone = 'ready' | 'warning' | 'blocked' | 'pending';
 
 export interface DeliveryReadinessMatrixInput {
   realReportCount: number;
+  importedReportTypeCount: number;
   importedRows: number;
   actionableRows: number;
   aiAvailable: boolean;
@@ -66,6 +68,7 @@ export function buildDeliveryReadinessMatrixInput(source: BuildDeliveryReadiness
 
   return {
     realReportCount: cleanCount(collection?.fileAudit?.realReportFileCount ?? collection?.realReportFiles?.length),
+    importedReportTypeCount: importedReportTypeCoverageCount(collection),
     importedRows: cleanCount(collection?.fileAudit?.importedRowCount ?? quant?.importedRows),
     actionableRows: cleanCount(quant?.actionableRows),
     aiAvailable: source.aiAvailable,
@@ -92,6 +95,7 @@ export function buildDeliveryReadinessMatrixInput(source: BuildDeliveryReadiness
 
 export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput): DeliveryReadinessMatrix {
   const realReportCount = cleanCount(input.realReportCount);
+  const importedReportTypeCount = cleanCount(input.importedReportTypeCount);
   const importedRows = cleanCount(input.importedRows);
   const actionableRows = cleanCount(input.actionableRows);
   const aiSuccessCount = cleanCount(input.aiSuccessCount);
@@ -106,7 +110,7 @@ export function buildDeliveryReadinessMatrix(input: DeliveryReadinessMatrixInput
   const approvedRecommendationCount = cleanCount(input.approvedRecommendationCount);
   const readbackVerifiedCount = cleanCount(input.readbackVerifiedCount);
 
-  const dataReady = realReportCount >= 8 && importedRows > 0 && actionableRows > 0;
+  const dataReady = realReportCount >= 8 && importedReportTypeCount >= 8 && importedRows > 0 && actionableRows > 0;
   const aiReady = input.aiAvailable && aiSuccessCount > 0;
   const contextReady = operationEventCount > 0 && productContextCount > 0;
   const listingReady = input.listingReadReady && input.listingDraftReady;

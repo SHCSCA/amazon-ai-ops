@@ -465,6 +465,74 @@ describe('RecommendationRepository', () => {
     expect(preserved?.status).toBe('approved');
   });
 
+  it('does not overwrite a reviewed pending duplicate or its immutable review audit', () => {
+    const { repo } = createRepo();
+    const id = repo.insert(recommendation({ status: 'needs_review' }));
+    const writableTarget = {
+      entityType: 'keyword' as const,
+      entityId: 'amzn-keyword-opaque-123',
+      entityName: 'door lock',
+      campaignName: 'SP exact',
+      adGroupName: 'Main',
+      metricDate: '2026-06-12',
+      sourceFile: 'C:/reports/keyword.xlsx',
+      sourceRow: 12,
+      identitySource: 'ads_ui' as const,
+      verifiedBy: 'Alice',
+      verifiedAt: '2026-07-16T03:00:00.000Z',
+      verificationNote: 'Matched the editable keyword row.',
+      identityProofPath: 'C:/evidence/keyword-identity.png',
+    };
+    expect(repo.updateStatusWithEvidenceIfCurrent(id, 'needs_review', 0, 'pending', {
+      writableTarget,
+      reviewResolution: {
+        schemaVersion: 1,
+        fromStatus: 'needs_review',
+        fromRevision: 0,
+        resolvedRevision: 1,
+        reviewedBy: 'Alice',
+        reviewedAt: '2026-07-16T03:00:00.000Z',
+        rationale: 'Reviewed current quant evidence.',
+        resolvedBlockers: ['quant_review_required'],
+        scope: {
+          dateFrom: '2026-06-01',
+          dateTo: '2026-06-12',
+          storeName: 'FT-US-US',
+          marketplaceCode: 'US',
+          asin: 'B0TESTASIN',
+          batchId: 'batch_1',
+        },
+        metricSource: {
+          batchId: 'batch_1',
+          sourceFiles: ['C:/reports/user-search-term.xlsx'],
+          sourceRow: 12,
+        },
+        writableTarget,
+      },
+    })).toBe(true);
+
+    const result = repo.insertIfNoDuplicate(recommendation({
+      taskId: 'task_should_not_replace_review',
+      evidence: {
+        ...recommendation().evidence,
+        explanationSource: 'ai',
+        aiExplanation: 'New explanation must not erase the completed review.',
+      },
+    }));
+
+    expect(result).toEqual({ id, inserted: false });
+    expect(repo.findById(id)).toMatchObject({
+      status: 'pending',
+      revision: 1,
+      evidence: {
+        reviewResolution: {
+          reviewedBy: 'Alice',
+          resolvedRevision: 1,
+        },
+      },
+    });
+  });
+
   it.each(['approved', 'rejected', 'executed', 'expired'] as const)(
     'does not let duplicate refresh write an incoming %s terminal status',
     (incomingStatus) => {

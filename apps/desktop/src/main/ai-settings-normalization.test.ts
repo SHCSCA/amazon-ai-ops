@@ -49,6 +49,26 @@ describe('ai settings normalization', () => {
     expect(result.aiLastTestAt).toBe('2026-06-17T10:00:00.000Z');
   });
 
+  it.each([
+    ['Base URL', { aiBaseUrl: 'https://api.example.com' }],
+    ['模型', { aiModel: 'deepseek-reasoner' }],
+    ['API Key', { aiApiKey: 'sk-new-live-key-654321' }],
+  ])('invalidates the saved connection test when %s changes', (_field, changedSettings) => {
+    const result = normalizeAiSettingsForSaveInput({
+      aiApiKey: '',
+      aiBaseUrl: savedSettings.aiBaseUrl,
+      aiModel: savedSettings.aiModel,
+      aiPersona: savedSettings.aiPersona,
+      ...changedSettings,
+    }, savedSettings);
+
+    expect(result.aiLastTestStatus).toBe('');
+    expect(result.aiLastTestAt).toBe('');
+    expect(result.aiLastTestBaseUrl).toBe('');
+    expect(result.aiLastTestModel).toBe('');
+    expect(result.aiLastTestMessage).toBe('');
+  });
+
   it('uses the saved API key when testing AI from a hidden-key renderer state', () => {
     const result = normalizeAiSettingsForTestInput({
       aiApiKey: '',

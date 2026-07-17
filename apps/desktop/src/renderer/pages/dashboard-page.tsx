@@ -14,7 +14,11 @@ import {
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput, type DeliveryMatrixItem, type DeliveryMatrixStatus } from '../delivery-readiness-matrix';
 import { compactPath, formatPercent, formatUsd } from '../formatters';
 import { operatorFacingAiError } from '../ai-call-diagnostics';
-import { hasRealReportCoverage, realReportCoverageCount } from '../report-coverage';
+import {
+  hasRealReportCoverage,
+  importedReportTypeCoverageCount,
+  realReportCoverageCount,
+} from '../report-coverage';
 import type { NavigationIntent } from '../navigation';
 import type { NextSafeAction } from '../workflow-state';
 import type { AiDiagnosisRunView, AppRoute, BusinessQuantDiagnostic, DeliveryEvidenceStatusView, DeliveryReadinessView, ProductHistoryLedgerView, RecommendationView, SettingsRuleConfig } from '../types';
@@ -33,6 +37,7 @@ export function dashboardVisibleDeliveryItems(items: DeliveryMatrixItem[], limit
 
 function dashboardDeliveryGateItemCopy(item: DeliveryMatrixItem, gateState: {
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
 }, route: AppRoute, nextAction: string): Partial<DeliveryMatrixItem> {
   if (route === 'ad-quant') {
@@ -45,11 +50,12 @@ function dashboardDeliveryGateItemCopy(item: DeliveryMatrixItem, gateState: {
     };
   }
   if (route === 'data-import-validation') {
+    const importedReportTypeCount = Math.max(0, Number(gateState.importedReportTypeCount || 0));
     return {
       route,
       label: '数据门槛',
       statusLabel: '等待指标入库',
-      detail: '已有真实报表，先完成指标入库。',
+      detail: `报表文件 ${gateState.realReportCount}/8 类，逐类入库 ${importedReportTypeCount}/8 类；先到导入检查补齐。`,
       nextAction,
     };
   }
@@ -66,6 +72,7 @@ export function dashboardNormalizeDeliveryItem(item: DeliveryMatrixItem, gateSta
   canGenerateFormalRecommendations: boolean;
   hasRealFiles: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
   actionableRows: number;
 }): DeliveryMatrixItem {
@@ -76,10 +83,13 @@ export function dashboardNormalizeDeliveryItem(item: DeliveryMatrixItem, gateSta
       ...dashboardDeliveryGateItemCopy(item, gateState, 'data-collection', '补齐真实报表'),
     };
   }
-  if (gateState.importedRows <= 0) {
+  const importedReportTypeCount = Number.isFinite(Number(gateState.importedReportTypeCount))
+    ? Math.max(0, Number(gateState.importedReportTypeCount))
+    : 0;
+  if (importedReportTypeCount < 8) {
     return {
       ...item,
-      ...dashboardDeliveryGateItemCopy(item, gateState, 'data-import-validation', '导入广告指标'),
+      ...dashboardDeliveryGateItemCopy(item, { ...gateState, importedReportTypeCount }, 'data-import-validation', importedReportTypeCount > 0 ? '补齐逐类入库' : '导入广告指标'),
     };
   }
   if (gateState.actionableRows <= 0) {
@@ -165,16 +175,23 @@ export function dashboardDataGateDetail(input: {
   isQuantifiable: boolean;
   hasRealFiles: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
   actionableRows: number;
 }): string {
+  const importedReportTypeCount = Number.isFinite(Number(input.importedReportTypeCount))
+    ? Math.max(0, Number(input.importedReportTypeCount))
+    : 0;
   if (input.isQuantifiable) {
-    return `${input.realReportCount}/8 类真实报表，${input.importedRows} 行广告指标，其中 ${input.actionableRows} 行可生成建议。`;
+    return `${input.realReportCount}/8 类报表文件、${importedReportTypeCount}/8 类逐类入库，共 ${input.importedRows} 行广告指标，其中 ${input.actionableRows} 行可生成建议。`;
   }
   if (input.hasRealFiles) {
     if (input.importedRows > 0) {
       if (input.realReportCount < 8) {
         return `${input.realReportCount}/8 类真实报表已导入 ${input.importedRows} 行指标，但量化门槛未闭合；需补齐 8 类真实报表。`;
+      }
+      if (importedReportTypeCount < 8) {
+        return `${input.realReportCount}/8 类报表文件已落盘，但仅 ${importedReportTypeCount}/8 类逐类入库（共 ${input.importedRows} 行）；需先到导入检查补齐。`;
       }
       if (input.actionableRows <= 0) {
         return `${input.realReportCount}/8 类真实报表已导入 ${input.importedRows} 行指标，但未形成可行动对象；需复核量化口径。`;
@@ -191,11 +208,16 @@ export function dashboardDataGateAction(input: {
   hasRealFiles: boolean;
   hasMetrics: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
   actionableRows: number;
 }): { route: AppRoute; label: string; title: string; detail: string } {
+  const importedReportTypeCount = Number.isFinite(Number(input.importedReportTypeCount))
+    ? Math.max(0, Number(input.importedReportTypeCount))
+    : 0;
   const formalGatePassed = input.canGenerateFormalRecommendations
     && input.realReportCount >= 8
+    && importedReportTypeCount >= 8
     && input.importedRows > 0
     && input.actionableRows > 0
     && input.hasMetrics;
@@ -209,6 +231,7 @@ export function dashboardDataGateAction(input: {
         isQuantifiable: true,
         hasRealFiles: input.hasRealFiles,
         realReportCount: input.realReportCount,
+        importedReportTypeCount,
         importedRows: input.importedRows,
         actionableRows: input.actionableRows,
       }),
@@ -223,6 +246,7 @@ export function dashboardDataGateAction(input: {
         isQuantifiable: false,
         hasRealFiles: false,
         realReportCount: input.realReportCount,
+        importedReportTypeCount,
         importedRows: input.importedRows,
         actionableRows: input.actionableRows,
       }),
@@ -237,6 +261,22 @@ export function dashboardDataGateAction(input: {
         isQuantifiable: false,
         hasRealFiles: true,
         realReportCount: input.realReportCount,
+        importedReportTypeCount,
+        importedRows: input.importedRows,
+        actionableRows: input.actionableRows,
+      }),
+    };
+  }
+  if (importedReportTypeCount < 8) {
+    return {
+      route: 'data-import-validation',
+      label: importedReportTypeCount > 0 ? '补齐逐类入库' : '导入广告指标',
+      title: `数据门槛未闭合：当前仅 ${importedReportTypeCount}/8 类逐类入库`,
+      detail: dashboardDataGateDetail({
+        isQuantifiable: false,
+        hasRealFiles: true,
+        realReportCount: input.realReportCount,
+        importedReportTypeCount,
         importedRows: input.importedRows,
         actionableRows: input.actionableRows,
       }),
@@ -251,6 +291,7 @@ export function dashboardDataGateAction(input: {
         isQuantifiable: false,
         hasRealFiles: true,
         realReportCount: input.realReportCount,
+        importedReportTypeCount,
         importedRows: input.importedRows,
         actionableRows: input.actionableRows,
       }),
@@ -281,6 +322,7 @@ export function dashboardMetricStatusCopy(input: {
   canGenerateFormalRecommendations: boolean;
   hasRealFiles: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
   actionableRows: number;
   hasMetrics: boolean;
@@ -325,11 +367,13 @@ export function dashboardMetricStatusCopy(input: {
 
 export function dashboardCanGenerateFormalRecommendations(input: {
   realReportCount: number;
+  importedReportTypeCount: number;
   importedRows: number;
   actionableRows: number;
   hasImportedMetrics: boolean;
 }): boolean {
   return input.realReportCount >= 8
+    && input.importedReportTypeCount >= 8
     && input.importedRows > 0
     && input.actionableRows > 0
     && input.hasImportedMetrics;
@@ -340,6 +384,7 @@ export function dashboardDataGateLabel(input: {
   hasRealFiles: boolean;
   hasMetrics: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
   actionableRows: number;
 }): string {
@@ -351,9 +396,13 @@ export function dashboardTaskEntryStatus(input: {
   canGenerateFormalRecommendations: boolean;
   hasRealFiles: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
 }): string {
   if (input.canGenerateFormalRecommendations) return '可以分析：真实报表和日级指标已闭合';
+  if (input.realReportCount >= 8 && Number(input.importedReportTypeCount ?? 0) < 8) {
+    return `数据门槛未闭合：当前仅 ${Math.max(0, Number(input.importedReportTypeCount || 0))}/8 类逐类入库`;
+  }
   if (input.hasRealFiles && input.importedRows > 0 && input.realReportCount < 8) {
     return `数据门槛未闭合：当前只完成 ${input.realReportCount}/8 类真实报表`;
   }
@@ -368,9 +417,13 @@ export function dashboardWorkflowQuantStatus(input: {
   canGenerateFormalRecommendations: boolean;
   hasMetrics: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   actionableRows: number;
 }): string {
   if (input.canGenerateFormalRecommendations) return `${input.actionableRows} 行可生成建议`;
+  if (input.realReportCount >= 8 && Number(input.importedReportTypeCount ?? 0) < 8) {
+    return `${Math.max(0, Number(input.importedReportTypeCount || 0))}/8 类逐类入库，正式诊断保持阻断`;
+  }
   if (input.hasMetrics && input.realReportCount < 8) return `${input.actionableRows} 行已导入但未达量化门槛`;
   return '缺可行动指标';
 }
@@ -380,6 +433,7 @@ export function dashboardWorkflowQuantNext(input: {
   hasMetrics: boolean;
   hasRealFiles: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
   actionableRows: number;
 }): { route: AppRoute; label: string } {
@@ -510,6 +564,7 @@ export function dashboardPrimaryTaskAction(input: {
   hasRealFiles: boolean;
   hasMetrics: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
   actionableRows: number;
   pendingRecommendationCount: number;
@@ -517,6 +572,7 @@ export function dashboardPrimaryTaskAction(input: {
 }): DashboardPrimaryTaskAction {
   const formalGatePassed = input.canGenerateFormalRecommendations
     && input.realReportCount >= 8
+    && Number(input.importedReportTypeCount ?? 0) >= 8
     && input.importedRows > 0
     && input.actionableRows > 0
     && input.hasMetrics;
@@ -616,6 +672,7 @@ export function dashboardDataActionQueueBlocker(input: {
   hasRealFiles: boolean;
   hasMetrics: boolean;
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
   actionableRows: number;
 }): DashboardActionQueueItem | null {
@@ -1137,11 +1194,13 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
   const quant = data?.quant;
   const hasMetrics = Boolean(quant?.hasImportedMetrics);
   const realReportCount = realReportCoverageCount(collection);
+  const importedReportTypeCount = importedReportTypeCoverageCount(collection);
   const importedRows = collection?.fileAudit?.importedRowCount ?? quant?.importedRows ?? 0;
   const actionableRows = quant?.actionableRows ?? 0;
   const hasRealFiles = hasRealReportCoverage(collection);
   const isQuantifiable = dashboardCanGenerateFormalRecommendations({
     realReportCount,
+    importedReportTypeCount,
     importedRows,
     actionableRows,
     hasImportedMetrics: hasMetrics,
@@ -1176,6 +1235,7 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
       approvedRecommendations,
     }),
     realReportCount,
+    importedReportTypeCount,
     importedRows,
     actionableRows,
   }), [
@@ -1185,6 +1245,7 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
     data,
     deliveryEvidenceStatus,
     deliveryReadiness,
+    importedReportTypeCount,
     importedRows,
     aiDiagnosisRuns,
     pendingRecommendations.length,
@@ -1205,9 +1266,10 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
     canGenerateFormalRecommendations: isQuantifiable,
     hasRealFiles,
     realReportCount,
+    importedReportTypeCount,
     importedRows,
     actionableRows,
-  })), [actionableRows, hasRealFiles, importedRows, isQuantifiable, realReportCount, visibleDeliveryItems]);
+  })), [actionableRows, hasRealFiles, importedReportTypeCount, importedRows, isQuantifiable, realReportCount, visibleDeliveryItems]);
   const hiddenDeliveryItemCount = Math.max(0, deliveryMatrix.items.length - visibleDeliveryItems.length);
   const productHistoryLedgers = data?.productHistory?.ledgers || [];
   const selectedScopeAsin = String(scope.asin || '').trim().toUpperCase();
@@ -1219,6 +1281,7 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
     hasRealFiles,
     hasMetrics,
     realReportCount,
+    importedReportTypeCount,
     importedRows,
     actionableRows,
   });
@@ -1238,6 +1301,7 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
     hasRealFiles,
     hasMetrics,
     realReportCount,
+    importedReportTypeCount,
     importedRows,
     actionableRows,
   });
@@ -1246,6 +1310,7 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
     hasMetrics,
     hasRealFiles,
     realReportCount,
+    importedReportTypeCount,
     importedRows,
     actionableRows,
   });
@@ -1456,9 +1521,11 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
               },
               {
                 id: 'data',
-                label: '真实数据',
-                value: `${realReportCount}/8 类`,
-                detail: importedRows > 0 ? `已入库 ${importedRows} 行` : dataGateLabel,
+                label: '逐类入库',
+                value: `${importedReportTypeCount}/8 类`,
+                detail: importedRows > 0
+                  ? `报表文件 ${realReportCount}/8 类 · ${importedRows} 行`
+                  : `报表文件 ${realReportCount}/8 类 · ${dataGateLabel}`,
               },
               {
                 id: 'performance',

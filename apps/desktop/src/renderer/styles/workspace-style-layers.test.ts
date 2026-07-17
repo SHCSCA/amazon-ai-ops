@@ -8,6 +8,7 @@ const styleFiles = [
   'workspace.css',
   'priority-table.css',
   'decisions.css',
+  'object-workspace.css',
   'states-motion.css',
 ] as const;
 
@@ -33,8 +34,10 @@ describe('task-first workspace style layers', () => {
 
   it('keeps visible workspace copy at 12px or above and uses explicit focus-visible rings', () => {
     const css = styleFiles.map(style).join('\n');
+    const legacyCss = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
     expect(css).not.toMatch(/font-size:\s*(?:[0-9]|1[01])px/);
+    expect(legacyCss).not.toMatch(/font-size:\s*(?:[0-9]|1[01])px/);
     expect(css).toMatch(/:focus-visible/);
     expect(css).toMatch(/outline:/);
     expect(style('foundations.css')).toMatch(/\.workspace-page-frame\s*\{[^}]*letter-spacing:\s*0/s);
@@ -45,12 +48,28 @@ describe('task-first workspace style layers', () => {
   it('assigns vertical scrolling to app content and only horizontal overflow to priority tables', () => {
     const shell = style('shell.css');
     const table = style('priority-table.css');
+    const legacyCss = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
     expect(shell).toMatch(/\.app-content\s*\{[^}]*overflow-y:\s*auto/s);
     expect(shell).toMatch(/\.app-content\s*\{[^}]*overflow-x:\s*hidden/s);
+    expect(shell).toMatch(/\.app-content\s*\{[^}]*overflow-anchor:\s*none/s);
     expect(table).toMatch(/\.priority-table-scroll\s*\{[^}]*overflow-x:\s*auto/s);
     expect(table).toMatch(/\.priority-table-scroll\s*\{[^}]*overflow-y:\s*visible/s);
     expect(style('workspace.css')).not.toMatch(/overflow-y:\s*(?:auto|scroll)/);
+    for (const selector of [
+      '.table-wrap',
+      '.product-management-list-wrap',
+      '.product-management-detail-table',
+      '.product-management-timeline',
+      '.product-config-page-stack .table-wrap',
+      '.ad-quant-object-table-wrap',
+      '.ad-quant-daily-table-wrap',
+      '.recommendation-workbench-table-wrap',
+      '.operation-events-primary-timeline',
+    ]) {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      expect(legacyCss).toMatch(new RegExp(`${escaped}[^\\{]*\\{[^}]*overflow-x:\\s*auto[^}]*overflow-y:\\s*visible`, 's'));
+    }
   });
 
   it('moves the global scope into a controlled second topbar row at compact desktop width', () => {
@@ -71,6 +90,17 @@ describe('task-first workspace style layers', () => {
     expect(css).toMatch(/\.workspace-gap-list\s*\{/);
     expect(css).toMatch(/\.workspace-technical-surface \.state-light-card\s*\{[^}]*box-shadow:\s*none/s);
     expect(css).toMatch(/\.workspace-technical-surface \.dashboard-history-summary-grid > div\s*\{[^}]*box-shadow:\s*none/s);
+  });
+
+  it('keeps queue-first task guidance compact without shrinking visible copy', () => {
+    const css = style('workspace.css');
+
+    expect(css).toMatch(/\.task-banner--compact\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto[^}]*padding:\s*var\(--workspace-space-1\) var\(--workspace-space-3\)/s);
+    expect(css).toMatch(/\.task-banner__title-line h2,[\s\S]*\.workbench-panel__title-line h2\s*\{[^}]*margin:\s*0/s);
+    expect(css).toMatch(/\.task-banner--compact \.task-banner__title-line\s*\{[^}]*flex:\s*none/s);
+    expect(css).toMatch(/\.task-banner--compact \.task-banner__title-line h2\s*\{[^}]*white-space:\s*nowrap/s);
+    expect(css).toMatch(/\.task-banner--compact \.task-banner__description\s*\{[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s);
+    expect(css).toMatch(/\.task-banner--compact \.task-banner__meta\s*\{[^}]*position:\s*absolute[^}]*clip:\s*rect\(0 0 0 0\)/s);
   });
 
   it('keeps the unified decisions queue dense and preserves all five columns at 1200px', () => {
@@ -98,6 +128,23 @@ describe('task-first workspace style layers', () => {
     expect(css).toMatch(/\.responsive-inspector:focus-visible\s*\{[^}]*outline:/s);
   });
 
+  it('gives object workspaces a bounded virtual queue and only adds the inline inspector at 1400px', () => {
+    const css = style('object-workspace.css');
+
+    expect(css).toMatch(/\[data-workspace-queue\] \.virtual-table-wrap\[data-scroll-owner="virtual-table"\]\s*\{[^}]*height:\s*clamp\(362px, calc\(100vh - 338px\), 422px\)[^}]*overflow-y:\s*auto/s);
+    expect(css).toMatch(/@media\s*\(min-width:\s*1400px\)[\s\S]*\[data-workspace-work-surface\]:has\(\.responsive-inspector--inline\)[^{]*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(350px, 380px\)/s);
+    expect(css).toMatch(/@media\s*\(min-width:\s*1400px\)[\s\S]*height:\s*clamp\(504px, calc\(100vh - 398px\), 542px\)[^}]*min-height:\s*504px/s);
+    expect(css).toMatch(/\[data-workspace-queue\] \.virtual-table-head\s*\{[^}]*top:\s*0/s);
+    expect(css).toMatch(/\[data-workspace-queue\] \.virtual-table-body-row\s*\{[^}]*min-height:\s*54px/s);
+    expect(css).toMatch(/\[data-workspace-queue\] \.workbench-panel__toolbar\s*\{[^}]*flex-wrap:\s*nowrap/s);
+    expect(css).toMatch(/\.diagnosis-queue-controls \.tag-metric-group\s*\{[^}]*flex-wrap:\s*nowrap/s);
+    expect(css).toMatch(/\.product-management-queue \.workbench-panel__footer\s*\{[^}]*padding:\s*3px var\(--workspace-space-3\)/s);
+    expect(css).toMatch(/\.diagnosis-workspace\s*\{[^}]*position:\s*relative[^}]*display:\s*grid[^}]*gap:\s*var\(--workspace-space-1\)/s);
+    expect(css).toMatch(/\.diagnosis-workspace > \.page-header\s*\{[^}]*margin-bottom:\s*0[^}]*padding:\s*var\(--workspace-space-1\) 0 0/s);
+    expect(css).toMatch(/\.diagnosis-workspace > \.progressive-details\s*\{[^}]*position:\s*absolute[^}]*top:\s*var\(--workspace-space-1\)[^}]*right:\s*0[^}]*z-index:\s*70/s);
+    expect(css).toMatch(/\.diagnosis-workspace > \.progressive-details\[open\]\s*\{[^}]*max-height:\s*calc\(100vh - 120px\)[^}]*overflow-y:\s*auto/s);
+  });
+
   it('makes read-only, blocked, confirmed, danger, and busy decision states visually distinct', () => {
     const css = style('decisions.css');
 
@@ -110,8 +157,10 @@ describe('task-first workspace style layers', () => {
 
   it('uses purposeful transitions, never transition all, and provides reduced-motion fallback', () => {
     const css = styleFiles.map(style).join('\n');
+    const legacyCss = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
     expect(css).not.toMatch(/transition:\s*all\b/);
+    expect(legacyCss).not.toMatch(/transition:\s*all\b/);
     expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
     expect(css).toMatch(/animation-duration:\s*0\.01ms/);
     expect(css).not.toMatch(/linear-gradient|radial-gradient|filter:\s*drop-shadow/);

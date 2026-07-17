@@ -32,10 +32,29 @@ describe('preload business update bridge', () => {
     expect(source).toContain("ipcRenderer.invoke('recommendations:reject', input)");
   });
 
+  it('exposes the controlled review resolution IPC through the shared request and result contract', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('ResolveRecommendationReviewRequest');
+    expect(source).toContain('ResolveRecommendationReviewResult');
+    expect(source).toContain('resolveRecommendationReview: (input: ResolveRecommendationReviewRequest)');
+    expect(source).toContain("ipcRenderer.invoke('recommendations:resolve-review', input)");
+  });
+
+  it('exposes pending writable-target binding through its shared request and result contract', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('BindRecommendationWritableTargetRequest');
+    expect(source).toContain('BindRecommendationWritableTargetResult');
+    expect(source).toContain('bindRecommendationWritableTarget: (input: BindRecommendationWritableTargetRequest)');
+    expect(source).toContain("ipcRenderer.invoke('recommendations:bind-writable-target', input)");
+  });
+
   it('exposes the readback export through the shared authority request instead of an untyped renderer payload', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
 
-    expect(source).toContain("import type { ExportAdReadbackEvidenceRequest } from '@amazon-ai-ops/shared-types'");
+    expect(source).toContain('ExportAdReadbackEvidenceRequest');
+    expect(source).toContain("from '@amazon-ai-ops/shared-types'");
     expect(source).toContain('exportAdReadbackEvidence: (input: ExportAdReadbackEvidenceRequest) =>');
     expect(source).not.toContain('exportAdReadbackEvidence: (input: any)');
   });

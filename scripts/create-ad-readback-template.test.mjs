@@ -16,10 +16,30 @@ function runNode(script, args = []) {
 }
 
 describe('ad readback evidence template', () => {
+  it('keeps the readback value unfilled when only an after value is supplied', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-template-independent-value-'));
+    const out = path.join(dir, 'template.json');
+    const mdOut = path.join(dir, 'template.md');
+
+    const result = runNode('scripts/create-ad-readback-evidence-template.js', [
+      '--out', out,
+      '--md-out', mdOut,
+      '--after-value', '1.46',
+    ]);
+
+    expect(result.status).toBe(0);
+    const evidence = JSON.parse(fs.readFileSync(out, 'utf8'));
+    expect(evidence.after.value).toBe('1.46');
+    expect(evidence.readback.actualValue).toContain('FILL:');
+    expect(fs.readFileSync(mdOut, 'utf8')).not.toContain('defaults to after value if omitted');
+  });
+
   it('creates a non-passing template for real readback completion', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-readback-template-'));
     const out = path.join(dir, 'template.json');
     const mdOut = path.join(dir, 'template.md');
+    const identityProof = path.join(dir, 'target-identity.png');
+    fs.writeFileSync(identityProof, 'identity proof');
     const result = runNode('scripts/create-ad-readback-evidence-template.js', [
       '--out', out,
       '--md-out', mdOut,
@@ -29,6 +49,8 @@ describe('ad readback evidence template', () => {
       '--asin', 'B0TESTASIN',
       '--metric-date', '2026-05-23',
       '--entity', 'test target',
+      '--entity-id', 'keyword-opaque-1',
+      '--identity-proof', identityProof,
       '--recommendation-id', 'rec-1',
       '--source-evidence', 'output/codex-evidence/source.json',
       '--source-files', 'C:/reports/user-search-term.xlsx',
@@ -51,6 +73,8 @@ describe('ad readback evidence template', () => {
     expect(evidence.target.portfolioName).toBe('Test Portfolio');
     expect(evidence.target.asin).toBe('B0TESTASIN');
     expect(evidence.target.metricDate).toBe('2026-05-23');
+    expect(evidence.target.entityId).toBe('keyword-opaque-1');
+    expect(evidence.target.identityProofPath).toBe(identityProof);
     expect(evidence.before.value).toContain('FILL:');
     expect(evidence.after.value).toContain('FILL:');
     expect(evidence.source.recommendationId).toBe('rec-1');
@@ -78,6 +102,8 @@ describe('ad readback evidence template', () => {
     expect(checklist).toContain('Test Campaign');
     expect(checklist).toContain('B0TESTASIN');
     expect(checklist).toContain('Source recommended value');
+    expect(checklist).toContain('Writable entity ID');
+    expect(checklist).toContain('Identity proof');
     expect(checklist).toContain('Source report files');
     expect(checklist).toContain('Source report row');
     expect(checklist).toContain('AI strategy fallback');

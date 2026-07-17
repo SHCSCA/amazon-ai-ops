@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
+import { TaskBanner } from '../components/workspace';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute } from '../types';
 import { toUserFacingError } from '../user-facing-error';
@@ -223,7 +224,7 @@ export function SchedulerPage() {
     setRunningTaskName(task.name);
     try {
       await (window as any).electronAPI?.runTaskNow?.(task.name);
-      setMessage(`${taskLabel(task.name)} 已触发。真实报表、审批和回读门槛仍然生效。`);
+      setMessage(`${taskLabel(task.name)} 已执行完成。真实报表、审批和回读门槛仍然生效。`);
       setPendingRunTask(null);
       await loadTasks({ clearMessage: false });
     } catch (caught) {
@@ -261,14 +262,6 @@ export function SchedulerPage() {
     groupBusy: schedulerControlBusy,
     label: '刷新调度状态',
   });
-  const confirmRunButton = schedulerActionButtonView({
-    active: Boolean(runningTaskName),
-    baseClassName: 'primary-button compact-button',
-    busyLabel: '执行中...',
-    groupBusy: schedulerControlBusy,
-    label: '确认触发',
-  });
-
   return (
     <div>
       <PageHeader
@@ -278,63 +271,37 @@ export function SchedulerPage() {
       />
 
       <div className="business-stack">
-        <div
-          aria-live="polite"
-          className={`scheduler-task-feedback scheduler-task-feedback-${taskPanelState.feedbackTone} scheduler-prototype-feedback`}
-          role="status"
-        >
-          <span>{taskPanelState.title}</span>
-          <strong>{taskPanelState.feedbackLabel}</strong>
-          <p>{taskPanelState.detail}</p>
-          <em>{taskPanelState.feedbackDetail}</em>
-        </div>
-        {taskPanelState.secondaryActions.length > 0 && (
-          <div className="action-row scheduler-prototype-actions">
-            {taskPanelState.secondaryActions.map((action) => (
-              <button
-                className="secondary-button"
-                disabled={action.disabled}
-                key={`${action.kind || action.route || action.label}-${action.label}`}
-                onClick={action.kind === 'cancel-run' ? () => setPendingRunTask(null) : () => action.route && navigate(action.route)}
-                type="button"
-              >
-                {action.label}
-              </button>
-            ))}
-          </div>
-        )}
+        <TaskBanner
+          eyebrow="本地自动化"
+          title={taskPanelState.title}
+          description={taskPanelState.detail}
+          tone={taskPanelState.feedbackTone === 'ready'
+            ? 'confirmed'
+            : taskPanelState.feedbackTone === 'blocked'
+              ? 'blocked'
+              : 'attention'}
+          status={<StatusPill tone={taskPanelState.feedbackTone}>{taskPanelState.feedbackLabel}</StatusPill>}
+          primaryAction={{
+            label: taskPanelState.primaryActionLabel,
+            busy: taskPanelState.primaryActionBusy,
+            busyLabel: taskPanelState.primaryBusyLabel,
+            disabled: taskPanelState.primaryActionDisabled || Boolean(togglingTaskName),
+            disabledReason: togglingTaskName ? '正在更新任务启停状态，请稍候。' : undefined,
+            onClick: taskPanelState.mode === 'confirm-run'
+              ? () => { void confirmRunNow(); }
+              : () => { void loadTasks(); },
+          }}
+          secondaryActions={taskPanelState.secondaryActions.map((action) => ({
+            label: action.label,
+            disabled: action.disabled,
+            onClick: action.kind === 'cancel-run'
+              ? () => setPendingRunTask(null)
+              : () => { if (action.route) navigate(action.route); },
+          }))}
+          meta={taskPanelState.feedbackDetail}
+        />
 
         <Panel title="任务列表" tone={enabledTaskCount ? 'success' : 'warning'}>
-          {pendingRunTask && (
-            <div className="inline-confirmation">
-              <div>
-                <span>确认立即执行</span>
-                <strong>{taskLabel(pendingRunTask.name)}</strong>
-                <p>{taskPurpose(pendingRunTask.name)}</p>
-                <p>本次只触发该本地任务；不会批准建议、不会改 bid、不会写入 Amazon Ads。执行结果会回到最近结果和对应业务页面。</p>
-              </div>
-              <div className="table-action-row">
-                <button
-                  className="secondary-button compact-button"
-                  disabled={schedulerControlBusy}
-                  onClick={() => setPendingRunTask(null)}
-                  type="button"
-                >
-                  取消
-                </button>
-                <button
-                  aria-busy={confirmRunButton.ariaBusy}
-                  className={confirmRunButton.className}
-                  disabled={confirmRunButton.disabled}
-                  onClick={confirmRunNow}
-                  type="button"
-                >
-                  {confirmRunButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-                  <span>{confirmRunButton.label}</span>
-                </button>
-              </div>
-            </div>
-          )}
           <div className="table-wrap">
             <table className="business-table">
               <thead>

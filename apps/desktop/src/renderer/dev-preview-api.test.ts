@@ -55,6 +55,34 @@ function previewExports() {
   };
 }
 
+async function bindPreviewPendingTarget(api: any, pending: any) {
+  return api.bindRecommendationWritableTarget({
+    recommendationId: pending.id,
+    expectedRevision: pending.revision,
+    scope: {
+      dateFrom: '2026-05-21',
+      dateTo: '2026-06-23',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0GTTJFQTM',
+      batchId: 'batch_preview_20260625',
+    },
+    binding: {
+      boundBy: 'Preview Verifier',
+      note: '已在 Ads UI 中确认当前关键词与真实报表行唯一对应。',
+      writableTarget: {
+        entityType: 'keyword',
+        entityId: 'amzn-keyword-preview-1001',
+        sourceFile: 'D:/preview/reports/keyword.xlsx',
+        sourceRow: pending.evidence.sourceRow,
+        identitySource: 'ads_ui',
+        identityProofPath: 'D:/preview/evidence/keyword-1001.png',
+        verificationNote: '逐项核对广告活动、广告组、关键词名称与对象 ID。',
+      },
+    },
+  });
+}
+
 describe('development preview enablement', () => {
   it('rejects localhost preview in a production build even with an explicit query opt-in', () => {
     const resolve = previewExports().resolvePreviewBootstrap;
@@ -156,15 +184,17 @@ describe('preview scenario contract', () => {
     for (const id of EXPECTED_SCENARIOS) {
       const scenario = PREVIEW_SCENARIOS![id];
       const api = createBrowserPreviewElectronApi!('SHC001', id);
-      const [scope, pipeline, recommendations, evidenceStatus, delivery] = await Promise.all([
+      const [scope, pipeline, batchOptions, recommendations, evidenceStatus, delivery] = await Promise.all([
         api.getOperationScope(),
         api.getBusinessUiDataPipeline(),
+        api.getBusinessBatchOptions(),
         api.getRecommendations(),
         api.getDeliveryEvidenceStatus(),
         api.getDeliveryReadiness(),
       ]);
 
       expect(Boolean(scope)).toBe(scenario.scopeReady);
+      expect(batchOptions).toEqual(pipeline.collection.availableBatches);
       expect(pipeline.collection.status === 'ready').toBe(scenario.reportsCollected);
       expect(pipeline.quant.hasImportedMetrics).toBe(scenario.reportsImported);
       expect(pipeline.quant.diagnostics.length > 0).toBe(scenario.diagnosisReady);
@@ -178,6 +208,84 @@ describe('preview scenario contract', () => {
       expect(delivery.previewReady).toBe(scenario.deliveryReady);
       expect(delivery.appReady).toBe(false);
       expect(delivery.previewOnly).toBe(true);
+    }
+  });
+
+  it('keeps readback-stage previews focused on readback instead of earlier AI or Listing gaps', async () => {
+    const createApi = previewExports().createBrowserPreviewElectronApi!;
+
+    for (const id of ['missing-readback-evidence', 'delivery-ready'] as const) {
+      const api = createApi('SHC001', id);
+      const [settings, aiRuns, evidenceStatus] = await Promise.all([
+        api.getSettings(),
+        api.listAiDiagnosisRuns({ limit: 5 }),
+        api.getDeliveryEvidenceStatus(),
+      ]);
+
+      expect(settings).toMatchObject({
+        aiKeyConfigured: true,
+        aiBaseUrl: 'https://api.deepseek.com',
+        aiLastTestBaseUrl: 'https://api.deepseek.com',
+        aiLastTestModel: 'deepseek-v4-flash',
+        aiLastTestStatus: 'available',
+      });
+      expect(aiRuns).toEqual([
+        expect.objectContaining({
+          success: true,
+          diagnosis: expect.objectContaining({
+            source: 'ai',
+            lifecycleStageRequiresReview: false,
+          }),
+        }),
+      ]);
+      expect(evidenceStatus.listing).toMatchObject({
+        readReady: true,
+        draftReady: true,
+        aiDraftCount: 1,
+      });
+      expect(evidenceStatus.package.installerAvailable).toBe(false);
+    }
+  });
+
+  it('ships a 100-plus-row diagnosis-ready fixture for real scroll-owner validation', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const [pipeline, products, events] = await Promise.all([
+      api.getBusinessUiDataPipeline(),
+      api.getProducts(),
+      api.listOperationEvents(),
+    ]);
+
+    expect(products.length).toBeGreaterThanOrEqual(100);
+    expect(events.length).toBeGreaterThanOrEqual(100);
+    expect(pipeline.quant.diagnostics.length).toBeGreaterThanOrEqual(100);
+  });
+
+  it('reports meaningful preview-only gate progress without claiming production readiness', async () => {
+    const expectedPassed: Record<PreviewScenarioId, number> = {
+      'missing-scope': 0,
+      'missing-reports': 1,
+      'pending-import': 2,
+      'diagnosis-ready': 4,
+      'mixed-recommendations': 5,
+      'missing-readback-evidence': 5,
+      'delivery-ready': 7,
+    };
+
+    for (const id of EXPECTED_SCENARIOS) {
+      const readiness = await previewExports().createBrowserPreviewElectronApi!('SHC001', id).getDeliveryReadiness();
+
+      expect(readiness).toMatchObject({
+        appReady: false,
+        manifestDriven: false,
+        previewOnly: true,
+        gatesSummary: {
+          total: 7,
+          passed: expectedPassed[id],
+          failed: 7 - expectedPassed[id],
+        },
+      });
+      expect(readiness.gates).toHaveLength(7);
+      expect(readiness.gates.every((gate: { name?: string }) => gate.name?.startsWith('开发预览·'))).toBe(true);
     }
   });
 
@@ -349,9 +457,10 @@ describe('preview scenario contract', () => {
       decision: { rejectedBy: 'Preview Reviewer', note: '' },
     })).rejects.toThrow(/拒绝原因|原因/);
 
+    const bindingResult = await bindPreviewPendingTarget(api, freshPending);
     await api.approveRecommendation({
       id: pending.id,
-      expectedRevision: pendingRevision,
+      expectedRevision: bindingResult.revision,
       decision: { approvedBy: 'Preview Ops' },
     });
     await api.rejectRecommendation({
@@ -391,11 +500,12 @@ describe('preview scenario contract', () => {
   it('persists an approved decision in preview memory with revision and decision evidence', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
     const [pending] = await api.getRecommendations({ status: 'pending' });
-    const displayedRevision = pending.revision;
+    const bindingResult = await bindPreviewPendingTarget(api, pending);
+    const [boundPending] = await api.getRecommendations({ status: 'pending' });
 
     await api.approveRecommendation({
-      id: pending.id,
-      expectedRevision: displayedRevision,
+      id: boundPending.id,
+      expectedRevision: bindingResult.revision,
       decision: { approvedBy: 'Preview Ops', note: '同意本次调整' },
     });
 
@@ -404,7 +514,7 @@ describe('preview scenario contract', () => {
     expect(approved).toMatchObject({
       id: pending.id,
       status: 'approved',
-      revision: displayedRevision + 1,
+      revision: pending.revision + 2,
       evidence: {
         approvalDecision: {
           decision: 'approved',
@@ -415,6 +525,39 @@ describe('preview scenario contract', () => {
       },
     });
     expect((await api.getRecommendations()).find((row: { id: number }) => row.id === pending.id)?.status).toBe('approved');
+  });
+
+  it('keeps ordinary pending recommendations unapproved until target binding is reloaded', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [pending] = await api.getRecommendations({ status: 'pending' });
+
+    await expect(api.approveRecommendation({
+      id: pending.id,
+      expectedRevision: pending.revision,
+      decision: { approvedBy: 'Preview Ops' },
+    })).rejects.toThrow(/Ads|可写对象|核验/);
+
+    const result = await bindPreviewPendingTarget(api, pending);
+    const [reloaded] = await api.getRecommendations({ status: 'pending' });
+    expect(result).toMatchObject({
+      ok: true,
+      recommendationId: pending.id,
+      status: 'pending',
+      revision: pending.revision + 1,
+    });
+    expect(reloaded).toMatchObject({
+      status: 'pending',
+      revision: result.revision,
+      evidence: {
+        writableTarget: { entityId: 'amzn-keyword-preview-1001' },
+        writableTargetBinding: {
+          fromRevision: pending.revision,
+          boundRevision: result.revision,
+          boundBy: 'Preview Verifier',
+        },
+      },
+    });
+    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
   });
 
   it('persists a rejected review decision and its required operator reason in preview memory', async () => {
@@ -445,6 +588,98 @@ describe('preview scenario contract', () => {
     });
   });
 
+  it('resolves one controlled review back to pending without approving it', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+
+    const result = await api.resolveRecommendationReview({
+      recommendationId: needsReview.id,
+      expectedRevision: needsReview.revision,
+      scope: {
+        dateFrom: '2026-05-21',
+        dateTo: '2026-06-23',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        asin: 'B0GTTJFQTM',
+        batchId: 'batch_preview_20260625',
+      },
+      review: {
+        reviewedBy: 'Preview Reviewer',
+        rationale: '已在 Ads UI 中确认当前关键词行与真实报表来源唯一对应。',
+        writableTarget: {
+          entityType: 'keyword',
+          entityId: 'amzn-keyword-preview-2002',
+          sourceFile: 'D:/preview/reports/keyword.xlsx',
+          sourceRow: needsReview.evidence.sourceRow,
+          identitySource: 'ads_ui',
+          identityProofPath: 'D:/preview/evidence/keyword-identity.png',
+          verificationNote: '在已认证 Ads UI 中逐项核对活动、广告组与关键词 ID。',
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      recommendationId: needsReview.id,
+      previousStatus: 'needs_review',
+      status: 'pending',
+      revision: needsReview.revision + 1,
+      resolvedBlockers: ['quant_review_required'],
+    });
+    expect(await api.getRecommendations({ status: 'needs_review' })).toEqual([]);
+    expect((await api.getRecommendations({ status: 'pending' })).find(
+      (row: { id: number }) => row.id === needsReview.id,
+    )).toMatchObject({
+      status: 'pending',
+      evidence: {
+        writableTarget: {
+          entityType: 'keyword',
+          entityId: 'amzn-keyword-preview-2002',
+          identitySource: 'ads_ui',
+        },
+        reviewResolution: {
+          fromStatus: 'needs_review',
+          reviewedBy: 'Preview Reviewer',
+        },
+      },
+    });
+    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
+  });
+
+  it('keeps preview review unresolved when the writable target source is outside the locked batch', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+
+    await expect(api.resolveRecommendationReview({
+      recommendationId: needsReview.id,
+      expectedRevision: needsReview.revision,
+      scope: {
+        dateFrom: '2026-05-21',
+        dateTo: '2026-06-23',
+        storeName: 'FT-US-US',
+        marketplaceCode: 'US',
+        asin: 'B0GTTJFQTM',
+        batchId: 'batch_preview_20260625',
+      },
+      review: {
+        reviewedBy: 'Preview Reviewer',
+        rationale: 'Attempted forged source.',
+        writableTarget: {
+          entityType: 'keyword',
+          entityId: 'amzn-keyword-preview-2002',
+          sourceFile: 'D:/forged/keyword.xlsx',
+          sourceRow: 43,
+          identitySource: 'ads_ui',
+          identityProofPath: 'D:/preview/evidence/keyword-identity.png',
+          verificationNote: 'Attempted forged source.',
+        },
+      },
+    })).rejects.toThrow(/锁定批次|可写对象/);
+
+    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
+    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
+  });
+
   it('rejects a stale displayed revision without mutating preview state', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
     const [pending] = await api.getRecommendations({ status: 'pending' });
@@ -462,10 +697,11 @@ describe('preview scenario contract', () => {
   it('requires a non-empty approval operator before changing preview state', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
     const [pending] = await api.getRecommendations({ status: 'pending' });
+    const bindingResult = await bindPreviewPendingTarget(api, pending);
 
     await expect(api.approveRecommendation({
       id: pending.id,
-      expectedRevision: pending.revision,
+      expectedRevision: bindingResult.revision,
       decision: { approvedBy: '   ' },
     })).rejects.toThrow(/审批人|处理人/);
 

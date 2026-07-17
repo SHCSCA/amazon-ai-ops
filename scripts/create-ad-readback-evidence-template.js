@@ -78,7 +78,9 @@ This packet is for one explicitly approved low-risk Amazon Ads action. It is not
 | ASIN | ${markdownEscape(target.asin || '')} |
 | Metric date | ${markdownEscape(target.metricDate || '')} |
 | Entity type | ${markdownEscape(target.entityType)} |
+| Writable entity ID | ${markdownEscape(target.entityId || '')} |
 | Entity name | ${markdownEscape(target.entityName)} |
+| Identity proof | ${markdownEscape(target.identityProofPath || '')} |
 | Action type | ${markdownEscape(target.actionType)} |
 | Before value | ${markdownEscape(evidence.before.value)} |
 | Proposed after value | ${markdownEscape(evidence.after.value)} |
@@ -101,6 +103,8 @@ This packet is for one explicitly approved low-risk Amazon Ads action. It is not
 - [ ] Operator confirms this exact scope and timestamp in \`approval\`.
 - [ ] Operator confirms \`source.sourceFiles\` points to the real Lingxing spreadsheet report(s), not audit JSON/PNG/HTML.
 - [ ] Operator confirms \`source.sourceRow\` is the original report row that produced the recommendation.
+- [ ] Operator confirms \`target.entityId\` is the opaque Ads UI/API object id, not the recommendation's synthesized display id.
+- [ ] Operator confirms \`target.identityProofPath\` points to the screenshot or API JSON used to bind that id.
 - [ ] Operator fills \`approval.approverName\` and \`approval.approvalArtifactPath\` with the external approval owner and proof reference.
 - [ ] Operator confirms \`realWriteApproved=true\`.
 - [ ] Risk owner confirms \`risk.allowedByPolicy=true\` and documents why the action is low risk.
@@ -115,7 +119,7 @@ This packet is for one explicitly approved low-risk Amazon Ads action. It is not
 - [ ] Execute exactly one approved action manually in Ads UI.
 - [ ] After screenshot: Ads UI shows the same entity after the change.
 - [ ] After value: copied into \`after.value\`.
-- [ ] Readback: reload or reopen Ads UI/API and confirm \`readback.actualValue\` equals \`after.value\`.
+- [ ] Readback: reload or reopen Ads UI/API, independently enter \`readback.actualValue\`, and confirm it equals \`after.value\`.
 - [ ] Readback evidence: capture a separate reload/readback screenshot or trace and fill \`readback.evidencePath\`.
 - [ ] Execution proof: operator name is copied into \`execution.performedBy\`, local action log id or Ads operation id is copied into \`execution.executionId\`, and \`execution.appExecutorUsed=false\` remains unchanged.
 - [ ] Timestamp order is preserved: approval <= before screenshot <= manual execution <= after screenshot <= readback evidence.
@@ -125,7 +129,7 @@ This packet is for one explicitly approved low-risk Amazon Ads action. It is not
 Do not overwrite the candidate JSON. After the approved manual Ads UI action is captured, write the completed PASS-intended evidence to a separate output file and let the verifier decide.
 
 \`\`\`powershell
-pnpm run fill:ad-readback -- --source ${psQuote(jsonPath)} --out ${psQuote(passPath)} --approver-name "<approver>" --approval-artifact "<ticket-or-screenshot-path>" --approval-confirmed-at "<ISO time>" --before-value "<live before bid>" --before-captured-at "<ISO time>" --before-screenshot "<before screenshot path>" --live-bid-source-note "${markdownEscape(liveBidSourceNoteForTarget(target))}" --after-value "<live after bid>" --after-captured-at "<ISO time>" --after-screenshot "<after screenshot path>" --executed-at "<ISO time>" --executed-by "<operator>" --execution-id "<manual action id>" --readback-read-at "<ISO time>" --readback-evidence "<reload/readback screenshot path>" --readback-actual-value "<reload value, defaults to after value if omitted>" --risk-rationale "<why this one action is low risk and reversible>"
+pnpm run fill:ad-readback -- --source ${psQuote(jsonPath)} --out ${psQuote(passPath)} --approver-name "<approver>" --approval-artifact "<ticket-or-screenshot-path>" --approval-confirmed-at "<ISO time>" --before-value "<live before bid>" --before-captured-at "<ISO time>" --before-screenshot "<before screenshot path>" --live-bid-source-note "${markdownEscape(liveBidSourceNoteForTarget(target))}" --after-value "<live after bid>" --after-captured-at "<ISO time>" --after-screenshot "<after screenshot path>" --executed-at "<ISO time>" --executed-by "<operator>" --execution-id "<manual action id>" --readback-read-at "<ISO time>" --readback-evidence "<reload/readback screenshot path>" --readback-actual-value "<independently observed reload value>" --risk-rationale "<why this one action is low risk and reversible>"
 \`\`\`
 
 ## Verification Commands
@@ -169,7 +173,9 @@ function main() {
       campaignName: value(args, 'campaign', 'FILL: campaign name'),
       adGroupName: value(args, 'ad-group', 'FILL: ad group name'),
       entityType: value(args, 'entity-type', 'target'),
+      entityId: value(args, 'entity-id', 'FILL: opaque Ads UI/API writable object id'),
       entityName: value(args, 'entity', 'FILL: keyword/search term/target'),
+      identityProofPath: value(args, 'identity-proof', 'FILL: local screenshot or API JSON proving the writable object id'),
       actionType: value(args, 'action', 'lower_bid'),
     },
     risk: {
@@ -192,7 +198,7 @@ function main() {
       verified: false,
       method: 'FILL: Ads UI reload/API/readback method',
       readAt: value(args, 'readback-read-at', 'FILL: readback timestamp in ISO format'),
-      actualValue: value(args, 'after-value', 'FILL: must equal after.value'),
+      actualValue: value(args, 'readback-actual-value', 'FILL: independently observe after reload; must equal after.value'),
       evidencePath: value(args, 'readback-evidence', 'FILL: absolute path to readback screenshot/trace evidence'),
     },
     execution: {

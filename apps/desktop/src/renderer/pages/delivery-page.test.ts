@@ -1,7 +1,24 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryOpenPathButtonView, deliveryReadbackVerifierPassed, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy, runDeliveryWorkflowMutation } from './delivery-page';
+import { buildDeliveryItems, buildDeliveryOverviewFacts, buildDeliveryReadbackRepairIntent, buildManifestActions, canExportDeliveryBundle, deliveryActionButtonView, deliveryCopySummaryActionView, deliveryOpenPathButtonView, deliveryReadbackVerifierPassed, deliverySummaryStatusLabel, deliveryTextForDisplay, findReadbackBlockerGate, packageEvidenceSummary, readbackBlockerSummary, readbackSessionStatusCopy, runDeliveryWorkflowMutation } from './delivery-page';
 import { subscribeWorkflowInvalidation } from '../workflow-invalidation';
+
+function maxProgressiveDetailsDepth(source: string): number {
+  const tokens = source.match(/<\/?ProgressiveDetails\b[^>]*>/g) || [];
+  let depth = 0;
+  let maxDepth = 0;
+  for (const token of tokens) {
+    if (token.startsWith('</')) {
+      depth -= 1;
+    } else if (!token.endsWith('/>')) {
+      depth += 1;
+      maxDepth = Math.max(maxDepth, depth);
+    }
+    if (depth < 0) throw new Error('ProgressiveDetails closing tag appears before its opening tag');
+  }
+  if (depth !== 0) throw new Error('ProgressiveDetails tags are unbalanced');
+  return maxDepth;
+}
 
 describe('delivery workflow invalidation contract', () => {
   it.each([
@@ -28,6 +45,14 @@ describe('delivery workflow invalidation contract', () => {
     expect(deliveryReadbackVerifierPassed({ ready: true, status: 'NEEDS_WORK' })).toBe(false);
     expect(sources).toEqual(['readback-verified']);
     unsubscribe();
+  });
+});
+
+describe('deliverySummaryStatusLabel', () => {
+  it('labels preview gate progress as development preview instead of a production blocker', () => {
+    expect(deliverySummaryStatusLabel({ deliveryReady: false, previewOnly: true })).toBe('开发预览');
+    expect(deliverySummaryStatusLabel({ deliveryReady: false, previewOnly: false })).toBe('当前阻断');
+    expect(deliverySummaryStatusLabel({ deliveryReady: true, previewOnly: false })).toBe('可以交付');
   });
 });
 
@@ -145,7 +170,9 @@ describe('canExportDeliveryBundle', () => {
     status: 'APP_READY',
     appReady: true,
     manifestDriven: true,
-    gates: [],
+    previewOnly: false,
+    gates: [{ id: 'release-package-hash', name: 'Release package hash', ok: true }],
+    failures: [],
     gatesSummary: { total: 1, passed: 1, failed: 0 },
   } as any;
 
@@ -153,15 +180,31 @@ describe('canExportDeliveryBundle', () => {
     installerAvailable: true,
     installerPath: 'C:/release/AmazonAIOpsAgent-1.5.0.exe',
     portablePath: 'C:/release/AmazonAIOpsAgent-1.5.0-portable.exe',
-    sha256: 'ABCDEF123456',
+    sha256: 'A'.repeat(64),
   } as any;
 
-  it('only allows bundle export after final readiness and package evidence are both recorded', () => {
+  it('allows bundle export only for a complete non-preview readiness and current portable authority', () => {
     expect(canExportDeliveryBundle(readyReadiness, recordedPackage)).toBe(true);
-    expect(canExportDeliveryBundle({ ...readyReadiness, appReady: false }, recordedPackage)).toBe(false);
-    expect(canExportDeliveryBundle({ ...readyReadiness, manifestDriven: false }, recordedPackage)).toBe(false);
-    expect(canExportDeliveryBundle(readyReadiness, null)).toBe(false);
-    expect(canExportDeliveryBundle(readyReadiness, { ...recordedPackage, installerAvailable: false })).toBe(false);
+  });
+
+  it.each([
+    ['unavailable readiness', { ...readyReadiness, available: false }, recordedPackage],
+    ['missing readiness file', { ...readyReadiness, exists: false }, recordedPackage],
+    ['non-ready status', { ...readyReadiness, status: 'APP_NEEDS_WORK' }, recordedPackage],
+    ['appReady false', { ...readyReadiness, appReady: false }, recordedPackage],
+    ['non-manifest readiness', { ...readyReadiness, manifestDriven: false }, recordedPackage],
+    ['preview-only readiness', { ...readyReadiness, previewOnly: true }, recordedPackage],
+    ['empty gates', { ...readyReadiness, gates: [] }, recordedPackage],
+    ['failed gate', { ...readyReadiness, gates: [{ id: 'release-package-hash', name: 'Release package hash', ok: false }] }, recordedPackage],
+    ['recorded failure', { ...readyReadiness, failures: [{ gateId: 'release-package-hash', code: 'STALE', message: 'stale', evidencePath: null }] }, recordedPackage],
+    ['missing failures array', { ...readyReadiness, failures: undefined }, recordedPackage],
+    ['missing package', readyReadiness, null],
+    ['missing installer', readyReadiness, { ...recordedPackage, installerAvailable: false }],
+    ['missing portable path', readyReadiness, { ...recordedPackage, portablePath: '' }],
+    ['missing portable hash', readyReadiness, { ...recordedPackage, sha256: '' }],
+    ['short portable hash', readyReadiness, { ...recordedPackage, sha256: 'ABCDEF123456' }],
+  ])('fails closed for %s', (_label, readiness, packageEvidence) => {
+    expect(canExportDeliveryBundle(readiness as any, packageEvidence as any)).toBe(false);
   });
 
   it('keeps the blocked export button physically disabled with a red forbidden cursor contract', () => {
@@ -169,7 +212,8 @@ describe('canExportDeliveryBundle', () => {
     const stylesheet = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
     expect(source).toContain('disabled: !deliveryReady');
-    expect(source).toContain('disabled={exportBundleButton.disabled}');
+    expect(source).toContain('disabled={deliveryPrimaryButton.disabled}');
+    expect(source).toContain('if (!deliveryReady) {');
     expect(source).toContain('delivery-export-blocked');
     expect(stylesheet).toContain('.delivery-export-blocked:disabled');
     expect(stylesheet).toContain('cursor: no-drop');
@@ -189,6 +233,24 @@ describe('Phase 5 delivery user task surface', () => {
     expect(source).toContain('<ProgressiveDetails title="技术支持细节">');
     expect(source).not.toContain('<Panel title="证据治理"');
     expect(source).not.toContain('<ProgressiveDetails title="文件与技术入口">');
+  });
+
+  it('keeps ProgressiveDetails as siblings instead of nesting native details disclosures', () => {
+    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+
+    expect(maxProgressiveDetailsDepth(source)).toBeLessThanOrEqual(1);
+    expect(source).not.toContain('<ProgressiveDetails title="交付证据、文件与回读支持">');
+    expect(source).toContain('<Panel title="回读工作包路径">');
+    expect(source).not.toContain('<ProgressiveDetails title="回读工作包路径">');
+  });
+
+  it('renders the computed delivery primary action once on the first screen', () => {
+    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('data-action-priority="primary"');
+    expect(source).toContain('onClick={deliveryPrimaryAction.onClick}');
+    expect(source.match(/data-action-priority="primary"/g)).toHaveLength(1);
+    expect(source.match(/onClick=\{exportBundle\}/g) || []).toHaveLength(0);
   });
 });
 describe('deliveryActionButtonView', () => {

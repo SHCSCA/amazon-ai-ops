@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBusinessDataPipeline, ScopeText } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
+import { TaskBanner } from '../components/workspace';
+import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scope';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import {
   buildListingReadinessIssues,
@@ -9,8 +11,8 @@ import {
   buildListingWorkflowSummary,
   isListingReadyForDraft,
 } from '../listing-workflow-summary';
-import { hasRealReportCoverage } from '../report-coverage';
-import type { ListingContentVersionView, ListingContentView, ListingDraftView, ListingHandoffPayload, ListingSection, ListingSuggestionView } from '../types';
+import { hasFormalReportCoverage, hasRealReportCoverage } from '../report-coverage';
+import type { AppRoute, ListingContentVersionView, ListingContentView, ListingDraftView, ListingHandoffPayload, ListingSection, ListingSuggestionView } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
 interface ListingReadEvidence {
@@ -63,6 +65,88 @@ export interface ListingDraftWorkspaceCopy {
   sourceLabel: string;
   sourceDetail: string;
   primaryActionLabel: string;
+}
+
+export type ListingTaskIntent =
+  | 'edit-keywords'
+  | 'keyword-opportunities'
+  | 'edit-listing'
+  | 'read-lingxing'
+  | 'generate-draft'
+  | 'export-draft';
+
+export interface ListingTaskModel {
+  tone: 'neutral' | 'attention' | 'blocked' | 'confirmed';
+  title: string;
+  description: string;
+  statusLabel: string;
+  primaryIntent: ListingTaskIntent;
+  primaryLabel: string;
+  primaryBusy: boolean;
+  secondaryIntents: ListingTaskIntent[];
+  publishBoundary: '仅本地，不提交 Amazon，不改写 Lingxing。';
+}
+
+export function buildListingTaskModel(input: {
+  keywordCount: number;
+  listingReady: boolean;
+  draftCount: number;
+  quantReady: boolean;
+  loading: string | null;
+}): ListingTaskModel {
+  const publishBoundary = '仅本地，不提交 Amazon，不改写 Lingxing。' as const;
+  if (input.keywordCount <= 0) {
+    return {
+      tone: 'attention',
+      title: '先确定要覆盖的关键词',
+      description: `从当前范围关键词机会带入，或手工录入本地词根。${publishBoundary}`,
+      statusLabel: '待关键词',
+      primaryIntent: 'edit-keywords',
+      primaryLabel: '打开关键词录入',
+      primaryBusy: false,
+      secondaryIntents: ['keyword-opportunities', 'edit-listing'],
+      publishBoundary,
+    };
+  }
+  if (!input.listingReady) {
+    return {
+      tone: 'blocked',
+      title: '补齐并保存当前 Listing',
+      description: `生成草案前必须核对 ASIN、范围、标题、五点和后台词。${publishBoundary}`,
+      statusLabel: 'Listing 待闭合',
+      primaryIntent: 'edit-listing',
+      primaryLabel: '补齐当前 Listing',
+      primaryBusy: false,
+      secondaryIntents: ['read-lingxing', 'edit-keywords'],
+      publishBoundary,
+    };
+  }
+  if (input.draftCount > 0) {
+    return {
+      tone: 'confirmed',
+      title: '导出草案给运营人工复核',
+      description: `当前有 ${input.draftCount} 条本地草案；导出不会发布或覆盖线上内容。${publishBoundary}`,
+      statusLabel: `${input.draftCount} 条本地草案`,
+      primaryIntent: 'export-draft',
+      primaryLabel: '导出本地草案',
+      primaryBusy: input.loading === 'export-drafts',
+      secondaryIntents: ['generate-draft', 'edit-listing'],
+      publishBoundary,
+    };
+  }
+  return {
+    tone: input.quantReady ? 'confirmed' : 'attention',
+    title: input.quantReady ? '生成本地 Listing 草案' : '生成仅供本地预览的草案',
+    description: input.quantReady
+      ? `真实广告指标可用于关键词相关性复核；生成后仍需人工确认。${publishBoundary}`
+      : `当前缺真实广告数据，草案不得声明 AI 已验证，也不能进入交付证据。${publishBoundary}`,
+    statusLabel: input.quantReady ? '可生成本地草案' : '仅本地预览',
+    primaryIntent: 'generate-draft',
+    primaryLabel: input.quantReady ? '开始生成本地草案' : '开始生成本地预览草案',
+    primaryBusy: input.loading === 'draft',
+    secondaryIntents: ['edit-keywords', 'edit-listing'],
+    publishBoundary,
+  };
 }
 
 interface ListingHeatmapSection {
@@ -163,6 +247,10 @@ export function listingHistoryRefreshButtonView(input: {
 
 function errorMessage(caught: unknown, fallback: string): string {
   return `${fallback}: ${toUserFacingError(caught, fallback)}`;
+}
+
+function navigate(route: AppRoute) {
+  window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
 
 function sectionLabel(section: ListingSection): string {
@@ -761,7 +849,7 @@ export function ListingOptimizationPage() {
     || readEvidence?.screenshotPath
     || detailProbeStatus,
   );
-  const quantReady = Boolean(hasRealReportCoverage(data?.collection) && data?.quant.hasImportedMetrics);
+  const quantReady = Boolean(hasFormalReportCoverage(data?.collection) && data?.quant.hasImportedMetrics);
   const aiDraftCount = drafts.filter((draft) => draft.source === 'ai' && !draft.aiFallbackReason).length;
   const ruleDraftCount = drafts.length - aiDraftCount;
   const listingReady = isListingReadyForDraft({
@@ -1240,37 +1328,15 @@ export function ListingOptimizationPage() {
     setListingEditorOpen(false);
   }
 
-  function handleKeywordEditorKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key !== 'Escape') return;
-    event.stopPropagation();
-    closeKeywordEditor();
-  }
-
-  function handleListingEditorKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key !== 'Escape') return;
-    event.stopPropagation();
-    closeListingEditor();
-  }
-
-  useEffect(() => {
-    if (!keywordEditorOpen) return;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      closeKeywordEditor();
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [keywordEditorOpen]);
-
-  useEffect(() => {
-    if (!listingEditorOpen) return;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      closeListingEditor();
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [listingEditorOpen, loading]);
+  const listingEditorDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    dismissDisabled: loading === 'save-manual',
+    onDismiss: closeListingEditor,
+    open: listingEditorOpen,
+  });
+  const listingKeywordDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    onDismiss: closeKeywordEditor,
+    open: keywordEditorOpen,
+  });
 
   const listingActionBusy = Boolean(loading);
   const historyRefreshButton = listingHistoryRefreshButtonView({
@@ -1308,6 +1374,68 @@ export function ListingOptimizationPage() {
     groupBusy: listingActionBusy,
     label: '导出草案',
   });
+  const listingTaskModel = buildListingTaskModel({
+    keywordCount: keywords.length,
+    listingReady,
+    draftCount: drafts.length,
+    quantReady,
+    loading,
+  });
+
+  function runListingTaskIntent(intent: ListingTaskIntent) {
+    if (intent === 'edit-keywords') {
+      setKeywordEditorOpen(true);
+      return;
+    }
+    if (intent === 'keyword-opportunities') {
+      navigate('keyword-opportunities');
+      return;
+    }
+    if (intent === 'edit-listing') {
+      setListingEditorOpen(true);
+      return;
+    }
+    if (intent === 'read-lingxing') {
+      void readFromLingxing();
+      return;
+    }
+    if (intent === 'generate-draft') {
+      void generateDrafts();
+      return;
+    }
+    if (intent === 'export-draft') {
+      void exportDrafts();
+    }
+  }
+
+  function listingTaskIntentBusy(intent: ListingTaskIntent): boolean {
+    return (intent === 'read-lingxing' && loading === 'read')
+      || (intent === 'generate-draft' && loading === 'draft')
+      || (intent === 'export-draft' && loading === 'export-drafts');
+  }
+
+  function listingTaskIntentLabel(intent: ListingTaskIntent): string {
+    const labels: Record<ListingTaskIntent, string> = {
+      'edit-keywords': '编辑关键词',
+      'keyword-opportunities': '打开关键词机会',
+      'edit-listing': '打开 Listing 编辑',
+      'read-lingxing': '辅助读取领星',
+      'generate-draft': '重新生成草案',
+      'export-draft': '导出本地草案',
+    };
+    return labels[intent];
+  }
+
+  const listingSecondaryActions = listingTaskModel.secondaryIntents.map((intent) => {
+    const busy = listingTaskIntentBusy(intent);
+    return {
+      busy,
+      busyLabel: busy ? '处理中...' : undefined,
+      disabled: Boolean(loading) && !busy,
+      label: listingTaskIntentLabel(intent),
+      onClick: () => runListingTaskIntent(intent),
+    };
+  });
 
   return (
     <div>
@@ -1318,33 +1446,27 @@ export function ListingOptimizationPage() {
       />
 
       <div className="business-stack listing-optimization-page-stack">
-        <Panel className="listing-flow-panel" title="本地草案工作流" tone={draftReady ? 'success' : keywords.length && listingReady ? 'warning' : 'default'}>
-          <div className={`listing-task-band listing-task-band-${workflowSummary.tone}`}>
-            <div className="listing-task-band-copy" aria-live="polite" role="status">
-              <span>当前草案任务</span>
+        <TaskBanner
+          description={(
+            <>
               <strong>{workflowSummary.headline}</strong>
-              <p>{workflowSummary.blockers.length ? workflowSummary.blockers.join('；') : workflowSummary.nextAction}</p>
-            </div>
-            <div className="listing-task-band-metrics">
-              <div>
-                <span>关键词</span>
-                <strong>{keywords.length ? `${keywords.length} 个` : '未录入'}</strong>
-              </div>
-              <div>
-                <span>Listing</span>
-                <strong>{listingReady ? '可生成草案' : listingSourceStatus.label}</strong>
-              </div>
-              <div>
-                <span>草案</span>
-                <strong>{draftReady ? `${drafts.length} 条` : aiStatus.label}</strong>
-              </div>
-              <div>
-                <span>边界</span>
-                <strong>仅本地</strong>
-              </div>
-            </div>
-            <StatusPill tone={workflowSummary.tone}>{workflowSummary.statusLabel}</StatusPill>
-          </div>
+              <p>{listingTaskModel.description}</p>
+            </>
+          )}
+          eyebrow="本地草案工作流"
+          meta={<span>关键词交接与发布边界。当前下一步：{workflowSummary.nextAction || workflowBlocker} {listingTaskModel.publishBoundary}</span>}
+          primaryAction={{
+            busy: listingTaskModel.primaryBusy,
+            busyLabel: '处理中...',
+            disabled: Boolean(loading) && !listingTaskModel.primaryBusy,
+            label: listingTaskModel.primaryLabel,
+            onClick: () => runListingTaskIntent(listingTaskModel.primaryIntent),
+          }}
+          secondaryActions={listingSecondaryActions}
+          status={<StatusPill tone={listingTaskModel.tone === 'confirmed' ? 'ready' : listingTaskModel.tone === 'blocked' ? 'blocked' : 'pending'}>{listingTaskModel.statusLabel}</StatusPill>}
+          title={`当前草案任务：${listingTaskModel.title}`}
+          tone={listingTaskModel.tone}
+        >
           <ol className="listing-progress-rail" aria-label="Listing 草案四步进度">
             <li className={keywords.length ? 'is-ready' : 'is-pending'}>
               <span>1</span>
@@ -1367,8 +1489,7 @@ export function ListingOptimizationPage() {
               <em>{draftReady ? '可导出' : '待草案'}</em>
             </li>
           </ol>
-          <p className="muted-line">当前下一步：{workflowBlocker}。本页负责 Listing 草案闭环，不承载广告审批或真实广告执行。</p>
-        </Panel>
+        </TaskBanner>
 
         <ProgressiveDetails title="录入、辅助读取和维护当前 Listing">
         <Panel className="listing-editor-panel listing-editor-entry-panel" title="当前 Listing 维护" tone={listing ? (listingReady ? 'success' : 'warning') : 'warning'}>
@@ -1474,6 +1595,7 @@ export function ListingOptimizationPage() {
 
         <ProgressiveDetails title="关键词交接与发布边界">
           <Panel className="listing-boundary-panel" title="交接与边界详情" tone={keywords.length ? 'success' : 'warning'}>
+            <p className="muted-line">关键词交接与发布边界：以下信息只用于核对来源、范围和本地草案用途。</p>
             <div className="context-summary-grid">
               <div>
                 <span>关键词来源</span>
@@ -1793,15 +1915,17 @@ export function ListingOptimizationPage() {
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeListingEditor();
             }}
+            ref={listingEditorDialogFocus.overlayRootRef}
             role="presentation"
           >
             <section
               aria-labelledby="listing-editor-modal-title"
               aria-modal="true"
               className="product-config-modal listing-editor-modal"
-              onKeyDown={handleListingEditorKeyDown}
               onMouseDown={(event) => event.stopPropagation()}
+              ref={listingEditorDialogFocus.surfaceRef}
               role="dialog"
+              tabIndex={-1}
             >
               <div className="product-config-modal-header">
                 <div>
@@ -1857,15 +1981,17 @@ export function ListingOptimizationPage() {
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeKeywordEditor();
             }}
+            ref={listingKeywordDialogFocus.overlayRootRef}
             role="presentation"
           >
             <section
               aria-labelledby="listing-keyword-editor-title"
               aria-modal="true"
               className="product-config-modal listing-keyword-modal"
-              onKeyDown={handleKeywordEditorKeyDown}
               onMouseDown={(event) => event.stopPropagation()}
+              ref={listingKeywordDialogFocus.surfaceRef}
               role="dialog"
+              tabIndex={-1}
             >
               <div className="product-config-modal-header">
                 <div>

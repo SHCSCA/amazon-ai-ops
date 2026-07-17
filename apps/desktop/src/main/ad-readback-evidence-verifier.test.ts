@@ -8,7 +8,7 @@ function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-ad-readback-verifier-'));
 }
 
-function writeFile(filePath: string, content = 'placeholder'): string {
+function writeFile(filePath: string, content = `placeholder:${path.basename(filePath)}`): string {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content);
   return filePath;
@@ -51,8 +51,10 @@ function validEvidence(dir: string, overrides: Record<string, any> = {}): Record
       asin: 'B0TESTASIN',
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
-      entityType: 'target',
+      entityType: 'keyword',
+      entityId: 'keyword-opaque-4',
       entityName: 'door lock',
+      identityProofPath: writeFile(path.join(dir, 'target-identity.png')),
       actionType: 'lower_bid',
     },
     risk: {
@@ -122,6 +124,28 @@ describe('verifyAdReadbackEvidenceFile', () => {
     ]));
   });
 
+  it('rejects v2 target context without an opaque writable entity id', () => {
+    const dir = tempDir();
+    const evidence = validEvidence(dir);
+    delete evidence.target.entityId;
+
+    const result = verifyAdReadbackEvidenceFile(writeEvidence(dir, evidence));
+
+    expect(result.ready).toBe(false);
+    expect(result.issues.join('\n')).toContain('target context includes store/site/campaign/ad group/entity id/identity proof/action');
+  });
+
+  it('rejects v2 target context when the identity proof file is missing', () => {
+    const dir = tempDir();
+    const evidence = validEvidence(dir);
+    evidence.target.identityProofPath = path.join(dir, 'missing-target-identity.png');
+
+    const result = verifyAdReadbackEvidenceFile(writeEvidence(dir, evidence));
+
+    expect(result.ready).toBe(false);
+    expect(result.issues.join('\n')).toContain('target context includes store/site/campaign/ad group/entity id/identity proof/action');
+  });
+
   it('rejects audit JSON masquerading as source report evidence', () => {
     const dir = tempDir();
     const auditPath = writeFile(path.join(dir, 'acceptance-audit.json'), '{}\n');
@@ -154,6 +178,19 @@ describe('verifyAdReadbackEvidenceFile', () => {
 
     expect(result.ready).toBe(false);
     expect(result.issues.join('\n')).toContain('before, after, and readback evidence files are distinct');
+  });
+
+  it('rejects distinct screenshot paths whose SHA-256 content is reused', () => {
+    const dir = tempDir();
+    const evidence = validEvidence(dir);
+    const reusedContent = fs.readFileSync(evidence.before.screenshotPath);
+    fs.writeFileSync(evidence.after.screenshotPath, reusedContent);
+    fs.writeFileSync(evidence.readback.evidencePath, reusedContent);
+
+    const result = verifyAdReadbackEvidenceFile(writeEvidence(dir, evidence));
+
+    expect(result.ready).toBe(false);
+    expect(result.issues.join('\n')).toContain('SHA-256');
   });
 
   it('rejects legacy or unbound evidence without a v2 authority record', () => {

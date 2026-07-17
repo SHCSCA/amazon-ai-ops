@@ -59,7 +59,9 @@ function writePassingReadbackEvidence(evidenceDir: string): string {
       campaignName: 'Campaign A',
       adGroupName: 'Ad Group A',
       entityType: 'target',
+      entityId: 'amzn-target-opaque-4',
       entityName: 'door lock',
+      identityProofPath: writeFile(path.join(evidenceDir, 'target-identity.json'), '{"verified":true}'),
       actionType: 'lower_bid',
     },
     risk: {
@@ -70,20 +72,20 @@ function writePassingReadbackEvidence(evidenceDir: string): string {
     before: {
       value: '1.20',
       capturedAt: '2026-06-18T10:01:00.000Z',
-      screenshotPath: writeFile(path.join(evidenceDir, 'before.png')),
+      screenshotPath: writeFile(path.join(evidenceDir, 'before.png'), 'before screenshot'),
       liveBidSourceNote: 'Read from Ads UI editable bid row.',
     },
     after: {
       value: '1.08',
       capturedAt: '2026-06-18T10:03:00.000Z',
-      screenshotPath: writeFile(path.join(evidenceDir, 'after.png')),
+      screenshotPath: writeFile(path.join(evidenceDir, 'after.png'), 'after screenshot'),
     },
     readback: {
       verified: true,
       method: 'Ads UI reload target row',
       readAt: '2026-06-18T10:05:00.000Z',
       actualValue: '1.08',
-      evidencePath: writeFile(path.join(evidenceDir, 'readback.png')),
+      evidencePath: writeFile(path.join(evidenceDir, 'readback.png'), 'readback screenshot'),
     },
     execution: {
       success: true,

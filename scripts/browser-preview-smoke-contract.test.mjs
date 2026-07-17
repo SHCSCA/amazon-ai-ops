@@ -29,6 +29,27 @@ describe('authoritative browser smoke harnesses', () => {
   });
 });
 
+describe('product object-workspace smoke contract', () => {
+  for (const fileName of ['smoke-business-ui-shell.js', 'smoke-business-ui-data-pipeline.js']) {
+    it(`${fileName} follows the product workspace heading and queue markers`, () => {
+      const source = readFileSync(new URL(fileName, import.meta.url), 'utf8');
+
+      expect(source).toContain('heading: /产品工作台/');
+      expect(source).toContain("[data-workspace-queue=\"products\"]");
+      expect(source).toContain('[data-workspace-queue-scroll]');
+      expect(source).not.toContain('heading: /^产品$/');
+    });
+  }
+
+  it('uses selectable virtual rows instead of the removed product table detail action', () => {
+    const source = readFileSync(new URL('smoke-business-ui-data-pipeline.js', import.meta.url), 'utf8');
+
+    expect(source).toContain("getByRole('row', { name: /B0TESTASIN/ })");
+    expect(source).not.toContain("locator('tr', { hasText: 'B0TESTASIN' })");
+    expect(source).not.toContain("getByRole('button', { name: '详情' })");
+  });
+});
+
 describe('ad readback smoke v2 authority contract', () => {
   it('rejects renderer-owned authority fields instead of asserting them as export input', () => {
     const source = readFileSync(new URL('smoke-business-ui-ad-execution.js', import.meta.url), 'utf8');

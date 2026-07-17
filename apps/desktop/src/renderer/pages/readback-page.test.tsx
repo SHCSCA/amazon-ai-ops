@@ -17,6 +17,7 @@ import {
   readbackContractChecks,
   readbackCopyCommandButtonView,
   readbackOpenPathButtonView,
+  readbackPrimaryTaskCopy,
   readbackRepairFieldClass,
   readbackPrecheckCopy,
   readbackVerifierPassed,
@@ -84,6 +85,33 @@ describe('readback workflow invalidation contract', () => {
 });
 
 describe('readback task-first workspace frame', () => {
+  it('asks for an approved action before presenting screenshot repair as the main task', () => {
+    const repairAction = {
+      blocker: 'screenshot' as const,
+      label: '补交截图',
+      stepId: 'evidence' as const,
+      focusTarget: 'readback-first-missing-screenshot',
+    };
+
+    expect(readbackPrimaryTaskCopy({
+      recommendationId: '',
+      finalVerificationPassed: false,
+      primaryRepairAction: repairAction,
+    })).toMatchObject({
+      dataAction: 'select-approved-action',
+      title: '选择已批准动作',
+      statusLabel: '待选择动作',
+    });
+    expect(readbackPrimaryTaskCopy({
+      recommendationId: '4',
+      finalVerificationPassed: false,
+      primaryRepairAction: repairAction,
+    })).toMatchObject({
+      dataAction: 'repair-screenshot',
+      title: '补交截图',
+    });
+  });
+
   it('exposes the evidence workspace identity and uses one task banner, workbench, and technical inspector', () => {
     const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
 
@@ -167,7 +195,8 @@ describe('readback task-first workspace frame', () => {
     const firstScreen = source.slice(source.indexOf('<PageFrame'), source.indexOf('<ResponsiveInspector'));
 
     expect(source).toContain('const finalVerificationPassed = readbackVerifierPassed(sessionVerifyResult)');
-    expect(firstScreen).toContain("finalVerificationPassed ? '结果核对已通过'");
+    expect(source).toContain("title: '结果核对已通过'");
+    expect(firstScreen).toContain('title={primaryTaskCopy.title}');
     expect(source).toContain("label: '查看核对详情'");
     expect(firstScreen).toContain('建议版本');
     expect(firstScreen).not.toContain('PASS');
@@ -209,6 +238,21 @@ describe('readback task-first workspace frame', () => {
     expect(stylesheet).toMatch(
       /\.readback-page \.readback-contract-card > span,[\s\S]*\.readback-page \.status-pill,[\s\S]*\.readback-page \.chip\s*{[\s\S]*font-size:\s*12px/,
     );
+  });
+
+  it('keeps technical-drawer business splits readable without changing global business splits', () => {
+    const stylesheet = readFileSync(new URL('../styles/readback.css', import.meta.url), 'utf8');
+
+    expect(stylesheet).toMatch(
+      /\.readback-technical-drawer \.business-split\s*{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+    );
+    expect(stylesheet).toMatch(
+      /\.readback-technical-drawer \.business-split \.status-pill\s*{[\s\S]*justify-self:\s*start[\s\S]*width:\s*fit-content[\s\S]*white-space:\s*normal/,
+    );
+    expect(stylesheet).toMatch(
+      /\.readback-technical-drawer \.business-split :is\(p, \.business-scope-line\)\s*{[\s\S]*text-align:\s*left[\s\S]*white-space:\s*normal/,
+    );
+    expect(stylesheet).not.toMatch(/(^|\n)\.business-split\s*{/);
   });
 });
 
@@ -379,7 +423,7 @@ describe('readback wizard user-task copy', () => {
     const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('runReadbackFinalVerificationWorkflow({');
-    expect(source).toContain('primaryAction={finalVerificationPassed ? passedTaskAction : taskBannerAction(primaryRepairAction)}');
+    expect(source).toContain(': form.recommendationId ? taskBannerAction(primaryRepairAction) : selectApprovedActionTaskAction');
     expect(source).toContain("activeActionRef.current = action");
     expect(source).not.toContain('const exportEvidenceButton = readbackActionButtonView({');
   });

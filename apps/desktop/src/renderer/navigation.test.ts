@@ -3,6 +3,7 @@ import {
   DEFAULT_WORKSPACE_INTENTS,
   LEGACY_ROUTE_INTENTS,
   VISIBLE_WORKSPACES,
+  WORKSPACE_SUBVIEW_TABS,
   navigationIntentForRoute,
   normalizeNavigationTarget,
   resolveNavigationTarget,
@@ -100,6 +101,29 @@ describe('visible workspace navigation', () => {
       expect(intent.workspace).toBe(workspace.id);
       expect(resolveNavigationTarget(intent)).toBeTruthy();
     }
+  });
+
+  it('publishes operator-facing subview tabs for every remaining workspace migration', () => {
+    expect(WORKSPACE_SUBVIEW_TABS.product.map((item) => [item.id, item.label])).toEqual([
+      ['products', '产品'],
+      ['targets', '目标与成本'],
+      ['events', '运营事件'],
+    ]);
+    expect(WORKSPACE_SUBVIEW_TABS['data-preparation'].map((item) => [item.id, item.label])).toEqual([
+      ['scope', '工作范围'],
+      ['reports', '报表采集'],
+      ['import-check', '导入检查'],
+    ]);
+    expect(WORKSPACE_SUBVIEW_TABS.diagnosis.map((item) => item.id)).toEqual(['analysis']);
+    expect(WORKSPACE_SUBVIEW_TABS.growth.map((item) => [item.id, item.label])).toEqual([
+      ['keywords', '关键词机会'],
+      ['listing', 'Listing 草案'],
+    ]);
+    expect(WORKSPACE_SUBVIEW_TABS.system.map((item) => [item.id, item.label])).toEqual([
+      ['settings', 'AI 与规则'],
+      ['scheduler', '定时任务'],
+      ['delivery', '交付验收'],
+    ]);
   });
 
   it('fails safely for invalid structured navigation details', () => {

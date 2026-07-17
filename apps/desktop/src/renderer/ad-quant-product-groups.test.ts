@@ -18,7 +18,7 @@ describe('ad quant product groups', () => {
     expect(result.groups[0]).toMatchObject({ asin: 'B002', cost: 40, orders: 2, highRiskCount: 1 });
   });
 
-  it('selects highest-spend product when scope ASIN is empty', () => {
+  it('keeps the all-product view when scope ASIN is empty', () => {
     const result = buildAdQuantProductGroups({
       diagnostics: [
         { asin: 'B001', cost: 10, spend: 10, sales: 0, orders: 0, clicks: 4, riskLevel: 'low' },
@@ -28,7 +28,7 @@ describe('ad quant product groups', () => {
       ledgers: [],
     });
 
-    expect(result.selectedProductKey).toBe('B003');
+    expect(result.selectedProductKey).toBe('');
   });
 
   it('keeps rows without ASIN in an explicit unbound group', () => {
@@ -38,8 +38,21 @@ describe('ad quant product groups', () => {
       ledgers: [],
     });
 
-    expect(result.selectedProductKey).toBe(UNBOUND_PRODUCT_KEY);
+    expect(result.selectedProductKey).toBe('');
     expect(result.groups[0].label).toBe('未绑定 ASIN');
+  });
+
+  it('counts severity high diagnostics as high-risk product objects', () => {
+    const result = buildAdQuantProductGroups({
+      diagnostics: [
+        { asin: 'B001', spend: 40, sales: 0, orders: 0, clicks: 30, severity: 'high' },
+        { asin: 'B001', spend: 10, sales: 20, orders: 1, clicks: 4, severity: 'medium' },
+      ],
+      timelines: [],
+      ledgers: [],
+    });
+
+    expect(result.groups[0]).toMatchObject({ productKey: 'B001', highRiskCount: 1 });
   });
 
   it('uses product ledger totals and stage when diagnostics are lighter', () => {

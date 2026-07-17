@@ -3,6 +3,8 @@ import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { FormTable, FormTableRow, KpiCard, PageHeader, Panel, StatusPill } from '../components/ui';
+import { TaskBanner } from '../components/workspace';
+import { useOverlayFocusScope } from '../components/workspace/overlay-focus-scope';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import type { AppRoute, OperationEventView } from '../types';
 
@@ -275,7 +277,7 @@ export function buildOperationEventTaskState(input: {
     primaryActionLabel: input.saving ? '正在保存...' : '记录事件',
     primaryActionBusy: input.saving,
     primaryActionBusyLabel: '正在保存...',
-    primaryActionDisabled: input.saving || !input.canSave,
+    primaryActionDisabled: input.saving,
     secondaryActionLabel: '查看广告表现',
   };
 }
@@ -369,6 +371,12 @@ export function OperationEventsPage() {
     setEventEditorOpen(false);
   }
 
+  const operationEventDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    dismissDisabled: saving,
+    onDismiss: closeEventEditor,
+    open: eventEditorOpen,
+  });
+
   async function loadEvents() {
     setLoading(true);
     setError('');
@@ -406,15 +414,6 @@ export function OperationEventsPage() {
     const timeout = window.setTimeout(() => setRecentDraftClearTick(null), 360);
     return () => window.clearTimeout(timeout);
   }, [recentDraftClearTick]);
-
-  useEffect(() => {
-    if (!eventEditorOpen) return undefined;
-    function handleWindowKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape' && !saving) closeEventEditor();
-    }
-    window.addEventListener('keydown', handleWindowKeyDown);
-    return () => window.removeEventListener('keydown', handleWindowKeyDown);
-  }, [eventEditorOpen, saving]);
 
   async function saveEvent() {
     const submittedDraft = draft;
@@ -471,6 +470,25 @@ export function OperationEventsPage() {
         description="先看当前范围事件时间轴；新增和维护通过弹窗处理，AI 使用说明和覆盖统计放在辅助区。"
       />
 
+      <TaskBanner
+        description={taskState.detail}
+        meta={`${specificEventCount} 条已绑定产品或广告对象 · 共 ${events.length} 条事件`}
+        primaryAction={{
+          label: taskState.primaryActionLabel,
+          onClick: openEventEditor,
+          disabled: taskState.primaryActionDisabled,
+          busy: taskState.primaryActionBusy,
+          busyLabel: taskState.primaryActionBusyLabel,
+        }}
+        secondaryActions={[
+          { label: taskState.secondaryActionLabel, onClick: () => navigate('ad-quant') },
+          { label: '查看优化建议', onClick: () => navigate('recommendations') },
+        ]}
+        status={visibleEvents.length ? `${visibleEvents.length} 条当前事件` : '待补充上下文'}
+        title={taskState.title}
+        tone={visibleEvents.length ? 'confirmed' : 'attention'}
+      />
+
       <div className="business-stack">
         <div className="operation-events-workbench-toolbar">
           <div className="operation-events-workbench-summary" aria-label="运营事件摘要">
@@ -490,17 +508,6 @@ export function OperationEventsPage() {
               <span>执行边界</span>
               <strong>只补上下文</strong>
             </div>
-          </div>
-          <div className="operation-events-workbench-actions">
-            <button className="primary-button compact-button" onClick={openEventEditor} type="button">
-              新增事件
-            </button>
-            <button className="secondary-button compact-button" onClick={() => navigate('ad-quant')} type="button">
-              广告表现
-            </button>
-            <button className="secondary-button compact-button" onClick={() => navigate('recommendations')} type="button">
-              优化建议
-            </button>
           </div>
         </div>
         {message && <p className="ready-line" role="status" aria-live="polite">{message}</p>}
@@ -731,6 +738,7 @@ export function OperationEventsPage() {
       {eventEditorOpen && (
         <div
           className="product-config-modal-backdrop operation-event-modal-backdrop"
+          ref={operationEventDialogFocus.overlayRootRef}
           role="presentation"
           onClick={(event) => {
             if (event.target === event.currentTarget) closeEventEditor();
@@ -740,7 +748,9 @@ export function OperationEventsPage() {
             aria-labelledby="operation-event-modal-title"
             aria-modal="true"
             className="product-config-modal operation-event-modal"
+            ref={operationEventDialogFocus.surfaceRef}
             role="dialog"
+            tabIndex={-1}
           >
             <header className="product-config-modal-header">
               <div>

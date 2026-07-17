@@ -198,7 +198,7 @@ function buildSessionInputGuide(candidate: ReadbackCandidate, paths: PreparedAdR
     ['executionId', '执行记录/执行编号或记录 ID', '工单、聊天记录编号或人工动作编号', 'manual-action-001'],
     ['readbackReadAt', '回读/刷新回读时间', '刷新或重新打开 Ads UI 后读取值的时间', '2026-06-18T10:05:00.000Z'],
     ['readbackEvidencePath', '回读/刷新回读截图文件', `保存到 ${paths.readbackScreenshotsDir}`, path.join(paths.readbackScreenshotsDir, 'readback.png')],
-    ['readbackActualValue', '回读/刷新回读实际值', '刷新后看到的实际值；通常应等于 afterValue', '1.08'],
+    ['readbackActualValue', '回读/刷新回读实际值', '必须从刷新后的 Ads UI 独立读取；校验时应等于 afterValue', '1.08'],
     ['riskRationale', '风控/低风险执行说明', '说明为什么本次动作低风险、可回滚、已审批', '一次已审批的低风险 Ads UI 人工动作，具备 before/after/readback 证据。'],
   ];
   return `# session-input.json 填写指南
@@ -216,7 +216,9 @@ function buildSessionInputGuide(candidate: ReadbackCandidate, paths: PreparedAdR
 | 广告活动 | ${markdownEscape(target.campaignName || '')} |
 | 广告组 | ${markdownEscape(target.adGroupName || '')} |
 | 对象类型 | ${markdownEscape(target.entityType || '')} |
+| 对象 ID | ${markdownEscape(target.entityId || '')} |
 | 对象名称 | ${markdownEscape(target.entityName || '')} |
+| 对象身份证明 | ${markdownEscape(target.identityProofPath || '')} |
 | 动作 | ${markdownEscape(target.actionType || '')} |
 | 来源当前值 | ${markdownEscape(source.currentValue || '')} |
 | 来源建议值 | ${markdownEscape(source.recommendedValue || '')} |
@@ -267,7 +269,9 @@ function buildChecklist(candidate: ReadbackCandidate, paths: PreparedAdReadbackS
 | 广告活动 | ${markdownEscape(target.campaignName || '')} |
 | 广告组 | ${markdownEscape(target.adGroupName || '')} |
 | 对象类型 | ${markdownEscape(target.entityType || '')} |
+| 对象 ID | ${markdownEscape(target.entityId || '')} |
 | 对象名称 | ${markdownEscape(target.entityName || '')} |
+| 对象身份证明 | ${markdownEscape(target.identityProofPath || '')} |
 | 动作类型 | ${markdownEscape(target.actionType || '')} |
 | 建议来源当前值 | ${markdownEscape(source.currentValue || '')} |
 | 建议来源推荐值 | ${markdownEscape(source.recommendedValue || '')} |
@@ -316,7 +320,9 @@ function buildLocatorGuide(candidate: ReadbackCandidate, paths: PreparedAdReadba
 | 广告活动 | ${markdownEscape(target.campaignName || '')} |
 | 广告组 | ${markdownEscape(target.adGroupName || '')} |
 | 对象类型 | ${markdownEscape(target.entityType || '')} |
+| 对象 ID | ${markdownEscape(target.entityId || '')} |
 | 对象名称 | ${markdownEscape(target.entityName || '')} |
+| 对象身份证明 | ${markdownEscape(target.identityProofPath || '')} |
 | 动作 | ${markdownEscape(target.actionType || '')} |
 | 建议来源当前值 | ${markdownEscape(source.currentValue || '')} |
 | 建议来源推荐值 | ${markdownEscape(source.recommendedValue || '')} |
@@ -353,6 +359,16 @@ export function prepareAdReadbackSession(input: PrepareAdReadbackSessionInput): 
   }
   if (candidate.status !== 'NEEDS_WORK') {
     throw new Error('prepareAdReadbackSession only prepares NEEDS_WORK candidates.');
+  }
+  if (unresolved(candidate.target?.entityId)) {
+    throw new Error('Candidate target.entityId is required before preparing a readback session.');
+  }
+  if (unresolved(candidate.target?.identityProofPath)) {
+    throw new Error('Candidate target.identityProofPath is required before preparing a readback session.');
+  }
+  const identityProofPath = path.resolve(String(candidate.target.identityProofPath).trim());
+  if (!isFile(identityProofPath)) {
+    throw new Error(`Candidate target identity proof file does not exist: ${identityProofPath}`);
   }
 
   const sessionDir = path.resolve(input.outDir || defaultSessionDir(sourceCandidatePath));
@@ -418,12 +434,10 @@ function requireResolvedSessionInput(input: Record<string, any>): string[] {
     'executionId',
     'readbackReadAt',
     'readbackEvidencePath',
+    'readbackActualValue',
     'riskRationale',
   ];
   const missing = required.filter((key) => unresolved(input[key]));
-  if (input.readbackActualValue && /<[^>]+>/.test(String(input.readbackActualValue))) {
-    missing.push('readbackActualValue');
-  }
   return missing;
 }
 
@@ -526,7 +540,7 @@ export function fillAdReadbackSession(sessionDir: string): FilledAdReadbackSessi
       verified: true,
       method: 'Ads UI reload target row',
       readAt: input.readbackReadAt,
-      actualValue: input.readbackActualValue || afterValue,
+      actualValue: input.readbackActualValue,
       evidencePath: input.readbackEvidencePath,
     },
     execution: {
@@ -590,6 +604,20 @@ export function verifyAdReadbackSession(sessionDir: string): VerifiedAdReadbackS
         'source candidate is NEEDS_WORK',
         candidate.kind === 'real-ad-execution-readback' && candidate.status === 'NEEDS_WORK',
         `kind=${candidate.kind || '<missing>'}, status=${candidate.status || '<missing>'}`,
+      );
+      const target = candidate.target || {};
+      addCheck(
+        'source candidate target.entityId exists',
+        !unresolved(target.entityId),
+        String(target.entityId || '<missing>'),
+      );
+      const identityProofPath = unresolved(target.identityProofPath)
+        ? ''
+        : path.resolve(String(target.identityProofPath).trim());
+      addCheck(
+        'target identity proof file exists',
+        Boolean(identityProofPath && isFile(identityProofPath)),
+        identityProofPath || '<missing target.identityProofPath>',
       );
     } catch (error) {
       addCheck('source candidate JSON is readable', false, error instanceof Error ? error.message : String(error));
