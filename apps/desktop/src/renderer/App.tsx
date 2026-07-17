@@ -185,15 +185,6 @@ const loginStyles: Record<string, React.CSSProperties> = {
     gap: 8,
     cursor: 'pointer',
   },
-  securityTag: {
-    border: '1px solid var(--tone-ready-border)',
-    borderRadius: 999,
-    background: 'var(--tone-ready-bg)',
-    color: 'var(--tone-ready-text)',
-    padding: '3px 8px',
-    fontSize: 12,
-    fontWeight: 800,
-  },
   notice: {
     color: 'var(--aao-ink-2)',
     fontSize: 12,
@@ -258,14 +249,128 @@ export function loginSubmitButtonView(loading: boolean): LoginSubmitButtonView {
 }
 
 export function loginStatusMessage(input: {
+  credentialSource?: 'saved' | 'typed';
   loading: boolean;
   credentialNotice?: string;
   rememberPassword: boolean;
 }): string {
-  if (input.loading) return '正在确认 ERP 和 Ads 会话，本机凭证只在主进程安全区解密。';
+  if (input.loading) {
+    return input.credentialSource === 'saved'
+      ? '正在确认 ERP 和 Ads 会话；已保存密码只在本机安全区解密。'
+      : '正在确认 ERP 和 Ads 会话；本次输入只用于建立当前会话。';
+  }
   if (input.credentialNotice) return input.credentialNotice;
-  if (input.rememberPassword) return '勾选后账号密码只保存在本机加密区。';
-  return '未记住密码，只使用本次登录输入。';
+  if (input.rememberPassword) return '勾选后密码保存在本机安全区；账号保留在本机用于下次识别。';
+  return '未记住密码；账号仍保留在本机，密码只用于本次登录。';
+}
+
+export type SavedLoginCredentialState =
+  | 'none'
+  | 'encrypted_ready'
+  | 'migrated'
+  | 'encryption_unavailable'
+  | 'encrypted_corrupt'
+  | 'migration_failed';
+
+export type LoginCredentialTone = 'neutral' | 'ready' | 'warning' | 'blocked';
+
+export function savedLoginCredentialTone(input: {
+  credentialState?: SavedLoginCredentialState;
+  passwordAvailable?: boolean;
+}): LoginCredentialTone {
+  if (input.passwordAvailable) return 'ready';
+  if (input.credentialState === 'encrypted_corrupt' || input.credentialState === 'migration_failed') {
+    return 'blocked';
+  }
+  if (input.credentialState === 'encryption_unavailable') return 'warning';
+  return 'neutral';
+}
+
+export function loginSecurityTagView(input: {
+  credentialSource: 'saved' | 'typed';
+  credentialState: SavedLoginCredentialState;
+  loading: boolean;
+  passwordAvailable: boolean;
+}): { className: string; label: string } {
+  if (input.loading) {
+    return { className: 'login-security-tag login-security-tag-pending', label: '会话确认中' };
+  }
+  if (input.credentialSource === 'saved' && input.passwordAvailable) {
+    return { className: 'login-security-tag login-security-tag-ready', label: '本机安全区托管' };
+  }
+  if (input.credentialState === 'encryption_unavailable') {
+    return { className: 'login-security-tag login-security-tag-warning', label: '本次不保存' };
+  }
+  if (input.credentialState === 'encrypted_corrupt' || input.credentialState === 'migration_failed') {
+    return { className: 'login-security-tag login-security-tag-blocked', label: '需重新输入' };
+  }
+  return { className: 'login-security-tag', label: '当前页面输入' };
+}
+
+export type BrowserLoginRequest =
+  | {
+      username: string;
+      credentialSource: 'saved';
+      rememberPassword: true;
+    }
+  | {
+      username: string;
+      credentialSource: 'typed';
+      password: string;
+      rememberPassword: boolean;
+    };
+
+export function savedLoginCredentialNotice(input: {
+  credentialState?: SavedLoginCredentialState;
+  passwordAvailable?: boolean;
+  rememberPassword?: boolean;
+}): string {
+  if (input.passwordAvailable) {
+    return input.credentialState === 'migrated'
+      ? '旧版密码已迁移至本机安全区；后续登录由本机安全区托管，当前页面不会读取密码。'
+      : '已加载账号；保存的密码由本机安全区托管，当前页面不会读取。';
+  }
+  if (input.credentialState === 'encryption_unavailable') {
+    return '当前系统无法使用本机加密；请重新输入密码，本次仅登录、不保存密码。';
+  }
+  if (input.credentialState === 'encrypted_corrupt') {
+    return '本机保存的密码无法解密，请重新输入并保存。';
+  }
+  if (input.credentialState === 'migration_failed') {
+    return '旧版凭证尚未完成安全迁移，系统未把旧密码发送到界面；请重新输入密码。';
+  }
+  if (input.rememberPassword) return '已加载账号，密码需重新输入。';
+  return '';
+}
+
+export function buildBrowserLoginRequest(input: {
+  credentialSource: 'saved' | 'typed';
+  password: string;
+  rememberPassword: boolean;
+  savedCredentialUsername: string;
+  savedPasswordAvailable: boolean;
+  username: string;
+}): BrowserLoginRequest | null {
+  const username = input.username.trim();
+  const useSavedCredential = input.credentialSource === 'saved'
+    && input.savedPasswordAvailable
+    && input.rememberPassword
+    && username === input.savedCredentialUsername;
+  if (!username) return null;
+  if (useSavedCredential) {
+    return {
+      username,
+      credentialSource: 'saved',
+      rememberPassword: true,
+    };
+  }
+  if (!input.password) return null;
+  return {
+    username,
+    credentialSource: 'typed',
+    password: input.password,
+    rememberPassword: input.rememberPassword,
+  };
 }
 
 function headerReadinessClass(readiness: DeliveryReadinessView | null): string {
@@ -278,47 +383,82 @@ function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberPassword, setRememberPassword] = useState(false);
+  const [credentialSource, setCredentialSource] = useState<'saved' | 'typed'>('typed');
+  const [savedCredentialUsername, setSavedCredentialUsername] = useState('');
+  const [savedPasswordAvailable, setSavedPasswordAvailable] = useState(false);
+  const [savedCredentialState, setSavedCredentialState] = useState<SavedLoginCredentialState>('none');
   const [credentialNotice, setCredentialNotice] = useState('');
+  const [credentialTone, setCredentialTone] = useState<LoginCredentialTone>('neutral');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const setLoginState = useStore((state) => state.setLoginState);
   const loginButtonView = loginSubmitButtonView(loading);
-  const loginStatus = loginStatusMessage({ loading, credentialNotice, rememberPassword });
+  const loginStatus = loginStatusMessage({ credentialSource, loading, credentialNotice, rememberPassword });
   const loginStatusClass = [
     'login-status-line',
     loading ? 'login-status-line-pending' : '',
-    !loading && credentialNotice ? 'login-status-line-ready' : '',
+    !loading && credentialTone === 'ready' ? 'login-status-line-ready' : '',
+    !loading && credentialTone === 'warning' ? 'login-status-line-warning' : '',
+    !loading && credentialTone === 'blocked' ? 'login-status-line-blocked' : '',
   ].filter(Boolean).join(' ');
+  const securityTagView = loginSecurityTagView({
+    credentialSource,
+    credentialState: savedCredentialState,
+    loading,
+    passwordAvailable: savedPasswordAvailable,
+  });
 
   useEffect(() => {
     let cancelled = false;
-    async function loadSavedCredentials() {
+    async function loadSavedCredentialStatus() {
       const api = appElectronApi(username);
-      if (!api?.getSavedLoginCredentials) return;
+      if (!api?.getSavedLoginCredentialStatus) return;
       try {
-        const saved = await api.getSavedLoginCredentials();
+        const saved = await api.getSavedLoginCredentialStatus();
         if (cancelled || !saved) return;
-        setUsername(typeof saved.username === 'string' ? saved.username : '');
-        setRememberPassword(Boolean(saved.rememberPassword));
-        if (saved.passwordAvailable && typeof saved.password === 'string') {
-          setPassword(saved.password);
-          setCredentialNotice('');
-        } else if (saved.rememberPassword) {
-          setCredentialNotice('已加载账号，密码需重新输入。');
-        }
+        const savedUsername = typeof saved.username === 'string' ? saved.username : '';
+        const passwordAvailable = Boolean(saved.passwordAvailable);
+        const credentialState = saved.credentialState || 'none';
+        const encryptionAvailable = credentialState !== 'encryption_unavailable';
+        const remember = encryptionAvailable && Boolean(saved.rememberPassword);
+        setUsername(savedUsername);
+        setSavedCredentialUsername(savedUsername);
+        setSavedPasswordAvailable(passwordAvailable);
+        setSavedCredentialState(credentialState);
+        setRememberPassword(remember);
+        setPassword('');
+        setCredentialSource(passwordAvailable && remember ? 'saved' : 'typed');
+        setCredentialNotice(savedLoginCredentialNotice({
+          credentialState,
+          passwordAvailable,
+          rememberPassword: remember,
+        }));
+        setCredentialTone(savedLoginCredentialTone({ credentialState, passwordAvailable }));
       } catch {
-        if (!cancelled) setCredentialNotice('');
+        if (!cancelled) {
+          setCredentialNotice('无法读取本机凭证状态，请重新输入密码。');
+          setCredentialTone('blocked');
+        }
       }
     }
 
-    loadSavedCredentials();
+    loadSavedCredentialStatus();
     return () => {
       cancelled = true;
     };
   }, []);
 
   async function handleLogin() {
-    if (!username || !password) {
+    if (loading) return;
+    const request = buildBrowserLoginRequest({
+      credentialSource,
+      password,
+      rememberPassword,
+      savedCredentialUsername,
+      savedPasswordAvailable,
+      username,
+    });
+    if (!request) {
       setError('请输入用户名和密码');
       return;
     }
@@ -332,8 +472,8 @@ function LoginPage() {
         setLoginState(true, previewState.currentStore, previewState.loginSession || null);
         return;
       }
-      const session = await api.browserLogin(username, password, rememberPassword);
-      setLoginState(true, username, session);
+      const session = await api.browserLogin(request);
+      setLoginState(true, request.username, session);
     } catch (caught) {
       setError(toUserFacingError(caught, '登录失败'));
     } finally {
@@ -350,16 +490,60 @@ function LoginPage() {
         </div>
         <div style={loginStyles.form}>
           <input
-            onChange={(event) => setUsername(event.target.value)}
-            onKeyDown={(event) => event.key === 'Enter' && handleLogin()}
+            onChange={(event) => {
+              const nextUsername = event.target.value;
+              const canReuseSaved = savedPasswordAvailable
+                && rememberPassword
+                && !password
+                && nextUsername.trim() === savedCredentialUsername;
+              setUsername(nextUsername);
+              setCredentialSource(canReuseSaved ? 'saved' : 'typed');
+              if (savedPasswordAvailable && !canReuseSaved) {
+                setCredentialNotice('账号已修改；请输入密码以建立新的登录会话。');
+                setCredentialTone('warning');
+              } else if (canReuseSaved) {
+                setCredentialNotice(savedLoginCredentialNotice({
+                  credentialState: 'encrypted_ready',
+                  passwordAvailable: true,
+                  rememberPassword: true,
+                }));
+                setCredentialTone('ready');
+              }
+            }}
+            aria-label="领星用户名"
+            onKeyDown={(event) => event.key === 'Enter' && !loading && handleLogin()}
             placeholder="领星用户名"
             style={loginStyles.input}
             type="text"
             value={username}
           />
           <input
-            onChange={(event) => setPassword(event.target.value)}
-            onKeyDown={(event) => event.key === 'Enter' && handleLogin()}
+            data-credential-source={credentialSource}
+            onChange={(event) => {
+              const nextPassword = event.target.value;
+              const canReuseSaved = !nextPassword
+                && savedPasswordAvailable
+                && rememberPassword
+                && username.trim() === savedCredentialUsername;
+              setPassword(nextPassword);
+              setCredentialSource(canReuseSaved ? 'saved' : 'typed');
+              if (canReuseSaved) {
+                setCredentialNotice(savedLoginCredentialNotice({
+                  credentialState: 'encrypted_ready',
+                  passwordAvailable: true,
+                  rememberPassword: true,
+                }));
+                setCredentialTone('ready');
+              } else if (savedCredentialState === 'encryption_unavailable') {
+                setCredentialNotice('当前系统无法使用本机加密；本次仅登录、不保存密码。');
+                setCredentialTone('warning');
+              } else {
+                setCredentialNotice('本次将使用当前页面输入的密码；已保存密码不会发送到当前页面。');
+                setCredentialTone('neutral');
+              }
+            }}
+            aria-label="领星密码"
+            onKeyDown={(event) => event.key === 'Enter' && !loading && handleLogin()}
             placeholder="领星密码"
             style={loginStyles.input}
             type="password"
@@ -369,12 +553,34 @@ function LoginPage() {
             <label style={loginStyles.rememberLabel}>
               <input
                 checked={rememberPassword}
-                onChange={(event) => setRememberPassword(event.target.checked)}
+                disabled={savedCredentialState === 'encryption_unavailable'}
+                onChange={(event) => {
+                  const remember = event.target.checked;
+                  const canReuseSaved = remember
+                    && savedPasswordAvailable
+                    && !password
+                    && username.trim() === savedCredentialUsername;
+                  setRememberPassword(remember);
+                  setCredentialSource(canReuseSaved ? 'saved' : 'typed');
+                  if (!remember && savedPasswordAvailable) {
+                    setCredentialNotice('取消后请重新输入密码；登录成功会清除本机保存的密码，账号仍保留。');
+                    setCredentialTone('warning');
+                  } else if (canReuseSaved) {
+                    setCredentialNotice(savedLoginCredentialNotice({
+                      credentialState: 'encrypted_ready',
+                      passwordAvailable: true,
+                      rememberPassword: true,
+                    }));
+                    setCredentialTone('ready');
+                  } else {
+                    setCredentialTone('neutral');
+                  }
+                }}
                 type="checkbox"
               />
-              <span>记住账号密码</span>
+              <span>记住密码</span>
             </label>
-            <span style={loginStyles.securityTag}>本机加密</span>
+            <span className={securityTagView.className}>{securityTagView.label}</span>
           </div>
           <div className={loginStatusClass} role="status" aria-live="polite">
             {loginStatus}

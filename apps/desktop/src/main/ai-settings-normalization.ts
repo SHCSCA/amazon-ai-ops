@@ -29,9 +29,6 @@ export interface NormalizedAiSettings {
 export const STRUCTURED_AI_OUTPUT_TOKEN_FLOOR = 8192;
 
 export function normalizeAiSettingsRecord(settings: Record<string, unknown> = {}): NormalizedAiSettings {
-  const asStrings = Object.fromEntries(
-    Object.entries(settings).map(([key, value]) => [key, String(value ?? '')]),
-  ) as Record<string, string>;
   const apiKey = stringSetting(settings.ai_api_key) || stringSetting(settings.aiApiKey);
   const baseUrl = (stringSetting(settings.ai_base_url) || stringSetting(settings.aiBaseUrl) || 'https://api.deepseek.com').replace(/\/+$/, '');
   const model = stringSetting(settings.ai_model) || stringSetting(settings.aiModel) || 'deepseek-v4-flash';
@@ -49,7 +46,6 @@ export function normalizeAiSettingsRecord(settings: Record<string, unknown> = {}
   const lastTestModel = stringSetting(settings.ai_last_test_model) || stringSetting(settings.aiLastTestModel);
   const lastTestMessage = stringSetting(settings.ai_last_test_message) || stringSetting(settings.aiLastTestMessage);
   return {
-    ...asStrings,
     aiApiKey: apiKey,
     ai_api_key: apiKey,
     aiBaseUrl: baseUrl,

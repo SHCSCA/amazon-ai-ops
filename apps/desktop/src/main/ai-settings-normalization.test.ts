@@ -128,4 +128,25 @@ describe('ai settings normalization', () => {
     expect(result.aiMaxTokens).toBe('8192');
     expect(result.ai_max_tokens).toBe('8192');
   });
+
+  it('rejects credential namespace and arbitrary fields from AI settings persistence', () => {
+    const result = normalizeAiSettingsForSaveInput({
+      aiModel: 'deepseek-reasoner',
+      login_username: 'attacker@example.com',
+      login_password: 'plaintext-injection',
+      login_password_encrypted: 'forged-ciphertext',
+      login_remember_password: 'true',
+      arbitrary_setting: 'must-not-persist',
+    }, {
+      ...savedSettings,
+      login_password: 'legacy-secret',
+    });
+
+    expect(result.aiModel).toBe('deepseek-reasoner');
+    expect(result).not.toHaveProperty('login_username');
+    expect(result).not.toHaveProperty('login_password');
+    expect(result).not.toHaveProperty('login_password_encrypted');
+    expect(result).not.toHaveProperty('login_remember_password');
+    expect(result).not.toHaveProperty('arbitrary_setting');
+  });
 });

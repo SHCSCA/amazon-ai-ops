@@ -213,7 +213,7 @@ export function buildCredentialSandboxSummary(scope: Pick<OperationScope, 'dateF
     status: 'Main 托管',
     sandboxId,
     scopeLine: `${marketplace} / ${period} / UI 不作明文留存`,
-    detail: 'login-credentials 已托管至 Main 物理加密区；Renderer 只接收状态和通道 ID，不保存账号或密码明文。',
+    detail: 'login-credentials 已托管至 Main 系统加密区；Renderer 只接收账号标识与非秘密状态，不接收或回填已保存密码。',
   };
 }
 

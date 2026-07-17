@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { resolveBoundAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
+const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -154,6 +155,125 @@ function completePackageLaunchSmoke(smoke, finalIndex) {
     && String(portable.sha256 || '').toUpperCase() === String(portablePackage.sha256 || '').toUpperCase();
 }
 
+function samePath(left, right) {
+  if (!left || !right) return false;
+  return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
+}
+
+function pathIsInside(filePath, parentDir) {
+  const relative = path.relative(path.resolve(parentDir), path.resolve(filePath));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function bundleSourceFileMatches(manifest, bundleManifestPath, sourcePath) {
+  if (!sourcePath || !fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) return false;
+  const record = Array.isArray(manifest.files)
+    ? manifest.files.find((item) => samePath(item?.sourcePath, sourcePath) && item?.bundlePath)
+    : null;
+  if (!record) return false;
+  const bundledPath = path.resolve(path.dirname(bundleManifestPath), record.bundlePath);
+  if (!pathIsInside(bundledPath, path.dirname(bundleManifestPath))) return false;
+  if (!fs.existsSync(bundledPath) || !fs.statSync(bundledPath).isFile()) return false;
+  const sourceHash = sha256(sourcePath);
+  const bundledHash = sha256(bundledPath);
+  return fs.statSync(sourcePath).size === Number(record.sizeBytes || 0)
+    && fs.statSync(bundledPath).size === Number(record.sizeBytes || 0)
+    && sourceHash === bundledHash
+    && bundledHash === String(record.sha256 || '').toUpperCase();
+}
+
+function completePackageUiHashBinding(filePath, packageLaunchSmoke, bundleManifest, bundleManifestPath) {
+  const failed = { passed: false, appContentSha256: '', mainBundleSha256: '' };
+  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return failed;
+  try {
+    const packageUi = readJson(filePath);
+    const exeBefore = String(packageUi.artifactsBefore?.exe?.sha256 || '').toUpperCase();
+    const exeAfter = String(packageUi.artifactsAfter?.exe?.sha256 || '').toUpperCase();
+    const appContentBefore = packageUi.artifactsBefore?.appContent;
+    const appContentAfter = packageUi.artifactsAfter?.appContent;
+    const appContentBeforeSha256 = String(appContentBefore?.sha256 || '').toUpperCase();
+    const appContentAfterSha256 = String(appContentAfter?.sha256 || '').toUpperCase();
+    const beforeMainBundles = (appContentBefore?.files || [])
+      .filter((item) => String(item?.path || '').replace(/\\/g, '/') === 'dist/main/index.js');
+    const afterMainBundles = (appContentAfter?.files || [])
+      .filter((item) => String(item?.path || '').replace(/\\/g, '/') === 'dist/main/index.js');
+    const mainBundleBeforeSha256 = beforeMainBundles.length === 1
+      ? String(beforeMainBundles[0]?.sha256 || '').toUpperCase()
+      : '';
+    const mainBundleAfterSha256 = afterMainBundles.length === 1
+      ? String(afterMainBundles[0]?.sha256 || '').toUpperCase()
+      : '';
+    const expectedExecutableSha256 = String(packageLaunchSmoke?.artifacts?.unpacked?.sha256 || '').toUpperCase();
+    const summary = bundleManifest.uiEvidence?.packageUiManifest;
+    const passed = packageUi.kind === 'package-ui-evidence'
+      && Number(packageUi.schemaVersion || 0) >= 5
+      && packageUi.passed === true
+      && packageUi.artifactHashesStable === true
+      && Array.isArray(packageUi.violations)
+      && packageUi.violations.length === 0
+      && packageUi.completeness?.passed === true
+      && Array.isArray(packageUi.completeness?.violations)
+      && packageUi.completeness.violations.length === 0
+      && /^[A-F0-9]{64}$/.test(expectedExecutableSha256)
+      && exeBefore === expectedExecutableSha256
+      && exeAfter === expectedExecutableSha256
+      && /^[A-F0-9]{64}$/.test(appContentAfterSha256)
+      && appContentBeforeSha256 === appContentAfterSha256
+      && String(packageUi.requested?.expectedExeSha256 || '').toUpperCase() === expectedExecutableSha256
+      && String(packageUi.requested?.expectedAppContentSha256 || '').toUpperCase() === appContentAfterSha256
+      && /^[A-F0-9]{64}$/.test(mainBundleAfterSha256)
+      && mainBundleBeforeSha256 === mainBundleAfterSha256
+      && summary?.present === true
+      && samePath(summary.sourcePath, filePath)
+      && bundleSourceFileMatches(bundleManifest, bundleManifestPath, filePath);
+    return {
+      passed,
+      appContentSha256: passed ? appContentAfterSha256 : '',
+      mainBundleSha256: passed ? mainBundleAfterSha256 : '',
+    };
+  } catch {
+    return failed;
+  }
+}
+
+function completePackageSecurityEvidence(
+  filePath,
+  packageLaunchSmoke,
+  bundleManifest,
+  bundleManifestPath,
+  expectedAppContentSha256,
+  expectedMainBundleSha256,
+) {
+  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
+  try {
+    const evidence = readJson(filePath);
+    const validation = validatePackageSecurityEvidence(evidence, {
+      executableSha256: packageLaunchSmoke?.artifacts?.unpacked?.sha256,
+      appContentSha256: expectedAppContentSha256,
+      mainBundleSha256: expectedMainBundleSha256,
+    });
+    const summary = bundleManifest.securityEvidence?.packageSecurityBoundaries;
+    const record = Array.isArray(bundleManifest.files)
+      ? bundleManifest.files.find((item) => samePath(item?.sourcePath, filePath) && item?.bundlePath)
+      : null;
+    if (!validation.passed || evidence.passed !== true || summary?.present !== true || !record) return false;
+    if (!samePath(summary.sourcePath, filePath)) return false;
+    const bundledPath = path.resolve(path.dirname(bundleManifestPath), record.bundlePath);
+    if (!pathIsInside(bundledPath, path.dirname(bundleManifestPath))) return false;
+    if (!fs.existsSync(bundledPath) || !fs.statSync(bundledPath).isFile()) return false;
+    const sourceHash = sha256(filePath);
+    const bundledHash = sha256(bundledPath);
+    return fs.statSync(filePath).size === Number(record.sizeBytes || 0)
+      && fs.statSync(bundledPath).size === Number(record.sizeBytes || 0)
+      && sourceHash === bundledHash
+      && bundledHash === String(record.sha256 || '').toUpperCase()
+      && samePath(path.resolve(path.dirname(bundleManifestPath), summary.bundlePath), bundledPath)
+      && String(summary.sha256 || '').toUpperCase() === bundledHash;
+  } catch {
+    return false;
+  }
+}
+
 const failures = [];
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 1) {
@@ -172,6 +292,12 @@ const smokePath = path.resolve(
   || '',
 );
 const bundleManifestPath = path.resolve(args.get('bundle-manifest') || latestBundleManifest() || '');
+const packageUiManifestPath = args.get('package-ui-manifest')
+  ? path.resolve(args.get('package-ui-manifest'))
+  : '';
+const packageSecurityEvidencePath = args.get('package-security-evidence')
+  ? path.resolve(args.get('package-security-evidence'))
+  : '';
 const readmePath = path.resolve(args.get('readme') || path.join(root, 'README.md'));
 const bundleReadmePath = bundleManifestPath && fs.existsSync(bundleManifestPath)
   ? path.join(path.dirname(bundleManifestPath), 'docs', 'README.md')
@@ -194,6 +320,13 @@ if (fs.existsSync(bundleManifestPath)) bundleManifest = readJson(bundleManifestP
 if (fs.existsSync(readmePath)) readme = fs.readFileSync(readmePath, 'utf8');
 if (bundleReadmePath && fs.existsSync(bundleReadmePath)) bundleReadme = fs.readFileSync(bundleReadmePath, 'utf8');
 
+const packageUiHashBinding = completePackageUiHashBinding(
+  packageUiManifestPath,
+  finalReadiness.packageLaunchSmoke,
+  bundleManifest,
+  bundleManifestPath,
+);
+
 let authorityDbPath = '';
 try {
   authorityDbPath = resolveBoundAdReadbackAuthorityDbPath(
@@ -214,6 +347,25 @@ check(finalReadiness.gates?.some((gate) => gate.name === 'Release package hash' 
 check(completeFinalPackageIndex(finalReadiness.packageIndex), 'final readiness records package hash evidence', failures);
 check(finalReadiness.gates?.some((gate) => gate.name === 'Package launch smoke' && gate.ok === true), 'package launch smoke gate passes', failures);
 check(completePackageLaunchSmoke(finalReadiness.packageLaunchSmoke, finalReadiness.packageIndex), 'final readiness records valid package launch smoke evidence', failures);
+check(Boolean(args.get('package-ui-manifest')), 'READY safety requires an explicit passing package UI manifest', failures);
+check(
+  packageUiHashBinding.passed,
+  'package UI evidence is schema-valid, fully passing, EXE/app-content/main-bundle hash-bound, and bundled byte-for-byte',
+  failures,
+);
+check(Boolean(args.get('package-security-evidence')), 'READY safety requires explicit passing package security evidence', failures);
+check(
+  completePackageSecurityEvidence(
+    packageSecurityEvidencePath,
+    finalReadiness.packageLaunchSmoke,
+    bundleManifest,
+    bundleManifestPath,
+    packageUiHashBinding.appContentSha256,
+    packageUiHashBinding.mainBundleSha256,
+  ),
+  'package security evidence is schema-valid, fully passing, EXE/app-content/main-bundle hash-bound, and bundled byte-for-byte',
+  failures,
+);
 check(Boolean(finalReadiness.evidenceSelection?.manifestPath && fs.existsSync(finalReadiness.evidenceSelection.manifestPath)), 'selected evidence manifest exists', failures);
 
 const manifest = finalReadiness.evidenceSelection?.manifestPath && fs.existsSync(finalReadiness.evidenceSelection.manifestPath)

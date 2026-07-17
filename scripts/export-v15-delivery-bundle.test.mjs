@@ -110,6 +110,35 @@ function sha256Text(content) {
   return crypto.createHash('sha256').update(Buffer.from(content, 'utf8')).digest('hex').toUpperCase();
 }
 
+function validPackageSecurityEvidence() {
+  const checks = [
+    'PACKAGE_EXECUTABLE_HASH_MATCH',
+    'PACKAGE_APP_CONTENT_HASH_MATCH',
+    'PACKAGE_MAIN_BUNDLE_HASH_VALID',
+    'NAVIGATION_SECURITY_MARKER_PRESENT',
+    'LEGACY_LOGIN_MIGRATION_MARKER_PRESENT',
+    'PACKAGED_DEV_DOWNGRADE_GUARD_PRESENT',
+    'NAVIGATION_GUARDS_WIRED',
+    'LEGACY_SAVED_PASSWORD_IPC_ABSENT',
+    'DIRECT_EXTERNAL_URL_FORWARDING_ABSENT',
+    'PLAINTEXT_CREDENTIAL_WRITER_ABSENT',
+    'SQLITE_VERBOSE_LOGGING_ABSENT',
+  ].map((code) => ({ code, passed: true }));
+  return {
+    kind: 'package-security-boundaries',
+    schemaVersion: 1,
+    generatedAt: '2026-07-17T00:00:00.000Z',
+    passed: true,
+    package: {
+      executableSha256: 'A'.repeat(64),
+      appContentSha256: 'B'.repeat(64),
+      mainBundleSha256: 'C'.repeat(64),
+    },
+    summary: { total: checks.length, passed: checks.length, failed: 0 },
+    checks,
+  };
+}
+
 function packageIndexFromArtifacts(artifacts) {
   return {
     present: artifacts.length > 0,
@@ -1105,7 +1134,7 @@ describe('export v15 delivery bundle', () => {
     });
   });
 
-  it('bundles explicitly selected workspace, business smoke, and full-test evidence when latest extras are skipped', () => {
+  it('bundles explicitly selected workspace, source-test, and package-security evidence when latest extras are skipped', () => {
     const runId = `${Date.now()}-${process.pid}`;
     const runDir = path.join(evidenceDir, `export-bundle-explicit-source-evidence-${runId}`);
     cleanupPaths.push(runDir);
@@ -1113,16 +1142,19 @@ describe('export v15 delivery bundle', () => {
     const workspaceUiManifest = path.join(runDir, 'workspace-ui-manifest.json');
     const businessUiSmoke = path.join(runDir, 'current-business-ui-smoke.json');
     const fullTestEvidence = path.join(runDir, 'full-vitest.json');
+    const packageSecurityEvidence = path.join(runDir, 'package-security-boundaries.json');
     const outDir = path.join(runDir, 'bundle');
     writeJson(workspaceUiManifest, { kind: 'workspace-ui-evidence', passed: true, targets: [] });
     writeJson(businessUiSmoke, { kind: 'current-business-ui-smoke-summary', passed: true, scripts: [] });
     writeJson(fullTestEvidence, { kind: 'vitest-json-report', success: true, numPassedTests: 1882 });
+    writeJson(packageSecurityEvidence, validPackageSecurityEvidence());
 
     const result = runNode('scripts/export-v15-delivery-bundle.js', [
       '--final-readiness', finalReadiness,
       '--workspace-ui-manifest', workspaceUiManifest,
       '--business-ui-smoke', businessUiSmoke,
       '--full-test-evidence', fullTestEvidence,
+      '--package-security-evidence', packageSecurityEvidence,
       '--release-dir', path.join(runDir, 'release'),
       '--skip-latest-extras', 'true',
       '--out', outDir,
@@ -1135,7 +1167,11 @@ describe('export v15 delivery bundle', () => {
       businessUiSmoke: { sourcePath: businessUiSmoke, present: true },
       fullTestEvidence: { sourcePath: fullTestEvidence, present: true },
     });
-    for (const sourcePath of [workspaceUiManifest, businessUiSmoke, fullTestEvidence]) {
+    expect(manifest.securityEvidence.packageSecurityBoundaries).toMatchObject({
+      sourcePath: packageSecurityEvidence,
+      present: true,
+    });
+    for (const sourcePath of [workspaceUiManifest, businessUiSmoke, fullTestEvidence, packageSecurityEvidence]) {
       const copied = manifest.files.find((file) => file.sourcePath === sourcePath);
       expect(copied).toBeTruthy();
       expect(fs.existsSync(path.join(outDir, copied.bundlePath))).toBe(true);

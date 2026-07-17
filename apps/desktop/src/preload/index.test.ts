@@ -10,11 +10,15 @@ describe('preload business update bridge', () => {
     expect(source).toContain("window.dispatchEvent(new Event('business-ui:data-updated'))");
   });
 
-  it('exposes remembered login credential IPC calls', () => {
+  it('exposes only remembered-login status and a discriminated login request', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
 
-    expect(source).toContain("getSavedLoginCredentials: () => ipcRenderer.invoke('browser:get-saved-credentials')");
+    expect(source).toContain("getSavedLoginCredentialStatus: () => ipcRenderer.invoke('browser:get-saved-credential-status')");
+    expect(source).toContain("credentialSource: 'saved'");
+    expect(source).toContain("credentialSource: 'typed'");
     expect(source).toContain('rememberPassword');
+    expect(source).not.toContain('getSavedLoginCredentials');
+    expect(source).not.toContain("ipcRenderer.invoke('browser:get-saved-credentials')");
   });
 
   it('exposes readback screenshot capture IPC without exposing ipcRenderer', () => {

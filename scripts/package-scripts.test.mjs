@@ -44,6 +44,20 @@ describe('root package smoke scripts', () => {
     expect(packageJson.scripts['smoke:v15-product-readiness-ui']).not.toContain('smoke-v15-product-readiness-ui.js');
   });
 
+  it('exposes package security evidence and requires its explicit handoff in both safety branches', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    const exporter = fs.readFileSync(path.join(root, 'scripts', 'export-v15-delivery-bundle.js'), 'utf8');
+    const nonReadySafety = fs.readFileSync(path.join(root, 'scripts', 'verify-v15-non-ready-safety.js'), 'utf8');
+    const readySafety = fs.readFileSync(path.join(root, 'scripts', 'verify-v15-ready-safety.js'), 'utf8');
+
+    expect(packageJson.scripts['smoke:package-security-boundaries'])
+      .toBe('node scripts/smoke-package-security-boundaries.js');
+    expect(exporter).toContain("explicitFileArg(args, 'package-security-evidence')");
+    expect(exporter).toContain('scripts/smoke-package-security-boundaries.js');
+    expect(nonReadySafety).toContain("args['package-security-evidence']");
+    expect(readySafety).toContain("args.get('package-security-evidence')");
+  });
+
   it('keeps delivery bundle extras aligned with the current business UI smoke artifact', () => {
     const exporter = fs.readFileSync(path.join(root, 'scripts', 'export-v15-delivery-bundle.js'), 'utf8');
 

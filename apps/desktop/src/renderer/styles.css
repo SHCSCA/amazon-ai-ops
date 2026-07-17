@@ -1846,6 +1846,53 @@ button:disabled {
   color: var(--green);
 }
 
+.login-status-line-warning {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-text);
+}
+
+.login-status-line-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+  color: var(--tone-blocked-text);
+}
+
+.login-security-tag {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--tone-pending-bg);
+  color: var(--text-muted);
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.login-security-tag-ready {
+  border-color: var(--tone-ready-border);
+  background: var(--tone-ready-bg);
+  color: var(--tone-ready-text);
+}
+
+.login-security-tag-pending {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.login-security-tag-warning {
+  border-color: var(--tone-warning-border);
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-text);
+}
+
+.login-security-tag-blocked {
+  border-color: var(--tone-blocked-border);
+  background: var(--tone-blocked-bg);
+  color: var(--tone-blocked-text);
+}
+
 .login-submit-button {
   display: inline-flex;
   align-items: center;

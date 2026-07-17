@@ -525,6 +525,18 @@ describe('saved-login navigation retry contract', () => {
     expect(isRetryableLoginNavigationError('用户名或密码错误')).toBe(false);
     expect(isRetryableLoginNavigationError('Timeout 120000ms exceeded')).toBe(false);
   });
+
+  it('proves saved-login readiness from non-secret Main-managed status instead of a populated password input', () => {
+    const source = readFileSync('scripts/package-ui-evidence.js', 'utf8');
+
+    expect(source).toContain("getAttribute('data-credential-source') === 'saved'");
+    expect(source).toContain('passwordManagedByMain');
+    expect(source).toContain('passwordInputEmpty');
+    expect(source).toContain('statusConfirmsMainOnly');
+    expect(source).not.toContain('passwordAvailable: Boolean(document.querySelector(\'input[placeholder="领星密码"]\')?.value)');
+    expect(source).not.toMatch(/authenticated-during-credential-observation[\s\S]{0,500}passwordInputEmpty:\s*true/);
+    expect(source).not.toMatch(/authenticated-during-credential-observation[\s\S]{0,500}passwordManagedByMain:\s*true/);
+  });
 });
 
 function validMetrics(expected, overrides = {}) {

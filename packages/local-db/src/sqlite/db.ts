@@ -14,7 +14,7 @@ let db: Database.Database | null = null;
 export function initSqlite(dbPath?: string): Database.Database {
   const finalPath = dbPath || path.join(getUserDataPath(), 'app-data', 'app.db');
   
-  db = new Database(finalPath, { verbose: console.log });
+  db = new Database(finalPath);
   
   // 启用 WAL 模式，提升并发性能
   db.pragma('journal_mode = WAL');

@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import * as AppModule from './App';
-import { headerReadinessLabel, headerSessionStatusLabel } from './App';
+import {
+  buildBrowserLoginRequest,
+  headerReadinessLabel,
+  headerSessionStatusLabel,
+  loginSecurityTagView,
+  savedLoginCredentialNotice,
+  savedLoginCredentialTone,
+} from './App';
 
 describe('headerReadinessLabel', () => {
   it('labels final readiness as application package readiness instead of current business delivery', () => {
@@ -43,11 +50,20 @@ describe('login micro-response contract', () => {
 
   it('keeps credential and loading feedback in one stable live region', () => {
     const loginStatusMessage = (AppModule as any).loginStatusMessage as
-      | ((input: { loading: boolean; credentialNotice?: string; rememberPassword: boolean }) => string)
+      | ((input: {
+          credentialSource?: 'saved' | 'typed';
+          loading: boolean;
+          credentialNotice?: string;
+          rememberPassword: boolean;
+        }) => string)
       | undefined;
 
     expect(typeof loginStatusMessage).toBe('function');
-    expect(loginStatusMessage!({ loading: true, rememberPassword: true })).toContain('主进程安全区');
+    expect(loginStatusMessage!({
+      credentialSource: 'saved',
+      loading: true,
+      rememberPassword: true,
+    })).toContain('已保存密码只在本机安全区解密');
     expect(loginStatusMessage!({
       loading: false,
       credentialNotice: '已加载账号，密码需重新输入。',
@@ -63,5 +79,96 @@ describe('login micro-response contract', () => {
     expect(css).toContain('.login-status-line');
     expect(css).toMatch(/\.login-status-line\s*\{[^}]*min-height:/s);
     expect(css).toMatch(/\.login-submit-button\s*\{[^}]*display:\s*inline-flex/s);
+  });
+
+  it('keeps remembered passwords in Main while preserving one-click saved login', () => {
+    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('getSavedLoginCredentialStatus');
+    expect(source).toContain("credentialSource: 'saved'");
+    expect(source).not.toMatch(/saved\.password\b/);
+    expect(source).not.toContain('setPassword(saved');
+    expect(savedLoginCredentialNotice({
+      credentialState: 'encrypted_ready',
+      passwordAvailable: true,
+      rememberPassword: true,
+    })).toContain('本机安全区托管');
+
+    expect(buildBrowserLoginRequest({
+      credentialSource: 'saved',
+      password: '',
+      rememberPassword: true,
+      savedCredentialUsername: 'operator@example.com',
+      savedPasswordAvailable: true,
+      username: 'operator@example.com',
+    })).toEqual({
+      username: 'operator@example.com',
+      credentialSource: 'saved',
+      rememberPassword: true,
+    });
+  });
+
+  it('requires typed password when the username or remember choice no longer matches saved state', () => {
+    expect(buildBrowserLoginRequest({
+      credentialSource: 'saved',
+      password: '',
+      rememberPassword: true,
+      savedCredentialUsername: 'saved-user',
+      savedPasswordAvailable: true,
+      username: 'changed-user',
+    })).toBeNull();
+
+    expect(buildBrowserLoginRequest({
+      credentialSource: 'typed',
+      password: 'typed-for-this-login',
+      rememberPassword: false,
+      savedCredentialUsername: 'saved-user',
+      savedPasswordAvailable: true,
+      username: 'changed-user',
+    })).toEqual({
+      username: 'changed-user',
+      credentialSource: 'typed',
+      password: 'typed-for-this-login',
+      rememberPassword: false,
+    });
+  });
+
+  it('uses warning and blocked feedback instead of green success for unavailable credentials', () => {
+    expect(savedLoginCredentialTone({
+      credentialState: 'encrypted_ready',
+      passwordAvailable: true,
+    })).toBe('ready');
+    expect(savedLoginCredentialTone({
+      credentialState: 'encryption_unavailable',
+      passwordAvailable: false,
+    })).toBe('warning');
+    expect(savedLoginCredentialTone({
+      credentialState: 'encrypted_corrupt',
+      passwordAvailable: false,
+    })).toBe('blocked');
+    expect(loginSecurityTagView({
+      credentialSource: 'typed',
+      credentialState: 'encryption_unavailable',
+      loading: false,
+      passwordAvailable: false,
+    })).toEqual({
+      className: 'login-security-tag login-security-tag-warning',
+      label: '本次不保存',
+    });
+    expect(savedLoginCredentialNotice({
+      credentialState: 'encryption_unavailable',
+      passwordAvailable: false,
+      rememberPassword: false,
+    })).toContain('本次仅登录、不保存密码');
+  });
+
+  it('locks Enter submission while login is already busy and disables persistence when encryption is unavailable', () => {
+    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('if (loading) return;');
+    expect(source.match(/event\.key === 'Enter' && !loading && handleLogin\(\)/g)).toHaveLength(2);
+    expect(source).toContain("disabled={savedCredentialState === 'encryption_unavailable'}");
+    expect(source).toContain("const remember = encryptionAvailable && Boolean(saved.rememberPassword)");
+    expect(source).toContain('<span>记住密码</span>');
   });
 });

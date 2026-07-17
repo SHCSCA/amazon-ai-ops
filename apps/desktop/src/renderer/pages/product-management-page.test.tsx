@@ -426,8 +426,8 @@ describe('ProductManagementPage model', () => {
       status: 'Main 托管',
       sandboxId: '#FL-US-2026-06',
     });
-    expect(summary.detail).toContain('login-credentials 已托管至 Main 物理加密区');
-    expect(summary.detail).toContain('不保存账号或密码明文');
+    expect(summary.detail).toContain('login-credentials 已托管至 Main 系统加密区');
+    expect(summary.detail).toContain('不接收或回填已保存密码');
     expect(JSON.stringify(summary)).not.toContain('operator@example.com');
   });
 

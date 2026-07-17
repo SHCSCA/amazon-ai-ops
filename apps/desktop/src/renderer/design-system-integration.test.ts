@@ -155,11 +155,14 @@ describe('prototype parity design system integration', () => {
     const loginStylesStart = appSource.indexOf('const loginStyles');
     const loginStylesEnd = appSource.indexOf('export function describeLoginSession', loginStylesStart);
     const loginStylesSource = appSource.slice(loginStylesStart, loginStylesEnd);
+    const sharedStylesSource = rendererSource('styles.css');
 
     expect(loginStylesSource).toContain('var(--aao-bg)');
     expect(loginStylesSource).toContain('var(--aao-surface)');
-    expect(loginStylesSource).toContain('var(--tone-ready-bg)');
     expect(loginStylesSource).toContain('var(--tone-blocked-bg)');
+    expect(sharedStylesSource).toMatch(/\.login-security-tag-ready\s*\{[^}]*var\(--tone-ready-bg\)/s);
+    expect(sharedStylesSource).toMatch(/\.login-security-tag-warning\s*\{[^}]*var\(--tone-warning-bg\)/s);
+    expect(sharedStylesSource).toMatch(/\.login-security-tag-blocked\s*\{[^}]*var\(--tone-blocked-bg\)/s);
     expect(loginStylesSource).not.toMatch(/#[0-9a-fA-F]{3,6}/);
   });
 

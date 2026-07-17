@@ -7,6 +7,19 @@ import type {
   ResolveRecommendationReviewResult,
 } from '@amazon-ai-ops/shared-types';
 
+type BrowserLoginRequest =
+  | {
+      username: string;
+      credentialSource: 'saved';
+      rememberPassword: true;
+    }
+  | {
+      username: string;
+      credentialSource: 'typed';
+      password: string;
+      rememberPassword: boolean;
+    };
+
 ipcRenderer.on('business-ui:data-updated', () => {
   window.dispatchEvent(new Event('business-ui:data-updated'));
 });
@@ -29,9 +42,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveOperationScope: (scope: any) => ipcRenderer.invoke('settings:save-operation-scope', scope),
 
   // Browser
-  getSavedLoginCredentials: () => ipcRenderer.invoke('browser:get-saved-credentials'),
-  browserLogin: (username: string, password: string, rememberPassword = false) =>
-    ipcRenderer.invoke('browser:login', { username, password, rememberPassword }),
+  getSavedLoginCredentialStatus: () => ipcRenderer.invoke('browser:get-saved-credential-status'),
+  browserLogin: (request: BrowserLoginRequest) =>
+    ipcRenderer.invoke('browser:login', request),
   browserLogout: () => ipcRenderer.invoke('browser:logout'),
   browserScreenshot: (label: 'before' | 'after' | 'error') =>
     ipcRenderer.invoke('browser:screenshot', label),

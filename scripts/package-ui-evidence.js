@@ -2084,37 +2084,57 @@ async function ensureAuthenticatedWorkspace(page, options) {
   const username = page.locator('input[placeholder="领星用户名"]');
   const password = page.locator('input[placeholder="领星密码"]');
   await username.waitFor({ state: 'visible', timeout: 10_000 });
+  await password.waitFor({ state: 'visible', timeout: 10_000 });
   await page.waitForFunction(() => {
     const account = document.querySelector('input[placeholder="领星用户名"]');
     const secret = document.querySelector('input[placeholder="领星密码"]');
-    return Boolean(account?.value && secret?.value);
+    const status = document.querySelector('.login-status-line');
+    return Boolean(
+      account?.value
+      && secret?.getAttribute('data-credential-source') === 'saved'
+      && !secret?.value
+      && status?.textContent?.includes('本机安全区托管'),
+    );
   }, undefined, { timeout: 10_000 }).catch(() => undefined);
   let savedCredentialState;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       savedCredentialState = await page.evaluate(() => ({
         usernameAvailable: Boolean(document.querySelector('input[placeholder="领星用户名"]')?.value),
-        passwordAvailable: Boolean(document.querySelector('input[placeholder="领星密码"]')?.value),
+        passwordInputEmpty: !document.querySelector('input[placeholder="领星密码"]')?.value,
+        passwordManagedByMain:
+          document.querySelector('input[placeholder="领星密码"]')?.getAttribute('data-credential-source') === 'saved',
         rememberPassword: Boolean(document.querySelector('input[type="checkbox"]')?.checked),
+        statusConfirmsMainOnly: Boolean(document.querySelector('.login-status-line')?.textContent?.includes('本机安全区托管')),
       }));
       break;
     } catch (error) {
       if (!isRetryableLoginNavigationError(error?.message || error)) throw error;
       if (await hasAuthenticatedWorkspace(page, 2_000)) {
-        completeLoginDiagnostics(loginDiagnostics, 'saved-credentials-auto-login', {
-          savedCredentials: { passwordAvailable: true, rememberPassword: null, usernameAvailable: true },
+        completeLoginDiagnostics(loginDiagnostics, 'authenticated-during-credential-observation', {
+          savedCredentials: savedCredentialState || null,
         });
-        return { mode: 'saved-credentials-auto-login', savedCredentialsLoginUsed: true };
+        return {
+          mode: 'authenticated-during-credential-observation',
+          savedCredentialsLoginUsed: false,
+          savedCredentialState: savedCredentialState || null,
+        };
       }
       if (attempt === 3) throw error;
       await page.waitForTimeout(500);
     }
   }
-  if (!savedCredentialState.usernameAvailable || !savedCredentialState.passwordAvailable) {
+  if (
+    !savedCredentialState.usernameAvailable
+    || !savedCredentialState.passwordInputEmpty
+    || !savedCredentialState.passwordManagedByMain
+    || !savedCredentialState.rememberPassword
+    || !savedCredentialState.statusConfirmsMainOnly
+  ) {
     completeLoginDiagnostics(loginDiagnostics, 'saved-credentials-incomplete', {
       savedCredentials: savedCredentialState,
     });
-    fail('Saved credentials are incomplete; package UI evidence refuses to read environment credentials or type secrets.');
+    fail('Saved credential status is incomplete; package UI evidence requires Main-managed login and refuses to read or type secrets.');
   }
   if (loginDiagnostics) loginDiagnostics.savedCredentials = savedCredentialState;
 

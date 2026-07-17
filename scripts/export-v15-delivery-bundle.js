@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { resolveBoundAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
+const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -530,6 +531,7 @@ function collectEvidencePaths(finalReadiness, options = {}) {
   }
   if (options.businessUiSmoke) paths.add(options.businessUiSmoke);
   if (options.fullTestEvidence) paths.add(options.fullTestEvidence);
+  if (options.packageSecurityEvidence) paths.add(options.packageSecurityEvidence);
   if (includeLatestExtras) {
     const addSmokeEvidence = (smoke) => {
       if (!smoke) return;
@@ -680,6 +682,13 @@ function main() {
   const workspaceUiManifestPath = explicitFileArg(args, 'workspace-ui-manifest');
   const businessUiSmokePath = explicitFileArg(args, 'business-ui-smoke');
   const fullTestEvidencePath = explicitFileArg(args, 'full-test-evidence');
+  const packageSecurityEvidencePath = explicitFileArg(args, 'package-security-evidence');
+  if (packageSecurityEvidencePath) {
+    const validation = validatePackageSecurityEvidence(readJson(packageSecurityEvidencePath));
+    if (!validation.passed) {
+      throw new Error(`Refusing to export invalid package security evidence: ${validation.violations.join('; ')}`);
+    }
+  }
   assertAppReadyReadmeState(finalReadiness, readmePath);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -767,6 +776,15 @@ function main() {
       },
       copyPolicy: 'Explicit source-level smoke and full-test evidence are copied into the bundle without latest-file discovery.',
     },
+    securityEvidence: {
+      packageSecurityBoundaries: {
+        sourcePath: packageSecurityEvidencePath,
+        present: Boolean(packageSecurityEvidencePath),
+        bundlePath: null,
+        sha256: null,
+      },
+      copyPolicy: 'Explicit package security boundary evidence is schema-validated and copied without source paths or credential values in its payload.',
+    },
   };
 
   const docsDir = path.join(bundleDir, 'docs');
@@ -808,6 +826,7 @@ function main() {
     'scripts/ad-readback-authority-db.js',
     'scripts/verify-ad-readback-evidence.js',
     'scripts/reconcile-lingxing-full8-data.js',
+    'scripts/smoke-package-security-boundaries.js',
   ]) {
     copyFile(path.join(root, relativePath), scriptsDir, relativePath, manifest);
   }
@@ -845,6 +864,7 @@ function main() {
     workspaceUiManifest: workspaceUiManifestPath,
     businessUiSmoke: businessUiSmokePath,
     fullTestEvidence: fullTestEvidencePath,
+    packageSecurityEvidence: packageSecurityEvidencePath,
   });
   const packageIndex = buildPackageIndex(path.resolve(args['release-dir'] || path.join(root, 'apps', 'desktop', 'release')));
   assertAppReadyFinalReadinessHasPackageEvidence(finalReadiness, packageIndex);
@@ -900,6 +920,15 @@ function main() {
     const destinationDir = ['.png', '.jpg', '.jpeg', '.webp'].includes(ext) ? screenshotsDir : evidenceOutDir;
     const copied = copyFile(sourcePath, destinationDir, `evidence:${path.basename(sourcePath)}`, manifest);
     if (copied) assertNoObviousSecret(copied);
+  }
+
+  if (packageSecurityEvidencePath) {
+    const bundledSecurityEvidence = manifest.files.find((file) => file.sourcePath === packageSecurityEvidencePath);
+    if (!bundledSecurityEvidence) {
+      throw new Error('Package security evidence was selected but not copied into the delivery bundle.');
+    }
+    manifest.securityEvidence.packageSecurityBoundaries.bundlePath = bundledSecurityEvidence.bundlePath;
+    manifest.securityEvidence.packageSecurityBoundaries.sha256 = bundledSecurityEvidence.sha256;
   }
 
   for (const file of manifest.files) {

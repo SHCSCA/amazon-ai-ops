@@ -129,6 +129,120 @@ function packageLaunchSmokeFromIndex(dir, finalIndex) {
   return smoke;
 }
 
+function writePackageSecurityEvidence(dir, packageLaunchSmoke) {
+  const evidencePath = path.join(dir, 'package-security-boundaries.json');
+  const checks = [
+    'PACKAGE_EXECUTABLE_HASH_MATCH',
+    'PACKAGE_APP_CONTENT_HASH_MATCH',
+    'PACKAGE_MAIN_BUNDLE_HASH_VALID',
+    'NAVIGATION_SECURITY_MARKER_PRESENT',
+    'LEGACY_LOGIN_MIGRATION_MARKER_PRESENT',
+    'PACKAGED_DEV_DOWNGRADE_GUARD_PRESENT',
+    'NAVIGATION_GUARDS_WIRED',
+    'LEGACY_SAVED_PASSWORD_IPC_ABSENT',
+    'DIRECT_EXTERNAL_URL_FORWARDING_ABSENT',
+    'PLAINTEXT_CREDENTIAL_WRITER_ABSENT',
+    'SQLITE_VERBOSE_LOGGING_ABSENT',
+  ].map((code) => ({ code, passed: true }));
+  writeJson(evidencePath, {
+    kind: 'package-security-boundaries',
+    schemaVersion: 1,
+    generatedAt: '2026-07-17T00:00:00.000Z',
+    passed: true,
+    package: {
+      executableSha256: packageLaunchSmoke.artifacts.unpacked.sha256,
+      appContentSha256: 'B'.repeat(64),
+      mainBundleSha256: 'C'.repeat(64),
+    },
+    summary: { total: checks.length, passed: checks.length, failed: 0 },
+    checks,
+  });
+  return evidencePath;
+}
+
+function writePackageUiEvidence(dir, packageLaunchSmoke) {
+  const evidencePath = path.join(dir, 'package-ui-manifest.json');
+  const appContentSha256 = 'B'.repeat(64);
+  const mainBundleSha256 = 'C'.repeat(64);
+  const appContent = {
+    kind: 'unpacked-app-content-manifest',
+    rootPath: path.join(dir, 'win-unpacked', 'resources', 'app'),
+    sha256: appContentSha256,
+    files: [{ path: 'dist/main/index.js', sizeBytes: 1, sha256: mainBundleSha256 }],
+  };
+  writeJson(evidencePath, {
+    kind: 'package-ui-evidence',
+    schemaVersion: 5,
+    passed: true,
+    artifactHashesStable: true,
+    violations: [],
+    completeness: { passed: true, violations: [] },
+    requested: {
+      expectedExeSha256: packageLaunchSmoke.artifacts.unpacked.sha256,
+      expectedAppContentSha256: appContentSha256,
+    },
+    artifactsBefore: {
+      exe: packageLaunchSmoke.artifacts.unpacked,
+      appContent,
+    },
+    artifactsAfter: {
+      exe: packageLaunchSmoke.artifacts.unpacked,
+      appContent,
+    },
+  });
+  return evidencePath;
+}
+
+function bundlePackageUiEvidence(bundleManifestPath, sourcePath) {
+  const bundlePath = 'evidence/package-ui-manifest.json';
+  const targetPath = path.join(path.dirname(bundleManifestPath), bundlePath);
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.copyFileSync(sourcePath, targetPath);
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(targetPath)).digest('hex').toUpperCase();
+  return {
+    manifest: {
+      packageUiManifest: {
+        sourcePath,
+        present: true,
+        bundlePath,
+        sha256: hash,
+      },
+    },
+    file: {
+      label: 'evidence:package-ui-manifest.json',
+      sourcePath,
+      bundlePath,
+      sizeBytes: fs.statSync(targetPath).size,
+      sha256: hash,
+    },
+  };
+}
+
+function bundlePackageSecurityEvidence(bundleManifestPath, sourcePath) {
+  const bundlePath = 'evidence/package-security-boundaries.json';
+  const targetPath = path.join(path.dirname(bundleManifestPath), bundlePath);
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.copyFileSync(sourcePath, targetPath);
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(targetPath)).digest('hex').toUpperCase();
+  return {
+    manifest: {
+      packageSecurityBoundaries: {
+        sourcePath,
+        present: true,
+        bundlePath,
+        sha256: hash,
+      },
+    },
+    file: {
+      label: 'evidence:package-security-boundaries.json',
+      sourcePath,
+      bundlePath,
+      sizeBytes: fs.statSync(targetPath).size,
+      sha256: hash,
+    },
+  };
+}
+
 function writeBundleReadme(bundleManifestPath, status = 'APP_READY') {
   const readmePath = path.join(path.dirname(bundleManifestPath), 'docs', 'README.md');
   fs.mkdirSync(path.dirname(readmePath), { recursive: true });
@@ -233,7 +347,7 @@ function writeValidReadbackWithDb(dir, evidencePath) {
 }
 
 describe('verify v15 ready safety', () => {
-  it('accepts current business UI smoke summaries without requiring raw APP_READY in operator UI evidence', () => {
+  it('accepts current UI smoke with explicit package security evidence and rejects its omission', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-ready-safety-'));
     const evidenceManifest = path.join(dir, 'evidence-manifest.json');
     const adReadback = path.join(dir, 'ad-readback.json');
@@ -242,6 +356,11 @@ describe('verify v15 ready safety', () => {
     const bundleManifest = path.join(dir, 'delivery-bundle-manifest.json');
     const readme = path.join(dir, 'README.md');
     const packageIndex = finalPackageIndex(dir);
+    const packageLaunchSmoke = packageLaunchSmokeFromIndex(dir, packageIndex);
+    const packageUiManifest = writePackageUiEvidence(dir, packageLaunchSmoke);
+    const packageSecurityEvidence = writePackageSecurityEvidence(dir, packageLaunchSmoke);
+    const bundledPackageUi = bundlePackageUiEvidence(bundleManifest, packageUiManifest);
+    const bundledPackageSecurity = bundlePackageSecurityEvidence(bundleManifest, packageSecurityEvidence);
 
     const dbPath = writeValidReadbackWithDb(dir, adReadback);
     writeJson(evidenceManifest, {
@@ -269,7 +388,7 @@ describe('verify v15 ready safety', () => {
         { name: 'Package launch smoke', ok: true, status: 'passed' },
       ],
       packageIndex,
-      packageLaunchSmoke: packageLaunchSmokeFromIndex(dir, packageIndex),
+      packageLaunchSmoke,
     });
     writeJson(smoke, {
       kind: 'current-business-ui-smoke-summary',
@@ -289,7 +408,11 @@ describe('verify v15 ready safety', () => {
         sourcePath: dbPath,
         copied: false,
       },
-      files: [{ label: 'scripts/verify-v15-ready-safety.js' }],
+      files: [
+        { label: 'scripts/verify-v15-ready-safety.js' },
+        bundledPackageUi.file,
+        bundledPackageSecurity.file,
+      ],
       dataReconciliation: {
         present: true,
         bundleJson: 'evidence/data.json',
@@ -306,6 +429,8 @@ describe('verify v15 ready safety', () => {
         bundleJson: 'evidence/real-report-file-index.json',
       },
       packageIndex: bundlePackageIndex(bundleManifest, packageIndex),
+      uiEvidence: bundledPackageUi.manifest,
+      securityEvidence: bundledPackageSecurity.manifest,
     });
     writeBundleReadme(bundleManifest, 'APP_READY');
     fs.writeFileSync(readme, '**DELIVERY: APP_READY.** refreshed current evidence.\n', 'utf8');
@@ -315,6 +440,8 @@ describe('verify v15 ready safety', () => {
       '--ui-smoke', smoke,
       '--bundle-manifest', bundleManifest,
       '--readme', readme,
+      '--package-ui-manifest', packageUiManifest,
+      '--package-security-evidence', packageSecurityEvidence,
     ]);
 
     expect(result.status).toBe(0);
@@ -332,9 +459,76 @@ describe('verify v15 ready safety', () => {
       '--bundle-manifest', bundleManifest,
       '--readme', readme,
       '--db', otherDbPath,
+      '--package-ui-manifest', packageUiManifest,
+      '--package-security-evidence', packageSecurityEvidence,
     ]);
     expect(mismatch.status).not.toBe(0);
     expect(`${mismatch.stdout}${mismatch.stderr}`).toContain('SQLite authority database mismatch');
+
+    const missingPackageSecurity = runNode('scripts/verify-v15-ready-safety.js', [
+      '--final-readiness', finalReadiness,
+      '--ui-smoke', smoke,
+      '--bundle-manifest', bundleManifest,
+      '--readme', readme,
+      '--package-ui-manifest', packageUiManifest,
+    ]);
+    expect(missingPackageSecurity.status).not.toBe(0);
+    expect(`${missingPackageSecurity.stdout}${missingPackageSecurity.stderr}`)
+      .toContain('READY safety requires explicit passing package security evidence');
+
+    const detachedSecurity = readJson(packageSecurityEvidence);
+    detachedSecurity.package.mainBundleSha256 = 'D'.repeat(64);
+    writeJson(packageSecurityEvidence, detachedSecurity);
+    const reboundSecurity = bundlePackageSecurityEvidence(bundleManifest, packageSecurityEvidence);
+    const detachedBundle = readJson(bundleManifest);
+    detachedBundle.files = detachedBundle.files.map((file) => (
+      file.sourcePath === packageSecurityEvidence ? reboundSecurity.file : file
+    ));
+    detachedBundle.securityEvidence = reboundSecurity.manifest;
+    writeJson(bundleManifest, detachedBundle);
+    const detachedMainBundle = runNode('scripts/verify-v15-ready-safety.js', [
+      '--final-readiness', finalReadiness,
+      '--ui-smoke', smoke,
+      '--bundle-manifest', bundleManifest,
+      '--readme', readme,
+      '--package-ui-manifest', packageUiManifest,
+      '--package-security-evidence', packageSecurityEvidence,
+    ]);
+    expect(detachedMainBundle.status).not.toBe(0);
+    expect(`${detachedMainBundle.stdout}${detachedMainBundle.stderr}`)
+      .toContain('EXE/app-content/main-bundle hash-bound');
+
+    const restoredSecurity = readJson(packageSecurityEvidence);
+    restoredSecurity.package.mainBundleSha256 = 'C'.repeat(64);
+    writeJson(packageSecurityEvidence, restoredSecurity);
+    const restoredBundledSecurity = bundlePackageSecurityEvidence(bundleManifest, packageSecurityEvidence);
+    const stalePackageUi = readJson(packageUiManifest);
+    stalePackageUi.artifactsAfter.appContent = {
+      ...stalePackageUi.artifactsAfter.appContent,
+      sha256: 'E'.repeat(64),
+    };
+    writeJson(packageUiManifest, stalePackageUi);
+    const reboundPackageUi = bundlePackageUiEvidence(bundleManifest, packageUiManifest);
+    const staleBundle = readJson(bundleManifest);
+    staleBundle.files = staleBundle.files.map((file) => {
+      if (file.sourcePath === packageSecurityEvidence) return restoredBundledSecurity.file;
+      if (file.sourcePath === packageUiManifest) return reboundPackageUi.file;
+      return file;
+    });
+    staleBundle.securityEvidence = restoredBundledSecurity.manifest;
+    staleBundle.uiEvidence = reboundPackageUi.manifest;
+    writeJson(bundleManifest, staleBundle);
+    const staleAppContent = runNode('scripts/verify-v15-ready-safety.js', [
+      '--final-readiness', finalReadiness,
+      '--ui-smoke', smoke,
+      '--bundle-manifest', bundleManifest,
+      '--readme', readme,
+      '--package-ui-manifest', packageUiManifest,
+      '--package-security-evidence', packageSecurityEvidence,
+    ]);
+    expect(staleAppContent.status).not.toBe(0);
+    expect(`${staleAppContent.stdout}${staleAppContent.stderr}`)
+      .toContain('package UI evidence is schema-valid, fully passing, EXE/app-content/main-bundle hash-bound');
   });
 
   it('rejects APP_READY evidence when the delivery bundle README still says IN_PROGRESS', () => {

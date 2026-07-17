@@ -39,6 +39,7 @@
     "evidence:workspace-ui": "node scripts/run-workspace-ui-evidence.js",
     "evidence:package-ui": "node scripts/run-package-ui-evidence.js",
     "smoke:package-launch": "node scripts/smoke-package-launch.js",
+    "smoke:package-security-boundaries": "node scripts/smoke-package-security-boundaries.js",
     "smoke:v15-product-readiness-ui": "pnpm run smoke:business-ui-current",
     "verify:v15-delivery": "node scripts/verify-ad-execution-fail-closed.js && node scripts/verify-v15-delivery-evidence.js",
     "reconcile:v15-full8-data": "node scripts/reconcile-lingxing-full8-data.js",

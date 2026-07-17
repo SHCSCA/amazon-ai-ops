@@ -14,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const bundleRoot = path.join(root, 'output', 'delivery-bundles');
+const PACKAGE_MAIN_BUNDLE_SHA256 = 'C'.repeat(64);
 
 function runNode(script, args = []) {
   return spawnSync(process.execPath, [path.join(root, script), ...args], {
@@ -135,6 +136,35 @@ function validPackageLaunchSmoke(dir, portablePackage) {
   };
 }
 
+function validPackageSecurityEvidence(smoke, packageUi) {
+  const checks = [
+    'PACKAGE_EXECUTABLE_HASH_MATCH',
+    'PACKAGE_APP_CONTENT_HASH_MATCH',
+    'PACKAGE_MAIN_BUNDLE_HASH_VALID',
+    'NAVIGATION_SECURITY_MARKER_PRESENT',
+    'LEGACY_LOGIN_MIGRATION_MARKER_PRESENT',
+    'PACKAGED_DEV_DOWNGRADE_GUARD_PRESENT',
+    'NAVIGATION_GUARDS_WIRED',
+    'LEGACY_SAVED_PASSWORD_IPC_ABSENT',
+    'DIRECT_EXTERNAL_URL_FORWARDING_ABSENT',
+    'PLAINTEXT_CREDENTIAL_WRITER_ABSENT',
+    'SQLITE_VERBOSE_LOGGING_ABSENT',
+  ].map((code) => ({ code, passed: true }));
+  return {
+    kind: 'package-security-boundaries',
+    schemaVersion: 1,
+    generatedAt: '2026-07-16T08:09:30.000Z',
+    passed: true,
+    package: {
+      executableSha256: smoke.artifacts.unpacked.sha256,
+      appContentSha256: packageUi.artifactsAfter.appContent.sha256,
+      mainBundleSha256: PACKAGE_MAIN_BUNDLE_SHA256,
+    },
+    summary: { total: checks.length, passed: checks.length, failed: 0 },
+    checks,
+  };
+}
+
 function validProcessIsolation(profilePath = null) {
   const snapshot = {
     error: null,
@@ -208,6 +238,11 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
     fileCount: 1,
     totalSizeBytes: 1,
     sha256: appContentSha256,
+    files: [{
+      path: 'dist/main/index.js',
+      sizeBytes: 1,
+      sha256: PACKAGE_MAIN_BUNDLE_SHA256,
+    }],
   };
   const run = (scalePercent, deviceScaleFactor) => ({
     actualDeviceScaleFactor: deviceScaleFactor,
@@ -329,6 +364,7 @@ function writeStrictNonReadyFixture(options) {
     finalReadiness,
     packageSmoke,
     packageUiManifest = path.join(artifactDir, 'package-ui-manifest.json'),
+    packageSecurityEvidence = path.join(artifactDir, 'package-security-boundaries.json'),
     bundleManifest,
     readme,
     mutateFinalReadiness = () => {},
@@ -344,6 +380,8 @@ function writeStrictNonReadyFixture(options) {
   writeJson(packageSmoke, smoke);
   const packageUi = validPackageUiEvidence(artifactDir, smoke, authorityDbPath);
   writeJson(packageUiManifest, packageUi);
+  const packageSecurity = validPackageSecurityEvidence(smoke, packageUi);
+  writeJson(packageSecurityEvidence, packageSecurity);
   const finalReadinessJson = {
     status: 'APP_NEEDS_WORK',
     appReady: false,
@@ -371,6 +409,7 @@ function writeStrictNonReadyFixture(options) {
   writeJson(finalReadiness, finalReadinessJson);
   const bundlePackageIndexPath = path.join(path.dirname(bundleManifest), 'evidence', 'release-package-index.json');
   const bundledPackageUiManifestPath = path.join(path.dirname(bundleManifest), 'evidence', 'package-ui-manifest.json');
+  const bundledPackageSecurityEvidencePath = path.join(path.dirname(bundleManifest), 'evidence', 'package-security-boundaries.json');
   writeJson(bundlePackageIndexPath, {
     generatedAt: packageIndex.generatedAt,
     releaseDir: packageIndex.releaseDir,
@@ -378,6 +417,7 @@ function writeStrictNonReadyFixture(options) {
     packages: packageIndex.packages,
   });
   writeJson(bundledPackageUiManifestPath, packageUi);
+  writeJson(bundledPackageSecurityEvidencePath, packageSecurity);
   writeJson(bundleManifest, {
     status: 'APP_NEEDS_WORK',
     appReady: false,
@@ -402,6 +442,13 @@ function writeStrictNonReadyFixture(options) {
         sizeBytes: fs.statSync(bundledPackageUiManifestPath).size,
         sha256: sha256File(bundledPackageUiManifestPath),
       },
+      {
+        label: 'evidence:package-security-boundaries.json',
+        sourcePath: packageSecurityEvidence,
+        bundlePath: path.relative(path.dirname(bundleManifest), bundledPackageSecurityEvidencePath),
+        sizeBytes: fs.statSync(bundledPackageSecurityEvidencePath).size,
+        sha256: sha256File(bundledPackageSecurityEvidencePath),
+      },
     ],
     packageIndex: {
       present: true,
@@ -416,14 +463,25 @@ function writeStrictNonReadyFixture(options) {
         present: true,
       },
     },
+    securityEvidence: {
+      packageSecurityBoundaries: {
+        sourcePath: packageSecurityEvidence,
+        present: true,
+        bundlePath: path.relative(path.dirname(bundleManifest), bundledPackageSecurityEvidencePath),
+        sha256: sha256File(bundledPackageSecurityEvidencePath),
+      },
+    },
   });
   return {
     authorityDbPath,
     bundledPackageUiManifestPath,
+    bundledPackageSecurityEvidencePath,
     bundlePackageIndexPath,
     packageIndex,
     packageUi,
     packageUiManifest,
+    packageSecurity,
+    packageSecurityEvidence,
     smoke,
   };
 }
@@ -435,6 +493,7 @@ function runStrictNonReadySafetyFixture(options = {}) {
     finalReadiness: path.join(dir, 'final-readiness.json'),
     packageSmoke: path.join(dir, 'package-launch-smoke.json'),
     packageUiManifest: path.join(dir, 'package-ui-manifest.json'),
+    packageSecurityEvidence: path.join(dir, 'package-security-boundaries.json'),
     bundleManifest: path.join(dir, 'delivery-bundle-manifest.json'),
     readme: path.join(dir, 'README.md'),
   };
@@ -454,6 +513,7 @@ function runStrictNonReadySafetyFixture(options = {}) {
       '--bundle-manifest', paths.bundleManifest,
       '--package-launch-smoke', paths.packageSmoke,
       ...(options.omitPackageUiManifest ? [] : ['--package-ui-manifest', paths.packageUiManifest]),
+      ...(options.omitPackageSecurityEvidence ? [] : ['--package-security-evidence', paths.packageSecurityEvidence]),
       '--readme', paths.readme,
       ...extraArgs,
     ]);
@@ -471,6 +531,19 @@ function mutatePackageUiFixture(context, mutate) {
   const packageUiFile = bundle.files.find((file) => file.sourcePath === context.paths.packageUiManifest);
   packageUiFile.sizeBytes = fs.statSync(context.fixture.bundledPackageUiManifestPath).size;
   packageUiFile.sha256 = sha256File(context.fixture.bundledPackageUiManifestPath);
+  writeJson(context.paths.bundleManifest, bundle);
+}
+
+function mutatePackageSecurityFixture(context, mutate) {
+  const evidence = JSON.parse(fs.readFileSync(context.paths.packageSecurityEvidence, 'utf8'));
+  mutate(evidence);
+  writeJson(context.paths.packageSecurityEvidence, evidence);
+  writeJson(context.fixture.bundledPackageSecurityEvidencePath, evidence);
+  const bundle = JSON.parse(fs.readFileSync(context.paths.bundleManifest, 'utf8'));
+  const record = bundle.files.find((file) => file.sourcePath === context.paths.packageSecurityEvidence);
+  record.sizeBytes = fs.statSync(context.fixture.bundledPackageSecurityEvidencePath).size;
+  record.sha256 = sha256File(context.fixture.bundledPackageSecurityEvidencePath);
+  bundle.securityEvidence.packageSecurityBoundaries.sha256 = record.sha256;
   writeJson(context.paths.bundleManifest, bundle);
 }
 
@@ -571,6 +644,7 @@ describe('verify v15 non-ready safety', () => {
     const finalReadiness = path.join(dir, 'final-readiness.json');
     const packageSmoke = path.join(dir, 'package-launch-smoke.json');
     const packageUiManifest = path.join(dir, 'package-ui-manifest.json');
+    const packageSecurityEvidence = path.join(dir, 'package-security-boundaries.json');
     const bundleManifest = path.join(dir, 'delivery-bundle-manifest.json');
     const readme = path.join(dir, 'README.md');
 
@@ -580,6 +654,7 @@ describe('verify v15 non-ready safety', () => {
       finalReadiness,
       packageSmoke,
       packageUiManifest,
+      packageSecurityEvidence,
       bundleManifest,
       readme,
     });
@@ -589,6 +664,7 @@ describe('verify v15 non-ready safety', () => {
       '--bundle-manifest', bundleManifest,
       '--package-launch-smoke', packageSmoke,
       '--package-ui-manifest', packageUiManifest,
+      '--package-security-evidence', packageSecurityEvidence,
       '--readme', readme,
     ]);
 
@@ -647,6 +723,42 @@ describe('verify v15 non-ready safety', () => {
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('strict APP_NEEDS_WORK requires an explicit package UI manifest');
+  });
+
+  it('rejects strict APP_NEEDS_WORK verification without explicit package security evidence', () => {
+    const result = runStrictNonReadySafetyFixture({ omitPackageSecurityEvidence: true });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('strict APP_NEEDS_WORK requires explicit passing package security evidence');
+  });
+
+  it('rejects strict APP_NEEDS_WORK verification when a package security boundary check failed', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite(context) {
+        mutatePackageSecurityFixture(context, (evidence) => {
+          evidence.checks.find((check) => check.code === 'NAVIGATION_SECURITY_MARKER_PRESENT').passed = false;
+          evidence.summary.passed -= 1;
+          evidence.summary.failed += 1;
+          evidence.passed = false;
+        });
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('explicit package security evidence is schema-valid, fully passing, package-hash-bound, and bundled byte-for-byte');
+  });
+
+  it('rejects strict APP_NEEDS_WORK verification when the security main-bundle hash is detached from package UI evidence', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateAfterWrite(context) {
+        mutatePackageSecurityFixture(context, (evidence) => {
+          evidence.package.mainBundleSha256 = 'D'.repeat(64);
+        });
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('explicit package security evidence is schema-valid, fully passing, package-hash-bound, and bundled byte-for-byte');
   });
 
   it('rejects APP_NEEDS_WORK when release package hash evidence is stale', () => {
@@ -959,6 +1071,7 @@ describe('verify v15 non-ready safety', () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-default-smoke-'));
     const packageSmoke = path.join(fixtureDir, 'package-launch-smoke.json');
     const packageUiManifest = path.join(fixtureDir, 'package-ui-manifest.json');
+    const packageSecurityEvidence = path.join(fixtureDir, 'package-security-boundaries.json');
 
     try {
       writeStrictNonReadyFixture({
@@ -967,6 +1080,7 @@ describe('verify v15 non-ready safety', () => {
         finalReadiness,
         packageSmoke,
         packageUiManifest,
+        packageSecurityEvidence,
         bundleManifest,
         readme,
       });
@@ -979,6 +1093,7 @@ describe('verify v15 non-ready safety', () => {
       const result = runNode('scripts/verify-v15-non-ready-safety.js', [
         '--package-launch-smoke', packageSmoke,
         '--package-ui-manifest', packageUiManifest,
+        '--package-security-evidence', packageSecurityEvidence,
         '--readme', readme,
       ]);
 
@@ -1004,6 +1119,7 @@ describe('verify v15 non-ready safety', () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-timestamp-default-'));
     const packageSmoke = path.join(fixtureDir, 'package-launch-smoke.json');
     const packageUiManifest = path.join(fixtureDir, 'package-ui-manifest.json');
+    const packageSecurityEvidence = path.join(fixtureDir, 'package-security-boundaries.json');
 
     try {
       writeStrictNonReadyFixture({
@@ -1012,6 +1128,7 @@ describe('verify v15 non-ready safety', () => {
         finalReadiness,
         packageSmoke,
         packageUiManifest,
+        packageSecurityEvidence,
         bundleManifest,
         readme,
       });
@@ -1024,6 +1141,7 @@ describe('verify v15 non-ready safety', () => {
       const result = runNode('scripts/verify-v15-non-ready-safety.js', [
         '--package-launch-smoke', packageSmoke,
         '--package-ui-manifest', packageUiManifest,
+        '--package-security-evidence', packageSecurityEvidence,
         '--readme', readme,
       ]);
 

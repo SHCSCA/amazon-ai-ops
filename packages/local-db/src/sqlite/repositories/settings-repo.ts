@@ -1,5 +1,12 @@
 import type { Database } from 'better-sqlite3';
 
+const RESERVED_LOGIN_CREDENTIAL_KEYS = new Set([
+  'login_username',
+  'login_remember_password',
+  'login_password_encrypted',
+  'login_password',
+]);
+
 export class SettingsRepository {
   constructor(private db: Database) {}
 
@@ -22,18 +29,13 @@ export class SettingsRepository {
     this.db.prepare('DELETE FROM app_settings WHERE key = ?').run(key);
   }
 
+  transaction<T>(work: () => T): T {
+    return this.db.transaction(work)();
+  }
+
   getAll(): Record<string, string> {
     const rows = this.db.prepare('SELECT key, value FROM app_settings').all() as { key: string; value: string }[];
     return Object.fromEntries(rows.map(r => [r.key, r.value]));
-  }
-
-  // 特定配置
-  getAiApiKey(): string | null {
-    return this.get('ai_api_key');
-  }
-
-  setAiApiKey(key: string): void {
-    this.set('ai_api_key', key);
   }
 
   getAiModel(): string {
@@ -52,16 +54,9 @@ export class SettingsRepository {
     this.set('schedule_time', time);
   }
 
-  // Desktop 主进程使用的高级方法
-  saveCredentials(creds: { username: string; password?: string }): void {
-    this.set('login_username', creds.username);
-    if (creds.password) {
-      this.set('login_password', creds.password);
-    }
-  }
-
   save(settings: Record<string, string>): void {
     for (const [key, value] of Object.entries(settings)) {
+      if (RESERVED_LOGIN_CREDENTIAL_KEYS.has(key)) continue;
       this.set(key, value);
     }
   }

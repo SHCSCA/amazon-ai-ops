@@ -86,7 +86,19 @@ import { buildListingAiCallLogInput, buildListingRewritePrompt, parseAiDraftResp
 import { normalizeManualListingContent } from './listing-manual-content';
 import { buildAdActionReasonAiCallLogInput, type AdActionExplanationForLog } from './ad-action-ai-call-log';
 import { mergeAdActionExplanationEvidence } from './ad-action-explanation-merge';
-import { readSavedLoginCredentials, saveLoginCredentials, type LoginCredentialCipher } from './login-credentials';
+import {
+  readSavedLoginCredentialStatus,
+  resolveSavedLoginPassword,
+  saveLoginCredentials,
+  type LoginCredentialCipher,
+  type SavedLoginCredentialStatus,
+} from './login-credentials';
+import {
+  createMainWindowNavigationHandler,
+  createSecureWindowOpenHandler,
+  type NavigationSecurityReport,
+  type TrustedRendererTarget,
+} from './window-navigation-security';
 import {
   resolveAiSettingsWithPersistedKey,
   savePersistedAiApiKey,
@@ -268,6 +280,10 @@ function canonicalizeExistingPath(filePath: string): string {
 
 let mainWindow: BrowserWindow | null = null;
 
+function reportNavigationSecurityBoundary(report: NavigationSecurityReport): void {
+  console.warn('[Security] renderer navigation boundary', JSON.stringify(report));
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -287,21 +303,35 @@ function createWindow(): void {
     mainWindow?.show();
   });
 
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173');
+  const development = !app.isPackaged && process.env.NODE_ENV === 'development';
+  const rendererFilePath = path.join(__dirname, '../renderer/index.html');
+  const trustedRendererTarget: TrustedRendererTarget = development
+    ? { kind: 'development', rendererUrl: 'http://localhost:5173' }
+    : { kind: 'packaged', rendererFilePath };
+  mainWindow.webContents.on('will-navigate', createMainWindowNavigationHandler({
+    surface: 'will-navigate',
+    target: trustedRendererTarget,
+    report: reportNavigationSecurityBoundary,
+  }));
+  mainWindow.webContents.on('will-redirect', createMainWindowNavigationHandler({
+    surface: 'will-redirect',
+    target: trustedRendererTarget,
+    report: reportNavigationSecurityBoundary,
+  }));
+  mainWindow.webContents.setWindowOpenHandler(createSecureWindowOpenHandler({
+    openExternal: (url) => shell.openExternal(url),
+    report: reportNavigationSecurityBoundary,
+  }));
+
+  if (development) {
+    void mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    void mainWindow.loadFile(rendererFilePath);
   }
 
   mainWindow.on('closed', () => {
     mainWindow = null;
-  });
-
-  // Handle external links
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: 'deny' };
   });
 }
 
@@ -320,6 +350,18 @@ async function initApp(): Promise<void> {
 
   // Init repositories
   state.settingsRepo = new SettingsRepository(state.db);
+  try {
+    const credentialStatus = handleGetSavedLoginCredentialStatus();
+    console.log('[Security] login credential state', JSON.stringify({
+      credentialState: credentialStatus.credentialState,
+      passwordAvailable: credentialStatus.passwordAvailable,
+      rememberPassword: credentialStatus.rememberPassword,
+    }));
+  } catch {
+    console.warn('[Security] login credential state unavailable', JSON.stringify({
+      credentialState: 'migration_failed',
+    }));
+  }
   state.productRepo = new ProductRepository(state.db);
   state.actionLogRepo = new ActionLogRepository(state.db);
   state.adMetricsRepo = new AdMetricsRepository(state.db);
@@ -400,7 +442,21 @@ type BrowserLoginResult = {
   adsEntryMode: 'erp_ads_entry';
   adsUrl: string;
   adsTitle: string;
+  credentialPersistence: 'saved' | 'cleared' | 'main_managed';
 };
+
+type BrowserLoginRequest =
+  | {
+      username: string;
+      credentialSource: 'saved';
+      rememberPassword: true;
+    }
+  | {
+      username: string;
+      credentialSource: 'typed';
+      password: string;
+      rememberPassword: boolean;
+    };
 
 type AdsSessionResult = {
   entryMode: 'erp_ads_entry';
@@ -412,7 +468,10 @@ const electronLoginCredentialCipher: LoginCredentialCipher & AiKeyCipher = {
   isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
   encrypt: (value: string) => `safe:${safeStorage.encryptString(value).toString('base64')}`,
   decrypt: (value: string) => {
-    const payload = value.startsWith('safe:') ? value.slice(5) : value;
+    if (!value.startsWith('safe:')) {
+      throw new Error('invalid encrypted credential envelope');
+    }
+    const payload = value.slice(5);
     return safeStorage.decryptString(Buffer.from(payload, 'base64'));
   },
 };
@@ -446,16 +505,52 @@ function inputRequestsAiKeyClear(input: Record<string, unknown>): boolean {
   return typeof value === 'string' && ['true', '1', 'yes'].includes(value.trim().toLowerCase());
 }
 
-function handleGetSavedLoginCredentials() {
+function emptySavedLoginCredentialStatus(): SavedLoginCredentialStatus {
+  return {
+    username: '',
+    rememberPassword: false,
+    passwordAvailable: false,
+    credentialState: 'none',
+  };
+}
+
+function handleGetSavedLoginCredentialStatus(): SavedLoginCredentialStatus {
   if (!state.settingsRepo) {
-    return {
-      username: '',
-      password: '',
-      rememberPassword: false,
-      passwordAvailable: false,
-    };
+    return emptySavedLoginCredentialStatus();
   }
-  return readSavedLoginCredentials(state.settingsRepo, electronLoginCredentialCipher);
+  return readSavedLoginCredentialStatus(state.settingsRepo, electronLoginCredentialCipher);
+}
+
+function normalizeBrowserLoginRequest(input: unknown): BrowserLoginRequest {
+  const candidate = input && typeof input === 'object'
+    ? input as Record<string, unknown>
+    : {};
+  const username = typeof candidate.username === 'string' ? candidate.username.trim() : '';
+  if (!username || username.length > 256 || /[\u0000-\u001f\u007f]/.test(username)) {
+    throw new Error('请输入有效的领星用户名。');
+  }
+  if (typeof candidate.rememberPassword !== 'boolean') {
+    throw new Error('登录凭证的记住选项无效。');
+  }
+  if (candidate.credentialSource === 'saved') {
+    if (candidate.rememberPassword !== true) {
+      throw new Error('保存凭证登录必须保持“记住密码”开启。');
+    }
+    return { username, credentialSource: 'saved', rememberPassword: true };
+  }
+  if (candidate.credentialSource !== 'typed') {
+    throw new Error('登录凭证来源无效，请重新输入密码。');
+  }
+  const password = typeof candidate.password === 'string' ? candidate.password : '';
+  if (!password || password.length > 4096 || /[\u0000\u007f]/.test(password)) {
+    throw new Error('请输入有效的领星密码。');
+  }
+  return {
+    username,
+    credentialSource: 'typed',
+    password,
+    rememberPassword: candidate.rememberPassword,
+  };
 }
 
 async function readLingxingPageState(page: NonNullable<ReturnType<BrowserController['getPage']>>) {
@@ -475,7 +570,18 @@ function adsSessionResultFromPageState(pageState: { url: string; title?: string 
   };
 }
 
-async function handleBrowserLogin(username: string, password: string, rememberPassword = false): Promise<BrowserLoginResult> {
+async function handleBrowserLogin(request: BrowserLoginRequest): Promise<BrowserLoginResult> {
+  const username = request.username;
+  const rememberPassword = request.rememberPassword;
+  const password = request.credentialSource === 'saved'
+    ? (() => {
+        if (!state.settingsRepo) {
+          throw new Error('本机凭证存储尚未就绪，请重新输入密码。');
+        }
+        return resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username);
+      })()
+    : request.password;
+
   if (state.browserController) {
     await state.browserController.close().catch(() => undefined);
     state.browserController = null;
@@ -525,8 +631,23 @@ async function handleBrowserLogin(username: string, password: string, rememberPa
     state.isLoggedIn = true;
     state.currentStore = username;
 
-    if (state.settingsRepo) {
-      saveLoginCredentials(state.settingsRepo, { username, password, rememberPassword }, electronLoginCredentialCipher);
+    let credentialPersistence: BrowserLoginResult['credentialPersistence'] = 'main_managed';
+    if (request.credentialSource === 'typed') {
+      if (!state.settingsRepo) {
+        throw new Error('本机凭证存储尚未就绪，本次登录未完成。');
+      }
+      try {
+        saveLoginCredentials(
+          state.settingsRepo,
+          { username, password, rememberPassword },
+          electronLoginCredentialCipher,
+        );
+        credentialPersistence = rememberPassword ? 'saved' : 'cleared';
+      } catch {
+        throw new Error(rememberPassword
+          ? '登录已确认，但密码未能安全保存；本次会话已关闭，请取消“记住密码”后重试。'
+          : '登录已确认，但旧凭证未能安全清除；本次会话已关闭，请重试。');
+      }
     }
 
     return {
@@ -535,6 +656,7 @@ async function handleBrowserLogin(username: string, password: string, rememberPa
       adsEntryMode: adsSession.entryMode,
       adsUrl: adsSession.adsUrl,
       adsTitle: adsSession.adsTitle,
+      credentialPersistence,
     };
   } catch (error) {
     await controller.close().catch(() => undefined);
@@ -7821,9 +7943,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle('settings:get-storage-paths', () => handleGetStoragePaths());
 
   // Browser
-  ipcMain.handle('browser:get-saved-credentials', () => handleGetSavedLoginCredentials());
-  ipcMain.handle('browser:login', (_, { username, password, rememberPassword }) =>
-    handleBrowserLogin(username, password, Boolean(rememberPassword))
+  ipcMain.handle('browser:get-saved-credential-status', () => handleGetSavedLoginCredentialStatus());
+  ipcMain.handle('browser:login', (_, input) =>
+    handleBrowserLogin(normalizeBrowserLoginRequest(input))
   );
   ipcMain.handle('browser:logout', () => handleBrowserLogout());
   ipcMain.handle('browser:screenshot', (_, label) => handleScreenshot(label));

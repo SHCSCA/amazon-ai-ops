@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { resolveBoundAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
+const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -664,6 +665,47 @@ function packageLaunchSmokeMatchesPackageIndex(finalReadiness, smoke) {
   });
 }
 
+function packageSecurityEvidenceIsStrictlyValid({
+  filePath,
+  packageUiManifestPath,
+  manifest,
+  bundleManifestPath,
+  smoke,
+}) {
+  if (!filePath || !packageUiManifestPath || !smoke || !fs.existsSync(filePath)) return false;
+  try {
+    const evidence = readJson(filePath);
+    const packageUi = readJson(packageUiManifestPath);
+    const expectedExecutableSha256 = smoke.artifacts?.unpacked?.sha256;
+    const expectedAppContentSha256 = packageUi.artifactsAfter?.appContent?.sha256;
+    const beforeMainBundles = (packageUi.artifactsBefore?.appContent?.files || [])
+      .filter((item) => String(item?.path || '').replace(/\\/g, '/') === 'dist/main/index.js');
+    const afterMainBundles = (packageUi.artifactsAfter?.appContent?.files || [])
+      .filter((item) => String(item?.path || '').replace(/\\/g, '/') === 'dist/main/index.js');
+    const expectedMainBundleSha256 = afterMainBundles.length === 1
+      ? String(afterMainBundles[0]?.sha256 || '').toUpperCase()
+      : '';
+    const mainBundleIdentityBound = beforeMainBundles.length === 1
+      && afterMainBundles.length === 1
+      && /^[A-F0-9]{64}$/.test(expectedMainBundleSha256)
+      && String(beforeMainBundles[0]?.sha256 || '').toUpperCase() === expectedMainBundleSha256;
+    const validation = validatePackageSecurityEvidence(evidence, {
+      executableSha256: expectedExecutableSha256,
+      appContentSha256: expectedAppContentSha256,
+      mainBundleSha256: expectedMainBundleSha256,
+    });
+    const bundled = manifest.securityEvidence?.packageSecurityBoundaries?.present === true
+      && samePath(manifest.securityEvidence?.packageSecurityBoundaries?.sourcePath, filePath)
+      && bundleSourceFileMatches(manifest, bundleManifestPath, filePath);
+    return mainBundleIdentityBound
+      && validation.passed
+      && evidence.passed === true
+      && bundled;
+  } catch {
+    return false;
+  }
+}
+
 function hasBoundExistingAuthorityDb(finalReadiness, manifest, explicitPath) {
   const bundleAuthority = manifest.authorityDatabase;
   if (!bundleAuthority?.sourcePath || bundleAuthority.existsAtExport !== true || bundleAuthority.copied !== false) return false;
@@ -687,6 +729,9 @@ function main() {
   const packageLaunchSmokePath = args['package-launch-smoke']
     ? path.resolve(args['package-launch-smoke'])
     : latestEvidence(packageLaunchSmokePattern);
+  const packageSecurityEvidencePath = args['package-security-evidence']
+    ? path.resolve(args['package-security-evidence'])
+    : '';
   const readmePath = path.resolve(args.readme || path.join(root, 'README.md'));
   const failures = [];
 
@@ -738,6 +783,22 @@ function main() {
         smoke: currentPackageLaunchSmoke,
       }),
       'explicit package UI evidence is fresh, complete, hash-bound, DB-safe, process-isolated, and bundled',
+      failures,
+    );
+    check(
+      Boolean(args['package-security-evidence']),
+      'strict APP_NEEDS_WORK requires explicit passing package security evidence',
+      failures,
+    );
+    check(
+      packageSecurityEvidenceIsStrictlyValid({
+        filePath: packageSecurityEvidencePath,
+        packageUiManifestPath: args['package-ui-manifest'] ? path.resolve(args['package-ui-manifest']) : '',
+        manifest,
+        bundleManifestPath,
+        smoke: currentPackageLaunchSmoke,
+      }),
+      'explicit package security evidence is schema-valid, fully passing, package-hash-bound, and bundled byte-for-byte',
       failures,
     );
     check(

@@ -19,11 +19,23 @@ Earlier delivery work also used orchestrator/product/UX/QA roles to reject prema
 
 ## Current 2026-07-17 Status
 
+The current external-security P1 candidate closes the three previous out-of-gate P1 findings. Main-window `will-navigate` and `will-redirect` accept only the exact development or packaged renderer document; development behavior also requires `!app.isPackaged`. Child-window requests are denied inside the app and only userinfo-free `http(s)` targets may be handed to `shell.openExternal`. Saved Lingxing passwords are resolved only in Electron Main; the Renderer receives non-secret status/username availability and keeps its password input empty. Legacy plaintext settings migrate transactionally into `safeStorage`, while unavailable, corrupt, and failed migration paths require safe re-entry without returning the secret to the UI. Login status distinguishes ready/warning/blocked/typed/pending paths and duplicate Enter/button submission is locked.
+
+Final evidence is `output\codex-evidence\full-vitest-external-security-p1-20260717-final.json` (584/584 suites, 1992/1992 tests), `output\codex-evidence\package-launch-smoke-1784276358829.json` (PASS), `output\codex-evidence\package-security-boundaries-20260717-p1.json` (11/11), `output\codex-evidence\current-business-ui-smoke-1784276952256.json` (PASS), and schema-v5 package UI `output\codex-evidence\package-ui-evidence-20260717-p1\2026-07-17T08-21-12-482Z\manifest.json` (100%/125% each 8 workspaces + 3 overlays, plus wide Product/Diagnosis). Package identity is installer `A08715C80D660DDA615324FC146A164C5D3C19232BE6E55E90859348C9C01637`, portable `E8961E89B53A19F1C11D9A0DAFCC1797B0DE7C90B7972196B52D0F9F062FE1FE`, win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`, app content `8A9132109B9C2C6A4C1AA6A1EB18EFC675E53403004CF7000CC6C2A5C01AFF34`, and main bundle `74046AD904EE2DFFB77E892367F7D38E0BD695F89A5F7A88BE6EF97A848035B9`.
+
+`output\codex-evidence\final-readiness-20260717-external-security-p1-non-ready.json` remains correctly `APP_NEEDS_WORK`, 7/8. The only external completion blocker is Task 8B: a current positive recommendation, human approval/Ads access, distinct real Amazon Ads v2 before/after/reload screenshots, and the correct authority-DB recommendationId. Once prerequisites exist, completion is estimated at 30–60 minutes. Non-blocking P2 follow-ups are a domain allowlist beyond the current protocol allowlist (optional 1–2 hours), stronger handling when a reused ERP session could otherwise save a password not verified on a visible login screen, and an adversarial-`NODE_ENV` packaged dynamic smoke.
+
+READY and NON_READY safety now bind the win-unpacked EXE, app content, and `dist/main/index.js` hashes, require current package UI/package-security evidence, and reject stale bundle copies. The internal bundle `output\delivery-bundles\v15-delivery-bundle-20260717-external-security-p1-non-ready` was exported after documentation freeze and passed all 19 strict NON_READY safety checks. Current product management does not display a `凭证映射通过` or `Main Sandboxed ID` chip; those older claims are not valid current UI evidence.
+
+Implementation rounds used focused tests. The recorded full regression is the final frozen-source evidence; documentation, export, and safety refresh do not trigger repeated full suites.
+
+### Superseded UI P2 closeout
+
 The current UI P2 candidate keeps the task-first 8-workspace / 16-legacy-route compatibility model and closes the Task 8A review follow-ups. Diagnosis Inspector now uses a diagnosis-specific two-column fact strip with non-breaking date tokens, bounded trend copy, and readable supporting-text contrast. Runtime evidence now includes explicit workspace error + retry, diagnosis AI busy, and diagnosis AI busy under reduced motion; the shared spinner has a static fallback. Package UI evidence is schema v5 with capped/redacted diagnostics and strict top-level plus per-run product/profile-browser process snapshots. Vitest defaults to `forks`; Electron shutdown is ordered scheduler → browser → DB with bounded per-resource timeout and continue-on-error cleanup. CRLF-sensitive fixture handling and the business-smoke assertion token split remove two Windows-only false-failure paths.
 
 The delivery evidence for this code freeze is: final full regression `output\codex-evidence\ui-p2-full-vitest-20260717-final.json` at 170/170 files, 576/576 suites, 1950/1950 tests; workspace UI `output\codex-evidence\workspace-ui-task6\workspace-ui-evidence-run-2026-07-17T06-23-26-823Z.json` at 46/46; business smoke `output\codex-evidence\current-business-ui-smoke-1784270629248.json` at 5/5; package launch smoke `output\codex-evidence\package-launch-smoke-1784269772321.json` PASS; and package UI `output\codex-evidence\package-ui-evidence\2026-07-17T06-33-01-390Z\manifest.json` schema v5 PASS with 30 PNGs, zero console/page/dropped diagnostics, unchanged authority DB, and zero product/profile-browser residue before and after every run. `output\codex-evidence\final-readiness-20260717-ui-p2-non-ready.json` is correctly `APP_NEEDS_WORK`, 7/8, with only `real-ad-execution-readback` failing the formal readiness gates.
 
-The UI P2 NON_READY bundle is exported at `output\delivery-bundles\v15-delivery-bundle-20260717-ui-p2-non-ready\delivery-bundle-manifest.json` with manifest status `APP_NEEDS_WORK`, and strict `verify:v15-non-ready-safety` passes 17/17. Outside the eight formal gates, external distribution remains blocked by three P1 hardening items: navigation/redirect destination allowlist, `openExternal` protocol allowlist, and legacy plaintext credential migration. Estimated implementation and focused verification time is 4–6 hours. Task 8B requires external human approval/access and distinct Ads UI before/after/reload evidence; once those prerequisites exist, its estimated execution and verification time is 30–60 minutes. Evaluation/audit artifact cleanup is nonblocking.
+The superseded UI P2 NON_READY bundle was exported at `output\delivery-bundles\v15-delivery-bundle-20260717-ui-p2-non-ready\delivery-bundle-manifest.json` with manifest status `APP_NEEDS_WORK`, and strict `verify:v15-non-ready-safety` passed 17/17. At that snapshot, navigation/redirect, external-link, and legacy-credential P1 items were still open; the current external-security candidate above closes them. Task 8B still requires external human approval/access and distinct Ads UI before/after/reload evidence; once those prerequisites exist, its estimated execution and verification time is 30–60 minutes. Evaluation/audit artifact cleanup is nonblocking.
 
 Testing discipline was deliberate: implementation rounds ran only focused incremental tests, followed by exactly one final full suite after code freeze. A separate orchestrator audit independently triggered an intermediate broad suite; that run is not used as delivery evidence and does not replace or duplicate the final frozen-suite record.
 
@@ -132,29 +144,46 @@ The 2026-06-29 global typography refresh completes the spec-level desktop typogr
 
 The 2026-06-25 approval-center refresh adds stamp-style decision feedback for approval and rejection paths. `SEALING`, `PASSED`, `REJECTED`, and `BLOCKED` are visible first-screen status states in `审批中心`; the active approve/reject button now also shows its own `处理中...` spinner/`aria-busy` state while the decision is being recorded. The three-state decision strip also fades non-focused available actions to 40% opacity on hover/focus, so the active approve/review/reject choice is visually isolated. The 2026-06-26 queue-exit refresh adds visible closure after a successful approve or reject: the decided row slides out for 180ms, leaves the local visible queue, and then the page reloads the authoritative queue. These acknowledge local decision recording only and do not replace the manual Ads UI execution/readback proof chain. The same package adds `优化建议` status-bucket filtering plus batch selection for formal-approval-ready rows; bucket filtering is visual triage only, batch handoff only passes selected recommendation IDs to `审批中心` as UI context, and every row still requires per-row approval and readback evidence before any manual Ads UI action.
 
-## Current UI P2 Evidence
+## Current external-security P1 Evidence
 
-Authoritative evidence:
+| Gate | Evidence |
+| --- | --- |
+| Final readiness | `output\codex-evidence\final-readiness-20260717-external-security-p1-non-ready.json` (`APP_NEEDS_WORK`, 7/8; only Task 8B fails) |
+| Full regression | `output\codex-evidence\full-vitest-external-security-p1-20260717-final.json` (584/584 suites, 1992/1992 tests) |
+| Package launch smoke | `output\codex-evidence\package-launch-smoke-1784276358829.json` (PASS) |
+| Package UI | `output\codex-evidence\package-ui-evidence-20260717-p1\2026-07-17T08-21-12-482Z\manifest.json` (schema v5 PASS; 100%/125% each 8 workspaces + 3 overlays; wide Product/Diagnosis) |
+| Package security | `output\codex-evidence\package-security-boundaries-20260717-p1.json` (11/11 PASS) |
+| Business smoke | `output\codex-evidence\current-business-ui-smoke-1784276952256.json` (PASS) |
+| Installer SHA-256 | `A08715C80D660DDA615324FC146A164C5D3C19232BE6E55E90859348C9C01637` |
+| Portable SHA-256 | `E8961E89B53A19F1C11D9A0DAFCC1797B0DE7C90B7972196B52D0F9F062FE1FE` |
+| win-unpacked EXE SHA-256 | `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` |
+| App content SHA-256 | `8A9132109B9C2C6A4C1AA6A1EB18EFC675E53403004CF7000CC6C2A5C01AFF34` |
+| Main bundle SHA-256 | `74046AD904EE2DFFB77E892367F7D38E0BD695F89A5F7A88BE6EF97A848035B9` |
+| Current NON_READY bundle | `output\delivery-bundles\v15-delivery-bundle-20260717-external-security-p1-non-ready` (exported after docs freeze; strict safety 19/19 PASS) |
+
+## Superseded UI P2 Evidence
+
+Historical evidence for this superseded snapshot:
 
 | Gate | Evidence |
 | --- | --- |
 | Final readiness | `output\codex-evidence\final-readiness-20260717-ui-p2-non-ready.json`（`APP_NEEDS_WORK`，7/8 gates passed；唯一失败门为 `real-ad-execution-readback`） |
 | Evidence selection | `output\codex-evidence\v15-final-readiness-evidence-manifest-20260717-ui-p2-non-ready.json` |
 | Delivery bundle | `output\delivery-bundles\v15-delivery-bundle-20260717-ui-p2-non-ready\delivery-bundle-manifest.json`（已导出；manifest status `APP_NEEDS_WORK`） |
-| NON_READY safety | 严格 `verify:v15-non-ready-safety` 17/17 PASS；结果属于当前 UI P2 bundle，不复用 Task 8A 结果 |
+| NON_READY safety | 严格 `verify:v15-non-ready-safety` 17/17 PASS；结果仅属于已取代的 UI P2 bundle，不复用 Task 8A 或当前 external-security 结果 |
 | Package launch smoke | `output\codex-evidence\package-launch-smoke-1784269772321.json`（win-unpacked + portable PASS） |
 | Package UI evidence | `output\codex-evidence\package-ui-evidence\2026-07-17T06-33-01-390Z\manifest.json`（schema v5；100%/125% + 1400×900 PASS；30 PNG、0 console/page/dropped diagnostics；每轮 DB/product/profile-browser isolation PASS） |
 | Workspace UI evidence | `output\codex-evidence\workspace-ui-task6\workspace-ui-evidence-run-2026-07-17T06-23-26-823Z.json`（46/46，包含 error/retry、AI busy 与 reduced-motion） |
 | Business UI smoke | `output\codex-evidence\current-business-ui-smoke-1784270629248.json`（5/5） |
 | Full regression | `output\codex-evidence\ui-p2-full-vitest-20260717-final.json`（170/170 files，576/576 suites，1950/1950 tests） |
-| Current report/import authority | `batch_20260625013151957_ajw0nb`（8/8 imported report types，6827 imported total rows；产品页 1879 为当前 ASIN） |
+| Snapshot report/import authority | `batch_20260625013151957_ajw0nb`（8/8 imported report types，6827 imported total rows；产品页 1879 为当时所选 ASIN） |
 | Authority DB snapshot SHA-256 | `9E82065E780B38A4D3348F4EE723DDF1A50142F3900192E612730CC1C8017439` |
 | Live ad strategy diagnosis | `output\codex-evidence\ad-strategy-live-1782358641101.json` |
 | Historical 2026-06-10 bundle | `output\delivery-bundles\v15-delivery-bundle-2026-06-10T07-00-21-859Z\delivery-bundle-manifest.json` |
 | Product UI smoke | `output\codex-evidence\v15-product-readiness-ui-smoke-1781072779324.json` |
 | Installer | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
 
-Current UI P2 package artifacts:
+Historical UI P2 package artifacts:
 
 | Field | Value |
 | --- | --- |
@@ -170,7 +199,19 @@ Current UI P2 package artifacts:
 
 Superseded pre-drawer-layout package facts (historical only): installer `4104B07DAED970CEB7C805225C642CF3284FAE3C6535715201524A0CEFD19693`, portable `FA1D315F478CE751A301F5ED7B07111E8D012620C2B8BB0332E748CAF4CC9A31`, win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`, app content `43DB54D577CAD1C5144B8262E0B85402CD411846BB81EC98613A8098AFB6B903`, smoke `output\codex-evidence\package-launch-smoke-1784098235751.json`, evidence manifest `output\codex-evidence\v15-final-readiness-evidence-manifest-2026-07-15T06-51-17-826Z.json`, and final readiness `output\codex-evidence\final-readiness-2026-07-15T06-51-27-719Z.json`. These values cannot be used for the final candidate.
 
-## Verification Snapshot
+## Current Verification Snapshot
+
+| Check | Result |
+| --- | --- |
+| Final full Vitest | 584/584 suites and 1992/1992 tests passed at `output\codex-evidence\full-vitest-external-security-p1-20260717-final.json` |
+| Package launch | PASS at `output\codex-evidence\package-launch-smoke-1784276358829.json` |
+| Package UI | Schema v5 PASS at `output\codex-evidence\package-ui-evidence-20260717-p1\2026-07-17T08-21-12-482Z\manifest.json` |
+| Package security | 11/11 PASS at `output\codex-evidence\package-security-boundaries-20260717-p1.json` |
+| Current business UI smoke | PASS at `output\codex-evidence\current-business-ui-smoke-1784276952256.json` |
+| Final readiness | `APP_NEEDS_WORK`, 7/8; only `real-ad-execution-readback` fails |
+| READY/NON_READY safety contract | Both bind EXE, app content, and main bundle plus exact package UI/package-security bundle copies; current NON_READY bundle passed all 19 strict checks after documentation freeze |
+
+## Superseded UI P2 Verification Snapshot
 
 Completed final-node checks:
 
@@ -195,14 +236,16 @@ Historical 2026-06-10 post-audit fix:
 
 ## Safety Boundary
 
-The app is a locally closed `APP_NEEDS_WORK` NON_READY candidate with the following explicit boundary. Bundle export and strict NON_READY safety are complete, but it is not an externally distributable handoff until the three out-of-gate P1 hardening items are complete:
+The app is an `APP_NEEDS_WORK` NON_READY candidate with the following explicit boundary. The three external-security P1 hardening items are complete; the post-documentation bundle export and strict NON_READY safety are complete, and external completion remains blocked only by Task 8B:
 
 - Historical real ad execution readiness was demonstrated by one user-approved, low-risk manual Ads UI sample on a paused FT-US keyword row `door lock`, with live bid `1.30 -> 1.17`. It is baseline evidence only and does not satisfy the current v2 positive recommendation id/revision and SQLite authority contract.
 - The app-side ad execution button remains fail-closed. It does not batch-write ads.
 - The `执行回读` time/value contract cards are pre-export UX checks only; they help operators see blockers early but do not replace distinct screenshots, valid time ordering, before/after value change, readback equality, and `verify:ad-readback`.
 - Future ad changes must each bind their own store, marketplace, portfolio, campaign, ad group, ASIN, entity type, entity name, action type, source recommendation, real source report file(s), original source row, live before value, live after value, approval proof, screenshots, and readback evidence.
 - The verified D6 paused-target sample must not be reused as proof for another product, ad group, target, or bid.
-- Navigation/redirect destinations and `openExternal` protocols require explicit allowlists, and legacy plaintext credentials require a controlled migration before external distribution; estimated completion is 4–6 hours.
+- Navigation/redirect/window-open allowlists, packaged dev-downgrade prevention, Main-only saved passwords, and legacy plaintext migration are implemented and package-security evidence passes 11/11.
+- Task 8B still requires a current positive recommendation, human approval/access, distinct Amazon Ads v2 before/after/reload screenshots, and the correct authority-DB recommendationId; estimated completion is 30–60 minutes once prerequisites exist.
+- P2-only follow-ups are domain-level external-link allowlisting beyond `http(s)` (optional 1–2 hours), reused-ERP-session password validation, and an adversarial-`NODE_ENV` packaged dynamic smoke.
 
 ## Commit Boundary
 
