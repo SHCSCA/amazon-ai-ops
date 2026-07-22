@@ -48,3 +48,11 @@ storage/
 
 # Local Superpowers execution ledger
 .superpowers/
+
+# Local Superdesign temporary component templates
+.superdesign/tmp/
+
+# Mission Control prototype local runtime artifacts
+amazon-ai-ops-mission-control-prototype/.npm-cache/
+amazon-ai-ops-mission-control-prototype/.npmrc
+amazon-ai-ops-mission-control-prototype/evidence/
