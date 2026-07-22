@@ -51,3 +51,13 @@ export {
   verifyOperationEventArchiveSchema,
 } from './0005-operation-event-archive';
 export type { OperationEventArchiveMigrationResult } from './0005-operation-event-archive';
+export {
+  MISSION_DOMAIN_MIGRATION_CHECKSUM,
+  MISSION_DOMAIN_MIGRATION_NAME,
+  MISSION_DOMAIN_MIGRATION_VERSION,
+  MISSION_DOMAIN_TABLES,
+  MissionDomainMigrationError,
+  runMissionDomainMigration,
+  verifyMissionDomainSchema,
+} from './0006-mission-domain';
+export type { MissionDomainMigrationResult } from './0006-mission-domain';

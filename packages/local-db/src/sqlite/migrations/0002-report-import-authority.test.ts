@@ -73,7 +73,7 @@ describe('report import authority migration v2', () => {
       `).get(REPORT_IMPORT_AUTHORITY_MIGRATION_VERSION);
       expect(second).toEqual(first);
       expect(reopened.prepare(`SELECT COUNT(*) AS count FROM schema_migrations`).get())
-        .toEqual({ count: 5 });
+        .toEqual({ count: 6 });
     } finally {
       reopened.close();
     }

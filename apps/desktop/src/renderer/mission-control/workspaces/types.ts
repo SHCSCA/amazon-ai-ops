@@ -47,6 +47,7 @@ export interface MissionControlWorkspaceViewProps {
   bridgePhase?: 'idle' | 'loading' | 'ready' | 'error';
   bridgeError?: string | null;
   previewMode: boolean;
+  onRefreshAuthority?: () => Promise<void> | void;
   onNavigate: (intent: NavigationIntent) => void;
   legacySlot?: LegacyWorkspaceSlot;
   storeCrudSlot?: React.ReactNode;

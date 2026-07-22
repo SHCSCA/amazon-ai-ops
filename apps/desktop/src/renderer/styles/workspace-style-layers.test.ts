@@ -41,6 +41,7 @@ describe('task-first workspace style layers', () => {
     expect(css).toMatch(/:focus-visible/);
     expect(css).toMatch(/outline:/);
     expect(style('foundations.css')).toMatch(/\.workspace-page-frame\s*\{[^}]*letter-spacing:\s*0/s);
+    expect(style('foundations.css')).toMatch(/\.sr-only\s*\{[^}]*clip-path:\s*inset\(50%\)[^}]*overflow:\s*hidden/s);
     expect(style('workspace.css')).toMatch(/\.workspace-page-frame \.status-pill\s*\{[^}]*font-size:\s*var\(--workspace-font-support\)/s);
     expect(style('shell.css')).toMatch(/\.topbar \.scope-title-row span,[\s\S]*font-size:\s*var\(--workspace-font-support\)/);
   });
@@ -101,6 +102,7 @@ describe('task-first workspace style layers', () => {
     expect(css).toMatch(/\.task-banner--compact \.task-banner__title-line h2\s*\{[^}]*white-space:\s*nowrap/s);
     expect(css).toMatch(/\.task-banner--compact \.task-banner__description\s*\{[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s);
     expect(css).toMatch(/\.task-banner--compact \.task-banner__meta\s*\{[^}]*position:\s*absolute[^}]*clip:\s*rect\(0 0 0 0\)/s);
+    expect(css).toMatch(/\.task-banner--compact \.task-banner__disabled-reason\s*\{[^}]*position:\s*absolute[^}]*clip-path:\s*inset\(50%\)/s);
   });
 
   it('keeps the unified decisions queue dense and preserves all five columns at 1200px', () => {

@@ -4,6 +4,7 @@ import * as path from 'path';
 import {
   prepareStoreAuthorityMigrationBackup,
   runListingStoreAuthorityMigration,
+  runMissionDomainMigration,
   runOperationEventArchiveMigration,
   runProductStoreAuthorityMigration,
   runReportImportAuthorityMigration,
@@ -640,6 +641,7 @@ function runMigrations(database: Database.Database): void {
   runProductStoreAuthorityMigration(database);
   runListingStoreAuthorityMigration(database);
   runOperationEventArchiveMigration(database);
+  runMissionDomainMigration(database);
 }
 
 function installStoreScopedMetricIdentitySafeguards(database: Database.Database): void {

@@ -1081,6 +1081,11 @@ describe('browser preview bootstrap integration', () => {
       scenarioId: 'mixed-recommendations',
     });
     expect(await getPreviewRecommendations(target.electronAPI)).toHaveLength(2);
+    const [store] = await target.electronAPI.listStores();
+    const storeView = await target.electronAPI.switchStore(store.storeId);
+    expect(target.electronAPI.missionDomain).toBeTruthy();
+    await expect(target.electronAPI.missionDomain.missions.list(storeView.context, { includeArchived: true }))
+      .resolves.toHaveLength(7);
   });
 
   it('preserves a pre-injected Electron API instead of replacing smoke or preload behavior', () => {
@@ -1175,7 +1180,14 @@ describe('Mission Control development preview bridge', () => {
       authoritativeContext: view.context,
     }));
     expect(response.data.capabilities.length).toBeGreaterThan(22);
-    expect(response.data.capabilities.every((row: any) => row.state === 'PROTOTYPE_ONLY')).toBe(true);
+    expect(response.data.capabilities.every((row: any) => row.state === 'PROTOTYPE_ONLY'
+      || (row.capabilityId === 'decisions.grants.issue'
+        && row.state === 'BLOCKED'
+        && row.blockerCode === 'AD_ENTITY_REGISTRY_NOT_IMPLEMENTED'))).toBe(true);
+    expect(response.data.capabilities.find((row: any) => row.capabilityId === 'decisions.grants.issue')?.view)
+      .toBe('decisions/decided');
+    expect(response.data.capabilities.find((row: any) => row.capabilityId === 'decisions.grants.revoke')?.view)
+      .toBe('decisions/decided');
     const serialized = JSON.stringify(response);
     expect(serialized).not.toMatch(/password|cookie|token|apiKey|filePath|profilePath/i);
     expect(serialized).not.toMatch(/[A-Za-z]:[\\/]/);
@@ -1632,21 +1644,27 @@ describe('Mission Control development preview bridge', () => {
     expect(productionMarkup).not.toContain('must-not-mount-in-production');
   });
 
-  it('blocks policy auto and strictly rejects extra request fields', async () => {
+  it('shares the explicit preview Policy runtime with the shell and strictly rejects extra request fields', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [store] = await api.listStores();
     const view = await api.switchStore(store.storeId);
-    const blocked = await api.missionControl.command({
+    const applied = await api.missionControl.command({
       command: 'set-autonomy-mode',
       requestId: 'preview-auto',
       contextEpoch: 1,
       context: view.context,
       payload: { mode: 'policy_auto' },
     });
-    expect(blocked).toEqual(expect.objectContaining({
-      status: 'BLOCKED',
-      currentMode: 'manual_approval',
-      blockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED',
+    expect(applied).toEqual(expect.objectContaining({
+      status: 'APPLIED',
+      currentMode: 'policy_auto',
+    }));
+    expect(applied.detail).toMatch(/仅开发预览|不授权|不执行/);
+    const refreshed = await api.missionControl.query({
+      query: 'workspace-bootstrap', requestId: 'preview-auto-query', contextEpoch: 1, context: view.context,
+    });
+    expect(refreshed.data.autonomy).toEqual(expect.objectContaining({
+      currentMode: 'policy_auto', policyAutoAvailable: true,
     }));
 
     await expect(api.missionControl.query({

@@ -310,6 +310,19 @@
   white-space: nowrap;
 }
 
+.task-banner--compact .task-banner__disabled-reason {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  border: 0;
+  white-space: nowrap;
+}
+
 .task-banner--compact .task-banner__actions {
   align-items: center;
 }

@@ -50,6 +50,7 @@ import type {
   VersionedStoreListingContent,
 } from '../main/store-scoped-ad-listing-service';
 import { createMissionControlPreloadApi } from './mission-control-api';
+import { createMissionDomainPreloadApi } from './mission-domain-api';
 
 type AuthoritativeLingxingCollectionRange = {
   start: string;
@@ -94,6 +95,7 @@ ipcRenderer.on('business-ui:data-updated', () => {
 // ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
   missionControl: createMissionControlPreloadApi(ipcRenderer),
+  missionDomain: createMissionDomainPreloadApi(ipcRenderer),
 
   // App
   getVersion: () => ipcRenderer.invoke('app:get-version'),

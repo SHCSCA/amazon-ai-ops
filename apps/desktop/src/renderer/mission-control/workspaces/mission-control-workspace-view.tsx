@@ -11,6 +11,7 @@ import { ObjectsWorkspace } from './objects-workspace';
 const CANONICAL_KIND_BY_VIEW = {
   'today/overview': 'today',
   'missions/overview': 'missions',
+  'missions/facts': 'missions',
   'decisions/recommendations': 'decisions',
   'decisions/approval': 'decisions',
   'decisions/decided': 'decisions',
@@ -29,6 +30,7 @@ export function MissionControlWorkspaceView({
   bridgePhase,
   bridgeError,
   previewMode,
+  onRefreshAuthority,
   onNavigate,
   legacySlot,
   storeCrudSlot,
@@ -83,6 +85,7 @@ export function MissionControlWorkspaceView({
         autonomy={autonomy}
         capabilities={capabilities}
         kind={kind}
+        onRefreshAuthority={onRefreshAuthority}
         previewMode={previewMode}
         storeContext={storeContext}
         view={definition.view}

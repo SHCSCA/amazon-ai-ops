@@ -89,6 +89,7 @@ export type MissionControlCapabilityAction =
   | 'create'
   | 'update'
   | 'start'
+  | 'complete'
   | 'pause'
   | 'resume'
   | 'approve'
@@ -237,7 +238,11 @@ export interface MissionControlSetAutonomyModeCommandRequest extends MissionCont
 
 export type MissionControlCommandRequest = MissionControlSetAutonomyModeCommandRequest;
 
-export type MissionControlCommandStatus = 'NOOP' | 'BLOCKED';
+/**
+ * `APPLIED` is returned only after Main has durably committed the requested
+ * authority change. `NOOP` means the durable state already matched.
+ */
+export type MissionControlCommandStatus = 'APPLIED' | 'NOOP' | 'BLOCKED';
 
 export interface MissionControlSetAutonomyModeCommandResponse extends MissionControlResponseMeta {
   command: 'set-autonomy-mode';

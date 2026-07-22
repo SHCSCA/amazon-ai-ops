@@ -63,14 +63,16 @@
 
 | ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
 | --- | --- | --- | --- | --- |
-| S4-01 | TODO | shared-types/local-db | S3 | Mission、Decision、Policy Version、Experiment、Causal contracts/tables |
-| S4-02 | TODO | Main domain services/preload | S4-01 | 状态机、Repository、事务、revision、审计 IPC |
-| S4-03 | TODO | Missions workspace | S4-02 | 飞行计划、检查点、暂停/恢复/归档与关联链 |
-| S4-04 | TODO | Decisions workspace | S4-02 | Crux decision、备选方案、CAS、MissionGrant、整批授权 |
-| S4-05 | TODO | Policy workspace | S4-02 | 店铺/对象策略、版本、模式、限额、熔断、kill switch |
-| S4-06 | TODO | Experiments workspace | S4-02 | 假设、指标、守护栏、观察窗、结论和引用保护 |
-| S4-07 | TODO | Memory workspace | S4-02/S4-06 | 追加式 CausalLedger、证据引用与索引 |
-| S4-08 | TODO | 阶段质量 owner | S4-01..07 | 状态机/CAS/跨店/因果链/Renderer 集中测试、commit/push |
+| S4-01 | REVIEW | shared-types/local-db | S3 | Mission、Decision、Policy Version、Experiment、Causal contracts/tables |
+| S4-02 | REVIEW | Main domain services/preload | S4-01 | 状态机、Repository、事务、revision、审计 IPC |
+| S4-03 | REVIEW | Missions workspace | S4-02 | 飞行计划、检查点、暂停/恢复/归档与关联链 |
+| S4-04 | REVIEW | Decisions workspace | S4-02 | Crux decision、备选方案、CAS、MissionGrant、整批授权 |
+| S4-05 | REVIEW | Policy workspace | S4-02 | 店铺/对象策略、版本、模式、限额、熔断、kill switch |
+| S4-06 | REVIEW | Experiments workspace | S4-02 | 假设、指标、守护栏、观察窗、结论和引用保护 |
+| S4-07 | REVIEW | Memory workspace | S4-02/S4-06 | 追加式 CausalLedger、证据引用与索引 |
+| S4-08 | REVIEW | 阶段质量 owner | S4-01..07 | 状态机/CAS/跨店/因果链/Renderer 集中测试、commit/push |
+
+阶段 4 集中验证（2026-07-22）：20 个领域/Repository/IPC/preload/Renderer 聚焦文件 219/219 项通过；排除两个因本机缺少 Playwright Chromium Headless Shell 而无法启动的证据脚本后，非浏览器完整回归 238/238 个文件通过，2530 项通过、2 项按预期跳过。`shared-types`、`local-db`、`desktop` typecheck 通过，Main、Preload、Renderer 生产构建通过（Renderer 4723 modules）。用户选定的应用内浏览器已按相同 1280×720 视口逐页对照原型与集成版，覆盖 Mission、Decision、Policy、Experiment、Memory 五个工作区及核心 CRUD/状态切换/跨店隔离交互；`missions/facts` 已切换到 canonical Mission 事实面且不再暴露新建 Mission。完整 `pnpm test` 的业务测试均通过，唯一两项失败均为上述本地 Playwright 可执行文件缺失，未冒充正式浏览器证据。
 
 ## 阶段 5：真实分析与双模式授权
 

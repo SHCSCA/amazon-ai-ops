@@ -32,6 +32,11 @@ import {
   CanonicalWorkspaceSurface,
   type CanonicalWorkspaceSurfaceKind,
 } from './canonical-workspace-surfaces';
+import { MissionsWorkspace } from './missions-workspace';
+import { DecisionsWorkspace, type DecisionWorkspaceView } from './decisions-workspace';
+import { PolicyWorkspace } from './policy-workspace';
+import { ExperimentsWorkspace } from './experiments-workspace';
+import { MemoryWorkspace } from './memory-workspace';
 import './canonical-workspace-surfaces.css';
 
 type CanonicalWorkspaceKey = CanonicalWorkspaceSurfaceKind;
@@ -230,6 +235,7 @@ export type CanonicalWorkspaceProps = {
   storeContext: StoreContextEnvelope | null;
   capabilities?: readonly MissionControlCapabilityProjection[];
   autonomy?: MissionControlAutonomyProjection | null;
+  onRefreshAuthority?: () => Promise<void> | void;
   previewMode: boolean;
 };
 
@@ -239,6 +245,7 @@ export function CanonicalWorkspace({
   storeContext,
   capabilities,
   autonomy,
+  onRefreshAuthority,
   previewMode,
 }: CanonicalWorkspaceProps) {
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -291,6 +298,85 @@ export function CanonicalWorkspace({
       </div>
     </ResponsiveInspector>
   );
+
+  if (kind === 'missions') {
+    return (
+      <>
+        <MissionsWorkspace
+          blockedReason={blockedReason}
+          capabilities={capabilities}
+          onInspectBoundary={() => setInspectorOpen(true)}
+          previewMode={previewMode}
+          storeContext={storeContext}
+          view={view === 'missions/facts' ? 'missions/facts' : 'missions/overview'}
+        />
+        {inspector}
+      </>
+    );
+  }
+
+  if (kind === 'decisions') {
+    return (
+      <>
+        <DecisionsWorkspace
+          blockedReason={blockedReason}
+          capabilities={capabilities}
+          onInspectBoundary={() => setInspectorOpen(true)}
+          previewMode={previewMode}
+          storeContext={storeContext}
+          view={view as DecisionWorkspaceView}
+        />
+        {inspector}
+      </>
+    );
+  }
+
+  if (kind === 'policy') {
+    return (
+      <>
+        <PolicyWorkspace
+          authoritativeAutonomy={autonomy}
+          blockedReason={blockedReason}
+          capabilities={capabilities}
+          onInspectBoundary={() => setInspectorOpen(true)}
+          onRefreshAuthority={onRefreshAuthority}
+          previewMode={previewMode}
+          storeContext={storeContext}
+        />
+        {inspector}
+      </>
+    );
+  }
+
+  if (kind === 'experiments') {
+    return (
+      <>
+        <ExperimentsWorkspace
+          blockedReason={blockedReason}
+          capabilities={capabilities}
+          onInspectBoundary={() => setInspectorOpen(true)}
+          previewMode={previewMode}
+          storeContext={storeContext}
+        />
+        {inspector}
+      </>
+    );
+  }
+
+  if (kind === 'memory') {
+    return (
+      <>
+        <MemoryWorkspace
+          blockedReason={blockedReason}
+          capabilities={capabilities}
+          onInspectBoundary={() => setInspectorOpen(true)}
+          previewMode={previewMode}
+          storeContext={storeContext}
+        />
+        {inspector}
+      </>
+    );
+  }
 
   if (previewEnabled) {
     return (

@@ -37,6 +37,13 @@ import {
   type RecommendationDecisionStatus,
 } from '@amazon-ai-ops/rules-engine';
 import type { BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, RecommendationView } from './types';
+import {
+  createMissionDomainWindowSurface,
+  createPreviewDecisionDomainApi,
+  createPreviewExperimentMemoryDomainSuite,
+  createPreviewMissionDomainApi,
+  createPreviewPolicyDomainApi,
+} from './mission-control/workspaces/mission-domain-window-api';
 
 type PreviewRecommendation = ActionRecommendation & RecommendationView;
 
@@ -290,17 +297,29 @@ const PREVIEW_MISSION_CAPABILITY_SPECS: readonly PreviewCapabilitySpec[] = [
   ['missions.mission.pause', 'missions', 'missions/overview', 'pause'],
   ['missions.mission.resume', 'missions', 'missions/overview', 'resume'],
   ['missions.mission.archive', 'missions', 'missions/overview', 'archive'],
+  ['missions.mission.restore', 'missions', 'missions/overview', 'restore'],
+  ['missions.checkpoint.create', 'missions', 'missions/facts', 'create'],
   ['missions.mission.delete', 'missions', 'missions/overview', 'delete'],
   ['missions.mission.facts.view', 'missions', 'missions/facts', 'view', 'ad-quant'],
   ['decisions.recommendations.view', 'decisions', 'decisions/recommendations', 'view', 'recommendations'],
+  ['decisions.recommendations.create', 'decisions', 'decisions/recommendations', 'create'],
+  ['decisions.recommendations.update', 'decisions', 'decisions/recommendations', 'update'],
   ['decisions.approval.view', 'decisions', 'decisions/approval', 'view', 'approval'],
+  ['decisions.approval.approve', 'decisions', 'decisions/approval', 'approve'],
+  ['decisions.approval.reject', 'decisions', 'decisions/approval', 'reject'],
+  ['decisions.grants.issue', 'decisions', 'decisions/decided', 'approve'],
+  ['decisions.grants.revoke', 'decisions', 'decisions/decided', 'reject'],
   ['decisions.decided.view', 'decisions', 'decisions/decided', 'view', 'approval'],
   ['experiments.experiment.view', 'experiments', 'experiments/ledger', 'view'],
   ['experiments.experiment.create', 'experiments', 'experiments/ledger', 'create'],
   ['experiments.experiment.update', 'experiments', 'experiments/ledger', 'update'],
+  ['experiments.experiment.start', 'experiments', 'experiments/ledger', 'start'],
   ['experiments.experiment.pause', 'experiments', 'experiments/ledger', 'pause'],
   ['experiments.experiment.resume', 'experiments', 'experiments/ledger', 'resume'],
+  ['experiments.experiment.complete', 'experiments', 'experiments/ledger', 'complete'],
   ['experiments.experiment.archive', 'experiments', 'experiments/ledger', 'archive'],
+  ['experiments.experiment.restore', 'experiments', 'experiments/ledger', 'restore'],
+  ['experiments.observation.create', 'experiments', 'experiments/ledger', 'create'],
   ['experiments.experiment.delete', 'experiments', 'experiments/ledger', 'delete'],
   ['execution.queue.view', 'execution', 'execution/live', 'view'],
   ['execution.queue.start', 'execution', 'execution/live', 'start'],
@@ -310,6 +329,8 @@ const PREVIEW_MISSION_CAPABILITY_SPECS: readonly PreviewCapabilitySpec[] = [
   ['execution.queue.kill-switch', 'execution', 'execution/live', 'kill-switch'],
   ['execution.evidence.view', 'execution', 'execution/evidence', 'view', 'readback'],
   ['memory.timeline.view', 'memory', 'memory/timeline', 'view'],
+  ['memory.timeline.create', 'memory', 'memory/timeline', 'create'],
+  ['memory.timeline.correct', 'memory', 'memory/timeline', 'update'],
   ['memory.timeline.export', 'memory', 'memory/timeline', 'export'],
   ['memory.timeline.rebuild-index', 'memory', 'memory/timeline', 'rebuild-index'],
   ['objects.products.view', 'objects', 'objects/products', 'view', 'product-management'],
@@ -330,12 +351,18 @@ const PREVIEW_MISSION_CAPABILITY_SPECS: readonly PreviewCapabilitySpec[] = [
   ['collection.reports.view', 'collection', 'collection/reports', 'view', 'data-collection'],
   ['collection.import-check.view', 'collection', 'collection/import-check', 'view', 'data-import-validation'],
   ['policy.version.view', 'policy', 'policy/rules', 'view'],
+  ['policy.policy.create', 'policy', 'policy/rules', 'create'],
+  ['policy.policy.update', 'policy', 'policy/rules', 'update'],
+  ['policy.policy.archive', 'policy', 'policy/rules', 'archive'],
+  ['policy.policy.restore', 'policy', 'policy/rules', 'restore'],
   ['policy.version.create', 'policy', 'policy/rules', 'create'],
   ['policy.version.update', 'policy', 'policy/rules', 'update'],
   ['policy.version.enable', 'policy', 'policy/rules', 'enable'],
   ['policy.version.disable', 'policy', 'policy/rules', 'disable'],
+  ['policy.runtime.mode.set', 'policy', 'policy/rules', 'update'],
   ['policy.version.publish', 'policy', 'policy/rules', 'publish'],
   ['policy.kill-switch.enable', 'policy', 'policy/rules', 'enable'],
+  ['policy.kill-switch.clear', 'policy', 'policy/rules', 'disable'],
   ['settings.ai-and-local.view', 'settings', 'settings/ai-and-local', 'view', 'settings'],
   ['settings.store-config.create', 'settings', 'settings/ai-and-local', 'create'],
   ['settings.store-config.update', 'settings', 'settings/ai-and-local', 'update'],
@@ -351,9 +378,13 @@ export const PREVIEW_MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabi
     view,
     action,
     ...(legacyRoute ? { legacyRoute } : {}),
-    state: 'PROTOTYPE_ONLY',
-    blockerCode: 'DEV_PREVIEW_ONLY',
-    detail: '仅开发预览 fixture；不代表生产服务、真实执行或真实回读已经接入。',
+    state: capabilityId === 'decisions.grants.issue' ? 'BLOCKED' : 'PROTOTYPE_ONLY',
+    blockerCode: capabilityId === 'decisions.grants.issue'
+      ? 'AD_ENTITY_REGISTRY_NOT_IMPLEMENTED'
+      : 'DEV_PREVIEW_ONLY',
+    detail: capabilityId === 'decisions.grants.issue'
+      ? 'MissionGrant 批次合同可交互预览，但稳定广告实体注册表未接入，不能签发真实执行授权。'
+      : '仅开发预览 fixture；不代表生产服务、真实执行或真实回读已经接入。',
   }));
 
 export interface PreviewBootstrapInput {
@@ -2476,9 +2507,17 @@ export function createBrowserPreviewElectronApi(
       .slice(offset, offset + limit)
       .map((row) => clonePreviewSnapshot(row));
   };
+  // One explicit in-memory domain suite backs both the workspace bridge and
+  // the shell autonomy projection. This prevents preview from presenting two
+  // conflicting sources of truth while remaining clearly non-production.
+  const previewMissionDomainApi = createPreviewMissionDomainApi();
+  const previewDecisionDomainApi = createPreviewDecisionDomainApi();
+  const previewPolicyDomainApi = createPreviewPolicyDomainApi();
+  const previewExperimentMemoryDomain = createPreviewExperimentMemoryDomainSuite();
   const previewMissionQuery = async (input: MissionControlQueryRequest): Promise<MissionControlQueryResponse> => {
     const request = normalizeMissionControlQueryRequest(input);
     const authoritative = requirePreviewMissionAuthority(request.context);
+    const runtime = await previewPolicyDomainApi.getPolicyRuntime(authoritative);
     return {
       query: 'workspace-bootstrap',
       requestId: request.requestId,
@@ -2488,11 +2527,13 @@ export function createBrowserPreviewElectronApi(
       data: {
         capabilities: clonePreviewSnapshot([...PREVIEW_MISSION_CONTROL_CAPABILITIES]),
         autonomy: {
-          currentMode: 'manual_approval',
+          currentMode: runtime.mode,
           manualApprovalAvailable: true,
-          policyAutoAvailable: false,
-          policyAutoBlockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED',
-          policyAutoBlockerDetail: '开发预览不具备真实 Main 全自动授权。',
+          policyAutoAvailable: runtime.canAutoExecute,
+          ...(!runtime.canAutoExecute ? {
+            policyAutoBlockerCode: 'PREVIEW_POLICY_RUNTIME_BLOCKED',
+            policyAutoBlockerDetail: '仅开发预览的启用版本、kill switch 或只读熔断状态不满足安全切换条件。',
+          } : {}),
         },
         today: {
           storeId: authoritative.storeId,
@@ -2533,19 +2574,23 @@ export function createBrowserPreviewElectronApi(
   const previewMissionCommand = async (input: MissionControlCommandRequest): Promise<MissionControlCommandResponse> => {
     const request = normalizeMissionControlCommandRequest(input);
     const authoritative = requirePreviewMissionAuthority(request.context);
-    const auto = request.payload.mode === 'policy_auto';
+    const before = await previewPolicyDomainApi.getPolicyRuntime(authoritative);
+    const runtime = await previewPolicyDomainApi.setAutonomyMode(authoritative, {
+      expectedRevision: before.revision,
+      mode: request.payload.mode,
+      reason: 'dev_preview_shell_mode_change',
+    });
     return {
       command: 'set-autonomy-mode',
       requestId: request.requestId,
       contextEpoch: request.contextEpoch,
       authoritativeContext: clonePreviewSnapshot(authoritative),
       completedAt: new Date().toISOString(),
-      status: auto ? 'BLOCKED' : 'NOOP',
-      currentMode: 'manual_approval',
-      ...(auto ? { blockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED' } : {}),
-      detail: auto
-        ? '开发预览不会伪造全自动授权或真实广告执行。'
-        : '开发预览已保持人工审批模式。',
+      status: 'APPLIED',
+      currentMode: runtime.mode,
+      detail: runtime.mode === 'policy_auto'
+        ? '仅开发预览已切换策略内自动；不授权或执行真实 Amazon Ads。'
+        : '仅开发预览已切换人工审批；不改变任何生产运行时。',
     };
   };
 
@@ -2554,6 +2599,13 @@ export function createBrowserPreviewElectronApi(
       query: previewMissionQuery,
       command: previewMissionCommand,
     },
+    missionDomain: createMissionDomainWindowSurface(
+      previewMissionDomainApi,
+      previewDecisionDomainApi,
+      previewPolicyDomainApi,
+      previewExperimentMemoryDomain.experiments,
+      previewExperimentMemoryDomain.memory,
+    ),
     storeScopedObjectsPreviewOnly: true,
     storeScopedAdListingPreviewOnly: true,
     listStores: async () => clonePreviewSnapshot(previewStores),

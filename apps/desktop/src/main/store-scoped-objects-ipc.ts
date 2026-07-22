@@ -30,8 +30,29 @@ export interface StoreScopedObjectsIpcRegistrar {
 }
 
 export interface StoreScopedObjectsIpcEvents {
-  onObjectsChanged?(context: StoreContextEnvelope): void;
+  onObjectsChanged?(
+    context: StoreContextEnvelope,
+    mutation: StoreScopedObjectMutation,
+  ): void;
 }
+
+/**
+ * Sanitized mutation receipt emitted only after the authoritative service has
+ * completed the write. Main uses the operation-event receipt to append (or
+ * idempotently reconcile) the matching CausalLedger fact without asking the
+ * Renderer to restate store or entity authority.
+ */
+export type StoreScopedObjectMutation =
+  | {
+      entityType: 'product';
+      action: 'create' | 'update' | 'archive';
+      record: unknown;
+    }
+  | {
+      entityType: 'operation_event';
+      action: 'create' | 'update' | 'archive' | 'restore';
+      record: unknown;
+    };
 
 type StoreScopedObjectsPort = Pick<
   StoreScopedObjectsService,
@@ -74,19 +95,25 @@ export function registerStoreScopedObjectsIpcHandlers(
   ipc.handle('store-objects:products:create', (_event, raw) => {
     const request = readAuthorizedRequest<StoreProductCreateInput>(raw);
     const result = service.createProduct(request.storeContext, request.input);
-    events.onObjectsChanged?.(request.storeContext);
+    events.onObjectsChanged?.(request.storeContext, {
+      entityType: 'product', action: 'create', record: result,
+    });
     return result;
   });
   ipc.handle('store-objects:products:update', (_event, raw) => {
     const request = readAuthorizedRequest<StoreProductUpdateInput>(raw);
     const result = service.updateProduct(request.storeContext, request.input);
-    events.onObjectsChanged?.(request.storeContext);
+    events.onObjectsChanged?.(request.storeContext, {
+      entityType: 'product', action: 'update', record: result,
+    });
     return result;
   });
   ipc.handle('store-objects:products:archive', (_event, raw) => {
     const request = readAuthorizedRequest<StoreProductArchiveInput>(raw);
     const result = service.archiveProduct(request.storeContext, request.input);
-    events.onObjectsChanged?.(request.storeContext);
+    events.onObjectsChanged?.(request.storeContext, {
+      entityType: 'product', action: 'archive', record: result,
+    });
     return result;
   });
   ipc.handle('store-objects:operation-events:list', (_event, raw) => {
@@ -97,21 +124,40 @@ export function registerStoreScopedObjectsIpcHandlers(
   ipc.handle('store-objects:operation-events:create', (_event, raw) => {
     const request = readAuthorizedRequest<StoreOperationEventCreateInput>(raw);
     const result = service.createOperationEvent(request.storeContext, request.input);
-    events.onObjectsChanged?.(request.storeContext);
+    events.onObjectsChanged?.(request.storeContext, {
+      entityType: 'operation_event', action: 'create', record: result,
+    });
     return projectRendererOperationEvent(result);
   });
   ipc.handle('store-objects:operation-events:update', (_event, raw) => {
     const request = readAuthorizedRequest<StoreOperationEventUpdateInput>(raw);
     const result = service.updateOperationEvent(request.storeContext, request.input);
-    events.onObjectsChanged?.(request.storeContext);
+    events.onObjectsChanged?.(request.storeContext, {
+      entityType: 'operation_event',
+      action: isOperationEventRestore(request.input) ? 'restore' : 'update',
+      record: result,
+    });
     return projectRendererOperationEvent(result);
   });
   ipc.handle('store-objects:operation-events:delete', (_event, raw) => {
     const request = readAuthorizedRequest<StoreOperationEventDeleteInput>(raw);
     const result = service.deleteOperationEvent(request.storeContext, request.input);
-    events.onObjectsChanged?.(request.storeContext);
+    events.onObjectsChanged?.(request.storeContext, {
+      entityType: 'operation_event', action: 'archive', record: result,
+    });
     return projectRendererOperationEvent(result);
   });
+}
+
+function isOperationEventRestore(input: StoreOperationEventUpdateInput): boolean {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+  const patch = (input as { patch?: unknown }).patch;
+  return Boolean(
+    patch
+    && typeof patch === 'object'
+    && !Array.isArray(patch)
+    && (patch as { archived?: unknown }).archived === false,
+  );
 }
 
 function projectRendererOperationEvent<T>(value: T): T {

@@ -21,7 +21,7 @@ export const MISSION_CONTROL_WORKSPACE_REGISTRY = [
     description: '管理 Mission 的目标、约束、检查点与停驻原因。',
     subviews: [
       { id: 'overview', label: 'Mission 队列', description: '目标、约束与检查点', view: 'missions/overview', kind: 'canonical' },
-      { id: 'facts', label: '广告事实', description: '复用真实广告诊断与量化事实', view: 'missions/facts', kind: 'legacy', legacyRoute: 'ad-quant' },
+      { id: 'facts', label: '广告事实', description: '核验 Mission 事实检查点与数据 lineage', view: 'missions/facts', kind: 'canonical' },
     ],
   },
   {

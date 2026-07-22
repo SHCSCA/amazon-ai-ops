@@ -35,6 +35,7 @@ import { AiCallLogRepository } from '@amazon-ai-ops/local-db/src/sqlite/reposito
 import { AiDiagnosisRunRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/ai-diagnosis-run-repo';
 import { StoreRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/store-repo';
 import { LingxingImportRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/lingxing-import-repo';
+import { MissionDomainRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/mission-domain-repo';
 import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, draftsToCsv, draftsToMarkdown, draftsToXlsxBuffer, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
@@ -158,6 +159,8 @@ import {
 } from './store-coordinator';
 import { registerStoreIpcHandlers } from './store-ipc';
 import { registerMissionControlIpcHandlers } from './mission-control-ipc';
+import { registerMissionDomainIpcHandlers } from './mission-domain-ipc';
+import { MissionDomainService } from './mission-domain-service';
 import { registerStoreScopedObjectsIpcHandlers } from './store-scoped-objects-ipc';
 import { StoreScopedObjectsService } from './store-scoped-objects-service';
 import { registerStoreScopedAdListingIpcHandlers } from './store-scoped-ad-listing-ipc';
@@ -205,6 +208,8 @@ interface AppState {
   aiDiagnosisRunRepo: AiDiagnosisRunRepository | null;
   storeRepo: StoreRepository | null;
   lingxingImportRepo: LingxingImportRepository | null;
+  missionDomainRepo: MissionDomainRepository | null;
+  missionDomainService: MissionDomainService | null;
   lingxingCollectionCoordinator: LingxingCollectionCoordinator | null;
   lingxingCollectionOperations: CollectionOperationGuard | null;
   storeCoordinator: StoreCoordinator | null;
@@ -230,6 +235,8 @@ const state: AppState = {
   aiDiagnosisRunRepo: null,
   storeRepo: null,
   lingxingImportRepo: null,
+  missionDomainRepo: null,
+  missionDomainService: null,
   lingxingCollectionCoordinator: null,
   lingxingCollectionOperations: null,
   storeCoordinator: null,
@@ -598,6 +605,21 @@ async function initApp(): Promise<void> {
   state.storeCoordinator = new StoreCoordinator({
     repository: state.storeRepo,
     sessions: storeSessions,
+  });
+  state.missionDomainRepo = new MissionDomainRepository(state.db, {
+    references: {
+      productBelongsToStore: (context, productId) => Boolean(
+        state.productRepo?.findByAsinForStore(context.storeId, productId),
+      ),
+      // Stage 3 projections intentionally do not claim a display object key is
+      // a stable writable Ads identity. Stage 5 will replace this fail-closed
+      // validator with the authoritative ad-object registry.
+      adEntityBelongsToStore: () => false,
+    },
+  });
+  state.missionDomainService = new MissionDomainService({
+    repository: state.missionDomainRepo,
+    storeCoordinator: state.storeCoordinator,
   });
   const collectionRecovery = recoverInterruptedLingxingCollectionJobsOnStartup();
   console.log('[App] init:lingxing-collection-recovery', JSON.stringify(collectionRecovery));
@@ -9390,6 +9412,7 @@ async function runDailyReportGeneration(): Promise<void> {
 
 function registerIpcHandlers(): void {
   if (!state.storeCoordinator) throw new Error('Store coordinator is not initialized');
+  if (!state.missionDomainService) throw new Error('Mission domain service is not initialized');
   if (!state.productRepo || !state.operationEventRepo) {
     throw new Error('Store-scoped object repositories are not initialized');
   }
@@ -9443,8 +9466,10 @@ function registerIpcHandlers(): void {
     state.storeCoordinator,
     createMissionControlLegacyAdapter({
       buildTodayProjection: buildAuthoritativeMissionControlTodayProjection,
+      missionDomain: state.missionDomainService,
     }),
   );
+  registerMissionDomainIpcHandlers(ipcMain, state.missionDomainService);
   registerStoreScopedObjectsIpcHandlers(
     ipcMain,
     new StoreScopedObjectsService({
@@ -9465,7 +9490,8 @@ function registerIpcHandlers(): void {
       },
     }),
     {
-      onObjectsChanged: () => {
+      onObjectsChanged: (context, mutation) => {
+        state.missionDomainService!.recordOperationEventMutation(context, mutation);
         mainWindow?.webContents.send('business-ui:data-updated');
       },
     },

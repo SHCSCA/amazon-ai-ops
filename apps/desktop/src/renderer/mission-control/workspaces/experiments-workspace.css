@@ -1,0 +1,922 @@
+.experiments-workspace {
+  --experiment-ink: #14213d;
+  --experiment-muted: #64748b;
+  --experiment-line: #dbe4f0;
+  --experiment-blue: #2563eb;
+  min-width: 0;
+}
+
+.experiments-page {
+  background: #f6f8fc;
+}
+
+.experiment-authority,
+.experiment-status {
+  align-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  color: #475569;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 800;
+  gap: 6px;
+  line-height: 1;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.experiment-authority::before,
+.experiment-status::before {
+  background: currentColor;
+  border-radius: 50%;
+  content: '';
+  height: 6px;
+  width: 6px;
+}
+
+.experiment-authority[data-state='PRODUCTION_NATIVE'],
+.experiment-status[data-status='running'],
+.experiment-status[data-status='completed'] {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+
+.experiment-authority[data-state='PROTOTYPE_ONLY'],
+.experiment-status[data-status='draft'] {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.experiment-status[data-status='paused'] {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #a16207;
+}
+
+.experiment-status[data-status='archived'],
+.experiment-authority[data-state='BLOCKED'] {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.experiment-preview-note {
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  margin: 8px 0 0;
+}
+
+.experiments-layout {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(280px, 0.34fr) minmax(0, 1fr);
+}
+
+.experiments-queue {
+  min-width: 0;
+  position: sticky;
+  top: 86px;
+}
+
+.experiments-queue-tools {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.experiments-queue-tools > input,
+.experiment-form input,
+.experiment-form select,
+.experiment-form textarea,
+.experiment-complete-dialog textarea {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  box-sizing: border-box;
+  color: var(--experiment-ink);
+  font: inherit;
+  min-width: 0;
+  outline: none;
+  padding: 9px 11px;
+  width: 100%;
+}
+
+.experiments-queue-tools > input:focus,
+.experiment-form input:focus,
+.experiment-form select:focus,
+.experiment-form textarea:focus,
+.experiment-complete-dialog textarea:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 12%);
+}
+
+.experiments-queue-tools > label {
+  align-items: center;
+  color: var(--experiment-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+}
+
+.experiments-queue-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.experiments-queue-list > li > button {
+  background: #fff;
+  border: 1px solid var(--experiment-line);
+  border-radius: 12px;
+  color: var(--experiment-ink);
+  cursor: pointer;
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  text-align: left;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  width: 100%;
+}
+
+.experiments-queue-list > li > button:hover,
+.experiments-queue-list > li > button:focus-visible {
+  border-color: #93c5fd;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 7%);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.experiments-queue-list > li > button[data-selected='true'] {
+  background: #f4f8ff;
+  border-color: var(--experiment-blue);
+  box-shadow: inset 3px 0 0 var(--experiment-blue);
+}
+
+.experiments-queue-list > li > button > span {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.experiments-queue-list b {
+  color: var(--experiment-blue);
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.experiments-queue-list strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.experiments-queue-list small {
+  color: var(--experiment-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiments-pagination {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.experiments-pagination span {
+  color: var(--experiment-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.experiment-detail {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.experiment-detail-header,
+.experiment-evidence-grid > section,
+.experiment-ledger,
+.experiment-metrics,
+.experiment-conclusion,
+.experiment-no-delete {
+  background: #fff;
+  border: 1px solid var(--experiment-line);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
+}
+
+.experiment-detail-header {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 18px;
+}
+
+.experiment-detail-header > div:first-child > span,
+.experiment-conclusion > span {
+  color: var(--experiment-blue);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .13em;
+}
+
+.experiment-detail-header h2 {
+  color: var(--experiment-ink);
+  font-size: 21px;
+  margin: 5px 0;
+}
+
+.experiment-detail-header p {
+  color: var(--experiment-muted);
+  line-height: 1.65;
+  margin: 0;
+}
+
+.experiment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  grid-column: 1 / -1;
+}
+
+.experiment-contract {
+  background: #172554;
+  border-radius: 14px;
+  color: #fff;
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  overflow: hidden;
+}
+
+.experiment-contract > div {
+  background: #1e3a8a;
+  min-width: 0;
+  padding: 13px 15px;
+}
+
+.experiment-contract dt {
+  color: #bfdbfe;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.experiment-contract dd {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.experiment-evidence-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(260px, .85fr);
+}
+
+.experiment-evidence-grid > section,
+.experiment-ledger,
+.experiment-metrics {
+  padding: 16px;
+}
+
+.experiment-evidence-grid header,
+.experiment-ledger > header,
+.experiment-metrics > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 13px;
+}
+
+.experiment-evidence-grid h3,
+.experiment-ledger h3,
+.experiment-metrics h3 {
+  color: var(--experiment-ink);
+  font-size: 15px;
+  margin: 0 0 3px;
+}
+
+.experiment-evidence-grid header p,
+.experiment-ledger header p,
+.experiment-metrics header p {
+  color: var(--experiment-muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+.experiment-metrics > header > span {
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.experiment-metrics > div {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.experiment-metrics article {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+}
+
+.experiment-metrics article > span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.experiment-metrics article > strong {
+  color: #14213d;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.experiment-metrics article > small {
+  color: #94a3b8;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.experiment-variables {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.experiment-variables article {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  min-width: 0;
+  padding: 11px;
+}
+
+.experiment-variables span {
+  color: var(--experiment-blue);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.experiment-variables pre {
+  color: #334155;
+  font-size: 11px;
+  margin: 8px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.experiment-evidence-grid ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.experiment-evidence-grid li {
+  background: #f8fafc;
+  border-left: 3px solid #10b981;
+  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px;
+}
+
+.experiment-evidence-grid li b {
+  color: var(--experiment-ink);
+  font-size: 12px;
+}
+
+.experiment-evidence-grid li span {
+  color: var(--experiment-muted);
+  font-size: 11px;
+}
+
+.experiment-ledger-list {
+  display: grid;
+  gap: 9px;
+}
+
+.experiment-ledger-list article {
+  align-items: start;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 70px minmax(0, 1fr);
+  padding: 11px;
+}
+
+.experiment-ledger-list article > span {
+  background: #eff6ff;
+  border-radius: 7px;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 7px;
+  text-align: center;
+}
+
+.experiment-ledger-list article[data-stage='EFFECT'] > span {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.experiment-ledger-list strong {
+  color: var(--experiment-ink);
+  font-size: 13px;
+}
+
+.experiment-ledger-list p {
+  color: #475569;
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.experiment-ledger-list small {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.experiment-conclusion,
+.experiment-no-delete {
+  padding: 14px 16px;
+}
+
+.experiment-conclusion p,
+.experiment-no-delete {
+  color: #475569;
+  line-height: 1.55;
+  margin: 5px 0 0;
+}
+
+.experiment-no-delete {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+  font-size: 12px;
+  margin: 0;
+}
+
+.experiment-feedback {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 10px;
+  bottom: 18px;
+  color: #047857;
+  font-size: 12px;
+  font-weight: 700;
+  margin: 14px 0 0 auto;
+  max-width: min(560px, 100%);
+  padding: 10px 12px;
+  position: sticky;
+  z-index: 4;
+}
+
+.experiment-feedback[data-tone='error'] {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+
+.experiment-editor {
+  max-height: min(88vh, 900px);
+  max-width: 820px;
+  overflow: auto;
+}
+
+.experiment-observation-editor {
+  max-width: 650px;
+}
+
+.experiment-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+  padding: 4px 20px 20px;
+}
+
+.experiment-form label,
+.experiment-complete-dialog > label {
+  color: #475569;
+  display: grid;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.experiment-form__wide {
+  grid-column: 1 / -1;
+}
+
+.experiment-json {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+  font-size: 11px !important;
+}
+
+.experiment-complete-dialog > label {
+  padding: 0 20px 18px;
+}
+
+@media (max-width: 1100px) {
+  .experiments-layout,
+  .experiment-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .experiments-queue {
+    position: static;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .experiments-queue-list > button {
+    transition: none;
+  }
+}
+
+/* Dense mission-control parity: the TaskBanner is the visible workbench header. */
+.experiments-page.workspace-page-frame {
+  max-width: none;
+  gap: 9px;
+  margin: 0;
+  padding: 14px 18px 20px;
+}
+
+.experiments-page > .workspace-page-frame__header {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 58px;
+  border: 0;
+  border-bottom: 1px solid var(--experiment-line);
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 10px;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__copy {
+  display: grid;
+  gap: 2px;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__eyebrow {
+  display: block;
+  color: #5b73a2;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .1em;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__title-line h2 {
+  font-size: 21px;
+  line-height: 1.25;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__description {
+  display: block;
+  overflow: hidden;
+  color: #50617d;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiments-page > .workspace-page-frame__task .task-banner__actions {
+  align-items: center;
+}
+
+.experiments-page > .workspace-page-frame__summary .summary-strip {
+  min-height: 55px;
+  border-radius: 8px;
+}
+
+.experiments-page > .workspace-page-frame__summary .summary-strip__item {
+  gap: 3px;
+  padding: 8px 11px;
+}
+
+.experiments-page > .workspace-page-frame__summary .summary-strip__item dt {
+  font-size: 9px;
+}
+
+.experiments-page > .workspace-page-frame__summary .summary-strip__item strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.experiment-authority,
+.experiment-status {
+  min-height: 20px;
+  padding: 4px 7px;
+  font-size: 9px;
+}
+
+.experiment-preview-note {
+  margin: 2px 0 0;
+  font-size: 9px;
+}
+
+.experiments-layout {
+  gap: 10px;
+  grid-template-columns: minmax(238px, 0.3fr) minmax(0, 1fr);
+}
+
+.experiments-queue {
+  top: 8px;
+  border-radius: 8px;
+}
+
+.experiments-queue .workbench-panel__header {
+  align-items: center;
+  padding: 9px 10px;
+}
+
+.experiments-queue .workbench-panel__title-line h2 {
+  font-size: 13px;
+}
+
+.experiments-queue .workbench-panel__description {
+  font-size: 10px;
+}
+
+.experiments-queue .workbench-panel__status {
+  padding: 2px 6px;
+  font-size: 9px;
+}
+
+.experiments-queue .workbench-panel__body {
+  padding: 9px;
+}
+
+.experiments-queue-tools {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.experiments-queue-tools > input {
+  min-height: 32px;
+  border-radius: 7px;
+  padding: 7px 9px;
+  font-size: 11px;
+}
+
+.experiments-queue-tools > label {
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.experiments-queue-list {
+  gap: 0;
+  border: 1px solid #e1e8f2;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.experiments-queue-list > li + li {
+  border-top: 1px solid #e8edf4;
+}
+
+.experiments-queue-list > li > button {
+  gap: 3px;
+  min-height: 59px;
+  border: 0;
+  border-radius: 0;
+  padding: 8px 9px;
+  box-shadow: none;
+}
+
+.experiments-queue-list > li > button:hover,
+.experiments-queue-list > li > button:focus-visible {
+  box-shadow: inset 3px 0 0 #93b5ef;
+  transform: none;
+}
+
+.experiments-queue-list strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiments-queue-list small,
+.experiments-queue-list b {
+  font-size: 9px;
+}
+
+.experiments-pagination {
+  margin-top: 8px;
+}
+
+.experiments-queue .workbench-panel__footer {
+  padding: 6px 10px;
+  font-size: 9px;
+}
+
+.experiment-detail {
+  gap: 8px;
+}
+
+.experiment-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.experiment-detail-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.experiment-detail-context > span {
+  overflow: hidden;
+  color: #5b73a2;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiment-detail-context > strong {
+  font-size: 11px;
+}
+
+.experiment-actions {
+  grid-column: auto;
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+.experiment-actions .workspace-button {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 10px;
+}
+
+.experiment-contract {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--experiment-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--experiment-ink);
+}
+
+.experiment-contract > div {
+  background: #fff;
+  padding: 8px 10px;
+}
+
+.experiment-contract > div + div {
+  border-left: 1px solid #e6ebf2;
+}
+
+.experiment-contract dt {
+  margin-bottom: 3px;
+  color: #65728a;
+  font-size: 9px;
+}
+
+.experiment-contract dd {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiment-ledger,
+.experiment-evidence-grid > section,
+.experiment-metrics {
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.experiment-ledger > header,
+.experiment-evidence-grid header,
+.experiment-metrics > header {
+  margin-bottom: 8px;
+}
+
+.experiment-ledger h3,
+.experiment-evidence-grid h3,
+.experiment-metrics h3 {
+  font-size: 12px;
+}
+
+.experiment-ledger header p,
+.experiment-evidence-grid header p,
+.experiment-metrics header p {
+  font-size: 9px;
+}
+
+.experiment-ledger-list {
+  max-height: 190px;
+  gap: 0;
+  border: 1px solid #e1e8f2;
+  border-radius: 7px;
+  overflow: auto;
+}
+
+.experiment-ledger-list article {
+  min-height: 54px;
+  gap: 8px;
+  grid-template-columns: 58px minmax(0, 1fr);
+  border: 0;
+  border-radius: 0;
+  padding: 8px;
+}
+
+.experiment-ledger-list article + article {
+  border-top: 1px solid #e8edf4;
+}
+
+.experiment-ledger-list article > span {
+  padding: 5px;
+  font-size: 9px;
+}
+
+.experiment-ledger-list strong,
+.experiment-ledger-list p,
+.experiment-ledger-list small {
+  font-size: 9px;
+}
+
+.experiment-evidence-grid {
+  gap: 8px;
+}
+
+.experiment-variables article,
+.experiment-evidence-grid li {
+  border-radius: 6px;
+  padding: 7px 8px;
+}
+
+.experiment-variables pre {
+  max-height: 64px;
+  margin-top: 4px;
+  font-size: 9px;
+}
+
+@media (max-width: 1080px) {
+  .experiments-page > .workspace-page-frame__task .task-banner {
+    grid-template-columns: 1fr;
+  }
+
+  .experiments-page > .workspace-page-frame__task .task-banner__actions {
+    justify-content: flex-start;
+  }
+
+  .experiments-layout {
+    grid-template-columns: minmax(210px, .35fr) minmax(0, 1fr);
+  }
+
+  .experiment-actions {
+    flex-wrap: wrap;
+  }
+}

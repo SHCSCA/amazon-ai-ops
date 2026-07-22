@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   MISSION_CONTROL_VIEW_IDS,
   normalizeMissionControlCommandRequest,
@@ -160,6 +160,110 @@ describe('Mission Control legacy adapter', () => {
     expect(manual).toEqual(expect.objectContaining({
       status: 'NOOP',
       currentMode: 'manual_approval',
+    }));
+  });
+
+  it('projects the durable policy runtime and changes modes with a Main-side CAS revision', async () => {
+    let runtime: {
+      mode: 'manual_approval' | 'policy_auto';
+      killSwitch: boolean;
+      circuitBreakerState: 'closed' | 'open' | 'half_open';
+      activePolicyVersionId?: string;
+      revision: number;
+      canAutoExecute: boolean;
+    } = {
+      mode: 'manual_approval',
+      killSwitch: false,
+      circuitBreakerState: 'closed' as const,
+      activePolicyVersionId: 'policy-version-one',
+      revision: 8,
+      canAutoExecute: true,
+    };
+    const setAutonomyMode = vi.fn((_context, input: {
+      expectedRevision: number;
+      mode: 'manual_approval' | 'policy_auto';
+    }) => {
+      expect(input.expectedRevision).toBe(8);
+      runtime = { ...runtime, mode: input.mode, revision: 9 };
+      return runtime;
+    });
+    const adapter = createMissionControlLegacyAdapter({
+      missionDomain: {
+        getAutonomyProjection: () => runtime,
+        setAutonomyMode,
+      },
+    });
+    const bootstrap = await adapter.query(normalizeMissionControlQueryRequest({
+      query: 'workspace-bootstrap',
+      requestId: 'bootstrap-policy-ready',
+      contextEpoch: 4,
+      context,
+    }), context);
+
+    expect(bootstrap.data.autonomy).toEqual({
+      currentMode: 'manual_approval',
+      manualApprovalAvailable: true,
+      policyAutoAvailable: true,
+    });
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'missions.mission.create'))
+      .toEqual(expect.objectContaining({ state: 'PRODUCTION_NATIVE' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'policy.runtime.mode.set'))
+      .toEqual(expect.objectContaining({ state: 'PRODUCTION_NATIVE' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'missions.checkpoint.create'))
+      .toEqual(expect.objectContaining({ state: 'PRODUCTION_NATIVE', action: 'create' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'policy.kill-switch.clear'))
+      .toEqual(expect.objectContaining({ state: 'PRODUCTION_NATIVE', action: 'disable' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'execution.queue.start'))
+      .toEqual(expect.objectContaining({ state: 'BLOCKED' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'decisions.grants.issue'))
+      .toEqual(expect.objectContaining({
+        state: 'BLOCKED',
+        view: 'decisions/decided',
+        blockerCode: 'AD_ENTITY_REGISTRY_NOT_IMPLEMENTED',
+      }));
+
+    const response = await adapter.command(normalizeMissionControlCommandRequest({
+      command: 'set-autonomy-mode',
+      requestId: 'mode-policy-ready',
+      contextEpoch: 4,
+      context,
+      payload: { mode: 'policy_auto' },
+    }), context);
+    expect(response).toEqual(expect.objectContaining({
+      status: 'APPLIED',
+      currentMode: 'policy_auto',
+    }));
+    expect(setAutonomyMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps policy auto unavailable when the durable kill switch is active', async () => {
+    const adapter = createMissionControlLegacyAdapter({
+      missionDomain: {
+        getAutonomyProjection: () => ({
+          mode: 'manual_approval',
+          killSwitch: true,
+          circuitBreakerState: 'closed',
+          activePolicyVersionId: 'policy-version-one',
+          revision: 3,
+          canAutoExecute: false,
+        }),
+        setAutonomyMode: vi.fn(() => {
+          throw new Error('must not write while blocked');
+        }),
+      },
+    });
+    const response = await adapter.command(normalizeMissionControlCommandRequest({
+      command: 'set-autonomy-mode',
+      requestId: 'mode-policy-killed',
+      contextEpoch: 4,
+      context,
+      payload: { mode: 'policy_auto' },
+    }), context);
+
+    expect(response).toEqual(expect.objectContaining({
+      status: 'BLOCKED',
+      currentMode: 'manual_approval',
+      blockerCode: 'POLICY_KILL_SWITCH_ACTIVE',
     }));
   });
 

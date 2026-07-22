@@ -72,7 +72,11 @@ describe('store-scoped objects IPC', () => {
     expect(onObjectsChanged).not.toHaveBeenCalled();
 
     handlers.get('store-objects:products:create')?.({}, { storeContext: context, input: { asin: 'B001' } });
-    expect(onObjectsChanged).toHaveBeenCalledWith(context);
+    expect(onObjectsChanged).toHaveBeenCalledWith(context, {
+      entityType: 'product',
+      action: 'create',
+      record: { id: 2 },
+    });
 
     service.updateProduct.mockImplementationOnce(() => { throw new Error('conflict'); });
     expect(() => handlers.get('store-objects:products:update')?.({}, {
@@ -80,6 +84,33 @@ describe('store-scoped objects IPC', () => {
       input: { id: 1, expectedRevision: 'stale', patch: { title: 'x' } },
     })).toThrow('conflict');
     expect(onObjectsChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes an authoritative operation-event receipt for causal-ledger reconciliation', () => {
+    const { handlers, onObjectsChanged } = harness();
+
+    handlers.get('store-objects:operation-events:create')?.({}, {
+      storeContext: context,
+      input: { eventDate: '2026-07-22', eventType: 'promotion', title: 'Prime Day' },
+    });
+    handlers.get('store-objects:operation-events:update')?.({}, {
+      storeContext: context,
+      input: { id: 6, expectedRevision: 'r1', patch: { archived: false } },
+    });
+    handlers.get('store-objects:operation-events:delete')?.({}, {
+      storeContext: context,
+      input: { id: 7, expectedRevision: 'r2' },
+    });
+
+    expect(onObjectsChanged).toHaveBeenNthCalledWith(1, context, {
+      entityType: 'operation_event', action: 'create', record: { id: 5 },
+    });
+    expect(onObjectsChanged).toHaveBeenNthCalledWith(2, context, {
+      entityType: 'operation_event', action: 'restore', record: { id: 6 },
+    });
+    expect(onObjectsChanged).toHaveBeenNthCalledWith(3, context, {
+      entityType: 'operation_event', action: 'archive', record: { id: 7, deleted: true },
+    });
   });
 
   it('applies the path-safe event projection at the final Main-to-Renderer boundary', () => {

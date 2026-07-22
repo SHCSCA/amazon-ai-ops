@@ -13,4 +13,5 @@ export * from './sqlite/repositories/lingxing-import-repo';
 export * from './sqlite/repositories/ai-call-log-repo';
 export * from './sqlite/repositories/ai-diagnosis-run-repo';
 export * from './sqlite/repositories/store-repo';
+export * from './sqlite/repositories/mission-domain-repo';
 export * from './duckdb/queries/ad-summary';

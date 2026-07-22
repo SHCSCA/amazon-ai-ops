@@ -1,5 +1,7 @@
 import type {
   MissionControlBootstrapProjection,
+  MissionControlAutonomyMode,
+  MissionControlAutonomyProjection,
   MissionControlCapabilityProjection,
   MissionControlCommandRequest,
   MissionControlCommandStatus,
@@ -36,6 +38,27 @@ export interface MissionControlAdapter {
 
 export interface MissionControlAdapterOptions {
   buildTodayProjection?(context: StoreContextEnvelope): MissionControlTodayProjection;
+  missionDomain?: {
+    getAutonomyProjection(context: StoreContextEnvelope): {
+      mode: MissionControlAutonomyMode;
+      killSwitch: boolean;
+      circuitBreakerState: 'closed' | 'open' | 'half_open';
+      activePolicyVersionId?: string;
+      revision: number;
+      canAutoExecute: boolean;
+    };
+    setAutonomyMode(
+      context: StoreContextEnvelope,
+      input: { expectedRevision: number; mode: MissionControlAutonomyMode; reason?: string },
+    ): {
+      mode: MissionControlAutonomyMode;
+      killSwitch: boolean;
+      circuitBreakerState: 'closed' | 'open' | 'half_open';
+      activePolicyVersionId?: string;
+      revision: number;
+      canAutoExecute: boolean;
+    };
+  };
 }
 
 const UNSCOPED_LEGACY_BLOCKER = 'STORE_SCOPED_LEGACY_ADAPTER_NOT_IMPLEMENTED';
@@ -58,17 +81,29 @@ export const MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabilityProj
   serviceBlocked('missions.mission.pause', 'missions', 'missions/overview', 'pause', '任务暂停服务尚未接入 Main。'),
   serviceBlocked('missions.mission.resume', 'missions', 'missions/overview', 'resume', '任务恢复服务尚未接入 Main。'),
   serviceBlocked('missions.mission.archive', 'missions', 'missions/overview', 'archive', '任务归档服务尚未接入 Main。'),
+  serviceBlocked('missions.mission.restore', 'missions', 'missions/overview', 'restore', '任务恢复归档服务尚未接入 Main。'),
   serviceBlocked('missions.mission.delete', 'missions', 'missions/overview', 'delete', '任务删除服务尚未接入 Main。'),
   serviceBlocked('missions.mission.facts.view', 'missions', 'missions/facts', 'view', '任务事实服务尚未接入 Main。'),
+  serviceBlocked('missions.checkpoint.create', 'missions', 'missions/facts', 'create', '任务事实检查点追加服务尚未接入 Main。'),
   blocked('decisions.recommendations.view', 'decisions', 'decisions/recommendations', 'recommendations', '建议列表尚未接入按店铺授权的后端。'),
+  serviceBlocked('decisions.recommendations.create', 'decisions', 'decisions/recommendations', 'create', '建议创建服务尚未接入 Main。'),
+  serviceBlocked('decisions.recommendations.update', 'decisions', 'decisions/recommendations', 'update', '建议修订服务尚未接入 Main。'),
   blocked('decisions.approval.view', 'decisions', 'decisions/approval', 'approval', '审批队列尚未接入按店铺授权的后端。'),
+  serviceBlocked('decisions.approval.approve', 'decisions', 'decisions/approval', 'approve', '人工批准服务尚未接入 Main。'),
+  serviceBlocked('decisions.approval.reject', 'decisions', 'decisions/approval', 'reject', '人工拒绝与阻断服务尚未接入 Main。'),
+  dependencyBlocked('decisions.grants.issue', 'decisions', 'decisions/decided', 'approve', 'AD_ENTITY_REGISTRY_NOT_IMPLEMENTED', 'MissionGrant 合同已就绪，但真实广告实体稳定身份注册表将在 Stage 6 接入。'),
+  serviceBlocked('decisions.grants.revoke', 'decisions', 'decisions/decided', 'reject', '人工撤销 MissionGrant 服务尚未接入 Main。'),
   blocked('decisions.decided.view', 'decisions', 'decisions/decided', 'approval', '已决策记录尚未接入按店铺授权的后端。'),
   serviceBlocked('experiments.experiment.view', 'experiments', 'experiments/ledger', 'view', '实验服务尚未接入 Main。'),
   serviceBlocked('experiments.experiment.create', 'experiments', 'experiments/ledger', 'create', '实验创建服务尚未接入 Main。'),
   serviceBlocked('experiments.experiment.update', 'experiments', 'experiments/ledger', 'update', '实验更新服务尚未接入 Main。'),
+  serviceBlocked('experiments.experiment.start', 'experiments', 'experiments/ledger', 'start', '实验启动服务尚未接入 Main。'),
   serviceBlocked('experiments.experiment.pause', 'experiments', 'experiments/ledger', 'pause', '实验暂停服务尚未接入 Main。'),
   serviceBlocked('experiments.experiment.resume', 'experiments', 'experiments/ledger', 'resume', '实验恢复服务尚未接入 Main。'),
+  serviceBlocked('experiments.experiment.complete', 'experiments', 'experiments/ledger', 'complete', '实验完成服务尚未接入 Main。'),
   serviceBlocked('experiments.experiment.archive', 'experiments', 'experiments/ledger', 'archive', '实验归档服务尚未接入 Main。'),
+  serviceBlocked('experiments.experiment.restore', 'experiments', 'experiments/ledger', 'restore', '实验恢复服务尚未接入 Main。'),
+  serviceBlocked('experiments.observation.create', 'experiments', 'experiments/ledger', 'create', '实验观察追加服务尚未接入 Main。'),
   serviceBlocked('experiments.experiment.delete', 'experiments', 'experiments/ledger', 'delete', '实验删除服务尚未接入 Main。'),
   serviceBlocked('execution.queue.view', 'execution', 'execution/live', 'view', '真实执行队列尚未接入 Main。'),
   serviceBlocked('execution.queue.start', 'execution', 'execution/live', 'start', '真实执行启动服务尚未接入 Main。'),
@@ -78,6 +113,8 @@ export const MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabilityProj
   serviceBlocked('execution.queue.kill-switch', 'execution', 'execution/live', 'kill-switch', '执行急停服务尚未接入 Main。'),
   blocked('execution.evidence.view', 'execution', 'execution/evidence', 'readback', '执行证据仍依赖未按店铺隔离的旧回读查询。'),
   serviceBlocked('memory.timeline.view', 'memory', 'memory/timeline', 'view', '因果记忆服务尚未接入 Main。'),
+  serviceBlocked('memory.timeline.create', 'memory', 'memory/timeline', 'create', '人工事实与分析追加服务尚未接入 Main。'),
+  serviceBlocked('memory.timeline.correct', 'memory', 'memory/timeline', 'update', '因果记忆修正服务尚未接入 Main。'),
   serviceBlocked('memory.timeline.export', 'memory', 'memory/timeline', 'export', '记忆导出服务尚未接入 Main。'),
   serviceBlocked('memory.timeline.rebuild-index', 'memory', 'memory/timeline', 'rebuild-index', '记忆索引重建服务尚未接入 Main。'),
   native('objects.products.view', 'objects', 'objects/products', 'view', '产品与运营事件由 Main 当前店铺对象服务投影。'),
@@ -113,12 +150,18 @@ export const MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabilityProj
   adaptedAction('collection.import-check.export', 'collection', 'collection/import-check', 'export', 'data-import-validation', '对账导出只包含当前店铺与当前范围。'),
   adaptedAction('collection.import-check.open-artifact', 'collection', 'collection/import-check', 'view', 'data-import-validation', '对账产物通过 Main 受控句柄打开。'),
   serviceBlocked('policy.version.view', 'policy', 'policy/rules', 'view', '版本化策略服务尚未接入 Main。'),
+  serviceBlocked('policy.policy.create', 'policy', 'policy/rules', 'create', '策略创建服务尚未接入 Main。'),
+  serviceBlocked('policy.policy.update', 'policy', 'policy/rules', 'update', '策略编辑服务尚未接入 Main。'),
+  serviceBlocked('policy.policy.archive', 'policy', 'policy/rules', 'archive', '策略归档服务尚未接入 Main。'),
+  serviceBlocked('policy.policy.restore', 'policy', 'policy/rules', 'restore', '策略恢复服务尚未接入 Main。'),
   serviceBlocked('policy.version.create', 'policy', 'policy/rules', 'create', '策略版本创建服务尚未接入 Main。'),
   serviceBlocked('policy.version.update', 'policy', 'policy/rules', 'update', '策略版本更新服务尚未接入 Main。'),
   serviceBlocked('policy.version.enable', 'policy', 'policy/rules', 'enable', '策略启用服务尚未接入 Main。'),
   serviceBlocked('policy.version.disable', 'policy', 'policy/rules', 'disable', '策略停用服务尚未接入 Main。'),
   serviceBlocked('policy.version.publish', 'policy', 'policy/rules', 'publish', '策略发布服务尚未接入 Main。'),
+  serviceBlocked('policy.runtime.mode.set', 'policy', 'policy/rules', 'update', '店铺自治模式切换尚未接入 Main。'),
   serviceBlocked('policy.kill-switch.enable', 'policy', 'policy/rules', 'enable', '全局策略急停服务尚未接入 Main。'),
+  serviceBlocked('policy.kill-switch.clear', 'policy', 'policy/rules', 'disable', '全局策略急停解除服务尚未接入 Main。'),
   blocked('settings.ai-and-local.view', 'settings', 'settings/ai-and-local', 'settings', 'AI 与本地设置尚未接入按店铺授权的配置。'),
   serviceBlocked('settings.store-config.create', 'settings', 'settings/ai-and-local', 'create', '店铺级设置创建服务尚未接入 Main。'),
   serviceBlocked('settings.store-config.update', 'settings', 'settings/ai-and-local', 'update', '店铺级设置更新服务尚未接入 Main。'),
@@ -135,54 +178,188 @@ export function createMissionControlLegacyAdapter(
       if (request.query !== 'workspace-bootstrap') {
         throw new TypeError('unsupported Mission Control query');
       }
-      const capabilities = MISSION_CONTROL_CAPABILITIES.map((capability) => (
-        options.buildTodayProjection && capability.capabilityId === 'today.overview.view'
+      const capabilities = MISSION_CONTROL_CAPABILITIES.map((capability) => {
+        if (options.buildTodayProjection && capability.capabilityId === 'today.overview.view') {
+          return native(
+            capability.capabilityId,
+            capability.workspace,
+            capability.view,
+            capability.action,
+            '当前店铺今日准备度由 Main 从真实采集 lineage、导入、产品和浏览器状态投影。',
+          );
+        }
+        const missionDomainDetail = options.missionDomain
+          ? MISSION_DOMAIN_CAPABILITY_DETAILS[capability.capabilityId]
+          : undefined;
+        return missionDomainDetail
           ? native(
               capability.capabilityId,
               capability.workspace,
               capability.view,
               capability.action,
-              '当前店铺今日准备度由 Main 从真实采集 lineage、导入、产品和浏览器状态投影。',
+              missionDomainDetail,
             )
-          : { ...capability }
-      ));
+          : { ...capability };
+      });
       const projectedToday = options.buildTodayProjection?.(authoritativeContext)
         ?? unavailableTodayProjection(authoritativeContext);
+      const autonomy = options.missionDomain
+        ? projectAutonomy(options.missionDomain.getAutonomyProjection(authoritativeContext))
+        : unavailableAutonomy();
       return {
         query: 'workspace-bootstrap',
         data: {
           capabilities,
-          autonomy: {
-            currentMode: 'manual_approval',
-            manualApprovalAvailable: true,
-            policyAutoAvailable: false,
-            policyAutoBlockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED',
-            policyAutoBlockerDetail: '全自动模式尚未实现 Main 授权、逐动作策略校验与真实回读闭环。',
-          },
+          autonomy,
           today: authorizeTodayNextAction(projectedToday, capabilities),
         },
       };
     },
-    command(request) {
+    command(request, authoritativeContext) {
       if (request.command !== 'set-autonomy-mode') {
         throw new TypeError('unsupported Mission Control command');
       }
-      if (request.payload.mode === 'policy_auto') {
+      if (!options.missionDomain) {
+        return {
+          command: 'set-autonomy-mode',
+          status: request.payload.mode === 'policy_auto' ? 'BLOCKED' : 'NOOP',
+          currentMode: 'manual_approval',
+          ...(request.payload.mode === 'policy_auto'
+            ? { blockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED' }
+            : {}),
+          detail: request.payload.mode === 'policy_auto'
+            ? '全自动模式未获得 Main 授权；系统继续保持人工审批。'
+            : '系统已处于人工审批模式。',
+        };
+      }
+      const current = options.missionDomain.getAutonomyProjection(authoritativeContext);
+      if (request.payload.mode === current.mode) {
+        return {
+          command: 'set-autonomy-mode',
+          status: 'NOOP',
+          currentMode: current.mode,
+          detail: current.mode === 'policy_auto'
+            ? '系统已处于策略全自动模式。'
+            : '系统已处于人工审批模式。',
+        };
+      }
+      if (request.payload.mode === 'policy_auto' && !current.canAutoExecute) {
+        const unavailable = projectAutonomy(current);
         return {
           command: 'set-autonomy-mode',
           status: 'BLOCKED',
-          currentMode: 'manual_approval',
-          blockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED',
-          detail: '全自动模式未获得 Main 授权；系统继续保持人工审批。',
+          currentMode: current.mode,
+          blockerCode: unavailable.policyAutoBlockerCode,
+          detail: unavailable.policyAutoBlockerDetail ?? '策略全自动模式尚未满足安全条件。',
         };
       }
+      const updated = options.missionDomain.setAutonomyMode(authoritativeContext, {
+        expectedRevision: current.revision,
+        mode: request.payload.mode,
+        reason: `mission_control_shell_set_${request.payload.mode}`,
+      });
       return {
         command: 'set-autonomy-mode',
-        status: 'NOOP',
-        currentMode: 'manual_approval',
-        detail: '系统已处于人工审批模式。',
+        status: 'APPLIED',
+        currentMode: updated.mode,
+        detail: updated.mode === 'policy_auto'
+          ? '已切换为策略全自动；真实动作仍逐项受 MissionGrant、限额、急停与回读门约束。'
+          : '已切换为人工审批；后续动作必须由人工签发授权。',
       };
     },
+  };
+}
+
+const MISSION_DOMAIN_CAPABILITY_DETAILS: Readonly<Record<string, string>> = Object.freeze({
+  'missions.mission.view': '任务由 Main 按当前店铺查询，并绑定数据批次与策略版本。',
+  'missions.mission.create': '任务创建由 Main 验证 StoreContext、数据批次和策略版本。',
+  'missions.mission.update': '任务编辑使用 expectedRevision，拒绝过期写入。',
+  'missions.mission.pause': '任务暂停通过 Main 状态机与 CAS 完成。',
+  'missions.mission.resume': '任务恢复通过 Main 状态机与 CAS 完成。',
+  'missions.mission.archive': '任务只允许可恢复归档，不硬删除受引用历史。',
+  'missions.mission.restore': '已归档任务可由 Main 以 CAS 恢复，并继续保留完整历史。',
+  'missions.mission.facts.view': '任务事实页读取 Main 持久化检查点与完整关联链。',
+  'missions.checkpoint.create': '人工事实或分析检查点由 Main 追加写入，历史记录不可改写。',
+  'decisions.recommendations.view': '建议与决策由 Main 按当前店铺和任务查询。',
+  'decisions.recommendations.create': '结构化建议创建绑定 Mission、数据批次、策略版本与动作 revision。',
+  'decisions.recommendations.update': '建议修订使用 expectedRevision，并保留不可改写历史。',
+  'decisions.approval.view': '人工审批由 Main 状态机、CAS 与 MissionGrant 授权约束。',
+  'decisions.approval.approve': '人工批准由 Main CAS 写入并保留完整决策历史。',
+  'decisions.approval.reject': '人工拒绝、阻断或替代由 Main 状态机写入不可改写历史。',
+  'decisions.grants.revoke': '人工可撤销当前店铺已签发的 MissionGrant；消费与过期仍只由 Main 写入。',
+  'decisions.decided.view': '已决策记录和不可改写历史由 Main 持久化读取。',
+  'experiments.experiment.view': '实验及观察窗由 Main 按当前店铺隔离查询。',
+  'experiments.experiment.create': '实验创建绑定任务、指标、守护栏与观察窗。',
+  'experiments.experiment.update': '实验编辑使用 expectedRevision，拒绝过期写入。',
+  'experiments.experiment.start': '实验从草稿启动通过 Main 状态机与 CAS 完成。',
+  'experiments.experiment.pause': '实验暂停通过 Main 状态机与 CAS 完成。',
+  'experiments.experiment.resume': '实验恢复通过 Main 状态机与 CAS 完成。',
+  'experiments.experiment.complete': '实验结论与完成状态通过 Main 状态机、CAS 和因果账本持久化。',
+  'experiments.experiment.archive': '实验采用可恢复归档并保留引用历史。',
+  'experiments.experiment.restore': '已归档实验可在当前店铺恢复为暂停状态。',
+  'experiments.observation.create': '人工观察以追加记录写入，修正必须引用原记录。',
+  'memory.timeline.view': '因果时间线由 Main 追加式账本按当前店铺读取。',
+  'memory.timeline.create': '人工只能追加 FACT 或 ANALYSIS；动作、回读和效果由 Main 权威流程写入。',
+  'memory.timeline.correct': '修正记录由 Main 校验同任务、同实体、同阶段后追加，原事件保持不变。',
+  'policy.version.view': '策略、不可变版本与运行时状态由 Main 按店铺读取。',
+  'policy.policy.create': '策略创建绑定当前店铺并记录审计事件。',
+  'policy.policy.update': '策略元数据编辑使用 expectedRevision，拒绝过期写入。',
+  'policy.policy.archive': '停用后的策略采用可恢复归档，不删除版本历史。',
+  'policy.policy.restore': '已归档策略可恢复为停用状态并保留全部版本。',
+  'policy.version.create': '策略及草稿版本创建绑定当前店铺与 US/USD 边界。',
+  'policy.version.update': '仅草稿策略版本可通过 Main 和 expectedRevision 修改。',
+  'policy.version.enable': '策略版本启用后内容不可修改，并成为运行时授权快照。',
+  'policy.version.disable': '策略停用由 Main CAS、审计与安全状态机控制。',
+  'policy.version.publish': '策略发布由 Main 启用不可变版本并写入审计账本。',
+  'policy.runtime.mode.set': '人工审批与策略内自动由 Main 持久化运行时、CAS 与安全前置条件控制。',
+  'policy.kill-switch.enable': '店铺级急停、熔断和自治模式由 Main 持久化控制。',
+  'policy.kill-switch.clear': '解除店铺级急停要求独立授权、明确原因与 Main 持久化审计。',
+});
+
+function unavailableAutonomy(): MissionControlAutonomyProjection {
+  return {
+    currentMode: 'manual_approval',
+    manualApprovalAvailable: true,
+    policyAutoAvailable: false,
+    policyAutoBlockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED',
+    policyAutoBlockerDetail: '全自动模式尚未实现 Main 授权、逐动作策略校验与真实回读闭环。',
+  };
+}
+
+function projectAutonomy(input: {
+  mode: MissionControlAutonomyMode;
+  killSwitch: boolean;
+  circuitBreakerState: 'closed' | 'open' | 'half_open';
+  activePolicyVersionId?: string;
+  canAutoExecute: boolean;
+}): MissionControlAutonomyProjection {
+  if (input.canAutoExecute) {
+    return {
+      currentMode: input.mode,
+      manualApprovalAvailable: true,
+      policyAutoAvailable: true,
+    };
+  }
+  const blocked = input.killSwitch
+    ? {
+        code: 'POLICY_KILL_SWITCH_ACTIVE',
+        detail: '店铺级策略急停已开启；关闭急停前不能选择策略全自动。',
+      }
+    : input.circuitBreakerState !== 'closed'
+      ? {
+          code: 'POLICY_CIRCUIT_BREAKER_NOT_CLOSED',
+          detail: '策略熔断器未关闭；完成复核前不能选择策略全自动。',
+        }
+      : {
+          code: 'ACTIVE_POLICY_VERSION_REQUIRED',
+          detail: '当前店铺尚未启用策略版本；先发布并启用一个不可变策略版本。',
+        };
+  return {
+    currentMode: input.mode,
+    manualApprovalAvailable: true,
+    policyAutoAvailable: false,
+    policyAutoBlockerCode: blocked.code,
+    policyAutoBlockerDetail: blocked.detail,
   };
 }
 
@@ -350,6 +527,25 @@ function serviceBlocked(
     action,
     state: 'BLOCKED',
     blockerCode: 'MISSION_CONTROL_SERVICE_NOT_IMPLEMENTED',
+    detail,
+  };
+}
+
+function dependencyBlocked(
+  capabilityId: string,
+  workspace: MissionControlCapabilityProjection['workspace'],
+  view: MissionControlCapabilityProjection['view'],
+  action: MissionControlCapabilityProjection['action'],
+  blockerCode: string,
+  detail: string,
+): MissionControlCapabilityProjection {
+  return {
+    capabilityId,
+    workspace,
+    view,
+    action,
+    state: 'BLOCKED',
+    blockerCode,
     detail,
   };
 }

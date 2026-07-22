@@ -114,6 +114,14 @@ describe('Mission Control workspace registry', () => {
       view: 'today/events',
     }));
     expect(todayEvents).not.toHaveProperty('legacyRoute');
+    const missionFacts = MISSION_CONTROL_WORKSPACE_REGISTRY
+      .find((workspace) => workspace.id === 'missions')
+      ?.subviews.find((subview) => subview.id === 'facts');
+    expect(missionFacts).toEqual(expect.objectContaining({
+      kind: 'canonical',
+      view: 'missions/facts',
+    }));
+    expect(missionFacts).not.toHaveProperty('legacyRoute');
   });
 });
 
@@ -128,7 +136,7 @@ describe('action-level capability rendering', () => {
     expect(summary?.projection?.action).toBe('update');
   });
 
-  it('renders a visibly labelled preview surface without enabling canonical mutations', () => {
+  it('renders the Mission CRUD shell but fails closed when the explicit preview adapter is absent', () => {
     const markup = renderToStaticMarkup(
       <MissionControlWorkspaceView
         autonomy={{ currentMode: 'manual_approval', manualApprovalAvailable: true, policyAutoAvailable: false }}
@@ -143,15 +151,16 @@ describe('action-level capability rendering', () => {
       />,
     );
     expect(markup).toContain('任务中心');
-    expect(markup).toContain('仅开发预览示例');
-    expect(markup).toContain('MISSION · US-SP-ACOS-001');
-    expect(markup).toContain('不写入数据库、不代表真实执行或回读');
+    expect(markup).toContain('仅开发预览');
+    expect(markup).toContain('显式内存 adapter');
+    expect(markup).toContain('Mission 队列');
+    expect(markup).toContain('失败关闭');
+    expect(markup).not.toContain('MISSION · US-SP-ACOS-001');
     expect(markup).toContain('查看接入边界');
-    expect(markup).toContain('canonical-preview-boundary-action');
-    expect(markup).not.toContain('task-banner');
-    expect(markup).not.toContain('summary-strip');
-    expect(markup).not.toContain('workbench-panel');
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>编辑 Mission<\/button>/);
+    expect(markup).toContain('task-banner');
+    expect(markup).toContain('summary-strip');
+    expect(markup).toContain('workbench-panel');
+    expect(markup).toMatch(/<button[^>]*data-action-id="missions\.mission\.create"[^>]*disabled=""/);
     expect(markup).not.toContain('执行成功');
   });
 
@@ -159,8 +168,8 @@ describe('action-level capability rendering', () => {
     [{ workspace: 'missions', subview: 'overview' }, 'missions/overview', '任务中心', 'missions.mission.create'],
     [{ workspace: 'experiments', subview: 'ledger' }, 'experiments/ledger', '经营实验', 'experiments.experiment.create'],
     [{ workspace: 'execution', subview: 'live' }, 'execution/live', '实时执行', 'execution.queue.start'],
-    [{ workspace: 'memory', subview: 'timeline' }, 'memory/timeline', '因果记忆', 'memory.timeline.rebuild-index'],
-    [{ workspace: 'policy', subview: 'rules' }, 'policy/rules', '策略与风控', 'policy.version.create'],
+    [{ workspace: 'memory', subview: 'timeline' }, 'memory/timeline', '因果记忆', 'memory.timeline.create'],
+    [{ workspace: 'policy', subview: 'rules' }, 'policy/rules', '策略与风控', 'policy.policy.create'],
   ] as const)('renders %s with its exact fail-closed blocker', (intent, view, title, createCapabilityId) => {
     const markup = renderToStaticMarkup(
       <MissionControlWorkspaceView
@@ -329,17 +338,33 @@ describe('action-level capability rendering', () => {
 describe('prototype-aligned canonical first screens', () => {
   it.each([
     [{ workspace: 'today', subview: 'overview' }, 'today/overview', 'today', 'ACTIVE STORE'],
-    [{ workspace: 'missions', subview: 'overview' }, 'missions/overview', 'missions', 'MISSION · US-SP-ACOS-001'],
-    [{ workspace: 'decisions', subview: 'recommendations' }, 'decisions/recommendations', 'decisions', '暂停智能门锁零订单高花费搜索词'],
-    [{ workspace: 'experiments', subview: 'ledger' }, 'experiments/ledger', 'experiments', 'EXPERIMENT · EXP-US-014'],
+    [{ workspace: 'missions', subview: 'overview' }, 'missions/overview', 'missions', 'Mission 队列'],
+    [{ workspace: 'missions', subview: 'facts' }, 'missions/facts', 'missions', 'Mission 事实链'],
+    [{ workspace: 'decisions', subview: 'recommendations' }, 'decisions/recommendations', 'decisions', 'AI 建议'],
+    [{ workspace: 'experiments', subview: 'ledger' }, 'experiments/ledger', 'experiments', '实验台账'],
     [{ workspace: 'execution', subview: 'live' }, 'execution/live', 'execution', 'Authority 未接入'],
     [{ workspace: 'memory', subview: 'timeline' }, 'memory/timeline', 'memory', 'FACT'],
-    [{ workspace: 'policy', subview: 'rules' }, 'policy/rules', 'policy', '美国站广告低风险执行边界'],
+    [{ workspace: 'policy', subview: 'rules' }, 'policy/rules', 'policy', '自动边界与审批策略'],
   ] as const)('gives %s an explicit, distinct US/USD preview surface', (intent, view, surface, copy) => {
     const markup = renderToStaticMarkup(
       <MissionControlWorkspaceView
         autonomy={{ currentMode: 'manual_approval', manualApprovalAvailable: true, policyAutoAvailable: false }}
-        capabilities={[capability(view, 'view', 'PROTOTYPE_ONLY')]}
+        capabilities={[capability(
+          view,
+          'view',
+          'PROTOTYPE_ONLY',
+          view === 'missions/facts'
+            ? 'missions.mission.facts.view'
+            : view === 'decisions/recommendations'
+            ? 'decisions.recommendations.view'
+            : view === 'experiments/ledger'
+              ? 'experiments.experiment.view'
+              : view === 'memory/timeline'
+                ? 'memory.timeline.view'
+            : view === 'policy/rules'
+              ? 'policy.version.view'
+              : `${view}.view`,
+        )]}
         intent={intent}
         legacySlot={<div>SHOULD_NOT_MOUNT</div>}
         onNavigate={vi.fn()}
@@ -350,10 +375,17 @@ describe('prototype-aligned canonical first screens', () => {
     );
     expect(markup).toContain(`data-canonical-surface="${surface}"`);
     expect(markup).toContain(copy);
-    expect(markup).toContain(surface === 'today' ? 'Amazon US / USD' : 'Amazon US · USD');
-    expect(markup).toContain('仅开发预览示例');
-    expect(markup).toContain('data-mutations-disabled="true"');
-    if (surface !== 'today') expect(markup).toContain('canonical-preview-boundary-action');
+    expect(markup).toMatch(/(?:Amazon )?US [/.·] USD/);
+    if (surface === 'missions' || surface === 'decisions' || surface === 'experiments' || surface === 'memory' || surface === 'policy') {
+      expect(markup).toContain('内存 adapter');
+      expect(markup).toContain('data-capability-state="PROTOTYPE_ONLY"');
+      expect(markup).toContain('接入边界');
+      expect(markup).not.toContain('data-mutations-disabled="true"');
+    } else {
+      expect(markup).toContain('仅开发预览示例');
+      expect(markup).toContain('data-mutations-disabled="true"');
+      if (surface !== 'today') expect(markup).toContain('canonical-preview-boundary-action');
+    }
     expect(markup).not.toContain('SHOULD_NOT_MOUNT');
     expect(markup).not.toContain('执行成功');
   });

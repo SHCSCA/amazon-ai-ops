@@ -905,6 +905,7 @@ function MissionControlRuntime({
             />
           )}
           onNavigate={requestNavigate}
+          onRefreshAuthority={missionControl.refreshBootstrap}
           previewMode={browserPreviewBootstrap.enabled}
           storeCrudSlot={(
             <StoreManagementPanel
