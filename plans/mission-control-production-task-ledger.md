@@ -37,12 +37,14 @@
 
 | ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
 | --- | --- | --- | --- | --- |
-| S2-01 | ACTIVE | Renderer navigation/shell/types | S1 | 十工作区 canonical navigation 与顶部 StoreContext |
-| S2-02 | ACTIVE | Renderer design system/styles | S2-01 | 原型视觉迁移、响应式 Inspector、统一 CRUD primitive |
-| S2-03 | ACTIVE | Renderer query/command bridge | S1/S2-01 | 去除生产 localStorage authority，query projection + typed command |
-| S2-04 | ACTIVE | Renderer legacy adapters | S2-01 | 16 个旧路由映射为 subview/alias，不丢生产能力 |
-| S2-05 | TODO | Dev preview/package UI evidence | S2-01..04 | 十工作区 fixture 合同和 UI evidence vNext |
-| S2-06 | TODO | 阶段质量 owner | S2-01..05 | typecheck、导航/渲染聚焦测试、十工作区 100%/125% UI 证据、commit/push |
+| S2-01 | DONE | Renderer navigation/shell/types | S1 | 十工作区 canonical navigation 与顶部 StoreContext |
+| S2-02 | DONE | Renderer design system/styles | S2-01 | 原型视觉迁移、响应式 Inspector、统一 CRUD primitive |
+| S2-03 | DONE | Renderer query/command bridge | S1/S2-01 | 去除生产 localStorage authority，query projection + typed command |
+| S2-04 | DONE | Renderer legacy adapters | S2-01 | 16 个旧路由映射为 subview/alias，不丢生产能力 |
+| S2-05 | DONE | Dev preview/package UI evidence | S2-01..04 | 十工作区 fixture 合同和 UI evidence vNext |
+| S2-06 | DONE | 阶段质量 owner | S2-01..05 | typecheck、导航/渲染聚焦测试、十工作区 100%/125% UI 证据、commit/push |
+
+阶段 2 集中验证（2026-07-22）：19 个聚焦测试文件 224/224 通过；`shared-types` 与 `desktop` typecheck 通过；Renderer 生产构建通过（4705 modules）。当前 UI 证据为 `output/codex-evidence/mission-control-stage2-ui-20260722-final/manifest.json`：20 个工作区 100%/125% 捕获、StoreGate、SHC001→SHC002 事实/Profile 隔离与 1200px 最小窗口执行布局共 23 个 PNG，严格校验绝对路径、文件存在性和 SHA-256；证据明确不提供最终生产 READY credit。独立审查提出的 previewMode 真值门、canonical 多店 fixture 隔离、Objects CRUD 精确 capability gate 和 1200px 表格裁切均已修复并加入回归。
 
 ## 阶段 3：真实领星采集与运营底座
 

@@ -1,85 +1,202 @@
 import React from 'react';
-import type { AppRoute } from '../types';
+import type { MissionControlCapabilityProjection } from '@amazon-ai-ops/shared-types';
+import {
+  ChartLineUp,
+  ClipboardText,
+  Database,
+  Flask,
+  Gear,
+  ListChecks,
+  MonitorPlay,
+  Notebook,
+  ShieldCheck,
+  SidebarSimple,
+  Storefront,
+} from '@phosphor-icons/react';
 import {
   VISIBLE_WORKSPACES,
-  workspaceForRoute,
 } from '../navigation';
-import type { NavigationIntent, VisibleWorkspaceDefinition } from '../navigation';
+import type {
+  NavigationIntent,
+  VisibleWorkspaceDefinition,
+  WorkspaceSection,
+} from '../navigation';
 import type { NextSafeAction } from '../workflow-state';
 
-const navigationSections: Array<{
-  id: 'daily' | 'system';
+export const NAVIGATION_SECTION_DEFINITIONS: ReadonlyArray<{
+  id: WorkspaceSection;
   label: string;
   items: readonly VisibleWorkspaceDefinition[];
 }> = [
-  { id: 'daily', label: '运营工作台', items: VISIBLE_WORKSPACES.filter((item) => item.section === 'daily') },
-  { id: 'system', label: '系统', items: VISIBLE_WORKSPACES.filter((item) => item.section === 'system') },
+  { id: 'mission', label: '任务', items: VISIBLE_WORKSPACES.filter((item) => item.section === 'mission') },
+  { id: 'learning', label: '学习闭环', items: VISIBLE_WORKSPACES.filter((item) => item.section === 'learning') },
+  { id: 'foundation', label: '运营底座', items: VISIBLE_WORKSPACES.filter((item) => item.section === 'foundation') },
+  { id: 'governance', label: '治理', items: VISIBLE_WORKSPACES.filter((item) => item.section === 'governance') },
 ];
-
-export function navItemOrdinal(index: number): string {
-  return String(index + 1).padStart(2, '0');
-}
 
 export function navGroupLabelId(index: number): string {
   return `app-nav-group-${index + 1}-label`;
 }
 
+const WORKSPACE_ICONS = {
+  today: ChartLineUp,
+  missions: ListChecks,
+  decisions: ClipboardText,
+  experiments: Flask,
+  execution: MonitorPlay,
+  memory: Notebook,
+  objects: Storefront,
+  collection: Database,
+  policy: ShieldCheck,
+  settings: Gear,
+} as const;
+
+export function workspaceCapabilityState(
+  capabilities: readonly MissionControlCapabilityProjection[],
+  workspace: VisibleWorkspaceDefinition['id'],
+): MissionControlCapabilityProjection['state'] | 'MIXED' | undefined {
+  const states = new Set(
+    capabilities
+      .filter((capability) => capability.workspace === workspace)
+      .map((capability) => capability.state),
+  );
+  if (states.size === 0) return undefined;
+  if (states.size === 1) return [...states][0];
+  return 'MIXED';
+}
+
+function capabilityLabel(state: ReturnType<typeof workspaceCapabilityState>): string | null {
+  if (state === 'BLOCKED') return '受阻';
+  if (state === 'MIXED') return '部分可用';
+  return null;
+}
+
 export function Sidebar({
-  activeRoute,
-  pendingRoute = null,
+  activeIntent,
+  pendingIntent = null,
+  capabilities = [],
+  collapsed = false,
+  activeStore,
+  onToggleCollapsed,
   onNavigate,
 }: {
-  activeRoute: AppRoute;
-  pendingRoute?: AppRoute | null;
+  activeIntent: NavigationIntent;
+  pendingIntent?: NavigationIntent | null;
+  capabilities?: readonly MissionControlCapabilityProjection[];
+  collapsed?: boolean;
+  activeStore?: {
+    storeId: string;
+    displayName: string;
+    marketplace: 'US';
+    currency: 'USD';
+  } | null;
+  onToggleCollapsed?: () => void;
   onNavigate: (intent: NavigationIntent) => void;
 }) {
-  const navigationBusy = Boolean(pendingRoute);
-  const activeWorkspace = workspaceForRoute(activeRoute);
-  const pendingWorkspace = workspaceForRoute(pendingRoute);
+  const navigationBusy = Boolean(pendingIntent);
+  const activeWorkspace = activeIntent.workspace;
+  const pendingWorkspace = pendingIntent?.workspace;
 
   return (
-    <nav className="app-sidebar" aria-busy={navigationBusy || undefined} aria-label="主业务导航" data-navigation-busy={navigationBusy || undefined}>
-      {navigationSections.map((section, groupIndex) => {
-        const groupLabelId = navGroupLabelId(groupIndex);
+    <nav
+      aria-busy={navigationBusy || undefined}
+      aria-label="主业务导航"
+      className={`app-sidebar${collapsed ? ' app-sidebar-collapsed' : ''}`}
+      data-navigation-busy={navigationBusy || undefined}
+    >
+      <div className="app-sidebar-scroll">
+        {NAVIGATION_SECTION_DEFINITIONS.map((section, groupIndex) => {
+          const groupLabelId = navGroupLabelId(groupIndex);
 
-        return (
-          <section
-            className={`nav-group${section.id === 'system' ? ' nav-group-system' : ''}`}
-            data-navigation-section={section.id}
-            key={section.id}
-            role="group"
-            aria-labelledby={groupLabelId}
-          >
-            <div className="nav-group-label" id={groupLabelId}>{section.label}</div>
-            <div className="nav-item-list" role="list" aria-label={`${section.label}导航项`}>
-              {section.items.map((item, index) => {
-                const isPending = pendingWorkspace === item.id;
-                return (
-                  <div className="nav-item-shell" key={item.id} role="listitem" aria-posinset={index + 1} aria-setsize={section.items.length}>
-                    <button
-                      aria-busy={isPending || undefined}
-                      aria-current={activeWorkspace === item.id ? 'page' : undefined}
-                      aria-describedby={groupLabelId}
-                      className="nav-item"
-                      data-pending={isPending ? 'true' : undefined}
-                      disabled={navigationBusy}
-                      onClick={() => {
-                        if (!navigationBusy) onNavigate(item.defaultIntent);
-                      }}
-                      title={item.description}
-                      type="button"
+          return (
+            <section
+              aria-labelledby={groupLabelId}
+              className={`nav-group nav-group-${section.id}`}
+              data-navigation-section={section.id}
+              key={section.id}
+              role="group"
+            >
+              <div className="nav-group-label" id={groupLabelId}>{section.label}</div>
+              <div className="nav-item-list" role="list" aria-label={`${section.label}导航项`}>
+                {section.items.map((item, index) => {
+                  const isPending = pendingWorkspace === item.id;
+                  const state = workspaceCapabilityState(capabilities, item.id);
+                  const stateLabel = capabilityLabel(state);
+                  const Icon = WORKSPACE_ICONS[item.id];
+                  const active = activeWorkspace === item.id;
+                  return (
+                    <div
+                      aria-posinset={index + 1}
+                      aria-setsize={section.items.length}
+                      className="nav-item-shell"
+                      key={item.id}
+                      role="listitem"
                     >
-                      <span className="nav-item-index">{navItemOrdinal(index)}</span>
-                      <span className="nav-item-label">{item.label}</span>
-                      {isPending && <span className="nav-item-feedback">转跳中...</span>}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        );
-      })}
+                      <button
+                        aria-busy={isPending || undefined}
+                        aria-current={active ? 'page' : undefined}
+                        aria-describedby={collapsed ? undefined : groupLabelId}
+                        aria-label={collapsed ? item.label : undefined}
+                        className="nav-item"
+                        data-capability-state={state}
+                        data-pending={isPending ? 'true' : undefined}
+                        disabled={navigationBusy}
+                        onClick={() => {
+                          if (!navigationBusy) onNavigate(item.defaultIntent);
+                        }}
+                        title={collapsed ? `${item.label} · ${item.description}` : item.description}
+                        type="button"
+                      >
+                        <span className="nav-item-index" aria-hidden="true">
+                          <Icon size={19} weight={active ? 'fill' : 'regular'} />
+                        </span>
+                        <span className="nav-item-label">{item.label}</span>
+                        {stateLabel && <span className="nav-item-capability">{stateLabel}</span>}
+                        {isPending && <span className="nav-item-feedback">转跳中...</span>}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      {(onToggleCollapsed || activeStore) && (
+        <div className="app-sidebar-footer">
+          {onToggleCollapsed && (
+            <button
+              aria-label={collapsed ? '展开主导航' : '收起主导航'}
+              className="sidebar-collapse-button"
+              onClick={onToggleCollapsed}
+              type="button"
+            >
+              <SidebarSimple aria-hidden="true" size={18} />
+              <span>{collapsed ? '展开' : '收起导航'}</span>
+            </button>
+          )}
+          {activeStore && (
+            <button
+              aria-label={`打开 ${activeStore.displayName} 的店铺与广告对象`}
+              className="sidebar-store-card"
+              onClick={() => onNavigate(
+                VISIBLE_WORKSPACES.find((item) => item.id === 'objects')!.defaultIntent,
+              )}
+              title={`${activeStore.displayName} · ${activeStore.storeId}`}
+              type="button"
+            >
+              <span className="sidebar-store-icon" aria-hidden="true">
+                <Storefront size={17} weight="duotone" />
+              </span>
+              <span className="sidebar-store-copy">
+                <strong>{activeStore.displayName}</strong>
+                <small>美国站 · USD · 独立数据域</small>
+              </span>
+            </button>
+          )}
+        </div>
+      )}
     </nav>
   );
 }

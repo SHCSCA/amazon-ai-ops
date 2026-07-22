@@ -31,23 +31,23 @@ describe('selectNextSafeAction', () => {
   it.each([
     {
       name: 'product not selected', evidence: { productSelected: false }, stage: 'product-selection', label: '选择运营产品',
-      intent: { workspace: 'product', subview: 'products' },
+      intent: { workspace: 'objects', subview: 'products' },
     },
     {
       name: 'scope missing', evidence: { scopeReady: false }, stage: 'scope-setup', label: '配置工作范围',
-      intent: { workspace: 'data-preparation', subview: 'scope' },
+      intent: { workspace: 'collection', subview: 'scope' },
     },
     {
       name: 'reports missing', evidence: { reportsReady: false }, stage: 'report-collection', label: '采集真实报表',
-      intent: { workspace: 'data-preparation', subview: 'reports' },
+      intent: { workspace: 'collection', subview: 'reports' },
     },
     {
       name: 'import pending', evidence: { importState: 'pending' as const }, stage: 'import-validation', label: '检查导入结果',
-      intent: { workspace: 'data-preparation', subview: 'import-check' },
+      intent: { workspace: 'collection', subview: 'import-check' },
     },
     {
       name: 'diagnosis pending', evidence: { diagnosisReady: false }, stage: 'diagnosis', label: '运行广告诊断',
-      intent: { workspace: 'diagnosis', subview: 'analysis' },
+      intent: { workspace: 'missions', subview: 'facts' },
     },
     {
       name: 'recommendations absent', evidence: { recommendationState: 'absent' as const }, stage: 'recommendations', label: '生成优化建议',
@@ -64,12 +64,12 @@ describe('selectNextSafeAction', () => {
     {
       name: 'readback evidence missing',
       evidence: { readback: { verifiedCount: 0, verificationStatus: 'missing' as const } },
-      stage: 'readback', label: '补齐执行回读', intent: { workspace: 'readback', subview: 'evidence' },
+      stage: 'readback', label: '补齐执行回读', intent: { workspace: 'execution', subview: 'evidence' },
     },
     {
       name: 'delivery pending',
       evidence: { delivery: { ...completeEvidence.delivery, appReady: false } },
-      stage: 'delivery', label: '检查交付验收', intent: { workspace: 'system', subview: 'delivery' },
+      stage: 'delivery', label: '检查交付验收', intent: { workspace: 'settings', subview: 'delivery' },
     },
   ])('returns one concrete blocked action when $name', ({ evidence, stage, label, intent }) => {
     const action = selectNextSafeAction({ ...completeEvidence, ...evidence });
@@ -85,7 +85,7 @@ describe('selectNextSafeAction', () => {
     expect(selectNextSafeAction({ ...completeEvidence, readback })).toMatchObject({
       blocked: true,
       stage: 'readback',
-      intent: { workspace: 'readback', subview: 'evidence' },
+      intent: { workspace: 'execution', subview: 'evidence' },
     });
   });
 
@@ -105,7 +105,7 @@ describe('selectNextSafeAction', () => {
     expect(action).toMatchObject({
       blocked: true,
       stage: 'delivery',
-      intent: { workspace: 'system', subview: 'delivery' },
+      intent: { workspace: 'settings', subview: 'delivery' },
     });
   });
 
@@ -248,7 +248,7 @@ describe('deriveWorkflowEvidence', () => {
     expect(selectNextSafeAction(evidence)).toMatchObject({
       stage: 'import-validation',
       label: '检查导入结果',
-      intent: { workspace: 'data-preparation', subview: 'import-check' },
+      intent: { workspace: 'collection', subview: 'import-check' },
     });
   });
 

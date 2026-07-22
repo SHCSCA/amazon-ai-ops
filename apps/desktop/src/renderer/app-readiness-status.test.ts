@@ -63,7 +63,8 @@ describe('headerSessionStatusLabel', () => {
 
     expect(source).toContain('setLoginState(true, session.currentStore, session)');
     expect(source).not.toContain('setLoginState(true, request.username, session)');
-    expect(source).toContain("loginSession?.sessionIdentityVerified === false ? '账号未核验'");
+    expect(source).toContain('activeStore={store.activeStore}');
+    expect(source).toContain('{headerSessionStatusLabel(loginSession)}');
   });
 
   it('exposes unverified session detail as a focusable warning status instead of title-only copy', () => {

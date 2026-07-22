@@ -1,0 +1,133 @@
+.mission-control-workspace-tabs {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mission-control-workspace-tabs > .workspace-subview-shell__navigation {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  margin: 16px 24px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.mission-control-workspace-tabs > .workspace-subview-shell__navigation > .workspace-subview-shell__identity {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  clip: rect(0, 0, 0, 0);
+  overflow: hidden;
+  border: 0;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-tabs .workspace-subview-shell__tabs {
+  display: inline-flex;
+  max-width: 100%;
+  gap: 3px;
+  align-items: center;
+  overflow-x: auto;
+  border: 1px solid var(--workspace-border);
+  border-radius: 8px;
+  background: #f6f8fb;
+  padding: 3px;
+  scrollbar-width: thin;
+}
+
+.mission-control-workspace-tabs .workspace-subview-shell__tabs > button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 0 10px;
+  color: var(--workspace-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 18px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-tabs .workspace-subview-shell__tabs > button:hover,
+.mission-control-workspace-tabs .workspace-subview-shell__tabs > button:focus-visible {
+  color: var(--workspace-action-hover);
+}
+
+.mission-control-workspace-tabs .workspace-subview-shell__tabs > button[aria-selected="true"] {
+  border-color: transparent;
+  background: #fff;
+  color: var(--workspace-action);
+  font-weight: 750;
+  box-shadow: 0 1px 3px rgb(20 33 55 / 0.1);
+}
+
+.mission-control-workspace-tabs .workspace-subview-shell__tabs > button > strong {
+  display: inline-flex;
+  font: inherit;
+}
+
+.mission-control-workspace-tab__state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  border: 1px solid var(--workspace-border);
+  border-radius: 999px;
+  background: #fff;
+  padding: 0 6px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 16px;
+}
+
+.mission-control-workspace-tab__state[data-capability-state="PRODUCTION_NATIVE"] {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.mission-control-workspace-tab__state[data-capability-state="LEGACY_ADAPTER"] {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.mission-control-workspace-tab__state[data-capability-state="PROTOTYPE_ONLY"] {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.mission-control-workspace-tab__state[data-capability-state="BLOCKED"] {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.mission-control-workspace-tabs > .workspace-subview-shell__panel {
+  min-width: 0;
+}
+
+@media (max-width: 1080px) {
+  .mission-control-workspace-tabs > .workspace-subview-shell__navigation {
+    margin-inline: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-control-workspace-tabs *,
+  .mission-control-workspace-tabs *::before,
+  .mission-control-workspace-tabs *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

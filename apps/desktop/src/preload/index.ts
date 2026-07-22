@@ -20,6 +20,7 @@ import type {
   UpdateStoreInput,
 } from '@amazon-ai-ops/shared-types';
 import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
+import { createMissionControlPreloadApi } from './mission-control-api';
 
 ipcRenderer.on('business-ui:data-updated', () => {
   window.dispatchEvent(new Event('business-ui:data-updated'));
@@ -28,6 +29,8 @@ ipcRenderer.on('business-ui:data-updated', () => {
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
+  missionControl: createMissionControlPreloadApi(ipcRenderer),
+
   // App
   getVersion: () => ipcRenderer.invoke('app:get-version'),
   getState: () => ipcRenderer.invoke('app:get-state'),

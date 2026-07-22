@@ -144,6 +144,8 @@ import {
   StoreCoordinator,
 } from './store-coordinator';
 import { registerStoreIpcHandlers } from './store-ipc';
+import { registerMissionControlIpcHandlers } from './mission-control-ipc';
+import { createMissionControlLegacyAdapter } from './mission-control-legacy-adapter';
 
 // ============================================================================
 // App State
@@ -8254,6 +8256,11 @@ function registerIpcHandlers(): void {
       mainWindow?.webContents.send('business-ui:data-updated');
     },
   });
+  registerMissionControlIpcHandlers(
+    ipcMain,
+    state.storeCoordinator,
+    createMissionControlLegacyAdapter(),
+  );
 
   // App
   ipcMain.handle('app:get-version', () => '1.5.0');

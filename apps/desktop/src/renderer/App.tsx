@@ -1,23 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
-import { Sidebar } from './components/app-shell';
-import { ScopeBar } from './components/scope-bar';
-import { WorkspaceSubviewShell } from './components/workspace';
-import { AdQuantPage } from './pages/ad-quant-page';
-import { DashboardPage } from './pages/dashboard-page';
-import { DataCollectionPage } from './pages/data-collection-page';
-import { DataImportValidationPage } from './pages/data-import-validation-page';
-import { DecisionsPage } from './pages/decisions-page';
-import { DeliveryPage } from './pages/delivery-page';
-import { KeywordOpportunitiesPage } from './pages/keyword-opportunities-page';
-import { ListingOptimizationPage } from './pages/listing-optimization-page';
-import { OperationEventsPage } from './pages/operation-events-page';
-import { OperationScopePage } from './pages/operation-scope-page';
-import { ProductConfigPage } from './pages/product-config-page';
-import { ProductManagementPage } from './pages/product-management-page';
-import { ReadbackPage } from './pages/readback-page';
-import { SchedulerPage } from './pages/scheduler-page';
-import { SettingsPage } from './pages/settings-page';
+import { missionControlContextKey, type StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import type { AppRoute, DeliveryReadinessView } from './types';
 import type {
   BrowserLoginCredentialPersistence,
@@ -29,8 +12,6 @@ import {
   navigationIntentsEqual,
   navigationNeedsGlobalHandoff,
   normalizeNavigationTarget,
-  resolveNavigationTarget,
-  WORKSPACE_SUBVIEW_TABS,
 } from './navigation';
 import type { NavigationIntent } from './navigation';
 import { useScopeStore } from './scope-store';
@@ -40,7 +21,21 @@ import { subscribeWorkflowInvalidation } from './workflow-invalidation';
 import type { WorkflowEventTarget, WorkflowInvalidationDetail } from './workflow-invalidation';
 import { toUserFacingError } from './user-facing-error';
 import { bootstrapBrowserPreview } from './dev-preview-api';
-import { readbackAuthorityForMode, type ReadbackAuthority } from './pages/readback-workspace-model';
+import { readbackAuthorityForMode } from './pages/readback-workspace-model';
+import {
+  MissionControlStoreContextProvider,
+  useMissionControlStoreContext,
+} from './mission-control/store-context';
+import type { MissionControlStorePhase } from './mission-control/store-context';
+import { MissionControlStoreGate } from './mission-control/store-gate';
+import { useMissionControlBridge } from './mission-control/bridge/use-mission-control-bridge';
+import {
+  DEFAULT_BLOCKED_AUTONOMY,
+  MissionControlShell,
+} from './mission-control/mission-control-shell';
+import { LegacyAdapterRouter } from './mission-control/router';
+import { MissionControlWorkspaceView } from './mission-control/workspaces';
+import { StoreManagementPanel } from './mission-control/components';
 import './styles.css';
 import './styles/tokens.css';
 import './styles/foundations.css';
@@ -51,6 +46,7 @@ import './styles/decisions.css';
 import './styles/object-workspace.css';
 import './styles/readback.css';
 import './styles/states-motion.css';
+import './styles/mission-control-shell.css';
 
 interface LoginSessionInfo {
   erpSessionReused?: boolean;
@@ -65,6 +61,7 @@ interface AppState {
   isLoggedIn: boolean;
   currentStore: string;
   loginSession?: LoginSessionInfo | null;
+  loginStateRevision: number;
   activeNavigation: NavigationIntent;
   setActiveNavigation: (intent: NavigationIntent) => void;
   setLoginState: (isLoggedIn: boolean, store?: string, loginSession?: LoginSessionInfo | null) => void;
@@ -74,10 +71,67 @@ const useStore = create<AppState>((set) => ({
   isLoggedIn: false,
   currentStore: '',
   loginSession: null,
+  loginStateRevision: 0,
   activeNavigation: DEFAULT_WORKSPACE_INTENTS.today,
   setActiveNavigation: (intent) => set({ activeNavigation: intent }),
-  setLoginState: (isLoggedIn, store = '', loginSession = null) => set({ isLoggedIn, currentStore: store, loginSession }),
+  setLoginState: (isLoggedIn, store = '', loginSession = null) => set((state) => ({
+    isLoggedIn,
+    currentStore: store,
+    loginSession,
+    loginStateRevision: state.loginStateRevision + 1,
+  })),
 }));
+
+export interface StoreAuthoritySnapshot {
+  authorityKey: string | null;
+  contextEpoch: number;
+  phase: MissionControlStorePhase;
+}
+
+export function shouldInvalidateLoginForStoreAuthority(
+  isLoggedIn: boolean,
+  previous: StoreAuthoritySnapshot,
+  current: StoreAuthoritySnapshot,
+): boolean {
+  if (!isLoggedIn) return false;
+
+  // The first explicit store selection establishes the initial authority. Every
+  // later switch starts a new browser/session authority, even when the operator
+  // re-selects the same store.
+  if (current.phase === 'switching') return current.contextEpoch > 0;
+
+  // Once an authority has existed, losing it means the old ERP/Ads session can
+  // no longer be displayed for any subsequent store selection.
+  if (current.authorityKey === null) return current.contextEpoch > 0;
+
+  // A direct Main-side authority replacement must also fail closed. The epoch
+  // guard distinguishes it from the initial null -> first-authority bootstrap.
+  if (previous.authorityKey === null) return current.contextEpoch > 1;
+  return previous.authorityKey !== current.authorityKey;
+}
+
+export function shouldRestoreLoginForStoreAuthority(input: {
+  responseIsLoggedIn: boolean;
+  responseAuthorityKey: string | null;
+  requestedAuthorityKey: string;
+  currentAuthorityKey: string | null;
+}): boolean {
+  return input.responseIsLoggedIn
+    && input.responseAuthorityKey !== null
+    && input.responseAuthorityKey === input.requestedAuthorityKey
+    && input.responseAuthorityKey === input.currentAuthorityKey;
+}
+
+function appStateAuthorityKey(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const context = (value as { storeContext?: unknown }).storeContext;
+  if (!context) return null;
+  try {
+    return missionControlContextKey(context as StoreContextEnvelope);
+  } catch {
+    return null;
+  }
+}
 
 function bootstrapAppBrowserPreview(username = 'SHC001') {
   if (typeof window === 'undefined') return { enabled: false } as const;
@@ -617,116 +671,21 @@ function LoginPage() {
   );
 }
 
-function BusinessRoutePage({
-  navigation,
-  nextSafeAction,
-  onNavigate,
-  previewMode,
-  readbackAuthority,
-  previewScenarioId,
+function MissionControlRuntime({
+  loginSession,
+  onLoggedOut,
 }: {
-  navigation: NavigationIntent;
-  nextSafeAction: NextSafeAction;
-  onNavigate: (intent: NavigationIntent) => void;
-  previewMode: boolean;
-  readbackAuthority: ReadbackAuthority;
-  previewScenarioId?: string;
+  loginSession?: LoginSessionInfo | null;
+  onLoggedOut: () => void;
 }) {
-  const route = resolveNavigationTarget(navigation) || 'dashboard';
-  if (navigation.workspace === 'decisions') return <DecisionsPage activeSubview={navigation.subview} />;
-  if (navigation.workspace === 'readback') {
-    return <ReadbackPage authority={readbackAuthority} previewScenarioId={previewScenarioId} />;
-  }
-  if (navigation.workspace === 'today') return <DashboardPage nextSafeAction={nextSafeAction} />;
-  if (navigation.workspace === 'product') {
-    const content = navigation.subview === 'products'
-      ? <ProductManagementPage />
-      : navigation.subview === 'targets'
-        ? <ProductConfigPage />
-        : <OperationEventsPage />;
-    return (
-      <WorkspaceSubviewShell
-        description="锁定当前产品，维护经营目标，并记录会影响判断的运营事件。"
-        onNavigate={(subview) => onNavigate({ workspace: 'product', subview })}
-        ownsPageHeading={navigation.subview === 'products'}
-        subview={navigation.subview}
-        tabs={WORKSPACE_SUBVIEW_TABS.product}
-        workspace="product"
-        workspaceLabel="产品工作台"
-      >
-        {content}
-      </WorkspaceSubviewShell>
-    );
-  }
-  if (navigation.workspace === 'data-preparation') {
-    const content = navigation.subview === 'scope'
-      ? <OperationScopePage />
-      : navigation.subview === 'reports'
-        ? <DataCollectionPage />
-        : <DataImportValidationPage />;
-    return (
-      <WorkspaceSubviewShell
-        description="确认工作范围，补齐八类真实报表，并核对逐类入库结果。"
-        onNavigate={(subview) => onNavigate({ workspace: 'data-preparation', subview })}
-        subview={navigation.subview}
-        tabs={WORKSPACE_SUBVIEW_TABS['data-preparation']}
-        workspace="data-preparation"
-        workspaceLabel="数据准备"
-      >
-        {content}
-      </WorkspaceSubviewShell>
-    );
-  }
-  if (navigation.workspace === 'diagnosis') return <AdQuantPage />;
-  if (navigation.workspace === 'growth') {
-    const content = navigation.subview === 'keywords'
-      ? <KeywordOpportunitiesPage />
-      : <ListingOptimizationPage />;
-    return (
-      <WorkspaceSubviewShell
-        description="从真实关键词机会进入仅本地使用的 Listing 草案流程。"
-        onNavigate={(subview) => onNavigate({ workspace: 'growth', subview })}
-        subview={navigation.subview}
-        tabs={WORKSPACE_SUBVIEW_TABS.growth}
-        workspace="growth"
-        workspaceLabel="关键词与 Listing"
-      >
-        {content}
-      </WorkspaceSubviewShell>
-    );
-  }
-  if (navigation.workspace === 'system') {
-    const content = navigation.subview === 'settings'
-      ? <SettingsPage />
-      : navigation.subview === 'scheduler'
-        ? <SchedulerPage />
-        : <DeliveryPage />;
-    return (
-      <WorkspaceSubviewShell
-        description="管理 AI 与规则、自动任务，并核对当前候选包的交付状态。"
-        onNavigate={(subview) => onNavigate({ workspace: 'system', subview })}
-        previewNotice={previewMode ? '仅开发预览，不代表 APP_READY。预览动作不形成正式交付证据。' : undefined}
-        subview={navigation.subview}
-        tabs={WORKSPACE_SUBVIEW_TABS.system}
-        workspace="system"
-        workspaceLabel="系统与交付"
-      >
-        {content}
-      </WorkspaceSubviewShell>
-    );
-  }
-  if (route === 'dashboard') return <DashboardPage nextSafeAction={nextSafeAction} />;
-  return <DashboardPage nextSafeAction={nextSafeAction} />;
-}
-
-export default function App() {
-  const { isLoggedIn, currentStore, loginSession, activeNavigation, setActiveNavigation, setLoginState } = useStore();
+  const { activeNavigation, setActiveNavigation } = useStore();
+  const store = useMissionControlStoreContext();
+  const missionControl = useMissionControlBridge();
   const scope = useScopeStore((state) => state.scope);
-  const activeTab = resolveNavigationTarget(activeNavigation) || 'dashboard';
+  const setScope = useScopeStore((state) => state.setScope);
   const [deliveryReadiness, setDeliveryReadiness] = useState<DeliveryReadinessView | null>(null);
   const [workflowEvidence, setWorkflowEvidence] = useState<WorkflowEvidence>(() => deriveWorkflowEvidence({}));
   const [pendingNavigationIntent, setPendingNavigationIntent] = useState<NavigationIntent | null>(null);
-  const pendingNavigationRoute = resolveNavigationTarget(pendingNavigationIntent);
   const nextSafeAction = selectNextSafeAction(workflowEvidence);
   const readbackAuthority = readbackAuthorityForMode(
     browserPreviewBootstrap.enabled ? 'preview-readonly' : 'production',
@@ -734,26 +693,9 @@ export default function App() {
   const contentRef = useRef<HTMLElement | null>(null);
   const navigationTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    async function checkLoginState() {
-      try {
-        const api = appElectronApi();
-        const state = await api.getState();
-        setLoginState(Boolean(state.isLoggedIn), state.currentStore, state.loginSession || null);
-      } catch (caught) {
-        console.error(caught);
-        setLoginState(false);
-      }
-    }
-
-    checkLoginState();
-  }, [setLoginState]);
-
   const requestNavigate = useCallback((target: AppRoute | NavigationIntent) => {
     const intent = normalizeNavigationTarget(target);
     if (!intent) return;
-    const route = resolveNavigationTarget(target);
-    if (!route) return;
     if (navigationIntentsEqual(intent, activeNavigation) && !pendingNavigationIntent) return;
     if (navigationTimerRef.current) window.clearTimeout(navigationTimerRef.current);
     setActiveNavigation(intent);
@@ -787,7 +729,30 @@ export default function App() {
   }, [activeNavigation.subview, activeNavigation.workspace]);
 
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!store.authoritativeContext || !store.activeStore) return;
+    setDeliveryReadiness(null);
+    setWorkflowEvidence(deriveWorkflowEvidence({}));
+    setScope({
+      storeName: store.activeStore.displayName,
+      marketplaceCode: store.authoritativeContext.marketplace,
+      currency: store.authoritativeContext.currency,
+      asin: undefined,
+      batchId: undefined,
+    });
+  }, [setScope, store.authorityKey]);
+
+  useEffect(() => {
+    if (!store.authoritativeContext || !store.authorityKey) return;
+    const dashboardCapability = missionControl.capabilities.find((capability) => (
+      capability.view === 'today/overview'
+        && capability.action === 'view'
+        && capability.state === 'LEGACY_ADAPTER'
+    ));
+    if (!dashboardCapability) {
+      setDeliveryReadiness(null);
+      setWorkflowEvidence(deriveWorkflowEvidence({ scope }));
+      return;
+    }
     let cancelled = false;
     const workflowLoadGuard = createLatestWorkflowLoadGuard();
     async function loadWorkflowState() {
@@ -845,69 +810,191 @@ export default function App() {
       window.removeEventListener('business-ui:data-updated', loadWorkflowState);
       unsubscribeWorkflowInvalidation();
     };
-  }, [isLoggedIn, scope]);
+  }, [missionControl.capabilities, scope, store.authorityKey, store.authoritativeContext]);
 
   async function handleLogout() {
     await (window as any).electronAPI.browserLogout();
-    setLoginState(false);
+    onLoggedOut();
   }
 
-  if (!isLoggedIn) {
-    return <LoginPage />;
-  }
+  if (!store.authoritativeContext || !store.activeStore) return null;
+
+  const previewScenarioId = 'scenarioId' in browserPreviewBootstrap
+    ? browserPreviewBootstrap.scenarioId
+    : undefined;
+  const brandBadges = (
+    <>
+      {browserPreviewBootstrap.enabled && (
+        <span
+          className="app-status app-status-warning"
+          role={browserPreviewBootstrap.warning ? 'alert' : 'status'}
+          title={browserPreviewBootstrap.warning || '开发预览只使用内存 fixture，不写入真实业务数据或验收证据。'}
+        >
+          仅开发预览 · {previewScenarioId}
+          {browserPreviewBootstrap.warning ? ` · ${browserPreviewBootstrap.warning}` : ''}
+        </span>
+      )}
+      <span className={headerReadinessClass(deliveryReadiness)}>{headerReadinessLabel(deliveryReadiness)}</span>
+      {missionControl.error && <span className="app-status app-status-warning">Capability 同步失败</span>}
+    </>
+  );
+  const sessionStatus = (
+    <span
+      aria-label={describeLoginSession(loginSession)}
+      aria-live="polite"
+      className={`session-line${loginSession?.sessionIdentityVerified === false ? ' session-line-warning' : ''}`}
+      role="status"
+      tabIndex={loginSession?.sessionIdentityVerified === false ? 0 : undefined}
+      title={describeLoginSession(loginSession)}
+    >
+      {headerSessionStatusLabel(loginSession)}
+    </span>
+  );
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <strong>Amazon AI Ops</strong>
-          <span>v1.5.0</span>
-          {browserPreviewBootstrap.enabled && (
-            <span
-              className="app-status app-status-warning"
-              role={browserPreviewBootstrap.warning ? 'alert' : 'status'}
-              title={browserPreviewBootstrap.warning || '开发预览只使用内存 fixture，不写入真实业务数据或验收证据。'}
-            >
-              仅开发预览 · {browserPreviewBootstrap.scenarioId}
-              {browserPreviewBootstrap.warning ? ` · ${browserPreviewBootstrap.warning}` : ''}
-            </span>
+    <MissionControlShell
+      activeIntent={activeNavigation}
+      activeStore={store.activeStore}
+      authoritativeContext={store.authoritativeContext}
+      autonomy={missionControl.autonomy ?? DEFAULT_BLOCKED_AUTONOMY}
+      brandBadges={brandBadges}
+      capabilities={missionControl.capabilities}
+      contentRef={contentRef}
+      onLogout={handleLogout}
+      onNavigate={requestNavigate}
+      onSetAutonomyMode={missionControl.setAutonomyMode}
+      onSwitchStore={store.switchStore}
+      pendingIntent={pendingNavigationIntent}
+      sessionStatus={sessionStatus}
+      storeError={store.error}
+      storePhase={store.phase}
+      stores={store.stores}
+    >
+      <div key={store.authorityKey} data-authority-key={store.authorityKey}>
+        <MissionControlWorkspaceView
+          autonomy={missionControl.autonomy}
+          capabilities={missionControl.phase === 'loading' ? undefined : missionControl.capabilities}
+          intent={activeNavigation}
+          legacySlot={({ route, intent, capabilities }) => (
+            <LegacyAdapterRouter
+              capabilities={capabilities}
+              intent={intent}
+              nextSafeAction={nextSafeAction}
+              previewMode={browserPreviewBootstrap.enabled}
+              previewScenarioId={previewScenarioId}
+              readbackAuthority={readbackAuthority}
+              route={route}
+              storeContext={store.authoritativeContext!}
+            />
           )}
-          <span className={headerReadinessClass(deliveryReadiness)}>{headerReadinessLabel(deliveryReadiness)}</span>
-        </div>
-        <ScopeBar />
-        <div className="topbar-right">
-          <strong>{currentStore || (loginSession?.sessionIdentityVerified === false ? '账号未核验' : '')}</strong>
-          <span
-            aria-label={describeLoginSession(loginSession)}
-            aria-live="polite"
-            className={`session-line${loginSession?.sessionIdentityVerified === false ? ' session-line-warning' : ''}`}
-            role="status"
-            tabIndex={loginSession?.sessionIdentityVerified === false ? 0 : undefined}
-            title={describeLoginSession(loginSession)}
-          >
-            {headerSessionStatusLabel(loginSession)}
-          </span>
-          <button className="logout-button" onClick={handleLogout} type="button">退出登录</button>
-        </div>
-      </header>
-      <div className="app-body">
-        <Sidebar activeRoute={activeTab} pendingRoute={pendingNavigationRoute} onNavigate={requestNavigate} />
-        <main ref={contentRef} className={`app-content${pendingNavigationRoute ? ' app-content-navigating' : ''}`}>
-          {pendingNavigationRoute && (
-            <div className="route-handoff-feedback" role="status" aria-live="polite">
-              转跳中...
-            </div>
+          onNavigate={requestNavigate}
+          previewMode={browserPreviewBootstrap.enabled}
+          storeCrudSlot={(
+            <StoreManagementPanel
+              activeStoreId={store.activeStore.storeId}
+              error={store.error}
+              onArchive={store.archiveStore}
+              onCreate={store.createStore}
+              onRestore={store.restoreStore}
+              onSwitch={store.switchStore}
+              onUpdate={store.updateStore}
+              stores={store.stores}
+            />
           )}
-          <BusinessRoutePage
-            navigation={activeNavigation}
-            nextSafeAction={nextSafeAction}
-            onNavigate={requestNavigate}
-            previewMode={browserPreviewBootstrap.enabled}
-            previewScenarioId={'scenarioId' in browserPreviewBootstrap ? browserPreviewBootstrap.scenarioId : undefined}
-            readbackAuthority={readbackAuthority}
-          />
-        </main>
+          storeContext={store.authoritativeContext}
+        />
       </div>
-    </div>
+    </MissionControlShell>
+  );
+}
+
+export function shouldStartLoginRestoreForAuthority(
+  restoredAuthorityKey: string | null,
+  current: StoreAuthoritySnapshot,
+): current is StoreAuthoritySnapshot & { authorityKey: string } {
+  return current.phase === 'ready'
+    && Boolean(current.authorityKey)
+    && restoredAuthorityKey !== current.authorityKey;
+}
+
+function MissionControlSessionAuthorityBoundary({ children }: { children: React.ReactNode }) {
+  const store = useMissionControlStoreContext();
+  const { isLoggedIn, setLoginState } = useStore();
+  const loginRestoreAuthorityRef = useRef<string | null>(null);
+  const previousAuthorityRef = useRef<StoreAuthoritySnapshot>({
+    authorityKey: store.authorityKey,
+    contextEpoch: store.contextEpoch,
+    phase: store.phase,
+  });
+
+  useLayoutEffect(() => {
+    const currentAuthority: StoreAuthoritySnapshot = {
+      authorityKey: store.authorityKey,
+      contextEpoch: store.contextEpoch,
+      phase: store.phase,
+    };
+    const previousAuthority = previousAuthorityRef.current;
+    previousAuthorityRef.current = currentAuthority;
+    if (shouldInvalidateLoginForStoreAuthority(isLoggedIn, previousAuthority, currentAuthority)) {
+      setLoginState(false);
+    }
+  }, [isLoggedIn, setLoginState, store.authorityKey, store.contextEpoch, store.phase]);
+
+  useEffect(() => {
+    const currentAuthority: StoreAuthoritySnapshot = {
+      authorityKey: store.authorityKey,
+      contextEpoch: store.contextEpoch,
+      phase: store.phase,
+    };
+    if (!shouldStartLoginRestoreForAuthority(loginRestoreAuthorityRef.current, currentAuthority)) return;
+    loginRestoreAuthorityRef.current = currentAuthority.authorityKey;
+    const requestedAuthorityKey = currentAuthority.authorityKey;
+    const requestedLoginRevision = useStore.getState().loginStateRevision;
+
+    async function restoreLoginState() {
+      try {
+        const state = await appElectronApi().getState();
+        if (useStore.getState().loginStateRevision !== requestedLoginRevision) return;
+        const currentAuthorityKey = previousAuthorityRef.current.authorityKey;
+        if (shouldRestoreLoginForStoreAuthority({
+          responseIsLoggedIn: Boolean(state?.isLoggedIn),
+          responseAuthorityKey: appStateAuthorityKey(state),
+          requestedAuthorityKey,
+          currentAuthorityKey,
+        })) {
+          setLoginState(true, state.currentStore, state.loginSession || null);
+        } else {
+          setLoginState(false);
+        }
+      } catch (caught) {
+        console.error(caught);
+        if (useStore.getState().loginStateRevision === requestedLoginRevision) {
+          setLoginState(false);
+        }
+      }
+    }
+
+    void restoreLoginState();
+  }, [setLoginState, store.authorityKey, store.contextEpoch, store.phase]);
+
+  return <>{children}</>;
+}
+
+export default function App() {
+  const { isLoggedIn, loginSession, setLoginState } = useStore();
+
+  return (
+    <MissionControlStoreContextProvider>
+      <MissionControlSessionAuthorityBoundary>
+        <MissionControlStoreGate>
+          {isLoggedIn ? (
+            <MissionControlRuntime
+              loginSession={loginSession}
+              onLoggedOut={() => setLoginState(false)}
+            />
+          ) : <LoginPage />}
+        </MissionControlStoreGate>
+      </MissionControlSessionAuthorityBoundary>
+    </MissionControlStoreContextProvider>
   );
 }

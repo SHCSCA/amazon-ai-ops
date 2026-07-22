@@ -13,121 +13,108 @@ import type { AppRoute } from './types';
 
 const expectedMappings = [
   ['dashboard', { workspace: 'today', subview: 'overview' }],
-  ['product-management', { workspace: 'product', subview: 'products' }],
-  ['product-config', { workspace: 'product', subview: 'targets' }],
-  ['operation-events', { workspace: 'product', subview: 'events' }],
-  ['operation-scope', { workspace: 'data-preparation', subview: 'scope' }],
-  ['data-collection', { workspace: 'data-preparation', subview: 'reports' }],
-  ['data-import-validation', { workspace: 'data-preparation', subview: 'import-check' }],
-  ['ad-quant', { workspace: 'diagnosis', subview: 'analysis' }],
+  ['product-management', { workspace: 'objects', subview: 'products' }],
+  ['product-config', { workspace: 'objects', subview: 'targets' }],
+  ['operation-events', { workspace: 'today', subview: 'events' }],
+  ['operation-scope', { workspace: 'collection', subview: 'scope' }],
+  ['data-collection', { workspace: 'collection', subview: 'reports' }],
+  ['data-import-validation', { workspace: 'collection', subview: 'import-check' }],
+  ['ad-quant', { workspace: 'missions', subview: 'facts' }],
   ['recommendations', { workspace: 'decisions', subview: 'recommendations' }],
   ['approval', { workspace: 'decisions', subview: 'approval' }],
-  ['readback', { workspace: 'readback', subview: 'evidence' }],
-  ['keyword-opportunities', { workspace: 'growth', subview: 'keywords' }],
-  ['listing-optimization', { workspace: 'growth', subview: 'listing' }],
-  ['settings', { workspace: 'system', subview: 'settings' }],
-  ['scheduler', { workspace: 'system', subview: 'scheduler' }],
-  ['delivery', { workspace: 'system', subview: 'delivery' }],
-] as const;
+  ['readback', { workspace: 'execution', subview: 'evidence' }],
+  ['keyword-opportunities', { workspace: 'objects', subview: 'keywords' }],
+  ['listing-optimization', { workspace: 'objects', subview: 'listing' }],
+  ['settings', { workspace: 'settings', subview: 'ai-and-local' }],
+  ['scheduler', { workspace: 'settings', subview: 'scheduler' }],
+  ['delivery', { workspace: 'settings', subview: 'delivery' }],
+] as const satisfies ReadonlyArray<readonly [AppRoute, ReturnType<typeof navigationIntentForRoute>]>;
 
 describe('legacy route navigation compatibility', () => {
-  it('maps all 16 AppRoute values to typed workspace intents', () => {
+  it('maps all 16 legacy routes into canonical Mission Control intents', () => {
     expect(Object.entries(LEGACY_ROUTE_INTENTS)).toEqual(expectedMappings);
-
     for (const [route, intent] of expectedMappings) {
       expect(navigationIntentForRoute(route)).toEqual(intent);
+      expect(resolveNavigationTarget(intent)).toBe(route);
+      expect(resolveNavigationTarget(route)).toBe(route);
     }
   });
 
-  it('round-trips every legacy route through its structured intent', () => {
-    for (const [route] of expectedMappings) {
-      expect(resolveNavigationTarget(navigationIntentForRoute(route))).toBe(route);
-    }
-  });
-
-  it('preserves decided as a first-class canonical subview while keeping the legacy approval route alias', () => {
+  it('keeps decided canonical while reusing the read-only approval page adapter', () => {
     const decided = { workspace: 'decisions', subview: 'decided' } as const;
-
     expect(normalizeNavigationTarget(decided)).toEqual(decided);
     expect(resolveNavigationTarget(decided)).toBe('approval');
   });
 
-  it('continues accepting every legacy route string directly', () => {
-    for (const [route] of expectedMappings) {
-      expect(resolveNavigationTarget(route)).toBe(route);
-    }
+  it('does not invent legacy routes for canonical-only workspaces', () => {
+    const canonicalOnly = [
+      { workspace: 'missions', subview: 'overview' },
+      { workspace: 'experiments', subview: 'ledger' },
+      { workspace: 'execution', subview: 'live' },
+      { workspace: 'memory', subview: 'timeline' },
+      { workspace: 'policy', subview: 'rules' },
+    ] as const;
+    canonicalOnly.forEach((intent) => {
+      expect(normalizeNavigationTarget(intent)).toEqual(intent);
+      expect(resolveNavigationTarget(intent)).toBeNull();
+    });
   });
 });
 
-describe('visible workspace navigation', () => {
-  it('publishes exactly seven daily workspaces and one separated system workspace', () => {
+describe('ten-workspace information architecture', () => {
+  it('publishes exactly ten workspaces in four operator groups', () => {
     expect(VISIBLE_WORKSPACES.map((item) => item.id)).toEqual([
       'today',
-      'product',
-      'data-preparation',
-      'diagnosis',
+      'missions',
       'decisions',
-      'readback',
-      'growth',
-      'system',
+      'experiments',
+      'execution',
+      'memory',
+      'objects',
+      'collection',
+      'policy',
+      'settings',
     ]);
-    expect(VISIBLE_WORKSPACES.filter((item) => item.section === 'daily')).toHaveLength(7);
-    expect(VISIBLE_WORKSPACES.filter((item) => item.section === 'system')).toHaveLength(1);
     expect(VISIBLE_WORKSPACES.map((item) => item.label)).toEqual([
       '今日任务',
-      '产品工作台',
-      '数据准备',
-      '广告诊断',
-      '建议与审批',
-      '结果核对',
-      '关键词与 Listing',
-      '系统与交付',
+      '任务中心',
+      '决策与审批',
+      '经营实验',
+      '实时执行',
+      '因果记忆',
+      '店铺与广告对象',
+      '数据采集',
+      '策略与风控',
+      '系统设置',
     ]);
+    expect(Object.fromEntries(['mission', 'learning', 'foundation', 'governance'].map((section) => [
+      section,
+      VISIBLE_WORKSPACES.filter((item) => item.section === section).length,
+    ]))).toEqual({ mission: 3, learning: 3, foundation: 2, governance: 2 });
   });
 
-  it('defines one valid default intent for every visible workspace', () => {
-    expect(DEFAULT_WORKSPACE_INTENTS).toEqual({
-      today: { workspace: 'today', subview: 'overview' },
-      product: { workspace: 'product', subview: 'products' },
-      'data-preparation': { workspace: 'data-preparation', subview: 'scope' },
-      diagnosis: { workspace: 'diagnosis', subview: 'analysis' },
-      decisions: { workspace: 'decisions', subview: 'recommendations' },
-      readback: { workspace: 'readback', subview: 'evidence' },
-      growth: { workspace: 'growth', subview: 'keywords' },
-      system: { workspace: 'system', subview: 'settings' },
-    });
-
+  it('defines a valid canonical default for every workspace, including route-less workspaces', () => {
     for (const workspace of VISIBLE_WORKSPACES) {
       const intent = DEFAULT_WORKSPACE_INTENTS[workspace.id];
       expect(intent.workspace).toBe(workspace.id);
-      expect(resolveNavigationTarget(intent)).toBeTruthy();
+      expect(normalizeNavigationTarget(intent)).toEqual(intent);
     }
+    expect(resolveNavigationTarget(DEFAULT_WORKSPACE_INTENTS.experiments)).toBeNull();
   });
 
-  it('publishes operator-facing subview tabs for every remaining workspace migration', () => {
-    expect(WORKSPACE_SUBVIEW_TABS.product.map((item) => [item.id, item.label])).toEqual([
-      ['products', '产品'],
-      ['targets', '目标与成本'],
-      ['events', '运营事件'],
+  it('publishes the complete operator-facing tab contract', () => {
+    expect(Object.keys(WORKSPACE_SUBVIEW_TABS)).toEqual([
+      'today', 'missions', 'decisions', 'execution', 'objects', 'collection', 'settings',
     ]);
-    expect(WORKSPACE_SUBVIEW_TABS['data-preparation'].map((item) => [item.id, item.label])).toEqual([
-      ['scope', '工作范围'],
-      ['reports', '报表采集'],
-      ['import-check', '导入检查'],
+    expect(WORKSPACE_SUBVIEW_TABS.decisions.map((tab) => tab.id)).toEqual([
+      'recommendations', 'approval', 'decided',
     ]);
-    expect(WORKSPACE_SUBVIEW_TABS.diagnosis.map((item) => item.id)).toEqual(['analysis']);
-    expect(WORKSPACE_SUBVIEW_TABS.growth.map((item) => [item.id, item.label])).toEqual([
-      ['keywords', '关键词机会'],
-      ['listing', 'Listing 草案'],
-    ]);
-    expect(WORKSPACE_SUBVIEW_TABS.system.map((item) => [item.id, item.label])).toEqual([
-      ['settings', 'AI 与规则'],
-      ['scheduler', '定时任务'],
-      ['delivery', '交付验收'],
+    expect(WORKSPACE_SUBVIEW_TABS.objects.map((tab) => tab.id)).toEqual([
+      'products', 'targets', 'keywords', 'listing',
     ]);
   });
 
-  it('fails safely for invalid structured navigation details', () => {
+  it('fails closed for invalid structured targets', () => {
     const invalidTargets: unknown[] = [
       null,
       undefined,
@@ -135,34 +122,25 @@ describe('visible workspace navigation', () => {
       'not-a-route',
       {},
       [],
-      { workspace: 'product' },
-      { workspace: 'product', subview: 'approval' },
+      { workspace: 'missions' },
+      { workspace: 'missions', subview: 'approval' },
       { workspace: 'unknown', subview: 'overview' },
-      { workspace: 'decisions', subview: 'targets' },
       { workspace: 'today', subview: 'overview', unsafe: true },
     ];
-
-    invalidTargets.forEach((target) => expect(resolveNavigationTarget(target)).toBeNull());
+    invalidTargets.forEach((target) => {
+      expect(normalizeNavigationTarget(target)).toBeNull();
+      expect(resolveNavigationTarget(target)).toBeNull();
+    });
   });
 
-  it('normalizes legacy routes into canonical intents without losing structured subviews', () => {
-    expect(normalizeNavigationTarget('operation-events')).toEqual({ workspace: 'product', subview: 'events' });
-    expect(normalizeNavigationTarget({ workspace: 'decisions', subview: 'decided' })).toEqual({ workspace: 'decisions', subview: 'decided' });
-  });
-
-  it('keeps the legacy mapping exhaustive at the AppRoute type boundary', () => {
-    const legacyRoutes = expectedMappings.map(([route]) => route) satisfies AppRoute[];
-    expect(legacyRoutes).toHaveLength(16);
-  });
-
-  it('reserves the global route handoff for cross-workspace navigation', () => {
+  it('reserves global handoff for cross-workspace navigation', () => {
     expect(navigationNeedsGlobalHandoff(
       { workspace: 'decisions', subview: 'recommendations' },
       { workspace: 'decisions', subview: 'decided' },
     )).toBe(false);
     expect(navigationNeedsGlobalHandoff(
       { workspace: 'decisions', subview: 'decided' },
-      { workspace: 'readback', subview: 'evidence' },
+      { workspace: 'execution', subview: 'evidence' },
     )).toBe(true);
     expect(navigationNeedsGlobalHandoff(null, { workspace: 'today', subview: 'overview' })).toBe(false);
   });

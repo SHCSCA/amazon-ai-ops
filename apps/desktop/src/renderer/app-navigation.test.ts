@@ -1,6 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { createAppNavigationEventHandler, createLatestWorkflowLoadGuard, resetWorkspaceScrollPosition, subscribeAppWorkflowInvalidation } from './App';
+import {
+  createAppNavigationEventHandler,
+  createLatestWorkflowLoadGuard,
+  resetWorkspaceScrollPosition,
+  shouldInvalidateLoginForStoreAuthority,
+  shouldRestoreLoginForStoreAuthority,
+  shouldStartLoginRestoreForAuthority,
+  subscribeAppWorkflowInvalidation,
+} from './App';
 import type { NavigationIntent } from './navigation';
 import { notifyWorkflowInvalidated } from './workflow-invalidation';
 
@@ -12,53 +20,208 @@ function appSource(): string {
   return readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
 }
 
-describe('App runtime navigation event compatibility', () => {
-  it('handles a legacy AppRoute event through the runtime handler', () => {
+function routerSource(): string {
+  return readFileSync(new URL('./mission-control/router.tsx', import.meta.url), 'utf8');
+}
+
+function boundarySource(): string {
+  return readFileSync(new URL('./mission-control/legacy-boundary.tsx', import.meta.url), 'utf8');
+}
+
+describe('App canonical navigation events', () => {
+  it('normalizes every legacy event into the new workspace model', () => {
     const visited: NavigationIntent[] = [];
     const handler = createAppNavigationEventHandler((intent) => visited.push(intent));
 
     expect(handler(navigationEvent('approval'))).toBe(true);
-    expect(visited).toEqual([{ workspace: 'decisions', subview: 'approval' }]);
+    expect(handler(navigationEvent('readback'))).toBe(true);
+    expect(visited).toEqual([
+      { workspace: 'decisions', subview: 'approval' },
+      { workspace: 'execution', subview: 'evidence' },
+    ]);
   });
 
-  it.each([
-    ['recommendations', { workspace: 'decisions', subview: 'recommendations' }],
-    ['approval', { workspace: 'decisions', subview: 'approval' }],
-  ] as const)('preserves the canonical decision intent for legacy %s events', (route, expected) => {
+  it('accepts canonical-only workspaces without inventing a legacy route', () => {
     const visited: NavigationIntent[] = [];
     const handler = createAppNavigationEventHandler((intent) => visited.push(intent));
+    const intents = [
+      { workspace: 'missions', subview: 'overview' },
+      { workspace: 'experiments', subview: 'ledger' },
+      { workspace: 'execution', subview: 'live' },
+      { workspace: 'memory', subview: 'timeline' },
+      { workspace: 'policy', subview: 'rules' },
+    ] as const;
 
-    expect(handler(navigationEvent(route))).toBe(true);
-    expect(visited).toEqual([expected]);
+    intents.forEach((intent) => expect(handler(navigationEvent(intent))).toBe(true));
+    expect(visited).toEqual(intents);
   });
 
-  it('handles and preserves a structured NavigationIntent through the same runtime handler', () => {
+  it('fails closed for malformed navigation details', () => {
     const visited: NavigationIntent[] = [];
     const handler = createAppNavigationEventHandler((intent) => visited.push(intent));
-
-    expect(handler(navigationEvent({ workspace: 'decisions', subview: 'decided' }))).toBe(true);
-    expect(visited).toEqual([{ workspace: 'decisions', subview: 'decided' }]);
-  });
-
-  it('fails safely without navigation for invalid structured event details', () => {
-    const visited: NavigationIntent[] = [];
-    const handler = createAppNavigationEventHandler((intent) => visited.push(intent));
-
     expect(handler(navigationEvent({ workspace: 'decisions', subview: 'targets' }))).toBe(false);
     expect(handler(navigationEvent('not-a-route'))).toBe(false);
     expect(visited).toEqual([]);
   });
 });
 
-describe('App workspace scroll restoration', () => {
-  it('resets the shared workspace scroll owner to the top-left on navigation', () => {
+describe('Mission Control runtime composition', () => {
+  it('gates store selection before login and mounts the runtime only after both are ready', () => {
+    const source = appSource();
+    const providerIndex = source.indexOf('<MissionControlStoreContextProvider>');
+    const sessionBoundaryIndex = source.indexOf('<MissionControlSessionAuthorityBoundary>');
+    const gateIndex = source.indexOf('<MissionControlStoreGate>');
+    const loginChoiceIndex = source.indexOf('{isLoggedIn ? (');
+
+    expect(providerIndex).toBeGreaterThan(0);
+    expect(sessionBoundaryIndex).toBeGreaterThan(providerIndex);
+    expect(gateIndex).toBeGreaterThan(sessionBoundaryIndex);
+    expect(loginChoiceIndex).toBeGreaterThan(gateIndex);
+    expect(source).toContain(') : <LoginPage />}');
+    expect(source).not.toContain("if (!isLoggedIn) return <LoginPage />");
+  });
+
+  it('uses the canonical workspace registry and remounts store-scoped state by authority key', () => {
+    const source = appSource();
+    expect(source).toContain('<MissionControlWorkspaceView');
+    expect(source).toContain('key={store.authorityKey}');
+    expect(source).toContain('data-authority-key={store.authorityKey}');
+    expect(source).toContain('capabilities={missionControl.phase === \'loading\' ? undefined : missionControl.capabilities}');
+    expect(source).not.toContain('function BusinessRoutePage(');
+  });
+
+  it('does not reject canonical-only navigation because resolveNavigationTarget returned null', () => {
+    const source = appSource();
+    const requestNavigateStart = source.indexOf('const requestNavigate = useCallback');
+    const requestNavigateEnd = source.indexOf('useEffect(() => {', requestNavigateStart);
+    const requestNavigate = source.slice(requestNavigateStart, requestNavigateEnd);
+    expect(requestNavigate).toContain('normalizeNavigationTarget(target)');
+    expect(requestNavigate).not.toContain('resolveNavigationTarget');
+  });
+
+  it('binds the real Store Authority CRUD panel instead of a decorative slot', () => {
+    const source = appSource();
+    expect(source).toContain('<StoreManagementPanel');
+    expect(source).toContain('onCreate={store.createStore}');
+    expect(source).toContain('onUpdate={store.updateStore}');
+    expect(source).toContain('onArchive={store.archiveStore}');
+    expect(source).toContain('onRestore={store.restoreStore}');
+    expect(source).toContain('onSwitch={store.switchStore}');
+  });
+});
+
+describe('Store authority login-session invalidation', () => {
+  const cold = { authorityKey: null, contextEpoch: 0, phase: 'loading' } as const;
+  const storeA = { authorityKey: 'store-a|profile-a|1', contextEpoch: 1, phase: 'ready' } as const;
+
+  it('keeps bootstrap login state only for the first established authority', () => {
+    expect(shouldInvalidateLoginForStoreAuthority(true, cold, storeA)).toBe(false);
+    expect(shouldInvalidateLoginForStoreAuthority(false, storeA, {
+      authorityKey: 'store-b|profile-b|2',
+      contextEpoch: 2,
+      phase: 'ready',
+    })).toBe(false);
+  });
+
+  it('invalidates the old ERP/Ads session as soon as an established store starts switching', () => {
+    expect(shouldInvalidateLoginForStoreAuthority(true, storeA, {
+      ...storeA,
+      phase: 'switching',
+    })).toBe(true);
+  });
+
+  it('invalidates the old session when Main replaces the authority key directly', () => {
+    expect(shouldInvalidateLoginForStoreAuthority(true, storeA, {
+      authorityKey: 'store-b|profile-b|2',
+      contextEpoch: 2,
+      phase: 'ready',
+    })).toBe(true);
+  });
+
+  it.each(['needs-selection', 'loading'] as const)(
+    'invalidates the old session when an established authority is cleared into %s',
+    (phase) => {
+      expect(shouldInvalidateLoginForStoreAuthority(true, storeA, {
+        authorityKey: null,
+        contextEpoch: 2,
+        phase,
+      })).toBe(true);
+    },
+  );
+
+  it('restores a persisted login only when Main returns the exact requested and current authority', () => {
+    const valid = {
+      responseIsLoggedIn: true,
+      responseAuthorityKey: storeA.authorityKey,
+      requestedAuthorityKey: storeA.authorityKey,
+      currentAuthorityKey: storeA.authorityKey,
+    };
+    expect(shouldRestoreLoginForStoreAuthority(valid)).toBe(true);
+    expect(shouldRestoreLoginForStoreAuthority({
+      ...valid,
+      currentAuthorityKey: 'store-b|profile-b|2',
+    })).toBe(false);
+    expect(shouldRestoreLoginForStoreAuthority({
+      ...valid,
+      responseAuthorityKey: null,
+    })).toBe(false);
+    expect(shouldRestoreLoginForStoreAuthority({
+      ...valid,
+      responseIsLoggedIn: false,
+    })).toBe(false);
+  });
+
+  it('revalidates login once for every newly established store authority', () => {
+    expect(shouldStartLoginRestoreForAuthority(null, storeA)).toBe(true);
+    expect(shouldStartLoginRestoreForAuthority(storeA.authorityKey, storeA)).toBe(false);
+    expect(shouldStartLoginRestoreForAuthority(storeA.authorityKey, {
+      authorityKey: 'store-b|profile-b|2',
+      contextEpoch: 2,
+      phase: 'ready',
+    })).toBe(true);
+    expect(shouldStartLoginRestoreForAuthority(storeA.authorityKey, {
+      ...storeA,
+      phase: 'switching',
+    })).toBe(false);
+  });
+});
+
+describe('Legacy adapter isolation', () => {
+  it('keeps all legacy page imports in the explicit adapter router', () => {
+    const app = appSource();
+    const router = routerSource();
+    const legacyPages = [
+      'DashboardPage', 'ProductManagementPage', 'ProductConfigPage', 'OperationEventsPage',
+      'OperationScopePage', 'DataCollectionPage', 'DataImportValidationPage', 'AdQuantPage',
+      'DecisionsPage', 'ReadbackPage', 'KeywordOpportunitiesPage', 'ListingOptimizationPage',
+      'SettingsPage', 'SchedulerPage', 'DeliveryPage',
+    ];
+    legacyPages.forEach((page) => {
+      expect(app).not.toMatch(new RegExp(`import \\{ ${page} \\}`));
+      expect(router).toContain(page);
+    });
+    expect(router).toContain('<LegacyAdapterBoundary');
+  });
+
+  it('requires exact store-scoped view, action and route capability before mounting old content', () => {
+    const boundary = boundarySource();
+    expect(boundary).toContain('capability.workspace === intent.workspace');
+    expect(boundary).toContain('capability.view === viewId');
+    expect(boundary).toContain('capability.legacyRoute === route');
+    expect(boundary).toContain("capability?.state === 'LEGACY_ADAPTER'");
+    expect(boundary).toContain("capability?.state === 'PROTOTYPE_ONLY' && previewMode");
+    expect(boundary).toContain('当前功能未放行');
+  });
+});
+
+describe('App workspace lifecycle helpers', () => {
+  it('resets the shared workspace scroll owner on navigation', () => {
     const calls: ScrollToOptions[] = [];
     const owner = {
       scrollLeft: 42,
       scrollTop: 680,
       scrollTo: (options: ScrollToOptions) => calls.push(options),
     };
-
     expect(resetWorkspaceScrollPosition(owner)).toBe(true);
     expect(owner.scrollTop).toBe(0);
     expect(owner.scrollLeft).toBe(0);
@@ -66,94 +229,23 @@ describe('App workspace scroll restoration', () => {
     expect(resetWorkspaceScrollPosition(null)).toBe(false);
   });
 
-  it('uses a layout-timed reset and one repaint guard for every workspace/subview change', () => {
-    const source = appSource();
-
-    expect(source).toContain('useLayoutEffect(() =>');
-    expect(source).toContain('resetWorkspaceScrollPosition(content)');
-    expect(source).toContain('window.requestAnimationFrame');
-  });
-});
-
-describe('App unified Decisions workspace routing', () => {
-  it('passes the full active navigation intent into BusinessRoutePage', () => {
-    const source = appSource();
-
-    expect(source).toContain('function BusinessRoutePage({');
-    expect(source).toContain('navigation,');
-    expect(source).toContain('nextSafeAction,');
-    expect(source).toContain('readbackAuthority,');
-    expect(source).toContain('navigation: NavigationIntent');
-    expect(source).toContain('<BusinessRoutePage');
-    expect(source).toContain('navigation={activeNavigation}');
-    expect(source).toContain('nextSafeAction={nextSafeAction}');
-    expect(source).toContain('readbackAuthority={readbackAuthority}');
-  });
-
-  it('renders every Decisions subview through one DecisionsPage and preserves legacy route sidebar state', () => {
-    const source = appSource();
-
-    expect(source).toContain("import { DecisionsPage } from './pages/decisions-page';");
-    expect(source).not.toContain("import { RecommendationsPage } from './pages/recommendations-page';");
-    expect(source).not.toContain("import { ApprovalPage } from './pages/approval-page';");
-    expect(source).toContain("if (navigation.workspace === 'decisions') return <DecisionsPage activeSubview={navigation.subview} />;");
-    expect(source).not.toContain("if (route === 'recommendations') return <RecommendationsPage />;");
-    expect(source).not.toContain("if (route === 'approval') return <ApprovalPage />;");
-    expect(source).toContain("const activeTab = resolveNavigationTarget(activeNavigation) || 'dashboard';");
-    expect(source).toContain('<Sidebar activeRoute={activeTab}');
-  });
-});
-
-describe('App remaining workspace shell routing', () => {
-  it('uses the shared shell only for multi-subview workspaces and renders diagnosis directly', () => {
-    const source = appSource();
-
-    expect(source).toContain("import { WorkspaceSubviewShell } from './components/workspace';");
-    expect(source).toContain('WORKSPACE_SUBVIEW_TABS,');
-    expect(source).toContain('onNavigate: (intent: NavigationIntent) => void');
-    expect(source).toContain('onNavigate={requestNavigate}');
-    expect(source).toContain("navigation.workspace === 'product'");
-    expect(source).toContain("navigation.workspace === 'data-preparation'");
-    expect(source).toContain("navigation.workspace === 'diagnosis'");
-    expect(source).toContain("navigation.workspace === 'growth'");
-    expect(source).toContain("navigation.workspace === 'system'");
-    expect(source).toContain("if (navigation.workspace === 'diagnosis') return <AdQuantPage />;");
-    expect(source.match(/<WorkspaceSubviewShell/g)).toHaveLength(4);
-    expect(source).toContain("ownsPageHeading={navigation.subview === 'products'}");
-  });
-
-  it('shows one workspace-level preview warning across every System subview', () => {
-    const source = appSource();
-
-    expect(source).toContain('previewMode: boolean');
-    expect(source).toContain('previewMode={browserPreviewBootstrap.enabled}');
-    expect(source).toContain('仅开发预览，不代表 APP_READY');
-  });
-});
-
-describe('App workflow invalidation subscription', () => {
-  it('reloads workflow state for runtime invalidations and cleans up without polling', () => {
-    const target = new EventTarget();
-    const sources: string[] = [];
-    const unsubscribe = subscribeAppWorkflowInvalidation((detail) => sources.push(detail.source), target);
-
-    notifyWorkflowInvalidated('approval-approved', target);
-    expect(sources).toEqual(['approval-approved']);
-
-    unsubscribe();
-    notifyWorkflowInvalidated('readback-verified', target);
-    expect(sources).toEqual(['approval-approved']);
-  });
-
-  it('keeps only the newest overlapping workflow reload authoritative', () => {
+  it('invalidates stale overlapping workflow loads', () => {
     const guard = createLatestWorkflowLoadGuard();
     const first = guard.begin();
     const second = guard.begin();
-
     expect(guard.isCurrent(first)).toBe(false);
     expect(guard.isCurrent(second)).toBe(true);
-
     guard.invalidate();
     expect(guard.isCurrent(second)).toBe(false);
+  });
+
+  it('subscribes to workflow invalidation without polling', () => {
+    const target = new EventTarget();
+    const sources: string[] = [];
+    const unsubscribe = subscribeAppWorkflowInvalidation((detail) => sources.push(detail.source), target);
+    notifyWorkflowInvalidated('approval-approved', target);
+    unsubscribe();
+    notifyWorkflowInvalidated('readback-verified', target);
+    expect(sources).toEqual(['approval-approved']);
   });
 });
