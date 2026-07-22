@@ -31,8 +31,12 @@ import {
   STORE_AUTHORITY_MIGRATION_VERSION,
   STORE_SCOPED_LEGACY_TABLES,
   getStoreMigrationRecoveryPreflight,
+  getUpgradeBackupRecoveryPreflight,
   restoreStoreMigrationBackupTo,
+  restoreUpgradeBackupTo,
+  upgradeBackupFromMigrationManifest,
   type SchemaMigrationRecord,
+  type SchemaMigrationManifest,
   type StoreMigrationManifest,
   type StoreMigrationQuarantineReason,
   type StoreMigrationQuarantineRecord,
@@ -664,7 +668,7 @@ export class StoreRepository {
     return row ? mapSchemaMigration(row) : undefined;
   }
 
-  getMigrationManifest(version = STORE_AUTHORITY_MIGRATION_VERSION): StoreMigrationManifest | undefined {
+  getMigrationManifest(version = STORE_AUTHORITY_MIGRATION_VERSION): SchemaMigrationManifest | undefined {
     return this.getSchemaMigration(version)?.manifest;
   }
 
@@ -679,7 +683,17 @@ export class StoreRepository {
     if (!migration) {
       throw new StoreRepositoryError('MIGRATION_NOT_FOUND', `Migration ${version} was not found.`);
     }
-    return getStoreMigrationRecoveryPreflight(migration.manifest);
+    if (version === STORE_AUTHORITY_MIGRATION_VERSION && isStoreMigrationManifest(migration.manifest)) {
+      return getStoreMigrationRecoveryPreflight(migration.manifest);
+    }
+    const upgradeBackup = upgradeBackupFromMigrationManifest(migration.manifest);
+    if (!upgradeBackup) {
+      throw new StoreRepositoryError(
+        'MIGRATION_NOT_FOUND',
+        `Migration ${version} does not contain a recoverable upgrade backup.`,
+      );
+    }
+    return getUpgradeBackupRecoveryPreflight(upgradeBackup);
   }
 
   restoreMigrationBackupTo(
@@ -690,7 +704,17 @@ export class StoreRepository {
     if (!migration) {
       throw new StoreRepositoryError('MIGRATION_NOT_FOUND', `Migration ${version} was not found.`);
     }
-    return restoreStoreMigrationBackupTo(migration.manifest, destinationPath);
+    if (version === STORE_AUTHORITY_MIGRATION_VERSION && isStoreMigrationManifest(migration.manifest)) {
+      return restoreStoreMigrationBackupTo(migration.manifest, destinationPath);
+    }
+    const upgradeBackup = upgradeBackupFromMigrationManifest(migration.manifest);
+    if (!upgradeBackup) {
+      throw new StoreRepositoryError(
+        'MIGRATION_NOT_FOUND',
+        `Migration ${version} does not contain a recoverable upgrade backup.`,
+      );
+    }
+    return restoreUpgradeBackupTo(upgradeBackup, destinationPath);
   }
 
   listMigrationQuarantine(
@@ -1122,7 +1146,7 @@ function mapSession(row: SessionRow): StoreSessionMetadata {
 }
 
 function mapSchemaMigration(row: SchemaMigrationRow): SchemaMigrationRecord {
-  const manifest = parseJson<StoreMigrationManifest>(row.manifest_json);
+  const manifest = parseJson<SchemaMigrationManifest>(row.manifest_json);
   if (!manifest) {
     throw new StoreRepositoryError(
       'MIGRATION_NOT_FOUND',
@@ -1140,6 +1164,13 @@ function mapSchemaMigration(row: SchemaMigrationRow): SchemaMigrationRecord {
     manifest,
     result: parseJson<StoreMigrationResult>(row.result_json),
   };
+}
+
+function isStoreMigrationManifest(manifest: SchemaMigrationManifest): manifest is StoreMigrationManifest {
+  return 'backup' in manifest
+    && 'schemaFingerprint' in manifest
+    && 'tableRowCounts' in manifest
+    && 'targetTables' in manifest;
 }
 
 function mapQuarantine(row: QuarantineRow): StoreMigrationQuarantineRecord {

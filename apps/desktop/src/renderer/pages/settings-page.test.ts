@@ -222,7 +222,7 @@ describe('Phase 5 settings user task surface', () => {
     const source = readFileSync(new URL('./settings-page.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('title="AI 服务连接"');
-    expect(source).toContain('<Panel title="规则阈值与动作边界">');
+    expect(source).toContain('<Panel title="系统回退规则（兼容）">');
     expect(source).toContain('<ProgressiveDetails title="高级诊断与本地支持">');
     expect(source).toContain('<Panel title="AI 调用记录与支持信息">');
     expect(source).toContain('<Panel title="本地支持路径">');
@@ -314,7 +314,7 @@ describe('settings rule action feedback', () => {
       active: true,
       baseClassName: 'primary-button',
       busyLabel: '保存中...',
-      label: '保存规则阈值',
+      label: '保存系统回退规则',
     });
 
     expect(saving.label).toBe('保存中...');
@@ -328,7 +328,7 @@ describe('settings rule action feedback', () => {
       baseClassName: 'primary-button',
       busyLabel: '保存中...',
       disabled: true,
-      label: '保存规则阈值',
+      label: '保存系统回退规则',
     });
 
     expect(unavailable.disabled).toBe(true);

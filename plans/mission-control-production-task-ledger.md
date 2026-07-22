@@ -103,8 +103,10 @@
 
 | ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
 | --- | --- | --- | --- | --- |
-| S7-01 | TODO | Renderer/性能 | S6 | 十工作区 CRUD 收口、5 万行、键盘、100%/125% |
-| S7-02 | TODO | migration/backup/security | S6 | 旧库升级、Profile 迁移、备份恢复、异常演练、secret scan |
-| S7-03 | TODO | 连续运行验收 | S3..S6 | 两店连续 7 美国业务日 8/8 或明确 BLOCKED，零串店/假成功/重复导入 |
-| S7-04 | TODO | package/evidence | S7-01..03 | installer、portable、package smoke、十工作区 UI、安全、readiness、bundle |
+| S7-01 | DONE | Renderer/性能 | S6 | 十工作区正式矩阵、设置 CRUD、5 万行、键盘、100%/125% package 证据合同已收口；真实 package 截图归 S7-04 |
+| S7-02 | DONE | migration/backup/security | S6 | v7→v8 全链升级备份、只恢复到新文件、显式离线迁移、Profile 单店绑定/回滚/防篡改已完成 |
+| S7-03 | BLOCKED | 连续运行验收 | S3..S6 | 只读验收器已完成；仍需两家真实店铺自然经过连续 7 个美国业务日并形成每天 8/8 或明确终态 BLOCKED 的外部证据 |
+| S7-04 | IN_PROGRESS | package/evidence | S7-01..03 | installer、portable、package smoke、十工作区 UI、安全、readiness、bundle |
 | S7-05 | TODO | 总负责人 | S7-04 | requirement-by-requirement completion audit、最终 commit/push |
+
+阶段 7A/7B 内部验证（2026-07-23）：第一版继续固定 Amazon US / USD；新增店铺级运行配置的创建、修改、可恢复归档与版本历史，并把目标 ACOS、分析窗口、最低建议置信度和店铺 AI 开关接入正式分析 Authority。10 个正式工作区的 package UI 基线已替换旧 8 页矩阵，要求 100%/125% 各一份、唯一 H1、无横向溢出、canonical 子视图 End/Home 键盘往返和三项只读 overlay 焦点证据；真实 package 截图仍由 S7-04 生成。5 万行验证使用生产同款 TanStack virtualizer，在首段/中段/末段分别只渲染 22/32/22 行，并验证稳定行键、Enter/Space 选择与粘性表头合同。数据库升级在任何待执行迁移前创建完整恢复点，校验 integrity/schema/行数/SHA；离线升级必须显式绑定绝对源路径与 SHA，禁止猜测 AppData 或原地覆盖。浏览器 Profile 迁移要求当前店铺、Provider、停止状态与身份凭证一致，拒绝 junction、歧义绑定、非空目标、哈希复用与篡改恢复。两店 7 美国业务日验收器要求每日 8 个下载检查点、8 类导入、8 份匹配对账且无 Profile/指纹/文件哈希串店；当前没有自然经过的 7 日真实证据，S7-03 保持 BLOCKED。集中验证 18/18 个聚焦测试文件、197/197 项通过；14/14 含 typecheck 的 workspace 通过；全量非浏览器回归 268/268 个文件、2713 项通过、2 项既有条件跳过；Main、Preload、Renderer 生产构建通过。迁移恢复 CLI 在没有显式离线 manifest 时按设计失败关闭，未触碰当前用户数据库；当前不得声明 READY。

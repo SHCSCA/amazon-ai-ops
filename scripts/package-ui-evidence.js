@@ -54,18 +54,21 @@ const EXPECTED_PACKAGE_UI_SCALES = Object.freeze([
   Object.freeze({ scalePercent: 125, deviceScaleFactor: 1.25 }),
 ]);
 const EXPECTED_PACKAGE_UI_WORKSPACES = Object.freeze([
-  Object.freeze({ workspace: 'today', subview: 'overview', label: '今日任务', heading: '今日任务' }),
-  Object.freeze({ workspace: 'product', subview: 'products', label: '产品工作台', heading: '产品工作台' }),
-  Object.freeze({ workspace: 'data-preparation', subview: 'scope', label: '数据准备', heading: '工作范围' }),
-  Object.freeze({ workspace: 'diagnosis', subview: 'analysis', label: '广告诊断', heading: '广告诊断' }),
-  Object.freeze({ workspace: 'decisions', subview: 'decided', tabLabel: '已决策', label: '建议与审批', heading: '建议与审批' }),
-  Object.freeze({ workspace: 'readback', subview: 'evidence', label: '结果核对', heading: '结果核对' }),
-  Object.freeze({ workspace: 'growth', subview: 'keywords', label: '关键词与 Listing', heading: '关键词机会' }),
-  Object.freeze({ workspace: 'system', subview: 'settings', label: '系统与交付', heading: 'AI 与规则' }),
+  Object.freeze({ workspace: 'today', subview: 'overview', label: '今日任务', heading: '今日任务', tabs: Object.freeze(['overview', 'events']) }),
+  Object.freeze({ workspace: 'missions', subview: 'overview', label: '任务中心', heading: '任务中心', tabs: Object.freeze(['overview', 'facts']) }),
+  Object.freeze({ workspace: 'decisions', subview: 'recommendations', label: '决策与审批', heading: '建议与审批', tabs: Object.freeze(['recommendations', 'approval', 'decided']) }),
+  Object.freeze({ workspace: 'experiments', subview: 'ledger', label: '经营实验', heading: '经营实验', tabs: Object.freeze(['ledger']) }),
+  Object.freeze({ workspace: 'execution', subview: 'live', label: '实时执行', heading: '实时执行', tabs: Object.freeze(['live', 'evidence']) }),
+  Object.freeze({ workspace: 'memory', subview: 'timeline', label: '因果记忆', heading: '因果记忆', tabs: Object.freeze(['timeline']) }),
+  Object.freeze({ workspace: 'objects', subview: 'products', label: '店铺与广告对象', heading: '店铺与广告对象', tabs: Object.freeze(['products', 'targets', 'keywords', 'listing']) }),
+  Object.freeze({ workspace: 'collection', subview: 'scope', label: '数据采集', heading: '工作范围', tabs: Object.freeze(['scope', 'reports', 'import-check']) }),
+  Object.freeze({ workspace: 'policy', subview: 'rules', label: '策略与风控', heading: '策略与风控', tabs: Object.freeze(['rules']) }),
+  Object.freeze({ workspace: 'settings', subview: 'ai-and-local', label: '系统设置', heading: '店铺与运行设置', tabs: Object.freeze(['ai-and-local', 'scheduler', 'delivery']) }),
 ]);
-const PACKAGE_OBJECT_WORKSPACES = Object.freeze(
-  EXPECTED_PACKAGE_UI_WORKSPACES.filter((item) => item.workspace === 'product' || item.workspace === 'diagnosis'),
-);
+// The retired Product/Diagnosis queue probes remain available as helpers, but
+// Stage 7 package truth is the canonical ten-workspace matrix. Large-table
+// capacity is proved independently by verify-mission-control-large-table.js.
+const PACKAGE_OBJECT_WORKSPACES = Object.freeze([]);
 const PACKAGE_OBJECT_EXPERIENCE_CONTRACTS = Object.freeze({
   compact: Object.freeze({
     maxPageOverflowPx: 24,
@@ -111,9 +114,14 @@ const READ_ONLY_INTERACTION_PLAN = Object.freeze([
     targets: EXPECTED_PACKAGE_UI_WORKSPACES.map((item) => item.label),
   }),
   Object.freeze({
+    id: 'workspace-tab-keyboard-navigation',
+    kind: 'keyboard-navigation',
+    targets: EXPECTED_PACKAGE_UI_WORKSPACES.map((item) => `${item.workspace}:${item.tabs.join(',')}`),
+  }),
+  Object.freeze({
     id: 'report-subview-navigation',
     kind: 'subview',
-    target: '报表采集',
+    target: '采集任务',
   }),
   Object.freeze({
     id: 'report-selector-dialog',
@@ -132,18 +140,6 @@ const READ_ONLY_INTERACTION_PLAN = Object.freeze([
     kind: 'overlay',
     target: '技术与证据详情',
     trigger: '查看技术与证据详情',
-  }),
-  Object.freeze({
-    id: 'product-read-only-row-inspector',
-    kind: 'row-selection',
-    target: '产品对象队列首个非锁定行，只读查看详情后 Escape 关闭',
-    trigger: 'Enter',
-  }),
-  Object.freeze({
-    id: 'diagnosis-read-only-row-inspector',
-    kind: 'row-selection',
-    target: '广告对象诊断队列首行，只读查看证据后 Escape 关闭',
-    trigger: 'Enter',
   }),
 ]);
 const OVERLAY_FOCUSABLE_SELECTOR = [
@@ -1116,13 +1112,12 @@ function validateObjectInspectorEvidence(input) {
 
 function validateReadOnlyInteractionPlan(plan = READ_ONLY_INTERACTION_PLAN) {
   const violations = [];
-  const allowedKinds = new Set(['navigation', 'subview', 'overlay', 'row-selection']);
+  const allowedKinds = new Set(['navigation', 'keyboard-navigation', 'subview', 'overlay']);
   const expectedIds = new Set([
     'workspace-navigation',
+    'workspace-tab-keyboard-navigation',
     'report-subview-navigation',
     ...EXPECTED_OVERLAY_CHECK_IDS,
-    'product-read-only-row-inspector',
-    'diagnosis-read-only-row-inspector',
   ]);
   const ids = new Set();
   for (const item of plan) {
@@ -1224,6 +1219,43 @@ function validateOverlayKeyboardEvidence({ backwardFocus, focusableCount, forwar
   };
 }
 
+function validateWorkspaceTabKeyboardEvidence(input, expected) {
+  const violations = [];
+  const expectedTabs = Array.isArray(expected?.tabs) ? expected.tabs : [];
+  const defaultSubview = expected?.subview;
+  const endSubview = expectedTabs[expectedTabs.length - 1];
+  for (const [phase, snapshot, expectedSubview] of [
+    ['initial', input?.initial, defaultSubview],
+    ['end', input?.end, endSubview],
+    ['restored', input?.restored, defaultSubview],
+  ]) {
+    if (!snapshot || snapshot.tabCount !== expectedTabs.length) {
+      violations.push(violation(
+        'WORKSPACE_TAB_COUNT_MISMATCH',
+        `${expected?.workspace || 'workspace'} ${phase} keyboard snapshot must expose every registered subview tab.`,
+        { actual: snapshot?.tabCount ?? null, expected: expectedTabs.length },
+      ));
+      continue;
+    }
+    if (snapshot.selectedCount !== 1
+      || snapshot.activeSubview !== expectedSubview
+      || snapshot.selectedSubview !== expectedSubview
+      || snapshot.focusedSubview !== expectedSubview) {
+      violations.push(violation(
+        'WORKSPACE_TAB_KEYBOARD_STATE_MISMATCH',
+        `${expected?.workspace || 'workspace'} ${phase} keyboard state must select and focus ${expectedSubview}.`,
+        snapshot,
+      ));
+    }
+  }
+  return {
+    ...input,
+    expectedTabs,
+    passed: violations.length === 0,
+    violations,
+  };
+}
+
 function evaluatePackageUiEvidenceCompleteness(input) {
   const violations = [];
   if (Number(input.schemaVersion || 0) < 5) {
@@ -1314,6 +1346,9 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       }
       if (check?.settleEvidence?.passed !== true || check?.compositeEvidence?.passed !== true) {
         violations.push(violation('WORKSPACE_NOT_SETTLED_FOR_CAPTURE', `${scale.scalePercent}% ${workspace.workspace} was not stably rendered before capture.`, check));
+      }
+      if (check?.keyboardEvidence?.passed !== true) {
+        violations.push(violation('WORKSPACE_KEYBOARD_EVIDENCE_MISSING_OR_FAILED', `${scale.scalePercent}% ${workspace.workspace} tab keyboard evidence is missing or failed.`, check?.keyboardEvidence));
       }
       const screenshot = (run.screenshots || []).find((candidate) => candidate.workspace === workspace.workspace);
       if (!screenshot || !/^[A-F0-9]{64}$/.test(String(screenshot.sha256 || ''))) {
@@ -2035,6 +2070,64 @@ async function navigateToWorkspace(page, expected, settleMs) {
   return waitForWorkspaceSettled(page, selector, settleMs);
 }
 
+async function workspaceTabKeyboardSnapshot(page, expected) {
+  return page.evaluate((settings) => {
+    const root = document.querySelector(
+      `[data-workspace-evidence-root][data-workspace="${settings.workspace}"]`,
+    );
+    const tabs = root
+      ? Array.from(root.querySelectorAll(':scope > .workspace-subview-shell__navigation [role="tab"]'))
+      : [];
+    const subviewFor = (tab) => {
+      const prefix = `${settings.workspace}-workspace-tab-`;
+      return tab?.id?.startsWith(prefix) ? tab.id.slice(prefix.length) : null;
+    };
+    const selected = tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true');
+    const focused = tabs.find((tab) => tab === document.activeElement) || null;
+    return {
+      activeSubview: root?.getAttribute('data-workspace-subview') || null,
+      focusedSubview: subviewFor(focused),
+      selectedCount: selected.length,
+      selectedSubview: subviewFor(selected[0] || null),
+      tabCount: tabs.length,
+    };
+  }, expected);
+}
+
+async function waitForWorkspaceSubview(page, workspace, subview) {
+  const selector = `[data-workspace-evidence-root][data-workspace="${workspace}"][data-workspace-subview="${subview}"]`;
+  await page.locator(selector).waitFor({ state: 'visible', timeout: 15_000 });
+  await waitForNavigationIdle(page);
+}
+
+async function exerciseWorkspaceTabKeyboard(page, expected) {
+  const root = page.locator(
+    `[data-workspace-evidence-root][data-workspace="${expected.workspace}"][data-workspace-subview="${expected.subview}"]`,
+  );
+  const activeTab = root.locator(':scope > .workspace-subview-shell__navigation [role="tab"][aria-selected="true"]');
+  if (await activeTab.count() !== 1) {
+    fail('Workspace must expose one selected canonical subview tab before keyboard evidence', expected.workspace);
+  }
+  await activeTab.focus();
+  const initial = await workspaceTabKeyboardSnapshot(page, expected);
+  const endSubview = expected.tabs[expected.tabs.length - 1];
+  await page.keyboard.press('End');
+  await waitForWorkspaceSubview(page, expected.workspace, endSubview);
+  const end = await workspaceTabKeyboardSnapshot(page, expected);
+  await page.keyboard.press('Home');
+  await waitForWorkspaceSubview(page, expected.workspace, expected.subview);
+  const restored = await workspaceTabKeyboardSnapshot(page, expected);
+  const evidence = validateWorkspaceTabKeyboardEvidence({
+    initial,
+    end,
+    restored,
+  }, expected);
+  if (!evidence.passed) {
+    fail('Workspace canonical subview keyboard evidence failed', `${expected.workspace}: ${JSON.stringify(evidence.violations)}`);
+  }
+  return evidence;
+}
+
 function isRetryableLoginNavigationError(value) {
   return /execution context was destroyed|most likely because of a navigation/i.test(String(value || ''));
 }
@@ -2595,10 +2688,10 @@ async function exerciseObjectInspector(page, options) {
 }
 
 async function runOverlayChecks(page, runOptions) {
-  const dataPreparation = EXPECTED_PACKAGE_UI_WORKSPACES.find((item) => item.workspace === 'data-preparation');
-  await navigateToWorkspace(page, dataPreparation, runOptions.settleMs);
-  await page.getByRole('tab', { name: '报表采集', exact: true }).click();
-  const reportRootSelector = '[data-workspace-evidence-root][data-workspace="data-preparation"][data-workspace-subview="reports"]';
+  const collection = EXPECTED_PACKAGE_UI_WORKSPACES.find((item) => item.workspace === 'collection');
+  await navigateToWorkspace(page, collection, runOptions.settleMs);
+  await page.getByRole('tab', { name: /采集任务/ }).click();
+  const reportRootSelector = '[data-workspace-evidence-root][data-workspace="collection"][data-workspace-subview="reports"]';
   await page.locator(reportRootSelector).waitFor({ state: 'visible', timeout: 10_000 });
   await waitForWorkspaceSettled(page, reportRootSelector, runOptions.settleMs);
   const reportCheck = await exerciseOverlayFocus(page, {
@@ -2637,8 +2730,12 @@ async function runOverlayChecks(page, runOptions) {
     trigger: page.locator('[data-workspace="decisions"] .task-banner [data-action-id="open-controlled-review-inspector"]'),
   });
 
-  const readback = EXPECTED_PACKAGE_UI_WORKSPACES.find((item) => item.workspace === 'readback');
-  await navigateToWorkspace(page, readback, runOptions.settleMs);
+  const execution = EXPECTED_PACKAGE_UI_WORKSPACES.find((item) => item.workspace === 'execution');
+  await navigateToWorkspace(page, execution, runOptions.settleMs);
+  await page.getByRole('tab', { name: /执行回读/ }).click();
+  const readbackRootSelector = '[data-workspace-evidence-root][data-workspace="execution"][data-workspace-subview="evidence"]';
+  await page.locator(readbackRootSelector).waitFor({ state: 'visible', timeout: 10_000 });
+  await waitForWorkspaceSettled(page, readbackRootSelector, runOptions.settleMs);
   const readbackCheck = await exerciseOverlayFocus(page, {
     dialogName: '技术与证据详情',
     electronApp: runOptions.electronApp,
@@ -2820,8 +2917,14 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
     for (const workspace of EXPECTED_PACKAGE_UI_WORKSPACES) {
       setRunDiagnosticPhase(diagnostics, `workspace:${workspace.workspace}/${workspace.subview}`);
       const settleEvidence = await navigateToWorkspace(page, workspace, options.settleMs);
+      const keyboardEvidence = await exerciseWorkspaceTabKeyboard(page, workspace);
       const workspaceRoot = page.locator(
         `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`,
+      );
+      await waitForWorkspaceSettled(
+        page,
+        `[data-workspace-evidence-root][data-workspace="${workspace.workspace}"][data-workspace-subview="${workspace.subview}"]`,
+        options.settleMs,
       );
       const compositeEvidence = await waitForRendererComposite(page, electronApp, workspaceRoot);
       const metrics = await collectPackageWorkspaceMetrics(page, workspace);
@@ -2884,6 +2987,7 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
         metrics,
         experienceEvidence,
         inspectorEvidence,
+        keyboardEvidence,
         screenshot,
       });
       if (!contract.passed) {
@@ -3481,6 +3585,7 @@ module.exports = {
   validateOverlayTriggerContract,
   validateOverlayKeyboardEvidence,
   validateReadOnlyInteractionPlan,
+  validateWorkspaceTabKeyboardEvidence,
   validateObjectWorkspaceExperienceEvidence,
   validateObjectInspectorEvidence,
   validateWorkspaceRuntimeMetrics,

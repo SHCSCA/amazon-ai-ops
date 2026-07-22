@@ -46,6 +46,7 @@ const {
   parsePackageUiEvidenceArgs,
   sanitizeDiagnosticText,
   validateOverlayKeyboardEvidence,
+  validateWorkspaceTabKeyboardEvidence,
   validateOverlayTriggerContract,
   validatePackageIdentity,
   validatePackageFreshness,
@@ -641,6 +642,7 @@ function validRun(scale) {
         } : null,
         passed: true,
         settleEvidence: { passed: true },
+        keyboardEvidence: { passed: true },
         workspace: workspace.workspace,
       };
     }),
@@ -656,14 +658,14 @@ function validWideRun() {
     pageErrors: [],
     packageProcessIsolation: validProcessIsolation(),
     profileId: PACKAGE_UI_WIDE_PROFILE.id,
-    screenshots: ['product', 'diagnosis'].map((workspace) => ({
-      path: `${workspace}-wide.png`,
+    screenshots: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
+      path: `${workspace.workspace}-wide.png`,
       sha256: HASH_A,
-      workspace,
+      workspace: workspace.workspace,
     })),
     profileProcessIsolation: validProcessIsolation(),
     viewport: { height: 900, width: 1400 },
-    workspaceChecks: ['product', 'diagnosis'].map((workspace) => ({
+    workspaceChecks: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
       experienceEvidence: { passed: true },
       inspectorEvidence: {
         inspector: { ariaModal: null, mode: 'inline' },
@@ -671,7 +673,7 @@ function validWideRun() {
         screenshot: { path: `${workspace}-wide-inspector.png`, sha256: HASH_B },
       },
       passed: true,
-      workspace,
+      workspace: workspace.workspace,
     })),
   };
 }
@@ -1064,17 +1066,45 @@ describe('package workspace runtime contract', () => {
     expect(decisionsTabAccessibleNamePattern('已决策').test('已决策')).toBe(false);
   });
 
-  it('locks the exact eight task-first workspace identities', () => {
+  it('locks the exact ten canonical Mission Control workspace identities and registered tabs', () => {
     expect(EXPECTED_PACKAGE_UI_WORKSPACES).toEqual([
-      { workspace: 'today', subview: 'overview', label: '今日任务', heading: '今日任务' },
-      { workspace: 'product', subview: 'products', label: '产品工作台', heading: '产品工作台' },
-      { workspace: 'data-preparation', subview: 'scope', label: '数据准备', heading: '工作范围' },
-      { workspace: 'diagnosis', subview: 'analysis', label: '广告诊断', heading: '广告诊断' },
-      { workspace: 'decisions', subview: 'decided', tabLabel: '已决策', label: '建议与审批', heading: '建议与审批' },
-      { workspace: 'readback', subview: 'evidence', label: '结果核对', heading: '结果核对' },
-      { workspace: 'growth', subview: 'keywords', label: '关键词与 Listing', heading: '关键词机会' },
-      { workspace: 'system', subview: 'settings', label: '系统与交付', heading: 'AI 与规则' },
+      { workspace: 'today', subview: 'overview', label: '今日任务', heading: '今日任务', tabs: ['overview', 'events'] },
+      { workspace: 'missions', subview: 'overview', label: '任务中心', heading: '任务中心', tabs: ['overview', 'facts'] },
+      { workspace: 'decisions', subview: 'recommendations', label: '决策与审批', heading: '建议与审批', tabs: ['recommendations', 'approval', 'decided'] },
+      { workspace: 'experiments', subview: 'ledger', label: '经营实验', heading: '经营实验', tabs: ['ledger'] },
+      { workspace: 'execution', subview: 'live', label: '实时执行', heading: '实时执行', tabs: ['live', 'evidence'] },
+      { workspace: 'memory', subview: 'timeline', label: '因果记忆', heading: '因果记忆', tabs: ['timeline'] },
+      { workspace: 'objects', subview: 'products', label: '店铺与广告对象', heading: '店铺与广告对象', tabs: ['products', 'targets', 'keywords', 'listing'] },
+      { workspace: 'collection', subview: 'scope', label: '数据采集', heading: '工作范围', tabs: ['scope', 'reports', 'import-check'] },
+      { workspace: 'policy', subview: 'rules', label: '策略与风控', heading: '策略与风控', tabs: ['rules'] },
+      { workspace: 'settings', subview: 'ai-and-local', label: '系统设置', heading: '店铺与运行设置', tabs: ['ai-and-local', 'scheduler', 'delivery'] },
     ]);
+  });
+
+  it('fails closed unless End and Home select and focus the registered canonical tabs', () => {
+    const expected = EXPECTED_PACKAGE_UI_WORKSPACES.find((workspace) => workspace.workspace === 'objects');
+    const snapshot = (activeSubview) => ({
+      activeSubview,
+      focusedSubview: activeSubview,
+      selectedCount: 1,
+      selectedSubview: activeSubview,
+      tabCount: expected.tabs.length,
+    });
+    expect(validateWorkspaceTabKeyboardEvidence({
+      initial: snapshot('products'),
+      end: snapshot('listing'),
+      restored: snapshot('products'),
+    }, expected)).toEqual(expect.objectContaining({ passed: true, violations: [] }));
+
+    const failed = validateWorkspaceTabKeyboardEvidence({
+      initial: snapshot('products'),
+      end: { ...snapshot('listing'), focusedSubview: 'products' },
+      restored: snapshot('products'),
+    }, expected);
+    expect(failed.passed).toBe(false);
+    expect(failed.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'WORKSPACE_TAB_KEYBOARD_STATE_MISMATCH' }),
+    ]));
   });
 
   it('accepts unique semantics, one primary action and page-owned scrolling', () => {
@@ -1347,7 +1377,7 @@ describe('read-only interactions and evidence completeness', () => {
     expect(source).toContain("  'summary',");
   });
 
-  it('limits automation to navigation, three non-writing overlays and two read-only row inspectors', () => {
+  it('limits automation to navigation, canonical tab keyboard checks and three non-writing overlays', () => {
     const result = validateReadOnlyInteractionPlan();
     expect(result).toEqual({ passed: true, violations: [] });
     expect(EXPECTED_OVERLAY_CHECK_IDS).toEqual([
@@ -1355,10 +1385,10 @@ describe('read-only interactions and evidence completeness', () => {
       'decisions-controlled-review-inspector',
       'readback-technical-drawer',
     ]);
-    expect(READ_ONLY_INTERACTION_PLAN.filter((item) => item.kind === 'row-selection').map((item) => item.id)).toEqual([
-      'product-read-only-row-inspector',
-      'diagnosis-read-only-row-inspector',
+    expect(READ_ONLY_INTERACTION_PLAN.filter((item) => item.kind === 'keyboard-navigation').map((item) => item.id)).toEqual([
+      'workspace-tab-keyboard-navigation',
     ]);
+    expect(READ_ONLY_INTERACTION_PLAN.filter((item) => item.kind === 'row-selection')).toEqual([]);
     const source = readFileSync('scripts/package-ui-evidence.js', 'utf8');
     expect(source.match(/electronApp: runOptions\.electronApp/g)).toHaveLength(3);
     expect(source).toContain('const api = window.electronAPI;');
@@ -1471,7 +1501,7 @@ describe('read-only interactions and evidence completeness', () => {
     });
   });
 
-  it('requires protected state, process cleanup, 100% and 125%, eight workspaces, three overlay checks and hashed screenshots', () => {
+  it('requires protected state, process cleanup, 100% and 125%, ten workspaces, keyboard evidence, three overlays and hashed screenshots', () => {
     const valid = {
       artifactHashesStable: true,
       schemaVersion: 5,

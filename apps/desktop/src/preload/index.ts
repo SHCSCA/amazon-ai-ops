@@ -3,6 +3,8 @@ import type {
   BindRecommendationWritableTargetRequest,
   BindRecommendationWritableTargetResult,
   ArchiveStoreInput,
+  ArchiveStoreRuntimeConfigInput,
+  CreateStoreRuntimeConfigInput,
   CreateStoreConnectionInput,
   CreateStoreInput,
   ExportAdReadbackEvidenceRequest,
@@ -10,16 +12,19 @@ import type {
   LingxingCollectionProgressEvent,
   ListStoresInput,
   RestoreStoreInput,
+  RestoreStoreRuntimeConfigInput,
   RemoveStoreConnectionInput,
   ResolveRecommendationReviewRequest,
   ResolveRecommendationReviewResult,
   StoreContextEnvelope,
   StoreId,
   StoreRecord,
+  StoreRuntimeConfigProjection,
   StoreConnection,
   StoreWorkspaceView,
   UpdateStoreConnectionInput,
   UpdateStoreInput,
+  UpdateStoreRuntimeConfigInput,
 } from '@amazon-ai-ops/shared-types';
 import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
 import type {
@@ -233,6 +238,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('settings:get-operation-scope', storeContext),
   saveOperationScope: (storeContext: StoreContextEnvelope, scope: any) =>
     ipcRenderer.invoke('settings:save-operation-scope', { storeContext, scope }),
+  getStoreRuntimeConfig: (storeContext: StoreContextEnvelope): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:get', { storeContext }) as Promise<StoreRuntimeConfigProjection>,
+  createStoreRuntimeConfig: (
+    storeContext: StoreContextEnvelope,
+    input: CreateStoreRuntimeConfigInput,
+  ): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:create', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
+  updateStoreRuntimeConfig: (
+    storeContext: StoreContextEnvelope,
+    input: UpdateStoreRuntimeConfigInput,
+  ): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:update', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
+  archiveStoreRuntimeConfig: (
+    storeContext: StoreContextEnvelope,
+    input: ArchiveStoreRuntimeConfigInput,
+  ): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:archive', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
+  restoreStoreRuntimeConfig: (
+    storeContext: StoreContextEnvelope,
+    input: RestoreStoreRuntimeConfigInput,
+  ): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:restore', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
 
   // Browser
   getSavedLoginCredentialStatus: () => ipcRenderer.invoke('browser:get-saved-credential-status'),

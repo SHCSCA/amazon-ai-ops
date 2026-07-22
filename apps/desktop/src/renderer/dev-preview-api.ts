@@ -20,6 +20,9 @@ import type {
   StoreContextEnvelope,
   StoreId,
   StoreRecord,
+  StoreRuntimeConfigProjection,
+  StoreRuntimeConfigRecord,
+  StoreRuntimeConfigValues,
   StoreWorkspaceView,
 } from '@amazon-ai-ops/shared-types';
 import {
@@ -368,6 +371,7 @@ const PREVIEW_MISSION_CAPABILITY_SPECS: readonly PreviewCapabilitySpec[] = [
   ['settings.store-config.create', 'settings', 'settings/ai-and-local', 'create'],
   ['settings.store-config.update', 'settings', 'settings/ai-and-local', 'update'],
   ['settings.store-config.archive', 'settings', 'settings/ai-and-local', 'archive'],
+  ['settings.store-config.restore', 'settings', 'settings/ai-and-local', 'restore'],
   ['settings.scheduler.view', 'settings', 'settings/scheduler', 'view', 'scheduler'],
   ['settings.delivery.view', 'settings', 'settings/delivery', 'view', 'delivery'],
 ] as const;
@@ -1601,6 +1605,44 @@ export function createBrowserPreviewElectronApi(
   const firstMissingPreviewGate = previewGates.find((gate) => !gate.ok);
   let previewStores = PREVIEW_STORES.map((store) => ({ ...store }));
   let activePreviewStoreId: StoreId | null = null;
+  const previewRuntimeConfigs = new Map<StoreId, StoreRuntimeConfigProjection>();
+  const defaultPreviewRuntimeValues = (): StoreRuntimeConfigValues => ({
+    aiRecommendationsEnabled: true,
+    collectionScheduleLocalTime: '08:00',
+    collectionLookbackDays: 14,
+    analysisWindowDays: 30,
+    defaultTargetAcosPercent: 28,
+    minimumRecommendationConfidencePercent: 72,
+    evidenceRetentionDays: 365,
+  });
+  const buildPreviewRuntimeConfig = (
+    store: StoreRecord,
+    values: StoreRuntimeConfigValues,
+    revision: number,
+    status: 'active' | 'archived',
+    occurredAt = new Date().toISOString(),
+  ): StoreRuntimeConfigRecord => ({
+    configId: `preview-store-config-${store.storeId}`,
+    storeId: store.storeId,
+    marketplace: 'US',
+    currency: 'USD',
+    businessTimezone: store.businessTimezone,
+    status,
+    revision,
+    values: clonePreviewSnapshot(values),
+    createdAt: previewRuntimeConfigs.get(store.storeId)?.current?.createdAt ?? occurredAt,
+    updatedAt: occurredAt,
+    ...(status === 'archived' ? { archivedAt: occurredAt } : {}),
+  });
+  const initialConfigStore = previewStores[0];
+  if (initialConfigStore) {
+    const occurredAt = '2026-07-22T08:00:00.000Z';
+    const current = buildPreviewRuntimeConfig(initialConfigStore, defaultPreviewRuntimeValues(), 1, 'active', occurredAt);
+    previewRuntimeConfigs.set(initialConfigStore.storeId, {
+      current,
+      versions: [{ revision: 1, action: 'create', occurredAt, snapshot: clonePreviewSnapshot(current) }],
+    });
+  }
   let previewProductIdSequence = 0;
   let previewOperationEventIdSequence = 0;
   let previewListingIdSequence = 0;
@@ -2734,6 +2776,110 @@ export function createBrowserPreviewElectronApi(
       };
       activePreviewScope = dataset.scope;
       return clonePreviewSnapshot(dataset.scope);
+    },
+    getStoreRuntimeConfig: async (storeContext: StoreContextEnvelope) => {
+      const authoritative = requirePreviewMissionAuthority(storeContext);
+      return clonePreviewSnapshot(
+        previewRuntimeConfigs.get(authoritative.storeId) ?? { current: null, versions: [] },
+      );
+    },
+    createStoreRuntimeConfig: async (storeContext: StoreContextEnvelope, inputValue: unknown) => {
+      const authoritative = requirePreviewMissionAuthority(storeContext);
+      const store = requirePreviewStore(authoritative.storeId);
+      if (previewRuntimeConfigs.has(store.storeId)) throw new Error('预览店铺已存在运行配置。');
+      const input = previewInputRecord(inputValue, '店铺运行配置创建参数');
+      const values = clonePreviewSnapshot(input.values as StoreRuntimeConfigValues);
+      const occurredAt = new Date().toISOString();
+      const current = buildPreviewRuntimeConfig(store, values, 1, 'active', occurredAt);
+      const projection: StoreRuntimeConfigProjection = {
+        current,
+        versions: [{ revision: 1, action: 'create', occurredAt, snapshot: clonePreviewSnapshot(current) }],
+      };
+      previewRuntimeConfigs.set(store.storeId, projection);
+      return clonePreviewSnapshot(projection);
+    },
+    updateStoreRuntimeConfig: async (storeContext: StoreContextEnvelope, inputValue: unknown) => {
+      const authoritative = requirePreviewMissionAuthority(storeContext);
+      const store = requirePreviewStore(authoritative.storeId);
+      const projection = previewRuntimeConfigs.get(store.storeId);
+      const input = previewInputRecord(inputValue, '店铺运行配置更新参数');
+      if (!projection?.current) throw new Error('预览店铺还没有运行配置。');
+      if (Number(input.expectedRevision) !== projection.current.revision) throw new Error('预览配置版本冲突，请刷新。');
+      if (projection.current.status === 'archived') throw new Error('预览配置已归档，请先恢复。');
+      const occurredAt = new Date().toISOString();
+      const current = buildPreviewRuntimeConfig(
+        store,
+        { ...projection.current.values, ...(input.patch as Partial<StoreRuntimeConfigValues>) },
+        projection.current.revision + 1,
+        'active',
+        occurredAt,
+      );
+      const next: StoreRuntimeConfigProjection = {
+        current,
+        versions: [...projection.versions, {
+          revision: current.revision,
+          action: 'update',
+          occurredAt,
+          snapshot: clonePreviewSnapshot(current),
+        }],
+      };
+      previewRuntimeConfigs.set(store.storeId, next);
+      return clonePreviewSnapshot(next);
+    },
+    archiveStoreRuntimeConfig: async (storeContext: StoreContextEnvelope, inputValue: unknown) => {
+      const authoritative = requirePreviewMissionAuthority(storeContext);
+      const store = requirePreviewStore(authoritative.storeId);
+      const projection = previewRuntimeConfigs.get(store.storeId);
+      const input = previewInputRecord(inputValue, '店铺运行配置归档参数');
+      if (!projection?.current) throw new Error('预览店铺还没有运行配置。');
+      if (Number(input.expectedRevision) !== projection.current.revision) throw new Error('预览配置版本冲突，请刷新。');
+      const occurredAt = new Date().toISOString();
+      const current = buildPreviewRuntimeConfig(
+        store,
+        projection.current.values,
+        projection.current.revision + 1,
+        'archived',
+        occurredAt,
+      );
+      const next: StoreRuntimeConfigProjection = {
+        current,
+        versions: [...projection.versions, {
+          revision: current.revision,
+          action: 'archive',
+          occurredAt,
+          reason: typeof input.reason === 'string' ? input.reason : undefined,
+          snapshot: clonePreviewSnapshot(current),
+        }],
+      };
+      previewRuntimeConfigs.set(store.storeId, next);
+      return clonePreviewSnapshot(next);
+    },
+    restoreStoreRuntimeConfig: async (storeContext: StoreContextEnvelope, inputValue: unknown) => {
+      const authoritative = requirePreviewMissionAuthority(storeContext);
+      const store = requirePreviewStore(authoritative.storeId);
+      const projection = previewRuntimeConfigs.get(store.storeId);
+      const input = previewInputRecord(inputValue, '店铺运行配置恢复参数');
+      if (!projection?.current) throw new Error('预览店铺还没有运行配置。');
+      if (Number(input.expectedRevision) !== projection.current.revision) throw new Error('预览配置版本冲突，请刷新。');
+      const occurredAt = new Date().toISOString();
+      const current = buildPreviewRuntimeConfig(
+        store,
+        projection.current.values,
+        projection.current.revision + 1,
+        'active',
+        occurredAt,
+      );
+      const next: StoreRuntimeConfigProjection = {
+        current,
+        versions: [...projection.versions, {
+          revision: current.revision,
+          action: 'restore',
+          occurredAt,
+          snapshot: clonePreviewSnapshot(current),
+        }],
+      };
+      previewRuntimeConfigs.set(store.storeId, next);
+      return clonePreviewSnapshot(next);
     },
     getBusinessUiDataPipeline: async () => {
       if (!activePreviewStoreId) return previewPipeline(scenario, fixtures);

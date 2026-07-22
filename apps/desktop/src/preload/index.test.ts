@@ -60,6 +60,18 @@ describe('preload business update bridge', () => {
     expect(source).not.toContain("ipcRenderer.invoke('settings:get-operation-scope')");
   });
 
+  it('exposes typed store runtime config CRUD only through complete StoreContext requests', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    expect(source).toContain('StoreRuntimeConfigProjection');
+    for (const channel of ['get', 'create', 'update', 'archive', 'restore']) {
+      expect(source).toContain(`ipcRenderer.invoke('store-runtime-config:${channel}', { storeContext`);
+    }
+    expect(source).toContain('UpdateStoreRuntimeConfigInput');
+    expect(source).toContain('ArchiveStoreRuntimeConfigInput');
+    expect(source).toContain('RestoreStoreRuntimeConfigInput');
+    expect(source).not.toContain("ipcRenderer.invoke('store-runtime-config:get')");
+  });
+
   it('opens collection and import artifacts by opaque id under the current StoreContext', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
     const reportsStart = source.indexOf('// Reports');

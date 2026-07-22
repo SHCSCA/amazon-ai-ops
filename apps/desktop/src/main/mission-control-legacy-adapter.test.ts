@@ -275,6 +275,45 @@ describe('Mission Control legacy adapter', () => {
       .toBe(true);
   });
 
+  it('keeps the system AI page adapted while promoting store runtime CRUD only when Main is ready', async () => {
+    const expected = [
+      'settings.ai-and-local.view',
+      'settings.store-config.create',
+      'settings.store-config.update',
+      'settings.store-config.archive',
+      'settings.store-config.restore',
+    ];
+    const blocked = await createMissionControlLegacyAdapter().query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-settings-blocked',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(blocked.data.capabilities
+      .filter((row) => expected.includes(row.capabilityId))
+      .every((row) => row.state === 'BLOCKED'))
+      .toBe(true);
+
+    const ready = await createMissionControlLegacyAdapter({ storeRuntimeConfigReady: true }).query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-settings-ready',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(ready.data.capabilities.find((row) => row.capabilityId === 'settings.ai-and-local.view'))
+      .toMatchObject({ state: 'LEGACY_ADAPTER', legacyRoute: 'settings' });
+    expect(ready.data.capabilities
+      .filter((row) => row.workspace === 'settings' && row.state === 'PRODUCTION_NATIVE')
+      .map((row) => row.capabilityId))
+      .toEqual(expected.slice(1));
+  });
+
   it('keeps policy auto unavailable when the durable kill switch is active', async () => {
     const adapter = createMissionControlLegacyAdapter({
       missionDomain: {

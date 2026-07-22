@@ -37,6 +37,7 @@ function viewport(scalePercent) {
 function autonomy() {
   return {
     currentMode: 'manual_approval',
+    manualApprovalAvailable: true,
     policyAutoAvailable: false,
     policyAutoState: 'BLOCKED',
     policyAutoBlockerCode: 'POLICY_AUTO_AUTHORITY_UNAVAILABLE',
@@ -77,7 +78,7 @@ function validManifest() {
     kind: MISSION_CONTROL_UI_EVIDENCE_KIND,
     schemaVersion: MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION,
     generatedAt: '2026-07-22T06:00:00.000Z',
-    status: 'STAGE2_UI_EVIDENCE',
+    status: 'STAGE7_UI_EVIDENCE',
     readinessImpact: 'NO_FINAL_READINESS_CREDIT',
     finalReadinessCredit: false,
     workspaceCaptures,
@@ -143,7 +144,7 @@ function violationCodes(manifest) {
   return evaluateMissionControlUiEvidenceManifest(manifest).violations.map(({ code }) => code);
 }
 
-describe('Mission Control Stage2 UI evidence contract', () => {
+describe('Mission Control Stage7 UI evidence contract', () => {
   it('accepts the complete ten-workspace 100%/125% matrix, StoreGate and store-isolation evidence', () => {
     const manifest = validManifest();
     const result = evaluateMissionControlUiEvidenceManifest(manifest);
@@ -187,16 +188,29 @@ describe('Mission Control Stage2 UI evidence contract', () => {
     expect(violationCodes(manifest)).toContain('HORIZONTAL_OVERFLOW_DETECTED');
   });
 
-  it('fails when policy-auto is presented as available', () => {
+  it('accepts policy-auto availability when the Main authority projection is internally consistent', () => {
+    const manifest = validManifest();
+    manifest.workspaceCaptures[0].autonomy = {
+      currentMode: 'manual_approval',
+      manualApprovalAvailable: true,
+      policyAutoAvailable: true,
+      policyAutoState: 'AVAILABLE',
+    };
+
+    expect(violationCodes(manifest)).not.toContain('AUTONOMY_AUTHORITY_INCONSISTENT');
+  });
+
+  it('fails when policy-auto state contradicts its availability or active mode', () => {
     const manifest = validManifest();
     manifest.workspaceCaptures[0].autonomy = {
       currentMode: 'policy_auto',
-      policyAutoAvailable: true,
-      policyAutoState: 'AVAILABLE',
-      policyAutoBlockerCode: '',
+      manualApprovalAvailable: true,
+      policyAutoAvailable: false,
+      policyAutoState: 'BLOCKED',
+      policyAutoBlockerCode: 'POLICY_VERSION_NOT_READY',
     };
 
-    expect(violationCodes(manifest)).toContain('POLICY_AUTO_NOT_BLOCKED');
+    expect(violationCodes(manifest)).toContain('AUTONOMY_AUTHORITY_INCONSISTENT');
   });
 
   it('fails when console or page errors are recorded', () => {

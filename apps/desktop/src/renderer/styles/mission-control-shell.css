@@ -63,6 +63,7 @@
 }
 
 .mission-control-shell .mission-control-brand-title strong {
+  flex: none;
   overflow: hidden;
   color: #172033;
   font-size: 17px;
@@ -1114,6 +1115,154 @@
   width: min(520px, calc(100vw - 48px));
 }
 
+.mission-control-workspace-root .mission-control-runtime-config {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .mission-control-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.mission-control-workspace-root .mission-control-config-actions .workspace-button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.mission-control-workspace-root .mission-control-config-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--workspace-border);
+}
+
+.mission-control-workspace-root .mission-control-config-fact {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  min-height: 78px;
+  background: #fff;
+  padding: 13px 14px;
+}
+
+.mission-control-workspace-root .mission-control-config-fact > span {
+  display: inline-grid;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.mission-control-workspace-root .mission-control-config-fact > div {
+  display: grid;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .mission-control-config-fact small,
+.mission-control-workspace-root .mission-control-config-fact strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .mission-control-config-fact small {
+  color: var(--workspace-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 17px;
+}
+
+.mission-control-workspace-root .mission-control-config-fact strong {
+  color: var(--workspace-text);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.mission-control-workspace-root .mission-control-config-version-action {
+  display: inline-flex;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  padding: 2px 8px;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 18px;
+}
+
+.mission-control-workspace-root .mission-control-config-version-action[data-action="archive"] {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.mission-control-workspace-root .mission-control-config-version-action[data-action="restore"] {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.mission-control-workspace-root .mission-control-config-dialog {
+  width: min(760px, calc(100vw - 48px));
+}
+
+.mission-control-workspace-root .mission-control-config-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.mission-control-workspace-root .mission-control-config-number {
+  position: relative;
+}
+
+.mission-control-workspace-root .mission-control-config-number input {
+  width: 100%;
+  padding-right: 38px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mission-control-workspace-root .mission-control-config-number em {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  color: var(--workspace-text-tertiary);
+  font-style: normal;
+  font-weight: 700;
+  transform: translateY(-50%);
+}
+
+.mission-control-workspace-root .mission-control-store-form label.mission-control-config-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  min-height: 69px;
+  border: 1px solid var(--workspace-border);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.mission-control-workspace-root .mission-control-config-toggle input {
+  width: 18px;
+  min-height: 18px;
+  accent-color: #2563eb;
+}
+
+.mission-control-workspace-root .mission-control-config-toggle strong {
+  grid-column: 1 / -1;
+  color: var(--workspace-text);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .mission-control-store-gate {
   display: grid;
   grid-template-columns: minmax(0, 680px) minmax(300px, 420px);
@@ -1553,7 +1702,7 @@
   min-height: 42px;
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1320px) {
   .mission-control-shell .mission-control-topbar {
     grid-template-columns:
       176px
@@ -1597,6 +1746,11 @@
     flex-basis: 100%;
     margin-left: 0;
   }
+
+  .mission-control-workspace-root .mission-control-config-grid,
+  .mission-control-workspace-root .mission-control-config-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1080px) {
@@ -1615,6 +1769,10 @@
   }
 
   .mission-control-workspace-root .mission-control-store-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mission-control-workspace-root .mission-control-config-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

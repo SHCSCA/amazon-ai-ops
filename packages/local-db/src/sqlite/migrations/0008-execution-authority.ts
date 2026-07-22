@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
 import { ensureSchemaMigrationsTable } from './0001-store-authority';
+import { prepareUpgradeBackup } from './upgrade-backup';
+import type { UpgradeBackupManifest } from './types';
 
 export const EXECUTION_AUTHORITY_MIGRATION_VERSION = 8;
 export const EXECUTION_AUTHORITY_MIGRATION_NAME = 'execution-authority-v8';
@@ -62,6 +64,7 @@ export class ExecutionAuthorityMigrationError extends Error {
 
 export function runExecutionAuthorityMigration(
   database: Database.Database,
+  preparedUpgradeBackup?: UpgradeBackupManifest,
 ): ExecutionAuthorityMigrationResult {
   ensureSchemaMigrationsTable(database);
   assertPrerequisites(database);
@@ -81,6 +84,11 @@ export function runExecutionAuthorityMigration(
   }
   const startedAt = new Date().toISOString();
   const started = defaultResult('started', startedAt, 0);
+  const upgradeBackup = preparedUpgradeBackup ?? prepareUpgradeBackup(database, {
+    targetVersion: EXECUTION_AUTHORITY_MIGRATION_VERSION,
+    targetName: EXECUTION_AUTHORITY_MIGRATION_NAME,
+    targetChecksum: EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
+  });
   const manifest = {
     version: EXECUTION_AUTHORITY_MIGRATION_VERSION,
     name: EXECUTION_AUTHORITY_MIGRATION_NAME,
@@ -89,6 +97,7 @@ export function runExecutionAuthorityMigration(
     integrityCheck,
     tables: EXECUTION_AUTHORITY_TABLES,
     startedAt,
+    upgradeBackup,
   };
   database.prepare(`
     INSERT INTO schema_migrations (
@@ -445,9 +454,9 @@ export function verifyExecutionAuthoritySchema(database: Database.Database): voi
   const tables = new Set((database.prepare(`
     SELECT name FROM sqlite_master WHERE type = 'table'
   `).all() as Array<{ name: string }>).map((row) => row.name));
-  const triggers = new Set((database.prepare(`
-    SELECT name FROM sqlite_master WHERE type = 'trigger'
-  `).all() as Array<{ name: string }>).map((row) => row.name));
+  const triggers = new Map((database.prepare(`
+    SELECT name, sql FROM sqlite_master WHERE type = 'trigger'
+  `).all() as Array<{ name: string; sql: string }>).map((row) => [row.name, row.sql]));
   for (const table of EXECUTION_AUTHORITY_TABLES) {
     if (!tables.has(table)) {
       throw new ExecutionAuthorityMigrationError(`Required execution table is missing: ${table}.`);
@@ -456,14 +465,26 @@ export function verifyExecutionAuthoritySchema(database: Database.Database): voi
   for (const table of APPEND_ONLY_TABLES) {
     for (const suffix of ['update', 'delete']) {
       const trigger = `trg_${table}_append_only_${suffix}`;
-      if (!triggers.has(trigger)) {
+      const sql = triggers.get(trigger);
+      if (!sql) {
         throw new ExecutionAuthorityMigrationError(`Required execution trigger is missing: ${trigger}.`);
+      }
+      const expectedSql = appendOnlyTriggerSql(table, suffix as 'update' | 'delete');
+      if (normalizeSql(sql) !== normalizeSql(expectedSql)) {
+        throw new ExecutionAuthorityMigrationError(`Required execution trigger definition changed: ${trigger}.`);
       }
     }
   }
   for (const trigger of STATE_GUARD_TRIGGERS) {
-    if (!triggers.has(trigger)) {
+    const sql = triggers.get(trigger);
+    if (!sql) {
       throw new ExecutionAuthorityMigrationError(`Required execution state guard is missing: ${trigger}.`);
+    }
+    const expectedSql = trigger === 'trg_ad_execution_jobs_status_guard'
+      ? jobStatusGuardTriggerSql()
+      : batchTerminalGuardTriggerSql();
+    if (normalizeSql(sql) !== normalizeSql(expectedSql)) {
+      throw new ExecutionAuthorityMigrationError(`Required execution state guard definition changed: ${trigger}.`);
     }
   }
   const identityColumns = new Set((database.pragma('table_info(ad_keyword_identity_versions)') as Array<{ name: string }>)
@@ -515,6 +536,51 @@ export function verifyExecutionAuthoritySchema(database: Database.Database): voi
   if (violations.length > 0) {
     throw new ExecutionAuthorityMigrationError('Execution authority foreign-key check failed.');
   }
+}
+
+function appendOnlyTriggerSql(table: typeof APPEND_ONLY_TABLES[number], suffix: 'update' | 'delete'): string {
+  const operation = suffix === 'update' ? 'UPDATE' : 'DELETE';
+  return `
+    CREATE TRIGGER trg_${table}_append_only_${suffix}
+    BEFORE ${operation} ON ${table}
+    BEGIN
+      SELECT RAISE(ABORT, '${table} is append-only');
+    END
+  `;
+}
+
+function jobStatusGuardTriggerSql(): string {
+  return `
+    CREATE TRIGGER trg_ad_execution_jobs_status_guard
+    BEFORE UPDATE OF status ON ad_execution_jobs
+    WHEN NOT (
+      NEW.status = OLD.status
+      OR (OLD.status = 'queued' AND NEW.status IN ('preflight', 'blocked', 'cancelled'))
+      OR (OLD.status = 'preflight' AND NEW.status IN ('intent_written', 'blocked', 'cancelled'))
+      OR (OLD.status = 'intent_written' AND NEW.status IN ('submitted', 'blocked', 'unknown'))
+      OR (OLD.status = 'submitted' AND NEW.status IN ('verifying', 'unknown'))
+      OR (OLD.status = 'verifying' AND NEW.status IN ('succeeded', 'unknown'))
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid or terminal ad execution job transition');
+    END
+  `;
+}
+
+function batchTerminalGuardTriggerSql(): string {
+  return `
+    CREATE TRIGGER trg_ad_execution_batches_terminal_guard
+    BEFORE UPDATE OF status ON ad_execution_batches
+    WHEN OLD.status IN ('succeeded', 'blocked', 'unknown', 'cancelled')
+      AND NEW.status <> OLD.status
+    BEGIN
+      SELECT RAISE(ABORT, 'terminal ad execution batch status is immutable');
+    END
+  `;
+}
+
+function normalizeSql(value: string): string {
+  return value.replace(/\s+/g, ' ').replace(/;\s*$/, '').trim().toLowerCase();
 }
 
 function assertPrerequisites(database: Database.Database): void {

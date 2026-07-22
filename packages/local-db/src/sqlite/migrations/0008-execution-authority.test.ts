@@ -10,6 +10,7 @@ import {
   EXECUTION_AUTHORITY_TABLES,
   ExecutionAuthorityMigrationError,
 } from './0008-execution-authority';
+import type { UpgradeBackupManifest } from './types';
 
 const tempDirs: string[] = [];
 
@@ -40,6 +41,13 @@ describe('Execution authority migration v8', () => {
         checksum: EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
         status: 'applied',
       }));
+      const parsedManifest = JSON.parse((first as { manifestJson: string }).manifestJson) as {
+        upgradeBackup: UpgradeBackupManifest;
+      };
+      expect(parsedManifest.upgradeBackup).toMatchObject({
+        kind: 'schema-upgrade-backup',
+        targetVersion: 8,
+      });
       const tables = new Set((database.prepare(`
         SELECT name FROM sqlite_master WHERE type = 'table'
       `).all() as Array<{ name: string }>).map((row) => row.name));
@@ -106,6 +114,21 @@ describe('Execution authority migration v8', () => {
       database.close();
     }
     expect(() => initSqlite(databasePath)).toThrow(ExecutionAuthorityMigrationError);
+  });
+
+  it('fails closed when a required trigger name is reused with weaker SQL', () => {
+    const databasePath = tempDatabasePath();
+    const database = initSqlite(databasePath);
+    try {
+      database.exec(`
+        DROP TRIGGER trg_ad_execution_events_append_only_update;
+        CREATE TRIGGER trg_ad_execution_events_append_only_update
+        AFTER UPDATE ON ad_execution_events BEGIN SELECT 1; END;
+      `);
+    } finally {
+      database.close();
+    }
+    expect(() => initSqlite(databasePath)).toThrow(/trigger definition changed/i);
   });
 
   it('rejects a mismatched migration checksum without rewriting history', () => {

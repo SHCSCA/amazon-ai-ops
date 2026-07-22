@@ -176,6 +176,16 @@ import { StoreScopedObjectsService } from './store-scoped-objects-service';
 import { registerStoreScopedAdListingIpcHandlers } from './store-scoped-ad-listing-ipc';
 import { StoreScopedAdListingService } from './store-scoped-ad-listing-service';
 import { StoreOperationScopeService } from './store-operation-scope-service';
+import { StoreRuntimeConfigService } from './store-runtime-config-service';
+import { registerStoreRuntimeConfigIpcHandlers } from './store-runtime-config-ipc';
+import {
+  assertRuntimeAnalysisWindow,
+  assertRuntimeConfigStore,
+  recommendationMeetsStoreConfidence,
+  requireStoreRuntimeAnalysisConfig,
+  storeRuntimeRuleRevisionPayload,
+  type StoreRuntimeAnalysisConfig,
+} from './store-runtime-analysis-config';
 import { createMissionControlLegacyAdapter } from './mission-control-legacy-adapter';
 import {
   buildMissionControlTodayProjection,
@@ -228,6 +238,7 @@ interface AppState {
   lingxingCollectionOperations: CollectionOperationGuard | null;
   storeCoordinator: StoreCoordinator | null;
   storeScopedAdListingService: StoreScopedAdListingService | null;
+  storeRuntimeConfigService: StoreRuntimeConfigService | null;
   ruleConfig: RuleConfig;
   isLoggedIn: boolean;
   currentStore: string;
@@ -259,6 +270,7 @@ const state: AppState = {
   lingxingCollectionOperations: null,
   storeCoordinator: null,
   storeScopedAdListingService: null,
+  storeRuntimeConfigService: null,
   ruleConfig: DEFAULT_RULE_CONFIG,
   isLoggedIn: false,
   currentStore: '',
@@ -279,6 +291,17 @@ function analysisRuleRevision(value: unknown): string {
     return JSON.stringify(candidate) ?? 'null';
   };
   return crypto.createHash('sha256').update(stable(value)).digest('hex');
+}
+
+function currentStoreRuntimeAnalysisConfig(): StoreRuntimeAnalysisConfig {
+  const context = state.storeCoordinator?.getActiveStoreContext();
+  if (!context || !state.storeRuntimeConfigService) {
+    throw new Error('当前店铺运行配置服务尚未就绪。');
+  }
+  return requireStoreRuntimeAnalysisConfig(
+    state.ruleConfig,
+    state.storeRuntimeConfigService.get(context),
+  );
 }
 
 // ============================================================================
@@ -651,6 +674,10 @@ async function initApp(): Promise<void> {
     repository: missionDomainRepo,
     storeCoordinator,
   });
+  const storeRuntimeConfigService = new StoreRuntimeConfigService({
+    storeCoordinator,
+    settings: state.settingsRepo!,
+  });
   const analysisAuthorityService = new AnalysisAuthorityService({
     db: state.db,
     repository: analysisAuthorityRepo,
@@ -658,10 +685,18 @@ async function initApp(): Promise<void> {
     recommendationRepository: state.recommendationRepo,
     storeCoordinator,
     generateRecommendations: (scope) => runRecommendationGeneration(scope),
-    currentRuleRevision: () => analysisRuleRevision(state.ruleConfig),
+    currentRuleRevision: () => analysisRuleRevision(
+      storeRuntimeRuleRevisionPayload(currentStoreRuntimeAnalysisConfig()),
+    ),
     currentModelRevision: () => {
       const settings = readAiSettingsForMain();
-      return `${settings.aiModel}:ad_strategy_diagnosis_v1:${settings.aiApiKey ? 'configured' : 'rule_fallback'}`;
+      const runtime = currentStoreRuntimeAnalysisConfig();
+      const availability = !runtime.values.aiRecommendationsEnabled
+        ? 'store_ai_disabled'
+        : settings.aiApiKey
+          ? 'configured'
+          : 'rule_fallback';
+      return `${settings.aiModel}:ad_strategy_diagnosis_v1:${availability}:store_config_r${runtime.configRevision}`;
     },
     allowedProofRoots: (context) => {
       const store = state.storeRepo?.getStore(context.storeId);
@@ -727,6 +762,7 @@ async function initApp(): Promise<void> {
   state.analysisAuthorityService = analysisAuthorityService;
   state.executionAuthorityRepo = executionAuthorityRepo;
   state.executionAuthorityService = executionAuthorityService;
+  state.storeRuntimeConfigService = storeRuntimeConfigService;
   const executionRecovery = executionAuthorityService.recoverStartup();
   console.log('[App] init:execution-recovery', JSON.stringify(executionRecovery));
   const collectionRecovery = recoverInterruptedLingxingCollectionJobsOnStartup();
@@ -2102,7 +2138,10 @@ function loadBusinessQuantSummary(scope: NormalizedBusinessUiScope, realReportFi
     }>
     : [];
 
-  const quantifier = new AdQuantifier(state.ruleConfig);
+  const runtimeConfig = currentStoreRuntimeAnalysisConfig();
+  assertRuntimeConfigStore(runtimeConfig, scope.storeId);
+  assertRuntimeAnalysisWindow(runtimeConfig, scope.dateFrom, scope.dateTo);
+  const quantifier = new AdQuantifier(runtimeConfig.ruleConfig);
   const timelineMetrics = actionableRows > 0
     ? state.db.prepare(`
       SELECT *
@@ -8056,6 +8095,8 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   skippedDuplicates: number;
   refreshedDuplicates: number;
   recommendationCandidates: number;
+  suppressedLowConfidence: number;
+  minimumConfidencePercent: number;
   recommendationIds: number[];
   aiExplanation: {
     configured: boolean;
@@ -8108,14 +8149,17 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
     importedRows: gate.pipeline.collection.fileAudit.importedRowCount,
   });
 
-  // Generate recommendations
-  const generator = new RecommendationGenerator(state.ruleConfig);
+  // Generate recommendations from the active store's runtime configuration.
+  const runtimeConfig = currentStoreRuntimeAnalysisConfig();
+  assertRuntimeConfigStore(runtimeConfig, gate.scope.storeId);
+  assertRuntimeAnalysisWindow(runtimeConfig, gate.scope.dateFrom, gate.scope.dateTo);
+  const generator = new RecommendationGenerator(runtimeConfig.ruleConfig);
   const firstMetric = metrics[0];
   const taskId = `task_${Date.now()}`;
   let recommendations = generator.generateTimelineBatch(metrics, {
     storeName: scope.storeName || firstMetric?.storeName || state.currentStore || 'unknown',
     marketplaceCode: scope.marketplaceCode || firstMetric?.marketplaceCode || 'US',
-    config: state.ruleConfig,
+    config: runtimeConfig.ruleConfig,
     taskId,
   });
   recommendations = bindRecommendationsToScopeAsin(recommendations, gate.scope.asin);
@@ -8130,12 +8174,20 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   const strategyDiagnosisResult = await enrichAdRecommendationsWithStrategyDiagnosis(recommendations, metrics, gate.scope, {
     taskId,
     sourceFiles: gate.metricSource.sourceFiles,
+    runtimeConfig,
   });
   recommendations = strategyDiagnosisResult.recommendations;
-  recommendations = await enrichAdRecommendationsWithAiExplanations(recommendations);
+  recommendations = await enrichAdRecommendationsWithAiExplanations(recommendations, runtimeConfig);
+  const recommendationsBeforeConfidenceGate = recommendations.length;
+  recommendations = recommendations.filter((recommendation) => (
+    recommendationMeetsStoreConfidence(recommendation.confidence, runtimeConfig)
+  ));
+  const suppressedLowConfidence = recommendationsBeforeConfidenceGate - recommendations.length;
   const aiCount = recommendations.filter((rec) => rec.evidence?.aiStrategySource === 'ai' || rec.evidence?.explanationSource === 'ai').length;
   const settings = readAiSettingsForMain();
-  const aiInvoked = metrics.length > 0 && Boolean(settings.aiApiKey);
+  const aiInvoked = runtimeConfig.values.aiRecommendationsEnabled
+    && metrics.length > 0
+    && Boolean(settings.aiApiKey);
   const aiFallbackReason = recommendations
     .map((rec) => rec.evidence?.aiFallbackReason)
     .find((reason): reason is string => typeof reason === 'string' && reason.length > 0);
@@ -8148,7 +8200,9 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
     strategyDiagnosis: strategyDiagnosisResult.summary,
     aiInsights: strategyDiagnosisResult.summary?.aiInsights || [],
     evidencePackSummary: strategyDiagnosisResult.summary?.evidencePackSummary,
-    reason: !settings.aiApiKey
+    reason: !runtimeConfig.values.aiRecommendationsEnabled
+      ? `当前店铺已关闭 AI 建议，使用规则引擎；低于 ${runtimeConfig.values.minimumRecommendationConfidencePercent}% 的建议已阻断。`
+      : !settings.aiApiKey
       ? '未配置 AI Key，建议解释使用规则引擎 fallback。'
       : recommendations.length === 0
         ? strategySource === 'ai'
@@ -8183,7 +8237,19 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
 
   console.log(`[Scheduler] Generated ${inserted} recommendations; refreshed ${refreshedDuplicates} incomplete duplicate(s); skipped ${skippedDuplicates} duplicate(s)`);
   mainWindow?.webContents.send('recommendations:generated', inserted);
-  return { generated: inserted, metrics: metrics.length, skippedDuplicates, refreshedDuplicates, recommendationCandidates, recommendationIds, aiExplanation, scope: gate.scope, metricsBackfill };
+  return {
+    generated: inserted,
+    metrics: metrics.length,
+    skippedDuplicates,
+    refreshedDuplicates,
+    recommendationCandidates,
+    suppressedLowConfidence,
+    minimumConfidencePercent: runtimeConfig.values.minimumRecommendationConfidencePercent,
+    recommendationIds,
+    aiExplanation,
+    scope: gate.scope,
+    metricsBackfill,
+  };
 }
 
 interface AdStrategyGenerationSummary {
@@ -8372,19 +8438,23 @@ function finiteNumberOrUndefined(value: unknown): number | undefined {
 
 async function enrichAdRecommendationsWithAiExplanations(
   recommendations: ActionRecommendation[],
+  runtimeConfig: StoreRuntimeAnalysisConfig,
 ): Promise<ActionRecommendation[]> {
   if (recommendations.length === 0) return recommendations;
 
   const settings = readAiSettingsForMain();
   const aiApiKey = settings.aiApiKey;
-  if (!aiApiKey) {
+  if (!runtimeConfig.values.aiRecommendationsEnabled || !aiApiKey) {
+    const fallbackReason = runtimeConfig.values.aiRecommendationsEnabled
+      ? '未配置 AI Key，广告建议解释使用规则引擎'
+      : '当前店铺已关闭 AI 建议，广告建议解释使用规则引擎';
     return recommendations.map((rec) => mergeAdActionExplanationEvidence({
       recommendation: rec,
       explanation: {
         source: 'rule',
         explanation: rec.reason,
-        riskWarnings: ['未配置 AI Key，广告建议解释使用规则引擎。'],
-        aiFallbackReason: '未配置 AI Key，广告建议解释使用规则引擎',
+        riskWarnings: [`${fallbackReason}。`],
+        aiFallbackReason: fallbackReason,
       },
       model: settings.aiModel,
     }));
@@ -8459,6 +8529,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
   options: {
     taskId: string;
     sourceFiles: string[];
+    runtimeConfig: StoreRuntimeAnalysisConfig;
   },
 ): Promise<{ recommendations: ActionRecommendation[]; summary?: AdStrategyGenerationSummary }> {
   if (!scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode) {
@@ -8514,12 +8585,12 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     metrics,
     operationEvents,
     productContexts,
-    ruleConfig: state.ruleConfig as RuleConfig & { minSpend?: number },
+    ruleConfig: options.runtimeConfig.ruleConfig as RuleConfig & { minSpend?: number },
     recommendations,
     evidencePack,
   });
   const settings = readAiSettingsForMain();
-  const diagnosis = settings.aiApiKey
+  const diagnosis = options.runtimeConfig.values.aiRecommendationsEnabled && settings.aiApiKey
     ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings)), {
         persona: settings.aiPersona,
         outputLanguage: settings.aiOutputLanguage,
@@ -8529,9 +8600,13 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
         schemaVersion: 'ad_strategy_diagnosis_v1' as const,
         evidenceSufficiency: assessAdEvidenceSufficiency(diagnosisInput),
         lifecycleStage: 'unknown' as const,
-        lifecycleStageReason: '未配置 AI Key，不能执行 AI 阶段判断。',
+        lifecycleStageReason: options.runtimeConfig.values.aiRecommendationsEnabled
+          ? '未配置 AI Key，不能执行 AI 阶段判断。'
+          : '当前店铺已关闭 AI 建议，不能执行 AI 阶段判断。',
         lifecycleStageEvidenceRefs: [],
-        summary: '未配置 AI Key，广告阶段诊断使用规则 fallback。',
+        summary: options.runtimeConfig.values.aiRecommendationsEnabled
+          ? '未配置 AI Key，广告阶段诊断使用规则 fallback。'
+          : '当前店铺已关闭 AI 建议，广告阶段诊断使用规则 fallback。',
         mainProblems: [],
         thresholdSuggestions: {
           targetAcos: {
@@ -8555,7 +8630,9 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
         insightOnlyCandidates: [],
         riskWarnings: ['AI 不可用，必须人工复核规则建议。'],
         source: 'rule' as const,
-        aiFallbackReason: '未配置 AI Key，广告阶段诊断使用规则 fallback',
+        aiFallbackReason: options.runtimeConfig.values.aiRecommendationsEnabled
+          ? '未配置 AI Key，广告阶段诊断使用规则 fallback'
+          : '当前店铺已关闭 AI 建议，广告阶段诊断使用规则 fallback',
       };
   recordAdStrategyAiCallLog(diagnosisInput, diagnosis, settings, evidencePackSummary);
   const validation = validateAiDiagnosisEvidence({
@@ -8966,12 +9043,15 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     importedRows: gate.pipeline.collection.fileAudit.importedRowCount,
   });
 
-  const generator = new RecommendationGenerator(state.ruleConfig);
+  const runtimeConfig = currentStoreRuntimeAnalysisConfig();
+  assertRuntimeConfigStore(runtimeConfig, gate.scope.storeId);
+  assertRuntimeAnalysisWindow(runtimeConfig, gate.scope.dateFrom, gate.scope.dateTo);
+  const generator = new RecommendationGenerator(runtimeConfig.ruleConfig);
   const firstMetric = metrics[0];
   const ruleCandidates = bindRecommendationsToScopeAsin(generator.generateTimelineBatch(metrics, {
     storeName: scope.storeName || firstMetric?.storeName || state.currentStore || 'unknown',
     marketplaceCode: scope.marketplaceCode || firstMetric?.marketplaceCode || 'US',
-    config: state.ruleConfig,
+    config: runtimeConfig.ruleConfig,
     taskId: `strategy_${Date.now()}`,
   }), gate.scope.asin);
   const operationEvents = state.operationEventRepo?.findByScopeForStore(gate.scope.storeId, {
@@ -9009,7 +9089,7 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     metrics,
     operationEvents,
     productContexts,
-    ruleConfig: state.ruleConfig as RuleConfig & { minSpend?: number },
+    ruleConfig: runtimeConfig.ruleConfig as RuleConfig & { minSpend?: number },
     recommendations: ruleCandidates,
     evidencePack,
   });
@@ -9018,9 +9098,13 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     schemaVersion: 'ad_strategy_diagnosis_v1',
     evidenceSufficiency: assessAdEvidenceSufficiency(diagnosisInput),
     lifecycleStage: 'unknown',
-    lifecycleStageReason: '未配置 AI Key，不能执行 AI 阶段判断。',
+    lifecycleStageReason: runtimeConfig.values.aiRecommendationsEnabled
+      ? '未配置 AI Key，不能执行 AI 阶段判断。'
+      : '当前店铺已关闭 AI 建议，不能执行 AI 阶段判断。',
     lifecycleStageEvidenceRefs: [],
-    summary: '未配置 AI Key，广告阶段诊断使用规则 fallback。',
+    summary: runtimeConfig.values.aiRecommendationsEnabled
+      ? '未配置 AI Key，广告阶段诊断使用规则 fallback。'
+      : '当前店铺已关闭 AI 建议，广告阶段诊断使用规则 fallback。',
     mainProblems: [],
     thresholdSuggestions: {
       targetAcos: {
@@ -9044,9 +9128,11 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     insightOnlyCandidates: [],
     riskWarnings: ['AI 不可用，必须人工复核规则建议。'],
     source: 'rule',
-    aiFallbackReason: '未配置 AI Key，广告阶段诊断使用规则 fallback',
+    aiFallbackReason: runtimeConfig.values.aiRecommendationsEnabled
+      ? '未配置 AI Key，广告阶段诊断使用规则 fallback'
+      : '当前店铺已关闭 AI 建议，广告阶段诊断使用规则 fallback',
   };
-  const diagnosis = settings.aiApiKey
+  const diagnosis = runtimeConfig.values.aiRecommendationsEnabled && settings.aiApiKey
     ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings)), {
         persona: settings.aiPersona,
         outputLanguage: settings.aiOutputLanguage,
@@ -9076,8 +9162,8 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
   });
 
   return {
-    configured: Boolean(settings.aiApiKey),
-    invoked: Boolean(settings.aiApiKey),
+    configured: runtimeConfig.values.aiRecommendationsEnabled && Boolean(settings.aiApiKey),
+    invoked: runtimeConfig.values.aiRecommendationsEnabled && Boolean(settings.aiApiKey),
     model: settings.aiModel,
     metrics: metrics.length,
     ruleCandidateCount: ruleCandidates.length,
@@ -9550,6 +9636,7 @@ function registerIpcHandlers(): void {
   if (!state.missionDomainService) throw new Error('Mission domain service is not initialized');
   if (!state.analysisAuthorityService) throw new Error('Analysis authority service is not initialized');
   if (!state.executionAuthorityService) throw new Error('Execution authority service is not initialized');
+  if (!state.storeRuntimeConfigService) throw new Error('Store runtime config service is not initialized');
   if (!state.productRepo || !state.operationEventRepo) {
     throw new Error('Store-scoped object repositories are not initialized');
   }
@@ -9613,12 +9700,18 @@ function registerIpcHandlers(): void {
       buildTodayProjection: buildAuthoritativeMissionControlTodayProjection,
       analysisAuthorityReady: Boolean(state.analysisAuthorityService),
       executionAuthorityReady: Boolean(state.executionAuthorityService),
+      storeRuntimeConfigReady: Boolean(state.storeRuntimeConfigService),
       missionDomain: state.missionDomainService,
     }),
   );
   registerMissionDomainIpcHandlers(ipcMain, state.missionDomainService);
   registerAnalysisAuthorityIpcHandlers(ipcMain, state.analysisAuthorityService);
   registerExecutionAuthorityIpcHandlers(ipcMain, state.executionAuthorityService);
+  registerStoreRuntimeConfigIpcHandlers(
+    ipcMain,
+    state.storeRuntimeConfigService,
+    () => mainWindow?.webContents.send('business-ui:data-updated'),
+  );
   registerStoreScopedObjectsIpcHandlers(
     ipcMain,
     new StoreScopedObjectsService({

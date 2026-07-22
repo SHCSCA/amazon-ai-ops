@@ -111,6 +111,12 @@ describe('Mission Control runtime composition', () => {
     expect(source).toContain('onRestore={store.restoreStore}');
     expect(source).toContain('onSwitch={store.switchStore}');
   });
+
+  it('binds the Main-authorized store runtime configuration panel to the active authority', () => {
+    const source = appSource();
+    expect(source).toContain('<StoreRuntimeConfigPanel storeContext={store.authoritativeContext} />');
+    expect(source).toContain('settingsCrudSlot={(');
+  });
 });
 
 describe('Store authority login-session invalidation', () => {

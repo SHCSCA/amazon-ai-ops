@@ -35,7 +35,7 @@ import {
 } from './mission-control/mission-control-shell';
 import { LegacyAdapterRouter } from './mission-control/router';
 import { MissionControlWorkspaceView } from './mission-control/workspaces';
-import { StoreManagementPanel } from './mission-control/components';
+import { StoreManagementPanel, StoreRuntimeConfigPanel } from './mission-control/components';
 import './styles.css';
 import './styles/tokens.css';
 import './styles/foundations.css';
@@ -918,6 +918,9 @@ function MissionControlRuntime({
               onUpdate={store.updateStore}
               stores={store.stores}
             />
+          )}
+          settingsCrudSlot={(
+            <StoreRuntimeConfigPanel storeContext={store.authoritativeContext} />
           )}
           storeContext={store.authoritativeContext}
         />

@@ -20,6 +20,46 @@ export interface StoreMigrationBackupManifest {
   sizeBytes?: number;
 }
 
+export type UpgradeBackupStatus = 'pending' | 'created' | 'reused' | 'not_applicable';
+
+/**
+ * Recovery point for one whole schema upgrade, captured before any pending
+ * migration mutates the source database. The final sidecar and backup are
+ * immutable once published; retries may only reuse a verified binding.
+ */
+export interface UpgradeBackupManifest {
+  kind: 'schema-upgrade-backup';
+  schemaVersion: 1;
+  status: UpgradeBackupStatus;
+  sourceVersion: number;
+  targetVersion: number;
+  targetName: string;
+  targetChecksum: string;
+  createdAt: string;
+  integrityCheck: string;
+  schemaFingerprint: string;
+  tableRowCounts: Record<string, number>;
+  databasePath?: string;
+  backupPath?: string;
+  manifestPath?: string;
+  backupIntegrityCheck?: string;
+  sha256?: string;
+  sizeBytes?: number;
+  reason?: 'memory_database' | 'empty_database' | 'target_already_applied';
+}
+
+export interface VersionedMigrationManifest {
+  version: number;
+  name: string;
+  checksum: string;
+  startedAt: string;
+  integrityCheck?: string;
+  upgradeBackup?: UpgradeBackupManifest;
+  [key: string]: unknown;
+}
+
+export type SchemaMigrationManifest = StoreMigrationManifest | VersionedMigrationManifest;
+
 export interface StoreMigrationManifest {
   version: number;
   name: string;
@@ -63,7 +103,7 @@ export interface SchemaMigrationRecord {
   startedAt: string;
   appliedAt?: string;
   errorMessage?: string;
-  manifest: StoreMigrationManifest;
+  manifest: SchemaMigrationManifest;
   result?: StoreMigrationResult;
 }
 
@@ -92,6 +132,14 @@ export interface StoreMigrationRecoveryPreflight {
   backupIntegrityCheck?: string;
   backupSha256?: string;
   blockers: string[];
+}
+
+export interface UpgradeBackupRecoveryPreflight extends StoreMigrationRecoveryPreflight {
+  sourceVersion: number;
+  targetVersion: number;
+  manifestPath?: string;
+  schemaFingerprintMatches?: boolean;
+  tableRowCountsMatch?: boolean;
 }
 
 export interface StoreMigrationRestoreResult {

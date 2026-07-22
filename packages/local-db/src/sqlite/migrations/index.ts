@@ -1,5 +1,16 @@
 export * from './types';
 export {
+  UpgradeBackupError,
+  collectTableRowCounts,
+  fingerprintDatabaseSchema,
+  getUpgradeBackupRecoveryPreflight,
+  isUpgradeBackupManifest,
+  prepareUpgradeBackup,
+  restoreUpgradeBackupTo,
+  upgradeBackupFromMigrationManifest,
+} from './upgrade-backup';
+export type { PrepareUpgradeBackupOptions, UpgradeBackupTarget } from './upgrade-backup';
+export {
   STORE_AUTHORITY_MIGRATION_CHECKSUM,
   STORE_AUTHORITY_MIGRATION_NAME,
   STORE_AUTHORITY_MIGRATION_VERSION,

@@ -46,6 +46,8 @@ export interface MissionControlAdapterOptions {
   analysisAuthorityReady?: boolean;
   /** Closed Main execution queue, evidence projection and takeover IPC are registered. */
   executionAuthorityReady?: boolean;
+  /** Main-authorized, store-keyed operating configuration CRUD is registered. */
+  storeRuntimeConfigReady?: boolean;
   missionDomain?: {
     getAutonomyProjection(context: StoreContextEnvelope): {
       mode: MissionControlAutonomyMode;
@@ -174,6 +176,7 @@ export const MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabilityProj
   serviceBlocked('settings.store-config.create', 'settings', 'settings/ai-and-local', 'create', '店铺级设置创建服务尚未接入 Main。'),
   serviceBlocked('settings.store-config.update', 'settings', 'settings/ai-and-local', 'update', '店铺级设置更新服务尚未接入 Main。'),
   serviceBlocked('settings.store-config.archive', 'settings', 'settings/ai-and-local', 'archive', '店铺级设置归档服务尚未接入 Main。'),
+  serviceBlocked('settings.store-config.restore', 'settings', 'settings/ai-and-local', 'restore', '店铺级设置恢复服务尚未接入 Main。'),
   blocked('settings.scheduler.view', 'settings', 'settings/scheduler', 'scheduler', '定时任务尚未接入按店铺授权的配置。'),
   blocked('settings.delivery.view', 'settings', 'settings/delivery', 'delivery', '交付状态尚未接入按店铺授权的查询。'),
 ] as const;
@@ -217,6 +220,29 @@ export function createMissionControlLegacyAdapter(
             capability.view,
             capability.action,
             '真实执行由 Main 从不可变授权重建命令，串行写入并保留 before / after / reload 证据；Renderer 不能提交竞价、Ads ID 或本地路径。',
+          );
+        }
+        if (options.storeRuntimeConfigReady && capability.capabilityId === 'settings.ai-and-local.view') {
+          return adapted(
+            capability.capabilityId,
+            capability.workspace,
+            capability.view,
+            'settings',
+            '系统级 AI 连接沿用受控生产适配；店铺运行参数由同页 Main 原生 CRUD 按 store_id 独立维护。',
+          );
+        }
+        if (options.storeRuntimeConfigReady && [
+          'settings.store-config.create',
+          'settings.store-config.update',
+          'settings.store-config.archive',
+          'settings.store-config.restore',
+        ].includes(capability.capabilityId)) {
+          return native(
+            capability.capabilityId,
+            capability.workspace,
+            capability.view,
+            capability.action,
+            '店铺运行配置由 Main 复核完整 StoreContext，以独立 store_id 持久化并使用 expectedRevision、可恢复归档和版本历史。',
           );
         }
         const missionDomainDetail = options.missionDomain

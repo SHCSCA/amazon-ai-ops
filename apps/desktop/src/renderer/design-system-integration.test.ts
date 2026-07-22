@@ -83,7 +83,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/settings-page.tsx',
-    markers: ['settings-ai-workbench', 'settings-ai-contract-copy-folded', 'AI 服务连接', '规则阈值与动作边界', 'FormTable'],
+    markers: ['settings-ai-workbench', 'settings-ai-contract-copy-folded', 'AI 服务连接', '系统回退规则（兼容）', 'FormTable'],
   },
   {
     pageFile: 'pages/delivery-page.tsx',

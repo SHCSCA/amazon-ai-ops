@@ -142,7 +142,7 @@ function LegacyRoutePage({
     case 'listing-optimization':
       return <ListingOptimizationPage />;
     case 'settings':
-      return <SettingsPage />;
+      return <SettingsPage embedded />;
     case 'scheduler':
       return <SchedulerPage />;
     case 'delivery':

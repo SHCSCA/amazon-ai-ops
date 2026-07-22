@@ -3,6 +3,10 @@ import { createHash } from 'crypto';
 import * as path from 'path';
 import {
   runAnalysisAuthorityMigration,
+  EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
+  EXECUTION_AUTHORITY_MIGRATION_NAME,
+  EXECUTION_AUTHORITY_MIGRATION_VERSION,
+  prepareUpgradeBackup,
   runExecutionAuthorityMigration,
   prepareStoreAuthorityMigrationBackup,
   runListingStoreAuthorityMigration,
@@ -11,6 +15,7 @@ import {
   runProductStoreAuthorityMigration,
   runReportImportAuthorityMigration,
   runStoreAuthorityMigrations,
+  type UpgradeBackupManifest,
 } from './migrations';
 
 // 获取用户数据目录
@@ -32,12 +37,20 @@ export function initSqlite(dbPath?: string): Database.Database {
     opened.pragma('journal_mode = WAL');
     opened.pragma('foreign_keys = ON');
 
+    // Capture one immutable recovery point for the complete pending chain.
+    // This runs before CREATE/ALTER statements, including a v7 -> v8 startup.
+    const upgradeBackup = prepareUpgradeBackup(opened, {
+      targetVersion: EXECUTION_AUTHORITY_MIGRATION_VERSION,
+      targetName: EXECUTION_AUTHORITY_MIGRATION_NAME,
+      targetChecksum: EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
+    });
+
     // Bind and verify the Stage 1 recovery snapshot before any legacy startup
     // migration can normalize, deduplicate, or otherwise mutate user rows.
     prepareStoreAuthorityMigrationBackup(opened);
 
     // 创建表
-    runMigrations(opened);
+    runMigrations(opened, upgradeBackup);
     return opened;
   } catch (error) {
     if (opened.open) opened.close();
@@ -53,7 +66,7 @@ export function getSqliteDb(): Database.Database {
   return db;
 }
 
-function runMigrations(database: Database.Database): void {
+function runMigrations(database: Database.Database, upgradeBackup: UpgradeBackupManifest): void {
   // app_settings
   database.exec(`
     CREATE TABLE IF NOT EXISTS app_settings (
@@ -645,7 +658,7 @@ function runMigrations(database: Database.Database): void {
   runOperationEventArchiveMigration(database);
   runMissionDomainMigration(database);
   runAnalysisAuthorityMigration(database);
-  runExecutionAuthorityMigration(database);
+  runExecutionAuthorityMigration(database, upgradeBackup);
 }
 
 function installStoreScopedMetricIdentitySafeguards(database: Database.Database): void {

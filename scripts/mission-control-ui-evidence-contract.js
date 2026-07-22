@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION = 'mission-control-ui-evidence/v1';
+const MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION = 'mission-control-ui-evidence/v2';
 const MISSION_CONTROL_UI_EVIDENCE_KIND = 'mission-control-ui-evidence';
 const EXPECTED_MISSION_CONTROL_SCALES = Object.freeze([100, 125]);
 const EXPECTED_MISSION_CONTROL_STORE_IDS = Object.freeze(['SHC001', 'SHC002']);
@@ -63,7 +63,7 @@ const EXPECTED_MISSION_CONTROL_WORKSPACES = Object.freeze(
 const MISSION_CONTROL_UI_EVIDENCE_JSON_SCHEMA = Object.freeze({
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   $id: MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION,
-  title: 'Mission Control Stage2 UI evidence',
+  title: 'Mission Control Stage7 UI evidence',
   type: 'object',
   required: [
     'kind',
@@ -81,7 +81,7 @@ const MISSION_CONTROL_UI_EVIDENCE_JSON_SCHEMA = Object.freeze({
     kind: { const: MISSION_CONTROL_UI_EVIDENCE_KIND },
     schemaVersion: { const: MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION },
     generatedAt: { type: 'string', format: 'date-time' },
-    status: { const: 'STAGE2_UI_EVIDENCE' },
+    status: { const: 'STAGE7_UI_EVIDENCE' },
     readinessImpact: { const: 'NO_FINAL_READINESS_CREDIT' },
     finalReadinessCredit: { const: false },
     workspaceCaptures: {
@@ -134,11 +134,12 @@ const MISSION_CONTROL_UI_EVIDENCE_JSON_SCHEMA = Object.freeze({
     },
     autonomy: {
       type: 'object',
-      required: ['currentMode', 'policyAutoAvailable', 'policyAutoState', 'policyAutoBlockerCode'],
+      required: ['currentMode', 'manualApprovalAvailable', 'policyAutoAvailable', 'policyAutoState'],
       properties: {
-        currentMode: { const: 'manual_approval' },
-        policyAutoAvailable: { const: false },
-        policyAutoState: { const: 'BLOCKED' },
+        currentMode: { enum: ['manual_approval', 'policy_auto'] },
+        manualApprovalAvailable: { const: true },
+        policyAutoAvailable: { type: 'boolean' },
+        policyAutoState: { enum: ['AVAILABLE', 'BLOCKED'] },
         policyAutoBlockerCode: { type: 'string', minLength: 1 },
       },
     },
@@ -344,7 +345,7 @@ function validateMarketAuthority(authority, authorityPath, violations, expectedS
       violations,
       'MARKETPLACE_NOT_US',
       `${authorityPath}.marketplace`,
-      'Mission Control Stage2 evidence is US-only.',
+      'Mission Control Stage7 evidence is US-only.',
       { actual: authority.marketplace, expected: 'US' },
     );
   }
@@ -353,7 +354,7 @@ function validateMarketAuthority(authority, authorityPath, violations, expectedS
       violations,
       'CURRENCY_NOT_USD',
       `${authorityPath}.currency`,
-      'Mission Control Stage2 evidence must use USD.',
+      'Mission Control Stage7 evidence must use USD.',
       { actual: authority.currency, expected: 'USD' },
     );
   }
@@ -365,18 +366,27 @@ function validateAutonomy(capture, capturePath, violations) {
     addViolation(violations, 'AUTONOMY_EVIDENCE_MISSING', `${capturePath}.autonomy`, 'Capture must include autonomy authority.');
     return;
   }
+  const validMode = autonomy.currentMode === 'manual_approval' || autonomy.currentMode === 'policy_auto';
+  const availabilityConsistent = (
+    autonomy.policyAutoAvailable === true && autonomy.policyAutoState === 'AVAILABLE'
+  ) || (
+    autonomy.policyAutoAvailable === false
+    && autonomy.policyAutoState === 'BLOCKED'
+    && typeof autonomy.policyAutoBlockerCode === 'string'
+    && autonomy.policyAutoBlockerCode.trim().length > 0
+  );
+  const activeModeAuthorized = autonomy.currentMode !== 'policy_auto' || autonomy.policyAutoAvailable === true;
   if (
-    autonomy.currentMode !== 'manual_approval'
-    || autonomy.policyAutoAvailable !== false
-    || autonomy.policyAutoState !== 'BLOCKED'
-    || typeof autonomy.policyAutoBlockerCode !== 'string'
-    || autonomy.policyAutoBlockerCode.trim().length === 0
+    !validMode
+    || autonomy.manualApprovalAvailable !== true
+    || !availabilityConsistent
+    || !activeModeAuthorized
   ) {
     addViolation(
       violations,
-      'POLICY_AUTO_NOT_BLOCKED',
+      'AUTONOMY_AUTHORITY_INCONSISTENT',
       `${capturePath}.autonomy`,
-      'Stage2 evidence must prove policy-auto is unavailable and visibly BLOCKED under manual approval.',
+      'Stage7 evidence must show manual approval and policy-auto availability consistently with the Main authority projection.',
     );
   }
 }
@@ -659,7 +669,7 @@ function evaluateMissionControlUiEvidenceManifest(value, options = {}) {
     addViolation(violations, 'GENERATED_AT_INVALID', 'generatedAt', 'generatedAt must be an ISO-compatible timestamp.');
   }
   if (
-    value.status !== 'STAGE2_UI_EVIDENCE'
+    value.status !== 'STAGE7_UI_EVIDENCE'
     || value.readinessImpact !== 'NO_FINAL_READINESS_CREDIT'
     || value.finalReadinessCredit !== false
   ) {
@@ -667,7 +677,7 @@ function evaluateMissionControlUiEvidenceManifest(value, options = {}) {
       violations,
       'READINESS_SCOPE_UNSAFE',
       'status',
-      'Stage2 UI evidence must explicitly carry no final production-readiness credit.',
+      'Stage7 UI evidence must explicitly carry no final production-readiness credit.',
     );
   }
 
