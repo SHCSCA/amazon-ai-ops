@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@phosphor-icons/react": "2.1.10",
     "@tanstack/react-virtual": "^3.14.3",
     "better-sqlite3": "^11.10.0",
     "bindings": "^1.5.0",

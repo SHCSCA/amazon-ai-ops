@@ -100,22 +100,22 @@ function deliveryVerified(delivery: DeliveryProvenance): boolean {
 
 export function selectNextSafeAction(evidence: WorkflowEvidence): NextSafeAction {
   if (!evidence.productSelected) {
-    return blockedAction('product-selection', '先锁定要运营的产品，再开始配置范围和读取数据。', '选择运营产品', { workspace: 'product', subview: 'products' });
+    return blockedAction('product-selection', '先锁定要运营的产品，再开始配置范围和读取数据。', '选择运营产品', { workspace: 'objects', subview: 'products' });
   }
   if (!evidence.scopeReady) {
-    return blockedAction('scope-setup', '当前产品还没有完整的店铺、站点和日期范围。', '配置工作范围', { workspace: 'data-preparation', subview: 'scope' });
+    return blockedAction('scope-setup', '当前产品还没有完整的店铺、站点和日期范围。', '配置工作范围', { workspace: 'collection', subview: 'scope' });
   }
   if (!evidence.reportsReady) {
-    return blockedAction('report-collection', '当前范围缺少真实领星广告报表，不能继续量化。', '采集真实报表', { workspace: 'data-preparation', subview: 'reports' });
+    return blockedAction('report-collection', '当前范围缺少真实领星广告报表，不能继续量化。', '采集真实报表', { workspace: 'collection', subview: 'reports' });
   }
   if (evidence.importState !== 'ready') {
     const reason = evidence.importState === 'pending'
       ? '真实报表正在导入或等待校验，完成前不生成诊断。'
       : '真实报表尚未完成导入校验，不能把文件存在当成数据可用。';
-    return blockedAction('import-validation', reason, '检查导入结果', { workspace: 'data-preparation', subview: 'import-check' });
+    return blockedAction('import-validation', reason, '检查导入结果', { workspace: 'collection', subview: 'import-check' });
   }
   if (!evidence.diagnosisReady) {
-    return blockedAction('diagnosis', '导入数据已就绪，但广告诊断还没有产出可复核结果。', '运行广告诊断', { workspace: 'diagnosis', subview: 'analysis' });
+    return blockedAction('diagnosis', '导入数据已就绪，但广告诊断还没有产出可复核结果。', '运行广告诊断', { workspace: 'missions', subview: 'facts' });
   }
   if (evidence.recommendationState === 'absent') {
     return blockedAction('recommendations', '诊断已就绪，但还没有基于证据生成优化建议。', '生成优化建议', { workspace: 'decisions', subview: 'recommendations' });
@@ -127,10 +127,10 @@ export function selectNextSafeAction(evidence: WorkflowEvidence): NextSafeAction
     return blockedAction('approval', '可审批建议仍需逐项人工决定；审批只代表决策，不代表已经执行。', '进入人工审批', { workspace: 'decisions', subview: 'approval' });
   }
   if (!readbackVerified(evidence.readback)) {
-    return blockedAction('readback', '人工审批已完成，但仍缺少已通过校验的 Ads 界面执行与结果回读证据。', '补齐执行回读', { workspace: 'readback', subview: 'evidence' });
+    return blockedAction('readback', '人工审批已完成，但仍缺少已通过校验的 Ads 界面执行与结果回读证据。', '补齐执行回读', { workspace: 'execution', subview: 'evidence' });
   }
   if (!deliveryVerified(evidence.delivery)) {
-    return blockedAction('delivery', '业务证据已补齐，但正式交付仍缺少 manifest、当前包启动冒烟或匹配的包哈希。开发预览不能替代正式验收。', '检查交付验收', { workspace: 'system', subview: 'delivery' });
+    return blockedAction('delivery', '业务证据已补齐，但正式交付仍缺少 manifest、当前包启动冒烟或匹配的包哈希。开发预览不能替代正式验收。', '检查交付验收', { workspace: 'settings', subview: 'delivery' });
   }
   return {
     stage: 'complete',

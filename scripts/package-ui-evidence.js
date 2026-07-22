@@ -58,7 +58,7 @@ const EXPECTED_PACKAGE_UI_WORKSPACES = Object.freeze([
   Object.freeze({ workspace: 'product', subview: 'products', label: '产品工作台', heading: '产品工作台' }),
   Object.freeze({ workspace: 'data-preparation', subview: 'scope', label: '数据准备', heading: '工作范围' }),
   Object.freeze({ workspace: 'diagnosis', subview: 'analysis', label: '广告诊断', heading: '广告诊断' }),
-  Object.freeze({ workspace: 'decisions', subview: 'recommendations', label: '建议与审批', heading: '建议与审批' }),
+  Object.freeze({ workspace: 'decisions', subview: 'decided', tabLabel: '已决策', label: '建议与审批', heading: '建议与审批' }),
   Object.freeze({ workspace: 'readback', subview: 'evidence', label: '结果核对', heading: '结果核对' }),
   Object.freeze({ workspace: 'growth', subview: 'keywords', label: '关键词与 Listing', heading: '关键词机会' }),
   Object.freeze({ workspace: 'system', subview: 'settings', label: '系统与交付', heading: 'AI 与规则' }),
@@ -157,6 +157,11 @@ const OVERLAY_FOCUSABLE_SELECTOR = [
   '[contenteditable="true"]',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
+
+function decisionsTabAccessibleNamePattern(label) {
+  const escaped = String(label || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}（已载入 \\d+）$`);
+}
 
 function fail(message, details) {
   const error = new Error(details ? `${message}: ${details}` : message);
@@ -2015,6 +2020,11 @@ async function navigateToWorkspace(page, expected, settleMs) {
   const button = page.locator('.app-sidebar .nav-item').filter({ hasText: expected.label });
   if (await button.count() !== 1) fail('Expected exactly one sidebar workspace button', expected.label);
   await button.click();
+  if (expected.tabLabel) {
+    const tab = page.getByRole('tab', { name: decisionsTabAccessibleNamePattern(expected.tabLabel) });
+    await tab.waitFor({ state: 'visible', timeout: 10_000 });
+    if (await tab.getAttribute('aria-selected') !== 'true') await tab.click();
+  }
   const selector = `[data-workspace-evidence-root][data-workspace="${expected.workspace}"][data-workspace-subview="${expected.subview}"]`;
   await page.locator(selector).waitFor({ state: 'visible', timeout: 15_000 });
   await waitForNavigationIdle(page);
@@ -2602,6 +2612,10 @@ async function runOverlayChecks(page, runOptions) {
 
   const decisions = EXPECTED_PACKAGE_UI_WORKSPACES.find((item) => item.workspace === 'decisions');
   await navigateToWorkspace(page, decisions, runOptions.settleMs);
+  await page.getByRole('tab', { name: decisionsTabAccessibleNamePattern('待判断') }).click();
+  const recommendationsRootSelector = '[data-workspace-evidence-root][data-workspace="decisions"][data-workspace-subview="recommendations"]';
+  await page.locator(recommendationsRootSelector).waitFor({ state: 'visible', timeout: 10_000 });
+  await waitForWorkspaceSettled(page, recommendationsRootSelector, runOptions.settleMs);
   const decisionsCheck = await exerciseOverlayFocus(page, {
     dialogLocator: page.locator('.responsive-inspector[role="dialog"]'),
     electronApp: runOptions.electronApp,
@@ -3443,6 +3457,7 @@ module.exports = {
   collectElectronIdentity,
   collectMatchingPackageProcesses,
   collectMatchingProfileBrowserProcesses,
+  decisionsTabAccessibleNamePattern,
   collectWorkspaceSettleSnapshot,
   evaluatePackageViewportContract,
   collectFixedPackageHashes,

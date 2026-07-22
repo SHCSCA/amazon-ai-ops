@@ -1,6 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const {
+  PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION,
+} = require('./smoke-package-adversarial-node-env');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -73,6 +76,15 @@ function main() {
       adAiExplanation: evidenceEntry('Ad recommendation AI explanation', args['ad-ai-explanation'], /^(installed-)?ad-ai-explanation-.*\.json$/i, true),
       listingAiDraft: evidenceEntry('Listing AI draft', args['listing-ai-draft'], /^(installed-listing-ai-draft|listing-ai-draft).*\.json$/i, true),
       adReadback: evidenceEntry('Real ad execution readback', args['ad-readback'], /^real-ad-execution-readback-.*\.json$/i, true),
+      packageAdversarialNodeEnv: {
+        contractVersion: PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION,
+        ...evidenceEntry(
+          'Adversarial NODE_ENV package smoke',
+          args['package-adversarial-node-env-evidence'],
+          /^package-adversarial-node-env-.*\.json$/i,
+          true,
+        ),
+      },
     },
     note: 'This manifest selects evidence paths for verify:v15-final-readiness. It does not make APP_READY claims by itself.',
   };

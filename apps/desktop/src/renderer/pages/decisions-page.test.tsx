@@ -26,6 +26,7 @@ import {
   decisionsHandoffMatchesQuery,
   decisionsQueryKey,
   decisionsRowsForPublishedQuery,
+  decisionsSharedApprovalPolicyBlockers,
   decisionsReviewBlockers,
   decisionsTargetBindingBlockers,
   isConfirmedDecisionsReviewResolution,
@@ -865,7 +866,15 @@ describe('decision safety summaries', () => {
 
   it('requires the mixed preview pending row to verify its Ads target before approval', async () => {
     const api = createBrowserPreviewElectronApi('SHC001', 'mixed-recommendations');
-    const [pending] = await api.getRecommendations({ status: 'pending' });
+    const [pending] = await api.getRecommendations({
+      dateFrom: '2026-05-21',
+      dateTo: '2026-06-23',
+      storeName: 'FT-US-US',
+      marketplaceCode: 'US',
+      asin: 'B0GTTJFQTM',
+      batchId: 'batch_preview_20260625',
+      status: 'pending',
+    });
     const pipeline = await api.getBusinessUiDataPipeline();
 
     expect(decisionEligibilitySummary(pending, {
@@ -888,6 +897,28 @@ describe('decision safety summaries', () => {
       readOnly: false,
       blockers: [],
     });
+  });
+
+  it('uses the shared approval policy blockers for renderer eligibility', () => {
+    const row = recommendation('pending', {
+      currentValue: '0.88',
+      recommendedValue: '1.02',
+      evidence: {
+        ...recommendation().evidence,
+        decisionAgreement: 'conflict',
+        decisionRequiresReview: true,
+      },
+    });
+    const sharedBlockers = decisionsSharedApprovalPolicyBlockers(row, eligibilityContext);
+    const eligibility = decisionEligibilitySummary(row, eligibilityContext);
+
+    expect(sharedBlockers).toEqual(expect.arrayContaining([
+      '降价动作的建议出价必须低于当前出价',
+      'AI/规则冲突',
+      'AI/规则合并标记需复核',
+    ]));
+    expect(eligibility.blockers).toEqual(expect.arrayContaining(sharedBlockers));
+    expect(eligibility.canApprove).toBe(false);
   });
 
   it('never offers approval for needs_review while preserving a reject path', () => {

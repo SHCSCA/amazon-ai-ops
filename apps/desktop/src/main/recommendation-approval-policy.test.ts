@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { ActionRecommendation } from '@amazon-ai-ops/shared-types';
+import { getRecommendationApprovalBlockers as getSharedRecommendationApprovalBlockers } from '@amazon-ai-ops/rules-engine';
 import {
   applyRecommendationDecision,
   assertRecommendationApprovalPolicy,
@@ -10,6 +11,7 @@ import {
   getRecommendationApprovalMissingFields,
   normalizeRecommendationDecisionRequest,
 } from './recommendation-approval-policy';
+import { getRecommendationWritableTargetOwnershipBlockers } from './recommendation-writable-target-policy';
 
 function recommendation(overrides: Partial<ActionRecommendation> = {}): ActionRecommendation {
   return {
@@ -121,6 +123,28 @@ const READ_ONLY_RECOMMENDATION_STATUSES = ['approved', 'rejected', 'executed', '
 const DECISION_TARGET_STATUSES = ['approved', 'rejected'] as const;
 
 describe('recommendation approval policy', () => {
+  it('keeps the Main authority adapter in parity with the shared pure policy', () => {
+    const current = recommendation();
+    const ownershipBlockers = getRecommendationWritableTargetOwnershipBlockers(
+      current,
+      current.evidence.writableTarget!,
+      sourceAuthority,
+    );
+
+    expect(getRecommendationApprovalBlockers(current, approvalOptions)).toEqual(
+      getSharedRecommendationApprovalBlockers(current, {
+        allowedSourceFiles: approvalOptions.allowedSourceFiles,
+        writableTargetOwnershipBlockers: ownershipBlockers,
+      }),
+    );
+  });
+
+  it('fails closed when a shared-policy caller omits its writable-target authority adapter', () => {
+    expect(getSharedRecommendationApprovalBlockers(recommendation(), {
+      allowedSourceFiles: approvalOptions.allowedSourceFiles,
+    })).toContain('Ads 可写对象不属于当前建议：缺少当前权威归属校验');
+  });
+
   it('preserves the displayed recommendation revision in structured decision requests', () => {
     expect(normalizeRecommendationDecisionRequest({
       id: 101,

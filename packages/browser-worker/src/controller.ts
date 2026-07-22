@@ -134,6 +134,22 @@ export class BrowserController {
     };
   }
 
+  /** Capture to an authority-selected path instead of inventing a global path. */
+  async screenshotToPath(filepath: string, label: string): Promise<ScreenshotResult> {
+    if (!this.page) throw new Error('Page not initialized');
+
+    const resolvedPath = path.resolve(filepath);
+    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+    await this.page.screenshot({ path: resolvedPath, fullPage: false });
+
+    return {
+      path: resolvedPath,
+      label: label as any,
+      pageUrl: this.page.url(),
+      takenAt: new Date().toISOString(),
+    };
+  }
+
   async takeFullPageScreenshot(label: string): Promise<ScreenshotResult> {
     if (!this.page) throw new Error('Page not initialized');
     

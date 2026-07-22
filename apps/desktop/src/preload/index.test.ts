@@ -12,13 +12,23 @@ describe('preload business update bridge', () => {
 
   it('exposes only remembered-login status and a discriminated login request', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const loginContractSource = fs.readFileSync(path.join(__dirname, '../shared/login-contract.ts'), 'utf8');
 
     expect(source).toContain("getSavedLoginCredentialStatus: () => ipcRenderer.invoke('browser:get-saved-credential-status')");
-    expect(source).toContain("credentialSource: 'saved'");
-    expect(source).toContain("credentialSource: 'typed'");
-    expect(source).toContain('rememberPassword');
+    expect(source).toContain('BrowserLoginRequest');
+    expect(loginContractSource).toContain("credentialSource: 'saved'");
+    expect(loginContractSource).toContain("credentialSource: 'typed'");
+    expect(loginContractSource).toContain('rememberPassword');
     expect(source).not.toContain('getSavedLoginCredentials');
     expect(source).not.toContain("ipcRenderer.invoke('browser:get-saved-credentials')");
+  });
+
+  it('uses the shared non-secret login result contract across the IPC bridge', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain("import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract'");
+    expect(source).toContain('browserLogin: (request: BrowserLoginRequest): Promise<BrowserLoginResult> =>');
+    expect(source).toContain("ipcRenderer.invoke('browser:login', request) as Promise<BrowserLoginResult>");
   });
 
   it('exposes readback screenshot capture IPC without exposing ipcRenderer', () => {
@@ -61,5 +71,21 @@ describe('preload business update bridge', () => {
     expect(source).toContain("from '@amazon-ai-ops/shared-types'");
     expect(source).toContain('exportAdReadbackEvidence: (input: ExportAdReadbackEvidenceRequest) =>');
     expect(source).not.toContain('exportAdReadbackEvidence: (input: any)');
+  });
+
+  it('exposes typed logical store CRUD and switching without profile paths or secrets', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('ListStoresInput');
+    expect(source).toContain('StoreWorkspaceView');
+    expect(source).toContain("ipcRenderer.invoke('stores:create', input)");
+    expect(source).toContain("ipcRenderer.invoke('stores:connections:create', input)");
+    expect(source).toContain("ipcRenderer.invoke('stores:switch', { storeId })");
+    expect(source).toContain("ipcRenderer.invoke('stores:get-active-context')");
+    expect(source).toContain("ipcRenderer.on('store-context:changed', handler)");
+    const storeBridgeStart = source.indexOf('listStores:');
+    const settingsStart = source.indexOf('// Settings', storeBridgeStart);
+    const storeBridge = source.slice(storeBridgeStart, settingsStart);
+    expect(storeBridge).not.toMatch(/profilePath|userDataDir|cookie|password|token/i);
   });
 });

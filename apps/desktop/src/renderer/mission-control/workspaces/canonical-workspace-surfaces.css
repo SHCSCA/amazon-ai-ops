@@ -1,0 +1,906 @@
+.mission-control-workspace-root .canonical-workspace-surface {
+  container-name: canonical-workspace;
+  container-type: inline-size;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  color: #172033;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mission-control-workspace-root.mission-control-workspace-root--preview
+  .mission-control-canonical-page.mission-control-canonical-page--preview {
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.mission-control-workspace-root.mission-control-workspace-root--preview
+  .mission-control-canonical-page--preview
+  > .workspace-page-frame__content {
+  min-width: 0;
+}
+
+.mission-control-workspace-root .canonical-workspace-surface h3,
+.mission-control-workspace-root .canonical-workspace-surface p,
+.mission-control-workspace-root .canonical-workspace-surface dl,
+.mission-control-workspace-root .canonical-workspace-surface ol,
+.mission-control-workspace-root .canonical-workspace-surface ul {
+  margin: 0;
+}
+
+.mission-control-workspace-root .canonical-workspace-surface :is(button, input, select):focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.mission-control-workspace-root .canonical-preview-notice {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #c9daf6;
+  border-radius: 8px;
+  background: #f7faff;
+  color: #47617f;
+}
+
+.mission-control-workspace-root .canonical-preview-notice > span {
+  padding: 2px 7px;
+  border: 1px solid #f2d7a0;
+  border-radius: 999px;
+  background: #fffaf0;
+  color: #99620d;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.mission-control-workspace-root .canonical-preview-notice > strong {
+  color: #1f4f91;
+}
+
+.mission-control-workspace-root .canonical-preview-notice > small {
+  min-width: 0;
+  flex: 1;
+  color: #68768d;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-preview-boundary-action {
+  flex: none;
+  min-height: 28px;
+  border: 1px solid #aac4ee;
+  border-radius: 7px;
+  background: #fff;
+  padding: 4px 9px;
+  color: #1f5bc9;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.mission-control-workspace-root .canonical-preview-boundary-action:hover {
+  border-color: #7ea5df;
+  background: #eef4ff;
+}
+
+.mission-control-workspace-root .canonical-disabled-action {
+  min-height: 32px;
+  border: 1px solid #cbd5e3;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 5px 10px;
+  color: #68768d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mission-control-workspace-root .canonical-disabled-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.mission-control-workspace-root .canonical-today-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 286px;
+  min-width: 0;
+  border: 1px solid #dce3ee;
+  border-radius: 9px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.mission-control-workspace-root .canonical-control-board {
+  min-width: 0;
+  padding: 16px;
+}
+
+.mission-control-workspace-root .canonical-control-board > header,
+.mission-control-workspace-root .canonical-board-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mission-control-workspace-root .canonical-board-heading > div,
+.mission-control-workspace-root .canonical-control-board > header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .canonical-board-heading span,
+.mission-control-workspace-root .canonical-control-board > header > span,
+.mission-control-workspace-root .canonical-flight-plan header span,
+.mission-control-workspace-root .canonical-hypothesis-card > span,
+.mission-control-workspace-root .canonical-policy-limits header span {
+  color: #71809a;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+
+.mission-control-workspace-root .canonical-board-heading strong,
+.mission-control-workspace-root .canonical-control-board > header > strong {
+  font-size: 15px;
+}
+
+.mission-control-workspace-root .canonical-board-heading > b {
+  align-self: start;
+  color: #1f5bc9;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-progress {
+  height: 5px;
+  margin-top: 12px;
+  border-radius: 999px;
+  background: #e8edf4;
+  overflow: hidden;
+}
+
+.mission-control-workspace-root .canonical-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+}
+
+.mission-control-workspace-root .canonical-mission-chain {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.mission-control-workspace-root .canonical-chain-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 14px;
+  grid-template-areas: "icon title arrow" "icon detail arrow";
+  align-items: center;
+  min-height: 66px;
+  gap: 2px 7px;
+  padding: 8px;
+  border: 1px solid #dce4f0;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.mission-control-workspace-root .canonical-chain-step > span {
+  grid-area: icon;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 7px;
+  background: #eaf2ff;
+  color: #2563eb;
+}
+
+.mission-control-workspace-root .canonical-chain-step > strong {
+  grid-area: title;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .canonical-chain-step > small {
+  grid-area: detail;
+  overflow: hidden;
+  color: #69758b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .canonical-chain-step > svg {
+  grid-area: arrow;
+  color: #8d98aa;
+}
+
+.mission-control-workspace-root .canonical-chain-step[data-tone="blocked"] {
+  border-color: #efcaca;
+  background: #fff8f8;
+}
+
+.mission-control-workspace-root .canonical-chain-step[data-tone="attention"] {
+  border-color: #f2d7a0;
+  background: #fffaf0;
+}
+
+.mission-control-workspace-root .canonical-health-rail {
+  padding: 16px;
+  border-left: 1px solid #dce3ee;
+  background: #fbfcfe;
+}
+
+.mission-control-workspace-root .canonical-health-rail h3,
+.mission-control-workspace-root .canonical-next-actions h3,
+.mission-control-workspace-root .canonical-agent-state h3,
+.mission-control-workspace-root .canonical-execution-detail h3,
+.mission-control-workspace-root .canonical-policy-limits h3 {
+  font-size: 14px;
+}
+
+.mission-control-workspace-root .canonical-health-rail ul {
+  display: grid;
+  margin: 10px 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-control-workspace-root .canonical-health-rail li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-health-rail li > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #344158;
+}
+
+.mission-control-workspace-root .canonical-health-rail li > b {
+  color: #087956;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-health-rail li > b[data-tone="blocked"] {
+  color: #bc3434;
+}
+
+.mission-control-workspace-root .canonical-next-actions {
+  border: 1px solid #dce3ee;
+  border-radius: 9px;
+  background: #fff;
+  padding: 14px;
+}
+
+.mission-control-workspace-root .canonical-next-actions ol {
+  display: grid;
+  margin-top: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-control-workspace-root .canonical-next-actions li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 52px;
+  border-top: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-next-actions li > svg {
+  color: #d97706;
+}
+
+.mission-control-workspace-root .canonical-next-actions li > span {
+  display: grid;
+}
+
+.mission-control-workspace-root .canonical-next-actions small {
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-contract-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid #dce3ee;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.mission-control-workspace-root .canonical-contract-strip > div {
+  display: grid;
+  gap: 4px;
+  padding: 11px 13px;
+}
+
+.mission-control-workspace-root .canonical-contract-strip > div + div {
+  border-left: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-contract-strip dt {
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-contract-strip dd {
+  margin: 0;
+  font-weight: 750;
+}
+
+.mission-control-workspace-root .canonical-mission-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  align-items: start;
+  gap: 12px;
+}
+
+.mission-control-workspace-root .canonical-flight-plan,
+.mission-control-workspace-root .canonical-agent-state,
+.mission-control-workspace-root .canonical-hypothesis-card,
+.mission-control-workspace-root .canonical-ledger,
+.mission-control-workspace-root .canonical-decisions-shell,
+.mission-control-workspace-root .canonical-policy-limits,
+.mission-control-workspace-root .canonical-kill-switch {
+  min-width: 0;
+  border: 1px solid #dce3ee;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.mission-control-workspace-root .canonical-flight-plan > header,
+.mission-control-workspace-root .canonical-policy-limits > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-flight-plan header h3,
+.mission-control-workspace-root .canonical-policy-limits header h3 {
+  font-size: 14px;
+}
+
+.mission-control-workspace-root .canonical-checkpoint-list {
+  display: grid;
+  padding: 0 14px;
+}
+
+.mission-control-workspace-root .canonical-checkpoint-list article {
+  display: grid;
+  grid-template-columns: 28px 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 58px;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-checkpoint-list article:last-child {
+  border-bottom: 0;
+}
+
+.mission-control-workspace-root .canonical-checkpoint-list article > span {
+  color: #2563eb;
+}
+
+.mission-control-workspace-root .canonical-checkpoint-list article[data-state="blocked"] > span {
+  color: #bc3434;
+}
+
+.mission-control-workspace-root .canonical-checkpoint-list article > time {
+  color: #71809a;
+  font-variant-numeric: tabular-nums;
+}
+
+.mission-control-workspace-root .canonical-checkpoint-list article > div {
+  display: grid;
+}
+
+.mission-control-workspace-root .canonical-checkpoint-list small {
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-agent-state {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.mission-control-workspace-root .canonical-agent-state > strong {
+  color: #a75d00;
+  font-size: 15px;
+}
+
+.mission-control-workspace-root .canonical-agent-state > p,
+.mission-control-workspace-root .canonical-kill-switch > p {
+  color: #69758b;
+}
+
+.mission-control-workspace-root .canonical-decisions-shell {
+  overflow: hidden;
+}
+
+.mission-control-workspace-root .canonical-decisions-shell > .canonical-preview-notice {
+  margin: 12px;
+}
+
+.mission-control-workspace-root .canonical-decisions-shell > nav {
+  display: flex;
+  gap: 2px;
+  min-height: 46px;
+  padding: 6px 12px 0;
+  border-bottom: 1px solid #dce3ee;
+}
+
+.mission-control-workspace-root .canonical-decisions-shell > nav b {
+  position: relative;
+  display: grid;
+  min-width: 90px;
+  place-items: center;
+  padding: 0 14px;
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-decisions-shell > nav b[data-active="true"] {
+  color: #1f5bc9;
+}
+
+.mission-control-workspace-root .canonical-decisions-shell > nav b[data-active="true"]::after {
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 2px;
+  background: #2563eb;
+  content: "";
+}
+
+.mission-control-workspace-root .canonical-decision-table {
+  display: grid;
+  min-width: 760px;
+}
+
+.mission-control-workspace-root .canonical-decision-row {
+  display: grid;
+  grid-template-columns: minmax(230px, 1.5fr) minmax(170px, 1fr) minmax(140px, .8fr) 120px 112px;
+  align-items: center;
+  min-height: 58px;
+  border-top: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-decision-row > span {
+  min-width: 0;
+  padding: 9px 12px;
+}
+
+.mission-control-workspace-root .canonical-decision-row > span:first-child {
+  display: grid;
+}
+
+.mission-control-workspace-root .canonical-decision-row small {
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-decision-head {
+  min-height: 36px;
+  border-top: 0;
+  background: #f8fafc;
+  color: #69758b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.mission-control-workspace-root .canonical-experiment-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, .76fr) minmax(0, 1.24fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.mission-control-workspace-root .canonical-hypothesis-card {
+  display: grid;
+  gap: 10px;
+  padding: 15px;
+}
+
+.mission-control-workspace-root .canonical-hypothesis-card h3 {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.mission-control-workspace-root .canonical-hypothesis-card dl {
+  display: grid;
+  border-top: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-hypothesis-card dl > div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-hypothesis-card dt {
+  color: #69758b;
+}
+
+.mission-control-workspace-root .canonical-hypothesis-card dd {
+  margin: 0;
+  font-weight: 650;
+}
+
+.mission-control-workspace-root .canonical-ledger {
+  padding: 5px 14px;
+}
+
+.mission-control-workspace-root .canonical-ledger article {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 56px;
+  padding: 9px 0;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-ledger article:last-child {
+  border-bottom: 0;
+}
+
+.mission-control-workspace-root .canonical-ledger article > span {
+  align-self: start;
+  width: fit-content;
+  border: 1px solid #d7e4ff;
+  border-radius: 999px;
+  background: #eaf2ff;
+  padding: 2px 7px;
+  color: #1f5bc9;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.mission-control-workspace-root .canonical-ledger article[data-state="blocked"] > span {
+  border-color: #efcaca;
+  background: #fff0f0;
+  color: #bc3434;
+}
+
+.mission-control-workspace-root .canonical-ledger article > div {
+  display: grid;
+}
+
+.mission-control-workspace-root .canonical-ledger small {
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-execution-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  border: 1px solid #dce3ee;
+  border-radius: 9px;
+  background: #fff;
+  padding: 9px 12px;
+}
+
+.mission-control-workspace-root .canonical-execution-toolbar > div:first-child {
+  display: grid;
+}
+
+.mission-control-workspace-root .canonical-execution-toolbar > div:first-child span {
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-execution-toolbar > div:last-child {
+  display: flex;
+  gap: 6px;
+}
+
+.mission-control-workspace-root .canonical-execution-room {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  min-width: 0;
+  gap: 12px;
+}
+
+.mission-control-workspace-root .canonical-browser-frame,
+.mission-control-workspace-root .canonical-execution-detail {
+  min-width: 0;
+  border: 1px solid #cbd5e3;
+  border-radius: 9px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.mission-control-workspace-root .canonical-browser-frame > header {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #dce3ee;
+  background: #f8fafc;
+}
+
+.mission-control-workspace-root .canonical-browser-frame > header > span {
+  margin-left: auto;
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-browser-frame > header > span[data-tone="blocked"] {
+  color: #bc3434;
+}
+
+.mission-control-workspace-root .canonical-browser-address {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  gap: 7px;
+  margin: 9px 10px;
+  border: 1px solid #dce3ee;
+  border-radius: 7px;
+  background: #fbfcfe;
+  padding: 7px 10px;
+  color: #69758b;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-browser-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.mission-control-workspace-root .canonical-browser-table-scroll:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.mission-control-workspace-root .canonical-browser-table {
+  display: grid;
+  width: max(100%, 680px);
+  border-top: 1px solid #dce3ee;
+}
+
+.mission-control-workspace-root .canonical-browser-table > div {
+  display: grid;
+  grid-template-columns: minmax(230px, 1.4fr) repeat(4, minmax(100px, .7fr));
+  align-items: center;
+  min-height: 54px;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-browser-table > div:first-child {
+  min-height: 36px;
+  background: #f8fafc;
+  color: #69758b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.mission-control-workspace-root .canonical-browser-table span {
+  display: grid;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.mission-control-workspace-root .canonical-browser-table small {
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-execution-detail {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 14px;
+}
+
+.mission-control-workspace-root .canonical-execution-detail dl {
+  display: grid;
+}
+
+.mission-control-workspace-root .canonical-execution-detail dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-execution-detail dt {
+  color: #69758b;
+}
+
+.mission-control-workspace-root .canonical-execution-detail dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.mission-control-workspace-root .canonical-memory-timeline {
+  position: relative;
+  display: grid;
+  gap: 0;
+  border: 1px solid #dce3ee;
+  border-radius: 9px;
+  background: #fff;
+  padding: 8px 14px;
+}
+
+.mission-control-workspace-root .canonical-memory-timeline article {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 66px;
+  padding: 10px 0;
+  border-bottom: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-memory-timeline article:last-child {
+  border-bottom: 0;
+}
+
+.mission-control-workspace-root .canonical-memory-timeline article > span {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: #eaf2ff;
+  color: #2563eb;
+}
+
+.mission-control-workspace-root .canonical-memory-timeline article[data-state="blocked"] > span {
+  background: #f0f3f8;
+  color: #8d98aa;
+}
+
+.mission-control-workspace-root .canonical-memory-timeline article > div {
+  display: grid;
+}
+
+.mission-control-workspace-root .canonical-memory-timeline article b {
+  color: #71809a;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.mission-control-workspace-root .canonical-memory-timeline article small {
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-policy-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  align-items: start;
+  gap: 12px;
+}
+
+.mission-control-workspace-root .canonical-policy-limits > div[role="list"] {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.mission-control-workspace-root .canonical-policy-limits article {
+  display: grid;
+  gap: 3px;
+  min-height: 92px;
+  padding: 14px;
+}
+
+.mission-control-workspace-root .canonical-policy-limits article + article {
+  border-left: 1px solid #e8edf4;
+}
+
+.mission-control-workspace-root .canonical-policy-limits article small,
+.mission-control-workspace-root .canonical-policy-limits article span {
+  color: #69758b;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .canonical-policy-limits article strong {
+  color: #1f5bc9;
+  font-size: 19px;
+}
+
+.mission-control-workspace-root .canonical-kill-switch {
+  display: grid;
+  gap: 10px;
+  padding: 15px;
+}
+
+.mission-control-workspace-root .canonical-kill-switch > svg {
+  color: #13966f;
+}
+
+@container canonical-workspace (max-width: 1040px) {
+  .mission-control-workspace-root .canonical-execution-room {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mission-control-workspace-root .canonical-execution-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .mission-control-workspace-root .canonical-execution-toolbar > div:last-child {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 1399px) {
+  .mission-control-workspace-root .canonical-mission-chain {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mission-control-workspace-root .canonical-chain-step {
+    min-height: 58px;
+  }
+}
+
+@media (max-width: 1199px) {
+  .mission-control-workspace-root .canonical-today-grid,
+  .mission-control-workspace-root .canonical-mission-layout,
+  .mission-control-workspace-root .canonical-experiment-layout,
+  .mission-control-workspace-root .canonical-execution-room,
+  .mission-control-workspace-root .canonical-policy-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mission-control-workspace-root .canonical-health-rail {
+    border-top: 1px solid #dce3ee;
+    border-left: 0;
+  }
+
+  .mission-control-workspace-root .canonical-contract-strip,
+  .mission-control-workspace-root .canonical-policy-limits > div[role="list"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mission-control-workspace-root .canonical-contract-strip > div:nth-child(3),
+  .mission-control-workspace-root .canonical-policy-limits article:nth-child(3) {
+    border-left: 0;
+  }
+
+  .mission-control-workspace-root .canonical-contract-strip > div:nth-child(n + 3),
+  .mission-control-workspace-root .canonical-policy-limits article:nth-child(n + 3) {
+    border-top: 1px solid #e8edf4;
+  }
+
+  .mission-control-workspace-root .canonical-preview-notice {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .mission-control-workspace-root .canonical-preview-notice > small {
+    width: 100%;
+    flex-basis: 100%;
+  }
+}

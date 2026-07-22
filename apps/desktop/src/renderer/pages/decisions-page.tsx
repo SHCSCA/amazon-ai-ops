@@ -6,6 +6,7 @@ import React, {
   useState,
 } from 'react';
 import type {
+  ActionRecommendation,
   BindRecommendationWritableTargetRequest,
   BindRecommendationWritableTargetResult,
   ResolveRecommendationReviewRequest,
@@ -13,6 +14,7 @@ import type {
   WritableAdEntityType,
   WritableAdTargetEvidence,
 } from '@amazon-ai-ops/shared-types';
+import { getRecommendationApprovalBlockers as getSharedRecommendationApprovalBlockers } from '@amazon-ai-ops/rules-engine';
 import { useBusinessDataPipeline } from '../components/business-data';
 import {
   PageFrame,
@@ -401,6 +403,111 @@ function uniqueMessages(values: Array<string | undefined | null>): string[] {
   return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
 }
 
+function decisionsPolicyEntityType(row: RecommendationView): ActionRecommendation['entityType'] {
+  const entityType = String(row.entityType || row.evidence?.matchType || '').trim();
+  if (entityType === 'search_term' || entityType === 'campaign' || entityType === 'ad_group') {
+    return entityType;
+  }
+  return 'target';
+}
+
+function decisionsPolicyStatus(row: RecommendationView): ActionRecommendation['status'] {
+  const status = String(row.status || '').trim();
+  return ['pending', 'needs_review', 'approved', 'rejected', 'executed', 'expired'].includes(status)
+    ? status as ActionRecommendation['status']
+    : 'expired';
+}
+
+function decisionsPolicyOwnershipBlockers(row: RecommendationView): string[] {
+  const target = row.evidence?.writableTarget;
+  if (!target) return [];
+  const text = (value: unknown) => String(value ?? '').trim().toLowerCase();
+  const file = (value: unknown) => text(value).replace(/\\/g, '/');
+  const blockers: string[] = [];
+  const expectedName = text(row.evidence?.searchTerm || row.evidence?.targeting || row.entityName);
+  if (text(target.entityName) !== expectedName) blockers.push('核验到的 Ads 对象名称与当前建议对象不一致');
+  if (
+    text(target.campaignName) !== text(row.evidence?.campaignName)
+    || text(target.adGroupName) !== text(row.evidence?.adGroupName)
+  ) {
+    blockers.push('核验到的 Ads 对象不属于当前建议的 campaign / ad group');
+  }
+  if (
+    !row.evidence?.sourceFiles?.some((sourceFile) => file(sourceFile) === file(target.sourceFile))
+    || Number(target.sourceRow) !== Number(row.evidence?.sourceRow)
+  ) {
+    blockers.push('核验到的 Ads 对象来源行与当前建议来源权威不一致');
+  }
+  if (text(target.metricDate) !== text(row.evidence?.date)) {
+    blockers.push('核验到的 Ads 对象指标日期与当前建议不一致');
+  }
+
+  const sourceName = file(row.evidence?.reportType || target.sourceFile);
+  const expectedTargetType = sourceName.includes('product_targeting')
+    ? 'product_targeting'
+    : sourceName.includes('auto_targeting')
+      ? 'auto_targeting'
+      : sourceName.includes('keyword')
+        ? 'keyword'
+        : '';
+  if (!expectedTargetType) {
+    blockers.push('当前建议来源报表不能唯一映射到 Ads 可写对象');
+  } else if (target.entityType !== expectedTargetType) {
+    blockers.push('核验到的 Ads 对象类型与当前建议来源不一致');
+  }
+  return blockers;
+}
+
+function decisionsPolicyRecommendation(
+  row: RecommendationView,
+  context: DecisionEligibilityContext,
+): ActionRecommendation {
+  const evidence = row.evidence || {};
+  return {
+    id: row.id,
+    taskId: `renderer-recommendation-${row.id}`,
+    storeName: context.scope.storeName,
+    marketplaceCode: context.scope.marketplaceCode,
+    asin: String(evidence.asin || ''),
+    msku: `renderer-${String(evidence.asin || row.id)}`,
+    entityType: decisionsPolicyEntityType(row),
+    entityId: String(row.entityId || ''),
+    entityName: row.entityName,
+    actionType: row.actionType as ActionRecommendation['actionType'],
+    currentValue: String(row.currentValue || ''),
+    recommendedValue: String(row.recommendedValue || ''),
+    reason: row.reason,
+    evidence: {
+      ...evidence,
+      impressions: Number(evidence.impressions || 0),
+      clicks: Number(evidence.clicks ?? row.clicks ?? 0),
+      cost: Number(evidence.cost ?? row.cost ?? 0),
+      orders: Number(evidence.orders || 0),
+      sales: Number(evidence.sales || 0),
+      acos: Number(evidence.acos ?? row.acos ?? 0),
+      cpc: Number(evidence.cpc || 0),
+      cvr: Number(evidence.cvr || 0),
+    } as ActionRecommendation['evidence'],
+    confidence: Number(row.confidence || 0),
+    riskLevel: row.riskLevel as ActionRecommendation['riskLevel'],
+    status: decisionsPolicyStatus(row),
+    revision: Number(row.revision || 0),
+  };
+}
+
+export function decisionsSharedApprovalPolicyBlockers(
+  row: RecommendationView,
+  context: DecisionEligibilityContext,
+): string[] {
+  return getSharedRecommendationApprovalBlockers(
+    decisionsPolicyRecommendation(row, context),
+    {
+      allowedSourceFiles: context.allowedSourceFiles,
+      writableTargetOwnershipBlockers: decisionsPolicyOwnershipBlockers(row),
+    },
+  );
+}
+
 export function decisionEligibilitySummary(
   row: RecommendationView,
   context: DecisionEligibilityContext,
@@ -466,6 +573,7 @@ export function decisionEligibilitySummary(
     context.allowedSourceFiles,
   );
   const reviewBlockers = approvalBlockers(row);
+  const sharedPolicyBlockers = decisionsSharedApprovalPolicyBlockers(row, context);
   const submitBlockers = approvalSubmitBlockers(
     row,
     context.scope,
@@ -474,6 +582,7 @@ export function decisionEligibilitySummary(
   );
   const blockers = uniqueMessages([
     ...missing,
+    ...sharedPolicyBlockers,
     ...reviewBlockers,
     ...submitBlockers,
   ]);
@@ -524,6 +633,7 @@ export function decisionEligibilitySummary(
   const canApprove = canEnterFormalApproval
     && !evidenceBlocked
     && !needsOperatorResolution
+    && sharedPolicyBlockers.length === 0
     && blockers.length === 0;
   if (canApprove) {
     return {

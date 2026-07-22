@@ -2,6 +2,7 @@ import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  EXTERNAL_OPEN_POLICY_MARKER,
   NAVIGATION_SECURITY_CONTRACT,
   createMainWindowNavigationHandler,
   createSecureWindowOpenHandler,
@@ -139,22 +140,24 @@ describe('window navigation security', () => {
     }
   });
 
-  it('denies the Electron child window while opening a valid HTTPS destination externally', () => {
-    const openExternal = vi.fn(async () => undefined);
+  it('denies a valid HTTPS child-window request when no business intent is approved', () => {
     const report = vi.fn();
-    const handler = createSecureWindowOpenHandler({ openExternal, report });
+    const handler = createSecureWindowOpenHandler({
+      externalOpenPolicy: EXTERNAL_OPEN_POLICY_MARKER,
+      report,
+    });
 
     const response = handler({
       url: 'https://docs.example.com/help?token=hidden#credentials',
     });
 
     expect(response).toEqual({ action: 'deny' });
-    expect(openExternal).toHaveBeenCalledWith('https://docs.example.com/help?token=hidden#credentials');
+    expect(EXTERNAL_OPEN_POLICY_MARKER).toBe('amazon-ai-ops:external-open-policy/deny-all-v1');
     expect(report).toHaveBeenCalledWith({
       contract: NAVIGATION_SECURITY_CONTRACT,
       surface: 'window-open',
-      outcome: 'external-open-started',
-      reason: 'allowed-external-url',
+      outcome: 'blocked',
+      reason: 'external-open-intent-not-approved',
       safeTarget: {
         protocol: 'https:',
         hostname: 'docs.example.com',
@@ -167,8 +170,9 @@ describe('window navigation security', () => {
   });
 
   it('does not invoke the operating system for malformed, credentialed, or non-HTTP URLs', () => {
-    const openExternal = vi.fn(async () => undefined);
-    const handler = createSecureWindowOpenHandler({ openExternal });
+    const handler = createSecureWindowOpenHandler({
+      externalOpenPolicy: EXTERNAL_OPEN_POLICY_MARKER,
+    });
     const blockedUrls = [
       'https:docs.example.com/help',
       ' https://docs.example.com/help',
@@ -182,15 +186,12 @@ describe('window navigation security', () => {
     for (const url of blockedUrls) {
       expect(handler({ url })).toEqual({ action: 'deny' });
     }
-
-    expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it('swallows openExternal rejection and emits only a structured redacted failure report', async () => {
-    const openExternal = vi.fn(() => Promise.reject(new Error('token=do-not-log')));
+  it('reports a valid but unapproved external target without logging query or hash secrets', async () => {
     const reports: unknown[] = [];
     const handler = createSecureWindowOpenHandler({
-      openExternal,
+      externalOpenPolicy: EXTERNAL_OPEN_POLICY_MARKER,
       report: (value) => reports.push(value),
     });
 
@@ -200,8 +201,8 @@ describe('window navigation security', () => {
     expect(reports[reports.length - 1]).toEqual({
       contract: NAVIGATION_SECURITY_CONTRACT,
       surface: 'window-open',
-      outcome: 'external-open-failed',
-      reason: 'external-open-failed',
+      outcome: 'blocked',
+      reason: 'external-open-intent-not-approved',
       safeTarget: {
         protocol: 'http:',
         hostname: 'support.example.com',
@@ -211,6 +212,5 @@ describe('window navigation security', () => {
     });
     expect(JSON.stringify(reports)).not.toContain('token=');
     expect(JSON.stringify(reports)).not.toContain('private');
-    expect(JSON.stringify(reports)).not.toContain('do-not-log');
   });
 });

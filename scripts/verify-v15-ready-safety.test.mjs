@@ -9,6 +9,10 @@ import {
   createValidAdReadbackEvidence,
   writeAdReadbackAuthorityDb,
 } from './ad-readback-authority-db.test-fixture.mjs';
+import {
+  bundleAdversarialNodeEnvEvidence,
+  writeValidAdversarialNodeEnvEvidence,
+} from './package-adversarial-node-env.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -359,8 +363,30 @@ describe('verify v15 ready safety', () => {
     const packageLaunchSmoke = packageLaunchSmokeFromIndex(dir, packageIndex);
     const packageUiManifest = writePackageUiEvidence(dir, packageLaunchSmoke);
     const packageSecurityEvidence = writePackageSecurityEvidence(dir, packageLaunchSmoke);
+    const packageAdversarialNodeEnvEvidence = path.join(dir, 'package-adversarial-node-env.json');
+    const adversarialFixture = writeValidAdversarialNodeEnvEvidence(
+      packageAdversarialNodeEnvEvidence,
+      {
+        executableSha256: packageLaunchSmoke.artifacts.unpacked.sha256,
+        appContentSha256: 'B'.repeat(64),
+        mainBundleSha256: 'C'.repeat(64),
+        rendererEntryPath: path.join(
+          dir,
+          'win-unpacked',
+          'resources',
+          'app',
+          'dist',
+          'renderer',
+          'index.html',
+        ),
+      },
+    );
     const bundledPackageUi = bundlePackageUiEvidence(bundleManifest, packageUiManifest);
     const bundledPackageSecurity = bundlePackageSecurityEvidence(bundleManifest, packageSecurityEvidence);
+    const bundledAdversarial = bundleAdversarialNodeEnvEvidence(
+      bundleManifest,
+      packageAdversarialNodeEnvEvidence,
+    );
 
     const dbPath = writeValidReadbackWithDb(dir, adReadback);
     writeJson(evidenceManifest, {
@@ -370,6 +396,7 @@ describe('verify v15 ready safety', () => {
           exists: true,
           absolutePath: adReadback,
         },
+        packageAdversarialNodeEnv: adversarialFixture.manifestEntry,
       },
     });
     writeJson(finalReadiness, {
@@ -389,6 +416,7 @@ describe('verify v15 ready safety', () => {
       ],
       packageIndex,
       packageLaunchSmoke,
+      packageAdversarialNodeEnv: adversarialFixture.selection,
     });
     writeJson(smoke, {
       kind: 'current-business-ui-smoke-summary',
@@ -412,6 +440,7 @@ describe('verify v15 ready safety', () => {
         { label: 'scripts/verify-v15-ready-safety.js' },
         bundledPackageUi.file,
         bundledPackageSecurity.file,
+        bundledAdversarial.file,
       ],
       dataReconciliation: {
         present: true,
@@ -430,7 +459,10 @@ describe('verify v15 ready safety', () => {
       },
       packageIndex: bundlePackageIndex(bundleManifest, packageIndex),
       uiEvidence: bundledPackageUi.manifest,
-      securityEvidence: bundledPackageSecurity.manifest,
+      securityEvidence: {
+        ...bundledPackageSecurity.manifest,
+        packageAdversarialNodeEnvSmoke: bundledAdversarial.summary,
+      },
     });
     writeBundleReadme(bundleManifest, 'APP_READY');
     fs.writeFileSync(readme, '**DELIVERY: APP_READY.** refreshed current evidence.\n', 'utf8');
@@ -442,12 +474,50 @@ describe('verify v15 ready safety', () => {
       '--readme', readme,
       '--package-ui-manifest', packageUiManifest,
       '--package-security-evidence', packageSecurityEvidence,
+      '--package-adversarial-node-env-evidence', packageAdversarialNodeEnvEvidence,
     ]);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('current business UI smoke summary passed');
     expect(result.stdout).toContain('V15_READY_SAFETY verified');
     expect(result.stderr).not.toContain('UI smoke contains APP_READY state');
+
+    const currentFinalReadiness = readJson(finalReadiness);
+    const legacyFinalReadiness = { ...currentFinalReadiness };
+    delete legacyFinalReadiness.packageAdversarialNodeEnv;
+    writeJson(finalReadiness, legacyFinalReadiness);
+    const downgradedContract = runNode('scripts/verify-v15-ready-safety.js', [
+      '--final-readiness', finalReadiness,
+      '--ui-smoke', smoke,
+      '--bundle-manifest', bundleManifest,
+      '--readme', readme,
+      '--package-ui-manifest', packageUiManifest,
+      '--package-security-evidence', packageSecurityEvidence,
+    ]);
+    expect(downgradedContract.status).not.toBe(0);
+    expect(`${downgradedContract.stdout}${downgradedContract.stderr}`)
+      .toContain('current READY safety requires package-adversarial-node-env/v1');
+
+    writeJson(finalReadiness, {
+      ...currentFinalReadiness,
+      packageAdversarialNodeEnv: {
+        ...currentFinalReadiness.packageAdversarialNodeEnv,
+        contractVersion: 'package-adversarial-node-env/v0',
+      },
+    });
+    const mismatchedVersion = runNode('scripts/verify-v15-ready-safety.js', [
+      '--final-readiness', finalReadiness,
+      '--ui-smoke', smoke,
+      '--bundle-manifest', bundleManifest,
+      '--readme', readme,
+      '--package-ui-manifest', packageUiManifest,
+      '--package-security-evidence', packageSecurityEvidence,
+      '--package-adversarial-node-env-evidence', packageAdversarialNodeEnvEvidence,
+    ]);
+    expect(mismatchedVersion.status).not.toBe(0);
+    expect(`${mismatchedVersion.stdout}${mismatchedVersion.stderr}`)
+      .toContain('current READY safety requires package-adversarial-node-env/v1');
+    writeJson(finalReadiness, currentFinalReadiness);
 
     const otherDbPath = writeAdReadbackAuthorityDb(
       path.join(dir, 'other-authority-db'),
@@ -461,6 +531,7 @@ describe('verify v15 ready safety', () => {
       '--db', otherDbPath,
       '--package-ui-manifest', packageUiManifest,
       '--package-security-evidence', packageSecurityEvidence,
+      '--package-adversarial-node-env-evidence', packageAdversarialNodeEnvEvidence,
     ]);
     expect(mismatch.status).not.toBe(0);
     expect(`${mismatch.stdout}${mismatch.stderr}`).toContain('SQLite authority database mismatch');
@@ -471,6 +542,7 @@ describe('verify v15 ready safety', () => {
       '--bundle-manifest', bundleManifest,
       '--readme', readme,
       '--package-ui-manifest', packageUiManifest,
+      '--package-adversarial-node-env-evidence', packageAdversarialNodeEnvEvidence,
     ]);
     expect(missingPackageSecurity.status).not.toBe(0);
     expect(`${missingPackageSecurity.stdout}${missingPackageSecurity.stderr}`)
@@ -493,6 +565,7 @@ describe('verify v15 ready safety', () => {
       '--readme', readme,
       '--package-ui-manifest', packageUiManifest,
       '--package-security-evidence', packageSecurityEvidence,
+      '--package-adversarial-node-env-evidence', packageAdversarialNodeEnvEvidence,
     ]);
     expect(detachedMainBundle.status).not.toBe(0);
     expect(`${detachedMainBundle.stdout}${detachedMainBundle.stderr}`)
@@ -525,6 +598,7 @@ describe('verify v15 ready safety', () => {
       '--readme', readme,
       '--package-ui-manifest', packageUiManifest,
       '--package-security-evidence', packageSecurityEvidence,
+      '--package-adversarial-node-env-evidence', packageAdversarialNodeEnvEvidence,
     ]);
     expect(staleAppContent.status).not.toBe(0);
     expect(`${staleAppContent.stdout}${staleAppContent.stderr}`)

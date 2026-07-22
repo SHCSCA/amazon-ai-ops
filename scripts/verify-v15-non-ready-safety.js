@@ -3,6 +3,14 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { resolveBoundAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
+const {
+  PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION,
+  rendererPathIdentity,
+  validateAdversarialNodeEnvBundleSummaryContract,
+  validateAdversarialNodeEnvEvidence,
+  validateAdversarialNodeEnvManifestEntryContract,
+  validateAdversarialNodeEnvSelectionContract,
+} = require('./smoke-package-adversarial-node-env');
 const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
 
 const root = path.resolve(__dirname, '..');
@@ -706,6 +714,49 @@ function packageSecurityEvidenceIsStrictlyValid({
   }
 }
 
+function packageAdversarialNodeEnvEvidenceIsStrictlyValid({
+  filePath,
+  finalReadiness,
+  packageUiManifestPath,
+  manifest,
+  bundleManifestPath,
+  smoke,
+}) {
+  if (!filePath || !packageUiManifestPath || !smoke || !fs.existsSync(filePath)) return false;
+  try {
+    const evidence = readJson(filePath);
+    const packageUi = readJson(packageUiManifestPath);
+    const appContentAfter = packageUi.artifactsAfter?.appContent;
+    const beforeMainBundles = (packageUi.artifactsBefore?.appContent?.files || [])
+      .filter((item) => String(item?.path || '').replace(/\\/g, '/') === 'dist/main/index.js');
+    const afterMainBundles = (appContentAfter?.files || [])
+      .filter((item) => String(item?.path || '').replace(/\\/g, '/') === 'dist/main/index.js');
+    if (!appContentAfter?.rootPath || beforeMainBundles.length !== 1 || afterMainBundles.length !== 1) return false;
+    const expectedMainBundleSha256 = String(afterMainBundles[0]?.sha256 || '').toUpperCase();
+    if (String(beforeMainBundles[0]?.sha256 || '').toUpperCase() !== expectedMainBundleSha256) return false;
+    const validation = validateAdversarialNodeEnvEvidence(evidence, {
+      executableSha256: smoke.artifacts?.unpacked?.sha256,
+      appContentSha256: appContentAfter.sha256,
+      mainBundleSha256: expectedMainBundleSha256,
+      rendererEntrySha256: rendererPathIdentity(path.join(appContentAfter.rootPath, 'dist', 'renderer', 'index.html')),
+    });
+    const selected = finalReadiness.packageAdversarialNodeEnv;
+    const summary = manifest.securityEvidence?.packageAdversarialNodeEnvSmoke;
+    const selectionContract = validateAdversarialNodeEnvSelectionContract(selected);
+    const summaryContract = validateAdversarialNodeEnvBundleSummaryContract(summary);
+    return validation.passed
+      && selectionContract.passed
+      && summaryContract.passed
+      && samePath(selected?.evidencePath, filePath)
+      && /^[A-F0-9]{64}$/.test(String(selected?.evidenceSha256 || ''))
+      && String(selected.evidenceSha256).toUpperCase() === sha256(filePath)
+      && samePath(summary?.sourcePath, filePath)
+      && bundleSourceFileMatches(manifest, bundleManifestPath, filePath);
+  } catch {
+    return false;
+  }
+}
+
 function hasBoundExistingAuthorityDb(finalReadiness, manifest, explicitPath) {
   const bundleAuthority = manifest.authorityDatabase;
   if (!bundleAuthority?.sourcePath || bundleAuthority.existsAtExport !== true || bundleAuthority.copied !== false) return false;
@@ -732,6 +783,9 @@ function main() {
   const packageSecurityEvidencePath = args['package-security-evidence']
     ? path.resolve(args['package-security-evidence'])
     : '';
+  const packageAdversarialNodeEnvEvidencePath = args['package-adversarial-node-env-evidence']
+    ? path.resolve(args['package-adversarial-node-env-evidence'])
+    : '';
   const readmePath = path.resolve(args.readme || path.join(root, 'README.md'));
   const failures = [];
 
@@ -754,6 +808,9 @@ function main() {
   const historicalReadyBundle = !explicitStrictNonReady && readmeNonReady && manifest.status === 'APP_READY' && manifest.appReady === true;
   const currentPackageHashEvidence = hasCurrentPackageHashEvidence(finalReadiness);
   const currentPackageLaunchSmoke = readValidPackageLaunchSmoke(packageLaunchSmokePath);
+  const adversarialNodeEnvSelectionContract = validateAdversarialNodeEnvSelectionContract(
+    finalReadiness.packageAdversarialNodeEnv,
+  );
 
   check(finalReadiness.evidenceSelection?.mode === 'manifest', 'final readiness uses manifest evidence selection', failures);
   check(
@@ -769,6 +826,25 @@ function main() {
       failures,
     );
   } else {
+    let adversarialNodeEnvManifestContractPassed = false;
+    try {
+      const evidenceManifest = readJson(path.resolve(finalReadiness.evidenceSelection?.manifestPath || ''));
+      adversarialNodeEnvManifestContractPassed = validateAdversarialNodeEnvManifestEntryContract(
+        evidenceManifest.evidence?.packageAdversarialNodeEnv,
+      ).passed;
+    } catch {
+      adversarialNodeEnvManifestContractPassed = false;
+    }
+    check(
+      adversarialNodeEnvSelectionContract.passed,
+      `current NON_READY safety requires ${PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION}`,
+      failures,
+    );
+    check(
+      adversarialNodeEnvManifestContractPassed,
+      `evidence manifest requires ${PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION}`,
+      failures,
+    );
     check(
       Boolean(args['package-ui-manifest']),
       'strict APP_NEEDS_WORK requires an explicit package UI manifest',
@@ -799,6 +875,25 @@ function main() {
         smoke: currentPackageLaunchSmoke,
       }),
       'explicit package security evidence is schema-valid, fully passing, package-hash-bound, and bundled byte-for-byte',
+      failures,
+    );
+    check(
+      Boolean(args['package-adversarial-node-env-evidence']),
+      'current strict APP_NEEDS_WORK requires explicit adversarial NODE_ENV package evidence',
+      failures,
+    );
+    check(
+      adversarialNodeEnvSelectionContract.passed
+        && Boolean(args['package-adversarial-node-env-evidence'])
+        && packageAdversarialNodeEnvEvidenceIsStrictlyValid({
+        filePath: packageAdversarialNodeEnvEvidencePath,
+        finalReadiness,
+        packageUiManifestPath: args['package-ui-manifest'] ? path.resolve(args['package-ui-manifest']) : '',
+        manifest,
+        bundleManifestPath,
+        smoke: currentPackageLaunchSmoke,
+      }),
+      'adversarial NODE_ENV evidence is passing, EXE/app-content/main/renderer hash-bound, process-clean, and bundled byte-for-byte',
       failures,
     );
     check(

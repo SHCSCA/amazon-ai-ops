@@ -34,6 +34,7 @@ const {
   collectElectronIdentity,
   collectMatchingPackageProcesses,
   collectMatchingProfileBrowserProcesses,
+  decisionsTabAccessibleNamePattern,
   evaluatePackageViewportContract,
   evaluatePackageUiEvidenceCompleteness,
   evaluateProfileDatabaseProvenance,
@@ -1057,13 +1058,19 @@ describe('unpacked package freshness', () => {
 });
 
 describe('package workspace runtime contract', () => {
+  it('matches Decisions tabs by their dynamic loaded-count accessible names', () => {
+    expect(decisionsTabAccessibleNamePattern('已决策').test('已决策（已载入 12）')).toBe(true);
+    expect(decisionsTabAccessibleNamePattern('待判断').test('待判断（已载入 0）')).toBe(true);
+    expect(decisionsTabAccessibleNamePattern('已决策').test('已决策')).toBe(false);
+  });
+
   it('locks the exact eight task-first workspace identities', () => {
     expect(EXPECTED_PACKAGE_UI_WORKSPACES).toEqual([
       { workspace: 'today', subview: 'overview', label: '今日任务', heading: '今日任务' },
       { workspace: 'product', subview: 'products', label: '产品工作台', heading: '产品工作台' },
       { workspace: 'data-preparation', subview: 'scope', label: '数据准备', heading: '工作范围' },
       { workspace: 'diagnosis', subview: 'analysis', label: '广告诊断', heading: '广告诊断' },
-      { workspace: 'decisions', subview: 'recommendations', label: '建议与审批', heading: '建议与审批' },
+      { workspace: 'decisions', subview: 'decided', tabLabel: '已决策', label: '建议与审批', heading: '建议与审批' },
       { workspace: 'readback', subview: 'evidence', label: '结果核对', heading: '结果核对' },
       { workspace: 'growth', subview: 'keywords', label: '关键词与 Listing', heading: '关键词机会' },
       { workspace: 'system', subview: 'settings', label: '系统与交付', heading: 'AI 与规则' },

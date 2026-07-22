@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { BrowserController, resolveChromiumExecutablePathForRuntime, toUserFacingBrowserLaunchError } from './controller';
 
@@ -55,6 +58,29 @@ describe('BrowserController.evaluate', () => {
 
     expect(result).toBe(8);
     expect(evaluate.mock.calls[0][1]).toBe(4);
+  });
+});
+
+describe('BrowserController.screenshotToPath', () => {
+  it('writes to the exact authority-selected path and returns that path', async () => {
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-capture-'));
+    try {
+      const controller = new BrowserController({ headless: true });
+      const screenshot = vi.fn(async () => undefined);
+      (controller as any).page = {
+        screenshot,
+        url: () => 'https://ads.lingxing.com/dashboard',
+      };
+      const expectedPath = path.join(temporaryRoot, 'store-one', 'screenshots', 'before.png');
+
+      const result = await controller.screenshotToPath(expectedPath, 'before');
+
+      expect(result.path).toBe(path.resolve(expectedPath));
+      expect(screenshot).toHaveBeenCalledWith({ path: path.resolve(expectedPath), fullPage: false });
+      expect(fs.existsSync(path.dirname(expectedPath))).toBe(true);
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
   });
 });
 

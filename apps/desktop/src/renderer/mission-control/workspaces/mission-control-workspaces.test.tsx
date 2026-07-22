@@ -1,0 +1,427 @@
+import React from 'react';
+import { readFileSync } from 'node:fs';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+import type {
+  MissionControlCapabilityProjection,
+  StoreContextEnvelope,
+  StoreRecord,
+} from '@amazon-ai-ops/shared-types';
+import {
+  MISSION_CONTROL_WORKSPACE_IDS,
+  MISSION_CONTROL_VIEW_IDS,
+} from '@amazon-ai-ops/shared-types';
+import {
+  STORE_MANAGEMENT_CAPABILITY_IDS,
+  StoreManagementPanel,
+  buildArchiveStoreInput,
+  buildCreateStoreInput,
+  buildRestoreStoreInput,
+  buildUpdateStoreInput,
+  summarizeViewCapability,
+  validateStoreDraft,
+} from '../components';
+import { MissionControlWorkspaceView } from './mission-control-workspace-view';
+import {
+  MISSION_CONTROL_WORKSPACE_REGISTRY,
+  missionControlViewIdForIntent,
+} from './registry';
+
+const context = {
+  storeId: 'store-one',
+  browserProfileId: 'profile-one',
+  marketplace: 'US',
+  currency: 'USD',
+  businessTimezone: 'America/Los_Angeles',
+  businessDate: '2026-07-22',
+  sessionGeneration: 4,
+} as StoreContextEnvelope;
+
+function capability(
+  view: MissionControlCapabilityProjection['view'],
+  action: MissionControlCapabilityProjection['action'],
+  state: MissionControlCapabilityProjection['state'],
+  capabilityId = `${view}.${action}`,
+): MissionControlCapabilityProjection {
+  return {
+    capabilityId,
+    workspace: view.split('/')[0] as MissionControlCapabilityProjection['workspace'],
+    view,
+    action,
+    state,
+    detail: `${capabilityId} ${state}`,
+  };
+}
+
+describe('Mission Control workspace registry', () => {
+  it('registers the exact ten workspaces and every qualified view once', () => {
+    expect(MISSION_CONTROL_WORKSPACE_REGISTRY.map((workspace) => workspace.id)).toEqual([
+      ...MISSION_CONTROL_WORKSPACE_IDS,
+    ]);
+    const views = MISSION_CONTROL_WORKSPACE_REGISTRY.flatMap((workspace) => (
+      workspace.subviews.map((subview) => subview.view)
+    ));
+    expect(views).toHaveLength(22);
+    expect(new Set(views).size).toBe(22);
+    expect(new Set(views)).toEqual(new Set(MISSION_CONTROL_VIEW_IDS));
+  });
+
+  it('resolves canonical views without converting them into fake legacy routes', () => {
+    expect(missionControlViewIdForIntent({ workspace: 'missions', subview: 'overview' })).toBe('missions/overview');
+    expect(missionControlViewIdForIntent({ workspace: 'execution', subview: 'live' })).toBe('execution/live');
+    expect(missionControlViewIdForIntent({ workspace: 'policy', subview: 'rules' })).toBe('policy/rules');
+  });
+});
+
+describe('action-level capability rendering', () => {
+  it('uses a pessimistic badge summary while preserving exact action rows', () => {
+    const capabilities = [
+      capability('objects/products', 'view', 'LEGACY_ADAPTER'),
+      capability('objects/products', 'update', 'BLOCKED'),
+    ];
+    const summary = summarizeViewCapability(capabilities, 'objects/products');
+    expect(summary?.state).toBe('BLOCKED');
+    expect(summary?.projection?.action).toBe('update');
+  });
+
+  it('renders a visibly labelled preview surface without enabling canonical mutations', () => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        autonomy={{ currentMode: 'manual_approval', manualApprovalAvailable: true, policyAutoAvailable: false }}
+        capabilities={[
+          capability('missions/overview', 'view', 'PROTOTYPE_ONLY', 'missions.mission.view'),
+          capability('missions/overview', 'create', 'BLOCKED', 'missions.mission.create'),
+        ]}
+        intent={{ workspace: 'missions', subview: 'overview' }}
+        onNavigate={vi.fn()}
+        previewMode
+        storeContext={context}
+      />,
+    );
+    expect(markup).toContain('任务中心');
+    expect(markup).toContain('仅开发预览示例');
+    expect(markup).toContain('MISSION · US-SP-ACOS-001');
+    expect(markup).toContain('不写入数据库、不代表真实执行或回读');
+    expect(markup).toContain('查看接入边界');
+    expect(markup).toContain('canonical-preview-boundary-action');
+    expect(markup).not.toContain('task-banner');
+    expect(markup).not.toContain('summary-strip');
+    expect(markup).not.toContain('workbench-panel');
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>编辑 Mission<\/button>/);
+    expect(markup).not.toContain('执行成功');
+  });
+
+  it.each([
+    [{ workspace: 'missions', subview: 'overview' }, 'missions/overview', '任务中心', 'missions.mission.create'],
+    [{ workspace: 'experiments', subview: 'ledger' }, 'experiments/ledger', '经营实验', 'experiments.experiment.create'],
+    [{ workspace: 'execution', subview: 'live' }, 'execution/live', '实时执行', 'execution.queue.start'],
+    [{ workspace: 'memory', subview: 'timeline' }, 'memory/timeline', '因果记忆', 'memory.timeline.rebuild-index'],
+    [{ workspace: 'policy', subview: 'rules' }, 'policy/rules', '策略与风控', 'policy.version.create'],
+  ] as const)('renders %s with its exact fail-closed blocker', (intent, view, title, createCapabilityId) => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability(view, 'view', 'BLOCKED', `${view}.view`)]}
+        intent={intent}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+    expect(markup).toContain(title);
+    expect(markup).toContain(createCapabilityId);
+    expect(markup).toContain('已阻断');
+    expect(markup).toContain(`${view}.view BLOCKED`);
+  });
+
+  it('blocks an unauthorized legacy slot and mounts a production-authorized adapter', () => {
+    const blocked = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability('today/overview', 'view', 'BLOCKED')]}
+        intent={{ workspace: 'today', subview: 'overview' }}
+        legacySlot={<div>LEGACY_DASHBOARD</div>}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+    const allowed = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability('today/overview', 'view', 'LEGACY_ADAPTER')]}
+        intent={{ workspace: 'today', subview: 'overview' }}
+        legacySlot={<div>LEGACY_DASHBOARD</div>}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+    expect(blocked).not.toContain('LEGACY_DASHBOARD');
+    expect(blocked).toContain('今日控制面已失败关闭');
+    expect(blocked).toContain('data-canonical-surface="today"');
+    expect(allowed).toContain('LEGACY_DASHBOARD');
+    expect(allowed).toContain('data-legacy-route="dashboard"');
+  });
+
+  it('uses the pure display surface for PROTOTYPE_ONLY without mounting a legacy fixture route', () => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability('today/overview', 'view', 'PROTOTYPE_ONLY')]}
+        intent={{ workspace: 'today', subview: 'overview' }}
+        legacySlot={<div>INNER_DEV_BOUNDARY</div>}
+        onNavigate={vi.fn()}
+        previewMode
+        storeContext={context}
+      />,
+    );
+    expect(markup).not.toContain('INNER_DEV_BOUNDARY');
+    expect(markup).toContain('data-canonical-surface="today"');
+    expect(markup).toContain('仅开发预览示例');
+    expect(markup).toContain('data-capability-state="PROTOTYPE_ONLY"');
+    expect(markup).not.toContain('data-capability-state="LEGACY_ADAPTER"');
+  });
+
+  it('fails closed when production receives a PROTOTYPE_ONLY projection', () => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability('today/overview', 'view', 'PROTOTYPE_ONLY')]}
+        intent={{ workspace: 'today', subview: 'overview' }}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+
+    expect(markup).toContain('当前不是显式开发预览');
+    expect(markup).toContain('data-capability-state="BLOCKED"');
+    expect(markup).toContain('task-banner');
+    expect(markup).not.toContain('mission-control-canonical-page--preview');
+    expect(markup).not.toContain('仅开发预览示例');
+    expect(markup).not.toContain('ACTIVE MISSION');
+  });
+
+  it('keeps the compact prototype surface direct while retaining the production safety wrapper', () => {
+    const preview = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability('today/overview', 'view', 'PROTOTYPE_ONLY')]}
+        intent={{ workspace: 'today', subview: 'overview' }}
+        onNavigate={vi.fn()}
+        previewMode
+        storeContext={context}
+      />,
+    );
+    const blocked = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability('today/overview', 'view', 'BLOCKED')]}
+        intent={{ workspace: 'today', subview: 'overview' }}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+
+    expect(preview).toContain('mission-control-canonical-page--preview');
+    expect(preview).toContain('ACTIVE MISSION');
+    expect(preview).toContain('canonical-preview-boundary-action');
+    expect(preview).not.toContain('task-banner');
+    expect(preview).not.toContain('summary-strip');
+    expect(preview).not.toContain('workbench-panel');
+
+    expect(blocked).not.toContain('mission-control-canonical-page--preview');
+    expect(blocked).toContain('task-banner');
+    expect(blocked).toContain('summary-strip');
+    expect(blocked).toContain('workbench-panel');
+    expect(blocked).not.toContain('canonical-preview-boundary-action');
+  });
+});
+
+describe('prototype-aligned canonical first screens', () => {
+  it.each([
+    [{ workspace: 'today', subview: 'overview' }, 'today/overview', 'today', 'ACTIVE MISSION'],
+    [{ workspace: 'missions', subview: 'overview' }, 'missions/overview', 'missions', 'MISSION · US-SP-ACOS-001'],
+    [{ workspace: 'decisions', subview: 'recommendations' }, 'decisions/recommendations', 'decisions', '暂停智能门锁零订单高花费搜索词'],
+    [{ workspace: 'experiments', subview: 'ledger' }, 'experiments/ledger', 'experiments', 'EXPERIMENT · EXP-US-014'],
+    [{ workspace: 'execution', subview: 'live' }, 'execution/live', 'execution', 'Authority 未接入'],
+    [{ workspace: 'memory', subview: 'timeline' }, 'memory/timeline', 'memory', 'FACT'],
+    [{ workspace: 'policy', subview: 'rules' }, 'policy/rules', 'policy', '美国站广告低风险执行边界'],
+  ] as const)('gives %s an explicit, distinct US/USD preview surface', (intent, view, surface, copy) => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        autonomy={{ currentMode: 'manual_approval', manualApprovalAvailable: true, policyAutoAvailable: false }}
+        capabilities={[capability(view, 'view', 'PROTOTYPE_ONLY')]}
+        intent={intent}
+        legacySlot={<div>SHOULD_NOT_MOUNT</div>}
+        onNavigate={vi.fn()}
+        previewMode
+        storeContext={context}
+      />,
+    );
+    expect(markup).toContain(`data-canonical-surface="${surface}"`);
+    expect(markup).toContain(copy);
+    expect(markup).toContain('Amazon US · USD');
+    expect(markup).toContain('仅开发预览示例');
+    expect(markup).toContain('data-mutations-disabled="true"');
+    expect(markup).not.toContain('SHOULD_NOT_MOUNT');
+    expect(markup).not.toContain('执行成功');
+  });
+
+  it('keeps execution writes, takeover and reload visibly disabled in preview', () => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability('execution/live', 'view', 'PROTOTYPE_ONLY')]}
+        intent={{ workspace: 'execution', subview: 'live' }}
+        onNavigate={vi.fn()}
+        previewMode
+        storeContext={context}
+      />,
+    );
+    for (const label of ['开始可见执行', '人工接管', '紧急停止', '应用 USD 1.08', 'Reload 并验证']) {
+      expect(markup).toMatch(new RegExp(`<button[^>]*disabled=""[^>]*>${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</button>`));
+    }
+    expect(markup).toContain('未知结果');
+    expect(markup).toContain('停止并人工对账');
+    expect(markup).not.toContain('Reload 回读一致');
+  });
+
+  it('does not expose preview example facts when the production view is blocked', () => {
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={[capability('execution/live', 'view', 'BLOCKED')]}
+        intent={{ workspace: 'execution', subview: 'live' }}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+    expect(markup).toContain('暂无可授权执行项');
+    expect(markup).not.toContain('USD 1.20');
+    expect(markup).not.toContain('smart lock bedroom');
+  });
+
+  it('keeps canonical surfaces pure display with no Renderer persistence or simulated completion timer', () => {
+    const source = readFileSync(
+      new URL('./canonical-workspace-surfaces.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).not.toMatch(/localStorage|sessionStorage|usePrototypeModel|prototypeReducer/);
+    expect(source).not.toMatch(/setTimeout|setInterval|APPLY_EXECUTION_ITEM|VERIFY_EXECUTION_ITEM/);
+    expect(source).not.toMatch(/onClick=\{\(\) =>/);
+  });
+});
+
+describe('StoreManagementPanel', () => {
+  const store = {
+    storeId: 'store-one',
+    displayName: 'Northstar Home',
+    browserProfileId: 'profile-one',
+    marketplace: 'US',
+    currency: 'USD',
+    status: 'active',
+    businessTimezone: 'America/Los_Angeles',
+    createdAt: '2026-07-22T00:00:00.000Z',
+    updatedAt: '2026-07-22T00:00:00.000Z',
+  } as StoreRecord;
+
+  it('validates display name and IANA timezone before calling typed handlers', () => {
+    expect(validateStoreDraft({ displayName: '', businessTimezone: 'not/a-zone', status: 'active' })).toEqual({
+      displayName: '请输入店铺名称。',
+      businessTimezone: '请输入有效的 IANA 时区。',
+    });
+    expect(validateStoreDraft({
+      displayName: 'Northstar Home',
+      businessTimezone: 'America/Los_Angeles',
+      status: 'active',
+    })).toEqual({});
+  });
+
+  it('builds typed create, update, archive and restore inputs without a delete path', () => {
+    const createDraft = {
+      displayName: '  New US Store  ',
+      businessTimezone: 'America/New_York',
+      status: 'active' as const,
+    };
+    expect(buildCreateStoreInput(createDraft)).toEqual({
+      displayName: 'New US Store',
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/New_York',
+    });
+    expect(buildUpdateStoreInput(store, {
+      displayName: 'Northstar Home Updated',
+      businessTimezone: store.businessTimezone,
+      status: 'inactive',
+    })).toEqual({
+      storeId: store.storeId,
+      expectedUpdatedAt: store.updatedAt,
+      patch: { displayName: 'Northstar Home Updated', status: 'inactive' },
+    });
+    expect(buildUpdateStoreInput(store, {
+      displayName: store.displayName,
+      businessTimezone: store.businessTimezone,
+      status: 'active',
+    })).toBeNull();
+    expect(buildArchiveStoreInput(store)).toEqual({
+      storeId: store.storeId,
+      expectedUpdatedAt: store.updatedAt,
+      reason: 'operator_archived_from_mission_control',
+    });
+    expect(buildRestoreStoreInput(store)).toEqual({
+      storeId: store.storeId,
+      expectedUpdatedAt: store.updatedAt,
+    });
+  });
+
+  it('renders fixed US/USD identity and capability-bound CRUD without hard delete', () => {
+    const archived = {
+      ...store,
+      storeId: 'store-archived',
+      browserProfileId: 'profile-archived',
+      displayName: 'Archived Store',
+      status: 'archived',
+      archivedAt: '2026-07-22T01:00:00.000Z',
+    } as StoreRecord;
+    const markup = renderToStaticMarkup(
+      <div className="mission-control-workspace-root">
+        <StoreManagementPanel
+          activeStoreId={store.storeId}
+          onArchive={vi.fn()}
+          onCreate={vi.fn()}
+          onRestore={vi.fn()}
+          onSwitch={vi.fn()}
+          onUpdate={vi.fn()}
+          stores={[store, archived]}
+        />
+      </div>,
+    );
+    expect(markup).toContain('US / USD');
+    expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.create);
+    expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.update);
+    expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.archive);
+    expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.restore);
+    expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.switch);
+    expect(markup).not.toContain('永久删除');
+    expect(markup).not.toContain('hard-delete');
+  });
+});
+
+describe('Mission Control namespaced visual contract', () => {
+  const stylesheet = readFileSync(
+    new URL('../../styles/mission-control-shell.css', import.meta.url),
+    'utf8',
+  );
+
+  it('restores the 216px sidebar and visible Phosphor icon rail', () => {
+    expect(stylesheet).toContain('.mission-control-shell .app-sidebar');
+    expect(stylesheet).toMatch(/\.mission-control-shell\s*\{[^}]*--mission-sidebar-width:\s*216px/s);
+    expect(stylesheet).toMatch(/\.mission-control-shell \.app-sidebar\s*\{[^}]*width:\s*var\(--mission-sidebar-width\)/s);
+    expect(stylesheet).toMatch(/\.mission-control-shell \.app-sidebar \.nav-item-index\s*\{[^}]*position:\s*static/s);
+    expect(stylesheet).toMatch(/\.nav-item-index svg\s*\{[^}]*width:\s*1[89]px/s);
+    expect(stylesheet).toContain('.mission-control-shell .app-sidebar .nav-group-governance');
+  });
+
+  it('keeps the new surface light, namespaced, and free of gradient or purple styling', () => {
+    expect(stylesheet).not.toMatch(/linear-gradient|radial-gradient/i);
+    expect(stylesheet).not.toMatch(/purple|#(?:7c3aed|8b5cf6|a855f7)/i);
+    expect(stylesheet).toContain('.mission-control-workspace-root');
+    expect(stylesheet).toContain('.mission-control-store-gate');
+    expect(stylesheet).toContain('font-size: 12px');
+  });
+});

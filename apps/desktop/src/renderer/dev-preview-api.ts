@@ -1,4 +1,5 @@
 import type {
+  ActionRecommendation,
   BindRecommendationWritableTargetRequest,
   BindRecommendationWritableTargetResult,
   RecommendationReviewResolution,
@@ -6,8 +7,49 @@ import type {
   ResolveRecommendationReviewResult,
   WritableAdTargetBinding,
   WritableAdTargetEvidence,
+  MissionControlCapabilityAction,
+  MissionControlCapabilityProjection,
+  MissionControlCommandRequest,
+  MissionControlCommandResponse,
+  MissionControlLegacyRouteId,
+  MissionControlQueryRequest,
+  MissionControlQueryResponse,
+  MissionControlViewId,
+  MissionControlWorkspaceId,
+  StoreContextEnvelope,
+  StoreId,
+  StoreRecord,
+  StoreWorkspaceView,
 } from '@amazon-ai-ops/shared-types';
+import {
+  missionControlContextKey,
+  normalizeBrowserProfileId,
+  normalizeMissionControlCommandRequest,
+  normalizeMissionControlQueryRequest,
+  normalizeStoreContextEnvelope,
+  normalizeStoreId,
+} from '@amazon-ai-ops/shared-types';
+import {
+  applyRecommendationDecision,
+  assertRecommendationDecisionRevision,
+  type RecommendationDecisionInput,
+  type RecommendationDecisionStatus,
+} from '@amazon-ai-ops/rules-engine';
 import type { BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, RecommendationView } from './types';
+
+type PreviewRecommendation = ActionRecommendation & RecommendationView;
+
+interface PreviewRecommendationFilter {
+  date?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  storeName?: string;
+  marketplaceCode?: string;
+  asin?: string;
+  batchId?: string;
+  status?: string;
+  limit?: number;
+}
 
 export const PREVIEW_SCENARIO_IDS = [
   'missing-scope',
@@ -106,6 +148,198 @@ export const PREVIEW_SCENARIOS: Record<PreviewScenarioId, PreviewScenarioContrac
 };
 
 const DEFAULT_PREVIEW_SCENARIO: PreviewScenarioId = 'diagnosis-ready';
+
+function previewStore(
+  storeIdInput: string,
+  browserProfileIdInput: string,
+  displayName: string,
+  timestamp = '2026-07-22T00:00:00.000Z',
+): StoreRecord {
+  return {
+    storeId: normalizeStoreId(storeIdInput),
+    browserProfileId: normalizeBrowserProfileId(browserProfileIdInput),
+    marketplace: 'US',
+    currency: 'USD',
+    displayName,
+    status: 'active',
+    businessTimezone: 'America/Los_Angeles',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function previewContext(store: StoreRecord, sessionGeneration: number): StoreContextEnvelope {
+  return normalizeStoreContextEnvelope({
+    storeId: store.storeId,
+    browserProfileId: store.browserProfileId,
+    marketplace: 'US',
+    currency: 'USD',
+    businessTimezone: store.businessTimezone,
+    businessDate: '2026-07-22',
+    sessionGeneration,
+  });
+}
+
+export const PREVIEW_STORES: readonly StoreRecord[] = [
+  previewStore('preview-store-shc001', 'preview-profile-shc001', 'SHC001 · 美国站预览'),
+  previewStore('preview-store-shc002', 'preview-profile-shc002', 'SHC002 · 美国站预览'),
+] as const;
+
+type PreviewStoreIdentity = {
+  storeName: string;
+  primaryAsin: string;
+  secondaryAsin: string;
+  tertiaryAsin: string;
+  batchId: string;
+  pathSegment: string;
+};
+
+function previewStoreIdentity(store: StoreRecord): PreviewStoreIdentity {
+  const stableSuffix = String(store.storeId)
+    .replace(/^preview-store-/i, '')
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase() || 'store';
+  if (stableSuffix === 'shc001') {
+    return {
+      storeName: 'SHC001-US',
+      primaryAsin: 'B0GTTJFQTM',
+      secondaryAsin: 'B0GVRW2HPY',
+      tertiaryAsin: 'B0GVS5LVK2',
+      batchId: 'batch_shc001_20260722',
+      pathSegment: 'shc001',
+    };
+  }
+  if (stableSuffix === 'shc002') {
+    return {
+      storeName: 'SHC002-US',
+      primaryAsin: 'B0SHC00201',
+      secondaryAsin: 'B0SHC00202',
+      tertiaryAsin: 'B0SHC00203',
+      batchId: 'batch_shc002_20260722',
+      pathSegment: 'shc002',
+    };
+  }
+  const compact = stableSuffix.replace(/[^a-z0-9]/g, '').toUpperCase().slice(-6).padStart(6, '0');
+  return {
+    storeName: `${stableSuffix.toUpperCase()}-US`,
+    primaryAsin: `B0${compact}01`.slice(0, 10),
+    secondaryAsin: `B0${compact}02`.slice(0, 10),
+    tertiaryAsin: `B0${compact}03`.slice(0, 10),
+    batchId: `batch_${stableSuffix}_20260722`,
+    pathSegment: stableSuffix,
+  };
+}
+
+function applyPreviewStoreIdentity<T>(value: T, identity: PreviewStoreIdentity): T {
+  const replacements = new Map<string, string>([
+    ['FT-US-US', identity.storeName],
+    ['B0GTTJFQTM', identity.primaryAsin],
+    ['B0GVRW2HPY', identity.secondaryAsin],
+    ['B0GVS5LVK2', identity.tertiaryAsin],
+    ['batch_preview_20260625', identity.batchId],
+    ['D:/preview/', `D:/preview/${identity.pathSegment}/`],
+    ['preview-event-', `preview-${identity.pathSegment}-event-`],
+    ['preview-recommendation-', `preview-${identity.pathSegment}-recommendation-`],
+  ]);
+  const visit = (input: unknown): unknown => {
+    if (typeof input === 'string') {
+      let next = input;
+      replacements.forEach((replacement, source) => {
+        if (source === 'D:/preview/' && next.includes(replacement)) return;
+        next = next.split(source).join(replacement);
+      });
+      return next;
+    }
+    if (Array.isArray(input)) return input.map((item) => visit(item));
+    if (input && typeof input === 'object') {
+      return Object.fromEntries(
+        Object.entries(input as Record<string, unknown>).map(([key, item]) => [key, visit(item)]),
+      );
+    }
+    return input;
+  };
+  return visit(value) as T;
+}
+
+type PreviewCapabilitySpec = readonly [
+  capabilityId: string,
+  workspace: MissionControlWorkspaceId,
+  view: MissionControlViewId,
+  action: MissionControlCapabilityAction,
+  legacyRoute?: MissionControlLegacyRouteId,
+];
+
+const PREVIEW_MISSION_CAPABILITY_SPECS: readonly PreviewCapabilitySpec[] = [
+  ['objects.store.view', 'objects', 'objects/products', 'view'],
+  ['objects.store.create', 'objects', 'objects/products', 'create'],
+  ['objects.store.update', 'objects', 'objects/products', 'update'],
+  ['objects.store.archive', 'objects', 'objects/products', 'archive'],
+  ['objects.store.restore', 'objects', 'objects/products', 'restore'],
+  ['objects.store.switch', 'objects', 'objects/products', 'switch'],
+  ['today.overview.view', 'today', 'today/overview', 'view', 'dashboard'],
+  ['today.events.view', 'today', 'today/events', 'view', 'operation-events'],
+  ['missions.mission.view', 'missions', 'missions/overview', 'view'],
+  ['missions.mission.create', 'missions', 'missions/overview', 'create'],
+  ['missions.mission.update', 'missions', 'missions/overview', 'update'],
+  ['missions.mission.pause', 'missions', 'missions/overview', 'pause'],
+  ['missions.mission.resume', 'missions', 'missions/overview', 'resume'],
+  ['missions.mission.archive', 'missions', 'missions/overview', 'archive'],
+  ['missions.mission.delete', 'missions', 'missions/overview', 'delete'],
+  ['missions.mission.facts.view', 'missions', 'missions/facts', 'view', 'ad-quant'],
+  ['decisions.recommendations.view', 'decisions', 'decisions/recommendations', 'view', 'recommendations'],
+  ['decisions.approval.view', 'decisions', 'decisions/approval', 'view', 'approval'],
+  ['decisions.decided.view', 'decisions', 'decisions/decided', 'view', 'approval'],
+  ['experiments.experiment.view', 'experiments', 'experiments/ledger', 'view'],
+  ['experiments.experiment.create', 'experiments', 'experiments/ledger', 'create'],
+  ['experiments.experiment.update', 'experiments', 'experiments/ledger', 'update'],
+  ['experiments.experiment.pause', 'experiments', 'experiments/ledger', 'pause'],
+  ['experiments.experiment.resume', 'experiments', 'experiments/ledger', 'resume'],
+  ['experiments.experiment.archive', 'experiments', 'experiments/ledger', 'archive'],
+  ['experiments.experiment.delete', 'experiments', 'experiments/ledger', 'delete'],
+  ['execution.queue.view', 'execution', 'execution/live', 'view'],
+  ['execution.queue.start', 'execution', 'execution/live', 'start'],
+  ['execution.queue.takeover', 'execution', 'execution/live', 'takeover'],
+  ['execution.queue.reconcile-unknown', 'execution', 'execution/live', 'reconcile-unknown'],
+  ['execution.queue.skip', 'execution', 'execution/live', 'skip'],
+  ['execution.queue.kill-switch', 'execution', 'execution/live', 'kill-switch'],
+  ['execution.evidence.view', 'execution', 'execution/evidence', 'view', 'readback'],
+  ['memory.timeline.view', 'memory', 'memory/timeline', 'view'],
+  ['memory.timeline.export', 'memory', 'memory/timeline', 'export'],
+  ['memory.timeline.rebuild-index', 'memory', 'memory/timeline', 'rebuild-index'],
+  ['objects.products.view', 'objects', 'objects/products', 'view', 'product-management'],
+  ['objects.targets.view', 'objects', 'objects/targets', 'view', 'product-config'],
+  ['objects.keywords.view', 'objects', 'objects/keywords', 'view', 'keyword-opportunities'],
+  ['objects.listing.view', 'objects', 'objects/listing', 'view', 'listing-optimization'],
+  ['collection.scope.view', 'collection', 'collection/scope', 'view', 'operation-scope'],
+  ['collection.reports.view', 'collection', 'collection/reports', 'view', 'data-collection'],
+  ['collection.import-check.view', 'collection', 'collection/import-check', 'view', 'data-import-validation'],
+  ['policy.version.view', 'policy', 'policy/rules', 'view'],
+  ['policy.version.create', 'policy', 'policy/rules', 'create'],
+  ['policy.version.update', 'policy', 'policy/rules', 'update'],
+  ['policy.version.enable', 'policy', 'policy/rules', 'enable'],
+  ['policy.version.disable', 'policy', 'policy/rules', 'disable'],
+  ['policy.version.publish', 'policy', 'policy/rules', 'publish'],
+  ['policy.kill-switch.enable', 'policy', 'policy/rules', 'enable'],
+  ['settings.ai-and-local.view', 'settings', 'settings/ai-and-local', 'view', 'settings'],
+  ['settings.store-config.create', 'settings', 'settings/ai-and-local', 'create'],
+  ['settings.store-config.update', 'settings', 'settings/ai-and-local', 'update'],
+  ['settings.store-config.archive', 'settings', 'settings/ai-and-local', 'archive'],
+  ['settings.scheduler.view', 'settings', 'settings/scheduler', 'view', 'scheduler'],
+  ['settings.delivery.view', 'settings', 'settings/delivery', 'view', 'delivery'],
+] as const;
+
+export const PREVIEW_MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabilityProjection[] =
+  PREVIEW_MISSION_CAPABILITY_SPECS.map(([capabilityId, workspace, view, action, legacyRoute]) => ({
+    capabilityId,
+    workspace,
+    view,
+    action,
+    ...(legacyRoute ? { legacyRoute } : {}),
+    state: 'PROTOTYPE_ONLY',
+    blockerCode: 'DEV_PREVIEW_ONLY',
+    detail: '仅开发预览 fixture；不代表生产服务、真实执行或真实回读已经接入。',
+  }));
 
 export interface PreviewBootstrapInput {
   dev: boolean;
@@ -588,6 +822,172 @@ function clonePreviewSnapshot<T>(value: T): T {
   return value;
 }
 
+function normalizedPreviewText(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+function normalizedPreviewPath(value: unknown): string {
+  return normalizedPreviewText(value).replace(/\\/g, '/').toLowerCase();
+}
+
+function samePreviewWritableTarget(
+  left: WritableAdTargetEvidence | undefined,
+  right: WritableAdTargetEvidence | undefined,
+): boolean {
+  if (!left || !right) return false;
+  return left.entityType === right.entityType
+    && normalizedPreviewText(left.entityId).toLowerCase() === normalizedPreviewText(right.entityId).toLowerCase()
+    && normalizedPreviewText(left.entityName).toLowerCase() === normalizedPreviewText(right.entityName).toLowerCase()
+    && normalizedPreviewText(left.campaignName).toLowerCase() === normalizedPreviewText(right.campaignName).toLowerCase()
+    && normalizedPreviewText(left.adGroupName).toLowerCase() === normalizedPreviewText(right.adGroupName).toLowerCase()
+    && normalizedPreviewText(left.metricDate) === normalizedPreviewText(right.metricDate)
+    && normalizedPreviewPath(left.sourceFile) === normalizedPreviewPath(right.sourceFile)
+    && Number(left.sourceRow) === Number(right.sourceRow)
+    && left.identitySource === right.identitySource
+    && normalizedPreviewText(left.verifiedBy) === normalizedPreviewText(right.verifiedBy)
+    && normalizedPreviewText(left.verifiedAt) === normalizedPreviewText(right.verifiedAt)
+    && normalizedPreviewText(left.verificationNote) === normalizedPreviewText(right.verificationNote)
+    && normalizedPreviewPath(left.identityProofPath) === normalizedPreviewPath(right.identityProofPath);
+}
+
+function previewWritableTargetOwnershipBlockers(recommendation: PreviewRecommendation): string[] {
+  const writableTarget = recommendation.evidence?.writableTarget;
+  if (!writableTarget) return [];
+
+  const blockers: string[] = [];
+  const reportType = normalizedPreviewText(recommendation.evidence?.reportType).toLowerCase();
+  if (!['keyword', 'auto_targeting', 'product_targeting'].includes(reportType)) {
+    blockers.push(`当前建议来源报表类型 ${reportType || 'unknown'} 不能唯一映射到 Ads 可写对象`);
+  } else if (writableTarget.entityType !== reportType) {
+    blockers.push('核验到的 Ads 对象类型与当前建议来源不一致');
+  }
+
+  const expectedName = normalizedPreviewText(
+    recommendation.evidence?.searchTerm
+      || recommendation.evidence?.targeting
+      || recommendation.entityName,
+  ).toLowerCase();
+  if (normalizedPreviewText(writableTarget.entityName).toLowerCase() !== expectedName) {
+    blockers.push('核验到的 Ads 对象名称与当前建议对象不一致');
+  }
+  if (
+    normalizedPreviewText(writableTarget.campaignName).toLowerCase()
+      !== normalizedPreviewText(recommendation.evidence?.campaignName).toLowerCase()
+    || normalizedPreviewText(writableTarget.adGroupName).toLowerCase()
+      !== normalizedPreviewText(recommendation.evidence?.adGroupName).toLowerCase()
+  ) {
+    blockers.push('核验到的 Ads 对象不属于当前建议的 campaign / ad group');
+  }
+  if (
+    !recommendation.evidence?.sourceFiles?.some(
+      (sourceFile) => normalizedPreviewPath(sourceFile) === normalizedPreviewPath(writableTarget.sourceFile),
+    )
+    || Number(writableTarget.sourceRow) !== Number(recommendation.evidence?.sourceRow)
+  ) {
+    blockers.push('核验到的 Ads 对象来源行与当前建议来源权威不一致');
+  }
+  if (normalizedPreviewText(writableTarget.metricDate) !== normalizedPreviewText(recommendation.evidence?.date)) {
+    blockers.push('核验到的 Ads 对象指标日期与当前建议不一致');
+  }
+
+  const binding = recommendation.evidence?.writableTargetBinding;
+  const resolution = recommendation.evidence?.reviewResolution;
+  const currentBinding = Boolean(binding)
+    && binding?.schemaVersion === 1
+    && binding.fromRevision + 1 === binding.boundRevision
+    && binding.boundRevision === recommendation.revision
+    && samePreviewWritableTarget(binding.writableTarget, writableTarget);
+  const currentResolution = Boolean(resolution)
+    && resolution?.schemaVersion === 1
+    && resolution.fromRevision + 1 === resolution.resolvedRevision
+    && resolution.resolvedRevision === recommendation.revision
+    && samePreviewWritableTarget(resolution.writableTarget, writableTarget);
+  if (!currentBinding && !currentResolution) {
+    blockers.push('缺少当前建议版本对应的 Ads 对象绑定或复核审计');
+  }
+
+  return blockers;
+}
+
+function previewDecisionSnapshot(
+  recommendation: PreviewRecommendation,
+  targetStatus: RecommendationDecisionStatus,
+  decision: RecommendationDecisionInput,
+  decidedAt: string,
+): RecommendationDecisionInput {
+  return {
+    ...decision,
+    decision: targetStatus,
+    approvedBy: targetStatus === 'approved'
+      ? normalizedPreviewText(decision.approvedBy)
+      : undefined,
+    rejectedBy: targetStatus === 'rejected'
+      ? normalizedPreviewText(decision.rejectedBy)
+      : undefined,
+    decidedAt,
+    note: normalizedPreviewText(decision.note),
+    batchId: recommendation.evidence?.batchId,
+    recommendationId: recommendation.id,
+    actionType: recommendation.actionType,
+    portfolioName: recommendation.evidence?.portfolioName,
+    campaignName: recommendation.evidence?.campaignName,
+    adGroupName: recommendation.evidence?.adGroupName,
+    asin: recommendation.asin,
+    entityType: recommendation.entityType,
+    entityName: recommendation.entityName,
+    currentValue: recommendation.currentValue,
+    recommendedValue: recommendation.recommendedValue,
+    sourceBatchId: recommendation.evidence?.batchId,
+    metricDate: recommendation.evidence?.date,
+    sourceRow: recommendation.evidence?.sourceRow,
+    sourceFiles: [...(recommendation.evidence?.sourceFiles || [])],
+    explanationSource: recommendation.evidence?.explanationSource,
+    aiModel: recommendation.evidence?.aiModel,
+    aiStrategySource: recommendation.evidence?.aiStrategySource,
+    aiLifecycleStage: recommendation.evidence?.aiLifecycleStage,
+    aiStrategySummary: recommendation.evidence?.aiStrategySummary,
+    decisionAgreement: recommendation.evidence?.decisionAgreement,
+    decisionSource: recommendation.evidence?.decisionSource,
+    decisionReasons: [...(recommendation.evidence?.decisionReasons || [])],
+    decisionRiskWarnings: [...(recommendation.evidence?.decisionRiskWarnings || [])],
+    quantReasons: [...(recommendation.evidence?.quantReasons || [])],
+    quantThresholds: recommendation.evidence?.quantThresholds,
+    scope: {
+      dateFrom: previewScope.dateFrom,
+      dateTo: previewScope.dateTo,
+      storeName: previewScope.storeName,
+      marketplaceCode: previewScope.marketplaceCode,
+      asin: recommendation.asin,
+    },
+  };
+}
+
+function applyPreviewRecommendationDecision(
+  recommendation: PreviewRecommendation,
+  targetStatus: RecommendationDecisionStatus,
+  decision: RecommendationDecisionInput,
+  decidedAt = new Date().toISOString(),
+): void {
+  applyRecommendationDecision({
+    recommendation,
+    targetStatus,
+    decision: previewDecisionSnapshot(recommendation, targetStatus, decision, decidedAt),
+    approvalOptions: {
+      allowedSourceFiles: previewReportOptions.map((report) => `D:/preview/reports/${report.type}.xlsx`),
+      writableTargetOwnershipBlockers: previewWritableTargetOwnershipBlockers(recommendation),
+    },
+    persist: (status, evidencePatch) => {
+      recommendation.status = status;
+      recommendation.revision += 1;
+      recommendation.updatedAt = decidedAt;
+      recommendation.evidence = {
+        ...recommendation.evidence,
+        ...evidencePatch,
+      } as PreviewRecommendation['evidence'];
+    },
+  });
+}
+
 function previewReadinessGates(scenario: PreviewScenarioContract) {
   const recommendationsReady = scenario.recommendationState === 'mixed'
     || scenario.recommendationState === 'approved';
@@ -617,13 +1017,19 @@ export function createBrowserPreviewElectronApi(
   scenarioId: PreviewScenarioId = DEFAULT_PREVIEW_SCENARIO,
 ) {
   const scenario = PREVIEW_SCENARIOS[scenarioId];
-  const fixtures = previewFixtures(scenario);
+  let activePreviewScope: OperationScope = clonePreviewSnapshot(previewScope);
+  let fixtures = previewFixtures(scenario);
   const recommendationSource = ['mixed', 'approved'].includes(scenario.recommendationState)
     ? previewDiagnostics
     : [];
-  const recommendations: RecommendationView[] = recommendationSource.map((diagnostic, index) => ({
+  let recommendations: PreviewRecommendation[] = recommendationSource.map((diagnostic, index) => ({
     id: 10_001 + index,
-    entityType: diagnostic.objectType,
+    taskId: `preview-recommendation-${index + 1}`,
+    storeName: activePreviewScope.storeName,
+    marketplaceCode: activePreviewScope.marketplaceCode,
+    asin: diagnostic.asin,
+    msku: 'D6-M',
+    entityType: diagnostic.objectType as ActionRecommendation['entityType'],
     entityId: `${diagnostic.campaignName}_${diagnostic.adGroupName}_${diagnostic.objectName}`,
     entityName: diagnostic.objectName,
     actionType: 'lower_bid',
@@ -633,12 +1039,12 @@ export function createBrowserPreviewElectronApi(
     acos: diagnostic.acos,
     clicks: diagnostic.clicks,
     cost: diagnostic.spend,
-    riskLevel: index === 0 ? 'low' : diagnostic.severity,
-    status: scenario.recommendationState === 'approved'
-      ? (index === 0 ? 'approved' : 'rejected')
-      : (index === 0 ? 'pending' : 'needs_review'),
+    riskLevel: 'APPROVAL',
+    status: index === 0 ? 'pending' : 'needs_review',
     revision: 0,
     confidence: index === 0 ? 0.86 : 0.72,
+    createdAt: '2026-06-24T09:00:00.000Z',
+    updatedAt: '2026-06-24T09:00:00.000Z',
     evidence: {
       impressions: index === 0 ? 6_840 : 3_920,
       clicks: diagnostic.clicks,
@@ -649,13 +1055,17 @@ export function createBrowserPreviewElectronApi(
       cpc: diagnostic.cpc,
       cvr: diagnostic.cvr,
       currency: 'USD',
-      batchId: previewScope.batchId,
-      date: previewScope.dateTo,
+      batchId: activePreviewScope.batchId,
+      date: activePreviewScope.dateTo,
       asin: diagnostic.asin,
       campaignName: diagnostic.campaignName,
       adGroupName: diagnostic.adGroupName,
       targeting: diagnostic.objectName,
       matchType: diagnostic.objectType,
+      reportType: index === 0 ? 'keyword' : 'user_search_term',
+      sourceFile: index === 0
+        ? 'D:/preview/reports/keyword.xlsx'
+        : 'D:/preview/reports/user_search_term.xlsx',
       sourceFiles: [
         index === 0
           ? 'D:/preview/reports/keyword.xlsx'
@@ -675,15 +1085,15 @@ export function createBrowserPreviewElectronApi(
           evidenceId: `preview:metric:${index + 1}`,
           type: 'metric',
           label: `${diagnostic.objectName} 广告指标`,
-          dateRange: `${previewScope.dateFrom} 至 ${previewScope.dateTo}`,
-          batchId: previewScope.batchId,
+          dateRange: `${activePreviewScope.dateFrom} 至 ${activePreviewScope.dateTo}`,
+          batchId: activePreviewScope.batchId,
           reportType: index === 0 ? 'keyword' : 'user_search_term',
           sourceFile: index === 0
             ? 'D:/preview/reports/keyword.xlsx'
             : 'D:/preview/reports/user_search_term.xlsx',
           sourceRow: 42 + index,
-          storeName: previewScope.storeName,
-          marketplaceCode: previewScope.marketplaceCode,
+          storeName: activePreviewScope.storeName,
+          marketplaceCode: activePreviewScope.marketplaceCode,
           asin: diagnostic.asin,
           campaignName: diagnostic.campaignName,
           adGroupName: diagnostic.adGroupName,
@@ -705,10 +1115,10 @@ export function createBrowserPreviewElectronApi(
           evidenceId: `preview:timeline:${index + 1}`,
           type: 'timeline',
           label: `${diagnostic.objectName} 生命周期`,
-          dateRange: `${previewScope.dateFrom} 至 ${previewScope.dateTo}`,
-          batchId: previewScope.batchId,
-          storeName: previewScope.storeName,
-          marketplaceCode: previewScope.marketplaceCode,
+          dateRange: `${activePreviewScope.dateFrom} 至 ${activePreviewScope.dateTo}`,
+          batchId: activePreviewScope.batchId,
+          storeName: activePreviewScope.storeName,
+          marketplaceCode: activePreviewScope.marketplaceCode,
           asin: diagnostic.asin,
           campaignName: diagnostic.campaignName,
           adGroupName: diagnostic.adGroupName,
@@ -716,8 +1126,8 @@ export function createBrowserPreviewElectronApi(
           entityName: diagnostic.objectName,
           timeline: {
             activeDays: 34,
-            firstMetricDate: previewScope.dateFrom,
-            lastMetricDate: previewScope.dateTo,
+            firstMetricDate: activePreviewScope.dateFrom,
+            lastMetricDate: activePreviewScope.dateTo,
             inferredStage: diagnostic.lifecycleStage,
             stageReasons: [diagnostic.diagnosis],
           },
@@ -745,33 +1155,64 @@ export function createBrowserPreviewElectronApi(
       quantReasons: [diagnostic.diagnosis],
       quantThresholds: { targetAcos: 0.35 },
       quantReviewRequired: index !== 0,
-      ...(scenario.recommendationState === 'approved' ? {
-        approvalDecision: {
-          decision: index === 0 ? 'approved' as const : 'rejected' as const,
-          approvedBy: index === 0 ? 'Preview Approver' : undefined,
-          rejectedBy: index === 0 ? undefined : 'Preview Reviewer',
-          decidedAt: '2026-06-24T10:00:00.000Z',
-          note: index === 0 ? '预览批准历史，仅用于界面验证。' : '预览拒绝历史，仅用于界面验证。',
-          batchId: previewScope.batchId,
-          sourceBatchId: previewScope.batchId,
-          metricDate: previewScope.dateTo,
-          sourceRow: 42 + index,
-          sourceFiles: [
-            index === 0
-              ? 'D:/preview/reports/keyword.xlsx'
-              : 'D:/preview/reports/user_search_term.xlsx',
-          ],
-          scope: {
-            dateFrom: previewScope.dateFrom,
-            dateTo: previewScope.dateTo,
-            storeName: previewScope.storeName,
-            marketplaceCode: previewScope.marketplaceCode,
-            asin: diagnostic.asin,
-          },
-        },
-      } : {}),
     },
-  }));
+  } as PreviewRecommendation));
+  if (scenario.recommendationState === 'approved' && recommendations.length >= 2) {
+    const approved = recommendations[0];
+    const boundAt = '2026-06-24T09:50:00.000Z';
+    const writableTarget: WritableAdTargetEvidence = {
+      entityType: 'keyword',
+      entityId: 'amzn-keyword-preview-1001',
+      entityName: approved.entityName,
+      campaignName: approved.evidence.campaignName || '',
+      adGroupName: approved.evidence.adGroupName || '',
+      metricDate: approved.evidence.date || '',
+      sourceFile: approved.evidence.sourceFile || approved.evidence.sourceFiles?.[0] || '',
+      sourceRow: Number(approved.evidence.sourceRow),
+      identitySource: 'ads_ui',
+      verifiedBy: 'Preview Verifier',
+      verifiedAt: boundAt,
+      verificationNote: '已在 Ads UI 中逐项核对活动、广告组、关键词名称与对象 ID。',
+      identityProofPath: 'D:/preview/evidence/keyword-1001.png',
+    };
+    const binding: WritableAdTargetBinding = {
+      schemaVersion: 1,
+      fromRevision: 0,
+      boundRevision: 1,
+      boundBy: 'Preview Verifier',
+      boundAt,
+      note: '预览历史通过与生产一致的对象绑定门生成。',
+      scope: {
+        dateFrom: activePreviewScope.dateFrom,
+        dateTo: activePreviewScope.dateTo,
+        storeName: activePreviewScope.storeName,
+        marketplaceCode: activePreviewScope.marketplaceCode,
+        asin: approved.asin,
+        batchId: activePreviewScope.batchId || '',
+      },
+      metricSource: {
+        batchId: activePreviewScope.batchId || '',
+        sourceFiles: [...(approved.evidence.sourceFiles || [])],
+        sourceRow: Number(approved.evidence.sourceRow),
+      },
+      writableTarget,
+    };
+    approved.revision = binding.boundRevision;
+    approved.updatedAt = boundAt;
+    approved.evidence = {
+      ...approved.evidence,
+      writableTarget,
+      writableTargetBinding: binding,
+    };
+    applyPreviewRecommendationDecision(approved, 'approved', {
+      approvedBy: 'Preview Approver',
+      note: '预览批准历史，仅用于界面验证。',
+    }, '2026-06-24T10:00:00.000Z');
+    applyPreviewRecommendationDecision(recommendations[1], 'rejected', {
+      rejectedBy: 'Preview Reviewer',
+      note: '预览拒绝历史，仅用于界面验证。',
+    }, '2026-06-24T10:01:00.000Z');
+  }
   const readbackStagePreview = scenario.recommendationState === 'approved';
   const previewAiEvidenceId = 'preview:ai-diagnosis:1';
   const previewAiDiagnosisRuns = readbackStagePreview ? [{
@@ -794,18 +1235,225 @@ export function createBrowserPreviewElectronApi(
   const previewGates = previewReadinessGates(scenario);
   const previewPassedGateCount = previewGates.filter((gate) => gate.ok).length;
   const firstMissingPreviewGate = previewGates.find((gate) => !gate.ok);
+  let previewStores = PREVIEW_STORES.map((store) => ({ ...store }));
+  let activePreviewStoreId: StoreId | null = null;
+  type PreviewStoreDataset = {
+    scope: OperationScope;
+    fixtures: ReturnType<typeof previewFixtures>;
+    recommendations: PreviewRecommendation[];
+  };
+  const basePreviewScope = clonePreviewSnapshot(activePreviewScope);
+  const baseFixtures = clonePreviewSnapshot(fixtures);
+  const baseRecommendations = clonePreviewSnapshot(recommendations);
+  const previewDatasets = new Map<StoreId, PreviewStoreDataset>(
+    previewStores.map((store) => {
+      const identity = previewStoreIdentity(store);
+      return [store.storeId, {
+        scope: applyPreviewStoreIdentity(basePreviewScope, identity),
+        fixtures: applyPreviewStoreIdentity(baseFixtures, identity),
+        recommendations: applyPreviewStoreIdentity(baseRecommendations, identity),
+      }];
+    }),
+  );
+  const activatePreviewDataset = (store: StoreRecord) => {
+    let dataset = previewDatasets.get(store.storeId);
+    if (!dataset) {
+      const identity = previewStoreIdentity(store);
+      dataset = {
+        scope: applyPreviewStoreIdentity(basePreviewScope, identity),
+        fixtures: applyPreviewStoreIdentity(baseFixtures, identity),
+        recommendations: applyPreviewStoreIdentity(baseRecommendations, identity),
+      };
+      previewDatasets.set(store.storeId, dataset);
+    }
+    activePreviewScope = dataset.scope;
+    fixtures = dataset.fixtures;
+    recommendations = dataset.recommendations;
+    return dataset;
+  };
+  const previewGenerations = new Map<StoreId, number>(
+    previewStores.map((store) => [store.storeId, 0]),
+  );
+  const storeContextListeners = new Set<(view: StoreWorkspaceView) => void>();
+  const storeRecordListeners = new Set<(store: StoreRecord) => void>();
+
+  const currentPreviewContext = (): StoreContextEnvelope | null => {
+    if (!activePreviewStoreId) return null;
+    const store = previewStores.find((row) => row.storeId === activePreviewStoreId);
+    if (!store || store.status !== 'active') return null;
+    return previewContext(store, previewGenerations.get(store.storeId) ?? 0);
+  };
+  const requirePreviewStore = (storeIdInput: unknown): StoreRecord => {
+    const storeId = normalizeStoreId(storeIdInput);
+    const store = previewStores.find((row) => row.storeId === storeId);
+    if (!store) throw new Error(`PREVIEW_STORE_NOT_FOUND:${storeId}`);
+    return store;
+  };
+  const previewView = (store: StoreRecord, context: StoreContextEnvelope): StoreWorkspaceView => ({
+    store: clonePreviewSnapshot(store),
+    context: clonePreviewSnapshot(context),
+    connections: [],
+    sessions: [],
+  });
+  const requirePreviewMissionAuthority = (submitted: StoreContextEnvelope) => {
+    const authoritative = currentPreviewContext();
+    if (!authoritative) throw new Error('PREVIEW_EXPLICIT_STORE_SELECTION_REQUIRED');
+    if (missionControlContextKey(authoritative) !== missionControlContextKey(submitted)) {
+      throw new Error('PREVIEW_MISSION_CONTROL_STORE_CONTEXT_MISMATCH');
+    }
+    return authoritative;
+  };
+  const previewMissionQuery = async (input: MissionControlQueryRequest): Promise<MissionControlQueryResponse> => {
+    const request = normalizeMissionControlQueryRequest(input);
+    const authoritative = requirePreviewMissionAuthority(request.context);
+    return {
+      query: 'workspace-bootstrap',
+      requestId: request.requestId,
+      contextEpoch: request.contextEpoch,
+      authoritativeContext: clonePreviewSnapshot(authoritative),
+      completedAt: new Date().toISOString(),
+      data: {
+        capabilities: clonePreviewSnapshot([...PREVIEW_MISSION_CONTROL_CAPABILITIES]),
+        autonomy: {
+          currentMode: 'manual_approval',
+          manualApprovalAvailable: true,
+          policyAutoAvailable: false,
+          policyAutoBlockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED',
+          policyAutoBlockerDetail: '开发预览不具备真实 Main 全自动授权。',
+        },
+      },
+    };
+  };
+  const previewMissionCommand = async (input: MissionControlCommandRequest): Promise<MissionControlCommandResponse> => {
+    const request = normalizeMissionControlCommandRequest(input);
+    const authoritative = requirePreviewMissionAuthority(request.context);
+    const auto = request.payload.mode === 'policy_auto';
+    return {
+      command: 'set-autonomy-mode',
+      requestId: request.requestId,
+      contextEpoch: request.contextEpoch,
+      authoritativeContext: clonePreviewSnapshot(authoritative),
+      completedAt: new Date().toISOString(),
+      status: auto ? 'BLOCKED' : 'NOOP',
+      currentMode: 'manual_approval',
+      ...(auto ? { blockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED' } : {}),
+      detail: auto
+        ? '开发预览不会伪造全自动授权或真实广告执行。'
+        : '开发预览已保持人工审批模式。',
+    };
+  };
 
   return {
+    missionControl: {
+      query: previewMissionQuery,
+      command: previewMissionCommand,
+    },
+    listStores: async () => clonePreviewSnapshot(previewStores),
+    getStore: async (storeId: StoreId) => clonePreviewSnapshot(requirePreviewStore(storeId)),
+    createStore: async (input: { displayName?: unknown }) => {
+      const displayName = String(input?.displayName ?? '').trim();
+      if (!displayName || displayName.length > 120) throw new Error('预览店铺名称必须为 1-120 个字符。');
+      const suffix = previewStores.length + 1;
+      const store = previewStore(
+        `preview-store-${suffix}`,
+        `preview-profile-${suffix}`,
+        displayName,
+        new Date().toISOString(),
+      );
+      previewStores = [...previewStores, store];
+      previewGenerations.set(store.storeId, 0);
+      storeRecordListeners.forEach((listener) => listener(clonePreviewSnapshot(store)));
+      return clonePreviewSnapshot(store);
+    },
+    updateStore: async (input: { storeId: StoreId; patch?: Partial<StoreRecord> }) => {
+      const current = requirePreviewStore(input?.storeId);
+      const patch = input?.patch ?? {};
+      const next: StoreRecord = {
+        ...current,
+        ...(typeof patch.displayName === 'string' ? { displayName: patch.displayName.trim() } : {}),
+        ...(patch.status === 'active' || patch.status === 'inactive' ? { status: patch.status } : {}),
+        ...(typeof patch.businessTimezone === 'string'
+          ? { businessTimezone: patch.businessTimezone.trim() }
+          : {}),
+        marketplace: 'US',
+        currency: 'USD',
+        updatedAt: new Date().toISOString(),
+      };
+      previewStores = previewStores.map((row) => row.storeId === next.storeId ? next : row);
+      if (next.status !== 'active' && activePreviewStoreId === next.storeId) {
+        activePreviewStoreId = null;
+      }
+      storeRecordListeners.forEach((listener) => listener(clonePreviewSnapshot(next)));
+      return clonePreviewSnapshot(next);
+    },
+    archiveStore: async (input: { storeId: StoreId }) => {
+      const current = requirePreviewStore(input?.storeId);
+      const updatedAt = new Date().toISOString();
+      const next: StoreRecord = { ...current, status: 'archived', archivedAt: updatedAt, updatedAt };
+      previewStores = previewStores.map((row) => row.storeId === next.storeId ? next : row);
+      if (activePreviewStoreId === next.storeId) activePreviewStoreId = null;
+      storeRecordListeners.forEach((listener) => listener(clonePreviewSnapshot(next)));
+      return clonePreviewSnapshot(next);
+    },
+    restoreStore: async (input: { storeId: StoreId }) => {
+      const current = requirePreviewStore(input?.storeId);
+      const next: StoreRecord = {
+        ...current,
+        status: 'active',
+        archivedAt: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      previewStores = previewStores.map((row) => row.storeId === next.storeId ? next : row);
+      storeRecordListeners.forEach((listener) => listener(clonePreviewSnapshot(next)));
+      return clonePreviewSnapshot(next);
+    },
+    switchStore: async (storeIdInput: StoreId) => {
+      const store = requirePreviewStore(storeIdInput);
+      if (store.status !== 'active') throw new Error('预览中只能切换到 active 店铺。');
+      if (activePreviewStoreId && activePreviewStoreId !== store.storeId) {
+        previewGenerations.set(
+          activePreviewStoreId,
+          (previewGenerations.get(activePreviewStoreId) ?? 0) + 1,
+        );
+      }
+      activatePreviewDataset(store);
+      activePreviewStoreId = store.storeId;
+      const generation = (previewGenerations.get(store.storeId) ?? 0) + 1;
+      previewGenerations.set(store.storeId, generation);
+      const view = previewView(store, previewContext(store, generation));
+      storeContextListeners.forEach((listener) => listener(clonePreviewSnapshot(view)));
+      return clonePreviewSnapshot(view);
+    },
+    getActiveStoreContext: async () => clonePreviewSnapshot(currentPreviewContext()),
+    onStoreContextChanged: (callback: (view: StoreWorkspaceView) => void) => {
+      storeContextListeners.add(callback);
+      return () => storeContextListeners.delete(callback);
+    },
+    onStoresChanged: (callback: (store: StoreRecord) => void) => {
+      storeRecordListeners.add(callback);
+      return () => storeRecordListeners.delete(callback);
+    },
     getState: async () => ({
       isLoggedIn: true,
-      currentStore: username || 'SHC001',
+      currentStore: activePreviewStoreId
+        ? previewStores.find((store) => store.storeId === activePreviewStoreId)?.displayName ?? username ?? 'SHC001'
+        : username || 'SHC001',
       loginSession: { erpSessionReused: true, adsEntryMode: 'browser-preview', adsTitle: '浏览器预览模式' },
+      storeContext: clonePreviewSnapshot(currentPreviewContext()),
     }),
     browserLogout: async () => true,
-    getOperationScope: async () => scenario.scopeReady ? previewScope : null,
-    saveOperationScope: async () => scenario.scopeReady ? previewScope : null,
-    getBusinessUiDataPipeline: async () => previewPipeline(scenario, fixtures),
-    getBusinessBatchOptions: async () => clonePreviewSnapshot(previewBatchOptions(scenario)),
+    getOperationScope: async () => scenario.scopeReady ? clonePreviewSnapshot(activePreviewScope) : null,
+    saveOperationScope: async () => scenario.scopeReady ? clonePreviewSnapshot(activePreviewScope) : null,
+    getBusinessUiDataPipeline: async () => {
+      if (!activePreviewStoreId) return previewPipeline(scenario, fixtures);
+      const store = requirePreviewStore(activePreviewStoreId);
+      return applyPreviewStoreIdentity(previewPipeline(scenario, fixtures), previewStoreIdentity(store));
+    },
+    getBusinessBatchOptions: async () => {
+      if (!activePreviewStoreId) return clonePreviewSnapshot(previewBatchOptions(scenario));
+      const store = requirePreviewStore(activePreviewStoreId);
+      return clonePreviewSnapshot(applyPreviewStoreIdentity(previewBatchOptions(scenario), previewStoreIdentity(store)));
+    },
     getProducts: async () => clonePreviewSnapshot(fixtures.products),
     saveProductConfig: async (input: unknown) => ({ ok: true, input }),
     bulkUpdateProductTargetAcos: async (input: any) => ({
@@ -817,11 +1465,38 @@ export function createBrowserPreviewElectronApi(
     listOperationEvents: async () => clonePreviewSnapshot(fixtures.events),
     createOperationEvent: async (input: unknown) => ({ id: 'preview-event-new', input }),
     deleteOperationEvent: async () => ({ ok: true }),
-    getRecommendations: async (filter?: { status?: string }) => clonePreviewSnapshot(
-      filter?.status
-        ? recommendations.filter((recommendation) => recommendation.status === filter.status)
-        : recommendations,
-    ),
+    getRecommendations: async (filter?: PreviewRecommendationFilter) => {
+      const request = filter || {};
+      const hasFullScope = Boolean(
+        normalizedPreviewText(request.dateFrom)
+        && normalizedPreviewText(request.dateTo)
+        && normalizedPreviewText(request.storeName)
+        && normalizedPreviewText(request.marketplaceCode),
+      );
+      const scopeMatches = hasFullScope
+        && normalizedPreviewText(request.dateFrom) === activePreviewScope.dateFrom
+        && normalizedPreviewText(request.dateTo) === activePreviewScope.dateTo
+        && normalizedPreviewText(request.storeName) === activePreviewScope.storeName
+        && normalizedPreviewText(request.marketplaceCode) === activePreviewScope.marketplaceCode
+        && (!normalizedPreviewText(request.asin)
+          || normalizedPreviewText(request.asin).toUpperCase() === activePreviewScope.asin)
+        && (!normalizedPreviewText(request.batchId)
+          || normalizedPreviewText(request.batchId) === activePreviewScope.batchId);
+      if (!scopeMatches) return [];
+
+      const status = normalizedPreviewText(request.status);
+      const limit = Number.isFinite(Number(request.limit))
+        ? Math.max(1, Math.min(500, Number(request.limit)))
+        : 100;
+      const scopedRows = recommendations.filter((recommendation) => (
+        recommendation.storeName === activePreviewScope.storeName
+        && recommendation.marketplaceCode === activePreviewScope.marketplaceCode
+        && recommendation.asin === activePreviewScope.asin
+        && recommendation.evidence?.batchId === activePreviewScope.batchId
+        && (!status || recommendation.status === status)
+      ));
+      return clonePreviewSnapshot(scopedRows.slice(0, limit));
+    },
     generateRecommendations: async () => clonePreviewSnapshot({
       generated: recommendations.length,
       recommendations,
@@ -843,10 +1518,10 @@ export function createBrowserPreviewElectronApi(
 
       const normalized = (value: unknown) => String(value ?? '').trim();
       const scope = input.scope;
-      const scopeMatches = normalized(scope?.dateFrom) === previewScope.dateFrom
-        && normalized(scope?.dateTo) === previewScope.dateTo
-        && normalized(scope?.storeName) === previewScope.storeName
-        && normalized(scope?.marketplaceCode) === previewScope.marketplaceCode
+      const scopeMatches = normalized(scope?.dateFrom) === activePreviewScope.dateFrom
+        && normalized(scope?.dateTo) === activePreviewScope.dateTo
+        && normalized(scope?.storeName) === activePreviewScope.storeName
+        && normalized(scope?.marketplaceCode) === activePreviewScope.marketplaceCode
         && normalized(scope?.asin).toUpperCase() === normalized(recommendation.evidence?.asin).toUpperCase()
         && normalized(scope?.batchId) === normalized(recommendation.evidence?.batchId);
       if (!scopeMatches) {
@@ -955,10 +1630,10 @@ export function createBrowserPreviewElectronApi(
 
       const normalized = (value: unknown) => String(value ?? '').trim();
       const scope = input.scope;
-      const scopeMatches = normalized(scope?.dateFrom) === previewScope.dateFrom
-        && normalized(scope?.dateTo) === previewScope.dateTo
-        && normalized(scope?.storeName) === previewScope.storeName
-        && normalized(scope?.marketplaceCode) === previewScope.marketplaceCode
+      const scopeMatches = normalized(scope?.dateFrom) === activePreviewScope.dateFrom
+        && normalized(scope?.dateTo) === activePreviewScope.dateTo
+        && normalized(scope?.storeName) === activePreviewScope.storeName
+        && normalized(scope?.marketplaceCode) === activePreviewScope.marketplaceCode
         && normalized(scope?.asin).toUpperCase() === normalized(recommendation.evidence?.asin).toUpperCase()
         && normalized(scope?.batchId) === normalized(recommendation.evidence?.batchId);
       if (!scopeMatches) {
@@ -1048,38 +1723,8 @@ export function createBrowserPreviewElectronApi(
     }) => {
       const recommendation = recommendations.find((row) => row.id === input.id);
       if (!recommendation) throw new Error('预览建议不存在，请刷新后重试。');
-      if (!Number.isInteger(input.expectedRevision) || input.expectedRevision !== recommendation.revision) {
-        throw new Error('预览审批状态冲突：建议版本已变化，请刷新后重试。');
-      }
-      if (recommendation.status !== 'pending') {
-        throw new Error(`预览审批被阻断：建议当前状态 ${recommendation.status} 不允许批准。`);
-      }
-      const binding = recommendation.evidence?.writableTargetBinding;
-      const resolution = recommendation.evidence?.reviewResolution;
-      const currentBinding = Boolean(binding)
-        && binding?.schemaVersion === 1
-        && binding.fromRevision + 1 === binding.boundRevision
-        && binding.boundRevision === recommendation.revision;
-      const currentResolution = Boolean(resolution)
-        && resolution?.schemaVersion === 1
-        && resolution.fromRevision + 1 === resolution.resolvedRevision
-        && resolution.resolvedRevision === recommendation.revision;
-      if (!recommendation.evidence?.writableTarget || (!currentBinding && !currentResolution)) {
-        throw new Error('预览审批被阻断：必须先核验唯一 Ads 可写对象并重新读取权威版本。');
-      }
-      if (!String(input.decision?.approvedBy || '').trim()) {
-        throw new Error('预览审批被阻断：批准前必须填写审批人。');
-      }
-      recommendation.status = 'approved';
-      recommendation.revision += 1;
-      recommendation.evidence = {
-        ...recommendation.evidence,
-        approvalDecision: {
-          ...input.decision,
-          decision: 'approved',
-          decidedAt: new Date().toISOString(),
-        },
-      };
+      assertRecommendationDecisionRevision(recommendation, input.expectedRevision);
+      applyPreviewRecommendationDecision(recommendation, 'approved', input.decision || {});
       return { ok: true };
     },
     rejectRecommendation: async (input: {
@@ -1089,28 +1734,8 @@ export function createBrowserPreviewElectronApi(
     }) => {
       const recommendation = recommendations.find((row) => row.id === input.id);
       if (!recommendation) throw new Error('预览建议不存在，请刷新后重试。');
-      if (!Number.isInteger(input.expectedRevision) || input.expectedRevision !== recommendation.revision) {
-        throw new Error('预览审批状态冲突：建议版本已变化，请刷新后重试。');
-      }
-      if (recommendation.status !== 'pending' && recommendation.status !== 'needs_review') {
-        throw new Error(`预览审批被阻断：建议当前状态 ${recommendation.status} 不允许拒绝。`);
-      }
-      if (!String(input.decision?.rejectedBy || '').trim()) {
-        throw new Error('预览审批被阻断：拒绝前必须填写处理人。');
-      }
-      if (!String(input.decision?.note || '').trim()) {
-        throw new Error('预览审批被阻断：拒绝前必须填写拒绝原因。');
-      }
-      recommendation.status = 'rejected';
-      recommendation.revision += 1;
-      recommendation.evidence = {
-        ...recommendation.evidence,
-        approvalDecision: {
-          ...input.decision,
-          decision: 'rejected',
-          decidedAt: new Date().toISOString(),
-        },
-      };
+      assertRecommendationDecisionRevision(recommendation, input.expectedRevision);
+      applyPreviewRecommendationDecision(recommendation, 'rejected', input.decision || {});
       return { ok: true };
     },
     getBusinessKeywordOpportunities: async () => scenario.diagnosisReady ? fixtures.timelines.map((item, index) => ({

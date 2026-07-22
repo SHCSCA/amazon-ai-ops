@@ -3,6 +3,12 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { resolveBoundAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
+const {
+  PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION,
+  validateAdversarialNodeEnvBundleSummaryContract,
+  validateAdversarialNodeEnvEvidence,
+  validateAdversarialNodeEnvSelectionContract,
+} = require('./smoke-package-adversarial-node-env');
 const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
 
 const root = path.resolve(__dirname, '..');
@@ -136,6 +142,11 @@ function canonicalPath(inputPath) {
   } catch {
     return resolved;
   }
+}
+
+function samePath(left, right) {
+  if (!left || !right) return false;
+  return canonicalPath(left).toLowerCase() === canonicalPath(right).toLowerCase();
 }
 
 function isInside(childPath, parentPath) {
@@ -532,6 +543,7 @@ function collectEvidencePaths(finalReadiness, options = {}) {
   if (options.businessUiSmoke) paths.add(options.businessUiSmoke);
   if (options.fullTestEvidence) paths.add(options.fullTestEvidence);
   if (options.packageSecurityEvidence) paths.add(options.packageSecurityEvidence);
+  if (options.packageAdversarialNodeEnvEvidence) paths.add(options.packageAdversarialNodeEnvEvidence);
   if (includeLatestExtras) {
     const addSmokeEvidence = (smoke) => {
       if (!smoke) return;
@@ -683,10 +695,42 @@ function main() {
   const businessUiSmokePath = explicitFileArg(args, 'business-ui-smoke');
   const fullTestEvidencePath = explicitFileArg(args, 'full-test-evidence');
   const packageSecurityEvidencePath = explicitFileArg(args, 'package-security-evidence');
+  const packageAdversarialNodeEnvEvidencePath = explicitFileArg(args, 'package-adversarial-node-env-evidence');
   if (packageSecurityEvidencePath) {
     const validation = validatePackageSecurityEvidence(readJson(packageSecurityEvidencePath));
     if (!validation.passed) {
       throw new Error(`Refusing to export invalid package security evidence: ${validation.violations.join('; ')}`);
+    }
+  }
+  const adversarialNodeEnvSelectionContract = validateAdversarialNodeEnvSelectionContract(
+    finalReadiness.packageAdversarialNodeEnv,
+  );
+  if (!adversarialNodeEnvSelectionContract.passed) {
+    throw new Error(
+      `Refusing to export final readiness without the current adversarial NODE_ENV package evidence contract ${PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION}: `
+      + adversarialNodeEnvSelectionContract.violations.join('; '),
+    );
+  }
+  if (!packageAdversarialNodeEnvEvidencePath) {
+    throw new Error('Refusing to export current delivery bundle without explicit adversarial NODE_ENV package evidence.');
+  }
+  if (packageAdversarialNodeEnvEvidencePath) {
+    const selected = finalReadiness.packageAdversarialNodeEnv;
+    const validation = validateAdversarialNodeEnvEvidence(
+      readJson(packageAdversarialNodeEnvEvidencePath),
+      selected?.package || {},
+    );
+    if (!validation.passed) {
+      throw new Error(`Refusing to export invalid adversarial NODE_ENV package evidence: ${validation.violations.join('; ')}`);
+    }
+    if (
+      selected?.passed !== true
+      || !selected?.evidencePath
+      || !samePath(selected.evidencePath, packageAdversarialNodeEnvEvidencePath)
+      || !/^[A-F0-9]{64}$/.test(String(selected?.evidenceSha256 || ''))
+      || sha256(packageAdversarialNodeEnvEvidencePath) !== String(selected.evidenceSha256).toUpperCase()
+    ) {
+      throw new Error('Refusing to export adversarial NODE_ENV evidence that is not the passing hash-bound selection in final readiness.');
     }
   }
   assertAppReadyReadmeState(finalReadiness, readmePath);
@@ -783,7 +827,15 @@ function main() {
         bundlePath: null,
         sha256: null,
       },
-      copyPolicy: 'Explicit package security boundary evidence is schema-validated and copied without source paths or credential values in its payload.',
+      packageAdversarialNodeEnvSmoke: {
+        contractVersion: PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION,
+        sourcePath: packageAdversarialNodeEnvEvidencePath,
+        present: Boolean(packageAdversarialNodeEnvEvidencePath),
+        requiredByFinalReadiness: true,
+        bundlePath: null,
+        sha256: null,
+      },
+      copyPolicy: 'Explicit static and adversarial-runtime package security evidence is schema-validated and copied without source paths, URLs, or credential values in its payload.',
     },
   };
 
@@ -827,6 +879,7 @@ function main() {
     'scripts/verify-ad-readback-evidence.js',
     'scripts/reconcile-lingxing-full8-data.js',
     'scripts/smoke-package-security-boundaries.js',
+    'scripts/smoke-package-adversarial-node-env.js',
   ]) {
     copyFile(path.join(root, relativePath), scriptsDir, relativePath, manifest);
   }
@@ -865,6 +918,7 @@ function main() {
     businessUiSmoke: businessUiSmokePath,
     fullTestEvidence: fullTestEvidencePath,
     packageSecurityEvidence: packageSecurityEvidencePath,
+    packageAdversarialNodeEnvEvidence: packageAdversarialNodeEnvEvidencePath,
   });
   const packageIndex = buildPackageIndex(path.resolve(args['release-dir'] || path.join(root, 'apps', 'desktop', 'release')));
   assertAppReadyFinalReadinessHasPackageEvidence(finalReadiness, packageIndex);
@@ -929,6 +983,20 @@ function main() {
     }
     manifest.securityEvidence.packageSecurityBoundaries.bundlePath = bundledSecurityEvidence.bundlePath;
     manifest.securityEvidence.packageSecurityBoundaries.sha256 = bundledSecurityEvidence.sha256;
+  }
+  if (packageAdversarialNodeEnvEvidencePath) {
+    const bundledEvidence = manifest.files.find((file) => file.sourcePath === packageAdversarialNodeEnvEvidencePath);
+    if (!bundledEvidence) {
+      throw new Error('Adversarial NODE_ENV package evidence was selected but not copied into the delivery bundle.');
+    }
+    manifest.securityEvidence.packageAdversarialNodeEnvSmoke.bundlePath = bundledEvidence.bundlePath;
+    manifest.securityEvidence.packageAdversarialNodeEnvSmoke.sha256 = bundledEvidence.sha256;
+    const summaryContract = validateAdversarialNodeEnvBundleSummaryContract(
+      manifest.securityEvidence.packageAdversarialNodeEnvSmoke,
+    );
+    if (!summaryContract.passed) {
+      throw new Error(`Invalid adversarial NODE_ENV bundle summary contract: ${summaryContract.violations.join('; ')}`);
+    }
   }
 
   for (const file of manifest.files) {

@@ -639,6 +639,8 @@ export interface RecommendationEvidence {
   reviewResolution?: RecommendationReviewResolution;
   writableTargetBinding?: WritableAdTargetBinding;
   batchId?: string;
+  reportType?: string;
+  sourceFile?: string;
   sourceFiles?: string[];
   sourceRow?: number;
   currency?: 'USD';
@@ -666,6 +668,8 @@ export interface RecommendationEvidence {
   clicks?: number;
   orders?: number;
   sales?: number;
+  cpc?: number;
+  cvr?: number;
 }
 
 export interface RecommendationView {
