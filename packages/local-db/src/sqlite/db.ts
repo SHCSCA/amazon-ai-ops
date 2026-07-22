@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import * as path from 'path';
 import {
   runAnalysisAuthorityMigration,
+  runExecutionAuthorityMigration,
   prepareStoreAuthorityMigrationBackup,
   runListingStoreAuthorityMigration,
   runMissionDomainMigration,
@@ -644,6 +645,7 @@ function runMigrations(database: Database.Database): void {
   runOperationEventArchiveMigration(database);
   runMissionDomainMigration(database);
   runAnalysisAuthorityMigration(database);
+  runExecutionAuthorityMigration(database);
 }
 
 function installStoreScopedMetricIdentitySafeguards(database: Database.Database): void {

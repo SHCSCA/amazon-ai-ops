@@ -84,6 +84,18 @@ describe('BrowserController.screenshotToPath', () => {
   });
 });
 
+describe('BrowserController.bringToFront', () => {
+  it('hands the existing visible page to the operator without opening another profile', async () => {
+    const controller = new BrowserController({ headless: false });
+    const bringToFront = vi.fn(async () => undefined);
+    (controller as any).page = { bringToFront };
+
+    await controller.bringToFront();
+
+    expect(bringToFront).toHaveBeenCalledOnce();
+  });
+});
+
 describe('resolveChromiumExecutablePathForRuntime', () => {
   it('uses the local ms-playwright Chromium when running the unpackaged Electron source app', () => {
     const executable = resolveChromiumExecutablePathForRuntime({

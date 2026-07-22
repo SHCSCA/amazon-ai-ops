@@ -16,3 +16,4 @@ export * from './lingxing-collection';
 export * from './asin';
 export * from './mission-domain';
 export * from './analysis-authority';
+export * from './execution-authority';

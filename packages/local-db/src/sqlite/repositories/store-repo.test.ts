@@ -391,7 +391,7 @@ describe('StoreRepository', () => {
     const database = initSqlite(dbPath);
     try {
       const repo = new StoreRepository(database);
-      expect(repo.listSchemaMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+      expect(repo.listSchemaMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
       expect(repo.getMigrationManifest()).toMatchObject({ version: 1, integrityCheck: 'ok' });
       expect(repo.getMigrationResult()).toMatchObject({ status: 'applied' });
       expect(repo.getMigrationRecoveryPreflight()).toMatchObject({ canRestore: true });

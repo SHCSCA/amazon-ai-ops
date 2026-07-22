@@ -33,6 +33,7 @@ export interface IpcHandlerRegistrar {
 }
 
 export interface StoreIpcEvents {
+  beforeActiveStoreMutation?(context: StoreContextEnvelope, operation: string): void;
   onStoreChanged?(view: StoreWorkspaceView): void;
   onStoreRecordChanged?(store: StoreRecord): void;
 }
@@ -51,14 +52,18 @@ export function registerStoreIpcHandlers(
     return store;
   });
   ipc.handle('stores:update', (_event, input) => {
-    const store = coordinator.updateStore(asObject(input) as unknown as UpdateStoreInput);
+    const request = asObject(input) as unknown as UpdateStoreInput;
+    guardActiveStoreMutation(coordinator, events, request.storeId, 'stores:update');
+    const store = coordinator.updateStore(request);
     events.onStoreRecordChanged?.(store);
     const activeView = coordinator.getActiveStoreWorkspaceView();
     if (activeView?.store.storeId === store.storeId) events.onStoreChanged?.(activeView);
     return store;
   });
   ipc.handle('stores:archive', (_event, input) => {
-    const store = coordinator.archiveStore(asObject(input) as unknown as ArchiveStoreInput);
+    const request = asObject(input) as unknown as ArchiveStoreInput;
+    guardActiveStoreMutation(coordinator, events, request.storeId, 'stores:archive');
+    const store = coordinator.archiveStore(request);
     events.onStoreRecordChanged?.(store);
     return store;
   });
@@ -68,36 +73,64 @@ export function registerStoreIpcHandlers(
     return store;
   });
   ipc.handle('stores:connections:create', (_event, input) => {
-    const connection = coordinator.createConnection(readCreateConnectionInput(input));
+    const request = readCreateConnectionInput(input);
+    guardActiveStoreMutation(coordinator, events, request.storeId, 'stores:connections:create');
+    const connection = coordinator.createConnection(request);
     const activeView = coordinator.getActiveStoreWorkspaceView();
     if (activeView?.store.storeId === connection.storeId) events.onStoreChanged?.(activeView);
     return connection;
   });
   ipc.handle('stores:connections:update', (_event, input) => {
-    const connection = coordinator.updateConnection(readUpdateConnectionInput(input));
+    const request = readUpdateConnectionInput(input);
+    guardActiveStoreMutation(coordinator, events, request.storeId, 'stores:connections:update');
+    const connection = coordinator.updateConnection(request);
     const activeView = coordinator.getActiveStoreWorkspaceView();
     if (activeView?.store.storeId === connection.storeId) events.onStoreChanged?.(activeView);
     return connection;
   });
   ipc.handle('stores:connections:remove', (_event, input) => {
     const request = readRemoveConnectionInput(input);
+    guardActiveStoreMutation(coordinator, events, request.storeId, 'stores:connections:remove');
     coordinator.removeConnection(request);
     const activeView = coordinator.getActiveStoreWorkspaceView();
     if (activeView?.store.storeId === request.storeId) events.onStoreChanged?.(activeView);
     return { success: true };
   });
   ipc.handle('stores:switch', (_event, input) => {
+    guardCurrentActiveStoreMutation(coordinator, events, 'stores:switch');
     const view = coordinator.switchStore(readStoreId(input));
     events.onStoreChanged?.(view);
     return view;
   });
   ipc.handle('stores:reconnect', (_event, input) => {
+    guardCurrentActiveStoreMutation(coordinator, events, 'stores:reconnect');
     const view = coordinator.reconnectStore(readStoreId(input));
     events.onStoreChanged?.(view);
     return view;
   });
   ipc.handle('stores:get-active-context', (): StoreContextEnvelope | null =>
     coordinator.getActiveStoreContext());
+}
+
+function guardCurrentActiveStoreMutation(
+  coordinator: StoreCoordinator,
+  events: StoreIpcEvents,
+  operation: string,
+): void {
+  const context = coordinator.getActiveStoreContext();
+  if (context) events.beforeActiveStoreMutation?.(context, operation);
+}
+
+function guardActiveStoreMutation(
+  coordinator: StoreCoordinator,
+  events: StoreIpcEvents,
+  storeId: unknown,
+  operation: string,
+): void {
+  const context = coordinator.getActiveStoreContext();
+  if (context && String(context.storeId) === String(storeId ?? '').trim()) {
+    events.beforeActiveStoreMutation?.(context, operation);
+  }
 }
 
 function readStoreId(value: unknown): unknown {

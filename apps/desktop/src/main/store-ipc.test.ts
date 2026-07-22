@@ -1,6 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
+import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import type { StoreCoordinator } from './store-coordinator';
 import { registerStoreIpcHandlers, STORE_IPC_CHANNELS } from './store-ipc';
+
+const activeContext = normalizeStoreContextEnvelope({
+  storeId: 'store-one',
+  browserProfileId: 'profile-one',
+  marketplace: 'US',
+  currency: 'USD',
+  businessTimezone: 'America/Los_Angeles',
+  businessDate: '2026-07-23',
+  sessionGeneration: 4,
+});
+
+function createCoordinator(): StoreCoordinator {
+  return {
+    listStores: vi.fn(() => []),
+    getStore: vi.fn(),
+    createStore: vi.fn(),
+    updateStore: vi.fn(),
+    archiveStore: vi.fn(),
+    restoreStore: vi.fn(),
+    createConnection: vi.fn(() => ({ storeId: 'store-one' })),
+    updateConnection: vi.fn(() => ({ storeId: 'store-one' })),
+    removeConnection: vi.fn(),
+    switchStore: vi.fn(() => ({ store: { storeId: 'store-two' }, context: activeContext })),
+    reconnectStore: vi.fn(() => ({ store: { storeId: 'store-one' }, context: activeContext })),
+    getActiveStoreContext: vi.fn(() => activeContext),
+    getActiveStoreWorkspaceView: vi.fn(() => null),
+  } as unknown as StoreCoordinator;
+}
 
 describe('store IPC boundary', () => {
   it('registers only logical store CRUD/context channels and emits switch results', () => {
@@ -105,5 +134,68 @@ describe('store IPC boundary', () => {
       id: 'capability-one',
       storeId: 'store-one',
     });
+  });
+
+  it.each([
+    ['stores:switch', { storeId: 'store-two' }, 'switchStore'],
+    ['stores:reconnect', { storeId: 'store-one' }, 'reconnectStore'],
+    ['stores:connections:create', {
+      storeId: 'store-one', provider: 'lingxing', accountLabel: 'operator', externalAccountId: 'external-one',
+    }, 'createConnection'],
+    ['stores:connections:update', {
+      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', externalAccountId: 'external-one',
+    }, 'updateConnection'],
+    ['stores:connections:remove', {
+      id: 'connection-one', storeId: 'store-one',
+    }, 'removeConnection'],
+  ] as const)('runs the active execution guard before %s mutates coordinator state', (
+    channel,
+    input,
+    mutation,
+  ) => {
+    const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
+    const coordinator = createCoordinator();
+    const beforeActiveStoreMutation = vi.fn();
+    registerStoreIpcHandlers(
+      { handle: (registeredChannel, handler) => handlers.set(registeredChannel, handler) },
+      coordinator,
+      { beforeActiveStoreMutation },
+    );
+
+    handlers.get(channel)?.({}, input);
+
+    expect(beforeActiveStoreMutation).toHaveBeenCalledWith(activeContext, channel);
+    const coordinatorMutation = coordinator[mutation] as ReturnType<typeof vi.fn>;
+    expect(beforeActiveStoreMutation.mock.invocationCallOrder[0])
+      .toBeLessThan(coordinatorMutation.mock.invocationCallOrder[0]);
+  });
+
+  it.each([
+    ['stores:switch', { storeId: 'store-two' }, 'switchStore'],
+    ['stores:reconnect', { storeId: 'store-one' }, 'reconnectStore'],
+    ['stores:connections:create', {
+      storeId: 'store-one', provider: 'amazon_ads', accountLabel: 'operator', externalAccountId: 'external-one',
+    }, 'createConnection'],
+    ['stores:connections:update', {
+      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', externalAccountId: 'external-one',
+    }, 'updateConnection'],
+    ['stores:connections:remove', {
+      id: 'connection-one', storeId: 'store-one',
+    }, 'removeConnection'],
+  ] as const)('does not mutate coordinator state when the active execution guard rejects %s', (
+    channel,
+    input,
+    mutation,
+  ) => {
+    const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
+    const coordinator = createCoordinator();
+    registerStoreIpcHandlers(
+      { handle: (registeredChannel, handler) => handlers.set(registeredChannel, handler) },
+      coordinator,
+      { beforeActiveStoreMutation: () => { throw new Error('execution batch is active'); } },
+    );
+
+    expect(() => handlers.get(channel)?.({}, input)).toThrow('execution batch is active');
+    expect(coordinator[mutation]).not.toHaveBeenCalled();
   });
 });

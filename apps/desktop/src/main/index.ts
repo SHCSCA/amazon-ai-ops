@@ -37,6 +37,7 @@ import { StoreRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories
 import { LingxingImportRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/lingxing-import-repo';
 import { MissionDomainRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/mission-domain-repo';
 import { AnalysisAuthorityRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/analysis-authority-repo';
+import { ExecutionAuthorityRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/execution-authority-repo';
 import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, draftsToCsv, draftsToMarkdown, draftsToXlsxBuffer, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
@@ -164,6 +165,11 @@ import { registerMissionDomainIpcHandlers } from './mission-domain-ipc';
 import { MissionDomainService } from './mission-domain-service';
 import { registerAnalysisAuthorityIpcHandlers } from './analysis-authority-ipc';
 import { AnalysisAuthorityService } from './analysis-authority-service';
+import { ExecutionAuthorityService } from './execution-authority-service';
+import {
+  EXECUTION_AUTHORITY_PROGRESS_CHANNEL,
+  registerExecutionAuthorityIpcHandlers,
+} from './execution-authority-ipc';
 import { currentAdEntityBelongsToStore } from './legacy-writable-ad-entity-authority';
 import { registerStoreScopedObjectsIpcHandlers } from './store-scoped-objects-ipc';
 import { StoreScopedObjectsService } from './store-scoped-objects-service';
@@ -216,6 +222,8 @@ interface AppState {
   missionDomainService: MissionDomainService | null;
   analysisAuthorityRepo: AnalysisAuthorityRepository | null;
   analysisAuthorityService: AnalysisAuthorityService | null;
+  executionAuthorityRepo: ExecutionAuthorityRepository | null;
+  executionAuthorityService: ExecutionAuthorityService | null;
   lingxingCollectionCoordinator: LingxingCollectionCoordinator | null;
   lingxingCollectionOperations: CollectionOperationGuard | null;
   storeCoordinator: StoreCoordinator | null;
@@ -245,6 +253,8 @@ const state: AppState = {
   missionDomainService: null,
   analysisAuthorityRepo: null,
   analysisAuthorityService: null,
+  executionAuthorityRepo: null,
+  executionAuthorityService: null,
   lingxingCollectionCoordinator: null,
   lingxingCollectionOperations: null,
   storeCoordinator: null,
@@ -255,7 +265,7 @@ const state: AppState = {
   loginSession: null,
 };
 
-const lingxingCollectionLeases = new BrowserLeaseManager();
+const browserOperationLeases = new BrowserLeaseManager();
 const cancelledLingxingCollectionRequests = new Set<string>();
 const mainArtifactRegistry = new MainArtifactRegistry();
 
@@ -659,15 +669,66 @@ async function initApp(): Promise<void> {
         ? artifactAllowedRootsForStore(store, 'diagnostic-file')
         : [];
     },
+    onAutomaticGrantIssued: (context, grant) => {
+      const service = state.executionAuthorityService;
+      if (!service) {
+        console.error('[Execution] policy grant issued before execution authority initialization');
+        return;
+      }
+      void service.enqueuePolicyGrant(context, grant).catch(() => {
+        console.error('[Execution] automatic grant enqueue rejected before safe queue entry');
+      });
+    },
+  });
+  const executionAuthorityRepo = new ExecutionAuthorityRepository(state.db);
+  const executionAuthorityService = new ExecutionAuthorityService({
+    repository: executionAuthorityRepo,
+    missionRepository: missionDomainRepo,
+    analysisRepository: analysisAuthorityRepo,
+    storeCoordinator,
+    leases: browserOperationLeases,
+    resolveBrowserRuntime: (context) => {
+      const runtime = state.browserRuntime;
+      if (!runtime || !state.isLoggedIn
+        || missionControlContextKey(runtime.context) !== missionControlContextKey(context)) {
+        throw new Error('请先为当前店铺启动并登录独立的领星 ERP 与 Amazon Ads 可见浏览器。');
+      }
+      const store = state.storeRepo?.getStore(context.storeId);
+      const controller = runtime.controllers.amazon_ads;
+      const page = controller.getPage();
+      const externalAccountId = runtime.connections.amazon_ads.externalAccountId?.trim();
+      if (!store || store.status !== 'active' || !page || !externalAccountId) {
+        throw new Error('当前店铺的 Amazon Ads 会话或 externalAccountId 尚未就绪。');
+      }
+      return {
+        context: runtime.context,
+        externalAccountId,
+        page,
+        capsule: storeCapsuleFor(store),
+        navigate: (url: string) => controller.navigate(url),
+        bringToFront: () => controller.bringToFront(),
+      };
+    },
+    emitProgress: (event) => {
+      mainWindow?.webContents.send(
+        EXECUTION_AUTHORITY_PROGRESS_CHANNEL,
+        rendererPayload(event),
+      );
+      mainWindow?.webContents.send('business-ui:data-updated');
+    },
   });
   // Publish the authority graph atomically only after every constructor has
   // succeeded. IPC registration later in startup therefore never observes a
-  // half-initialized Mission/Analysis authority.
+  // half-initialized Mission/Analysis/Execution authority.
   state.storeCoordinator = storeCoordinator;
   state.analysisAuthorityRepo = analysisAuthorityRepo;
   state.missionDomainRepo = missionDomainRepo;
   state.missionDomainService = missionDomainService;
   state.analysisAuthorityService = analysisAuthorityService;
+  state.executionAuthorityRepo = executionAuthorityRepo;
+  state.executionAuthorityService = executionAuthorityService;
+  const executionRecovery = executionAuthorityService.recoverStartup();
+  console.log('[App] init:execution-recovery', JSON.stringify(executionRecovery));
   const collectionRecovery = recoverInterruptedLingxingCollectionJobsOnStartup();
   console.log('[App] init:lingxing-collection-recovery', JSON.stringify(collectionRecovery));
   initializeLingxingCollectionCoordinator();
@@ -968,6 +1029,7 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
   if (!initialContext) {
     throw new Error('请先选择一个有效店铺，再启动浏览器登录。');
   }
+  state.executionAuthorityService?.assertStoreMutationAllowed(initialContext);
 
   const password = request.credentialSource === 'saved'
     ? (() => {
@@ -1208,6 +1270,7 @@ async function ensureLingxingAdsSession(controller: BrowserController): Promise<
 
 async function handleBrowserLogout(): Promise<void> {
   const activeContext = state.storeCoordinator?.getActiveStoreContext() ?? null;
+  if (activeContext) state.executionAuthorityService?.assertStoreMutationAllowed(activeContext);
   const pendingControllers = invalidatePendingBrowserLogin();
   const runtime = detachBrowserRuntimeForStore();
   try {
@@ -2826,7 +2889,7 @@ function initializeLingxingCollectionCoordinator(): void {
     throw new Error('店铺级领星采集依赖尚未初始化。');
   }
   const operations = new CollectionOperationGuard({
-    leases: lingxingCollectionLeases,
+    leases: browserOperationLeases,
     assertActiveContext: (context) => state.storeCoordinator!.assertActiveStoreContext(context),
   });
   state.lingxingCollectionOperations = operations;
@@ -9486,10 +9549,14 @@ function registerIpcHandlers(): void {
   if (!state.storeCoordinator) throw new Error('Store coordinator is not initialized');
   if (!state.missionDomainService) throw new Error('Mission domain service is not initialized');
   if (!state.analysisAuthorityService) throw new Error('Analysis authority service is not initialized');
+  if (!state.executionAuthorityService) throw new Error('Execution authority service is not initialized');
   if (!state.productRepo || !state.operationEventRepo) {
     throw new Error('Store-scoped object repositories are not initialized');
   }
   registerStoreIpcHandlers(ipcMain, state.storeCoordinator, {
+    beforeActiveStoreMutation: (context) => {
+      state.executionAuthorityService?.assertStoreMutationAllowed(context);
+    },
     onStoreChanged: (view) => {
       const runtime = state.browserRuntime;
       const staleRuntime = runtime && (
@@ -9507,6 +9574,11 @@ function registerIpcHandlers(): void {
         ]);
       }
       storeCapsuleFor(view.store);
+      try {
+        state.executionAuthorityService?.reconcileActiveStore(view.context);
+      } catch (error) {
+        console.error('[Execution] recovered Mission stop reconciliation failed:', error);
+      }
       state.currentStore = view.store.displayName;
       publishStoreContextChanged(view);
       mainWindow?.webContents.send('business-ui:data-updated');
@@ -9540,11 +9612,13 @@ function registerIpcHandlers(): void {
     createMissionControlLegacyAdapter({
       buildTodayProjection: buildAuthoritativeMissionControlTodayProjection,
       analysisAuthorityReady: Boolean(state.analysisAuthorityService),
+      executionAuthorityReady: Boolean(state.executionAuthorityService),
       missionDomain: state.missionDomainService,
     }),
   );
   registerMissionDomainIpcHandlers(ipcMain, state.missionDomainService);
   registerAnalysisAuthorityIpcHandlers(ipcMain, state.analysisAuthorityService);
+  registerExecutionAuthorityIpcHandlers(ipcMain, state.executionAuthorityService);
   registerStoreScopedObjectsIpcHandlers(
     ipcMain,
     new StoreScopedObjectsService({
@@ -9856,6 +9930,7 @@ app.on('window-all-closed', () => {
 const handleBeforeQuit = createBeforeQuitCoordinator({
   cleanup: async () => {
     stopStoreBusinessDateAuthorityMonitor();
+    await state.executionAuthorityService?.prepareForShutdown();
     const runtime = detachBrowserRuntimeForStore();
     const pendingControllers = invalidatePendingBrowserLogin();
     const scheduler = state.scheduler;

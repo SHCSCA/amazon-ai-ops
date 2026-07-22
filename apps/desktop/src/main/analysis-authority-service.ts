@@ -68,6 +68,10 @@ export interface AnalysisAuthorityServiceOptions {
   currentRuleRevision: () => string;
   currentModelRevision: () => string;
   allowedProofRoots: (context: StoreContextEnvelope) => readonly string[];
+  onAutomaticGrantIssued?: (
+    context: StoreContextEnvelope,
+    grant: MissionGrantRecord,
+  ) => void;
   now?: () => Date;
 }
 
@@ -85,6 +89,7 @@ export class AnalysisAuthorityService {
   private readonly currentRuleRevision: AnalysisAuthorityServiceOptions['currentRuleRevision'];
   private readonly currentModelRevision: AnalysisAuthorityServiceOptions['currentModelRevision'];
   private readonly allowedProofRoots: AnalysisAuthorityServiceOptions['allowedProofRoots'];
+  private readonly onAutomaticGrantIssued?: AnalysisAuthorityServiceOptions['onAutomaticGrantIssued'];
   private readonly now: () => Date;
 
   constructor(options: AnalysisAuthorityServiceOptions) {
@@ -97,6 +102,7 @@ export class AnalysisAuthorityService {
     this.currentRuleRevision = options.currentRuleRevision;
     this.currentModelRevision = options.currentModelRevision;
     this.allowedProofRoots = options.allowedProofRoots;
+    this.onAutomaticGrantIssued = options.onAutomaticGrantIssued;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -227,6 +233,9 @@ export class AnalysisAuthorityService {
         missionId: mission.id,
         proposalIds: proposals.map((proposal) => proposal.id),
       }, 'policy_auto');
+      if (result.automaticAuthorization.authorized && result.automaticAuthorization.grant) {
+        this.onAutomaticGrantIssued?.(context, result.automaticAuthorization.grant);
+      }
     }
     return result;
   }

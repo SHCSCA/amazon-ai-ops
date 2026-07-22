@@ -44,6 +44,8 @@ export interface MissionControlAdapterOptions {
    * root instead of upgrading grant issuance merely because Mission CRUD exists.
    */
   analysisAuthorityReady?: boolean;
+  /** Closed Main execution queue, evidence projection and takeover IPC are registered. */
+  executionAuthorityReady?: boolean;
   missionDomain?: {
     getAutonomyProjection(context: StoreContextEnvelope): {
       mode: MissionControlAutonomyMode;
@@ -201,6 +203,20 @@ export function createMissionControlLegacyAdapter(
             capability.view,
             capability.action,
             '整批授权只接受 Main 封存的同一分析 action batch，并复核 Evidence、Decision、策略与稳定 Ads 实体版本。',
+          );
+        }
+        if (options.executionAuthorityReady && [
+          'execution.queue.view',
+          'execution.queue.start',
+          'execution.queue.takeover',
+          'execution.evidence.view',
+        ].includes(capability.capabilityId)) {
+          return native(
+            capability.capabilityId,
+            capability.workspace,
+            capability.view,
+            capability.action,
+            '真实执行由 Main 从不可变授权重建命令，串行写入并保留 before / after / reload 证据；Renderer 不能提交竞价、Ads ID 或本地路径。',
           );
         }
         const missionDomainDetail = options.missionDomain

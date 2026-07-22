@@ -15,4 +15,5 @@ export * from './sqlite/repositories/ai-diagnosis-run-repo';
 export * from './sqlite/repositories/store-repo';
 export * from './sqlite/repositories/mission-domain-repo';
 export * from './sqlite/repositories/analysis-authority-repo';
+export * from './sqlite/repositories/execution-authority-repo';
 export * from './duckdb/queries/ad-summary';

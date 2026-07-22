@@ -342,7 +342,7 @@ describe('prototype-aligned canonical first screens', () => {
     [{ workspace: 'missions', subview: 'facts' }, 'missions/facts', 'missions', 'Mission 事实链'],
     [{ workspace: 'decisions', subview: 'recommendations' }, 'decisions/recommendations', 'decisions', 'AI 建议'],
     [{ workspace: 'experiments', subview: 'ledger' }, 'experiments/ledger', 'experiments', '实验台账'],
-    [{ workspace: 'execution', subview: 'live' }, 'execution/live', 'execution', 'Authority 未接入'],
+    [{ workspace: 'execution', subview: 'live' }, 'execution/live', 'execution', 'MISSIONGRANT → SERIAL EXECUTION'],
     [{ workspace: 'memory', subview: 'timeline' }, 'memory/timeline', 'memory', 'FACT'],
     [{ workspace: 'policy', subview: 'rules' }, 'policy/rules', 'policy', '自动边界与审批策略'],
   ] as const)('gives %s an explicit, distinct US/USD preview surface', (intent, view, surface, copy) => {
@@ -381,6 +381,11 @@ describe('prototype-aligned canonical first screens', () => {
       expect(markup).toContain('data-capability-state="PROTOTYPE_ONLY"');
       expect(markup).toContain('接入边界');
       expect(markup).not.toContain('data-mutations-disabled="true"');
+    } else if (surface === 'execution') {
+      expect(markup).toContain('仅开发预览');
+      expect(markup).toContain('不调用真实 API、不写入 Ads');
+      expect(markup).toContain('查看接入边界');
+      expect(markup).toContain('data-mutations-disabled="true"');
     } else {
       expect(markup).toContain('仅开发预览示例');
       expect(markup).toContain('data-mutations-disabled="true"');
@@ -390,7 +395,7 @@ describe('prototype-aligned canonical first screens', () => {
     expect(markup).not.toContain('执行成功');
   });
 
-  it('keeps execution writes, takeover and reload visibly disabled in preview', () => {
+  it('keeps real execution disabled while allowing a clearly-labelled in-memory preview flow', () => {
     const markup = renderToStaticMarkup(
       <MissionControlWorkspaceView
         capabilities={[capability('execution/live', 'view', 'PROTOTYPE_ONLY')]}
@@ -400,12 +405,13 @@ describe('prototype-aligned canonical first screens', () => {
         storeContext={context}
       />,
     );
-    for (const label of ['开始可见执行', '人工接管', '紧急停止', '应用 USD 1.08', 'Reload 并验证']) {
-      expect(markup).toMatch(new RegExp(`<button[^>]*disabled=""[^>]*>${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</button>`));
-    }
-    expect(markup).toContain('未知结果');
-    expect(markup).toContain('停止并人工对账');
-    expect(markup).not.toContain('Reload 回读一致');
+    expect(markup).toContain('不调用真实 API、不写入 Ads');
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>从完整 Grant 建队列<\/button>/);
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?开始串行执行<\/button>/);
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?检查 \/ 接管浏览器<\/button>/);
+    expect(markup).toContain('UNKNOWN');
+    expect(markup).toContain('人工对账');
+    expect(markup).not.toContain('执行成功');
   });
 
   it('does not expose preview example facts when the production view is blocked', () => {
@@ -418,7 +424,8 @@ describe('prototype-aligned canonical first screens', () => {
         storeContext={context}
       />,
     );
-    expect(markup).toContain('暂无可授权执行项');
+    expect(markup).toContain('实时执行 Authority 未就绪');
+    expect(markup).toContain('不会回退到预览数据');
     expect(markup).not.toContain('USD 1.20');
     expect(markup).not.toContain('smart lock bedroom');
   });

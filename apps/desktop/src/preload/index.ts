@@ -52,6 +52,7 @@ import type {
 import { createMissionControlPreloadApi } from './mission-control-api';
 import { createMissionDomainPreloadApi } from './mission-domain-api';
 import { createAnalysisAuthorityPreloadApi } from './analysis-authority-api';
+import { createExecutionAuthorityPreloadApi } from './execution-authority-api';
 
 type AuthoritativeLingxingCollectionRange = {
   start: string;
@@ -98,6 +99,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   missionControl: createMissionControlPreloadApi(ipcRenderer),
   missionDomain: createMissionDomainPreloadApi(ipcRenderer),
   analysisAuthority: createAnalysisAuthorityPreloadApi(ipcRenderer),
+  executionAuthority: createExecutionAuthorityPreloadApi(ipcRenderer),
 
   // App
   getVersion: () => ipcRenderer.invoke('app:get-version'),

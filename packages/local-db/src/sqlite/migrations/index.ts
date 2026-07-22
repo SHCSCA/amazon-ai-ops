@@ -71,3 +71,13 @@ export {
   verifyAnalysisAuthoritySchema,
 } from './0007-analysis-authority';
 export type { AnalysisAuthorityMigrationResult } from './0007-analysis-authority';
+export {
+  EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
+  EXECUTION_AUTHORITY_MIGRATION_NAME,
+  EXECUTION_AUTHORITY_MIGRATION_VERSION,
+  EXECUTION_AUTHORITY_TABLES,
+  ExecutionAuthorityMigrationError,
+  runExecutionAuthorityMigration,
+  verifyExecutionAuthoritySchema,
+} from './0008-execution-authority';
+export type { ExecutionAuthorityMigrationResult } from './0008-execution-authority';

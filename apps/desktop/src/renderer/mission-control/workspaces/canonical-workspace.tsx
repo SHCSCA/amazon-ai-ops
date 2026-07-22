@@ -37,6 +37,7 @@ import { DecisionsWorkspace, type DecisionWorkspaceView } from './decisions-work
 import { PolicyWorkspace } from './policy-workspace';
 import { ExperimentsWorkspace } from './experiments-workspace';
 import { MemoryWorkspace } from './memory-workspace';
+import { ExecutionWorkspace } from './execution-workspace';
 import './canonical-workspace-surfaces.css';
 
 type CanonicalWorkspaceKey = CanonicalWorkspaceSurfaceKind;
@@ -360,6 +361,24 @@ export function CanonicalWorkspace({
         />
         {inspector}
       </>
+    );
+  }
+
+  if (kind === 'execution') {
+    return (
+      <div
+        className={`mission-control-workspace-root${previewEnabled ? ' mission-control-workspace-root--preview' : ''}`}
+        data-canonical-view={view}
+        data-workspace={kind}
+      >
+        <ExecutionWorkspace
+          blockedReason={blockedReason}
+          onInspectBoundary={() => setInspectorOpen(true)}
+          previewEnabled={previewEnabled}
+          storeContext={storeContext}
+        />
+        {inspector}
+      </div>
     );
   }
 

@@ -236,6 +236,45 @@ describe('Mission Control legacy adapter', () => {
     expect(setAutonomyMode).toHaveBeenCalledTimes(1);
   });
 
+  it('promotes only implemented execution capabilities when execution authority is ready', async () => {
+    const implementedExecutionCapabilities = [
+      'execution.queue.view',
+      'execution.queue.start',
+      'execution.queue.takeover',
+      'execution.evidence.view',
+    ];
+    const blocked = await createMissionControlLegacyAdapter().query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-execution-blocked',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(blocked.data.capabilities
+      .filter((row) => row.workspace === 'execution' && row.state === 'PRODUCTION_NATIVE'))
+      .toEqual([]);
+
+    const ready = await createMissionControlLegacyAdapter({ executionAuthorityReady: true }).query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-execution-ready',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(ready.data.capabilities
+      .filter((row) => row.workspace === 'execution' && row.state === 'PRODUCTION_NATIVE')
+      .map((row) => row.capabilityId))
+      .toEqual(implementedExecutionCapabilities);
+    expect(ready.data.capabilities
+      .filter((row) => row.workspace === 'execution' && !implementedExecutionCapabilities.includes(row.capabilityId))
+      .every((row) => row.state === 'BLOCKED'))
+      .toBe(true);
+  });
+
   it('keeps policy auto unavailable when the durable kill switch is active', async () => {
     const adapter = createMissionControlLegacyAdapter({
       missionDomain: {

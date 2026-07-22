@@ -77,6 +77,11 @@ export class BrowserController {
     await this.getPageOrThrow().waitForTimeout(ms);
   }
 
+  /** Bring the headed, store-bound browser page forward for explicit operator takeover. */
+  async bringToFront(): Promise<void> {
+    await this.getPageOrThrow().bringToFront();
+  }
+
   async click(selector: string): Promise<void> {
     await this.getPageOrThrow().click(selector);
   }

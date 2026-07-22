@@ -16,7 +16,10 @@ import {
   type PolicyVersionRules,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
-import { AnalysisAuthorityService } from './analysis-authority-service';
+import {
+  AnalysisAuthorityService,
+  type AnalysisAuthorityServiceOptions,
+} from './analysis-authority-service';
 
 const NOW = '2026-07-22T12:00:00.000Z';
 const RULE_REVISION = 'a'.repeat(64);
@@ -58,6 +61,7 @@ function createHarness(options: {
   cooldownMinutes?: number;
   executionWindow?: PolicyVersionRules['executionWindow'];
   mutateMissionDuringGeneration?: boolean;
+  onAutomaticGrantIssued?: AnalysisAuthorityServiceOptions['onAutomaticGrantIssued'];
 } = {}): Harness {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-analysis-service-'));
   tempDirs.push(directory);
@@ -207,6 +211,7 @@ function createHarness(options: {
     currentRuleRevision: () => ruleRevision.value,
     currentModelRevision: () => 'gpt-5.6:ad_strategy_diagnosis_v1',
     allowedProofRoots: () => [options.proofAllowed === false ? deniedProofRoot : directory],
+    onAutomaticGrantIssued: options.onAutomaticGrantIssued,
     now: () => new Date(NOW),
     generateRecommendations: async (scope) => {
       expect(scope).toMatchObject({
@@ -547,6 +552,36 @@ describe('AnalysisAuthorityService', () => {
     expect(authorized.grant?.id).toBe(result.automaticAuthorization?.grant?.id);
     const decision = harness.missionRepository.getDecision(harness.context, authorized.decisionIds[0]);
     expect(decision?.status).toBe('approved');
+  });
+
+  it('notifies execution exactly once for a policy-auto grant and never for manual authorization', async () => {
+    const onAutomaticGrantIssued = vi.fn();
+    const automaticHarness = createHarness({
+      autonomyMode: 'policy_auto',
+      onAutomaticGrantIssued,
+    });
+
+    const automatic = await runRequest(automaticHarness);
+    expect(onAutomaticGrantIssued).toHaveBeenCalledTimes(1);
+    expect(onAutomaticGrantIssued).toHaveBeenCalledWith(
+      automaticHarness.context,
+      automatic.automaticAuthorization?.grant,
+    );
+    automaticHarness.service.authorizeProposalBatch({
+      context: automaticHarness.context,
+      missionId: automaticHarness.missionId,
+      proposalIds: automatic.proposals.map((proposal) => proposal.id),
+    });
+    expect(onAutomaticGrantIssued).toHaveBeenCalledTimes(1);
+
+    const manualHarness = createHarness({ onAutomaticGrantIssued });
+    const manual = await runRequest(manualHarness);
+    manualHarness.service.authorizeProposalBatch({
+      context: manualHarness.context,
+      missionId: manualHarness.missionId,
+      proposalIds: manual.proposals.map((proposal) => proposal.id),
+    });
+    expect(onAutomaticGrantIssued).toHaveBeenCalledTimes(1);
   });
 
   it('never downgrades an automatic authorization attempt into a human grant when mode changes', async () => {

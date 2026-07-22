@@ -58,7 +58,7 @@ describe('Mission domain migration v6', () => {
         sql: expect.stringMatching(/UNIQUE\s*\(store_id,\s*mission_id,\s*action_revision\)/i),
       }));
       expect(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get())
-        .toEqual({ count: 7 });
+        .toEqual({ count: 8 });
       expect(database.pragma('foreign_key_check')).toEqual([]);
     } finally {
       database.close();
