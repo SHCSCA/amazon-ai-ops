@@ -61,7 +61,7 @@ function emptyPipeline(scope: OperationScope, reason: string): BusinessDataPipel
       availableBatches: [],
       reportOptions: DEFAULT_BUSINESS_REPORT_OPTIONS,
       realReportFiles: [],
-      evidencePaths: [],
+      evidenceArtifacts: [],
       fileAudit: {
         totalFileRecords: 0,
         downloadedFileRecords: 0,

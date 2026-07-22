@@ -880,7 +880,7 @@ describe('decision safety summaries', () => {
     expect(decisionEligibilitySummary(pending, {
       scope: { storeName: 'FT-US-US', marketplaceCode: 'US' },
       currentBatchId: pending.evidence?.batchId,
-      allowedSourceFiles: pipeline.collection.realReportFiles.map((file: { filePath: string }) => file.filePath),
+      allowedSourceFiles: pipeline.collection.realReportFiles.map((file: { artifactDisplayName: string }) => file.artifactDisplayName),
       stale: false,
     })).toMatchObject({
       label: '先核验 Ads 对象',

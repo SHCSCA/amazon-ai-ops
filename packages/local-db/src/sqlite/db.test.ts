@@ -91,7 +91,7 @@ describe('initSqlite v1.5 schema', () => {
       const productId = productRepo.insert({
         marketplace_code: 'US',
         store_name: 'FT-US-US',
-        asin: 'B001',
+        asin: 'B0DBTEST01',
         parent_asin: '',
         msku: 'MSKU-1',
         sku: 'SKU-1',
@@ -114,7 +114,7 @@ describe('initSqlite v1.5 schema', () => {
 
       expect(products).toEqual([
         expect.objectContaining({
-          asin: 'B001',
+          asin: 'B0DBTEST01',
           cost: expect.objectContaining({
             currentPrice: 39.99,
             purchaseCost: 12.5,
@@ -131,13 +131,13 @@ describe('initSqlite v1.5 schema', () => {
     try {
       const productRepo = new ProductRepository(db);
       const productId = productRepo.insert({
-        marketplace_code: 'US', store_name: 'FT-US-US', asin: 'B001', parent_asin: '', msku: '', sku: '',
+        marketplace_code: 'US', store_name: 'FT-US-US', asin: 'B0DBTEST01', parent_asin: '', msku: '', sku: '',
         title: 'Atomic batch product', product_stage: 'scaling', status: 'active',
       });
       productRepo.updateCost(productId, { productId, targetAcos: 0.25 });
 
       expect(() => productRepo.updateTargetAcosMany([
-        { asin: 'B001', storeName: 'FT-US-US', marketplaceCode: 'US', targetAcos: 0.35 },
+        { asin: 'B0DBTEST01', storeName: 'FT-US-US', marketplaceCode: 'US', targetAcos: 0.35 },
         { asin: 'MISSING', storeName: 'FT-US-US', marketplaceCode: 'US', targetAcos: 0.35 },
       ])).toThrow('MISSING');
       expect(productRepo.getCost(productId)?.targetAcos).toBe(0.25);
@@ -287,7 +287,7 @@ describe('initSqlite v1.5 schema', () => {
     }
   });
 
-  it('deduplicates legacy ad_daily_metrics rows and enforces unique daily report identity', () => {
+  it('preserves conflicting legacy ad metrics in quarantine and blocks silent reauthorization', () => {
     const dbPath = tempDbPath();
     const legacyDb = new Database(dbPath);
     try {
@@ -339,24 +339,49 @@ describe('initSqlite v1.5 schema', () => {
     const upgradedDb = initSqlite(dbPath);
     try {
       const row = upgradedDb.prepare(`
-        SELECT COUNT(*) AS rowCount, SUM(cost) AS totalCost, SUM(clicks) AS totalClicks
+        SELECT COUNT(*) AS rowCount,
+               SUM(cost) AS totalCost,
+               SUM(clicks) AS totalClicks,
+               SUM(store_authority_quarantined) AS quarantinedCount
         FROM ad_daily_metrics
         WHERE batch_id = 'batch_1'
           AND source_file = 'C:/reports/user-search-term.xlsx'
-      `).get() as { rowCount: number; totalCost: number; totalClicks: number };
-      expect(row).toEqual({ rowCount: 1, totalCost: 42.25, totalClicks: 33 });
+      `).get() as {
+        rowCount: number;
+        totalCost: number;
+        totalClicks: number;
+        quarantinedCount: number;
+      };
+      expect(row).toEqual({
+        rowCount: 2,
+        totalCost: 83.75,
+        totalClicks: 65,
+        quarantinedCount: 2,
+      });
+      expect(upgradedDb.prepare(`
+        SELECT reason, COUNT(*) AS count
+        FROM store_migration_quarantine
+        WHERE source_table = 'ad_daily_metrics' AND status = 'pending'
+        GROUP BY reason
+      `).all()).toEqual([{ reason: 'identity_content_conflict', count: 2 }]);
+      const { storeId } = upgradedDb.prepare(`
+        SELECT store_id AS storeId
+        FROM ad_daily_metrics
+        WHERE batch_id = 'batch_1'
+        LIMIT 1
+      `).get() as { storeId: string };
 
       expect(() => upgradedDb.prepare(`
         INSERT INTO ad_daily_metrics (
-          batch_id, report_type, date, store_name, marketplace_code, asin, msku,
+          store_id, batch_id, report_type, date, store_name, marketplace_code, asin, msku,
           campaign_name, ad_group_name, targeting, search_term, match_type,
           impressions, clicks, cost, orders, sales, acos, cpc, cvr, source_file
         ) VALUES (
-          'batch_1', 'user_search_term', '2026-06-12', 'FT-US-US', 'US', 'B001', '',
+          ?, 'batch_1', 'user_search_term', '2026-06-12', 'FT-US-US', 'US', 'B001', '',
           'Campaign', 'Ad group', '', 'smart lock outdoor', 'exact',
           1000, 34, 43.00, 0, 0, 0, 1.26, 0, 'C:/reports/user-search-term.xlsx'
         )
-      `).run()).toThrow(/UNIQUE|constraint/i);
+      `).run(storeId)).toThrow(/pending ad metric identity conflict/i);
     } finally {
       upgradedDb.close();
     }
@@ -399,11 +424,11 @@ describe('initSqlite v1.5 schema', () => {
       `);
       legacyDb.prepare(`
         INSERT INTO products (marketplace_code, store_name, asin, parent_asin, msku, sku, title, product_stage, status)
-        VALUES ('US', 'FT-US-US', 'B001', 'OLD-PARENT', 'OLD-MSKU', 'OLD-SKU', 'Old product', 'launch', 'active')
+        VALUES ('US', 'FT-US-US', 'B0DBTEST01', 'B0PARENT01', 'OLD-MSKU', 'OLD-SKU', 'Old product', 'launch', 'active')
       `).run();
       legacyDb.prepare(`
         INSERT INTO products (marketplace_code, store_name, asin, parent_asin, msku, sku, title, product_stage, status)
-        VALUES ('US', 'FT-US-US', 'B001', 'KEEP-PARENT', 'KEEP-MSKU', 'KEEP-SKU', 'Keep product', 'scaling', 'active')
+        VALUES ('US', 'FT-US-US', 'B0DBTEST01', 'B0PARENT02', 'KEEP-MSKU', 'KEEP-SKU', 'Keep product', 'scaling', 'active')
       `).run();
       legacyDb.prepare(`
         INSERT INTO product_costs (product_id, purchase_cost, target_acos)
@@ -423,31 +448,31 @@ describe('initSqlite v1.5 schema', () => {
       const products = upgradedDb.prepare(`
         SELECT asin, parent_asin AS parentAsin, title, product_stage AS productStage
         FROM products
-        WHERE asin = 'B001' AND store_name = 'FT-US-US' AND marketplace_code = 'US'
+        WHERE asin = 'B0DBTEST01' AND store_name = 'FT-US-US' AND marketplace_code = 'US'
       `).all() as Array<{ asin: string; parentAsin: string; title: string; productStage: string }>;
 
       expect(products).toEqual([
         {
-          asin: 'B001',
-          parentAsin: 'KEEP-PARENT',
+          asin: 'B0DBTEST01',
+          parentAsin: 'B0PARENT02',
           title: 'Keep product',
           productStage: 'scaling',
         },
       ]);
 
       productRepo.upsert({
-        asin: 'B001',
+        asin: 'B0DBTEST01',
         store_name: 'FT-US-US',
         marketplace_code: 'US',
-        parent_asin: 'NEW-PARENT',
+        parent_asin: 'B0PARENT03',
         msku: 'NEW-MSKU',
         sku: 'NEW-SKU',
         title: 'Updated product',
         product_stage: 'harvest',
         status: 'paused',
       });
-      const updated = productRepo.findByAsin('B001', 'FT-US-US', 'US');
-      expect(updated?.parent_asin).toBe('NEW-PARENT');
+      const updated = productRepo.findByAsin('B0DBTEST01', 'FT-US-US', 'US');
+      expect(updated?.parent_asin).toBe('B0PARENT03');
       expect(updated?.product_stage).toBe('harvest');
       expect(updated?.status).toBe('paused');
 
@@ -476,7 +501,7 @@ describe('initSqlite v1.5 schema', () => {
       const withCosts = productRepo.findAllWithCosts('FT-US-US');
       expect(withCosts).toEqual([
         expect.objectContaining({
-          asin: 'B001',
+          asin: 'B0DBTEST01',
           title: 'Updated product',
           cost: expect.objectContaining({
             purchaseCost: 13.5,

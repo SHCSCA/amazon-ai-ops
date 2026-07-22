@@ -35,7 +35,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/operation-scope-page.tsx',
-    markers: ['operation-scope-confirm-panel', '范围字段确认', 'operation-scope-field-card', '后续读取与影响页面', 'openScopeEditor'],
+    markers: ['operation-scope-confirm-panel', '范围字段确认', 'operation-scope-field-card', '后续读取与影响页面', 'operation-scope-editor-panel', 'saveOperationScope(storeContext'],
   },
   {
     pageFile: 'pages/data-collection-page.tsx',

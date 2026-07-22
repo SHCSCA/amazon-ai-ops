@@ -11,11 +11,12 @@ export function getLatestDownloadCenterDiagnosticRowForModel(
   model: DownloadCenterPageModel,
   dateStart: string,
   dateEnd: string,
-  scope: { storeName?: string; marketplaceCode?: string } = {},
+  scope: { storeId: string; storeName?: string; marketplaceCode?: string },
 ): unknown {
   return db.prepare(`
     SELECT * FROM download_center_diagnostics
-    WHERE page_model = ?
+    WHERE store_id = ?
+      AND page_model = ?
       AND page_model_snapshot_json = ?
       AND date_start = ?
       AND date_end = ?
@@ -23,5 +24,5 @@ export function getLatestDownloadCenterDiagnosticRowForModel(
       AND COALESCE(marketplace_code, '') = COALESCE(?, '')
     ORDER BY checked_at DESC, id DESC
     LIMIT 1
-  `).get(model.name, JSON.stringify(model), dateStart, dateEnd, scope.storeName ?? '', scope.marketplaceCode ?? '');
+  `).get(scope.storeId, model.name, JSON.stringify(model), dateStart, dateEnd, scope.storeName ?? '', scope.marketplaceCode ?? '');
 }

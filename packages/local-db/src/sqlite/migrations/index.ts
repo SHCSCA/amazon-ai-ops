@@ -11,3 +11,43 @@ export {
   restoreStoreMigrationBackupTo,
   runStoreAuthorityMigrations,
 } from './0001-store-authority';
+export {
+  REPORT_IMPORT_AUTHORITY_MIGRATION_CHECKSUM,
+  REPORT_IMPORT_AUTHORITY_MIGRATION_NAME,
+  REPORT_IMPORT_AUTHORITY_MIGRATION_VERSION,
+  REPORT_IMPORT_AUTHORITY_TABLES,
+  REPORT_IMPORT_PROGRESS_TABLES,
+  ReportImportAuthorityMigrationError,
+  runReportImportAuthorityMigration,
+  verifyReportImportAuthoritySchema,
+} from './0002-report-import-authority';
+export type { ReportImportAuthorityMigrationResult } from './0002-report-import-authority';
+export {
+  PRODUCT_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+  PRODUCT_STORE_AUTHORITY_MIGRATION_NAME,
+  PRODUCT_STORE_AUTHORITY_MIGRATION_VERSION,
+  ProductStoreAuthorityMigrationError,
+  runProductStoreAuthorityMigration,
+  verifyProductStoreAuthoritySchema,
+} from './0003-product-store-authority';
+export type { ProductStoreAuthorityMigrationResult } from './0003-product-store-authority';
+export {
+  LISTING_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+  LISTING_STORE_AUTHORITY_MIGRATION_NAME,
+  LISTING_STORE_AUTHORITY_MIGRATION_VERSION,
+  LISTING_STORE_UNIQUE_INDEX,
+  ListingStoreAuthorityMigrationError,
+  runListingStoreAuthorityMigration,
+  verifyListingStoreAuthoritySchema,
+} from './0004-listing-store-authority';
+export type { ListingStoreAuthorityMigrationResult } from './0004-listing-store-authority';
+export {
+  OPERATION_EVENT_ARCHIVE_INDEX,
+  OPERATION_EVENT_ARCHIVE_MIGRATION_CHECKSUM,
+  OPERATION_EVENT_ARCHIVE_MIGRATION_NAME,
+  OPERATION_EVENT_ARCHIVE_MIGRATION_VERSION,
+  OperationEventArchiveMigrationError,
+  runOperationEventArchiveMigration,
+  verifyOperationEventArchiveSchema,
+} from './0005-operation-event-archive';
+export type { OperationEventArchiveMigrationResult } from './0005-operation-event-archive';

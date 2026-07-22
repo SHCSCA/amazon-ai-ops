@@ -3,34 +3,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { normalizeFieldName, mapRowFields } from './field-mapper';
 import { validateBatch, cleanNumericFields } from './validators';
-import type { AdDailyMetrics } from '@amazon-ai-ops/shared-types';
+import type { AdDailyMetrics, LingxingReportType } from '@amazon-ai-ops/shared-types';
 import type { ValidationResult } from './validators';
 
 export interface ParseOptions {
   skipHeaderRows?: number;  // 跳过前几行表头，默认 0
   requiredFields?: string[]; // 额外必填字段
   dateFormat?: string;      // 日期格式，默认 'YYYY-MM-DD'
-  reportType?: string;      // 调用方已知报表类型，优先于文件名推断
-}
-
-function inferReportType(sourceFile: string): string | undefined {
-  const baseName = path.basename(sourceFile).toLowerCase();
-  const candidates = [
-    'advertised_product',
-    'product_targeting',
-    'auto_targeting',
-    'user_search_term',
-    'search_term',
-    'ad_group',
-    'placement',
-    'campaign',
-    'keyword',
-  ];
-  return candidates.find((candidate) => baseName.includes(candidate));
+  reportType?: string;      // 调用方声明类型；必须与内容列语义一致
 }
 
 export interface ParseResult {
   success: boolean;
+  /** Headers match the minimum advertising-report contract, even when there are zero data rows. */
+  schemaValid: boolean;
   data: AdDailyMetrics[];
   validation: ValidationResult;
   sourceFile: string;
@@ -76,6 +62,14 @@ export class ReportParser {
    */
   private parseSheet(worksheet: XLSX.WorkSheet, sourceFile: string, options: ParseOptions): ParseResult {
     const skipRows = options.skipHeaderRows ?? 0;
+    const rawRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+      header: 1,
+      defval: '',
+      blankrows: false,
+    });
+    const rawHeaders = (rawRows[0] ?? [])
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean);
     
     // 转换为 JSON
     const jsonData = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, {
@@ -83,14 +77,18 @@ export class ReportParser {
     });
 
     if (jsonData.length === 0) {
+      const reportType = resolveSemanticReportType(rawHeaders, options.reportType);
+      const schemaValid = isAdvertisingReportSchema(rawHeaders, options.requiredFields)
+        && reportType !== undefined;
       return {
-        success: false,
+        success: schemaValid,
+        schemaValid,
         data: [],
         validation: { valid: true, errors: [], validCount: 0, invalidCount: 0 },
         sourceFile,
         parsedAt: new Date().toISOString(),
         totalRows: 0,
-        headers: [],
+        headers: rawHeaders,
       };
     }
 
@@ -99,28 +97,35 @@ export class ReportParser {
     
     // 获取表头
     const headers = Object.keys(dataRows[0] || {});
+    const reportType = resolveSemanticReportType(headers, options.reportType);
+    const schemaValid = isAdvertisingReportSchema(headers, options.requiredFields)
+      && reportType !== undefined;
 
     // 字段名标准化
-    const normalizedRows = dataRows.map(row => {
-      const mapped = mapRowFields(row);
-      return cleanNumericFields(mapped);
-    });
+    const mappedRows = dataRows.map(row => mapRowFields(row));
 
     // 数据校验
-    const validation = validateBatch(normalizedRows);
+    const validation = validateBatch(mappedRows);
+    const invalidRows = new Set(validation.errors.map((error) => error.row));
+    const normalizedRows = mappedRows.map(row => cleanNumericFields(row));
 
     // 转换为 AdDailyMetrics
     const metrics: AdDailyMetrics[] = normalizedRows.map((row, index) => {
-      return this.mapToAdMetrics(row, sourceFile, options, index + skipRows + 2);
-    }).filter(m => m.date && (m.asin || m.campaignName || m.adGroupName || m.targeting || m.searchTerm)); // 过滤无效行
+      return this.mapToAdMetrics(row, sourceFile, reportType, index + skipRows + 2);
+    }).filter((m, index) => (
+      !invalidRows.has(index)
+      && m.date
+      && (m.asin || m.campaignName || m.adGroupName || m.targeting || m.searchTerm)
+    )); // 无效行绝不进入导入候选；Main 仍会对整文件 validation fail closed。
 
     return {
-      success: validation.validCount > 0,
-      data: metrics,
+      success: schemaValid && validation.valid && metrics.length > 0,
+      schemaValid,
+      data: schemaValid ? metrics : [],
       validation,
       sourceFile,
       parsedAt: new Date().toISOString(),
-      totalRows: metrics.length,
+      totalRows: dataRows.length,
       headers,
     };
   }
@@ -128,7 +133,12 @@ export class ReportParser {
   /**
    * 将行数据映射为 AdDailyMetrics
    */
-  private mapToAdMetrics(row: Record<string, any>, sourceFile: string, options: ParseOptions, sourceRow: number): AdDailyMetrics {
+  private mapToAdMetrics(
+    row: Record<string, any>,
+    sourceFile: string,
+    reportType: LingxingReportType | undefined,
+    sourceRow: number,
+  ): AdDailyMetrics {
     // 尝试从多个可能的字段名中取值
     const getValue = (field: string): any => {
       const lowerField = field.toLowerCase();
@@ -151,8 +161,6 @@ export class ReportParser {
     const acos = sales > 0 ? cost / sales : 0;
     const cpc = clicks > 0 ? cost / clicks : 0;
     const cvr = clicks > 0 ? orders / clicks : 0;
-    const reportType = options.reportType || inferReportType(sourceFile);
-
     return {
       date,
       storeName: String(getValue('storeName') || getValue('店铺') || 'unknown'),
@@ -226,4 +234,73 @@ export class ReportParser {
         throw new Error(`Unsupported file format: ${ext}`);
     }
   }
+}
+
+function isAdvertisingReportSchema(
+  headers: readonly string[],
+  extraRequiredFields: readonly string[] | undefined,
+): boolean {
+  const canonical = new Set(headers.map((header) => normalizeFieldName(header)));
+  const required = ['date', ...(extraRequiredFields ?? []).map((field) => normalizeFieldName(field))];
+  const hasIdentity = ['asin', 'campaignName', 'adGroupName', 'targeting', 'searchTerm']
+    .some((field) => canonical.has(field));
+  const hasMetric = ['impressions', 'clicks', 'cost', 'orders', 'sales']
+    .some((field) => canonical.has(field));
+  return required.every((field) => canonical.has(field)) && hasIdentity && hasMetric;
+}
+
+const REPORT_COLUMN_ALIASES = {
+  campaign: ['广告活动', '广告活动名称', 'campaign', 'campaignname'],
+  adGroup: ['广告组', '广告组名称', 'adgroup', 'adgroupname'],
+  placement: ['广告位', '广告位名称', '投放位置', 'placement', 'placementname'],
+  advertisedProduct: [
+    '推广的商品', '推广商品', '广告商品', '广告asin', '推广asin',
+    'advertisedproduct', 'advertisedasin', 'advertisedsku', 'asin',
+  ],
+  autoTargeting: [
+    '自动投放', '自动定向', '自动投放类型', '自动投放组',
+    'autotargeting', 'autotarget', 'autotargetinggroup',
+  ],
+  keyword: ['关键词', '投放关键词', 'keyword', 'keywordtext'],
+  productTargeting: [
+    '商品投放', '商品定位', 'asin投放', '投放表达式',
+    'producttargeting', 'targetingexpression',
+  ],
+  searchTerm: [
+    '用户搜索词', '客户搜索词', '搜索词',
+    'searchterm', 'customersearchterm', 'searchquery',
+  ],
+} as const;
+
+function normalizeReportHeader(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_\-()/（）【】[\]{}:：,，.。]+/g, '');
+}
+
+function headerSetHas(headers: ReadonlySet<string>, aliases: readonly string[]): boolean {
+  return aliases.some((alias) => headers.has(normalizeReportHeader(alias)));
+}
+
+function inferSemanticReportType(headers: readonly string[]): LingxingReportType | undefined {
+  const normalized = new Set(headers.map(normalizeReportHeader).filter(Boolean));
+  if (headerSetHas(normalized, REPORT_COLUMN_ALIASES.searchTerm)) return 'user_search_term';
+  if (headerSetHas(normalized, REPORT_COLUMN_ALIASES.placement)) return 'placement';
+  if (headerSetHas(normalized, REPORT_COLUMN_ALIASES.autoTargeting)) return 'auto_targeting';
+  if (headerSetHas(normalized, REPORT_COLUMN_ALIASES.productTargeting)) return 'product_targeting';
+  if (headerSetHas(normalized, REPORT_COLUMN_ALIASES.keyword)) return 'keyword';
+  if (headerSetHas(normalized, REPORT_COLUMN_ALIASES.advertisedProduct)) return 'advertised_product';
+  if (headerSetHas(normalized, REPORT_COLUMN_ALIASES.adGroup)) return 'ad_group';
+  if (headerSetHas(normalized, REPORT_COLUMN_ALIASES.campaign)) return 'campaign';
+  return undefined;
+}
+
+function resolveSemanticReportType(
+  headers: readonly string[],
+  declaredReportType: string | undefined,
+): LingxingReportType | undefined {
+  const inferred = inferSemanticReportType(headers);
+  if (!declaredReportType) return inferred;
+  return inferred === declaredReportType ? inferred : undefined;
 }

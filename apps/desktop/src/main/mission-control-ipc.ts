@@ -44,6 +44,19 @@ export function registerMissionControlIpcHandlers(
       data: {
         capabilities: body.data.capabilities.map((capability) => ({ ...capability })),
         autonomy: { ...body.data.autonomy },
+        today: {
+          ...body.data.today,
+          facts: {
+            ...body.data.today.facts,
+            ...(body.data.today.facts.latestCollectionJob ? {
+              latestCollectionJob: { ...body.data.today.facts.latestCollectionJob },
+            } : {}),
+          },
+          readiness: body.data.today.readiness.map((item) => ({ ...item })),
+          blockers: [...body.data.today.blockers],
+          attentionItems: [...body.data.today.attentionItems],
+          nextAction: { ...body.data.today.nextAction },
+        },
       },
     };
   });

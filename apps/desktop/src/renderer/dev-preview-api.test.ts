@@ -126,7 +126,7 @@ async function bindPreviewPendingTarget(api: any, pending: any) {
       writableTarget: {
         entityType: 'keyword',
         entityId: 'amzn-keyword-preview-1001',
-        sourceFile: 'D:/preview/reports/keyword.xlsx',
+        sourceFile: 'keyword.xlsx',
         sourceRow: pending.evidence.sourceRow,
         identitySource: 'ads_ui',
         identityProofPath: 'D:/preview/evidence/keyword-1001.png',
@@ -237,11 +237,13 @@ describe('preview scenario contract', () => {
     for (const id of EXPECTED_SCENARIOS) {
       const scenario = PREVIEW_SCENARIOS![id];
       const api = createBrowserPreviewElectronApi!('SHC001', id);
-      const [scope, pipeline, batchOptions, recommendations, evidenceStatus, delivery] = await Promise.all([
-        api.getOperationScope(),
+      const [store] = await api.listStores();
+      const view = await api.switchStore(store.storeId);
+      const scope = await api.getOperationScope(view.context);
+      const [pipeline, batchOptions, recommendations, evidenceStatus, delivery] = await Promise.all([
         api.getBusinessUiDataPipeline(),
         api.getBusinessBatchOptions(),
-        getPreviewRecommendations(api),
+        getPreviewRecommendations(api, scope || { storeName: store.displayName }),
         api.getDeliveryEvidenceStatus(),
         api.getDeliveryReadiness(),
       ]);
@@ -251,7 +253,10 @@ describe('preview scenario contract', () => {
       expect(pipeline.collection.status === 'ready').toBe(scenario.reportsCollected);
       expect(pipeline.quant.hasImportedMetrics).toBe(scenario.reportsImported);
       expect(pipeline.quant.diagnostics.length > 0).toBe(scenario.diagnosisReady);
-      expect(recommendations.length > 0).toBe(['mixed', 'approved'].includes(scenario.recommendationState));
+      expect(
+        recommendations.length > 0,
+        `scenario ${id} recommendation projection must match ${scenario.recommendationState}`,
+      ).toBe(['mixed', 'approved'].includes(scenario.recommendationState));
       expect(recommendations.every((recommendation: { revision?: unknown }) => (
         Number.isInteger(recommendation.revision) && Number(recommendation.revision) >= 0
       ))).toBe(true);
@@ -300,16 +305,18 @@ describe('preview scenario contract', () => {
     }
   });
 
-  it('ships a 100-plus-row diagnosis-ready fixture for real scroll-owner validation', async () => {
+  it('ships native object rows plus a 100-row diagnosis surface for scroll-owner validation', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const [store] = await api.listStores();
+    const view = await api.switchStore(store.storeId);
     const [pipeline, products, events] = await Promise.all([
       api.getBusinessUiDataPipeline(),
-      api.getProducts(),
-      api.listOperationEvents(),
+      api.listStoreProducts(view.context),
+      api.listStoreOperationEvents(view.context),
     ]);
 
-    expect(products.length).toBeGreaterThanOrEqual(100);
-    expect(events.length).toBeGreaterThanOrEqual(100);
+    expect(products.length).toBeGreaterThan(0);
+    expect(events.length).toBeGreaterThan(0);
     expect(pipeline.quant.diagnostics.length).toBeGreaterThanOrEqual(100);
   });
 
@@ -342,14 +349,16 @@ describe('preview scenario contract', () => {
     }
   });
 
-  it('does not leak imported metrics, history, or keyword opportunities into pre-diagnosis scenarios', async () => {
+  it('does not leak imported metrics, history, or canonical keyword facts into pre-diagnosis scenarios', async () => {
     const createApi = previewExports().createBrowserPreviewElectronApi!;
 
     for (const id of ['missing-scope', 'missing-reports', 'pending-import'] as const) {
       const api = createApi('SHC001', id);
-      const [pipeline, keywordOpportunities] = await Promise.all([
+      const [store] = await api.listStores();
+      const context = (await api.switchStore(store.storeId)).context;
+      const [pipeline, keywordFacts] = await Promise.all([
         api.getBusinessUiDataPipeline(),
-        api.getBusinessKeywordOpportunities(),
+        api.listStoreKeywordFacts(context, { limit: 20 }),
       ]);
 
       expect(pipeline.quant).toMatchObject({
@@ -365,7 +374,7 @@ describe('preview scenario contract', () => {
         wastedSpend: 0,
       });
       expect(pipeline.productHistory.ledgers).toEqual([]);
-      expect(keywordOpportunities).toEqual([]);
+      expect(keywordFacts).toEqual([]);
     }
   });
 
@@ -408,8 +417,22 @@ describe('preview scenario contract', () => {
       api.getBusinessUiDataPipeline(),
     ]);
     const currentSourceFiles = new Set(
-      pipeline.collection.realReportFiles.map((file: { filePath: string }) => file.filePath.toLowerCase()),
+      pipeline.collection.realReportFiles.map((file: { artifactDisplayName: string }) => file.artifactDisplayName.toLowerCase()),
     );
+    const collectionPayload = JSON.stringify(pipeline.collection);
+    expect(collectionPayload).not.toMatch(/filePath|folderPath|downloadDir|manifestPath|evidencePaths/);
+    expect(pipeline.collection.evidenceArtifacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        artifactId: expect.stringMatching(/^artifact:v1:/),
+        displayName: expect.any(String),
+        kind: 'folder',
+      }),
+    ]));
+    expect(pipeline.collection.realReportFiles.every((file: any) => (
+      /^artifact:v1:/.test(file.artifactId)
+      && /^artifact:v1:/.test(file.sourceArtifactId)
+      && !/[\\/]/.test(file.artifactDisplayName)
+    ))).toBe(true);
     const legalActionTypes = new Set([
       'lower_bid',
       'raise_bid',
@@ -474,6 +497,23 @@ describe('preview scenario contract', () => {
       expect(recommendation).not.toHaveProperty('suggestedValue');
       expect(recommendation).not.toHaveProperty('evidenceRefs');
     }
+  });
+
+  it('opens only registered report artifacts under the current store authority', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const [firstStore, secondStore] = await api.listStores();
+    const firstView = await api.switchStore(firstStore.storeId);
+    const pipeline = await api.getBusinessUiDataPipeline();
+    const artifactId = pipeline.collection.realReportFiles[0].artifactId;
+
+    await expect(api.openReportArtifact(artifactId, firstView.context)).resolves.toMatchObject({
+      opened: true,
+      artifactId,
+      previewOnly: true,
+    });
+    const secondView = await api.switchStore(secondStore.storeId);
+    await expect(api.openReportArtifact(artifactId, firstView.context)).rejects.toThrow(/STORE_CONTEXT_MISMATCH|权威|上下文|失效/);
+    await expect(api.openReportArtifact('artifact:v1:unknown', secondView.context)).rejects.toThrow(/不存在|失效/);
   });
 
   it('builds approved preview history through a valid binding, revision, and decision snapshot', async () => {
@@ -544,7 +584,7 @@ describe('preview scenario contract', () => {
         writableTarget: {
           entityType: 'keyword',
           entityId: 'amzn-keyword-preview-conflict',
-          sourceFile: 'D:/preview/reports/keyword.xlsx',
+          sourceFile: 'keyword.xlsx',
           sourceRow: needsReview.evidence.sourceRow,
           identitySource: 'ads_ui',
           identityProofPath: 'D:/preview/evidence/conflict-keyword.png',
@@ -776,7 +816,7 @@ describe('preview scenario contract', () => {
         writableTarget: {
           entityType: 'keyword',
           entityId: 'amzn-keyword-preview-2002',
-          sourceFile: 'D:/preview/reports/keyword.xlsx',
+          sourceFile: 'keyword.xlsx',
           sourceRow: needsReview.evidence.sourceRow,
           identitySource: 'ads_ui',
           identityProofPath: 'D:/preview/evidence/keyword-identity.png',
@@ -1141,18 +1181,377 @@ describe('Mission Control development preview bridge', () => {
     expect(serialized).not.toMatch(/[A-Za-z]:[\\/]/);
   });
 
-  it('keeps legacy preview facts isolated when the authoritative store changes', async () => {
+  it('marks every store-scoped object preview capability as prototype-only', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const [store] = await api.listStores();
+    const view = await api.switchStore(store.storeId);
+    const response = await api.missionControl.query({
+      query: 'workspace-bootstrap', requestId: 'preview-object-capabilities', contextEpoch: 1, context: view.context,
+    });
+    const expected = [
+      'today.events.view',
+      'today.events.create',
+      'today.events.update',
+      'today.events.archive',
+      'today.events.restore',
+      'objects.products.view',
+      'objects.products.create',
+      'objects.products.update',
+      'objects.products.archive',
+      'objects.events.view',
+      'objects.events.create',
+      'objects.events.update',
+      'objects.events.delete',
+      'objects.targets.view',
+      'objects.keywords.view',
+      'objects.listing.view',
+      'objects.listing.create',
+      'objects.listing.update',
+      'objects.listing.delete',
+    ];
+    const capabilities = new Map(
+      response.data.capabilities.map((capability: any) => [capability.capabilityId, capability]),
+    );
+
+    expect(api.storeScopedObjectsPreviewOnly).toBe(true);
+    expect(api.storeScopedAdListingPreviewOnly).toBe(true);
+    for (const capabilityId of expected) {
+      expect(capabilities.get(capabilityId)).toEqual(expect.objectContaining({
+        capabilityId,
+        blockerCode: 'DEV_PREVIEW_ONLY',
+        state: 'PROTOTYPE_ONLY',
+      }));
+    }
+  });
+
+  it('keeps versioned product CRUD isolated by the complete active StoreContext', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const stores = await api.listStores();
+    const firstView = await api.switchStore(stores[0].storeId);
+    const first = await api.createStoreProduct(firstView.context, {
+      asin: 'B0PREVIEW9',
+      title: 'First preview store product',
+      marketplace: 'US',
+      currency: 'USD',
+      cost: { currentPrice: 39.99, purchaseCost: 8.5, targetAcos: 0.3 },
+    });
+
+    expect(first).toEqual(expect.objectContaining({
+      storeId: stores[0].storeId,
+      store_name: stores[0].displayName,
+      marketplace_code: 'US',
+      asin: 'B0PREVIEW9',
+      title: 'First preview store product',
+      status: 'active',
+      revision: expect.stringMatching(/^product-v1:[a-f0-9]{64}$/),
+      cost: expect.objectContaining({ currentPrice: 39.99, purchaseCost: 8.5, targetAcos: 0.3 }),
+    }));
+
+    const secondView = await api.switchStore(stores[1].storeId);
+    const second = await api.createStoreProduct(secondView.context, {
+      asin: 'B0PREVIEW9',
+      title: 'Second preview store product',
+    });
+    expect(second).toEqual(expect.objectContaining({
+      storeId: stores[1].storeId,
+      asin: 'B0PREVIEW9',
+      title: 'Second preview store product',
+    }));
+    expect(second.id).not.toBe(first.id);
+    expect(await api.listStoreProducts(secondView.context)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: second.id, storeId: stores[1].storeId }),
+    ]));
+    expect((await api.listStoreProducts(secondView.context)).some((row: any) => row.id === first.id)).toBe(false);
+    await expect(api.listStoreProducts(firstView.context)).rejects.toThrow('PREVIEW_MISSION_CONTROL_STORE_CONTEXT_MISMATCH');
+
+    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    const current = (await api.listStoreProducts(refreshedFirst.context, { includeArchived: true }))
+      .find((row: any) => row.id === first.id);
+    const updated = await api.updateStoreProduct(refreshedFirst.context, {
+      id: current.id,
+      expectedRevision: current.revision,
+      patch: { title: 'First product updated', marketplace: 'US', currency: 'USD' },
+      cost: { currentPrice: 42.5 },
+    });
+    expect(updated).toEqual(expect.objectContaining({
+      id: first.id,
+      title: 'First product updated',
+      cost: expect.objectContaining({ currentPrice: 42.5, purchaseCost: 8.5 }),
+    }));
+    expect(updated.revision).not.toBe(current.revision);
+    await expect(api.updateStoreProduct(refreshedFirst.context, {
+      id: first.id,
+      expectedRevision: current.revision,
+      patch: { title: 'Stale overwrite' },
+    })).rejects.toThrow(/revision|版本|冲突/i);
+
+    const archived = await api.archiveStoreProduct(refreshedFirst.context, {
+      id: first.id,
+      expectedRevision: updated.revision,
+    });
+    expect(archived.status).toBe('archived');
+    expect((await api.listStoreProducts(refreshedFirst.context)).some((row: any) => row.id === first.id)).toBe(false);
+    expect(await api.getStoreProduct(refreshedFirst.context, { id: first.id })).toEqual(
+      expect.objectContaining({ id: first.id, status: 'archived' }),
+    );
+  });
+
+  it('supports store-owned operation-event CRUD with revision CAS', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const stores = await api.listStores();
+    const firstView = await api.switchStore(stores[0].storeId);
+    const created = await api.createStoreOperationEvent(firstView.context, {
+      eventDate: firstView.context.businessDate,
+      eventType: 'coupon',
+      title: 'Preview coupon launched',
+      asin: 'B0EVENT001',
+      impactExpectation: 'conversion_up',
+      notes: 'Track this store only.',
+      marketplace: 'US',
+      currency: 'USD',
+    });
+    expect(created).toEqual(expect.objectContaining({
+      storeId: stores[0].storeId,
+      storeName: stores[0].displayName,
+      marketplaceCode: 'US',
+      eventDate: firstView.context.businessDate,
+      title: 'Preview coupon launched',
+      archiveRevision: 0,
+      revision: expect.stringMatching(/^operation-event-v1:[a-f0-9]{64}$/),
+    }));
+
+    const updated = await api.updateStoreOperationEvent(firstView.context, {
+      id: created.id,
+      expectedRevision: created.revision,
+      patch: { title: 'Preview coupon reviewed', notes: 'Keep observing ACOS.' },
+    });
+    expect(updated.title).toBe('Preview coupon reviewed');
+    expect(updated.revision).not.toBe(created.revision);
+    await expect(api.deleteStoreOperationEvent(firstView.context, {
+      id: created.id,
+      expectedRevision: created.revision,
+    })).rejects.toThrow(/revision|版本|冲突/i);
+    expect(await api.listStoreOperationEvents(firstView.context, {
+      asin: 'b0event001', dateFrom: '2026-07-01', dateTo: '2026-07-31', limit: 20,
+    })).toEqual([expect.objectContaining({ id: created.id, title: 'Preview coupon reviewed' })]);
+
+    const secondView = await api.switchStore(stores[1].storeId);
+    expect((await api.listStoreOperationEvents(secondView.context, { limit: 200 }))
+      .some((row: any) => row.id === created.id)).toBe(false);
+    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    const archived = await api.deleteStoreOperationEvent(refreshedFirst.context, {
+      id: updated.id,
+      expectedRevision: updated.revision,
+    });
+    expect(archived).toEqual(expect.objectContaining({
+      id: updated.id,
+      archivedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      archiveRevision: 1,
+      revision: expect.stringMatching(/^operation-event-v1:[a-f0-9]{64}$/),
+    }));
+    expect(archived.revision).not.toBe(updated.revision);
+    expect((await api.listStoreOperationEvents(refreshedFirst.context, { limit: 200 }))
+      .some((row: any) => row.id === updated.id)).toBe(false);
+    expect(await api.listStoreOperationEvents(refreshedFirst.context, {
+      includeArchived: true,
+      limit: 200,
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: updated.id, archiveRevision: 1 }),
+    ]));
+    await expect(api.listStoreOperationEvents(refreshedFirst.context, {
+      includeArchived: 'yes',
+    })).rejects.toThrow(/includeArchived/);
+    await expect(api.updateStoreOperationEvent(refreshedFirst.context, {
+      id: updated.id,
+      expectedRevision: archived.revision,
+      patch: { title: 'Archived overwrite' },
+    })).rejects.toThrow(/归档|只读|恢复/);
+    await expect(api.updateStoreOperationEvent(refreshedFirst.context, {
+      id: updated.id,
+      expectedRevision: archived.revision,
+      patch: { archived: false, title: 'Restore and overwrite' },
+    })).rejects.toThrow(/拆分|恢复/);
+    const restored = await api.updateStoreOperationEvent(refreshedFirst.context, {
+      id: updated.id,
+      expectedRevision: archived.revision,
+      patch: { archived: false },
+    });
+    expect(restored).toEqual(expect.objectContaining({
+      id: updated.id,
+      archiveRevision: 2,
+      title: 'Preview coupon reviewed',
+    }));
+    expect(restored.archivedAt).toBeUndefined();
+    expect(restored.revision).not.toBe(archived.revision);
+    expect((await api.listStoreOperationEvents(refreshedFirst.context, { limit: 200 }))
+      .some((row: any) => row.id === updated.id)).toBe(true);
+  });
+
+  it('projects store-isolated US/USD advertising objects and keyword facts', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const stores = await api.listStores();
+    const firstView = await api.switchStore(stores[0].storeId);
+    const firstByKind = await Promise.all(
+      ['campaign', 'ad_group', 'target', 'search_term'].map((kind) => (
+        api.listStoreAdObjects(firstView.context, { kind, limit: 20 })
+      )),
+    );
+    expect(firstByKind.every((rows) => rows.length > 0)).toBe(true);
+    expect(firstByKind.flat().every((row: any) => (
+      row.storeId === stores[0].storeId && row.marketplace === 'US' && row.currency === 'USD'
+    ))).toBe(true);
+    const firstTarget = firstByKind[2][0];
+    expect(await api.listStoreAdObjects(firstView.context, {
+      kind: 'target', asin: firstTarget.asin, query: firstTarget.name, limit: 5,
+    })).toEqual([expect.objectContaining({ objectKey: firstTarget.objectKey })]);
+
+    const firstKeywords = await api.listStoreKeywordFacts(firstView.context, { limit: 20 });
+    expect(firstKeywords.length).toBeGreaterThan(0);
+    expect(firstKeywords.every((row: any) => (
+      row.storeId === stores[0].storeId && row.marketplace === 'US' && row.currency === 'USD'
+    ))).toBe(true);
+    expect(await api.listStoreKeywordFacts(firstView.context, {
+      asin: firstKeywords[0].asin, query: firstKeywords[0].keyword, limit: 5,
+    })).toEqual([expect.objectContaining({ keyword: firstKeywords[0].keyword })]);
+
+    const secondView = await api.switchStore(stores[1].storeId);
+    const secondTargets = await api.listStoreAdObjects(secondView.context, { kind: 'target', limit: 20 });
+    const secondKeywords = await api.listStoreKeywordFacts(secondView.context, { limit: 20 });
+    expect(secondTargets.every((row: any) => row.storeId === stores[1].storeId)).toBe(true);
+    expect(secondKeywords.every((row: any) => row.storeId === stores[1].storeId)).toBe(true);
+    expect(JSON.stringify({ secondTargets, secondKeywords })).not.toContain(firstTarget.asin);
+    expect(JSON.stringify({ secondTargets, secondKeywords })).not.toContain(String(stores[0].storeId));
+  });
+
+  it('keeps Listing CRUD and durable versions isolated with revision CAS', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const stores = await api.listStores();
+    const firstView = await api.switchStore(stores[0].storeId);
+    const first = await api.createStoreListingContent(firstView.context, {
+      asin: 'B0LISTP009',
+      title: 'First store preview Listing',
+      bullets: ['First bullet', 'Second bullet'],
+      description: 'Store-owned description',
+      backendTerms: 'preview listing',
+      source: 'manual',
+      versionLabel: 'v1',
+      changeSummary: 'Created in DEV preview',
+      marketplace: 'US',
+      currency: 'USD',
+    });
+    expect(first).toEqual(expect.objectContaining({
+      storeId: stores[0].storeId,
+      storeName: stores[0].displayName,
+      marketplace: 'US',
+      currency: 'USD',
+      asin: 'B0LISTP009',
+      title: 'First store preview Listing',
+      bullets: ['First bullet', 'Second bullet'],
+      revision: expect.stringMatching(/^listing-content-v1:[a-f0-9]{64}$/),
+    }));
+    expect(await api.getStoreListingContent(firstView.context, { asin: 'b0listp009' }))
+      .toEqual(expect.objectContaining({ id: first.id, storeId: stores[0].storeId }));
+    expect(await api.listStoreListingContentVersions(firstView.context, {
+      listingContentId: first.id, limit: 20,
+    })).toEqual([expect.objectContaining({
+      listingContentId: first.id,
+      storeId: stores[0].storeId,
+      asin: 'B0LISTP009',
+      title: 'First store preview Listing',
+    })]);
+
+    const secondView = await api.switchStore(stores[1].storeId);
+    const second = await api.createStoreListingContent(secondView.context, {
+      asin: 'B0LISTP009', title: 'Second store preview Listing',
+    });
+    expect(second.storeId).toBe(stores[1].storeId);
+    expect(second.id).not.toBe(first.id);
+    expect((await api.listStoreListingContent(secondView.context, { limit: 250 }))
+      .some((row: any) => row.id === first.id)).toBe(false);
+
+    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    const current = await api.getStoreListingContent(refreshedFirst.context, { id: first.id });
+    const updated = await api.updateStoreListingContent(refreshedFirst.context, {
+      id: current.id,
+      expectedRevision: current.revision,
+      patch: {
+        title: 'First store Listing updated',
+        bullets: ['Updated bullet'],
+        versionLabel: 'v2',
+        changeSummary: 'Reviewed in DEV preview',
+        marketplace: 'US',
+        currency: 'USD',
+      },
+    });
+    expect(updated.title).toBe('First store Listing updated');
+    expect(updated.revision).not.toBe(current.revision);
+    await expect(api.updateStoreListingContent(refreshedFirst.context, {
+      id: first.id,
+      expectedRevision: current.revision,
+      patch: { title: 'Stale Listing overwrite' },
+    })).rejects.toThrow(/revision|版本|冲突/i);
+    expect(await api.listStoreListingContentVersions(refreshedFirst.context, {
+      listingContentId: first.id, limit: 20,
+    })).toHaveLength(2);
+
+    expect(await api.deleteStoreListingContent(refreshedFirst.context, {
+      id: first.id,
+      expectedRevision: updated.revision,
+    })).toEqual({ id: first.id, deleted: true });
+    expect((await api.listStoreListingContent(refreshedFirst.context, { limit: 250 }))
+      .some((row: any) => row.id === first.id)).toBe(false);
+    expect(await api.listStoreListingContentVersions(refreshedFirst.context, {
+      listingContentId: first.id, limit: 20,
+    })).toHaveLength(2);
+    const deletedHistoryInStoreLedger = await api.listStoreListingContentVersions(
+      refreshedFirst.context,
+      { limit: 100, offset: 0 },
+    );
+    expect(deletedHistoryInStoreLedger.filter((row: any) => row.listingContentId === first.id))
+      .toHaveLength(2);
+    expect(deletedHistoryInStoreLedger.every((row: any) => row.storeId === stores[0].storeId))
+      .toBe(true);
+    const [ledgerPageOne, ledgerPageTwo] = await Promise.all([
+      api.listStoreListingContentVersions(refreshedFirst.context, { limit: 1, offset: 0 }),
+      api.listStoreListingContentVersions(refreshedFirst.context, { limit: 1, offset: 1 }),
+    ]);
+    expect(ledgerPageOne).toHaveLength(1);
+    expect(ledgerPageTwo).toHaveLength(1);
+    expect(ledgerPageTwo[0].id).not.toBe(ledgerPageOne[0].id);
+  });
+
+  it('exposes a clearly marked empty collection-job bridge without inventing production records', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const [store] = await api.listStores();
+    const view = await api.switchStore(store.storeId);
+
+    expect(api.lingxingCollectionJobsPreviewOnly).toBe(true);
+    expect(await api.listLingxingCollectionJobs({ storeContext: view.context, limit: 12 })).toEqual([]);
+    await expect(api.resumeLingxingCollection({
+      storeContext: view.context,
+      jobId: 'preview-job-does-not-exist',
+      requestId: 'lx:preview-resume',
+    })).rejects.toThrow('开发预览没有可恢复的真实领星任务');
+    await expect(api.cancelLingxingCollection({
+      storeContext: view.context,
+      jobId: 'preview-job-does-not-exist',
+      requestId: 'lx:preview-cancel',
+    })).rejects.toThrow('开发预览没有可取消的真实领星任务');
+    expect(api.onLingxingCollectionProgress(() => undefined)()).toBeUndefined();
+  });
+
+  it('keeps canonical preview facts isolated when the authoritative store changes', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const stores = await api.listStores();
 
-    await api.switchStore(stores[0].storeId);
-    const firstScope = await api.getOperationScope();
-    const firstProducts = await api.getProducts();
+    const firstView = await api.switchStore(stores[0].storeId);
+    const firstScope = await api.getOperationScope(firstView.context);
+    const firstProducts = await api.listStoreProducts(firstView.context);
     const firstPipeline = await api.getBusinessUiDataPipeline();
 
-    await api.switchStore(stores[1].storeId);
-    const secondScope = await api.getOperationScope();
-    const secondProducts = await api.getProducts();
+    const secondView = await api.switchStore(stores[1].storeId);
+    const secondScope = await api.getOperationScope(secondView.context);
+    const secondProducts = await api.listStoreProducts(secondView.context);
     const secondPipeline = await api.getBusinessUiDataPipeline();
 
     expect(firstScope).toEqual(expect.objectContaining({ storeName: 'SHC001-US', currency: 'USD' }));
@@ -1161,15 +1560,15 @@ describe('Mission Control development preview bridge', () => {
     expect(secondScope.asin).not.toBe(firstScope.asin);
     expect(secondScope.batchId).not.toBe(firstScope.batchId);
     expect(secondProducts[0].asin).not.toBe(firstProducts[0].asin);
-    expect(secondProducts.every((product: any) => product.store_name === secondScope.storeName)).toBe(true);
+    expect(secondProducts.every((product: any) => product.store_name === stores[1].displayName)).toBe(true);
     expect(firstPipeline.scope.storeName).toBe(firstScope.storeName);
     expect(secondPipeline.scope.storeName).toBe(secondScope.storeName);
     expect(JSON.stringify(secondPipeline)).not.toContain(firstScope.storeName);
     expect(JSON.stringify(secondPipeline)).not.toContain('D:/preview/shc002/shc002/');
 
-    await api.switchStore(stores[0].storeId);
-    expect(await api.getOperationScope()).toEqual(firstScope);
-    expect((await api.getProducts())[0].asin).toBe(firstProducts[0].asin);
+    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    expect(await api.getOperationScope(refreshedFirst.context)).toEqual(firstScope);
+    expect((await api.listStoreProducts(refreshedFirst.context))[0].asin).toBe(firstProducts[0].asin);
   });
 
   it('binds all 16 legacy preview pages to their exact route projection without opening production', async () => {

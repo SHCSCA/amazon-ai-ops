@@ -123,13 +123,24 @@ describe('operation scope task state', () => {
     ]);
   });
 
-  it('keeps range editing in the global scope editor instead of rendering a duplicate page form', () => {
+  it('renders a store-authorized inline editor so the page CRUD action is reachable', () => {
     const source = readFileSync(new URL('./operation-scope-page.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('buildDataReadinessLedger({');
-    expect(source).toContain('const canQuantify = dataLedger.canEnterDiagnosis;');
-    expect(source).toContain("window.dispatchEvent(new CustomEvent('amazon-ai-ops:open-scope-editor'))");
-    expect(source).toContain("{ label: '编辑范围', onClick: openScopeEditor");
+    expect(source).toContain('dataLedger.canEnterDiagnosis');
+    expect(source).toContain('lineageReadiness.canEnterDiagnosis');
+    expect(source).toContain('listLingxingCollectionJobs({');
+    expect(source).toContain('buildProductionCollectionLineageReadiness({');
+    expect(source).toContain('其他批次不参与放行');
+    expect(source).toContain("label: editing ? '收起编辑' : '编辑范围'");
+    expect(source).toContain('className="operation-scope-editor-panel"');
+    expect(source).toContain('title="编辑当前店铺范围"');
+    expect(source).toContain('<FormTable>');
+    expect(source).toContain('aria-label="运营范围开始日期"');
+    expect(source).toContain('aria-label="运营范围结束日期"');
+    expect(source).toContain('aria-label="运营范围 ASIN"');
+    expect(source).toContain('aria-label="当前锁定店铺站点币种"');
+    expect(source).toContain('void confirmScope(draft)');
     expect(source).toContain('title="范围字段确认"');
     expect(source).toContain('className="operation-scope-field-card"');
     expect(source).toContain('后续读取与影响页面');
@@ -143,16 +154,17 @@ describe('operation scope task state', () => {
     expect(source).not.toContain('Panel title="范围确认与下一步"');
     expect(source).not.toContain('Panel title="当前范围摘要"');
     expect(source).not.toContain('Panel title="范围设置"');
-    expect(source).not.toContain('<FormTable>');
-    expect(source).toContain('api.saveOperationScope(normalizedDraft)');
+    expect(source).toContain('api.saveOperationScope(storeContext, normalizedDraft)');
+    expect(source).not.toContain("amazon-ai-ops:open-scope-editor");
   });
 
-  it('uses one shared task banner instead of a second PageHeader primary action', () => {
+  it('uses one shared task banner while keeping the editor save action local to its form', () => {
     const source = readFileSync(new URL('./operation-scope-page.tsx', import.meta.url), 'utf8');
     const header = source.slice(source.indexOf('<PageHeader'), source.indexOf('/>', source.indexOf('<PageHeader')) + 2);
 
     expect(source.match(/<TaskBanner/g)).toHaveLength(1);
     expect(header).not.toContain('primaryAction=');
-    expect(source).not.toContain('className="primary-button"');
+    expect(source.match(/className="primary-button"/g)).toHaveLength(1);
+    expect(source).toContain('aria-label="范围编辑动作"');
   });
 });

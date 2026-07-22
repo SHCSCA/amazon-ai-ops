@@ -4,6 +4,7 @@ import type {
   MissionControlAutonomyProjection,
   MissionControlCapabilityProjection,
   MissionControlCommandResponse,
+  MissionControlTodayProjection,
 } from '@amazon-ai-ops/shared-types';
 import { useMissionControlStoreContext } from '../store-context';
 import { getMissionControlWindowApi } from './window-api';
@@ -17,6 +18,7 @@ export type MissionControlBridgePhase = 'idle' | 'loading' | 'ready' | 'error';
 export interface MissionControlBridgeState {
   capabilities: MissionControlCapabilityProjection[];
   autonomy: MissionControlAutonomyProjection | null;
+  today: MissionControlTodayProjection | null;
   phase: MissionControlBridgePhase;
   error: string | null;
   refreshBootstrap(): Promise<void>;
@@ -29,8 +31,10 @@ export function useMissionControlBridge(): MissionControlBridgeState {
   const store = useMissionControlStoreContext();
   const [capabilities, setCapabilities] = useState<MissionControlCapabilityProjection[]>([]);
   const [autonomy, setAutonomy] = useState<MissionControlAutonomyProjection | null>(null);
+  const [today, setToday] = useState<MissionControlTodayProjection | null>(null);
   const [phase, setPhase] = useState<MissionControlBridgePhase>('idle');
   const [error, setError] = useState<string | null>(null);
+  const latestBootstrapSequenceRef = useRef(0);
   const currentRef = useRef({
     contextEpoch: store.contextEpoch,
     context: store.authoritativeContext,
@@ -41,10 +45,13 @@ export function useMissionControlBridge(): MissionControlBridgeState {
   };
 
   const refreshBootstrap = useCallback(async () => {
+    const bootstrapSequence = latestBootstrapSequenceRef.current + 1;
+    latestBootstrapSequenceRef.current = bootstrapSequence;
     const context = currentRef.current.context;
     if (!context) {
       setCapabilities([]);
       setAutonomy(null);
+      setToday(null);
       setPhase('idle');
       setError(null);
       return;
@@ -61,14 +68,22 @@ export function useMissionControlBridge(): MissionControlBridgeState {
         contextEpoch,
         context,
       });
-      if (!isMissionControlResponseCurrent(response, capture, currentRef.current)) return;
+      if (
+        bootstrapSequence !== latestBootstrapSequenceRef.current
+        || !isMissionControlResponseCurrent(response, capture, currentRef.current)
+      ) return;
       setCapabilities(response.data.capabilities);
       setAutonomy(response.data.autonomy);
+      setToday(response.data.today);
       setPhase('ready');
     } catch (caught) {
-      if (currentRef.current.contextEpoch !== contextEpoch) return;
+      if (
+        bootstrapSequence !== latestBootstrapSequenceRef.current
+        || currentRef.current.contextEpoch !== contextEpoch
+      ) return;
       setCapabilities([]);
       setAutonomy(null);
+      setToday(null);
       setPhase('error');
       setError(errorMessage(caught));
     }
@@ -77,10 +92,17 @@ export function useMissionControlBridge(): MissionControlBridgeState {
   useEffect(() => {
     setCapabilities([]);
     setAutonomy(null);
+    setToday(null);
     setError(null);
     setPhase(store.authoritativeContext ? 'loading' : 'idle');
     void refreshBootstrap();
   }, [store.authorityKey, store.contextEpoch, refreshBootstrap]);
+
+  useEffect(() => {
+    const refresh = () => { void refreshBootstrap(); };
+    window.addEventListener('business-ui:data-updated', refresh);
+    return () => window.removeEventListener('business-ui:data-updated', refresh);
+  }, [refreshBootstrap]);
 
   const setAutonomyMode = useCallback(async (
     mode: MissionControlAutonomyMode,
@@ -119,7 +141,7 @@ export function useMissionControlBridge(): MissionControlBridgeState {
     }
   }, []);
 
-  return { capabilities, autonomy, phase, error, refreshBootstrap, setAutonomyMode };
+  return { capabilities, autonomy, today, phase, error, refreshBootstrap, setAutonomyMode };
 }
 
 function nextRequestId(kind: string): string {

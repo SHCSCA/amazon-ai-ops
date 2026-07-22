@@ -55,11 +55,11 @@ describe('page header copy contract', () => {
   });
 
   it('lets the product workspace shell own the single page heading', () => {
-    const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const workspaceSource = readFileSync(new URL('mission-control/workspaces/objects-workspace.tsx', import.meta.url), 'utf8');
     const pageSource = readFileSync(new URL('pages/product-management-page.tsx', import.meta.url), 'utf8');
 
-    expect(appSource).toContain("ownsPageHeading={navigation.subview === 'products'}");
-    expect(appSource).toContain('workspaceLabel="产品工作台"');
+    expect(workspaceSource).toContain('<PageFrame');
+    expect(workspaceSource).toContain("title={activeSubview === 'products' ? '店铺与广告对象' : surface.title}");
     expect(pageSource).not.toContain('<PageHeader');
     expect(pageSource).not.toContain('PAGE_HEADER_TITLES');
   });

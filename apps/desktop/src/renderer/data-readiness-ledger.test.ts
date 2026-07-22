@@ -145,6 +145,50 @@ describe('buildDataReadinessLedger', () => {
     expect(ledger.nextStep).toBe('diagnose');
   });
 
+  it('treats a receipt-backed zero-row report as imported instead of looping back to import', () => {
+    const ledger = buildDataReadinessLedger({
+      requiredReportCount: 8,
+      reportOptions: Array.from({ length: 8 }, (_, index) => ({
+        type: `report_${index}`,
+        label: `报表 ${index + 1}`,
+        status: 'imported',
+        realFileAvailable: true,
+        importedRows: index === 7 ? 0 : index + 1,
+      })),
+      realReportFileCount: 8,
+      importedRowCount: 28,
+      rejectedEvidenceFileCount: 0,
+    });
+
+    expect(ledger.status).toBe('ready');
+    expect(ledger.canEnterDiagnosis).toBe(true);
+    expect(ledger.nextStep).toBe('diagnose');
+    expect(ledger.stages.find((stage) => stage.key === 'imported')).toMatchObject({
+      status: 'complete',
+      value: '8/8 类 · 28 行',
+    });
+  });
+
+  it('accepts a fully receipt-backed zero-row date range as a verified business zero state', () => {
+    const ledger = buildDataReadinessLedger({
+      requiredReportCount: 8,
+      reportOptions: Array.from({ length: 8 }, (_, index) => ({
+        type: `report_${index}`,
+        label: `报表 ${index + 1}`,
+        status: 'imported',
+        realFileAvailable: true,
+        importedRows: 0,
+      })),
+      realReportFileCount: 8,
+      importedRowCount: 0,
+      rejectedEvidenceFileCount: 0,
+    });
+
+    expect(ledger.status).toBe('ready');
+    expect(ledger.nextStep).toBe('diagnose');
+    expect(ledger.stages.find((stage) => stage.key === 'imported')?.detail).toContain('0 行业务零状态');
+  });
+
   it('tells the operator to import when real files exist but DB rows are missing', () => {
     const ledger = buildDataReadinessLedger({
       requiredReportCount: 8,

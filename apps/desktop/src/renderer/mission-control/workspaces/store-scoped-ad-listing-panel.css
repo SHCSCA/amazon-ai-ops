@@ -1,0 +1,364 @@
+.mission-control-workspace-root .store-scoped-ad-listing-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .store-fact-authority {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #f7fbff;
+  padding: 6px 10px;
+  color: #315b93;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mission-control-workspace-root .store-fact-authority strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.mission-control-workspace-root .store-fact-authority span {
+  margin-left: auto;
+  color: #166534;
+  font-weight: 720;
+}
+
+.mission-control-workspace-root .store-fact-feedback {
+  border: 1px solid;
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mission-control-workspace-root .store-fact-feedback--error {
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #b42318;
+}
+
+.mission-control-workspace-root .store-fact-feedback--success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.mission-control-workspace-root .store-fact-filter {
+  display: grid;
+  grid-template-columns: auto minmax(112px, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-height: 32px;
+  border: 1px solid #dbe4ef;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 3px 5px 3px 8px;
+}
+
+.mission-control-workspace-root .store-fact-filter > span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .store-fact-filter input,
+.mission-control-workspace-root .store-fact-filter select {
+  min-width: 0;
+  height: 26px;
+  border: 0;
+  background: #fff;
+  padding: 0 7px;
+  color: #172033;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.mission-control-workspace-root .store-fact-filter:focus-within {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 2px rgb(59 130 246 / 10%);
+}
+
+.mission-control-workspace-root .store-fact-primary,
+.mission-control-workspace-root .store-fact-metric,
+.mission-control-workspace-root .store-fact-opportunity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .store-fact-primary strong,
+.mission-control-workspace-root .store-fact-metric strong,
+.mission-control-workspace-root .store-fact-opportunity strong {
+  overflow: hidden;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 730;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .store-fact-primary small,
+.mission-control-workspace-root .store-fact-metric small,
+.mission-control-workspace-root .store-fact-opportunity small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .store-fact-opportunity strong {
+  color: #475569;
+}
+
+.mission-control-workspace-root .store-fact-opportunity--high strong {
+  color: #b42318;
+}
+
+.mission-control-workspace-root .store-fact-opportunity--medium strong {
+  color: #b45309;
+}
+
+.mission-control-workspace-root .store-fact-opportunity--low strong {
+  color: #166534;
+}
+
+.mission-control-workspace-root .store-fact-row-actions {
+  display: inline-flex;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.mission-control-workspace-root .store-fact-row-actions .workspace-button {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.mission-control-workspace-root .store-fact-dialog-backdrop {
+  position: fixed;
+  z-index: 220;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(15 23 42 / 42%);
+  padding: 24px;
+}
+
+.mission-control-workspace-root .store-fact-dialog {
+  display: grid;
+  width: min(860px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgb(15 23 42 / 24%);
+  overflow: hidden;
+}
+
+.mission-control-workspace-root .store-fact-dialog--confirm {
+  width: min(520px, calc(100vw - 48px));
+}
+
+.mission-control-workspace-root .store-fact-dialog > header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 15px 18px;
+}
+
+.mission-control-workspace-root .store-fact-dialog > header > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .store-fact-dialog > header span {
+  color: #315b93;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 15px;
+}
+
+.mission-control-workspace-root .store-fact-dialog h2,
+.mission-control-workspace-root .store-fact-dialog p {
+  margin: 0;
+}
+
+.mission-control-workspace-root .store-fact-dialog h2 {
+  color: #172033;
+  font-size: 17px;
+  line-height: 25px;
+}
+
+.mission-control-workspace-root .store-fact-dialog p {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mission-control-workspace-root .store-fact-dialog > header > button {
+  display: inline-grid;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  place-items: center;
+  border: 1px solid #dbe4ef;
+  border-radius: 7px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+}
+
+.mission-control-workspace-root .store-listing-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  overflow: auto;
+  padding: 15px 18px;
+}
+
+.mission-control-workspace-root .store-listing-form > label {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+}
+
+.mission-control-workspace-root .store-listing-form > label > span {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 16px;
+}
+
+.mission-control-workspace-root .store-listing-form input,
+.mission-control-workspace-root .store-listing-form select,
+.mission-control-workspace-root .store-listing-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  padding: 7px 9px;
+  color: #172033;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  outline: none;
+  resize: vertical;
+}
+
+.mission-control-workspace-root .store-listing-form input,
+.mission-control-workspace-root .store-listing-form select {
+  height: 34px;
+}
+
+.mission-control-workspace-root .store-listing-form input:focus,
+.mission-control-workspace-root .store-listing-form select:focus,
+.mission-control-workspace-root .store-listing-form textarea:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgb(59 130 246 / 10%);
+}
+
+.mission-control-workspace-root .store-listing-form__wide {
+  grid-column: 1 / -1;
+}
+
+.mission-control-workspace-root .store-listing-version-layout {
+  min-height: 360px;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.35fr);
+  align-items: start;
+}
+
+.mission-control-workspace-root .store-listing-version-list,
+.mission-control-workspace-root .store-listing-version-snapshot {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .store-listing-version-list {
+  max-height: 480px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.mission-control-workspace-root .store-listing-version-list > .workspace-button {
+  justify-content: flex-start;
+  min-width: 0;
+  height: auto;
+  min-height: 48px;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.mission-control-workspace-root .store-listing-version-snapshot {
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.mission-control-workspace-root .store-listing-version-snapshot .store-fact-primary {
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 8px;
+}
+
+.mission-control-workspace-root .store-listing-version-snapshot .store-fact-primary:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.mission-control-workspace-root .store-listing-ledger-meta {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.mission-control-workspace-root .store-fact-dialog > footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 11px 18px;
+}
+
+@media (max-width: 1040px) {
+  .mission-control-workspace-root .store-fact-filter {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .mission-control-workspace-root .store-listing-form {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-control-workspace-root .store-listing-version-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-control-workspace-root .store-listing-form__wide {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-control-workspace-root .store-fact-dialog-backdrop {
+    scroll-behavior: auto;
+  }
+}

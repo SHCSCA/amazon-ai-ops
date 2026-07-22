@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { missionControlContextKey, type StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
-import type { AppRoute, DeliveryReadinessView } from './types';
+import type { AppRoute, DeliveryReadinessView, OperationScope } from './types';
 import type {
   BrowserLoginCredentialPersistence,
   BrowserLoginRequest,
@@ -692,6 +692,7 @@ function MissionControlRuntime({
   );
   const contentRef = useRef<HTMLElement | null>(null);
   const navigationTimerRef = useRef<number | null>(null);
+  const operationScopeLoadSequenceRef = useRef(0);
 
   const requestNavigate = useCallback((target: AppRoute | NavigationIntent) => {
     const intent = normalizeNavigationTarget(target);
@@ -730,15 +731,28 @@ function MissionControlRuntime({
 
   useEffect(() => {
     if (!store.authoritativeContext || !store.activeStore) return;
+    const context = store.authoritativeContext;
+    const storeName = store.activeStore.displayName;
+    const authorityKey = missionControlContextKey(context);
+    const requestSequence = ++operationScopeLoadSequenceRef.current;
     setDeliveryReadiness(null);
     setWorkflowEvidence(deriveWorkflowEvidence({}));
-    setScope({
-      storeName: store.activeStore.displayName,
-      marketplaceCode: store.authoritativeContext.marketplace,
-      currency: store.authoritativeContext.currency,
-      asin: undefined,
-      batchId: undefined,
-    });
+    setScope(defaultOperationScopeForAuthority(context, storeName));
+    const api = (window as any).electronAPI;
+    void api?.getOperationScope?.(context)
+      .then((savedScope: unknown) => {
+        if (
+          requestSequence !== operationScopeLoadSequenceRef.current
+          || store.authorityKey !== authorityKey
+        ) return;
+        if (operationScopeBelongsToAuthority(savedScope, context, storeName)) {
+          setScope(savedScope);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      operationScopeLoadSequenceRef.current += 1;
+    };
   }, [setScope, store.authorityKey]);
 
   useEffect(() => {
@@ -873,6 +887,9 @@ function MissionControlRuntime({
       <div key={store.authorityKey} data-authority-key={store.authorityKey}>
         <MissionControlWorkspaceView
           autonomy={missionControl.autonomy}
+          today={missionControl.today}
+          bridgeError={missionControl.error}
+          bridgePhase={missionControl.phase}
           capabilities={missionControl.phase === 'loading' ? undefined : missionControl.capabilities}
           intent={activeNavigation}
           legacySlot={({ route, intent, capabilities }) => (
@@ -906,6 +923,38 @@ function MissionControlRuntime({
       </div>
     </MissionControlShell>
   );
+}
+
+export function defaultOperationScopeForAuthority(
+  context: StoreContextEnvelope,
+  storeName: string,
+): OperationScope {
+  const end = new Date(`${context.businessDate}T12:00:00.000Z`);
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 13);
+  return {
+    dateFrom: start.toISOString().slice(0, 10),
+    dateTo: context.businessDate,
+    storeName,
+    marketplaceCode: 'US',
+    currency: 'USD',
+    asin: undefined,
+    batchId: undefined,
+  };
+}
+
+export function operationScopeBelongsToAuthority(
+  value: unknown,
+  context: StoreContextEnvelope,
+  storeName: string,
+): value is OperationScope {
+  if (!value || typeof value !== 'object') return false;
+  const scope = value as Partial<OperationScope>;
+  return typeof scope.dateFrom === 'string'
+    && typeof scope.dateTo === 'string'
+    && scope.storeName === storeName
+    && scope.marketplaceCode === context.marketplace
+    && scope.currency === context.currency;
 }
 
 export function shouldStartLoginRestoreForAuthority(

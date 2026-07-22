@@ -7,7 +7,19 @@ import type {
   UpdateOperationEventInput,
 } from '@amazon-ai-ops/shared-types';
 
-export type StoreScopedOperationEvent = OperationEvent & { storeId: StoreId };
+export type StoreScopedOperationEvent = OperationEvent & {
+  storeId: StoreId;
+  /**
+   * Archived events remain durable historical facts. Default timeline reads
+   * hide them, while explicit history reads may include them.
+   */
+  archivedAt?: string;
+  archiveRevision: number;
+};
+
+export interface OperationEventHistoryOptions {
+  includeArchived?: boolean;
+}
 
 export class OperationEventRepository {
   constructor(private db: Database) {}
@@ -81,8 +93,11 @@ export class OperationEventRepository {
   }
 
   /** @deprecated Legacy optionally unscoped read. Stage 2 must use findByScopeForStore. */
-  findByScope(filter: OperationEventFilter = {}): OperationEvent[] {
-    const where: string[] = [];
+  findByScope(
+    filter: OperationEventFilter = {},
+    options: OperationEventHistoryOptions = {},
+  ): OperationEvent[] {
+    const where: string[] = options.includeArchived ? [] : ['archived_at IS NULL'];
     const params: unknown[] = [];
 
     if (filter.dateFrom) {
@@ -133,9 +148,14 @@ export class OperationEventRepository {
   findByScopeForStore(
     storeId: StoreId,
     filter: Omit<OperationEventFilter, 'storeName'> = {},
+    options: OperationEventHistoryOptions = {},
   ): StoreScopedOperationEvent[] {
     const where: string[] = ['store_id = ?'];
     const params: unknown[] = [storeId];
+
+    if (!options.includeArchived) {
+      where.push('archived_at IS NULL');
+    }
 
     if (filter.dateFrom) {
       where.push('event_date >= ?');
@@ -244,16 +264,46 @@ export class OperationEventRepository {
     return result.changes > 0;
   }
 
-  /** @deprecated Legacy unscoped row delete. Stage 2 must use deleteForStore. */
+  /**
+   * @deprecated Legacy unscoped archive. Stage 2 must use archiveForStore.
+   * This deliberately never hard-deletes an operator event.
+   */
   delete(id: number): boolean {
-    const result = this.db.prepare('DELETE FROM operation_events WHERE id = ?').run(id);
+    const result = this.db.prepare(`
+      UPDATE operation_events
+      SET archived_at = datetime('now'),
+          archive_revision = COALESCE(archive_revision, 0) + 1,
+          updated_at = datetime('now')
+      WHERE id = ? AND archived_at IS NULL
+    `).run(id);
     return result.changes > 0;
   }
 
+  /** @deprecated Use archiveForStore. Kept for the legacy IPC surface. */
   deleteForStore(storeId: StoreId, id: number): boolean {
+    return this.archiveForStore(storeId, id);
+  }
+
+  archiveForStore(storeId: StoreId, id: number): boolean {
     this.getWritableStoreAuthority(storeId);
     const result = this.db.prepare(`
-      DELETE FROM operation_events WHERE id = ? AND store_id = ?
+      UPDATE operation_events
+      SET archived_at = datetime('now'),
+          archive_revision = COALESCE(archive_revision, 0) + 1,
+          updated_at = datetime('now')
+      WHERE id = ? AND store_id = ? AND archived_at IS NULL
+    `).run(id, storeId);
+    return result.changes > 0;
+  }
+
+  restoreForStore(storeId: StoreId, id: number): boolean {
+    this.getWritableStoreAuthority(storeId);
+    const result = this.db.prepare(`
+      UPDATE operation_events
+      SET archived_at = NULL,
+          archive_revision = COALESCE(archive_revision, 0) + 1,
+          updated_at = datetime('now')
+      WHERE id = ? AND store_id = ? AND archived_at IS NOT NULL
     `).run(id, storeId);
     return result.changes > 0;
   }
@@ -281,6 +331,8 @@ export class OperationEventRepository {
     return {
       ...this.mapRow(row),
       storeId: row.store_id as StoreId,
+      archivedAt: row.archived_at ?? undefined,
+      archiveRevision: Number(row.archive_revision ?? 0),
     };
   }
 

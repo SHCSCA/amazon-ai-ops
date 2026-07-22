@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import type { LingxingCollectionJobSnapshot, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { useBusinessDataPipeline } from '../components/business-data';
 import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
@@ -6,7 +7,12 @@ import { TaskBanner } from '../components/workspace';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { VirtualDataTable, type VirtualDataTableColumn } from '../components/virtual-data-table';
 import { buildDataReadinessLedger, type DataReadinessLedger } from '../data-readiness-ledger';
-import { compactPath, formatUsd } from '../formatters';
+import { formatUsd } from '../formatters';
+import {
+  buildProductionCollectionLineageReadiness,
+  type ProductionCollectionReportBinding,
+} from '../lingxing-collection-lineage';
+import { useMissionControlStoreContext } from '../mission-control/store-context';
 import { toUserFacingError } from '../user-facing-error';
 
 export type ImportMode = 'current' | 'local';
@@ -38,7 +44,8 @@ export interface DataImportReportRow {
   type: string;
   label: string;
   fileName: string;
-  filePath: string;
+  artifactId: string;
+  fileExtension: string;
   fileHash: string;
   fileSizeBytes: number;
   importedRows: number;
@@ -49,18 +56,17 @@ export interface DataImportReportRow {
 
 const DATA_IMPORT_TEXT_SORT_KEYS = new Set<DataImportSortKey>(['label', 'file', 'ext', 'hash', 'status']);
 
-function fileExtension(fileName: string, filePath: string): string {
-  const target = fileName || filePath;
+function reportFileExtension(fileName: string, explicitExtension?: string): string {
+  if (explicitExtension) return explicitExtension.toLowerCase();
+  const target = fileName;
   const dotIndex = target.lastIndexOf('.');
   return dotIndex >= 0 ? target.slice(dotIndex).toLowerCase() : '-';
 }
 
-export function dataImportFileLabel(row: Pick<DataImportReportRow, 'fileName' | 'filePath'>): string {
+export function dataImportFileLabel(row: Pick<DataImportReportRow, 'fileName'>): string {
   const explicitName = String(row.fileName || '').trim();
   if (explicitName) return explicitName;
-  const filePath = String(row.filePath || '').trim();
-  if (!filePath) return '缺少真实文件';
-  return filePath.split(/[\\/]/).filter(Boolean).pop() || filePath;
+  return '缺少真实文件';
 }
 
 function formatFileSize(bytes: number): string {
@@ -75,8 +81,8 @@ function shortDataImportHash(hash: string): string {
 }
 
 function dataImportSortValue(row: DataImportReportRow, key: DataImportSortKey): string | number {
-  if (key === 'file') return (row.fileName || row.filePath || '').toLowerCase();
-  if (key === 'ext') return fileExtension(row.fileName, row.filePath);
+  if (key === 'file') return (row.fileName || '').toLowerCase();
+  if (key === 'ext') return reportFileExtension(row.fileName, row.fileExtension);
   if (key === 'size') return Number(row.fileSizeBytes || 0);
   if (key === 'hash') return (row.fileHash || '').toLowerCase();
   if (key === 'rows') return Number(row.importedRows || 0);
@@ -198,16 +204,16 @@ export function dataImportExportButtonView(input: {
   };
 }
 
-export function dataImportPathActionKey(label: string, targetPath?: string): string {
-  return `${label}:${String(targetPath || 'missing')}`;
+export function dataImportArtifactActionKey(label: string, artifactId?: string): string {
+  return `${label}:${String(artifactId || 'missing')}`;
 }
 
-export function dataImportOpenPathButtonView(input: {
-  activePathKey: string | null;
+export function dataImportOpenArtifactButtonView(input: {
+  activeArtifactKey: string | null;
   baseClassName?: string;
   disabled?: boolean;
   idleLabel: string;
-  pathKey: string;
+  artifactKey: string;
 }): {
   label: string;
   disabled: boolean;
@@ -215,10 +221,10 @@ export function dataImportOpenPathButtonView(input: {
   className: string;
   showSpinner: boolean;
 } {
-  const active = input.activePathKey === input.pathKey;
+  const active = input.activeArtifactKey === input.artifactKey;
   return {
     label: active ? '打开中...' : input.idleLabel,
-    disabled: Boolean(input.disabled || input.activePathKey),
+    disabled: Boolean(input.disabled || input.activeArtifactKey),
     ariaBusy: active ? true : undefined,
     className: [input.baseClassName || 'secondary-button', active ? 'button-loading' : ''].filter(Boolean).join(' '),
     showSpinner: active,
@@ -246,10 +252,31 @@ function feedbackClassName(tone: StatusTone): string {
 export function buildReportImportStatusDisplay(input: {
   status: string;
   importedRows: number;
-  filePath?: string;
+  artifactId?: string;
   importError?: string;
 }): ReportImportStatusDisplay {
   const importedRows = Number(input.importedRows || 0);
+  if (input.status === 'source_mismatch') {
+    return {
+      label: '任务血缘不一致',
+      detail: '当前文件不属于所选生产 lineage 的报表批次，不能参与正式诊断。',
+      tone: 'blocked',
+    };
+  }
+  if (input.status === 'download_incomplete') {
+    return {
+      label: '下载未确认',
+      detail: '生产任务没有留下该报表的 downloaded 检查点。',
+      tone: 'blocked',
+    };
+  }
+  if (input.status === 'import_pending') {
+    return {
+      label: '入库待确认',
+      detail: '真实文件已绑定生产任务，但任务入库状态尚未持久化为 succeeded。',
+      tone: 'warning',
+    };
+  }
   if (input.importError || input.status === 'import_failed') {
     return {
       label: '导入失败',
@@ -264,14 +291,14 @@ export function buildReportImportStatusDisplay(input: {
       tone: 'ready',
     };
   }
-  if (input.filePath && input.status === 'downloaded') {
+  if (input.artifactId && input.status === 'downloaded') {
     return {
       label: '已下载待入库',
       detail: '文件已在本地；点击“导入已下载表格”后才会解析并写入 SQLite。',
       tone: 'warning',
     };
   }
-  if (input.filePath) {
+  if (input.artifactId) {
     return {
       label: reportStatusLabel(input.status),
       detail: '已发现本地文件，但还没有形成可量化的日级广告指标。',
@@ -287,6 +314,7 @@ export function buildReportImportStatusDisplay(input: {
 
 export function buildDataImportFeedback(input: {
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
   runningImport: ImportMode | null;
   notice?: string;
@@ -324,16 +352,18 @@ export function buildDataImportFeedback(input: {
   if (input.readiness.canEnterDiagnosis) {
     return {
       title: '当前范围已入库',
-      detail: importNotice || `SQLite 已有 ${input.importedRows} 行日级广告指标；如果重新下载过表格，可再次导入刷新。`,
+      detail: importNotice || (input.importedRows > 0
+        ? `SQLite 已有 ${input.importedRows} 行日级广告指标；如果重新下载过表格，可再次导入刷新。`
+        : '完整 8 类报表均已形成可验证的零行入库回执；当前范围会按真实零数据状态进入广告表现。'),
       statusLabel: '已入库',
       tone: 'ready',
       className: feedbackClassName('ready'),
     };
   }
-  if (Number(input.importedRows || 0) > 0) {
+  if (Number(input.importedRows || 0) > 0 || Number(input.importedReportTypeCount || 0) > 0) {
     return {
-      title: '部分指标已入库',
-      detail: importNotice || `SQLite 已有 ${input.importedRows} 行日级广告指标，但尚未覆盖全部 8 类真实报表，不能进入正式诊断。`,
+      title: '部分报表已有入库回执',
+      detail: importNotice || `${Math.min(8, Number(input.importedReportTypeCount || 0))}/8 类已有可验证入库回执，共 ${input.importedRows} 行日级广告指标；完整生产血缘闭合前不能进入正式诊断。`,
       statusLabel: '待补齐',
       tone: 'warning',
       className: feedbackClassName('warning'),
@@ -392,22 +422,24 @@ export interface DataImportTaskState {
 
 export function dataImportFirstViewportReportFolder(input: {
   realReportCount: number;
-  realFiles: Array<{ folderPath?: string }>;
-  auditDownloadDir?: string;
+  realFiles: Array<{ folderArtifactId?: string }>;
+  auditDownloadArtifactId?: string;
 }): string | undefined {
   if ((Number(input.realReportCount) || 0) <= 0) return undefined;
-  return input.realFiles.find((file) => Boolean(file.folderPath))?.folderPath;
+  return input.realFiles.find((file) => Boolean(file.folderArtifactId))?.folderArtifactId;
 }
 
 export function buildDataImportTaskState({
   realReportCount,
+  importedReportTypeCount = 0,
   importedRows,
-  reportFolder,
+  reportFolderArtifactId,
   readiness,
 }: {
   realReportCount: number;
+  importedReportTypeCount?: number;
   importedRows: number;
-  reportFolder?: string;
+  reportFolderArtifactId?: string;
   readiness: Pick<DataReadinessLedger, 'status' | 'canEnterDiagnosis' | 'nextStep'>;
 }): DataImportTaskState {
   const reportCount = Math.max(0, Math.min(8, Number(realReportCount) || 0));
@@ -417,97 +449,184 @@ export function buildDataImportTaskState({
   return {
     title: `真实报表 ${reportCount}/8，已导入 ${rowCount} 行`,
     detail: isReady
-      ? '完整 8 类日级广告指标已写入 SQLite；重导入同批同文件会先清旧行再写入。'
-      : readiness.nextStep === 'import' && rowCount > 0
-        ? '已有部分日级指标，但仍有报表类型未入库；补齐前不能进入正式诊断。'
+      ? rowCount > 0
+        ? '完整 8 类日级广告指标已写入 SQLite；重导入同批同文件会先清旧行再写入。'
+        : '完整 8 类报表已写入零行入库回执；当前范围是可追溯的真实零数据状态。'
+      : readiness.nextStep === 'import' && (rowCount > 0 || importedReportTypeCount > 0)
+        ? `${Math.min(8, importedReportTypeCount)}/8 类已有入库回执，但仍有报表类型未入库；补齐前不能进入正式诊断。`
       : hasRealReports
         ? '真实报表已下载但未入库，下一步把广告指标写入 SQLite。'
         : '当前范围缺少真实报表，先回数据采集获取或导入本地表格。',
     primaryActionLabel: isReady ? '查看广告表现' : readiness.nextStep === 'import' ? '导入已下载表格' : '去数据采集',
-    secondaryActionLabel: reportFolder ? '打开报表目录' : '导入本地报表',
+    secondaryActionLabel: reportFolderArtifactId ? '打开报表目录' : '导入本地报表',
   };
 }
 
 export function DataImportValidationPage() {
   const { data, error, loading, scope, reload } = useBusinessDataPipeline();
+  const storeAuthority = useMissionControlStoreContext();
   const [runningImport, setRunningImport] = useState<ImportMode | null>(null);
   const [exportingReconciliation, setExportingReconciliation] = useState(false);
   const [reconciliation, setReconciliation] = useState<{
-    jsonPath?: string;
-    markdownPath?: string;
+    jsonArtifactId?: string;
+    jsonDisplayName?: string;
+    markdownArtifactId?: string;
+    markdownDisplayName?: string;
     canonicalSource?: string;
     canonical?: { rows?: number; spend?: number; orders?: number };
     blockers?: string[];
   } | null>(null);
   const [notice, setNotice] = useState('');
   const [importError, setImportError] = useState('');
-  const [pathNotice, setPathNotice] = useState('');
-  const [openingPathKey, setOpeningPathKey] = useState<string | null>(null);
+  const [artifactNotice, setArtifactNotice] = useState('');
+  const [openingArtifactKey, setOpeningArtifactKey] = useState<string | null>(null);
   const [sortState, setSortState] = useState<DataImportSortState | null>(null);
   const [tableRefreshing, setTableRefreshing] = useState(false);
+  const [collectionJobs, setCollectionJobs] = useState<LingxingCollectionJobSnapshot[]>([]);
+  const [collectionJobsLoading, setCollectionJobsLoading] = useState(false);
+  const [collectionJobsError, setCollectionJobsError] = useState('');
+  const [collectionJobsPreviewOnly, setCollectionJobsPreviewOnly] = useState(false);
   const refreshTimerRef = useRef<number | null>(null);
+  const collectionJobsLoadSequenceRef = useRef(0);
+  const authorityKeyRef = useRef(storeAuthority.authorityKey);
+  authorityKeyRef.current = storeAuthority.authorityKey;
   const importLocked = Boolean(runningImport);
   const collection = data?.collection;
   const quant = data?.quant;
   const reportOptions = collection?.reportOptions || [];
   const realFiles = collection?.realReportFiles || [];
   const fileAudit = collection?.fileAudit;
-  const realReportCount = fileAudit?.realReportFileCount ?? realFiles.length;
-  const importedRows = fileAudit?.importedRowCount ?? quant?.importedRows ?? 0;
+  const aggregateRealReportCount = fileAudit?.realReportFileCount ?? realFiles.length;
+  const aggregateImportedRows = fileAudit?.importedRowCount ?? quant?.importedRows ?? 0;
   const rejectedEvidenceCount = fileAudit?.rejectedEvidenceFileCount ?? 0;
+  const lineageReadiness = useMemo(() => buildProductionCollectionLineageReadiness({
+    currentContext: storeAuthority.authoritativeContext,
+    dateStart: scope.dateFrom,
+    dateEnd: scope.dateTo,
+    jobs: collectionJobs,
+    files: realFiles,
+  }), [collectionJobs, realFiles, scope.dateFrom, scope.dateTo, storeAuthority.authoritativeContext]);
+  const bindingByReportType = useMemo(() => new Map(
+    lineageReadiness.reportBindings.map((binding) => [binding.reportType, binding]),
+  ), [lineageReadiness.reportBindings]);
+  const realReportCount = lineageReadiness.sourceMatchedReportCount;
+  const importedRows = lineageReadiness.importedRows;
   const hasRealFiles = realReportCount > 0;
-  const hasImportedMetrics = importedRows > 0;
-  const reportFolder = dataImportFirstViewportReportFolder({
+  const hasImportedMetrics = lineageReadiness.importedReportCount > 0;
+  const productionRealFiles = useMemo(() => realFiles.filter((file) => {
+    const binding = bindingByReportType.get(file.reportType as ProductionCollectionReportBinding['reportType']);
+    return Boolean(binding?.expectedBatchId && file.batchId === binding.expectedBatchId);
+  }), [bindingByReportType, realFiles]);
+  const reportFolderArtifactId = dataImportFirstViewportReportFolder({
     realReportCount,
-    realFiles,
-    auditDownloadDir: fileAudit?.downloadDir,
+    realFiles: productionRealFiles,
+    auditDownloadArtifactId: fileAudit?.downloadArtifactId,
   });
+  const lineageManifestArtifactId = collection?.latestBatch?.id
+    && lineageReadiness.lineageJobIds.includes(collection.latestBatch.id)
+    ? collection.latestBatch.manifestArtifactId
+    : undefined;
   const totalSpend = quant?.totalSpend ?? 0;
   const totalSales = quant?.totalSales ?? 0;
   const totalOrders = quant?.totalOrders ?? 0;
+  const productionReportOptions = useMemo(() => reportOptions.map((option) => {
+    const binding = bindingByReportType.get(option.type as ProductionCollectionReportBinding['reportType']);
+    return {
+      ...option,
+      realFileAvailable: Boolean(binding?.fileBatchId && binding.fileBatchId === binding.expectedBatchId),
+      importedRows: binding?.state === 'imported' ? binding.importedRows : 0,
+      status: binding?.state || 'missing',
+    };
+  }), [bindingByReportType, reportOptions]);
   const dataLedger = useMemo(() => buildDataReadinessLedger({
     requiredReportCount: 8,
-    reportOptions,
+    reportOptions: productionReportOptions,
     realReportFileCount: realReportCount,
     importedRowCount: importedRows,
     rejectedEvidenceFileCount: rejectedEvidenceCount,
-  }), [importedRows, realReportCount, rejectedEvidenceCount, reportOptions]);
-  const isDataReady = dataLedger.canEnterDiagnosis;
-  const taskState = buildDataImportTaskState({
+  }), [importedRows, productionReportOptions, realReportCount, rejectedEvidenceCount]);
+  const isDataReady = dataLedger.canEnterDiagnosis && lineageReadiness.canEnterDiagnosis;
+  const computedTaskState = buildDataImportTaskState({
     realReportCount,
+    importedReportTypeCount: lineageReadiness.importedReportCount,
     importedRows,
-    reportFolder,
-    readiness: dataLedger,
+    reportFolderArtifactId,
+    readiness: { ...dataLedger, canEnterDiagnosis: isDataReady },
   });
+  const baseTaskState: DataImportTaskState = {
+    ...computedTaskState,
+    secondaryActionLabel: reportFolderArtifactId ? '打开报表目录' : '导入本地文件（仅检查）',
+  };
+  const taskState: DataImportTaskState = collectionJobsLoading
+    ? {
+        ...baseTaskState,
+        title: '正在核对生产采集血缘',
+        detail: '正在按当前店铺、日期窗和批次读取真实采集任务；完成前不会放行正式诊断。',
+        primaryActionLabel: '核对中...',
+      }
+    : isDataReady
+      ? baseTaskState
+      : {
+          ...baseTaskState,
+          title: lineageReadiness.title,
+          detail: lineageReadiness.detail,
+          primaryActionLabel: lineageReadiness.latestJobId ? '回采集任务处理' : '去数据采集',
+        };
   useEffect(() => () => {
     if (refreshTimerRef.current) {
       window.clearTimeout(refreshTimerRef.current);
     }
   }, []);
 
-  const reportRows = useMemo<DataImportReportRow[]>(() => reportOptions.map((option) => {
-    const files = realFiles.filter((file) => file.reportType === option.type);
+  useEffect(() => {
+    ++collectionJobsLoadSequenceRef.current;
+    setCollectionJobs([]);
+    setCollectionJobsError('');
+    setCollectionJobsPreviewOnly(false);
+    setRunningImport(null);
+    setExportingReconciliation(false);
+    setReconciliation(null);
+    setNotice('');
+    setImportError('');
+    setArtifactNotice('');
+    setOpeningArtifactKey(null);
+    const context = storeAuthority.authoritativeContext;
+    const authorityKey = storeAuthority.authorityKey;
+    if (!context || !authorityKey) return;
+    void loadProductionCollectionJobs(context, authorityKey);
+  }, [storeAuthority.authoritativeContext, storeAuthority.authorityKey]);
+
+  const reportRows = useMemo<DataImportReportRow[]>(() => productionReportOptions.map((option) => {
+    const binding = bindingByReportType.get(option.type as ProductionCollectionReportBinding['reportType']);
+    const files = realFiles.filter((file) => (
+      file.reportType === option.type
+      && Boolean(binding?.expectedBatchId)
+      && file.batchId === binding?.expectedBatchId
+    ));
     const firstFile = files[0];
     const importedForType = files.reduce((sum, file) => sum + Number(file.importedRows || 0), 0) || option.importedRows;
     return {
       ...option,
       fileName: firstFile?.fileName || '',
-      filePath: firstFile?.filePath || '',
+      fileExtension: firstFile?.fileExtension || '',
+      artifactId: firstFile?.artifactId || '',
       fileHash: firstFile?.fileHash || '',
       fileSizeBytes: firstFile?.fileSizeBytes || 0,
       importedRows: importedForType,
       importError: firstFile?.importError || '',
-      status: firstFile?.importError ? 'import_failed' : importedForType > 0 ? 'imported' : firstFile?.status || option.status,
+      status: firstFile?.importError
+        ? 'import_failed'
+        : binding?.state || (importedForType > 0 ? 'imported' : firstFile?.status || option.status),
     };
   }).map((row) => ({
     ...row,
     statusDisplay: buildReportImportStatusDisplay({
       status: row.status,
       importedRows: row.importedRows,
-      filePath: row.filePath,
+      artifactId: row.artifactId,
       importError: row.importError,
     }),
-  })), [realFiles, reportOptions]);
+  })), [bindingByReportType, productionReportOptions, realFiles]);
   const sortedReportRows = useMemo(() => sortDataImportReportRows(reportRows, sortState), [reportRows, sortState]);
   const tableFeedback = buildDataImportTableFeedback({
     importedRows,
@@ -518,36 +637,37 @@ export function DataImportValidationPage() {
   });
   const importFeedback = buildDataImportFeedback({
     realReportCount,
+    importedReportTypeCount: lineageReadiness.importedReportCount,
     importedRows,
     runningImport,
     notice,
     importError,
-    readiness: dataLedger,
+    readiness: { ...dataLedger, canEnterDiagnosis: isDataReady },
   });
   const currentImportButton = dataImportActionButtonView({ mode: 'current', runningImport, hasRealFiles });
   const localImportButton = dataImportActionButtonView({ mode: 'local', runningImport, hasRealFiles });
   const exportButton = dataImportExportButtonView({ exportingReconciliation, hasImportedMetrics });
-  function renderOpenPathButton(input: {
+  function renderOpenArtifactButton(input: {
     className?: string;
     disabled?: boolean;
     idleLabel: string;
     messageLabel?: string;
-    targetPath?: string;
+    artifactId?: string;
   }) {
     const messageLabel = input.messageLabel || input.idleLabel;
-    const view = dataImportOpenPathButtonView({
-      activePathKey: openingPathKey,
+    const view = dataImportOpenArtifactButtonView({
+      activeArtifactKey: openingArtifactKey,
       baseClassName: input.className,
       disabled: input.disabled,
       idleLabel: input.idleLabel,
-      pathKey: dataImportPathActionKey(messageLabel, input.targetPath),
+      artifactKey: dataImportArtifactActionKey(messageLabel, input.artifactId),
     });
     return (
       <button
         aria-busy={view.ariaBusy}
         className={view.className}
         disabled={view.disabled}
-        onClick={() => openPath(input.targetPath, messageLabel)}
+        onClick={() => openArtifact(input.artifactId, messageLabel)}
         type="button"
       >
         {view.showSpinner && <span aria-hidden="true" className="button-spinner" />}
@@ -563,11 +683,11 @@ export function DataImportValidationPage() {
       width: 'minmax(160px, 0.9fr)',
       sortable: true,
       sortLabel: '文件',
-      cell: (row) => row.filePath
-        ? <code title={row.filePath}>{dataImportFileLabel(row)}</code>
+      cell: (row) => row.artifactId
+        ? <code>{dataImportFileLabel(row)}</code>
         : '缺少真实文件',
     },
-    { key: 'ext', header: '类型', width: '72px', sortable: true, sortLabel: '类型', cell: (row) => <code>{row.filePath ? fileExtension(row.fileName, row.filePath) : '-'}</code> },
+    { key: 'ext', header: '类型', width: '72px', sortable: true, sortLabel: '类型', cell: (row) => <code>{row.artifactId ? reportFileExtension(row.fileName, row.fileExtension) : '-'}</code> },
     { key: 'size', header: '大小', width: '88px', sortable: true, sortLabel: '大小', cell: (row) => formatFileSize(row.fileSizeBytes) },
     {
       key: 'hash',
@@ -597,12 +717,12 @@ export function DataImportValidationPage() {
       header: '操作',
       width: '100px',
       cell: (row) => (
-        renderOpenPathButton({
+        renderOpenArtifactButton({
           className: 'secondary-button compact-button',
-          disabled: !row.filePath || importLocked,
+          disabled: !row.artifactId || importLocked,
           idleLabel: '打开表格',
           messageLabel: `打开${row.label}`,
-          targetPath: row.filePath,
+          artifactId: row.artifactId,
         })
       ),
     },
@@ -621,22 +741,54 @@ export function DataImportValidationPage() {
     }, 200);
   }
 
-  async function openPath(targetPath?: string, label = '打开路径') {
-    if (openingPathKey) return;
-    if (!targetPath) {
-      setPathNotice('打开路径不可用：当前没有可打开的文件或目录。');
+  async function loadProductionCollectionJobs(
+    capturedContext: StoreContextEnvelope,
+    capturedAuthorityKey: string,
+  ): Promise<void> {
+    const sequence = ++collectionJobsLoadSequenceRef.current;
+    const api = (window as any).electronAPI;
+    setCollectionJobsLoading(true);
+    setCollectionJobsError('');
+    setCollectionJobsPreviewOnly(api?.lingxingCollectionJobsPreviewOnly === true);
+    try {
+      if (!api?.listLingxingCollectionJobs) {
+        throw new Error('生产采集任务接口未暴露，请检查 preload IPC。');
+      }
+      const jobs = await api.listLingxingCollectionJobs({
+        storeContext: { ...capturedContext },
+        limit: 100,
+      });
+      if (sequence !== collectionJobsLoadSequenceRef.current || authorityKeyRef.current !== capturedAuthorityKey) return;
+      setCollectionJobs(Array.isArray(jobs) ? jobs : []);
+    } catch (caught) {
+      if (sequence !== collectionJobsLoadSequenceRef.current || authorityKeyRef.current !== capturedAuthorityKey) return;
+      setCollectionJobs([]);
+      setCollectionJobsError(toUserFacingError(caught, '生产采集任务读取失败。'));
+    } finally {
+      if (sequence === collectionJobsLoadSequenceRef.current && authorityKeyRef.current === capturedAuthorityKey) {
+        setCollectionJobsLoading(false);
+      }
+    }
+  }
+
+  async function openArtifact(artifactId?: string, label = '打开工件') {
+    if (openingArtifactKey) return;
+    if (!artifactId) {
+      setArtifactNotice('打开操作不可用：当前没有已登记的文件或目录。');
       return;
     }
-    const pathKey = dataImportPathActionKey(label, targetPath);
-    setOpeningPathKey(pathKey);
-    setPathNotice(`${label}打开中...`);
+    const artifactKey = dataImportArtifactActionKey(label, artifactId);
+    setOpeningArtifactKey(artifactKey);
+    setArtifactNotice(`${label}打开中...`);
     try {
-      await (window as any).electronAPI?.openReportPath?.(targetPath);
-      setPathNotice(`已请求打开：${compactPath(targetPath)}`);
+      const storeContext = storeAuthority.authoritativeContext;
+      if (!storeContext) throw new Error('当前店铺权威不可用。');
+      await (window as any).electronAPI?.openReportArtifact?.(artifactId, { ...storeContext });
+      setArtifactNotice(`${label}已请求打开。`);
     } catch (caught) {
-      setPathNotice(`打开失败：${toUserFacingError(caught, '打开路径失败。')}`);
+      setArtifactNotice(`打开失败：${toUserFacingError(caught, '打开工件失败。')}`);
     } finally {
-      setOpeningPathKey(null);
+      setOpeningArtifactKey(null);
     }
   }
 
@@ -648,7 +800,7 @@ export function DataImportValidationPage() {
     setExportingReconciliation(true);
     setImportError('');
     try {
-      const result = await (window as any).electronAPI?.exportDataReconciliation?.(scope);
+      const result = await (window as any).electronAPI?.exportDataReconciliationArtifacts?.(scope);
       setReconciliation(result || null);
       setNotice('数据对账已导出');
     } catch (caught) {
@@ -660,26 +812,44 @@ export function DataImportValidationPage() {
 
   async function runImport(mode: ImportMode) {
     const api = (window as any).electronAPI;
+    const capturedContext = storeAuthority.authoritativeContext;
+    const capturedAuthorityKey = storeAuthority.authorityKey;
+    if (!capturedContext || !capturedAuthorityKey) {
+      setImportError('请先选择美国站店铺，再执行报表导入。');
+      return;
+    }
+    if (capturedContext.marketplace !== 'US' || capturedContext.currency !== 'USD') {
+      setImportError('第一版只支持 Amazon US / USD 店铺。');
+      return;
+    }
     setRunningImport(mode);
     setNotice(mode === 'current'
       ? '正在导入当前范围已下载的 Lingxing 原始表格...'
       : '请选择本地已有的 Lingxing xlsx/xls/csv 原始广告表格...');
     setImportError('');
     try {
+      const authorizedScope = {
+        ...scope,
+        storeName: storeAuthority.activeStore?.displayName || scope.storeName,
+        marketplaceCode: 'US',
+        storeContext: { ...capturedContext },
+      };
       if (mode === 'current') {
         if (!api?.importCurrentBusinessReports) throw new Error('导入当前范围接口未暴露。');
-        const result = await api.importCurrentBusinessReports(scope);
+        const result = await api.importCurrentBusinessReports(authorizedScope);
         const inserted = Number(result?.metricsImport?.inserted || 0);
         const parsedFiles = Number(result?.metricsImport?.parsedFiles || 0);
         const errors = Number(result?.metricsImport?.errors?.length || 0);
-        if (inserted <= 0 || errors > 0) {
+        if (parsedFiles <= 0 || errors > 0) {
           setImportError(`导入未形成可量化广告数据：解析 ${parsedFiles} 个表，写入 ${inserted} 行，错误 ${errors} 个。`);
         } else {
-          setNotice(`导入完成：解析 ${parsedFiles} 个真实报表，写入 ${inserted} 行广告指标。`);
+          setNotice(inserted > 0
+            ? `导入完成：解析 ${parsedFiles} 个真实报表，写入 ${inserted} 行广告指标。`
+            : `导入回执完成：解析 ${parsedFiles} 个有效空表，写入 0 行；哈希与零行回执已登记，系统将按完整 8 类任务血缘重新核对。`);
         }
       } else {
         if (!api?.importLocalBusinessReportFiles) throw new Error('导入本地报表接口未暴露。');
-        const result = await api.importLocalBusinessReportFiles(scope);
+        const result = await api.importLocalBusinessReportFiles(authorizedScope);
         if (result?.cancelled) {
           setNotice('已取消本地报表选择。');
           return;
@@ -687,19 +857,24 @@ export function DataImportValidationPage() {
         const inserted = Number(result?.metricsImport?.inserted || 0);
         const parsedFiles = Number(result?.metricsImport?.parsedFiles || 0);
         const errors = Number(result?.metricsImport?.errors?.length || 0);
-        if (inserted <= 0 || errors > 0) {
+        if (parsedFiles <= 0 || errors > 0) {
           setImportError(`本地导入未形成可量化广告数据：解析 ${parsedFiles} 个表，写入 ${inserted} 行，错误 ${errors} 个。`);
         } else {
-          setNotice(`本地导入完成：解析 ${parsedFiles} 个真实报表，写入 ${inserted} 行广告指标。`);
+          setNotice(inserted > 0
+            ? `本地导入完成：解析 ${parsedFiles} 个真实报表，写入 ${inserted} 行广告指标。`
+            : `本地导入回执完成：解析 ${parsedFiles} 个有效空表，写入 0 行；哈希与零行回执已登记，系统将按完整 8 类任务血缘重新核对。`);
         }
       }
+      if (authorityKeyRef.current !== capturedAuthorityKey) return;
       window.dispatchEvent(new Event('business-ui:data-updated'));
       reload();
+      await loadProductionCollectionJobs(capturedContext, capturedAuthorityKey);
     } catch (caught) {
+      if (authorityKeyRef.current !== capturedAuthorityKey) return;
       setImportError(toUserFacingError(caught, '真实报表导入未完成。'));
       setNotice('真实报表导入未完成。');
     } finally {
-      setRunningImport(null);
+      if (authorityKeyRef.current === capturedAuthorityKey) setRunningImport(null);
     }
   }
 
@@ -713,39 +888,85 @@ export function DataImportValidationPage() {
 
       <TaskBanner
         description={taskState.detail}
-        meta={`${realReportCount}/8 类真实报表 · ${importedRows} 行日级指标`}
+        meta={`生产血缘 ${realReportCount}/8 类真实报表 · ${importedRows} 行日级指标`}
         primaryAction={{
           label: taskState.primaryActionLabel,
-          busy: Boolean(runningImport),
-          busyLabel: dataImportBusyLabel(runningImport),
-          disabled: Boolean(runningImport),
+          busy: Boolean(runningImport || collectionJobsLoading),
+          busyLabel: collectionJobsLoading ? '核对中...' : dataImportBusyLabel(runningImport),
+          disabled: Boolean(runningImport || collectionJobsLoading),
           onClick: isDataReady
             ? () => navigateTo('ad-quant')
-            : dataLedger.nextStep === 'import'
-              ? () => runImport('current')
-              : () => navigateTo('data-collection'),
+            : () => navigateTo('data-collection'),
         }}
         secondaryActions={[
           {
             label: taskState.secondaryActionLabel,
-            disabled: Boolean(runningImport || openingPathKey),
-            onClick: reportFolder
-              ? () => { void openPath(reportFolder, '打开报表目录'); }
+            disabled: Boolean(runningImport || openingArtifactKey),
+            onClick: reportFolderArtifactId
+              ? () => { void openArtifact(reportFolderArtifactId, '打开报表目录'); }
               : () => { void runImport('local'); },
           },
           { label: '回到数据采集', onClick: () => navigateTo('data-collection'), disabled: Boolean(runningImport) },
         ]}
-        status={isDataReady ? '已闭合' : hasImportedMetrics ? '部分入库' : hasRealFiles ? '待入库' : '缺报表'}
+        status={collectionJobsLoading ? '核对中' : isDataReady ? '已闭合' : lineageReadiness.latestJobId ? '血缘未闭合' : '缺生产任务'}
         title={taskState.title}
-        tone={isDataReady ? 'confirmed' : hasRealFiles || hasImportedMetrics ? 'attention' : 'blocked'}
+        tone={isDataReady ? 'confirmed' : lineageReadiness.state === 'partial' ? 'attention' : 'blocked'}
       />
 
       <div className="business-stack data-import-prototype-stack">
         <Panel
-          className="data-import-primary-panel"
-          title="导入批次状态"
+          title="生产采集血缘"
           titleAccessory={(
-            <div className="data-import-title-pills" aria-label="导入状态摘要">
+            <StatusPill tone={collectionJobsLoading ? 'pending' : lineageReadiness.state === 'ready' ? 'ready' : lineageReadiness.state === 'partial' ? 'warning' : 'blocked'}>
+              {collectionJobsLoading ? '核对中' : lineageReadiness.state === 'ready' ? '已闭合' : lineageReadiness.state === 'missing' ? '缺任务' : '未闭合'}
+            </StatusPill>
+          )}
+          tone={lineageReadiness.state === 'ready' ? 'success' : lineageReadiness.state === 'partial' ? 'warning' : 'blocked'}
+        >
+          <div className="context-summary-grid">
+            <div>
+              <span>生产 root 任务</span>
+              <strong>{lineageReadiness.rootJobId || '未建立'}</strong>
+              <p>{lineageReadiness.lineageId ? `lineage ${lineageReadiness.lineageId}` : '独立任务不会与其他批次拼成 8/8。'}</p>
+            </div>
+            <div>
+              <span>授权链任务</span>
+              <strong>{lineageReadiness.lineageJobIds.length} 个</strong>
+              <p>{lineageReadiness.latestJobId ? `最近任务 ${lineageReadiness.latestJobId}` : '当前日期窗没有真实生产任务。'}</p>
+            </div>
+            <div>
+              <span>文件批次匹配</span>
+              <strong>{lineageReadiness.sourceMatchedReportCount}/8 类</strong>
+              <p>每类文件的 batchId 必须等于产生最终 downloaded 检查点的任务。</p>
+            </div>
+            <div>
+              <span>生产入库确认</span>
+              <strong>{lineageReadiness.importedReportCount}/8 类 · {lineageReadiness.importedRows} 行</strong>
+              <p>只计入 importState=succeeded 且可回读到对应批次的指标行。</p>
+            </div>
+          </div>
+          {collectionJobsPreviewOnly && (
+            <p className="warning-line" role="status">DEV 预览不会注入伪造任务、lineage 或入库成功；此状态不提供生产就绪证明。</p>
+          )}
+          {collectionJobsError && <p className="blocked-line" role="alert">生产任务读取失败：{collectionJobsError}</p>}
+          {!collectionJobsLoading && !collectionJobsError && !isDataReady && (
+            <div className="evidence-check-panel">
+              <h3>{lineageReadiness.title}</h3>
+              <p className="warning-line">{lineageReadiness.detail}</p>
+            </div>
+          )}
+          {(aggregateRealReportCount !== realReportCount || aggregateImportedRows !== importedRows) && (
+            <p className="warning-line">
+              当前日期窗聚合检测到 {aggregateRealReportCount}/8 类文件、{aggregateImportedRows} 行指标；其中只有 {realReportCount}/8 类、{importedRows} 行属于最新生产授权链，其他批次不参与放行。
+            </p>
+          )}
+        </Panel>
+
+        <Panel
+          className="data-import-primary-panel"
+          title="生产血缘导入状态"
+          titleAccessory={(
+            <div className="data-import-title-pills" aria-label="导入批次状态">
               <StatusPill tone={realReportCount >= 8 ? 'ready' : hasRealFiles ? 'warning' : 'blocked'}>真实报表 {realReportCount}/8</StatusPill>
               <StatusPill tone={isDataReady ? 'ready' : hasImportedMetrics ? 'warning' : 'blocked'}>入库 {importedRows} 行</StatusPill>
               <StatusPill tone={rejectedEvidenceCount > 0 ? 'warning' : 'ready'}>异常证据 {rejectedEvidenceCount}</StatusPill>
@@ -773,21 +994,21 @@ export function DataImportValidationPage() {
                       <StatusPill tone={row.statusDisplay.tone}>{row.statusDisplay.label}</StatusPill>
                       {row.importError && <p className="blocked-line table-subtext">{row.importError}</p>}
                     </td>
-                    <td>{row.filePath ? <code title={row.filePath}>{dataImportFileLabel(row)}</code> : '缺少真实文件'}</td>
+                    <td>{row.artifactId ? <code>{dataImportFileLabel(row)}</code> : '缺少真实文件'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="muted-line data-import-primary-note">只以 Lingxing xlsx/xls/csv 原始表格入库；截图、HTML、审计文件只留在辅助证据区。</p>
+          <p className="muted-line data-import-primary-note">只以 Lingxing xlsx/xls/csv 原始表格入库；生产授权链与 batchId 必须可回读，截图、HTML、审计文件只留在辅助证据区。</p>
           {loading && <p className="muted-line">正在读取当前范围文件和数据库状态...</p>}
           {error && <p className="blocked-line">读取异常：{error}</p>}
           <div className="action-row">
-            {reportFolder
-              ? renderOpenPathButton({
-                  disabled: Boolean(runningImport || openingPathKey),
+            {reportFolderArtifactId
+              ? renderOpenArtifactButton({
+                  disabled: Boolean(runningImport || openingArtifactKey),
                   idleLabel: '打开报表目录',
-                  targetPath: reportFolder,
+                  artifactId: reportFolderArtifactId,
                 })
               : (
                 <button aria-busy={localImportButton.ariaBusy} className={localImportButton.className} disabled={localImportButton.disabled} onClick={() => runImport('local')} type="button">
@@ -813,7 +1034,7 @@ export function DataImportValidationPage() {
           <StatusPill tone={importFeedback.tone}>{importFeedback.statusLabel}</StatusPill>
         </div>
 
-        {reportFolder && (
+        {reportFolderArtifactId && (
           <details className="folded-ops-panel data-import-report-folder-panel">
             <summary>
               <span>真实报表目录</span>
@@ -821,11 +1042,11 @@ export function DataImportValidationPage() {
             </summary>
             <div className="folded-ops-body business-split">
               <div>
-                <div className="business-scope-line">{compactPath(reportFolder)}</div>
+                <div className="business-scope-line">当前店铺原始报表目录已登记</div>
                 <p className="muted-line">这里只放当前范围可导入的 Lingxing xlsx/xls/csv 原始广告报表。</p>
               </div>
               <div className="business-pill-row business-pill-row-right">
-                {renderOpenPathButton({ idleLabel: '打开报表目录', targetPath: reportFolder })}
+                {renderOpenArtifactButton({ idleLabel: '打开报表目录', artifactId: reportFolderArtifactId })}
               </div>
             </div>
           </details>
@@ -836,7 +1057,7 @@ export function DataImportValidationPage() {
             <div className="judgment-panel">
               <div>
                 <span>{isDataReady ? '数据链已闭合' : '数据链未闭合'}</span>
-                <strong>{isDataReady ? '可以查看广告表现' : dataLedger.nextStep === 'import' ? '先完成逐类指标入库' : '先补齐真实广告报表'}</strong>
+                <strong>{isDataReady ? '可以查看广告表现' : lineageReadiness.latestJobId ? '回采集任务恢复或补导' : '先建立完整八报表任务'}</strong>
                 <p>导入页只负责把真实报表变成日级广告事实；审计证据不能替代广告数据。</p>
               </div>
             </div>
@@ -855,8 +1076,8 @@ export function DataImportValidationPage() {
               {isDataReady
                 ? '下一步：查看广告表现，复核 ACOS、花费、订单和产品阶段。'
                 : hasRealFiles
-                  ? '下一步：点击“导入已下载表格”，把真实报表写入 SQLite 日级指标。'
-                  : '下一步：到“数据准备 → 报表采集”下载已创建报表、重新创建下载，或导入本地报表。'}
+                  ? '下一步：回到“报表采集”的当前店铺任务历史，按任务状态继续采集或补导；通用文件导入不会替代生产任务血缘。'
+                  : '下一步：到“数据准备 → 报表采集”建立当前店铺、当前日期窗的完整八报表生产任务。'}
             </p>
           </Panel>
         </ProgressiveDetails>
@@ -866,13 +1087,13 @@ export function DataImportValidationPage() {
             <div className="context-summary-grid">
             <div>
               <span>原始表格目录</span>
-              <strong>{hasRealFiles && fileAudit?.downloadDir ? compactPath(fileAudit.downloadDir) : '暂无真实报表目录'}</strong>
+              <strong>{reportFolderArtifactId ? '当前店铺原始报表目录已登记' : '暂无生产血缘报表目录'}</strong>
               <p>{hasRealFiles ? '这里存放当前范围的 Lingxing xlsx/xls/csv 原始广告报表。' : '当前本地还没有当前范围的真实广告表格。'}</p>
             </div>
             <div>
               <span>SQLite 日级指标</span>
               <strong>{importedRows} 行可用</strong>
-              <p>{isDataReady ? '广告表现、AI 证据包和优化建议会读取这些日级广告事实。' : hasImportedMetrics ? '已有部分日级指标，但完整 8 类逐类入库前不会放行正式诊断。' : '未导入前数据库没有可用于广告表现的每日指标。'}</p>
+              <p>{isDataReady ? importedRows > 0 ? '广告表现、AI 证据包和优化建议会读取这些日级广告事实。' : '完整 8 类零行回执已闭合；广告表现会展示可追溯的真实零数据状态。' : hasImportedMetrics ? `已有 ${lineageReadiness.importedReportCount}/8 类入库回执，但完整生产血缘闭合前不会放行正式诊断。` : '未导入前数据库没有可用于广告表现的每日指标或零行回执。'}</p>
             </div>
             <div>
               <span>审计文件不参与计算</span>
@@ -881,12 +1102,12 @@ export function DataImportValidationPage() {
             </div>
             <div>
               <span>下一步</span>
-              <strong>{isDataReady ? '下一步查看广告表现' : dataLedger.nextStep === 'import' ? '导入已下载表格' : '回数据采集补齐真实报表'}</strong>
-              <p>{isDataReady ? '复核 ACOS、花费、订单、产品阶段和 AI 证据链。' : dataLedger.nextStep === 'import' ? '把每类真实报表解析并写入 SQLite 后才能进入正式诊断。' : '先下载已创建报表、重新创建下载，或导入本地真实报表。'}</p>
+              <strong>{isDataReady ? '下一步查看广告表现' : '回采集任务处理'}</strong>
+              <p>{isDataReady ? '复核 ACOS、花费、订单、产品阶段和 AI 证据链。' : '继续或补导最新生产授权链；独立本地导入不解锁正式诊断。'}</p>
             </div>
             </div>
             <div className="action-row">
-              {renderOpenPathButton({ disabled: !hasRealFiles || !fileAudit?.downloadDir, idleLabel: '打开原始表格目录', targetPath: fileAudit?.downloadDir })}
+              {renderOpenArtifactButton({ disabled: !reportFolderArtifactId, idleLabel: '打开原始表格目录', artifactId: reportFolderArtifactId })}
               <button aria-busy={exportButton.ariaBusy} className={exportButton.className} disabled={exportButton.disabled} onClick={exportReconciliation} type="button">
                 <span className={exportButton.ariaBusy ? 'button-content' : undefined}>
                   {exportButton.ariaBusy && <span className="button-spinner" aria-hidden="true" />}
@@ -909,13 +1130,13 @@ export function DataImportValidationPage() {
                 <div className="path-list">
                   <div className="path-row">
                     <span>对账数据文件</span>
-                    <code>{reconciliation.jsonPath || '-'}</code>
-                    {renderOpenPathButton({ className: 'secondary-button compact-button', disabled: !reconciliation.jsonPath, idleLabel: '打开对账数据文件', targetPath: reconciliation.jsonPath })}
+                    <code>{reconciliation.jsonDisplayName || '-'}</code>
+                    {renderOpenArtifactButton({ className: 'secondary-button compact-button', disabled: !reconciliation.jsonArtifactId, idleLabel: '打开对账数据文件', artifactId: reconciliation.jsonArtifactId })}
                   </div>
                   <div className="path-row">
                     <span>对账说明文件</span>
-                    <code>{reconciliation.markdownPath || '-'}</code>
-                    {renderOpenPathButton({ className: 'secondary-button compact-button', disabled: !reconciliation.markdownPath, idleLabel: '打开对账说明文件', targetPath: reconciliation.markdownPath })}
+                    <code>{reconciliation.markdownDisplayName || '-'}</code>
+                    {renderOpenArtifactButton({ className: 'secondary-button compact-button', disabled: !reconciliation.markdownArtifactId, idleLabel: '打开对账说明文件', artifactId: reconciliation.markdownArtifactId })}
                   </div>
                 </div>
               </div>
@@ -928,13 +1149,13 @@ export function DataImportValidationPage() {
             <div className="judgment-panel">
               <div>
                 <span>下一步</span>
-                <strong>{hasImportedMetrics ? '当前范围已经有入库指标' : hasRealFiles ? '导入已下载表格' : '先获取真实报表'}</strong>
+                <strong>{hasImportedMetrics ? '当前范围已经有入库回执' : hasRealFiles ? '导入已下载表格' : '先获取真实报表'}</strong>
                 <p>
                   {hasImportedMetrics
-                    ? `当前 DB 已有 ${importedRows} 行指标；如果重新下载过表格，可再次导入刷新。`
+                    ? `当前生产授权链已有 ${lineageReadiness.importedReportCount}/8 类入库回执、${importedRows} 行指标；只有完整 8 类任务入库状态持久化为 succeeded 才能放行。`
                     : hasRealFiles
-                      ? '把当前范围下载目录中的真实报表解析并写入 SQLite，每天的广告数据会沉淀到数据库。'
-                      : '当前没有真实报表，不能导入。请先到“数据准备 → 报表采集”下载或重新创建报表。'}
+                      ? '可重新解析当前文件，但生产任务失败或待确认时仍需回“报表采集”执行任务级补导。'
+                      : '当前没有与生产授权链匹配的真实报表；请先回“报表采集”建立或恢复完整八报表任务。'}
                 </p>
               </div>
               <div className="table-action-row">
@@ -999,17 +1220,17 @@ export function DataImportValidationPage() {
             <div className="path-list">
             <div className="path-row">
               <span>真实广告表格目录</span>
-              <code>{fileAudit?.downloadDir ? compactPath(fileAudit.downloadDir) : '暂无'}</code>
-              {renderOpenPathButton({ className: 'secondary-button compact-button', disabled: !fileAudit?.downloadDir, idleLabel: '打开', messageLabel: '打开真实广告表格目录', targetPath: fileAudit?.downloadDir })}
+              <code>{reportFolderArtifactId ? '当前店铺报表目录已登记' : '暂无'}</code>
+              {renderOpenArtifactButton({ className: 'secondary-button compact-button', disabled: !reportFolderArtifactId, idleLabel: '打开', messageLabel: '打开真实广告表格目录', artifactId: reportFolderArtifactId })}
             </div>
             <div className="path-row">
               <span>采集清单</span>
-              <code>{fileAudit?.manifestPath ? compactPath(fileAudit.manifestPath) : '暂无'}</code>
-              {renderOpenPathButton({ className: 'secondary-button compact-button', disabled: !fileAudit?.manifestPath, idleLabel: '打开', messageLabel: '打开采集清单', targetPath: fileAudit?.manifestPath })}
+              <code>{lineageManifestArtifactId ? '当前生产任务采集清单已登记' : '暂无匹配生产任务清单'}</code>
+              {renderOpenArtifactButton({ className: 'secondary-button compact-button', disabled: !lineageManifestArtifactId, idleLabel: '打开', messageLabel: '打开采集清单', artifactId: lineageManifestArtifactId })}
             </div>
             </div>
             <p className="warning-line">采集清单和审计证据只用于追溯流程；广告表现只读取上方真实报表和 SQLite 指标。</p>
-            {pathNotice && <p className={pathNotice.startsWith('打开失败') ? 'blocked-line' : 'muted-line'}>{pathNotice}</p>}
+            {artifactNotice && <p className={artifactNotice.startsWith('打开失败') ? 'blocked-line' : 'muted-line'}>{artifactNotice}</p>}
           </Panel>
         </ProgressiveDetails>
       </div>

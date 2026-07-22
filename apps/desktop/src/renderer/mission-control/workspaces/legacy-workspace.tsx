@@ -14,7 +14,7 @@ import {
   summarizeViewCapability,
 } from '../components';
 import type { LegacyWorkspaceSlot, LegacyWorkspaceSlotInput } from './types';
-import { ObjectsWorkspace } from './objects-workspace';
+import { ObjectsWorkspace, type ObjectsWorkspaceSubview } from './objects-workspace';
 
 export type LegacyWorkspaceProps = {
   intent: NavigationIntent;
@@ -104,10 +104,11 @@ export function LegacyWorkspace({
     ? renderLegacySlot(legacySlot, { route, intent, capabilities: viewCapabilities })
     : undefined;
 
-  if (intent.workspace === 'objects' && intent.subview === 'products') {
+  if (intent.workspace === 'objects') {
     return (
       <div className="mission-control-workspace-root" data-legacy-route={route} data-workspace={intent.workspace}>
         <ObjectsWorkspace
+          activeSubview={intent.subview as ObjectsWorkspaceSubview}
           capabilities={capabilities}
           legacyContent={legacyContent}
           previewMode={previewMode}

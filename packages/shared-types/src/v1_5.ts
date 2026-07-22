@@ -1,3 +1,10 @@
+import type {
+  BrowserProfileId,
+  BusinessDate,
+  SessionGeneration,
+  StoreId,
+} from './store';
+
 export type LingxingReportType =
   | 'campaign'
   | 'ad_group'
@@ -123,6 +130,11 @@ export interface DownloadCenterDiagnosticResult {
 
 export interface LingxingReportBatch {
   id: string;
+  requestId?: string;
+  storeId?: StoreId;
+  browserProfileId?: BrowserProfileId;
+  businessDate?: BusinessDate;
+  sessionGeneration?: SessionGeneration;
   appVersion?: string;
   dateStart: string;
   dateEnd: string;

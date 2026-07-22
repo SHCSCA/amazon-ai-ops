@@ -226,14 +226,14 @@ describe('operation events page product/global views', () => {
     expect(idleRefresh.ariaBusy).toBeUndefined();
 
     const deleting = operationEventRowDeleteButtonView({ eventId: 42, deletingEventId: 42 });
-    expect(deleting.label).toBe('删除中...');
+    expect(deleting.label).toBe('归档中...');
     expect(deleting.className).toContain('button-loading');
     expect(deleting.disabled).toBe(true);
     expect(deleting.ariaBusy).toBe(true);
     expect(deleting.showSpinner).toBe(true);
 
     const lockedPeer = operationEventRowDeleteButtonView({ eventId: 41, deletingEventId: 42 });
-    expect(lockedPeer.label).toBe('删除');
+    expect(lockedPeer.label).toBe('归档');
     expect(lockedPeer.disabled).toBe(true);
     expect(lockedPeer.ariaBusy).toBeUndefined();
     expect(lockedPeer.className).not.toContain('button-loading');

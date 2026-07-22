@@ -12,12 +12,13 @@ describe('store IPC boundary', () => {
       updateStore: vi.fn(),
       archiveStore: vi.fn(),
       restoreStore: vi.fn(),
-      createConnection: vi.fn(),
-      updateConnection: vi.fn(),
+      createConnection: vi.fn(() => ({ storeId: 'store-one' })),
+      updateConnection: vi.fn(() => ({ storeId: 'store-one' })),
       removeConnection: vi.fn(),
       switchStore: vi.fn(() => ({ store: { storeId: 'store-one' }, context: { storeId: 'store-one' } })),
       reconnectStore: vi.fn(),
       getActiveStoreContext: vi.fn(() => null),
+      getActiveStoreWorkspaceView: vi.fn(() => null),
     } as unknown as StoreCoordinator;
     const onStoreChanged = vi.fn();
 
@@ -47,6 +48,7 @@ describe('store IPC boundary', () => {
       switchStore: vi.fn(),
       reconnectStore: vi.fn(),
       getActiveStoreContext: vi.fn(),
+      getActiveStoreWorkspaceView: vi.fn(() => null),
     } as unknown as StoreCoordinator;
     registerStoreIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, coordinator);
 
@@ -63,12 +65,13 @@ describe('store IPC boundary', () => {
       updateStore: vi.fn(),
       archiveStore: vi.fn(),
       restoreStore: vi.fn(),
-      createConnection: vi.fn(),
-      updateConnection: vi.fn(),
+      createConnection: vi.fn(() => ({ storeId: 'store-one' })),
+      updateConnection: vi.fn(() => ({ storeId: 'store-one' })),
       removeConnection: vi.fn(),
       switchStore: vi.fn(),
       reconnectStore: vi.fn(),
       getActiveStoreContext: vi.fn(),
+      getActiveStoreWorkspaceView: vi.fn(() => null),
     } as unknown as StoreCoordinator;
     registerStoreIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, coordinator);
     const forged = {

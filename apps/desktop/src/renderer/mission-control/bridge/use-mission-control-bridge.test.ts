@@ -11,6 +11,8 @@ describe('useMissionControlBridge contract', () => {
     expect(source.match(/isMissionControlResponseCurrent/g)?.length).toBeGreaterThanOrEqual(2);
     expect(source).toContain('.missionControl.query');
     expect(source).toContain('.missionControl.command');
+    expect(source).toContain('latestBootstrapSequenceRef');
+    expect(source).toContain('bootstrapSequence !== latestBootstrapSequenceRef.current');
   });
 
   it('propagates command transport failures instead of reporting a false success', () => {

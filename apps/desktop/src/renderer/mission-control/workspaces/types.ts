@@ -3,6 +3,7 @@ import type {
   MissionControlAutonomyProjection,
   MissionControlCapabilityProjection,
   MissionControlViewId,
+  MissionControlTodayProjection,
   MissionControlWorkspaceId,
   StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
@@ -42,6 +43,9 @@ export interface MissionControlWorkspaceViewProps {
   storeContext: StoreContextEnvelope | null;
   capabilities?: readonly MissionControlCapabilityProjection[];
   autonomy?: MissionControlAutonomyProjection | null;
+  today?: MissionControlTodayProjection | null;
+  bridgePhase?: 'idle' | 'loading' | 'ready' | 'error';
+  bridgeError?: string | null;
   previewMode: boolean;
   onNavigate: (intent: NavigationIntent) => void;
   legacySlot?: LegacyWorkspaceSlot;

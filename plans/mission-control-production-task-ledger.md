@@ -50,12 +50,14 @@
 
 | ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
 | --- | --- | --- | --- | --- |
-| S3-01 | TODO | collector/browser/page-model | S1/S2 | 店铺身份核验、可见下载中心、八报告任务 |
-| S3-02 | TODO | report parser/local DB | S3-01 | store-scoped 批次、文件、幂等导入和 0.01 对账 |
-| S3-03 | TODO | Objects workspace | S1/S2 | 店铺、产品、成本目标、广告对象、关键词、Listing 真实数据 |
-| S3-04 | TODO | Collection workspace | S3-01/S3-02 | scope、任务 CRUD、运行历史、可见监控、导入检查 |
-| S3-05 | TODO | Today projection | S3-02/S3-03 | 当前店铺真实准备度、下一动作和阻断原因 |
-| S3-06 | TODO | 阶段质量 owner | S3-01..05 | 每店 8/8 采集导入 smoke、Repository/IPC/UI 聚焦测试、commit/push |
+| S3-01 | DONE | collector/browser/page-model | S1/S2 | 店铺身份核验、可见下载中心、八报告任务 |
+| S3-02 | DONE | report parser/local DB | S3-01 | store-scoped 批次、文件、幂等导入和 0.01 对账 |
+| S3-03 | DONE | Objects workspace | S1/S2 | 店铺、产品、成本目标、广告对象、关键词、Listing 真实数据 |
+| S3-04 | DONE | Collection workspace | S3-01/S3-02 | scope、任务 CRUD、运行历史、可见监控、导入检查 |
+| S3-05 | DONE | Today projection | S3-02/S3-03 | 当前店铺真实准备度、下一动作和阻断原因 |
+| S3-06 | BLOCKED | 阶段质量 owner | S3-01..05 | 每店 8/8 采集导入 smoke、Repository/IPC/UI 聚焦测试、commit/push |
+
+阶段 3 集中验证（2026-07-22）：完整 Vitest 回归 226/226 个文件通过，2444 项通过、2 项按预期跳过；最后一轮 Objects/Event/Preview 聚焦回归 4 个文件 109/109 通过；`shared-types`、`local-db`、`browser-worker`、`lingxing-report-collector`、`report-parser`、`desktop` 六包 typecheck 通过，Desktop 生产构建通过（4711 modules）。可见原型已验证 SHC001/SHC002 数据隔离、广告对象、Listing 版本账本、店铺范围编辑，以及运营事件的创建→编辑→归档→恢复闭环。数据库身份冲突采用保留原行、隔离并失败关闭，不再启动时静默合并。当前唯一阶段阻断是缺少可授权的真实领星会话来完成每店 8/8 现场采集与导入 smoke；自动化、UI 预览或历史文件均不会冒充这项生产证据。
 
 ## 阶段 4：Mission、决策、策略、实验与因果账本
 

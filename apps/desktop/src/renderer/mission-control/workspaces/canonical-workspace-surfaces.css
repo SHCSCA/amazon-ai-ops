@@ -173,18 +173,25 @@
   margin-top: 14px;
 }
 
+.mission-control-workspace-root .canonical-chain-item {
+  min-width: 0;
+}
+
 .mission-control-workspace-root .canonical-chain-step {
   position: relative;
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) 14px;
   grid-template-areas: "icon title arrow" "icon detail arrow";
   align-items: center;
+  width: 100%;
   min-height: 66px;
   gap: 2px 7px;
   padding: 8px;
   border: 1px solid #dce4f0;
   border-radius: 8px;
   background: #fbfcfe;
+  color: inherit;
+  text-align: left;
 }
 
 .mission-control-workspace-root .canonical-chain-step > span {
@@ -275,6 +282,10 @@
   color: #bc3434;
 }
 
+.mission-control-workspace-root .canonical-health-rail li > b[data-tone="attention"] {
+  color: #9a620a;
+}
+
 .mission-control-workspace-root .canonical-next-actions {
   border: 1px solid #dce3ee;
   border-radius: 9px;
@@ -304,6 +315,10 @@
 
 .mission-control-workspace-root .canonical-next-actions li > span {
   display: grid;
+}
+
+.mission-control-workspace-root .canonical-next-actions .canonical-preview-notice {
+  margin-top: 8px;
 }
 
 .mission-control-workspace-root .canonical-next-actions small {

@@ -2,10 +2,20 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
+import {
+  normalizeStoreContextEnvelope,
+  type LingxingCollectionJobSnapshot,
+  type LingxingCollectionProgressEvent,
+} from '@amazon-ai-ops/shared-types';
 import * as dataCollectionPage from './data-collection-page';
 import {
   buildDataCollectionTaskState,
   buildCollectionMonitorState,
+  buildAuthoritativeCollectionDateRange,
+  buildCollectionProgressPresentation,
+  buildCollectionImportPresentation,
+  buildCollectionJobWorkspaceRow,
+  CollectionJobWorkspace,
   collectionActionButtonDetail,
   collectionActionButtonLabel,
   collectionActionButtonView,
@@ -13,14 +23,417 @@ import {
   collectionActionGuide,
   collectionActionNextStep,
   collectionCompletionNotice,
+  collectionProgressBelongsToAuthority,
+  collectionJobBelongsToAuthority,
+  collectionJobBelongsToStore,
+  productionReportFileHasImportReceipt,
   collectionFeedbackActionButtonView,
-  collectionOpenPathButtonView,
+  collectionOpenArtifactButtonView,
   collectionReportSelectionState,
   dataCollectionFirstViewportReportFolder,
+  createLingxingCollectionRequestId,
   runCollectionDownloadAction,
   shouldOfferDownloadCenterVerification,
+  upsertCollectionJobSnapshot,
 } from './data-collection-page';
 import { buildDataImportFeedback, buildDataImportTaskState, buildReportImportStatusDisplay, dataImportFirstViewportReportFolder } from './data-import-validation-page';
+
+const storeContext = normalizeStoreContextEnvelope({
+  storeId: 'store_us_primary',
+  marketplace: 'US',
+  currency: 'USD',
+  businessTimezone: 'America/Los_Angeles',
+  businessDate: '2026-07-22',
+  browserProfileId: 'profile_us_primary',
+  sessionGeneration: 4,
+});
+
+function collectionProgressEvent(
+  state: LingxingCollectionProgressEvent['job']['reports'][number]['state'] = 'downloading',
+): LingxingCollectionProgressEvent {
+  return {
+    eventId: 'batch_1:3',
+    emittedAt: '2026-07-22T08:00:00.000Z',
+    changedReportType: 'campaign',
+    externalStep: state === 'create_unknown' ? 'create' : 'download',
+    job: {
+      jobId: 'batch_1',
+      request: {
+        requestId: 'lx:recreate-full:test:abc',
+        storeContext,
+        dateStart: '2026-07-01',
+        dateEnd: '2026-07-21',
+        mode: 'create-and-download',
+        reportTypes: ['campaign', 'keyword'],
+      },
+      state: state === 'create_unknown' ? 'completed_with_errors' : 'running',
+      reports: [{
+        reportType: 'campaign',
+        state,
+        attemptIndex: 0,
+        autoRetryCount: 0,
+        updatedAt: '2026-07-22T08:00:00.000Z',
+      }],
+      createdAt: '2026-07-22T07:59:00.000Z',
+      updatedAt: '2026-07-22T08:00:00.000Z',
+    },
+  };
+}
+
+const allReportTypes: LingxingCollectionJobSnapshot['request']['reportTypes'] = [
+  'campaign',
+  'ad_group',
+  'placement',
+  'advertised_product',
+  'auto_targeting',
+  'keyword',
+  'product_targeting',
+  'user_search_term',
+];
+
+function collectionJob(input: {
+  jobId?: string;
+  jobState?: LingxingCollectionJobSnapshot['state'];
+  checkpointState?: LingxingCollectionJobSnapshot['reports'][number]['state'];
+  downloadedCount?: number;
+  context?: typeof storeContext;
+  canary?: boolean;
+  importState?: LingxingCollectionJobSnapshot['importState'];
+  importError?: string;
+} = {}): LingxingCollectionJobSnapshot {
+  const downloadedCount = input.downloadedCount ?? 0;
+  const checkpointState = input.checkpointState ?? 'failed';
+  return {
+    jobId: input.jobId || 'job_recent_1',
+    request: {
+      requestId: `${input.canary ? 'canary:' : 'lx:'}${input.jobId || 'job_recent_1'}`,
+      storeContext: input.context || storeContext,
+      dateStart: '2026-07-01',
+      dateEnd: '2026-07-21',
+      mode: 'create-and-download',
+      reportTypes: allReportTypes,
+    },
+    state: input.jobState || 'failed',
+    reports: allReportTypes.map((reportType, index) => ({
+      reportType,
+      state: index < downloadedCount ? 'downloaded' : index === downloadedCount ? checkpointState : 'queued',
+      attemptIndex: 0,
+      autoRetryCount: 0,
+      updatedAt: `2026-07-22T08:0${Math.min(index, 9)}:00.000Z`,
+    })),
+    createdAt: '2026-07-22T07:59:00.000Z',
+    updatedAt: '2026-07-22T08:10:00.000Z',
+    blockerCode: input.jobState === 'failed' ? 'download_timeout' : undefined,
+    ...(input.importState ? { importState: input.importState } : {}),
+    ...(input.importError ? { importError: input.importError } : {}),
+  };
+}
+
+describe('DataCollectionPage store authority collection contract', () => {
+  it('builds a safe request id and carries a captured US/USD StoreContext', () => {
+    const requestId = createLingxingCollectionRequestId('recreate full', 123456, 'unsafe token/value');
+    const range = buildAuthoritativeCollectionDateRange({
+      action: 'recreate-full',
+      dateStart: '2026-07-01',
+      dateEnd: '2026-07-21',
+      requestId,
+      storeContext,
+      storeName: 'SHC001',
+    });
+
+    expect(requestId).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+    expect(range.requestId).toBe(requestId);
+    expect(range.storeContext).toEqual(storeContext);
+    expect(range.storeContext).not.toBe(storeContext);
+    expect(range.marketplaceCode).toBe('US');
+  });
+
+  it('drops delayed prior-store and prior-session progress before it reaches UI state', () => {
+    const event = collectionProgressEvent();
+    const otherStore = normalizeStoreContextEnvelope({
+      ...storeContext,
+      storeId: 'store_us_secondary',
+      browserProfileId: 'profile_us_secondary',
+    });
+    const newerSession = normalizeStoreContextEnvelope({ ...storeContext, sessionGeneration: 5 });
+
+    expect(collectionProgressBelongsToAuthority(event, storeContext, event.job.request.requestId)).toBe(true);
+    expect(collectionProgressBelongsToAuthority(event, otherStore, event.job.request.requestId)).toBe(false);
+    expect(collectionProgressBelongsToAuthority(event, newerSession, event.job.request.requestId)).toBe(false);
+    expect(collectionProgressBelongsToAuthority(event, storeContext, 'lx:newer-request')).toBe(false);
+  });
+
+  it('surfaces create_unknown as manual reconciliation and never as retryable progress', () => {
+    const presentation = buildCollectionProgressPresentation(collectionProgressEvent('create_unknown'));
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+
+    expect(presentation?.manualReconciliation).toBe(true);
+    expect(presentation?.tone).toBe('blocked');
+    expect(presentation?.statusLabel).toBe('需人工核对');
+    expect(presentation?.detail).toContain('已停止本批次和自动重试');
+    expect(presentation?.detail).toContain('领星下载中心');
+    expect(source).toContain("manualReconciliationRequired && mode !== 'download-existing'");
+    expect(source).toContain('disabled={recreateFullButton.disabled || manualReconciliationRequired}');
+  });
+
+  it('loads and mutates only job snapshots that belong to the complete current authority', () => {
+    const current = collectionJob({ jobId: 'job-current' });
+    const priorSession = collectionJob({
+      jobId: 'job-prior-session',
+      jobState: 'running',
+      checkpointState: 'downloading',
+      context: normalizeStoreContextEnvelope({ ...storeContext, sessionGeneration: 3 }),
+    });
+
+    expect(collectionJobBelongsToAuthority(current, storeContext)).toBe(true);
+    expect(collectionJobBelongsToAuthority(priorSession, storeContext)).toBe(false);
+    expect(collectionJobBelongsToStore(priorSession, storeContext)).toBe(true);
+    expect(buildCollectionJobWorkspaceRow(priorSession, storeContext).action).toBe('resume');
+    expect(upsertCollectionJobSnapshot([priorSession, current], {
+      ...current,
+      state: 'completed',
+      updatedAt: '2026-07-22T09:00:00.000Z',
+    })).toEqual([
+      expect.objectContaining({ jobId: 'job-current', state: 'completed' }),
+      priorSession,
+    ]);
+    expect(upsertCollectionJobSnapshot([{
+      ...current,
+      state: 'completed',
+      updatedAt: '2026-07-22T09:00:00.000Z',
+    }], current)[0]).toMatchObject({ state: 'completed', updatedAt: '2026-07-22T09:00:00.000Z' });
+  });
+
+  it('offers cancel for running, continue for recoverable jobs, and no recovery for creating or UNKNOWN', () => {
+    const running = buildCollectionJobWorkspaceRow(collectionJob({
+      jobId: 'job-running',
+      jobState: 'running',
+      checkpointState: 'downloading',
+      downloadedCount: 5,
+    }));
+    const failed = buildCollectionJobWorkspaceRow(collectionJob({
+      jobId: 'job-failed',
+      jobState: 'failed',
+      checkpointState: 'failed',
+      downloadedCount: 6,
+    }));
+    const cancelled = buildCollectionJobWorkspaceRow(collectionJob({
+      jobId: 'job-cancelled',
+      jobState: 'cancelled',
+      checkpointState: 'cancelled',
+      downloadedCount: 4,
+    }));
+    const creating = buildCollectionJobWorkspaceRow(collectionJob({
+      jobId: 'job-creating',
+      jobState: 'running',
+      checkpointState: 'creating',
+      downloadedCount: 0,
+    }));
+    const unknown = buildCollectionJobWorkspaceRow(collectionJob({
+      jobId: 'job-unknown',
+      jobState: 'completed_with_errors',
+      checkpointState: 'create_unknown',
+      downloadedCount: 2,
+    }));
+
+    expect(running.action).toBe('cancel');
+    expect(running.progressLabel).toBe('5/8 类');
+    expect(failed.action).toBe('resume');
+    expect(cancelled.action).toBe('resume');
+    expect(creating.action).toBe('manual-reconciliation');
+    expect(unknown.action).toBe('manual-reconciliation');
+    expect(unknown.blockerText).toContain('禁止恢复或重复创建');
+  });
+
+  it('marks canary jobs as diagnostic-only and keeps them out of production 8/8 progress', () => {
+    const canary = collectionJob({
+      jobId: 'job-canary',
+      jobState: 'failed',
+      checkpointState: 'failed',
+      downloadedCount: 1,
+      canary: true,
+    });
+    const row = buildCollectionJobWorkspaceRow(canary, storeContext);
+    const markup = renderToStaticMarkup(React.createElement(CollectionJobWorkspace, {
+      actionBusyKey: null,
+      currentContext: storeContext,
+      error: null,
+      jobs: [canary],
+      loading: false,
+      onCancel: vi.fn(),
+      onRefresh: vi.fn(),
+      onResume: vi.fn(),
+    }));
+
+    expect(row.canary).toBe(true);
+    expect(row.progressLabel).toBe('1/8 类（Canary）');
+    expect(row.progressDetail).toContain('不计入生产 8/8');
+    expect(markup).toContain('Canary（不入生产）');
+    expect(markup).toContain('继续采集');
+  });
+
+  it('does not declare business completion until the durable import lifecycle succeeds', () => {
+    const pending = collectionJob({
+      jobId: 'job-import-pending',
+      jobState: 'completed',
+      downloadedCount: 8,
+      importState: 'pending',
+    });
+    const failed = collectionJob({
+      jobId: 'job-import-failed',
+      jobState: 'completed',
+      downloadedCount: 8,
+      importState: 'failed',
+      importError: 'keyword 表头无法识别',
+    });
+    const succeeded = collectionJob({
+      jobId: 'job-import-succeeded',
+      jobState: 'completed',
+      downloadedCount: 8,
+      importState: 'succeeded',
+    });
+    const legacy = collectionJob({
+      jobId: 'job-import-legacy',
+      jobState: 'completed',
+      downloadedCount: 8,
+    });
+    const canary = collectionJob({
+      jobId: 'job-import-canary',
+      jobState: 'completed',
+      downloadedCount: 1,
+      canary: true,
+      importState: 'not_applicable',
+    });
+
+    expect(buildCollectionJobWorkspaceRow(pending).statusLabel).toBe('下载完成，正在导入');
+    expect(buildCollectionJobWorkspaceRow(pending).action).toBe('none');
+    expect(buildCollectionImportPresentation(pending).productionComplete).toBe(false);
+    expect(buildCollectionJobWorkspaceRow(failed)).toMatchObject({
+      statusLabel: '导入失败',
+      action: 'supplement-import',
+    });
+    expect(buildCollectionJobWorkspaceRow(failed).blockerText).toContain('keyword 表头无法识别');
+    expect(buildCollectionJobWorkspaceRow(succeeded)).toMatchObject({
+      statusLabel: '采集与入库完成',
+      action: 'none',
+    });
+    expect(buildCollectionImportPresentation(succeeded).productionComplete).toBe(true);
+    expect(buildCollectionJobWorkspaceRow(legacy)).toMatchObject({
+      statusLabel: '下载完成，入库待核对',
+      action: 'supplement-import',
+    });
+    expect(buildCollectionImportPresentation(legacy).detail).toContain('不能宣称生产入库成功');
+    expect(buildCollectionImportPresentation(canary).label).toBe('Canary 不写生产指标');
+  });
+
+  it('renders pending, failed, succeeded, legacy and canary import truth without false completion', () => {
+    const pending = collectionJob({ jobId: 'pending', jobState: 'completed', downloadedCount: 8, importState: 'pending' });
+    const failed = collectionJob({ jobId: 'failed', jobState: 'completed', downloadedCount: 8, importState: 'failed' });
+    const succeeded = collectionJob({ jobId: 'succeeded', jobState: 'completed', downloadedCount: 8, importState: 'succeeded' });
+    const legacy = collectionJob({ jobId: 'legacy', jobState: 'completed', downloadedCount: 8 });
+    const canary = collectionJob({ jobId: 'canary', jobState: 'completed', downloadedCount: 1, canary: true, importState: 'not_applicable' });
+    const markup = renderToStaticMarkup(React.createElement(CollectionJobWorkspace, {
+      actionBusyKey: null,
+      currentContext: storeContext,
+      error: null,
+      jobs: [pending, failed, succeeded, legacy, canary],
+      loading: false,
+      onCancel: vi.fn(),
+      onRefresh: vi.fn(),
+      onResume: vi.fn(),
+    }));
+
+    expect(markup).toContain('等待 / 正在导入');
+    expect(markup).toContain('导入失败');
+    expect(markup).toContain('补导数据');
+    expect(markup).toContain('采集与入库完成');
+    expect(markup).toContain('旧任务 · 入库待核对');
+    expect(markup).toContain('Canary 不写生产指标');
+    expect(buildCollectionProgressPresentation({ ...collectionProgressEvent(), job: pending })?.title).toContain('等待 / 正在导入');
+    expect(buildCollectionProgressPresentation({ ...collectionProgressEvent(), job: failed })?.statusLabel).toBe('导入失败');
+    expect(buildCollectionProgressPresentation({ ...collectionProgressEvent(), job: succeeded })?.statusLabel).toBe('采集与入库完成');
+    expect(buildCollectionProgressPresentation({ ...collectionProgressEvent(), job: legacy })?.statusLabel).toBe('入库待核对');
+    expect(buildCollectionProgressPresentation({ ...collectionProgressEvent(), job: canary })?.statusLabel).toBe('Canary 不入生产');
+  });
+
+  it('marks the browser development preview as an intentionally empty non-production task list', () => {
+    const markup = renderToStaticMarkup(React.createElement(CollectionJobWorkspace, {
+      actionBusyKey: null,
+      currentContext: storeContext,
+      error: null,
+      jobs: [],
+      loading: false,
+      previewOnly: true,
+      onCancel: vi.fn(),
+      onRefresh: vi.fn(),
+      onResume: vi.fn(),
+    }));
+
+    expect(markup).toContain('DEV 空任务预览');
+    expect(markup).toContain('不会注入伪造采集任务或生产成功');
+    expect(markup).toContain('未伪造真实采集、入库或生产成功记录');
+  });
+
+  it('renders loading, error, empty, resume-busy, cancel, and manual-reconciliation workspace states', () => {
+    const renderWorkspace = (overrides: Partial<Parameters<typeof CollectionJobWorkspace>[0]> = {}) => renderToStaticMarkup(
+      React.createElement(CollectionJobWorkspace, {
+        actionBusyKey: null,
+        error: null,
+        jobs: [],
+        loading: false,
+        onCancel: vi.fn(),
+        onRefresh: vi.fn(),
+        onResume: vi.fn(),
+        ...overrides,
+      }),
+    );
+
+    const loadingMarkup = renderWorkspace({ loading: true });
+    expect(loadingMarkup).toContain('aria-busy="true"');
+    expect(loadingMarkup).toContain('正在读取当前店铺最近任务');
+
+    const errorMarkup = renderWorkspace({ error: 'Main unavailable' });
+    expect(errorMarkup).toContain('role="alert"');
+    expect(errorMarkup).toContain('任务读取失败：Main unavailable');
+    expect(errorMarkup).toContain('刷新任务');
+
+    const emptyMarkup = renderWorkspace();
+    expect(emptyMarkup).toContain('当前店铺还没有采集任务');
+
+    const failed = collectionJob({ jobId: 'job-failed', jobState: 'failed', downloadedCount: 6 });
+    const resumeBusyMarkup = renderWorkspace({ jobs: [failed], actionBusyKey: 'resume:job-failed' });
+    expect(resumeBusyMarkup).toContain('6/8 类');
+    expect(resumeBusyMarkup).toContain('恢复中...');
+    expect(resumeBusyMarkup).toMatch(/<button[^>]*aria-busy="true"[^>]*disabled=""/);
+
+    const runningMarkup = renderWorkspace({
+      jobs: [collectionJob({ jobId: 'job-running', jobState: 'running', checkpointState: 'downloading' })],
+    });
+    expect(runningMarkup).toContain('取消任务');
+
+    const unknownMarkup = renderWorkspace({
+      jobs: [collectionJob({ jobId: 'job-unknown', jobState: 'completed_with_errors', checkpointState: 'create_unknown' })],
+    });
+    expect(unknownMarkup).toContain('人工核对（禁止恢复）');
+    expect(unknownMarkup).not.toContain('>继续采集<');
+  });
+
+  it('captures storeContext for job and import mutations and drops responses after an authority change', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('listLingxingCollectionJobs({');
+    expect(source).toContain('resumeLingxingCollection({');
+    expect(source).toContain('cancelLingxingCollection({');
+    expect(source).toContain('jobId: job.jobId');
+    expect(source).toContain('requestId: job.request.requestId');
+    expect(source).toContain('storeContext: captured.storeContext');
+    expect(source).toContain("? `canary:${requestSeed}`.slice(0, 128)");
+    expect(source).toContain('if (result?.job && !collectionJobBelongsToStore(result.job, captured.storeContext)) return;');
+    expect(source).toContain('importCurrentBusinessReports(captured.input)');
+    expect(source).toContain('importLocalBusinessReportFiles(captured.input)');
+    expect(source).toContain('if (!isCapturedAuthorityCurrent(captured.authorityKey)) return;');
+  });
+});
 
 describe('DataCollectionPage overlay focus contracts', () => {
   it('wires both modal dialogs to independent shared focus scopes', () => {
@@ -47,15 +460,27 @@ describe('DataCollectionPage overlay focus contracts', () => {
   });
 });
 
-describe('DataCollectionPage first-screen path disclosure', () => {
+describe('DataCollectionPage first-screen artifact disclosure', () => {
   it('uses business labels while keeping the primary report folder openable', () => {
     const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
 
     expect(source).not.toContain('compactPath(primaryReportFolder)');
     expect(source).toContain('当前范围原始报表目录');
     expect(source).toContain('已创建，可打开');
-    expect(source).toContain("idleLabel: '打开目录', targetPath: primaryReportFolder");
-    expect(source).toContain("idleLabel: '打开报表目录', targetPath: primaryReportFolder");
+    expect(source).toContain("idleLabel: '打开目录', artifactId: primaryReportFolderArtifactId");
+    expect(source).toContain("idleLabel: '打开报表目录', artifactId: primaryReportFolderArtifactId");
+    expect(source).toContain('openReportArtifact');
+    expect(source).not.toContain('openReportPath');
+  });
+
+  it('never consumes absolute-path fields from collection or import responses', () => {
+    const source = readFileSync(new URL('./data-collection-page.tsx', import.meta.url), 'utf8');
+
+    for (const forbidden of ['filePath', 'folderPath', 'downloadDir', 'manifestPath', 'screenshotPath', 'domSnapshotPath']) {
+      expect(source).not.toContain(forbidden);
+    }
+    expect(source).toContain('artifactId');
+    expect(source).toContain('folderArtifactId');
   });
 });
 
@@ -108,7 +533,7 @@ describe('collectionCompletionNotice', () => {
       batchIds: ['batch_1'],
       downloadedCount: 8,
       actionDownloadedFiles: [
-        { label: '关键词报告', fileName: 'keyword.xlsx', filePath: 'C:/reports/keyword.xlsx', fileSizeBytes: 1024 },
+        { label: '关键词报告', fileName: 'keyword.xlsx', fileExtension: '.xlsx', artifactId: 'artifact:v1:keyword', fileSizeBytes: 1024 },
       ],
       failedCount: 0,
       parsedFiles: 1,
@@ -119,6 +544,60 @@ describe('collectionCompletionNotice', () => {
     });
 
     expect(notice).toBe('采集动作已完成：本次新增 1 个真实原始报表文件，当前范围覆盖 8/8 类真实报表，已自动导入 96 行广告指标。');
+  });
+
+  it('records a partial header-only import as a receipt while keeping the full-lineage gate explicit', () => {
+    const notice = collectionCompletionNotice({
+      title: '真实报表导入完成',
+      tone: 'success',
+      mode: 'import',
+      batchIds: ['batch_empty'],
+      downloadedCount: 1,
+      actionDownloadedFiles: [],
+      failedCount: 0,
+      parsedFiles: 1,
+      insertedRows: 0,
+      currentImportedRows: 0,
+      nextStep: '下一步：补齐日级广告指标。',
+      failedFiles: [],
+    });
+
+    expect(notice).toContain('零行回执已登记');
+    expect(notice).toContain('完整 8 类任务血缘核对');
+  });
+
+  it('describes a fully proven zero-row lineage as a real zero-data state', () => {
+    const notice = collectionCompletionNotice({
+      title: '真实报表导入完成',
+      tone: 'success',
+      mode: 'import',
+      batchIds: ['batch_empty'],
+      downloadedCount: 8,
+      actionDownloadedFiles: [],
+      failedCount: 0,
+      parsedFiles: 8,
+      insertedRows: 0,
+      currentImportedRows: 0,
+      productionReady: true,
+      nextStep: '下一步：查看广告表现。',
+      failedFiles: [],
+    });
+
+    expect(notice).toContain('可进入广告表现查看零数据状态');
+  });
+
+  it('uses the exact production binding instead of row count for zero-row import display', () => {
+    const file = { batchId: 'job_empty', importedRows: 0, status: 'downloaded' };
+    expect(productionReportFileHasImportReceipt(file, {
+      expectedBatchId: 'job_empty',
+      fileBatchId: 'job_empty',
+      state: 'imported',
+    })).toBe(true);
+    expect(productionReportFileHasImportReceipt(file, {
+      expectedBatchId: 'job_other',
+      fileBatchId: 'job_other',
+      state: 'imported',
+    })).toBe(false);
   });
 });
 
@@ -236,7 +715,7 @@ describe('task-first data page helpers', () => {
       actionNotice: '创建并下载未完成。',
       actionError: '页面验证未通过：缺少关键控件。',
       lastActionResult: null,
-      lastDiagnostic: { ready: false, screenshotPath: 'C:/evidence/download-center.png' },
+      lastDiagnostic: { ready: false, screenshotArtifactId: 'artifact:v1:diagnostic' },
       realReportCount: 0,
       importedRowCount: 0,
     });
@@ -244,7 +723,7 @@ describe('task-first data page helpers', () => {
     expect(monitor?.tone).toBe('blocked');
     expect(monitor?.statusLabel).toBe('需处理');
     expect(monitor?.detail).toContain('采集动作被阻断');
-    expect(monitor?.previewDetail).toContain('download-center.png');
+    expect(monitor?.previewDetail).toContain('诊断证据已登记');
     expect(monitor?.canClose).toBe(true);
   });
 
@@ -260,7 +739,7 @@ describe('task-first data page helpers', () => {
         batchIds: ['batch_1'],
         downloadedCount: 8,
         actionDownloadedFiles: [
-          { label: '关键词报告', fileName: 'keyword.xlsx', filePath: 'C:/reports/keyword.xlsx', fileSizeBytes: 1024 },
+          { label: '关键词报告', fileName: 'keyword.xlsx', fileExtension: '.xlsx', artifactId: 'artifact:v1:keyword', fileSizeBytes: 1024 },
         ],
         failedCount: 0,
         parsedFiles: 1,
@@ -300,7 +779,7 @@ describe('task-first data page helpers', () => {
     const markup = renderToStaticMarkup(React.createElement(Drawer, {
       state: state!,
       steps: [{ label: '1. 验证当前范围', description: '检查日期和店铺。', status: 'pending' }],
-      evidencePath: 'C:/evidence/download-center.png',
+      evidenceAvailable: true,
       onClose: vi.fn(),
     }));
     const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
@@ -316,13 +795,13 @@ describe('task-first data page helpers', () => {
     const firstViewportFolder = dataCollectionFirstViewportReportFolder({
       realReportCount: 0,
       realFiles: [],
-      evidenceFolder: 'C:/AmazonAIOps/storage/downloads/mock-batch',
-      auditDownloadDir: 'C:/AmazonAIOps/storage/downloads/mock-batch',
+      evidenceFolderArtifactId: 'artifact:v1:evidence-folder',
+      auditDownloadArtifactId: 'artifact:v1:report-folder',
     });
     const task = buildDataCollectionTaskState({
       realReportCount: 0,
       importedRowCount: 0,
-      primaryReportFolder: firstViewportFolder,
+      primaryReportFolderArtifactId: firstViewportFolder,
       runningAction: null,
       readiness: { status: 'blocked', canEnterDiagnosis: false, nextStep: 'collect' },
     });
@@ -337,7 +816,7 @@ describe('task-first data page helpers', () => {
     const task = buildDataCollectionTaskState({
       realReportCount: 8,
       importedRowCount: 96,
-      primaryReportFolder: 'C:/AmazonAIOps/storage/downloads/mock-batch',
+      primaryReportFolderArtifactId: 'artifact:v1:report-folder',
       runningAction: null,
       readiness: { status: 'ready', canEnterDiagnosis: true, nextStep: 'diagnose' },
     });
@@ -351,7 +830,7 @@ describe('task-first data page helpers', () => {
     const task = buildDataCollectionTaskState({
       realReportCount: 8,
       importedRowCount: 96,
-      primaryReportFolder: 'C:/AmazonAIOps/storage/downloads/mock-batch',
+      primaryReportFolderArtifactId: 'artifact:v1:report-folder',
       runningAction: null,
       readiness: { status: 'blocked', canEnterDiagnosis: false, nextStep: 'import' },
     });
@@ -460,16 +939,16 @@ describe('task-first data page helpers', () => {
     expect(locked.className).not.toContain('button-loading');
   });
 
-  it('gives local path open buttons an explicit busy contract while opening a file or folder', () => {
-    const active = collectionOpenPathButtonView({
-      activePathKey: '打开报表目录:C:/reports',
+  it('gives store-bound artifact buttons an explicit busy contract while opening a file or folder', () => {
+    const active = collectionOpenArtifactButtonView({
+      activeArtifactKey: '打开报表目录:artifact:v1:reports',
       idleLabel: '打开报表目录',
-      pathKey: '打开报表目录:C:/reports',
+      artifactKey: '打开报表目录:artifact:v1:reports',
     });
-    const locked = collectionOpenPathButtonView({
-      activePathKey: '打开报表目录:C:/reports',
+    const locked = collectionOpenArtifactButtonView({
+      activeArtifactKey: '打开报表目录:artifact:v1:reports',
       idleLabel: '打开采集清单',
-      pathKey: '打开采集清单:C:/manifest.json',
+      artifactKey: '打开采集清单:artifact:v1:manifest',
     });
 
     expect(active.label).toBe('打开中...');
@@ -541,24 +1020,24 @@ describe('task-first data page helpers', () => {
     const firstViewportFolder = dataImportFirstViewportReportFolder({
       realReportCount: 0,
       realFiles: [],
-      auditDownloadDir: 'C:/reports',
+      auditDownloadArtifactId: 'artifact:v1:reports',
     });
 
     expect(firstViewportFolder).toBeUndefined();
     const collectReadiness = { status: 'blocked' as const, canEnterDiagnosis: false, nextStep: 'collect' as const };
     const importReadiness = { status: 'blocked' as const, canEnterDiagnosis: false, nextStep: 'import' as const };
     const readyReadiness = { status: 'ready' as const, canEnterDiagnosis: true, nextStep: 'diagnose' as const };
-    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder, readiness: collectReadiness }).primaryActionLabel).toBe('去数据采集');
-    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolder: firstViewportFolder, readiness: collectReadiness }).secondaryActionLabel).toBe('导入本地报表');
-    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 0, reportFolder: 'C:/reports', readiness: importReadiness }).primaryActionLabel).toBe('导入已下载表格');
-    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 96, reportFolder: 'C:/reports', readiness: readyReadiness }).primaryActionLabel).toBe('查看广告表现');
+    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolderArtifactId: firstViewportFolder, readiness: collectReadiness }).primaryActionLabel).toBe('去数据采集');
+    expect(buildDataImportTaskState({ realReportCount: 0, importedRows: 0, reportFolderArtifactId: firstViewportFolder, readiness: collectReadiness }).secondaryActionLabel).toBe('导入本地报表');
+    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 0, reportFolderArtifactId: 'artifact:v1:reports', readiness: importReadiness }).primaryActionLabel).toBe('导入已下载表格');
+    expect(buildDataImportTaskState({ realReportCount: 8, importedRows: 96, reportFolderArtifactId: 'artifact:v1:reports', readiness: readyReadiness }).primaryActionLabel).toBe('查看广告表现');
   });
 
   it('makes downloaded report files explicitly wait for DB import', () => {
     const status = buildReportImportStatusDisplay({
       status: 'downloaded',
       importedRows: 0,
-      filePath: 'C:/reports/campaign.xlsx',
+      artifactId: 'artifact:v1:campaign',
     });
 
     expect(status.label).toBe('已下载待入库');
@@ -589,7 +1068,7 @@ describe('task-first data page helpers', () => {
       runningImport: null,
       readiness: { status: 'blocked', canEnterDiagnosis: false, nextStep: 'import' },
     });
-    expect(partial.title).toBe('部分指标已入库');
+    expect(partial.title).toBe('部分报表已有入库回执');
     expect(partial.statusLabel).toBe('待补齐');
     expect(partial.tone).toBe('warning');
     expect(partial.detail).toContain('不能进入正式诊断');

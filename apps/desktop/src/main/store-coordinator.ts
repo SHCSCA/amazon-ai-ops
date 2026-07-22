@@ -31,6 +31,12 @@ import {
 } from '@amazon-ai-ops/shared-types';
 
 export interface StoreAuthorityRepository {
+  /**
+   * Runs store authority and durable generation writes on the same database
+   * transaction boundary. Implementations must roll back every nested write
+   * when `work` throws.
+   */
+  transaction<T>(work: () => T): T;
   listStores(input?: ListStoresInput): StoreRecord[];
   getStore(storeId: StoreId): StoreRecord | undefined;
   createStore(input: {
@@ -240,13 +246,16 @@ export class StoreCoordinator {
     if (Object.keys(normalizedPatch).length === 0) {
       throw new StoreCoordinatorError('EMPTY_STORE_PATCH', 'store update requires at least one field');
     }
-    const updated = this.repository.updateStore({
-      storeId,
-      patch: normalizedPatch,
-      expectedUpdatedAt: input.expectedUpdatedAt,
+    const updated = this.repository.transaction(() => {
+      const result = this.repository.updateStore({
+        storeId,
+        patch: normalizedPatch,
+        expectedUpdatedAt: input.expectedUpdatedAt,
+      });
+      this.sessions.advance(storeId);
+      return result;
     });
     if (this.activeStoreId === storeId && updated.status !== 'active') {
-      this.sessions.advance(storeId);
       this.activeStoreId = null;
     }
     return updated;
@@ -255,9 +264,13 @@ export class StoreCoordinator {
   archiveStore(input: ArchiveStoreInput): StoreRecord {
     const storeId = normalizeStoreId(input?.storeId);
     this.requireStore(storeId);
-    const archived = this.repository.archiveStore({ ...input, storeId });
-    if (this.activeStoreId === storeId) {
-      this.sessions.advance(storeId);
+    const wasActive = this.activeStoreId === storeId;
+    const archived = this.repository.transaction(() => {
+      const result = this.repository.archiveStore({ ...input, storeId });
+      if (wasActive) this.sessions.advance(storeId);
+      return result;
+    });
+    if (wasActive) {
       this.activeStoreId = null;
     }
     return archived;
@@ -272,30 +285,41 @@ export class StoreCoordinator {
   createConnection(input: CreateStoreConnectionInput): StoreConnection {
     const storeId = normalizeStoreId(input?.storeId);
     this.requireActiveStore(storeId);
-    return this.repository.createConnection({
-      storeId,
-      id: normalizeStoreCapabilityId(this.createStoreCapabilityId()),
-      provider: input?.provider,
-      accountLabel: input?.accountLabel,
-      externalAccountId: input?.externalAccountId,
+    return this.repository.transaction(() => {
+      const connection = this.repository.createConnection({
+        storeId,
+        id: normalizeStoreCapabilityId(this.createStoreCapabilityId()),
+        provider: input?.provider,
+        accountLabel: input?.accountLabel,
+        externalAccountId: input?.externalAccountId,
+      });
+      this.sessions.advance(storeId);
+      return connection;
     });
   }
 
   updateConnection(input: UpdateStoreConnectionInput): StoreConnection {
     const storeId = normalizeStoreId(input?.storeId);
     this.requireActiveStore(storeId);
-    return this.repository.updateConnection({
-      id: input?.id,
-      storeId,
-      accountLabel: input?.accountLabel,
-      externalAccountId: input?.externalAccountId,
+    return this.repository.transaction(() => {
+      const connection = this.repository.updateConnection({
+        id: input?.id,
+        storeId,
+        accountLabel: input?.accountLabel,
+        externalAccountId: input?.externalAccountId,
+      });
+      this.sessions.advance(storeId);
+      return connection;
     });
   }
 
   removeConnection(input: RemoveStoreConnectionInput): void {
     const storeId = normalizeStoreId(input?.storeId);
     this.requireActiveStore(storeId);
-    this.repository.removeConnection({ id: input?.id, storeId });
+    this.repository.transaction(() => {
+      this.repository.removeConnection({ id: input?.id, storeId });
+      this.sessions.advance(storeId);
+    });
   }
 
   switchStore(storeIdInput: unknown): StoreWorkspaceView {
@@ -341,6 +365,12 @@ export class StoreCoordinator {
     return this.buildContext(store, this.sessions.current(store.storeId));
   }
 
+  getActiveStoreWorkspaceView(): StoreWorkspaceView | null {
+    if (!this.activeStoreId) return null;
+    const store = this.requireActiveStore(this.activeStoreId);
+    return this.buildWorkspaceView(store, this.sessions.current(store.storeId));
+  }
+
   /** Validate a captured store context without rebinding it to the current UI. */
   assertStoreContext(value: unknown): StoreContextEnvelope {
     const context = normalizeStoreContextEnvelope(value);
@@ -350,6 +380,7 @@ export class StoreCoordinator {
       || context.marketplace !== store.marketplace
       || context.currency !== store.currency
       || context.businessTimezone !== store.businessTimezone
+      || context.businessDate !== businessDateFor(this.now(), store.businessTimezone)
     ) {
       throw new StoreCoordinatorError(
         'STORE_CONTEXT_MISMATCH',

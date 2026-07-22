@@ -2,6 +2,7 @@ import {
   normalizeStoreContextEnvelope,
   type StoreContextEnvelope,
 } from './store';
+import type { LingxingCollectionImportState } from './lingxing-collection';
 
 /**
  * Stable production workspaces exposed by the Mission Control shell.
@@ -137,6 +138,54 @@ export interface MissionControlAutonomyProjection {
   policyAutoBlockerDetail?: string;
 }
 
+export type MissionControlTodayReadinessState = 'ready' | 'attention' | 'blocked';
+
+export interface MissionControlTodayReadinessItem {
+  id: 'collection' | 'import' | 'products' | 'browser';
+  label: string;
+  state: MissionControlTodayReadinessState;
+  detail: string;
+  targetView: MissionControlViewId;
+}
+
+export interface MissionControlTodayProjection {
+  storeId: string;
+  authorityKey: string;
+  businessDate: string;
+  marketplace: 'US';
+  currency: 'USD';
+  generatedAt: string;
+  facts: {
+    productCount: number;
+    configuredProductCount: number;
+    collectionJobCount: number;
+    latestCollectionJob?: {
+      jobId: string;
+      state: string;
+      importState: LingxingCollectionImportState | 'legacy_unverified';
+      downloadedReports: number;
+      totalReports: number;
+      updatedAt: string;
+    };
+    importedMetricRows: number;
+    latestMetricDate?: string;
+    operationEventsToday: number;
+    browserSessionReady: boolean;
+  };
+  readiness: MissionControlTodayReadinessItem[];
+  blockers: string[];
+  attentionItems: string[];
+  nextAction: {
+    id: string;
+    label: string;
+    detail: string;
+    targetView: MissionControlViewId;
+    requiredCapabilityId: string;
+    available: boolean;
+    blockerCode?: string;
+  };
+}
+
 /**
  * Renderer epoch is a local invalidation counter, not an authorization token.
  * Main echoes it so the Renderer can discard a response issued before a store
@@ -168,6 +217,7 @@ export type MissionControlQueryRequest = MissionControlBootstrapQueryRequest;
 export interface MissionControlBootstrapProjection {
   capabilities: MissionControlCapabilityProjection[];
   autonomy: MissionControlAutonomyProjection;
+  today: MissionControlTodayProjection;
 }
 
 export interface MissionControlBootstrapQueryResponse extends MissionControlResponseMeta {

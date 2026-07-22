@@ -7,7 +7,9 @@ export type StoreMigrationQuarantineReason =
   | 'missing_parent_store'
   | 'ambiguous_parent_store'
   | 'cross_store_conflict'
-  | 'invalid_existing_store_id';
+  | 'invalid_existing_store_id'
+  | 'duplicate_identity'
+  | 'identity_content_conflict';
 
 export interface StoreMigrationBackupManifest {
   status: 'pending' | 'created' | 'reused' | 'not_applicable';

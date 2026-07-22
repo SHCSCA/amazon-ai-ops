@@ -116,6 +116,10 @@ export class StoreRepositoryError extends Error {
 export class StoreRepository {
   constructor(private readonly db: Database) {}
 
+  transaction<T>(work: () => T): T {
+    return this.db.transaction(work).immediate();
+  }
+
   createStore(input: CreateStoreRecordInput): StoreRecord {
     const storeId = normalizeStoreId(input.storeId);
     const browserProfileId = normalizeBrowserProfileId(input.browserProfileId);
@@ -745,19 +749,20 @@ export class StoreRepository {
       const sourceTable = row.source_table as typeof STORE_SCOPED_LEGACY_TABLES[number];
       const identityColumn = this.tableHasColumn(sourceTable, 'id') ? 'id' : 'rowid';
       const source = this.db.prepare(`
-        SELECT store_id
+        SELECT *
         FROM ${quoteIdentifier(sourceTable)}
         WHERE CAST(${quoteIdentifier(identityColumn)} AS TEXT) = ?
-      `).get(row.source_row_id) as { store_id: string | null } | undefined;
+      `).get(row.source_row_id) as Record<string, unknown> | undefined;
       if (!source) {
         throw new StoreRepositoryError('QUARANTINE_TARGET_CONFLICT', 'Quarantined source row no longer exists.');
       }
-      if (source.store_id && source.store_id !== store.storeId) {
+      if (typeof source.store_id === 'string' && source.store_id && source.store_id !== store.storeId) {
         throw new StoreRepositoryError(
           'QUARANTINE_TARGET_CONFLICT',
           `Source row is already assigned to store ${source.store_id}.`,
         );
       }
+      this.assertQuarantineParentAuthority(sourceTable, source, store.storeId);
       if (!source.store_id) {
         this.db.prepare(`
           UPDATE ${quoteIdentifier(sourceTable)}
@@ -765,8 +770,21 @@ export class StoreRepository {
           WHERE CAST(${quoteIdentifier(identityColumn)} AS TEXT) = ? AND store_id IS NULL
         `).run(store.storeId, row.source_row_id);
       }
+      // Marker-backed partial indexes intentionally keep pending rows outside
+      // authoritative identities. Clearing the marker inside this transaction
+      // makes SQLite's unique indexes the final race-free preflight: any
+      // collision aborts and rolls back both the owner assignment and the
+      // quarantine resolution, so a restart can safely re-synchronise markers.
+      if (this.tableHasColumn(sourceTable, 'store_authority_quarantined')) {
+        this.db.prepare(`
+          UPDATE ${quoteIdentifier(sourceTable)}
+          SET store_authority_quarantined = 0
+          WHERE CAST(${quoteIdentifier(identityColumn)} AS TEXT) = ?
+            AND store_authority_quarantined = 1
+        `).run(row.source_row_id);
+      }
       const now = new Date().toISOString();
-      this.db.prepare(`
+      const resolution = this.db.prepare(`
         UPDATE store_migration_quarantine
         SET status = 'resolved', resolved_store_id = @storeId,
             resolution_note = @resolutionNote, resolved_at = @resolvedAt,
@@ -779,11 +797,106 @@ export class StoreRepository {
         resolvedAt: now,
         updatedAt: now,
       });
+      if (resolution.changes !== 1) {
+        throw new StoreRepositoryError(
+          'QUARANTINE_ALREADY_RESOLVED',
+          'Migration quarantine record was resolved concurrently.',
+        );
+      }
       return mapQuarantine(this.db.prepare(`
         SELECT * FROM store_migration_quarantine WHERE id = ?
       `).get(row.id) as QuarantineRow);
     });
-    return resolve();
+    try {
+      return resolve();
+    } catch (error) {
+      if (error instanceof StoreRepositoryError) throw error;
+      if (isSqliteConstraint(error)) {
+        throw new StoreRepositoryError(
+          'QUARANTINE_TARGET_CONFLICT',
+          'Resolving this row would conflict with existing store-scoped authority.',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private assertQuarantineParentAuthority(
+    sourceTable: typeof STORE_SCOPED_LEGACY_TABLES[number],
+    source: Record<string, unknown>,
+    storeId: StoreId,
+  ): void {
+    const link = QUARANTINE_PARENT_LINKS[sourceTable];
+    if (link) {
+      const parentId = source[link.localColumn];
+      if (parentId !== null && parentId !== undefined && String(parentId).trim()) {
+        const parents = this.db.prepare(`
+          SELECT parent.store_id AS store_id,
+                 CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM store_migration_quarantine quarantine
+                   WHERE quarantine.source_table = ?
+                     AND quarantine.source_row_id = CAST(parent.${quoteIdentifier(link.parentIdentityColumn)} AS TEXT)
+                     AND quarantine.status = 'pending'
+                 ) THEN 1 ELSE 0 END AS pending
+          FROM ${quoteIdentifier(link.parentTable)} parent
+          WHERE parent.${quoteIdentifier(link.parentColumn)} = ?
+        `).all(link.parentTable, parentId) as Array<{ store_id: string | null; pending: number }>;
+        this.assertParentRowsMatchStore(sourceTable, link.parentTable, parents, storeId);
+      }
+    }
+
+    if (sourceTable === 'keyword_metrics') {
+      const sourceFile = typeof source.source_file === 'string' ? source.source_file.trim() : '';
+      if (sourceFile) {
+        const parents = this.db.prepare(`
+          SELECT parent.store_id, parent.pending
+          FROM (
+            SELECT report.store_id AS store_id,
+                   CASE WHEN EXISTS (
+                     SELECT 1 FROM store_migration_quarantine quarantine
+                     WHERE quarantine.source_table = 'report_files'
+                       AND quarantine.source_row_id = CAST(report.id AS TEXT)
+                       AND quarantine.status = 'pending'
+                   ) THEN 1 ELSE 0 END AS pending
+            FROM report_files report
+            WHERE report.file_path = ?
+            UNION ALL
+            SELECT report.store_id AS store_id,
+                   CASE WHEN EXISTS (
+                     SELECT 1 FROM store_migration_quarantine quarantine
+                     WHERE quarantine.source_table = 'lingxing_report_files'
+                       AND quarantine.source_row_id = CAST(report.id AS TEXT)
+                       AND quarantine.status = 'pending'
+                   ) THEN 1 ELSE 0 END AS pending
+            FROM lingxing_report_files report
+            WHERE report.file_path = ?
+          ) parent
+        `).all(sourceFile, sourceFile) as Array<{ store_id: string | null; pending: number }>;
+        this.assertParentRowsMatchStore(sourceTable, 'report_files', parents, storeId);
+      }
+    }
+  }
+
+  private assertParentRowsMatchStore(
+    sourceTable: string,
+    parentTable: string,
+    parents: Array<{ store_id: string | null; pending: number }>,
+    storeId: StoreId,
+  ): void {
+    if (parents.length === 0 || parents.some((parent) => parent.pending === 1 || !parent.store_id)) {
+      throw new StoreRepositoryError(
+        'QUARANTINE_TARGET_CONFLICT',
+        `${sourceTable} cannot be resolved before its ${parentTable} parent has authoritative store ownership.`,
+      );
+    }
+    const conflictingParent = parents.find((parent) => parent.store_id !== storeId);
+    if (conflictingParent) {
+      throw new StoreRepositoryError(
+        'QUARANTINE_TARGET_CONFLICT',
+        `${sourceTable} parent belongs to store ${conflictingParent.store_id}, not ${storeId}.`,
+      );
+    }
   }
 
   private requireStore(storeIdInput: StoreId): StoreRecord {
@@ -921,6 +1034,61 @@ interface QuarantineRow {
   updated_at: string;
   resolved_at: string | null;
 }
+
+interface QuarantineParentLink {
+  parentTable: typeof STORE_SCOPED_LEGACY_TABLES[number];
+  localColumn: string;
+  parentColumn: string;
+  parentIdentityColumn: string;
+}
+
+const QUARANTINE_PARENT_LINKS: Partial<Record<
+  typeof STORE_SCOPED_LEGACY_TABLES[number],
+  QuarantineParentLink
+>> = {
+  product_costs: {
+    parentTable: 'products',
+    localColumn: 'product_id',
+    parentColumn: 'id',
+    parentIdentityColumn: 'id',
+  },
+  action_logs: {
+    parentTable: 'action_recommendations',
+    localColumn: 'recommendation_id',
+    parentColumn: 'id',
+    parentIdentityColumn: 'id',
+  },
+  approval_tasks: {
+    parentTable: 'action_recommendations',
+    localColumn: 'recommendation_id',
+    parentColumn: 'id',
+    parentIdentityColumn: 'id',
+  },
+  lingxing_report_files: {
+    parentTable: 'lingxing_report_batches',
+    localColumn: 'batch_id',
+    parentColumn: 'id',
+    parentIdentityColumn: 'id',
+  },
+  report_files: {
+    parentTable: 'lingxing_report_batches',
+    localColumn: 'batch_id',
+    parentColumn: 'id',
+    parentIdentityColumn: 'id',
+  },
+  ad_daily_metrics: {
+    parentTable: 'lingxing_report_batches',
+    localColumn: 'batch_id',
+    parentColumn: 'id',
+    parentIdentityColumn: 'id',
+  },
+  listing_content_versions: {
+    parentTable: 'listing_content',
+    localColumn: 'listing_content_id',
+    parentColumn: 'id',
+    parentIdentityColumn: 'id',
+  },
+};
 
 function mapStore(row: StoreRow): StoreRecord {
   return {

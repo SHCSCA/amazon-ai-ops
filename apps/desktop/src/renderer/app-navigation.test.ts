@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   createAppNavigationEventHandler,
   createLatestWorkflowLoadGuard,
+  defaultOperationScopeForAuthority,
+  operationScopeBelongsToAuthority,
   resetWorkspaceScrollPosition,
   shouldInvalidateLoginForStoreAuthority,
   shouldRestoreLoginForStoreAuthority,
@@ -11,6 +13,7 @@ import {
 } from './App';
 import type { NavigationIntent } from './navigation';
 import { notifyWorkflowInvalidated } from './workflow-invalidation';
+import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 
 function navigationEvent(detail: unknown): Event {
   return { detail } as unknown as Event;
@@ -215,6 +218,32 @@ describe('Legacy adapter isolation', () => {
 });
 
 describe('App workspace lifecycle helpers', () => {
+  it('resets operation scope to the exact US/USD store authority and rejects cross-store values', () => {
+    const context: StoreContextEnvelope = {
+      storeId: 'scope-store-a' as StoreContextEnvelope['storeId'],
+      browserProfileId: 'scope-profile-a' as StoreContextEnvelope['browserProfileId'],
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+      businessDate: '2026-07-22' as StoreContextEnvelope['businessDate'],
+      sessionGeneration: 4,
+    };
+    const scope = defaultOperationScopeForAuthority(context, 'SHC001-US');
+
+    expect(scope).toEqual({
+      dateFrom: '2026-07-09',
+      dateTo: '2026-07-22',
+      storeName: 'SHC001-US',
+      marketplaceCode: 'US',
+      currency: 'USD',
+      asin: undefined,
+      batchId: undefined,
+    });
+    expect(operationScopeBelongsToAuthority(scope, context, 'SHC001-US')).toBe(true);
+    expect(operationScopeBelongsToAuthority({ ...scope, storeName: 'SHC002-US' }, context, 'SHC001-US')).toBe(false);
+    expect(operationScopeBelongsToAuthority({ ...scope, currency: 'USDT' }, context, 'SHC001-US')).toBe(false);
+  });
+
   it('resets the shared workspace scroll owner on navigation', () => {
     const calls: ScrollToOptions[] = [];
     const owner = {

@@ -33,13 +33,23 @@ export function resolveBusinessReportImportState(input: BusinessReportImportStat
   status: string;
 } {
   const importedRows = Math.max(0, Number(input.countedMetricRows || 0));
-  if (importedRows > 0) {
-    return { importedRows, status: 'imported' };
-  }
+  // The indexed report-file record is the durable per-file import receipt.
+  // A schema-valid report may legitimately contain zero business rows, so a
+  // successful indexed import must not be downgraded back to "downloaded".
   if (input.indexedStatus === 'import_failed') {
     return { importedRows: 0, status: 'import_failed' };
   }
-  return { importedRows: 0, status: String(input.fileStatus || input.indexedStatus || 'downloaded') };
+  if (input.indexedStatus === 'imported') {
+    return { importedRows, status: 'imported' };
+  }
+  if (importedRows > 0) {
+    return { importedRows, status: 'imported' };
+  }
+  const unverifiedFileStatus = String(input.fileStatus || input.indexedStatus || 'downloaded');
+  return {
+    importedRows: 0,
+    status: unverifiedFileStatus === 'imported' ? 'downloaded' : unverifiedFileStatus,
+  };
 }
 
 export function isRejectedEvidenceLikePath(filePath: string): boolean {

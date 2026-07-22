@@ -4,14 +4,18 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import {
   BrowserController,
+  BrowserLeaseManager,
+  CollectionOperationGuard,
   deriveStoreCapsulePaths,
   ensureStoreCapsulePaths,
+  resolveStoreCapsuleDownloadTarget,
   type StoreCapsulePaths,
 } from '@amazon-ai-ops/browser-worker';
 import { LocalScheduler } from '@amazon-ai-ops/scheduler';
 import { AuditLogger, ScreenshotManager, TraceManager, CleanupManager } from '@amazon-ai-ops/audit-log';
 import { AdQuantifier, RecommendationGenerator, DEFAULT_RULE_CONFIG, buildAdMetricObjectIdentity, mergeAdDecisions } from '@amazon-ai-ops/rules-engine';
 import { ReportParser, keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics, parseListingContent } from '@amazon-ai-ops/report-parser';
+import { assertLingxingParsedReportImportable } from './lingxing-report-import-validation';
 import { AdActionReasonExplainer, AdStrategyDiagnoser, OpenAICompatibleProvider, DailyReportGenerator, assessAdEvidenceSufficiency, type AdStrategyDiagnosisOutput, type AiEvidenceItem, type AiReasonedDecision, type ProductStrategyContext } from '@amazon-ai-ops/ai-adapter';
 import { initSqlite, getSqliteDb } from '@amazon-ai-ops/local-db/src/sqlite/db';
 import {
@@ -30,12 +34,13 @@ import { ReportFileRepository, type ReportFileRecord } from '@amazon-ai-ops/loca
 import { AiCallLogRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/ai-call-log-repo';
 import { AiDiagnosisRunRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/ai-diagnosis-run-repo';
 import { StoreRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/store-repo';
-import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, downloadExistingLingxingReportBatch, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, runLingxingReportBatch, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
+import { LingxingImportRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/lingxing-import-repo';
+import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, draftsToCsv, draftsToMarkdown, draftsToXlsxBuffer, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
 import type { RuleConfig } from '@amazon-ai-ops/rules-engine';
 import type { TaskName } from '@amazon-ai-ops/scheduler';
-import type { ActionRecommendation, AdDailyMetrics, CreateOperationEventInput, DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingContentVersion, ListingDraft, ListingSuggestion, OperationEventFilter, UpdateOperationEventInput } from '@amazon-ai-ops/shared-types';
+import type { ActionRecommendation, AdDailyMetrics, DownloadCenterActionSelectorCheck, DownloadCenterActionSelectors, DownloadCenterDiagnosticResult, DownloadCenterPageModel, DownloadCenterSelectorCandidate, KeywordMetric, KeywordOpportunity, LingxingCreatedReportIdentity, LingxingReportBatch, LingxingReportFile, LingxingReportType, ListingContent, ListingDraft, ListingSuggestion } from '@amazon-ai-ops/shared-types';
 import type {
   BindRecommendationWritableTargetRequest,
   BindRecommendationWritableTargetResult,
@@ -45,7 +50,14 @@ import type {
   StoreConnectionProvider,
   StoreContextEnvelope,
   StoreRecord,
+  StoreWorkspaceView,
+  LingxingCollectionImportState,
+  LingxingCollectionJobSnapshot,
+  LingxingCollectionProgressEvent,
+  LingxingCollectionReportCheckpoint,
+  LingxingCollectionResumeState,
 } from '@amazon-ai-ops/shared-types';
+import { canonicalizeAmazonAsin, missionControlContextKey, normalizeStoreId } from '@amazon-ai-ops/shared-types';
 import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
 import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithinRealDirectory, isSafeManifestPath, readLingxingManifestForAudit, safeFileSegment } from './acceptance-audit-export';
 import { cleanupAppResources, createBeforeQuitCoordinator } from './app-shutdown';
@@ -61,6 +73,7 @@ import { writeDownloadCenterPageModelEnablementAuditBundle } from './page-model-
 import { selectorUsesDateScope, selectorUsesReportScope, validateDownloadCenterPageModel } from './download-center-page-model-validation';
 import { backupExistingDownloadCenterPageModelOverride, getDownloadCenterPageModelOverrideMetadataPath, saveDownloadCenterPageModelOverride } from './download-center-page-model-override-store';
 import { getLingxingSessionNavigationPlan, isLingxingAdsLoggedInPage } from './lingxing-session-flow';
+import { bindLingxingCollectionCancellation } from './lingxing-collection-control';
 import { buildAdExecutionUnavailableResult, buildActionLogForExecution, getRecommendationExecutionOutcome } from './recommendation-execution-policy';
 import { applyRecommendationDecision, assertRecommendationDecisionRevision, normalizeRecommendationDecisionRequest } from './recommendation-approval-policy';
 import { extractLingxingListingFromSnapshot, type ListingDomFieldSnapshot, type ListingExtractionResult, type ListingPageSnapshot } from './listing-lingxing-extractor';
@@ -87,6 +100,7 @@ import { annotateRecommendationsWithStrategy, bindRecommendationsToScopeAsin, bu
 import { buildAdAiEvidencePack, summarizeAiEvidencePack } from './ad-ai-evidence-pack';
 import { validateAiDiagnosisEvidence } from './ad-ai-evidence-validator';
 import { buildAdProductHistoryLedger } from './ad-product-history-ledger';
+import { projectBusinessOperationEventForRenderer } from './business-operation-event-projection';
 import { filterBusinessPipelineOperationEvents } from './operation-event-scope';
 import { assertRecommendationMetricsLoaded, filterFormalRecommendationMetrics } from './recommendation-generation-gate';
 import {
@@ -94,7 +108,6 @@ import {
   type FormalBusinessWorkflow,
 } from './formal-business-data-gate';
 import { buildListingAiCallLogInput, buildListingRewritePrompt, parseAiDraftResponse } from './listing-ai-draft';
-import { normalizeManualListingContent } from './listing-manual-content';
 import { buildAdActionReasonAiCallLogInput, type AdActionExplanationForLog } from './ad-action-ai-call-log';
 import { mergeAdActionExplanationEvidence } from './ad-action-explanation-merge';
 import {
@@ -145,7 +158,26 @@ import {
 } from './store-coordinator';
 import { registerStoreIpcHandlers } from './store-ipc';
 import { registerMissionControlIpcHandlers } from './mission-control-ipc';
+import { registerStoreScopedObjectsIpcHandlers } from './store-scoped-objects-ipc';
+import { StoreScopedObjectsService } from './store-scoped-objects-service';
+import { registerStoreScopedAdListingIpcHandlers } from './store-scoped-ad-listing-ipc';
+import { StoreScopedAdListingService } from './store-scoped-ad-listing-service';
+import { StoreOperationScopeService } from './store-operation-scope-service';
 import { createMissionControlLegacyAdapter } from './mission-control-legacy-adapter';
+import {
+  buildMissionControlTodayProjection,
+  selectLatestMissionControlCollectionWindow,
+} from './mission-control-today-projection';
+import {
+  LingxingCollectionCoordinator,
+  type StartLingxingCollectionInput,
+} from './lingxing-collection-coordinator';
+import {
+  assertRendererPayloadIsPathFree,
+  MainArtifactRegistry,
+  type MainArtifactDescriptor,
+  type MainArtifactKind,
+} from './main-artifact-registry';
 
 // ============================================================================
 // App State
@@ -172,7 +204,11 @@ interface AppState {
   aiCallLogRepo: AiCallLogRepository | null;
   aiDiagnosisRunRepo: AiDiagnosisRunRepository | null;
   storeRepo: StoreRepository | null;
+  lingxingImportRepo: LingxingImportRepository | null;
+  lingxingCollectionCoordinator: LingxingCollectionCoordinator | null;
+  lingxingCollectionOperations: CollectionOperationGuard | null;
   storeCoordinator: StoreCoordinator | null;
+  storeScopedAdListingService: StoreScopedAdListingService | null;
   ruleConfig: RuleConfig;
   isLoggedIn: boolean;
   currentStore: string;
@@ -193,12 +229,20 @@ const state: AppState = {
   aiCallLogRepo: null,
   aiDiagnosisRunRepo: null,
   storeRepo: null,
+  lingxingImportRepo: null,
+  lingxingCollectionCoordinator: null,
+  lingxingCollectionOperations: null,
   storeCoordinator: null,
+  storeScopedAdListingService: null,
   ruleConfig: DEFAULT_RULE_CONFIG,
   isLoggedIn: false,
   currentStore: '',
   loginSession: null,
 };
+
+const lingxingCollectionLeases = new BrowserLeaseManager();
+const cancelledLingxingCollectionRequests = new Set<string>();
+const mainArtifactRegistry = new MainArtifactRegistry();
 
 // ============================================================================
 // Paths
@@ -235,6 +279,64 @@ function storeCapsuleFor(store: { storeId: string; browserProfileId: string }): 
   ));
 }
 
+type RendererArtifactReference = MainArtifactDescriptor;
+
+function artifactAllowedRootsForStore(
+  store: { storeId: string; browserProfileId: string },
+  kind: MainArtifactKind,
+): string[] {
+  const capsule = storeCapsuleFor(store);
+  const roots = [
+    capsule.downloadsDir,
+    capsule.reportsDir,
+    capsule.screenshotsDir,
+    capsule.tracesDir,
+    capsule.evidenceDir,
+  ];
+  if (kind === 'export-file' || kind === 'export-folder') roots.push(EXPORTS_DIR);
+  return roots;
+}
+
+function issueRendererArtifact(
+  storeId: string,
+  targetPath: unknown,
+  kind: MainArtifactKind,
+  displayName?: string,
+): RendererArtifactReference | undefined {
+  if (typeof targetPath !== 'string' || !targetPath.trim()) return undefined;
+  const normalizedStoreId = normalizeStoreId(storeId);
+  const store = state.storeRepo?.getStore(normalizedStoreId);
+  if (!store || store.status !== 'active') return undefined;
+  try {
+    return mainArtifactRegistry.issue({
+      storeId: normalizedStoreId,
+      absolutePath: path.resolve(targetPath),
+      allowedRoots: artifactAllowedRootsForStore(store, kind),
+      kind,
+      displayName,
+    });
+  } catch (error) {
+    console.warn('[Security] artifact registration rejected', JSON.stringify({
+      storeId: normalizedStoreId,
+      kind,
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    }));
+    return undefined;
+  }
+}
+
+function rendererPayload<T>(value: T): T {
+  assertRendererPayloadIsPathFree(value);
+  return value;
+}
+
+function rendererSafeDetail(value: unknown, fallback = '操作未完成，请在当前店铺的数据采集诊断中查看详情。'): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const withoutDrivePaths = value.replace(/[A-Za-z]:[\\/][^\r\n，。；;,)\]}]*/g, '[本地文件]');
+  const withoutUncPaths = withoutDrivePaths.replace(/\\\\[^\\/\s]+[\\/][^\r\n，。；;,)\]}]*/g, '[本地文件]');
+  return withoutUncPaths.trim() || fallback;
+}
+
 function storeSessionGenerationSettingKey(storeId: string): string {
   return `${STORE_SESSION_GENERATION_SETTING_PREFIX}${storeId}`;
 }
@@ -247,6 +349,7 @@ interface BusinessUiScope {
   asin?: string;
   batchId?: string;
   currency?: 'USD';
+  storeContext?: StoreContextEnvelope;
 }
 
 type NormalizedBusinessUiScope = ReturnType<typeof normalizeBusinessUiScope>;
@@ -258,6 +361,11 @@ interface BusinessBatchResult {
   sourceBatchIds?: string[];
   fileDownloadDirs?: Record<string, string>;
 }
+
+type LingxingBatchFilesResult = {
+  batch: LingxingReportBatch;
+  files: LingxingReportFile[];
+};
 
 interface BusinessMetricSource {
   batchId?: string;
@@ -326,6 +434,56 @@ function canonicalizeExistingPath(filePath: string): string {
 // ============================================================================
 
 let mainWindow: BrowserWindow | null = null;
+let lastPublishedStoreContext: StoreContextEnvelope | null = null;
+let storeBusinessDateAuthorityTimer: ReturnType<typeof setInterval> | null = null;
+const STORE_BUSINESS_DATE_AUTHORITY_POLL_MS = 30_000;
+
+function publishStoreContextChanged(view: StoreWorkspaceView): void {
+  lastPublishedStoreContext = Object.freeze({ ...view.context });
+  mainWindow?.webContents.send('store-context:changed', view);
+}
+
+function refreshActiveStoreBusinessDateAuthority(): boolean {
+  const view = state.storeCoordinator?.getActiveStoreWorkspaceView();
+  const previous = lastPublishedStoreContext;
+  if (!view || !previous) return false;
+  const next = view.context;
+  if (
+    previous.storeId !== next.storeId
+    || previous.browserProfileId !== next.browserProfileId
+    || previous.sessionGeneration !== next.sessionGeneration
+    || previous.businessDate === next.businessDate
+  ) return false;
+
+  // A date rollover changes authority even when the browser profile and
+  // durable generation remain the same. Rebind the already-visible browser
+  // runtime to the freshly minted business date; all requests captured before
+  // midnight remain fail-closed in StoreCoordinator.assertActiveStoreContext.
+  if (
+    state.browserRuntime
+    && missionControlContextKey(state.browserRuntime.context) === missionControlContextKey(previous)
+  ) {
+    state.browserRuntime = { ...state.browserRuntime, context: Object.freeze({ ...next }) };
+  }
+  publishStoreContextChanged(view);
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return true;
+}
+
+function startStoreBusinessDateAuthorityMonitor(): void {
+  if (storeBusinessDateAuthorityTimer) return;
+  storeBusinessDateAuthorityTimer = setInterval(
+    refreshActiveStoreBusinessDateAuthority,
+    STORE_BUSINESS_DATE_AUTHORITY_POLL_MS,
+  );
+  storeBusinessDateAuthorityTimer.unref?.();
+}
+
+function stopStoreBusinessDateAuthorityMonitor(): void {
+  if (!storeBusinessDateAuthorityTimer) return;
+  clearInterval(storeBusinessDateAuthorityTimer);
+  storeBusinessDateAuthorityTimer = null;
+}
 
 function reportNavigationSecurityBoundary(report: NavigationSecurityReport): void {
   console.warn('[Security] renderer navigation boundary', JSON.stringify(report));
@@ -418,6 +576,7 @@ async function initApp(): Promise<void> {
   state.aiCallLogRepo = new AiCallLogRepository(state.db);
   state.aiDiagnosisRunRepo = new AiDiagnosisRunRepository(state.db);
   state.storeRepo = new StoreRepository(state.db);
+  state.lingxingImportRepo = new LingxingImportRepository(state.db);
   const storeSessions = new DurableStoreSessionGenerationAuthority({
     transaction: (work) => state.settingsRepo!.transaction(work),
     read: (storeId) => {
@@ -440,9 +599,14 @@ async function initApp(): Promise<void> {
     repository: state.storeRepo,
     sessions: storeSessions,
   });
+  const collectionRecovery = recoverInterruptedLingxingCollectionJobsOnStartup();
+  console.log('[App] init:lingxing-collection-recovery', JSON.stringify(collectionRecovery));
+  initializeLingxingCollectionCoordinator();
   for (const store of state.storeRepo.listStores({ includeArchived: true })) {
     storeCapsuleFor(store);
   }
+  const importRecovery = recoverPendingLingxingCollectionImportsOnStartup();
+  console.log('[App] init:lingxing-import-recovery', JSON.stringify(importRecovery));
   readAiSettingsForMain();
   console.log('[App] init:repositories-ready');
 
@@ -774,7 +938,7 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     if (pendingBrowserLogin?.attemptId === attemptId) {
       pendingBrowserLogin.context = loginContext;
     }
-    mainWindow?.webContents.send('store-context:changed', view);
+    publishStoreContextChanged(view);
     const store = state.storeRepo.getStore(loginContext.storeId);
     if (!store) throw new Error('当前店铺授权记录不存在。');
     loginSetup = {
@@ -1061,103 +1225,15 @@ async function handleDownloadReport(dateRange: { start: string; end: string }): 
 }
 
 async function handleParseReport(filePath: string): Promise<number> {
-  const parser = new ReportParser();
-  const result = parser.autoParse(filePath);
-
-  if (!result.success) {
-    throw new Error(`Parse failed: ${result.validation.errors.slice(0, 3).map(e => e.message).join('; ')}`);
-  }
-
-  // Save to database
-  for (const metrics of result.data) {
-    state.adMetricsRepo?.insert({
-      ...metrics,
-      id: 0, // auto
-    });
-  }
-
-  return result.totalRows;
+  throw new Error(
+    `旧版无店铺归属的报表解析入口已停用：${path.basename(filePath || '') || '未提供文件'}。`
+    + ' 请从当前美国站店铺的“采集与导入”工作台执行，系统会写入 store_id、文件快照与对账记录。',
+  );
 }
 
 // ============================================================================
 // v1.5 Report Collector / Keyword / Listing
 // ============================================================================
-
-function persistLingxingBatch(result: Awaited<ReturnType<typeof runLingxingReportBatch>>): void {
-  if (!state.db) return;
-
-  const save = state.db.transaction(() => {
-    state.db!.prepare(`
-      INSERT OR REPLACE INTO lingxing_report_batches
-        (id, app_version, date_start, date_end, store_name, marketplace_code, status, download_dir, manifest_path, created_at, completed_at)
-      VALUES
-        (@id, @appVersion, @dateStart, @dateEnd, @storeName, @marketplaceCode, @status, @downloadDir, @manifestPath, @createdAt, @completedAt)
-    `).run({
-      ...result.batch,
-      appVersion: result.batch.appVersion ?? APP_VERSION,
-      storeName: result.batch.storeName ?? null,
-      marketplaceCode: result.batch.marketplaceCode ?? null,
-      manifestPath: result.batch.manifestPath ?? null,
-      completedAt: result.batch.completedAt ?? null,
-    });
-
-    const insertFile = state.db!.prepare(`
-      INSERT OR REPLACE INTO lingxing_report_files
-        (id, batch_id, report_type, display_name, status, max_auto_retries, auto_retry_count,
-         file_path, file_size_bytes, error_message, attempt_errors_json, failure_screenshot_path,
-         failure_dom_snapshot_path, failure_trace_path, trace_unavailable_reason, created_at, updated_at)
-      VALUES
-        (@id, @batchId, @reportType, @displayName, @status, @maxAutoRetries, @autoRetryCount,
-         @filePath, @fileSizeBytes, @errorMessage, @attemptErrorsJson, @failureScreenshotPath,
-         @failureDomSnapshotPath, @failureTracePath, @traceUnavailableReason, @createdAt, @updatedAt)
-    `);
-
-    for (const file of result.files) {
-      insertFile.run({
-        ...file,
-        filePath: file.filePath ?? null,
-        fileSizeBytes: file.fileSizeBytes ?? 0,
-        errorMessage: file.errorMessage ?? null,
-        maxAutoRetries: file.maxAutoRetries ?? 2,
-        autoRetryCount: file.autoRetryCount ?? 0,
-        attemptErrorsJson: JSON.stringify(file.attemptErrors ?? []),
-        failureScreenshotPath: file.failureScreenshotPath ?? null,
-        failureDomSnapshotPath: file.failureDomSnapshotPath ?? null,
-        failureTracePath: file.failureTracePath ?? null,
-        traceUnavailableReason: file.traceUnavailableReason ?? null,
-      });
-    }
-  });
-  save();
-  syncReportFileIndex(result, new Map());
-}
-
-function syncReportFileIndex(
-  result: Awaited<ReturnType<typeof runLingxingReportBatch>>,
-  importedRowsByFilePath: Map<string, number>,
-  importErrorsByFilePath: Map<string, string> = new Map(),
-): void {
-  if (!state.reportFileRepo) return;
-  for (const file of result.files) {
-    if (file.status !== 'downloaded' || !file.filePath) continue;
-    const filePath = canonicalizeExistingPath(file.filePath);
-    const importedRows = importedRowsByFilePath.get(filePath) ?? 0;
-    const importError = importErrorsByFilePath.get(filePath) ?? null;
-    const status = importError ? 'import_failed' : importedRows > 0 ? 'imported' : file.status;
-    state.reportFileRepo.upsert({
-      batchId: file.batchId || result.batch.id,
-      reportType: file.reportType,
-      filePath,
-      fileName: path.basename(filePath),
-      fileSize: file.fileSizeBytes ?? fileSizeOrZero(filePath),
-      status,
-      importedRows,
-      fileHash: fileHashOrNull(filePath),
-      importError,
-      lastImportedAt: importedRows > 0 || importError ? new Date().toISOString() : null,
-    });
-  }
-}
 
 function localBatchStamp(): string {
   return `${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 17)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1185,7 +1261,11 @@ function inferLingxingReportTypeFromLocalPath(filePath: string): LingxingReportT
   return undefined;
 }
 
-function buildLocalBusinessReportBatch(scope: NormalizedBusinessUiScope, selectedPaths: string[]): { batch: LingxingReportBatch; files: LingxingReportFile[] } {
+function buildLocalBusinessReportBatch(
+  scope: NormalizedBusinessUiScope,
+  selectedPaths: string[],
+  capsule: StoreCapsulePaths,
+): { batch: LingxingReportBatch; files: LingxingReportFile[] } {
   const uniquePaths = Array.from(new Set(selectedPaths.map((item) => canonicalizeExistingPath(item)).filter(Boolean)));
   const rejectedPaths = uniquePaths.filter((filePath) => !isExistingRawBusinessReportPath(filePath));
   if (rejectedPaths.length > 0) {
@@ -1195,11 +1275,14 @@ function buildLocalBusinessReportBatch(scope: NormalizedBusinessUiScope, selecte
   const now = new Date().toISOString();
   const batchId = `batch_local_${localBatchStamp()}`;
   const downloadDir = path.join(
-    DOWNLOADS_DIR,
-    'lingxing-ad-reports',
+    capsule.downloadsDir,
+    'local-imports',
     `${scope.dateFrom}_${scope.dateTo}`,
     batchId,
   );
+  if (!isPathInsideDirectory(downloadDir, capsule.downloadsDir)) {
+    throw new Error('本地导入被阻断：目标目录不属于当前店铺独立数据舱。');
+  }
   fs.mkdirSync(downloadDir, { recursive: true });
 
   const files: LingxingReportFile[] = [];
@@ -1252,6 +1335,11 @@ function buildLocalBusinessReportBatch(scope: NormalizedBusinessUiScope, selecte
 
   const batch: LingxingReportBatch = {
     id: batchId,
+    requestId: `local-import:${batchId}`,
+    storeId: scope.storeId,
+    browserProfileId: scope.storeContext.browserProfileId,
+    businessDate: scope.storeContext.businessDate,
+    sessionGeneration: scope.storeContext.sessionGeneration,
     appVersion: APP_VERSION,
     dateStart: scope.dateFrom,
     dateEnd: scope.dateTo,
@@ -1331,89 +1419,123 @@ function attachUniqueProductContext(metrics: AdDailyMetrics[]): AdDailyMetrics[]
   });
 }
 
-function importLingxingDownloadedReportMetrics(result: Awaited<ReturnType<typeof runLingxingReportBatch>>): {
+function importStoreScopedLingxingDownloadedReportMetrics(result: LingxingBatchFilesResult): {
   inserted: number;
   parsedFiles: number;
   skippedFiles: number;
   deletedExisting: number;
+  deduplicated: boolean;
+  importRunId?: string;
   errors: Array<{ reportType: string; filePath?: string; message: string }>;
 } {
-  if (!state.adMetricsRepo) {
-    return { inserted: 0, parsedFiles: 0, skippedFiles: result.files.length, deletedExisting: 0, errors: [] };
+  if (!state.lingxingImportRepo || !state.storeRepo || !result.batch.storeId) {
+    throw new Error('店铺级领星导入仓库或批次 StoreContext 尚未就绪。');
   }
-
+  const storeId = result.batch.storeId;
+  const store = state.storeRepo.getStore(storeId);
+  if (!store || store.status !== 'active') {
+    throw new Error(`店铺 ${storeId} 不存在或已停用，拒绝导入领星报表。`);
+  }
   const parser = new ReportParser();
   const errors: Array<{ reportType: string; filePath?: string; message: string }> = [];
   const parsedMetrics: AdDailyMetrics[] = [];
-  const parsedSourcesByBatchId = new Map<string, Set<string>>();
-  const parsedRowsByFilePath = new Map<string, number>();
-  const importErrorsByFilePath = new Map<string, string>();
-  let parsedFiles = 0;
+  const importFiles: Array<{
+    lingxingFileId: string;
+    reportType: string;
+    filePath: string;
+    fileName: string;
+    fileSizeBytes: number;
+    fileHash: string;
+    importedRows: number;
+  }> = [];
   let skippedFiles = 0;
 
   for (const file of result.files) {
     if (file.status !== 'downloaded' || !file.filePath) {
-      skippedFiles++;
+      skippedFiles += 1;
       continue;
     }
     try {
-      const fileBatchId = file.batchId || result.batch.id;
       const sourceFile = canonicalizeExistingPath(file.filePath);
-      const sourceCandidates = metricSourceFileCandidates(sourceFile);
-      const parsed = parser.autoParse(file.filePath, { reportType: file.reportType });
-      if (parsed.data.length === 0) {
-        throw new Error(
-          `真实报表未解析出广告指标行：${path.basename(file.filePath)}。`
-          + ` 请确认表头、日期、campaign/ad group/关键词/投放对象和指标列可识别。`,
-        );
-      }
-      parsedRowsByFilePath.set(sourceFile, parsed.data.length);
+      const parsed = parser.autoParse(sourceFile, { reportType: file.reportType });
+      assertLingxingParsedReportImportable(parsed, {
+        dateStart: result.batch.dateStart,
+        dateEnd: result.batch.dateEnd,
+        sourceName: path.basename(sourceFile),
+      });
+      const fileHash = fileHashOrNull(sourceFile);
+      if (!fileHash) throw new Error(`无法计算报表 SHA-256：${path.basename(sourceFile)}。`);
+      importFiles.push({
+        lingxingFileId: file.id,
+        reportType: file.reportType,
+        filePath: sourceFile,
+        fileName: path.basename(sourceFile),
+        fileSizeBytes: file.fileSizeBytes ?? fileSizeOrZero(sourceFile),
+        fileHash,
+        importedRows: parsed.data.length,
+      });
       parsedMetrics.push(...parsed.data.map((metric) => ({
         ...metric,
-        batchId: fileBatchId,
+        batchId: result.batch.id,
         reportType: file.reportType,
-        storeName: result.batch.storeName || metric.storeName,
-        marketplaceCode: result.batch.marketplaceCode || metric.marketplaceCode,
+        storeName: store.displayName,
+        marketplaceCode: 'US',
+        currency: 'USD',
         sourceFile,
       })));
-      const batchSources = parsedSourcesByBatchId.get(fileBatchId) ?? new Set<string>();
-      for (const candidate of sourceCandidates) batchSources.add(candidate);
-      parsedSourcesByBatchId.set(fileBatchId, batchSources);
-      parsedFiles++;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (file.filePath) {
-        importErrorsByFilePath.set(canonicalizeExistingPath(file.filePath), message);
-      }
       errors.push({
         reportType: file.reportType,
         filePath: file.filePath,
-        message,
+        message: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  const readyMetrics = attachUniqueProductContext(parsedMetrics);
-  let deletedExisting = 0;
-  for (const [batchId, sourceFiles] of parsedSourcesByBatchId.entries()) {
-    deletedExisting += state.adMetricsRepo.deleteByBatchAndSourceFiles(batchId, Array.from(sourceFiles));
+  const metrics = attachUniqueProductContext(parsedMetrics);
+  if (errors.length > 0 || importFiles.length === 0) {
+    return {
+      inserted: 0,
+      parsedFiles: importFiles.length,
+      skippedFiles,
+      deletedExisting: 0,
+      deduplicated: false,
+      errors,
+    };
   }
-  const inserted = readyMetrics.length ? state.adMetricsRepo.insertBatch(readyMetrics) : 0;
-  syncReportFileIndex(result, parsedRowsByFilePath, importErrorsByFilePath);
-  return { inserted, parsedFiles, skippedFiles, deletedExisting, errors };
+
+  const runId = `import_${result.batch.id}`;
+  const commit = state.lingxingImportRepo.commitImportForStore(storeId, {
+    runId,
+    idempotencyKey: `lingxing:${result.batch.id}`,
+    batchId: result.batch.id,
+    files: importFiles,
+    metrics,
+    // Parsed rows cannot independently prove their own completeness. Until
+    // Lingxing supplies a separate control total, persist no "matched"
+    // business reconciliation evidence for this run.
+    reconciliations: [],
+    startedAt: result.batch.completedAt ?? result.batch.createdAt,
+  });
+  return {
+    inserted: commit.run.metricRowCount,
+    parsedFiles: commit.run.sourceFileCount,
+    skippedFiles,
+    deletedExisting: 0,
+    deduplicated: commit.deduplicated,
+    importRunId: commit.run.runId,
+    errors,
+  };
 }
 
-function loadLatestImportableLingxingBatchForScope(scope: {
-  dateFrom?: string;
-  dateTo?: string;
-  storeName?: string;
-  marketplaceCode?: string;
-}): Awaited<ReturnType<typeof runLingxingReportBatch>> | undefined {
-  if (!state.db || !scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode) return undefined;
+function loadLatestImportableLingxingBatchForScope(scope: NormalizedBusinessUiScope): LingxingBatchFilesResult | undefined {
+  if (!state.db) return undefined;
   const batch = state.db.prepare(`
     SELECT *
     FROM lingxing_report_batches
     WHERE status IN ('completed', 'completed_with_errors')
+      AND store_id = @storeId
+      AND COALESCE(request_id, '') NOT LIKE 'canary:%'
       AND date_start = @dateFrom
       AND date_end = @dateTo
       AND store_name = @storeName
@@ -1426,13 +1548,18 @@ function loadLatestImportableLingxingBatchForScope(scope: {
   const rows = state.db.prepare(`
     SELECT *
     FROM lingxing_report_files
-    WHERE batch_id = ?
+    WHERE store_id = ? AND batch_id = ?
     ORDER BY created_at ASC, id ASC
-  `).all(batch.id) as any[];
+  `).all(scope.storeId, batch.id) as any[];
 
   return {
     batch: {
       id: batch.id,
+      requestId: batch.request_id,
+      storeId: batch.store_id,
+      browserProfileId: batch.browser_profile_id,
+      businessDate: batch.business_date,
+      sessionGeneration: batch.session_generation,
       appVersion: batch.app_version,
       dateStart: batch.date_start,
       dateEnd: batch.date_end,
@@ -1466,32 +1593,63 @@ function loadLatestImportableLingxingBatchForScope(scope: {
   };
 }
 
-function backfillAdMetricsFromLatestBatchIfNeeded(scope: {
-  dateFrom?: string;
-  dateTo?: string;
-  storeName?: string;
-  marketplaceCode?: string;
-}) {
-  const existing = state.adMetricsRepo?.findForRecommendations({ ...scope, limit: 1 }) ?? [];
-  if (existing.length > 0) return undefined;
+function backfillAdMetricsFromLatestBatchIfNeeded(scope: NormalizedBusinessUiScope) {
+  const existing = state.db?.prepare(`
+    SELECT 1 FROM ad_daily_metrics
+    WHERE store_id = ? AND date >= ? AND date <= ?
+    LIMIT 1
+  `).get(scope.storeId, scope.dateFrom, scope.dateTo);
+  if (existing) return undefined;
   const latestBatch = loadLatestImportableLingxingBatchForScope(scope);
-  return latestBatch ? importLingxingDownloadedReportMetrics(latestBatch) : undefined;
+  return latestBatch ? importStoreScopedLingxingDownloadedReportMetrics(latestBatch) : undefined;
 }
 
-function normalizeBusinessUiScope(input: unknown): Required<Pick<BusinessUiScope, 'dateFrom' | 'dateTo' | 'storeName' | 'marketplaceCode' | 'currency'>> & Pick<BusinessUiScope, 'asin' | 'batchId'> {
+function resolveBusinessStoreAuthority(submittedContext?: unknown): {
+  context: StoreContextEnvelope;
+  store: StoreRecord;
+} {
+  if (!state.storeCoordinator || !state.storeRepo) {
+    throw new Error('店铺数据域尚未初始化。');
+  }
+  const context = submittedContext
+    ? state.storeCoordinator.assertActiveStoreContext(submittedContext)
+    : state.storeCoordinator.getActiveStoreContext();
+  if (!context) throw new Error('请先选择美国站店铺。');
+  const store = state.storeRepo.getStore(context.storeId);
+  if (!store || store.status !== 'active') {
+    throw new Error('当前店铺不存在或已停用。');
+  }
+  if (store.marketplace !== 'US' || store.currency !== 'USD') {
+    throw new Error('当前版本仅支持 Amazon 美国站与 USD。');
+  }
+  return { context, store };
+}
+
+function normalizeBusinessUiScope(input: unknown) {
   const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const dateFrom = typeof value.dateFrom === 'string' ? value.dateFrom.trim() : '';
   const dateTo = typeof value.dateTo === 'string' ? value.dateTo.trim() : '';
   validateDateRange({ start: dateFrom, end: dateTo });
+  const { context, store } = resolveBusinessStoreAuthority(value.storeContext);
   return {
     dateFrom,
     dateTo,
-    storeName: optionalTrimmedString(value.storeName) || state.currentStore || '',
-    marketplaceCode: optionalTrimmedString(value.marketplaceCode) || 'US',
+    storeId: context.storeId,
+    storeContext: Object.freeze({ ...context }),
+    storeName: store.displayName,
+    marketplaceCode: 'US' as const,
     asin: optionalTrimmedString(value.asin),
     batchId: optionalTrimmedString(value.batchId),
-    currency: 'USD',
+    currency: 'USD' as const,
   };
+}
+
+function normalizeBusinessMutationScope(input: unknown): NormalizedBusinessUiScope {
+  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  if (!value.storeContext) {
+    throw new Error('该写入操作缺少 StoreContext，请刷新当前店铺后重试。');
+  }
+  return normalizeBusinessUiScope(value);
 }
 
 function businessMetricsWhere(
@@ -1500,13 +1658,14 @@ function businessMetricsWhere(
   grain: AdMetricReportGrain = 'actionable',
 ): { sql: string; params: (string | number)[] } {
   let sql = `
-    date >= ?
+    store_id = ?
+    AND date >= ?
     AND date <= ?
     AND COALESCE(store_name, '') = COALESCE(?, '')
     AND COALESCE(marketplace_code, '') = COALESCE(?, '')
     AND ${adMetricGrainWhere(grain)}
   `;
-  const params: (string | number)[] = [scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode];
+  const params: (string | number)[] = [scope.storeId, scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode];
   if (scope.asin) {
     sql += ' AND upper(COALESCE(asin, \'\')) = upper(?)';
     params.push(scope.asin);
@@ -1564,7 +1723,9 @@ function loadBusinessBatchesForScope(scope: NormalizedBusinessUiScope): Business
   const rows = state.db.prepare(`
     SELECT id
     FROM lingxing_report_batches
-    WHERE date_start = @dateFrom
+    WHERE store_id = @storeId
+      AND COALESCE(request_id, '') NOT LIKE 'canary:%'
+      AND date_start = @dateFrom
       AND date_end = @dateTo
       AND COALESCE(store_name, '') = COALESCE(@storeName, '')
       AND COALESCE(marketplace_code, '') = COALESCE(@marketplaceCode, '')
@@ -1602,12 +1763,30 @@ function composeBusinessBatchForScope(scope: NormalizedBusinessUiScope): Busines
 
 function summarizeBusinessBatchOption(scope: NormalizedBusinessUiScope, batchResult: BusinessBatchResult): BusinessBatchOptionView {
   const realFiles = batchResult.files.filter((file) => isExistingRawBusinessReportFile(file, batchResult.batch));
+  const indexedFilesByKey = new Map<string, ReportFileRecord>();
+  const batchIds = Array.from(new Set([
+    batchResult.batch.id,
+    ...(batchResult.sourceBatchIds || []),
+    ...realFiles.map((file) => file.batchId).filter((value): value is string => Boolean(value)),
+  ]));
+  for (const batchId of batchIds) {
+    for (const indexed of state.reportFileRepo?.findForStore(scope.storeId, { batchId, limit: 5000 }) || []) {
+      indexedFilesByKey.set(reportFileIndexKey(indexed.batchId, indexed.reportType, indexed.filePath), indexed);
+    }
+  }
   const importedReportTypes = new Set<string>();
   const importedRowCount = realFiles.reduce((sum, file) => {
     if (!file.filePath) return sum;
-    const importedRows = countImportedRowsForFile(scope, canonicalizeExistingPath(file.filePath), file.batchId || batchResult.batch.id);
-    if (importedRows > 0) importedReportTypes.add(file.reportType);
-    return sum + importedRows;
+    const filePath = canonicalizeExistingPath(file.filePath);
+    const batchId = file.batchId || batchResult.batch.id;
+    const indexed = indexedFilesByKey.get(reportFileIndexKey(batchId, file.reportType, filePath));
+    const importState = resolveBusinessReportImportState({
+      fileStatus: file.status,
+      indexedStatus: indexed?.status,
+      countedMetricRows: countImportedRowsForFile(scope, filePath, batchId),
+    });
+    if (importState.status === 'imported') importedReportTypes.add(file.reportType);
+    return sum + importState.importedRows;
   }, 0);
   const coverage = summarizeBusinessReportCoverage({
     expectedTypes: LINGXING_AD_REPORTS.map((report) => report.type),
@@ -2122,110 +2301,6 @@ function handleGetBusinessKeywordOpportunities(input: unknown): BusinessKeywordO
   return Array.from(deduped.values());
 }
 
-function normalizeOperationEventFilter(input: unknown): OperationEventFilter {
-  const scope = normalizeBusinessUiScope(input);
-  const request = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
-  return {
-    dateFrom: scope.dateFrom,
-    dateTo: scope.dateTo,
-    storeName: scope.storeName,
-    marketplaceCode: scope.marketplaceCode,
-    asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : scope.asin,
-    campaignName: typeof request.campaignName === 'string' && request.campaignName.trim() ? request.campaignName.trim() : undefined,
-    adGroupName: typeof request.adGroupName === 'string' && request.adGroupName.trim() ? request.adGroupName.trim() : undefined,
-    eventType: typeof request.eventType === 'string' && request.eventType.trim() ? request.eventType.trim() : undefined,
-    limit: typeof request.limit === 'number' ? request.limit : 200,
-  };
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new Error(`${label}不能为空`);
-  }
-  return value.trim();
-}
-
-function normalizeOperationEventInput(input: unknown): CreateOperationEventInput {
-  const request = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
-  const eventDate = requireString(request.eventDate, '事件日期');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
-    throw new Error('事件日期必须是 YYYY-MM-DD');
-  }
-  return {
-    eventDate,
-    storeName: requireString(request.storeName, '店铺'),
-    marketplaceCode: requireString(request.marketplaceCode, '站点'),
-    asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
-    campaignName: typeof request.campaignName === 'string' && request.campaignName.trim() ? request.campaignName.trim() : undefined,
-    adGroupName: typeof request.adGroupName === 'string' && request.adGroupName.trim() ? request.adGroupName.trim() : undefined,
-    eventType: requireString(request.eventType, '事件类型'),
-    title: requireString(request.title, '事件标题'),
-    impactExpectation: typeof request.impactExpectation === 'string' && request.impactExpectation.trim() ? request.impactExpectation.trim() : undefined,
-    notes: typeof request.notes === 'string' && request.notes.trim() ? request.notes.trim() : undefined,
-    evidencePath: typeof request.evidencePath === 'string' && request.evidencePath.trim() ? request.evidencePath.trim() : undefined,
-  };
-}
-
-function normalizeOperationEventPatch(input: unknown): { id: number; patch: UpdateOperationEventInput } {
-  const request = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
-  const id = Number(request.id);
-  if (!Number.isInteger(id) || id <= 0) {
-    throw new Error('事件 ID 无效');
-  }
-  const patchInput = (request.patch && typeof request.patch === 'object') ? request.patch as Record<string, unknown> : request;
-  const patch: UpdateOperationEventInput = {};
-  const assignString = (key: keyof UpdateOperationEventInput, sourceKey = key) => {
-    if (Object.prototype.hasOwnProperty.call(patchInput, sourceKey)) {
-      const value = patchInput[sourceKey];
-      patch[key] = typeof value === 'string' && value.trim() ? value.trim() : undefined;
-    }
-  };
-
-  assignString('eventDate');
-  assignString('storeName');
-  assignString('marketplaceCode');
-  assignString('asin');
-  assignString('campaignName');
-  assignString('adGroupName');
-  assignString('eventType');
-  assignString('title');
-  assignString('impactExpectation');
-  assignString('notes');
-  assignString('evidencePath');
-  if (patch.eventDate && !/^\d{4}-\d{2}-\d{2}$/.test(patch.eventDate)) {
-    throw new Error('事件日期必须是 YYYY-MM-DD');
-  }
-  return { id, patch };
-}
-
-function handleListOperationEvents(input: unknown) {
-  return state.operationEventRepo?.findByScope(normalizeOperationEventFilter(input)) || [];
-}
-
-function handleCreateOperationEvent(input: unknown) {
-  if (!state.operationEventRepo) throw new Error('运营事件仓库未初始化');
-  const id = state.operationEventRepo.create(normalizeOperationEventInput(input));
-  mainWindow?.webContents.send('business-ui:data-updated');
-  return state.operationEventRepo.getById(id);
-}
-
-function handleUpdateOperationEvent(input: unknown) {
-  if (!state.operationEventRepo) throw new Error('运营事件仓库未初始化');
-  const { id, patch } = normalizeOperationEventPatch(input);
-  const changed = state.operationEventRepo.update(id, patch);
-  mainWindow?.webContents.send('business-ui:data-updated');
-  return { changed, event: state.operationEventRepo.getById(id) };
-}
-
-function handleDeleteOperationEvent(input: unknown) {
-  if (!state.operationEventRepo) throw new Error('运营事件仓库未初始化');
-  const id = typeof input === 'number' ? input : Number((input as any)?.id);
-  if (!Number.isInteger(id) || id <= 0) throw new Error('事件 ID 无效');
-  const deleted = state.operationEventRepo.delete(id);
-  mainWindow?.webContents.send('business-ui:data-updated');
-  return { deleted };
-}
-
 function handleGetBusinessUiDataPipeline(input: unknown) {
   const scope = normalizeBusinessUiScope(input);
   const batchResult = loadLatestBusinessBatch(scope);
@@ -2237,7 +2312,7 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
     ...(batchResult?.sourceBatchIds || []),
   ].filter((value): value is string => typeof value === 'string' && value.length > 0)));
   for (const batchId of indexBatchIds) {
-    const indexedFiles = state.reportFileRepo?.find({ batchId, limit: 5000 }) || [];
+    const indexedFiles = state.reportFileRepo?.findForStore(scope.storeId, { batchId, limit: 5000 }) || [];
     for (const indexedFile of indexedFiles) {
       reportFileIndexByKey.set(reportFileIndexKey(indexedFile.batchId, indexedFile.reportType, indexedFile.filePath), indexedFile);
     }
@@ -2289,8 +2364,8 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
     expectedTypes: LINGXING_AD_REPORTS.map((report) => report.type),
     realReportFiles,
   });
-  const latestFileByType = new Map<string, LingxingReportFile>();
-  for (const file of files) {
+  const latestFileByType = new Map<string, (typeof realReportFiles)[number]>();
+  for (const file of realReportFiles) {
     if (!latestFileByType.has(file.reportType)) latestFileByType.set(file.reportType, file);
   }
 
@@ -2328,10 +2403,9 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
     .map((item) => item.label);
 
   const quant = loadBusinessQuantSummary(scope, reportCoverage.realReportFileCount, metricSource);
-  const operationEventsInRange = state.operationEventRepo?.findByScope({
+  const operationEventsInRange = state.operationEventRepo?.findByScopeForStore(scope.storeId, {
     dateFrom: scope.dateFrom,
     dateTo: scope.dateTo,
-    storeName: scope.storeName,
     marketplaceCode: scope.marketplaceCode,
     limit: 300,
   }) || [];
@@ -2371,6 +2445,8 @@ function handleGetBusinessUiDataPipeline(input: unknown) {
 
   return {
     scope: {
+      storeId: scope.storeId,
+      storeContext: scope.storeContext,
       dateFrom: scope.dateFrom,
       dateTo: scope.dateTo,
       storeName: scope.storeName,
@@ -2467,38 +2543,478 @@ function assertBatchContainsRealReportFiles(
   throw new Error(`${actionLabel}未完成：当前动作没有拿到真实领星广告表格。${detail}`);
 }
 
-async function handleCollectLingxingReports(input: unknown) {
-  const request = normalizeLingxingCollectionRequest(input);
-  const dateRange = { start: request.start, end: request.end };
-  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
-  validateDateRange(dateRange);
-  assertLingxingCollectionPreflightReady(dateRange, target);
+function lingxingCollectionCancellationKey(input: {
+  storeId: string;
+  requestId?: string;
+  jobId?: string;
+}): string[] {
+  return [
+    input.requestId ? `request:${input.storeId}:${input.requestId}` : undefined,
+    input.jobId ? `job:${input.storeId}:${input.jobId}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+}
 
-  const controller = browserRuntimeController('amazon_ads');
-  if (!controller || !state.isLoggedIn) {
-    throw new Error('请先启动并登录领星 ERP 浏览器');
+function authorizedLingxingCollectionTarget(
+  submittedContext: StoreContextEnvelope,
+): { context: StoreContextEnvelope; store: StoreRecord; target: { marketplaceCode: 'US'; storeId: string; storeName: string } } {
+  if (!state.storeCoordinator || !state.storeRepo) {
+    throw new Error('店铺会话协调器尚未就绪。');
   }
+  const context = state.storeCoordinator.assertActiveStoreContext(submittedContext);
+  const store = state.storeRepo.getStore(context.storeId);
+  if (!store || store.status !== 'active') {
+    throw new Error('当前店铺不存在或已停用，领星操作已拒绝。');
+  }
+  const connection = state.storeRepo.listConnections(context.storeId)
+    .find((candidate) => candidate.provider === 'amazon_ads');
+  const targetStoreName = connection?.accountLabel?.trim()
+    || connection?.externalAccountId?.trim();
+  if (!targetStoreName) {
+    throw new Error('当前店铺的 Amazon Ads 连接缺少领星店铺标识。');
+  }
+  return {
+    context,
+    store,
+    target: {
+      marketplaceCode: 'US',
+      storeId: context.storeId,
+      storeName: targetStoreName,
+    },
+  };
+}
 
-  const result = await runLingxingReportBatch({
-    dateStart: dateRange.start,
-    dateEnd: dateRange.end,
-    storeName: target.storeName,
-    marketplaceCode: target.marketplaceCode,
-    rootDownloadDir: DOWNLOADS_DIR,
-    appVersion: APP_VERSION,
-    automation: createDownloadCenterAutomation(controller, target),
+function projectBusinessReportFileForRenderer(storeId: string, file: any) {
+  const fileArtifact = issueRendererArtifact(
+    storeId,
+    file.filePath,
+    'report-file',
+    file.fileName || file.displayName,
+  );
+  const folderArtifact = issueRendererArtifact(
+    storeId,
+    file.folderPath || (file.filePath ? path.dirname(file.filePath) : undefined),
+    'report-folder',
+    '原始报表目录',
+  );
+  return {
+    id: String(file.id || ''),
+    ...(file.batchId ? { batchId: String(file.batchId) } : {}),
+    reportType: String(file.reportType || ''),
+    displayName: String(file.displayName || file.reportType || '原始报表'),
+    status: String(file.status || 'missing'),
+    fileName: String(file.fileName || (file.filePath ? path.basename(file.filePath) : '')),
+    fileExtension: String(path.extname(file.fileName || file.filePath || '')).toLowerCase(),
+    fileSizeBytes: Number(file.fileSizeBytes || 0),
+    importedRows: Number(file.importedRows || 0),
+    ...(file.fileHash ? { fileHash: String(file.fileHash) } : {}),
+    ...(file.importError ? { importError: rendererSafeDetail(file.importError) } : {}),
+    ...(file.lastImportedAt ? { lastImportedAt: String(file.lastImportedAt) } : {}),
+    ...(file.updatedAt ? { updatedAt: String(file.updatedAt) } : {}),
+    ...(fileArtifact ? {
+      artifactId: fileArtifact.artifactId,
+      sourceArtifactId: fileArtifact.artifactId,
+      artifactDisplayName: fileArtifact.displayName,
+    } : {}),
+    ...(folderArtifact ? {
+      folderArtifactId: folderArtifact.artifactId,
+      folderDisplayName: folderArtifact.displayName,
+    } : {}),
+  };
+}
+
+function projectBusinessBatchForRenderer(storeId: string, batch: any) {
+  if (!batch) return null;
+  const downloadArtifact = issueRendererArtifact(storeId, batch.downloadDir, 'report-folder', '原始报表目录');
+  const manifestArtifact = issueRendererArtifact(storeId, batch.manifestPath, 'manifest', '采集清单');
+  return {
+    id: String(batch.id || ''),
+    status: String(batch.status || ''),
+    dateStart: String(batch.dateStart || ''),
+    dateEnd: String(batch.dateEnd || ''),
+    ...(batch.storeName ? { storeName: String(batch.storeName) } : {}),
+    ...(batch.marketplaceCode ? { marketplaceCode: String(batch.marketplaceCode) } : {}),
+    ...(batch.createdAt ? { createdAt: String(batch.createdAt) } : {}),
+    ...(batch.completedAt ? { completedAt: String(batch.completedAt) } : {}),
+    ...(downloadArtifact ? {
+      downloadArtifactId: downloadArtifact.artifactId,
+      downloadDisplayName: downloadArtifact.displayName,
+    } : {}),
+    ...(manifestArtifact ? {
+      manifestArtifactId: manifestArtifact.artifactId,
+      manifestDisplayName: manifestArtifact.displayName,
+    } : {}),
+  };
+}
+
+function projectBusinessBatchOptionForRenderer(storeId: string, batch: any) {
+  const safeBatch = projectBusinessBatchForRenderer(storeId, batch)!;
+  return {
+    ...safeBatch,
+    totalFileRecords: Number(batch.totalFileRecords || 0),
+    realReportFileCount: Number(batch.realReportFileCount || 0),
+    importedReportTypeCount: Number(batch.importedReportTypeCount || 0),
+    importedRowCount: Number(batch.importedRowCount || 0),
+    missingReportLabels: Array.isArray(batch.missingReportLabels)
+      ? batch.missingReportLabels.map((item: unknown) => String(item))
+      : [],
+  };
+}
+
+function projectBusinessPipelineForRenderer(pipeline: any) {
+  const storeId = String(pipeline?.scope?.storeId || pipeline?.scope?.storeContext?.storeId || '');
+  if (!storeId) throw new Error('业务数据投影缺少当前店铺权威。');
+  const collection = pipeline?.collection || {};
+  const realReportFiles = Array.isArray(collection.realReportFiles)
+    ? collection.realReportFiles.map((file: any) => projectBusinessReportFileForRenderer(storeId, file))
+    : [];
+  const evidenceArtifacts = (Array.isArray(collection.evidencePaths) ? collection.evidencePaths : [])
+    .map((item: any) => {
+      const artifactKind: MainArtifactKind = item.kind === 'folder'
+        ? 'report-folder'
+        : item.kind === 'file'
+          ? 'report-file'
+          : 'manifest';
+      const artifact = issueRendererArtifact(storeId, item.path, artifactKind, String(item.label || '本地证据'));
+      return artifact ? {
+        label: String(item.label || artifact.displayName),
+        artifactId: artifact.artifactId,
+        displayName: artifact.displayName,
+        kind: item.kind === 'folder' || item.kind === 'file' ? item.kind : 'audit',
+      } : undefined;
+    })
+    .filter(Boolean);
+  const latestBatch = projectBusinessBatchForRenderer(storeId, collection.latestBatch);
+  const safeOperationEvents = Array.isArray(pipeline?.operations?.events)
+    ? pipeline.operations.events.map(projectBusinessOperationEventForRenderer)
+    : [];
+  const safeProductHistoryLedgers = Array.isArray(pipeline?.productHistory?.ledgers)
+    ? pipeline.productHistory.ledgers.map((ledger: any) => ({
+        ...ledger,
+        events: Array.isArray(ledger?.events)
+          ? ledger.events.map(projectBusinessOperationEventForRenderer)
+          : [],
+      }))
+    : [];
+  const safe = {
+    ...pipeline,
+    operations: {
+      ...pipeline.operations,
+      events: safeOperationEvents,
+      eventCount: safeOperationEvents.length,
+    },
+    productHistory: {
+      ...pipeline.productHistory,
+      ledgers: safeProductHistoryLedgers,
+      ledgerCount: safeProductHistoryLedgers.length,
+    },
+    collection: {
+      status: collection.status,
+      latestBatch,
+      sourceBatchIds: Array.isArray(collection.sourceBatchIds) ? [...collection.sourceBatchIds] : [],
+      availableBatches: Array.isArray(collection.availableBatches)
+        ? collection.availableBatches.map((batch: any) => projectBusinessBatchOptionForRenderer(storeId, batch))
+        : [],
+      reportOptions: Array.isArray(collection.reportOptions) ? collection.reportOptions : [],
+      realReportFiles,
+      evidenceArtifacts,
+      fileAudit: {
+        totalFileRecords: Number(collection.fileAudit?.totalFileRecords || 0),
+        downloadedFileRecords: Number(collection.fileAudit?.downloadedFileRecords || 0),
+        existingFileRecords: Number(collection.fileAudit?.existingFileRecords || 0),
+        realReportFileCount: Number(collection.fileAudit?.realReportFileCount || 0),
+        importedRowCount: Number(collection.fileAudit?.importedRowCount || 0),
+        rejectedEvidenceFileCount: Number(collection.fileAudit?.rejectedEvidenceFileCount || 0),
+        missingReportLabels: Array.isArray(collection.fileAudit?.missingReportLabels)
+          ? collection.fileAudit.missingReportLabels.map((item: unknown) => String(item))
+          : [],
+        ...(latestBatch?.downloadArtifactId ? {
+          downloadArtifactId: latestBatch.downloadArtifactId,
+          downloadDisplayName: latestBatch.downloadDisplayName,
+        } : {}),
+        ...(latestBatch?.manifestArtifactId ? {
+          manifestArtifactId: latestBatch.manifestArtifactId,
+          manifestDisplayName: latestBatch.manifestDisplayName,
+        } : {}),
+      },
+      blockers: Array.isArray(collection.blockers) ? collection.blockers.map((item: unknown) => rendererSafeDetail(item) || '') : [],
+      audit: {
+        ...collection.audit,
+        notes: [
+          '只读读取当前店铺的报表批次、报表文件和广告指标。',
+          '广告量化指标必须绑定当前数据批次；旧导入数据只允许由 Main 按当前真实报表来源回退匹配。',
+          '手动输入的数据批次必须与当前日期、店铺和站点一致，否则整条数据管道阻断。',
+          '只有 Main 已校验存在的 xlsx/xls/csv 原始报表计为真实文件。',
+          '审计 JSON、PNG 截图、HTML/DOM 快照和 Trace 不计为真实报表文件。',
+        ],
+      },
+    },
+  };
+  return rendererPayload(safe);
+}
+
+function initializeLingxingCollectionCoordinator(): void {
+  if (!state.storeCoordinator || !state.storeRepo || !state.lingxingImportRepo) {
+    throw new Error('店铺级领星采集依赖尚未初始化。');
+  }
+  const operations = new CollectionOperationGuard({
+    leases: lingxingCollectionLeases,
+    assertActiveContext: (context) => state.storeCoordinator!.assertActiveStoreContext(context),
   });
-  persistLingxingBatch(result);
-  const metricsImport = importLingxingDownloadedReportMetrics(result);
+  state.lingxingCollectionOperations = operations;
+  state.lingxingCollectionCoordinator = new LingxingCollectionCoordinator({
+    authority: state.storeCoordinator,
+    operations,
+    resolveRuntime(context, options) {
+      const authorized = authorizedLingxingCollectionTarget(context);
+      const activeContext = authorized.context;
+      const browserRuntime = state.browserRuntime;
+      if (
+        !browserRuntime
+        || !state.isLoggedIn
+        || missionControlContextKey(browserRuntime.context) !== missionControlContextKey(activeContext)
+      ) {
+        throw new Error('请先为当前店铺启动并登录独立的领星 ERP 与 Amazon Ads 浏览器。');
+      }
+      const capsule = storeCapsuleFor(authorized.store);
+      return {
+        automation: createDownloadCenterAutomation(
+          browserRuntime.controllers.amazon_ads,
+          authorized.target,
+          {
+            allowManualVerificationForCanary: options.canary,
+            storeCapsule: capsule,
+          },
+        ),
+        browserProfileId: activeContext.browserProfileId,
+        canary: options.canary,
+        capsule,
+        storeDisplayName: authorized.store.displayName,
+        storeId: activeContext.storeId,
+        target: {
+          marketplaceCode: 'US',
+          storeId: activeContext.storeId,
+          storeName: authorized.target.storeName,
+        },
+      };
+    },
+    preflight(request, runtime) {
+      const dateRange = { start: request.dateStart, end: request.dateEnd };
+      if (runtime.canary) {
+        const model = readDownloadCenterPageModel();
+        const report = LINGXING_AD_REPORTS.find((item) => item.type === request.reportTypes[0]);
+        const displayName = report?.displayName || request.reportTypes[0] || '单报表 canary';
+        const automationReadiness = getDownloadCenterAutomationReadiness({
+          ...model,
+          requiresManualVerification: false,
+        });
+        assertDownloadCenterAutomationReady(automationReadiness, displayName);
+        assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, displayName, runtime.target);
+        return;
+      }
+      assertLingxingCollectionPreflightReady(dateRange, runtime.target);
+    },
+    assertRuntimeCurrent(context, runtime) {
+      const authorized = authorizedLingxingCollectionTarget(context);
+      if (
+        authorized.target.storeId !== runtime.target.storeId
+        || authorized.target.marketplaceCode !== runtime.target.marketplaceCode
+        || authorized.target.storeName !== runtime.target.storeName
+      ) {
+        throw new Error('领星店铺/Ads 账户映射已变化，本次采集已停止；请重新确认会话后发起新任务。');
+      }
+      if (
+        !state.browserRuntime
+        || missionControlContextKey(state.browserRuntime.context) !== missionControlContextKey(context)
+      ) {
+        throw new Error('当前店铺浏览器会话已变化，本次采集已停止。');
+      }
+    },
+    clearCancellation: ({ jobId, requestId, storeId }) => {
+      for (const key of lingxingCollectionCancellationKey({ jobId, requestId, storeId })) {
+        cancelledLingxingCollectionRequests.delete(key);
+      }
+    },
+    persistence: {
+      persistProgress(event) {
+        state.lingxingImportRepo!.upsertCollectionProgressForStore(
+          event.job.request.storeContext.storeId,
+          event,
+        );
+      },
+      persistResult(result) {
+        const context = state.storeCoordinator!.assertActiveStoreContext(
+          result.job.request.storeContext,
+        );
+        const store = state.storeRepo!.getStore(context.storeId);
+        if (!store || store.status !== 'active') {
+          throw new Error('采集结果所属店铺不存在或已停用，拒绝持久化。');
+        }
+        state.lingxingImportRepo!.commitCollectionTerminalForStore(context.storeId, {
+          job: result.job,
+          batch: {
+            ...result.batch,
+            storeName: store.displayName,
+            marketplaceCode: 'US',
+          },
+          files: result.files,
+        });
+      },
+      persistImportState(job) {
+        state.lingxingImportRepo!.upsertCollectionJobSnapshotForStore(
+          job.request.storeContext.storeId,
+          job,
+        );
+      },
+    },
+    importResult: (result) => {
+      const summary = importStoreScopedLingxingDownloadedReportMetrics(result);
+      if (summary.errors.length > 0 || summary.parsedFiles <= 0 || !summary.importRunId) {
+        const detail = summary.errors.map((error) => error.message).join('；')
+          || '真实报表未形成可提交的逐文件导入凭证。';
+        throw new Error(`LINGXING_COLLECTION_IMPORT_FAILED: ${detail}`);
+      }
+      return summary;
+    },
+    publishProgress: (event) => {
+      mainWindow?.webContents.send('lingxing-collection:progress', rendererPayload(event));
+    },
+    isCancelled: ({ jobId, requestId, storeId }) => lingxingCollectionCancellationKey({
+      jobId,
+      requestId,
+      storeId,
+    }).some((key) => cancelledLingxingCollectionRequests.has(key)),
+  });
+}
+
+function buildAuthoritativeMissionControlTodayProjection(contextInput: StoreContextEnvelope) {
+  if (!state.storeCoordinator || !state.productRepo || !state.lingxingImportRepo || !state.db) {
+    throw new Error('MISSION_CONTROL_TODAY_DEPENDENCIES_UNAVAILABLE');
+  }
+  const context = state.storeCoordinator.assertActiveStoreContext(contextInput);
+  const collectionJobs = state.lingxingImportRepo.listCollectionJobsForStore(context.storeId, 100);
+  const latestCollectionWindow = selectLatestMissionControlCollectionWindow(collectionJobs, context);
+  const lineageBatchIds = latestCollectionWindow?.jobs.map((job) => job.jobId) ?? [];
+  const metricFacts = latestCollectionWindow && lineageBatchIds.length > 0
+    ? state.db.prepare(`
+      SELECT COUNT(*) AS rowCount, MAX(date) AS latestMetricDate
+      FROM ad_daily_metrics
+      WHERE store_id = ?
+        AND batch_id IN (${lineageBatchIds.map(() => '?').join(', ')})
+        AND date >= ? AND date <= ?
+        AND upper(trim(marketplace_code)) = 'US'
+        AND upper(trim(currency)) = 'USD'
+    `).get(
+      context.storeId,
+      ...lineageBatchIds,
+      latestCollectionWindow.dateStart,
+      latestCollectionWindow.dateEnd,
+    ) as { rowCount: number; latestMetricDate: string | null }
+    : { rowCount: 0, latestMetricDate: null };
+  const reportImportProofs = latestCollectionWindow && lineageBatchIds.length > 0
+    ? state.db.prepare(`
+      SELECT
+        snapshots.batch_id AS batchId,
+        snapshots.report_type AS reportType,
+        snapshots.imported_rows AS importedRows,
+        snapshots.file_hash AS fileHash,
+        snapshots.run_id AS runId
+      FROM report_import_file_snapshots snapshots
+      INNER JOIN report_import_runs runs
+        ON runs.store_id = snapshots.store_id
+       AND runs.run_id = snapshots.run_id
+       AND runs.batch_id = snapshots.batch_id
+      WHERE snapshots.store_id = ?
+        AND snapshots.batch_id IN (${lineageBatchIds.map(() => '?').join(', ')})
+        AND runs.status = 'completed'
+        AND snapshots.report_file_id IS NOT NULL
+      ORDER BY snapshots.captured_at DESC, snapshots.snapshot_id DESC
+    `).all(context.storeId, ...lineageBatchIds) as Array<{
+      batchId: string;
+      reportType: LingxingReportType;
+      importedRows: number;
+      fileHash: string;
+      runId: string;
+    }>
+    : [];
+  const eventFacts = state.db.prepare(`
+    SELECT COUNT(*) AS rowCount
+    FROM operation_events
+    WHERE store_id = ? AND event_date = ? AND archived_at IS NULL
+  `).get(context.storeId, context.businessDate) as { rowCount: number };
+  const browserSessionReady = Boolean(
+    state.isLoggedIn
+    && state.browserRuntime
+    && missionControlContextKey(state.browserRuntime.context) === missionControlContextKey(context)
+    && state.browserRuntime.controllers.amazon_ads,
+  );
+  return buildMissionControlTodayProjection({
+    context,
+    products: state.productRepo.findAllWithCostsForStore(context.storeId),
+    collectionJobs,
+    reportImportProofs,
+    importedMetricRows: Number(metricFacts.rowCount) || 0,
+    ...(metricFacts.latestMetricDate ? { latestMetricDate: metricFacts.latestMetricDate } : {}),
+    operationEventsToday: Number(eventFacts.rowCount) || 0,
+    browserSessionReady,
+  });
+}
+
+async function runAuthorizedLingxingCollection(
+  input: unknown,
+  options: {
+    mode: 'create-and-download' | 'download-existing';
+    reportTypes?: readonly LingxingReportType[];
+    maxRetries?: number;
+    canary?: boolean;
+    resumeFrom?: LingxingCollectionResumeState;
+    lineage?: StartLingxingCollectionInput['lineage'];
+  },
+) {
+  if (!state.lingxingCollectionCoordinator) {
+    throw new Error('店铺级领星采集协调器尚未就绪。');
+  }
+  const request = normalizeLingxingCollectionRequest(input);
+  if (!request.requestId || !request.storeContext) {
+    throw new Error('领星采集请求缺少 Main 可复核的 requestId 或 StoreContext。请刷新当前店铺后重试。');
+  }
+  if (!options.canary && request.requestId.startsWith('canary:')) {
+    throw new Error('普通领星采集不得使用系统保留的 canary: requestId 前缀。');
+  }
+  if (options.canary && !request.requestId.startsWith('canary:')) {
+    throw new Error('Canary 采集必须使用 Main 生成的 canary: requestId。');
+  }
+  const startInput: StartLingxingCollectionInput = {
+    requestId: request.requestId,
+    storeContext: request.storeContext,
+    dateStart: request.start,
+    dateEnd: request.end,
+    mode: options.mode,
+    ...(options.reportTypes ? { reportTypes: options.reportTypes } : {}),
+    ...(options.maxRetries === undefined ? {} : { maxRetries: options.maxRetries }),
+    ...(options.canary ? { canary: true } : {}),
+    ...(options.resumeFrom ? { resumeFrom: options.resumeFrom } : {}),
+    ...(options.lineage ? { lineage: options.lineage } : {}),
+    appVersion: APP_VERSION,
+  };
+  return state.lingxingCollectionCoordinator.start(startInput);
+}
+
+async function handleCollectLingxingReports(input: unknown) {
+  const output = await runAuthorizedLingxingCollection(input, {
+    mode: 'create-and-download',
+  });
   mainWindow?.webContents.send('business-ui:data-updated');
-  return { ...result, metricsImport };
+  return { ...output.result, metricsImport: output.importSummary };
 }
 
 function handleImportCurrentBusinessReports(input: unknown) {
-  const scope = normalizeBusinessUiScope(input);
+  const scope = normalizeBusinessMutationScope(input);
   const batchResult = loadLatestBusinessBatch(scope);
   if (!batchResult) {
     throw new Error('导入被阻断：当前范围没有 completed 数据批次。');
+  }
+  if (batchResult.scopeMismatch?.length) {
+    throw new Error(`导入被阻断：${batchResult.scopeMismatch.join('；')}`);
   }
   const fileBatchForPath = (file: LingxingReportFile): LingxingReportBatch => {
     const downloadDir = batchResult.fileDownloadDirs?.[file.id] || batchResult.batch.downloadDir;
@@ -2508,7 +3024,32 @@ function handleImportCurrentBusinessReports(input: unknown) {
   if (realReportFiles.length === 0) {
     throw new Error('导入被阻断：当前范围没有真实 .xlsx/.xls/.csv 原始报表文件。');
   }
-  const metricsImport = importLingxingDownloadedReportMetrics({ ...batchResult, files: realReportFiles });
+  const sourceBatchIds = Array.from(new Set(
+    realReportFiles.map((file) => file.batchId || batchResult.batch.id),
+  ));
+  const importSummaries = sourceBatchIds.map((batchId) => {
+    state.storeCoordinator!.assertActiveStoreContext(scope.storeContext);
+    const sourceBatch = loadPersistedLingxingBatch(batchId);
+    const sourceFiles = sourceBatch.files.filter((file) => isExistingRawReportFile(file, sourceBatch.batch));
+    if (sourceFiles.length === 0) {
+      throw new Error(`导入被阻断：来源批次 ${batchId} 没有可验证的真实报表文件。`);
+    }
+    return importStoreScopedLingxingDownloadedReportMetrics({
+      batch: sourceBatch.batch,
+      files: sourceFiles,
+    });
+  });
+  const metricsImport = {
+    inserted: importSummaries.reduce((sum, item) => sum + item.inserted, 0),
+    parsedFiles: importSummaries.reduce((sum, item) => sum + item.parsedFiles, 0),
+    skippedFiles: importSummaries.reduce((sum, item) => sum + item.skippedFiles, 0),
+    deletedExisting: 0,
+    deduplicated: importSummaries.length > 0 && importSummaries.every((item) => item.deduplicated),
+    importRunIds: importSummaries
+      .map((item) => item.importRunId)
+      .filter((value): value is string => Boolean(value)),
+    errors: importSummaries.flatMap((item) => item.errors),
+  };
   return {
     batch: batchResult.batch,
     files: realReportFiles,
@@ -2518,7 +3059,7 @@ function handleImportCurrentBusinessReports(input: unknown) {
 }
 
 async function handleImportLocalBusinessReportFiles(input: unknown) {
-  const scope = normalizeBusinessUiScope(input);
+  const scope = normalizeBusinessMutationScope(input);
   if (!mainWindow) {
     throw new Error('本地导入被阻断：主窗口未就绪。');
   }
@@ -2536,9 +3077,19 @@ async function handleImportLocalBusinessReportFiles(input: unknown) {
       pipeline: handleGetBusinessUiDataPipeline(scope),
     };
   }
-  const result = buildLocalBusinessReportBatch(scope, selected.filePaths);
-  persistLingxingBatch(result);
-  const metricsImport = importLingxingDownloadedReportMetrics(result);
+  const context = state.storeCoordinator!.assertActiveStoreContext(scope.storeContext);
+  const store = state.storeRepo?.getStore(context.storeId);
+  if (!store || store.status !== 'active') {
+    throw new Error('本地导入被阻断：当前店铺不存在或已停用。');
+  }
+  const result = buildLocalBusinessReportBatch(
+    scope,
+    selected.filePaths,
+    storeCapsuleFor(store),
+  );
+  state.storeCoordinator!.assertActiveStoreContext(context);
+  state.lingxingImportRepo!.saveCollectionSnapshotForStore(context.storeId, result);
+  const metricsImport = importStoreScopedLingxingDownloadedReportMetrics(result);
   mainWindow.webContents.send('business-ui:data-updated');
   return {
     cancelled: false,
@@ -2552,17 +3103,23 @@ function handlePreflightLingxingCollection(input: unknown) {
   const request = normalizeLingxingCollectionRequest(input);
   const dateRange = { start: request.start, end: request.end };
   validateDateRange(dateRange);
+  const submittedContext = request.storeContext ?? state.storeCoordinator?.getActiveStoreContext();
+  if (!submittedContext) throw new Error('请先选择店铺，再检查领星采集条件。');
+  const authorized = authorizedLingxingCollectionTarget(submittedContext);
   const model = readDownloadCenterPageModel();
-  const diagnosticEvidenceReadiness = getDownloadCenterDiagnosticEvidenceReadiness(model, dateRange, {
-    storeName: request.storeName,
-    marketplaceCode: request.marketplaceCode,
-  });
-  const browserSessionReady = Boolean(browserRuntimeController('amazon_ads') && state.isLoggedIn);
+  const diagnosticEvidenceReadiness = getDownloadCenterDiagnosticEvidenceReadiness(
+    model,
+    dateRange,
+    authorized.target,
+  );
+  const browserSessionReady = Boolean(
+    state.browserRuntime
+    && missionControlContextKey(state.browserRuntime.context) === missionControlContextKey(authorized.context)
+    && browserRuntimeController('amazon_ads')
+    && state.isLoggedIn,
+  );
   return buildDownloadCenterCollectionPreflight(model, dateRange, undefined, {
-    target: {
-      storeName: request.storeName,
-      marketplaceCode: request.marketplaceCode,
-    },
+    target: authorized.target,
     diagnosticEvidenceReadiness,
     browserSessionReady,
     browserSessionReason: browserSessionReady ? undefined : '请先启动并登录领星 ERP 浏览器',
@@ -2577,16 +3134,22 @@ function assertLingxingCollectionPreflightReady(dateRange: { start: string; end:
 function handleExportLingxingCollectionPreflight(input: unknown): string {
   const request = normalizeLingxingCollectionRequest(input);
   const dateRange = { start: request.start, end: request.end };
+  const submittedContext = request.storeContext ?? state.storeCoordinator?.getActiveStoreContext();
+  if (!submittedContext) throw new Error('请先选择店铺，再导出领星采集检查。');
+  const authorized = authorizedLingxingCollectionTarget(submittedContext);
+  const capsule = storeCapsuleFor(authorized.store);
   const preflight = handlePreflightLingxingCollection(request);
   const model = readDownloadCenterPageModel();
   const diagnostic = preflight.diagnosticEvidenceReadiness.diagnosticId
     ? loadPersistedDownloadCenterDiagnostic(preflight.diagnosticEvidenceReadiness.diagnosticId, dateRange.start, dateRange.end)
-    : loadLatestPersistedDownloadCenterDiagnosticForModel(model, dateRange.start, dateRange.end, {
-      storeName: request.storeName,
-      marketplaceCode: request.marketplaceCode,
-    });
+    : loadLatestPersistedDownloadCenterDiagnosticForModel(
+        model,
+        dateRange.start,
+        dateRange.end,
+        authorized.target,
+      );
   const exportDir = path.join(
-    EXPORTS_DIR,
+    capsule.evidenceDir,
     `lingxing_collection_preflight_${safeFileSegment(dateRange.start)}_${safeFileSegment(dateRange.end)}_${Date.now()}`,
   );
   writeLingxingCollectionPreflightEvidenceBundle({
@@ -2595,114 +3158,666 @@ function handleExportLingxingCollectionPreflight(input: unknown): string {
     model,
     diagnostic,
     directories: {
-      screenshotsDir: SCREENSHOTS_DIR,
-      domSnapshotsDir: DOM_SNAPSHOTS_DIR,
+      screenshotsDir: capsule.screenshotsDir,
+      domSnapshotsDir: capsule.evidenceDir,
     },
   });
   return exportDir;
 }
 
 async function handleRetryLingxingReport(input: unknown, reportType: LingxingReportType) {
-  const request = normalizeLingxingCollectionRequest(input);
-  const dateRange = { start: request.start, end: request.end };
-  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
-  validateDateRange(dateRange);
   validateLingxingReportType(reportType);
-  assertLingxingCollectionPreflightReady(dateRange, target);
-
-  const controller = browserRuntimeController('amazon_ads');
-  if (!controller || !state.isLoggedIn) {
-    throw new Error('请先启动并登录领星 ERP 浏览器');
-  }
-
-  const result = await runLingxingReportBatch({
-    dateStart: dateRange.start,
-    dateEnd: dateRange.end,
-    storeName: target.storeName,
-    marketplaceCode: target.marketplaceCode,
-    rootDownloadDir: DOWNLOADS_DIR,
-    appVersion: APP_VERSION,
+  const output = await runAuthorizedLingxingCollection(input, {
+    mode: 'create-and-download',
     reportTypes: [reportType],
-    automation: createDownloadCenterAutomation(controller, target),
   });
-  persistLingxingBatch(result);
-  const metricsImport = importLingxingDownloadedReportMetrics(result);
   mainWindow?.webContents.send('business-ui:data-updated');
-  return { ...result, metricsImport };
+  return { ...output.result, metricsImport: output.importSummary };
 }
 
 async function handleDownloadExistingLingxingReports(input: unknown, reportTypes: LingxingReportType[]) {
-  const request = normalizeLingxingCollectionRequest(input);
-  const dateRange = { start: request.start, end: request.end };
-  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
   const selectedReportTypes = Array.from(new Set(reportTypes));
-  validateDateRange(dateRange);
   if (selectedReportTypes.length === 0) {
     throw new Error('请至少选择 1 类已创建报表。');
   }
   selectedReportTypes.forEach(validateLingxingReportType);
-  assertLingxingCollectionPreflightReady(dateRange, target);
-
-  const controller = browserRuntimeController('amazon_ads');
-  if (!controller || !state.isLoggedIn) {
-    throw new Error('请先启动并登录领星 ERP 浏览器');
-  }
-
-  const result = await downloadExistingLingxingReportBatch({
-    dateStart: dateRange.start,
-    dateEnd: dateRange.end,
-    storeName: target.storeName,
-    marketplaceCode: target.marketplaceCode,
-    rootDownloadDir: DOWNLOADS_DIR,
-    appVersion: APP_VERSION,
+  const output = await runAuthorizedLingxingCollection(input, {
+    mode: 'download-existing',
     reportTypes: selectedReportTypes,
     maxRetries: 0,
-    automation: createDownloadCenterAutomation(controller, target),
   });
-  persistLingxingBatch(result);
-  const metricsImport = importLingxingDownloadedReportMetrics(result);
   mainWindow?.webContents.send('business-ui:data-updated');
-  return { ...result, metricsImport };
+  return { ...output.result, metricsImport: output.importSummary };
 }
 
 async function handleRunLingxingCanaryReport(input: unknown, reportType: LingxingReportType) {
-  const request = normalizeLingxingCollectionRequest(input);
-  const dateRange = { start: request.start, end: request.end };
-  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
-  validateDateRange(dateRange);
   validateLingxingReportType(reportType);
-
-  const controller = browserRuntimeController('amazon_ads');
-  if (!controller || !state.isLoggedIn) {
-    throw new Error('请先启动并登录领星 ERP 浏览器');
-  }
-
-  const model = readDownloadCenterPageModel();
-  const report = LINGXING_AD_REPORTS.find((item) => item.type === reportType);
-  const displayName = report?.displayName || reportType;
-  const automationReadiness = getDownloadCenterAutomationReadiness({
-    ...model,
-    requiresManualVerification: false,
-  });
-  assertDownloadCenterAutomationReady(automationReadiness, displayName);
-  assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, displayName, target);
-
-  const result = await runLingxingReportBatch({
-    dateStart: dateRange.start,
-    dateEnd: dateRange.end,
-    storeName: target.storeName,
-    marketplaceCode: target.marketplaceCode,
-    rootDownloadDir: DOWNLOADS_DIR,
-    appVersion: APP_VERSION,
+  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const originalRequestId = optionalTrimmedString(value.requestId);
+  if (!originalRequestId) throw new Error('单报表 canary 缺少有效 requestId。');
+  const canaryRequestId = asLingxingCanaryRequestId(originalRequestId);
+  const output = await runAuthorizedLingxingCollection({
+    ...value,
+    requestId: canaryRequestId,
+  }, {
+    canary: true,
+    mode: 'create-and-download',
     reportTypes: [reportType],
     maxRetries: 0,
-    automation: createDownloadCenterAutomation(controller, target, {
-      allowManualVerificationForCanary: true,
-    }),
   });
-  persistLingxingBatch(result);
-  assertBatchContainsRealReportFiles(result, '单报表 canary');
-  return result;
+  assertBatchContainsRealReportFiles(output.result, '单报表 canary');
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return output.result;
+}
+
+function asLingxingCanaryRequestId(requestId: string): string {
+  return requestId.startsWith('canary:')
+    ? requestId.slice(0, 128)
+    : `canary:${requestId.slice(0, 120)}`;
+}
+
+function requireCurrentCollectionStoreContext(value: unknown): StoreContextEnvelope {
+  if (!state.storeCoordinator) throw new Error('店铺会话协调器尚未就绪。');
+  if (!value || typeof value !== 'object') {
+    throw new Error('领星采集操作缺少 StoreContext。');
+  }
+  return state.storeCoordinator.assertActiveStoreContext(value);
+}
+
+function handleListLingxingCollectionJobs(input: unknown): LingxingCollectionJobSnapshot[] {
+  if (!state.lingxingImportRepo) throw new Error('店铺级领星采集仓库尚未就绪。');
+  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const context = requireCurrentCollectionStoreContext(value.storeContext);
+  const requestedLimit = typeof value.limit === 'number' ? value.limit : 30;
+  const limit = Math.max(1, Math.min(100, Math.trunc(requestedLimit)));
+  return state.lingxingImportRepo.listCollectionJobsForStore(context.storeId, limit);
+}
+
+function handleCancelLingxingCollection(
+  input: unknown,
+): { cancelled: true; requestId: string; jobId: string } {
+  if (!state.lingxingImportRepo) throw new Error('店铺级领星采集仓库尚未就绪。');
+  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const context = requireCurrentCollectionStoreContext(value.storeContext);
+  const { requestId, jobId } = bindLingxingCollectionCancellation(
+    state.lingxingImportRepo,
+    context.storeId,
+    { requestId: value.requestId, jobId: value.jobId },
+  );
+  // A cancellation acknowledgement is a durable boundary. Persist the
+  // cancelled terminal before exposing the in-memory runner guard or
+  // returning to Renderer. Late runner progress is rejected by the repo's
+  // monotonic cancelled-state rule.
+  state.lingxingImportRepo.cancelCollectionJobForStore(context.storeId, jobId, {
+    requestId,
+    completedAt: new Date().toISOString(),
+  });
+  for (const key of lingxingCollectionCancellationKey({
+    storeId: context.storeId,
+    requestId,
+    jobId,
+  })) {
+    cancelledLingxingCollectionRequests.add(key);
+  }
+  return { cancelled: true, requestId, jobId };
+}
+
+function validatedDownloadedResumeReportTypes(
+  job: LingxingCollectionJobSnapshot,
+): LingxingReportType[] {
+  if (!state.lingxingImportRepo) throw new Error('店铺级领星采集仓库尚未就绪。');
+  const snapshot = state.lingxingImportRepo.getCollectionSnapshotForStore(
+    job.request.storeContext.storeId,
+    job.jobId,
+  );
+  const downloaded = job.reports
+    .filter((checkpoint) => checkpoint.state === 'downloaded')
+    .map((checkpoint) => checkpoint.reportType);
+  for (const reportType of downloaded) {
+    const file = snapshot?.files.find((candidate) => (
+      candidate.reportType === reportType
+      && candidate.status === 'downloaded'
+      && Boolean(candidate.filePath)
+    ));
+    const definition = LINGXING_AD_REPORTS.find((candidate) => candidate.type === reportType);
+    const verification = file?.filePath && snapshot
+      ? verifyDownloadedFile(file.filePath, {
+          expectedDateRange: {
+            start: job.request.dateStart,
+            end: job.request.dateEnd,
+          },
+          expectedDownloadDir: snapshot.batch.downloadDir,
+          expectedFilenameKeyword: definition?.expectedFilenameKeyword,
+          expectedReportType: reportType,
+        })
+      : { valid: false, errorMessage: '缺少已下载文件快照' };
+    if (!verification.valid) {
+      throw new Error(
+        `任务 ${job.jobId} 的已下载报表 ${reportType} 无法重新验证：${verification.errorMessage || '未知原因'}。`
+        + ' 请先人工核对本地文件，系统不会自动重复下载。',
+      );
+    }
+  }
+  return downloaded;
+}
+
+function rebindLingxingResumeState(
+  job: LingxingCollectionJobSnapshot,
+  requestId: string,
+  context: StoreContextEnvelope,
+): {
+  resumeFrom?: LingxingCollectionResumeState;
+  reportTypes: LingxingReportType[];
+  reused: LingxingReportType[];
+  lineage?: StartLingxingCollectionInput['lineage'];
+} {
+  if (
+    job.request.storeContext.storeId !== context.storeId
+    || job.request.storeContext.browserProfileId !== context.browserProfileId
+  ) {
+    throw new Error('历史采集任务不属于当前店铺浏览器 Profile，拒绝恢复。');
+  }
+  const manualReconciliation = job.reports.find((checkpoint) => (
+    checkpoint.state === 'creating' || checkpoint.state === 'create_unknown'
+  ));
+  if (manualReconciliation) {
+    throw new Error(
+      `${manualReconciliation.reportType} 的创建结果不确定，必须先在领星下载中心人工核对；系统不会自动恢复或重复创建。`,
+    );
+  }
+  const reused = validatedDownloadedResumeReportTypes(job);
+  const reportTypes = job.request.reportTypes.filter((reportType) => !reused.includes(reportType));
+  if (reportTypes.length === 0) return { reportTypes: [], reused };
+
+  const resumableReports: LingxingCollectionReportCheckpoint[] = [];
+  for (const checkpoint of job.reports) {
+    if (!reportTypes.includes(checkpoint.reportType) || !checkpoint.createdReportIdentity) continue;
+    resumableReports.push({
+      ...checkpoint,
+      state: ['ready', 'downloading', 'verifying'].includes(checkpoint.state)
+        ? 'ready'
+        : 'created',
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  const reboundRequest = {
+    requestId,
+    storeContext: context,
+    dateStart: job.request.dateStart,
+    dateEnd: job.request.dateEnd,
+    mode: job.request.mode,
+    reportTypes,
+  } as const;
+  const fullOriginalRequest = job.request.reportTypes.length === LINGXING_REPORT_TYPE_SET.size
+    && job.request.reportTypes.every((reportType) => LINGXING_REPORT_TYPE_SET.has(reportType));
+  const sourceLineage = job.lineage ?? (fullOriginalRequest ? {
+    lineageId: job.jobId,
+    rootJobId: job.jobId,
+    expectedReportTypes: [...job.request.reportTypes],
+    purpose: 'production_full' as const,
+  } : undefined);
+  return {
+    reportTypes,
+    reused,
+    ...(sourceLineage ? {
+      lineage: {
+        ...sourceLineage,
+        parentJobId: job.jobId,
+        expectedReportTypes: [...sourceLineage.expectedReportTypes],
+        purpose: 'resume' as const,
+      },
+    } : {}),
+    resumeFrom: {
+      jobId: `resume_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+      request: reboundRequest,
+      reports: resumableReports,
+    },
+  };
+}
+
+function nextLingxingCollectionSnapshotTimestamp(previous: string): string {
+  const previousMs = Date.parse(previous);
+  const nextMs = Number.isFinite(previousMs)
+    ? Math.max(Date.now(), previousMs + 1)
+    : Date.now();
+  return new Date(nextMs).toISOString();
+}
+
+function persistLingxingCollectionImportState(
+  job: LingxingCollectionJobSnapshot,
+  importState: LingxingCollectionImportState,
+  options: {
+    attemptedAt?: string;
+    completedAt?: string;
+    error?: string;
+  } = {},
+): LingxingCollectionJobSnapshot {
+  if (!state.lingxingImportRepo) throw new Error('店铺级领星采集仓库尚未就绪。');
+  const {
+    importState: _previousImportState,
+    importAttemptedAt: _previousImportAttemptedAt,
+    importCompletedAt: _previousImportCompletedAt,
+    importError: _previousImportError,
+    ...base
+  } = job;
+  const updatedAt = nextLingxingCollectionSnapshotTimestamp(job.updatedAt);
+  const next: LingxingCollectionJobSnapshot = {
+    ...base,
+    importState,
+    updatedAt,
+    ...(options.attemptedAt ? { importAttemptedAt: options.attemptedAt } : {}),
+    ...(options.completedAt ? { importCompletedAt: options.completedAt } : {}),
+    ...(options.error ? { importError: options.error } : {}),
+  };
+  const persisted = state.lingxingImportRepo.upsertCollectionProgressForStore(
+    next.request.storeContext.storeId,
+    {
+      eventId: `${next.jobId}:import-recovery:${importState}`,
+      emittedAt: updatedAt,
+      job: next,
+    },
+  );
+  try {
+    state.storeCoordinator?.assertActiveStoreContext(persisted.request.storeContext);
+    mainWindow?.webContents.send('lingxing-collection:progress', rendererPayload({
+      eventId: `${persisted.jobId}:import-recovery:${importState}`,
+      emittedAt: persisted.updatedAt,
+      job: persisted,
+    } satisfies LingxingCollectionProgressEvent));
+  } catch {
+    // The import state is durable; never leak a previous store's recovery event
+    // into a workspace selected while recovery was finishing.
+  }
+  return persisted;
+}
+
+function recoverCompletedLingxingCollectionImport(
+  job: LingxingCollectionJobSnapshot,
+  context: StoreContextEnvelope,
+  options: { requireActiveContext?: boolean } = {},
+) {
+  if (!state.lingxingImportRepo) throw new Error('店铺级领星采集仓库尚未就绪。');
+  if (job.state !== 'completed' && job.state !== 'completed_with_errors') {
+    throw new Error(`任务 ${job.jobId} 的下载终态为 ${job.state}，不能直接补导。`);
+  }
+  if (job.reports.some((checkpoint) => checkpoint.state === 'create_unknown')) {
+    throw new Error('任务存在 create_unknown，必须先在领星下载中心人工核对，禁止自动补导。');
+  }
+  const snapshot = state.lingxingImportRepo.getCollectionSnapshotForStore(context.storeId, job.jobId);
+  if (!snapshot) throw new Error(`任务 ${job.jobId} 缺少店铺级下载批次快照，无法补导。`);
+
+  const runId = `import_${job.jobId}`;
+  const existing = state.lingxingImportRepo.getImportRunForStore(context.storeId, runId);
+  if (existing) {
+    if (job.importState === 'succeeded') {
+      return {
+        job,
+        importRecovered: false,
+        metricsImport: {
+          inserted: existing.metricRowCount,
+          parsedFiles: existing.sourceFileCount,
+          skippedFiles: 0,
+          deletedExisting: 0,
+          deduplicated: true,
+          importRunId: existing.runId,
+          errors: [],
+        },
+      };
+    }
+    const completedAt = nextLingxingCollectionSnapshotTimestamp(job.updatedAt);
+    const succeeded = persistLingxingCollectionImportState(job, 'succeeded', {
+      attemptedAt: job.importAttemptedAt || existing.startedAt,
+      completedAt,
+    });
+    return {
+      job: succeeded,
+      importRecovered: true,
+      metricsImport: {
+        inserted: existing.metricRowCount,
+        parsedFiles: existing.sourceFileCount,
+        skippedFiles: 0,
+        deletedExisting: 0,
+        deduplicated: true,
+        importRunId: existing.runId,
+        errors: [],
+      },
+    };
+  }
+
+  if (options.requireActiveContext !== false) {
+    state.storeCoordinator!.assertActiveStoreContext(context);
+  }
+  const attemptedAt = nextLingxingCollectionSnapshotTimestamp(job.updatedAt);
+  let pending = persistLingxingCollectionImportState(job, 'pending', { attemptedAt });
+  let metricsImport: ReturnType<typeof importStoreScopedLingxingDownloadedReportMetrics>;
+  try {
+    metricsImport = importStoreScopedLingxingDownloadedReportMetrics(snapshot);
+    if (metricsImport.errors.length > 0 || metricsImport.parsedFiles <= 0 || !metricsImport.importRunId) {
+      const detail = metricsImport.errors.map((error) => error.message).join('；')
+        || '真实报表未形成可提交的逐文件导入凭证。';
+      throw new Error(`LINGXING_COLLECTION_IMPORT_FAILED: ${detail}`);
+    }
+  } catch (error) {
+    const completedAt = nextLingxingCollectionSnapshotTimestamp(pending.updatedAt);
+    persistLingxingCollectionImportState(pending, 'failed', {
+      attemptedAt,
+      completedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+  const completedAt = nextLingxingCollectionSnapshotTimestamp(pending.updatedAt);
+  pending = persistLingxingCollectionImportState(pending, 'succeeded', {
+    attemptedAt,
+    completedAt,
+  });
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return { job: pending, importRecovered: true, metricsImport };
+}
+
+function recoverPendingLingxingCollectionImportsOnStartup(): {
+  inspected: number;
+  recovered: number;
+  failed: number;
+} {
+  if (!state.lingxingImportRepo || !state.storeRepo) {
+    return { inspected: 0, recovered: 0, failed: 0 };
+  }
+  let inspected = 0;
+  let recovered = 0;
+  let failed = 0;
+  const stores = state.storeRepo.listStores().filter((store) => store.status === 'active');
+  for (const store of stores) {
+    let cursor: { updatedAt: string; jobId: string } | undefined;
+    do {
+      const page = state.lingxingImportRepo.listRecoverableCollectionImportsForStore(
+        store.storeId,
+        {
+          limit: 200,
+          cursor,
+          importStates: ['pending', 'failed'],
+        },
+      );
+      for (const job of page.jobs) {
+        inspected += 1;
+        try {
+          recoverCompletedLingxingCollectionImport(job, job.request.storeContext, {
+            requireActiveContext: false,
+          });
+          recovered += 1;
+        } catch (error) {
+          failed += 1;
+          console.warn('[Lingxing] pending import recovery failed', JSON.stringify({
+            storeId: store.storeId,
+            jobId: job.jobId,
+            errorName: error instanceof Error ? error.name : 'UnknownError',
+            blockerCode: 'LINGXING_COLLECTION_IMPORT_RECOVERY_FAILED',
+          }));
+        }
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+  }
+  return { inspected, recovered, failed };
+}
+
+function recoverInterruptedLingxingCollectionJobsOnStartup(): {
+  cancelled: number;
+  failedStores: number;
+} {
+  if (!state.lingxingImportRepo || !state.storeRepo) {
+    return { cancelled: 0, failedStores: 0 };
+  }
+  let cancelled = 0;
+  let failedStores = 0;
+  const completedAt = new Date().toISOString();
+  for (const store of state.storeRepo.listStores({ includeArchived: true })) {
+    try {
+      cancelled += state.lingxingImportRepo.recoverInterruptedCollectionJobsForStore(
+        store.storeId,
+        { completedAt },
+      ).length;
+    } catch (error) {
+      failedStores += 1;
+      console.warn('[Lingxing] interrupted collection recovery failed', JSON.stringify({
+        storeId: store.storeId,
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        blockerCode: 'LINGXING_COLLECTION_RESTART_RECOVERY_FAILED',
+      }));
+    }
+  }
+  return { cancelled, failedStores };
+}
+
+function sanitizeLingxingImportSummaryForRenderer(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined;
+  const summary = value as Record<string, unknown>;
+  const finiteCount = (input: unknown) => {
+    const count = Number(input);
+    return Number.isFinite(count) && count >= 0 ? Math.trunc(count) : 0;
+  };
+  const errors = Array.isArray(summary.errors)
+    ? summary.errors.map((error) => {
+        const item = error && typeof error === 'object' ? error as Record<string, unknown> : {};
+        return {
+          reportType: optionalTrimmedString(item.reportType) || 'unknown',
+          message: '导入未完成，请在当前店铺的数据采集诊断中查看详情。',
+        };
+      })
+    : [];
+  return {
+    inserted: finiteCount(summary.inserted),
+    parsedFiles: finiteCount(summary.parsedFiles),
+    skippedFiles: finiteCount(summary.skippedFiles),
+    deletedExisting: finiteCount(summary.deletedExisting),
+    deduplicated: summary.deduplicated === true,
+    ...(optionalTrimmedString(summary.importRunId)
+      ? { importRunId: optionalTrimmedString(summary.importRunId) }
+      : {}),
+    ...(Array.isArray(summary.importRunIds)
+      ? { importRunIds: summary.importRunIds.map(optionalTrimmedString).filter(Boolean) }
+      : {}),
+    errors,
+  };
+}
+
+function minimalLingxingCollectionJobForRenderer(job: LingxingCollectionJobSnapshot) {
+  return {
+    jobId: job.jobId,
+    request: {
+      requestId: job.request.requestId,
+      storeContext: job.request.storeContext,
+      dateStart: job.request.dateStart,
+      dateEnd: job.request.dateEnd,
+      mode: job.request.mode,
+      reportTypes: [...job.request.reportTypes],
+    },
+    state: job.state,
+    importState: job.importState,
+    updatedAt: job.updatedAt,
+    ...(job.completedAt ? { completedAt: job.completedAt } : {}),
+  };
+}
+
+function projectLingxingReportFileForRenderer(storeId: string, file: LingxingReportFile) {
+  const fileArtifact = issueRendererArtifact(
+    storeId,
+    file.filePath,
+    'report-file',
+    file.filePath ? path.basename(file.filePath) : file.displayName,
+  );
+  const folderArtifact = issueRendererArtifact(
+    storeId,
+    file.filePath ? path.dirname(file.filePath) : undefined,
+    'report-folder',
+    '原始报表目录',
+  );
+  const failureArtifacts = [
+    issueRendererArtifact(storeId, file.failureScreenshotPath, 'diagnostic-file', '失败截图'),
+    issueRendererArtifact(storeId, file.failureDomSnapshotPath, 'diagnostic-file', '失败页面快照'),
+    issueRendererArtifact(storeId, file.failureTracePath, 'diagnostic-file', '失败 Trace'),
+  ].filter((item): item is RendererArtifactReference => Boolean(item));
+  return {
+    id: file.id,
+    ...(file.batchId ? { batchId: file.batchId } : {}),
+    reportType: file.reportType,
+    displayName: file.displayName,
+    status: file.status,
+    maxAutoRetries: Number(file.maxAutoRetries || 0),
+    autoRetryCount: Number(file.autoRetryCount || 0),
+    fileName: file.filePath ? path.basename(file.filePath) : '',
+    fileExtension: file.filePath ? path.extname(file.filePath).toLowerCase() : '',
+    fileSizeBytes: Number(file.fileSizeBytes || 0),
+    ...(file.errorMessage ? { errorMessage: rendererSafeDetail(file.errorMessage) } : {}),
+    ...(file.traceUnavailableReason ? { traceUnavailableReason: String(file.traceUnavailableReason) } : {}),
+    createdAt: file.createdAt,
+    updatedAt: file.updatedAt,
+    ...(fileArtifact ? {
+      artifactId: fileArtifact.artifactId,
+      artifactDisplayName: fileArtifact.displayName,
+    } : {}),
+    ...(folderArtifact ? {
+      folderArtifactId: folderArtifact.artifactId,
+      folderDisplayName: folderArtifact.displayName,
+    } : {}),
+    ...(failureArtifacts.length > 0 ? { failureArtifacts } : {}),
+  };
+}
+
+function projectLingxingCollectionResultForRenderer(result: LingxingBatchFilesResult & { job?: LingxingCollectionJobSnapshot }, importSummary?: unknown) {
+  const storeId = String(result.batch.storeId || result.job?.request.storeContext.storeId || '');
+  if (!storeId) throw new Error('领星采集结果缺少当前店铺权威。');
+  return rendererPayload({
+    batch: projectBusinessBatchForRenderer(storeId, result.batch),
+    files: result.files.map((file) => projectLingxingReportFileForRenderer(storeId, file)),
+    ...(result.job ? { job: result.job } : {}),
+    ...(importSummary === undefined ? {} : { metricsImport: sanitizeLingxingImportSummaryForRenderer(importSummary) }),
+  });
+}
+
+function projectBusinessImportResultForRenderer(result: any) {
+  const pipeline = projectBusinessPipelineForRenderer(result.pipeline);
+  const storeId = String(pipeline?.scope?.storeId || pipeline?.scope?.storeContext?.storeId || '');
+  return rendererPayload({
+    cancelled: result.cancelled === true,
+    ...(result.batch ? { batch: projectBusinessBatchForRenderer(storeId, result.batch) } : {}),
+    files: Array.isArray(result.files)
+      ? result.files.map((file: LingxingReportFile) => projectLingxingReportFileForRenderer(storeId, file))
+      : [],
+    metricsImport: sanitizeLingxingImportSummaryForRenderer(result.metricsImport),
+    pipeline,
+  });
+}
+
+function currentArtifactStore(): StoreRecord {
+  const context = state.storeCoordinator?.getActiveStoreContext();
+  if (!context) throw new Error('请先选择店铺，再访问本地 Artifact。');
+  const store = state.storeRepo?.getStore(context.storeId);
+  if (!store || store.status !== 'active') throw new Error('当前店铺不存在或已停用。');
+  return store;
+}
+
+function projectDiagnosticForRenderer(diagnostic: DownloadCenterDiagnosticResult) {
+  const store = currentArtifactStore();
+  const screenshotArtifact = issueRendererArtifact(
+    store.storeId,
+    diagnostic.screenshotPath,
+    'diagnostic-file',
+    '下载中心截图',
+  );
+  const domArtifact = issueRendererArtifact(
+    store.storeId,
+    diagnostic.domSnapshotPath,
+    'diagnostic-file',
+    '下载中心页面快照',
+  );
+  const {
+    screenshotPath: _screenshotPath,
+    domSnapshotPath: _domSnapshotPath,
+    errorMessage,
+    ...safeDiagnostic
+  } = diagnostic;
+  return rendererPayload({
+    ...safeDiagnostic,
+    ...(errorMessage ? { errorMessage: rendererSafeDetail(errorMessage) } : {}),
+    ...(screenshotArtifact ? {
+      screenshotArtifactId: screenshotArtifact.artifactId,
+      screenshotDisplayName: screenshotArtifact.displayName,
+    } : {}),
+    ...(domArtifact ? {
+      domArtifactId: domArtifact.artifactId,
+      domDisplayName: domArtifact.displayName,
+    } : {}),
+  });
+}
+
+function projectExportArtifactForCurrentStore(
+  targetPath: string,
+  kind: 'diagnostic-folder' | 'export-folder' | 'export-file',
+  displayName: string,
+) {
+  const store = currentArtifactStore();
+  const artifact = issueRendererArtifact(store.storeId, targetPath, kind, displayName);
+  if (!artifact) throw new Error('导出已完成，但 Artifact 未通过当前店铺目录校验。');
+  return rendererPayload(artifact);
+}
+
+async function handleResumeLingxingCollection(input: unknown) {
+  if (!state.lingxingImportRepo) throw new Error('店铺级领星采集仓库尚未就绪。');
+  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const context = requireCurrentCollectionStoreContext(value.storeContext);
+  const requestId = optionalTrimmedString(value.requestId);
+  const jobId = optionalTrimmedString(value.jobId);
+  if (!requestId || !jobId) throw new Error('恢复采集需要有效的 requestId 与 jobId。');
+  const job = state.lingxingImportRepo.getCollectionJobForStore(context.storeId, jobId);
+  if (!job) throw new Error(`当前店铺未找到采集任务：${jobId}`);
+  const isCanary = job.request.requestId.startsWith('canary:');
+  const reboundRequestId = isCanary ? asLingxingCanaryRequestId(requestId) : requestId;
+  const rebound = rebindLingxingResumeState(job, reboundRequestId, context);
+  if (!rebound.resumeFrom || rebound.reportTypes.length === 0) {
+    if (isCanary) {
+      const canaryJob = job.importState === 'not_applicable'
+        ? job
+        : persistLingxingCollectionImportState(job, 'not_applicable');
+      return {
+        alreadyComplete: true,
+        job: minimalLingxingCollectionJobForRenderer(canaryJob),
+        importRecovered: false,
+        resumedFromJobId: jobId,
+        reusedDownloadedReportTypes: rebound.reused,
+      };
+    }
+    const recovery = recoverCompletedLingxingCollectionImport(job, context);
+    return {
+      alreadyComplete: true,
+      job: minimalLingxingCollectionJobForRenderer(recovery.job),
+      importRecovered: recovery.importRecovered,
+      metricsImport: sanitizeLingxingImportSummaryForRenderer(recovery.metricsImport),
+      resumedFromJobId: jobId,
+      reusedDownloadedReportTypes: rebound.reused,
+    };
+  }
+  const output = await runAuthorizedLingxingCollection({
+    requestId: reboundRequestId,
+    storeContext: context,
+    start: job.request.dateStart,
+    end: job.request.dateEnd,
+  }, {
+    ...(isCanary ? { canary: true } : {}),
+    mode: job.request.mode,
+    reportTypes: rebound.reportTypes,
+    resumeFrom: rebound.resumeFrom,
+    ...(rebound.lineage ? { lineage: rebound.lineage } : {}),
+  });
+  mainWindow?.webContents.send('business-ui:data-updated');
+  return {
+    alreadyComplete: false,
+    job: minimalLingxingCollectionJobForRenderer(output.result.job),
+    importState: output.result.job.importState,
+    metricsImport: sanitizeLingxingImportSummaryForRenderer(output.importSummary),
+    resumedFromJobId: jobId,
+    reusedDownloadedReportTypes: rebound.reused,
+  };
 }
 
 const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS = {
@@ -2855,8 +3970,11 @@ async function readDownloadCenterSortState(
 
 function createDownloadCenterAutomation(
   controller: BrowserController,
-  target: LingxingCollectionTarget = {},
-  options: { allowManualVerificationForCanary?: boolean } = {},
+  target: LingxingCollectionTarget & { marketplaceCode: string; storeId: string; storeName: string },
+  options: {
+    allowManualVerificationForCanary?: boolean;
+    storeCapsule?: StoreCapsulePaths;
+  } = {},
 ): DownloadCenterAutomationPort {
   const model = readDownloadCenterPageModel();
   const automationReadiness = getDownloadCenterAutomationReadiness(
@@ -2871,6 +3989,7 @@ function createDownloadCenterAutomation(
   const reportContext = (
     report: { type: LingxingReportType; displayName: string; expectedFilenameKeyword: string },
     dateRange: { start: string; end: string },
+    createdReportIdentity?: LingxingCreatedReportIdentity,
   ): DownloadCenterReportSelectorContext => {
     const key = reportContextKey(report, dateRange);
     if (!generatedReportNames.has(key)) {
@@ -2878,7 +3997,7 @@ function createDownloadCenterAutomation(
     }
     return {
       ...report,
-      generatedReportName: generatedReportNames.get(key),
+      generatedReportName: createdReportIdentity?.externalReportName ?? generatedReportNames.get(key),
       storeName: target.storeName,
       marketplaceCode: target.marketplaceCode,
     };
@@ -2984,13 +4103,28 @@ function createDownloadCenterAutomation(
         await okButton.click();
       }
       await navigateToLingxingDownloadCenter(controller, model);
+      const createdRow = page.locator('tr').filter({
+        hasText: context.generatedReportName || report.displayName,
+      }).first();
+      await createdRow.waitFor({ state: 'visible', timeout: 30000 });
+      return {
+        status: 'created',
+        identity: {
+          provider: 'lingxing',
+          reportType: report.type,
+          externalReportName: context.generatedReportName || report.displayName,
+          dateStart: dateRange.start,
+          dateEnd: dateRange.end,
+          createdAt: new Date().toISOString(),
+        },
+      };
     },
-    async waitForReportReady(report, dateRange) {
+    async waitForReportReady(report, dateRange, createdReportIdentity) {
       assertDownloadCenterAutomationReady(automationReadiness, report.displayName);
       assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName, target);
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
-      const context = reportContext(report, dateRange);
+      const context = reportContext(report, dateRange, createdReportIdentity);
       let lastRecoveryAt = 0;
       const recoverListIfNeeded = async (attempt: number) => {
         const now = Date.now();
@@ -3038,22 +4172,29 @@ function createDownloadCenterAutomation(
       }
       await assertUsableDownloadCenterActionSelector(page, 'readyReportSelector', selectors.readyReportSelector, context, dateRange);
     },
-    async downloadReport(report, downloadDir, dateRange) {
+    async downloadReport(report, downloadDir, dateRange, createdReportIdentity) {
       assertDownloadCenterAutomationReady(automationReadiness, report.displayName);
       assertDownloadCenterDiagnosticEvidenceReady(model, dateRange, report.displayName, target);
       const page = getControllerPageOrThrow(controller);
       const selectors = model.actionSelectors!;
       fs.mkdirSync(downloadDir, { recursive: true });
-      const context = reportContext(report, dateRange);
+      const context = reportContext(report, dateRange, createdReportIdentity);
       const downloadButton = await assertUsableDownloadCenterActionSelector(page, 'downloadButton', selectors.downloadButton, context, dateRange);
 
       const [download] = await Promise.all([
         page.waitForEvent('download', { timeout: selectors.downloadTimeoutMs ?? 120000 }),
         page.locator(downloadButton).click(),
       ]);
-      const filePath = path.join(downloadDir, download.suggestedFilename());
-      await download.saveAs(filePath);
-      return filePath;
+      if (!options.storeCapsule) {
+        throw new Error('当前领星采集缺少店铺独立下载舱，拒绝保存报表。');
+      }
+      const targetFile = resolveStoreCapsuleDownloadTarget(
+        options.storeCapsule,
+        download.suggestedFilename(),
+        downloadDir,
+      );
+      await download.saveAs(targetFile.path);
+      return targetFile.path;
     },
     async startAttemptTrace(report, dateRange, attemptIndex) {
       traceStartError = undefined;
@@ -3087,7 +4228,12 @@ function createDownloadCenterAutomation(
           return undefined;
         }
 
-        const tracePath = buildReportFailureTracePath(report.type, dateRange, attemptIndex);
+        const tracePath = buildReportFailureTracePath(
+          report.type,
+          dateRange,
+          attemptIndex,
+          options.storeCapsule?.tracesDir,
+        );
         await context.tracing.stop({ path: tracePath });
         traceStarted = false;
         return tracePath;
@@ -3098,7 +4244,14 @@ function createDownloadCenterAutomation(
       }
     },
     async captureFailureEvidence(report, dateRange, attemptErrors) {
-      return captureReportFailureEvidence(controller, report.type, dateRange, attemptErrors, traceStartError);
+      return captureReportFailureEvidence(
+        controller,
+        report.type,
+        dateRange,
+        attemptErrors,
+        traceStartError,
+        options.storeCapsule,
+      );
     },
   };
 }
@@ -3107,10 +4260,11 @@ function buildReportFailureTracePath(
   reportType: LingxingReportType,
   dateRange: { start: string; end: string },
   attemptIndex: number,
+  traceDirectory = TRACES_DIR,
 ): string {
-  fs.mkdirSync(TRACES_DIR, { recursive: true });
+  fs.mkdirSync(traceDirectory, { recursive: true });
   return path.join(
-    TRACES_DIR,
+    traceDirectory,
     `report_failure_${reportType}_${dateRange.start}_${dateRange.end}_attempt_${attemptIndex}_${Date.now()}.zip`,
   );
 }
@@ -3130,7 +4284,7 @@ function assertDownloadCenterDiagnosticEvidenceReady(
   model: DownloadCenterPageModel,
   dateRange: { start: string; end: string },
   displayName: string,
-  target: LingxingCollectionTarget = {},
+  target: LingxingCollectionTarget & { marketplaceCode: string; storeId: string; storeName: string },
 ): void {
   const evidence = getDownloadCenterDiagnosticEvidenceReadiness(model, dateRange, target);
   if (evidence.ready) return;
@@ -3142,11 +4296,23 @@ function assertDownloadCenterDiagnosticEvidenceReady(
 function getDownloadCenterDiagnosticEvidenceReadiness(
   model: DownloadCenterPageModel,
   dateRange: { start: string; end: string },
-  target: LingxingCollectionTarget = {},
+  target: LingxingCollectionTarget & { marketplaceCode: string; storeId: string; storeName: string },
 ): { ready: boolean; missing: string[]; reason?: string; diagnosticId?: number; checkedAt?: string } {
   if (!state.db) {
     return { ready: false, missing: ['download_center_diagnostics'], reason: 'local database is not available' };
   }
+  const activeContext = state.storeCoordinator?.getActiveStoreContext();
+  if (!activeContext) {
+    return { ready: false, missing: ['activeStoreContext'], reason: 'active store context is not available' };
+  }
+  const authorized = authorizedLingxingCollectionTarget(activeContext);
+  if (
+    target.storeName !== authorized.target.storeName
+    || target.marketplaceCode !== authorized.target.marketplaceCode
+  ) {
+    return { ready: false, missing: ['storeAuthority'], reason: 'diagnostic target does not match the active store authority' };
+  }
+  const capsule = storeCapsuleFor(authorized.store);
   const modelSnapshotJson = JSON.stringify(model);
   const row = state.db.prepare(`
     SELECT
@@ -3163,7 +4329,8 @@ function getDownloadCenterDiagnosticEvidenceReadiness(
       dom_snapshot_path AS domSnapshotPath,
       checked_at AS checkedAt
     FROM download_center_diagnostics
-    WHERE page_model = @pageModel
+    WHERE store_id = @storeId
+      AND page_model = @pageModel
       AND page_model_snapshot_json = @modelSnapshotJson
       AND date_start = @dateStart
       AND date_end = @dateEnd
@@ -3172,6 +4339,7 @@ function getDownloadCenterDiagnosticEvidenceReadiness(
     ORDER BY checked_at DESC, id DESC
     LIMIT 1
   `).get({
+    storeId: target.storeId,
     pageModel: model.name,
     modelSnapshotJson,
     dateStart: dateRange.start,
@@ -3213,8 +4381,8 @@ function getDownloadCenterDiagnosticEvidenceReadiness(
     { target },
   );
   const fileReadiness = evaluateDownloadCenterDiagnosticEvidenceFiles(row, {
-    screenshotsDir: SCREENSHOTS_DIR,
-    domSnapshotsDir: DOM_SNAPSHOTS_DIR,
+    screenshotsDir: capsule.screenshotsDir,
+    domSnapshotsDir: capsule.evidenceDir,
   });
   const missing = Array.from(new Set([...diagnosticReadiness.missing, ...fileReadiness.missing]));
   return {
@@ -3255,11 +4423,14 @@ function getControllerPageOrThrow(controller: BrowserController) {
 interface LingxingCollectionTarget {
   storeName?: string;
   marketplaceCode?: string;
+  storeId?: string;
 }
 
 interface LingxingCollectionRequest extends LingxingCollectionTarget {
   start: string;
   end: string;
+  requestId?: string;
+  storeContext?: StoreContextEnvelope;
 }
 
 interface DownloadCenterReportSelectorContext {
@@ -3278,6 +4449,10 @@ function normalizeLingxingCollectionRequest(input: unknown): LingxingCollectionR
   return {
     start,
     end,
+    requestId: optionalTrimmedString(value.requestId),
+    storeContext: value.storeContext && typeof value.storeContext === 'object'
+      ? value.storeContext as StoreContextEnvelope
+      : undefined,
     storeName: optionalTrimmedString(value.storeName),
     marketplaceCode: optionalTrimmedString(value.marketplaceCode ?? value.site),
   };
@@ -3407,6 +4582,7 @@ async function captureReportFailureEvidence(
   dateRange: { start: string; end: string },
   attemptErrors: string[],
   traceUnavailableReason?: string,
+  storeCapsule?: StoreCapsulePaths,
 ) {
   const page = controller.getPage();
   const evidenceId = `${reportType}_${dateRange.start}_${dateRange.end}_${Date.now()}`;
@@ -3414,10 +4590,14 @@ async function captureReportFailureEvidence(
   let domSnapshotPath: string | undefined;
 
   if (page) {
-    screenshotPath = path.join(SCREENSHOTS_DIR, `report_failure_${evidenceId}.png`);
+    const screenshotsDir = storeCapsule?.screenshotsDir ?? SCREENSHOTS_DIR;
+    const domSnapshotsDir = storeCapsule?.evidenceDir ?? DOM_SNAPSHOTS_DIR;
+    fs.mkdirSync(screenshotsDir, { recursive: true });
+    fs.mkdirSync(domSnapshotsDir, { recursive: true });
+    screenshotPath = path.join(screenshotsDir, `report_failure_${evidenceId}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: false });
 
-    domSnapshotPath = path.join(DOM_SNAPSHOTS_DIR, `report_failure_${evidenceId}.html`);
+    domSnapshotPath = path.join(domSnapshotsDir, `report_failure_${evidenceId}.html`);
     const html = await collectSanitizedDomEvidence(controller);
     const metadata = [
       '<!--',
@@ -3441,13 +4621,29 @@ async function captureReportFailureEvidence(
 }
 
 async function handleDiagnoseLingxingDownloadCenter(input?: unknown): Promise<DownloadCenterDiagnosticResult> {
-  const controller = browserRuntimeController('amazon_ads');
-  if (!controller || !state.isLoggedIn) {
-    throw new Error('请先启动并登录领星 ERP 浏览器');
-  }
   const request = input ? normalizeLingxingCollectionRequest(input) : undefined;
+  const submittedContext = request?.storeContext ?? state.storeCoordinator?.getActiveStoreContext();
+  if (!submittedContext) throw new Error('请先选择店铺，再验证领星下载中心。');
+  const authorized = authorizedLingxingCollectionTarget(submittedContext);
+  if (!state.lingxingCollectionOperations) throw new Error('店铺浏览器互斥协调器尚未就绪。');
+  return state.lingxingCollectionOperations.run({
+    context: authorized.context,
+    owner: `lingxing-diagnostic:${request?.requestId || Date.now()}`,
+    ttlMs: 10 * 60 * 1_000,
+  }, async (operation) => {
+    operation.assertStepCurrent();
+    const browserRuntime = state.browserRuntime;
+    if (
+      !browserRuntime
+      || !state.isLoggedIn
+      || missionControlContextKey(browserRuntime.context) !== missionControlContextKey(authorized.context)
+    ) {
+      throw new Error('请先启动并登录当前店铺的独立领星 ERP 与 Amazon Ads 浏览器');
+    }
+    const controller = browserRuntime.controllers.amazon_ads;
+    const capsule = storeCapsuleFor(authorized.store);
   const dateRange = request ? { start: request.start, end: request.end } : undefined;
-  const target = request ? { storeName: request.storeName, marketplaceCode: request.marketplaceCode } : {};
+  const target = authorized.target;
   if (dateRange) {
     validateDateRange(dateRange);
   }
@@ -3458,6 +4654,7 @@ async function handleDiagnoseLingxingDownloadCenter(input?: unknown): Promise<Do
   let result: DownloadCenterDiagnosticResult;
 
   try {
+    operation.assertStepCurrent();
     await navigateToLingxingDownloadCenter(controller, model);
     const selectorMatches: Record<string, boolean> = {};
     for (const hint of model.verifySelectors) {
@@ -3521,16 +4718,26 @@ async function handleDiagnoseLingxingDownloadCenter(input?: unknown): Promise<Do
 
   result.appVersion = APP_VERSION;
   try {
-    result.screenshotPath = await captureDownloadCenterDiagnosticScreenshot(controller);
+    operation.assertStepCurrent();
+    result.screenshotPath = await captureDownloadCenterDiagnosticScreenshot(
+      controller,
+      capsule.screenshotsDir,
+    );
   } catch (error) {
     result.errorMessage = appendDiagnosticError(result.errorMessage, `screenshot: ${error instanceof Error ? error.message : String(error)}`);
   }
   try {
-    result.domSnapshotPath = await captureDownloadCenterDiagnosticDomSnapshot(controller);
+    operation.assertStepCurrent();
+    result.domSnapshotPath = await captureDownloadCenterDiagnosticDomSnapshot(
+      controller,
+      capsule.evidenceDir,
+    );
   } catch (error) {
     result.errorMessage = appendDiagnosticError(result.errorMessage, `domSnapshot: ${error instanceof Error ? error.message : String(error)}`);
   }
-  return persistDownloadCenterDiagnostic(result);
+    operation.assertStepCurrent();
+    return persistDownloadCenterDiagnostic(result);
+  });
 }
 
 function appendDiagnosticError(existing: string | undefined, next: string): string {
@@ -3624,18 +4831,26 @@ function handleResetDownloadCenterPageModel() {
   };
 }
 
-async function captureDownloadCenterDiagnosticScreenshot(controller: BrowserController): Promise<string | undefined> {
+async function captureDownloadCenterDiagnosticScreenshot(
+  controller: BrowserController,
+  screenshotsDir = SCREENSHOTS_DIR,
+): Promise<string | undefined> {
   const page = controller.getPage();
   if (!page) return undefined;
-  const screenshotPath = path.join(SCREENSHOTS_DIR, `download_center_diagnostic_${Date.now()}.png`);
+  fs.mkdirSync(screenshotsDir, { recursive: true });
+  const screenshotPath = path.join(screenshotsDir, `download_center_diagnostic_${Date.now()}.png`);
   await page.screenshot({ path: screenshotPath, fullPage: false });
   return screenshotPath;
 }
 
-async function captureDownloadCenterDiagnosticDomSnapshot(controller: BrowserController): Promise<string | undefined> {
+async function captureDownloadCenterDiagnosticDomSnapshot(
+  controller: BrowserController,
+  evidenceDir = DOM_SNAPSHOTS_DIR,
+): Promise<string | undefined> {
   const page = controller.getPage();
   if (!page) return undefined;
-  const domSnapshotPath = path.join(DOM_SNAPSHOTS_DIR, `download_center_diagnostic_${Date.now()}.html`);
+  fs.mkdirSync(evidenceDir, { recursive: true });
+  const domSnapshotPath = path.join(evidenceDir, `download_center_diagnostic_${Date.now()}.html`);
   const html = await collectSanitizedDomEvidence(controller);
   const metadata = [
     '<!--',
@@ -4062,20 +5277,30 @@ async function collectSanitizedDomEvidence(controller: BrowserController): Promi
 
 function persistDownloadCenterDiagnostic(result: DownloadCenterDiagnosticResult): DownloadCenterDiagnosticResult {
   if (!state.db) return result;
+  const activeContext = state.storeCoordinator?.getActiveStoreContext();
+  if (!activeContext) throw new Error('下载中心诊断缺少当前店铺权威。');
+  const authorized = authorizedLingxingCollectionTarget(activeContext);
+  if (
+    result.storeName !== authorized.target.storeName
+    || result.marketplaceCode !== authorized.target.marketplaceCode
+  ) {
+    throw new Error('下载中心诊断结果与当前店铺权威不一致，拒绝持久化。');
+  }
 
   const insert = state.db.prepare(`
     INSERT INTO download_center_diagnostics
-      (app_version, page_model, page_model_source, page_model_snapshot_json, date_start, date_end, store_name, marketplace_code, url, title, ready, requires_manual_verification, matched_entry_hints_json,
+      (store_id, app_version, page_model, page_model_source, page_model_snapshot_json, date_start, date_end, store_name, marketplace_code, url, title, ready, requires_manual_verification, matched_entry_hints_json,
        matched_report_names_json, selector_checks_json, missing_required_selectors_json, selector_candidates_json,
        action_selector_checks_json,
        screenshot_path, dom_snapshot_path, error_message, checked_at)
     VALUES
-      (@appVersion, @pageModel, @pageModelSource, @pageModelSnapshotJson, @dateStart, @dateEnd, @storeName, @marketplaceCode, @url, @title, @ready, @requiresManualVerification, @matchedEntryHintsJson,
+      (@storeId, @appVersion, @pageModel, @pageModelSource, @pageModelSnapshotJson, @dateStart, @dateEnd, @storeName, @marketplaceCode, @url, @title, @ready, @requiresManualVerification, @matchedEntryHintsJson,
        @matchedReportNamesJson, @selectorChecksJson, @missingRequiredSelectorsJson, @selectorCandidatesJson,
        @actionSelectorChecksJson,
        @screenshotPath, @domSnapshotPath, @errorMessage, @checkedAt)
   `);
   const response = insert.run({
+    storeId: authorized.context.storeId,
     appVersion: result.appVersion ?? APP_VERSION,
     pageModel: result.pageModel,
     pageModelSource: result.pageModelSource ?? null,
@@ -4671,150 +5896,47 @@ async function handleExtractListingFromLingxing(options: ListingReadOptions = {}
 }
 
 function persistListingContent(listing: ListingContent, context: ListingReadPersistContext = {}): { id: number; versionId: number; savedAt: string } | null {
-  if (!state.db) return null;
+  if (!state.storeScopedAdListingService) return null;
+  const { context: activeContext } = resolveBusinessStoreAuthority();
   const normalized = {
     ...listing,
-    asin: String(listing.asin || '').trim().toUpperCase(),
+    asin: canonicalizeAmazonAsin(listing.asin),
     title: String(listing.title || '').trim(),
     bullets: Array.isArray(listing.bullets) ? listing.bullets.map((item) => String(item || '').trim()).filter(Boolean) : [],
   };
-  const savedAt = new Date().toISOString();
   const payload = {
     asin: normalized.asin,
-    storeName: context.storeName || null,
-    marketplaceCode: context.marketplaceCode || null,
     title: normalized.title,
-    bulletsJson: JSON.stringify(normalized.bullets),
-    description: normalized.description ?? null,
-    aPlus: normalized.aPlus ?? null,
-    imageCopy: normalized.imageCopy ?? null,
-    backendTerms: normalized.backendTerms ?? null,
+    bullets: normalized.bullets,
+    description: normalized.description ?? '',
+    aPlus: normalized.aPlus ?? '',
+    imageCopy: normalized.imageCopy ?? '',
+    backendTerms: normalized.backendTerms ?? '',
     source: context.source || normalized.source || 'manual',
-    sourceUrl: context.sourceUrl || normalized.sourceUrl || null,
-    screenshotPath: context.screenshotPath || normalized.screenshotPath || null,
-    versionLabel: context.versionLabel || normalized.versionLabel || null,
-    changeSummary: context.changeSummary || normalized.changeSummary || null,
-    savedAt,
+    versionLabel: context.versionLabel || normalized.versionLabel || '',
+    changeSummary: context.changeSummary || normalized.changeSummary || '',
   };
-  const transaction = state.db.transaction(() => {
-    const existing = state.db!.prepare(`
-      SELECT id FROM listing_content
-      WHERE asin = @asin
-        AND COALESCE(store_name, '') = COALESCE(@storeName, '')
-        AND COALESCE(marketplace_code, '') = COALESCE(@marketplaceCode, '')
-      ORDER BY id DESC
-      LIMIT 1
-    `).get(payload) as { id: number } | undefined;
-
-    let listingContentId = existing?.id;
-    if (listingContentId) {
-      state.db!.prepare(`
-        UPDATE listing_content
-        SET title = @title,
-            bullets_json = @bulletsJson,
-            description = @description,
-            a_plus = @aPlus,
-            image_copy = @imageCopy,
-            backend_terms = @backendTerms,
-            source = @source,
-            source_url = @sourceUrl,
-            screenshot_path = @screenshotPath,
-            version_label = @versionLabel,
-            change_summary = @changeSummary,
-            updated_at = @savedAt
-        WHERE id = @id
-      `).run({ ...payload, id: listingContentId });
-    } else {
-      const info = state.db!.prepare(`
-        INSERT INTO listing_content
-          (asin, store_name, marketplace_code, title, bullets_json, description, a_plus, image_copy, backend_terms, source, source_url, screenshot_path, version_label, change_summary, created_at, updated_at)
-        VALUES
-          (@asin, @storeName, @marketplaceCode, @title, @bulletsJson, @description, @aPlus, @imageCopy, @backendTerms, @source, @sourceUrl, @screenshotPath, @versionLabel, @changeSummary, @savedAt, @savedAt)
-      `).run(payload);
-      listingContentId = Number(info.lastInsertRowid);
-    }
-
-    const versionInfo = state.db!.prepare(`
-      INSERT INTO listing_content_versions
-        (listing_content_id, asin, store_name, marketplace_code, title, bullets_json, description, a_plus, image_copy, backend_terms, source, source_url, screenshot_path, version_label, change_summary, created_at)
-      VALUES
-        (@listingContentId, @asin, @storeName, @marketplaceCode, @title, @bulletsJson, @description, @aPlus, @imageCopy, @backendTerms, @source, @sourceUrl, @screenshotPath, @versionLabel, @changeSummary, @savedAt)
-    `).run({ ...payload, listingContentId });
-    return { id: Number(listingContentId), versionId: Number(versionInfo.lastInsertRowid), savedAt };
-  });
-  return transaction();
-}
-
-function handleSaveManualListingContent(input: unknown): ListingContent & { versionId?: number } {
-  const body = input && typeof input === 'object' ? input as any : {};
-  const listing = normalizeManualListingContent(body.listing || body);
-  const scope = body.scope && typeof body.scope === 'object' ? body.scope : {};
-  const persisted = persistListingContent(listing, {
-    storeName: typeof scope.storeName === 'string' ? scope.storeName : readCurrentOperationScopeValue('storeName'),
-    marketplaceCode: typeof scope.marketplaceCode === 'string' ? scope.marketplaceCode : readCurrentOperationScopeValue('marketplaceCode'),
-    source: 'manual',
-    sourceUrl: listing.sourceUrl,
-    screenshotPath: listing.screenshotPath,
-    versionLabel: listing.versionLabel || '手工录入',
-    changeSummary: listing.changeSummary || '运营手工保存 Listing 内容',
-  });
+  const existing = state.storeScopedAdListingService.listListingContent(activeContext, {
+    asin: normalized.asin,
+    limit: 1,
+  })[0];
+  const saved = existing
+    ? state.storeScopedAdListingService.updateListingContent(activeContext, {
+        id: existing.id,
+        expectedRevision: existing.revision,
+        patch: payload,
+      })
+    : state.storeScopedAdListingService.createListingContent(activeContext, payload);
+  const version = state.storeScopedAdListingService.listListingVersions(activeContext, {
+    listingContentId: saved.id,
+    limit: 1,
+  })[0];
+  if (!version) throw new Error('Listing 版本回读失败，已拒绝返回未验证的保存结果。');
   return {
-    ...listing,
-    id: persisted?.id,
-    versionId: persisted?.versionId,
-    updatedAt: persisted?.savedAt || listing.updatedAt,
-  } as ListingContent & { versionId?: number };
-}
-
-function handleListListingContentVersions(input: unknown): ListingContentVersion[] {
-  if (!state.db) return [];
-  const body = input && typeof input === 'object' ? input as any : {};
-  const asin = String(body.asin || '').trim().toUpperCase();
-  if (!asin) return [];
-  const rows = state.db.prepare(`
-    SELECT *
-    FROM listing_content_versions
-    WHERE asin = @asin
-      AND (@storeName = '' OR COALESCE(store_name, '') = @storeName)
-      AND (@marketplaceCode = '' OR COALESCE(marketplace_code, '') = @marketplaceCode)
-    ORDER BY id DESC
-    LIMIT @limit
-  `).all({
-    asin,
-    storeName: String(body.storeName || '').trim(),
-    marketplaceCode: String(body.marketplaceCode || '').trim(),
-    limit: Math.min(50, Math.max(1, Number(body.limit || 20))),
-  }) as any[];
-  return rows.map((row) => ({
-    versionId: Number(row.id),
-    listingContentId: row.listing_content_id === null || row.listing_content_id === undefined ? undefined : Number(row.listing_content_id),
-    id: row.listing_content_id === null || row.listing_content_id === undefined ? undefined : Number(row.listing_content_id),
-    asin: String(row.asin || ''),
-    storeName: row.store_name || undefined,
-    marketplaceCode: row.marketplace_code || undefined,
-    title: String(row.title || ''),
-    bullets: parseListingStringArray(row.bullets_json),
-    description: row.description || undefined,
-    aPlus: row.a_plus || undefined,
-    imageCopy: row.image_copy || undefined,
-    backendTerms: row.backend_terms || undefined,
-    source: row.source || 'manual',
-    sourceUrl: row.source_url || undefined,
-    screenshotPath: row.screenshot_path || undefined,
-    versionLabel: row.version_label || undefined,
-    changeSummary: row.change_summary || undefined,
-    createdAt: row.created_at || undefined,
-    updatedAt: row.created_at || undefined,
-  }));
-}
-
-function parseListingStringArray(value: unknown): string[] {
-  try {
-    const parsed = JSON.parse(String(value || '[]'));
-    return Array.isArray(parsed) ? parsed.map((item) => String(item || '')).filter(Boolean) : [];
-  } catch {
-    return [];
-  }
+    id: saved.id,
+    versionId: version.id,
+    savedAt: saved.updatedAt,
+  };
 }
 
 function readCurrentOperationScopeValue(key: 'storeName' | 'marketplaceCode'): string {
@@ -5667,16 +6789,6 @@ async function handleExportListingDrafts(drafts: ListingDraft[], format: 'csv' |
   return filePath;
 }
 
-const OPEN_PATH_ALLOWED_DIRS = [
-  DOWNLOADS_DIR,
-  SCREENSHOTS_DIR,
-  DOM_SNAPSHOTS_DIR,
-  TRACES_DIR,
-  EXPORTS_DIR,
-  REPORTS_DIR,
-  CODEX_EVIDENCE_DIR,
-];
-
 const OPEN_PATH_ALLOWED_EXTENSIONS = new Set([
   '.csv',
   '.htm',
@@ -5806,20 +6918,34 @@ function normalizePersistedOperationScope(input: unknown) {
   };
 }
 
-function handleGetOperationScope() {
-  const raw = state.settingsRepo?.get('operation_scope');
-  if (!raw) return null;
-  try {
-    return normalizePersistedOperationScope(JSON.parse(raw));
-  } catch {
-    return null;
+function currentStoreOperationScopeService(): StoreOperationScopeService {
+  if (!state.storeCoordinator || !state.settingsRepo) {
+    throw new Error('店铺级运营范围服务尚未初始化。');
   }
+  return new StoreOperationScopeService({
+    storeCoordinator: state.storeCoordinator,
+    settings: state.settingsRepo,
+  });
+}
+
+function handleGetOperationScope(contextInput?: unknown) {
+  const context = contextInput ?? state.storeCoordinator?.getActiveStoreContext();
+  if (!context) return null;
+  return currentStoreOperationScopeService().get(context as StoreContextEnvelope);
 }
 
 function handleSaveOperationScope(input: unknown) {
-  const scope = normalizePersistedOperationScope(input);
-  state.settingsRepo?.set('operation_scope', JSON.stringify(scope));
-  return scope;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new TypeError('保存运营范围需要 StoreContext 与 scope。');
+  }
+  const request = input as { storeContext?: unknown; scope?: unknown };
+  if (!request.storeContext || !Object.prototype.hasOwnProperty.call(request, 'scope')) {
+    throw new TypeError('保存运营范围需要 StoreContext 与 scope。');
+  }
+  return currentStoreOperationScopeService().save(
+    request.storeContext as StoreContextEnvelope,
+    request.scope,
+  );
 }
 
 function copyDeliveryBundleFile(sourcePath: string | undefined, targetDir: string, targetName: string): string | undefined {
@@ -6126,6 +7252,26 @@ function handleExportDataReconciliation(input: unknown) {
   };
 }
 
+function handleExportDataReconciliationArtifacts(input: unknown) {
+  const result = handleExportDataReconciliation(input);
+  const store = currentArtifactStore();
+  const jsonArtifact = issueRendererArtifact(store.storeId, result.jsonPath, 'export-file', '数据对账 JSON');
+  const markdownArtifact = issueRendererArtifact(store.storeId, result.markdownPath, 'export-file', '数据对账 Markdown');
+  if (!jsonArtifact || !markdownArtifact) {
+    throw new Error('数据对账已导出，但受控工件登记失败。');
+  }
+  return rendererPayload({
+    success: result.success,
+    jsonArtifactId: jsonArtifact.artifactId,
+    jsonDisplayName: jsonArtifact.displayName,
+    markdownArtifactId: markdownArtifact.artifactId,
+    markdownDisplayName: markdownArtifact.displayName,
+    canonical: result.canonical,
+    canonicalSource: result.canonicalSource,
+    blockers: result.blockers.map((item: unknown) => rendererSafeDetail(item) || ''),
+  });
+}
+
 function downloadCenterDiagnosticChecklist(diagnostic: DownloadCenterDiagnosticResult, readiness: ReturnType<typeof getDownloadCenterAutomationReadiness>): string {
   const missing = readiness.missing.length > 0 ? readiness.missing.join(', ') : 'none';
   return [
@@ -6170,13 +7316,23 @@ function handleExportDownloadCenterDiagnosticBundle(diagnosticId: number): strin
   if (!diagnostic) {
     throw new Error(`未找到下载中心诊断记录：${diagnosticId}`);
   }
+  const activeContext = state.storeCoordinator?.getActiveStoreContext();
+  if (!activeContext) throw new Error('请先选择店铺，再导出下载中心诊断。');
+  const authorized = authorizedLingxingCollectionTarget(activeContext);
+  if (
+    diagnostic.storeName !== authorized.target.storeName
+    || diagnostic.marketplaceCode !== authorized.target.marketplaceCode
+  ) {
+    throw new Error('诊断记录不属于当前店铺，拒绝导出。');
+  }
+  const capsule = storeCapsuleFor(authorized.store);
   const model = diagnostic.pageModelSnapshot ?? readDownloadCenterPageModel();
   const readiness = getDownloadCenterAutomationReadiness(model);
-  const bundleDir = path.join(EXPORTS_DIR, `download_center_diagnostic_${diagnosticId}_${Date.now()}`);
+  const bundleDir = path.join(capsule.evidenceDir, `download_center_diagnostic_${diagnosticId}_${Date.now()}`);
   fs.mkdirSync(bundleDir, { recursive: true });
 
-  const screenshotCopyPath = copyDiagnosticEvidenceFileToBundle(diagnostic.screenshotPath, bundleDir, 'screenshot', SCREENSHOTS_DIR, new Set(['.png', '.jpg', '.jpeg']));
-  const domSnapshotCopyPath = copyDiagnosticEvidenceFileToBundle(diagnostic.domSnapshotPath, bundleDir, 'dom-snapshot', DOM_SNAPSHOTS_DIR, new Set(['.html', '.htm']));
+  const screenshotCopyPath = copyDiagnosticEvidenceFileToBundle(diagnostic.screenshotPath, bundleDir, 'screenshot', capsule.screenshotsDir, new Set(['.png', '.jpg', '.jpeg']));
+  const domSnapshotCopyPath = copyDiagnosticEvidenceFileToBundle(diagnostic.domSnapshotPath, bundleDir, 'dom-snapshot', capsule.evidenceDir, new Set(['.html', '.htm']));
   const bundleDiagnostic = {
     ...diagnostic,
     copiedScreenshotPath: screenshotCopyPath,
@@ -6200,9 +7356,19 @@ function handleExportDownloadCenterPageModelDraft(diagnosticId: number): { expor
   if (!diagnostic) {
     throw new Error(`未找到下载中心诊断记录：${diagnosticId}`);
   }
+  const activeContext = state.storeCoordinator?.getActiveStoreContext();
+  if (!activeContext) throw new Error('请先选择店铺，再导出页面模型草稿。');
+  const authorized = authorizedLingxingCollectionTarget(activeContext);
+  if (
+    diagnostic.storeName !== authorized.target.storeName
+    || diagnostic.marketplaceCode !== authorized.target.marketplaceCode
+  ) {
+    throw new Error('诊断记录不属于当前店铺，拒绝生成页面模型草稿。');
+  }
+  const capsule = storeCapsuleFor(authorized.store);
   const baseModel = diagnostic.pageModelSnapshot ?? readDownloadCenterPageModel();
   const draftResult = buildDownloadCenterPageModelDraft(baseModel, diagnostic);
-  const draftDir = path.join(EXPORTS_DIR, `download_center_page_model_draft_${diagnosticId}_${Date.now()}`);
+  const draftDir = path.join(capsule.evidenceDir, `download_center_page_model_draft_${diagnosticId}_${Date.now()}`);
   fs.mkdirSync(draftDir, { recursive: true });
   fs.writeFileSync(path.join(draftDir, 'page-model-draft.json'), `${JSON.stringify(draftResult.draft, null, 2)}\n`, 'utf8');
   fs.writeFileSync(path.join(draftDir, 'solidification-notes.md'), downloadCenterPageModelDraftToMarkdown(draftResult, diagnostic), 'utf8');
@@ -6217,7 +7383,11 @@ function handleExportDownloadCenterPageModelEnablementAudit(
 ): { exportPath: string; canDisableManualVerification: boolean; missing: string[] } {
   const request = normalizeLingxingCollectionRequest(input);
   const dateRange = { start: request.start, end: request.end };
-  const target = { storeName: request.storeName, marketplaceCode: request.marketplaceCode };
+  const submittedContext = request.storeContext ?? state.storeCoordinator?.getActiveStoreContext();
+  if (!submittedContext) throw new Error('请先选择店铺，再导出页面模型放行审计。');
+  const authorized = authorizedLingxingCollectionTarget(submittedContext);
+  const target = authorized.target;
+  const capsule = storeCapsuleFor(authorized.store);
   validateDateRange(dateRange);
   if (diagnosticId !== undefined && (!Number.isInteger(diagnosticId) || diagnosticId <= 0)) {
     throw new Error('下载中心诊断 ID 无效');
@@ -6231,8 +7401,8 @@ function handleExportDownloadCenterPageModelEnablementAudit(
     : undefined;
   const diagnosticFileReadiness = diagnostic
     ? evaluateDownloadCenterDiagnosticEvidenceFiles(diagnostic, {
-      screenshotsDir: SCREENSHOTS_DIR,
-      domSnapshotsDir: DOM_SNAPSHOTS_DIR,
+      screenshotsDir: capsule.screenshotsDir,
+      domSnapshotsDir: capsule.evidenceDir,
     })
     : undefined;
   const diagnosticEvidenceReadiness = selectorEvidenceReadiness && diagnosticFileReadiness
@@ -6251,7 +7421,7 @@ function handleExportDownloadCenterPageModelEnablementAudit(
     canaryEvidenceReadiness,
   });
   const auditDir = path.join(
-    EXPORTS_DIR,
+    capsule.evidenceDir,
     `download_center_page_model_enablement_${safeFileSegment(dateRange.start)}_${safeFileSegment(dateRange.end)}_${Date.now()}`,
   );
   writeDownloadCenterPageModelEnablementAuditBundle({
@@ -6260,8 +7430,8 @@ function handleExportDownloadCenterPageModelEnablementAudit(
     model,
     diagnostic,
     directories: {
-      screenshotsDir: SCREENSHOTS_DIR,
-      domSnapshotsDir: DOM_SNAPSHOTS_DIR,
+      screenshotsDir: capsule.screenshotsDir,
+      domSnapshotsDir: capsule.evidenceDir,
     },
   });
   return {
@@ -6277,7 +7447,13 @@ function handleExportLingxingAcceptanceAudit(batchId: string, diagnosticId?: num
   }
   const persisted = loadPersistedLingxingBatch(batchId);
   const { batch, files } = persisted;
-  const target = { storeName: batch.storeName, marketplaceCode: batch.marketplaceCode };
+  const activeContext = state.storeCoordinator?.getActiveStoreContext();
+  if (!activeContext || batch.storeId !== activeContext.storeId) {
+    throw new Error('领星批次不属于当前店铺，拒绝导出验收审计。');
+  }
+  const authorized = authorizedLingxingCollectionTarget(activeContext);
+  const target = authorized.target;
+  const capsule = storeCapsuleFor(authorized.store);
   const activeModel = readDownloadCenterPageModel();
   const diagnostic = diagnosticId
     ? loadPersistedDownloadCenterDiagnostic(diagnosticId, batch.dateStart, batch.dateEnd)
@@ -6287,8 +7463,8 @@ function handleExportLingxingAcceptanceAudit(batchId: string, diagnosticId?: num
     : undefined;
   const diagnosticFileReadiness = diagnostic
     ? evaluateDownloadCenterDiagnosticEvidenceFiles(diagnostic, {
-      screenshotsDir: SCREENSHOTS_DIR,
-      domSnapshotsDir: DOM_SNAPSHOTS_DIR,
+      screenshotsDir: capsule.screenshotsDir,
+      domSnapshotsDir: capsule.evidenceDir,
     })
     : undefined;
   const diagnosticEvidenceReadiness = selectorEvidenceReadiness && diagnosticFileReadiness
@@ -6304,6 +7480,7 @@ function handleExportLingxingAcceptanceAudit(batchId: string, diagnosticId?: num
     batch,
     files,
     diagnostic,
+    diagnosticTarget: target,
     diagnosticEvidenceReadiness,
     manifest,
     fileExists: (filePath) => {
@@ -6323,7 +7500,7 @@ function handleExportLingxingAcceptanceAudit(batchId: string, diagnosticId?: num
       }
     },
   });
-  const auditDir = path.join(EXPORTS_DIR, `lingxing_acceptance_audit_${safeFileSegment(batch.id)}_${Date.now()}`);
+  const auditDir = path.join(capsule.evidenceDir, `lingxing_acceptance_audit_${safeFileSegment(batch.id)}_${Date.now()}`);
   fs.mkdirSync(auditDir, { recursive: true });
   fs.writeFileSync(path.join(auditDir, 'acceptance-audit.json'), `${JSON.stringify(audit, null, 2)}\n`, 'utf8');
   fs.writeFileSync(path.join(auditDir, 'acceptance-audit.md'), lingxingAcceptanceAuditToMarkdown(audit), 'utf8');
@@ -6331,14 +7508,14 @@ function handleExportLingxingAcceptanceAudit(batchId: string, diagnosticId?: num
   fs.writeFileSync(path.join(auditDir, 'batch-result.json'), `${JSON.stringify({ batch, files }, null, 2)}\n`, 'utf8');
   fs.writeFileSync(path.join(auditDir, 'downloaded-report-files.json'), `${JSON.stringify(buildDownloadedReportEvidenceIndex(batch, files), null, 2)}\n`, 'utf8');
   const failureEvidenceFiles = copyReportFailureEvidenceFilesToBundle(files, auditDir, {
-    screenshotsDir: SCREENSHOTS_DIR,
-    domSnapshotsDir: DOM_SNAPSHOTS_DIR,
-    tracesDir: TRACES_DIR,
+    screenshotsDir: capsule.screenshotsDir,
+    domSnapshotsDir: capsule.evidenceDir,
+    tracesDir: capsule.tracesDir,
   });
   fs.writeFileSync(path.join(auditDir, 'report-failure-evidence-files.json'), `${JSON.stringify(failureEvidenceFiles, null, 2)}\n`, 'utf8');
   if (diagnostic) {
-    const copiedScreenshotPath = copyDiagnosticEvidenceFileToBundle(diagnostic.screenshotPath, auditDir, 'diagnostic-screenshot', SCREENSHOTS_DIR, new Set(['.png', '.jpg', '.jpeg']));
-    const copiedDomSnapshotPath = copyDiagnosticEvidenceFileToBundle(diagnostic.domSnapshotPath, auditDir, 'diagnostic-dom-snapshot', DOM_SNAPSHOTS_DIR, new Set(['.html', '.htm']));
+    const copiedScreenshotPath = copyDiagnosticEvidenceFileToBundle(diagnostic.screenshotPath, auditDir, 'diagnostic-screenshot', capsule.screenshotsDir, new Set(['.png', '.jpg', '.jpeg']));
+    const copiedDomSnapshotPath = copyDiagnosticEvidenceFileToBundle(diagnostic.domSnapshotPath, auditDir, 'diagnostic-dom-snapshot', capsule.evidenceDir, new Set(['.html', '.htm']));
     fs.writeFileSync(path.join(auditDir, 'diagnostic.json'), `${JSON.stringify({
       ...diagnostic,
       copiedScreenshotPath,
@@ -6362,9 +7539,16 @@ function loadPersistedLingxingBatch(batchId: string): { batch: LingxingReportBat
   if (!state.db) {
     throw new Error('本地数据库尚未初始化');
   }
+  const storeId = state.storeCoordinator?.getActiveStoreContext()?.storeId;
+  if (!storeId) throw new Error('请先选择店铺，再读取领星采集批次。');
   const batchRow = state.db.prepare(`
     SELECT
       id,
+      store_id AS storeId,
+      request_id AS requestId,
+      browser_profile_id AS browserProfileId,
+      business_date AS businessDate,
+      session_generation AS sessionGeneration,
       app_version AS appVersion,
       date_start AS dateStart,
       date_end AS dateEnd,
@@ -6376,8 +7560,8 @@ function loadPersistedLingxingBatch(batchId: string): { batch: LingxingReportBat
       created_at AS createdAt,
       completed_at AS completedAt
     FROM lingxing_report_batches
-    WHERE id = ?
-  `).get(batchId) as (LingxingReportBatch & { appVersion?: string | null; manifestPath?: string | null; completedAt?: string | null }) | undefined;
+    WHERE store_id = ? AND id = ?
+  `).get(storeId, batchId) as (LingxingReportBatch & { appVersion?: string | null; manifestPath?: string | null; completedAt?: string | null }) | undefined;
   if (!batchRow) {
     throw new Error(`未找到领星采集批次：${batchId}`);
   }
@@ -6401,9 +7585,9 @@ function loadPersistedLingxingBatch(batchId: string): { batch: LingxingReportBat
       created_at AS createdAt,
       updated_at AS updatedAt
     FROM lingxing_report_files
-    WHERE batch_id = ?
+    WHERE store_id = ? AND batch_id = ?
     ORDER BY id ASC
-  `).all(batchId) as Array<LingxingReportFile & { attemptErrorsJson?: string | null; filePath?: string | null; errorMessage?: string | null }>;
+  `).all(storeId, batchId) as Array<LingxingReportFile & { attemptErrorsJson?: string | null; filePath?: string | null; errorMessage?: string | null }>;
 
   return {
     batch: {
@@ -6429,7 +7613,7 @@ function loadPersistedLingxingBatch(batchId: string): { batch: LingxingReportBat
 
 function loadSuccessfulCanaryReportTypesForScope(
   dateRange: { start: string; end: string },
-  target: LingxingCollectionTarget,
+  target: LingxingCollectionTarget & { storeId: string },
   afterCheckedAt?: string,
 ): LingxingReportType[] {
   if (!state.db) return [];
@@ -6444,25 +7628,26 @@ function loadSuccessfulCanaryReportTypesForScope(
       f.error_message AS errorMessage,
       f.attempt_errors_json AS attemptErrorsJson
     FROM lingxing_report_batches b
-    JOIN lingxing_report_files f ON f.batch_id = b.id
-    WHERE b.app_version = ?
+    JOIN lingxing_report_files f ON f.store_id = b.store_id AND f.batch_id = b.id
+    WHERE b.store_id = ?
+      AND b.app_version = ?
       AND b.date_start = ?
       AND b.date_end = ?
-      AND COALESCE(b.store_name, '') = COALESCE(?, '')
+      AND COALESCE(b.request_id, '') LIKE 'canary:%'
       AND COALESCE(b.marketplace_code, '') = COALESCE(?, '')
       AND b.status = 'completed'
       AND f.status = 'downloaded'
       AND (
         SELECT COUNT(*)
         FROM lingxing_report_files count_files
-        WHERE count_files.batch_id = b.id
+        WHERE count_files.store_id = b.store_id AND count_files.batch_id = b.id
       ) = 1
     ORDER BY b.created_at DESC, b.id DESC
   `).all(
+    target.storeId,
     APP_VERSION,
     dateRange.start,
     dateRange.end,
-    target.storeName ?? '',
     target.marketplaceCode ?? '',
   ) as Array<{
     batchId: string;
@@ -6510,16 +7695,18 @@ function loadPersistedDownloadCenterDiagnostic(
   dateEnd: string,
 ): DownloadCenterDiagnosticResult | undefined {
   if (!state.db) return undefined;
+  const storeId = state.storeCoordinator?.getActiveStoreContext()?.storeId;
+  if (!storeId) return undefined;
   const row = diagnosticId
     ? state.db.prepare(`
-        SELECT * FROM download_center_diagnostics WHERE id = ?
-      `).get(diagnosticId)
+        SELECT * FROM download_center_diagnostics WHERE store_id = ? AND id = ?
+      `).get(storeId, diagnosticId)
     : state.db.prepare(`
         SELECT * FROM download_center_diagnostics
-        WHERE date_start = ? AND date_end = ?
+        WHERE store_id = ? AND date_start = ? AND date_end = ?
         ORDER BY checked_at DESC, id DESC
         LIMIT 1
-      `).get(dateStart, dateEnd);
+      `).get(storeId, dateStart, dateEnd);
   if (!row) return undefined;
   return mapDownloadCenterDiagnosticRow(row as Record<string, unknown>);
 }
@@ -6528,7 +7715,7 @@ function loadLatestPersistedDownloadCenterDiagnosticForModel(
   model: DownloadCenterPageModel,
   dateStart: string,
   dateEnd: string,
-  target: LingxingCollectionTarget = {},
+  target: LingxingCollectionTarget & { storeId: string },
 ): DownloadCenterDiagnosticResult | undefined {
   if (!state.db) return undefined;
   const row = getLatestDownloadCenterDiagnosticRowForModel(state.db, model, dateStart, dateEnd, target);
@@ -6582,26 +7769,18 @@ function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
 }
 
-function getOpenPathAllowedRealDirs(): string[] {
-  return OPEN_PATH_ALLOWED_DIRS
-    .filter((allowedDir) => fs.existsSync(allowedDir))
-    .map((allowedDir) => fs.realpathSync(allowedDir));
-}
-
-async function handleOpenPath(targetPath: string): Promise<void> {
-  if (typeof targetPath !== 'string' || !targetPath.trim()) {
-    throw new Error('路径无效');
-  }
-  const resolvedPath = path.resolve(targetPath);
-  let realPath: string;
-  try {
-    realPath = fs.realpathSync(resolvedPath);
-  } catch {
-    throw new Error(`路径不存在：${resolvedPath}`);
-  }
-  if (!getOpenPathAllowedRealDirs().some((allowedDir) => isPathInsideDirectory(realPath, allowedDir))) {
-    throw new Error('只允许打开应用本地证据、下载和导出目录内的文件');
-  }
+async function handleOpenArtifact(input: unknown): Promise<void> {
+  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const context = requireCurrentCollectionStoreContext(value.storeContext);
+  const artifactId = optionalTrimmedString(value.artifactId);
+  if (!artifactId) throw new Error('Artifact ID 无效或已失效。');
+  const store = state.storeRepo?.getStore(context.storeId);
+  if (!store || store.status !== 'active') throw new Error('当前店铺不存在或已停用。');
+  const realPath = mainArtifactRegistry.resolve({
+    artifactId,
+    currentStoreId: context.storeId,
+    allowedRoots: artifactAllowedRootsForStore(store, 'export-file'),
+  });
   const stat = fs.statSync(realPath);
   if (stat.isFile() && !OPEN_PATH_ALLOWED_EXTENSIONS.has(path.extname(realPath).toLowerCase())) {
     throw new Error('文件类型不允许直接打开');
@@ -6989,19 +8168,20 @@ function summarizeMergedDecisionDiagnostics(
 }
 
 function loadProductStrategyContexts(scope: {
+  storeId: StoreContextEnvelope['storeId'];
   storeName?: string;
   marketplaceCode?: string;
   asin?: string;
 }): ProductStrategyContext[] {
   if (!state.productRepo || !scope.storeName || !scope.marketplaceCode) return [];
   const products = state.productRepo
-    .findAll(scope.storeName)
+    .findAllForStore(scope.storeId)
     .filter((product) => product.marketplace_code === scope.marketplaceCode)
     .filter((product) => !scope.asin || product.asin.toLowerCase() === scope.asin.toLowerCase())
     .slice(0, 20);
 
   return products.map((product) => {
-    const cost = state.productRepo?.getCost(product.id);
+    const cost = state.productRepo?.getCostForStore(scope.storeId, product.id);
     return {
       asin: product.asin,
       parentAsin: product.parent_asin || undefined,
@@ -7111,6 +8291,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
   recommendations: ActionRecommendation[],
   metrics: AdDailyMetrics[],
   scope: {
+    storeId: StoreContextEnvelope['storeId'];
     dateFrom?: string;
     dateTo?: string;
     storeName?: string;
@@ -7127,10 +8308,9 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     return { recommendations };
   }
 
-  const operationEvents = state.operationEventRepo?.findByScope({
+  const operationEvents = state.operationEventRepo?.findByScopeForStore(scope.storeId, {
     dateFrom: scope.dateFrom,
     dateTo: scope.dateTo,
-    storeName: scope.storeName,
     marketplaceCode: scope.marketplaceCode,
     asin: scope.asin,
     limit: 100,
@@ -7637,15 +8817,14 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     config: state.ruleConfig,
     taskId: `strategy_${Date.now()}`,
   }), gate.scope.asin);
-  const operationEvents = state.operationEventRepo?.findByScope({
+  const operationEvents = state.operationEventRepo?.findByScopeForStore(gate.scope.storeId, {
     dateFrom: scope.dateFrom,
     dateTo: scope.dateTo,
-    storeName: scope.storeName,
     marketplaceCode: scope.marketplaceCode,
     asin: scope.asin,
     limit: 100,
   }) || [];
-  const productContexts = loadProductStrategyContexts(scope);
+  const productContexts = loadProductStrategyContexts(gate.scope);
   const productHistoryLedgers = buildAdProductHistoryLedger({
     scope: gate.scope,
     metrics,
@@ -8211,6 +9390,9 @@ async function runDailyReportGeneration(): Promise<void> {
 
 function registerIpcHandlers(): void {
   if (!state.storeCoordinator) throw new Error('Store coordinator is not initialized');
+  if (!state.productRepo || !state.operationEventRepo) {
+    throw new Error('Store-scoped object repositories are not initialized');
+  }
   registerStoreIpcHandlers(ipcMain, state.storeCoordinator, {
     onStoreChanged: (view) => {
       const runtime = state.browserRuntime;
@@ -8230,7 +9412,7 @@ function registerIpcHandlers(): void {
       }
       storeCapsuleFor(view.store);
       state.currentStore = view.store.displayName;
-      mainWindow?.webContents.send('store-context:changed', view);
+      publishStoreContextChanged(view);
       mainWindow?.webContents.send('business-ui:data-updated');
     },
     onStoreRecordChanged: (store) => {
@@ -8259,7 +9441,47 @@ function registerIpcHandlers(): void {
   registerMissionControlIpcHandlers(
     ipcMain,
     state.storeCoordinator,
-    createMissionControlLegacyAdapter(),
+    createMissionControlLegacyAdapter({
+      buildTodayProjection: buildAuthoritativeMissionControlTodayProjection,
+    }),
+  );
+  registerStoreScopedObjectsIpcHandlers(
+    ipcMain,
+    new StoreScopedObjectsService({
+      storeCoordinator: state.storeCoordinator,
+      productRepository: state.productRepo,
+      operationEventRepository: state.operationEventRepo,
+      validateEvidenceArtifact: (store, artifactId) => {
+        try {
+          mainArtifactRegistry.resolve({
+            artifactId,
+            currentStoreId: store.storeId,
+            allowedRoots: artifactAllowedRootsForStore(store, 'export-file'),
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    }),
+    {
+      onObjectsChanged: () => {
+        mainWindow?.webContents.send('business-ui:data-updated');
+      },
+    },
+  );
+  state.storeScopedAdListingService = new StoreScopedAdListingService({
+    db: state.db!,
+    storeCoordinator: state.storeCoordinator,
+  });
+  registerStoreScopedAdListingIpcHandlers(
+    ipcMain,
+    state.storeScopedAdListingService,
+    {
+      onListingChanged: () => {
+        mainWindow?.webContents.send('business-ui:data-updated');
+      },
+    },
   );
 
   // App
@@ -8297,8 +9519,8 @@ function registerIpcHandlers(): void {
     state.settingsRepo?.saveRuleConfig(config);
     state.ruleConfig = config;
   });
-  ipcMain.handle('settings:get-operation-scope', () => handleGetOperationScope());
-  ipcMain.handle('settings:save-operation-scope', (_, scope) => handleSaveOperationScope(scope));
+  ipcMain.handle('settings:get-operation-scope', (_, storeContext) => handleGetOperationScope(storeContext));
+  ipcMain.handle('settings:save-operation-scope', (_, request) => handleSaveOperationScope(request));
   ipcMain.handle('settings:get-storage-paths', () => handleGetStoragePaths());
 
   // Browser
@@ -8315,24 +9537,24 @@ function registerIpcHandlers(): void {
   ));
 
   // Reports
-  ipcMain.handle('report:download', (_, dateRange) =>
-    handleDownloadReport(dateRange)
-  );
-  ipcMain.handle('report:parse', (_, filePath) => handleParseReport(filePath));
-  ipcMain.handle('v1_5:reports:collect-lingxing', (_, dateRange) =>
-    handleCollectLingxingReports(dateRange)
-  );
+  ipcMain.handle('v1_5:reports:collect-lingxing', async (_, dateRange) => {
+    const result = await handleCollectLingxingReports(dateRange);
+    return projectLingxingCollectionResultForRenderer(result, result.metricsImport);
+  });
   ipcMain.handle('v1_5:business-ui:data-pipeline', (_, scope) =>
-    handleGetBusinessUiDataPipeline(scope)
+    projectBusinessPipelineForRenderer(handleGetBusinessUiDataPipeline(scope))
   );
-  ipcMain.handle('v1_5:business-ui:batch-options', (_, scope) =>
-    handleGetBusinessBatchOptions(scope)
-  );
+  ipcMain.handle('v1_5:business-ui:batch-options', (_, scope) => {
+    const storeId = currentArtifactStore().storeId;
+    return rendererPayload(handleGetBusinessBatchOptions(scope).map((batch) => (
+      projectBusinessBatchOptionForRenderer(storeId, batch)
+    )));
+  });
   ipcMain.handle('v1_5:business-ui:import-current-reports', (_, scope) =>
-    handleImportCurrentBusinessReports(scope)
+    projectBusinessImportResultForRenderer(handleImportCurrentBusinessReports(scope))
   );
-  ipcMain.handle('v1_5:business-ui:import-local-report-files', (_, scope) =>
-    handleImportLocalBusinessReportFiles(scope)
+  ipcMain.handle('v1_5:business-ui:import-local-report-files', async (_, scope) =>
+    projectBusinessImportResultForRenderer(await handleImportLocalBusinessReportFiles(scope))
   );
   ipcMain.handle('v1_5:delivery:readiness', () =>
     handleGetDeliveryReadiness()
@@ -8349,54 +9571,75 @@ function registerIpcHandlers(): void {
   ipcMain.handle('v1_5:delivery:export-data-reconciliation', (_, scope) =>
     handleExportDataReconciliation(scope)
   );
+  ipcMain.handle('v1_5:business-ui:export-data-reconciliation-artifacts', (_, scope) =>
+    handleExportDataReconciliationArtifacts(scope)
+  );
   ipcMain.handle('v1_5:settings:storage-paths', () =>
     handleGetStoragePaths()
-  );
-  ipcMain.handle('v1_5:business-ui:keyword-opportunities', (_, scope) =>
-    handleGetBusinessKeywordOpportunities(scope)
-  );
-  ipcMain.handle('operation-events:list', (_, filter) =>
-    handleListOperationEvents(filter)
-  );
-  ipcMain.handle('operation-events:create', (_, input) =>
-    handleCreateOperationEvent(input)
-  );
-  ipcMain.handle('operation-events:update', (_, input) =>
-    handleUpdateOperationEvent(input)
-  );
-  ipcMain.handle('operation-events:delete', (_, input) =>
-    handleDeleteOperationEvent(input)
   );
   ipcMain.handle('v1_5:reports:preflight-lingxing-collection', (_, dateRange) =>
     handlePreflightLingxingCollection(dateRange)
   );
   ipcMain.handle('v1_5:reports:export-lingxing-collection-preflight', (_, dateRange) =>
-    handleExportLingxingCollectionPreflight(dateRange)
+    projectExportArtifactForCurrentStore(
+      handleExportLingxingCollectionPreflight(dateRange),
+      'diagnostic-folder',
+      '采集预检证据',
+    )
   );
-  ipcMain.handle('v1_5:reports:retry-lingxing-report', (_, { dateRange, reportType }) =>
-    handleRetryLingxingReport(dateRange, reportType)
+  ipcMain.handle('v1_5:reports:retry-lingxing-report', async (_, { dateRange, reportType }) => {
+    const result = await handleRetryLingxingReport(dateRange, reportType);
+    return projectLingxingCollectionResultForRenderer(result, result.metricsImport);
+  });
+  ipcMain.handle('v1_5:reports:download-existing-lingxing-reports', async (_, { dateRange, reportTypes }) => {
+    const result = await handleDownloadExistingLingxingReports(dateRange, Array.isArray(reportTypes) ? reportTypes : []);
+    return projectLingxingCollectionResultForRenderer(result, result.metricsImport);
+  });
+  ipcMain.handle('v1_5:reports:run-lingxing-canary-report', async (_, { dateRange, reportType }) => (
+    projectLingxingCollectionResultForRenderer(await handleRunLingxingCanaryReport(dateRange, reportType))
+  ));
+  ipcMain.handle('v1_5:reports:list-lingxing-collection-jobs', (_, input) =>
+    rendererPayload(handleListLingxingCollectionJobs(input))
   );
-  ipcMain.handle('v1_5:reports:download-existing-lingxing-reports', (_, { dateRange, reportTypes }) =>
-    handleDownloadExistingLingxingReports(dateRange, Array.isArray(reportTypes) ? reportTypes : [])
+  ipcMain.handle('v1_5:reports:resume-lingxing-collection', async (_, input) =>
+    rendererPayload(await handleResumeLingxingCollection(input))
   );
-  ipcMain.handle('v1_5:reports:run-lingxing-canary-report', (_, { dateRange, reportType }) =>
-    handleRunLingxingCanaryReport(dateRange, reportType)
+  ipcMain.handle('v1_5:reports:cancel-lingxing-collection', (_, input) =>
+    handleCancelLingxingCollection(input)
   );
   ipcMain.handle('v1_5:reports:export-acceptance-audit', (_, { batchId, diagnosticId }) =>
-    handleExportLingxingAcceptanceAudit(batchId, diagnosticId)
+    projectExportArtifactForCurrentStore(
+      handleExportLingxingAcceptanceAudit(batchId, diagnosticId),
+      'diagnostic-folder',
+      '采集验收审计',
+    )
   );
-  ipcMain.handle('v1_5:reports:diagnose-download-center', (_, dateRange) =>
-    handleDiagnoseLingxingDownloadCenter(dateRange)
+  ipcMain.handle('v1_5:reports:diagnose-download-center', async (_, dateRange) =>
+    projectDiagnosticForRenderer(await handleDiagnoseLingxingDownloadCenter(dateRange))
   );
   ipcMain.handle('v1_5:reports:export-download-center-diagnostic-bundle', (_, { diagnosticId }) =>
-    handleExportDownloadCenterDiagnosticBundle(diagnosticId)
+    projectExportArtifactForCurrentStore(
+      handleExportDownloadCenterDiagnosticBundle(diagnosticId),
+      'diagnostic-folder',
+      '下载中心诊断包',
+    )
   );
-  ipcMain.handle('v1_5:reports:export-download-center-page-model-draft', (_, { diagnosticId }) =>
-    handleExportDownloadCenterPageModelDraft(diagnosticId)
-  );
-  ipcMain.handle('v1_5:reports:export-download-center-page-model-enablement-audit', (_, { dateRange, diagnosticId }) =>
-    handleExportDownloadCenterPageModelEnablementAudit(dateRange, diagnosticId)
-  );
+  ipcMain.handle('v1_5:reports:export-download-center-page-model-draft', (_, { diagnosticId }) => {
+    const result = handleExportDownloadCenterPageModelDraft(diagnosticId);
+    return rendererPayload({
+      artifact: projectExportArtifactForCurrentStore(result.exportPath, 'diagnostic-folder', '页面模型草稿'),
+      draft: result.draft,
+      notes: result.notes,
+    });
+  });
+  ipcMain.handle('v1_5:reports:export-download-center-page-model-enablement-audit', (_, { dateRange, diagnosticId }) => {
+    const result = handleExportDownloadCenterPageModelEnablementAudit(dateRange, diagnosticId);
+    return rendererPayload({
+      artifact: projectExportArtifactForCurrentStore(result.exportPath, 'diagnostic-folder', '页面模型放行审计'),
+      canDisableManualVerification: result.canDisableManualVerification,
+      missing: result.missing,
+    });
+  });
   ipcMain.handle('v1_5:reports:get-download-center-page-model', () =>
     handleGetDownloadCenterPageModel()
   );
@@ -8406,19 +9649,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle('v1_5:reports:reset-download-center-page-model', () =>
     handleResetDownloadCenterPageModel()
   );
-  ipcMain.handle('v1_5:reports:open-path', (_, targetPath) =>
-    handleOpenPath(targetPath)
+  ipcMain.handle('v1_5:reports:open-artifact', (_, input) =>
+    handleOpenArtifact(input)
   );
-  ipcMain.handle('report:select-file', async () => {
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      properties: ['openFile'],
-      filters: [
-        { name: 'Excel Files', extensions: ['xlsx', 'xls', 'csv'] },
-      ],
-    });
-    return result.filePaths[0] || null;
-  });
-
   // Recommendations
   ipcMain.handle('recommendations:get', (_, filter) => handleGetRecommendations(filter));
   ipcMain.handle('recommendations:generate', (_, filter) => runRecommendationGeneration(filter));
@@ -8445,94 +9678,6 @@ function registerIpcHandlers(): void {
     await state.scheduler?.runNow(name);
   });
 
-  // Products
-  ipcMain.handle('products:get', () => state.productRepo?.findAllWithCosts() || []);
-  ipcMain.handle('products:add', (_, product) => {
-    state.productRepo?.insert(product);
-  });
-  ipcMain.handle('products:save-config', (_, input) => {
-    if (!state.productRepo) throw new Error('Product repository is not initialized');
-    const product = input?.product || {};
-    const asin = String(product.asin || '').trim();
-    const storeName = String(product.storeName || product.store_name || '').trim();
-    const marketplaceCode = String(product.marketplaceCode || product.marketplace_code || '').trim();
-    if (!asin || !storeName || !marketplaceCode) {
-      throw new Error('保存产品配置需要 ASIN、店铺和站点。');
-    }
-    state.productRepo.upsert({
-      asin,
-      store_name: storeName,
-      marketplace_code: marketplaceCode,
-      parent_asin: String(product.parentAsin || product.parent_asin || ''),
-      msku: String(product.msku || ''),
-      sku: String(product.sku || ''),
-      title: String(product.title || ''),
-      product_stage: String(product.productStage || product.product_stage || 'keyword_exploration'),
-      status: String(product.status || 'active'),
-    });
-    const saved = state.productRepo.findByAsin(asin, storeName, marketplaceCode);
-    if (!saved?.id) throw new Error('产品基础信息已保存但无法读取 product id。');
-    if (input?.cost && typeof input.cost === 'object') {
-      const toNumber = (value: unknown, fallback = 0) => {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : fallback;
-      };
-      state.productRepo.updateCost(saved.id, {
-        productId: saved.id,
-        currentPrice: toNumber(input.cost.currentPrice),
-        purchaseCost: toNumber(input.cost.purchaseCost),
-        firstLegCost: toNumber(input.cost.firstLegCost),
-        fbaFee: toNumber(input.cost.fbaFee),
-        referralFeeRate: toNumber(input.cost.referralFeeRate, 0.15),
-        storageFee: toNumber(input.cost.storageFee),
-        otherCost: toNumber(input.cost.otherCost),
-        minPrice: toNumber(input.cost.minPrice),
-        targetNetMargin: toNumber(input.cost.targetNetMargin),
-        targetAcos: toNumber(input.cost.targetAcos),
-        targetTacos: toNumber(input.cost.targetTacos),
-      });
-    }
-    mainWindow?.webContents.send('business-ui:data-updated');
-    return {
-      success: true,
-      product: state.productRepo.findByAsin(asin, storeName, marketplaceCode),
-      cost: state.productRepo.getCost(saved.id),
-    };
-  });
-
-  ipcMain.handle('products:bulk-update-target-acos', (_, input) => {
-    if (!state.productRepo) throw new Error('Product repository is not initialized');
-    const targetAcos = Number(input?.targetAcos);
-    const products = Array.isArray(input?.products) ? input.products : [];
-    if (!Number.isFinite(targetAcos) || targetAcos <= 0 || targetAcos > 1) {
-      throw new Error('批量目标 ACOS 必须大于 0 且不超过 100%。');
-    }
-    if (products.length === 0 || products.length > 500) {
-      throw new Error('请选择 1 到 500 个产品后再批量更新目标 ACOS。');
-    }
-    const identities = new Set<string>();
-    const updates = products.map((product: any) => {
-      const asin = String(product?.asin || '').trim();
-      const storeName = String(product?.storeName || product?.store_name || '').trim();
-      const marketplaceCode = String(product?.marketplaceCode || product?.marketplace_code || '').trim();
-      if (!asin || !storeName || !marketplaceCode) {
-        throw new Error('批量目标 ACOS 更新需要 ASIN、店铺和站点。');
-      }
-      const identity = `${storeName}\u0000${marketplaceCode}\u0000${asin}`.toUpperCase();
-      if (identities.has(identity)) throw new Error(`产品 ${asin} 在批量更新中重复。`);
-      identities.add(identity);
-      return { asin, storeName, marketplaceCode, targetAcos };
-    });
-    const updatedProducts = state.productRepo.updateTargetAcosMany(updates);
-    mainWindow?.webContents.send('business-ui:data-updated');
-    return {
-      success: true,
-      targetAcos,
-      updatedCount: updatedProducts.length,
-      products: updatedProducts,
-    };
-  });
-
   // Logs
   ipcMain.handle('logs:get', (_, { dateFrom, dateTo, limit }) =>
     state.actionLogRepo?.findByDateRange(dateFrom, dateTo, limit) || []
@@ -8553,39 +9698,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle('v1_5:keywords:build-opportunities', (_, { metrics, options }) =>
     handleBuildKeywordOpportunities(metrics, options)
   );
-  ipcMain.handle('v1_5:keywords:import-report', (_, { filePath, source, duplicateStrategy }) =>
-    handleImportKeywordMetrics(filePath, source, duplicateStrategy)
-  );
   ipcMain.handle('v1_5:keywords:export-diagnostics', (_, { diagnostics }) =>
     handleExportKeywordDiagnostics(diagnostics)
   );
   ipcMain.handle('v1_5:listing:analyze-coverage', (_, { listing, keywords }) =>
     handleAnalyzeListingCoverage(listing, keywords)
-  );
-  ipcMain.handle('v1_5:listing:import-content', (_, { filePath }) =>
-    handleImportListingContent(filePath)
-  );
-  ipcMain.handle('v1_5:listing:save-manual-content', (_, input) =>
-    handleSaveManualListingContent(input)
-  );
-  ipcMain.handle('v1_5:listing:list-content-versions', (_, input) =>
-    handleListListingContentVersions(input)
-  );
-  ipcMain.handle('v1_5:listing:extract-from-lingxing', (_, input) =>
-    handleExtractListingFromLingxing({
-      expectedAsin: typeof input?.expectedAsin === 'string' ? input.expectedAsin : undefined,
-      persist: input?.persist === false ? false : undefined,
-      scope: input?.scope && typeof input.scope === 'object' ? {
-        storeName: typeof input.scope.storeName === 'string' ? input.scope.storeName : undefined,
-        marketplaceCode: typeof input.scope.marketplaceCode === 'string' ? input.scope.marketplaceCode : undefined,
-      } : undefined,
-    })
-  );
-  ipcMain.handle('v1_5:listing:open-and-extract-from-lingxing', (_, input) =>
-    handleOpenLingxingListingAndExtract(input)
-  );
-  ipcMain.handle('v1_5:listing:probe-detail-and-extract', (_, input) =>
-    handleProbeLingxingListingDetailAndExtract(input)
   );
   ipcMain.handle('v1_5:listing:build-suggestions', (_, { listing, opportunities }) =>
     handleBuildListingSuggestions(listing, opportunities)
@@ -8615,6 +9732,7 @@ app.whenReady().then(async () => {
     registerIpcHandlers();
     console.log('[App] ipc-ready');
     createWindow();
+    startStoreBusinessDateAuthorityMonitor();
     console.log('[App] window-created');
 
     app.on('activate', () => {
@@ -8636,6 +9754,7 @@ app.on('window-all-closed', () => {
 
 const handleBeforeQuit = createBeforeQuitCoordinator({
   cleanup: async () => {
+    stopStoreBusinessDateAuthorityMonitor();
     const runtime = detachBrowserRuntimeForStore();
     const pendingControllers = invalidatePendingBrowserLogin();
     const scheduler = state.scheduler;

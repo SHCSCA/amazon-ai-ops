@@ -53,6 +53,8 @@ export function registerStoreIpcHandlers(
   ipc.handle('stores:update', (_event, input) => {
     const store = coordinator.updateStore(asObject(input) as unknown as UpdateStoreInput);
     events.onStoreRecordChanged?.(store);
+    const activeView = coordinator.getActiveStoreWorkspaceView();
+    if (activeView?.store.storeId === store.storeId) events.onStoreChanged?.(activeView);
     return store;
   });
   ipc.handle('stores:archive', (_event, input) => {
@@ -65,12 +67,23 @@ export function registerStoreIpcHandlers(
     events.onStoreRecordChanged?.(store);
     return store;
   });
-  ipc.handle('stores:connections:create', (_event, input) =>
-    coordinator.createConnection(readCreateConnectionInput(input)));
-  ipc.handle('stores:connections:update', (_event, input) =>
-    coordinator.updateConnection(readUpdateConnectionInput(input)));
+  ipc.handle('stores:connections:create', (_event, input) => {
+    const connection = coordinator.createConnection(readCreateConnectionInput(input));
+    const activeView = coordinator.getActiveStoreWorkspaceView();
+    if (activeView?.store.storeId === connection.storeId) events.onStoreChanged?.(activeView);
+    return connection;
+  });
+  ipc.handle('stores:connections:update', (_event, input) => {
+    const connection = coordinator.updateConnection(readUpdateConnectionInput(input));
+    const activeView = coordinator.getActiveStoreWorkspaceView();
+    if (activeView?.store.storeId === connection.storeId) events.onStoreChanged?.(activeView);
+    return connection;
+  });
   ipc.handle('stores:connections:remove', (_event, input) => {
-    coordinator.removeConnection(readRemoveConnectionInput(input));
+    const request = readRemoveConnectionInput(input);
+    coordinator.removeConnection(request);
+    const activeView = coordinator.getActiveStoreWorkspaceView();
+    if (activeView?.store.storeId === request.storeId) events.onStoreChanged?.(activeView);
     return { success: true };
   });
   ipc.handle('stores:switch', (_event, input) => {

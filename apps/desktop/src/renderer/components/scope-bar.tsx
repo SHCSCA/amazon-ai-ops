@@ -3,6 +3,7 @@ import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import type { BusinessBatchOption } from '../types';
 import { ProgressiveDetails } from './progressive-details';
+import { useMissionControlStoreContext } from '../mission-control/store-context';
 
 const AUTO_BATCH_VALUE = '__auto__';
 const MANUAL_BATCH_VALUE = '__manual__';
@@ -148,6 +149,8 @@ export function scopeEditorSaveButtonView(saving: boolean): {
 
 export function ScopeBar() {
   const { scope, setScope } = useScopeStore();
+  const missionStore = useMissionControlStoreContext();
+  const storeContext = missionStore.authoritativeContext;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(scope);
   const [batchOptions, setBatchOptions] = useState<BusinessBatchOption[]>([]);
@@ -199,9 +202,9 @@ export function ScopeBar() {
     setScopeEditorSaving(true);
     try {
       const api = (window as any).electronAPI;
-      if (api?.saveOperationScope) {
-        await api.saveOperationScope(normalizedDraft);
-      }
+      if (!storeContext) throw new Error('等待 Main 确认当前店铺后才能保存范围。');
+      if (!api?.saveOperationScope) throw new Error('范围保存接口未暴露。');
+      await api.saveOperationScope(storeContext, normalizedDraft);
       setScope(normalizedDraft);
       setDraft(normalizedDraft);
       setEditing(false);
@@ -240,10 +243,12 @@ export function ScopeBar() {
 
   useEffect(() => {
     let cancelled = false;
+    setScopeHydrated(false);
     async function loadPersistedScope() {
       try {
         const api = (window as any).electronAPI;
-        const savedScope = await api?.getOperationScope?.();
+        if (!storeContext) return;
+        const savedScope = await api?.getOperationScope?.(storeContext);
         if (cancelled) return;
         if (savedScope?.dateFrom && savedScope?.dateTo && savedScope?.storeName && savedScope?.marketplaceCode) {
           const normalizedScope = { ...savedScope, currency: 'USD' as const };
@@ -262,13 +267,13 @@ export function ScopeBar() {
     return () => {
       cancelled = true;
     };
-  }, [setScope]);
+  }, [setScope, missionStore.authorityKey, storeContext]);
 
   useEffect(() => {
-    if (!scopeHydrated) return;
+    if (!scopeHydrated || !storeContext) return;
     const api = (window as any).electronAPI;
     if (!api?.saveOperationScope) return;
-    api.saveOperationScope(scope)
+    api.saveOperationScope(storeContext, scope)
       .then(() => setScopePersistError(''))
       .catch((caught: unknown) => {
         setScopePersistError(toUserFacingError(caught, '保存运营范围失败。'));
@@ -282,6 +287,7 @@ export function ScopeBar() {
     scope.asin,
     scope.batchId,
     scope.currency,
+    storeContext,
   ]);
 
   useEffect(() => {
@@ -323,7 +329,9 @@ export function ScopeBar() {
     let cancelled = false;
     async function loadProducts() {
       try {
-        const rows = await (window as any).electronAPI?.getProducts?.();
+        const rows = storeContext
+          ? await (window as any).electronAPI?.listStoreProducts?.(storeContext)
+          : [];
         if (!cancelled) setProducts(Array.isArray(rows) ? rows : []);
       } catch {
         if (!cancelled) setProducts([]);
@@ -335,7 +343,7 @@ export function ScopeBar() {
       cancelled = true;
       window.removeEventListener('business-ui:data-updated', loadProducts);
     };
-  }, []);
+  }, [storeContext]);
 
   useEffect(() => {
     let cancelled = false;

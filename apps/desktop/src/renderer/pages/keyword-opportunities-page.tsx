@@ -586,9 +586,15 @@ export function KeywordOpportunitiesPage() {
     const normalized = row.sourceFile.replace(/\\/g, '/').toLowerCase();
     const sourceFileName = normalized.split('/').filter(Boolean).pop();
     const matched = collection.realReportFiles.find((file) => {
-      const normalizedFilePath = file.filePath.replace(/\\/g, '/').toLowerCase();
-      const normalizedFileName = (file.fileName || normalizedFilePath.split('/').filter(Boolean).pop() || '').toLowerCase();
-      return normalizedFilePath === normalized || (Boolean(sourceFileName) && normalizedFileName === sourceFileName);
+      const sourceReferences = [
+        file.sourceArtifactId,
+        file.artifactId,
+        file.artifactDisplayName,
+        file.fileName,
+        file.displayName,
+      ].map((value) => String(value || '').trim().replace(/\\/g, '/').toLowerCase()).filter(Boolean);
+      return sourceReferences.includes(normalized)
+        || (Boolean(sourceFileName) && sourceReferences.some((value) => value.split('/').filter(Boolean).pop() === sourceFileName));
     });
     return matched?.importedRows ?? null;
   }

@@ -272,7 +272,25 @@ describe('auditLingxingAcceptanceEvidence', () => {
     expect(result.status).toBe('incomplete');
     expect(result.checks.find((check) => check.name === 'download_center_diagnostic')).toMatchObject({
       status: 'incomplete',
-      detail: expect.stringContaining('diagnostic store/site scope FT-CA-CA/CA does not match batch FT-US-US/US'),
+      detail: expect.stringContaining('diagnostic store/site scope FT-CA-CA/CA does not match authorized target FT-US-US/US'),
+    });
+  });
+
+  it('compares diagnostics with the external authorized target instead of the store display name', () => {
+    const batchValue = batch({ storeName: 'SHC001 主店', marketplaceCode: 'US' });
+    const result = auditLingxingAcceptanceEvidence({
+      batch: batchValue,
+      files: files(),
+      diagnostic: diagnostic({ storeName: 'SHC001', marketplaceCode: 'US' }),
+      diagnosticTarget: { storeName: 'SHC001', marketplaceCode: 'US' },
+      diagnosticEvidenceReadiness: diagnosticReadiness(),
+      manifest: manifest(batchValue),
+      fileExists: () => true,
+      getFileSizeBytes: () => 256,
+    });
+
+    expect(result.checks.find((check) => check.name === 'download_center_diagnostic')).toMatchObject({
+      status: 'passed',
     });
   });
 

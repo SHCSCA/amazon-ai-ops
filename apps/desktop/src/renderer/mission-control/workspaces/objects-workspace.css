@@ -162,6 +162,17 @@
 .mission-control-workspace-root .mission-control-objects-adapter-context strong {
   color: #172033;
   font-size: 13px;
+  padding-right: 10px;
+  border-right: 1px solid #cbd5e1;
+}
+
+.mission-control-workspace-root .mission-control-objects-adapter-context > span:nth-of-type(2) {
+  border-radius: 999px;
+  background: #eef2ff;
+  padding: 2px 8px;
+  color: #3730a3;
+  font-weight: 720;
+  white-space: nowrap;
 }
 
 .mission-control-workspace-root .mission-control-objects-adapter-context small {
@@ -183,6 +194,338 @@
 
 .mission-control-workspace-root .mission-control-objects-product-state {
   padding: 16px;
+}
+
+.mission-control-workspace-root .store-scoped-objects {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .store-object-tabs {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  min-height: 40px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.mission-control-workspace-root .store-object-tabs > button {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 40px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: 0 11px;
+  color: #64748b;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mission-control-workspace-root .store-object-tabs > button:hover,
+.mission-control-workspace-root .store-object-tabs > button:focus-visible {
+  background: #f8fafc;
+  color: #1d4ed8;
+  outline: none;
+}
+
+.mission-control-workspace-root .store-object-tabs > button[aria-selected='true'] {
+  border-bottom-color: #2563eb;
+  color: #1d4ed8;
+}
+
+.mission-control-workspace-root .store-object-tabs > button span {
+  display: inline-grid;
+  min-width: 22px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  background: #e2e8f0;
+  padding: 0 6px;
+  color: #334155;
+  font-size: 11px;
+}
+
+.mission-control-workspace-root .store-object-tabs > button[aria-selected='true'] span {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.mission-control-workspace-root .store-object-authority {
+  margin-left: auto;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: #f0fdf4;
+  padding: 3px 9px;
+  color: #166534;
+  font-size: 11px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .mission-control-objects-adapter-context__separator {
+  color: #94a3b8;
+  font-weight: 800;
+}
+
+.mission-control-workspace-root .store-object-feedback {
+  border: 1px solid #bbf7d0;
+  border-radius: 7px;
+  background: #f0fdf4;
+  padding: 7px 10px;
+  color: #166534;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mission-control-workspace-root .store-object-feedback--error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.mission-control-workspace-root .store-object-panel {
+  border: 0;
+  box-shadow: none;
+}
+
+.mission-control-workspace-root .store-object-panel > .workbench-panel__header {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.mission-control-workspace-root .store-object-panel > .workbench-panel__body {
+  padding: 0;
+}
+
+.mission-control-workspace-root .store-object-search input {
+  width: 218px;
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  padding: 0 10px;
+  color: #172033;
+  font: inherit;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .store-object-search input:focus {
+  border-color: #60a5fa;
+  outline: 3px solid rgb(59 130 246 / 12%);
+}
+
+.mission-control-workspace-root .store-object-toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: #475569;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .store-object-toggle input {
+  accent-color: #2563eb;
+}
+
+.mission-control-workspace-root .store-object-identity {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .store-object-identity > span:first-child {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.mission-control-workspace-root .store-object-identity > span:last-child,
+.mission-control-workspace-root .store-object-two-line {
+  display: grid;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .store-object-identity strong,
+.mission-control-workspace-root .store-object-two-line strong {
+  overflow: hidden;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 740;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .store-object-identity small,
+.mission-control-workspace-root .store-object-two-line small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .store-object-status {
+  display: inline-flex;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: #f0fdf4;
+  padding: 2px 8px;
+  color: #166534;
+  font-size: 11px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .store-object-status[data-object-status='inactive'] {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.mission-control-workspace-root .store-object-status[data-object-status='archived'] {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.mission-control-workspace-root .store-object-status[data-object-status='reconcile'] {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.mission-control-workspace-root .store-object-actions {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.mission-control-workspace-root .store-object-event-date {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: #334155;
+  font-variant-numeric: tabular-nums;
+  font-weight: 680;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .store-object-pagination {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 46px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+  color: #64748b;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mission-control-workspace-root .store-object-pagination > div {
+  display: flex;
+  gap: 6px;
+}
+
+.mission-control-dialog.store-object-editor {
+  width: min(920px, calc(100vw - 48px));
+  max-height: min(820px, calc(100vh - 48px));
+}
+
+.store-object-editor .store-object-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  overflow: auto;
+  padding: 18px 20px;
+}
+
+.store-object-editor .store-object-form--product {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.store-object-editor .store-object-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.store-object-editor .store-object-form input,
+.store-object-editor .store-object-form select,
+.store-object-editor .store-object-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  padding: 8px 10px;
+  color: #172033;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.store-object-editor .store-object-form input,
+.store-object-editor .store-object-form select {
+  height: 38px;
+}
+
+.store-object-editor .store-object-form textarea {
+  resize: vertical;
+}
+
+.store-object-editor .store-object-form input:focus,
+.store-object-editor .store-object-form select:focus,
+.store-object-editor .store-object-form textarea:focus {
+  border-color: #60a5fa;
+  outline: 3px solid rgb(59 130 246 / 12%);
+}
+
+.store-object-editor .store-object-form input:disabled {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.store-object-editor .store-object-form__section {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 2px;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 6px 0;
+}
+
+.store-object-editor .store-object-form__section strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.store-object-editor .store-object-form__section small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.store-object-editor .store-object-form__wide {
+  grid-column: 1 / -1;
 }
 
 @media (max-width: 1180px) {
@@ -214,5 +557,24 @@
 
   .mission-control-workspace-root .mission-control-objects-domain__header p {
     white-space: normal;
+  }
+
+  .mission-control-workspace-root .store-object-panel .workbench-panel__toolbar {
+    flex-wrap: wrap;
+  }
+
+  .mission-control-workspace-root .store-object-search,
+  .mission-control-workspace-root .store-object-search input {
+    width: 100%;
+  }
+
+  .store-object-editor .store-object-form,
+  .store-object-editor .store-object-form--product {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .store-object-editor .store-object-form__section,
+  .store-object-editor .store-object-form__wide {
+    grid-column: auto;
   }
 }

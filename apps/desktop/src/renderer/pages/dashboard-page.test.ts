@@ -15,7 +15,7 @@ import {
   dashboardDecisionSummary,
   dashboardMetricStatusCopy,
   dashboardNormalizeDeliveryItem,
-  dashboardOpenPathButtonView,
+  dashboardOpenArtifactButtonView,
   dashboardPrimaryTaskAction,
   dashboardPrimaryTaskNavigationFeedback,
   dashboardProductWorkbenchAction,
@@ -1640,17 +1640,17 @@ describe('dashboardPrimaryTaskNavigationFeedback', () => {
   });
 });
 
-describe('dashboardOpenPathButtonView', () => {
-  it('gives dashboard evidence path buttons active feedback and locks path peers', () => {
-    const active = dashboardOpenPathButtonView({
-      activePathKey: '打开证据:C:/evidence',
+describe('dashboardOpenArtifactButtonView', () => {
+  it('gives dashboard evidence artifact buttons active feedback and locks artifact peers', () => {
+    const active = dashboardOpenArtifactButtonView({
+      activeArtifactKey: '打开证据:artifact:v1:evidence',
       idleLabel: '打开',
-      pathKey: '打开证据:C:/evidence',
+      artifactKey: '打开证据:artifact:v1:evidence',
     });
-    const locked = dashboardOpenPathButtonView({
-      activePathKey: '打开证据:C:/evidence',
+    const locked = dashboardOpenArtifactButtonView({
+      activeArtifactKey: '打开证据:artifact:v1:evidence',
       idleLabel: '打开',
-      pathKey: '打开清单:C:/manifest.json',
+      artifactKey: '打开清单:artifact:v1:manifest',
     });
 
     expect(active.label).toBe('打开中...');
@@ -1662,6 +1662,14 @@ describe('dashboardOpenPathButtonView', () => {
     expect(locked.disabled).toBe(true);
     expect(locked.ariaBusy).toBeUndefined();
     expect(locked.showSpinner).toBe(false);
+  });
+
+  it('opens collection evidence only through store-bound opaque artifacts', () => {
+    const source = readFileSync(new URL('./dashboard-page.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('openReportArtifact?.(artifactId, { ...storeContext })');
+    expect(source).toContain('collection.evidenceArtifacts.map');
+    expect(source).not.toContain('electronAPI?.openReportPath');
+    expect(source).not.toContain('collection.evidencePaths');
   });
 });
 

@@ -23,8 +23,27 @@ import {
 
 class MemoryStoreRepository implements StoreAuthorityRepository {
   readonly rows = new Map<StoreId, StoreRecord>();
+  readonly connections = new Map<StoreCapabilityId, StoreConnection>();
   lastCreatedConnectionInput: (CreateStoreConnectionInput & { id: StoreCapabilityId }) | null = null;
   lastUpdatedConnectionInput: UpdateStoreConnectionInput | null = null;
+
+  transaction<T>(work: () => T): T {
+    const rowSnapshot = new Map([...this.rows].map(([key, value]) => [key, { ...value }]));
+    const connectionSnapshot = new Map([...this.connections].map(([key, value]) => [key, { ...value }]));
+    const createdInputSnapshot = this.lastCreatedConnectionInput;
+    const updatedInputSnapshot = this.lastUpdatedConnectionInput;
+    try {
+      return work();
+    } catch (error) {
+      this.rows.clear();
+      for (const [key, value] of rowSnapshot) this.rows.set(key, value);
+      this.connections.clear();
+      for (const [key, value] of connectionSnapshot) this.connections.set(key, value);
+      this.lastCreatedConnectionInput = createdInputSnapshot;
+      this.lastUpdatedConnectionInput = updatedInputSnapshot;
+      throw error;
+    }
+  }
 
   listStores(input?: ListStoresInput): StoreRecord[] {
     return [...this.rows.values()].filter((store) => input?.includeArchived || store.status !== 'archived');
@@ -67,29 +86,34 @@ class MemoryStoreRepository implements StoreAuthorityRepository {
 
   createConnection(input: CreateStoreConnectionInput & { id: StoreCapabilityId }): StoreConnection {
     this.lastCreatedConnectionInput = input;
-    return {
+    const connection: StoreConnection = {
       ...input,
       status: 'not_configured',
       createdAt: '2026-07-22T00:00:00.000Z',
       updatedAt: '2026-07-22T00:00:00.000Z',
     };
+    this.connections.set(connection.id, connection);
+    return connection;
   }
 
   updateConnection(input: UpdateStoreConnectionInput): StoreConnection {
     this.lastUpdatedConnectionInput = input;
-    return {
+    const existing = this.connections.get(input.id)!;
+    const connection: StoreConnection = {
+      ...existing,
       ...input,
-      provider: 'lingxing',
-      status: 'ready',
-      createdAt: '2026-07-22T00:00:00.000Z',
       updatedAt: '2026-07-22T00:01:00.000Z',
     };
+    this.connections.set(connection.id, connection);
+    return connection;
   }
 
-  removeConnection(_input: RemoveStoreConnectionInput): void {}
+  removeConnection(input: RemoveStoreConnectionInput): void {
+    this.connections.delete(input.id);
+  }
 
-  listConnections(_storeId: StoreId): StoreConnection[] {
-    return [];
+  listConnections(storeId: StoreId): StoreConnection[] {
+    return [...this.connections.values()].filter((connection) => connection.storeId === storeId);
   }
 
   listSessionMetadata(_storeId: StoreId): StoreSessionMetadata[] {
@@ -132,12 +156,17 @@ class MemoryGenerationStorage implements StoreSessionGenerationStorage {
 
 class MemorySessions {
   private readonly generations = new Map<StoreId, number>();
+  failNextAdvance = false;
 
   current(storeId: StoreId): number {
     return this.generations.get(storeId) ?? 0;
   }
 
   advance(storeId: StoreId): number {
+    if (this.failNextAdvance) {
+      this.failNextAdvance = false;
+      throw new Error('injected generation write failure');
+    }
     const next = this.current(storeId) + 1;
     this.generations.set(storeId, next);
     return next;
@@ -159,15 +188,21 @@ function createHarness() {
   const repository = new MemoryStoreRepository();
   const sessions = new MemorySessions();
   let id = 0;
+  let now = new Date('2026-07-22T06:00:00.000Z');
   const coordinator = new StoreCoordinator({
     repository,
     sessions,
-    now: () => new Date('2026-07-22T06:00:00.000Z'),
+    now: () => now,
     createStoreId: () => asStoreId(`store-${++id}`),
     createBrowserProfileId: (storeId) => asProfileId(`browser-${storeId}`),
     createStoreCapabilityId: () => 'capability-1' as StoreCapabilityId,
   });
-  return { coordinator, repository, sessions };
+  return {
+    coordinator,
+    repository,
+    sessions,
+    setNow(value: string) { now = new Date(value); },
+  };
 }
 
 describe('StoreCoordinator', () => {
@@ -193,6 +228,18 @@ describe('StoreCoordinator', () => {
     coordinator.switchStore(second.storeId);
 
     expect(() => coordinator.assertStoreContext(firstView.context)).toThrow(/stale generation/);
+  });
+
+  it('invalidates a captured context when the US business date rolls over', () => {
+    const { coordinator, setNow } = createHarness();
+    const store = coordinator.createStore({ displayName: 'One' });
+    const beforeMidnight = coordinator.switchStore(store.storeId).context;
+
+    setNow('2026-07-22T08:00:00.000Z');
+
+    expect(() => coordinator.assertActiveStoreContext(beforeMidnight))
+      .toThrow(/store context no longer matches Main-process store authority/);
+    expect(coordinator.getActiveStoreContext()?.businessDate).toBe('2026-07-22');
   });
 
   it('does not silently rebind a captured context to the current UI store', () => {
@@ -228,6 +275,55 @@ describe('StoreCoordinator', () => {
     expect(connection.id).toBe('capability-1');
     coordinator.updateStore({ storeId: row.storeId, patch: { status: 'inactive' } });
     expect(() => coordinator.createConnection({ storeId: row.storeId, provider: 'amazon_ads' })).toThrow(/not active/);
+  });
+
+  it('invalidates the active StoreContext whenever a connection mapping changes', () => {
+    const { coordinator } = createHarness();
+    const row = coordinator.createStore({ displayName: 'One' });
+    const initial = coordinator.switchStore(row.storeId).context;
+
+    const connection = coordinator.createConnection({
+      storeId: row.storeId,
+      provider: 'amazon_ads',
+      accountLabel: 'old-account',
+      externalAccountId: 'profile-old',
+    });
+    expect(() => coordinator.assertActiveStoreContext(initial)).toThrow(/stale generation/);
+
+    const afterCreate = coordinator.getActiveStoreContext()!;
+    coordinator.updateConnection({
+      id: connection.id,
+      storeId: row.storeId,
+      accountLabel: 'old-account',
+      externalAccountId: 'profile-new',
+    });
+    expect(() => coordinator.assertActiveStoreContext(afterCreate)).toThrow(/stale generation/);
+
+    const afterUpdate = coordinator.getActiveStoreContext()!;
+    coordinator.removeConnection({ id: connection.id, storeId: row.storeId });
+    expect(() => coordinator.assertActiveStoreContext(afterUpdate)).toThrow(/stale generation/);
+  });
+
+  it('rolls back store and connection writes when durable generation advancement fails', () => {
+    const { coordinator, repository, sessions } = createHarness();
+    const store = coordinator.createStore({ displayName: 'One' });
+    const initialStore = repository.getStore(store.storeId)!;
+
+    sessions.failNextAdvance = true;
+    expect(() => coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { displayName: 'Should Roll Back' },
+    })).toThrow(/injected generation write failure/);
+    expect(repository.getStore(store.storeId)).toEqual(initialStore);
+
+    sessions.failNextAdvance = true;
+    expect(() => coordinator.createConnection({
+      storeId: store.storeId,
+      provider: 'lingxing',
+      accountLabel: 'should-not-persist',
+    })).toThrow(/injected generation write failure/);
+    expect(repository.listConnections(store.storeId)).toEqual([]);
+    expect(sessions.current(store.storeId)).toBe(0);
   });
 
   it('strips Renderer-only connection state before calling the repository', () => {

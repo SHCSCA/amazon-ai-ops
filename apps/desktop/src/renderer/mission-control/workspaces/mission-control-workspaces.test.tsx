@@ -4,12 +4,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   MissionControlCapabilityProjection,
+  MissionControlTodayProjection,
   StoreContextEnvelope,
   StoreRecord,
 } from '@amazon-ai-ops/shared-types';
 import {
   MISSION_CONTROL_WORKSPACE_IDS,
   MISSION_CONTROL_VIEW_IDS,
+  missionControlContextKey,
 } from '@amazon-ai-ops/shared-types';
 import {
   STORE_MANAGEMENT_CAPABILITY_IDS,
@@ -36,6 +38,40 @@ const context = {
   businessDate: '2026-07-22',
   sessionGeneration: 4,
 } as StoreContextEnvelope;
+
+const todayProjection: MissionControlTodayProjection = {
+  storeId: String(context.storeId),
+  authorityKey: missionControlContextKey(context),
+  businessDate: context.businessDate,
+  marketplace: 'US',
+  currency: 'USD',
+  generatedAt: '2026-07-22T09:00:00.000Z',
+  facts: {
+    productCount: 1,
+    configuredProductCount: 1,
+    collectionJobCount: 1,
+    importedMetricRows: 24,
+    latestMetricDate: '2026-07-21',
+    operationEventsToday: 1,
+    browserSessionReady: true,
+  },
+  readiness: [
+    { id: 'products', label: '产品与经营目标', state: 'ready', detail: '1/1 已配置', targetView: 'objects/products' },
+    { id: 'collection', label: '领星八报表', state: 'ready', detail: '8/8 已下载', targetView: 'collection/reports' },
+    { id: 'import', label: '广告事实入库', state: 'ready', detail: '24 行已入库', targetView: 'collection/import-check' },
+    { id: 'browser', label: '可见浏览器会话', state: 'ready', detail: '会话已确认', targetView: 'collection/reports' },
+  ],
+  blockers: [],
+  attentionItems: [],
+  nextAction: {
+    id: 'review-ad-facts',
+    label: '进入广告事实分析',
+    detail: '数据已就绪',
+    targetView: 'missions/facts',
+    requiredCapabilityId: 'missions.mission.facts.view',
+    available: true,
+  },
+};
 
 function capability(
   view: MissionControlCapabilityProjection['view'],
@@ -70,6 +106,14 @@ describe('Mission Control workspace registry', () => {
     expect(missionControlViewIdForIntent({ workspace: 'missions', subview: 'overview' })).toBe('missions/overview');
     expect(missionControlViewIdForIntent({ workspace: 'execution', subview: 'live' })).toBe('execution/live');
     expect(missionControlViewIdForIntent({ workspace: 'policy', subview: 'rules' })).toBe('policy/rules');
+    const todayEvents = MISSION_CONTROL_WORKSPACE_REGISTRY
+      .find((workspace) => workspace.id === 'today')
+      ?.subviews.find((subview) => subview.id === 'events');
+    expect(todayEvents).toEqual(expect.objectContaining({
+      kind: 'canonical',
+      view: 'today/events',
+    }));
+    expect(todayEvents).not.toHaveProperty('legacyRoute');
   });
 });
 
@@ -170,6 +214,7 @@ describe('action-level capability rendering', () => {
         onNavigate={vi.fn()}
         previewMode
         storeContext={context}
+        today={todayProjection}
       />,
     );
     expect(markup).not.toContain('INNER_DEV_BOUNDARY');
@@ -177,6 +222,57 @@ describe('action-level capability rendering', () => {
     expect(markup).toContain('仅开发预览示例');
     expect(markup).toContain('data-capability-state="PROTOTYPE_ONLY"');
     expect(markup).not.toContain('data-capability-state="LEGACY_ADAPTER"');
+  });
+
+  it('routes Today events to the production-native store event surface and never mounts the old event page', () => {
+    const capabilities = [
+      capability('today/events', 'view', 'PRODUCTION_NATIVE', 'today.events.view'),
+      capability('today/events', 'create', 'PRODUCTION_NATIVE', 'today.events.create'),
+      capability('today/events', 'update', 'PRODUCTION_NATIVE', 'today.events.update'),
+      capability('today/events', 'archive', 'PRODUCTION_NATIVE', 'today.events.archive'),
+      capability('today/events', 'restore', 'PRODUCTION_NATIVE', 'today.events.restore'),
+    ];
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={capabilities}
+        intent={{ workspace: 'today', subview: 'events' }}
+        legacySlot={<div>OLD OPERATION EVENTS PAGE</div>}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+
+    expect(markup).toContain('data-store-object-subview="events"');
+    expect(markup).toContain('当前店铺运营事件');
+    expect(markup).toContain('记录事件');
+    expect(markup).not.toContain('新建产品');
+    expect(markup).not.toContain('OLD OPERATION EVENTS PAGE');
+    expect(markup).not.toContain('data-legacy-route="operation-events"');
+  });
+
+  it('fails Today events closed when any exact native event action is missing', () => {
+    const capabilities = [
+      capability('today/events', 'view', 'PRODUCTION_NATIVE', 'today.events.view'),
+      capability('today/events', 'create', 'PRODUCTION_NATIVE', 'today.events.create'),
+      capability('today/events', 'update', 'PRODUCTION_NATIVE', 'today.events.update'),
+      capability('today/events', 'archive', 'PRODUCTION_NATIVE', 'today.events.archive'),
+    ];
+    const markup = renderToStaticMarkup(
+      <MissionControlWorkspaceView
+        capabilities={capabilities}
+        intent={{ workspace: 'today', subview: 'events' }}
+        legacySlot={<div>OLD OPERATION EVENTS PAGE</div>}
+        onNavigate={vi.fn()}
+        previewMode={false}
+        storeContext={context}
+      />,
+    );
+
+    expect(markup).toContain('当前对象视图未获授权');
+    expect(markup).toContain('today.events.restore');
+    expect(markup).not.toContain('记录事件');
+    expect(markup).not.toContain('OLD OPERATION EVENTS PAGE');
   });
 
   it('fails closed when production receives a PROTOTYPE_ONLY projection', () => {
@@ -191,9 +287,9 @@ describe('action-level capability rendering', () => {
     );
 
     expect(markup).toContain('当前不是显式开发预览');
-    expect(markup).toContain('data-capability-state="BLOCKED"');
-    expect(markup).toContain('task-banner');
-    expect(markup).not.toContain('mission-control-canonical-page--preview');
+    expect(markup).toContain('data-capability-state="PROTOTYPE_ONLY"');
+    expect(markup).toContain('workspace-state--blocked');
+    expect(markup).not.toContain('data-preview-today-projection');
     expect(markup).not.toContain('仅开发预览示例');
     expect(markup).not.toContain('ACTIVE MISSION');
   });
@@ -206,6 +302,7 @@ describe('action-level capability rendering', () => {
         onNavigate={vi.fn()}
         previewMode
         storeContext={context}
+        today={todayProjection}
       />,
     );
     const blocked = renderToStaticMarkup(
@@ -218,24 +315,20 @@ describe('action-level capability rendering', () => {
       />,
     );
 
-    expect(preview).toContain('mission-control-canonical-page--preview');
-    expect(preview).toContain('ACTIVE MISSION');
-    expect(preview).toContain('canonical-preview-boundary-action');
-    expect(preview).not.toContain('task-banner');
-    expect(preview).not.toContain('summary-strip');
-    expect(preview).not.toContain('workbench-panel');
+    expect(preview).toContain('data-preview-today-projection="store-one"');
+    expect(preview).toContain('ACTIVE STORE');
+    expect(preview).toContain('data-mutations-disabled="true"');
+    expect(preview).not.toContain('data-production-today-projection');
 
-    expect(blocked).not.toContain('mission-control-canonical-page--preview');
-    expect(blocked).toContain('task-banner');
-    expect(blocked).toContain('summary-strip');
-    expect(blocked).toContain('workbench-panel');
-    expect(blocked).not.toContain('canonical-preview-boundary-action');
+    expect(blocked).toContain('workspace-state--blocked');
+    expect(blocked).toContain('今日控制面已失败关闭');
+    expect(blocked).not.toContain('data-preview-today-projection');
   });
 });
 
 describe('prototype-aligned canonical first screens', () => {
   it.each([
-    [{ workspace: 'today', subview: 'overview' }, 'today/overview', 'today', 'ACTIVE MISSION'],
+    [{ workspace: 'today', subview: 'overview' }, 'today/overview', 'today', 'ACTIVE STORE'],
     [{ workspace: 'missions', subview: 'overview' }, 'missions/overview', 'missions', 'MISSION · US-SP-ACOS-001'],
     [{ workspace: 'decisions', subview: 'recommendations' }, 'decisions/recommendations', 'decisions', '暂停智能门锁零订单高花费搜索词'],
     [{ workspace: 'experiments', subview: 'ledger' }, 'experiments/ledger', 'experiments', 'EXPERIMENT · EXP-US-014'],
@@ -252,13 +345,15 @@ describe('prototype-aligned canonical first screens', () => {
         onNavigate={vi.fn()}
         previewMode
         storeContext={context}
+        today={view === 'today/overview' ? todayProjection : undefined}
       />,
     );
     expect(markup).toContain(`data-canonical-surface="${surface}"`);
     expect(markup).toContain(copy);
-    expect(markup).toContain('Amazon US · USD');
+    expect(markup).toContain(surface === 'today' ? 'Amazon US / USD' : 'Amazon US · USD');
     expect(markup).toContain('仅开发预览示例');
     expect(markup).toContain('data-mutations-disabled="true"');
+    if (surface !== 'today') expect(markup).toContain('canonical-preview-boundary-action');
     expect(markup).not.toContain('SHOULD_NOT_MOUNT');
     expect(markup).not.toContain('执行成功');
   });

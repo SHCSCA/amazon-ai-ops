@@ -12,8 +12,9 @@ import {
   type PriorityDataTableColumn,
 } from '../components/workspace';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput, type DeliveryMatrixItem, type DeliveryMatrixStatus } from '../delivery-readiness-matrix';
-import { compactPath, formatPercent, formatUsd } from '../formatters';
+import { formatPercent, formatUsd } from '../formatters';
 import { operatorFacingAiError } from '../ai-call-diagnostics';
+import { useMissionControlStoreContext } from '../mission-control/store-context';
 import {
   hasRealReportCoverage,
   importedReportTypeCoverageCount,
@@ -633,16 +634,16 @@ export function dashboardPrimaryTaskNavigationFeedback(input: {
   };
 }
 
-export function dashboardPathActionKey(label: string, targetPath: string): string {
-  return `${label}:${String(targetPath || 'missing')}`;
+export function dashboardArtifactActionKey(label: string, artifactId: string): string {
+  return `${label}:${String(artifactId || 'missing')}`;
 }
 
-export function dashboardOpenPathButtonView(input: {
-  activePathKey: string | null;
+export function dashboardOpenArtifactButtonView(input: {
+  activeArtifactKey: string | null;
   baseClassName?: string;
   disabled?: boolean;
   idleLabel: string;
-  pathKey: string;
+  artifactKey: string;
 }): {
   label: string;
   disabled: boolean;
@@ -650,10 +651,10 @@ export function dashboardOpenPathButtonView(input: {
   className: string;
   showSpinner: boolean;
 } {
-  const active = input.activePathKey === input.pathKey;
+  const active = input.activeArtifactKey === input.artifactKey;
   return {
     label: active ? '打开中...' : input.idleLabel,
-    disabled: Boolean(input.disabled || input.activePathKey),
+    disabled: Boolean(input.disabled || input.activeArtifactKey),
     ariaBusy: active ? true : undefined,
     className: [input.baseClassName || 'secondary-button', active ? 'button-loading' : ''].filter(Boolean).join(' '),
     showSpinner: active,
@@ -1180,8 +1181,9 @@ const dashboardRiskColumns: Array<PriorityDataTableColumn<BusinessQuantDiagnosti
 
 export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeAction }) {
   const { data, error, loading, reload, scope } = useBusinessDataPipeline();
-  const [pathNotice, setPathNotice] = useState<string | null>(null);
-  const [openingPathKey, setOpeningPathKey] = useState<string | null>(null);
+  const storeAuthority = useMissionControlStoreContext();
+  const [artifactNotice, setArtifactNotice] = useState<string | null>(null);
+  const [openingArtifactKey, setOpeningArtifactKey] = useState<string | null>(null);
   const [ruleConfig, setRuleConfig] = useState(() => normalizeRuleConfig(null));
   const [aiStatus, setAiStatus] = useState(() => dashboardAiStatus(null));
   const [pendingRecommendations, setPendingRecommendations] = useState<RecommendationView[]>([]);
@@ -1437,44 +1439,46 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
     };
   }, [data?.collection.latestBatch?.id, scope.asin, scope.batchId, scope.dateFrom, scope.dateTo, scope.marketplaceCode, scope.storeName]);
 
-  async function openPath(targetPath: string, label = '打开路径') {
-    if (openingPathKey) return;
-    if (!targetPath) {
-      setPathNotice('打开路径不可用：当前没有可打开的文件或目录。');
+  async function openArtifact(artifactId: string, label = '打开工件') {
+    if (openingArtifactKey) return;
+    if (!artifactId) {
+      setArtifactNotice('打开操作不可用：当前没有已登记的文件或目录。');
       return;
     }
-    const pathKey = dashboardPathActionKey(label, targetPath);
-    setOpeningPathKey(pathKey);
-    setPathNotice(`${label}打开中...`);
+    const artifactKey = dashboardArtifactActionKey(label, artifactId);
+    setOpeningArtifactKey(artifactKey);
+    setArtifactNotice(`${label}打开中...`);
     try {
-      await (window as any).electronAPI?.openReportPath?.(targetPath);
-      setPathNotice(`已请求打开：${compactPath(targetPath)}`);
+      const storeContext = storeAuthority.authoritativeContext;
+      if (!storeContext) throw new Error('当前店铺权威不可用。');
+      await (window as any).electronAPI?.openReportArtifact?.(artifactId, { ...storeContext });
+      setArtifactNotice(`${label}已请求打开。`);
     } catch (caught) {
-      setPathNotice(`打开失败：${toUserFacingError(caught, '打开路径失败。')}`);
+      setArtifactNotice(`打开失败：${toUserFacingError(caught, '打开工件失败。')}`);
     } finally {
-      setOpeningPathKey(null);
+      setOpeningArtifactKey(null);
     }
   }
 
-  function renderOpenPathButton(input: {
+  function renderOpenArtifactButton(input: {
+    artifactId: string;
     className?: string;
     idleLabel: string;
     messageLabel?: string;
-    targetPath: string;
   }) {
     const messageLabel = input.messageLabel || input.idleLabel;
-    const view = dashboardOpenPathButtonView({
-      activePathKey: openingPathKey,
+    const view = dashboardOpenArtifactButtonView({
+      activeArtifactKey: openingArtifactKey,
+      artifactKey: dashboardArtifactActionKey(messageLabel, input.artifactId),
       baseClassName: input.className,
       idleLabel: input.idleLabel,
-      pathKey: dashboardPathActionKey(messageLabel, input.targetPath),
     });
     return (
       <button
         aria-busy={view.ariaBusy}
         className={view.className}
         disabled={view.disabled}
-        onClick={() => openPath(input.targetPath, messageLabel)}
+        onClick={() => openArtifact(input.artifactId, messageLabel)}
         type="button"
       >
         {view.showSpinner && <span aria-hidden="true" className="button-spinner" />}
@@ -1690,23 +1694,23 @@ export function DashboardPage({ nextSafeAction }: { nextSafeAction: NextSafeActi
               <div className="workspace-technical-heading">
                 <div>
                   <span>本地证据</span>
-                  <h3 id="today-evidence-path-title">最近文件路径</h3>
+                  <h3 id="today-evidence-path-title">最近证据工件</h3>
                 </div>
-                <StatusPill tone={collection?.evidencePaths.length ? 'ready' : 'warning'}>{collection?.evidencePaths.length || 0} 个入口</StatusPill>
+                <StatusPill tone={collection?.evidenceArtifacts.length ? 'ready' : 'warning'}>{collection?.evidenceArtifacts.length || 0} 个入口</StatusPill>
               </div>
-              {collection?.evidencePaths.length ? (
+              {collection?.evidenceArtifacts.length ? (
                 <div className="path-list">
-                  {collection.evidencePaths.map((item) => (
-                    <div className="path-row" key={`${item.kind}-${item.path}`}>
+                  {collection.evidenceArtifacts.map((item) => (
+                    <div className="path-row" key={`${item.kind}-${item.artifactId}`}>
                       <span>{item.label}</span>
-                      <code title={item.path}>{compactPath(item.path)}</code>
-                      {renderOpenPathButton({ className: 'secondary-button compact-button', idleLabel: '打开', messageLabel: `打开${item.label}`, targetPath: item.path })}
+                      <code title={item.displayName}>{item.displayName}</code>
+                      {renderOpenArtifactButton({ artifactId: item.artifactId, className: 'secondary-button compact-button', idleLabel: '打开', messageLabel: `打开${item.label}` })}
                     </div>
                   ))}
-                  {pathNotice && <p className={pathNotice.startsWith('打开失败') ? 'blocked-line' : 'muted-line'}>{pathNotice}</p>}
+                  {artifactNotice && <p className={artifactNotice.startsWith('打开失败') ? 'blocked-line' : 'muted-line'}>{artifactNotice}</p>}
                 </div>
               ) : (
-                <p className="muted-line">当前还没有可打开的真实报表或证据路径。</p>
+                <p className="muted-line">当前还没有可打开的真实报表或已登记证据工件。</p>
               )}
             </section>
           </div>
