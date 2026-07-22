@@ -150,6 +150,20 @@ button:disabled {
   font-size: 12px;
 }
 
+.session-line-warning {
+  border: 1px solid var(--tone-warning-border);
+  border-radius: 999px;
+  background: var(--tone-warning-bg);
+  color: var(--tone-warning-text);
+  padding: 2px 7px;
+  font-weight: 700;
+}
+
+.session-line-warning:focus-visible {
+  outline: 2px solid var(--state-warning);
+  outline-offset: 2px;
+}
+
 .app-status {
   border: 1px solid var(--aao-line-strong);
   border-radius: 999px;

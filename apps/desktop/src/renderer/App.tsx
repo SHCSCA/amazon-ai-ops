@@ -19,9 +19,15 @@ import { ReadbackPage } from './pages/readback-page';
 import { SchedulerPage } from './pages/scheduler-page';
 import { SettingsPage } from './pages/settings-page';
 import type { AppRoute, DeliveryReadinessView } from './types';
+import type {
+  BrowserLoginCredentialPersistence,
+  BrowserLoginRequest,
+  BrowserLoginResult,
+} from '../shared/login-contract';
 import {
   DEFAULT_WORKSPACE_INTENTS,
   navigationIntentsEqual,
+  navigationNeedsGlobalHandoff,
   normalizeNavigationTarget,
   resolveNavigationTarget,
   WORKSPACE_SUBVIEW_TABS,
@@ -48,9 +54,11 @@ import './styles/states-motion.css';
 
 interface LoginSessionInfo {
   erpSessionReused?: boolean;
+  sessionIdentityVerified?: boolean;
   adsEntryMode?: string;
   adsUrl?: string;
   adsTitle?: string;
+  credentialPersistence?: BrowserLoginCredentialPersistence;
 }
 
 interface AppState {
@@ -211,6 +219,16 @@ const loginStyles: Record<string, React.CSSProperties> = {
 
 export function describeLoginSession(session?: LoginSessionInfo | null): string {
   if (!session) return 'ERP/Ads 会话：待确认';
+  if (
+    session.erpSessionReused
+    && session.sessionIdentityVerified === false
+  ) {
+    const ads = session.adsTitle || session.adsUrl ? `Ads 已进入：${session.adsTitle || session.adsUrl}` : 'Ads 会话待确认';
+    const identity = session.credentialPersistence === 'not_saved_unverified_session'
+      ? '账号和本次密码均未核验'
+      : '保存账号未与当前 ERP 会话核验';
+    return `ERP 已复用登录态；${identity}，本机安全区未更改；${ads}`;
+  }
   const erp = session.erpSessionReused ? 'ERP 已复用登录态' : 'ERP 已完成登录';
   const ads = session.adsTitle || session.adsUrl ? `Ads 已进入：${session.adsTitle || session.adsUrl}` : 'Ads 会话待确认';
   return `${erp}；${ads}`;
@@ -218,6 +236,12 @@ export function describeLoginSession(session?: LoginSessionInfo | null): string 
 
 export function headerSessionStatusLabel(session?: LoginSessionInfo | null): string {
   if (!session) return '会话待确认';
+  if (
+    session.erpSessionReused
+    && session.sessionIdentityVerified === false
+  ) {
+    return 'ERP 会话复用 · 身份未核验';
+  }
   const erpReady = Boolean(session.erpSessionReused);
   const adsReady = Boolean(session.adsTitle || session.adsUrl || session.adsEntryMode);
   if (erpReady && adsReady) return 'ERP/Ads 已连接';
@@ -306,19 +330,6 @@ export function loginSecurityTagView(input: {
   }
   return { className: 'login-security-tag', label: '当前页面输入' };
 }
-
-export type BrowserLoginRequest =
-  | {
-      username: string;
-      credentialSource: 'saved';
-      rememberPassword: true;
-    }
-  | {
-      username: string;
-      credentialSource: 'typed';
-      password: string;
-      rememberPassword: boolean;
-    };
 
 export function savedLoginCredentialNotice(input: {
   credentialState?: SavedLoginCredentialState;
@@ -472,8 +483,8 @@ function LoginPage() {
         setLoginState(true, previewState.currentStore, previewState.loginSession || null);
         return;
       }
-      const session = await api.browserLogin(request);
-      setLoginState(true, request.username, session);
+      const session = await api.browserLogin(request) as BrowserLoginResult;
+      setLoginState(true, session.currentStore, session);
     } catch (caught) {
       setError(toUserFacingError(caught, '登录失败'));
     } finally {
@@ -745,8 +756,13 @@ export default function App() {
     if (!route) return;
     if (navigationIntentsEqual(intent, activeNavigation) && !pendingNavigationIntent) return;
     if (navigationTimerRef.current) window.clearTimeout(navigationTimerRef.current);
-    setPendingNavigationIntent(intent);
     setActiveNavigation(intent);
+    if (!navigationNeedsGlobalHandoff(activeNavigation, intent)) {
+      setPendingNavigationIntent(null);
+      navigationTimerRef.current = null;
+      return;
+    }
+    setPendingNavigationIntent(intent);
     navigationTimerRef.current = window.setTimeout(() => {
       setPendingNavigationIntent((current) => (navigationIntentsEqual(current, intent) ? null : current));
       navigationTimerRef.current = null;
@@ -860,8 +876,17 @@ export default function App() {
         </div>
         <ScopeBar />
         <div className="topbar-right">
-          <strong>{currentStore}</strong>
-          <span className="session-line" title={describeLoginSession(loginSession)}>{headerSessionStatusLabel(loginSession)}</span>
+          <strong>{currentStore || (loginSession?.sessionIdentityVerified === false ? '账号未核验' : '')}</strong>
+          <span
+            aria-label={describeLoginSession(loginSession)}
+            aria-live="polite"
+            className={`session-line${loginSession?.sessionIdentityVerified === false ? ' session-line-warning' : ''}`}
+            role="status"
+            tabIndex={loginSession?.sessionIdentityVerified === false ? 0 : undefined}
+            title={describeLoginSession(loginSession)}
+          >
+            {headerSessionStatusLabel(loginSession)}
+          </span>
           <button className="logout-button" onClick={handleLogout} type="button">退出登录</button>
         </div>
       </header>

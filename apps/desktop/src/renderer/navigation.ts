@@ -172,6 +172,13 @@ export function navigationIntentsEqual(left?: NavigationIntent | null, right?: N
   return Boolean(left && right && left.workspace === right.workspace && left.subview === right.subview);
 }
 
+export function navigationNeedsGlobalHandoff(
+  current?: NavigationIntent | null,
+  target?: NavigationIntent | null,
+): boolean {
+  return Boolean(current && target && current.workspace !== target.workspace);
+}
+
 export function workspaceForRoute(route?: AppRoute | null): PrimaryWorkspace | null {
   if (!route) return null;
   return navigationIntentForRoute(route).workspace;

@@ -1,6 +1,8 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import type { ActionRecommendation } from '@amazon-ai-ops/shared-types';
+import { getRecommendationApprovalBlockers } from '../main/recommendation-approval-policy';
 import * as PreviewModule from './dev-preview-api';
 import * as DeliveryPageModule from './pages/delivery-page';
 
@@ -15,6 +17,25 @@ const EXPECTED_SCENARIOS = [
 ] as const;
 
 type PreviewScenarioId = (typeof EXPECTED_SCENARIOS)[number];
+
+const PREVIEW_RECOMMENDATION_FILTER = {
+  dateFrom: '2026-05-21',
+  dateTo: '2026-06-23',
+  storeName: 'FT-US-US',
+  marketplaceCode: 'US',
+  asin: 'B0GTTJFQTM',
+  batchId: 'batch_preview_20260625',
+} as const;
+
+function getPreviewRecommendations(
+  api: any,
+  filter: Record<string, unknown> = {},
+): Promise<any[]> {
+  return api.getRecommendations({
+    ...PREVIEW_RECOMMENDATION_FILTER,
+    ...filter,
+  });
+}
 
 interface PreviewScenarioContract {
   id: PreviewScenarioId;
@@ -188,7 +209,7 @@ describe('preview scenario contract', () => {
         api.getOperationScope(),
         api.getBusinessUiDataPipeline(),
         api.getBusinessBatchOptions(),
-        api.getRecommendations(),
+        getPreviewRecommendations(api),
         api.getDeliveryEvidenceStatus(),
         api.getDeliveryReadiness(),
       ]);
@@ -321,18 +342,37 @@ describe('preview scenario contract', () => {
     const mixedApi = createApi('SHC001', 'mixed-recommendations');
     const approvedApi = createApi('SHC001', 'missing-readback-evidence');
 
-    expect(await mixedApi.getRecommendations({ status: 'pending' })).toHaveLength(1);
-    expect(await mixedApi.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
-    expect(await mixedApi.getRecommendations({ status: 'approved' })).toEqual([]);
-    expect(await approvedApi.getRecommendations({ status: 'pending' })).toEqual([]);
-    expect(await approvedApi.getRecommendations({ status: 'approved' })).toHaveLength(1);
-    expect(await approvedApi.getRecommendations({ status: 'rejected' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(mixedApi, { status: 'pending' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(mixedApi, { status: 'needs_review' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(mixedApi, { status: 'approved' })).toEqual([]);
+    expect(await getPreviewRecommendations(approvedApi, { status: 'pending' })).toEqual([]);
+    expect(await getPreviewRecommendations(approvedApi, { status: 'approved' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(approvedApi, { status: 'rejected' })).toHaveLength(1);
   });
 
-  it('exposes complete RecommendationView fixtures backed by nested report evidence', async () => {
+  it('requires the same scoped query contract as the production recommendation reader', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+
+    expect(await api.getRecommendations()).toEqual([]);
+    expect(await api.getRecommendations({
+      ...PREVIEW_RECOMMENDATION_FILTER,
+      batchId: 'forged-batch',
+    })).toEqual([]);
+    expect(await api.getRecommendations({
+      ...PREVIEW_RECOMMENDATION_FILTER,
+      asin: 'B0WRONGASIN',
+    })).toEqual([]);
+    expect(await api.getRecommendations({
+      ...PREVIEW_RECOMMENDATION_FILTER,
+      limit: 1,
+    })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'pending' })).toHaveLength(1);
+  });
+
+  it('exposes complete canonical ActionRecommendation fixtures backed by nested report evidence', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
     const [recommendations, pipeline] = await Promise.all([
-      api.getRecommendations(),
+      getPreviewRecommendations(api),
       api.getBusinessUiDataPipeline(),
     ]);
     const currentSourceFiles = new Set(
@@ -356,6 +396,11 @@ describe('preview scenario contract', () => {
       expect(Number.isInteger(recommendation.id) && recommendation.id > 0).toBe(true);
       expect(legalActionTypes.has(recommendation.actionType)).toBe(true);
       expect(recommendation).toMatchObject({
+        taskId: expect.any(String),
+        storeName: PREVIEW_RECOMMENDATION_FILTER.storeName,
+        marketplaceCode: PREVIEW_RECOMMENDATION_FILTER.marketplaceCode,
+        asin: PREVIEW_RECOMMENDATION_FILTER.asin,
+        msku: expect.any(String),
         entityName: expect.any(String),
         currentValue: expect.any(String),
         recommendedValue: expect.any(String),
@@ -365,6 +410,8 @@ describe('preview scenario contract', () => {
         cost: expect.any(Number),
         confidence: expect.any(Number),
         revision: expect.any(Number),
+        createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
         evidence: {
           batchId: expect.any(String),
           date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
@@ -397,9 +444,97 @@ describe('preview scenario contract', () => {
     }
   });
 
+  it('builds approved preview history through a valid binding, revision, and decision snapshot', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'missing-readback-evidence');
+    const [approved] = await getPreviewRecommendations(api, { status: 'approved' });
+
+    expect(approved).toMatchObject({
+      status: 'approved',
+      revision: expect.any(Number),
+      evidence: {
+        writableTarget: {
+          entityType: 'keyword',
+          entityId: expect.any(String),
+          identityProofPath: expect.any(String),
+        },
+        writableTargetBinding: {
+          schemaVersion: 1,
+          fromRevision: 0,
+          boundRevision: 1,
+        },
+        approvalDecision: {
+          decision: 'approved',
+          approvedBy: 'Preview Approver',
+          recommendationId: approved.id,
+          actionType: approved.actionType,
+          entityType: approved.entityType,
+          entityName: approved.entityName,
+          currentValue: approved.currentValue,
+          recommendedValue: approved.recommendedValue,
+          sourceBatchId: PREVIEW_RECOMMENDATION_FILTER.batchId,
+          scope: {
+            dateFrom: PREVIEW_RECOMMENDATION_FILTER.dateFrom,
+            dateTo: PREVIEW_RECOMMENDATION_FILTER.dateTo,
+            storeName: PREVIEW_RECOMMENDATION_FILTER.storeName,
+            marketplaceCode: PREVIEW_RECOMMENDATION_FILTER.marketplaceCode,
+            asin: PREVIEW_RECOMMENDATION_FILTER.asin,
+          },
+        },
+      },
+    });
+    expect(approved.revision).toBeGreaterThanOrEqual(2);
+
+    expect(getRecommendationApprovalBlockers(approved as ActionRecommendation, {
+      allowedSourceFiles: approved.evidence.sourceFiles,
+      sourceAuthority: {
+        reportType: approved.evidence.reportType,
+        entityName: approved.entityName,
+        campaignName: approved.evidence.campaignName,
+        adGroupName: approved.evidence.adGroupName,
+        metricDate: approved.evidence.date,
+        sourceFile: approved.evidence.sourceFile || approved.evidence.sourceFiles[0],
+        sourceRow: approved.evidence.sourceRow,
+      },
+    })).toEqual([]);
+  });
+
+  it('does not approve a resolved row while its action direction and AI decision still conflict', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
+    const [needsReview] = await getPreviewRecommendations(api, { status: 'needs_review' });
+
+    const result = await api.resolveRecommendationReview({
+      recommendationId: needsReview.id,
+      expectedRevision: needsReview.revision,
+      scope: PREVIEW_RECOMMENDATION_FILTER,
+      review: {
+        reviewedBy: 'Preview Reviewer',
+        rationale: '仅确认 Ads 对象身份，不覆盖动作方向与 AI/规则冲突。',
+        writableTarget: {
+          entityType: 'keyword',
+          entityId: 'amzn-keyword-preview-conflict',
+          sourceFile: 'D:/preview/reports/keyword.xlsx',
+          sourceRow: needsReview.evidence.sourceRow,
+          identitySource: 'ads_ui',
+          identityProofPath: 'D:/preview/evidence/conflict-keyword.png',
+          verificationNote: '已确认对象身份，但未改变建议内容。',
+        },
+      },
+    });
+
+    await expect(api.approveRecommendation({
+      id: needsReview.id,
+      expectedRevision: result.revision,
+      decision: { approvedBy: 'Preview Ops' },
+    })).rejects.toThrow(/降价|冲突|复核/);
+    expect((await getPreviewRecommendations(api, { status: 'pending' })).find(
+      (row) => row.id === needsReview.id,
+    )).toBeDefined();
+    expect(await getPreviewRecommendations(api, { status: 'approved' })).toEqual([]);
+  });
+
   it('isolates recommendation reads from caller mutation without weakening decision guards', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [pending, needsReview] = await api.getRecommendations();
+    const [pending, needsReview] = await getPreviewRecommendations(api);
     const pendingRevision = pending.revision;
     const reviewRevision = needsReview.revision;
     const pendingSourceFile = pending.evidence.sourceFiles[0];
@@ -422,8 +557,8 @@ describe('preview scenario contract', () => {
       decidedAt: '2026-07-14T00:00:00.000Z',
     };
 
-    const [freshPending] = await api.getRecommendations({ status: 'pending' });
-    const [freshReview] = await api.getRecommendations({ status: 'needs_review' });
+    const [freshPending] = await getPreviewRecommendations(api, { status: 'pending' });
+    const [freshReview] = await getPreviewRecommendations(api, { status: 'needs_review' });
     expect(freshPending).toMatchObject({
       id: pending.id,
       status: 'pending',
@@ -468,8 +603,8 @@ describe('preview scenario contract', () => {
       expectedRevision: reviewRevision,
       decision: { rejectedBy: 'Preview Reviewer', note: '证据冲突，暂不执行' },
     });
-    expect(await api.getRecommendations({ status: 'approved' })).toHaveLength(1);
-    expect(await api.getRecommendations({ status: 'rejected' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'approved' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'rejected' })).toHaveLength(1);
   });
 
   it('returns generation results as isolated snapshots of preview recommendation state', async () => {
@@ -493,15 +628,15 @@ describe('preview scenario contract', () => {
       revision: originalRevision,
       evidence: { sourceFiles: [originalSourceFile] },
     });
-    expect(await api.getRecommendations({ status: 'pending' })).toHaveLength(1);
-    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
+    expect(await getPreviewRecommendations(api, { status: 'pending' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'approved' })).toEqual([]);
   });
 
   it('persists an approved decision in preview memory with revision and decision evidence', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [pending] = await api.getRecommendations({ status: 'pending' });
+    const [pending] = await getPreviewRecommendations(api, { status: 'pending' });
     const bindingResult = await bindPreviewPendingTarget(api, pending);
-    const [boundPending] = await api.getRecommendations({ status: 'pending' });
+    const [boundPending] = await getPreviewRecommendations(api, { status: 'pending' });
 
     await api.approveRecommendation({
       id: boundPending.id,
@@ -509,8 +644,8 @@ describe('preview scenario contract', () => {
       decision: { approvedBy: 'Preview Ops', note: '同意本次调整' },
     });
 
-    expect(await api.getRecommendations({ status: 'pending' })).toEqual([]);
-    const [approved] = await api.getRecommendations({ status: 'approved' });
+    expect(await getPreviewRecommendations(api, { status: 'pending' })).toEqual([]);
+    const [approved] = await getPreviewRecommendations(api, { status: 'approved' });
     expect(approved).toMatchObject({
       id: pending.id,
       status: 'approved',
@@ -524,12 +659,12 @@ describe('preview scenario contract', () => {
         },
       },
     });
-    expect((await api.getRecommendations()).find((row: { id: number }) => row.id === pending.id)?.status).toBe('approved');
+    expect((await getPreviewRecommendations(api)).find((row: { id: number }) => row.id === pending.id)?.status).toBe('approved');
   });
 
   it('keeps ordinary pending recommendations unapproved until target binding is reloaded', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [pending] = await api.getRecommendations({ status: 'pending' });
+    const [pending] = await getPreviewRecommendations(api, { status: 'pending' });
 
     await expect(api.approveRecommendation({
       id: pending.id,
@@ -538,7 +673,7 @@ describe('preview scenario contract', () => {
     })).rejects.toThrow(/Ads|可写对象|核验/);
 
     const result = await bindPreviewPendingTarget(api, pending);
-    const [reloaded] = await api.getRecommendations({ status: 'pending' });
+    const [reloaded] = await getPreviewRecommendations(api, { status: 'pending' });
     expect(result).toMatchObject({
       ok: true,
       recommendationId: pending.id,
@@ -557,12 +692,12 @@ describe('preview scenario contract', () => {
         },
       },
     });
-    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
+    expect(await getPreviewRecommendations(api, { status: 'approved' })).toEqual([]);
   });
 
   it('persists a rejected review decision and its required operator reason in preview memory', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+    const [needsReview] = await getPreviewRecommendations(api, { status: 'needs_review' });
     const displayedRevision = needsReview.revision;
 
     await api.rejectRecommendation({
@@ -571,8 +706,8 @@ describe('preview scenario contract', () => {
       decision: { rejectedBy: 'Preview Reviewer', note: '证据冲突，暂不执行' },
     });
 
-    expect(await api.getRecommendations({ status: 'needs_review' })).toEqual([]);
-    const [rejected] = await api.getRecommendations({ status: 'rejected' });
+    expect(await getPreviewRecommendations(api, { status: 'needs_review' })).toEqual([]);
+    const [rejected] = await getPreviewRecommendations(api, { status: 'rejected' });
     expect(rejected).toMatchObject({
       id: needsReview.id,
       status: 'rejected',
@@ -590,7 +725,7 @@ describe('preview scenario contract', () => {
 
   it('resolves one controlled review back to pending without approving it', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+    const [needsReview] = await getPreviewRecommendations(api, { status: 'needs_review' });
 
     const result = await api.resolveRecommendationReview({
       recommendationId: needsReview.id,
@@ -626,8 +761,8 @@ describe('preview scenario contract', () => {
       revision: needsReview.revision + 1,
       resolvedBlockers: ['quant_review_required'],
     });
-    expect(await api.getRecommendations({ status: 'needs_review' })).toEqual([]);
-    expect((await api.getRecommendations({ status: 'pending' })).find(
+    expect(await getPreviewRecommendations(api, { status: 'needs_review' })).toEqual([]);
+    expect((await getPreviewRecommendations(api, { status: 'pending' })).find(
       (row: { id: number }) => row.id === needsReview.id,
     )).toMatchObject({
       status: 'pending',
@@ -643,12 +778,12 @@ describe('preview scenario contract', () => {
         },
       },
     });
-    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
+    expect(await getPreviewRecommendations(api, { status: 'approved' })).toEqual([]);
   });
 
   it('keeps preview review unresolved when the writable target source is outside the locked batch', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+    const [needsReview] = await getPreviewRecommendations(api, { status: 'needs_review' });
 
     await expect(api.resolveRecommendationReview({
       recommendationId: needsReview.id,
@@ -676,13 +811,13 @@ describe('preview scenario contract', () => {
       },
     })).rejects.toThrow(/锁定批次|可写对象/);
 
-    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
-    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
+    expect(await getPreviewRecommendations(api, { status: 'needs_review' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'approved' })).toEqual([]);
   });
 
   it('rejects a stale displayed revision without mutating preview state', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [pending] = await api.getRecommendations({ status: 'pending' });
+    const [pending] = await getPreviewRecommendations(api, { status: 'pending' });
 
     await expect(api.approveRecommendation({
       id: pending.id,
@@ -690,13 +825,13 @@ describe('preview scenario contract', () => {
       decision: { approvedBy: 'Preview Ops' },
     })).rejects.toThrow(/版本|冲突/);
 
-    expect(await api.getRecommendations({ status: 'pending' })).toHaveLength(1);
-    expect(await api.getRecommendations({ status: 'approved' })).toEqual([]);
+    expect(await getPreviewRecommendations(api, { status: 'pending' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'approved' })).toEqual([]);
   });
 
   it('requires a non-empty approval operator before changing preview state', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [pending] = await api.getRecommendations({ status: 'pending' });
+    const [pending] = await getPreviewRecommendations(api, { status: 'pending' });
     const bindingResult = await bindPreviewPendingTarget(api, pending);
 
     await expect(api.approveRecommendation({
@@ -705,12 +840,12 @@ describe('preview scenario contract', () => {
       decision: { approvedBy: '   ' },
     })).rejects.toThrow(/审批人|处理人/);
 
-    expect(await api.getRecommendations({ status: 'pending' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'pending' })).toHaveLength(1);
   });
 
   it('requires a non-empty rejection operator before changing preview state', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+    const [needsReview] = await getPreviewRecommendations(api, { status: 'needs_review' });
 
     await expect(api.rejectRecommendation({
       id: needsReview.id,
@@ -718,12 +853,12 @@ describe('preview scenario contract', () => {
       decision: { rejectedBy: '', note: '证据不足' },
     })).rejects.toThrow(/处理人|审批人/);
 
-    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'needs_review' })).toHaveLength(1);
   });
 
   it('requires a non-empty rejection reason before changing preview state', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+    const [needsReview] = await getPreviewRecommendations(api, { status: 'needs_review' });
 
     await expect(api.rejectRecommendation({
       id: needsReview.id,
@@ -731,12 +866,12 @@ describe('preview scenario contract', () => {
       decision: { rejectedBy: 'Preview Reviewer', note: '  ' },
     })).rejects.toThrow(/拒绝原因|原因/);
 
-    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'needs_review' })).toHaveLength(1);
   });
 
   it('rejects a stale rejection revision without mutating preview state', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+    const [needsReview] = await getPreviewRecommendations(api, { status: 'needs_review' });
 
     await expect(api.rejectRecommendation({
       id: needsReview.id,
@@ -744,13 +879,13 @@ describe('preview scenario contract', () => {
       decision: { rejectedBy: 'Preview Reviewer', note: '证据不足' },
     })).rejects.toThrow(/版本|冲突/);
 
-    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
-    expect(await api.getRecommendations({ status: 'rejected' })).toEqual([]);
+    expect(await getPreviewRecommendations(api, { status: 'needs_review' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'rejected' })).toEqual([]);
   });
 
   it('does not allow a needs-review recommendation to bypass review through approval', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [needsReview] = await api.getRecommendations({ status: 'needs_review' });
+    const [needsReview] = await getPreviewRecommendations(api, { status: 'needs_review' });
 
     await expect(api.approveRecommendation({
       id: needsReview.id,
@@ -758,12 +893,12 @@ describe('preview scenario contract', () => {
       decision: { approvedBy: 'Preview Ops' },
     })).rejects.toThrow(/状态|不允许|复核/);
 
-    expect(await api.getRecommendations({ status: 'needs_review' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'needs_review' })).toHaveLength(1);
   });
 
   it('keeps approved-scenario decisions as immutable approved and rejected history', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'missing-readback-evidence');
-    const history = await api.getRecommendations();
+    const history = await getPreviewRecommendations(api);
     const initial = history.map((row: any) => ({ id: row.id, status: row.status, revision: row.revision }));
 
     expect(history.map((row: any) => ({
@@ -788,7 +923,7 @@ describe('preview scenario contract', () => {
       })).rejects.toThrow(/状态|不允许/);
     }
 
-    expect((await api.getRecommendations()).map((row: any) => ({
+    expect((await getPreviewRecommendations(api)).map((row: any) => ({
       id: row.id,
       status: row.status,
       revision: row.revision,
@@ -797,7 +932,7 @@ describe('preview scenario contract', () => {
 
   it('allows a pending recommendation to be rejected without first moving it to review', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [pending] = await api.getRecommendations({ status: 'pending' });
+    const [pending] = await getPreviewRecommendations(api, { status: 'pending' });
 
     await api.rejectRecommendation({
       id: pending.id,
@@ -805,8 +940,8 @@ describe('preview scenario contract', () => {
       decision: { rejectedBy: 'Preview Reviewer', note: '运营决定不采用' },
     });
 
-    expect(await api.getRecommendations({ status: 'pending' })).toEqual([]);
-    expect(await api.getRecommendations({ status: 'rejected' })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status: 'pending' })).toEqual([]);
+    expect(await getPreviewRecommendations(api, { status: 'rejected' })).toHaveLength(1);
   });
 
   it.each([
@@ -820,7 +955,7 @@ describe('preview scenario contract', () => {
     ['rejectRecommendation', 'needs_review', '0'],
   ] as const)('rejects invalid displayed revision %s / %s / %s', async (method, status, expectedRevision) => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'mixed-recommendations');
-    const [recommendation] = await api.getRecommendations({ status });
+    const [recommendation] = await getPreviewRecommendations(api, { status });
     const decision = method === 'approveRecommendation'
       ? { approvedBy: 'Preview Ops' }
       : { rejectedBy: 'Preview Reviewer', note: '证据不足' };
@@ -831,7 +966,7 @@ describe('preview scenario contract', () => {
       decision,
     })).rejects.toThrow(/版本|冲突/);
 
-    expect(await api.getRecommendations({ status })).toHaveLength(1);
+    expect(await getPreviewRecommendations(api, { status })).toHaveLength(1);
   });
 
   it('keeps delivery-ready preview in memory and exposes no evidence-writing API', () => {
@@ -873,7 +1008,7 @@ describe('browser preview bootstrap integration', () => {
       enabled: true,
       scenarioId: 'mixed-recommendations',
     });
-    expect(await target.electronAPI.getRecommendations()).toHaveLength(2);
+    expect(await getPreviewRecommendations(target.electronAPI)).toHaveLength(2);
   });
 
   it('preserves a pre-injected Electron API instead of replacing smoke or preload behavior', () => {

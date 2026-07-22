@@ -22,6 +22,13 @@ describe('Electron external-distribution security wiring', () => {
     expect(source).not.toContain('shell.openExternal(url);');
   });
 
+  it('wires the deny-all external-open policy without exposing a shell opener', () => {
+    expect(source).toContain('EXTERNAL_OPEN_POLICY_MARKER');
+    expect(source).toContain('externalOpenPolicy: EXTERNAL_OPEN_POLICY_MARKER');
+    expect(source).not.toContain('shell.openExternal');
+    expect(source).not.toContain('openExternal: (url) =>');
+  });
+
   it('exposes saved-credential status only and resolves saved passwords inside Main', () => {
     expect(source).toContain("ipcMain.handle('browser:get-saved-credential-status'");
     expect(source).toContain('resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username)');
@@ -35,5 +42,21 @@ describe('Electron external-distribution security wiring', () => {
     expect(source).toContain("if (!value.startsWith('safe:'))");
     expect(source).toContain("const payload = value.slice(5)");
     expect(source).not.toContain("value.startsWith('safe:') ? value.slice(5) : value");
+  });
+
+  it('applies the session credential policy before persisting or trusting a login identity', () => {
+    expect(source).toContain('decideLoginSessionCredentialPolicy({');
+    expect(source).toContain('credentialAction === \'save\' || credentialAction === \'clear\'');
+    expect(source).toContain("state.currentStore = credentialPolicy.trustRequestedUsername ? username : ''");
+    expect(source).toContain('credentialPersistence: credentialPolicy.credentialPersistence');
+    expect(source).toContain('sessionIdentityVerified: credentialPolicy.sessionIdentityVerified');
+  });
+
+  it('keeps the non-secret login session across renderer refresh and clears it on safe exits', () => {
+    expect(source).toContain('loginSession: BrowserLoginResult | null;');
+    expect(source).toContain('state.loginSession = loginResult;');
+    expect(source).toContain('loginSession: state.loginSession,');
+    expect(source).toContain('function clearBrowserLoginState(): void');
+    expect(source.match(/clearBrowserLoginState\(\);/g)?.length).toBeGreaterThanOrEqual(3);
   });
 });

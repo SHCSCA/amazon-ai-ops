@@ -36,6 +36,7 @@ import type {
   ResolveRecommendationReviewRequest,
   ResolveRecommendationReviewResult,
 } from '@amazon-ai-ops/shared-types';
+import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
 import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithinRealDirectory, isSafeManifestPath, readLingxingManifestForAudit, safeFileSegment } from './acceptance-audit-export';
 import { cleanupAppResources, createBeforeQuitCoordinator } from './app-shutdown';
 import { summarizeBusinessReportCoverage } from './business-report-coverage';
@@ -93,7 +94,9 @@ import {
   type LoginCredentialCipher,
   type SavedLoginCredentialStatus,
 } from './login-credentials';
+import { decideLoginSessionCredentialPolicy } from './login-session-credential-policy';
 import {
+  EXTERNAL_OPEN_POLICY_MARKER,
   createMainWindowNavigationHandler,
   createSecureWindowOpenHandler,
   type NavigationSecurityReport,
@@ -147,6 +150,7 @@ interface AppState {
   ruleConfig: RuleConfig;
   isLoggedIn: boolean;
   currentStore: string;
+  loginSession: BrowserLoginResult | null;
 }
 
 const state: AppState = {
@@ -165,6 +169,7 @@ const state: AppState = {
   ruleConfig: DEFAULT_RULE_CONFIG,
   isLoggedIn: false,
   currentStore: '',
+  loginSession: null,
 };
 
 // ============================================================================
@@ -319,7 +324,7 @@ function createWindow(): void {
     report: reportNavigationSecurityBoundary,
   }));
   mainWindow.webContents.setWindowOpenHandler(createSecureWindowOpenHandler({
-    openExternal: (url) => shell.openExternal(url),
+    externalOpenPolicy: EXTERNAL_OPEN_POLICY_MARKER,
     report: reportNavigationSecurityBoundary,
   }));
 
@@ -436,28 +441,6 @@ async function initApp(): Promise<void> {
 // Browser / Session
 // ============================================================================
 
-type BrowserLoginResult = {
-  ok: true;
-  erpSessionReused: boolean;
-  adsEntryMode: 'erp_ads_entry';
-  adsUrl: string;
-  adsTitle: string;
-  credentialPersistence: 'saved' | 'cleared' | 'main_managed';
-};
-
-type BrowserLoginRequest =
-  | {
-      username: string;
-      credentialSource: 'saved';
-      rememberPassword: true;
-    }
-  | {
-      username: string;
-      credentialSource: 'typed';
-      password: string;
-      rememberPassword: boolean;
-    };
-
 type AdsSessionResult = {
   entryMode: 'erp_ads_entry';
   adsUrl: string;
@@ -570,9 +553,22 @@ function adsSessionResultFromPageState(pageState: { url: string; title?: string 
   };
 }
 
+function clearBrowserLoginState(): void {
+  state.isLoggedIn = false;
+  state.currentStore = '';
+  state.loginSession = null;
+}
+
 async function handleBrowserLogin(request: BrowserLoginRequest): Promise<BrowserLoginResult> {
   const username = request.username;
   const rememberPassword = request.rememberPassword;
+
+  if (state.browserController) {
+    await state.browserController.close().catch(() => undefined);
+    state.browserController = null;
+  }
+  clearBrowserLoginState();
+
   const password = request.credentialSource === 'saved'
     ? (() => {
         if (!state.settingsRepo) {
@@ -581,12 +577,6 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
         return resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username);
       })()
     : request.password;
-
-  if (state.browserController) {
-    await state.browserController.close().catch(() => undefined);
-    state.browserController = null;
-    state.isLoggedIn = false;
-  }
 
   const navigationPlan = getLingxingSessionNavigationPlan();
   const controller = new BrowserController({
@@ -628,11 +618,20 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
 
     const adsSession = await ensureLingxingAdsSession(controller);
 
-    state.isLoggedIn = true;
-    state.currentStore = username;
+    const credentialPolicy = decideLoginSessionCredentialPolicy({
+      credentialSource: request.credentialSource,
+      erpSessionReused,
+      rememberPassword,
+    });
 
-    let credentialPersistence: BrowserLoginResult['credentialPersistence'] = 'main_managed';
-    if (request.credentialSource === 'typed') {
+    state.isLoggedIn = true;
+    state.currentStore = credentialPolicy.trustRequestedUsername ? username : '';
+
+    const { credentialAction } = credentialPolicy;
+    if (
+      request.credentialSource === 'typed'
+      && (credentialAction === 'save' || credentialAction === 'clear')
+    ) {
       if (!state.settingsRepo) {
         throw new Error('本机凭证存储尚未就绪，本次登录未完成。');
       }
@@ -642,29 +641,38 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
           { username, password, rememberPassword },
           electronLoginCredentialCipher,
         );
-        credentialPersistence = rememberPassword ? 'saved' : 'cleared';
       } catch {
         throw new Error(rememberPassword
           ? '登录已确认，但密码未能安全保存；本次会话已关闭，请取消“记住密码”后重试。'
           : '登录已确认，但旧凭证未能安全清除；本次会话已关闭，请重试。');
       }
     }
+    if (credentialPolicy.credentialPersistence === 'not_saved_unverified_session') {
+      console.warn('[Security] typed login reused an unverified ERP session', JSON.stringify({
+        credentialPersistence: credentialPolicy.credentialPersistence,
+        erpSessionReused,
+        sessionIdentityVerified: credentialPolicy.sessionIdentityVerified,
+      }));
+    }
 
-    return {
+    const loginResult: BrowserLoginResult = {
       ok: true,
+      currentStore: state.currentStore,
       erpSessionReused,
+      sessionIdentityVerified: credentialPolicy.sessionIdentityVerified,
       adsEntryMode: adsSession.entryMode,
       adsUrl: adsSession.adsUrl,
       adsTitle: adsSession.adsTitle,
-      credentialPersistence,
+      credentialPersistence: credentialPolicy.credentialPersistence,
     };
+    state.loginSession = loginResult;
+    return loginResult;
   } catch (error) {
     await controller.close().catch(() => undefined);
     if (state.browserController === controller) {
       state.browserController = null;
     }
-    state.isLoggedIn = false;
-    state.currentStore = '';
+    clearBrowserLoginState();
     throw error;
   }
 }
@@ -725,12 +733,14 @@ async function ensureLingxingAdsSession(controller: BrowserController): Promise<
 }
 
 async function handleBrowserLogout(): Promise<void> {
-  if (state.browserController) {
-    await state.browserController.close();
+  try {
+    if (state.browserController) {
+      await state.browserController.close();
+    }
+  } finally {
     state.browserController = null;
+    clearBrowserLoginState();
   }
-  state.isLoggedIn = false;
-  state.currentStore = '';
 }
 
 async function handleScreenshot(label: 'before' | 'after' | 'error'): Promise<string> {
@@ -7910,6 +7920,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('app:get-state', () => ({
     isLoggedIn: state.isLoggedIn,
     currentStore: state.currentStore,
+    loginSession: state.loginSession,
   }));
 
   // Settings

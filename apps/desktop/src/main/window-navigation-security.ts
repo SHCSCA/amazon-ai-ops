@@ -2,6 +2,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 export const NAVIGATION_SECURITY_CONTRACT = 'amazon-ai-ops:navigation-security/v1' as const;
+export const EXTERNAL_OPEN_POLICY_MARKER = 'amazon-ai-ops:external-open-policy/deny-all-v1' as const;
 
 export type TrustedRendererTarget =
   | { kind: 'development'; rendererUrl: string }
@@ -20,9 +21,8 @@ export type NavigationSecurityReason =
   | 'invalid-trusted-renderer'
   | 'invalid-packaged-renderer'
   | 'invalid-url'
-  | 'allowed-external-url'
   | 'disallowed-external-url'
-  | 'external-open-failed';
+  | 'external-open-intent-not-approved';
 
 export interface NavigationSecurityDecision {
   contract: typeof NAVIGATION_SECURITY_CONTRACT;
@@ -32,7 +32,7 @@ export interface NavigationSecurityDecision {
 }
 
 export type NavigationSecuritySurface = 'will-navigate' | 'will-redirect' | 'window-open';
-export type NavigationSecurityOutcome = 'blocked' | 'external-open-started' | 'external-open-failed';
+export type NavigationSecurityOutcome = 'blocked';
 
 export interface NavigationSecurityReport {
   contract: typeof NAVIGATION_SECURITY_CONTRACT;
@@ -51,8 +51,6 @@ export interface MainWindowNavigationEvent {
 export interface WindowOpenDetails {
   url: string;
 }
-
-export type ExternalUrlOpener = (url: string) => Promise<void> | void;
 
 function safeTarget(url: URL): SafeNavigationTarget {
   return {
@@ -251,62 +249,31 @@ export function evaluateWindowOpen(rawUrl: string): NavigationSecurityDecision {
       safeTarget: null,
     };
   }
-  const allowed = ['http:', 'https:'].includes(candidate.protocol)
+  const validExternalUrl = ['http:', 'https:'].includes(candidate.protocol)
     && Boolean(candidate.hostname)
     && candidate.username === ''
     && candidate.password === '';
   return {
     contract: NAVIGATION_SECURITY_CONTRACT,
-    allowed,
-    reason: allowed ? 'allowed-external-url' : 'disallowed-external-url',
+    allowed: false,
+    reason: validExternalUrl ? 'external-open-intent-not-approved' : 'disallowed-external-url',
     safeTarget: safeTarget(candidate),
   };
 }
 
 export function createSecureWindowOpenHandler(options: {
-  openExternal: ExternalUrlOpener;
+  externalOpenPolicy: typeof EXTERNAL_OPEN_POLICY_MARKER;
   report?: NavigationSecurityReporter;
 }): (details: WindowOpenDetails) => { action: 'deny' } {
   return (details) => {
     const decision = evaluateWindowOpen(details.url);
-    if (!decision.allowed) {
-      safelyReport(options.report, {
-        contract: NAVIGATION_SECURITY_CONTRACT,
-        surface: 'window-open',
-        outcome: 'blocked',
-        reason: decision.reason,
-        safeTarget: decision.safeTarget,
-      });
-      return { action: 'deny' };
-    }
-
     safelyReport(options.report, {
       contract: NAVIGATION_SECURITY_CONTRACT,
       surface: 'window-open',
-      outcome: 'external-open-started',
+      outcome: 'blocked',
       reason: decision.reason,
       safeTarget: decision.safeTarget,
     });
-    const normalizedUrl = new URL(details.url).toString();
-    try {
-      void Promise.resolve(options.openExternal(normalizedUrl)).catch(() => {
-        safelyReport(options.report, {
-          contract: NAVIGATION_SECURITY_CONTRACT,
-          surface: 'window-open',
-          outcome: 'external-open-failed',
-          reason: 'external-open-failed',
-          safeTarget: decision.safeTarget,
-        });
-      });
-    } catch {
-      safelyReport(options.report, {
-        contract: NAVIGATION_SECURITY_CONTRACT,
-        surface: 'window-open',
-        outcome: 'external-open-failed',
-        reason: 'external-open-failed',
-        safeTarget: decision.safeTarget,
-      });
-    }
     return { action: 'deny' };
   };
 }

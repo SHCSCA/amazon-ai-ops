@@ -5,6 +5,7 @@ import {
   VISIBLE_WORKSPACES,
   WORKSPACE_SUBVIEW_TABS,
   navigationIntentForRoute,
+  navigationNeedsGlobalHandoff,
   normalizeNavigationTarget,
   resolveNavigationTarget,
 } from './navigation';
@@ -44,7 +45,7 @@ describe('legacy route navigation compatibility', () => {
     }
   });
 
-  it('preserves decided as a first-class canonical subview while using the approval page as its temporary renderer', () => {
+  it('preserves decided as a first-class canonical subview while keeping the legacy approval route alias', () => {
     const decided = { workspace: 'decisions', subview: 'decided' } as const;
 
     expect(normalizeNavigationTarget(decided)).toEqual(decided);
@@ -152,5 +153,17 @@ describe('visible workspace navigation', () => {
   it('keeps the legacy mapping exhaustive at the AppRoute type boundary', () => {
     const legacyRoutes = expectedMappings.map(([route]) => route) satisfies AppRoute[];
     expect(legacyRoutes).toHaveLength(16);
+  });
+
+  it('reserves the global route handoff for cross-workspace navigation', () => {
+    expect(navigationNeedsGlobalHandoff(
+      { workspace: 'decisions', subview: 'recommendations' },
+      { workspace: 'decisions', subview: 'decided' },
+    )).toBe(false);
+    expect(navigationNeedsGlobalHandoff(
+      { workspace: 'decisions', subview: 'decided' },
+      { workspace: 'readback', subview: 'evidence' },
+    )).toBe(true);
+    expect(navigationNeedsGlobalHandoff(null, { workspace: 'today', subview: 'overview' })).toBe(false);
   });
 });

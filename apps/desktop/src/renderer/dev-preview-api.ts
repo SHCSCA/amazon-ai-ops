@@ -1,4 +1,5 @@
 import type {
+  ActionRecommendation,
   BindRecommendationWritableTargetRequest,
   BindRecommendationWritableTargetResult,
   RecommendationReviewResolution,
@@ -7,7 +8,27 @@ import type {
   WritableAdTargetBinding,
   WritableAdTargetEvidence,
 } from '@amazon-ai-ops/shared-types';
+import {
+  applyRecommendationDecision,
+  assertRecommendationDecisionRevision,
+  type RecommendationDecisionInput,
+  type RecommendationDecisionStatus,
+} from '@amazon-ai-ops/rules-engine';
 import type { BusinessQuantDiagnostic, BusinessQuantTimeline, OperationScope, RecommendationView } from './types';
+
+type PreviewRecommendation = ActionRecommendation & RecommendationView;
+
+interface PreviewRecommendationFilter {
+  date?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  storeName?: string;
+  marketplaceCode?: string;
+  asin?: string;
+  batchId?: string;
+  status?: string;
+  limit?: number;
+}
 
 export const PREVIEW_SCENARIO_IDS = [
   'missing-scope',
@@ -588,6 +609,172 @@ function clonePreviewSnapshot<T>(value: T): T {
   return value;
 }
 
+function normalizedPreviewText(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+function normalizedPreviewPath(value: unknown): string {
+  return normalizedPreviewText(value).replace(/\\/g, '/').toLowerCase();
+}
+
+function samePreviewWritableTarget(
+  left: WritableAdTargetEvidence | undefined,
+  right: WritableAdTargetEvidence | undefined,
+): boolean {
+  if (!left || !right) return false;
+  return left.entityType === right.entityType
+    && normalizedPreviewText(left.entityId).toLowerCase() === normalizedPreviewText(right.entityId).toLowerCase()
+    && normalizedPreviewText(left.entityName).toLowerCase() === normalizedPreviewText(right.entityName).toLowerCase()
+    && normalizedPreviewText(left.campaignName).toLowerCase() === normalizedPreviewText(right.campaignName).toLowerCase()
+    && normalizedPreviewText(left.adGroupName).toLowerCase() === normalizedPreviewText(right.adGroupName).toLowerCase()
+    && normalizedPreviewText(left.metricDate) === normalizedPreviewText(right.metricDate)
+    && normalizedPreviewPath(left.sourceFile) === normalizedPreviewPath(right.sourceFile)
+    && Number(left.sourceRow) === Number(right.sourceRow)
+    && left.identitySource === right.identitySource
+    && normalizedPreviewText(left.verifiedBy) === normalizedPreviewText(right.verifiedBy)
+    && normalizedPreviewText(left.verifiedAt) === normalizedPreviewText(right.verifiedAt)
+    && normalizedPreviewText(left.verificationNote) === normalizedPreviewText(right.verificationNote)
+    && normalizedPreviewPath(left.identityProofPath) === normalizedPreviewPath(right.identityProofPath);
+}
+
+function previewWritableTargetOwnershipBlockers(recommendation: PreviewRecommendation): string[] {
+  const writableTarget = recommendation.evidence?.writableTarget;
+  if (!writableTarget) return [];
+
+  const blockers: string[] = [];
+  const reportType = normalizedPreviewText(recommendation.evidence?.reportType).toLowerCase();
+  if (!['keyword', 'auto_targeting', 'product_targeting'].includes(reportType)) {
+    blockers.push(`当前建议来源报表类型 ${reportType || 'unknown'} 不能唯一映射到 Ads 可写对象`);
+  } else if (writableTarget.entityType !== reportType) {
+    blockers.push('核验到的 Ads 对象类型与当前建议来源不一致');
+  }
+
+  const expectedName = normalizedPreviewText(
+    recommendation.evidence?.searchTerm
+      || recommendation.evidence?.targeting
+      || recommendation.entityName,
+  ).toLowerCase();
+  if (normalizedPreviewText(writableTarget.entityName).toLowerCase() !== expectedName) {
+    blockers.push('核验到的 Ads 对象名称与当前建议对象不一致');
+  }
+  if (
+    normalizedPreviewText(writableTarget.campaignName).toLowerCase()
+      !== normalizedPreviewText(recommendation.evidence?.campaignName).toLowerCase()
+    || normalizedPreviewText(writableTarget.adGroupName).toLowerCase()
+      !== normalizedPreviewText(recommendation.evidence?.adGroupName).toLowerCase()
+  ) {
+    blockers.push('核验到的 Ads 对象不属于当前建议的 campaign / ad group');
+  }
+  if (
+    !recommendation.evidence?.sourceFiles?.some(
+      (sourceFile) => normalizedPreviewPath(sourceFile) === normalizedPreviewPath(writableTarget.sourceFile),
+    )
+    || Number(writableTarget.sourceRow) !== Number(recommendation.evidence?.sourceRow)
+  ) {
+    blockers.push('核验到的 Ads 对象来源行与当前建议来源权威不一致');
+  }
+  if (normalizedPreviewText(writableTarget.metricDate) !== normalizedPreviewText(recommendation.evidence?.date)) {
+    blockers.push('核验到的 Ads 对象指标日期与当前建议不一致');
+  }
+
+  const binding = recommendation.evidence?.writableTargetBinding;
+  const resolution = recommendation.evidence?.reviewResolution;
+  const currentBinding = Boolean(binding)
+    && binding?.schemaVersion === 1
+    && binding.fromRevision + 1 === binding.boundRevision
+    && binding.boundRevision === recommendation.revision
+    && samePreviewWritableTarget(binding.writableTarget, writableTarget);
+  const currentResolution = Boolean(resolution)
+    && resolution?.schemaVersion === 1
+    && resolution.fromRevision + 1 === resolution.resolvedRevision
+    && resolution.resolvedRevision === recommendation.revision
+    && samePreviewWritableTarget(resolution.writableTarget, writableTarget);
+  if (!currentBinding && !currentResolution) {
+    blockers.push('缺少当前建议版本对应的 Ads 对象绑定或复核审计');
+  }
+
+  return blockers;
+}
+
+function previewDecisionSnapshot(
+  recommendation: PreviewRecommendation,
+  targetStatus: RecommendationDecisionStatus,
+  decision: RecommendationDecisionInput,
+  decidedAt: string,
+): RecommendationDecisionInput {
+  return {
+    ...decision,
+    decision: targetStatus,
+    approvedBy: targetStatus === 'approved'
+      ? normalizedPreviewText(decision.approvedBy)
+      : undefined,
+    rejectedBy: targetStatus === 'rejected'
+      ? normalizedPreviewText(decision.rejectedBy)
+      : undefined,
+    decidedAt,
+    note: normalizedPreviewText(decision.note),
+    batchId: recommendation.evidence?.batchId,
+    recommendationId: recommendation.id,
+    actionType: recommendation.actionType,
+    portfolioName: recommendation.evidence?.portfolioName,
+    campaignName: recommendation.evidence?.campaignName,
+    adGroupName: recommendation.evidence?.adGroupName,
+    asin: recommendation.asin,
+    entityType: recommendation.entityType,
+    entityName: recommendation.entityName,
+    currentValue: recommendation.currentValue,
+    recommendedValue: recommendation.recommendedValue,
+    sourceBatchId: recommendation.evidence?.batchId,
+    metricDate: recommendation.evidence?.date,
+    sourceRow: recommendation.evidence?.sourceRow,
+    sourceFiles: [...(recommendation.evidence?.sourceFiles || [])],
+    explanationSource: recommendation.evidence?.explanationSource,
+    aiModel: recommendation.evidence?.aiModel,
+    aiStrategySource: recommendation.evidence?.aiStrategySource,
+    aiLifecycleStage: recommendation.evidence?.aiLifecycleStage,
+    aiStrategySummary: recommendation.evidence?.aiStrategySummary,
+    decisionAgreement: recommendation.evidence?.decisionAgreement,
+    decisionSource: recommendation.evidence?.decisionSource,
+    decisionReasons: [...(recommendation.evidence?.decisionReasons || [])],
+    decisionRiskWarnings: [...(recommendation.evidence?.decisionRiskWarnings || [])],
+    quantReasons: [...(recommendation.evidence?.quantReasons || [])],
+    quantThresholds: recommendation.evidence?.quantThresholds,
+    scope: {
+      dateFrom: previewScope.dateFrom,
+      dateTo: previewScope.dateTo,
+      storeName: previewScope.storeName,
+      marketplaceCode: previewScope.marketplaceCode,
+      asin: recommendation.asin,
+    },
+  };
+}
+
+function applyPreviewRecommendationDecision(
+  recommendation: PreviewRecommendation,
+  targetStatus: RecommendationDecisionStatus,
+  decision: RecommendationDecisionInput,
+  decidedAt = new Date().toISOString(),
+): void {
+  applyRecommendationDecision({
+    recommendation,
+    targetStatus,
+    decision: previewDecisionSnapshot(recommendation, targetStatus, decision, decidedAt),
+    approvalOptions: {
+      allowedSourceFiles: previewReportOptions.map((report) => `D:/preview/reports/${report.type}.xlsx`),
+      writableTargetOwnershipBlockers: previewWritableTargetOwnershipBlockers(recommendation),
+    },
+    persist: (status, evidencePatch) => {
+      recommendation.status = status;
+      recommendation.revision += 1;
+      recommendation.updatedAt = decidedAt;
+      recommendation.evidence = {
+        ...recommendation.evidence,
+        ...evidencePatch,
+      } as PreviewRecommendation['evidence'];
+    },
+  });
+}
+
 function previewReadinessGates(scenario: PreviewScenarioContract) {
   const recommendationsReady = scenario.recommendationState === 'mixed'
     || scenario.recommendationState === 'approved';
@@ -621,9 +808,14 @@ export function createBrowserPreviewElectronApi(
   const recommendationSource = ['mixed', 'approved'].includes(scenario.recommendationState)
     ? previewDiagnostics
     : [];
-  const recommendations: RecommendationView[] = recommendationSource.map((diagnostic, index) => ({
+  const recommendations: PreviewRecommendation[] = recommendationSource.map((diagnostic, index) => ({
     id: 10_001 + index,
-    entityType: diagnostic.objectType,
+    taskId: `preview-recommendation-${index + 1}`,
+    storeName: previewScope.storeName,
+    marketplaceCode: previewScope.marketplaceCode,
+    asin: diagnostic.asin,
+    msku: 'D6-M',
+    entityType: diagnostic.objectType as ActionRecommendation['entityType'],
     entityId: `${diagnostic.campaignName}_${diagnostic.adGroupName}_${diagnostic.objectName}`,
     entityName: diagnostic.objectName,
     actionType: 'lower_bid',
@@ -633,12 +825,12 @@ export function createBrowserPreviewElectronApi(
     acos: diagnostic.acos,
     clicks: diagnostic.clicks,
     cost: diagnostic.spend,
-    riskLevel: index === 0 ? 'low' : diagnostic.severity,
-    status: scenario.recommendationState === 'approved'
-      ? (index === 0 ? 'approved' : 'rejected')
-      : (index === 0 ? 'pending' : 'needs_review'),
+    riskLevel: 'APPROVAL',
+    status: index === 0 ? 'pending' : 'needs_review',
     revision: 0,
     confidence: index === 0 ? 0.86 : 0.72,
+    createdAt: '2026-06-24T09:00:00.000Z',
+    updatedAt: '2026-06-24T09:00:00.000Z',
     evidence: {
       impressions: index === 0 ? 6_840 : 3_920,
       clicks: diagnostic.clicks,
@@ -656,6 +848,10 @@ export function createBrowserPreviewElectronApi(
       adGroupName: diagnostic.adGroupName,
       targeting: diagnostic.objectName,
       matchType: diagnostic.objectType,
+      reportType: index === 0 ? 'keyword' : 'user_search_term',
+      sourceFile: index === 0
+        ? 'D:/preview/reports/keyword.xlsx'
+        : 'D:/preview/reports/user_search_term.xlsx',
       sourceFiles: [
         index === 0
           ? 'D:/preview/reports/keyword.xlsx'
@@ -745,33 +941,64 @@ export function createBrowserPreviewElectronApi(
       quantReasons: [diagnostic.diagnosis],
       quantThresholds: { targetAcos: 0.35 },
       quantReviewRequired: index !== 0,
-      ...(scenario.recommendationState === 'approved' ? {
-        approvalDecision: {
-          decision: index === 0 ? 'approved' as const : 'rejected' as const,
-          approvedBy: index === 0 ? 'Preview Approver' : undefined,
-          rejectedBy: index === 0 ? undefined : 'Preview Reviewer',
-          decidedAt: '2026-06-24T10:00:00.000Z',
-          note: index === 0 ? '预览批准历史，仅用于界面验证。' : '预览拒绝历史，仅用于界面验证。',
-          batchId: previewScope.batchId,
-          sourceBatchId: previewScope.batchId,
-          metricDate: previewScope.dateTo,
-          sourceRow: 42 + index,
-          sourceFiles: [
-            index === 0
-              ? 'D:/preview/reports/keyword.xlsx'
-              : 'D:/preview/reports/user_search_term.xlsx',
-          ],
-          scope: {
-            dateFrom: previewScope.dateFrom,
-            dateTo: previewScope.dateTo,
-            storeName: previewScope.storeName,
-            marketplaceCode: previewScope.marketplaceCode,
-            asin: diagnostic.asin,
-          },
-        },
-      } : {}),
     },
-  }));
+  } as PreviewRecommendation));
+  if (scenario.recommendationState === 'approved' && recommendations.length >= 2) {
+    const approved = recommendations[0];
+    const boundAt = '2026-06-24T09:50:00.000Z';
+    const writableTarget: WritableAdTargetEvidence = {
+      entityType: 'keyword',
+      entityId: 'amzn-keyword-preview-1001',
+      entityName: approved.entityName,
+      campaignName: approved.evidence.campaignName || '',
+      adGroupName: approved.evidence.adGroupName || '',
+      metricDate: approved.evidence.date || '',
+      sourceFile: approved.evidence.sourceFile || approved.evidence.sourceFiles?.[0] || '',
+      sourceRow: Number(approved.evidence.sourceRow),
+      identitySource: 'ads_ui',
+      verifiedBy: 'Preview Verifier',
+      verifiedAt: boundAt,
+      verificationNote: '已在 Ads UI 中逐项核对活动、广告组、关键词名称与对象 ID。',
+      identityProofPath: 'D:/preview/evidence/keyword-1001.png',
+    };
+    const binding: WritableAdTargetBinding = {
+      schemaVersion: 1,
+      fromRevision: 0,
+      boundRevision: 1,
+      boundBy: 'Preview Verifier',
+      boundAt,
+      note: '预览历史通过与生产一致的对象绑定门生成。',
+      scope: {
+        dateFrom: previewScope.dateFrom,
+        dateTo: previewScope.dateTo,
+        storeName: previewScope.storeName,
+        marketplaceCode: previewScope.marketplaceCode,
+        asin: approved.asin,
+        batchId: previewScope.batchId || '',
+      },
+      metricSource: {
+        batchId: previewScope.batchId || '',
+        sourceFiles: [...(approved.evidence.sourceFiles || [])],
+        sourceRow: Number(approved.evidence.sourceRow),
+      },
+      writableTarget,
+    };
+    approved.revision = binding.boundRevision;
+    approved.updatedAt = boundAt;
+    approved.evidence = {
+      ...approved.evidence,
+      writableTarget,
+      writableTargetBinding: binding,
+    };
+    applyPreviewRecommendationDecision(approved, 'approved', {
+      approvedBy: 'Preview Approver',
+      note: '预览批准历史，仅用于界面验证。',
+    }, '2026-06-24T10:00:00.000Z');
+    applyPreviewRecommendationDecision(recommendations[1], 'rejected', {
+      rejectedBy: 'Preview Reviewer',
+      note: '预览拒绝历史，仅用于界面验证。',
+    }, '2026-06-24T10:01:00.000Z');
+  }
   const readbackStagePreview = scenario.recommendationState === 'approved';
   const previewAiEvidenceId = 'preview:ai-diagnosis:1';
   const previewAiDiagnosisRuns = readbackStagePreview ? [{
@@ -817,11 +1044,38 @@ export function createBrowserPreviewElectronApi(
     listOperationEvents: async () => clonePreviewSnapshot(fixtures.events),
     createOperationEvent: async (input: unknown) => ({ id: 'preview-event-new', input }),
     deleteOperationEvent: async () => ({ ok: true }),
-    getRecommendations: async (filter?: { status?: string }) => clonePreviewSnapshot(
-      filter?.status
-        ? recommendations.filter((recommendation) => recommendation.status === filter.status)
-        : recommendations,
-    ),
+    getRecommendations: async (filter?: PreviewRecommendationFilter) => {
+      const request = filter || {};
+      const hasFullScope = Boolean(
+        normalizedPreviewText(request.dateFrom)
+        && normalizedPreviewText(request.dateTo)
+        && normalizedPreviewText(request.storeName)
+        && normalizedPreviewText(request.marketplaceCode),
+      );
+      const scopeMatches = hasFullScope
+        && normalizedPreviewText(request.dateFrom) === previewScope.dateFrom
+        && normalizedPreviewText(request.dateTo) === previewScope.dateTo
+        && normalizedPreviewText(request.storeName) === previewScope.storeName
+        && normalizedPreviewText(request.marketplaceCode) === previewScope.marketplaceCode
+        && (!normalizedPreviewText(request.asin)
+          || normalizedPreviewText(request.asin).toUpperCase() === previewScope.asin)
+        && (!normalizedPreviewText(request.batchId)
+          || normalizedPreviewText(request.batchId) === previewScope.batchId);
+      if (!scopeMatches) return [];
+
+      const status = normalizedPreviewText(request.status);
+      const limit = Number.isFinite(Number(request.limit))
+        ? Math.max(1, Math.min(500, Number(request.limit)))
+        : 100;
+      const scopedRows = recommendations.filter((recommendation) => (
+        recommendation.storeName === previewScope.storeName
+        && recommendation.marketplaceCode === previewScope.marketplaceCode
+        && recommendation.asin === previewScope.asin
+        && recommendation.evidence?.batchId === previewScope.batchId
+        && (!status || recommendation.status === status)
+      ));
+      return clonePreviewSnapshot(scopedRows.slice(0, limit));
+    },
     generateRecommendations: async () => clonePreviewSnapshot({
       generated: recommendations.length,
       recommendations,
@@ -1048,38 +1302,8 @@ export function createBrowserPreviewElectronApi(
     }) => {
       const recommendation = recommendations.find((row) => row.id === input.id);
       if (!recommendation) throw new Error('预览建议不存在，请刷新后重试。');
-      if (!Number.isInteger(input.expectedRevision) || input.expectedRevision !== recommendation.revision) {
-        throw new Error('预览审批状态冲突：建议版本已变化，请刷新后重试。');
-      }
-      if (recommendation.status !== 'pending') {
-        throw new Error(`预览审批被阻断：建议当前状态 ${recommendation.status} 不允许批准。`);
-      }
-      const binding = recommendation.evidence?.writableTargetBinding;
-      const resolution = recommendation.evidence?.reviewResolution;
-      const currentBinding = Boolean(binding)
-        && binding?.schemaVersion === 1
-        && binding.fromRevision + 1 === binding.boundRevision
-        && binding.boundRevision === recommendation.revision;
-      const currentResolution = Boolean(resolution)
-        && resolution?.schemaVersion === 1
-        && resolution.fromRevision + 1 === resolution.resolvedRevision
-        && resolution.resolvedRevision === recommendation.revision;
-      if (!recommendation.evidence?.writableTarget || (!currentBinding && !currentResolution)) {
-        throw new Error('预览审批被阻断：必须先核验唯一 Ads 可写对象并重新读取权威版本。');
-      }
-      if (!String(input.decision?.approvedBy || '').trim()) {
-        throw new Error('预览审批被阻断：批准前必须填写审批人。');
-      }
-      recommendation.status = 'approved';
-      recommendation.revision += 1;
-      recommendation.evidence = {
-        ...recommendation.evidence,
-        approvalDecision: {
-          ...input.decision,
-          decision: 'approved',
-          decidedAt: new Date().toISOString(),
-        },
-      };
+      assertRecommendationDecisionRevision(recommendation, input.expectedRevision);
+      applyPreviewRecommendationDecision(recommendation, 'approved', input.decision || {});
       return { ok: true };
     },
     rejectRecommendation: async (input: {
@@ -1089,28 +1313,8 @@ export function createBrowserPreviewElectronApi(
     }) => {
       const recommendation = recommendations.find((row) => row.id === input.id);
       if (!recommendation) throw new Error('预览建议不存在，请刷新后重试。');
-      if (!Number.isInteger(input.expectedRevision) || input.expectedRevision !== recommendation.revision) {
-        throw new Error('预览审批状态冲突：建议版本已变化，请刷新后重试。');
-      }
-      if (recommendation.status !== 'pending' && recommendation.status !== 'needs_review') {
-        throw new Error(`预览审批被阻断：建议当前状态 ${recommendation.status} 不允许拒绝。`);
-      }
-      if (!String(input.decision?.rejectedBy || '').trim()) {
-        throw new Error('预览审批被阻断：拒绝前必须填写处理人。');
-      }
-      if (!String(input.decision?.note || '').trim()) {
-        throw new Error('预览审批被阻断：拒绝前必须填写拒绝原因。');
-      }
-      recommendation.status = 'rejected';
-      recommendation.revision += 1;
-      recommendation.evidence = {
-        ...recommendation.evidence,
-        approvalDecision: {
-          ...input.decision,
-          decision: 'rejected',
-          decidedAt: new Date().toISOString(),
-        },
-      };
+      assertRecommendationDecisionRevision(recommendation, input.expectedRevision);
+      applyPreviewRecommendationDecision(recommendation, 'rejected', input.decision || {});
       return { ok: true };
     },
     getBusinessKeywordOpportunities: async () => scenario.diagnosisReady ? fixtures.timelines.map((item, index) => ({

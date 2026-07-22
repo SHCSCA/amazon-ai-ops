@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import * as AppModule from './App';
 import {
   buildBrowserLoginRequest,
+  describeLoginSession,
   headerReadinessLabel,
   headerSessionStatusLabel,
   loginSecurityTagView,
@@ -29,6 +30,53 @@ describe('headerSessionStatusLabel', () => {
 
   it('does not show long browser state text before login state is confirmed', () => {
     expect(headerSessionStatusLabel(null)).toBe('会话待确认');
+  });
+
+  it('visibly marks a reused ERP session whose typed identity and password were not verified', () => {
+    const session = {
+      erpSessionReused: true,
+      sessionIdentityVerified: false,
+      credentialPersistence: 'not_saved_unverified_session' as const,
+      adsTitle: 'Amazon Ads Console',
+    };
+
+    expect(headerSessionStatusLabel(session)).toBe('ERP 会话复用 · 身份未核验');
+    expect(describeLoginSession(session)).toContain('账号和本次密码均未核验');
+    expect(describeLoginSession(session)).toContain('本机安全区未更改');
+  });
+
+  it('does not present a saved account as verified when another ERP session was reused', () => {
+    const session = {
+      erpSessionReused: true,
+      sessionIdentityVerified: false,
+      credentialPersistence: 'main_managed' as const,
+      adsTitle: 'Amazon Ads Console',
+    };
+
+    expect(headerSessionStatusLabel(session)).toBe('ERP 会话复用 · 身份未核验');
+    expect(describeLoginSession(session)).toContain('保存账号未与当前 ERP 会话核验');
+    expect(describeLoginSession(session)).toContain('本机安全区未更改');
+  });
+
+  it('uses the Main-verified store result instead of promoting the submitted username in Renderer', () => {
+    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('setLoginState(true, session.currentStore, session)');
+    expect(source).not.toContain('setLoginState(true, request.username, session)');
+    expect(source).toContain("loginSession?.sessionIdentityVerified === false ? '账号未核验'");
+  });
+
+  it('exposes unverified session detail as a focusable warning status instead of title-only copy', () => {
+    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+
+    expect(source).toContain('aria-label={describeLoginSession(loginSession)}');
+    expect(source).toContain('aria-live="polite"');
+    expect(source).toContain('role="status"');
+    expect(source).toContain('tabIndex={loginSession?.sessionIdentityVerified === false ? 0 : undefined}');
+    expect(source).toContain("session-line-warning");
+    expect(css).toContain('.session-line-warning');
+    expect(css).toMatch(/\.session-line-warning:focus-visible\s*\{/);
   });
 });
 
