@@ -176,6 +176,14 @@ export interface MissionControlTodayProjection {
   readiness: MissionControlTodayReadinessItem[];
   blockers: string[];
   attentionItems: string[];
+  analysis?: {
+    activeMissionId?: string;
+    evidencePackageCount: number;
+    proposalCount: number;
+    humanEligibleCount: number;
+    policyEligibleCount: number;
+    latestFreshUntil?: string;
+  };
   nextAction: {
     id: string;
     label: string;

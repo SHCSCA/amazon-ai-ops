@@ -99,7 +99,7 @@ describe('MissionDomainService Main authority boundary', () => {
     expect(coordinator.assertActiveStoreContext).toHaveBeenCalledTimes(2);
   });
 
-  it('overrides renderer actor ids and cannot issue a policy grant through Renderer operations', () => {
+  it('overrides renderer actor ids and blocks raw Renderer grant issuance', () => {
     const { service, repository, active } = setup();
 
     service.executeOperation('missions.create', active, { id: 'mission-1', actorId: 'attacker' });
@@ -108,19 +108,11 @@ describe('MissionDomainService Main authority boundary', () => {
       expect.objectContaining({ actorId: 'operator' }),
     );
 
-    service.executeOperation('grants.issueHuman', active, {
+    expect(() => service.executeOperation('grants.issueHuman' as never, active, {
       id: 'grant-1',
       decisionIds: ['decision-1', 'decision-2'],
-      issuer: { type: 'policy', actorId: 'attacker' },
-      issuerType: 'policy',
-    });
-    expect(repository.issueMissionGrant).toHaveBeenCalledWith(
-      active,
-      expect.objectContaining({
-        decisionIds: ['decision-1', 'decision-2'],
-        issuer: { type: 'human', actorId: 'operator' },
-      }),
-    );
+    })).toThrow(/Unsupported Mission domain operation/);
+    expect(repository.issueMissionGrant).not.toHaveBeenCalled();
     expect(() => service.executeOperation('grants.issuePolicy' as never, active, {})).toThrow();
   });
 

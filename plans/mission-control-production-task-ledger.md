@@ -78,10 +78,12 @@
 
 | ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
 | --- | --- | --- | --- | --- |
-| S5-01 | ACTIVE | rules-engine/ai-adapter | S3/S4 | store-scoped 量化、证据包、结构化提案、模型 revision |
-| S5-02 | TODO | policy/decision services | S5-01 | 人工签发与策略签发 MissionGrant 的统一流水线 |
-| S5-03 | TODO | Renderer Today/Mission/Decision | S5-01/S5-02 | 真实建议、批准来源、阻断与授权状态 |
-| S5-04 | TODO | 阶段质量 owner | S5-01..03 | 缺数据、旧 revision、越权、跨店、预算和 AI 降级集中测试、commit/push |
+| S5-01 | REVIEW | rules-engine/ai-adapter | S3/S4 | store-scoped 量化、证据包、结构化提案、模型 revision |
+| S5-02 | REVIEW | policy/decision services | S5-01 | 人工签发与策略签发 MissionGrant 的统一流水线 |
+| S5-03 | REVIEW | Renderer Today/Mission/Decision | S5-01/S5-02 | 真实建议、批准来源、阻断与授权状态 |
+| S5-04 | ACTIVE | 阶段质量 owner | S5-01..03 | 缺数据、旧 revision、越权、跨店、预算和 AI 降级集中测试、commit/push |
+
+阶段 5 集中验证（2026-07-22，待提交）：排除两个必须启动 Playwright Chromium 的独立证据脚本后，非浏览器完整回归 746/746 个测试文件、2581/2581 项测试通过；14 个 workspace typecheck 已通过，最后修改涉及的 `local-db` 与 `desktop` 再次 typecheck 通过，Main、Preload、Renderer 生产构建通过。应用内浏览器已把原型与集成版放在同一轮对照中复核 Decision、Policy 和长表单交互；策略版本编辑器现为内部滚动且底部保存区可达。授权链新增 Mission 异步分析期 revision 事务校验，并覆盖证据/对象/批次/策略/规则/模型 revision、整批授权、窗口、日限额、冷却、kill switch、终态 grant 与策略自动不降级。
 
 ## 阶段 6：真实 Amazon Ads 执行
 

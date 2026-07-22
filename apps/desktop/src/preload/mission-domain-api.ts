@@ -11,7 +11,7 @@ export interface MissionDomainPreloadApi {
   readonly policyVersions: Readonly<Record<'create' | 'get' | 'list' | 'updateDraft' | 'enable', ScopedCall>>;
   readonly policyRuntime: Readonly<Record<'get' | 'setAutonomyMode' | 'setKillSwitch', ScopedCall>>;
   readonly missions: Readonly<Record<'create' | 'get' | 'list' | 'update' | 'transition' | 'archive' | 'restore' | 'appendCheckpoint' | 'listCheckpoints' | 'getLineage', ScopedCall>>;
-  readonly grants: Readonly<Record<'issueHuman' | 'get' | 'list' | 'listEvents' | 'revokeHuman', ScopedCall>>;
+  readonly grants: Readonly<Record<'get' | 'list' | 'listEvents' | 'revokeHuman', ScopedCall>>;
   readonly decisions: Readonly<Record<'create' | 'get' | 'list' | 'revise' | 'resolveHuman' | 'history', ScopedCall>>;
   readonly experiments: Readonly<Record<
     'create' | 'get' | 'list' | 'update' | 'transition' | 'archive' | 'restore'
@@ -61,7 +61,6 @@ export function createMissionDomainPreloadApi(ipc: MissionDomainIpcInvoker): Mis
       getLineage: call('mission-domain:missions:get-lineage'),
     }),
     grants: Object.freeze({
-      issueHuman: call('mission-domain:grants:issue-human'),
       get: call('mission-domain:grants:get'),
       list: call('mission-domain:grants:list'),
       listEvents: call('mission-domain:grants:list-events'),

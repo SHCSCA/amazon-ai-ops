@@ -51,6 +51,7 @@ import type {
 } from '../main/store-scoped-ad-listing-service';
 import { createMissionControlPreloadApi } from './mission-control-api';
 import { createMissionDomainPreloadApi } from './mission-domain-api';
+import { createAnalysisAuthorityPreloadApi } from './analysis-authority-api';
 
 type AuthoritativeLingxingCollectionRange = {
   start: string;
@@ -96,6 +97,7 @@ ipcRenderer.on('business-ui:data-updated', () => {
 contextBridge.exposeInMainWorld('electronAPI', {
   missionControl: createMissionControlPreloadApi(ipcRenderer),
   missionDomain: createMissionDomainPreloadApi(ipcRenderer),
+  analysisAuthority: createAnalysisAuthorityPreloadApi(ipcRenderer),
 
   // App
   getVersion: () => ipcRenderer.invoke('app:get-version'),

@@ -27,7 +27,6 @@ export const MISSION_DOMAIN_IPC_ROUTES = Object.freeze({
   'mission-domain:missions:append-checkpoint': 'missions.appendCheckpoint',
   'mission-domain:missions:list-checkpoints': 'missions.listCheckpoints',
   'mission-domain:missions:get-lineage': 'missions.getLineage',
-  'mission-domain:grants:issue-human': 'grants.issueHuman',
   'mission-domain:grants:get': 'grants.get',
   'mission-domain:grants:list': 'grants.list',
   'mission-domain:grants:list-events': 'grants.listEvents',

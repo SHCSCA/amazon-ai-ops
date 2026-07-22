@@ -326,6 +326,46 @@
   font-size: 12px;
 }
 
+.mission-control-workspace-root .canonical-analysis-status {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(330px, 1.15fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 9px;
+  border: 1px solid #cfe0f8;
+  border-radius: 8px;
+  background: #f7faff;
+  padding: 10px;
+}
+
+.mission-control-workspace-root .canonical-analysis-status > div {
+  display: grid;
+  gap: 2px;
+}
+
+.mission-control-workspace-root .canonical-analysis-status > div > span {
+  color: #1f5bc9;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .07em;
+}
+
+.mission-control-workspace-root .canonical-analysis-status > div > strong { font-size: 13px; }
+
+.mission-control-workspace-root .canonical-analysis-status dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.mission-control-workspace-root .canonical-analysis-status dl > div {
+  padding: 0 9px;
+  border-left: 1px solid #dbe5f3;
+}
+
+.mission-control-workspace-root .canonical-analysis-status dt { color: #71809a; font-size: 10px; }
+.mission-control-workspace-root .canonical-analysis-status dd { margin: 2px 0 0; font-size: 11px; font-weight: 700; }
+
 .mission-control-workspace-root .canonical-contract-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -917,5 +957,14 @@
   .mission-control-workspace-root .canonical-preview-notice > small {
     width: 100%;
     flex-basis: 100%;
+  }
+
+  .mission-control-workspace-root .canonical-analysis-status {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .mission-control-workspace-root .canonical-analysis-status dl {
+    grid-column: 1 / -1;
+    order: 3;
   }
 }

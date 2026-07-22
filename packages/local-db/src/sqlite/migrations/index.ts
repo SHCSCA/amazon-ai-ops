@@ -61,3 +61,13 @@ export {
   verifyMissionDomainSchema,
 } from './0006-mission-domain';
 export type { MissionDomainMigrationResult } from './0006-mission-domain';
+export {
+  ANALYSIS_AUTHORITY_MIGRATION_CHECKSUM,
+  ANALYSIS_AUTHORITY_MIGRATION_NAME,
+  ANALYSIS_AUTHORITY_MIGRATION_VERSION,
+  ANALYSIS_AUTHORITY_TABLES,
+  AnalysisAuthorityMigrationError,
+  runAnalysisAuthorityMigration,
+  verifyAnalysisAuthoritySchema,
+} from './0007-analysis-authority';
+export type { AnalysisAuthorityMigrationResult } from './0007-analysis-authority';

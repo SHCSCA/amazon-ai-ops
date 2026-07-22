@@ -3,7 +3,15 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { MissionControlCapabilityProjection, PolicyRecord, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { createPreviewPolicyDomainApi } from './mission-domain-window-api';
-import { PolicyWorkspace, buildCreatePolicyInput, buildPolicyVersionInput, responseMatchesPolicyDetail } from './policy-workspace';
+import {
+  PolicyWorkspace,
+  VersionDialog,
+  buildCreatePolicyInput,
+  buildPolicyVersionDraft,
+  buildPolicyVersionInput,
+  formatExecutionWindowSummary,
+  responseMatchesPolicyDetail,
+} from './policy-workspace';
 
 const context = {
   storeId: 'preview-store-shc001', browserProfileId: 'preview-profile-shc001',
@@ -59,10 +67,52 @@ describe('PolicyWorkspace', () => {
       createdAt: '2026-07-22T00:00:00.000Z', updatedAt: '2026-07-22T00:00:00.000Z',
     } as PolicyRecord;
     const version = buildPolicyVersionInput(policy, {
-      version: '1', allowedAdEntityIds: '', maxChangePct: '15', totalImpactBudget: '0', validFrom: '', validUntil: '',
+      ...buildPolicyVersionDraft(null, context.businessTimezone),
+      version: '1', allowedAdEntityIds: '', maxChangePct: '15', totalImpactBudget: '0',
     }, 'POLICY-EMPTY-V1');
     expect(version.rules.allowedAdEntityIds).toEqual([]);
     expect(version.rules.allowedActionTypes).toEqual(['set_keyword_bid']);
+    expect(version.rules).toMatchObject({
+      maxDailyActionCount: 25,
+      cooldownMinutes: 30,
+      executionWindow: {
+        timeZone: context.businessTimezone,
+        daysOfWeek: [1, 2, 3, 4, 5],
+        start: '08:00',
+        end: '18:00',
+      },
+    });
+    expect(formatExecutionWindowSummary(version.rules)).toContain('25 次/日');
+  });
+
+  it('renders and validates immutable daily limit, cooldown, timezone and execution-window fields', () => {
+    const policy = {
+      ...buildCreatePolicyInput({ name: '窗口策略', scope: 'store', priority: '10' }, 'POLICY-WINDOW'),
+      storeId: context.storeId, status: 'draft', revision: 1,
+      createdAt: '2026-07-22T00:00:00.000Z', updatedAt: '2026-07-22T00:00:00.000Z',
+    } as PolicyRecord;
+    const draft = buildPolicyVersionDraft(null, context.businessTimezone);
+    const markup = renderToStaticMarkup(<VersionDialog
+      record={null}
+      draft={draft}
+      busy={false}
+      onChange={() => undefined}
+      onClose={() => undefined}
+      onSave={() => undefined}
+    />);
+    expect(markup).toContain('每日动作上限');
+    expect(markup).toContain('同对象冷却时间');
+    expect(markup).toContain('V1 执行窗口');
+    expect(markup).toContain('America/Los_Angeles');
+    expect(() => buildPolicyVersionInput(policy, { ...draft, maxDailyActionCount: '0' }, 'BAD-DAILY'))
+      .toThrow(/每日动作上限/);
+    expect(() => buildPolicyVersionInput(policy, { ...draft, executionDaysOfWeek: [] }, 'BAD-DAYS'))
+      .toThrow(/执行日/);
+    expect(() => buildPolicyVersionInput(policy, {
+      ...draft, executionWindowStart: '18:00', executionWindowEnd: '08:00',
+    }, 'BAD-WINDOW')).toThrow(/不能跨午夜/);
+    expect(() => buildPolicyVersionInput(policy, { ...draft, executionTimeZone: 'Not/A_Timezone' }, 'BAD-TZ'))
+      .toThrow(/IANA/);
   });
 
   it('rejects stale policy detail responses even after an A to B to A store round trip', () => {

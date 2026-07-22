@@ -44,6 +44,7 @@ import {
   createPreviewMissionDomainApi,
   createPreviewPolicyDomainApi,
 } from './mission-control/workspaces/mission-domain-window-api';
+import { createPreviewAnalysisAuthorityApi } from './mission-control/workspaces/analysis-authority-window-api';
 
 type PreviewRecommendation = ActionRecommendation & RecommendationView;
 
@@ -378,12 +379,10 @@ export const PREVIEW_MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabi
     view,
     action,
     ...(legacyRoute ? { legacyRoute } : {}),
-    state: capabilityId === 'decisions.grants.issue' ? 'BLOCKED' : 'PROTOTYPE_ONLY',
-    blockerCode: capabilityId === 'decisions.grants.issue'
-      ? 'AD_ENTITY_REGISTRY_NOT_IMPLEMENTED'
-      : 'DEV_PREVIEW_ONLY',
+    state: 'PROTOTYPE_ONLY',
+    blockerCode: 'DEV_PREVIEW_ONLY',
     detail: capabilityId === 'decisions.grants.issue'
-      ? 'MissionGrant 批次合同可交互预览，但稳定广告实体注册表未接入，不能签发真实执行授权。'
+      ? '仅开发预览：可演示 Evidence 锁定与整批授权，但不签发生产授权或执行真实 Ads。'
       : '仅开发预览 fixture；不代表生产服务、真实执行或真实回读已经接入。',
   }));
 
@@ -2512,6 +2511,7 @@ export function createBrowserPreviewElectronApi(
   // conflicting sources of truth while remaining clearly non-production.
   const previewMissionDomainApi = createPreviewMissionDomainApi();
   const previewDecisionDomainApi = createPreviewDecisionDomainApi();
+  const previewAnalysisAuthorityApi = createPreviewAnalysisAuthorityApi();
   const previewPolicyDomainApi = createPreviewPolicyDomainApi();
   const previewExperimentMemoryDomain = createPreviewExperimentMemoryDomainSuite();
   const previewMissionQuery = async (input: MissionControlQueryRequest): Promise<MissionControlQueryResponse> => {
@@ -2558,6 +2558,14 @@ export function createBrowserPreviewElectronApi(
           ],
           blockers: ['仅开发预览，不代表真实准备度。'],
           attentionItems: [],
+          analysis: {
+            activeMissionId: `MISSION-${String(authoritative.storeId)}-ACTIVE`,
+            evidencePackageCount: 1,
+            proposalCount: 2,
+            humanEligibleCount: 2,
+            policyEligibleCount: 2,
+            latestFreshUntil: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+          },
           nextAction: {
             id: 'preview-only',
             label: '仅查看开发预览',
@@ -2606,6 +2614,7 @@ export function createBrowserPreviewElectronApi(
       previewExperimentMemoryDomain.experiments,
       previewExperimentMemoryDomain.memory,
     ),
+    analysisAuthority: previewAnalysisAuthorityApi,
     storeScopedObjectsPreviewOnly: true,
     storeScopedAdListingPreviewOnly: true,
     listStores: async () => clonePreviewSnapshot(previewStores),

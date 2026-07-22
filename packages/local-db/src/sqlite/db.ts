@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { createHash } from 'crypto';
 import * as path from 'path';
 import {
+  runAnalysisAuthorityMigration,
   prepareStoreAuthorityMigrationBackup,
   runListingStoreAuthorityMigration,
   runMissionDomainMigration,
@@ -642,6 +643,7 @@ function runMigrations(database: Database.Database): void {
   runListingStoreAuthorityMigration(database);
   runOperationEventArchiveMigration(database);
   runMissionDomainMigration(database);
+  runAnalysisAuthorityMigration(database);
 }
 
 function installStoreScopedMetricIdentitySafeguards(database: Database.Database): void {

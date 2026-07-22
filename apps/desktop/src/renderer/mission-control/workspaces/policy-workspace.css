@@ -309,7 +309,17 @@
 .policy-domain-safety strong { font-size: 12px; }
 .policy-domain-safety p { margin: 0; color: #95600d; font-size: 12px; }
 
-.policy-domain-dialog { width: min(720px, calc(100vw - 48px)); }
+.mission-control-workspace-root .mission-control-dialog.policy-domain-dialog { width: min(720px, calc(100vw - 48px)); }
+.mission-control-workspace-root .mission-control-dialog.policy-domain-dialog--version {
+  width: min(860px, calc(100vw - 48px));
+  max-height: min(720px, calc(100vh - 48px));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+.mission-control-workspace-root .policy-domain-dialog--version .policy-domain-form--version {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .policy-domain-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 16px; }
 .policy-domain-form label { display: grid; align-content: start; gap: 6px; color: #526079; font-size: 12px; font-weight: 700; }
 .policy-domain-form label:first-child { grid-column: 1 / -1; }
@@ -317,6 +327,75 @@
 .policy-domain-form__wide { grid-column: 1 / -1; }
 .policy-domain-input-unit { display: flex; align-items: center; gap: 6px; }
 .policy-domain-input-unit b { color: #526079; }
+
+.policy-domain-boundary {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid #d7e2f0;
+  border-radius: 9px;
+  background: #f8fbff;
+  padding: 12px;
+}
+
+.policy-domain-boundary legend {
+  padding: 0 5px;
+  color: #315782;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.policy-domain-window-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(130px, .8fr));
+  gap: 10px;
+}
+
+.policy-domain-day-field {
+  display: grid;
+  gap: 6px;
+  color: #526079;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.policy-domain-day-options {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(34px, 1fr));
+  gap: 5px;
+}
+
+.policy-domain-day-options button {
+  min-height: 32px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #526079;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.policy-domain-day-options button[aria-pressed="true"] {
+  border-color: #2563eb;
+  background: #eaf2ff;
+  color: #1f5bc9;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 10%);
+}
+
+.policy-domain-day-options button:focus-visible {
+  outline: 2px solid rgb(37 99 235 / 24%);
+  outline-offset: 1px;
+}
+
+.policy-domain-version-boundary {
+  max-width: 620px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .policy-domain-feedback {
   position: sticky;
@@ -345,8 +424,10 @@
   .policy-domain-safety { grid-template-columns: 1fr; }
   .policy-domain-form label:first-child,
   .policy-domain-form__wide,
+  .policy-domain-boundary,
   .policy-domain-safety h3,
   .policy-domain-safety p { grid-column: auto; }
+  .policy-domain-window-grid { grid-template-columns: 1fr; }
   .policy-domain-version-list article { align-items: flex-start; flex-direction: column; }
 }
 

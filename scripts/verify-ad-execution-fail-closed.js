@@ -103,8 +103,8 @@ mustContain(
 );
 mustContain(
   mainIndex,
-  'insertIfNoDuplicate(rec)',
-  'recommendation generation skips duplicate recommendations instead of repeated inserts',
+  'insertIfNoDuplicateForStore(gate.scope.storeId, rec)',
+  'recommendation generation skips store-scoped duplicate recommendations instead of repeated inserts',
 );
 mustContain(
   mainIndex,

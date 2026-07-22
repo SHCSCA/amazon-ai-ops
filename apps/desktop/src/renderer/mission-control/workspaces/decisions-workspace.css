@@ -225,6 +225,84 @@
 .decision-domain-batch-authority label small { margin-top: 2px; color: #69758b; font-size: 11px; }
 .decision-domain-batch-authority > p { color: #69758b; font-size: 11px; }
 
+.decision-domain-analysis-batch > div {
+  max-height: 176px;
+}
+
+.decision-domain-analysis-batch > .decision-domain-analysis-scope {
+  display: grid;
+  gap: 6px;
+  max-height: none;
+  overflow: visible;
+}
+
+.decision-domain-analysis-scope label {
+  display: grid;
+  gap: 4px;
+  padding: 6px 7px;
+}
+
+.decision-domain-analysis-scope label > span {
+  color: #526079;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.decision-domain-analysis-scope select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  padding: 6px 7px;
+  color: #202a3b;
+  font: inherit;
+  font-size: 10px;
+}
+
+.decision-domain-analysis-scope select:focus-visible {
+  border-color: #2563eb;
+  outline: 2px solid rgb(37 99 235 / 15%);
+  outline-offset: 1px;
+}
+
+.decision-domain-analysis-batch > .decision-domain-analysis-proposals {
+  max-height: 176px;
+  overflow: auto;
+}
+
+.decision-domain-analysis-error {
+  color: #b24b3d !important;
+}
+
+.decision-domain-analysis-batch article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 3px 8px;
+  border: 1px solid #dce6f4;
+  border-radius: 6px;
+  background: #fff;
+  padding: 7px;
+}
+
+.decision-domain-analysis-batch article span,
+.decision-domain-analysis-batch article b,
+.decision-domain-analysis-batch article small { display: block; }
+.decision-domain-analysis-batch article span { min-width: 0; }
+.decision-domain-analysis-batch article b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.decision-domain-analysis-batch article small { margin-top: 2px; color: #69758b; font-size: 10px; }
+.decision-domain-analysis-batch article strong { color: #1f5bc9; font-size: 11px; }
+.decision-domain-analysis-batch article em { grid-column: 1 / -1; color: #b24b3d; font-size: 10px; font-style: normal; }
+.decision-domain-analysis-batch article em[data-eligible="true"] { color: #087956; }
+
+.decision-domain-proposal-source {
+  display: block;
+  margin-top: 5px;
+  color: #1f5bc9;
+  font-size: 10px;
+}
+
 .decision-domain-search:focus-visible,
 .decision-domain-form input:focus-visible,
 .decision-domain-form textarea:focus-visible,

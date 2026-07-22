@@ -28,6 +28,7 @@ describe('Mission domain fixed IPC whitelist', () => {
     expect([...handlers.keys()]).toEqual(MISSION_DOMAIN_IPC_CHANNELS);
     expect(MISSION_DOMAIN_IPC_CHANNELS).not.toContain('mission-domain:invoke' as never);
     expect(MISSION_DOMAIN_IPC_CHANNELS).not.toContain('mission-domain:grants:issue-policy' as never);
+    expect(MISSION_DOMAIN_IPC_CHANNELS).not.toContain('mission-domain:grants:issue-human' as never);
     expect(MISSION_DOMAIN_IPC_CHANNELS).not.toContain('mission-domain:missions:append-link' as never);
     expect(MISSION_DOMAIN_IPC_CHANNELS).not.toContain('mission-domain:causal:append-link' as never);
     expect(MISSION_DOMAIN_IPC_CHANNELS).not.toContain('mission-domain:experiments:append-metric-snapshot' as never);
@@ -46,16 +47,6 @@ describe('Mission domain fixed IPC whitelist', () => {
       { id: 'mission-1' },
     );
 
-    const grantChannel = 'mission-domain:grants:issue-human';
-    await handlers.get(grantChannel)?.({}, {
-      storeContext,
-      input: { id: 'grant-1', decisionIds: ['decision-1', 'decision-2'] },
-    });
-    expect(executeOperation).toHaveBeenLastCalledWith(
-      MISSION_DOMAIN_IPC_ROUTES[grantChannel],
-      storeContext,
-      { id: 'grant-1', decisionIds: ['decision-1', 'decision-2'] },
-    );
   });
 
   it('rejects incomplete envelopes and extra top-level authority fields', async () => {

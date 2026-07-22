@@ -36,6 +36,7 @@ import { AiDiagnosisRunRepository } from '@amazon-ai-ops/local-db/src/sqlite/rep
 import { StoreRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/store-repo';
 import { LingxingImportRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/lingxing-import-repo';
 import { MissionDomainRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/mission-domain-repo';
+import { AnalysisAuthorityRepository } from '@amazon-ai-ops/local-db/src/sqlite/repositories/analysis-authority-repo';
 import { assertDownloadCenterCollectionPreflightReady, auditDownloadCenterPageModelEnablement, auditLingxingAcceptanceEvidence, buildDownloadCenterCollectionPreflight, buildDownloadCenterPageModelDraft, downloadCenterPageModelDraftToMarkdown, evaluateDownloadCenterCanaryEvidenceReadiness, evaluateDownloadCenterDiagnosticEvidenceReadiness, evaluateDownloadCenterPageModel, getDownloadCenterAutomationReadiness, LINGXING_AD_REPORTS, lingxingAcceptanceAuditToMarkdown, pollReportGenerationStatus, type DownloadCenterAutomationPort, verifyDownloadedFile, writeManifest } from '@amazon-ai-ops/lingxing-report-collector';
 import { buildKeywordOpportunities } from '@amazon-ai-ops/keyword-opportunity';
 import { analyzeKeywordCoverage, buildListingSuggestions as buildSafeListingSuggestions, buildRuleBasedListingDrafts, draftsToCsv, draftsToMarkdown, draftsToXlsxBuffer, suggestionsToCsv, suggestionsToMarkdown, suggestionsToXlsxBuffer } from '@amazon-ai-ops/listing-analyzer';
@@ -161,6 +162,9 @@ import { registerStoreIpcHandlers } from './store-ipc';
 import { registerMissionControlIpcHandlers } from './mission-control-ipc';
 import { registerMissionDomainIpcHandlers } from './mission-domain-ipc';
 import { MissionDomainService } from './mission-domain-service';
+import { registerAnalysisAuthorityIpcHandlers } from './analysis-authority-ipc';
+import { AnalysisAuthorityService } from './analysis-authority-service';
+import { currentAdEntityBelongsToStore } from './legacy-writable-ad-entity-authority';
 import { registerStoreScopedObjectsIpcHandlers } from './store-scoped-objects-ipc';
 import { StoreScopedObjectsService } from './store-scoped-objects-service';
 import { registerStoreScopedAdListingIpcHandlers } from './store-scoped-ad-listing-ipc';
@@ -210,6 +214,8 @@ interface AppState {
   lingxingImportRepo: LingxingImportRepository | null;
   missionDomainRepo: MissionDomainRepository | null;
   missionDomainService: MissionDomainService | null;
+  analysisAuthorityRepo: AnalysisAuthorityRepository | null;
+  analysisAuthorityService: AnalysisAuthorityService | null;
   lingxingCollectionCoordinator: LingxingCollectionCoordinator | null;
   lingxingCollectionOperations: CollectionOperationGuard | null;
   storeCoordinator: StoreCoordinator | null;
@@ -237,6 +243,8 @@ const state: AppState = {
   lingxingImportRepo: null,
   missionDomainRepo: null,
   missionDomainService: null,
+  analysisAuthorityRepo: null,
+  analysisAuthorityService: null,
   lingxingCollectionCoordinator: null,
   lingxingCollectionOperations: null,
   storeCoordinator: null,
@@ -250,6 +258,18 @@ const state: AppState = {
 const lingxingCollectionLeases = new BrowserLeaseManager();
 const cancelledLingxingCollectionRequests = new Set<string>();
 const mainArtifactRegistry = new MainArtifactRegistry();
+
+function analysisRuleRevision(value: unknown): string {
+  const stable = (candidate: unknown): string => {
+    if (Array.isArray(candidate)) return `[${candidate.map(stable).join(',')}]`;
+    if (candidate && typeof candidate === 'object') {
+      const record = candidate as Record<string, unknown>;
+      return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stable(record[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(candidate) ?? 'null';
+  };
+  return crypto.createHash('sha256').update(stable(value)).digest('hex');
+}
 
 // ============================================================================
 // Paths
@@ -602,25 +622,52 @@ async function initApp(): Promise<void> {
       .reduce((maximum, session) => Math.max(maximum, session.sessionGeneration), 0);
     storeSessions.seed(store.storeId, durableGeneration);
   }
-  state.storeCoordinator = new StoreCoordinator({
+  const storeCoordinator = new StoreCoordinator({
     repository: state.storeRepo,
     sessions: storeSessions,
   });
-  state.missionDomainRepo = new MissionDomainRepository(state.db, {
+  const analysisAuthorityRepo = new AnalysisAuthorityRepository(state.db);
+  const missionDomainRepo = new MissionDomainRepository(state.db, {
     references: {
       productBelongsToStore: (context, productId) => Boolean(
         state.productRepo?.findByAsinForStore(context.storeId, productId),
       ),
-      // Stage 3 projections intentionally do not claim a display object key is
-      // a stable writable Ads identity. Stage 5 will replace this fail-closed
-      // validator with the authoritative ad-object registry.
-      adEntityBelongsToStore: () => false,
+      adEntityBelongsToStore: (context, adEntityId) => Boolean(
+        currentAdEntityBelongsToStore(analysisAuthorityRepo, state.db!, context, adEntityId),
+      ),
     },
   });
-  state.missionDomainService = new MissionDomainService({
-    repository: state.missionDomainRepo,
-    storeCoordinator: state.storeCoordinator,
+  const missionDomainService = new MissionDomainService({
+    repository: missionDomainRepo,
+    storeCoordinator,
   });
+  const analysisAuthorityService = new AnalysisAuthorityService({
+    db: state.db,
+    repository: analysisAuthorityRepo,
+    missionRepository: missionDomainRepo,
+    recommendationRepository: state.recommendationRepo,
+    storeCoordinator,
+    generateRecommendations: (scope) => runRecommendationGeneration(scope),
+    currentRuleRevision: () => analysisRuleRevision(state.ruleConfig),
+    currentModelRevision: () => {
+      const settings = readAiSettingsForMain();
+      return `${settings.aiModel}:ad_strategy_diagnosis_v1:${settings.aiApiKey ? 'configured' : 'rule_fallback'}`;
+    },
+    allowedProofRoots: (context) => {
+      const store = state.storeRepo?.getStore(context.storeId);
+      return store?.status === 'active'
+        ? artifactAllowedRootsForStore(store, 'diagnostic-file')
+        : [];
+    },
+  });
+  // Publish the authority graph atomically only after every constructor has
+  // succeeded. IPC registration later in startup therefore never observes a
+  // half-initialized Mission/Analysis authority.
+  state.storeCoordinator = storeCoordinator;
+  state.analysisAuthorityRepo = analysisAuthorityRepo;
+  state.missionDomainRepo = missionDomainRepo;
+  state.missionDomainService = missionDomainService;
+  state.analysisAuthorityService = analysisAuthorityService;
   const collectionRecovery = recoverInterruptedLingxingCollectionJobsOnStartup();
   console.log('[App] init:lingxing-collection-recovery', JSON.stringify(collectionRecovery));
   initializeLingxingCollectionCoordinator();
@@ -2969,7 +3016,7 @@ function buildAuthoritativeMissionControlTodayProjection(contextInput: StoreCont
     && missionControlContextKey(state.browserRuntime.context) === missionControlContextKey(context)
     && state.browserRuntime.controllers.amazon_ads,
   );
-  return buildMissionControlTodayProjection({
+  const projection = buildMissionControlTodayProjection({
     context,
     products: state.productRepo.findAllWithCostsForStore(context.storeId),
     collectionJobs,
@@ -2979,6 +3026,28 @@ function buildAuthoritativeMissionControlTodayProjection(contextInput: StoreCont
     operationEventsToday: Number(eventFacts.rowCount) || 0,
     browserSessionReady,
   });
+  const activeMission = state.missionDomainRepo?.listMissions(context, { includeArchived: false })
+    .find((mission) => mission.status === 'active');
+  const analysis = activeMission && state.analysisAuthorityService
+    ? state.analysisAuthorityService.getMissionAnalysisProjection(context, activeMission.id)
+    : null;
+  const latestActionBatchId = analysis?.actionBatches[0]?.id;
+  const latestProposals = latestActionBatchId
+    ? analysis!.proposals.filter((proposal) => proposal.actionBatchId === latestActionBatchId)
+    : [];
+  return {
+    ...projection,
+    analysis: {
+      ...(activeMission ? { activeMissionId: activeMission.id } : {}),
+      evidencePackageCount: analysis?.evidencePackages.length ?? 0,
+      proposalCount: latestProposals.length,
+      humanEligibleCount: latestProposals.filter((proposal) => proposal.authorization.human.eligible).length,
+      policyEligibleCount: latestProposals.filter((proposal) => proposal.authorization.policy.eligible).length,
+      ...(analysis?.evidencePackages[0]?.freshUntil
+        ? { latestFreshUntil: analysis.evidencePackages[0].freshUntil }
+        : {}),
+    },
+  };
 }
 
 async function runAuthorizedLingxingCollection(
@@ -7924,6 +7993,7 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   skippedDuplicates: number;
   refreshedDuplicates: number;
   recommendationCandidates: number;
+  recommendationIds: number[];
   aiExplanation: {
     configured: boolean;
     invoked: boolean;
@@ -8033,10 +8103,12 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   let inserted = 0;
   let skippedDuplicates = 0;
   let refreshedDuplicates = 0;
+  const recommendationIds: number[] = [];
   for (const rec of recommendations) {
-    const result = state.recommendationRepo?.insertIfNoDuplicate
-      ? state.recommendationRepo.insertIfNoDuplicate(rec)
-      : { id: state.recommendationRepo?.insert(rec) || 0, inserted: true };
+    const result = state.recommendationRepo?.insertIfNoDuplicateForStore
+      ? state.recommendationRepo.insertIfNoDuplicateForStore(gate.scope.storeId, rec)
+      : { id: state.recommendationRepo?.insertForStore(gate.scope.storeId, rec) || 0, inserted: true };
+    if (result.id > 0) recommendationIds.push(result.id);
     if (result.inserted) {
       inserted++;
     } else if (result.updated) {
@@ -8048,7 +8120,7 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
 
   console.log(`[Scheduler] Generated ${inserted} recommendations; refreshed ${refreshedDuplicates} incomplete duplicate(s); skipped ${skippedDuplicates} duplicate(s)`);
   mainWindow?.webContents.send('recommendations:generated', inserted);
-  return { generated: inserted, metrics: metrics.length, skippedDuplicates, refreshedDuplicates, recommendationCandidates, aiExplanation, scope: gate.scope, metricsBackfill };
+  return { generated: inserted, metrics: metrics.length, skippedDuplicates, refreshedDuplicates, recommendationCandidates, recommendationIds, aiExplanation, scope: gate.scope, metricsBackfill };
 }
 
 interface AdStrategyGenerationSummary {
@@ -9413,6 +9485,7 @@ async function runDailyReportGeneration(): Promise<void> {
 function registerIpcHandlers(): void {
   if (!state.storeCoordinator) throw new Error('Store coordinator is not initialized');
   if (!state.missionDomainService) throw new Error('Mission domain service is not initialized');
+  if (!state.analysisAuthorityService) throw new Error('Analysis authority service is not initialized');
   if (!state.productRepo || !state.operationEventRepo) {
     throw new Error('Store-scoped object repositories are not initialized');
   }
@@ -9466,10 +9539,12 @@ function registerIpcHandlers(): void {
     state.storeCoordinator,
     createMissionControlLegacyAdapter({
       buildTodayProjection: buildAuthoritativeMissionControlTodayProjection,
+      analysisAuthorityReady: Boolean(state.analysisAuthorityService),
       missionDomain: state.missionDomainService,
     }),
   );
   registerMissionDomainIpcHandlers(ipcMain, state.missionDomainService);
+  registerAnalysisAuthorityIpcHandlers(ipcMain, state.analysisAuthorityService);
   registerStoreScopedObjectsIpcHandlers(
     ipcMain,
     new StoreScopedObjectsService({

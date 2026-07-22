@@ -188,6 +188,7 @@ describe('Mission Control legacy adapter', () => {
       return runtime;
     });
     const adapter = createMissionControlLegacyAdapter({
+      analysisAuthorityReady: true,
       missionDomain: {
         getAutonomyProjection: () => runtime,
         setAutonomyMode,
@@ -217,9 +218,8 @@ describe('Mission Control legacy adapter', () => {
       .toEqual(expect.objectContaining({ state: 'BLOCKED' }));
     expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'decisions.grants.issue'))
       .toEqual(expect.objectContaining({
-        state: 'BLOCKED',
+        state: 'PRODUCTION_NATIVE',
         view: 'decisions/decided',
-        blockerCode: 'AD_ENTITY_REGISTRY_NOT_IMPLEMENTED',
       }));
 
     const response = await adapter.command(normalizeMissionControlCommandRequest({

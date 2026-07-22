@@ -394,10 +394,26 @@ export interface PolicyVersionRules {
   allowedAdEntityIds: readonly string[];
   maxChangePct: number;
   totalImpactBudget: number;
+  /** Maximum number of proposal actions that may be authorized per business day. */
+  maxDailyActionCount: number;
+  /** Minimum elapsed time before the same Ads entity can receive another grant. */
+  cooldownMinutes: number;
+  /** V1 uses one non-overnight window in an explicit IANA timezone. */
+  executionWindow: PolicyExecutionWindow;
   requiredEvidence: readonly MissionGrantEvidenceType[];
   stopConditions: readonly MissionGrantStopCondition[];
   killSwitch: boolean;
   [key: string]: unknown;
+}
+
+export interface PolicyExecutionWindow {
+  timeZone: string;
+  /** 0 = Sunday, 6 = Saturday. */
+  daysOfWeek: readonly number[];
+  /** Inclusive local wall-clock start, HH:mm. */
+  start: string;
+  /** Exclusive local wall-clock end, HH:mm. V1 does not cross midnight. */
+  end: string;
 }
 
 export interface PolicyVersionRecord {

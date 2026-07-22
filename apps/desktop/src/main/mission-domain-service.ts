@@ -1,6 +1,5 @@
 import {
   normalizeStoreContextEnvelope,
-  type CreateMissionGrantInput,
   type PolicyAutonomyMode,
   type PolicyRuntimeRecord,
   type StoreContextEnvelope,
@@ -18,7 +17,7 @@ export const MISSION_DOMAIN_OPERATIONS = [
   'missions.create', 'missions.get', 'missions.list', 'missions.update',
   'missions.transition', 'missions.archive', 'missions.restore',
   'missions.appendCheckpoint', 'missions.listCheckpoints', 'missions.getLineage',
-  'grants.issueHuman', 'grants.get', 'grants.list', 'grants.listEvents', 'grants.revokeHuman',
+  'grants.get', 'grants.list', 'grants.listEvents', 'grants.revokeHuman',
   'decisions.create', 'decisions.get', 'decisions.list', 'decisions.revise',
   'decisions.resolveHuman', 'decisions.history',
   'experiments.create', 'experiments.get', 'experiments.list',
@@ -40,7 +39,7 @@ type MissionDomainRepositoryPort = Pick<MissionDomainRepository,
   | 'transitionMission' | 'archiveMission' | 'restoreMission'
   | 'appendMissionCheckpoint' | 'listMissionCheckpoints'
   | 'appendMissionLink' | 'getMissionLineage'
-  | 'issueMissionGrant' | 'getMissionGrant' | 'listMissionGrants' | 'listMissionGrantEvents'
+  | 'getMissionGrant' | 'listMissionGrants' | 'listMissionGrantEvents'
   | 'appendMissionGrantEvent'
   | 'createDecision' | 'getDecision' | 'listDecisions' | 'reviseDecision'
   | 'resolveDecision' | 'listDecisionHistory'
@@ -141,7 +140,6 @@ export class MissionDomainService {
       case 'missions.listCheckpoints': return this.run(contextInput, (c) => this.repository.listMissionCheckpoints(c, requiredString(input, 'missionId')));
       case 'missions.getLineage': return this.run(contextInput, (c) => this.repository.getMissionLineage(c, requiredString(input, 'missionId')));
 
-      case 'grants.issueHuman': return this.issueHumanMissionGrant(contextInput, input);
       case 'grants.get': return this.run(contextInput, (c) => this.repository.getMissionGrant(c, requiredId(input)));
       case 'grants.list': return this.run(contextInput, (c) => this.repository.listMissionGrants(c, requiredString(input, 'missionId')));
       case 'grants.listEvents': return this.run(contextInput, (c) => this.repository.listMissionGrantEvents(c, requiredString(input, 'missionId')));
@@ -248,17 +246,6 @@ export class MissionDomainService {
     return this.getAutonomyProjection(contextInput);
   }
 
-  issuePolicyMissionGrant(
-    contextInput: StoreContextEnvelope,
-    input: Omit<CreateMissionGrantInput, 'issuer'>,
-  ): unknown {
-    rendererInput(input);
-    return this.run(contextInput, (context) => this.repository.issueMissionGrant(context, {
-      ...input,
-      issuer: { type: 'policy', actorId: POLICY_ACTOR },
-    }));
-  }
-
   appendMissionLinkInternal(contextInput: StoreContextEnvelope, input: unknown): unknown {
     const value = rendererInput(input);
     return this.run(contextInput, (context) => this.repository.appendMissionLink(context, {
@@ -341,17 +328,6 @@ export class MissionDomainService {
       source: 'operator',
       actorId: OPERATOR_ACTOR,
     }));
-  }
-
-  private issueHumanMissionGrant(
-    contextInput: StoreContextEnvelope,
-    input: Record<string, unknown>,
-  ): unknown {
-    const { issuer: _ignoredIssuer, issuerType: _ignoredIssuerType, ...grantInput } = input;
-    return this.run(contextInput, (context) => this.repository.issueMissionGrant(context, {
-      ...grantInput,
-      issuer: { type: 'human', actorId: OPERATOR_ACTOR },
-    } as unknown as CreateMissionGrantInput));
   }
 
   private run<T>(

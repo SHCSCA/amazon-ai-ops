@@ -18,6 +18,7 @@ import {
 } from '@phosphor-icons/react';
 import {
   missionControlContextKey,
+  type MissionAnalysisProjection,
   type AppendMissionCheckpointInput,
   type CreateMissionInput,
   type MissionCheckpointRecord,
@@ -46,6 +47,11 @@ import {
   type MissionDomainRendererApi,
   type MissionLineageProjection,
 } from './mission-domain-window-api';
+import {
+  assertAnalysisProjectionBelongsToContext,
+  readAnalysisAuthorityWindowApi,
+  type AnalysisAuthorityRendererApi,
+} from './analysis-authority-window-api';
 import './missions-workspace.css';
 
 const PAGE_SIZE = 6;
@@ -107,6 +113,7 @@ type CheckpointDraft = {
 
 export type MissionsWorkspaceProps = {
   apiOverride?: MissionDomainRendererApi;
+  analysisApiOverride?: AnalysisAuthorityRendererApi;
   blockedReason: string;
   capabilities?: readonly MissionControlCapabilityProjection[];
   onInspectBoundary?: () => void;
@@ -303,6 +310,7 @@ function CheckpointEditor({
 
 export function MissionsWorkspace({
   apiOverride,
+  analysisApiOverride,
   blockedReason,
   capabilities,
   onInspectBoundary,
@@ -313,6 +321,7 @@ export function MissionsWorkspace({
   const [missions, setMissions] = useState<MissionRecord[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [lineage, setLineage] = useState<MissionLineageProjection | null>(null);
+  const [analysis, setAnalysis] = useState<MissionAnalysisProjection | null>(null);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -325,6 +334,7 @@ export function MissionsWorkspace({
   const [archiveConfirm, setArchiveConfirm] = useState<MissionRecord | null>(null);
   const requestSequence = useRef(0);
   const lineageSequence = useRef(0);
+  const analysisSequence = useRef(0);
   const mutationSequence = useRef(0);
   const idSequence = useRef(0);
   const authorityKey = storeContext ? missionControlContextKey(storeContext) : '';
@@ -334,6 +344,7 @@ export function MissionsWorkspace({
   const viewReady = capabilityReady(capabilities, view, 'view', previewMode);
   const expectedCapability = previewMode ? 'PROTOTYPE_ONLY' : 'PRODUCTION_NATIVE';
   const api = apiOverride ?? readMissionDomainWindowApi();
+  const analysisApi = analysisApiOverride ?? readAnalysisAuthorityWindowApi();
 
   const selected = missions.find((mission) => mission.id === selectedId) ?? missions[0] ?? null;
   const filtered = useMemo(() => {
@@ -390,10 +401,12 @@ export function MissionsWorkspace({
   useEffect(() => {
     requestSequence.current += 1;
     lineageSequence.current += 1;
+    analysisSequence.current += 1;
     mutationSequence.current += 1;
     setMissions([]);
     setSelectedId('');
     setLineage(null);
+    setAnalysis(null);
     setPage(1);
     setSearch('');
     setEditor(null);
@@ -433,6 +446,24 @@ export function MissionsWorkspace({
       setError(errorMessage(lineageError));
     });
   }, [api, authorityKey, selected?.id, storeContext, viewReady]);
+
+  useEffect(() => {
+    if (!selected || !storeContext || !analysisApi || !viewReady) {
+      setAnalysis(null);
+      return;
+    }
+    const capturedKey = authorityKey;
+    const capturedSequence = ++analysisSequence.current;
+    void analysisApi.getMissionProjection(storeContext, selected.id).then((projection) => {
+      if (!responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) return;
+      assertAnalysisProjectionBelongsToContext(storeContext, selected.id, projection);
+      setAnalysis(projection);
+    }).catch((analysisError) => {
+      if (!responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) return;
+      setAnalysis(null);
+      setError(errorMessage(analysisError));
+    });
+  }, [analysisApi, authorityKey, selected?.id, storeContext, viewReady]);
 
   const runMutation = async <T,>(label: string, operation: (activeApi: MissionDomainRendererApi, context: StoreContextEnvelope) => Promise<T>): Promise<T | undefined> => {
     if (!api || !storeContext || pending || !viewReady) {
@@ -545,11 +576,51 @@ export function MissionsWorkspace({
     setFeedback(`检查点“${saved.title}”已追加到因果链。`);
   };
 
+  const runAnalysis = async () => {
+    if (!analysisApi || !storeContext || !selected || pending) {
+      setError('真实分析 Authority 不可用，操作已阻断。');
+      return;
+    }
+    const capturedKey = authorityKey;
+    const capturedSequence = ++analysisSequence.current;
+    setPending('analysis');
+    setError(null);
+    setFeedback('');
+    try {
+      const result = await analysisApi.runMissionAnalysis({
+        context: storeContext,
+        missionId: selected.id,
+      });
+      const projection = await analysisApi.getMissionProjection(storeContext, selected.id);
+      if (!responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) return;
+      assertAnalysisProjectionBelongsToContext(storeContext, selected.id, projection);
+      setAnalysis(projection);
+      const automatic = result.automaticAuthorization;
+      setFeedback(automatic
+        ? automatic.authorized
+          ? `分析完成：8/8 领星证据已封存，策略自动已整批签发 ${automatic.proposalIds.length} 条建议；尚未执行 Ads。`
+          : `分析完成：形成 ${result.proposals.length} 条不可变建议，但策略自动授权被阻断：${automatic.blockers.join('；')}`
+        : `分析完成：8/8 领星证据已封存，形成 ${result.proposals.length} 条不可变建议快照，等待一次人工整批授权。`);
+    } catch (analysisError) {
+      if (!responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) return;
+      setError(errorMessage(analysisError));
+    } finally {
+      if (responseMatchesMissionAuthority(currentAuthorityKey.current, capturedKey, analysisSequence.current, capturedSequence)) {
+        setPending(null);
+      }
+    }
+  };
+
   const activeCheckpoints = lineage?.checkpoints ?? [];
   const completedCount = activeCheckpoints.filter((checkpoint) => ['completed', 'done', 'verified', 'success'].includes(checkpoint.status)).length;
   const currentPhaseIndex = selected ? ['fact', 'analysis', 'decision', 'action', 'readback', 'effect'].indexOf(selected.phase) : -1;
   const blocked = phase === 'blocked' || phase === 'error';
   const busy = pending !== null;
+  const latestEvidence = analysis?.evidencePackages[0] ?? null;
+  const latestActionBatchId = analysis?.actionBatches[0]?.id;
+  const latestProposals = latestActionBatchId
+    ? analysis?.proposals.filter((proposal) => proposal.actionBatchId === latestActionBatchId) ?? []
+    : [];
 
   return (
     <div className={`mission-control-workspace-root mission-domain-workspace${factsView ? ' mission-domain-workspace--facts' : ''}`} data-canonical-surface="missions" data-capability-state={viewReady ? expectedCapability : 'BLOCKED'} data-default-focus={factsView ? 'evidence-lineage' : 'mission-flight-plan'} data-preview-mode={previewMode || undefined} data-view={view}>
@@ -638,6 +709,7 @@ export function MissionsWorkspace({
                   <div><span>MISSION · {selected.id}</span><h2>{selected.title}</h2><p>{selected.objective}</p></div>
                   <MissionStatus status={selected.status} />
                   {!factsView && <div className="mission-domain-actions" role="group" aria-label="Mission CRUD">
+                    <button className="workspace-button workspace-button--primary" disabled={!analysisApi || busy || selected.status !== 'active'} onClick={() => void runAnalysis()} title={selected.status !== 'active' ? '只有运行中的 Mission 可以形成正式分析批次。' : undefined} type="button"><FlagBanner size={15} />{pending === 'analysis' ? '分析中…' : '运行分析'}</button>
                     <button className="workspace-button workspace-button--primary" disabled={!actionReady('update') || busy || ['archived', 'completed'].includes(selected.status)} onClick={() => storeContext && setEditor({ mission: selected, draft: missionDraft(storeContext, selected) })} type="button"><PencilSimple size={15} />编辑</button>
                     {selected.status !== 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!actionReady(selected.status === 'active' ? 'pause' : 'resume') || busy || selected.status === 'completed'} onClick={() => void transitionMission()} type="button">{selected.status === 'active' ? <Pause size={15} /> : <Play size={15} />}{selected.status === 'active' ? '暂停 Agent' : '恢复 Agent'}</button>}
                     {selected.status !== 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!actionReady('archive') || busy} onClick={() => setArchiveConfirm(selected)} type="button"><Archive size={15} />归档</button>}
@@ -651,6 +723,15 @@ export function MissionsWorkspace({
                   <div><dt>策略版本</dt><dd>{selected.policyVersionId}</dd></div>
                   <div><dt>检查点进度</dt><dd>{completedCount} / {activeCheckpoints.length}</dd></div>
                 </dl>
+
+                <section className="mission-domain-analysis-authority" aria-label="Mission 分析权威">
+                  <header><div><span>ANALYSIS AUTHORITY · US / USD</span><h3>真实分析与不可变建议批次</h3><p>范围由 Main 从 Mission 数据批次推导；Renderer 不能提交路径、规则 revision 或授权限额。</p></div><b data-ready={latestEvidence ? 'true' : 'false'}>{latestEvidence ? '已封存' : '等待分析'}</b></header>
+                  {latestEvidence ? <>
+                    <dl><div><dt>领星报告</dt><dd>{latestEvidence.reportTypes.length}/8</dd></div><div><dt>指标行</dt><dd>{latestEvidence.metricRowCount}</dd></div><div><dt>数据区间</dt><dd>{latestEvidence.dateFrom} → {latestEvidence.dateTo}</dd></div><div><dt>有效至</dt><dd>{latestEvidence.freshUntil.slice(0, 16).replace('T', ' ')}</dd></div></dl>
+                    <div className="mission-domain-proposal-strip" role="list">{latestProposals.map((proposal) => <article key={proposal.id} role="listitem" data-authorizable={proposal.authorization.human.eligible || undefined}><div><strong>{proposal.entityName}</strong><small>{proposal.campaignName} / {proposal.adGroupName}</small></div><b>${(proposal.currentBidCents / 100).toFixed(2)} → ${(proposal.proposedBidCents / 100).toFixed(2)}</b><span>{proposal.source === 'rule_ai' ? '规则 + AI 一致' : proposal.source === 'ai' ? '仅 AI / 人工审批' : proposal.source === 'rule_fallback' ? 'AI 降级 / 不可授权' : '规则建议'}</span><em>{proposal.authorization.human.eligible ? '可进入人工审批' : proposal.authorization.human.blockers.join(' · ')}</em></article>)}</div>
+                    <footer><code>{latestEvidence.packageHash.slice(0, 12)}</code><span>Rule {latestEvidence.ruleRevision.slice(0, 8)} · {latestEvidence.modelRevision}</span></footer>
+                  </> : <WorkspaceState kind="empty" title="尚未形成真实分析批次" description="运行中的 Mission 会封存当前店铺 8 类领星报表、规则与模型 revision，然后创建可追溯 Decision。" />}
+                </section>
 
                 <div className="mission-domain-flight-layout">
                   <section className="mission-domain-flight-plan">

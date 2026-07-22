@@ -722,6 +722,10 @@ export class MissionDomainRepository {
       if (version.policyId !== policy.id) throw referenceConflict('Policy version does not belong to policy.');
       if (policy.status === 'archived') throw stateConflict('Archived policy cannot be enabled.');
       if (version.status !== 'draft') throw stateConflict('Only a draft policy version can be enabled.');
+      // Revalidate the stored JSON at the irreversible draft -> enabled boundary.
+      // This fails closed for legacy drafts that predate required rate-limit and
+      // execution-window fields instead of activating an incomplete policy.
+      rulesOf(version.rules);
       const now = this.timestamp();
       if (version.validUntil && Date.parse(version.validUntil) <= Date.parse(now)) {
         throw stateConflict('Expired policy version cannot be enabled.');
@@ -2834,6 +2838,39 @@ function rulesOf(value: PolicyVersionRules): PolicyVersionRules {
   if (!Number.isFinite(value.totalImpactBudget) || value.totalImpactBudget < 0) {
     throw invalid('Policy totalImpactBudget must be non-negative.');
   }
+  if (!Number.isSafeInteger(value.maxDailyActionCount)
+    || value.maxDailyActionCount <= 0
+    || value.maxDailyActionCount > 10_000) {
+    throw invalid('Policy maxDailyActionCount must be an integer from 1 to 10000.');
+  }
+  if (!Number.isSafeInteger(value.cooldownMinutes)
+    || value.cooldownMinutes < 0
+    || value.cooldownMinutes > 525_600) {
+    throw invalid('Policy cooldownMinutes must be an integer from 0 to 525600.');
+  }
+  const executionWindow = value.executionWindow;
+  if (!executionWindow || typeof executionWindow !== 'object' || Array.isArray(executionWindow)) {
+    throw invalid('Policy executionWindow must be configured.');
+  }
+  const timeZone = textOf(executionWindow.timeZone, 'executionWindow.timeZone', 100);
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date(0));
+  } catch {
+    throw invalid('Policy executionWindow.timeZone must be a valid IANA timezone.');
+  }
+  if (!Array.isArray(executionWindow.daysOfWeek) || executionWindow.daysOfWeek.length === 0
+    || executionWindow.daysOfWeek.some((day) => !Number.isSafeInteger(day) || day < 0 || day > 6)) {
+    throw invalid('Policy executionWindow.daysOfWeek must contain weekday integers from 0 to 6.');
+  }
+  const daysOfWeek = [...new Set(executionWindow.daysOfWeek)].sort((left, right) => left - right);
+  if (daysOfWeek.length !== executionWindow.daysOfWeek.length) {
+    throw invalid('Policy executionWindow.daysOfWeek cannot contain duplicates.');
+  }
+  const start = executionWindowTime(executionWindow.start, 'executionWindow.start');
+  const end = executionWindowTime(executionWindow.end, 'executionWindow.end');
+  if (wallClockMinutes(start) >= wallClockMinutes(end)) {
+    throw invalid('Policy executionWindow must end after it starts; V1 does not cross midnight.');
+  }
   if (typeof value.killSwitch !== 'boolean') throw invalid('Policy killSwitch must be boolean.');
   return {
     ...value,
@@ -2841,6 +2878,9 @@ function rulesOf(value: PolicyVersionRules): PolicyVersionRules {
     allowedAdEntityIds,
     maxChangePct: value.maxChangePct,
     totalImpactBudget: value.totalImpactBudget,
+    maxDailyActionCount: value.maxDailyActionCount,
+    cooldownMinutes: value.cooldownMinutes,
+    executionWindow: { timeZone, daysOfWeek, start, end },
     requiredEvidence,
     stopConditions: value.stopConditions.map((condition) => ({
       code: condition.code,
@@ -2848,6 +2888,18 @@ function rulesOf(value: PolicyVersionRules): PolicyVersionRules {
     })),
     killSwitch: value.killSwitch,
   };
+}
+
+function executionWindowTime(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+    throw invalid(`Policy ${label} must use HH:mm.`);
+  }
+  return value;
+}
+
+function wallClockMinutes(value: string): number {
+  const [hours, minutes] = value.split(':').map(Number);
+  return (hours * 60) + minutes;
 }
 
 function assertMissionTransition(from: MissionLifecycleStatus, to: MissionLifecycleStatus): void {

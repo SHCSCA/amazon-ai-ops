@@ -117,6 +117,14 @@ const policyRules = (storeId: string): PolicyVersionRules => ({
   allowedAdEntityIds: [`${storeId}-keyword-1`],
   maxChangePct: 10,
   totalImpactBudget: 50,
+  maxDailyActionCount: 100,
+  cooldownMinutes: 0,
+  executionWindow: {
+    timeZone: 'America/Los_Angeles',
+    daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+    start: '00:00',
+    end: '23:59',
+  },
   requiredEvidence: [
     'page_identity',
     'before_screenshot',
@@ -253,6 +261,38 @@ function expectRepositoryError(
 }
 
 describe('MissionDomainRepository policy and context authority', () => {
+  it('refuses to enable a legacy draft without rate limits and an execution window', () => {
+    const { database, repository, contextOne } = createHarness();
+    const policy = repository.createPolicy(contextOne, {
+      id: 'legacy-incomplete-policy',
+      name: 'Legacy incomplete policy',
+      scope: 'store',
+      priority: 5,
+      actorId: 'operator-one',
+    });
+    const draft = repository.createPolicyVersion(contextOne, {
+      id: 'legacy-incomplete-policy-v1',
+      policyId: policy.id,
+      version: 1,
+      rules: policyRules(contextOne.storeId),
+      actorId: 'operator-one',
+    });
+    const incomplete = { ...policyRules(contextOne.storeId) } as Record<string, unknown>;
+    delete incomplete.maxDailyActionCount;
+    delete incomplete.cooldownMinutes;
+    delete incomplete.executionWindow;
+    database.prepare('UPDATE policy_versions SET rules_json = ? WHERE store_id = ? AND id = ?')
+      .run(JSON.stringify(incomplete), contextOne.storeId, draft.id);
+    expectRepositoryError(() => repository.enablePolicyVersion(contextOne, {
+      policyId: policy.id,
+      versionId: draft.id,
+      expectedPolicyRevision: policy.revision,
+      expectedVersionRevision: draft.revision,
+      actorId: 'operator-one',
+    }), 'INVALID_INPUT');
+    expect(repository.getPolicyVersion(contextOne, draft.id)?.status).toBe('draft');
+  });
+
   it('isolates stores, rejects stale context/CAS, and keeps policy/runtime changes audited', () => {
     const { database, repository, contextOne, contextTwo } = createHarness();
     const { policy, version } = seedEnabledPolicy(repository, contextOne);

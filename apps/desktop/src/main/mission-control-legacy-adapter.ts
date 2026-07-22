@@ -38,6 +38,12 @@ export interface MissionControlAdapter {
 
 export interface MissionControlAdapterOptions {
   buildTodayProjection?(context: StoreContextEnvelope): MissionControlTodayProjection;
+  /**
+   * Set only when the closed analysis authority IPC surface is registered.
+   * This keeps the capability projection aligned with the actual composition
+   * root instead of upgrading grant issuance merely because Mission CRUD exists.
+   */
+  analysisAuthorityReady?: boolean;
   missionDomain?: {
     getAutonomyProjection(context: StoreContextEnvelope): {
       mode: MissionControlAutonomyMode;
@@ -186,6 +192,15 @@ export function createMissionControlLegacyAdapter(
             capability.view,
             capability.action,
             '当前店铺今日准备度由 Main 从真实采集 lineage、导入、产品和浏览器状态投影。',
+          );
+        }
+        if (options.analysisAuthorityReady && capability.capabilityId === 'decisions.grants.issue') {
+          return native(
+            capability.capabilityId,
+            capability.workspace,
+            capability.view,
+            capability.action,
+            '整批授权只接受 Main 封存的同一分析 action batch，并复核 Evidence、Decision、策略与稳定 Ads 实体版本。',
           );
         }
         const missionDomainDetail = options.missionDomain

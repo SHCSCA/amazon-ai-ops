@@ -6,7 +6,6 @@ import {
   type CausalLedgerStage,
   type CreateDecisionInput,
   type CreateExperimentInput,
-  type CreateMissionGrantInput,
   type CreateMissionInput,
   type CreatePolicyInput,
   type CreatePolicyVersionInput,
@@ -83,10 +82,6 @@ export type HumanDecisionResolutionInput = {
   actorId: string;
 };
 
-export type CreateHumanMissionGrantInput = Omit<CreateMissionGrantInput, 'issuer'> & {
-  actorId?: string;
-};
-
 export type HumanGrantRevokeInput = {
   id: string;
   grantId: string;
@@ -102,7 +97,6 @@ export interface DecisionDomainRendererApi {
   getDecisionHistory(context: StoreContextEnvelope, decisionId: string): Promise<DecisionHistoryRecord[]>;
   listHumanGrants(context: StoreContextEnvelope, missionId: string): Promise<MissionGrantRecord[]>;
   listHumanGrantEvents(context: StoreContextEnvelope, missionId: string): Promise<MissionGrantEventRecord[]>;
-  issueHumanGrant(context: StoreContextEnvelope, input: CreateHumanMissionGrantInput): Promise<MissionGrantRecord>;
   revokeHumanGrant(context: StoreContextEnvelope, input: HumanGrantRevokeInput): Promise<MissionGrantEventRecord>;
 }
 
@@ -236,7 +230,7 @@ export interface MissionDomainWindowSurface {
     MissionScopedCall
   >>;
   decisions?: Readonly<Record<'create' | 'list' | 'revise' | 'resolveHuman' | 'history', MissionScopedCall>>;
-  grants?: Readonly<Record<'issueHuman' | 'list' | 'listEvents' | 'revokeHuman', MissionScopedCall>>;
+  grants?: Readonly<Record<'list' | 'listEvents' | 'revokeHuman', MissionScopedCall>>;
   policies?: Readonly<Record<'create' | 'list' | 'update' | 'disable' | 'archive' | 'restore', MissionScopedCall>>;
   policyVersions?: Readonly<Record<'create' | 'list' | 'updateDraft' | 'enable', MissionScopedCall>>;
   policyRuntime?: Readonly<Record<'get' | 'setAutonomyMode' | 'setKillSwitch', MissionScopedCall>>;
@@ -285,7 +279,6 @@ export function createMissionDomainWindowSurface(
       history: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => decisionApi.getDecisionHistory(context, String(input.decisionId ?? '')),
     });
     surface.grants = Object.freeze({
-      issueHuman: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => decisionApi.issueHumanGrant(context, input as unknown as CreateHumanMissionGrantInput),
       list: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => decisionApi.listHumanGrants(context, String(input.missionId ?? '')),
       listEvents: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => decisionApi.listHumanGrantEvents(context, String(input.missionId ?? '')),
       revokeHuman: (context: StoreContextEnvelope, input: Record<string, unknown> = {}) => decisionApi.revokeHumanGrant(context, input as unknown as HumanGrantRevokeInput),
@@ -361,7 +354,7 @@ export function readMissionDomainWindowApi(
 }
 
 const DECISION_METHODS = ['create', 'list', 'revise', 'resolveHuman', 'history'] as const;
-const GRANT_METHODS = ['issueHuman', 'list', 'listEvents', 'revokeHuman'] as const;
+const GRANT_METHODS = ['list', 'listEvents', 'revokeHuman'] as const;
 
 export function readDecisionDomainWindowApi(target?: unknown): DecisionDomainRendererApi | null {
   const resolvedTarget = target ?? (typeof window === 'undefined' ? undefined : window);
@@ -381,7 +374,6 @@ export function readDecisionDomainWindowApi(target?: unknown): DecisionDomainRen
     getDecisionHistory: async (context, decisionId) => decisions.history(context, { decisionId }) as Promise<DecisionHistoryRecord[]>,
     listHumanGrants: async (context, missionId) => grants.list(context, { missionId }) as Promise<MissionGrantRecord[]>,
     listHumanGrantEvents: async (context, missionId) => grants.listEvents(context, { missionId }) as Promise<MissionGrantEventRecord[]>,
-    issueHumanGrant: async (context, input) => grants.issueHuman(context, input as unknown as Record<string, unknown>) as Promise<MissionGrantRecord>,
     revokeHumanGrant: async (context, input) => grants.revokeHuman(context, input as unknown as Record<string, unknown>) as Promise<MissionGrantEventRecord>,
   };
 }
@@ -1052,53 +1044,6 @@ export function createPreviewDecisionDomainApi(): DecisionDomainRendererApi {
       return clone(state.grantEvents.filter((event) => grantIds.has(event.grantId))
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt)));
     },
-    async issueHumanGrant(context, input) {
-      const state = stateFor(context);
-      if (state.grants.some((grant) => grant.id === input.id)) throw new Error('MissionGrant ID 已存在。');
-      if (!input.decisionIds.length || new Set(input.decisionIds).size !== input.decisionIds.length) {
-        throw new Error('MissionGrant decisionIds 必须非空且不能重复。');
-      }
-      if (!input.allowedAdEntityIds.length || new Set(input.allowedAdEntityIds).size !== input.allowedAdEntityIds.length) {
-        throw new Error('MissionGrant 广告实体 allowlist 必须非空且不能重复。');
-      }
-      if (!input.allowedActionTypes.length || new Set(input.allowedActionTypes).size !== input.allowedActionTypes.length
-        || input.allowedActionTypes.some((action) => action !== 'set_keyword_bid')) {
-        throw new Error('V1 人工授权必须限定关键词竞价对象。');
-      }
-      const decisions = input.decisionIds.map((id) => decisionFor(state, id));
-      if (decisions.some((decision) => decision.status !== 'approved')) throw new Error('批次授权只接受已批准 Decision。');
-      if (decisions.some((decision) => decision.missionId !== input.missionId
-        || decision.dataBatchId !== decisions[0].dataBatchId
-        || decision.policyVersionId !== input.policyVersionId
-        || decision.policyRevision !== input.policyRevision
-        || decision.actionRevision !== input.actionRevision)) {
-        throw new Error('批次 Decision 必须匹配同一 Mission、数据批次、策略快照与 action revision。');
-      }
-      const expectedEntities = decisions.map((decision) => decision.adEntityId).filter((id): id is string => Boolean(id));
-      const expectedActions = [...new Set(decisions.map((decision) => decision.actionType))];
-      const exactEntitySet = expectedEntities.length === input.allowedAdEntityIds.length
-        && expectedEntities.every((id) => input.allowedAdEntityIds.includes(id));
-      if (!exactEntitySet) throw new Error('广告实体 allowlist 必须与批次 Decision 精确一致。');
-      const exactActionSet = expectedActions.length === input.allowedActionTypes.length
-        && expectedActions.every((action) => input.allowedActionTypes.includes(action as 'set_keyword_bid'));
-      if (!exactActionSet) throw new Error('动作 allowlist 必须与批次 Decision 精确一致。');
-      if (Date.parse(input.expiresAt) <= Date.now()) throw new Error('授权有效期必须晚于当前时间。');
-      const grant: MissionGrantRecord = {
-        ...input,
-        storeId: context.storeId,
-        marketplace: 'US',
-        currency: 'USD',
-        issuer: { type: 'human', actorId: 'desktop-operator' },
-        issuedAt: nowAfter(),
-        createdSessionGeneration: context.sessionGeneration,
-      };
-      state.grants.unshift(grant);
-      state.grantEvents.unshift({
-        id: `GRANT-EVENT-${grant.id}-ISSUED`, storeId: context.storeId, grantId: grant.id,
-        eventType: 'issued', actorId: grant.issuer.actorId, createdAt: grant.issuedAt,
-      });
-      return clone(grant);
-    },
     async revokeHumanGrant(context, input) {
       const state = stateFor(context);
       const grant = state.grants.find((item) => item.id === input.grantId);
@@ -1133,6 +1078,14 @@ function defaultPreviewRules(entityId: string, maxChangePct = 15): PolicyVersion
     allowedAdEntityIds: [entityId],
     maxChangePct,
     totalImpactBudget: 50,
+    maxDailyActionCount: 100,
+    cooldownMinutes: 0,
+    executionWindow: {
+      timeZone: 'America/Los_Angeles',
+      daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+      start: '00:00',
+      end: '23:59',
+    },
     requiredEvidence: ['before_screenshot', 'after_screenshot', 'reload_screenshot', 'page_identity', 'readback_value'],
     stopConditions: [
       { code: 'identity_drift', detail: '店铺或对象身份漂移立即停止。' },

@@ -25,6 +25,7 @@ describe('Mission domain preload API', () => {
     expect(Object.values(api).every(Object.isFrozen)).toBe(true);
     expect(api).not.toHaveProperty('invoke');
     expect(api.grants).not.toHaveProperty('issuePolicy');
+    expect(api.grants).not.toHaveProperty('issueHuman');
     expect(api.grants).not.toHaveProperty('appendEvent');
     expect(api.grants).not.toHaveProperty('authorize');
     expect(api.missions).not.toHaveProperty('appendLink');

@@ -36,6 +36,17 @@ import './policy-workspace.css';
 
 const OPERATOR = 'desktop-operator';
 const PAGE_SIZE = 6;
+const TIME_OF_DAY_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+const DAY_OPTIONS = [
+  { value: 1, shortLabel: '一', label: '周一' },
+  { value: 2, shortLabel: '二', label: '周二' },
+  { value: 3, shortLabel: '三', label: '周三' },
+  { value: 4, shortLabel: '四', label: '周四' },
+  { value: 5, shortLabel: '五', label: '周五' },
+  { value: 6, shortLabel: '六', label: '周六' },
+  { value: 0, shortLabel: '日', label: '周日' },
+] as const;
+const DEFAULT_EXECUTION_DAYS = [1, 2, 3, 4, 5];
 
 type PolicyDraft = { name: string; scope: string; priority: string };
 type VersionDraft = {
@@ -43,6 +54,12 @@ type VersionDraft = {
   allowedAdEntityIds: string;
   maxChangePct: string;
   totalImpactBudget: string;
+  maxDailyActionCount: string;
+  cooldownMinutes: string;
+  executionTimeZone: string;
+  executionDaysOfWeek: number[];
+  executionWindowStart: string;
+  executionWindowEnd: string;
   validFrom: string;
   validUntil: string;
 };
@@ -88,12 +105,22 @@ export function responseMatchesPolicyDetail(
     && currentSequence === capturedSequence;
 }
 
-function defaultRules(entityIds: string[], maxChangePct: number, impactBudget: number): PolicyVersionRules {
+function defaultRules(
+  entityIds: string[],
+  maxChangePct: number,
+  impactBudget: number,
+  maxDailyActionCount: number,
+  cooldownMinutes: number,
+  executionWindow: PolicyVersionRules['executionWindow'],
+): PolicyVersionRules {
   return {
     allowedActionTypes: ['set_keyword_bid'],
     allowedAdEntityIds: entityIds,
     maxChangePct,
     totalImpactBudget: impactBudget,
+    maxDailyActionCount,
+    cooldownMinutes,
+    executionWindow,
     requiredEvidence: ['before_screenshot', 'after_screenshot', 'reload_screenshot', 'page_identity', 'readback_value'],
     stopConditions: [
       { code: 'identity_drift', detail: '店铺、页面或广告对象身份漂移立即停止。' },
@@ -111,15 +138,75 @@ function policyDraft(record?: PolicyRecord | null): PolicyDraft {
   return { name: record?.name ?? '', scope: record?.scope ?? 'store', priority: String(record?.priority ?? 20) };
 }
 
-function versionDraft(record?: PolicyVersionRecord | null): VersionDraft {
+export function buildPolicyVersionDraft(record: PolicyVersionRecord | null | undefined, defaultTimeZone: string): VersionDraft {
   return {
     version: String(record?.version ?? 1),
     allowedAdEntityIds: record?.rules.allowedAdEntityIds.join('\n') ?? '',
     maxChangePct: String(record?.rules.maxChangePct ?? 15),
     totalImpactBudget: String(record?.rules.totalImpactBudget ?? 50),
+    maxDailyActionCount: String(record?.rules.maxDailyActionCount ?? 25),
+    cooldownMinutes: String(record?.rules.cooldownMinutes ?? 30),
+    executionTimeZone: record?.rules.executionWindow?.timeZone ?? defaultTimeZone,
+    executionDaysOfWeek: [...(record?.rules.executionWindow?.daysOfWeek ?? DEFAULT_EXECUTION_DAYS)],
+    executionWindowStart: record?.rules.executionWindow?.start ?? '08:00',
+    executionWindowEnd: record?.rules.executionWindow?.end ?? '18:00',
     validFrom: record?.validFrom?.slice(0, 10) ?? '',
     validUntil: record?.validUntil?.slice(0, 10) ?? '',
   };
+}
+
+function parseRequiredInteger(value: string, label: string, minimum: number, maximum: number): number {
+  const normalized = value.trim();
+  if (!/^(?:0|[1-9]\d*)$/.test(normalized)) {
+    throw new Error(`${label}必须是${minimum === 0 ? '非负' : '正'}整数。`);
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${label}必须是 ${minimum}–${maximum} 的整数。`);
+  }
+  return parsed;
+}
+
+function normalizeExecutionDays(days: readonly number[]): number[] {
+  if (!Array.isArray(days) || days.length === 0) throw new Error('执行窗口至少选择一个执行日。');
+  if (days.some((day) => !Number.isSafeInteger(day) || day < 0 || day > 6)) {
+    throw new Error('执行窗口星期必须是 0–6 的整数。');
+  }
+  if (new Set(days).size !== days.length) throw new Error('执行窗口星期不能重复。');
+  return DAY_OPTIONS.map((option) => option.value).filter((day) => days.includes(day));
+}
+
+function validateTimeZone(value: string): string {
+  const timeZone = value.trim();
+  if (!timeZone) throw new Error('执行时区必须填写有效的 IANA 时区。');
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format(0);
+  } catch {
+    throw new Error('执行时区必须填写有效的 IANA 时区。');
+  }
+  return timeZone;
+}
+
+function toggleExecutionDay(days: readonly number[], day: number): number[] {
+  const next = new Set(days);
+  if (next.has(day)) next.delete(day);
+  else next.add(day);
+  return DAY_OPTIONS.map((option) => option.value).filter((value) => next.has(value));
+}
+
+function formatExecutionDays(days: readonly number[]): string {
+  const selected = DAY_OPTIONS.filter((option) => days.includes(option.value));
+  if (selected.length === DAY_OPTIONS.length) return '每天';
+  if (selected.length === 5 && selected.every((option, index) => option.value === DEFAULT_EXECUTION_DAYS[index])) return '周一至周五';
+  return selected.map((option) => option.label).join('、') || '未选择日期';
+}
+
+export function formatExecutionWindowSummary(rules: PolicyVersionRules): string {
+  const window = rules.executionWindow;
+  const dailyLimit = Number.isSafeInteger(rules.maxDailyActionCount) ? `${rules.maxDailyActionCount} 次/日` : '每日上限未配置';
+  const cooldown = Number.isSafeInteger(rules.cooldownMinutes) ? `冷却 ${rules.cooldownMinutes} 分钟` : '冷却未配置';
+  if (!window) return `${dailyLimit} · ${cooldown} · 执行窗口未配置`;
+  return `${dailyLimit} · ${cooldown} · ${formatExecutionDays(window.daysOfWeek)} ${window.start}–${window.end} · ${window.timeZone}`;
 }
 
 export function buildCreatePolicyInput(draft: PolicyDraft, id: string): CreatePolicyInput {
@@ -137,16 +224,29 @@ export function buildPolicyVersionInput(
   const version = Number(draft.version);
   const maxChangePct = Number(draft.maxChangePct);
   const totalImpactBudget = Number(draft.totalImpactBudget);
+  const maxDailyActionCount = parseRequiredInteger(draft.maxDailyActionCount, '每日动作上限', 1, 10_000);
+  const cooldownMinutes = parseRequiredInteger(draft.cooldownMinutes, '同对象冷却时间', 0, 525_600);
+  const timeZone = validateTimeZone(draft.executionTimeZone);
+  const daysOfWeek = normalizeExecutionDays(draft.executionDaysOfWeek);
+  const start = draft.executionWindowStart.trim();
+  const end = draft.executionWindowEnd.trim();
   const entities = split(draft.allowedAdEntityIds);
   if (!Number.isSafeInteger(version) || version < 1) throw new Error('版本号必须是正整数。');
   if (!(maxChangePct > 0 && maxChangePct <= 15)) throw new Error('V1 关键词竞价单次变化必须在 0–15% 内。');
-  if (!(totalImpactBudget >= 0)) throw new Error('批次影响预算不能小于 0 USD。');
+  if (!Number.isFinite(totalImpactBudget) || totalImpactBudget < 0) throw new Error('批次影响预算不能小于 0 USD。');
+  if (!TIME_OF_DAY_PATTERN.test(start) || !TIME_OF_DAY_PATTERN.test(end)) throw new Error('执行窗口时间必须使用 HH:mm 24 小时格式。');
+  if (start >= end) throw new Error('V1 执行窗口结束时间必须晚于开始时间，且不能跨午夜。');
   if (draft.validFrom && draft.validUntil && draft.validFrom >= draft.validUntil) throw new Error('策略有效期结束日期必须晚于开始日期。');
   return {
     id,
     policyId: policy.id,
     version,
-    rules: defaultRules(entities, maxChangePct, totalImpactBudget),
+    rules: defaultRules(entities, maxChangePct, totalImpactBudget, maxDailyActionCount, cooldownMinutes, {
+      timeZone,
+      daysOfWeek,
+      start,
+      end,
+    }),
     ...(draft.validFrom ? { validFrom: `${draft.validFrom}T07:00:00.000Z` } : {}),
     ...(draft.validUntil ? { validUntil: `${draft.validUntil}T07:00:00.000Z` } : {}),
     actorId: OPERATOR,
@@ -180,7 +280,7 @@ function PolicyDialog({ record, draft, busy, onChange, onClose, onSave }: {
   return <div className="mission-control-dialog-backdrop"><section aria-modal="true" className="mission-control-dialog policy-domain-dialog" role="dialog" aria-labelledby="policy-dialog-title"><header><div><span>POLICY · AMAZON US / USD</span><h2 id="policy-dialog-title">{record ? '编辑策略' : '新建策略'}</h2><p>策略元数据可通过 CAS 修改；已启用版本内容保持不可变。</p></div><button aria-label="关闭策略编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onClose} type="button"><X size={18} /></button></header><div className="policy-domain-form"><label><span>策略名称 *</span><input autoFocus value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} /></label><label><span>作用范围 *</span><select value={draft.scope} onChange={(event) => onChange({ ...draft, scope: event.target.value })}><option value="store">整个店铺</option><option value="product">当前产品范围</option><option value="data">数据质量门</option></select></label><label><span>优先级 *</span><input min="1" max="100" type="number" value={draft.priority} onChange={(event) => onChange({ ...draft, priority: event.target.value })} /></label></div><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onClose} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '保存中…' : record ? '保存策略' : '创建策略'}</button></footer></section></div>;
 }
 
-function VersionDialog({ record, draft, busy, onChange, onClose, onSave }: {
+export function VersionDialog({ record, draft, busy, onChange, onClose, onSave }: {
   record: PolicyVersionRecord | null;
   draft: VersionDraft;
   busy: boolean;
@@ -188,7 +288,40 @@ function VersionDialog({ record, draft, busy, onChange, onClose, onSave }: {
   onClose: () => void;
   onSave: () => void;
 }) {
-  return <div className="mission-control-dialog-backdrop"><section aria-modal="true" className="mission-control-dialog policy-domain-dialog" role="dialog" aria-labelledby="version-dialog-title"><header><div><span>IMMUTABLE POLICY SNAPSHOT</span><h2 id="version-dialog-title">{record ? '编辑草稿版本' : '新建策略版本'}</h2><p>启用后规则不可编辑；后续变化必须新建版本。</p></div><button aria-label="关闭版本编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onClose} type="button"><X size={18} /></button></header><div className="policy-domain-form policy-domain-form--version"><label><span>版本号 *</span><input disabled={Boolean(record)} min="1" type="number" value={draft.version} onChange={(event) => onChange({ ...draft, version: event.target.value })} /></label><label><span>最大单次变化 *</span><div className="policy-domain-input-unit"><input max="15" min="0.1" step="0.1" type="number" value={draft.maxChangePct} onChange={(event) => onChange({ ...draft, maxChangePct: event.target.value })} /><b>%</b></div></label><label><span>批次影响预算 *</span><div className="policy-domain-input-unit"><b>$</b><input min="0" step="1" type="number" value={draft.totalImpactBudget} onChange={(event) => onChange({ ...draft, totalImpactBudget: event.target.value })} /></div></label><label className="policy-domain-form__wide"><span>允许广告实体 ID（可空；空=零执行权限）</span><textarea rows={4} value={draft.allowedAdEntityIds} onChange={(event) => onChange({ ...draft, allowedAdEntityIds: event.target.value })} /><small>每行一个稳定关键词广告实体 ID；未知 ID 由 Main 失败关闭。</small></label><label><span>生效日期</span><input type="date" value={draft.validFrom} onChange={(event) => onChange({ ...draft, validFrom: event.target.value })} /></label><label><span>失效日期</span><input type="date" value={draft.validUntil} onChange={(event) => onChange({ ...draft, validUntil: event.target.value })} /></label></div><footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onClose} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '保存中…' : '保存草稿版本'}</button></footer></section></div>;
+  return <div className="mission-control-dialog-backdrop">
+    <section aria-labelledby="version-dialog-title" aria-modal="true" className="mission-control-dialog policy-domain-dialog policy-domain-dialog--version" role="dialog">
+      <header>
+        <div><span>IMMUTABLE POLICY SNAPSHOT</span><h2 id="version-dialog-title">{record ? '编辑草稿版本' : '新建策略版本'}</h2><p>启用后规则不可编辑；后续变化必须新建版本。</p></div>
+        <button aria-label="关闭版本编辑器" className="mission-control-dialog__close" disabled={busy} onClick={onClose} type="button"><X size={18} /></button>
+      </header>
+      <div className="policy-domain-form policy-domain-form--version">
+        <label><span>版本号 *</span><input disabled={Boolean(record)} min="1" step="1" type="number" value={draft.version} onChange={(event) => onChange({ ...draft, version: event.target.value })} /></label>
+        <label><span>最大单次变化 *</span><div className="policy-domain-input-unit"><input max="15" min="0.1" step="0.1" type="number" value={draft.maxChangePct} onChange={(event) => onChange({ ...draft, maxChangePct: event.target.value })} /><b>%</b></div></label>
+        <label><span>批次影响预算 *</span><div className="policy-domain-input-unit"><b>$</b><input min="0" step="1" type="number" value={draft.totalImpactBudget} onChange={(event) => onChange({ ...draft, totalImpactBudget: event.target.value })} /></div></label>
+        <label><span>每日动作上限 *</span><div className="policy-domain-input-unit"><input min="1" step="1" type="number" value={draft.maxDailyActionCount} onChange={(event) => onChange({ ...draft, maxDailyActionCount: event.target.value })} /><b>次</b></div></label>
+        <label><span>同对象冷却时间 *</span><div className="policy-domain-input-unit"><input min="0" step="1" type="number" value={draft.cooldownMinutes} onChange={(event) => onChange({ ...draft, cooldownMinutes: event.target.value })} /><b>分钟</b></div></label>
+        <label className="policy-domain-form__wide"><span>允许广告实体 ID（可空；空=零执行权限）</span><textarea rows={4} value={draft.allowedAdEntityIds} onChange={(event) => onChange({ ...draft, allowedAdEntityIds: event.target.value })} /><small>每行一个稳定关键词广告实体 ID；未知 ID 由 Main 失败关闭。</small></label>
+        <fieldset aria-describedby="policy-execution-window-help" className="policy-domain-boundary">
+          <legend>V1 执行窗口 *</legend>
+          <div className="policy-domain-window-grid">
+            <label><span>IANA 时区</span><input placeholder="区域/城市" spellCheck={false} value={draft.executionTimeZone} onChange={(event) => onChange({ ...draft, executionTimeZone: event.target.value })} /></label>
+            <label><span>开始时间</span><input step="300" type="time" value={draft.executionWindowStart} onChange={(event) => onChange({ ...draft, executionWindowStart: event.target.value })} /></label>
+            <label><span>结束时间</span><input step="300" type="time" value={draft.executionWindowEnd} onChange={(event) => onChange({ ...draft, executionWindowEnd: event.target.value })} /></label>
+          </div>
+          <div className="policy-domain-day-field">
+            <span>执行日（至少一天）</span>
+            <div aria-label="策略执行日" className="policy-domain-day-options" role="group">
+              {DAY_OPTIONS.map((option) => <button aria-label={option.label} aria-pressed={draft.executionDaysOfWeek.includes(option.value)} key={option.value} onClick={() => onChange({ ...draft, executionDaysOfWeek: toggleExecutionDay(draft.executionDaysOfWeek, option.value) })} type="button">{option.shortLabel}</button>)}
+            </div>
+          </div>
+          <small id="policy-execution-window-help">按所填时区解释本地时间；结束时间不包含在窗口内。V1 要求开始早于结束，不支持跨午夜。</small>
+        </fieldset>
+        <label><span>生效日期</span><input type="date" value={draft.validFrom} onChange={(event) => onChange({ ...draft, validFrom: event.target.value })} /></label>
+        <label><span>失效日期</span><input type="date" value={draft.validUntil} onChange={(event) => onChange({ ...draft, validUntil: event.target.value })} /></label>
+      </div>
+      <footer><button className="workspace-button workspace-button--secondary" disabled={busy} onClick={onClose} type="button">取消</button><button className="workspace-button workspace-button--primary" disabled={busy} onClick={onSave} type="button">{busy ? '保存中…' : '保存草稿版本'}</button></footer>
+    </section>
+  </div>;
 }
 
 export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedReason, capabilities, onInspectBoundary, onRefreshAuthority, previewMode, storeContext }: PolicyWorkspaceProps) {
@@ -416,7 +549,7 @@ export function PolicyWorkspace({ apiOverride, authoritativeAutonomy, blockedRea
         </WorkbenchPanel>
         <div className="policy-domain-detail">{selected ? <>
           <section className="policy-domain-detail-head"><div><span>POLICY · {selected.id}</span><h2>{selected.name}</h2><p>{selected.scope} · 优先级 P{selected.priority} · revision {selected.revision}</p></div><em data-status={selected.status}>{selected.status}</em><div className="policy-domain-actions"><button className="workspace-button workspace-button--primary" disabled={!can('policy.policy.update') || busy || selected.status === 'archived'} onClick={() => setPolicyEditor({ record: selected, draft: policyDraft(selected) })} type="button"><PencilSimple size={15} />编辑</button>{selected.status === 'active' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.version.disable') || busy} onClick={() => void lifecycle('disable')} type="button"><Power size={15} />停用</button>}{selected.status !== 'active' && selected.status !== 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.policy.archive') || busy} onClick={() => void lifecycle('archive')} type="button"><Archive size={15} />归档</button>}{selected.status === 'archived' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.policy.restore') || busy} onClick={() => void lifecycle('restore')} type="button"><ArrowClockwise size={15} />恢复</button>}</div></section>
-          <section className="policy-domain-versions"><header><div><h3>不可变版本</h3><p>只有 draft 可修改；enable 后形成审计快照。</p></div><button className="workspace-button workspace-button--primary" disabled={!can('policy.version.create') || busy || selected.status === 'archived'} onClick={() => setVersionEditor({ record: null, draft: versionDraft({ version: Math.max(0, ...versions.map((item) => item.version)) + 1 } as PolicyVersionRecord) })} type="button"><Plus size={15} />新建版本</button></header><div className="policy-domain-version-list" role="list">{versions.map((version) => <article data-status={version.status} key={version.id} role="listitem"><div><span>{version.status === 'enabled' ? <LockKey size={18} /> : <ShieldCheck size={18} />}</span><div><strong>v{version.version} · {version.id}</strong><small>r{version.revision} · {version.rules.allowedAdEntityIds.length ? `${version.rules.allowedAdEntityIds.length} 个对象` : '0 对象 · 不可自动签发'} · ≤ {version.rules.maxChangePct}% · ${version.rules.totalImpactBudget}</small></div></div><div>{version.status === 'draft' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.version.update') || busy} onClick={() => setVersionEditor({ record: version, draft: versionDraft(version) })} type="button"><PencilSimple size={14} />编辑草稿</button>}{version.status === 'draft' && <button className="workspace-button workspace-button--primary" disabled={!can('policy.version.enable') || busy} onClick={() => void enableVersion(version)} type="button"><CheckCircle size={14} />启用并冻结</button>}{version.status !== 'draft' && <span className="policy-domain-immutable"><LockKey size={14} />内容不可变</span>}</div></article>)}</div></section>
+          <section className="policy-domain-versions"><header><div><h3>不可变版本</h3><p>只有 draft 可修改；enable 后形成审计快照。</p></div><button className="workspace-button workspace-button--primary" disabled={!can('policy.version.create') || busy || selected.status === 'archived'} onClick={() => setVersionEditor({ record: null, draft: { ...buildPolicyVersionDraft(null, storeContext?.businessTimezone ?? 'America/Los_Angeles'), version: String(Math.max(0, ...versions.map((item) => item.version)) + 1) } })} type="button"><Plus size={15} />新建版本</button></header><div className="policy-domain-version-list" role="list">{versions.map((version) => <article data-status={version.status} key={version.id} role="listitem"><div><span>{version.status === 'enabled' ? <LockKey size={18} /> : <ShieldCheck size={18} />}</span><div><strong>v{version.version} · {version.id}</strong><small>r{version.revision} · {version.rules.allowedAdEntityIds.length ? `${version.rules.allowedAdEntityIds.length} 个对象` : '0 对象 · 不可自动签发'} · ≤ {version.rules.maxChangePct}% · ${version.rules.totalImpactBudget}</small><small className="policy-domain-version-boundary">{formatExecutionWindowSummary(version.rules)}</small></div></div><div>{version.status === 'draft' && <button className="workspace-button workspace-button--secondary" disabled={!can('policy.version.update') || busy} onClick={() => setVersionEditor({ record: version, draft: buildPolicyVersionDraft(version, storeContext?.businessTimezone ?? 'America/Los_Angeles') })} type="button"><PencilSimple size={14} />编辑草稿</button>}{version.status === 'draft' && <button className="workspace-button workspace-button--primary" disabled={!can('policy.version.enable') || busy} onClick={() => void enableVersion(version)} type="button"><CheckCircle size={14} />启用并冻结</button>}{version.status !== 'draft' && <span className="policy-domain-immutable"><LockKey size={14} />内容不可变</span>}</div></article>)}</div></section>
           <section className="policy-domain-safety"><h3>V1 固定安全合同</h3><div><span>允许动作</span><strong>set_keyword_bid</strong></div><div><span>必需证据</span><strong>Before / After / Reload / Page identity / Readback value</strong></div><div><span>UNKNOWN</span><strong>停止，且不自动重试</strong></div><p>界面不会暴露 circuitBreakerState 或 activePolicyVersionId 的通用写入口。</p></section>
         </> : phase === 'ready' ? <WorkspaceState kind="empty" title="等待选择策略" description="从左侧选择策略查看不可变版本。" /> : null}</div>
       </div>

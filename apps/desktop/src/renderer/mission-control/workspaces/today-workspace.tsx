@@ -101,6 +101,7 @@ export function TodayWorkspace({
               { id: 'market', label: '站点 / 币种', value: 'Amazon US / USD' },
               { id: 'metrics', label: '广告事实', value: `${safeProjection.facts.importedMetricRows} 行`, tone: importReady ? 'confirmed' : 'attention' },
               { id: 'events', label: '今日运营事件', value: `${safeProjection.facts.operationEventsToday} 条` },
+              { id: 'analysis', label: '分析建议', value: `${safeProjection.analysis?.proposalCount ?? 0} 条`, tone: safeProjection.analysis?.proposalCount ? 'confirmed' : 'attention' },
             ]}
           />
         ) : undefined}
@@ -204,6 +205,13 @@ export function TodayWorkspace({
             </div>
             <section className="canonical-next-actions">
               <h3>下一推进动作</h3>
+              {safeProjection.analysis && (
+                <div className="canonical-analysis-status">
+                  <div><span>AGENT ANALYSIS · US / USD</span><strong>{safeProjection.analysis.activeMissionId ? '运行中 Mission' : '尚无活动 Mission'}</strong><small>{safeProjection.analysis.evidencePackageCount ? `${safeProjection.analysis.evidencePackageCount} 个证据包 · ${safeProjection.analysis.proposalCount} 条不可变建议` : '先进入任务中心运行真实分析。'}</small></div>
+                  <dl><div><dt>人工可授权</dt><dd>{safeProjection.analysis.humanEligibleCount}</dd></div><div><dt>策略可授权</dt><dd>{safeProjection.analysis.policyEligibleCount}</dd></div><div><dt>证据有效至</dt><dd>{safeProjection.analysis.latestFreshUntil?.slice(0, 16).replace('T', ' ') ?? '等待分析'}</dd></div></dl>
+                  <button disabled={!capabilityAllows(safeProjection.analysis.proposalCount ? 'decisions/recommendations' : 'missions/overview')} onClick={() => navigateTo(safeProjection.analysis!.proposalCount ? 'decisions/recommendations' : 'missions/overview')} type="button">{safeProjection.analysis.proposalCount ? '查看建议' : '运行分析'}</button>
+                </div>
+              )}
               <ol>
                 <li>
                   {safeProjection.blockers.length ? <Warning size={18} weight="fill" /> : <CheckCircle size={18} weight="fill" />}

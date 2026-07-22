@@ -152,8 +152,8 @@ describe('preview experiment and causal-memory domain adapter', () => {
   });
 });
 
-describe('preview decision and grant domain adapter', () => {
-  it('supports CAS history, human-only resolution and a multi-decision exact grant', async () => {
+describe('preview decision domain adapter', () => {
+  it('supports CAS history and human-only resolution without exposing grant issuance', async () => {
     const api = createPreviewDecisionDomainApi();
     const base = {
       missionId: 'MISSION-SHC001-001', dataBatchId: 'BATCH-SHC001-0722', policyVersionId: 'POL-SHC001-US-V3',
@@ -167,34 +167,12 @@ describe('preview decision and grant domain adapter', () => {
     const revisedSecond = await api.reviseDecision(firstContext, { id: second.id, expectedRevision: second.revision, title: '批次二修订', actorId: 'operator' });
     await expect(api.reviseDecision(firstContext, { id: first.id, expectedRevision: first.revision, title: '覆盖并发变更', actorId: 'operator' })).rejects.toThrow(/revision|版本冲突/);
     const approvedOne = await api.resolveDecisionHuman(firstContext, { id: revised.id, expectedRevision: revised.revision, status: 'approved', reason: '人工确认', actorId: 'operator' });
-    const approvedTwo = await api.resolveDecisionHuman(firstContext, { id: revisedSecond.id, expectedRevision: revisedSecond.revision, status: 'approved', reason: '人工确认', actorId: 'operator' });
+    await api.resolveDecisionHuman(firstContext, { id: revisedSecond.id, expectedRevision: revisedSecond.revision, status: 'approved', reason: '人工确认', actorId: 'operator' });
     const history = await api.getDecisionHistory(firstContext, approvedOne.id);
     expect(history.map((row) => row.eventType)).toEqual(expect.arrayContaining(['created', 'revised', 'approved']));
     await expect(api.resolveDecisionHuman(firstContext, { id: approvedOne.id, expectedRevision: approvedOne.revision, status: 'executed' as never, reason: '越权', actorId: 'operator' })).rejects.toThrow(/只能人工/);
 
-    const grantInput = {
-      id: 'GRANT-BATCH-1', missionId: approvedOne.missionId, missionRevision: 1,
-      decisionIds: [approvedOne.id, approvedTwo.id], actionRevision: approvedOne.actionRevision,
-      allowedActionTypes: ['set_keyword_bid'], allowedAdEntityIds: ['KW-BATCH-1', 'KW-BATCH-2'],
-      maxChangePct: 15, totalImpactBudget: 75, expiresAt: '2099-07-23T07:00:00.000Z',
-      policyVersionId: approvedOne.policyVersionId, policyRevision: approvedOne.policyRevision,
-      requiredEvidence: ['before_screenshot', 'after_screenshot', 'reload_screenshot', 'page_identity', 'readback_value'],
-      stopConditions: [{ code: 'unknown_result', detail: 'UNKNOWN 停止' }], actorId: 'operator',
-    } as const;
-    const grant = await api.issueHumanGrant(firstContext, grantInput);
-    expect(grant).toMatchObject({ issuer: { type: 'human' }, decisionIds: [approvedOne.id, approvedTwo.id] });
-    expect(await api.listHumanGrants(firstContext, approvedOne.missionId)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: grant.id }),
-    ]));
-    await api.revokeHumanGrant(firstContext, { id: 'GRANT-EVENT-1', grantId: grant.id, actorId: 'operator', reason: '人工撤销' });
-    expect((await api.listHumanGrants(firstContext, approvedOne.missionId)).some((row) => row.id === grant.id)).toBe(true);
-    expect(await api.listHumanGrantEvents(firstContext, approvedOne.missionId)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ grantId: grant.id, eventType: 'issued' }),
-      expect.objectContaining({ grantId: grant.id, eventType: 'revoked', reason: '人工撤销' }),
-    ]));
-    await expect(api.issueHumanGrant(firstContext, { ...grantInput, id: 'GRANT-DUP-DECISIONS', decisionIds: [approvedOne.id, approvedOne.id] })).rejects.toThrow(/decisionIds.*重复/);
-    await expect(api.issueHumanGrant(firstContext, { ...grantInput, id: 'GRANT-DUP-ENTITIES', allowedAdEntityIds: ['KW-BATCH-1', 'KW-BATCH-1'] })).rejects.toThrow(/allowlist.*重复/);
-    await expect(api.issueHumanGrant(firstContext, { ...grantInput, id: 'GRANT-DUP-ACTIONS', allowedActionTypes: ['set_keyword_bid', 'set_keyword_bid'] })).rejects.toThrow(/关键词竞价对象/);
+    expect(api).not.toHaveProperty('issueHumanGrant');
   });
 
   it('isolates decision identities by store and session generation', async () => {

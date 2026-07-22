@@ -1180,10 +1180,9 @@ describe('Mission Control development preview bridge', () => {
       authoritativeContext: view.context,
     }));
     expect(response.data.capabilities.length).toBeGreaterThan(22);
-    expect(response.data.capabilities.every((row: any) => row.state === 'PROTOTYPE_ONLY'
-      || (row.capabilityId === 'decisions.grants.issue'
-        && row.state === 'BLOCKED'
-        && row.blockerCode === 'AD_ENTITY_REGISTRY_NOT_IMPLEMENTED'))).toBe(true);
+    expect(response.data.capabilities.every((row: any) => (
+      row.state === 'PROTOTYPE_ONLY' && row.blockerCode === 'DEV_PREVIEW_ONLY'
+    ))).toBe(true);
     expect(response.data.capabilities.find((row: any) => row.capabilityId === 'decisions.grants.issue')?.view)
       .toBe('decisions/decided');
     expect(response.data.capabilities.find((row: any) => row.capabilityId === 'decisions.grants.revoke')?.view)
