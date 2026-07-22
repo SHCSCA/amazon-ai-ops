@@ -23,15 +23,15 @@
 
 | ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
 | --- | --- | --- | --- | --- |
-| S1-01 | TODO | `packages/shared-types` | S0 | `StoreId`、StoreContextEnvelope、connection/session/capability 合同 |
-| S1-02 | TODO | `packages/local-db/src/sqlite/db.ts` 与 migration 模块 | S1-01 | `schema_migrations`、stores、connections、session metadata、quarantine |
-| S1-03 | TODO | `packages/local-db/.../repositories` | S1-02 | StoreRepository、迁移回填、store-scoped repository contract |
-| S1-04 | TODO | 新 store capsule/path 模块 | S1-01 | `%LOCALAPPDATA%/stores/{storeId}`、canonical path containment、备份 manifest |
-| S1-05 | TODO | `packages/browser-worker` | S1-01/S1-04 | 每店 Lingxing/Ads Profile、BrowserLease、sessionGeneration |
-| S1-06 | TODO | `apps/desktop/src/main`、`preload` | S1-02..05 | StoreCoordinator、店铺 CRUD/切换/连接 IPC、旧请求失效 |
-| S1-07 | TODO | 阶段质量 owner | S1-01..06 | 迁移/隔离/Profile/凭证/桌面 smoke 集中验证与阶段 commit/push |
+| S1-01 | REVIEW | `packages/shared-types` | S0 | `StoreId`、StoreContextEnvelope、connection/session/capability 合同 |
+| S1-02 | REVIEW | `packages/local-db/src/sqlite/db.ts` 与 migration 模块 | S1-01 | `schema_migrations`、stores、connections、session metadata、quarantine |
+| S1-03 | REVIEW | `packages/local-db/.../repositories` | S1-02 | StoreRepository、迁移回填、store-scoped repository contract |
+| S1-04 | REVIEW | 新 store capsule/path 模块 | S1-01 | `%LOCALAPPDATA%/stores/{storeId}`、canonical path containment、备份 manifest |
+| S1-05 | REVIEW | `packages/browser-worker` | S1-01/S1-04 | 每店 Lingxing/Ads Profile、BrowserLease、sessionGeneration |
+| S1-06 | REVIEW | `apps/desktop/src/main`、`preload` | S1-02..05 | StoreCoordinator、店铺 CRUD/切换/连接 IPC、旧请求失效 |
+| S1-07 | REVIEW | 阶段质量 owner | S1-01..06 | 迁移/隔离/Profile/凭证/桌面 smoke 集中验证与阶段 commit/push |
 
-阶段 1 集中验证：受影响 package typecheck、migration/repository/browser/Main IPC 聚焦测试、两个美国店铺隔离 smoke。
+阶段 1 集中验证（2026-07-22）：11 个聚焦测试文件最终 80/80 通过；`shared-types`、`local-db`、`browser-worker`、`desktop` 四包 typecheck 通过；跨店 Profile、Repository、BrowserLease、StoreContext、迁移恢复和 generation 单调性均有回归。待阶段 commit/push 成功后置为 `DONE`。
 
 ## 阶段 2：Mission Control 正式 Renderer
 

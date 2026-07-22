@@ -47,9 +47,28 @@ describe('Electron external-distribution security wiring', () => {
   it('applies the session credential policy before persisting or trusting a login identity', () => {
     expect(source).toContain('decideLoginSessionCredentialPolicy({');
     expect(source).toContain('credentialAction === \'save\' || credentialAction === \'clear\'');
-    expect(source).toContain("state.currentStore = credentialPolicy.trustRequestedUsername ? username : ''");
+    expect(source).toContain('if (!credentialPolicy.sessionIdentityVerified)');
+    expect(source).toContain('assertProviderIdentity(connections.lingxing');
+    expect(source).toContain('assertProviderIdentity(connections.amazon_ads');
+    expect(source.match(/assertBrowserLoginAttempt\(attemptId, loginContext\)/g)?.length).toBeGreaterThanOrEqual(2);
     expect(source).toContain('credentialPersistence: credentialPolicy.credentialPersistence');
     expect(source).toContain('sessionIdentityVerified: credentialPolicy.sessionIdentityVerified');
+  });
+
+  it('binds browser controllers to one store context and two provider-specific profiles', () => {
+    expect(source).toContain('interface StoreBrowserRuntime');
+    expect(source).toContain('context: StoreContextEnvelope;');
+    expect(source).toContain('userDataDir: capsule.lingxingProfileDir');
+    expect(source).toContain('userDataDir: capsule.amazonAdsProfileDir');
+    expect(source).toContain("browserRuntimeController('amazon_ads')");
+    expect(source).not.toContain("path.join(STORAGE_DIR, 'browser-data')");
+  });
+
+  it('captures screenshots inside the active store capsule and closes by store id', () => {
+    expect(source).toContain('storeCapsuleFor(store).screenshotsDir');
+    expect(source).toContain('controller.screenshotToPath(screenshotPath, label)');
+    expect(source).toContain('state.browserRuntime?.context.storeId === store.storeId');
+    expect(source).not.toContain('state.currentStore === store.displayName');
   });
 
   it('keeps the non-secret login session across renderer refresh and clears it on safe exits', () => {

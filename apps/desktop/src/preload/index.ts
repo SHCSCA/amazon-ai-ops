@@ -2,9 +2,22 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   BindRecommendationWritableTargetRequest,
   BindRecommendationWritableTargetResult,
+  ArchiveStoreInput,
+  CreateStoreConnectionInput,
+  CreateStoreInput,
   ExportAdReadbackEvidenceRequest,
+  ListStoresInput,
+  RestoreStoreInput,
+  RemoveStoreConnectionInput,
   ResolveRecommendationReviewRequest,
   ResolveRecommendationReviewResult,
+  StoreContextEnvelope,
+  StoreId,
+  StoreRecord,
+  StoreConnection,
+  StoreWorkspaceView,
+  UpdateStoreConnectionInput,
+  UpdateStoreInput,
 } from '@amazon-ai-ops/shared-types';
 import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
 
@@ -18,6 +31,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App
   getVersion: () => ipcRenderer.invoke('app:get-version'),
   getState: () => ipcRenderer.invoke('app:get-state'),
+
+  // Main-authorized US store context. No local profile or artifact path crosses this bridge.
+  listStores: (input?: ListStoresInput): Promise<StoreRecord[]> =>
+    ipcRenderer.invoke('stores:list', input) as Promise<StoreRecord[]>,
+  getStore: (storeId: StoreId): Promise<StoreRecord> =>
+    ipcRenderer.invoke('stores:get', { storeId }) as Promise<StoreRecord>,
+  createStore: (input: CreateStoreInput): Promise<StoreRecord> =>
+    ipcRenderer.invoke('stores:create', input) as Promise<StoreRecord>,
+  updateStore: (input: UpdateStoreInput): Promise<StoreRecord> =>
+    ipcRenderer.invoke('stores:update', input) as Promise<StoreRecord>,
+  archiveStore: (input: ArchiveStoreInput): Promise<StoreRecord> =>
+    ipcRenderer.invoke('stores:archive', input) as Promise<StoreRecord>,
+  restoreStore: (input: RestoreStoreInput): Promise<StoreRecord> =>
+    ipcRenderer.invoke('stores:restore', input) as Promise<StoreRecord>,
+  createStoreConnection: (input: CreateStoreConnectionInput): Promise<StoreConnection> =>
+    ipcRenderer.invoke('stores:connections:create', input) as Promise<StoreConnection>,
+  updateStoreConnection: (input: UpdateStoreConnectionInput): Promise<StoreConnection> =>
+    ipcRenderer.invoke('stores:connections:update', input) as Promise<StoreConnection>,
+  removeStoreConnection: (input: RemoveStoreConnectionInput): Promise<{ success: true }> =>
+    ipcRenderer.invoke('stores:connections:remove', input) as Promise<{ success: true }>,
+  switchStore: (storeId: StoreId): Promise<StoreWorkspaceView> =>
+    ipcRenderer.invoke('stores:switch', { storeId }) as Promise<StoreWorkspaceView>,
+  reconnectStore: (storeId: StoreId): Promise<StoreWorkspaceView> =>
+    ipcRenderer.invoke('stores:reconnect', { storeId }) as Promise<StoreWorkspaceView>,
+  getActiveStoreContext: (): Promise<StoreContextEnvelope | null> =>
+    ipcRenderer.invoke('stores:get-active-context') as Promise<StoreContextEnvelope | null>,
 
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
@@ -211,6 +250,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:listing:export-drafts', { drafts, format }),
 
   // Event listeners
+  onStoreContextChanged: (callback: (view: StoreWorkspaceView) => void) => {
+    const handler = (_: unknown, view: StoreWorkspaceView) => callback(view);
+    ipcRenderer.on('store-context:changed', handler);
+    return () => ipcRenderer.removeListener('store-context:changed', handler);
+  },
+  onStoresChanged: (callback: (store: StoreRecord) => void) => {
+    const handler = (_: unknown, store: StoreRecord) => callback(store);
+    ipcRenderer.on('stores:changed', handler);
+    return () => ipcRenderer.removeListener('stores:changed', handler);
+  },
   onSchedulerTaskStart: (callback: (taskName: string) => void) => {
     const handler = (_: any, taskName: string) => callback(taskName);
     ipcRenderer.on('scheduler:task-start', handler);

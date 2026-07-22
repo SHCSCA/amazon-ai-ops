@@ -72,4 +72,20 @@ describe('preload business update bridge', () => {
     expect(source).toContain('exportAdReadbackEvidence: (input: ExportAdReadbackEvidenceRequest) =>');
     expect(source).not.toContain('exportAdReadbackEvidence: (input: any)');
   });
+
+  it('exposes typed logical store CRUD and switching without profile paths or secrets', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('ListStoresInput');
+    expect(source).toContain('StoreWorkspaceView');
+    expect(source).toContain("ipcRenderer.invoke('stores:create', input)");
+    expect(source).toContain("ipcRenderer.invoke('stores:connections:create', input)");
+    expect(source).toContain("ipcRenderer.invoke('stores:switch', { storeId })");
+    expect(source).toContain("ipcRenderer.invoke('stores:get-active-context')");
+    expect(source).toContain("ipcRenderer.on('store-context:changed', handler)");
+    const storeBridgeStart = source.indexOf('listStores:');
+    const settingsStart = source.indexOf('// Settings', storeBridgeStart);
+    const storeBridge = source.slice(storeBridgeStart, settingsStart);
+    expect(storeBridge).not.toMatch(/profilePath|userDataDir|cookie|password|token/i);
+  });
 });

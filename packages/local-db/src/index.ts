@@ -1,5 +1,6 @@
 export { initSqlite, getSqliteDb } from './sqlite/db';
 export * from './sqlite/ad-metric-grain';
+export * from './sqlite/migrations';
 export { initDuckDb, getDuckDb } from './duckdb/analytics';
 export * from './sqlite/repositories/product-repo';
 export * from './sqlite/repositories/ad-metrics-repo';
@@ -10,4 +11,5 @@ export * from './sqlite/repositories/operation-event-repo';
 export * from './sqlite/repositories/report-file-repo';
 export * from './sqlite/repositories/ai-call-log-repo';
 export * from './sqlite/repositories/ai-diagnosis-run-repo';
+export * from './sqlite/repositories/store-repo';
 export * from './duckdb/queries/ad-summary';

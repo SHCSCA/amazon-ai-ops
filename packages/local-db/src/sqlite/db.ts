@@ -1,5 +1,9 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
+import {
+  prepareStoreAuthorityMigrationBackup,
+  runStoreAuthorityMigrations,
+} from './migrations';
 
 // 获取用户数据目录
 function getUserDataPath(): string {
@@ -19,6 +23,10 @@ export function initSqlite(dbPath?: string): Database.Database {
   // 启用 WAL 模式，提升并发性能
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+
+  // Bind and verify the Stage 1 recovery snapshot before any legacy startup
+  // migration can normalize, deduplicate, or otherwise mutate user rows.
+  prepareStoreAuthorityMigrationBackup(db);
   
   // 创建表
   runMigrations(db);
@@ -717,6 +725,11 @@ function runMigrations(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_download_center_diagnostics_model_date ON download_center_diagnostics(page_model, date_start, date_end, checked_at);
     CREATE INDEX IF NOT EXISTS idx_download_center_diagnostics_scope ON download_center_diagnostics(page_model, date_start, date_end, store_name, marketplace_code, checked_at);
   `);
+
+  // Stage 1 starts the durable, versioned migration chain. Legacy tables keep
+  // nullable store_id columns until every row has a proven owner or an
+  // explicit quarantine record; the migration never guesses or drops rows.
+  runStoreAuthorityMigrations(database);
 }
 
 function ensureColumn(database: Database.Database, tableName: string, columnName: string, definition: string): void {
