@@ -9,6 +9,10 @@ import {
   createValidAdReadbackEvidence,
   writeAdReadbackAuthorityDb,
 } from './ad-readback-authority-db.test-fixture.mjs';
+import {
+  bundleAdversarialNodeEnvEvidence,
+  writeValidAdversarialNodeEnvEvidence,
+} from './package-adversarial-node-env.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -365,6 +369,7 @@ function writeStrictNonReadyFixture(options) {
     packageSmoke,
     packageUiManifest = path.join(artifactDir, 'package-ui-manifest.json'),
     packageSecurityEvidence = path.join(artifactDir, 'package-security-boundaries.json'),
+    packageAdversarialNodeEnvEvidence = path.join(artifactDir, 'package-adversarial-node-env.json'),
     bundleManifest,
     readme,
     mutateFinalReadiness = () => {},
@@ -376,12 +381,29 @@ function writeStrictNonReadyFixture(options) {
   const authorityDbPath = path.join(artifactDir, 'authority.db');
   fs.writeFileSync(authorityDbPath, 'authority database identity fixture\n', 'utf8');
   writeReadme(readme);
-  writeJson(evidenceManifest, { kind: 'v15-final-readiness-evidence-manifest', evidence: {} });
   writeJson(packageSmoke, smoke);
   const packageUi = validPackageUiEvidence(artifactDir, smoke, authorityDbPath);
   writeJson(packageUiManifest, packageUi);
   const packageSecurity = validPackageSecurityEvidence(smoke, packageUi);
   writeJson(packageSecurityEvidence, packageSecurity);
+  const adversarialFixture = writeValidAdversarialNodeEnvEvidence(
+    packageAdversarialNodeEnvEvidence,
+    {
+      executableSha256: smoke.artifacts.unpacked.sha256,
+      appContentSha256: packageUi.artifactsAfter.appContent.sha256,
+      mainBundleSha256: PACKAGE_MAIN_BUNDLE_SHA256,
+      rendererEntryPath: path.join(
+        packageUi.artifactsAfter.appContent.rootPath,
+        'dist',
+        'renderer',
+        'index.html',
+      ),
+    },
+  );
+  writeJson(evidenceManifest, {
+    kind: 'v15-final-readiness-evidence-manifest',
+    evidence: { packageAdversarialNodeEnv: adversarialFixture.manifestEntry },
+  });
   const finalReadinessJson = {
     status: 'APP_NEEDS_WORK',
     appReady: false,
@@ -403,6 +425,7 @@ function writeStrictNonReadyFixture(options) {
       checks: smoke.checks,
     },
     gates: strictNonReadyGates(),
+    packageAdversarialNodeEnv: adversarialFixture.selection,
   };
   finalReadinessJson.gates.find((gate) => gate.id === 'package-launch-smoke').evidencePath = packageSmoke;
   mutateFinalReadiness(finalReadinessJson);
@@ -410,6 +433,10 @@ function writeStrictNonReadyFixture(options) {
   const bundlePackageIndexPath = path.join(path.dirname(bundleManifest), 'evidence', 'release-package-index.json');
   const bundledPackageUiManifestPath = path.join(path.dirname(bundleManifest), 'evidence', 'package-ui-manifest.json');
   const bundledPackageSecurityEvidencePath = path.join(path.dirname(bundleManifest), 'evidence', 'package-security-boundaries.json');
+  const bundledAdversarial = bundleAdversarialNodeEnvEvidence(
+    bundleManifest,
+    packageAdversarialNodeEnvEvidence,
+  );
   writeJson(bundlePackageIndexPath, {
     generatedAt: packageIndex.generatedAt,
     releaseDir: packageIndex.releaseDir,
@@ -449,6 +476,7 @@ function writeStrictNonReadyFixture(options) {
         sizeBytes: fs.statSync(bundledPackageSecurityEvidencePath).size,
         sha256: sha256File(bundledPackageSecurityEvidencePath),
       },
+      bundledAdversarial.file,
     ],
     packageIndex: {
       present: true,
@@ -470,6 +498,7 @@ function writeStrictNonReadyFixture(options) {
         bundlePath: path.relative(path.dirname(bundleManifest), bundledPackageSecurityEvidencePath),
         sha256: sha256File(bundledPackageSecurityEvidencePath),
       },
+      packageAdversarialNodeEnvSmoke: bundledAdversarial.summary,
     },
   });
   return {
@@ -482,6 +511,8 @@ function writeStrictNonReadyFixture(options) {
     packageUiManifest,
     packageSecurity,
     packageSecurityEvidence,
+    packageAdversarialNodeEnvEvidence,
+    bundledPackageAdversarialNodeEnvEvidencePath: bundledAdversarial.targetPath,
     smoke,
   };
 }
@@ -494,6 +525,7 @@ function runStrictNonReadySafetyFixture(options = {}) {
     packageSmoke: path.join(dir, 'package-launch-smoke.json'),
     packageUiManifest: path.join(dir, 'package-ui-manifest.json'),
     packageSecurityEvidence: path.join(dir, 'package-security-boundaries.json'),
+    packageAdversarialNodeEnvEvidence: path.join(dir, 'package-adversarial-node-env.json'),
     bundleManifest: path.join(dir, 'delivery-bundle-manifest.json'),
     readme: path.join(dir, 'README.md'),
   };
@@ -514,6 +546,9 @@ function runStrictNonReadySafetyFixture(options = {}) {
       '--package-launch-smoke', paths.packageSmoke,
       ...(options.omitPackageUiManifest ? [] : ['--package-ui-manifest', paths.packageUiManifest]),
       ...(options.omitPackageSecurityEvidence ? [] : ['--package-security-evidence', paths.packageSecurityEvidence]),
+      ...(options.omitPackageAdversarialNodeEnvEvidence
+        ? []
+        : ['--package-adversarial-node-env-evidence', paths.packageAdversarialNodeEnvEvidence]),
       '--readme', paths.readme,
       ...extraArgs,
     ]);
@@ -648,7 +683,7 @@ describe('verify v15 non-ready safety', () => {
     const bundleManifest = path.join(dir, 'delivery-bundle-manifest.json');
     const readme = path.join(dir, 'README.md');
 
-    writeStrictNonReadyFixture({
+    const fixture = writeStrictNonReadyFixture({
       artifactDir: dir,
       evidenceManifest,
       finalReadiness,
@@ -665,6 +700,7 @@ describe('verify v15 non-ready safety', () => {
       '--package-launch-smoke', packageSmoke,
       '--package-ui-manifest', packageUiManifest,
       '--package-security-evidence', packageSecurityEvidence,
+      '--package-adversarial-node-env-evidence', fixture.packageAdversarialNodeEnvEvidence,
       '--readme', readme,
     ]);
 
@@ -694,6 +730,30 @@ describe('verify v15 non-ready safety', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('NON_READY_SAFETY verified');
+  });
+
+  it('rejects strict APP_NEEDS_WORK when the adversarial NODE_ENV contract is deleted', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateFinalReadiness(finalReadiness) {
+        delete finalReadiness.packageAdversarialNodeEnv;
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`)
+      .toContain('current NON_READY safety requires package-adversarial-node-env/v1');
+  });
+
+  it('rejects strict APP_NEEDS_WORK when the adversarial NODE_ENV contract version is changed', () => {
+    const result = runStrictNonReadySafetyFixture({
+      mutateFinalReadiness(finalReadiness) {
+        finalReadiness.packageAdversarialNodeEnv.contractVersion = 'package-adversarial-node-env/v0';
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`)
+      .toContain('current NON_READY safety requires package-adversarial-node-env/v1');
   });
 
   it('rejects a package UI viewport outside the recorded two-pixel tolerance', () => {
@@ -1074,7 +1134,7 @@ describe('verify v15 non-ready safety', () => {
     const packageSecurityEvidence = path.join(fixtureDir, 'package-security-boundaries.json');
 
     try {
-      writeStrictNonReadyFixture({
+      const fixture = writeStrictNonReadyFixture({
         artifactDir: fixtureDir,
         evidenceManifest,
         finalReadiness,
@@ -1094,6 +1154,7 @@ describe('verify v15 non-ready safety', () => {
         '--package-launch-smoke', packageSmoke,
         '--package-ui-manifest', packageUiManifest,
         '--package-security-evidence', packageSecurityEvidence,
+        '--package-adversarial-node-env-evidence', fixture.packageAdversarialNodeEnvEvidence,
         '--readme', readme,
       ]);
 
@@ -1122,7 +1183,7 @@ describe('verify v15 non-ready safety', () => {
     const packageSecurityEvidence = path.join(fixtureDir, 'package-security-boundaries.json');
 
     try {
-      writeStrictNonReadyFixture({
+      const fixture = writeStrictNonReadyFixture({
         artifactDir: fixtureDir,
         evidenceManifest,
         finalReadiness,
@@ -1142,6 +1203,7 @@ describe('verify v15 non-ready safety', () => {
         '--package-launch-smoke', packageSmoke,
         '--package-ui-manifest', packageUiManifest,
         '--package-security-evidence', packageSecurityEvidence,
+        '--package-adversarial-node-env-evidence', fixture.packageAdversarialNodeEnvEvidence,
         '--readme', readme,
       ]);
 

@@ -1,15 +1,23 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const {
   evaluatePackageReadinessFromFiles,
   evaluateReadinessContract,
 } = require('../apps/desktop/src/main/final-readiness-package-evaluator.js');
 const { resolveAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
+const {
+  PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION,
+  collectPackageIdentity,
+  validateAdversarialNodeEnvEvidence,
+  validateAdversarialNodeEnvManifestEntryContract,
+} = require('./smoke-package-adversarial-node-env');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const packageLaunchSmokePattern = /^package-launch-smoke-\d+\.json$/i;
+const packageAdversarialNodeEnvPattern = /^package-adversarial-node-env-.*\.json$/i;
 
 function parseArgs(argv) {
   const args = {};
@@ -55,6 +63,10 @@ function runNode(script, args = []) {
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function sha256File(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').toUpperCase();
 }
 
 function containsObviousSecret(value) {
@@ -235,6 +247,60 @@ function checkAdExecutionReadback(evidencePath, dbPath, dbResolutionError) {
   };
 }
 
+function inspectPackageAdversarialNodeEnv(
+  evidencePath,
+  releaseDir,
+  packageEvaluation,
+  selectedBy,
+  manifestEntryContract,
+) {
+  const base = {
+    contractVersion: PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION,
+    present: Boolean(evidencePath && fs.existsSync(evidencePath)),
+    evidencePath: evidencePath || null,
+    selectedBy,
+    requiredForDeliverySafety: true,
+    passed: false,
+    evidenceSha256: null,
+    package: null,
+    message: 'adversarial NODE_ENV package smoke evidence is missing',
+  };
+  if (!base.present) return base;
+  try {
+    const appContentPath = path.join(releaseDir, 'win-unpacked', 'resources', 'app');
+    const executablePath = path.join(releaseDir, 'win-unpacked', 'AmazonAIOpsAgent.exe');
+    const expected = collectPackageIdentity({ appContentPath, executablePath });
+    const evidence = readJson(evidencePath);
+    const validation = validateAdversarialNodeEnvEvidence(evidence, expected);
+    const launchExecutableSha256 = String(
+      packageEvaluation?.packageLaunchSmoke?.artifacts?.unpacked?.sha256 || '',
+    ).toUpperCase();
+    const launchIdentityBound = /^[A-F0-9]{64}$/.test(launchExecutableSha256)
+      && launchExecutableSha256 === expected.executableSha256;
+    const manifestContractPassed = manifestEntryContract?.passed !== false;
+    const passed = validation.passed && launchIdentityBound && manifestContractPassed;
+    return {
+      ...base,
+      passed,
+      evidenceSha256: sha256File(evidencePath),
+      package: {
+        executableSha256: evidence?.package?.executableSha256 || null,
+        appContentSha256: evidence?.package?.appContentSha256 || null,
+        mainBundleSha256: evidence?.package?.mainBundleSha256 || null,
+      },
+      message: passed
+        ? 'hostile NODE_ENV=development stayed packaged, file-rendered, DevTools-closed, localhost-free and process-clean'
+        : `adversarial NODE_ENV evidence is stale or invalid (${[
+          ...validation.violations,
+          ...(launchIdentityBound ? [] : ['package launch executable identity mismatch']),
+          ...(manifestContractPassed ? [] : manifestEntryContract.violations),
+        ].join('; ')})`,
+    };
+  } catch {
+    return { ...base, message: 'adversarial NODE_ENV evidence or current package identity could not be read' };
+  }
+}
+
 function printGate(gate) {
   const label = gate.ok ? 'PASS' : gate.status === 'missing' ? 'MISSING' : 'NEEDS_WORK';
   console.log(`[${label}] ${gate.name}`);
@@ -269,11 +335,31 @@ if (adReadbackEvidence || args.db || process.env.AMAZON_AI_OPS_DB_PATH) {
 const packageLaunchSmokePath = args['package-launch-smoke']
   ? path.resolve(args['package-launch-smoke'])
   : latestEvidence(packageLaunchSmokePattern);
+const packageAdversarialNodeEnvPath = args['package-adversarial-node-env-evidence']
+  ? path.resolve(args['package-adversarial-node-env-evidence'])
+  : resolveManifestEvidencePath(evidenceManifest, 'packageAdversarialNodeEnv')
+    || (!evidenceManifest ? latestEvidence(packageAdversarialNodeEnvPattern) : '');
+const releaseDir = path.resolve(args['release-dir'] || path.join(root, 'apps', 'desktop', 'release'));
 const packageEvaluation = evaluatePackageReadinessFromFiles({
-  releaseDir: args['release-dir'] || path.join(root, 'apps', 'desktop', 'release'),
+  releaseDir,
   packageLaunchSmokePath,
   selectedBy: args['package-launch-smoke'] ? 'explicit-arg' : 'latest-evidence',
 });
+const packageAdversarialNodeEnv = inspectPackageAdversarialNodeEnv(
+  packageAdversarialNodeEnvPath,
+  releaseDir,
+  packageEvaluation,
+  args['package-adversarial-node-env-evidence']
+    ? 'explicit-arg'
+    : evidenceManifest
+      ? 'evidence-manifest'
+      : 'latest-evidence',
+  evidenceManifest
+    ? validateAdversarialNodeEnvManifestEntryContract(
+      evidenceManifest.evidence?.packageAdversarialNodeEnv,
+    )
+    : { passed: true, violations: [] },
+);
 
 const businessGates = [
   checkWithVerifier('Report collection delivery', 'scripts/verify-v15-delivery-evidence.js', deliveryEvidence),
@@ -290,10 +376,14 @@ const { gates } = readiness;
 for (const gate of gates) {
   printGate(gate);
 }
+console.log(`[${packageAdversarialNodeEnv.passed ? 'PASS' : 'NEEDS_WORK'}] Adversarial NODE_ENV package delivery safety`);
+console.log(`  ${packageAdversarialNodeEnv.message}`);
 
 const reportReady = gates[0].ok;
 const listingReady = gates[1].ok;
-const { allGatesPass, appReady } = readiness;
+const formalAllGatesPass = readiness.allGatesPass;
+const allGatesPass = formalAllGatesPass && packageAdversarialNodeEnv.passed;
+const appReady = readiness.appReady && packageAdversarialNodeEnv.passed;
 const missing = [];
 const actionItems = [];
 if (!manifestDriven) {
@@ -305,6 +395,18 @@ for (const gate of gates) {
     missing.push(gate.message || `${gate.name} 未通过。`);
     actionItems.push(`补齐 ${gate.name} 证据后重新运行最终验收。`);
   }
+}
+if (!packageAdversarialNodeEnv.passed) {
+  missing.push(packageAdversarialNodeEnv.message);
+  actionItems.push('生成并显式选择当前版本的 adversarial NODE_ENV 包体证据后重新运行最终验收。');
+}
+const failures = [...readiness.failures];
+if (!packageAdversarialNodeEnv.passed) {
+  failures.push({
+    gateId: 'package-adversarial-node-env',
+    code: 'PACKAGE_ADVERSARIAL_NODE_ENV_DELIVERY_CONTRACT_FAILED',
+    message: packageAdversarialNodeEnv.message,
+  });
 }
 const summary = {
   generatedAt: new Date().toISOString(),
@@ -321,12 +423,14 @@ const summary = {
   listingReadReady: listingReady,
   appReady,
   allGatesPass,
+  formalAllGatesPass,
   missing,
   actionItems,
-  failures: readiness.failures,
+  failures,
   packageIndex: readiness.packageIndex,
   currentPortablePackage: readiness.currentPortablePackage,
   packageLaunchSmoke: readiness.packageLaunchSmoke,
+  packageAdversarialNodeEnv,
   gates: gates.map((gate) => ({
     id: gate.id,
     name: gate.name,

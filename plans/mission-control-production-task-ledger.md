@@ -15,7 +15,7 @@
 | ID | 状态 | Owner / 文件边界 | 交付物 | 阶段验证 / 提交边界 |
 | --- | --- | --- | --- | --- |
 | S0-01 | DONE | Main/Preload/Renderer/Rules/package-ui 既有修改 | Preview、Decisions、登录与外链安全 checkpoint | 284 聚焦测试 + 全 workspace typecheck；commit `05dec18b` 已推送 |
-| S0-02 | ACTIVE | `package.json`、adversarial package smoke/readiness/bundle scripts | 不可降级的 adversarial `NODE_ENV` 证据合同 | 脚本聚焦测试；独立 `fix:` commit/push |
+| S0-02 | DONE | `package.json`、adversarial package smoke/readiness/bundle scripts | 不可降级的 adversarial `NODE_ENV` 证据合同 | 6 files、94/94 聚焦测试通过；独立 `fix:` commit/push |
 | S0-03 | DONE | `amazon-ai-ops-mission-control-prototype` 源码 | 多美国店铺、US/USD、十工作区产品基线 | prototype build 通过；随本产品基线提交推送 |
 | S0-04 | DONE | `plans/mission-control-production-*`、`.gitignore` | 生产对接计划、矩阵、台账、artifact ignore | `git diff --check` + reviewer 8.1/10；随 S0-03 提交推送 |
 

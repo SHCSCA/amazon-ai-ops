@@ -8,6 +8,9 @@ import {
   createValidAdReadbackEvidence,
   writeAdReadbackAuthorityDb,
 } from './ad-readback-authority-db.test-fixture.mjs';
+import {
+  writeValidAdversarialNodeEnvEvidence,
+} from './package-adversarial-node-env.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -15,8 +18,38 @@ const evidenceDir = path.join(root, 'output', 'codex-evidence');
 
 const cleanupPaths = [];
 
-function runNode(script, args = []) {
-  return spawnSync(process.execPath, [path.join(root, script), ...args], {
+function ensureCurrentAdversarialNodeEnvContract(args) {
+  const finalReadinessIndex = args.indexOf('--final-readiness');
+  if (finalReadinessIndex < 0 || !args[finalReadinessIndex + 1]) return args;
+  const finalReadinessPath = path.resolve(args[finalReadinessIndex + 1]);
+  if (!fs.existsSync(finalReadinessPath)) return args;
+  const finalReadiness = JSON.parse(fs.readFileSync(finalReadinessPath, 'utf8'));
+  const fixturePath = path.join(path.dirname(finalReadinessPath), 'package-adversarial-node-env.json');
+  const fixture = writeValidAdversarialNodeEnvEvidence(fixturePath, {
+    executableSha256: 'A'.repeat(64),
+    appContentSha256: 'B'.repeat(64),
+    mainBundleSha256: 'C'.repeat(64),
+    rendererEntryPath: path.join(path.dirname(finalReadinessPath), 'dist', 'renderer', 'index.html'),
+  });
+  finalReadiness.packageAdversarialNodeEnv = fixture.selection;
+  fs.writeFileSync(finalReadinessPath, `${JSON.stringify(finalReadiness, null, 2)}\n`, 'utf8');
+  const manifestPath = finalReadiness.evidenceSelection?.manifestPath;
+  if (manifestPath && fs.existsSync(manifestPath)) {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest.evidence = manifest.evidence || {};
+    manifest.evidence.packageAdversarialNodeEnv = fixture.manifestEntry;
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  }
+  if (args.includes('--package-adversarial-node-env-evidence')) return args;
+  return [...args, '--package-adversarial-node-env-evidence', fixturePath];
+}
+
+function runNode(script, args = [], options = {}) {
+  const effectiveArgs = script === 'scripts/export-v15-delivery-bundle.js'
+    && options.currentAdversarialContract !== false
+    ? ensureCurrentAdversarialNodeEnvContract(args)
+    : args;
+  return spawnSync(process.execPath, [path.join(root, script), ...effectiveArgs], {
     cwd: root,
     encoding: 'utf8',
   });
@@ -251,6 +284,25 @@ describe('export v15 delivery bundle', () => {
     for (const cleanupPath of cleanupPaths.splice(0).reverse()) {
       fs.rmSync(cleanupPath, { recursive: true, force: true });
     }
+  });
+
+  it('refuses to re-export legacy final readiness without adversarial NODE_ENV contract evidence', () => {
+    const runId = `${Date.now()}-${process.pid}`;
+    const runDir = path.join(evidenceDir, `export-bundle-legacy-adversarial-contract-${runId}`);
+    cleanupPaths.push(runDir);
+    const { finalReadiness } = writeNonReadyFinalReadiness(runDir);
+    const outDir = path.join(runDir, 'bundle');
+
+    const result = runNode('scripts/export-v15-delivery-bundle.js', [
+      '--final-readiness', finalReadiness,
+      '--release-dir', path.join(runDir, 'release'),
+      '--skip-latest-extras', 'true',
+      '--out', outDir,
+    ], { currentAdversarialContract: false });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`)
+      .toContain('current adversarial NODE_ENV package evidence contract');
   });
 
   it('refuses APP_READY bundle export when manifest-selected readback evidence fails verify:ad-readback', () => {

@@ -47,15 +47,32 @@ describe('root package smoke scripts', () => {
   it('exposes package security evidence and requires its explicit handoff in both safety branches', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     const exporter = fs.readFileSync(path.join(root, 'scripts', 'export-v15-delivery-bundle.js'), 'utf8');
+    const finalReadiness = fs.readFileSync(path.join(root, 'scripts', 'verify-v15-final-readiness.js'), 'utf8');
+    const evidenceManifestWriter = fs.readFileSync(path.join(root, 'scripts', 'write-v15-evidence-manifest.js'), 'utf8');
     const nonReadySafety = fs.readFileSync(path.join(root, 'scripts', 'verify-v15-non-ready-safety.js'), 'utf8');
     const readySafety = fs.readFileSync(path.join(root, 'scripts', 'verify-v15-ready-safety.js'), 'utf8');
 
     expect(packageJson.scripts['smoke:package-security-boundaries'])
       .toBe('node scripts/smoke-package-security-boundaries.js');
+    expect(packageJson.scripts['smoke:package-adversarial-node-env'])
+      .toBe('node scripts/smoke-package-adversarial-node-env.js');
     expect(exporter).toContain("explicitFileArg(args, 'package-security-evidence')");
+    expect(exporter).toContain("explicitFileArg(args, 'package-adversarial-node-env-evidence')");
     expect(exporter).toContain('scripts/smoke-package-security-boundaries.js');
+    expect(exporter).toContain('scripts/smoke-package-adversarial-node-env.js');
+    expect(finalReadiness).toContain('evidenceSha256: sha256File(evidencePath)');
+    expect(exporter).toContain('selected?.evidenceSha256');
+    expect(evidenceManifestWriter).toContain('PACKAGE_ADVERSARIAL_NODE_ENV_CONTRACT_VERSION');
+    expect(evidenceManifestWriter).toMatch(/packageAdversarialNodeEnv:\s*\{[\s\S]*?contractVersion:[\s\S]*?true,\s*\),/s);
+    expect(exporter).toContain('validateAdversarialNodeEnvSelectionContract');
+    expect(nonReadySafety).toContain('validateAdversarialNodeEnvSelectionContract');
+    expect(readySafety).toContain('validateAdversarialNodeEnvSelectionContract');
     expect(nonReadySafety).toContain("args['package-security-evidence']");
+    expect(nonReadySafety).toContain("args['package-adversarial-node-env-evidence']");
+    expect(nonReadySafety).toContain('selected?.evidenceSha256');
     expect(readySafety).toContain("args.get('package-security-evidence')");
+    expect(readySafety).toContain("args.get('package-adversarial-node-env-evidence')");
+    expect(readySafety).toContain('selected?.evidenceSha256');
   });
 
   it('keeps delivery bundle extras aligned with the current business UI smoke artifact', () => {
