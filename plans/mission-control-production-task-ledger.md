@@ -23,24 +23,24 @@
 
 | ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
 | --- | --- | --- | --- | --- |
-| S1-01 | REVIEW | `packages/shared-types` | S0 | `StoreId`、StoreContextEnvelope、connection/session/capability 合同 |
-| S1-02 | REVIEW | `packages/local-db/src/sqlite/db.ts` 与 migration 模块 | S1-01 | `schema_migrations`、stores、connections、session metadata、quarantine |
-| S1-03 | REVIEW | `packages/local-db/.../repositories` | S1-02 | StoreRepository、迁移回填、store-scoped repository contract |
-| S1-04 | REVIEW | 新 store capsule/path 模块 | S1-01 | `%LOCALAPPDATA%/stores/{storeId}`、canonical path containment、备份 manifest |
-| S1-05 | REVIEW | `packages/browser-worker` | S1-01/S1-04 | 每店 Lingxing/Ads Profile、BrowserLease、sessionGeneration |
-| S1-06 | REVIEW | `apps/desktop/src/main`、`preload` | S1-02..05 | StoreCoordinator、店铺 CRUD/切换/连接 IPC、旧请求失效 |
-| S1-07 | REVIEW | 阶段质量 owner | S1-01..06 | 迁移/隔离/Profile/凭证/桌面 smoke 集中验证与阶段 commit/push |
+| S1-01 | DONE | `packages/shared-types` | S0 | `StoreId`、StoreContextEnvelope、connection/session/capability 合同 |
+| S1-02 | DONE | `packages/local-db/src/sqlite/db.ts` 与 migration 模块 | S1-01 | `schema_migrations`、stores、connections、session metadata、quarantine |
+| S1-03 | DONE | `packages/local-db/.../repositories` | S1-02 | StoreRepository、迁移回填、store-scoped repository contract |
+| S1-04 | DONE | 新 store capsule/path 模块 | S1-01 | `%LOCALAPPDATA%/stores/{storeId}`、canonical path containment、备份 manifest |
+| S1-05 | DONE | `packages/browser-worker` | S1-01/S1-04 | 每店 Lingxing/Ads Profile、BrowserLease、sessionGeneration |
+| S1-06 | DONE | `apps/desktop/src/main`、`preload` | S1-02..05 | StoreCoordinator、店铺 CRUD/切换/连接 IPC、旧请求失效 |
+| S1-07 | DONE | 阶段质量 owner | S1-01..06 | 迁移/隔离/Profile/凭证/桌面 smoke 集中验证与阶段 commit/push |
 
-阶段 1 集中验证（2026-07-22）：11 个聚焦测试文件最终 80/80 通过；`shared-types`、`local-db`、`browser-worker`、`desktop` 四包 typecheck 通过；跨店 Profile、Repository、BrowserLease、StoreContext、迁移恢复和 generation 单调性均有回归。待阶段 commit/push 成功后置为 `DONE`。
+阶段 1 集中验证（2026-07-22）：11 个聚焦测试文件最终 80/80 通过；`shared-types`、`local-db`、`browser-worker`、`desktop` 四包 typecheck 通过；跨店 Profile、Repository、BrowserLease、StoreContext、迁移恢复和 generation 单调性均有回归。阶段提交 `87cb7600` 已推送至 `origin/codex/preview-contract-production-p2`。
 
 ## 阶段 2：Mission Control 正式 Renderer
 
 | ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
 | --- | --- | --- | --- | --- |
-| S2-01 | TODO | Renderer navigation/shell/types | S1 | 十工作区 canonical navigation 与顶部 StoreContext |
-| S2-02 | TODO | Renderer design system/styles | S2-01 | 原型视觉迁移、响应式 Inspector、统一 CRUD primitive |
-| S2-03 | TODO | Renderer query/command bridge | S1/S2-01 | 去除生产 localStorage authority，query projection + typed command |
-| S2-04 | TODO | Renderer legacy adapters | S2-01 | 16 个旧路由映射为 subview/alias，不丢生产能力 |
+| S2-01 | ACTIVE | Renderer navigation/shell/types | S1 | 十工作区 canonical navigation 与顶部 StoreContext |
+| S2-02 | ACTIVE | Renderer design system/styles | S2-01 | 原型视觉迁移、响应式 Inspector、统一 CRUD primitive |
+| S2-03 | ACTIVE | Renderer query/command bridge | S1/S2-01 | 去除生产 localStorage authority，query projection + typed command |
+| S2-04 | ACTIVE | Renderer legacy adapters | S2-01 | 16 个旧路由映射为 subview/alias，不丢生产能力 |
 | S2-05 | TODO | Dev preview/package UI evidence | S2-01..04 | 十工作区 fixture 合同和 UI evidence vNext |
 | S2-06 | TODO | 阶段质量 owner | S2-01..05 | typecheck、导航/渲染聚焦测试、十工作区 100%/125% UI 证据、commit/push |
 
