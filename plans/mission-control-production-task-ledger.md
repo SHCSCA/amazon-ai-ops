@@ -95,9 +95,9 @@
 | S6-04 | DONE | Execution workspace | S6-03 | 可见浏览器、任务进度、人工接管、三段证据 |
 | S6-05 | BLOCKED | 人工 canary | S6-01..04 | 需要当前低风险真实关键词对象、当前人工 MissionGrant 与已登录可见领星 Ads 会话；未获这些当次授权前禁止真实写入 |
 | S6-06 | BLOCKED | 策略自动 canary | S6-05 | 依赖先完成当前人工 canary，并需要已启用策略、实时 kill switch/会话与当次真实对象授权 |
-| S6-07 | REVIEW | 阶段质量 owner | S6-01..06 | 内部错店/错对象/幂等/UNKNOWN/崩溃验证收口中；真实 canary 与 package smoke 不得由预览或单测替代 |
+| S6-07 | BLOCKED | 阶段质量 owner | S6-01..06 | 内部错店/错对象/幂等/UNKNOWN/崩溃验证已收口；受 S6-05/S6-06 当次真实授权与会话阻断，package smoke 延至 S7-04，当前不得声明 READY |
 
-阶段 6 内部验证（2026-07-23）：产品范围固定为 Amazon US / USD，原型继续作为可见体验基准；实现只开放 `set_keyword_bid` 降价、单动作最多 10%、单批最多 10 个对象。Main Authority 在提交前重新核对店铺、Profile、Ads Account、Campaign、Ad Group、Keyword、对象 revision、MissionGrant、策略、kill switch 与当前可见会话；intent 落库后只允许一次保存点击，before / after / reload 必须绑定同一 canonical 对象和值。`UNKNOWN` 不自动重试，并会停止同批后续对象、撤销授权、保留因果事件与启动恢复标记。应用内浏览器已在相同视口对照原型与集成版，验证执行来源展开、身份解析、整批建队列、串行执行、三段回读、标签与详情切换。阶段集中回归 257/257 个测试文件通过，2670 项通过、2 项按既有条件跳过；14/15 workspace typecheck 通过，Main、Preload、Renderer 生产构建通过。真实人工 canary、策略自动 canary 与 package smoke 仍需当次真实对象、有效授权和已登录领星 Ads 可见会话，当前不得声明 READY。
+阶段 6 内部验证（2026-07-23）：产品范围固定为 Amazon US / USD，原型继续作为可见体验基准；实现只开放 `set_keyword_bid` 降价、单动作最多 10%、单批最多 10 个对象。Main Authority 在提交前重新核对店铺、Profile、Ads Account、Campaign、Ad Group、Keyword、对象 revision、MissionGrant、策略、kill switch 与当前可见会话；intent 落库后只允许一次保存点击，before / after / reload 必须绑定同一 canonical 对象和值。`UNKNOWN` 不自动重试，并会停止同批后续对象、撤销授权、保留因果事件与启动恢复标记。应用内浏览器已在相同视口对照原型与集成版，验证执行来源展开、身份解析、整批建队列、串行执行、三段回读、标签与详情切换。阶段集中回归 257/257 个测试文件通过，2670 项通过、2 项按既有条件跳过；14/15 workspace typecheck 通过，Main、Preload、Renderer 生产构建通过。实现提交 `4cb5a3870a4db8ef9ed8b1d795cbf3b4230d85fb` 已推送到 `origin/codex/preview-contract-production-p2`。真实人工 canary、策略自动 canary 与 package smoke 仍需当次真实对象、有效授权和已登录领星 Ads 可见会话，当前不得声明 READY。
 
 ## 阶段 7：完整交付
 
