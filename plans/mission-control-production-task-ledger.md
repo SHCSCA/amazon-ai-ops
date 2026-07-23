@@ -121,7 +121,7 @@
 | S8-02 | DONE | Main scheduler/collection + Renderer | S3/S7 | 当前店铺/Profile 可见领星会话、美国业务日、采集窗口和持久幂等调度闭环；“当前店铺自动化”七状态与二次确认已接入 |
 | S8-03 | DONE | Store Capsule/evidence retention | S7 | 路径无关 StoreContext-only dry-run 摘要、全引用保护、只读派生 Capsule 和旧全局删除器禁用已完成 |
 | S8-04 | BLOCKED | 真实运行验收 | S6/S8-02 | 两店七个美国业务日、低风险人工 canary、策略自动 canary；依赖真实登录会话、当次对象与授权 |
-| S8-05 | BLOCKED | 总负责人 | S8-01..04 | 内部安全实现与验证已完成；最终 package UI、8/8 生产就绪和严格 bundle 仍依赖 S7-03/S7-04/S8-04 外部证据 |
+| S8-05 | BLOCKED | 总负责人 | S8-01..04 | 内部实现提交 `d43cfc8f` 已推送；最终 package UI、8/8 生产就绪和严格 bundle 仍依赖 S7-03/S7-04/S8-04 外部证据 |
 
 阶段 8 固定边界：第一版只支持 Amazon 美国站和 USD；店铺数据、浏览器 Profile、任务、证据与运行配置相互隔离。AI 连接继续是系统级配置，店铺只持有启停和分析规则；采集调度不会自动切换店铺或复用别店 Profile。真实写入仍只允许人工批准或命中已启用策略的整批授权，`UNKNOWN` 继续停止并交由人工核对。
 
@@ -129,4 +129,4 @@
 
 证据保留第一版严格为 dry-run：完整候选 manifest 只留在 Main，IPC/Preload 只传路径无关汇总；当前店铺 Store Capsule 中超过保留期且无任一店铺 DB/Authority 引用的普通 `screenshots`/`traces` 才能成为候选，`evidence`、`reports`、`downloads`、`backups` 和浏览器 Profile 永久保护。跨店引用、路径逃逸、symlink/junction、hardlink、缺失 Capsule、异常文件类型和过期 StoreContext 均失败关闭，扫描过程只派生路径且不创建目录；没有 delete/apply API。独立核心与留存审查共发现 6 个 P1，均已修复且复审无新增 P0/P1。
 
-“当前店铺自动化”替换旧全局 Cron CRUD，显示当前店铺、US/USD、业务日、时区、会话代次、配置版本、七状态计划和只读保留汇总；立即采集必须二次确认并再次由 Main 核对 StoreContext。应用内浏览器在 1280×720 下验证侧栏 216px、主区无横向溢出、SHC001/SHC002 切换后计划、配置版本、窗口与安全阻塞独立，确认框 Esc 关闭并把焦点返回“立即采集”；DEV 页面明确 `PROTOTYPE_ONLY`，不形成 package 或生产执行证据。集中验证 20 个文件 243/243 项、复审后 8 个文件 135/135 项通过；全量非浏览器回归 277/277 个文件通过，2825 项通过、2 项条件跳过；14/15 workspace typecheck 通过；Main、Preload、Renderer 生产构建通过（Renderer 4733 modules，只有既有 chunk 体积提示）。两个独立 Playwright Chromium 测试按用户浏览器选择未运行，未生成新的 package UI、真实连续运行或 Ads canary 证据，当前仍不得声明 READY。
+“当前店铺自动化”替换旧全局 Cron CRUD，显示当前店铺、US/USD、业务日、时区、会话代次、配置版本、七状态计划和只读保留汇总；立即采集必须二次确认并再次由 Main 核对 StoreContext。应用内浏览器在 1280×720 下验证侧栏 216px、主区无横向溢出、SHC001/SHC002 切换后计划、配置版本、窗口与安全阻塞独立，确认框 Esc 关闭并把焦点返回“立即采集”；DEV 页面明确 `PROTOTYPE_ONLY`，不形成 package 或生产执行证据。集中验证 20 个文件 243/243 项、复审后 8 个文件 135/135 项通过；全量非浏览器回归 277/277 个文件通过，2825 项通过、2 项条件跳过；14/15 workspace typecheck 通过；Main、Preload、Renderer 生产构建通过（Renderer 4733 modules，只有既有 chunk 体积提示）。两个独立 Playwright Chromium 测试按用户浏览器选择未运行，未生成新的 package UI、真实连续运行或 Ads canary 证据，当前仍不得声明 READY。阶段实现提交 `d43cfc8f` 已推送至 `origin/codex/preview-contract-production-p2`。
