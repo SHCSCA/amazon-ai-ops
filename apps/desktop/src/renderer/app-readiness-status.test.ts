@@ -32,6 +32,20 @@ describe('headerSessionStatusLabel', () => {
     expect(headerSessionStatusLabel(null)).toBe('会话待确认');
   });
 
+  it('shows Lingxing ready separately while Ads authorization remains blocked', () => {
+    const session = {
+      erpSessionReady: true,
+      erpSessionReused: false,
+      sessionIdentityVerified: true,
+      adsSessionReady: false,
+      adsUnavailableReason: '独立 Profile 待授权',
+    };
+
+    expect(headerSessionStatusLabel(session)).toBe('ERP 已连接 · Ads 待授权');
+    expect(describeLoginSession(session)).toContain('ERP 已完成登录');
+    expect(describeLoginSession(session)).toContain('Ads 未连接：独立 Profile 待授权');
+  });
+
   it('visibly marks a reused ERP session whose typed identity and password were not verified', () => {
     const session = {
       erpSessionReused: true,
@@ -74,7 +88,8 @@ describe('headerSessionStatusLabel', () => {
     expect(source).toContain('aria-label={describeLoginSession(loginSession)}');
     expect(source).toContain('aria-live="polite"');
     expect(source).toContain('role="status"');
-    expect(source).toContain('tabIndex={loginSession?.sessionIdentityVerified === false ? 0 : undefined}');
+    expect(source).toContain("loginSession?.adsSessionReady === false ? ' session-line-warning' : ''");
+    expect(source).toContain('loginSession?.adsSessionReady === false ? 0 : undefined}');
     expect(source).toContain("session-line-warning");
     expect(css).toContain('.session-line-warning');
     expect(css).toMatch(/\.session-line-warning:focus-visible\s*\{/);

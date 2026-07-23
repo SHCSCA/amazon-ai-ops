@@ -79,7 +79,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/scheduler-page.tsx',
-    markers: ['scheduler-prototype-status-grid', '本地调度控制器', '自动化安全边界', '任务列表'],
+    markers: ['PageFrame', 'TaskBanner', 'SummaryStrip', '当前店铺自动化', '本业务日计划', '证据保留预览'],
   },
   {
     pageFile: 'pages/settings-page.tsx',
@@ -112,6 +112,7 @@ describe('prototype parity design system integration', () => {
         'pages/listing-optimization-page.tsx': ['listing-optimization-page-stack', 'listing-editor-panel', 'listing-draft-panel'],
         'pages/approval-page.tsx': ['approval-workbench-head', 'approval-table'],
         'pages/readback-page.tsx': ['PageFrame', 'TaskBanner', 'readback-step-tabs', 'WorkbenchPanel'],
+        'pages/scheduler-page.tsx': ['PageFrame', 'TaskBanner', 'SummaryStrip', 'WorkbenchPanel', 'mission-control-automation-state-grid', 'mission-control-retention-preview'],
         'pages/settings-page.tsx': ['settings-ai-workbench', 'settings-ai-contract-copy-folded'],
         'pages/delivery-page.tsx': ['delivery-summary-workbench', 'delivery-summary-hero'],
       };

@@ -71,6 +71,11 @@ const EXACT_ROUTE_REQUIREMENTS: Partial<Record<AppRoute, ReadonlyArray<{
     { capabilityId: 'collection.import-check.export', action: 'export' },
     { capabilityId: 'collection.import-check.open-artifact', action: 'view' },
   ],
+  'scheduler': [
+    { capabilityId: 'settings.scheduler.view', action: 'view' },
+    { capabilityId: 'settings.scheduler.run-now', action: 'start' },
+    { capabilityId: 'settings.scheduler.retention-preview', action: 'view' },
+  ],
 };
 
 /**
@@ -94,8 +99,10 @@ export function resolveLegacyRouteCapability(
     capability.capabilityId === requirement.capabilityId
     && capability.view === view
     && capability.action === requirement.action
-    && capability.state === 'LEGACY_ADAPTER'
-    && capability.legacyRoute === route
+    && (
+      (capability.state === 'LEGACY_ADAPTER' && capability.legacyRoute === route)
+      || capability.state === 'PRODUCTION_NATIVE'
+    )
   )));
   if (missing.length === 0) return viewCapability;
   return {
@@ -113,7 +120,19 @@ function LegacyRoutePage({
   readbackAuthority,
   previewScenarioId,
   storeContext,
-}: Pick<LegacyAdapterRouterProps, 'route' | 'intent' | 'nextSafeAction' | 'readbackAuthority' | 'previewScenarioId' | 'storeContext'>) {
+  capabilities,
+  previewMode,
+}: Pick<
+  LegacyAdapterRouterProps,
+  | 'route'
+  | 'intent'
+  | 'nextSafeAction'
+  | 'readbackAuthority'
+  | 'previewScenarioId'
+  | 'storeContext'
+  | 'capabilities'
+  | 'previewMode'
+>) {
   switch (route) {
     case 'dashboard':
       return <DashboardPage nextSafeAction={nextSafeAction} />;
@@ -144,7 +163,13 @@ function LegacyRoutePage({
     case 'settings':
       return <SettingsPage embedded />;
     case 'scheduler':
-      return <SchedulerPage />;
+      return (
+        <SchedulerPage
+          capabilities={capabilities}
+          previewMode={previewMode}
+          storeContext={storeContext}
+        />
+      );
     case 'delivery':
       return <DeliveryPage />;
     default: {
@@ -171,7 +196,9 @@ export function LegacyAdapterRouter(props: LegacyAdapterRouterProps) {
     >
       <LegacyRoutePage
         intent={props.intent}
+        capabilities={props.capabilities}
         nextSafeAction={props.nextSafeAction}
+        previewMode={props.previewMode}
         previewScenarioId={props.previewScenarioId}
         readbackAuthority={props.readbackAuthority}
         route={props.route}

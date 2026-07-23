@@ -18,3 +18,5 @@ export * from './mission-domain';
 export * from './analysis-authority';
 export * from './execution-authority';
 export * from './store-runtime-config';
+export * from './store-collection-schedule';
+export * from './store-evidence-retention';

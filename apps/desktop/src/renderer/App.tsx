@@ -49,11 +49,14 @@ import './styles/states-motion.css';
 import './styles/mission-control-shell.css';
 
 interface LoginSessionInfo {
+  erpSessionReady?: boolean;
   erpSessionReused?: boolean;
   sessionIdentityVerified?: boolean;
+  adsSessionReady?: boolean;
   adsEntryMode?: string;
   adsUrl?: string;
   adsTitle?: string;
+  adsUnavailableReason?: string;
   credentialPersistence?: BrowserLoginCredentialPersistence;
 }
 
@@ -284,7 +287,11 @@ export function describeLoginSession(session?: LoginSessionInfo | null): string 
     return `ERP 已复用登录态；${identity}，本机安全区未更改；${ads}`;
   }
   const erp = session.erpSessionReused ? 'ERP 已复用登录态' : 'ERP 已完成登录';
-  const ads = session.adsTitle || session.adsUrl ? `Ads 已进入：${session.adsTitle || session.adsUrl}` : 'Ads 会话待确认';
+  const ads = session.adsSessionReady === false
+    ? `Ads 未连接：${session.adsUnavailableReason || '独立 Profile 待授权，广告执行保持阻断'}`
+    : session.adsTitle || session.adsUrl
+      ? `Ads 已进入：${session.adsTitle || session.adsUrl}`
+      : 'Ads 会话待确认';
   return `${erp}；${ads}`;
 }
 
@@ -296,9 +303,11 @@ export function headerSessionStatusLabel(session?: LoginSessionInfo | null): str
   ) {
     return 'ERP 会话复用 · 身份未核验';
   }
-  const erpReady = Boolean(session.erpSessionReused);
-  const adsReady = Boolean(session.adsTitle || session.adsUrl || session.adsEntryMode);
+  const erpReady = session.erpSessionReady === true || Boolean(session.erpSessionReused);
+  const adsReady = session.adsSessionReady === true
+    || (session.adsSessionReady === undefined && Boolean(session.adsTitle || session.adsUrl || session.adsEntryMode));
   if (erpReady && adsReady) return 'ERP/Ads 已连接';
+  if (erpReady && session.adsSessionReady === false) return 'ERP 已连接 · Ads 待授权';
   if (adsReady) return 'Ads 已连接';
   if (erpReady) return 'ERP 已连接';
   return '会话确认中';
@@ -856,9 +865,9 @@ function MissionControlRuntime({
     <span
       aria-label={describeLoginSession(loginSession)}
       aria-live="polite"
-      className={`session-line${loginSession?.sessionIdentityVerified === false ? ' session-line-warning' : ''}`}
+      className={`session-line${loginSession?.sessionIdentityVerified === false || loginSession?.adsSessionReady === false ? ' session-line-warning' : ''}`}
       role="status"
-      tabIndex={loginSession?.sessionIdentityVerified === false ? 0 : undefined}
+      tabIndex={loginSession?.sessionIdentityVerified === false || loginSession?.adsSessionReady === false ? 0 : undefined}
       title={describeLoginSession(loginSession)}
     >
       {headerSessionStatusLabel(loginSession)}

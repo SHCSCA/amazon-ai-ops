@@ -29,6 +29,37 @@ function reportCapabilities(
 }
 
 const intent = { workspace: 'collection', subview: 'reports' } as const;
+const schedulerIntent = { workspace: 'settings', subview: 'scheduler' } as const;
+
+function schedulerCapabilities(): MissionControlCapabilityProjection[] {
+  return [
+    {
+      capabilityId: 'settings.scheduler.view',
+      workspace: 'settings',
+      view: 'settings/scheduler',
+      action: 'view',
+      state: 'LEGACY_ADAPTER',
+      legacyRoute: 'scheduler',
+      detail: 'compatibility view',
+    },
+    {
+      capabilityId: 'settings.scheduler.run-now',
+      workspace: 'settings',
+      view: 'settings/scheduler',
+      action: 'start',
+      state: 'PRODUCTION_NATIVE',
+      detail: 'store context run-now',
+    },
+    {
+      capabilityId: 'settings.scheduler.retention-preview',
+      workspace: 'settings',
+      view: 'settings/scheduler',
+      action: 'view',
+      state: 'PRODUCTION_NATIVE',
+      detail: 'retention dry-run',
+    },
+  ];
+}
 
 describe('resolveLegacyRouteCapability', () => {
   it('mounts the collection adapter only when every exact real action is authorized', () => {
@@ -65,5 +96,27 @@ describe('resolveLegacyRouteCapability', () => {
     )).toMatchObject({
       state: 'PROTOTYPE_ONLY',
     });
+  });
+
+  it('mounts the scheduler compatibility view only with both exact native operations', () => {
+    expect(resolveLegacyRouteCapability(
+      schedulerCapabilities(),
+      'scheduler',
+      schedulerIntent,
+    )).toMatchObject({
+      capabilityId: 'settings.scheduler.view',
+      state: 'LEGACY_ADAPTER',
+    });
+
+    const incomplete = resolveLegacyRouteCapability(
+      schedulerCapabilities().filter((item) => item.capabilityId !== 'settings.scheduler.retention-preview'),
+      'scheduler',
+      schedulerIntent,
+    );
+    expect(incomplete).toMatchObject({
+      state: 'BLOCKED',
+      blockerCode: 'EXACT_LEGACY_ACTION_CAPABILITIES_MISSING',
+    });
+    expect(incomplete?.detail).toContain('settings.scheduler.retention-preview');
   });
 });

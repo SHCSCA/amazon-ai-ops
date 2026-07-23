@@ -1263,6 +1263,226 @@
   line-height: 18px;
 }
 
+.mission-control-workspace-root .mission-control-store-automation,
+.mission-control-workspace-root .mission-control-store-automation .workspace-page-frame__content {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .mission-control-automation-state-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(118px, 1fr));
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.mission-control-workspace-root .mission-control-automation-state {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 118px;
+  min-height: 96px;
+  border: 1px solid var(--workspace-border);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 11px;
+  color: var(--workspace-text-secondary);
+}
+
+.mission-control-workspace-root .mission-control-automation-state > span {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.mission-control-workspace-root .mission-control-automation-state > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .mission-control-automation-state strong {
+  color: var(--workspace-text);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mission-control-workspace-root .mission-control-automation-state small {
+  color: inherit;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.mission-control-workspace-root .mission-control-automation-state > svg {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.mission-control-workspace-root .mission-control-automation-state[data-active="true"] {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+  box-shadow: inset 0 0 0 1px #dbeafe;
+}
+
+.mission-control-workspace-root .mission-control-automation-state[data-active="true"] > span {
+  background: #2563eb;
+  color: #fff;
+}
+
+.mission-control-workspace-root .mission-control-automation-state[data-state="failed"][data-active="true"],
+.mission-control-workspace-root .mission-control-automation-state[data-state="archived"][data-active="true"] {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #b91c1c;
+  box-shadow: inset 0 0 0 1px #fee2e2;
+}
+
+.mission-control-workspace-root .mission-control-automation-state[data-state="failed"][data-active="true"] > span,
+.mission-control-workspace-root .mission-control-automation-state[data-state="archived"][data-active="true"] > span {
+  background: #dc2626;
+}
+
+.mission-control-workspace-root .mission-control-automation-window,
+.mission-control-workspace-root .mission-control-retention-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 12px;
+  background: var(--workspace-border);
+}
+
+.mission-control-workspace-root .mission-control-automation-fact,
+.mission-control-workspace-root .mission-control-retention-metric {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  min-height: 74px;
+  background: #fff;
+  padding: 12px 13px;
+}
+
+.mission-control-workspace-root .mission-control-automation-fact > span,
+.mission-control-workspace-root .mission-control-retention-metric > span {
+  display: inline-grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.mission-control-workspace-root .mission-control-automation-fact > div,
+.mission-control-workspace-root .mission-control-retention-metric > div {
+  display: grid;
+  min-width: 0;
+}
+
+.mission-control-workspace-root .mission-control-automation-fact small,
+.mission-control-workspace-root .mission-control-retention-metric small {
+  color: var(--workspace-text-secondary);
+  font-size: 10px;
+  font-weight: 680;
+  line-height: 16px;
+}
+
+.mission-control-workspace-root .mission-control-automation-fact strong,
+.mission-control-workspace-root .mission-control-retention-metric strong {
+  overflow: hidden;
+  color: var(--workspace-text);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-workspace-root .mission-control-retention-preview .workbench-panel__toolbar .workspace-button,
+.mission-control-workspace-root .mission-control-retention-preview .workbench-panel__toolbar .workspace-button > span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.mission-control-workspace-root .mission-control-retention-safety,
+.mission-control-workspace-root .mission-control-automation-confirm-boundary {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 9px;
+  background: #f0fdf4;
+  padding: 11px 12px;
+  color: #166534;
+}
+
+.mission-control-workspace-root .mission-control-retention-safety[data-scan-safe="false"],
+.mission-control-workspace-root .mission-control-automation-confirm-boundary {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.mission-control-workspace-root .mission-control-retention-safety > div {
+  display: grid;
+  gap: 2px;
+}
+
+.mission-control-workspace-root .mission-control-retention-safety strong,
+.mission-control-workspace-root .mission-control-retention-safety p,
+.mission-control-workspace-root .mission-control-automation-confirm-boundary p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.mission-control-workspace-root .mission-control-retention-blockers {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-control-workspace-root .mission-control-retention-blockers li {
+  display: grid;
+  grid-template-columns: minmax(150px, max-content) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  padding: 8px 10px;
+  color: #991b1b;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.mission-control-workspace-root .mission-control-retention-blockers code {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.mission-control-workspace-root .mission-control-automation-confirm-boundary {
+  margin: 14px;
+}
+
 .mission-control-store-gate {
   display: grid;
   grid-template-columns: minmax(0, 680px) minmax(300px, 420px);
@@ -1748,7 +1968,9 @@
   }
 
   .mission-control-workspace-root .mission-control-config-grid,
-  .mission-control-workspace-root .mission-control-config-form {
+  .mission-control-workspace-root .mission-control-config-form,
+  .mission-control-workspace-root .mission-control-automation-window,
+  .mission-control-workspace-root .mission-control-retention-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1774,6 +1996,16 @@
 
   .mission-control-workspace-root .mission-control-config-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mission-control-workspace-root .mission-control-automation-window,
+  .mission-control-workspace-root .mission-control-retention-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mission-control-workspace-root .mission-control-retention-blockers li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
   }
 
   .mission-control-store-gate {

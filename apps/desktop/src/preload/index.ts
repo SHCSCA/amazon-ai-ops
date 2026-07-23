@@ -17,6 +17,9 @@ import type {
   ResolveRecommendationReviewRequest,
   ResolveRecommendationReviewResult,
   StoreContextEnvelope,
+  StoreCollectionScheduleProjection,
+  StoreCollectionScheduleRunResult,
+  StoreEvidenceRetentionPreviewSummary,
   StoreId,
   StoreRecord,
   StoreRuntimeConfigProjection,
@@ -260,6 +263,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     input: RestoreStoreRuntimeConfigInput,
   ): Promise<StoreRuntimeConfigProjection> =>
     ipcRenderer.invoke('store-runtime-config:restore', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
+  previewStoreEvidenceRetention: (
+    storeContext: StoreContextEnvelope,
+  ): Promise<StoreEvidenceRetentionPreviewSummary> =>
+    ipcRenderer.invoke('store-evidence-retention:preview', { storeContext }) as Promise<StoreEvidenceRetentionPreviewSummary>,
+  getStoreCollectionSchedule: (
+    storeContext: StoreContextEnvelope,
+  ): Promise<StoreCollectionScheduleProjection> =>
+    ipcRenderer.invoke('store-collection-scheduler:get', { storeContext }) as Promise<StoreCollectionScheduleProjection>,
+  runStoreCollectionScheduleNow: (
+    storeContext: StoreContextEnvelope,
+  ): Promise<StoreCollectionScheduleRunResult> =>
+    ipcRenderer.invoke('store-collection-scheduler:run-now', { storeContext }) as Promise<StoreCollectionScheduleRunResult>,
 
   // Browser
   getSavedLoginCredentialStatus: () => ipcRenderer.invoke('browser:get-saved-credential-status'),
@@ -386,6 +401,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('recommendations:save-readback-capture', input),
 
   // Scheduler
+  // Legacy unscoped scheduler bridge. Main keeps mutation channels fail-closed;
+  // store collection uses the StoreContext-authorized methods above.
   getScheduledTasks: () => ipcRenderer.invoke('scheduler:get-tasks'),
   setTaskEnabled: (name: string, enabled: boolean) =>
     ipcRenderer.invoke('scheduler:set-task-enabled', { name, enabled }),

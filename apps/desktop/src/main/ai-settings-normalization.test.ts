@@ -3,6 +3,7 @@ import {
   normalizeAiSettingsForSaveInput,
   normalizeAiSettingsRecord,
   normalizeAiSettingsForTestInput,
+  SYSTEM_AI_PROVIDER,
   sanitizeAiSettingsForRenderer,
 } from './ai-settings-normalization';
 
@@ -29,9 +30,21 @@ describe('ai settings normalization', () => {
     expect(result.ai_api_key).toBe('');
     expect(result.aiKeyConfigured).toBe(true);
     expect(result.ai_key_configured).toBe(true);
+    expect(result.aiProvider).toBe(SYSTEM_AI_PROVIDER);
+    expect(result.ai_provider).toBe(SYSTEM_AI_PROVIDER);
     expect(result.aiLastTestStatus).toBe('available');
     expect(JSON.stringify(result)).not.toContain('sk-saved-live-key-123456');
   });
+
+  it.each([undefined, '', 'deepseek', 'openai', 'unsupported-provider'])(
+    'migrates the legacy provider label %s into the single closed provider contract',
+    (aiProvider) => {
+      const result = normalizeAiSettingsRecord({ aiProvider });
+
+      expect(result.aiProvider).toBe('openai-compatible');
+      expect(result.ai_provider).toBe('openai-compatible');
+    },
+  );
 
   it('preserves saved API key and available test state when saving persona from hidden-key UI state', () => {
     const result = normalizeAiSettingsForSaveInput({

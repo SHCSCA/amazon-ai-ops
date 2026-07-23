@@ -19,6 +19,7 @@ import {
 import {
   AnalysisAuthorityService,
   type AnalysisAuthorityServiceOptions,
+  type CapturedAnalysisGenerationAuthority,
 } from './analysis-authority-service';
 
 const NOW = '2026-07-22T12:00:00.000Z';
@@ -49,6 +50,7 @@ interface Harness {
   policyVersionId: string;
   proofPath: string;
   ruleRevision: { value: string };
+  modelRevision: { value: string };
 }
 
 function createHarness(options: {
@@ -61,6 +63,9 @@ function createHarness(options: {
   cooldownMinutes?: number;
   executionWindow?: PolicyVersionRules['executionWindow'];
   mutateMissionDuringGeneration?: boolean;
+  generationAuthorityFactory?: (
+    captured: CapturedAnalysisGenerationAuthority,
+  ) => CapturedAnalysisGenerationAuthority;
   onAutomaticGrantIssued?: AnalysisAuthorityServiceOptions['onAutomaticGrantIssued'];
 } = {}): Harness {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-analysis-service-'));
@@ -195,8 +200,12 @@ function createHarness(options: {
   }
   const recommendationCount = options.recommendationCount ?? 1;
   const ruleRevision = { value: RULE_REVISION };
+  const modelRevision = { value: 'gpt-5.6:ad_strategy_diagnosis_v1' };
   const deniedProofRoot = path.join(directory, 'denied-proof-root');
   fs.mkdirSync(deniedProofRoot, { recursive: true });
+  let generationDelegate: CapturedAnalysisGenerationAuthority['generateRecommendations'] = async () => {
+    throw new Error('analysis generation delegate was not initialized');
+  };
   const service = new AnalysisAuthorityService({
     db: database,
     repository: analysisRepository,
@@ -209,11 +218,19 @@ function createHarness(options: {
       },
     },
     currentRuleRevision: () => ruleRevision.value,
-    currentModelRevision: () => 'gpt-5.6:ad_strategy_diagnosis_v1',
+    currentModelRevision: () => modelRevision.value,
+    captureGenerationAuthority: () => {
+      const captured = Object.freeze({
+        ruleRevision: ruleRevision.value,
+        modelRevision: modelRevision.value,
+        generateRecommendations: generationDelegate,
+      });
+      return options.generationAuthorityFactory?.(captured) ?? captured;
+    },
     allowedProofRoots: () => [options.proofAllowed === false ? deniedProofRoot : directory],
     onAutomaticGrantIssued: options.onAutomaticGrantIssued,
     now: () => new Date(NOW),
-    generateRecommendations: async (scope) => {
+    generateRecommendations: generationDelegate = async (scope) => {
       expect(scope).toMatchObject({
         storeName: 'US Store One',
         marketplaceCode: 'US',
@@ -296,6 +313,7 @@ function createHarness(options: {
     policyVersionId: policyVersion.id,
     proofPath,
     ruleRevision,
+    modelRevision,
   };
 }
 
@@ -637,7 +655,57 @@ describe('AnalysisAuthorityService', () => {
     expect(result.ai.detail).not.toMatch(/provider unavailable|AI and rules aligned/i);
   });
 
-  it('blocks stale Mission, rule and non-latest action revisions before changing Decisions', async () => {
+  it('keeps one immutable generation authority when mutable settings change A to B to A during an AI await', async () => {
+    let signalStarted!: () => void;
+    let releaseGeneration!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const generationGate = new Promise<void>((resolve) => { releaseGeneration = resolve; });
+    const authoritiesUsed: Array<{ ruleRevision: string; modelRevision: string }> = [];
+    const harness = createHarness({
+      generationAuthorityFactory: (captured) => Object.freeze({
+        ...captured,
+        generateRecommendations: async (
+          scope: Parameters<CapturedAnalysisGenerationAuthority['generateRecommendations']>[0],
+        ) => {
+          authoritiesUsed.push({
+            ruleRevision: captured.ruleRevision,
+            modelRevision: captured.modelRevision,
+          });
+          signalStarted();
+          await generationGate;
+          return captured.generateRecommendations(scope);
+        },
+      }),
+    });
+    const originalModelRevision = harness.modelRevision.value;
+
+    const pending = runRequest(harness);
+    await started;
+    harness.ruleRevision.value = 'b'.repeat(64);
+    harness.modelRevision.value = 'changed-during-generation';
+    harness.ruleRevision.value = RULE_REVISION;
+    harness.modelRevision.value = originalModelRevision;
+    releaseGeneration();
+
+    const result = await pending;
+    expect(authoritiesUsed).toEqual([{
+      ruleRevision: RULE_REVISION,
+      modelRevision: originalModelRevision,
+    }]);
+    expect(result.evidencePackage).toMatchObject({
+      ruleRevision: RULE_REVISION,
+      modelRevision: originalModelRevision,
+    });
+    const authorization = harness.service.authorizeProposalBatch({
+      context: harness.context,
+      missionId: harness.missionId,
+      proposalIds: result.proposals.map((proposal) => proposal.id),
+    });
+    expect(authorization.blockers).not.toContain('当前规则 revision 已变化；必须重新分析。');
+    expect(authorization.blockers).not.toContain('当前 AI 模型 revision 已变化；必须重新分析。');
+  });
+
+  it('blocks stale Mission, rule, AI runtime and non-latest action revisions before changing Decisions', async () => {
     const missionHarness = createHarness();
     const missionResult = await runRequest(missionHarness);
     const mission = missionHarness.missionRepository.getMission(missionHarness.context, missionHarness.missionId)!;
@@ -662,6 +730,15 @@ describe('AnalysisAuthorityService', () => {
       missionId: ruleHarness.missionId,
       proposalIds: ruleResult.proposals.map((proposal) => proposal.id),
     }).blockers).toContain('当前规则 revision 已变化；必须重新分析。');
+
+    const modelHarness = createHarness();
+    const modelResult = await runRequest(modelHarness);
+    modelHarness.modelRevision.value = 'changed-ai-runtime-revision';
+    expect(modelHarness.service.authorizeProposalBatch({
+      context: modelHarness.context,
+      missionId: modelHarness.missionId,
+      proposalIds: modelResult.proposals.map((proposal) => proposal.id),
+    }).blockers).toContain('当前 AI 模型 revision 已变化；必须重新分析。');
 
     const latestHarness = createHarness();
     const latestResult = await runRequest(latestHarness);

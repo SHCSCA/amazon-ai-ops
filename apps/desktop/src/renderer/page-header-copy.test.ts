@@ -33,7 +33,6 @@ const pageTitleBindings = [
   ['keyword opportunities', 'pages/keyword-opportunities-page.tsx', 'keywordOpportunities'],
   ['listing optimization', 'pages/listing-optimization-page.tsx', 'listingOptimization'],
   ['delivery', 'pages/delivery-page.tsx', 'delivery'],
-  ['scheduler', 'pages/scheduler-page.tsx', 'scheduler'],
   ['settings', 'pages/settings-page.tsx', 'settings'],
 ] as const;
 
@@ -78,5 +77,14 @@ describe('page header copy contract', () => {
     expect(source).toContain('<PageFrame');
     expect(source).toContain('title="结果核对"');
     expect(source).not.toContain('<PageHeader');
+  });
+
+  it('uses the current-store PageFrame title for automation instead of the legacy scheduler PageHeader', () => {
+    const source = readFileSync(new URL('pages/scheduler-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('<PageFrame');
+    expect(source).toContain('title="当前店铺自动化"');
+    expect(source).not.toContain('<PageHeader');
+    expect(source).not.toContain('PAGE_HEADER_TITLES');
   });
 });

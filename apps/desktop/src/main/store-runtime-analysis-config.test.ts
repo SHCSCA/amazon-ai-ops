@@ -45,9 +45,51 @@ describe('store runtime analysis config', () => {
     expect(runtime.minimumRecommendationConfidence).toBe(0.72);
     expect(storeRuntimeRuleRevisionPayload(runtime)).toMatchObject({
       storeId: 'store-a',
-      storeConfigRevision: 3,
+      analysisWindowDays: 30,
+      defaultTargetAcosPercent: 32.5,
+      minimumRecommendationConfidencePercent: 72,
       effectiveRuleConfig: { targetAcos: 0.325 },
     });
+  });
+
+  it('keeps collection and retention edits outside the analysis-rule fingerprint domain', () => {
+    const runtime = requireStoreRuntimeAnalysisConfig(DEFAULT_RULE_CONFIG, projection);
+    const operationalOnlyProjection: StoreRuntimeConfigProjection = {
+      ...projection,
+      current: {
+        ...projection.current!,
+        revision: 99,
+        values: {
+          ...projection.current!.values,
+          collectionScheduleLocalTime: '22:30',
+          collectionLookbackDays: 60,
+          evidenceRetentionDays: 1825,
+        },
+      },
+    };
+    const operationalOnly = requireStoreRuntimeAnalysisConfig(DEFAULT_RULE_CONFIG, operationalOnlyProjection);
+
+    expect(storeRuntimeRuleRevisionPayload(operationalOnly))
+      .toEqual(storeRuntimeRuleRevisionPayload(runtime));
+  });
+
+  it('changes the analysis-rule fingerprint payload for effective rule, window or confidence edits', () => {
+    const runtime = requireStoreRuntimeAnalysisConfig(DEFAULT_RULE_CONFIG, projection);
+    for (const values of [
+      { analysisWindowDays: 14 },
+      { defaultTargetAcosPercent: 28 },
+      { minimumRecommendationConfidencePercent: 85 },
+    ]) {
+      const changed = requireStoreRuntimeAnalysisConfig(DEFAULT_RULE_CONFIG, {
+        ...projection,
+        current: {
+          ...projection.current!,
+          values: { ...projection.current!.values, ...values },
+        },
+      });
+      expect(storeRuntimeRuleRevisionPayload(changed))
+        .not.toEqual(storeRuntimeRuleRevisionPayload(runtime));
+    }
   });
 
   it('fails closed for missing or archived store configuration', () => {

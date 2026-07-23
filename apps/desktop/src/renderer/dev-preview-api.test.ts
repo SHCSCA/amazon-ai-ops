@@ -1582,6 +1582,114 @@ describe('Mission Control development preview bridge', () => {
     expect((await api.listStoreProducts(refreshedFirst.context))[0].asin).toBe(firstProducts[0].asin);
   });
 
+  it('keeps two store automation previews independent, explicit, and path-free', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const stores = await api.listStores();
+
+    const firstView = await api.switchStore(stores[0].storeId);
+    const firstSchedule = await api.getStoreCollectionSchedule(firstView.context);
+    const firstRetention = await api.previewStoreEvidenceRetention(firstView.context);
+    expect(firstSchedule).toMatchObject({
+      storeId: stores[0].storeId,
+      state: 'waiting',
+      previewOnly: true,
+      authorityState: 'PROTOTYPE_ONLY',
+    });
+    expect(firstRetention).toMatchObject({
+      storeId: String(stores[0].storeId),
+      mode: 'dry-run',
+      deletionSupported: false,
+      applyable: false,
+      scanSafe: true,
+      previewOnly: true,
+      authorityState: 'PROTOTYPE_ONLY',
+      blockers: [],
+    });
+
+    const firstRun = await api.runStoreCollectionScheduleNow(firstView.context);
+    expect(firstRun).toMatchObject({
+      accepted: true,
+      duplicate: false,
+      projection: { storeId: stores[0].storeId, state: 'succeeded' },
+    });
+
+    const secondView = await api.switchStore(stores[1].storeId);
+    const secondSchedule = await api.getStoreCollectionSchedule(secondView.context);
+    const secondRetention = await api.previewStoreEvidenceRetention(secondView.context);
+    expect(secondSchedule).toMatchObject({
+      storeId: stores[1].storeId,
+      state: 'failed',
+      detail: expect.stringMatching(/失败关闭.*不会自动重试/),
+      previewOnly: true,
+      authorityState: 'PROTOTYPE_ONLY',
+    });
+    expect(await api.runStoreCollectionScheduleNow(secondView.context)).toMatchObject({
+      accepted: false,
+      duplicate: true,
+      projection: { storeId: stores[1].storeId, state: 'failed' },
+    });
+    expect(secondRetention).toMatchObject({
+      storeId: String(stores[1].storeId),
+      deletionSupported: false,
+      applyable: false,
+      scanSafe: false,
+      blockers: [expect.objectContaining({ code: 'UNSAFE_LINK_OR_REPARSE_POINT' })],
+      authorityState: 'PROTOTYPE_ONLY',
+    });
+    await expect(api.getStoreCollectionSchedule(firstView.context))
+      .rejects.toThrow(/STORE_CONTEXT_MISMATCH|StoreContext|CONTEXT/i);
+
+    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    expect(await api.getStoreCollectionSchedule(refreshedFirst.context)).toMatchObject({
+      storeId: stores[0].storeId,
+      state: 'succeeded',
+    });
+
+    const serialized = JSON.stringify({
+      firstSchedule,
+      firstRetention,
+      firstRun,
+      secondSchedule,
+      secondRetention,
+    });
+    expect(serialized).not.toMatch(/[A-Za-z]:[\\/]/);
+    expect(serialized).not.toMatch(/absolutePath|relativePath|filePath|folderPath/);
+    expect(api.getScheduledTasks).toBeUndefined();
+    expect(api.setTaskEnabled).toBeUndefined();
+    expect(api.runTaskNow).toBeUndefined();
+  });
+
+  it('projects all scheduler preview actions as explicit PROTOTYPE_ONLY capabilities', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const [store] = await api.listStores();
+    const view = await api.switchStore(store.storeId);
+    const response = await api.missionControl.query({
+      query: 'workspace-bootstrap',
+      requestId: 'preview-store-automation-capabilities',
+      contextEpoch: 2,
+      context: view.context,
+    });
+    expect(response.data.capabilities
+      .filter((item: any) => item.view === 'settings/scheduler'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          capabilityId: 'settings.scheduler.view',
+          state: 'PROTOTYPE_ONLY',
+          legacyRoute: 'scheduler',
+        }),
+        expect.objectContaining({
+          capabilityId: 'settings.scheduler.run-now',
+          action: 'start',
+          state: 'PROTOTYPE_ONLY',
+        }),
+        expect.objectContaining({
+          capabilityId: 'settings.scheduler.retention-preview',
+          action: 'view',
+          state: 'PROTOTYPE_ONLY',
+        }),
+      ]));
+  });
+
   it('binds all 16 legacy preview pages to their exact route projection without opening production', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [store] = await api.listStores();

@@ -48,6 +48,12 @@ export interface MissionControlAdapterOptions {
   executionAuthorityReady?: boolean;
   /** Main-authorized, store-keyed operating configuration CRUD is registered. */
   storeRuntimeConfigReady?: boolean;
+  /**
+   * Main-only StoreContext scheduler plus retention dry-run preview are
+   * registered. The view remains behind the legacy route compatibility
+   * boundary while both operations are projected as exact native actions.
+   */
+  storeAutomationReady?: boolean;
   missionDomain?: {
     getAutonomyProjection(context: StoreContextEnvelope): {
       mode: MissionControlAutonomyMode;
@@ -178,6 +184,8 @@ export const MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabilityProj
   serviceBlocked('settings.store-config.archive', 'settings', 'settings/ai-and-local', 'archive', '店铺级设置归档服务尚未接入 Main。'),
   serviceBlocked('settings.store-config.restore', 'settings', 'settings/ai-and-local', 'restore', '店铺级设置恢复服务尚未接入 Main。'),
   blocked('settings.scheduler.view', 'settings', 'settings/scheduler', 'scheduler', '定时任务尚未接入按店铺授权的配置。'),
+  serviceBlocked('settings.scheduler.run-now', 'settings', 'settings/scheduler', 'start', '当前店铺立即采集尚未接入 Main StoreContext 调度器。'),
+  serviceBlocked('settings.scheduler.retention-preview', 'settings', 'settings/scheduler', 'view', '当前店铺证据保留 dry-run 尚未接入 Main。'),
   blocked('settings.delivery.view', 'settings', 'settings/delivery', 'delivery', '交付状态尚未接入按店铺授权的查询。'),
 ] as const;
 
@@ -243,6 +251,33 @@ export function createMissionControlLegacyAdapter(
             capability.view,
             capability.action,
             '店铺运行配置由 Main 复核完整 StoreContext，以独立 store_id 持久化并使用 expectedRevision、可恢复归档和版本历史。',
+          );
+        }
+        if (options.storeAutomationReady && capability.capabilityId === 'settings.scheduler.view') {
+          return adapted(
+            capability.capabilityId,
+            capability.workspace,
+            capability.view,
+            'scheduler',
+            '当前店铺自动化页面通过兼容路由装载，但只调用 Main 的 StoreContext-only 调度与只读证据保留接口。',
+          );
+        }
+        if (options.storeAutomationReady && capability.capabilityId === 'settings.scheduler.run-now') {
+          return native(
+            capability.capabilityId,
+            capability.workspace,
+            capability.view,
+            capability.action,
+            '立即采集只接受当前 Main StoreContext；二次确认后仍按店铺、业务日与采集口径幂等认领，同一 fingerprint 失败不重试。',
+          );
+        }
+        if (options.storeAutomationReady && capability.capabilityId === 'settings.scheduler.retention-preview') {
+          return native(
+            capability.capabilityId,
+            capability.workspace,
+            capability.view,
+            capability.action,
+            '证据保留仅返回当前店铺 dry-run 汇总，固定 deletionSupported=false，不暴露删除或应用入口。',
           );
         }
         const missionDomainDetail = options.missionDomain

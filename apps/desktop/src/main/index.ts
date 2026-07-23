@@ -12,7 +12,7 @@ import {
   type StoreCapsulePaths,
 } from '@amazon-ai-ops/browser-worker';
 import { LocalScheduler } from '@amazon-ai-ops/scheduler';
-import { AuditLogger, ScreenshotManager, TraceManager, CleanupManager } from '@amazon-ai-ops/audit-log';
+import { AuditLogger, ScreenshotManager, TraceManager } from '@amazon-ai-ops/audit-log';
 import { AdQuantifier, RecommendationGenerator, DEFAULT_RULE_CONFIG, buildAdMetricObjectIdentity, mergeAdDecisions } from '@amazon-ai-ops/rules-engine';
 import { ReportParser, keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics, parseListingContent } from '@amazon-ai-ops/report-parser';
 import { assertLingxingParsedReportImportable } from './lingxing-report-import-validation';
@@ -141,6 +141,12 @@ import {
   sanitizeAiSettingsForRenderer as sanitizeAiSettingsForRendererRecord,
 } from './ai-settings-normalization';
 import {
+  AD_STRATEGY_ANALYSIS_PROMPT_SCHEMA_VERSION,
+  analysisAiRuntimeRevision,
+  buildSystemAiProviderConfig,
+  resolveSystemAiRuntimeConfig,
+} from './system-ai-runtime-config';
+import {
   BUSINESS_REAL_REPORT_EXTENSIONS,
   BUSINESS_REJECTED_EVIDENCE_EXTENSIONS,
   isExistingRawBusinessReportFile,
@@ -164,7 +170,10 @@ import { registerMissionControlIpcHandlers } from './mission-control-ipc';
 import { registerMissionDomainIpcHandlers } from './mission-domain-ipc';
 import { MissionDomainService } from './mission-domain-service';
 import { registerAnalysisAuthorityIpcHandlers } from './analysis-authority-ipc';
-import { AnalysisAuthorityService } from './analysis-authority-service';
+import {
+  AnalysisAuthorityService,
+  type AnalysisRecommendationGenerationScope,
+} from './analysis-authority-service';
 import { ExecutionAuthorityService } from './execution-authority-service';
 import {
   EXECUTION_AUTHORITY_PROGRESS_CHANNEL,
@@ -178,6 +187,13 @@ import { StoreScopedAdListingService } from './store-scoped-ad-listing-service';
 import { StoreOperationScopeService } from './store-operation-scope-service';
 import { StoreRuntimeConfigService } from './store-runtime-config-service';
 import { registerStoreRuntimeConfigIpcHandlers } from './store-runtime-config-ipc';
+import {
+  registerStoreEvidenceRetentionIpcHandlers,
+  StoreEvidenceRetentionPreviewService,
+} from './store-evidence-retention-ipc';
+import { projectStoreEvidenceReferencePaths } from './store-evidence-reference-projection';
+import { StoreCollectionScheduler } from './store-collection-scheduler';
+import { registerStoreCollectionSchedulerIpcHandlers } from './store-collection-scheduler-ipc';
 import {
   assertRuntimeAnalysisWindow,
   assertRuntimeConfigStore,
@@ -208,9 +224,9 @@ import {
 
 interface StoreBrowserRuntime {
   context: StoreContextEnvelope;
-  controllers: Record<StoreConnectionProvider, BrowserController>;
-  profileDirs: Record<StoreConnectionProvider, string>;
-  connections: Record<StoreConnectionProvider, StoreConnection>;
+  controllers: { lingxing: BrowserController; amazon_ads?: BrowserController };
+  profileDirs: { lingxing: string; amazon_ads?: string };
+  connections: { lingxing: StoreConnection; amazon_ads?: StoreConnection };
 }
 
 interface AppState {
@@ -239,6 +255,8 @@ interface AppState {
   storeCoordinator: StoreCoordinator | null;
   storeScopedAdListingService: StoreScopedAdListingService | null;
   storeRuntimeConfigService: StoreRuntimeConfigService | null;
+  storeEvidenceRetentionService: StoreEvidenceRetentionPreviewService | null;
+  storeCollectionScheduler: StoreCollectionScheduler | null;
   ruleConfig: RuleConfig;
   isLoggedIn: boolean;
   currentStore: string;
@@ -271,6 +289,8 @@ const state: AppState = {
   storeCoordinator: null,
   storeScopedAdListingService: null,
   storeRuntimeConfigService: null,
+  storeEvidenceRetentionService: null,
+  storeCollectionScheduler: null,
   ruleConfig: DEFAULT_RULE_CONFIG,
   isLoggedIn: false,
   currentStore: '',
@@ -337,6 +357,23 @@ function storeCapsuleFor(store: { storeId: string; browserProfileId: string }): 
     store.storeId,
     store.browserProfileId,
   ));
+}
+
+function storeEvidenceRetentionReferencesFor(
+  context: StoreContextEnvelope,
+  capsule: StoreCapsulePaths,
+) {
+  if (!state.db) throw new Error('STORE_RETENTION_DATABASE_UNAVAILABLE');
+  return {
+    databaseReferences: projectStoreEvidenceReferencePaths(
+      state.db,
+      context.storeId,
+      capsule,
+    ),
+    // Execution Authority and delivery artifacts live under the planner's
+    // permanently protected evidence/backups scopes and are never enumerated.
+    authorityReferencedPaths: [],
+  };
 }
 
 type RendererArtifactReference = MainArtifactDescriptor;
@@ -526,6 +563,9 @@ function refreshActiveStoreBusinessDateAuthority(): boolean {
     state.browserRuntime = { ...state.browserRuntime, context: Object.freeze({ ...next }) };
   }
   publishStoreContextChanged(view);
+  void state.storeCollectionScheduler?.reconcile(next).catch((error) => {
+    console.error('[CollectionScheduler] business-date reconciliation failed:', error);
+  });
   mainWindow?.webContents.send('business-ui:data-updated');
   return true;
 }
@@ -678,6 +718,17 @@ async function initApp(): Promise<void> {
     storeCoordinator,
     settings: state.settingsRepo!,
   });
+  const storeEvidenceRetentionService = new StoreEvidenceRetentionPreviewService({
+    authority: storeCoordinator,
+    runtimeConfig: storeRuntimeConfigService,
+    deriveCapsuleFor: (context) => deriveStoreCapsulePaths(
+      STORES_DIR,
+      context.storeId,
+      context.browserProfileId,
+    ),
+    referencesFor: storeEvidenceRetentionReferencesFor,
+    artifactResolver: mainArtifactRegistry,
+  });
   const analysisAuthorityService = new AnalysisAuthorityService({
     db: state.db,
     repository: analysisAuthorityRepo,
@@ -685,18 +736,33 @@ async function initApp(): Promise<void> {
     recommendationRepository: state.recommendationRepo,
     storeCoordinator,
     generateRecommendations: (scope) => runRecommendationGeneration(scope),
+    captureGenerationAuthority: () => {
+      const captured = captureRecommendationGenerationRuntimeSnapshot();
+      return Object.freeze({
+        ruleRevision: analysisRuleRevision(
+          storeRuntimeRuleRevisionPayload(captured.runtimeConfig),
+        ),
+        modelRevision: analysisAiRuntimeRevision({
+          system: resolveSystemAiRuntimeConfig(captured.aiSettings),
+          storeAiRecommendationsEnabled: captured.runtimeConfig.values.aiRecommendationsEnabled,
+          promptSchemaVersion: AD_STRATEGY_ANALYSIS_PROMPT_SCHEMA_VERSION,
+        }),
+        generateRecommendations: (scope: AnalysisRecommendationGenerationScope) => (
+          runRecommendationGeneration(scope, captured)
+        ),
+      });
+    },
     currentRuleRevision: () => analysisRuleRevision(
       storeRuntimeRuleRevisionPayload(currentStoreRuntimeAnalysisConfig()),
     ),
     currentModelRevision: () => {
       const settings = readAiSettingsForMain();
       const runtime = currentStoreRuntimeAnalysisConfig();
-      const availability = !runtime.values.aiRecommendationsEnabled
-        ? 'store_ai_disabled'
-        : settings.aiApiKey
-          ? 'configured'
-          : 'rule_fallback';
-      return `${settings.aiModel}:ad_strategy_diagnosis_v1:${availability}:store_config_r${runtime.configRevision}`;
+      return analysisAiRuntimeRevision({
+        system: resolveSystemAiRuntimeConfig(settings),
+        storeAiRecommendationsEnabled: runtime.values.aiRecommendationsEnabled,
+        promptSchemaVersion: AD_STRATEGY_ANALYSIS_PROMPT_SCHEMA_VERSION,
+      });
     },
     allowedProofRoots: (context) => {
       const store = state.storeRepo?.getStore(context.storeId);
@@ -730,9 +796,20 @@ async function initApp(): Promise<void> {
       }
       const store = state.storeRepo?.getStore(context.storeId);
       const controller = runtime.controllers.amazon_ads;
-      const page = controller.getPage();
-      const externalAccountId = runtime.connections.amazon_ads.externalAccountId?.trim();
-      if (!store || store.status !== 'active' || !page || !externalAccountId) {
+      const connection = runtime.connections.amazon_ads;
+      const page = controller?.getPage();
+      const externalAccountId = connection?.externalAccountId?.trim();
+      const adsSession = state.storeRepo?.getSessionMetadata(context.storeId, 'amazon_ads');
+      if (!store
+        || store.status !== 'active'
+        || !controller
+        || !connection
+        || !page
+        || !externalAccountId
+        || !adsSession
+        || adsSession.status !== 'ready'
+        || adsSession.browserProfileId !== context.browserProfileId
+        || adsSession.sessionGeneration !== context.sessionGeneration) {
         throw new Error('当前店铺的 Amazon Ads 会话或 externalAccountId 尚未就绪。');
       }
       return {
@@ -763,11 +840,13 @@ async function initApp(): Promise<void> {
   state.executionAuthorityRepo = executionAuthorityRepo;
   state.executionAuthorityService = executionAuthorityService;
   state.storeRuntimeConfigService = storeRuntimeConfigService;
+  state.storeEvidenceRetentionService = storeEvidenceRetentionService;
   const executionRecovery = executionAuthorityService.recoverStartup();
   console.log('[App] init:execution-recovery', JSON.stringify(executionRecovery));
   const collectionRecovery = recoverInterruptedLingxingCollectionJobsOnStartup();
   console.log('[App] init:lingxing-collection-recovery', JSON.stringify(collectionRecovery));
   initializeLingxingCollectionCoordinator();
+  initializeStoreCollectionScheduler();
   for (const store of state.storeRepo.listStores({ includeArchived: true })) {
     storeCapsuleFor(store);
   }
@@ -780,7 +859,6 @@ async function initApp(): Promise<void> {
   const auditLogger = new AuditLogger(state.db);
   const screenshotMgr = new ScreenshotManager(SCREENSHOTS_DIR);
   const traceMgr = new TraceManager(TRACES_DIR);
-  const cleanupMgr = new CleanupManager(STORAGE_DIR);
 
   // Load saved config
   const savedConfig = state.settingsRepo.getRuleConfig();
@@ -822,15 +900,23 @@ async function initApp(): Promise<void> {
   state.scheduler.register({
     name: 'data_cleanup',
     cron: '0 3 * * *',
-    enabled: true,
+    enabled: false,
     callback: async () => {
-      const report = await cleanupMgr.cleanup();
-      mainWindow?.webContents.send('cleanup:report', report);
+      if (!state.storeEvidenceRetentionService) {
+        throw new Error('STORE_RETENTION_SERVICE_UNAVAILABLE');
+      }
+      const manifest = state.storeEvidenceRetentionService.previewActiveStore();
+      if (!manifest) {
+        console.info('[Retention] data_cleanup dry-run skipped: no active store');
+        return;
+      }
+      mainWindow?.webContents.send('cleanup:report', rendererPayload(manifest));
     },
   });
 
   // Start scheduler
   state.scheduler.start();
+  state.storeCollectionScheduler?.start();
 
   console.log('[App] Initialized successfully');
 }
@@ -976,10 +1062,28 @@ function browserRuntimeController(provider: StoreConnectionProvider): BrowserCon
   if (!runtime || !state.storeCoordinator) return null;
   try {
     state.storeCoordinator.assertActiveStoreContext(runtime.context);
-    return runtime.controllers[provider];
+    return runtime.controllers[provider] ?? null;
   } catch {
     return null;
   }
+}
+
+function isProviderBrowserSessionReady(
+  context: StoreContextEnvelope,
+  provider: StoreConnectionProvider,
+): boolean {
+  const runtime = state.browserRuntime;
+  const session = state.storeRepo?.getSessionMetadata(context.storeId, provider);
+  return Boolean(
+    state.isLoggedIn
+    && runtime
+    && missionControlContextKey(runtime.context) === missionControlContextKey(context)
+    && runtime.controllers[provider]?.getPage()
+    && session
+    && session.status === 'ready'
+    && session.browserProfileId === context.browserProfileId
+    && session.sessionGeneration === context.sessionGeneration,
+  );
 }
 
 function detachBrowserRuntimeForStore(storeId?: string): StoreBrowserRuntime | null {
@@ -1024,16 +1128,26 @@ function assertBrowserLoginAttempt(attemptId: number, context: StoreContextEnvel
 
 function requireProviderConnections(
   connections: readonly StoreConnection[],
-): Record<StoreConnectionProvider, StoreConnection> {
+): { lingxing: StoreConnection; amazon_ads?: StoreConnection; adsUnavailableReason?: string } {
   const lingxing = connections.find((connection) => connection.provider === 'lingxing');
   const amazonAds = connections.find((connection) => connection.provider === 'amazon_ads');
-  if (!lingxing || !amazonAds) {
-    throw new Error('当前店铺必须先配置独立的领星与 Amazon Ads 连接，浏览器登录已拒绝。');
+  if (!lingxing) {
+    throw new Error('当前店铺必须先配置领星连接，浏览器登录已拒绝。');
   }
-  for (const connection of [lingxing, amazonAds]) {
-    if (!connection.accountLabel?.trim() && !connection.externalAccountId?.trim()) {
-      throw new Error(`${connection.provider} 连接缺少账号标识，不能验证浏览器会话归属。`);
-    }
+  if (!lingxing.accountLabel?.trim() && !lingxing.externalAccountId?.trim()) {
+    throw new Error('lingxing 连接缺少账号标识，不能验证浏览器会话归属。');
+  }
+  if (!amazonAds) {
+    return {
+      lingxing,
+      adsUnavailableReason: '当前店铺尚未配置 Amazon Ads 连接，广告执行保持阻断。',
+    };
+  }
+  if (!amazonAds.accountLabel?.trim() && !amazonAds.externalAccountId?.trim()) {
+    return {
+      lingxing,
+      adsUnavailableReason: '当前店铺 Amazon Ads 连接缺少账号标识，广告执行保持阻断。',
+    };
   }
   return { lingxing, amazon_ads: amazonAds };
 }
@@ -1097,7 +1211,11 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     loginContext: StoreContextEnvelope;
     store: StoreRecord;
     capsule: StoreCapsulePaths;
-    connections: Record<StoreConnectionProvider, StoreConnection>;
+    connections: {
+      lingxing: StoreConnection;
+      amazon_ads?: StoreConnection;
+      adsUnavailableReason?: string;
+    };
   };
   try {
     const view = state.storeCoordinator.reconnectStore(initialContext.storeId);
@@ -1125,12 +1243,14 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     headless: false,
     userDataDir: capsule.lingxingProfileDir,
   });
-  const amazonAdsController = new BrowserController({
-    headless: false,
-    userDataDir: capsule.amazonAdsProfileDir,
-  });
+  const amazonAdsController = connections.amazon_ads
+    ? new BrowserController({
+        headless: false,
+        userDataDir: capsule.amazonAdsProfileDir,
+      })
+    : null;
   pendingBrowserLogin.controllers.add(lingxingController);
-  pendingBrowserLogin.controllers.add(amazonAdsController);
+  if (amazonAdsController) pendingBrowserLogin.controllers.add(amazonAdsController);
 
   try {
     await lingxingController.launch();
@@ -1172,22 +1292,6 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
       erpLoginState.title,
       erpLoginState.bodyText,
     ]);
-
-    await amazonAdsController.launch();
-    await amazonAdsController.navigate('https://ads.lingxing.com/');
-    await amazonAdsController.waitForTimeout(6000);
-    const adsPage = getControllerPageOrThrow(amazonAdsController);
-    const amazonAdsState = await readLingxingPageState(adsPage);
-    if (!isLingxingAdsLoggedInPage(amazonAdsState)) {
-      throw new Error('独立 Amazon Ads Profile 未连接；当前版本不会复用领星 ERP Profile，请先完成该 Profile 的广告授权。');
-    }
-    assertProviderIdentity(connections.amazon_ads, [
-      amazonAdsState.url,
-      amazonAdsState.title,
-      amazonAdsState.bodyText,
-    ]);
-    const adsSession = adsSessionResultFromPageState(amazonAdsState);
-
     assertBrowserLoginAttempt(attemptId, loginContext);
 
     const { credentialAction } = credentialPolicy;
@@ -1212,64 +1316,150 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     }
     assertBrowserLoginAttempt(attemptId, loginContext);
 
-    const observedAt = new Date().toISOString();
+    const lingxingObservedAt = new Date().toISOString();
     state.db!.transaction(() => {
-      for (const provider of ['lingxing', 'amazon_ads'] as const) {
-        const connection = connections[provider];
+      state.storeRepo!.updateConnection({
+        id: connections.lingxing.id,
+        storeId: loginContext.storeId,
+        status: 'ready',
+        lastVerifiedAt: lingxingObservedAt,
+        lastFailureCode: '',
+      });
+      state.storeRepo!.saveSessionMetadata({
+        storeId: loginContext.storeId,
+        browserProfileId: loginContext.browserProfileId,
+        provider: 'lingxing',
+        status: 'ready',
+        sessionGeneration: loginContext.sessionGeneration,
+        observedAt: lingxingObservedAt,
+        accountLabel: connections.lingxing.accountLabel,
+        externalAccountId: connections.lingxing.externalAccountId,
+        verifiedAt: lingxingObservedAt,
+      });
+    })();
+    assertBrowserLoginAttempt(attemptId, loginContext);
+
+    // Publish the verified Lingxing runtime before probing the independent Ads
+    // profile. Report collection must remain available even when Ads needs a
+    // separate human authorization; Ads writes are gated below by ready session
+    // metadata on every execution-runtime resolution.
+    state.browserRuntime = {
+      context: loginContext,
+      controllers: {
+        lingxing: lingxingController,
+        ...(amazonAdsController ? { amazon_ads: amazonAdsController } : {}),
+      },
+      profileDirs: {
+        lingxing: capsule.lingxingProfileDir,
+        ...(amazonAdsController ? { amazon_ads: capsule.amazonAdsProfileDir } : {}),
+      },
+      connections: {
+        lingxing: connections.lingxing,
+        ...(connections.amazon_ads ? { amazon_ads: connections.amazon_ads } : {}),
+      },
+    };
+    state.isLoggedIn = true;
+    state.currentStore = store.displayName;
+
+    let adsSession: AdsSessionResult | null = null;
+    let adsUnavailableReason: string | undefined;
+    const adsConnection = connections.amazon_ads;
+    if (!adsConnection || !amazonAdsController) {
+      adsUnavailableReason = connections.adsUnavailableReason
+        || '当前店铺 Amazon Ads 连接不可用，广告执行保持阻断。';
+    } else try {
+      await amazonAdsController.launch();
+      await amazonAdsController.navigate('https://ads.lingxing.com/');
+      await amazonAdsController.waitForTimeout(6000);
+      const adsPage = getControllerPageOrThrow(amazonAdsController);
+      const amazonAdsState = await readLingxingPageState(adsPage);
+      if (!isLingxingAdsLoggedInPage(amazonAdsState)) {
+        throw new Error('ADS_SESSION_NOT_READY');
+      }
+      assertProviderIdentity(adsConnection, [
+        amazonAdsState.url,
+        amazonAdsState.title,
+        amazonAdsState.bodyText,
+      ]);
+      assertBrowserLoginAttempt(attemptId, loginContext);
+      adsSession = adsSessionResultFromPageState(amazonAdsState);
+      const adsObservedAt = new Date().toISOString();
+      state.db!.transaction(() => {
         state.storeRepo!.updateConnection({
-          id: connection.id,
+          id: adsConnection.id,
           storeId: loginContext.storeId,
           status: 'ready',
-          lastVerifiedAt: observedAt,
+          lastVerifiedAt: adsObservedAt,
           lastFailureCode: '',
         });
         state.storeRepo!.saveSessionMetadata({
           storeId: loginContext.storeId,
           browserProfileId: loginContext.browserProfileId,
-          provider,
+          provider: 'amazon_ads',
           status: 'ready',
           sessionGeneration: loginContext.sessionGeneration,
-          observedAt,
-          accountLabel: connection.accountLabel,
-          externalAccountId: connection.externalAccountId,
-          verifiedAt: observedAt,
+          observedAt: adsObservedAt,
+          accountLabel: adsConnection.accountLabel,
+          externalAccountId: adsConnection.externalAccountId,
+          verifiedAt: adsObservedAt,
         });
-      }
-    })();
+      })();
+    } catch {
+      // A store switch/cancel must still tear down the whole stale runtime.
+      assertBrowserLoginAttempt(attemptId, loginContext);
+      adsSession = null;
+      adsUnavailableReason = '独立 Amazon Ads Profile 待授权，广告执行保持阻断。';
+      const adsObservedAt = new Date().toISOString();
+      state.db!.transaction(() => {
+        state.storeRepo!.updateConnection({
+          id: adsConnection.id,
+          storeId: loginContext.storeId,
+          status: 'attention_required',
+          lastFailureCode: 'ADS_SESSION_NOT_READY',
+        });
+        state.storeRepo!.saveSessionMetadata({
+          storeId: loginContext.storeId,
+          browserProfileId: loginContext.browserProfileId,
+          provider: 'amazon_ads',
+          status: 'blocked',
+          sessionGeneration: loginContext.sessionGeneration,
+          observedAt: adsObservedAt,
+          failureCode: 'ADS_SESSION_NOT_READY',
+        });
+      })();
+    }
     assertBrowserLoginAttempt(attemptId, loginContext);
-
-    state.browserRuntime = {
-      context: loginContext,
-      controllers: {
-        lingxing: lingxingController,
-        amazon_ads: amazonAdsController,
-      },
-      profileDirs: {
-        lingxing: capsule.lingxingProfileDir,
-        amazon_ads: capsule.amazonAdsProfileDir,
-      },
-      connections,
-    };
-    state.isLoggedIn = true;
-    state.currentStore = store.displayName;
 
     const loginResult: BrowserLoginResult = {
       ok: true,
       currentStore: state.currentStore,
+      erpSessionReady: true,
       erpSessionReused,
       sessionIdentityVerified: credentialPolicy.sessionIdentityVerified,
-      adsEntryMode: adsSession.entryMode,
-      adsUrl: adsSession.adsUrl,
-      adsTitle: adsSession.adsTitle,
+      adsSessionReady: Boolean(adsSession),
+      ...(adsSession ? {
+        adsEntryMode: adsSession.entryMode,
+        adsUrl: adsSession.adsUrl,
+        adsTitle: adsSession.adsTitle,
+      } : { adsUnavailableReason }),
       credentialPersistence: credentialPolicy.credentialPersistence,
     };
     state.loginSession = loginResult;
     if (pendingBrowserLogin?.attemptId === attemptId) {
       pendingBrowserLogin = null;
     }
+    void state.storeCollectionScheduler?.reconcile(loginContext).catch((error) => {
+      console.error('[CollectionScheduler] login reconciliation failed:', error);
+    });
     return loginResult;
   } catch (error) {
-    await closeBrowserControllers([lingxingController, amazonAdsController]);
+    await closeBrowserControllers([
+      lingxingController,
+      ...(amazonAdsController ? [amazonAdsController] : []),
+    ]);
+    if (state.browserRuntime?.controllers.lingxing === lingxingController) {
+      state.browserRuntime = null;
+    }
     if (pendingBrowserLogin?.attemptId === attemptId) pendingBrowserLogin = null;
     if (state.storeCoordinator && state.storeRepo) {
       const observedAt = new Date().toISOString();
@@ -1293,15 +1483,6 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     if (browserLoginAttempt === attemptId) clearBrowserLoginState();
     throw error;
   }
-}
-
-async function ensureLingxingAdsSession(controller: BrowserController): Promise<AdsSessionResult> {
-  const page = getControllerPageOrThrow(controller);
-  const currentState = await readLingxingPageState(page).catch(() => null);
-  if (!currentState || !isLingxingAdsLoggedInPage(currentState)) {
-    throw new Error('独立 Amazon Ads Profile 会话未就绪；拒绝回退到领星 ERP Profile。');
-  }
-  return adsSessionResultFromPageState(currentState);
 }
 
 async function handleBrowserLogout(): Promise<void> {
@@ -2736,12 +2917,13 @@ function authorizedLingxingCollectionTarget(
   if (!store || store.status !== 'active') {
     throw new Error('当前店铺不存在或已停用，领星操作已拒绝。');
   }
-  const connection = state.storeRepo.listConnections(context.storeId)
-    .find((candidate) => candidate.provider === 'amazon_ads');
-  const targetStoreName = connection?.accountLabel?.trim()
-    || connection?.externalAccountId?.trim();
+  const connection = state.storeRepo.getConnection(context.storeId, 'lingxing');
+  if (!connection) {
+    throw new Error('当前店铺尚未配置领星连接，仅领星采集被阻断。');
+  }
+  const targetStoreName = connection.externalAccountId?.trim();
   if (!targetStoreName) {
-    throw new Error('当前店铺的 Amazon Ads 连接缺少领星店铺标识。');
+    throw new Error('当前店铺的领星连接缺少 externalAccountId 店铺映射，仅领星采集被阻断。');
   }
   return {
     context,
@@ -2939,17 +3121,12 @@ function initializeLingxingCollectionCoordinator(): void {
       const authorized = authorizedLingxingCollectionTarget(context);
       const activeContext = authorized.context;
       const browserRuntime = state.browserRuntime;
-      if (
-        !browserRuntime
-        || !state.isLoggedIn
-        || missionControlContextKey(browserRuntime.context) !== missionControlContextKey(activeContext)
-      ) {
-        throw new Error('请先为当前店铺启动并登录独立的领星 ERP 与 Amazon Ads 浏览器。');
-      }
+      assertVisibleLingxingCollectionSession(activeContext);
+      if (!browserRuntime) throw new Error('请先为当前店铺启动并登录独立的领星 ERP 浏览器。');
       const capsule = storeCapsuleFor(authorized.store);
       return {
         automation: createDownloadCenterAutomation(
-          browserRuntime.controllers.amazon_ads,
+          browserRuntime.controllers.lingxing,
           authorized.target,
           {
             allowManualVerificationForCanary: options.canary,
@@ -2986,6 +3163,7 @@ function initializeLingxingCollectionCoordinator(): void {
     },
     assertRuntimeCurrent(context, runtime) {
       const authorized = authorizedLingxingCollectionTarget(context);
+      assertVisibleLingxingCollectionSession(authorized.context);
       if (
         authorized.target.storeId !== runtime.target.storeId
         || authorized.target.marketplaceCode !== runtime.target.marketplaceCode
@@ -3057,6 +3235,66 @@ function initializeLingxingCollectionCoordinator(): void {
   });
 }
 
+function initializeStoreCollectionScheduler(): void {
+  if (
+    !state.storeCoordinator
+    || !state.storeRuntimeConfigService
+    || !state.settingsRepo
+    || !state.storeRepo
+    || !state.lingxingCollectionCoordinator
+  ) {
+    throw new Error('店铺级采集调度依赖尚未初始化。');
+  }
+  state.storeCollectionScheduler = new StoreCollectionScheduler({
+    authority: state.storeCoordinator,
+    config: state.storeRuntimeConfigService,
+    settings: state.settingsRepo,
+    recordCodec: {
+      isAvailable: () => electronLoginCredentialCipher.isEncryptionAvailable(),
+      seal: (plaintext) => electronLoginCredentialCipher.encrypt(plaintext),
+      open: (envelope) => electronLoginCredentialCipher.decrypt(envelope),
+    },
+    assertVisibleSession(context) {
+      assertVisibleLingxingCollectionSession(context);
+    },
+    cancelActiveCollection({ requestId, storeId }) {
+      for (const key of lingxingCollectionCancellationKey({ requestId, storeId })) {
+        cancelledLingxingCollectionRequests.add(key);
+      }
+    },
+    startCollection(input) {
+      return state.lingxingCollectionCoordinator!.start(input);
+    },
+    onChanged(projection) {
+      mainWindow?.webContents.send('store-collection-scheduler:changed', rendererPayload(projection));
+      mainWindow?.webContents.send('business-ui:data-updated');
+    },
+    onError(error) {
+      console.error('[CollectionScheduler] scheduled reconciliation failed:', error);
+    },
+  });
+}
+
+function assertVisibleLingxingCollectionSession(context: StoreContextEnvelope): void {
+  if (!state.storeCoordinator || !state.storeRepo) {
+    throw new Error('VISIBLE_SESSION_REQUIRED: 店铺会话协调器尚未就绪。');
+  }
+  const authorized = state.storeCoordinator.assertActiveStoreContext(context);
+  const runtime = state.browserRuntime;
+  const session = state.storeRepo.getSessionMetadata(authorized.storeId, 'lingxing');
+  if (
+    !runtime
+    || missionControlContextKey(runtime.context) !== missionControlContextKey(authorized)
+    || !runtime.controllers.lingxing.getPage()
+    || !session
+    || session.status !== 'ready'
+    || session.browserProfileId !== authorized.browserProfileId
+    || session.sessionGeneration !== authorized.sessionGeneration
+  ) {
+    throw new Error('VISIBLE_SESSION_REQUIRED: 当前激活店铺的领星可见会话/Profile 与 StoreContext generation 不一致。');
+  }
+}
+
 function buildAuthoritativeMissionControlTodayProjection(contextInput: StoreContextEnvelope) {
   if (!state.storeCoordinator || !state.productRepo || !state.lingxingImportRepo || !state.db) {
     throw new Error('MISSION_CONTROL_TODAY_DEPENDENCIES_UNAVAILABLE');
@@ -3112,12 +3350,7 @@ function buildAuthoritativeMissionControlTodayProjection(contextInput: StoreCont
     FROM operation_events
     WHERE store_id = ? AND event_date = ? AND archived_at IS NULL
   `).get(context.storeId, context.businessDate) as { rowCount: number };
-  const browserSessionReady = Boolean(
-    state.isLoggedIn
-    && state.browserRuntime
-    && missionControlContextKey(state.browserRuntime.context) === missionControlContextKey(context)
-    && state.browserRuntime.controllers.amazon_ads,
-  );
+  const browserSessionReady = isProviderBrowserSessionReady(context, 'amazon_ads');
   const projection = buildMissionControlTodayProjection({
     context,
     products: state.productRepo.findAllWithCostsForStore(context.storeId),
@@ -3305,12 +3538,14 @@ function handlePreflightLingxingCollection(input: unknown) {
     dateRange,
     authorized.target,
   );
-  const browserSessionReady = Boolean(
-    state.browserRuntime
-    && missionControlContextKey(state.browserRuntime.context) === missionControlContextKey(authorized.context)
-    && browserRuntimeController('amazon_ads')
-    && state.isLoggedIn,
-  );
+  const browserSessionReady = (() => {
+    try {
+      assertVisibleLingxingCollectionSession(authorized.context);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
   return buildDownloadCenterCollectionPreflight(model, dateRange, undefined, {
     target: authorized.target,
     diagnosticEvidenceReadiness,
@@ -4048,9 +4283,12 @@ async function waitForDownloadCenterListPage(page: NonNullable<ReturnType<Browse
 }
 
 async function navigateToLingxingDownloadCenter(controller: BrowserController, model: DownloadCenterPageModel): Promise<void> {
-  await ensureLingxingAdsSession(controller);
   const page = getControllerPageOrThrow(controller);
 
+  // Report collection is authorized by the verified Lingxing ERP session and
+  // may follow Lingxing's own SSO into the read-only download center. Real Ads
+  // writes still use the separate amazon_ads Profile and its strict runtime
+  // gate; this navigation helper must not require or reuse that write session.
   await page.goto(model.candidateUrls[0], { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => undefined);
   if (await waitForDownloadCenterListPage(page)) return;
 
@@ -4831,9 +5069,10 @@ async function handleDiagnoseLingxingDownloadCenter(input?: unknown): Promise<Do
       || !state.isLoggedIn
       || missionControlContextKey(browserRuntime.context) !== missionControlContextKey(authorized.context)
     ) {
-      throw new Error('请先启动并登录当前店铺的独立领星 ERP 与 Amazon Ads 浏览器');
+      throw new Error('请先启动并登录当前店铺的独立领星 ERP 浏览器');
     }
-    const controller = browserRuntime.controllers.amazon_ads;
+    assertVisibleLingxingCollectionSession(authorized.context);
+    const controller = browserRuntime.controllers.lingxing;
     const capsule = storeCapsuleFor(authorized.store);
   const dateRange = request ? { start: request.start, end: request.end } : undefined;
   const target = authorized.target;
@@ -6783,21 +7022,17 @@ function normalizeAiSettings(settings: Record<string, unknown>): Record<string, 
 }
 
 function buildAiProviderConfig(settings: Record<string, unknown>) {
-  const normalized = normalizeAiSettings(settings);
-  return {
-    apiKey: normalized.aiApiKey,
-    baseUrl: normalized.aiBaseUrl,
-    model: normalized.aiModel,
-    temperature: parseNumberSetting(normalized.aiTemperature, 0.3),
-    maxTokens: parseIntegerSetting(normalized.aiMaxTokens, 8192),
-  };
+  return buildSystemAiProviderConfig(resolveSystemAiRuntimeConfig(settings));
 }
 
 async function handleTestAiSettings(settings: Record<string, unknown>) {
-  const config = buildAiProviderConfig(settings || {});
+  const runtime = resolveSystemAiRuntimeConfig(settings || {});
+  const config = buildSystemAiProviderConfig(runtime);
   function persistTestStatus(status: 'available' | 'failed', message: string) {
     const testedAt = new Date().toISOString();
     persistAiSettingsForMain({
+      aiProvider: runtime.provider,
+      ai_provider: runtime.provider,
       aiApiKey: config.apiKey,
       ai_api_key: config.apiKey,
       aiBaseUrl: config.baseUrl,
@@ -8089,7 +8324,42 @@ function normalizeKeywordSource(source?: string): KeywordMetric['source'] | unde
 // Recommendation & Execution
 // ============================================================================
 
-async function runRecommendationGeneration(request: any = {}): Promise<{
+interface RecommendationGenerationRuntimeSnapshot {
+  runtimeConfig: StoreRuntimeAnalysisConfig;
+  aiSettings: Record<string, string>;
+}
+
+function captureRecommendationGenerationRuntimeSnapshot(): RecommendationGenerationRuntimeSnapshot {
+  const currentRuntime = currentStoreRuntimeAnalysisConfig();
+  const snapshot: RecommendationGenerationRuntimeSnapshot = {
+    runtimeConfig: {
+      ...currentRuntime,
+      values: { ...currentRuntime.values },
+      ruleConfig: {
+        ...currentRuntime.ruleConfig,
+        coreWordWhitelist: [...currentRuntime.ruleConfig.coreWordWhitelist],
+        brandWordWhitelist: [...currentRuntime.ruleConfig.brandWordWhitelist],
+      },
+    },
+    aiSettings: { ...readAiSettingsForMain() },
+  };
+  return deepFreezeGenerationSnapshot(snapshot);
+}
+
+function deepFreezeGenerationSnapshot<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      deepFreezeGenerationSnapshot(child);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+async function runRecommendationGeneration(
+  request: any = {},
+  capturedRuntime?: RecommendationGenerationRuntimeSnapshot,
+): Promise<{
   generated: number;
   metrics: number;
   skippedDuplicates: number;
@@ -8131,6 +8401,10 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
     throw new Error('生成优化建议需要明确当前运营范围，并且必须先完成真实报表采集和导入。');
   }
 
+  // One immutable snapshot supplies both rule generation and every AI phase.
+  // Mission analysis captures this before sealing its revisions, so a settings
+  // edit during a long model call cannot create a mixed A/B result.
+  const generationRuntime = capturedRuntime ?? captureRecommendationGenerationRuntimeSnapshot();
   const gate = getBusinessRecommendationGate(scope, 'recommendation');
   const metricsBackfill = undefined;
   const metrics = filterFormalRecommendationMetrics(
@@ -8150,7 +8424,7 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
   });
 
   // Generate recommendations from the active store's runtime configuration.
-  const runtimeConfig = currentStoreRuntimeAnalysisConfig();
+  const runtimeConfig = generationRuntime.runtimeConfig;
   assertRuntimeConfigStore(runtimeConfig, gate.scope.storeId);
   assertRuntimeAnalysisWindow(runtimeConfig, gate.scope.dateFrom, gate.scope.dateTo);
   const generator = new RecommendationGenerator(runtimeConfig.ruleConfig);
@@ -8175,16 +8449,21 @@ async function runRecommendationGeneration(request: any = {}): Promise<{
     taskId,
     sourceFiles: gate.metricSource.sourceFiles,
     runtimeConfig,
+    aiSettings: generationRuntime.aiSettings,
   });
   recommendations = strategyDiagnosisResult.recommendations;
-  recommendations = await enrichAdRecommendationsWithAiExplanations(recommendations, runtimeConfig);
+  recommendations = await enrichAdRecommendationsWithAiExplanations(
+    recommendations,
+    runtimeConfig,
+    generationRuntime.aiSettings,
+  );
   const recommendationsBeforeConfidenceGate = recommendations.length;
   recommendations = recommendations.filter((recommendation) => (
     recommendationMeetsStoreConfidence(recommendation.confidence, runtimeConfig)
   ));
   const suppressedLowConfidence = recommendationsBeforeConfidenceGate - recommendations.length;
   const aiCount = recommendations.filter((rec) => rec.evidence?.aiStrategySource === 'ai' || rec.evidence?.explanationSource === 'ai').length;
-  const settings = readAiSettingsForMain();
+  const settings = generationRuntime.aiSettings;
   const aiInvoked = runtimeConfig.values.aiRecommendationsEnabled
     && metrics.length > 0
     && Boolean(settings.aiApiKey);
@@ -8439,10 +8718,10 @@ function finiteNumberOrUndefined(value: unknown): number | undefined {
 async function enrichAdRecommendationsWithAiExplanations(
   recommendations: ActionRecommendation[],
   runtimeConfig: StoreRuntimeAnalysisConfig,
+  settings: Record<string, string>,
 ): Promise<ActionRecommendation[]> {
   if (recommendations.length === 0) return recommendations;
 
-  const settings = readAiSettingsForMain();
   const aiApiKey = settings.aiApiKey;
   if (!runtimeConfig.values.aiRecommendationsEnabled || !aiApiKey) {
     const fallbackReason = runtimeConfig.values.aiRecommendationsEnabled
@@ -8530,6 +8809,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     taskId: string;
     sourceFiles: string[];
     runtimeConfig: StoreRuntimeAnalysisConfig;
+    aiSettings: Record<string, string>;
   },
 ): Promise<{ recommendations: ActionRecommendation[]; summary?: AdStrategyGenerationSummary }> {
   if (!scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode) {
@@ -8589,7 +8869,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     recommendations,
     evidencePack,
   });
-  const settings = readAiSettingsForMain();
+  const settings = options.aiSettings;
   const diagnosis = options.runtimeConfig.values.aiRecommendationsEnabled && settings.aiApiKey
     ? await new AdStrategyDiagnoser(new OpenAICompatibleProvider(buildAiProviderConfig(settings)), {
         persona: settings.aiPersona,
@@ -9701,6 +9981,9 @@ function registerIpcHandlers(): void {
       analysisAuthorityReady: Boolean(state.analysisAuthorityService),
       executionAuthorityReady: Boolean(state.executionAuthorityService),
       storeRuntimeConfigReady: Boolean(state.storeRuntimeConfigService),
+      storeAutomationReady: Boolean(
+        state.storeCollectionScheduler && state.storeEvidenceRetentionService
+      ),
       missionDomain: state.missionDomainService,
     }),
   );
@@ -9710,8 +9993,24 @@ function registerIpcHandlers(): void {
   registerStoreRuntimeConfigIpcHandlers(
     ipcMain,
     state.storeRuntimeConfigService,
-    () => mainWindow?.webContents.send('business-ui:data-updated'),
+    (context) => {
+      mainWindow?.webContents.send('business-ui:data-updated');
+      void state.storeCollectionScheduler?.reconcile(context).catch((error) => {
+        console.error('[CollectionScheduler] config reconciliation failed:', error);
+      });
+    },
   );
+  if (!state.storeEvidenceRetentionService) {
+    throw new Error('店铺证据保留预览服务尚未就绪。');
+  }
+  registerStoreEvidenceRetentionIpcHandlers(
+    ipcMain,
+    state.storeEvidenceRetentionService,
+  );
+  if (!state.storeCollectionScheduler) {
+    throw new Error('店铺级采集调度服务尚未就绪。');
+  }
+  registerStoreCollectionSchedulerIpcHandlers(ipcMain, state.storeCollectionScheduler);
   registerStoreScopedObjectsIpcHandlers(
     ipcMain,
     new StoreScopedObjectsService({
@@ -9799,9 +10098,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle('browser:logout', () => handleBrowserLogout());
   ipcMain.handle('browser:screenshot', (_, label) => handleScreenshot(normalizeScreenshotLabel(label)));
   ipcMain.handle('browser:is-ready', () => Boolean(
-    state.isLoggedIn
-    && browserRuntimeController('lingxing')
-    && browserRuntimeController('amazon_ads'),
+    state.storeCoordinator?.getActiveStoreContext()
+    && isProviderBrowserSessionReady(state.storeCoordinator.getActiveStoreContext()!, 'lingxing')
+    && isProviderBrowserSessionReady(state.storeCoordinator.getActiveStoreContext()!, 'amazon_ads'),
   ));
 
   // Reports
@@ -9939,11 +10238,11 @@ function registerIpcHandlers(): void {
 
   // Scheduler
   ipcMain.handle('scheduler:get-tasks', () => state.scheduler?.getTasks() || []);
-  ipcMain.handle('scheduler:set-task-enabled', (_, { name, enabled }) => {
-    state.scheduler?.setTaskEnabled(name, enabled);
+  ipcMain.handle('scheduler:set-task-enabled', () => {
+    throw new Error('LEGACY_SCHEDULER_IPC_DISABLED: 请使用带 StoreContext 的店铺采集调度配置。');
   });
-  ipcMain.handle('scheduler:run-now', async (_, name: TaskName) => {
-    await state.scheduler?.runNow(name);
+  ipcMain.handle('scheduler:run-now', async () => {
+    throw new Error('LEGACY_SCHEDULER_IPC_DISABLED: 旧调度入口没有店铺授权，已失败关闭。');
   });
 
   // Logs
@@ -10026,9 +10325,11 @@ const handleBeforeQuit = createBeforeQuitCoordinator({
     await state.executionAuthorityService?.prepareForShutdown();
     const runtime = detachBrowserRuntimeForStore();
     const pendingControllers = invalidatePendingBrowserLogin();
-    const scheduler = state.scheduler;
+    const localScheduler = state.scheduler;
+    const storeCollectionScheduler = state.storeCollectionScheduler;
     const db = state.db;
     state.scheduler = null;
+    state.storeCollectionScheduler = null;
     state.db = null;
     await cleanupAppResources({
       browserController: runtime || pendingControllers.length > 0
@@ -10039,7 +10340,17 @@ const handleBeforeQuit = createBeforeQuitCoordinator({
             ]).then(() => undefined),
           }
         : null,
-      scheduler,
+      scheduler: localScheduler || storeCollectionScheduler
+        ? {
+            stop: async () => {
+              try {
+                await storeCollectionScheduler?.stopAndDrain();
+              } finally {
+                localScheduler?.stop();
+              }
+            },
+          }
+        : null,
       db,
     }, (resource, error) => {
       console.error(`[App] shutdown ${resource} cleanup failed:`, error);

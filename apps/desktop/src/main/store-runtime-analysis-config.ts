@@ -89,8 +89,9 @@ export function recommendationMeetsStoreConfidence(
 export function storeRuntimeRuleRevisionPayload(runtime: StoreRuntimeAnalysisConfig): Record<string, unknown> {
   return {
     storeId: runtime.storeId,
-    storeConfigRevision: runtime.configRevision,
-    storeConfigValues: runtime.values,
+    analysisWindowDays: runtime.values.analysisWindowDays,
+    defaultTargetAcosPercent: runtime.values.defaultTargetAcosPercent,
+    minimumRecommendationConfidencePercent: runtime.values.minimumRecommendationConfidencePercent,
     effectiveRuleConfig: runtime.ruleConfig,
   };
 }

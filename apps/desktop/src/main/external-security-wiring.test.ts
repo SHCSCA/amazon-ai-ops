@@ -49,7 +49,7 @@ describe('Electron external-distribution security wiring', () => {
     expect(source).toContain('credentialAction === \'save\' || credentialAction === \'clear\'');
     expect(source).toContain('if (!credentialPolicy.sessionIdentityVerified)');
     expect(source).toContain('assertProviderIdentity(connections.lingxing');
-    expect(source).toContain('assertProviderIdentity(connections.amazon_ads');
+    expect(source).toContain('assertProviderIdentity(adsConnection');
     expect(source.match(/assertBrowserLoginAttempt\(attemptId, loginContext\)/g)?.length).toBeGreaterThanOrEqual(2);
     expect(source).toContain('credentialPersistence: credentialPolicy.credentialPersistence');
     expect(source).toContain('sessionIdentityVerified: credentialPolicy.sessionIdentityVerified');
@@ -62,6 +62,24 @@ describe('Electron external-distribution security wiring', () => {
     expect(source).toContain('userDataDir: capsule.amazonAdsProfileDir');
     expect(source).toContain("browserRuntimeController('amazon_ads')");
     expect(source).not.toContain("path.join(STORAGE_DIR, 'browser-data')");
+  });
+
+  it('requires Lingxing for collection login while keeping a missing Ads connection explicitly blocked', () => {
+    const connectionStart = source.indexOf('function requireProviderConnections');
+    const connectionEnd = source.indexOf('function normalizeIdentityEvidence', connectionStart);
+    const connectionContract = source.slice(connectionStart, connectionEnd);
+    expect(connectionContract).toContain('if (!lingxing)');
+    expect(connectionContract).not.toContain('if (!lingxing || !amazonAds)');
+    expect(connectionContract).toContain('if (!amazonAds)');
+    expect(connectionContract).toContain('Amazon Ads 连接缺少账号标识，广告执行保持阻断');
+    expect(connectionContract).toContain('return { lingxing, amazon_ads: amazonAds }');
+
+    const loginStart = source.indexOf('async function handleBrowserLogin');
+    const loginEnd = source.indexOf('async function handleBrowserLogout', loginStart);
+    const login = source.slice(loginStart, loginEnd);
+    expect(login).toContain('if (!adsConnection || !amazonAdsController)');
+    expect(login).toContain('adsUnavailableReason = connections.adsUnavailableReason');
+    expect(login).toContain('adsSessionReady: Boolean(adsSession)');
   });
 
   it('captures screenshots inside the active store capsule and closes by store id', () => {

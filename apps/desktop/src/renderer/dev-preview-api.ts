@@ -18,6 +18,8 @@ import type {
   MissionControlWorkspaceId,
   ProductCost,
   StoreContextEnvelope,
+  StoreCollectionScheduleProjection,
+  StoreCollectionScheduleRunResult,
   StoreId,
   StoreRecord,
   StoreRuntimeConfigProjection,
@@ -373,6 +375,8 @@ const PREVIEW_MISSION_CAPABILITY_SPECS: readonly PreviewCapabilitySpec[] = [
   ['settings.store-config.archive', 'settings', 'settings/ai-and-local', 'archive'],
   ['settings.store-config.restore', 'settings', 'settings/ai-and-local', 'restore'],
   ['settings.scheduler.view', 'settings', 'settings/scheduler', 'view', 'scheduler'],
+  ['settings.scheduler.run-now', 'settings', 'settings/scheduler', 'start'],
+  ['settings.scheduler.retention-preview', 'settings', 'settings/scheduler', 'view'],
   ['settings.delivery.view', 'settings', 'settings/delivery', 'view', 'delivery'],
 ] as const;
 
@@ -1634,15 +1638,29 @@ export function createBrowserPreviewElectronApi(
     updatedAt: occurredAt,
     ...(status === 'archived' ? { archivedAt: occurredAt } : {}),
   });
-  const initialConfigStore = previewStores[0];
-  if (initialConfigStore) {
-    const occurredAt = '2026-07-22T08:00:00.000Z';
-    const current = buildPreviewRuntimeConfig(initialConfigStore, defaultPreviewRuntimeValues(), 1, 'active', occurredAt);
-    previewRuntimeConfigs.set(initialConfigStore.storeId, {
+  previewStores.forEach((store, index) => {
+    const occurredAt = `2026-07-22T0${8 + index}:00:00.000Z`;
+    const values = {
+      ...defaultPreviewRuntimeValues(),
+      collectionScheduleLocalTime: index === 0 ? '08:00' : '09:30',
+      collectionLookbackDays: index === 0 ? 14 : 21,
+      evidenceRetentionDays: index === 0 ? 365 : 180,
+    };
+    const current = buildPreviewRuntimeConfig(store, values, index + 1, 'active', occurredAt);
+    previewRuntimeConfigs.set(store.storeId, {
       current,
-      versions: [{ revision: 1, action: 'create', occurredAt, snapshot: clonePreviewSnapshot(current) }],
+      versions: [{
+        revision: current.revision,
+        action: 'create',
+        occurredAt,
+        snapshot: clonePreviewSnapshot(current),
+      }],
     });
-  }
+  });
+  const previewScheduleStates = new Map<StoreId, 'waiting' | 'succeeded' | 'failed'>([
+    [previewStores[0]!.storeId, 'waiting'],
+    [previewStores[1]!.storeId, 'failed'],
+  ]);
   let previewProductIdSequence = 0;
   let previewOperationEventIdSequence = 0;
   let previewListingIdSequence = 0;
@@ -1964,6 +1982,132 @@ export function createBrowserPreviewElectronApi(
     const store = requirePreviewStore(authoritative.storeId);
     const dataset = previewDatasets.get(store.storeId) ?? activatePreviewDataset(store);
     return { authoritative, store, dataset };
+  };
+  const previewCollectionWindow = (
+    businessDate: string,
+    lookbackDays: number,
+  ): { dateStart: string; dateEnd: string } => {
+    const businessDay = new Date(`${businessDate}T00:00:00.000Z`);
+    const dateEnd = new Date(businessDay.getTime() - 24 * 60 * 60 * 1_000);
+    const dateStart = new Date(businessDay.getTime() - lookbackDays * 24 * 60 * 60 * 1_000);
+    return {
+      dateStart: dateStart.toISOString().slice(0, 10),
+      dateEnd: dateEnd.toISOString().slice(0, 10),
+    };
+  };
+  const previewScheduleProjection = (
+    submitted: StoreContextEnvelope,
+  ): StoreCollectionScheduleProjection & {
+    previewOnly: true;
+    authorityState: 'PROTOTYPE_ONLY';
+  } => {
+    const authoritative = requirePreviewMissionAuthority(submitted);
+    const config = previewRuntimeConfigs.get(authoritative.storeId)?.current;
+    if (!config) {
+      return {
+        storeId: authoritative.storeId,
+        businessDate: authoritative.businessDate,
+        enabled: false,
+        state: 'not_configured',
+        detail: '仅开发预览：当前店铺尚未配置。',
+        previewOnly: true,
+        authorityState: 'PROTOTYPE_ONLY',
+      };
+    }
+    if (config.status === 'archived') {
+      return {
+        storeId: authoritative.storeId,
+        businessDate: authoritative.businessDate,
+        enabled: false,
+        state: 'archived',
+        detail: '仅开发预览：当前店铺配置已归档。',
+        previewOnly: true,
+        authorityState: 'PROTOTYPE_ONLY',
+      };
+    }
+    const state = previewScheduleStates.get(authoritative.storeId) ?? 'waiting';
+    const window = previewCollectionWindow(
+      authoritative.businessDate,
+      config.values.collectionLookbackDays,
+    );
+    const fingerprint = (String(authoritative.storeId).includes('shc001') ? '1' : '2').repeat(64);
+    const terminal = state === 'succeeded' || state === 'failed';
+    return {
+      storeId: authoritative.storeId,
+      businessDate: authoritative.businessDate,
+      enabled: true,
+      state,
+      detail: state === 'failed'
+        ? '仅开发预览：本业务日失败关闭且不会自动重试。'
+        : state === 'succeeded'
+          ? '仅开发预览：本业务日采集已完成。'
+          : '仅开发预览：等待当前店铺配置时间。',
+      scheduleLocalTime: config.values.collectionScheduleLocalTime,
+      configRevision: config.revision,
+      ...window,
+      fingerprint,
+      ...(terminal
+        ? {
+            lastAttempt: {
+              schemaVersion: 1,
+              fingerprint,
+              integrityDigest: (state === 'failed' ? 'b' : 'a').repeat(64),
+              storeId: authoritative.storeId,
+              browserProfileId: authoritative.browserProfileId,
+              sessionGeneration: authoritative.sessionGeneration,
+              businessDate: authoritative.businessDate,
+              scheduleLocalTime: config.values.collectionScheduleLocalTime,
+              configRevision: config.revision,
+              lookbackDays: config.values.collectionLookbackDays,
+              ...window,
+              requestId: `manual:${fingerprint}`,
+              trigger: 'manual',
+              state,
+              claimedAt: '2026-07-22T15:00:00.000Z',
+              completedAt: '2026-07-22T15:02:00.000Z',
+              ...(state === 'failed' ? { failureCode: 'PREVIEW_VISIBLE_SESSION_REQUIRED' } : {}),
+            },
+          }
+        : {}),
+      previewOnly: true,
+      authorityState: 'PROTOTYPE_ONLY',
+    };
+  };
+  const previewRetentionManifest = (submitted: StoreContextEnvelope) => {
+    const authoritative = requirePreviewMissionAuthority(submitted);
+    const config = previewRuntimeConfigs.get(authoritative.storeId)?.current;
+    if (!config || config.status !== 'active') {
+      throw new Error('仅开发预览：当前店铺活动配置不可用。');
+    }
+    const blocked = String(authoritative.storeId).includes('shc002');
+    return {
+      schemaVersion: 1,
+      mode: 'dry-run',
+      deletionSupported: false,
+      generatedAt: '2026-07-22T16:00:00.000Z',
+      storeId: String(authoritative.storeId),
+      profileId: String(authoritative.browserProfileId),
+      marketplace: 'US',
+      currency: 'USD',
+      retentionDays: config.values.evidenceRetentionDays,
+      cutoffAt: blocked ? '2026-01-23T16:00:00.000Z' : '2025-07-22T16:00:00.000Z',
+      expiryBasis: 'mtime-before-cutoff',
+      applyable: false,
+      scanSafe: !blocked,
+      candidateCount: blocked ? 0 : 3,
+      candidateBytes: blocked ? 0 : 3_145_728,
+      protectedScopeCount: 3,
+      protectedFileCount: 1,
+      blockerCount: blocked ? 1 : 0,
+      blockers: blocked
+        ? [{
+            code: 'UNSAFE_LINK_OR_REPARSE_POINT',
+            detail: '仅开发预览安全阻塞示例；不包含本地路径。',
+          }]
+        : [],
+      previewOnly: true,
+      authorityState: 'PROTOTYPE_ONLY',
+    };
   };
   const publicPreviewProduct = (state: PreviewProductState): PreviewVersionedProduct =>
     clonePreviewSnapshot(state.row);
@@ -3277,9 +3421,29 @@ export function createBrowserPreviewElectronApi(
           : '开发预览场景尚未走通；不可视为 APP_READY。',
       },
     }),
-    getScheduledTasks: async () => [{ name: 'daily-import-preview', enabled: true, cron: '0 9 * * *', lastStatus: 'success' }],
-    setTaskEnabled: async () => ({ ok: true }),
-    runTaskNow: async () => ({ ok: true }),
+    getStoreCollectionSchedule: async (storeContext: StoreContextEnvelope) =>
+      clonePreviewSnapshot(previewScheduleProjection(storeContext)),
+    runStoreCollectionScheduleNow: async (
+      storeContext: StoreContextEnvelope,
+    ): Promise<StoreCollectionScheduleRunResult> => {
+      const authoritative = requirePreviewMissionAuthority(storeContext);
+      const current = previewScheduleProjection(authoritative);
+      if (current.state === 'succeeded' || current.state === 'failed' || current.state === 'claimed') {
+        return clonePreviewSnapshot({
+          accepted: false,
+          duplicate: true,
+          projection: current,
+        });
+      }
+      previewScheduleStates.set(authoritative.storeId, 'succeeded');
+      return clonePreviewSnapshot({
+        accepted: true,
+        duplicate: false,
+        projection: previewScheduleProjection(authoritative),
+      });
+    },
+    previewStoreEvidenceRetention: async (storeContext: StoreContextEnvelope) =>
+      clonePreviewSnapshot(previewRetentionManifest(storeContext)),
     openReportArtifact: async (artifactId: string, storeContext: StoreContextEnvelope) => {
       requirePreviewMissionAuthority(storeContext);
       const knownArtifacts = new Set<string>([

@@ -314,6 +314,48 @@ describe('Mission Control legacy adapter', () => {
       .toEqual(expected.slice(1));
   });
 
+  it('keeps the scheduler view behind the compatibility route while promoting exact store automation actions', async () => {
+    const blocked = await createMissionControlLegacyAdapter().query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-store-automation-blocked',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(blocked.data.capabilities
+      .filter((row) => row.view === 'settings/scheduler')
+      .every((row) => row.state === 'BLOCKED'))
+      .toBe(true);
+
+    const ready = await createMissionControlLegacyAdapter({ storeAutomationReady: true }).query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-store-automation-ready',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(ready.data.capabilities.find((row) => row.capabilityId === 'settings.scheduler.view'))
+      .toMatchObject({
+        state: 'LEGACY_ADAPTER',
+        legacyRoute: 'scheduler',
+        action: 'view',
+      });
+    expect(ready.data.capabilities.find((row) => row.capabilityId === 'settings.scheduler.run-now'))
+      .toMatchObject({
+        state: 'PRODUCTION_NATIVE',
+        action: 'start',
+      });
+    expect(ready.data.capabilities.find((row) => row.capabilityId === 'settings.scheduler.retention-preview'))
+      .toMatchObject({
+        state: 'PRODUCTION_NATIVE',
+        action: 'view',
+      });
+  });
+
   it('keeps policy auto unavailable when the durable kill switch is active', async () => {
     const adapter = createMissionControlLegacyAdapter({
       missionDomain: {

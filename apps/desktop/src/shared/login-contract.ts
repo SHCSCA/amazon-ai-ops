@@ -20,10 +20,13 @@ export type BrowserLoginCredentialPersistence =
 export interface BrowserLoginResult {
   ok: true;
   currentStore: string;
+  erpSessionReady: true;
   erpSessionReused: boolean;
   sessionIdentityVerified: boolean;
-  adsEntryMode: 'erp_ads_entry';
-  adsUrl: string;
-  adsTitle: string;
+  adsSessionReady: boolean;
+  adsEntryMode?: 'erp_ads_entry';
+  adsUrl?: string;
+  adsTitle?: string;
+  adsUnavailableReason?: string;
   credentialPersistence: BrowserLoginCredentialPersistence;
 }

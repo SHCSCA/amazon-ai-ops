@@ -72,6 +72,32 @@ describe('preload business update bridge', () => {
     expect(source).not.toContain("ipcRenderer.invoke('store-runtime-config:get')");
   });
 
+  it('exposes store collection schedule operations only through complete StoreContext requests', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('StoreCollectionScheduleProjection');
+    expect(source).toContain('StoreCollectionScheduleRunResult');
+    expect(source).toContain('getStoreCollectionSchedule: (');
+    expect(source).toContain('runStoreCollectionScheduleNow: (');
+    expect(source).toContain("ipcRenderer.invoke('store-collection-scheduler:get', { storeContext })");
+    expect(source).toContain("ipcRenderer.invoke('store-collection-scheduler:run-now', { storeContext })");
+    expect(source).not.toContain("ipcRenderer.invoke('store-collection-scheduler:get')");
+    expect(source).not.toContain("ipcRenderer.invoke('store-collection-scheduler:run-now')");
+  });
+
+  it('exposes retention as a typed StoreContext-only dry-run preview', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const start = source.indexOf('previewStoreEvidenceRetention:');
+    const end = source.indexOf('getStoreCollectionSchedule:', start);
+    const bridge = source.slice(start, end);
+
+    expect(bridge).toContain('storeContext: StoreContextEnvelope');
+    expect(bridge).toContain('Promise<StoreEvidenceRetentionPreviewSummary>');
+    expect(bridge).toContain("ipcRenderer.invoke('store-evidence-retention:preview', { storeContext })");
+    expect(bridge).not.toMatch(/absolutePath|referencedPaths|retentionDays|candidates|protectedFiles|relativePath|delete|apply/i);
+    expect(source).not.toContain("from '../main/store-evidence-retention'");
+  });
+
   it('opens collection and import artifacts by opaque id under the current StoreContext', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
     const reportsStart = source.indexOf('// Reports');

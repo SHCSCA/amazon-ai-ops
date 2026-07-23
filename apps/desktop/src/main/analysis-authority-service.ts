@@ -51,20 +51,43 @@ export interface RecommendationGenerationResultForAnalysis {
   };
 }
 
+export interface AnalysisRecommendationGenerationScope {
+  dateFrom: string;
+  dateTo: string;
+  storeName: string;
+  marketplaceCode: 'US';
+  asin?: string;
+  batchId: string;
+}
+
+/**
+ * One immutable analysis-run authority captured before evidence sealing.
+ *
+ * Main must bind `generateRecommendations` to the exact runtime/rule/AI
+ * snapshot represented by these revisions. Keeping the closure and revisions
+ * together prevents a long AI await from re-reading mutable global settings.
+ */
+export interface CapturedAnalysisGenerationAuthority {
+  readonly ruleRevision: string;
+  readonly modelRevision: string;
+  readonly generateRecommendations: (
+    scope: AnalysisRecommendationGenerationScope,
+  ) => Promise<RecommendationGenerationResultForAnalysis>;
+}
+
 export interface AnalysisAuthorityServiceOptions {
   db: Database.Database;
   repository: AnalysisAuthorityRepository;
   missionRepository: MissionDomainRepository;
   recommendationRepository: RecommendationRepository;
   storeCoordinator: Pick<StoreCoordinator, 'assertActiveStoreContext'>;
-  generateRecommendations: (scope: {
-    dateFrom: string;
-    dateTo: string;
-    storeName: string;
-    marketplaceCode: 'US';
-    asin?: string;
-    batchId: string;
-  }) => Promise<RecommendationGenerationResultForAnalysis>;
+  generateRecommendations: CapturedAnalysisGenerationAuthority['generateRecommendations'];
+  /**
+   * Preferred production boundary. The legacy generator remains temporarily
+   * available so Main can be migrated without weakening authorization-time
+   * current-revision checks.
+   */
+  captureGenerationAuthority?: () => CapturedAnalysisGenerationAuthority;
   currentRuleRevision: () => string;
   currentModelRevision: () => string;
   allowedProofRoots: (context: StoreContextEnvelope) => readonly string[];
@@ -86,6 +109,7 @@ export class AnalysisAuthorityService {
   private readonly recommendationRepository: RecommendationRepository;
   private readonly storeCoordinator: AnalysisAuthorityServiceOptions['storeCoordinator'];
   private readonly generateRecommendations: AnalysisAuthorityServiceOptions['generateRecommendations'];
+  private readonly captureGenerationAuthority: () => CapturedAnalysisGenerationAuthority;
   private readonly currentRuleRevision: AnalysisAuthorityServiceOptions['currentRuleRevision'];
   private readonly currentModelRevision: AnalysisAuthorityServiceOptions['currentModelRevision'];
   private readonly allowedProofRoots: AnalysisAuthorityServiceOptions['allowedProofRoots'];
@@ -99,6 +123,11 @@ export class AnalysisAuthorityService {
     this.recommendationRepository = options.recommendationRepository;
     this.storeCoordinator = options.storeCoordinator;
     this.generateRecommendations = options.generateRecommendations;
+    this.captureGenerationAuthority = options.captureGenerationAuthority ?? (() => ({
+      ruleRevision: options.currentRuleRevision(),
+      modelRevision: options.currentModelRevision(),
+      generateRecommendations: this.generateRecommendations,
+    }));
     this.currentRuleRevision = options.currentRuleRevision;
     this.currentModelRevision = options.currentModelRevision;
     this.allowedProofRoots = options.allowedProofRoots;
@@ -131,8 +160,16 @@ export class AnalysisAuthorityService {
     const dateFrom = batch.dateFrom;
     const dateTo = batch.dateTo;
     const asin = mission.productId?.toUpperCase();
-    const ruleRevision = sha256Text(this.currentRuleRevision(), 'ruleRevision');
-    const modelRevision = requiredText(this.currentModelRevision(), 'modelRevision');
+    const capturedAuthority = this.captureGenerationAuthority();
+    if (!capturedAuthority || typeof capturedAuthority.generateRecommendations !== 'function') {
+      throw new TypeError('captured analysis generation authority is invalid');
+    }
+    const generationAuthority = Object.freeze({
+      ruleRevision: sha256Text(capturedAuthority.ruleRevision, 'ruleRevision'),
+      modelRevision: requiredText(capturedAuthority.modelRevision, 'modelRevision'),
+      generateRecommendations: capturedAuthority.generateRecommendations,
+    });
+    const { ruleRevision, modelRevision } = generationAuthority;
     const evidencePackage = this.repository.sealEvidencePackage(context, {
       missionId: mission.id,
       dateFrom,
@@ -143,7 +180,7 @@ export class AnalysisAuthorityService {
       modelRevision,
     });
 
-    const generation = await this.generateRecommendations({
+    const generation = await generationAuthority.generateRecommendations({
       dateFrom,
       dateTo,
       storeName: batch.storeName,
