@@ -15,6 +15,12 @@ files:
   - "!dist/**/*.map"
   - "!node_modules/better-sqlite3/deps/**/*"
   - "!node_modules/better-sqlite3/src/**/*"
+  - "!node_modules/duckdb/build/**/*"
+  - "!node_modules/duckdb/scripts/**/*"
+  - "!node_modules/duckdb/src/**/*"
+  - "!node_modules/duckdb/vendor/**/*"
+  - "!node_modules/duckdb/binding.gyp.in"
+  - "!node_modules/duckdb/Makefile"
 
 extraResources:
   - from: ../../resources

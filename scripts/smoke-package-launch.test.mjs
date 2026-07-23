@@ -11,6 +11,9 @@ describe('package launch smoke isolated userData source contract', () => {
     expect(source).toContain('launchPortable(portableExe, isolatedUserData.portable)');
     expect(source.indexOf('if (!userDataOverrideBundleContract.passed)')).toBeLessThan(source.indexOf('launchUnpacked(unpackedExe'));
     expect(source.match(/buildEvidenceUserDataEnv\(process\.env, PACKAGE_LAUNCH_SMOKE_MODE, userDataDir\)/g)).toHaveLength(2);
+    expect(source).toContain("spawnSync('powershell.exe', ['-NoProfile', '-Command', bootstrapScript]");
+    expect(source).toContain("'-WindowStyle Hidden'");
+    expect(source).toContain('const deadline = Date.now() + 120000');
   });
 
   it('requires a runtime marker and exact userData identity before either smoke check can pass', () => {

@@ -172,32 +172,57 @@ async function launchPortable(exePath, userDataDir) {
   const stderr = [];
   const stdoutPath = path.join(evidenceDir, `package-launch-portable-${runId}.stdout.log`);
   const stderrPath = path.join(evidenceDir, `package-launch-portable-${runId}.stderr.log`);
-  const child = spawn(exePath, [], {
-    cwd: path.dirname(exePath),
-    env: {
-      ...buildEvidenceUserDataEnv(process.env, PACKAGE_LAUNCH_SMOKE_MODE, userDataDir),
-      ELECTRON_ENABLE_LOGGING: '1',
-      ELECTRON_ENABLE_STACK_DUMPING: '1',
-    },
+  const portableEnv = {
+    ...buildEvidenceUserDataEnv(process.env, PACKAGE_LAUNCH_SMOKE_MODE, userDataDir),
+    AMAZON_AI_OPS_PORTABLE_CWD: path.dirname(exePath),
+    AMAZON_AI_OPS_PORTABLE_EXE: exePath,
+    ELECTRON_ENABLE_LOGGING: '1',
+    ELECTRON_ENABLE_STACK_DUMPING: '1',
+  };
+  const bootstrapScript = [
+    '$process = Start-Process',
+    '-FilePath $env:AMAZON_AI_OPS_PORTABLE_EXE',
+    '-WorkingDirectory $env:AMAZON_AI_OPS_PORTABLE_CWD',
+    '-WindowStyle Hidden',
+    '-PassThru;',
+    '[Console]::Out.Write($process.Id)',
+  ].join(' ');
+  const bootstrap = spawnSync('powershell.exe', ['-NoProfile', '-Command', bootstrapScript], {
+    encoding: 'utf8',
+    env: portableEnv,
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
   });
-  child.stdout.on('data', (chunk) => stdout.push(chunk.toString()));
-  child.stderr.on('data', (chunk) => stderr.push(chunk.toString()));
+  stdout.push(String(bootstrap.stdout || ''));
+  stderr.push(String(bootstrap.stderr || ''));
+  if (bootstrap.status !== 0) {
+    fail('Portable launcher bootstrap failed', stderr.join('').trim() || `PowerShell exited ${bootstrap.status}`);
+  }
+  const launcherPid = Number(String(bootstrap.stdout || '').trim());
+  if (!Number.isInteger(launcherPid) || launcherPid <= 0) {
+    fail('Portable launcher bootstrap returned an invalid PID', String(bootstrap.stdout || '').trim());
+  }
 
   let descendantSnapshot = { processes: [] };
   try {
-    const deadline = Date.now() + 25000;
+    // Portable NSIS startup includes extraction of the full Windows payload.
+    // On operator machines with real-time scanning this consistently exceeds
+    // one minute even though the child app starts correctly. PowerShell's
+    // Start-Process also avoids binding the NSIS extractor to Node's job/pipe
+    // handles, while WMI + the runtime marker still prove the exact child app.
+    const deadline = Date.now() + 120000;
+    let nextDescendantPollAt = 0;
     while (Date.now() < deadline) {
-      descendantSnapshot = windowsDescendants(child.pid);
+      if (Date.now() >= nextDescendantPollAt) {
+        descendantSnapshot = windowsDescendants(launcherPid);
+        nextDescendantPollAt = Date.now() + 2000;
+      }
       const appChildren = descendantSnapshot.processes.filter((item) => /AmazonAIOpsAgent\.exe/i.test(String(item.Name || '')));
       const userDataEvidence = collectUserDataEvidence(userDataDir);
       if (appChildren.length > 0 && userDataEvidence.passed) break;
-      if (child.exitCode !== null) break;
       await sleep(500);
     }
   } finally {
-    killTree(child.pid);
+    killTree(launcherPid);
     await sleep(500);
     writeLog(stdoutPath, stdout);
     writeLog(stderrPath, stderr);
@@ -208,8 +233,9 @@ async function launchPortable(exePath, userDataDir) {
   return {
     kind: 'portable',
     ok: appChildren.length > 0 && userDataEvidence.passed,
-    launcherPid: child.pid,
-    launcherExitCode: child.exitCode,
+    launcherPid,
+    launcherExitCode: null,
+    bootstrapExitCode: bootstrap.status,
     descendantCount: descendantSnapshot.processes.length,
     appChildCount: appChildren.length,
     descendants: descendantSnapshot.processes,
