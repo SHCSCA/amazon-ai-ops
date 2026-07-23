@@ -1,8 +1,15 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const { createRequire } = require('node:module');
 const path = require('node:path');
 
+const requireLocalDbDependency = createRequire(
+  path.join(__dirname, '..', 'packages', 'local-db', 'package.json'),
+);
+
 const SCHEMA_VERSION = 's7-continuous-operation-evidence/v1';
+const ACCEPTANCE_CONTRACT_VERSION = 's7-continuous-operation-success-only/v2';
+const US_BUSINESS_CALENDAR_VERSION = 'us-federal-business-day/v1';
 const EXPECTED_REPORT_TYPES = Object.freeze([
   'campaign',
   'ad_group',
@@ -13,7 +20,7 @@ const EXPECTED_REPORT_TYPES = Object.freeze([
   'product_targeting',
   'user_search_term',
 ]);
-const ACCEPTED_BLOCKED_STATES = new Set([
+const TERMINAL_BLOCKED_STATES = new Set([
   'completed_with_errors',
   'failed',
   'cancelled',
@@ -42,9 +49,15 @@ function parseArgs(argv) {
   if (!result.databasePath) fail('--database is required.');
   if (result.stores.length !== 2 || new Set(result.stores).size !== 2) fail('Exactly two distinct --store values are required.');
   if (!validIsoDate(result.dateFrom) || !validIsoDate(result.dateTo)) fail('--date-from and --date-to must use YYYY-MM-DD.');
-  const dates = inclusiveDates(result.dateFrom, result.dateTo);
-  if (dates.length !== 7) fail('The continuous acceptance window must contain exactly seven US business dates.');
-  return { ...result, dates };
+  const calendarDates = inclusiveDates(result.dateFrom, result.dateTo);
+  if (calendarDates.length === 0 || calendarDates.at(-1) !== result.dateTo) {
+    fail('The continuous acceptance window must be ascending and no longer than 31 calendar days.');
+  }
+  const dates = usFederalBusinessDates(result.dateFrom, result.dateTo);
+  if (dates.length !== 7) {
+    fail(`The continuous acceptance window must contain exactly seven US federal business dates under ${US_BUSINESS_CALENDAR_VERSION}.`);
+  }
+  return { ...result, dates, businessCalendarVersion: US_BUSINESS_CALENDAR_VERSION };
 }
 
 function inclusiveDates(dateFrom, dateTo) {
@@ -52,11 +65,80 @@ function inclusiveDates(dateFrom, dateTo) {
   const dates = [];
   const cursor = new Date(`${dateFrom}T12:00:00.000Z`);
   const end = new Date(`${dateTo}T12:00:00.000Z`);
-  while (cursor <= end && dates.length <= 31) {
+  while (cursor <= end && dates.length < 31) {
     dates.push(cursor.toISOString().slice(0, 10));
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return dates;
+}
+
+function isoDate(year, monthIndex, dayOfMonth) {
+  return new Date(Date.UTC(year, monthIndex, dayOfMonth, 12)).toISOString().slice(0, 10);
+}
+
+function observedFixedHoliday(year, monthIndex, dayOfMonth) {
+  const actual = new Date(Date.UTC(year, monthIndex, dayOfMonth, 12));
+  const weekday = actual.getUTCDay();
+  if (weekday === 6) actual.setUTCDate(actual.getUTCDate() - 1);
+  else if (weekday === 0) actual.setUTCDate(actual.getUTCDate() + 1);
+  return actual.toISOString().slice(0, 10);
+}
+
+function nthWeekdayOfMonth(year, monthIndex, weekday, occurrence) {
+  const first = new Date(Date.UTC(year, monthIndex, 1, 12));
+  const offset = (weekday - first.getUTCDay() + 7) % 7;
+  return isoDate(year, monthIndex, 1 + offset + ((occurrence - 1) * 7));
+}
+
+function lastWeekdayOfMonth(year, monthIndex, weekday) {
+  const last = new Date(Date.UTC(year, monthIndex + 1, 0, 12));
+  const offset = (last.getUTCDay() - weekday + 7) % 7;
+  return isoDate(year, monthIndex, last.getUTCDate() - offset);
+}
+
+/**
+ * Deterministic US federal holiday calendar. Fixed-date holidays use the
+ * federal Friday/Monday observed rule. Juneteenth begins in 2021 and Martin
+ * Luther King Jr. Day begins in 1986, matching their federal effective years.
+ */
+function usFederalHolidayDates(year) {
+  const holidays = new Set([
+    observedFixedHoliday(year, 0, 1),
+    nthWeekdayOfMonth(year, 1, 1, 3),
+    lastWeekdayOfMonth(year, 4, 1),
+    observedFixedHoliday(year, 6, 4),
+    nthWeekdayOfMonth(year, 8, 1, 1),
+    nthWeekdayOfMonth(year, 9, 1, 2),
+    observedFixedHoliday(year, 10, 11),
+    nthWeekdayOfMonth(year, 10, 4, 4),
+    observedFixedHoliday(year, 11, 25),
+  ]);
+  if (year >= 1986) holidays.add(nthWeekdayOfMonth(year, 0, 1, 3));
+  if (year >= 2021) holidays.add(observedFixedHoliday(year, 5, 19));
+  return holidays;
+}
+
+function usFederalBusinessDates(dateFrom, dateTo) {
+  const calendarDates = inclusiveDates(dateFrom, dateTo);
+  if (calendarDates.length === 0) return [];
+  const firstYear = Number(calendarDates[0].slice(0, 4));
+  const lastYear = Number(calendarDates.at(-1).slice(0, 4));
+  const holidays = new Set();
+  // Adjacent years are required because a Saturday January 1 is observed on
+  // December 31 of the preceding calendar year.
+  for (let year = firstYear - 1; year <= lastYear + 1; year += 1) {
+    for (const holiday of usFederalHolidayDates(year)) holidays.add(holiday);
+  }
+  return calendarDates.filter((value) => {
+    const day = new Date(`${value}T12:00:00.000Z`).getUTCDay();
+    return day >= 1 && day <= 5 && !holidays.has(value);
+  });
+}
+
+// Kept for the production-readiness verifier's existing import surface. Its
+// semantics are the versioned federal-business-day contract above.
+function usWeekdayBusinessDates(dateFrom, dateTo) {
+  return usFederalBusinessDates(dateFrom, dateTo);
 }
 
 function validIsoDate(value) {
@@ -186,6 +268,8 @@ function evaluateContinuousOperationSnapshot(snapshot, input) {
   detectCrossStoreLeakage(snapshot, storeById, addViolation);
   return {
     passed: violations.length === 0 && storeResults.length === 2 && storeResults.every((store) => store.acceptedDayCount === 7),
+    acceptanceContractVersion: ACCEPTANCE_CONTRACT_VERSION,
+    businessCalendarVersion: US_BUSINESS_CALENDAR_VERSION,
     expectedStoreCount: 2,
     expectedDayCountPerStore: 7,
     expectedReportCountPerSuccessfulDay: EXPECTED_REPORT_TYPES.length,
@@ -195,55 +279,126 @@ function evaluateContinuousOperationSnapshot(snapshot, input) {
 }
 
 function evaluateStoreDay(snapshot, store, businessDate) {
-  const jobs = snapshot.jobs.filter((job) => lower(job.storeId) === lower(store.storeId) && job.businessDate === businessDate);
+  const jobs = snapshot.jobs
+    .filter((job) => lower(job.storeId) === lower(store.storeId) && job.businessDate === businessDate)
+    .sort(compareNewestRecord('updatedAt', 'jobId'));
   const violations = [];
   if (jobs.length === 0) {
     violations.push({ code: 'SILENT_MISSING_DAY', message: 'No collection job or explicit blocker exists for this business date.', detail: {} });
     return { businessDate, outcome: 'MISSING', accepted: false, jobId: null, reportCount: 0, importRunId: null, violations };
   }
-  const successful = jobs.find((job) => job.state === 'completed');
-  if (successful) {
-    const checkpoints = snapshot.checkpoints.filter((row) => lower(row.storeId) === lower(store.storeId) && row.jobId === successful.jobId);
+  const latestJob = jobs[0];
+  const latestTimestamp = normalizedTimestamp(latestJob.updatedAt);
+  const equallyLatestJobs = jobs.filter((job) => normalizedTimestamp(job.updatedAt) === latestTimestamp);
+  if (!latestTimestamp || equallyLatestJobs.length !== 1) {
+    violations.push({
+      code: 'LATEST_JOB_IDENTITY_AMBIGUOUS',
+      message: 'The latest store/day collection job must have one unique durable updatedAt.',
+      detail: { jobIds: equallyLatestJobs.map((job) => job.jobId), updatedAt: latestTimestamp || null },
+    });
+    return {
+      businessDate,
+      outcome: 'INCOMPLETE',
+      accepted: false,
+      jobId: latestJob?.jobId ?? null,
+      reportCount: 0,
+      importRunId: null,
+      violations,
+    };
+  }
+  if (latestJob.state === 'completed') {
+    const checkpoints = snapshot.checkpoints.filter((row) => lower(row.storeId) === lower(store.storeId) && row.jobId === latestJob.jobId);
     const downloaded = new Set(checkpoints.filter((row) => row.state === 'downloaded').map((row) => row.reportType));
     const missingReports = EXPECTED_REPORT_TYPES.filter((reportType) => !downloaded.has(reportType));
-    const imports = snapshot.imports.filter((row) => lower(row.storeId) === lower(store.storeId) && row.businessDate === businessDate && row.status === 'completed');
-    const acceptedImport = imports.find((run) => {
+    const unexpectedReports = [...downloaded].filter((reportType) => !EXPECTED_REPORT_TYPES.includes(reportType));
+    const lineageImports = snapshot.imports
+      .filter((row) => lower(row.storeId) === lower(store.storeId)
+        && row.businessDate === businessDate
+        && row.batchId === latestJob.jobId)
+      .sort(compareNewestRecord('completedAt', 'runId'));
+    const latestImport = lineageImports[0];
+    const latestImportTimestamp = normalizedTimestamp(latestImport?.completedAt);
+    const equallyLatestImports = latestImport
+      ? lineageImports.filter((run) => normalizedTimestamp(run.completedAt) === latestImportTimestamp)
+      : [];
+    if (latestImport && (!latestImportTimestamp || equallyLatestImports.length !== 1)) {
+      violations.push({
+        code: 'LATEST_IMPORT_IDENTITY_AMBIGUOUS',
+        message: 'The latest import for the completed job/batch lineage must have one unique durable completedAt.',
+        detail: { runIds: equallyLatestImports.map((run) => run.runId), completedAt: latestImportTimestamp || null },
+      });
+    }
+    const acceptedImport = latestImport && latestImportTimestamp && equallyLatestImports.length === 1 && (() => {
+      const run = latestImport;
+      if (run.status !== 'completed') return false;
+      const fileRows = snapshot.importFiles.filter((row) => lower(row.storeId) === lower(store.storeId) && row.runId === run.runId);
       const types = new Set(snapshot.importFiles.filter((row) => lower(row.storeId) === lower(store.storeId) && row.runId === run.runId).map((row) => row.reportType));
       const reconciliations = snapshot.reconciliations.filter((row) => lower(row.storeId) === lower(store.storeId) && row.runId === run.runId);
       const matchedReconciliationTypes = new Set(reconciliations
         .filter((row) => row.status === 'matched' && Number(row.withinTolerance) === 1)
         .map((row) => row.reportType));
-      return EXPECTED_REPORT_TYPES.every((reportType) => types.has(reportType))
+      return fileRows.length === EXPECTED_REPORT_TYPES.length
+        && types.size === EXPECTED_REPORT_TYPES.length
+        && reconciliations.length === EXPECTED_REPORT_TYPES.length
+        && matchedReconciliationTypes.size === EXPECTED_REPORT_TYPES.length
+        && EXPECTED_REPORT_TYPES.every((reportType) => types.has(reportType))
         && EXPECTED_REPORT_TYPES.every((reportType) => matchedReconciliationTypes.has(reportType))
-        && Number(run.sourceFileCount) >= EXPECTED_REPORT_TYPES.length
-        && Number(run.reconciliationCount) >= EXPECTED_REPORT_TYPES.length
+        && Number(run.sourceFileCount) === EXPECTED_REPORT_TYPES.length
+        && Number(run.reconciliationCount) === EXPECTED_REPORT_TYPES.length
         && Number(run.metricRowCount) > 0;
-    });
-    if (missingReports.length > 0) {
-      violations.push({ code: 'REPORT_SET_INCOMPLETE', message: 'Completed day does not have eight downloaded report checkpoints.', detail: { missingReports } });
+    })();
+    if (missingReports.length > 0 || unexpectedReports.length > 0 || checkpoints.length !== EXPECTED_REPORT_TYPES.length) {
+      violations.push({
+        code: 'REPORT_SET_INCOMPLETE',
+        message: 'Latest completed job does not have exactly eight downloaded report checkpoints.',
+        detail: { missingReports, unexpectedReports, checkpointCount: checkpoints.length },
+      });
     }
     if (!acceptedImport) {
-      violations.push({ code: 'IMPORT_NOT_VERIFIED', message: 'Completed day has no eight-report idempotent import with matched reconciliation.', detail: {} });
+      const sameDayBatchIds = snapshot.imports
+        .filter((row) => lower(row.storeId) === lower(store.storeId) && row.businessDate === businessDate)
+        .map((row) => row.batchId);
+      violations.push({
+        code: lineageImports.length === 0 && sameDayBatchIds.length > 0 ? 'IMPORT_LINEAGE_MISMATCH' : 'IMPORT_NOT_VERIFIED',
+        message: lineageImports.length === 0 && sameDayBatchIds.length > 0
+          ? 'Latest completed job cannot be combined with an import from another batch lineage.'
+          : 'Latest completed job/batch has no latest exact eight-report import with matched reconciliation.',
+        detail: { expectedBatchId: latestJob.jobId, actualBatchIds: [...new Set(sameDayBatchIds)] },
+      });
     }
     return {
       businessDate,
       outcome: violations.length === 0 ? 'SUCCESS_8_OF_8' : 'INVALID_SUCCESS',
       accepted: violations.length === 0,
-      jobId: successful.jobId,
+      jobId: latestJob.jobId,
       reportCount: downloaded.size,
-      importRunId: acceptedImport?.runId ?? null,
+      importRunId: acceptedImport ? latestImport.runId : null,
       violations,
     };
   }
-  const blocked = jobs.find((job) => ACCEPTED_BLOCKED_STATES.has(job.state) && nonEmpty(job.blockerCode) && nonEmpty(job.detail));
-  if (!blocked) {
-    violations.push({ code: 'BLOCKER_NOT_ACTIONABLE', message: 'Non-success day must persist a terminal state, blockerCode and repair detail.', detail: { states: jobs.map((job) => job.state) } });
+  const blocked = TERMINAL_BLOCKED_STATES.has(latestJob.state)
+    && nonEmpty(latestJob.blockerCode)
+    && nonEmpty(latestJob.detail)
+    ? latestJob
+    : null;
+  if (blocked) {
+    violations.push({
+      code: 'DAY_BLOCKED',
+      message: 'An actionable blocked day is durable evidence, but it cannot satisfy the production continuous-operation gate.',
+      detail: { state: blocked.state, blockerCode: blocked.blockerCode },
+    });
+  } else {
+    violations.push({
+      code: 'BLOCKER_NOT_ACTIONABLE',
+      message: 'Latest non-success job must persist a terminal state, blockerCode and repair detail.',
+      detail: { state: latestJob.state },
+    });
   }
   return {
     businessDate,
     outcome: blocked ? 'EXPLICIT_BLOCKED' : 'INCOMPLETE',
-    accepted: Boolean(blocked),
-    jobId: blocked?.jobId ?? jobs[0]?.jobId ?? null,
+    accepted: false,
+    jobId: latestJob.jobId,
     reportCount: blocked
       ? snapshot.checkpoints.filter((row) => lower(row.storeId) === lower(store.storeId) && row.jobId === blocked.jobId && row.state === 'downloaded').length
       : 0,
@@ -251,6 +406,21 @@ function evaluateStoreDay(snapshot, store, businessDate) {
     blockerCode: blocked?.blockerCode,
     blockerDetail: blocked?.detail,
     violations,
+  };
+}
+
+function normalizedTimestamp(value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  const timestamp = new Date(value).valueOf();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+}
+
+function compareNewestRecord(timestampField, identityField) {
+  return (left, right) => {
+    const timestampOrder = normalizedTimestamp(right?.[timestampField])
+      .localeCompare(normalizedTimestamp(left?.[timestampField]));
+    if (timestampOrder !== 0) return timestampOrder;
+    return String(right?.[identityField] ?? '').localeCompare(String(left?.[identityField] ?? ''));
   };
 }
 
@@ -348,7 +518,12 @@ function buildEvidenceManifest(databasePath, input, result, integrityCheck) {
       integrityCheck,
       openedReadOnly: true,
     },
-    window: { dateFrom: input.dateFrom, dateTo: input.dateTo, businessDates: input.dates },
+    window: {
+      dateFrom: input.dateFrom,
+      dateTo: input.dateTo,
+      businessDates: input.dates,
+      businessCalendarVersion: US_BUSINESS_CALENDAR_VERSION,
+    },
     ...result,
   };
 }
@@ -361,7 +536,7 @@ function run(argv = process.argv.slice(2)) {
   }
   if (!fs.existsSync(input.databasePath)) fail(`Database does not exist: ${input.databasePath}`);
   // Loaded lazily so --help works even before native dependencies are prepared.
-  const Database = require('better-sqlite3');
+  const Database = requireLocalDbDependency('better-sqlite3');
   const database = new Database(input.databasePath, { readonly: true, fileMustExist: true });
   try {
     const integrityRows = database.pragma('integrity_check');
@@ -395,12 +570,17 @@ if (require.main === module) {
 }
 
 module.exports = {
+  ACCEPTANCE_CONTRACT_VERSION,
   EXPECTED_REPORT_TYPES,
   SCHEMA_VERSION,
+  US_BUSINESS_CALENDAR_VERSION,
   buildEvidenceManifest,
   evaluateContinuousOperationSnapshot,
   inclusiveDates,
   parseArgs,
   readContinuousOperationSnapshot,
   run,
+  usFederalBusinessDates,
+  usFederalHolidayDates,
+  usWeekdayBusinessDates,
 };

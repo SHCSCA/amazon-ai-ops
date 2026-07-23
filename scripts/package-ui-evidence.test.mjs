@@ -747,6 +747,8 @@ describe('package UI evidence CLI contract', () => {
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('real packaged Electron application');
+    expect(result.stdout).toContain('all ten canonical Mission Control workspaces');
+    expect(result.stdout).toContain('50,000-row production virtualizer contract');
     expect(result.stdout).toContain('--expected-app-content-sha256');
     expect(result.stdout).toContain('--print-package-hashes');
     expect(result.stdout).toContain('--user-data-dir');

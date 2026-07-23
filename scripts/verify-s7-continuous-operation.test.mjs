@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import verifierModule from './verify-s7-continuous-operation.js';
 
 const {
+  ACCEPTANCE_CONTRACT_VERSION,
   EXPECTED_REPORT_TYPES,
+  US_BUSINESS_CALENDAR_VERSION,
   evaluateContinuousOperationSnapshot,
   inclusiveDates,
   parseArgs,
+  usFederalBusinessDates,
+  usWeekdayBusinessDates,
 } = verifierModule;
 
-const dates = inclusiveDates('2026-07-15', '2026-07-21');
+const dates = usWeekdayBusinessDates('2026-07-13', '2026-07-21');
 const input = {
   stores: ['shc001', 'shc002'],
   dates,
@@ -52,7 +56,7 @@ function validSnapshot() {
         runId,
         idempotencyKey: `idem-${store.storeId}-${dayIndex}`,
         inputFingerprint: `fingerprint-${store.storeId}-${dayIndex}`,
-        batchId: `batch-${store.storeId}-${dayIndex}`,
+        batchId: jobId,
         status: 'completed',
         sourceFileCount: 8,
         metricRowCount: 120,
@@ -86,13 +90,15 @@ describe('S7 continuous operation verifier', () => {
   it('accepts two isolated US/USD stores with seven complete 8/8 days', () => {
     const result = evaluateContinuousOperationSnapshot(validSnapshot(), input);
     expect(result.passed).toBe(true);
+    expect(result.acceptanceContractVersion).toBe(ACCEPTANCE_CONTRACT_VERSION);
+    expect(result.businessCalendarVersion).toBe(US_BUSINESS_CALENDAR_VERSION);
     expect(result.violations).toEqual([]);
     expect(result.stores).toHaveLength(2);
     expect(result.stores.every((store) => store.acceptedDayCount === 7)).toBe(true);
     expect(result.stores.flatMap((store) => store.days).every((day) => day.outcome === 'SUCCESS_8_OF_8')).toBe(true);
   });
 
-  it('accepts an explicitly blocked day only when terminal state, code and repair detail are durable', () => {
+  it('records an actionable blocked day but refuses production-readiness credit', () => {
     const snapshot = validSnapshot();
     const blockedJob = snapshot.jobs.find((job) => job.storeId === 'shc002' && job.businessDate === dates[3]);
     blockedJob.state = 'failed';
@@ -104,8 +110,62 @@ describe('S7 continuous operation verifier', () => {
     snapshot.reconciliations = snapshot.reconciliations.filter((row) => row.runId !== blockedRun.runId);
 
     const result = evaluateContinuousOperationSnapshot(snapshot, input);
-    expect(result.passed).toBe(true);
-    expect(result.stores[1].days[3]).toMatchObject({ outcome: 'EXPLICIT_BLOCKED', accepted: true });
+    expect(result.passed).toBe(false);
+    expect(result.stores[1].days[3]).toMatchObject({
+      outcome: 'EXPLICIT_BLOCKED',
+      accepted: false,
+      blockerCode: 'LINGXING_LOGIN_EXPIRED',
+    });
+    expect(result.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'DAY_BLOCKED', storeId: 'shc002', businessDate: dates[3] }),
+    ]));
+  });
+
+  it('rejects a 14-of-14 window made entirely of explicit blockers', () => {
+    const snapshot = validSnapshot();
+    for (const job of snapshot.jobs) {
+      job.state = 'failed';
+      job.blockerCode = 'LINGXING_LOGIN_EXPIRED';
+      job.detail = '重新登录当前店铺独立 Profile 后恢复同一 job。';
+    }
+
+    const result = evaluateContinuousOperationSnapshot(snapshot, input);
+    expect(result.passed).toBe(false);
+    expect(result.stores.every((store) => store.acceptedDayCount === 0)).toBe(true);
+    expect(result.violations.filter(({ code }) => code === 'DAY_BLOCKED')).toHaveLength(14);
+  });
+
+  it('uses the latest store-day job so a newer failure overrides an older success', () => {
+    const snapshot = validSnapshot();
+    const oldSuccess = snapshot.jobs.find((job) => job.storeId === 'shc001' && job.businessDate === dates[0]);
+    snapshot.jobs.push({
+      ...oldSuccess,
+      jobId: `${oldSuccess.jobId}-retry`,
+      requestId: `${oldSuccess.requestId}-retry`,
+      state: 'failed',
+      blockerCode: 'LINGXING_SESSION_EXPIRED',
+      detail: '刷新当前店铺 Profile 会话后恢复该 retry job。',
+      updatedAt: `${dates[0]}T17:00:00.000Z`,
+    });
+
+    const result = evaluateContinuousOperationSnapshot(snapshot, input);
+    expect(result.passed).toBe(false);
+    expect(result.stores[0].days[0]).toMatchObject({
+      outcome: 'EXPLICIT_BLOCKED',
+      accepted: false,
+      jobId: `${oldSuccess.jobId}-retry`,
+    });
+  });
+
+  it('does not splice a completed job with an import from another batch lineage', () => {
+    const snapshot = validSnapshot();
+    snapshot.imports[0].batchId = 'unrelated-older-batch';
+
+    const result = evaluateContinuousOperationSnapshot(snapshot, input);
+    expect(result.passed).toBe(false);
+    expect(result.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'IMPORT_LINEAGE_MISMATCH', storeId: 'shc001', businessDate: dates[0] }),
+    ]));
   });
 
   it('fails silent missing days, partial reports and non-actionable blockers', () => {
@@ -168,11 +228,54 @@ describe('S7 continuous operation verifier', () => {
     ]));
   });
 
-  it('requires exactly two stores and exactly seven inclusive business dates', () => {
+  it('uses seven versioned US federal business dates when the window spans a weekend', () => {
+    expect(inclusiveDates('2026-07-13', '2026-07-21')).toHaveLength(9);
+    expect(dates).toEqual([
+      '2026-07-13',
+      '2026-07-14',
+      '2026-07-15',
+      '2026-07-16',
+      '2026-07-17',
+      '2026-07-20',
+      '2026-07-21',
+    ]);
+    expect(parseArgs([
+      '--database', 'test.db',
+      '--store', 'SHC001',
+      '--store', 'SHC002',
+      '--date-from', '2026-07-13',
+      '--date-to', '2026-07-21',
+    ])).toMatchObject({
+      dates,
+      businessCalendarVersion: US_BUSINESS_CALENDAR_VERSION,
+    });
+  });
+
+  it('excludes federal holidays and weekend-observed holidays from the acceptance window', () => {
+    expect(usFederalBusinessDates('2026-07-01', '2026-07-10')).toEqual([
+      '2026-07-01',
+      '2026-07-02',
+      '2026-07-06',
+      '2026-07-07',
+      '2026-07-08',
+      '2026-07-09',
+      '2026-07-10',
+    ]);
     expect(() => parseArgs([
       '--database', 'test.db',
       '--store', 'SHC001',
-      '--date-from', '2026-07-15',
+      '--store', 'SHC002',
+      '--date-from', '2026-07-01',
+      '--date-to', '2026-07-09',
+    ])).toThrow(new RegExp(US_BUSINESS_CALENDAR_VERSION));
+    expect(usFederalBusinessDates('2026-11-23', '2026-12-02')).not.toContain('2026-11-26');
+  });
+
+  it('requires exactly two stores and exactly seven federal business dates', () => {
+    expect(() => parseArgs([
+      '--database', 'test.db',
+      '--store', 'SHC001',
+      '--date-from', '2026-07-13',
       '--date-to', '2026-07-21',
     ])).toThrow(/Exactly two distinct/);
     expect(() => parseArgs([
@@ -181,6 +284,13 @@ describe('S7 continuous operation verifier', () => {
       '--store', 'SHC002',
       '--date-from', '2026-07-15',
       '--date-to', '2026-07-20',
+    ])).toThrow(/exactly seven/);
+    expect(() => parseArgs([
+      '--database', 'test.db',
+      '--store', 'SHC001',
+      '--store', 'SHC002',
+      '--date-from', '2026-07-13',
+      '--date-to', '2026-07-22',
     ])).toThrow(/exactly seven/);
   });
 });

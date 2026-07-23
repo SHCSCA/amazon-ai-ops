@@ -50,7 +50,8 @@
     "verify:s7-migration-backup-restore": "node scripts/verify-s7-migration-backup-restore.js",
     "verify:s7-large-table": "node scripts/verify-mission-control-large-table.js",
     "verify:s7-continuous-operation": "node scripts/verify-s7-continuous-operation.js",
-    "verify:s7-ui-evidence": "node scripts/mission-control-ui-evidence-contract.js"
+    "verify:s7-ui-evidence": "node scripts/mission-control-ui-evidence-contract.js",
+    "verify:s7-production-readiness": "node scripts/verify-mission-control-production-readiness.js"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

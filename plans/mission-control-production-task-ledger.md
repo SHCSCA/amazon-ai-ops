@@ -103,10 +103,24 @@
 
 | ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
 | --- | --- | --- | --- | --- |
-| S7-01 | DONE | Renderer/性能 | S6 | 十工作区正式矩阵、设置 CRUD、5 万行、键盘、100%/125% package 证据合同已收口；真实 package 截图归 S7-04 |
-| S7-02 | DONE | migration/backup/security | S6 | v7→v8 全链升级备份、只恢复到新文件、显式离线迁移、Profile 单店绑定/回滚/防篡改已完成 |
+| S7-01 | DONE | Renderer/性能 | S6 | 十工作区正式矩阵、设置 CRUD、5 万行、键盘、100%/125% package 证据合同已收口并推送；真实 package 截图归 S7-04 |
+| S7-02 | DONE | migration/backup/security | S6 | v7→v8 全链升级备份、只恢复到新文件、显式离线迁移、Profile 单店绑定/回滚/防篡改已完成并推送 |
 | S7-03 | BLOCKED | 连续运行验收 | S3..S6 | 只读验收器已完成；仍需两家真实店铺自然经过连续 7 个美国业务日并形成每天 8/8 或明确终态 BLOCKED 的外部证据 |
-| S7-04 | IN_PROGRESS | package/evidence | S7-01..03 | installer、portable、package smoke、十工作区 UI、安全、readiness、bundle |
-| S7-05 | TODO | 总负责人 | S7-04 | requirement-by-requirement completion audit、最终 commit/push |
+| S7-04 | BLOCKED | package/evidence | S7-01..03 | 当前 installer/portable、launch、安全与 adversarial `NODE_ENV` 已通过；用户选定的应用内浏览器不能替代 package UI runner 所需的独立 Chromium，十工作区 package UI 与严格 NON_READY bundle 暂缺 |
+| S7-05 | REVIEW | 总负责人 | S7-04 | 8 门生产就绪聚合器与逐项审计已完成并失败关闭为 4/8；阶段提交、推送与四项外部证据仍待完成 |
 
 阶段 7A/7B 内部验证（2026-07-23）：第一版继续固定 Amazon US / USD；新增店铺级运行配置的创建、修改、可恢复归档与版本历史，并把目标 ACOS、分析窗口、最低建议置信度和店铺 AI 开关接入正式分析 Authority。10 个正式工作区的 package UI 基线已替换旧 8 页矩阵，要求 100%/125% 各一份、唯一 H1、无横向溢出、canonical 子视图 End/Home 键盘往返和三项只读 overlay 焦点证据；真实 package 截图仍由 S7-04 生成。5 万行验证使用生产同款 TanStack virtualizer，在首段/中段/末段分别只渲染 22/32/22 行，并验证稳定行键、Enter/Space 选择与粘性表头合同。数据库升级在任何待执行迁移前创建完整恢复点，校验 integrity/schema/行数/SHA；离线升级必须显式绑定绝对源路径与 SHA，禁止猜测 AppData 或原地覆盖。浏览器 Profile 迁移要求当前店铺、Provider、停止状态与身份凭证一致，拒绝 junction、歧义绑定、非空目标、哈希复用与篡改恢复。两店 7 美国业务日验收器要求每日 8 个下载检查点、8 类导入、8 份匹配对账且无 Profile/指纹/文件哈希串店；当前没有自然经过的 7 日真实证据，S7-03 保持 BLOCKED。集中验证 18/18 个聚焦测试文件、197/197 项通过；14/14 含 typecheck 的 workspace 通过；全量非浏览器回归 268/268 个文件、2713 项通过、2 项既有条件跳过；Main、Preload、Renderer 生产构建通过。迁移恢复 CLI 在没有显式离线 manifest 时按设计失败关闭，未触碰当前用户数据库；当前不得声明 READY。
+
+阶段 7C 生产就绪审计（2026-07-23）：新增 8 门失败关闭聚合器，旧 v1.5 的 7/8 只允许由新的数据库回溯人工 canary 与策略自动 canary 共同取代，任何其他旧门失败均拒绝。聚合器会重新核对 package UI 截图文件与 SHA、只读 SQLite 快照、两店七个周一至周五美国业务日、MissionGrant/执行任务/三段回读以及 Store Capsule 路径和文件哈希，手写 PASSED JSON 不能直接获得信用。首轮 117/117 项聚焦回归通过，但独立审查发现包体/数据库根未锚定、app content 未现场重算、全 BLOCKED 可误计连续运行以及旧证据重放四项 P1 假 READY 风险；修复后生产聚合器固定 canonical release 与 AppData authority snapshot 根，现场重算 EXE/app content/Main bundle，拒绝 symlink/reparse/hardlink，强制同包同快照与时间顺序，并把连续运行收紧为 14/14 `SUCCESS_8_OF_8`。阶段边界共 129/129 项通过；重新生成的 `output/codex-evidence/mission-control-production-readiness-20260723-stage7c-hardened-non-ready.json` 仍按预期为 `APP_NEEDS_WORK` 4/8：v1.5 基线、当前 package launch、安全边界、adversarial `NODE_ENV` 通过；十工作区 package UI、两店连续七日、人工 canary、策略自动 canary 缺失。当前 package UI 所需独立 Chromium 不存在，且用户已选定只使用应用内浏览器，因此未擅自安装或切换浏览器；严格 NON_READY bundle 未导出。阶段 7A/7B 提交 `9392aecd` 与 Windows package 确定性修复 `85ce509e` 已在 GitHub 网络恢复后推送至 `origin/codex/preview-contract-production-p2`。
+
+## 阶段 8：运行配置闭环与持续运营
+
+| ID | 状态 | Owner / 文件边界 | 依赖 | 交付物 |
+| --- | --- | --- | --- | --- |
+| S8-01 | REVIEW | Main AI/runtime authority | S5/S7 | 系统级 OpenAI-compatible 配置、Main-only Key、AI runtime fingerprint 与分析规则 fingerprint 分域；等待阶段集中验证、提交和推送 |
+| S8-02 | ACTIVE | Main scheduler/collection | S3/S7 | 当前店铺且当前 Profile 会话内的店铺级采集时间、回看窗口、美国业务日期和幂等调度闭环 |
+| S8-03 | TODO | Store Capsule/evidence retention | S7 | 按店铺证据保留候选清单、dry-run、Authority/交付引用保护和可审计清理；禁止直接复用会误删权威证据的旧 CleanupManager |
+| S8-04 | BLOCKED | 真实运行验收 | S6/S8-02 | 两店七个美国业务日、低风险人工 canary、策略自动 canary；依赖真实登录会话、当次对象与授权 |
+| S8-05 | TODO | 总负责人 | S8-01..04 | 最终 package UI、8/8 生产就绪、严格 bundle、阶段 commit/push 与交付说明 |
+
+阶段 8 固定边界：第一版只支持 Amazon 美国站和 USD；店铺数据、浏览器 Profile、任务、证据与运行配置相互隔离。AI 连接继续是系统级配置，店铺只持有启停和分析规则；采集调度不会自动切换店铺或复用别店 Profile。真实写入仍只允许人工批准或命中已启用策略的整批授权，`UNKNOWN` 继续停止并交由人工核对。

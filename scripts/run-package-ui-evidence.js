@@ -25,11 +25,11 @@ This runner is fixed to:
 
 The hash preflight is read-only and never launches Electron. Evidence mode
 launches the real packaged Electron application and keeps the full 1200x700
-matrix at 100% and 125% across all eight workspaces and the
-three established overlay keyboard checks. Product and Diagnosis additionally
-prove their bounded virtual queues and read-only row inspectors. A separate
-1400x900@100 profile checks only Product and Diagnosis with non-modal inline
-inspectors. It accepts no
+matrix at 100% and 125% across all ten canonical Mission Control workspaces
+and the three established overlay keyboard checks. The retained 1400x900@100
+profile checks packaged process/profile isolation and diagnostics only; the
+50,000-row production virtualizer contract is verified independently by
+verify:s7-large-table. It accepts no
 URL, preview scenario, executable override, credentials, approval, execution,
 export, collection, or Ads-write argument.
 
