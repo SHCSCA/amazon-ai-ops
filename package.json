@@ -53,7 +53,11 @@
     "verify:s7-ui-evidence": "node scripts/mission-control-ui-evidence-contract.js",
     "export:s7-authority-snapshot": "node scripts/export-mission-control-authority-snapshot.js",
     "export:s7-execution-canary": "node scripts/export-mission-control-execution-canary-evidence.js",
-    "verify:s7-production-readiness": "node scripts/verify-mission-control-production-readiness.js"
+    "verify:s7-production-readiness": "node scripts/verify-mission-control-production-readiness.js",
+    "export:s7-delivery-bundle": "node scripts/export-s7-delivery-bundle.js",
+    "verify:s7-non-ready-safety": "node scripts/verify-s7-non-ready-safety.js",
+    "verify:s7-ready-safety": "node scripts/verify-s7-ready-safety.js",
+    "gate:s8": "node scripts/stage8-gate-operator.js"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
