@@ -38,6 +38,8 @@ describe('PolicyWorkspace', () => {
       previewMode
       storeContext={context}
     />);
+    expect(markup.match(/<h1\b/g)).toHaveLength(1);
+    expect(markup).toContain('<h1 id="workspace-page-policy-rules-title">策略与风控</h1>');
     expect(markup).toContain('自动边界与审批策略');
     expect(markup).toContain('不可变策略版本');
     expect(markup).toContain('紧急停止');

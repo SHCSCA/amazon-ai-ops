@@ -674,6 +674,7 @@ export function ExecutionWorkspace({
   if (phase === 'blocked' && !previewEnabled) {
     return (
       <div className="execution-workspace" data-canonical-surface="execution" data-capability-state="BLOCKED">
+        <h1 className="execution-page-title">实时执行</h1>
         <WorkspaceState
           description="生产 Renderer 不会把预览队列或本地假状态冒充真实 Ads 执行。"
           details={`execution/live.view BLOCKED · 已阻断 · ${error ?? blockedReason} · execution.queue.start`}
@@ -740,6 +741,7 @@ export function ExecutionWorkspace({
       data-reconciliation-active={reconciliation || undefined}
       data-mutations-disabled={previewEnabled || undefined}
     >
+      <h1 className="execution-page-title">实时执行</h1>
       <header className="execution-mission-header">
         <div>
           <span>EXECUTION · {shortId((selected?.batch.id ?? selectedMissionId) || 'WAITING', 34)}</span>

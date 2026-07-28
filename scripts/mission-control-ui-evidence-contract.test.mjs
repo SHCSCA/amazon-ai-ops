@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import evidenceContract from './mission-control-ui-evidence-contract.js';
@@ -15,6 +16,45 @@ const {
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
+const HASH_C = 'c'.repeat(64);
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function fingerprint(value) {
+  return crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
+function businessFactSentinels(projection) {
+  return [...new Set([
+    projection.scope.asin,
+    projection.scope.batchId,
+    ...projection.productAsins,
+    ...projection.keywordFacts.flatMap((fact) => [fact.asin, fact.keyword]),
+  ])].sort((left, right) => left.localeCompare(right, 'en-US'));
+}
+
+const SHC001_BUSINESS_FACTS = {
+  scope: { asin: 'B0GTTJFQTM', batchId: 'batch_shc001_20260722' },
+  productAsins: ['B0GTTJFQTM', 'B0GVRW2HPY'],
+  keywordFacts: [
+    { asin: 'B0GTTJFQTM', keyword: 'shc001 smart lock' },
+  ],
+};
+const SHC002_BUSINESS_FACTS = {
+  scope: { asin: 'B0SHC00201', batchId: 'batch_shc002_20260722' },
+  productAsins: ['B0SHC00201', 'B0SHC00202'],
+  keywordFacts: [
+    { asin: 'B0SHC00201', keyword: 'shc002 smart lock' },
+  ],
+};
 
 function screenshot(captureId, hash = HASH_A) {
   return {
@@ -59,7 +99,7 @@ function workspaceCapture(workspace, scalePercent, storeId = 'SHC001') {
     scalePercent,
     screenshot: screenshot(captureId),
     viewport: viewport(scalePercent),
-    h1: { count: 1, text: `${workspace} workspace` },
+    h1: { count: 1, text: contract.heading },
     tabs: {
       renderedSubviews: [...contract.tabs],
       activeSubview: contract.defaultIntent.subview,
@@ -81,6 +121,16 @@ function validManifest() {
     status: 'STAGE7_UI_EVIDENCE',
     readinessImpact: 'NO_FINAL_READINESS_CREDIT',
     finalReadinessCredit: false,
+    source: {
+      runtime: 'vite-dev-preview',
+      scenario: 'diagnosis-ready',
+      runnerSha256: HASH_A,
+      contractSha256: HASH_B,
+      rendererTreeSha256: HASH_C,
+      realLoginAccessed: false,
+      authorityDatabaseAccessed: false,
+      adsWriteAttempted: false,
+    },
     workspaceCaptures,
     storeGateCapture: {
       captureId: 'store-gate-100',
@@ -114,8 +164,21 @@ function validManifest() {
         leakedStoreIds: [],
         fromBrowserProfileId: 'profile-shc001',
         toBrowserProfileId: 'profile-shc002',
-        fromStoreScopedFingerprint: HASH_A,
-        toStoreScopedFingerprint: HASH_B,
+        fromIdentityFingerprint: fingerprint({
+          browserProfileId: 'profile-shc001',
+          storeId: 'SHC001',
+        }),
+        toIdentityFingerprint: fingerprint({
+          browserProfileId: 'profile-shc002',
+          storeId: 'SHC002',
+        }),
+        fromBusinessFactProjection: SHC001_BUSINESS_FACTS,
+        toBusinessFactProjection: SHC002_BUSINESS_FACTS,
+        fromBusinessFactsFingerprint: fingerprint(SHC001_BUSINESS_FACTS),
+        toBusinessFactsFingerprint: fingerprint(SHC002_BUSINESS_FACTS),
+        fromBusinessFactSentinels: businessFactSentinels(SHC001_BUSINESS_FACTS),
+        toBusinessFactSentinels: businessFactSentinels(SHC002_BUSINESS_FACTS),
+        leakedBusinessFactSentinels: [],
       },
     },
     minimumWindowCapture: {
@@ -174,6 +237,49 @@ describe('Mission Control Stage7 UI evidence contract', () => {
     ]));
   });
 
+  it('fails when source provenance is missing', () => {
+    const manifest = validManifest();
+    delete manifest.source;
+
+    expect(violationCodes(manifest)).toContain('SOURCE_PROVENANCE_MISSING');
+  });
+
+  it('fails when source provenance is not the fixed preview-only runtime contract', () => {
+    const manifest = validManifest();
+    manifest.source = {
+      ...manifest.source,
+      runtime: 'production',
+      scenario: 'another-scenario',
+      runnerSha256: 'not-a-sha',
+      realLoginAccessed: true,
+      authorityDatabaseAccessed: true,
+      adsWriteAttempted: true,
+      unexpected: true,
+    };
+
+    expect(violationCodes(manifest)).toEqual(expect.arrayContaining([
+      'SOURCE_RUNTIME_UNSAFE',
+      'SOURCE_SCENARIO_UNSAFE',
+      'SOURCE_PROVENANCE_FIELDS_INVALID',
+      'SOURCE_SHA256_INVALID',
+      'SOURCE_ACCESS_CLAIM_UNSAFE',
+    ]));
+  });
+
+  it('fails when source hashes do not match the current runner, contract, and renderer tree', () => {
+    const manifest = validManifest();
+    const result = evaluateMissionControlUiEvidenceManifest(manifest, {
+      expectedSourceHashes: {
+        runnerSha256: HASH_B,
+        contractSha256: HASH_C,
+        rendererTreeSha256: HASH_A,
+      },
+    });
+
+    expect(result.violations.filter(({ code }) => code === 'SOURCE_SHA256_MISMATCH'))
+      .toHaveLength(3);
+  });
+
   it('fails when a capture claims a non-USD currency', () => {
     const manifest = validManifest();
     manifest.workspaceCaptures[0].authority.currency = 'USDT';
@@ -186,6 +292,22 @@ describe('Mission Control Stage7 UI evidence contract', () => {
     manifest.workspaceCaptures[0].viewport.scrollWidth = 1492;
 
     expect(violationCodes(manifest)).toContain('HORIZONTAL_OVERFLOW_DETECTED');
+  });
+
+  it('fails with exact expected and actual details when a workspace h1 drifts from its registered heading', () => {
+    const manifest = validManifest();
+    const captureIndex = manifest.workspaceCaptures.findIndex((capture) => capture.workspace === 'decisions');
+    manifest.workspaceCaptures[captureIndex].h1.text = 'AI 建议';
+
+    const result = evaluateMissionControlUiEvidenceManifest(manifest);
+
+    expect(result.violations).toContainEqual({
+      code: 'H1_CONTRACT_INVALID',
+      path: `workspaceCaptures[${captureIndex}].h1.text`,
+      message: 'Workspace h1 must exactly match the registered heading: 建议与审批.',
+      actual: 'AI 建议',
+      expected: '建议与审批',
+    });
   });
 
   it('accepts policy-auto availability when the Main authority projection is internally consistent', () => {
@@ -247,5 +369,70 @@ describe('Mission Control Stage7 UI evidence contract', () => {
     manifest.minimumWindowCapture.executionLayout.tableClipped = true;
 
     expect(violationCodes(manifest)).toContain('MINIMUM_WINDOW_EXECUTION_CLIPPED');
+  });
+
+  it('fails when distinct store identities wrap identical business fact projections', () => {
+    const manifest = validManifest();
+    const isolation = manifest.storeIsolationCapture.isolation;
+    isolation.toBusinessFactProjection = isolation.fromBusinessFactProjection;
+    isolation.toBusinessFactsFingerprint = isolation.fromBusinessFactsFingerprint;
+    isolation.toBusinessFactSentinels = isolation.fromBusinessFactSentinels;
+
+    expect(violationCodes(manifest)).toContain('STORE_ISOLATION_FACTS_NOT_DISTINCT');
+  });
+
+  it('fails when a business fact projection is changed without updating its fingerprint', () => {
+    const manifest = validManifest();
+    manifest.storeIsolationCapture.isolation.toBusinessFactProjection.scope.asin = 'B0TAMPERED';
+
+    expect(violationCodes(manifest)).toContain('STORE_ISOLATION_FACT_FINGERPRINT_MISMATCH');
+  });
+
+  it('fails when store identity is mixed into the fact projection or a prior-store sentinel leaks', () => {
+    const manifest = validManifest();
+    const isolation = manifest.storeIsolationCapture.isolation;
+    isolation.toBusinessFactProjection.storeId = 'SHC002';
+    isolation.leakedBusinessFactSentinels = [isolation.fromBusinessFactSentinels[0]];
+
+    expect(violationCodes(manifest)).toEqual(expect.arrayContaining([
+      'STORE_ISOLATION_FACT_PROJECTION_INVALID',
+      'STORE_ISOLATION_BUSINESS_FACT_LEAK_DETECTED',
+    ]));
+  });
+
+  it('fails when identity fingerprints do not match the separately recorded profiles', () => {
+    const manifest = validManifest();
+    manifest.storeIsolationCapture.isolation.toIdentityFingerprint = HASH_A;
+
+    expect(violationCodes(manifest)).toContain('STORE_ISOLATION_IDENTITY_FINGERPRINT_INVALID');
+  });
+
+  it('fails when a browser profile identity contains only whitespace', () => {
+    const manifest = validManifest();
+    const isolation = manifest.storeIsolationCapture.isolation;
+    isolation.fromBrowserProfileId = '   ';
+    isolation.fromIdentityFingerprint = fingerprint({
+      browserProfileId: isolation.fromBrowserProfileId,
+      storeId: 'SHC001',
+    });
+
+    expect(violationCodes(manifest)).toContain('STORE_ISOLATION_PROFILE_NOT_DISTINCT');
+  });
+
+  it('fails when browser profile identities differ only by surrounding whitespace', () => {
+    const manifest = validManifest();
+    const isolation = manifest.storeIsolationCapture.isolation;
+    isolation.fromBrowserProfileId = ' preview-profile-shared ';
+    isolation.toBrowserProfileId = 'preview-profile-shared';
+    isolation.fromIdentityFingerprint = fingerprint({
+      browserProfileId: isolation.fromBrowserProfileId,
+      storeId: 'SHC001',
+    });
+    isolation.toIdentityFingerprint = fingerprint({
+      browserProfileId: isolation.toBrowserProfileId,
+      storeId: 'SHC002',
+    });
+
+    expect(violationCodes(manifest)).toContain('STORE_ISOLATION_PROFILE_NOT_DISTINCT');
   });
 });

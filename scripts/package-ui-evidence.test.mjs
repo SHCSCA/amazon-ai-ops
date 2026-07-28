@@ -14,6 +14,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import missionControlEvidenceContract from './mission-control-ui-evidence-contract.js';
 import evidenceModule from './package-ui-evidence.js';
 import runnerModule from './run-package-ui-evidence.js';
 
@@ -26,6 +27,7 @@ const requireFromLocalDb = createRequire(
   path.resolve('packages', 'local-db', 'package.json'),
 );
 const Database = requireFromLocalDb('better-sqlite3');
+const { MISSION_CONTROL_WORKSPACE_CONTRACT } = missionControlEvidenceContract;
 
 afterAll(() => {
   rmSync(CURRENT_ARTIFACT_ROOT, { force: true, recursive: true });
@@ -2901,6 +2903,20 @@ describe('package workspace runtime contract', () => {
       { workspace: 'policy', subview: 'rules', label: '策略与风控', heading: '策略与风控', tabs: ['rules'] },
       { workspace: 'settings', subview: 'ai-and-local', label: '系统设置', heading: '店铺与运行设置', tabs: ['ai-and-local', 'scheduler', 'delivery'] },
     ]);
+  });
+
+  it('keeps package headings and tabs exactly aligned with the source Stage7 evidence contract', () => {
+    expect(EXPECTED_PACKAGE_UI_WORKSPACES.map(({ workspace, subview, heading, tabs }) => ({
+      workspace,
+      subview,
+      heading,
+      tabs,
+    }))).toEqual(Object.entries(MISSION_CONTROL_WORKSPACE_CONTRACT).map(([workspace, contract]) => ({
+      workspace,
+      subview: contract.defaultIntent.subview,
+      heading: contract.heading,
+      tabs: [...contract.tabs],
+    })));
   });
 
   it('locks the read-only production scheduler subview without duplicating the settings workspace matrix entry', () => {

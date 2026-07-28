@@ -561,7 +561,7 @@ export function ExperimentsWorkspace({
           ? `${selected.missionId} · ${selected.productId || '店铺级'} · ${selected.adEntityId || '未绑定广告对象'}`
           : '把每次经营干预记录成可证伪假设、单一变量、观察窗口和追加式结果。'}
         pageId="experiments-ledger"
-        title={selected?.name ?? '经营实验'}
+        title="经营实验"
         task={<TaskBanner compact description={selected?.hypothesis ?? '先定义基线、唯一变量和守护栏，再启动观察；实验记录只追加修正，不覆盖历史。'} eyebrow={selected ? `EXPERIMENT · ${selected.id}` : 'CAUSAL EXPERIMENT'} primaryAction={{ actionId: 'experiments.experiment.create', disabled: !actionReady('experiments.experiment.create') || busy || !storeContext, disabledReason: blockedReason, label: '新建 Experiment', onClick: () => storeContext && setEditor({ record: null, draft: draftFor(storeContext) }) }} secondaryActions={onInspectBoundary ? [{ actionId: 'experiment-boundary', label: '接入边界', onClick: onInspectBoundary }] : []} status={<span className="experiment-authority" data-state={viewReady ? expectedCapability : 'BLOCKED'}>{viewReady ? previewMode ? '显式开发预览 · Amazon US / USD' : 'Main / SQLite · Amazon US / USD' : '已阻断'}</span>} title={selected?.name ?? '经营实验'} tone={blocked ? 'blocked' : 'neutral'}>{previewMode && <p className="experiment-preview-note">内存 adapter · 不写入真实广告</p>}</TaskBanner>}
         summary={<SummaryStrip ariaLabel="经营实验当前权威上下文" items={[
           { id: 'hypothesis', label: '假设 H1', value: selected?.hypothesis ?? '等待选择实验' },

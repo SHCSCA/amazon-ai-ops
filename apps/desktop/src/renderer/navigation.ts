@@ -117,7 +117,7 @@ export const DEFAULT_WORKSPACE_INTENTS = {
   execution: { workspace: 'execution', subview: 'live' },
   memory: { workspace: 'memory', subview: 'timeline' },
   objects: LEGACY_ROUTE_INTENTS['product-management'],
-  collection: LEGACY_ROUTE_INTENTS['data-collection'],
+  collection: LEGACY_ROUTE_INTENTS['operation-scope'],
   policy: { workspace: 'policy', subview: 'rules' },
   settings: LEGACY_ROUTE_INTENTS.settings,
 } as const satisfies Record<PrimaryWorkspace, NavigationIntent>;

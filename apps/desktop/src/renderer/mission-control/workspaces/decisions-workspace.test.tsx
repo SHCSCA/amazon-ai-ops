@@ -53,6 +53,8 @@ describe('DecisionsWorkspace', () => {
       view={view}
     />);
     expect(markup).toContain(`data-view="${view}"`);
+    expect(markup.match(/<h1\b/g)).toHaveLength(1);
+    expect(markup).toContain(`<h1 id="workspace-page-${view.replace('/', '-')}-title">建议与审批</h1>`);
     expect(markup).toContain(title);
     expect(markup).toContain(marker);
     expect(markup).toContain('Amazon US');

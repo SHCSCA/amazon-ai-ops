@@ -14,6 +14,16 @@
   outline-offset: 2px;
 }
 
+.mission-control-workspace-root .execution-page-title {
+  margin: 0;
+  padding: 0 1px;
+  color: #172033;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -.025em;
+  line-height: 1.2;
+}
+
 .mission-control-workspace-root .execution-preview-banner {
   display: flex;
   align-items: center;
@@ -664,7 +674,7 @@
   .mission-control-workspace-root .execution-contract-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mission-control-workspace-root .execution-contract-strip > div:nth-child(2) { border-right: 0; }
   .mission-control-workspace-root .execution-contract-strip > div:nth-child(-n+2) { border-bottom: 1px solid #e6ebf2; }
-  .mission-control-workspace-root .execution-cockpit--prototype { grid-template-columns: minmax(220px, .65fr) minmax(470px, 1.35fr); }
+  .mission-control-workspace-root .execution-cockpit--prototype { grid-template-columns: minmax(0, 1fr); }
   .mission-control-workspace-root .execution-browser-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mission-control-workspace-root .execution-action-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mission-control-workspace-root .execution-action-panel > *:last-child { grid-column: 1 / -1; border-top: 1px solid #e5eaf1; }

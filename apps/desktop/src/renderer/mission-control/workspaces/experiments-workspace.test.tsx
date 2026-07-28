@@ -37,6 +37,8 @@ describe('ExperimentsWorkspace', () => {
       storeContext={context}
     />);
     expect(markup).toContain('data-canonical-surface="experiments"');
+    expect(markup.match(/<h1\b/g)).toHaveLength(1);
+    expect(markup).toContain('<h1 id="workspace-page-experiments-ledger-title">经营实验</h1>');
     expect(markup).toContain('经营实验');
     expect(markup).toContain('Amazon US / USD');
     expect(markup).toContain('新建 Experiment');

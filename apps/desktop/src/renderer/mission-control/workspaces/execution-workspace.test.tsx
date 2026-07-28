@@ -174,6 +174,29 @@ describe('execution workspace', () => {
     expect(markup).not.toContain(['15', '%'].join(''));
   });
 
+  it('renders one visible page h1 named 实时执行 in both live and blocked states', () => {
+    const liveMarkup = renderToStaticMarkup(<ExecutionWorkspace
+      apiOverride={createPreviewExecutionAuthorityApi()}
+      blockedReason="仅开发预览"
+      previewEnabled
+      storeContext={context}
+    />);
+    const blockedMarkup = renderToStaticMarkup(<ExecutionWorkspace
+      blockedReason="Execution Main Authority 未接入"
+      previewEnabled={false}
+      storeContext={context}
+    />);
+    const css = readFileSync(new URL('./execution-workspace.css', import.meta.url), 'utf8');
+
+    for (const markup of [liveMarkup, blockedMarkup]) {
+      expect(markup.match(/<h1(?:\s[^>]*)?>/g) ?? []).toHaveLength(1);
+      expect(markup).toContain('<h1 class="execution-page-title">实时执行</h1>');
+    }
+    expect(liveMarkup).toContain('<h2>Prime Day 后 7 日利润守护</h2>');
+    expect(css).toMatch(/\.execution-page-title\s*\{[\s\S]*?font-size:\s*20px/);
+    expect(css).toMatch(/\.execution-mission-header h2\s*\{/);
+  });
+
   it('fails closed when the production preload API is absent', () => {
     const markup = renderToStaticMarkup(<ExecutionWorkspace
       blockedReason="Execution Main Authority 未接入"
@@ -282,6 +305,7 @@ describe('execution workspace', () => {
     expect(css).toMatch(/\.execution-cockpit\s*\{[\s\S]*?grid-template-columns:/);
     expect(css).toMatch(/@container execution-workspace \(max-width:\s*1120px\)/);
     expect(css).toMatch(/@container execution-workspace \(max-width:\s*820px\)/);
+    expect(css).toMatch(/@container execution-workspace \(max-width:\s*980px\)[\s\S]*?\.execution-cockpit--prototype\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\);\s*\}/);
     expect(css).toMatch(/\.execution-object-grid\s*\{[\s\S]*?overflow-x:\s*auto/);
     expect(css).toMatch(/\.execution-console__body\s*\{[\s\S]*?overflow:\s*auto/);
   });
