@@ -16,6 +16,7 @@ const require = createRequire(import.meta.url);
 const {
   PORTABLE_START_TIMEOUT_MS,
   TASKKILL_COMMAND_TIMEOUT_MS,
+  WINDOWS_PROCESS_COMMAND_ATTEMPTS,
   WINDOWS_PROCESS_COMMAND_TIMEOUT_MS,
   cleanupVerifiedProcessTrees,
   packagedRendererPathForExecutable,
@@ -451,10 +452,12 @@ describe('package launch smoke isolated runtime contract', () => {
   it('uses bounded PowerShell process inspection without CIM and bounds taskkill too', () => {
     const source = readFileSync('scripts/smoke-package-launch.js', 'utf8');
     expect(WINDOWS_PROCESS_COMMAND_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(WINDOWS_PROCESS_COMMAND_ATTEMPTS).toBe(2);
     expect(TASKKILL_COMMAND_TIMEOUT_MS).toBeGreaterThan(0);
     expect(source.match(/spawnSync\(POWERSHELL_EXECUTABLE/g)).toHaveLength(1);
     expect(source).toContain('timeout: WINDOWS_PROCESS_COMMAND_TIMEOUT_MS');
     expect(source).toContain('terminateTimedOutHelper(result)');
+    expect(source).toContain("Get-Process -Name 'AmazonAIOpsAgent*'");
     expect(source).not.toContain('Get-CimInstance');
     expect(source.match(/spawnSync\('taskkill\.exe'/g)).toHaveLength(1);
     expect(source).toContain('timeout: TASKKILL_COMMAND_TIMEOUT_MS');

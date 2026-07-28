@@ -11,10 +11,8 @@
     "build:preload": "node scripts/build-preload.js && node -e \"require('fs').copyFileSync('dist/preload/index.cjs','dist/preload/index.js')\"",
     "build:renderer": "vite build",
     "stage:playwright-chromium": "node scripts/stage-playwright-chromium.js",
-    "prepare:native:electron": "set npm_execpath=&& set NPM_CLI_JS=&& pnpm --filter @amazon-ai-ops/desktop exec electron-builder install-app-deps",
-    "prebuild": "pnpm run prepare:native:electron",
-    "build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run stage:playwright-chromium && electron-builder",
-    "build:win": "npm run build",
+    "build": "node ../../scripts/build-windows-package.js",
+    "build:win": "node ../../scripts/build-windows-package.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -21,6 +21,7 @@ const isolatedUserDataRoot = path.join('D:\\Temp', 'amazon-ai-ops-package-launch
 const PORTABLE_START_TIMEOUT_MS = 300000;
 const UNPACKED_START_TIMEOUT_MS = 60000;
 const WINDOWS_PROCESS_COMMAND_TIMEOUT_MS = 10000;
+const WINDOWS_PROCESS_COMMAND_ATTEMPTS = 2;
 const TASKKILL_COMMAND_TIMEOUT_MS = 10000;
 const PROCESS_CLEANUP_ATTEMPTS = 20;
 const PROCESS_CLEANUP_INTERVAL_MS = 250;
@@ -397,14 +398,18 @@ function terminateTimedOutHelper(result) {
 }
 
 function runPowerShell(script) {
-  const result = spawnSync(POWERSHELL_EXECUTABLE, ['-NoProfile', '-NonInteractive', '-Command', script], {
-    encoding: 'utf8',
-    windowsHide: true,
-    timeout: WINDOWS_PROCESS_COMMAND_TIMEOUT_MS,
-    killSignal: 'SIGKILL',
-    maxBuffer: 1024 * 1024,
-  });
-  terminateTimedOutHelper(result);
+  let result;
+  for (let attempt = 1; attempt <= WINDOWS_PROCESS_COMMAND_ATTEMPTS; attempt += 1) {
+    result = spawnSync(POWERSHELL_EXECUTABLE, ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: WINDOWS_PROCESS_COMMAND_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+      maxBuffer: 1024 * 1024,
+    });
+    terminateTimedOutHelper(result);
+    if (result?.error?.code !== 'ETIMEDOUT') return result;
+  }
   return result;
 }
 
@@ -446,7 +451,7 @@ function parseWindowsProcessSnapshot(result, label = 'powershell') {
 function windowsDescendants(pid) {
   const script = `
 $rootPid = ${Number(pid)}
-$records = foreach ($item in @(Get-Process -ErrorAction SilentlyContinue)) {
+$records = foreach ($item in @(Get-Process -Name 'AmazonAIOpsAgent*' -ErrorAction SilentlyContinue)) {
   $parentPid = 0
   $executablePath = $null
   $startedAt = $null
@@ -1519,6 +1524,7 @@ module.exports = {
   PORTABLE_START_TIMEOUT_MS,
   PROCESS_CLEANUP_ATTEMPTS,
   TASKKILL_COMMAND_TIMEOUT_MS,
+  WINDOWS_PROCESS_COMMAND_ATTEMPTS,
   WINDOWS_PROCESS_COMMAND_TIMEOUT_MS,
   cleanupVerifiedProcessTrees,
   normalizedExecutablePath,

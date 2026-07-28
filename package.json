@@ -6,7 +6,7 @@
     "dev": "pnpm --filter @amazon-ai-ops/desktop run dev",
     "build": "pnpm --filter @amazon-ai-ops/desktop run build",
     "build:win": "pnpm --filter @amazon-ai-ops/desktop run build:win",
-    "prepare:native:node": "pnpm --filter @amazon-ai-ops/local-db rebuild",
+    "prepare:native:node": "node scripts/prepare-native-runtime.js --mode=node",
     "pretest": "pnpm run prepare:native:node",
     "test": "vitest run",
     "typecheck": "pnpm -r run typecheck",

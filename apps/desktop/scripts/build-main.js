@@ -27,4 +27,4 @@ const args = [
 ];
 
 console.log('Building main process...');
-child_process.execFileSync('node', args, { stdio: 'inherit', cwd: desktopDir });
+child_process.execFileSync(process.execPath, args, { stdio: 'inherit', cwd: desktopDir });
