@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   collectRowCounts,
+  evaluateBusinessRowPreservation,
   loadLocalDbRuntime,
   normalizeSha256,
   readAppliedVersion,
@@ -54,10 +55,18 @@ function verifyS7MigrationBackupRestore(manifestPath) {
 
   const Database = requireSqlite();
   let upgraded;
+  let evaluatedBusinessRowPreservation;
   try {
     upgraded = new Database(manifest.workingDatabase.path, { readonly: true, fileMustExist: true });
     const upgradedIntegrity = upgraded.pragma('integrity_check', { simple: true });
     const foreignKeyViolations = upgraded.pragma('foreign_key_check');
+    const upgradedRowCounts = collectRowCounts(upgraded);
+    evaluatedBusinessRowPreservation = evaluateBusinessRowPreservation(
+      upgraded,
+      manifest.source?.tableRowCounts,
+      upgradedRowCounts,
+      manifest.source?.listingMergeBaseline,
+    );
     const appliedVersions = upgraded.prepare(`
       SELECT version FROM schema_migrations WHERE status = 'applied' ORDER BY version
     `).all().map((row) => Number(row.version));
@@ -85,6 +94,19 @@ function verifyS7MigrationBackupRestore(manifestPath) {
   } finally {
     if (upgraded?.open) upgraded.close();
   }
+  add(
+    'BUSINESS_ROW_PRESERVATION_RECOMPUTED',
+    evaluatedBusinessRowPreservation?.passed === true,
+    `failures=${JSON.stringify(evaluatedBusinessRowPreservation?.failures || null)}`,
+  );
+  add(
+    'BUSINESS_ROW_TRANSFER_PROOF_BOUND',
+    sameJsonValue(
+      evaluatedBusinessRowPreservation,
+      manifest.businessRowPreservation,
+    ),
+    'manifest preservation proof matches the independently recomputed upgraded database proof',
+  );
 
   let restored;
   try {
@@ -108,7 +130,10 @@ function verifyS7MigrationBackupRestore(manifestPath) {
     && migrationRecords.every((record, index) => Number(record.version) === index + 1 && record.status === 'applied'),
   `records=${migrationRecords.length}`);
   add('BUSINESS_ROWS_PRESERVED', Array.isArray(manifest.preservationFailures)
-    && manifest.preservationFailures.length === 0, `failures=${JSON.stringify(manifest.preservationFailures || null)}`);
+    && manifest.preservationFailures.length === 0
+    && manifest.businessRowPreservation?.passed === true
+    && evaluatedBusinessRowPreservation?.passed === true,
+  `failures=${JSON.stringify(manifest.preservationFailures || null)}`);
 
   const passedCount = checks.filter((check) => check.passed).length;
   return {
@@ -156,6 +181,11 @@ function sameNumericRecord(left, right) {
   const rightKeys = Object.keys(right).sort();
   return leftKeys.length === rightKeys.length
     && leftKeys.every((key, index) => key === rightKeys[index] && Number(left[key]) === Number(right[key]));
+}
+
+function sameJsonValue(left, right) {
+  if (left === undefined || right === undefined) return false;
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function samePath(left, right) {

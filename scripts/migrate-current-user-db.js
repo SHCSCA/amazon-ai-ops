@@ -1,10 +1,12 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const TARGET_VERSION = 9;
 const SCRIPT_SCHEMA_VERSION = 1;
+const INSPECTION_TEMP_PREFIX = `amazon-ai-ops-s7-inspection-${process.pid}-`;
 let loadedLocalDbRuntime;
 
 function parseOfflineMigrationArgs(argv) {
@@ -47,10 +49,13 @@ function inspectOfflineMigration(args) {
   }
   assertRegularFile(sourcePath, 'source database');
   assertOfflineSource(sourcePath);
+  const sourceDirectoryEntries = readDirectoryEntries(path.dirname(sourcePath));
   const actualSha256 = sha256File(sourcePath);
   if (actualSha256 !== expectedSha256) {
     throw new Error(`Source database SHA-256 mismatch: expected=${expectedSha256}, actual=${actualSha256}`);
   }
+  assertOfflineSource(sourcePath);
+  const sourceSizeBytes = fs.statSync(sourcePath).size;
   if (isSameOrContainedPath(path.dirname(sourcePath), workDir)) {
     throw new Error('--work-dir must be outside the source database directory.');
   }
@@ -60,9 +65,22 @@ function inspectOfflineMigration(args) {
       throw new Error('--work-dir must be a regular non-link directory.');
     }
   }
-  const Database = requireSqlite();
-  const inspected = new Database(sourcePath, { readonly: true, fileMustExist: true });
+
+  const inspectionDirectory = createControlledInspectionDirectory(path.dirname(sourcePath));
+  const inspectionDatabasePath = path.join(inspectionDirectory.path, 'source-inspection-copy.db');
+  let inspected;
+  let inspectionResult;
+  let inspectionError;
+  let closeError;
+  let cleanupError;
   try {
+    fs.copyFileSync(sourcePath, inspectionDatabasePath, fs.constants.COPYFILE_EXCL);
+    const inspectionCopySha256 = sha256File(inspectionDatabasePath);
+    if (inspectionCopySha256 !== actualSha256) {
+      throw new Error('Inspection database copy SHA-256 does not match the explicitly bound source.');
+    }
+    const Database = requireSqlite();
+    inspected = new Database(inspectionDatabasePath, { readonly: true, fileMustExist: true });
     const integrityCheck = inspected.pragma('integrity_check', { simple: true });
     if (integrityCheck !== 'ok') throw new Error(`Source database integrity_check returned: ${integrityCheck}`);
     const sourceVersion = readAppliedVersion(inspected);
@@ -70,6 +88,7 @@ function inspectOfflineMigration(args) {
       throw new Error(`Source database is already at migration ${sourceVersion}; no offline upgrade is pending.`);
     }
     const sourceTableRowCounts = collectRowCounts(inspected);
+    const listingMergeBaseline = collectListingMergeBaseline(inspected);
     const workingDatabasePath = path.join(
       workDir,
       `${path.basename(sourcePath, path.extname(sourcePath))}.upgrade-to-v${TARGET_VERSION}.db`,
@@ -89,17 +108,18 @@ function inspectOfflineMigration(args) {
       if (fs.existsSync(candidate)) throw new Error(`${label} already exists: ${candidate}`);
       if (samePath(candidate, sourcePath)) throw new Error(`${label} must not overwrite the source database.`);
     }
-    return {
+    inspectionResult = {
       kind: 's7-offline-db-upgrade-plan',
       schemaVersion: SCRIPT_SCHEMA_VERSION,
       mode: args.execute ? 'execute' : 'dry-run',
       source: {
         path: sourcePath,
         sha256: actualSha256,
-        sizeBytes: fs.statSync(sourcePath).size,
+        sizeBytes: sourceSizeBytes,
         integrityCheck,
         version: sourceVersion,
         tableRowCounts: sourceTableRowCounts,
+        listingMergeBaseline,
       },
       targetVersion: TARGET_VERSION,
       workDir,
@@ -107,9 +127,48 @@ function inspectOfflineMigration(args) {
       restoreDatabasePath,
       manifestPath,
     };
+  } catch (error) {
+    inspectionError = error;
   } finally {
-    inspected.close();
+    if (inspected) {
+      try {
+        inspected.close();
+      } catch (error) {
+        closeError = error;
+      }
+    }
+    try {
+      removeControlledInspectionDirectory(inspectionDirectory);
+    } catch (error) {
+      cleanupError = error;
+    }
   }
+
+  let sourceSafetyError;
+  try {
+    assertRegularFile(sourcePath, 'source database');
+    assertOfflineSource(sourcePath);
+    const finalSourceSha256 = sha256File(sourcePath);
+    if (finalSourceSha256 !== actualSha256) {
+      throw new Error(`Source database changed during read-only inspection: ${finalSourceSha256}`);
+    }
+    const finalSourceDirectoryEntries = readDirectoryEntries(path.dirname(sourcePath));
+    if (JSON.stringify(finalSourceDirectoryEntries) !== JSON.stringify(sourceDirectoryEntries)) {
+      throw new Error(
+        `Source database directory changed during read-only inspection: before=${JSON.stringify(sourceDirectoryEntries)}, `
+        + `after=${JSON.stringify(finalSourceDirectoryEntries)}`,
+      );
+    }
+  } catch (error) {
+    sourceSafetyError = error;
+  }
+
+  const failures = [inspectionError, closeError, cleanupError, sourceSafetyError].filter(Boolean);
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, `Offline source inspection failed: ${failures.map((error) => error.message).join(' | ')}`);
+  }
+  return inspectionResult;
 }
 
 function executeOfflineMigration(args) {
@@ -143,10 +202,13 @@ function executeOfflineMigration(args) {
     }
 
     const upgradedRowCounts = collectRowCounts(upgraded);
-    const preservationFailures = Object.entries(plan.source.tableRowCounts)
-      .filter(([table]) => table !== 'schema_migrations')
-      .filter(([table, count]) => !(table in upgradedRowCounts) || upgradedRowCounts[table] < count)
-      .map(([table, count]) => ({ table, before: count, after: upgradedRowCounts[table] ?? null }));
+    const businessRowPreservation = evaluateBusinessRowPreservation(
+      upgraded,
+      plan.source.tableRowCounts,
+      upgradedRowCounts,
+      plan.source.listingMergeBaseline,
+    );
+    const preservationFailures = businessRowPreservation.failures;
     if (preservationFailures.length > 0) {
       throw new Error(`Business row preservation failed: ${JSON.stringify(preservationFailures)}`);
     }
@@ -204,6 +266,7 @@ function executeOfflineMigration(args) {
         integrityCheck: restoredIntegrityCheck,
         tableRowCounts: restoredRowCounts,
       },
+      businessRowPreservation,
       preservationFailures,
     };
   } finally {
@@ -288,6 +351,68 @@ function assertOfflineSource(sourcePath) {
   }
 }
 
+function createControlledInspectionDirectory(sourceDirectoryPath) {
+  const tempRoot = fs.realpathSync(os.tmpdir());
+  const sourceDirectory = fs.realpathSync(sourceDirectoryPath);
+  if (isSameOrContainedPath(sourceDirectory, tempRoot)) {
+    throw new Error(`System temporary directory must be outside the source database directory: ${tempRoot}`);
+  }
+  const createdPath = fs.mkdtempSync(path.join(tempRoot, INSPECTION_TEMP_PREFIX));
+  const resolvedPath = path.resolve(createdPath);
+  const stat = fs.lstatSync(resolvedPath);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Controlled inspection path is not a regular directory: ${resolvedPath}`);
+  }
+  const realPath = fs.realpathSync(resolvedPath);
+  if (!samePath(realPath, resolvedPath)
+    || samePath(tempRoot, resolvedPath)
+    || !isSameOrContainedPath(tempRoot, resolvedPath)
+    || !path.basename(resolvedPath).startsWith(INSPECTION_TEMP_PREFIX)) {
+    throw new Error(`Controlled inspection path failed mkdtemp containment validation: ${resolvedPath}`);
+  }
+  return Object.freeze({
+    path: resolvedPath,
+    realPath,
+    tempRoot,
+    device: stat.dev,
+    inode: stat.ino,
+    birthtimeMs: stat.birthtimeMs,
+  });
+}
+
+function removeControlledInspectionDirectory(inspectionDirectory) {
+  if (!inspectionDirectory || typeof inspectionDirectory !== 'object') {
+    throw new Error('Controlled inspection cleanup requires the exact mkdtemp identity.');
+  }
+  const targetPath = path.resolve(String(inspectionDirectory.path || ''));
+  const tempRoot = fs.realpathSync(os.tmpdir());
+  if (!samePath(tempRoot, inspectionDirectory.tempRoot)
+    || samePath(tempRoot, targetPath)
+    || !isSameOrContainedPath(tempRoot, targetPath)
+    || !path.basename(targetPath).startsWith(INSPECTION_TEMP_PREFIX)
+    || !samePath(targetPath, inspectionDirectory.realPath)) {
+    throw new Error(`Refusing recursive cleanup outside the controlled mkdtemp identity: ${targetPath}`);
+  }
+  const stat = fs.lstatSync(targetPath);
+  const realPath = fs.realpathSync(targetPath);
+  if (stat.isSymbolicLink()
+    || !stat.isDirectory()
+    || !samePath(realPath, inspectionDirectory.realPath)
+    || stat.dev !== inspectionDirectory.device
+    || stat.ino !== inspectionDirectory.inode
+    || stat.birthtimeMs !== inspectionDirectory.birthtimeMs) {
+    throw new Error(`Refusing recursive cleanup of a replaced inspection directory: ${targetPath}`);
+  }
+  fs.rmSync(targetPath, { recursive: true, force: false });
+  if (fs.existsSync(targetPath)) {
+    throw new Error(`Controlled inspection directory cleanup did not complete: ${targetPath}`);
+  }
+}
+
+function readDirectoryEntries(directoryPath) {
+  return fs.readdirSync(directoryPath).sort();
+}
+
 function readAppliedVersion(database) {
   const exists = database.prepare(`
     SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'
@@ -309,6 +434,158 @@ function collectRowCounts(database) {
     table,
     Number(database.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)}`).get().count),
   ]));
+}
+
+function evaluateBusinessRowPreservation(
+  database,
+  sourceRowCounts,
+  upgradedRowCounts,
+  sourceListingMergeBaseline = { migration4MergedDuplicateRows: 0, resolvedMergeRecords: 0 },
+) {
+  const listingCurrentToHistoryTransfer = evaluateListingCurrentToHistoryTransfer(
+    database,
+    sourceRowCounts,
+    upgradedRowCounts,
+    sourceListingMergeBaseline,
+  );
+  const provenTableReductions = new Set();
+  if (listingCurrentToHistoryTransfer.applied && listingCurrentToHistoryTransfer.passed) {
+    provenTableReductions.add('listing_content');
+  }
+  const failures = Object.entries(sourceRowCounts)
+    .filter(([table]) => table !== 'schema_migrations')
+    .filter(([table, count]) => {
+      if (provenTableReductions.has(table)) return false;
+      return !(table in upgradedRowCounts) || upgradedRowCounts[table] < count;
+    })
+    .map(([table, count]) => ({ table, before: count, after: upgradedRowCounts[table] ?? null }));
+  return {
+    passed: failures.length === 0,
+    failures,
+    listingCurrentToHistoryTransfer,
+  };
+}
+
+function evaluateListingCurrentToHistoryTransfer(
+  database,
+  sourceRowCounts,
+  upgradedRowCounts,
+  sourceListingMergeBaseline,
+) {
+  const sourceCurrentRows = numericRowCount(sourceRowCounts, 'listing_content');
+  const upgradedCurrentRows = numericRowCount(upgradedRowCounts, 'listing_content');
+  const sourceHistoryRows = numericRowCount(sourceRowCounts, 'listing_content_versions') ?? 0;
+  const upgradedHistoryRows = numericRowCount(upgradedRowCounts, 'listing_content_versions');
+  const applied = sourceCurrentRows !== null
+    && upgradedCurrentRows !== null
+    && upgradedCurrentRows < sourceCurrentRows;
+  const currentRowsMoved = applied ? sourceCurrentRows - upgradedCurrentRows : 0;
+  const historyRowsAdded = upgradedHistoryRows === null
+    ? null
+    : upgradedHistoryRows - sourceHistoryRows;
+
+  const sourceMigration4MergedDuplicateRows = numericBaselineCount(
+    sourceListingMergeBaseline,
+    'migration4MergedDuplicateRows',
+  );
+  const sourceResolvedMergeRecords = numericBaselineCount(
+    sourceListingMergeBaseline,
+    'resolvedMergeRecords',
+  );
+  let upgradedMigration4MergedDuplicateRows = null;
+  let upgradedResolvedMergeRecords = null;
+  if (applied) {
+    const upgradedBaseline = collectListingMergeBaseline(database);
+    upgradedMigration4MergedDuplicateRows = upgradedBaseline.migration4MergedDuplicateRows;
+    upgradedResolvedMergeRecords = upgradedBaseline.resolvedMergeRecords;
+  }
+  const migration4MergedDuplicateRowsAdded = upgradedMigration4MergedDuplicateRows === null
+    || sourceMigration4MergedDuplicateRows === null
+    ? null
+    : upgradedMigration4MergedDuplicateRows - sourceMigration4MergedDuplicateRows;
+  const resolvedMergeRecordsAdded = upgradedResolvedMergeRecords === null
+    || sourceResolvedMergeRecords === null
+    ? null
+    : upgradedResolvedMergeRecords - sourceResolvedMergeRecords;
+
+  const passed = !applied || (
+    currentRowsMoved > 0
+    && historyRowsAdded === currentRowsMoved
+    && migration4MergedDuplicateRowsAdded === currentRowsMoved
+    && resolvedMergeRecordsAdded === currentRowsMoved
+  );
+  return {
+    applied,
+    passed,
+    sourceCurrentRows,
+    upgradedCurrentRows,
+    currentRowsMoved,
+    sourceHistoryRows,
+    upgradedHistoryRows,
+    historyRowsAdded,
+    sourceMigration4MergedDuplicateRows,
+    upgradedMigration4MergedDuplicateRows,
+    migration4MergedDuplicateRowsAdded,
+    sourceResolvedMergeRecords,
+    upgradedResolvedMergeRecords,
+    resolvedMergeRecordsAdded,
+  };
+}
+
+function collectListingMergeBaseline(database) {
+  let migration4MergedDuplicateRows = 0;
+  const migrationTableExists = database.prepare(`
+    SELECT 1 FROM sqlite_master
+    WHERE type = 'table' AND name = 'schema_migrations'
+  `).get();
+  if (migrationTableExists) {
+    const migration = database.prepare(`
+      SELECT result_json AS resultJson
+      FROM schema_migrations
+      WHERE version = 4 AND status = 'applied'
+    `).get();
+    if (migration) {
+      let parsed;
+      try {
+        parsed = JSON.parse(migration.resultJson);
+      } catch {
+        throw new Error('Applied migration 4 contains malformed result_json.');
+      }
+      migration4MergedDuplicateRows = numericBaselineCount(parsed, 'mergedDuplicateRows');
+      if (migration4MergedDuplicateRows === null) {
+        throw new Error('Applied migration 4 contains an invalid mergedDuplicateRows count.');
+      }
+    }
+  }
+
+  let resolvedMergeRecords = 0;
+  const quarantineTableExists = database.prepare(`
+    SELECT 1 FROM sqlite_master
+    WHERE type = 'table' AND name = 'store_migration_quarantine'
+  `).get();
+  if (quarantineTableExists) {
+    resolvedMergeRecords = Number(database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM store_migration_quarantine
+      WHERE migration_version = 4
+        AND source_table = 'listing_content'
+        AND reason = 'duplicate_normalized_asin_merged'
+        AND status = 'resolved'
+    `).get().count);
+  }
+  return { migration4MergedDuplicateRows, resolvedMergeRecords };
+}
+
+function numericRowCount(rowCounts, table) {
+  if (!rowCounts || typeof rowCounts !== 'object' || !(table in rowCounts)) return null;
+  const value = Number(rowCounts[table]);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function numericBaselineCount(value, key) {
+  if (!value || typeof value !== 'object' || !(key in value)) return null;
+  const count = Number(value[key]);
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
 }
 
 function normalizeSha256(value, label) {
@@ -380,6 +657,7 @@ function main() {
 module.exports = {
   TARGET_VERSION,
   collectRowCounts,
+  evaluateBusinessRowPreservation,
   executeOfflineMigration,
   inspectOfflineMigration,
   loadLocalDbRuntime,
