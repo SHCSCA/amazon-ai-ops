@@ -62,6 +62,29 @@ describe('store IPC boundary', () => {
     expect(onStoreChanged).toHaveBeenCalledWith(result);
   });
 
+  it('returns the complete Renderer-safe active workspace view through a read-only channel', () => {
+    const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
+    const activeView = {
+      store: { storeId: 'store-one', marketplace: 'US', currency: 'USD' },
+      context: activeContext,
+      connections: [{ id: 'connection-one', storeId: 'store-one', provider: 'lingxing' }],
+      sessions: [],
+    };
+    const coordinator = createCoordinator();
+    vi.mocked(coordinator.getActiveStoreWorkspaceView).mockReturnValue(activeView as never);
+
+    registerStoreIpcHandlers({
+      handle: (channel, handler) => handlers.set(channel, handler),
+    }, coordinator);
+
+    expect(handlers.get('stores:get-active-workspace-view')?.({}, {
+      storeId: 'renderer-cannot-select-authority',
+      password: 'renderer-cannot-send-secrets',
+    })).toBe(activeView);
+    expect(coordinator.getActiveStoreWorkspaceView).toHaveBeenCalledOnce();
+    expect(coordinator.createConnection).not.toHaveBeenCalled();
+  });
+
   it('rejects non-object CRUD payloads before repository access', () => {
     const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
     const coordinator = {

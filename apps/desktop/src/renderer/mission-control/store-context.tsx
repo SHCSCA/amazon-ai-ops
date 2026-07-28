@@ -14,6 +14,7 @@ import {
   type CreateStoreInput,
   type RestoreStoreInput,
   type StoreContextEnvelope,
+  type StoreConnection,
   type StoreId,
   type StoreRecord,
   type StoreWorkspaceView,
@@ -50,6 +51,7 @@ export interface MissionControlStoreContextValue extends MissionControlStoreStat
   updateStore(input: UpdateStoreInput): Promise<StoreRecord>;
   archiveStore(input: ArchiveStoreInput): Promise<StoreRecord>;
   restoreStore(input: RestoreStoreInput): Promise<StoreRecord>;
+  bindLingxingConnection(accountLabel: string): Promise<StoreConnection>;
 }
 
 export type MissionControlStoreAction =
@@ -156,28 +158,24 @@ export function MissionControlStoreContextProvider({
   }, [api, dispatch]);
 
   const readActiveView = useCallback(async (): Promise<StoreWorkspaceView | null> => {
-    const first = await api.getActiveStoreContext();
-    if (!first) return null;
-    const store = await api.getStore(first.storeId);
-    const confirmed = await api.getActiveStoreContext();
-    if (!confirmed || missionControlContextKey(first) !== missionControlContextKey(confirmed)) {
-      return null;
-    }
-    return { store, context: confirmed, connections: [], sessions: [] };
+    return api.getActiveStoreWorkspaceView();
   }, [api]);
 
-  const resyncAuthority = useCallback(async (phaseWhenMissing: MissionControlStorePhase = 'needs-selection') => {
+  const resyncAuthority = useCallback(async (
+    phaseWhenMissing: MissionControlStorePhase = 'needs-selection',
+  ): Promise<StoreWorkspaceView | null> => {
     const sequence = ++resyncSequenceRef.current;
     let view: StoreWorkspaceView | null;
     try {
       view = await readActiveView();
     } catch (error) {
-      if (!mountedRef.current || sequence !== resyncSequenceRef.current) return;
+      if (!mountedRef.current || sequence !== resyncSequenceRef.current) return null;
       throw error;
     }
-    if (!mountedRef.current || sequence !== resyncSequenceRef.current) return;
+    if (!mountedRef.current || sequence !== resyncSequenceRef.current) return null;
     if (view) dispatch({ type: 'authority', view });
     else dispatch({ type: 'clear-authority', phase: phaseWhenMissing });
+    return view;
   }, [dispatch, readActiveView]);
 
   useEffect(() => {
@@ -298,6 +296,42 @@ export function MissionControlStoreContextProvider({
     return store;
   }, [api, refreshStores]);
 
+  const bindLingxingConnection = useCallback(async (accountLabel: string) => {
+    const activeView = stateRef.current.activeView;
+    if (!activeView) throw new Error('当前没有 Main 授权店铺，无法绑定领星连接。');
+    const normalizedAccountLabel = accountLabel.trim();
+    if (!normalizedAccountLabel) throw new Error('请输入领星用户名后再绑定。');
+    const existing = activeView.connections.find((connection) => connection.provider === 'lingxing');
+    if (existing?.accountLabel?.trim() === normalizedAccountLabel) return existing;
+    const changed = existing
+      ? await api.updateStoreConnection({
+        id: existing.id,
+        storeId: activeView.store.storeId,
+        accountLabel: normalizedAccountLabel,
+      })
+      : await api.createStoreConnection({
+        storeId: activeView.store.storeId,
+        provider: 'lingxing',
+        accountLabel: normalizedAccountLabel,
+      });
+    const confirmedView = await api.getActiveStoreWorkspaceView();
+    if (!confirmedView || !sameStoreAuthorityIdentity(activeView, confirmedView)) {
+      throw new Error('领星连接写入后店铺权限上下文已变化，请重新确认当前店铺。');
+    }
+    const confirmed = confirmedView.connections.find((candidate) =>
+      candidate.provider === 'lingxing'
+      && candidate.id === changed.id
+      && candidate.accountLabel?.trim() === normalizedAccountLabel
+      && candidate.status === 'not_configured'
+      && !candidate.externalAccountId
+      && !candidate.lastVerifiedAt
+      && !candidate.lastFailureCode
+      && !candidate.session);
+    if (!confirmed) throw new Error('领星连接写入后未能从 Main 权限上下文回读。');
+    dispatch({ type: 'authority', view: confirmedView });
+    return confirmed;
+  }, [api, dispatch]);
+
   const value = useMemo<MissionControlStoreContextValue>(() => ({
     ...state,
     switchStore,
@@ -307,7 +341,18 @@ export function MissionControlStoreContextProvider({
     updateStore,
     archiveStore,
     restoreStore,
-  }), [state, switchStore, refreshStores, retryBootstrap, createStore, updateStore, archiveStore, restoreStore]);
+    bindLingxingConnection,
+  }), [
+    state,
+    switchStore,
+    refreshStores,
+    retryBootstrap,
+    createStore,
+    updateStore,
+    archiveStore,
+    restoreStore,
+    bindLingxingConnection,
+  ]);
 
   return (
     <MissionControlStoreContext.Provider value={value}>
@@ -326,6 +371,20 @@ function replaceStore(stores: StoreRecord[], store: StoreRecord): StoreRecord[] 
   const index = stores.findIndex((row) => row.storeId === store.storeId);
   if (index === -1) return [...stores, store];
   return stores.map((row, rowIndex) => rowIndex === index ? store : row);
+}
+
+function sameStoreAuthorityIdentity(
+  expected: StoreWorkspaceView,
+  actual: StoreWorkspaceView,
+): boolean {
+  return expected.store.storeId === actual.store.storeId
+    && expected.context.storeId === actual.context.storeId
+    && expected.context.browserProfileId === actual.context.browserProfileId
+    && expected.context.marketplace === actual.context.marketplace
+    && expected.context.currency === actual.context.currency
+    && expected.context.businessTimezone === actual.context.businessTimezone
+    && expected.context.businessDate === actual.context.businessDate
+    && Number(actual.context.sessionGeneration) >= Number(expected.context.sessionGeneration);
 }
 
 function errorMessage(error: unknown): string {

@@ -198,6 +198,13 @@ describe('store automation Renderer API', () => {
     expect(source).not.toMatch(/deleteStoreEvidence|applyStoreEvidence|retention:delete|retention:apply/);
     expect(source).toContain('runStoreCollectionScheduleNow');
     expect(source).toContain('previewStoreEvidenceRetention');
+    expect(source).toContain('data-business-date={projection.businessDate}');
+    expect(source).toContain('data-schedule-state={projection.state}');
+    expect(source).toContain('data-store-id={projection.storeId}');
+    expect(source).toContain('data-candidate-count={retention.candidateCount}');
+    expect(source).toContain('data-blocker-count={retention.blockers.length}');
+    expect(source).toContain('data-marketplace={retention.marketplace}');
+    expect(source).toContain('data-currency={retention.currency}');
     expect(source).toContain('调整触发时间不会绕过幂等，只有回看窗口变化才会形成新 fingerprint');
     expect(source).toContain('onKeyDown={handleConfirmDialogKeyDown}');
     expect(source).toContain('data-confirm-initial');

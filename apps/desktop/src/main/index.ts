@@ -66,7 +66,14 @@ import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithin
 import { cleanupAppResources, createBeforeQuitCoordinator } from './app-shutdown';
 import { summarizeBusinessReportCoverage } from './business-report-coverage';
 import { countImportedRowsForReportFile } from './business-report-import-coverage';
-import { configureEvidenceUserDataPath } from './evidence-user-data-path';
+import {
+  configureEvidenceUserDataPath,
+  isPackageLaunchWindowReadyMarker,
+  PACKAGE_LAUNCH_SMOKE_MODE,
+  PACKAGE_LAUNCH_WINDOW_READY_MARKER,
+  PACKAGE_UI_EVIDENCE_MODE,
+} from './evidence-user-data-path';
+import { PackageUiSchedulerAudit } from './package-ui-scheduler-audit';
 import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-preflight-export';
 import { copyDiagnosticEvidenceFileToBundle, copyReportFailureEvidenceFilesToBundle, evaluateDownloadCenterDiagnosticEvidenceFiles } from './download-center-diagnostic-evidence-files';
 import { getLatestDownloadCenterDiagnosticRowForModel } from './download-center-diagnostic-store';
@@ -120,7 +127,15 @@ import {
   type LoginCredentialCipher,
   type SavedLoginCredentialStatus,
 } from './login-credentials';
-import { decideLoginSessionCredentialPolicy } from './login-session-credential-policy';
+import {
+  decideLoginSessionCredentialPolicy,
+  isPackageUiSavedSessionContinuationAllowed,
+} from './login-session-credential-policy';
+import {
+  assertProviderActiveIdentity,
+  PROVIDER_ACTIVE_IDENTITY_DOM_PROBES,
+  type ProviderCredentialSubmission,
+} from './provider-active-identity';
 import {
   EXTERNAL_OPEN_POLICY_MARKER,
   createMainWindowNavigationHandler,
@@ -328,8 +343,20 @@ function currentStoreRuntimeAnalysisConfig(): StoreRuntimeAnalysisConfig {
 // Paths
 // ============================================================================
 
-configureEvidenceUserDataPath(app);
+const evidenceUserDataIdentity = configureEvidenceUserDataPath(app);
+const packageUiReadOnlyRuntime = evidenceUserDataIdentity.mode === PACKAGE_UI_EVIDENCE_MODE;
+const packageLaunchSmokeRuntime = evidenceUserDataIdentity.mode === PACKAGE_LAUNCH_SMOKE_MODE;
 const USER_DATA_DIR = app.getPath('userData');
+const packageUiSchedulerAudit = new PackageUiSchedulerAudit({
+  enabled: packageUiReadOnlyRuntime,
+  evidenceMode: evidenceUserDataIdentity.mode,
+  database: () => state.db,
+  authorizeDatabaseCheckpoint: () => authorizePackageUiDatabaseCheckpoint(),
+  userDataDir: USER_DATA_DIR,
+});
+if (packageLaunchSmokeRuntime) {
+  fs.rmSync(path.join(USER_DATA_DIR, PACKAGE_LAUNCH_WINDOW_READY_MARKER), { force: true });
+}
 const STORAGE_DIR = path.join(USER_DATA_DIR, 'storage');
 const STORES_DIR = path.join(USER_DATA_DIR, 'stores');
 const SCREENSHOTS_DIR = path.join(STORAGE_DIR, 'screenshots');
@@ -531,6 +558,7 @@ function canonicalizeExistingPath(filePath: string): string {
 // ============================================================================
 
 let mainWindow: BrowserWindow | null = null;
+let packageLaunchWindowReadyWritten = false;
 let lastPublishedStoreContext: StoreContextEnvelope | null = null;
 let storeBusinessDateAuthorityTimer: ReturnType<typeof setInterval> | null = null;
 const STORE_BUSINESS_DATE_AUTHORITY_POLL_MS = 30_000;
@@ -563,9 +591,7 @@ function refreshActiveStoreBusinessDateAuthority(): boolean {
     state.browserRuntime = { ...state.browserRuntime, context: Object.freeze({ ...next }) };
   }
   publishStoreContextChanged(view);
-  void state.storeCollectionScheduler?.reconcile(next).catch((error) => {
-    console.error('[CollectionScheduler] business-date reconciliation failed:', error);
-  });
+  reconcileStoreCollectionScheduler(next, 'business-date');
   mainWindow?.webContents.send('business-ui:data-updated');
   return true;
 }
@@ -585,12 +611,27 @@ function stopStoreBusinessDateAuthorityMonitor(): void {
   storeBusinessDateAuthorityTimer = null;
 }
 
+function reconcileStoreCollectionScheduler(
+  context: StoreContextEnvelope,
+  source: 'business-date' | 'config' | 'login',
+): void {
+  if (packageUiReadOnlyRuntime) {
+    packageUiSchedulerAudit.recordSuppressed('automaticReconcile');
+    console.info(`[CollectionScheduler] package-ui read-only reconciliation suppressed: ${source}`);
+    return;
+  }
+  packageUiSchedulerAudit.recordControl('reconcile', context);
+  void state.storeCollectionScheduler?.reconcile(context).catch((error) => {
+    console.error(`[CollectionScheduler] ${source} reconciliation failed:`, error);
+  });
+}
+
 function reportNavigationSecurityBoundary(report: NavigationSecurityReport): void {
   console.warn('[Security] renderer navigation boundary', JSON.stringify(report));
 }
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
+  const createdWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1200,
@@ -603,9 +644,52 @@ function createWindow(): void {
     title: 'Amazon AI Ops Agent',
     show: false,
   });
+  mainWindow = createdWindow;
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
+  let rendererDidFinishLoad = false;
+  let windowDidShow = false;
+  const writeLaunchReadyMarkerWhenComplete = (): void => {
+    if (
+      !packageLaunchSmokeRuntime
+      || packageLaunchWindowReadyWritten
+      || !rendererDidFinishLoad
+      || !windowDidShow
+      || createdWindow.isDestroyed()
+      || createdWindow.webContents.isDestroyed()
+    ) return;
+    const marker = {
+      kind: 'package-launch-window-ready' as const,
+      schemaVersion: 1 as const,
+      pid: process.pid,
+      browserWindowId: createdWindow.id,
+      evidenceMode: PACKAGE_LAUNCH_SMOKE_MODE,
+      userDataDir: USER_DATA_DIR,
+      rendererUrl: createdWindow.webContents.getURL(),
+      generatedAt: new Date().toISOString(),
+    };
+    if (!isPackageLaunchWindowReadyMarker(marker, {
+      pid: process.pid,
+      browserWindowId: createdWindow.id,
+      userDataDir: USER_DATA_DIR,
+    })) {
+      throw new Error('PACKAGE_LAUNCH_WINDOW_READY_MARKER_INVALID');
+    }
+    const markerPath = path.join(USER_DATA_DIR, PACKAGE_LAUNCH_WINDOW_READY_MARKER);
+    const temporaryPath = `${markerPath}.${process.pid}.${createdWindow.id}.tmp`;
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(marker, null, 2)}\n`, 'utf8');
+    fs.renameSync(temporaryPath, markerPath);
+    packageLaunchWindowReadyWritten = true;
+    console.info('[App] package-launch-window-ready', JSON.stringify(marker));
+  };
+
+  createdWindow.webContents.once('did-finish-load', () => {
+    rendererDidFinishLoad = true;
+    writeLaunchReadyMarkerWhenComplete();
+  });
+  createdWindow.once('ready-to-show', () => {
+    createdWindow.show();
+    windowDidShow = true;
+    writeLaunchReadyMarkerWhenComplete();
   });
 
   const development = !app.isPackaged && process.env.NODE_ENV === 'development';
@@ -613,30 +697,30 @@ function createWindow(): void {
   const trustedRendererTarget: TrustedRendererTarget = development
     ? { kind: 'development', rendererUrl: 'http://localhost:5173' }
     : { kind: 'packaged', rendererFilePath };
-  mainWindow.webContents.on('will-navigate', createMainWindowNavigationHandler({
+  createdWindow.webContents.on('will-navigate', createMainWindowNavigationHandler({
     surface: 'will-navigate',
     target: trustedRendererTarget,
     report: reportNavigationSecurityBoundary,
   }));
-  mainWindow.webContents.on('will-redirect', createMainWindowNavigationHandler({
+  createdWindow.webContents.on('will-redirect', createMainWindowNavigationHandler({
     surface: 'will-redirect',
     target: trustedRendererTarget,
     report: reportNavigationSecurityBoundary,
   }));
-  mainWindow.webContents.setWindowOpenHandler(createSecureWindowOpenHandler({
+  createdWindow.webContents.setWindowOpenHandler(createSecureWindowOpenHandler({
     externalOpenPolicy: EXTERNAL_OPEN_POLICY_MARKER,
     report: reportNavigationSecurityBoundary,
   }));
 
   if (development) {
-    void mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools();
+    void createdWindow.loadURL('http://localhost:5173');
+    createdWindow.webContents.openDevTools();
   } else {
-    void mainWindow.loadFile(rendererFilePath);
+    void createdWindow.loadFile(rendererFilePath);
   }
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  createdWindow.on('closed', () => {
+    if (mainWindow === createdWindow) mainWindow = null;
   });
 }
 
@@ -914,9 +998,21 @@ async function initApp(): Promise<void> {
     },
   });
 
-  // Start scheduler
-  state.scheduler.start();
-  state.storeCollectionScheduler?.start();
+  // Package UI evidence must exercise the production read APIs without
+  // starting timers or executing the StoreContext scheduler. Normal packaged
+  // runtime stays unchanged because the guard is bound to the explicit,
+  // isolated package-ui evidence mode.
+  if (packageUiReadOnlyRuntime) {
+    packageUiSchedulerAudit.recordSuppressed('localSchedulerStart');
+    packageUiSchedulerAudit.recordSuppressed('storeSchedulerStart');
+    packageUiSchedulerAudit.recordSuppressed('startupReconcile');
+    packageUiSchedulerAudit.checkpoint();
+  } else {
+    packageUiSchedulerAudit.recordControl('localSchedulerStart');
+    state.scheduler.start();
+    packageUiSchedulerAudit.recordControl('storeSchedulerStart');
+    state.storeCollectionScheduler?.start();
+  }
 
   console.log('[App] Initialized successfully');
 }
@@ -1029,6 +1125,43 @@ async function readLingxingPageState(page: NonNullable<ReturnType<BrowserControl
   }));
 }
 
+async function assertProviderPageActiveIdentity(input: {
+  connection: StoreConnection;
+  page: NonNullable<ReturnType<BrowserController['getPage']>>;
+  pageUrl: string;
+  credentialSubmission?: ProviderCredentialSubmission;
+}): Promise<void> {
+  const probes = PROVIDER_ACTIVE_IDENTITY_DOM_PROBES.map((probe) => ({
+    id: probe.id,
+    selector: probe.selector,
+    attribute: probe.attribute,
+  }));
+  const domObservations = await input.page.evaluate((activeIdentityProbes) => (
+    activeIdentityProbes.flatMap((probe) => (
+      [...document.querySelectorAll(probe.selector)]
+        .filter((element) => {
+          if (element.closest('[hidden], [aria-hidden="true"], [inert]')) return false;
+          const style = window.getComputedStyle(element);
+          return element.getClientRects().length > 0
+            && style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && Number(style.opacity) > 0;
+        })
+        .slice(0, 2)
+        .flatMap((element) => {
+          const value = element.getAttribute(probe.attribute);
+          return value === null ? [] : [{ probeId: probe.id, value }];
+        })
+    ))
+  ), probes);
+  assertProviderActiveIdentity({
+    connection: input.connection,
+    pageUrl: input.pageUrl,
+    domObservations,
+    credentialSubmission: input.credentialSubmission,
+  });
+}
+
 function adsSessionResultFromPageState(pageState: { url: string; title?: string }): AdsSessionResult {
   return {
     entryMode: 'erp_ads_entry',
@@ -1084,6 +1217,41 @@ function isProviderBrowserSessionReady(
     && session.browserProfileId === context.browserProfileId
     && session.sessionGeneration === context.sessionGeneration,
   );
+}
+
+function authorizePackageUiDatabaseCheckpoint(): StoreContextEnvelope {
+  if (!packageUiReadOnlyRuntime) {
+    throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_DISABLED');
+  }
+  if (!state.db) {
+    throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_UNAVAILABLE');
+  }
+  const coordinator = state.storeCoordinator;
+  const activeContext = coordinator?.getActiveStoreContext();
+  if (!coordinator || !activeContext) {
+    throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_CONTEXT_UNAVAILABLE');
+  }
+  const authorized = coordinator.assertActiveStoreContext(activeContext);
+  if (authorized.marketplace !== 'US' || authorized.currency !== 'USD') {
+    throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_USD_CONTEXT_REQUIRED');
+  }
+  const runtime = state.browserRuntime;
+  if (
+    !runtime
+    || missionControlContextKey(runtime.context) !== missionControlContextKey(authorized)
+  ) {
+    throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_BROWSER_CONTEXT_MISMATCH');
+  }
+  if (
+    !state.loginSession?.ok
+    || !state.loginSession.erpSessionReady
+    || !state.loginSession.adsSessionReady
+    || !isProviderBrowserSessionReady(authorized, 'lingxing')
+    || !isProviderBrowserSessionReady(authorized, 'amazon_ads')
+  ) {
+    throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_SESSION_NOT_READY');
+  }
+  return authorized;
 }
 
 function detachBrowserRuntimeForStore(storeId?: string): StoreBrowserRuntime | null {
@@ -1150,23 +1318,6 @@ function requireProviderConnections(
     };
   }
   return { lingxing, amazon_ads: amazonAds };
-}
-
-function normalizeIdentityEvidence(value: string): string {
-  return value.normalize('NFKC').toLocaleLowerCase('en-US').replace(/\s+/g, ' ').trim();
-}
-
-function assertProviderIdentity(
-  connection: StoreConnection,
-  evidenceParts: readonly string[],
-): void {
-  const evidence = normalizeIdentityEvidence(evidenceParts.join('\n'));
-  const expected = [connection.externalAccountId, connection.accountLabel]
-    .filter((value): value is string => Boolean(value?.trim()))
-    .map((value) => normalizeIdentityEvidence(value));
-  if (!expected.some((identity) => identity.length >= 3 && evidence.includes(identity))) {
-    throw new Error(`${connection.provider} 页面身份与当前店铺连接不匹配，浏览器会话已拒绝。`);
-  }
 }
 
 async function handleBrowserLogin(request: BrowserLoginRequest): Promise<BrowserLoginResult> {
@@ -1283,15 +1434,31 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
       erpSessionReused,
       rememberPassword,
     });
-    if (!credentialPolicy.sessionIdentityVerified) {
+    const packageUiSavedSessionContinuationAllowed =
+      isPackageUiSavedSessionContinuationAllowed({
+        credentialSource: request.credentialSource,
+        erpSessionReused,
+        packageUiReadOnlyRuntime,
+        policy: credentialPolicy,
+      });
+    if (
+      !credentialPolicy.sessionIdentityVerified
+      && !packageUiSavedSessionContinuationAllowed
+    ) {
       throw new Error('当前领星会话身份未经本次凭证验证；请在自动化浏览器中退出旧会话后重试。');
     }
-    assertProviderIdentity(connections.lingxing, [
-      username,
-      erpLoginState.url,
-      erpLoginState.title,
-      erpLoginState.bodyText,
-    ]);
+    await assertProviderPageActiveIdentity({
+      connection: connections.lingxing,
+      page,
+      pageUrl: erpLoginState.url,
+      credentialSubmission: request.credentialSource === 'typed' && needsLogin
+        ? {
+            credentialSource: 'typed',
+            credentialsSubmitted: true,
+            username,
+          }
+        : undefined,
+    });
     assertBrowserLoginAttempt(attemptId, loginContext);
 
     const { credentialAction } = credentialPolicy;
@@ -1376,11 +1543,11 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
       if (!isLingxingAdsLoggedInPage(amazonAdsState)) {
         throw new Error('ADS_SESSION_NOT_READY');
       }
-      assertProviderIdentity(adsConnection, [
-        amazonAdsState.url,
-        amazonAdsState.title,
-        amazonAdsState.bodyText,
-      ]);
+      await assertProviderPageActiveIdentity({
+        connection: adsConnection,
+        page: adsPage,
+        pageUrl: amazonAdsState.url,
+      });
       assertBrowserLoginAttempt(attemptId, loginContext);
       adsSession = adsSessionResultFromPageState(amazonAdsState);
       const adsObservedAt = new Date().toISOString();
@@ -1432,6 +1599,7 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
 
     const loginResult: BrowserLoginResult = {
       ok: true,
+      credentialSource: request.credentialSource,
       currentStore: state.currentStore,
       erpSessionReady: true,
       erpSessionReused,
@@ -1448,9 +1616,10 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     if (pendingBrowserLogin?.attemptId === attemptId) {
       pendingBrowserLogin = null;
     }
-    void state.storeCollectionScheduler?.reconcile(loginContext).catch((error) => {
-      console.error('[CollectionScheduler] login reconciliation failed:', error);
-    });
+    reconcileStoreCollectionScheduler(loginContext, 'login');
+    if (packageUiReadOnlyRuntime) {
+      packageUiSchedulerAudit.capturePostBootstrapDatabaseBaseline();
+    }
     return loginResult;
   } catch (error) {
     await closeBrowserControllers([
@@ -3263,6 +3432,7 @@ function initializeStoreCollectionScheduler(): void {
       }
     },
     startCollection(input) {
+      packageUiSchedulerAudit.recordControl('execute', input.storeContext);
       return state.lingxingCollectionCoordinator!.start(input);
     },
     onChanged(projection) {
@@ -9920,6 +10090,8 @@ function registerIpcHandlers(): void {
   if (!state.productRepo || !state.operationEventRepo) {
     throw new Error('Store-scoped object repositories are not initialized');
   }
+  const schedulerEvidenceIpc = packageUiSchedulerAudit.wrapRegistrar(ipcMain);
+  packageUiSchedulerAudit.registerDatabaseCheckpointIpc(ipcMain);
   registerStoreIpcHandlers(ipcMain, state.storeCoordinator, {
     beforeActiveStoreMutation: (context) => {
       state.executionAuthorityService?.assertStoreMutationAllowed(context);
@@ -9974,7 +10146,7 @@ function registerIpcHandlers(): void {
     },
   });
   registerMissionControlIpcHandlers(
-    ipcMain,
+    schedulerEvidenceIpc,
     state.storeCoordinator,
     createMissionControlLegacyAdapter({
       buildTodayProjection: buildAuthoritativeMissionControlTodayProjection,
@@ -9995,22 +10167,32 @@ function registerIpcHandlers(): void {
     state.storeRuntimeConfigService,
     (context) => {
       mainWindow?.webContents.send('business-ui:data-updated');
-      void state.storeCollectionScheduler?.reconcile(context).catch((error) => {
-        console.error('[CollectionScheduler] config reconciliation failed:', error);
-      });
+      reconcileStoreCollectionScheduler(context, 'config');
     },
   );
   if (!state.storeEvidenceRetentionService) {
     throw new Error('店铺证据保留预览服务尚未就绪。');
   }
   registerStoreEvidenceRetentionIpcHandlers(
-    ipcMain,
+    schedulerEvidenceIpc,
     state.storeEvidenceRetentionService,
   );
   if (!state.storeCollectionScheduler) {
     throw new Error('店铺级采集调度服务尚未就绪。');
   }
-  registerStoreCollectionSchedulerIpcHandlers(ipcMain, state.storeCollectionScheduler);
+  registerStoreCollectionSchedulerIpcHandlers(
+    schedulerEvidenceIpc,
+    packageUiReadOnlyRuntime
+      ? {
+          get: (context) => state.storeCollectionScheduler!.get(context),
+          runNow: async () => {
+            throw new Error(
+              'PACKAGE_UI_EVIDENCE_READ_ONLY: package UI evidence may read scheduler state but may not execute collection.',
+            );
+          },
+        }
+      : state.storeCollectionScheduler,
+  );
   registerStoreScopedObjectsIpcHandlers(
     ipcMain,
     new StoreScopedObjectsService({
@@ -10351,7 +10533,17 @@ const handleBeforeQuit = createBeforeQuitCoordinator({
             },
           }
         : null,
-      db,
+      db: db && packageUiReadOnlyRuntime
+        ? {
+            close: async () => {
+              try {
+                packageUiSchedulerAudit.capturePreCloseTerminalDatabaseCheckpoint();
+              } finally {
+                await db.close();
+              }
+            },
+          }
+        : db,
     }, (resource, error) => {
       console.error(`[App] shutdown ${resource} cleanup failed:`, error);
     });

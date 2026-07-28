@@ -97,6 +97,20 @@ describe('BrowserController.bringToFront', () => {
 });
 
 describe('resolveChromiumExecutablePathForRuntime', () => {
+  it('uses the bundled Playwright Chromium from packaged app content', () => {
+    const executable = resolveChromiumExecutablePathForRuntime({
+      env: { LOCALAPPDATA: 'C:\\Users\\wz\\AppData\\Local' },
+      resourcesPath: 'C:\\Program Files\\Amazon AI Ops\\resources',
+      electronVersion: '28.3.3',
+      listDir: () => ['chromium-1228'],
+      fileExists: (file) => file.endsWith('resources\\app\\playwright-browsers\\chrome-win64\\chrome.exe'),
+    });
+
+    expect(executable).toBe(
+      'C:\\Program Files\\Amazon AI Ops\\resources\\app\\playwright-browsers\\chrome-win64\\chrome.exe',
+    );
+  });
+
   it('uses the local ms-playwright Chromium when running the unpackaged Electron source app', () => {
     const executable = resolveChromiumExecutablePathForRuntime({
       env: { LOCALAPPDATA: 'C:\\Users\\wz\\AppData\\Local' },
@@ -115,9 +129,11 @@ describe('resolveChromiumExecutablePathForRuntime', () => {
       resourcesPath: 'C:\\Program Files\\Amazon AI Ops\\resources',
       electronVersion: '28.3.3',
       listDir: () => ['chromium-1223'],
-      fileExists: () => true,
+      fileExists: (file) => file.includes('ms-playwright'),
     });
 
-    expect(executable).toBeUndefined();
+    expect(executable).toBe(
+      'C:\\Program Files\\Amazon AI Ops\\resources\\app\\playwright-browsers\\chrome-win64\\chrome.exe',
+    );
   });
 });

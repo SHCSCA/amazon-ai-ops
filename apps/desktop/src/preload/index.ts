@@ -138,6 +138,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('stores:reconnect', { storeId }) as Promise<StoreWorkspaceView>,
   getActiveStoreContext: (): Promise<StoreContextEnvelope | null> =>
     ipcRenderer.invoke('stores:get-active-context') as Promise<StoreContextEnvelope | null>,
+  getActiveStoreWorkspaceView: (): Promise<StoreWorkspaceView | null> =>
+    ipcRenderer.invoke('stores:get-active-workspace-view') as Promise<StoreWorkspaceView | null>,
+  packageUiDatabaseCheckpoint: (
+    phase: 'post-bootstrap' | 'post-navigation',
+  ): Promise<unknown> =>
+    ipcRenderer.invoke('package-ui-evidence:database-checkpoint', { phase }),
 
   // Main-authorized product and operation-event objects. Every request carries
   // the complete captured StoreContext and every write uses expectedRevision.

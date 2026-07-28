@@ -2,6 +2,7 @@ import type {
   ActionRecommendation,
   BindRecommendationWritableTargetRequest,
   BindRecommendationWritableTargetResult,
+  CreateStoreConnectionInput,
   RecommendationReviewResolution,
   ResolveRecommendationReviewRequest,
   ResolveRecommendationReviewResult,
@@ -20,12 +21,14 @@ import type {
   StoreContextEnvelope,
   StoreCollectionScheduleProjection,
   StoreCollectionScheduleRunResult,
+  StoreConnection,
   StoreId,
   StoreRecord,
   StoreRuntimeConfigProjection,
   StoreRuntimeConfigRecord,
   StoreRuntimeConfigValues,
   StoreWorkspaceView,
+  UpdateStoreConnectionInput,
 } from '@amazon-ai-ops/shared-types';
 import {
   missionControlContextKey,
@@ -33,6 +36,7 @@ import {
   normalizeMissionControlCommandRequest,
   normalizeMissionControlQueryRequest,
   normalizeStoreContextEnvelope,
+  normalizeStoreCapabilityId,
   normalizeStoreId,
 } from '@amazon-ai-ops/shared-types';
 import {
@@ -1609,6 +1613,10 @@ export function createBrowserPreviewElectronApi(
   const firstMissingPreviewGate = previewGates.find((gate) => !gate.ok);
   let previewStores = PREVIEW_STORES.map((store) => ({ ...store }));
   let activePreviewStoreId: StoreId | null = null;
+  let previewConnectionSequence = 0;
+  const previewConnections = new Map<StoreId, StoreConnection[]>(
+    previewStores.map((store) => [store.storeId, []]),
+  );
   const previewRuntimeConfigs = new Map<StoreId, StoreRuntimeConfigProjection>();
   const defaultPreviewRuntimeValues = (): StoreRuntimeConfigValues => ({
     aiRecommendationsEnabled: true,
@@ -1966,7 +1974,7 @@ export function createBrowserPreviewElectronApi(
   const previewView = (store: StoreRecord, context: StoreContextEnvelope): StoreWorkspaceView => ({
     store: clonePreviewSnapshot(store),
     context: clonePreviewSnapshot(context),
-    connections: [],
+    connections: clonePreviewSnapshot(previewConnections.get(store.storeId) ?? []),
     sessions: [],
   });
   const requirePreviewMissionAuthority = (submitted: StoreContextEnvelope) => {
@@ -2817,6 +2825,7 @@ export function createBrowserPreviewElectronApi(
       );
       previewStores = [...previewStores, store];
       previewGenerations.set(store.storeId, 0);
+      previewConnections.set(store.storeId, []);
       storeRecordListeners.forEach((listener) => listener(clonePreviewSnapshot(store)));
       return clonePreviewSnapshot(store);
     },
@@ -2879,7 +2888,84 @@ export function createBrowserPreviewElectronApi(
       storeContextListeners.forEach((listener) => listener(clonePreviewSnapshot(view)));
       return clonePreviewSnapshot(view);
     },
+    createStoreConnection: async (input: CreateStoreConnectionInput) => {
+      const store = requirePreviewStore(input?.storeId);
+      if (store.status !== 'active' || activePreviewStoreId !== store.storeId) {
+        throw new Error('PREVIEW_ACTIVE_STORE_CONNECTION_REQUIRED');
+      }
+      if (input?.provider !== 'lingxing' && input?.provider !== 'amazon_ads') {
+        throw new Error('PREVIEW_STORE_CONNECTION_PROVIDER_UNSUPPORTED');
+      }
+      const current = previewConnections.get(store.storeId) ?? [];
+      const existing = current.find((connection) => connection.provider === input.provider);
+      if (existing) return clonePreviewSnapshot(existing);
+      const occurredAt = new Date().toISOString();
+      const connection: StoreConnection = {
+        id: normalizeStoreCapabilityId(`preview-capability-${++previewConnectionSequence}`),
+        storeId: store.storeId,
+        provider: input.provider,
+        status: 'not_configured',
+        ...(typeof input.accountLabel === 'string' && input.accountLabel.trim()
+          ? { accountLabel: input.accountLabel.trim() }
+          : {}),
+        ...(typeof input.externalAccountId === 'string' && input.externalAccountId.trim()
+          ? { externalAccountId: input.externalAccountId.trim() }
+          : {}),
+        createdAt: occurredAt,
+        updatedAt: occurredAt,
+      };
+      previewConnections.set(store.storeId, [...current, connection]);
+      const generation = (previewGenerations.get(store.storeId) ?? 0) + 1;
+      previewGenerations.set(store.storeId, generation);
+      const view = previewView(store, previewContext(store, generation));
+      storeContextListeners.forEach((listener) => listener(clonePreviewSnapshot(view)));
+      return clonePreviewSnapshot(connection);
+    },
+    updateStoreConnection: async (input: UpdateStoreConnectionInput) => {
+      const store = requirePreviewStore(input?.storeId);
+      if (store.status !== 'active' || activePreviewStoreId !== store.storeId) {
+        throw new Error('PREVIEW_ACTIVE_STORE_CONNECTION_REQUIRED');
+      }
+      const current = previewConnections.get(store.storeId) ?? [];
+      const index = current.findIndex((connection) => connection.id === input?.id);
+      if (index === -1) throw new Error('PREVIEW_STORE_CONNECTION_NOT_FOUND');
+      const existing = current[index]!;
+      const normalizedAccountLabel = typeof input.accountLabel === 'string'
+        ? input.accountLabel.trim()
+        : existing.accountLabel;
+      const identityChanged = input.accountLabel !== undefined
+        && normalizedAccountLabel !== existing.accountLabel?.trim();
+      const updated: StoreConnection = {
+        ...existing,
+        ...(typeof input.accountLabel === 'string' && input.accountLabel.trim()
+          ? { accountLabel: input.accountLabel.trim() }
+          : {}),
+        ...(!identityChanged && typeof input.externalAccountId === 'string' && input.externalAccountId.trim()
+          ? { externalAccountId: input.externalAccountId.trim() }
+          : {}),
+        ...(identityChanged ? {
+          externalAccountId: undefined,
+          status: 'not_configured' as const,
+          lastVerifiedAt: undefined,
+          lastFailureCode: undefined,
+          session: undefined,
+        } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+      previewConnections.set(store.storeId, current.map((connection, rowIndex) =>
+        rowIndex === index ? updated : connection));
+      const generation = (previewGenerations.get(store.storeId) ?? 0) + 1;
+      previewGenerations.set(store.storeId, generation);
+      const view = previewView(store, previewContext(store, generation));
+      storeContextListeners.forEach((listener) => listener(clonePreviewSnapshot(view)));
+      return clonePreviewSnapshot(updated);
+    },
     getActiveStoreContext: async () => clonePreviewSnapshot(currentPreviewContext()),
+    getActiveStoreWorkspaceView: async () => {
+      const context = currentPreviewContext();
+      if (!context) return null;
+      return clonePreviewSnapshot(previewView(requirePreviewStore(context.storeId), context));
+    },
     onStoreContextChanged: (callback: (view: StoreWorkspaceView) => void) => {
       storeContextListeners.add(callback);
       return () => storeContextListeners.delete(callback);

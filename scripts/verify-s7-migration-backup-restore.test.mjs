@@ -35,7 +35,7 @@ describe('S7 offline migration and recovery verifier', () => {
       .toThrow(/absolute path/i);
   });
 
-  it('upgrades only a bound v7 copy and independently verifies its pre-v8 restore', () => {
+  it('upgrades only a bound v7 copy and independently verifies its pre-v9 restore', () => {
     const root = tempDirectory();
     const sourceDirectory = path.join(root, 'source');
     const workDir = path.join(root, 'work');
@@ -56,9 +56,9 @@ describe('S7 offline migration and recovery verifier', () => {
       kind: 's7-offline-db-upgrade',
       passed: true,
       source: { version: 7, sha256: sourceSha256 },
-      targetVersion: 8,
+      targetVersion: 9,
       preservationFailures: [],
-      recoveryPreflight: { canRestore: true, sourceVersion: 7, targetVersion: 8 },
+      recoveryPreflight: { canRestore: true, sourceVersion: 7, targetVersion: 9 },
       restore: { version: 7, integrityCheck: 'ok' },
     });
     expect(sha256File(sourcePath)).toBe(sourceSha256);
@@ -67,7 +67,7 @@ describe('S7 offline migration and recovery verifier', () => {
     const verification = verifyS7MigrationBackupRestore(manifestPath);
     expect(verification.passed).toBe(true);
     expect(verification.summary.failed).toBe(0);
-    expect(verification.checks.map((check) => check.code)).toContain('MIGRATIONS_1_TO_8_APPLIED');
+    expect(verification.checks.map((check) => check.code)).toContain('MIGRATIONS_1_TO_9_APPLIED');
 
     fs.appendFileSync(evidence.restore.destinationPath, 'tampered');
     const tampered = verifyS7MigrationBackupRestore(manifestPath);
@@ -94,7 +94,7 @@ function createV7Source(databasePath) {
       'ad_keyword_identity_versions',
     ];
     for (const table of executionTables) database.exec(`DROP TABLE IF EXISTS "${table}"`);
-    database.prepare('DELETE FROM schema_migrations WHERE version = 8').run();
+    database.prepare('DELETE FROM schema_migrations WHERE version IN (8, 9)').run();
     database.prepare(`
       INSERT INTO app_settings (key, value, updated_at)
       VALUES ('s7-script-sentinel', 'preserve-me', '2026-07-23T00:00:00.000Z')

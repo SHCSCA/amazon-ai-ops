@@ -63,22 +63,22 @@ function verifyS7MigrationBackupRestore(manifestPath) {
     `).all().map((row) => Number(row.version));
     add('UPGRADED_INTEGRITY_OK', upgradedIntegrity === 'ok', `integrity=${upgradedIntegrity}`);
     add('UPGRADED_FOREIGN_KEYS_OK', foreignKeyViolations.length === 0, `violations=${foreignKeyViolations.length}`);
-    add('MIGRATIONS_1_TO_8_APPLIED', JSON.stringify(appliedVersions) === JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8]), appliedVersions.join(','));
+    add('MIGRATIONS_1_TO_9_APPLIED', JSON.stringify(appliedVersions) === JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8, 9]), appliedVersions.join(','));
 
     const runtime = loadLocalDbRuntime();
     const repository = new runtime.StoreRepository(upgraded);
     let preflight;
     try {
-      preflight = repository.getMigrationRecoveryPreflight(8);
-      add('V8_BACKUP_PREFLIGHT_OK', preflight.canRestore === true, preflight.blockers.join(' '));
-      add('V8_BACKUP_SOURCE_VERSION_BOUND', preflight.sourceVersion === manifest.source.version,
+      preflight = repository.getMigrationRecoveryPreflight(9);
+      add('V9_BACKUP_PREFLIGHT_OK', preflight.canRestore === true, preflight.blockers.join(' '));
+      add('V9_BACKUP_SOURCE_VERSION_BOUND', preflight.sourceVersion === manifest.source.version,
         `source=${manifest.source.version}, backup=${preflight.sourceVersion}`);
-      add('V8_BACKUP_SCHEMA_BOUND', preflight.schemaFingerprintMatches === true,
+      add('V9_BACKUP_SCHEMA_BOUND', preflight.schemaFingerprintMatches === true,
         `schemaFingerprintMatches=${preflight.schemaFingerprintMatches}`);
-      add('V8_BACKUP_ROWS_BOUND', preflight.tableRowCountsMatch === true,
+      add('V9_BACKUP_ROWS_BOUND', preflight.tableRowCountsMatch === true,
         `tableRowCountsMatch=${preflight.tableRowCountsMatch}`);
     } catch (error) {
-      add('V8_BACKUP_PREFLIGHT_OK', false, error.message);
+      add('V9_BACKUP_PREFLIGHT_OK', false, error.message);
     }
   } catch (error) {
     add('UPGRADED_DATABASE_READABLE', false, error.message);
@@ -104,7 +104,7 @@ function verifyS7MigrationBackupRestore(manifestPath) {
   }
 
   const migrationRecords = Array.isArray(manifest.migrations) ? manifest.migrations : [];
-  add('EVIDENCE_MIGRATION_RECORDS_BOUND', migrationRecords.length === 8
+  add('EVIDENCE_MIGRATION_RECORDS_BOUND', migrationRecords.length === 9
     && migrationRecords.every((record, index) => Number(record.version) === index + 1 && record.status === 'applied'),
   `records=${migrationRecords.length}`);
   add('BUSINESS_ROWS_PRESERVED', Array.isArray(manifest.preservationFailures)

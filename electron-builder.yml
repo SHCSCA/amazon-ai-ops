@@ -11,6 +11,7 @@ files:
   - dist/main/**/*
   - dist/preload/**/*
   - dist/renderer/**/*
+  - playwright-browsers/**/*
   - package.json
   - "!dist/**/*.map"
   - "!node_modules/better-sqlite3/deps/**/*"

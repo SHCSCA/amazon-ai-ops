@@ -190,8 +190,16 @@ export function resolveChromiumExecutablePathForRuntime(input: ChromiumRuntimeRe
   const listDir = input.listDir ?? ((dir: string) => fs.existsSync(dir) ? fs.readdirSync(dir) : []);
   const fileExists = input.fileExists ?? fs.existsSync;
 
-  if (!electronVersion || !isUnpackagedElectronResourcesPath(resourcesPath)) {
+  if (!electronVersion) {
     return undefined;
+  }
+
+  if (!isUnpackagedElectronResourcesPath(resourcesPath)) {
+    // Always bind packaged automation to the Chromium bytes covered by the
+    // resources/app content hash. Returning this canonical path even when the
+    // file is missing prevents Playwright from silently borrowing a developer
+    // cache outside the installed package.
+    return path.join(resourcesPath, 'app', 'playwright-browsers', 'chrome-win64', 'chrome.exe');
   }
 
   const localAppData = env.LOCALAPPDATA || env.LocalAppData || env.localappdata;

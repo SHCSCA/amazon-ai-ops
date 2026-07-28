@@ -12,6 +12,8 @@ const {
   validateAdversarialNodeEnvSelectionContract,
 } = require('./smoke-package-adversarial-node-env');
 const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
+const { validatePackageLaunchSmokeEvidence } = require('./smoke-package-launch');
+const { evaluatePackageUiEvidenceCompleteness } = require('./package-ui-evidence');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -282,6 +284,39 @@ function bundleSourceFileMatches(manifest, bundleManifestPath, sourcePath) {
     && sha256(sourcePath) === String(record.sha256 || '').toUpperCase();
 }
 
+function packageUiReferencedArtifactsAreBundled(packageUi, manifest, bundleManifestPath) {
+  const artifacts = [];
+  const pushArtifact = (artifact) => {
+    if (artifact?.path) artifacts.push(artifact);
+  };
+  for (const run of packageUi?.runs || []) {
+    for (const screenshot of run?.screenshots || []) pushArtifact(screenshot);
+    for (const overlay of run?.overlayChecks || []) pushArtifact(overlay?.screenshot);
+    for (const workspace of run?.workspaceChecks || []) {
+      pushArtifact(workspace?.inspectorEvidence?.screenshot);
+    }
+    for (const subview of run?.subviewChecks || []) pushArtifact(subview?.screenshot);
+    pushArtifact(run?.schedulerReadOnlyRuntime?.artifact);
+  }
+  for (const screenshot of packageUi?.wideProfile?.screenshots || []) pushArtifact(screenshot);
+  for (const workspace of packageUi?.wideProfile?.workspaceChecks || []) {
+    pushArtifact(workspace?.inspectorEvidence?.screenshot);
+  }
+  pushArtifact(packageUi?.wideProfile?.schedulerReadOnlyRuntime?.artifact);
+  if (artifacts.length === 0) return false;
+
+  return artifacts.every((artifact) => {
+    if (!validArtifact(artifact)) return false;
+    const record = Array.isArray(manifest?.files)
+      ? manifest.files.find((item) => samePath(item?.sourcePath, artifact.path) && item?.bundlePath)
+      : null;
+    return Boolean(record)
+      && Number(record.sizeBytes || 0) === Number(artifact.sizeBytes || 0)
+      && String(record.sha256 || '').toUpperCase() === String(artifact.sha256 || '').toUpperCase()
+      && bundleSourceFileMatches(manifest, bundleManifestPath, artifact.path);
+  });
+}
+
 function viewportMatchesBoundedContract(run, requestedViewport, expectedDeviceScaleFactor) {
   const actualWidth = Number(run?.viewport?.width);
   const actualHeight = Number(run?.viewport?.height);
@@ -401,6 +436,7 @@ function runDiagnosticsAreStrictlyValid(diagnostics, run, expectedProfileId) {
   const renderer = diagnostics?.renderer;
   const successfulLoginOutcomes = new Set([
     'existing-authenticated-session',
+    'interactive-operator-login',
     'saved-credentials-auto-login',
     'saved-credentials-login',
   ]);
@@ -543,6 +579,13 @@ function packageUiEvidenceIsStrictlyValid({
         wideWorkspaceNames.has(item?.workspace)
         && /^[A-F0-9]{64}$/.test(String(item?.sha256 || ''))
       ));
+    const currentPackageUiCompleteness = packageUi.schemaVersion === 7
+      ? evaluatePackageUiEvidenceCompleteness(packageUi)
+      : null;
+    const packageUiSchemaContractValid = packageUi.schemaVersion === 7
+      && currentPackageUiCompleteness?.passed === true
+      && Array.isArray(currentPackageUiCompleteness.violations)
+      && currentPackageUiCompleteness.violations.length === 0;
     const generatedAt = Date.parse(packageUi.generatedAt);
     const completedAt = Date.parse(packageUi.completedAt);
     const smokeGeneratedAt = Date.parse(smoke?.generatedAt);
@@ -594,8 +637,10 @@ function packageUiEvidenceIsStrictlyValid({
     const bundled = manifest.uiEvidence?.packageUiManifest?.present === true
       && samePath(manifest.uiEvidence?.packageUiManifest?.sourcePath, filePath)
       && bundleSourceFileMatches(manifest, bundleManifestPath, filePath);
+    const referencedArtifactsBundled = packageUi.schemaVersion === 7
+      && packageUiReferencedArtifactsAreBundled(packageUi, manifest, bundleManifestPath);
     return packageUi.kind === 'package-ui-evidence'
-      && Number(packageUi.schemaVersion || 0) >= 5
+      && packageUiSchemaContractValid
       && packageUi.passed === true
       && Array.isArray(packageUi.violations)
       && packageUi.violations.length === 0
@@ -617,6 +662,7 @@ function packageUiEvidenceIsStrictlyValid({
       && profileDatabaseProvenanceValid
       && processIsolated
       && profileProcessIsolated
+      && referencedArtifactsBundled
       && bundled;
   } catch {
     return false;
@@ -627,12 +673,14 @@ function readValidPackageLaunchSmoke(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return false;
   try {
     const smoke = readJson(filePath);
+    const strictValidation = validatePackageLaunchSmokeEvidence(smoke);
     const unpacked = smoke.artifacts?.unpacked;
     const portable = smoke.artifacts?.portable;
     const checks = Array.isArray(smoke.checks) ? smoke.checks : [];
     const hasCheck = (kind) => checks.some((item) => item?.kind === kind && item.ok === true);
 
-    const valid = smoke.kind === 'package-launch-smoke'
+    const valid = strictValidation.passed === true
+      && smoke.kind === 'package-launch-smoke'
       && smoke.passed === true
       && Number.isFinite(Date.parse(smoke.generatedAt))
       && validArtifact(unpacked)
@@ -1003,4 +1051,10 @@ function main() {
   console.log('\nNON_READY_SAFETY verified.');
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  packageUiReferencedArtifactsAreBundled,
+};

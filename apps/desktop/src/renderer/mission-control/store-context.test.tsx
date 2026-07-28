@@ -98,6 +98,40 @@ describe('Mission Control StoreContext state', () => {
     expect(source).toMatch(/const switchStore[\s\S]*await resyncAuthority\('needs-selection'\)/);
   });
 
+  it('resyncs the complete Main workspace view without fabricating empty connections', () => {
+    const source = fs.readFileSync(new URL('./store-context.tsx', import.meta.url), 'utf8');
+    const readActiveView = source.slice(
+      source.indexOf('const readActiveView'),
+      source.indexOf('const resyncAuthority'),
+    );
+
+    expect(readActiveView).toContain('api.getActiveStoreWorkspaceView()');
+    expect(readActiveView).not.toContain('connections: []');
+    expect(readActiveView).not.toContain('sessions: []');
+  });
+
+  it('upserts Lingxing identity for the current Main authority and directly verifies the workspace view', () => {
+    const source = fs.readFileSync(new URL('./store-context.tsx', import.meta.url), 'utf8');
+    const bindBlock = source.slice(
+      source.indexOf('const bindLingxingConnection'),
+      source.indexOf('const value ='),
+    );
+
+    expect(bindBlock).toContain("connection.provider === 'lingxing'");
+    expect(bindBlock).toContain("provider: 'lingxing'");
+    expect(bindBlock).toContain('api.updateStoreConnection');
+    expect(bindBlock).toContain('accountLabel');
+    expect(bindBlock).toContain('api.getActiveStoreWorkspaceView()');
+    expect(bindBlock).toContain('sameStoreAuthorityIdentity');
+    expect(bindBlock).toContain('candidate.id === changed.id');
+    expect(bindBlock).toContain("candidate.status === 'not_configured'");
+    expect(bindBlock).toContain('!candidate.externalAccountId');
+    expect(bindBlock).toContain('!candidate.session');
+    expect(bindBlock).toContain("dispatch({ type: 'authority', view: confirmedView })");
+    expect(bindBlock).not.toContain("await resyncAuthority('needs-selection')");
+    expect(bindBlock).not.toMatch(/password|cookie|token/i);
+  });
+
   it('exposes real typed Store CRUD and never auto-switches after creation', () => {
     const source = fs.readFileSync(new URL('./store-context.tsx', import.meta.url), 'utf8');
     expect(source).toContain('createStore(input: CreateStoreInput)');

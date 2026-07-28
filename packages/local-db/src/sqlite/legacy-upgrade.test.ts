@@ -5,11 +5,11 @@ import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initSqlite } from './db';
 import {
-  EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
-  EXECUTION_AUTHORITY_MIGRATION_NAME,
-  EXECUTION_AUTHORITY_MIGRATION_VERSION,
   EXECUTION_AUTHORITY_TABLES,
   prepareUpgradeBackup,
+  STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
+  STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
+  STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
   type UpgradeBackupManifest,
 } from './migrations';
 import { StoreRepository } from './repositories/store-repo';
@@ -22,8 +22,8 @@ afterEach(() => {
   }
 });
 
-describe('representative legacy database upgrade to migration 8', () => {
-  it('preserves v7 business rows and binds a restorable pre-v8 snapshot', () => {
+describe('representative legacy database upgrade to migration 9', () => {
+  it('preserves v7 business rows and binds one restorable pre-v9 snapshot for migrations 8 and 9', () => {
     const databasePath = createRepresentativeV7Fixture();
 
     const upgraded = initSqlite(databasePath);
@@ -31,7 +31,7 @@ describe('representative legacy database upgrade to migration 8', () => {
     try {
       expect(upgraded.prepare(`
         SELECT version, status FROM schema_migrations ORDER BY version
-      `).all()).toEqual(Array.from({ length: 8 }, (_, index) => ({
+      `).all()).toEqual(Array.from({ length: 9 }, (_, index) => ({
         version: index + 1,
         status: 'applied',
       })));
@@ -43,13 +43,13 @@ describe('representative legacy database upgrade to migration 8', () => {
 
       const migration = upgraded.prepare(`
         SELECT manifest_json AS manifestJson
-        FROM schema_migrations WHERE version = 8
+        FROM schema_migrations WHERE version = 9
       `).get() as { manifestJson: string };
       upgradeBackup = (JSON.parse(migration.manifestJson) as { upgradeBackup: UpgradeBackupManifest }).upgradeBackup;
       expect(upgradeBackup).toMatchObject({
         status: 'created',
         sourceVersion: 7,
-        targetVersion: 8,
+        targetVersion: 9,
         integrityCheck: 'ok',
         backupIntegrityCheck: 'ok',
       });
@@ -57,16 +57,16 @@ describe('representative legacy database upgrade to migration 8', () => {
       expect(upgradeBackup.tableRowCounts.products).toBeGreaterThanOrEqual(1);
 
       const repository = new StoreRepository(upgraded);
-      expect(repository.getMigrationRecoveryPreflight(8)).toMatchObject({
+      expect(repository.getMigrationRecoveryPreflight(9)).toMatchObject({
         canRestore: true,
         sourceVersion: 7,
-        targetVersion: 8,
+        targetVersion: 9,
         schemaFingerprintMatches: true,
         tableRowCountsMatch: true,
       });
-      const restoredPath = path.join(path.dirname(databasePath), 'restored-pre-v8.db');
-      expect(repository.restoreMigrationBackupTo(restoredPath, 8)).toMatchObject({
-        version: 8,
+      const restoredPath = path.join(path.dirname(databasePath), 'restored-pre-v9.db');
+      expect(repository.restoreMigrationBackupTo(restoredPath, 9)).toMatchObject({
+        version: 9,
         destinationPath: path.resolve(restoredPath),
         integrityCheck: 'ok',
       });
@@ -94,31 +94,31 @@ describe('representative legacy database upgrade to migration 8', () => {
     expect(fs.existsSync(upgradeBackup!.manifestPath!)).toBe(true);
   });
 
-  it('reuses the same bound snapshot after a recorded interrupted v8 attempt', () => {
+  it('reuses the same bound snapshot after a recorded interrupted v9 attempt', () => {
     const databasePath = createRepresentativeV7Fixture();
     const interrupted = new Database(databasePath);
     interrupted.pragma('journal_mode = WAL');
     interrupted.pragma('foreign_keys = ON');
     try {
       const backup = prepareUpgradeBackup(interrupted, {
-        targetVersion: EXECUTION_AUTHORITY_MIGRATION_VERSION,
-        targetName: EXECUTION_AUTHORITY_MIGRATION_NAME,
-        targetChecksum: EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
+        targetVersion: STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
+        targetName: STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
+        targetChecksum: STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
       });
       interrupted.prepare(`
         INSERT INTO schema_migrations (
           version, name, checksum, status, started_at, applied_at,
           error_message, manifest_json, result_json
-        ) VALUES (8, ?, ?, 'failed', ?, NULL, 'simulated process interruption', ?, '{}')
+        ) VALUES (9, ?, ?, 'failed', ?, NULL, 'simulated process interruption', ?, '{}')
       `).run(
-        EXECUTION_AUTHORITY_MIGRATION_NAME,
-        EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
-        '2026-07-23T00:00:00.000Z',
+        STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
+        STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
+        '2026-07-27T00:00:00.000Z',
         JSON.stringify({
-          version: 8,
-          name: EXECUTION_AUTHORITY_MIGRATION_NAME,
-          checksum: EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
-          startedAt: '2026-07-23T00:00:00.000Z',
+          version: 9,
+          name: STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
+          checksum: STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
+          startedAt: '2026-07-27T00:00:00.000Z',
           upgradeBackup: backup,
         }),
       );
@@ -129,7 +129,7 @@ describe('representative legacy database upgrade to migration 8', () => {
     const recovered = initSqlite(databasePath);
     try {
       const row = recovered.prepare(`
-        SELECT status, manifest_json AS manifestJson FROM schema_migrations WHERE version = 8
+        SELECT status, manifest_json AS manifestJson FROM schema_migrations WHERE version = 9
       `).get() as { status: string; manifestJson: string };
       const manifest = JSON.parse(row.manifestJson) as { upgradeBackup: UpgradeBackupManifest };
       expect(row.status).toBe('applied');
@@ -153,7 +153,7 @@ function createRepresentativeV7Fixture(): string {
     for (const table of [...EXECUTION_AUTHORITY_TABLES].reverse()) {
       current.exec(`DROP TABLE IF EXISTS "${table}"`);
     }
-    current.prepare(`DELETE FROM schema_migrations WHERE version = 8`).run();
+    current.prepare(`DELETE FROM schema_migrations WHERE version IN (8, 9)`).run();
     current.prepare(`
       INSERT INTO app_settings (key, value, updated_at)
       VALUES ('legacy-business-sentinel', 'preserve-after-v8', '2026-07-22T00:00:00.000Z')

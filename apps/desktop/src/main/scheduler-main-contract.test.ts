@@ -13,7 +13,8 @@ describe('desktop scheduler scope contract', () => {
   it('keeps legacy unscoped scheduler mutations fail-closed and registers the StoreContext scheduler IPC', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 
-    expect(source).toContain('registerStoreCollectionSchedulerIpcHandlers(ipcMain, state.storeCollectionScheduler)');
+    expect(source).toContain('registerStoreCollectionSchedulerIpcHandlers(');
+    expect(source).toContain(': state.storeCollectionScheduler');
     expect(source).toContain('LEGACY_SCHEDULER_IPC_DISABLED');
     const legacyStart = source.indexOf("ipcMain.handle('scheduler:set-task-enabled'");
     const legacyEnd = source.indexOf('// Logs', legacyStart);
@@ -70,7 +71,7 @@ describe('desktop scheduler scope contract', () => {
     expect(login).toContain("failureCode: 'ADS_SESSION_NOT_READY'");
     expect(login).toContain('erpSessionReady: true');
     expect(login).toContain('adsSessionReady: Boolean(adsSession)');
-    expect(login).toContain('state.storeCollectionScheduler?.reconcile(loginContext)');
+    expect(login).toContain("reconcileStoreCollectionScheduler(loginContext, 'login')");
 
     const executionStart = source.indexOf('resolveBrowserRuntime: (context) => {');
     const executionEnd = source.indexOf('emitProgress:', executionStart);
@@ -93,6 +94,82 @@ describe('desktop scheduler scope contract', () => {
     );
   });
 
+  it('keeps package UI evidence read-only while leaving normal scheduler startup unchanged', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const evidenceIdentity = source.indexOf(
+      'const packageUiReadOnlyRuntime = evidenceUserDataIdentity.mode === PACKAGE_UI_EVIDENCE_MODE',
+    );
+    const startupStart = source.indexOf(
+      '// Package UI evidence must exercise the production read APIs',
+    );
+    const startupEnd = source.indexOf("console.log('[App] Initialized successfully')", startupStart);
+    const startup = source.slice(startupStart, startupEnd);
+    const reconcileStart = source.indexOf('function reconcileStoreCollectionScheduler(');
+    const reconcileEnd = source.indexOf('function reportNavigationSecurityBoundary', reconcileStart);
+    const reconcile = source.slice(reconcileStart, reconcileEnd);
+    const ipcStart = source.indexOf('registerStoreCollectionSchedulerIpcHandlers(');
+    const ipcEnd = source.indexOf('registerStoreScopedObjectsIpcHandlers(', ipcStart);
+    const schedulerIpc = source.slice(ipcStart, ipcEnd);
+
+    expect(evidenceIdentity).toBeGreaterThan(0);
+    expect(startup).toContain('if (packageUiReadOnlyRuntime)');
+    expect(startup).toContain("packageUiSchedulerAudit.recordSuppressed('localSchedulerStart')");
+    expect(startup).toContain("packageUiSchedulerAudit.recordSuppressed('storeSchedulerStart')");
+    expect(startup).toContain("packageUiSchedulerAudit.recordSuppressed('startupReconcile')");
+    expect(startup).toContain('} else {');
+    expect(startup).toContain('state.scheduler.start()');
+    expect(startup).toContain('state.storeCollectionScheduler?.start()');
+    expect(reconcile).toContain('if (packageUiReadOnlyRuntime)');
+    expect(reconcile).toContain("packageUiSchedulerAudit.recordSuppressed('automaticReconcile')");
+    expect(reconcile).toContain('reconciliation suppressed');
+    expect(reconcile).toContain('state.storeCollectionScheduler?.reconcile(context)');
+    expect(schedulerIpc).toContain('packageUiReadOnlyRuntime');
+    expect(schedulerIpc).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
+    expect(source).toContain('packageUiSchedulerAudit.wrapRegistrar(ipcMain)');
+    expect(source).toContain('database: () => state.db');
+    expect(source).toContain('authorizeDatabaseCheckpoint: () => authorizePackageUiDatabaseCheckpoint()');
+    expect(source).toContain('packageUiSchedulerAudit.registerDatabaseCheckpointIpc(ipcMain)');
+    expect(source).toContain("packageUiSchedulerAudit.recordControl('execute', input.storeContext)");
+
+    const checkpointAuthorityStart = source.indexOf(
+      'function authorizePackageUiDatabaseCheckpoint()',
+    );
+    const checkpointAuthorityEnd = source.indexOf(
+      'function detachBrowserRuntimeForStore',
+      checkpointAuthorityStart,
+    );
+    const checkpointAuthority = source.slice(checkpointAuthorityStart, checkpointAuthorityEnd);
+    expect(checkpointAuthority).toContain('if (!packageUiReadOnlyRuntime)');
+    expect(checkpointAuthority).toContain('if (!state.db)');
+    expect(checkpointAuthority).toContain('coordinator.assertActiveStoreContext(activeContext)');
+    expect(checkpointAuthority).toContain("authorized.marketplace !== 'US'");
+    expect(checkpointAuthority).toContain("authorized.currency !== 'USD'");
+    expect(checkpointAuthority).toContain(
+      'missionControlContextKey(runtime.context) !== missionControlContextKey(authorized)',
+    );
+    expect(checkpointAuthority).toContain('!state.loginSession.adsSessionReady');
+    expect(checkpointAuthority).toContain(
+      "isProviderBrowserSessionReady(authorized, 'lingxing')",
+    );
+    expect(checkpointAuthority).toContain(
+      "isProviderBrowserSessionReady(authorized, 'amazon_ads')",
+    );
+
+    const loginStart = source.indexOf('async function handleBrowserLogin');
+    const loginEnd = source.indexOf('async function handleBrowserLogout', loginStart);
+    const login = source.slice(loginStart, loginEnd);
+    const suppressedReconcile = login.indexOf(
+      "reconcileStoreCollectionScheduler(loginContext, 'login')",
+    );
+    const mainBaseline = login.indexOf(
+      'packageUiSchedulerAudit.capturePostBootstrapDatabaseBaseline()',
+    );
+    const loginReturn = login.indexOf('return loginResult;', mainBaseline);
+    expect(suppressedReconcile).toBeGreaterThan(0);
+    expect(mainBaseline).toBeGreaterThan(suppressedReconcile);
+    expect(loginReturn).toBeGreaterThan(mainBaseline);
+  });
+
   it('drains durable collection claims before browser and database shutdown', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     const schedulerStart = source.indexOf('function initializeStoreCollectionScheduler');
@@ -105,11 +182,18 @@ describe('desktop scheduler scope contract', () => {
     const shutdown = source.slice(shutdownStart, source.indexOf("app.on('before-quit'", shutdownStart));
     const drain = shutdown.indexOf('await storeCollectionScheduler?.stopAndDrain()');
     const resourceCleanup = shutdown.indexOf('await cleanupAppResources');
+    const terminalCheckpoint = shutdown.indexOf(
+      'packageUiSchedulerAudit.capturePreCloseTerminalDatabaseCheckpoint()',
+    );
+    const databaseClose = shutdown.indexOf('await db.close()', terminalCheckpoint);
 
     expect(resourceCleanup).toBeGreaterThan(0);
     expect(drain).toBeGreaterThan(resourceCleanup);
+    expect(terminalCheckpoint).toBeGreaterThan(drain);
+    expect(databaseClose).toBeGreaterThan(terminalCheckpoint);
     expect(shutdown).toContain('browserController: runtime || pendingControllers.length > 0');
-    expect(shutdown).toContain('db,');
+    expect(shutdown).toContain('db: db && packageUiReadOnlyRuntime');
+    expect(shutdown.slice(terminalCheckpoint, databaseClose)).toContain('} finally {');
   });
 
   it('fails the daily report task when no artifact can be produced and propagates generation failures', () => {

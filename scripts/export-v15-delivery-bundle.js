@@ -10,6 +10,13 @@ const {
   validateAdversarialNodeEnvSelectionContract,
 } = require('./smoke-package-adversarial-node-env');
 const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
+const { validatePackageLaunchSmokeEvidence } = require('./smoke-package-launch');
+const {
+  EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
+  evaluatePackageUiEvidenceCompleteness,
+  validatePackageUiReadOnlyRuntimeEvidence,
+  validateSchedulerSubviewEvidence,
+} = require('./package-ui-evidence');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -17,6 +24,8 @@ const bundleRoot = path.join(root, 'output', 'delivery-bundles');
 const appDataStorageRoot = process.env.APPDATA
   ? path.join(process.env.APPDATA, '@amazon-ai-ops', 'desktop', 'storage')
   : '';
+const validatedExternalPackageLaunchArtifacts = new Set();
+const validatedPackageLaunchEvidencePaths = new Set();
 
 function parseArgs(argv) {
   const args = {};
@@ -131,6 +140,95 @@ function sha256(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex').toUpperCase();
 }
 
+function assertCurrentHashBoundEvidenceFile(record, label) {
+  const filePath = record?.path;
+  if (!filePath || !path.isAbsolute(filePath) || !fs.existsSync(filePath)) {
+    throw new Error(`Refusing to export package UI evidence because ${label} is missing.`);
+  }
+  const lstat = fs.lstatSync(filePath);
+  const stat = fs.statSync(filePath);
+  if (
+    !lstat.isFile()
+    || lstat.isSymbolicLink()
+    || Number(record?.sizeBytes) !== stat.size
+    || !/^[A-F0-9]{64}$/.test(String(record?.sha256 || ''))
+    || sha256(filePath) !== String(record.sha256).toUpperCase()
+  ) {
+    throw new Error(
+      `Refusing to export package UI evidence because ${label} current SHA-256/size is missing or stale.`,
+    );
+  }
+  return path.resolve(filePath);
+}
+
+function assertPackageUiV7SchedulerAndInteractiveLoginEvidence(packageUi) {
+  if (packageUi?.kind !== 'package-ui-evidence' || packageUi?.schemaVersion !== 7) {
+    throw new Error(
+      'Refusing to export package UI evidence unless it uses current scheduler-read-only and interactive-login-attestation schema v7; schemas v5/v6 are historical and cannot be used for current export.',
+    );
+  }
+  const completeness = evaluatePackageUiEvidenceCompleteness(packageUi);
+  if (completeness.passed !== true) {
+    throw new Error(
+      `Refusing to export incomplete package UI evidence: ${completeness.violations
+        .map((item) => item.code || item.message)
+        .join(', ')}.`,
+    );
+  }
+  const runs = Array.isArray(packageUi.runs) ? packageUi.runs : [];
+  const scales = runs.map((run) => run?.scalePercent).sort((left, right) => left - right);
+  if (JSON.stringify(scales) !== JSON.stringify([100, 125])) {
+    throw new Error('Refusing to export package UI evidence without exact 100% and 125% v7 runs.');
+  }
+  for (const run of runs) {
+    const subviews = Array.isArray(run?.subviewChecks) ? run.subviewChecks : [];
+    const scheduler = subviews.filter((item) => (
+      item?.workspace === 'settings' && item?.subview === 'scheduler'
+    ));
+    if (
+      scheduler.length !== 1
+      || scheduler[0]?.passed !== true
+      || validateSchedulerSubviewEvidence(
+        scheduler[0]?.identityCapabilityEvidence,
+        EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS[0],
+      ).passed !== true
+    ) {
+      throw new Error(
+        `Refusing to export package UI evidence because ${run?.scalePercent || 'unknown'}% settings/scheduler evidence is missing or failed.`,
+      );
+    }
+    assertCurrentHashBoundEvidenceFile(
+      scheduler[0].screenshot,
+      `${run.scalePercent}% settings/scheduler screenshot`,
+    );
+    const runtimeValidation = validatePackageUiReadOnlyRuntimeEvidence(
+      run?.schedulerReadOnlyRuntime,
+      { requireSchedulerReads: true },
+    );
+    if (runtimeValidation.passed !== true) {
+      throw new Error(
+        `Refusing to export package UI evidence because ${run?.scalePercent || 'unknown'}% Main scheduler read-only runtime evidence failed.`,
+      );
+    }
+    assertCurrentHashBoundEvidenceFile(
+      run.schedulerReadOnlyRuntime.artifact,
+      `${run.scalePercent}% Main scheduler read-only runtime attestation`,
+    );
+  }
+  if (
+    validatePackageUiReadOnlyRuntimeEvidence(
+      packageUi.wideProfile?.schedulerReadOnlyRuntime,
+      { requireSchedulerReads: false },
+    ).passed !== true
+  ) {
+    throw new Error('Refusing to export package UI evidence because the wide Main scheduler read-only runtime evidence failed.');
+  }
+  assertCurrentHashBoundEvidenceFile(
+    packageUi.wideProfile.schedulerReadOnlyRuntime.artifact,
+    'wide Main scheduler read-only runtime attestation',
+  );
+}
+
 function safeBasename(filePath) {
   return path.basename(filePath).replace(/[^a-zA-Z0-9._-]+/g, '-');
 }
@@ -185,7 +283,10 @@ function assertAllowedSource(sourcePath, label) {
       || isInside(resolved, path.join(appDataStorageRoot, 'exports'))
       || path.basename(resolved).toLowerCase() === 'manifest.json'
     );
-  if (!isRepoDocOrScript && !isAppOwnedEvidence) {
+  const isValidatedPackageLaunchArtifact = validatedExternalPackageLaunchArtifacts.has(
+    resolved.toLowerCase(),
+  );
+  if (!isRepoDocOrScript && !isAppOwnedEvidence && !isValidatedPackageLaunchArtifact) {
     throw new Error(`Refusing to export ${label}: source path is outside allowed evidence roots: ${resolved}`);
   }
   if (['.db', '.sqlite', '.sqlite3', '.exe', '.xlsx', '.xls', '.csv'].includes(ext)) {
@@ -502,14 +603,62 @@ function resolveDataReconciliationEvidence(args) {
 function collectEvidencePaths(finalReadiness, options = {}) {
   const includeLatestExtras = options.includeLatestExtras !== false;
   const paths = new Set();
+  const validatedPackageLaunchPaths = new Set();
+  const addValidatedPackageLaunchEvidence = (filePath) => {
+    if (!filePath) return;
+    const absolutePath = path.resolve(filePath);
+    if (validatedPackageLaunchPaths.has(absolutePath)) return;
+    if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+      throw new Error(`Package launch evidence is missing: ${absolutePath}`);
+    }
+    const smoke = readJson(absolutePath);
+    const validation = validatePackageLaunchSmokeEvidence(smoke);
+    if (!validation.passed) {
+      throw new Error(`Package launch strict contract failed: ${validation.violations
+        .map((violation) => `${violation.code}@${violation.path}`)
+        .join('; ')}`);
+    }
+    validatedPackageLaunchPaths.add(absolutePath);
+    validatedPackageLaunchEvidencePaths.add(absolutePath);
+    paths.add(absolutePath);
+    for (const check of smoke.checks || []) {
+      for (const artifact of [
+        { path: check?.stdoutPath, allowExternal: false },
+        { path: check?.stderrPath, allowExternal: false },
+        { path: check?.userDataEvidence?.markerPath, allowExternal: true },
+        { path: check?.windowReadyEvidence?.markerPath, allowExternal: true },
+      ]) {
+        if (artifact.path) {
+          const resolvedArtifactPath = path.resolve(artifact.path);
+          paths.add(resolvedArtifactPath);
+          if (
+            artifact.allowExternal
+            && !isInside(resolvedArtifactPath, root)
+            && !isInside(resolvedArtifactPath, appDataStorageRoot)
+          ) {
+            validatedExternalPackageLaunchArtifacts.add(
+              canonicalPath(resolvedArtifactPath).toLowerCase(),
+            );
+          }
+        }
+      }
+    }
+  };
   paths.add(finalReadiness.__path);
   paths.add(finalReadiness.evidenceSelection?.manifestPath);
   for (const gate of finalReadiness.gates || []) {
     if (gate.evidencePath) paths.add(gate.evidencePath);
   }
+  addValidatedPackageLaunchEvidence(finalReadiness.packageLaunchSmoke?.evidencePath);
+  for (const gate of finalReadiness.gates || []) {
+    if (gate?.id === 'package-launch-smoke' || gate?.id === 'package-launch') {
+      addValidatedPackageLaunchEvidence(gate.evidencePath);
+    }
+  }
   if (options.packageUiManifest) {
     paths.add(options.packageUiManifest);
     const packageUi = readJson(options.packageUiManifest);
+    assertPackageUiV7SchedulerAndInteractiveLoginEvidence(packageUi);
     for (const run of packageUi.runs || []) {
       for (const screenshot of run.screenshots || []) {
         if (screenshot?.path) paths.add(path.resolve(screenshot.path));
@@ -522,6 +671,14 @@ function collectEvidencePaths(finalReadiness, options = {}) {
           paths.add(path.resolve(workspace.inspectorEvidence.screenshot.path));
         }
       }
+      for (const subview of run.subviewChecks || []) {
+        if (subview?.screenshot?.path) {
+          paths.add(path.resolve(subview.screenshot.path));
+        }
+      }
+      if (run.schedulerReadOnlyRuntime?.artifact?.path) {
+        paths.add(path.resolve(run.schedulerReadOnlyRuntime.artifact.path));
+      }
     }
     for (const screenshot of packageUi.wideProfile?.screenshots || []) {
       if (screenshot?.path) paths.add(path.resolve(screenshot.path));
@@ -530,6 +687,9 @@ function collectEvidencePaths(finalReadiness, options = {}) {
       if (workspace?.inspectorEvidence?.screenshot?.path) {
         paths.add(path.resolve(workspace.inspectorEvidence.screenshot.path));
       }
+    }
+    if (packageUi.wideProfile?.schedulerReadOnlyRuntime?.artifact?.path) {
+      paths.add(path.resolve(packageUi.wideProfile.schedulerReadOnlyRuntime.artifact.path));
     }
   }
   if (options.workspaceUiManifest) {
@@ -588,14 +748,8 @@ function collectEvidencePaths(finalReadiness, options = {}) {
         }
       }
     }
-    const packageLaunchSmoke = latestEvidence(/^package-launch-smoke-.*\.json$/i);
-    if (packageLaunchSmoke) {
-      paths.add(packageLaunchSmoke);
-      const smokeJson = readJson(packageLaunchSmoke);
-      for (const check of smokeJson.checks || []) {
-        if (check.stdoutPath) paths.add(check.stdoutPath);
-        if (check.stderrPath) paths.add(check.stderrPath);
-      }
+    if (validatedPackageLaunchPaths.size === 0) {
+      addValidatedPackageLaunchEvidence(latestEvidence(/^package-launch-smoke-.*\.json$/i));
     }
   }
 
@@ -969,6 +1123,14 @@ function main() {
     }
   }
 
+  for (const launchEvidencePath of validatedPackageLaunchEvidencePaths) {
+    const validation = validatePackageLaunchSmokeEvidence(readJson(launchEvidencePath));
+    if (!validation.passed) {
+      throw new Error(`Package launch strict contract changed before bundle copy: ${validation.violations
+        .map((violation) => `${violation.code}@${violation.path}`)
+        .join('; ')}`);
+    }
+  }
   for (const sourcePath of evidencePaths) {
     const ext = path.extname(sourcePath).toLowerCase();
     const destinationDir = ['.png', '.jpg', '.jpeg', '.webp'].includes(ext) ? screenshotsDir : evidenceOutDir;

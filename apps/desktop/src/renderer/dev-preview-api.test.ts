@@ -1150,6 +1150,7 @@ describe('Mission Control development preview bridge', () => {
     expect(new Set(stores.map((store: any) => store.storeId)).size).toBe(2);
     expect(new Set(stores.map((store: any) => store.browserProfileId)).size).toBe(2);
     expect(await api.getActiveStoreContext()).toBeNull();
+    expect(await api.getActiveStoreWorkspaceView()).toBeNull();
 
     await expect(api.missionControl.query({
       query: 'workspace-bootstrap', requestId: 'before-switch', contextEpoch: 0,
@@ -1190,6 +1191,63 @@ describe('Mission Control development preview bridge', () => {
     const serialized = JSON.stringify(response);
     expect(serialized).not.toMatch(/password|cookie|token|apiKey|filePath|profilePath/i);
     expect(serialized).not.toMatch(/[A-Za-z]:[\\/]/);
+  });
+
+  it('simulates a visible store connection binding without accepting secrets or creating duplicates', async () => {
+    const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
+    const [store] = await api.listStores();
+    const switched = await api.switchStore(store.storeId);
+    expect(switched.connections).toEqual([]);
+
+    const first = await api.createStoreConnection({
+      storeId: store.storeId,
+      provider: 'lingxing',
+      accountLabel: 'preview-operator',
+      externalAccountId: 'preview-external-a',
+      password: 'must-not-cross-preview-boundary',
+      token: 'must-not-cross-preview-boundary',
+    } as any);
+    const repeated = await api.createStoreConnection({
+      storeId: store.storeId,
+      provider: 'lingxing',
+      accountLabel: 'different-label-does-not-create-a-duplicate',
+    });
+    const active = await api.getActiveStoreWorkspaceView();
+
+    expect(repeated.id).toBe(first.id);
+    expect(active).toEqual(expect.objectContaining({
+      store: expect.objectContaining({ storeId: store.storeId, marketplace: 'US', currency: 'USD' }),
+      connections: [expect.objectContaining({
+        id: first.id,
+        provider: 'lingxing',
+        accountLabel: 'preview-operator',
+        externalAccountId: 'preview-external-a',
+        status: 'not_configured',
+      })],
+    }));
+    expect(JSON.stringify({ first, active })).not.toMatch(/password|token|cookie|profilePath|userDataDir/i);
+
+    const updated = await api.updateStoreConnection({
+      id: first.id,
+      storeId: store.storeId,
+      accountLabel: 'preview-operator-updated',
+      password: 'must-not-cross-preview-boundary',
+    } as any);
+    const updatedView = await api.getActiveStoreWorkspaceView();
+    expect(updated).toEqual(expect.objectContaining({
+      id: first.id,
+      accountLabel: 'preview-operator-updated',
+    }));
+    expect(updatedView?.connections).toEqual([
+      expect.objectContaining({
+        id: first.id,
+        accountLabel: 'preview-operator-updated',
+        status: 'not_configured',
+      }),
+    ]);
+    expect(updated.externalAccountId).toBeUndefined();
+    expect(updated.session).toBeUndefined();
+    expect(JSON.stringify({ updated, updatedView })).not.toMatch(/password|token|cookie|profilePath|userDataDir/i);
   });
 
   it('marks every store-scoped object preview capability as prototype-only', async () => {

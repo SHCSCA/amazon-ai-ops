@@ -17,7 +17,7 @@ Usage:
     --expected-app-content-sha256 <64-hex> \\
     --user-data-dir <D:\\Temp\\amazon-ai-ops-...> \\
     --protected-db <C:\\Users\\...\\amazon-ai-ops.db> \\
-    --allow-saved-login
+    --allow-interactive-login
 
 This runner is fixed to:
   apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe
@@ -40,6 +40,8 @@ used as an isolation mechanism. Before launch, profile/amazon-ai-ops.db must
 match the explicit protected DB by SHA-256 and size while remaining a distinct
 file. The protected DB is also hashed before and after the run; matching package
 processes must be zero before and after.
+Schema v7 requires a visible, secret-blind operator handoff for every profile;
+the first profile must establish a fresh typed-and-saved identity proof.
 
 Options:
   --print-package-hashes                 Print fixed EXE + app-content hashes only
@@ -47,9 +49,9 @@ Options:
   --expected-app-content-sha256 <hash>   Required immutable app tree hash
   --user-data-dir <absolute D path>      Required existing isolated profile copy
   --protected-db <absolute file path>    Required real AppData DB protected by before/after hash
-  --allow-saved-login                    Explicitly allow app-owned saved credentials
+  --allow-interactive-login              Required: wait for visible operator login without secret capture
   --output <dir>                         Evidence output directory
-  --login-timeout-ms <ms>                Saved-session login timeout (default 120000)
+  --interactive-login-timeout-ms <ms>    Visible handoff timeout, 60000-900000 (default 600000)
   --settle-ms <ms>                       Extra settle floor (default 800; capture enforces at least 2500)
   --help                                  Show this help without launching Electron`);
 }

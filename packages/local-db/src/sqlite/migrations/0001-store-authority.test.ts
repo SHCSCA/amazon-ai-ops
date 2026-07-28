@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initSqlite } from '../db';
 import {
+  LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
   STORE_AUTHORITY_MIGRATION_CHECKSUM,
   STORE_AUTHORITY_MIGRATION_NAME,
   STORE_AUTHORITY_MIGRATION_VERSION,
@@ -13,6 +14,7 @@ import {
   getStoreMigrationRecoveryPreflight,
   prepareStoreAuthorityMigrationBackup,
   restoreStoreMigrationBackupTo,
+  runStoreAuthorityMigrations,
 } from '.';
 import type { StoreMigrationManifest, StoreMigrationResult } from './types';
 
@@ -178,6 +180,362 @@ describe('store authority migration v1', () => {
       `).get()).toEqual({ count: 1 });
     } finally {
       reopened.close();
+    }
+  });
+
+  it('adds every legacy store_id column before resolving cross-table ASIN ownership', () => {
+    const dbPath = tempDbPath();
+    const legacy = new Database(dbPath);
+    try {
+      legacy.exec(`
+        CREATE TABLE products (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          marketplace_code TEXT,
+          store_name TEXT,
+          asin TEXT,
+          parent_asin TEXT,
+          msku TEXT,
+          sku TEXT,
+          title TEXT,
+          product_stage TEXT,
+          status TEXT DEFAULT 'active',
+          created_at TEXT,
+          updated_at TEXT
+        );
+        CREATE TABLE listing_content (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          asin TEXT NOT NULL,
+          store_name TEXT,
+          marketplace_code TEXT,
+          title TEXT DEFAULT '',
+          bullets_json TEXT DEFAULT '[]',
+          description TEXT,
+          source TEXT DEFAULT 'manual',
+          created_at TEXT,
+          updated_at TEXT
+        );
+        CREATE TABLE listing_drafts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          asin TEXT NOT NULL,
+          store_name TEXT,
+          marketplace_code TEXT,
+          section TEXT NOT NULL,
+          current_text TEXT,
+          drafted_text TEXT NOT NULL,
+          keywords_json TEXT DEFAULT '[]',
+          source TEXT DEFAULT 'rule',
+          status TEXT DEFAULT 'pending',
+          created_at TEXT,
+          updated_at TEXT
+        );
+        INSERT INTO products (id, marketplace_code, store_name, asin, title)
+        VALUES (1, 'US', 'Historical Shop', 'B-HISTORICAL', 'Owned product');
+        INSERT INTO listing_content (id, asin, title)
+        VALUES
+          (1, 'B-HISTORICAL', 'Legacy content without direct store identity'),
+          (2, 'B-REVERSE', 'Ownership appears only in a later table');
+        INSERT INTO listing_drafts (
+          id, asin, store_name, marketplace_code, section, current_text, drafted_text
+        ) VALUES
+          (1, 'B-HISTORICAL', NULL, NULL, 'title', 'Old title', 'New title'),
+          (2, 'B-REVERSE', 'Historical Shop', 'US', 'title', 'Old reverse', 'New reverse');
+      `);
+    } finally {
+      legacy.close();
+    }
+
+    const database = initSqlite(dbPath);
+    try {
+      const product = database.prepare('SELECT store_id FROM products WHERE id = 1').get() as {
+        store_id: string;
+      };
+      expect(product.store_id).toBeTruthy();
+      expect(database.prepare('SELECT store_id FROM listing_content WHERE id = 1').get()).toEqual({
+        store_id: product.store_id,
+      });
+      expect(database.prepare('SELECT store_id FROM listing_drafts WHERE id = 1').get()).toEqual({
+        store_id: product.store_id,
+      });
+      expect(database.prepare('SELECT store_id FROM listing_content WHERE id = 2').get()).toEqual({
+        store_id: product.store_id,
+      });
+      expect(database.prepare('SELECT store_id FROM listing_drafts WHERE id = 2').get()).toEqual({
+        store_id: product.store_id,
+      });
+      expect(database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM store_migration_quarantine
+        WHERE source_table IN ('listing_content', 'listing_drafts')
+      `).get()).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('promotes a failed legacy v1 checksum only while reusing its bound backup', () => {
+    const dbPath = tempDbPath();
+    const legacy = new Database(dbPath);
+    let failedManifest: StoreMigrationManifest;
+    try {
+      legacy.exec(`
+        CREATE TABLE products (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          marketplace_code TEXT,
+          store_name TEXT,
+          asin TEXT,
+          created_at TEXT,
+          updated_at TEXT
+        );
+        CREATE TABLE listing_content (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          asin TEXT NOT NULL,
+          store_name TEXT,
+          marketplace_code TEXT,
+          title TEXT DEFAULT '',
+          created_at TEXT,
+          updated_at TEXT
+        );
+        CREATE TABLE listing_drafts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          asin TEXT NOT NULL,
+          store_name TEXT,
+          marketplace_code TEXT,
+          section TEXT NOT NULL,
+          drafted_text TEXT NOT NULL,
+          created_at TEXT,
+          updated_at TEXT
+        );
+        INSERT INTO listing_content (id, asin, title)
+        VALUES (1, 'B-RETRY', 'Content awaiting later ownership');
+        INSERT INTO listing_drafts (
+          id, asin, store_name, marketplace_code, section, drafted_text
+        ) VALUES (
+          1, 'B-RETRY', 'Retry Shop', 'US', 'title', 'Retry title'
+        );
+      `);
+      prepareStoreAuthorityMigrationBackup(legacy);
+      const preparedManifest = JSON.parse((legacy.prepare(`
+        SELECT manifest_json FROM schema_migrations WHERE version = 1
+      `).get() as { manifest_json: string }).manifest_json) as StoreMigrationManifest;
+      failedManifest = {
+        ...preparedManifest,
+        checksum: LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+      };
+      legacy.prepare(`
+        UPDATE schema_migrations
+        SET checksum = @legacyChecksum,
+            status = 'failed',
+            error_message = 'simulated pre-fix failure',
+            manifest_json = @manifestJson
+        WHERE version = 1
+      `).run({
+        legacyChecksum: LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+        manifestJson: JSON.stringify(failedManifest),
+      });
+    } finally {
+      legacy.close();
+    }
+
+    const database = initSqlite(dbPath);
+    try {
+      const migration = database.prepare(`
+        SELECT checksum, status, error_message, manifest_json
+        FROM schema_migrations
+        WHERE version = 1
+      `).get() as {
+        checksum: string;
+        status: string;
+        error_message: string | null;
+        manifest_json: string;
+      };
+      const retriedManifest = JSON.parse(migration.manifest_json) as StoreMigrationManifest & {
+        legacyChecksumProvenance: {
+          legacyChecksum: string;
+          promotedToChecksum: string;
+          previousStatus: string;
+          previousStartedAt: string;
+          promotedAt: string;
+        };
+      };
+      expect(migration).toMatchObject({
+        checksum: STORE_AUTHORITY_MIGRATION_CHECKSUM,
+        status: 'applied',
+        error_message: null,
+      });
+      expect(retriedManifest.backup).toMatchObject({
+        backupPath: failedManifest.backup.backupPath,
+        sha256: failedManifest.backup.sha256,
+        integrityCheck: 'ok',
+      });
+      expect(retriedManifest.legacyChecksumProvenance).toMatchObject({
+        legacyChecksum: LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+        promotedToChecksum: STORE_AUTHORITY_MIGRATION_CHECKSUM,
+        previousStatus: 'failed',
+        previousStartedAt: failedManifest.startedAt,
+        promotedAt: expect.any(String),
+      });
+      const content = database.prepare(`
+        SELECT store_id FROM listing_content WHERE id = 1
+      `).get() as { store_id: string | null };
+      const draft = database.prepare(`
+        SELECT store_id FROM listing_drafts WHERE id = 1
+      `).get() as { store_id: string | null };
+      expect(content.store_id).toBeTruthy();
+      expect(content.store_id).toBe(draft.store_id);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('accepts an already-applied legacy v1 checksum without rewriting or rerunning it', () => {
+    const database = initSqlite(':memory:');
+    try {
+      const applied = database.prepare(`
+        SELECT manifest_json, result_json
+        FROM schema_migrations
+        WHERE version = 1
+      `).get() as { manifest_json: string; result_json: string };
+      const legacyManifest = {
+        ...(JSON.parse(applied.manifest_json) as StoreMigrationManifest),
+        checksum: LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+      };
+      const legacyManifestJson = JSON.stringify(legacyManifest);
+      database.prepare(`
+        UPDATE schema_migrations
+        SET checksum = ?, manifest_json = ?
+        WHERE version = 1 AND status = 'applied'
+      `).run(LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM, legacyManifestJson);
+
+      const result = runStoreAuthorityMigrations(database)[0];
+
+      expect(result.status).toBe('applied');
+      expect(database.prepare(`
+        SELECT checksum, status, manifest_json, result_json
+        FROM schema_migrations
+        WHERE version = 1
+      `).get()).toEqual({
+        checksum: LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+        status: 'applied',
+        manifest_json: legacyManifestJson,
+        result_json: applied.result_json,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('refuses to promote an unfinished legacy v1 checksum without its original bound backup', () => {
+    const database = new Database(tempDbPath());
+    try {
+      ensureSchemaMigrationsTable(database);
+      const legacyManifest: StoreMigrationManifest = {
+        version: 1,
+        name: STORE_AUTHORITY_MIGRATION_NAME,
+        checksum: LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+        startedAt: '2026-07-22T00:00:00.000Z',
+        schemaFingerprint: 'legacy-fingerprint',
+        integrityCheck: 'ok',
+        tableRowCounts: {},
+        targetTables: [...STORE_SCOPED_LEGACY_TABLES],
+        backup: {
+          status: 'not_applicable',
+          integrityCheck: 'ok',
+        },
+      };
+      database.prepare(`
+        INSERT INTO schema_migrations (
+          version, name, checksum, status, started_at,
+          error_message, manifest_json, result_json
+        ) VALUES (
+          1, ?, ?, 'failed', ?, 'simulated legacy failure', ?, NULL
+        )
+      `).run(
+        STORE_AUTHORITY_MIGRATION_NAME,
+        LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+        legacyManifest.startedAt,
+        JSON.stringify(legacyManifest),
+      );
+
+      expect(() => prepareStoreAuthorityMigrationBackup(database)).toThrow(/original bound backup/i);
+      expect(database.prepare(`
+        SELECT checksum, status
+        FROM schema_migrations
+        WHERE version = 1
+      `).get()).toEqual({
+        checksum: LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+        status: 'failed',
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it('rolls back column and ownership writes before retrying an interrupted migration transaction', () => {
+    const dbPath = tempDbPath();
+    const database = new Database(dbPath);
+    try {
+      database.exec(`
+        CREATE TABLE products (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          marketplace_code TEXT,
+          store_name TEXT,
+          asin TEXT
+        );
+        CREATE TABLE listing_content (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          asin TEXT NOT NULL,
+          store_name TEXT,
+          marketplace_code TEXT
+        );
+        CREATE TABLE listing_drafts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          asin TEXT NOT NULL,
+          store_name TEXT,
+          marketplace_code TEXT,
+          section TEXT NOT NULL,
+          drafted_text TEXT NOT NULL
+        );
+        INSERT INTO listing_content (id, asin)
+        VALUES (1, 'B-ROLLBACK');
+        INSERT INTO listing_drafts (
+          id, asin, store_name, marketplace_code, section, drafted_text
+        ) VALUES (
+          1, 'B-ROLLBACK', 'Rollback Shop', 'US', 'title', 'Recovered title'
+        );
+        CREATE TRIGGER force_store_migration_failure
+        BEFORE UPDATE ON listing_drafts
+        BEGIN
+          SELECT RAISE(ABORT, 'simulated ownership write failure');
+        END;
+      `);
+      prepareStoreAuthorityMigrationBackup(database);
+
+      expect(() => runStoreAuthorityMigrations(database)).toThrow(/simulated ownership write failure/i);
+      expect(database.prepare(`
+        SELECT status FROM schema_migrations WHERE version = 1
+      `).get()).toEqual({ status: 'failed' });
+      expect(database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'stores'
+      `).get()).toEqual({ count: 0 });
+      for (const table of ['products', 'listing_content', 'listing_drafts']) {
+        const columns = database.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>;
+        expect(columns.some((column) => column.name === 'store_id')).toBe(false);
+      }
+
+      database.exec('DROP TRIGGER force_store_migration_failure');
+      expect(runStoreAuthorityMigrations(database)[0]).toMatchObject({ status: 'applied' });
+      const content = database.prepare(`
+        SELECT store_id FROM listing_content WHERE id = 1
+      `).get() as { store_id: string | null };
+      const draft = database.prepare(`
+        SELECT store_id FROM listing_drafts WHERE id = 1
+      `).get() as { store_id: string | null };
+      expect(content.store_id).toBeTruthy();
+      expect(content.store_id).toBe(draft.store_id);
+    } finally {
+      database.close();
     }
   });
 

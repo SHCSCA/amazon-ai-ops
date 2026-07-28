@@ -2,6 +2,12 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { createRequire } = require('node:module');
+const { validatePackageLaunchSmokeEvidence } = require('./smoke-package-launch');
+const {
+  SQLITE_AUTHORITY_CURRENTNESS_SCHEMA_VERSION,
+  assertMatchingAuthorityCurrentnessProofs,
+  captureAuthoritySnapshotCurrentness,
+} = require('./sqlite-authority-currentness');
 
 const ROOT = path.resolve(__dirname, '..');
 const requireFromLocalDb = createRequire(path.join(ROOT, 'packages', 'local-db', 'package.json'));
@@ -30,11 +36,17 @@ const PACKAGE_IDENTITY_FIELDS = Object.freeze([
 const V15_SUPERSEDED_GATE_ID = 'real-ad-execution-readback';
 const V15_SUPERSEDING_GATE_IDS = Object.freeze(['manual-canary', 'policy-auto-canary']);
 const AUTHORITY_SNAPSHOT_KIND = 'mission-control-authority-database-snapshot';
-const AUTHORITY_SNAPSHOT_SCHEMA_VERSION = 'mission-control-authority-database-snapshot/v1';
+const AUTHORITY_SNAPSHOT_SCHEMA_VERSION = 'mission-control-authority-database-snapshot/v2';
+const AUTHORITY_SNAPSHOT_BACKUP_METHOD = 'sqlite-online-backup';
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_PACKAGE_EVIDENCE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_CONTINUOUS_EVIDENCE_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_CANARY_EVIDENCE_AGE_MS = 72 * 60 * 60 * 1000;
+const AUTHORITY_SNAPSHOT_DEPENDENT_GATE_IDS = Object.freeze([
+  's7-continuous-operation',
+  'manual-canary',
+  'policy-auto-canary',
+]);
 
 const GATE_SPECS = Object.freeze([
   Object.freeze({
@@ -58,15 +70,32 @@ const OPTION_ALIASES = Object.freeze({
   'policy-canary': 'policy-auto-canary-evidence',
   output: 'out',
 });
-const ALLOWED_OPTIONS = new Set([...GATE_SPECS.map((spec) => spec.option), 'authority-snapshot-manifest', 'out']);
+const ALLOWED_OPTIONS = new Set([
+  ...GATE_SPECS.map((spec) => spec.option),
+  'authority-db',
+  'authority-snapshot-manifest',
+  'out',
+]);
 
-function defaultProductionContext() {
+function defaultProductionContext(explicitAuthorityDbPath = null) {
   const releaseRoot = path.join(ROOT, 'apps', 'desktop', 'release');
   let authorityDbPath = null;
   let authorityDbError = null;
   try {
     const { resolveAdReadbackAuthorityDbPath } = require('./ad-readback-authority-db');
-    authorityDbPath = resolveAdReadbackAuthorityDbPath(undefined);
+    authorityDbPath = resolveAdReadbackAuthorityDbPath(explicitAuthorityDbPath || undefined);
+    if (explicitAuthorityDbPath) {
+      const selectedPath = path.resolve(explicitAuthorityDbPath);
+      const selectedStat = fs.statSync(selectedPath);
+      if (!path.isAbsolute(explicitAuthorityDbPath)
+        || !requestedPathEqualsRealpath(selectedPath)
+        || !samePath(selectedPath, authorityDbPath)
+        || fs.lstatSync(selectedPath).isSymbolicLink()
+        || !selectedStat.isFile()
+        || selectedStat.nlink !== 1) {
+        throw new Error('--authority-db must resolve directly to one unique regular live database file.');
+      }
+    }
   } catch (error) {
     authorityDbError = error instanceof Error ? error.message : String(error);
   }
@@ -117,6 +146,9 @@ function parseArgs(argv) {
       continue;
     }
     values[key] = value;
+  }
+  if (!help && !Object.prototype.hasOwnProperty.call(values, 'authority-db')) {
+    errors.push('Missing required argument: --authority-db');
   }
   return { errors, help, values };
 }
@@ -213,8 +245,10 @@ function withVerifiedReadOnlyDatabase(databaseEvidence, label, reasons, reader, 
     const Database = requireFromLocalDb('better-sqlite3');
     database = new Database(databaseEvidence.absolutePath, { readonly: true, fileMustExist: true });
     database.pragma('query_only = ON');
+    const queryOnly = Number(database.pragma('query_only', { simple: true })) === 1;
     const integrityCheck = sqliteIntegrityCheck(database);
     const foreignKeyViolations = database.pragma('foreign_key_check');
+    pushReason(reasons, queryOnly, `${label} authority database did not enter SQLite query_only mode`);
     pushReason(
       reasons,
       integrityCheck.length === 1 && integrityCheck[0] === 'ok',
@@ -352,11 +386,92 @@ function validateAuthoritySnapshotManifest(selection, context, canonicalPackage)
   pushReason(reasons, isRecord(manifest), 'authority snapshot manifest is missing or invalid');
   if (!isRecord(manifest)) return validationResult(reasons);
   pushReason(reasons, manifest.kind === AUTHORITY_SNAPSHOT_KIND, 'authority snapshot manifest kind is invalid');
-  pushReason(reasons, manifest.schemaVersion === AUTHORITY_SNAPSHOT_SCHEMA_VERSION, 'authority snapshot manifest schema is invalid');
+  pushReason(
+    reasons,
+    manifest.schemaVersion === AUTHORITY_SNAPSHOT_SCHEMA_VERSION,
+    `authority snapshot manifest must use ${AUTHORITY_SNAPSHOT_SCHEMA_VERSION}; v1 is rejected fail-closed`,
+  );
   pushReason(reasons, validTimestamp(manifest.exportedAt), 'authority snapshot exportedAt is invalid');
+  pushReason(reasons, manifest.backup?.method === AUTHORITY_SNAPSHOT_BACKUP_METHOD, 'authority snapshot backup method is not SQLite online backup');
+  pushReason(reasons, validTimestamp(manifest.backup?.startedAt), 'authority snapshot backup startedAt is invalid');
+  pushReason(reasons, validTimestamp(manifest.backup?.completedAt), 'authority snapshot backup completedAt is invalid');
+  pushReason(
+    reasons,
+    validTimestamp(manifest.backup?.startedAt)
+      && validTimestamp(manifest.backup?.completedAt)
+      && Date.parse(manifest.backup.startedAt) <= Date.parse(manifest.backup.completedAt),
+    'authority snapshot backup timestamps are out of order',
+  );
+  pushReason(reasons, manifest.exportedAt === manifest.backup?.completedAt, 'authority snapshot exportedAt is not bound to backup completion');
+  pushReason(reasons, manifest.backup?.completed === true, 'authority snapshot online backup did not declare completion');
+  pushReason(reasons, isPositiveInteger(manifest.backup?.totalPages), 'authority snapshot online backup totalPages is invalid');
+  pushReason(reasons, manifest.backup?.remainingPages === 0, 'authority snapshot online backup has remaining pages');
   pushReason(reasons, nonEmpty(context.authorityDbPath), `canonical authority database is unavailable: ${context.authorityDbError || 'not selected'}`);
+  pushReason(
+    reasons,
+    nonEmpty(manifest.source?.absolutePath)
+      && path.basename(manifest.source.absolutePath).toLowerCase() === 'amazon-ai-ops.db',
+    'authority snapshot source must be the canonical USER_DATA_DIR/amazon-ai-ops.db filename',
+  );
   pushReason(reasons, realpathEquals(manifest.source?.absolutePath, context.authorityDbPath), 'authority snapshot source is not the canonical live AppData database');
   pushReason(reasons, realpathEquals(manifest.source?.realPath, context.authorityDbPath), 'authority snapshot source realpath is not canonical');
+  pushReason(reasons, manifest.source?.openedReadOnly === true, 'authority snapshot source was not opened read-only');
+  pushReason(reasons, manifest.source?.queryOnly === true, 'authority snapshot source did not prove SQLite query_only mode');
+  pushReason(reasons, stableEqual(manifest.source?.integrityCheck, ['ok']), 'authority snapshot source integrity_check proof is invalid');
+  pushReason(reasons, stableEqual(manifest.source?.foreignKeyCheck, []), 'authority snapshot source foreign_key_check proof is invalid');
+  for (const [label, record] of [
+    ['before', manifest.source?.artifactBefore],
+    ['after', manifest.source?.artifactAfter],
+  ]) {
+    pushReason(
+      reasons,
+      isRecord(record)
+        && isSha256(record.sha256)
+        && Number.isInteger(record.sizeBytes)
+        && record.sizeBytes > 0
+        && Number.isFinite(record.mtimeMs),
+      `authority snapshot source ${label} artifact proof is invalid`,
+    );
+  }
+  pushReason(
+    reasons,
+    stableEqual(manifest.source?.artifactBefore, manifest.source?.artifactAfter),
+    'authority snapshot source artifactBefore and artifactAfter do not prove one unchanged live database',
+  );
+  try {
+    const sourcePath = path.resolve(manifest.source?.absolutePath);
+    const sourceStatBefore = fs.statSync(sourcePath);
+    pushReason(
+      reasons,
+      requestedPathEqualsRealpath(sourcePath)
+        && !fs.lstatSync(sourcePath).isSymbolicLink()
+        && sourceStatBefore.isFile()
+        && sourceStatBefore.nlink === 1,
+      'authority snapshot source is linked, reparsed, or not a unique regular file',
+    );
+    const sourceSha256Before = sha256File(sourcePath);
+    const sourceStatDuring = fs.statSync(sourcePath);
+    const sourceSha256After = sha256File(sourcePath);
+    const sourceStatAfter = fs.statSync(sourcePath);
+    pushReason(
+      reasons,
+      sourceSha256Before === sourceSha256After
+        && sourceStatBefore.size === sourceStatDuring.size
+        && sourceStatBefore.size === sourceStatAfter.size
+        && sourceStatBefore.mtimeMs === sourceStatDuring.mtimeMs
+        && sourceStatBefore.mtimeMs === sourceStatAfter.mtimeMs,
+      'authority snapshot live source changed while formal bytes/size/mtime were recomputed',
+    );
+    pushReason(
+      reasons,
+      normalizeSha256(manifest.source?.artifactAfter?.sha256) === sourceSha256After
+        && Number(manifest.source?.artifactAfter?.sizeBytes) === sourceStatAfter.size
+        && Number(manifest.source?.artifactAfter?.mtimeMs) === sourceStatAfter.mtimeMs,
+      'authority snapshot live source bytes/size/mtime drifted after snapshot export',
+    );
+  } catch {
+    reasons.push('authority snapshot source cannot be resolved as the selected unique live database');
+  }
   const snapshotPath = manifest.snapshot?.absolutePath;
   let snapshotRootReal = null;
   let snapshotReal = null;
@@ -372,9 +487,42 @@ function validateAuthoritySnapshotManifest(selection, context, canonicalPackage)
   pushReason(reasons, nonEmpty(snapshotPath) && isPathContained(context.authoritySnapshotRoot, snapshotPath), 'authority snapshot is outside the canonical snapshot root');
   pushReason(reasons, snapshotRootReal && snapshotReal && isPathContained(snapshotRootReal, snapshotReal), 'authority snapshot realpath escapes the canonical snapshot root');
   pushReason(reasons, realpathEquals(snapshotPath, manifest.snapshot?.realPath), 'authority snapshot realpath binding is invalid');
+  pushReason(reasons, !realpathEquals(snapshotPath, context.authorityDbPath), 'authority snapshot must be an independent database file');
+  pushReason(reasons, manifest.snapshot?.openedReadOnly === true, 'authority snapshot validation was not opened read-only');
+  pushReason(reasons, manifest.snapshot?.queryOnly === true, 'authority snapshot validation did not prove SQLite query_only mode');
+  pushReason(reasons, stableEqual(manifest.snapshot?.integrityCheck, ['ok']), 'authority snapshot claimed integrity_check proof is invalid');
+  pushReason(reasons, stableEqual(manifest.snapshot?.foreignKeyCheck, []), 'authority snapshot claimed foreign_key_check proof is invalid');
   pushReason(reasons, currentFileMatches(manifest.snapshot, 'absolutePath'), 'authority snapshot bytes are missing, linked, or stale');
-  pushReason(reasons, normalizeSha256(manifest.source?.sha256) === normalizeSha256(manifest.snapshot?.sha256), 'authority source SHA is not bound to the immutable snapshot');
   pushReason(reasons, stableEqual(manifest.packageIdentity, canonicalPackage.packageIdentity), 'authority snapshot is not bound to the current canonical package identity');
+  let snapshotDatabase;
+  try {
+    const Database = requireFromLocalDb('better-sqlite3');
+    snapshotDatabase = new Database(snapshotPath, { readonly: true, fileMustExist: true });
+    snapshotDatabase.pragma('query_only = ON');
+    const queryOnly = Number(snapshotDatabase.pragma('query_only', { simple: true })) === 1;
+    const integrityCheck = sqliteIntegrityCheck(snapshotDatabase);
+    const foreignKeyCheck = snapshotDatabase.pragma('foreign_key_check');
+    pushReason(reasons, queryOnly, 'authority snapshot did not enter SQLite query_only mode during formal verification');
+    pushReason(
+      reasons,
+      stableEqual(integrityCheck, ['ok']) && stableEqual(integrityCheck, manifest.snapshot?.integrityCheck),
+      'authority snapshot formal integrity_check did not match the v2 manifest',
+    );
+    pushReason(
+      reasons,
+      stableEqual(foreignKeyCheck, []) && stableEqual(foreignKeyCheck, manifest.snapshot?.foreignKeyCheck),
+      'authority snapshot formal foreign_key_check did not match the v2 manifest',
+    );
+  } catch (error) {
+    reasons.push(`authority snapshot could not be reopened read-only: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    if (snapshotDatabase) snapshotDatabase.close();
+  }
+  pushReason(
+    reasons,
+    currentFileMatches(manifest.snapshot, 'absolutePath'),
+    'authority snapshot bytes changed during formal verification',
+  );
   return validationResult(reasons, { manifest, snapshotPath: nonEmpty(snapshotPath) ? path.resolve(snapshotPath) : null });
 }
 
@@ -388,6 +536,121 @@ function validationResult(reasons, extras = {}) {
 
 function pushReason(reasons, condition, message) {
   if (!condition) reasons.push(message);
+}
+
+function expectedAuthoritySnapshotArtifact(snapshotSelection) {
+  const snapshot = snapshotSelection?.evidence?.snapshot;
+  if (
+    !isRecord(snapshot)
+    || !isSha256(snapshot.sha256)
+    || !Number.isInteger(snapshot.sizeBytes)
+    || snapshot.sizeBytes <= 0
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    sha256: normalizeSha256(snapshot.sha256),
+    sizeBytes: snapshot.sizeBytes,
+  });
+}
+
+function captureAuthorityCurrentness(
+  sourceDatabasePath,
+  expectedSnapshotArtifact,
+  captureLabel,
+  injectedContext = null,
+) {
+  if (!nonEmpty(sourceDatabasePath)) {
+    return {
+      ok: false,
+      proof: null,
+      reason: `WAL-aware authority currentness ${captureLabel} cannot run without the selected live authority database.`,
+    };
+  }
+  if (!expectedSnapshotArtifact) {
+    return {
+      ok: false,
+      proof: null,
+      reason: `WAL-aware authority currentness ${captureLabel} cannot run without a valid selected snapshot SHA-256 and size.`,
+    };
+  }
+  try {
+    const helperContext = isRecord(injectedContext?.authorityCurrentnessHelperContext)
+      ? injectedContext.authorityCurrentnessHelperContext
+      : undefined;
+    const proof = captureAuthoritySnapshotCurrentness({
+      sourceDatabasePath,
+      expectedSnapshotArtifact,
+      captureLabel,
+    }, helperContext);
+    return {
+      ok: true,
+      proof,
+      reason: 'WAL-aware read-only SQLite online backup matches the selected authority snapshot.',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      proof: null,
+      reason: `WAL-aware authority currentness ${captureLabel} failed closed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+function publicAuthorityCurrentnessProof(proof) {
+  if (!isRecord(proof)) return null;
+  return {
+    captureLabel: proof.captureLabel ?? null,
+    capturedAt: proof.capturedAt ?? null,
+    method: proof.method ?? null,
+    sourceReadOnly: proof.source?.openedReadOnly === true && proof.source?.queryOnly === true,
+    observedSnapshot: {
+      sha256: normalizeSha256(proof.observedBackup?.sha256) || null,
+      sizeBytes: Number.isInteger(proof.observedBackup?.sizeBytes)
+        ? proof.observedBackup.sizeBytes
+        : null,
+    },
+    matchesSelectedSnapshot: proof.matchesSelectedSnapshot === true,
+  };
+}
+
+function publicAuthorityCurrentnessSummary(state) {
+  const proofs = Array.isArray(state?.proofs) ? state.proofs : [];
+  const failures = Array.isArray(state?.failures) ? state.failures : [];
+  const captureSummaries = proofs.map(publicAuthorityCurrentnessProof).filter(Boolean);
+  const byLabel = new Map(captureSummaries.map((proof) => [proof.captureLabel, proof]));
+  return {
+    schemaVersion: SQLITE_AUTHORITY_CURRENTNESS_SCHEMA_VERSION,
+    method: 'readonly-sqlite-online-backup',
+    passed: failures.length === 0 && proofs.length > 0,
+    expectedSnapshot: state?.expectedSnapshotArtifact
+      ? {
+        sha256: state.expectedSnapshotArtifact.sha256,
+        sizeBytes: state.expectedSnapshotArtifact.sizeBytes,
+      }
+      : null,
+    captures: captureSummaries,
+    beforeFinalWriteCapturedAt: byLabel.get('before-final-report-write')?.capturedAt ?? null,
+    afterFinalWriteCapturedAt: byLabel.get('after-final-report-write')?.capturedAt ?? null,
+    failures: [...failures],
+  };
+}
+
+function mergeSnapshotCurrentnessValidation(snapshotValidation, captureResult) {
+  if (captureResult.ok) {
+    return {
+      ...snapshotValidation,
+      initialCurrentnessProof: captureResult.proof,
+    };
+  }
+  return {
+    ...snapshotValidation,
+    ok: false,
+    reason: snapshotValidation.reason === 'Evidence passed its production contract.'
+      ? captureResult.reason
+      : `${snapshotValidation.reason}; ${captureResult.reason}`,
+    initialCurrentnessProof: null,
+  };
 }
 
 function validateV15FinalReadiness(evidence, context) {
@@ -506,6 +769,14 @@ function validatePackageLaunch(evidence, context = {}) {
   const reasons = [];
   pushReason(reasons, isRecord(evidence), 'package launch evidence must be an object');
   if (!isRecord(evidence)) return validationResult(reasons);
+  const strictValidation = validatePackageLaunchSmokeEvidence(evidence);
+  pushReason(
+    reasons,
+    strictValidation.passed === true,
+    `package launch strict contract failed: ${(strictValidation.violations || [])
+      .map((violation) => `${violation.code}@${violation.path}`)
+      .join(', ')}`,
+  );
   pushReason(reasons, evidence.kind === 'package-launch-smoke', 'unexpected package launch evidence kind');
   pushReason(reasons, validTimestamp(evidence.generatedAt), 'package launch generatedAt is invalid');
   pushReason(reasons, evidence.evidenceMode === 'package-launch-smoke', 'package launch evidence mode is invalid');
@@ -532,7 +803,11 @@ function validatePackageUi(evidence) {
   pushReason(reasons, isRecord(evidence), 'package UI evidence must be an object');
   if (!isRecord(evidence)) return validationResult(reasons);
   pushReason(reasons, evidence.kind === 'package-ui-evidence', 'unexpected package UI evidence kind');
-  pushReason(reasons, evidence.schemaVersion === 5, 'package UI evidence must use schema v5');
+  pushReason(
+    reasons,
+    evidence.schemaVersion === 7,
+    'package UI evidence must use current production interactive-login schema v7; schema v5/v6 are historical only',
+  );
   pushReason(reasons, validTimestamp(evidence.generatedAt), 'package UI generatedAt is invalid');
   pushReason(reasons, evidence.passed === true, 'package UI evidence did not pass');
   let completeness;
@@ -552,15 +827,21 @@ function validatePackageUi(evidence) {
   const runs = Array.isArray(evidence.runs) ? evidence.runs : [];
   pushReason(reasons, uniqueExactStrings(runs.map((run) => run?.scalePercent), [100, 125]), 'package UI must contain exactly one 100% and one 125% run');
   let expectedWorkspaces = [];
+  let expectedSubviews = [];
   let expectedOverlays = [];
+  let packageUiContract = null;
   try {
-    const contract = require('./package-ui-evidence');
-    expectedWorkspaces = contract.EXPECTED_PACKAGE_UI_WORKSPACES.map((item) => item.workspace);
-    expectedOverlays = [...contract.EXPECTED_OVERLAY_CHECK_IDS];
+    packageUiContract = require('./package-ui-evidence');
+    expectedWorkspaces = packageUiContract.EXPECTED_PACKAGE_UI_WORKSPACES.map((item) => item.workspace);
+    expectedSubviews = packageUiContract.EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS.map(
+      (item) => `${item.workspace}/${item.subview}`,
+    );
+    expectedOverlays = [...packageUiContract.EXPECTED_OVERLAY_CHECK_IDS];
   } catch (error) {
     reasons.push(`package UI workspace contract could not be loaded: ${error instanceof Error ? error.message : String(error)}`);
   }
   pushReason(reasons, expectedWorkspaces.length === 10, 'repository package UI contract is not the ten-workspace Stage 7 matrix');
+  pushReason(reasons, stableEqual(expectedSubviews, ['settings/scheduler']), 'repository package UI scheduler subview contract is invalid');
   for (const run of runs) {
     pushReason(reasons, run?.passed === true, `${run?.scalePercent || 'unknown'}% package UI run did not pass`);
     pushReason(
@@ -588,6 +869,37 @@ function validatePackageUi(evidence) {
       (run?.overlayChecks || []).every((item) => currentFileMatches(item?.screenshot)),
       `${run?.scalePercent || 'unknown'}% package UI overlay screenshot files are missing or stale`,
     );
+    pushReason(
+      reasons,
+      uniqueExactStrings(
+        (run?.subviewChecks || []).map((item) => `${item?.workspace}/${item?.subview}`),
+        expectedSubviews,
+      ),
+      `${run?.scalePercent || 'unknown'}% package UI read-only subview checks are incomplete`,
+    );
+    pushReason(
+      reasons,
+      (run?.subviewChecks || []).every((item) => (
+        item?.passed === true
+        && packageUiContract?.validateSchedulerSubviewEvidence(
+          item?.identityCapabilityEvidence,
+          packageUiContract.EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS.find((expected) => (
+            expected.workspace === item?.workspace && expected.subview === item?.subview
+          )),
+        ).passed === true
+        && currentFileMatches(item?.screenshot)
+      )),
+      `${run?.scalePercent || 'unknown'}% package UI read-only subview screenshot files are missing or stale`,
+    );
+    pushReason(
+      reasons,
+      packageUiContract?.validatePackageUiReadOnlyRuntimeEvidence(
+        run?.schedulerReadOnlyRuntime,
+        { requireSchedulerReads: true },
+      ).passed === true
+        && currentFileMatches(run?.schedulerReadOnlyRuntime?.artifact),
+      `${run?.scalePercent || 'unknown'}% package UI Main scheduler read-only runtime evidence is missing or stale`,
+    );
   }
   pushReason(
     reasons,
@@ -596,6 +908,15 @@ function validatePackageUi(evidence) {
         !item?.inspectorEvidence?.screenshot || currentFileMatches(item.inspectorEvidence.screenshot)
       )),
     'package UI wide-profile screenshot files are missing or stale',
+  );
+  pushReason(
+    reasons,
+    packageUiContract?.validatePackageUiReadOnlyRuntimeEvidence(
+      evidence.wideProfile?.schedulerReadOnlyRuntime,
+      { requireSchedulerReads: false },
+    ).passed === true
+      && currentFileMatches(evidence.wideProfile?.schedulerReadOnlyRuntime?.artifact),
+    'package UI wide-profile Main scheduler read-only runtime evidence is missing or stale',
   );
   const before = evidence.artifactsBefore;
   const after = evidence.artifactsAfter;
@@ -693,6 +1014,7 @@ function continuousStoresProjection(stores) {
 
 function validateContinuousOperation(evidence, context = {}) {
   const reasons = [];
+  let verifiedFileArtifacts = Object.freeze([]);
   pushReason(reasons, isRecord(evidence), 'continuous-operation evidence must be an object');
   if (!isRecord(evidence)) return validationResult(reasons);
   pushReason(reasons, evidence.kind === S7_CONTINUOUS_OPERATION_KIND, 'unexpected continuous-operation evidence kind');
@@ -755,12 +1077,29 @@ function validateContinuousOperation(evidence, context = {}) {
   const storesAreNormalized = inputStores.every(Boolean)
     && stores.every((store, index) => store?.storeId === inputStores[index]);
   pushReason(reasons, storesAreNormalized, 'continuous-operation store ids are not normalized logical ids');
+  pushReason(
+    reasons,
+    nonEmpty(evidence.storesRoot)
+      && path.isAbsolute(evidence.storesRoot)
+      && samePath(evidence.storesRoot, context.canonicalStoresRoot)
+      && realpathEquals(evidence.storesRoot, context.canonicalStoresRoot),
+    'continuous-operation storesRoot is not the canonical snapshot-source USER_DATA_DIR/stores directory',
+  );
+  const expectedVerifiedFileCount = 2 * 7 * 8;
+  pushReason(
+    reasons,
+    samePath(evidence.storeCapsule?.storesRoot, evidence.storesRoot)
+      && evidence.storeCapsule?.verifiedFileCount === expectedVerifiedFileCount,
+    'continuous-operation Store Capsule proof must bind the canonical storesRoot and exactly 112 verified report files',
+  );
   if (storesAreNormalized && dates.length === 7 && dates.every(isUsBusinessDate)) {
     const input = {
       stores: inputStores,
       dates,
       dateFrom: dates[0],
       dateTo: dates.at(-1),
+      generatedAt: evidence.generatedAt,
+      storesRoot: evidence.storesRoot,
     };
     const recomputed = withVerifiedReadOnlyDatabase(
       evidence.database,
@@ -777,7 +1116,22 @@ function validateContinuousOperation(evidence, context = {}) {
       context,
     );
     if (recomputed) {
+      const recomputedArtifacts = Array.isArray(recomputed._verifiedFileArtifacts)
+        ? recomputed._verifiedFileArtifacts
+        : [];
+      verifiedFileArtifacts = Object.freeze(recomputedArtifacts.map((artifact) => Object.freeze({
+        filePath: artifact.filePath,
+        runKey: artifact.runKey,
+        sha256: artifact.sha256,
+        sizeBytes: artifact.sizeBytes,
+      })));
       pushReason(reasons, recomputed.passed === true, 'continuous-operation read-only database recomputation did not pass');
+      pushReason(
+        reasons,
+        verifiedFileArtifacts.length === expectedVerifiedFileCount
+          && verifiedFileArtifacts.length === evidence.storeCapsule?.verifiedFileCount,
+        'continuous-operation recomputation did not retain exactly the 112 verified Store Capsule file artifacts',
+      );
       pushReason(
         reasons,
         recomputed.expectedStoreCount === evidence.expectedStoreCount
@@ -800,7 +1154,10 @@ function validateContinuousOperation(evidence, context = {}) {
     // Even an invalid manifest must still validate its database identity rather than trust the JSON claim.
     withVerifiedReadOnlyDatabase(evidence.database, 'continuous-operation', reasons, () => null, context);
   }
-  return validationResult(reasons, { packageIdentity: evidence.packageIdentity });
+  return validationResult(reasons, {
+    packageIdentity: evidence.packageIdentity,
+    verifiedFileArtifacts,
+  });
 }
 
 function parseJsonArray(value) {
@@ -809,6 +1166,57 @@ function parseJsonArray(value) {
     return Array.isArray(parsed) ? parsed : null;
   } catch {
     return null;
+  }
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseStopConditionCodes(value) {
+  const parsed = parseJsonArray(value);
+  if (!parsed || parsed.length === 0) return null;
+  const codes = parsed.map((item) => {
+    if (nonEmpty(item)) return item;
+    if (isRecord(item) && nonEmpty(item.code)) return item.code;
+    return null;
+  });
+  return codes.every(nonEmpty) && new Set(codes).size === codes.length ? codes : null;
+}
+
+function exactDatabaseRow(database, sql, parameters, label, reasons) {
+  const rows = database.prepare(sql).all(...parameters);
+  pushReason(reasons, rows.length === 1, `${label} must resolve to exactly one authority DB row`);
+  return rows.length === 1 ? rows[0] : null;
+}
+
+function validatePngArtifact(filePath, label, reasons) {
+  try {
+    const handle = fs.openSync(filePath, 'r');
+    const header = Buffer.alloc(33);
+    let bytesRead;
+    try {
+      bytesRead = fs.readSync(handle, header, 0, header.length, 0);
+    } finally {
+      fs.closeSync(handle);
+    }
+    pushReason(
+      reasons,
+      bytesRead === header.length
+        && header.subarray(0, 8).toString('hex').toUpperCase() === '89504E470D0A1A0A'
+        && header.readUInt32BE(8) === 13
+        && header.subarray(12, 16).toString('ascii') === 'IHDR'
+        && header.readUInt32BE(16) > 0
+        && header.readUInt32BE(20) > 0,
+      `${label} is not a PNG with a valid first IHDR chunk`,
+    );
+  } catch (error) {
+    reasons.push(`${label} PNG header cannot be read: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -884,6 +1292,7 @@ function validateExecutionArtifact(record, databaseRecord, artifactContext, labe
       && !hasUnsafeFilesystemLink(root, expectedPath);
     pushReason(reasons, physicallyContained, `${label} ${slot} artifact escapes or links through the Store Capsule boundary`);
     pushReason(reasons, stat.isFile() && stat.nlink === 1, `${label} ${slot} Store Capsule evidence must be a unique regular file`);
+    validatePngArtifact(expectedPath, `${label} ${slot} Store Capsule artifact`, reasons);
     currentHash = sha256File(expectedPath);
   } catch (error) {
     reasons.push(`${label} ${slot} Store Capsule artifact cannot be read: ${error instanceof Error ? error.message : String(error)}`);
@@ -907,11 +1316,11 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
   const recordIdentity = proof?.recordIdentity;
   const expectedIssuer = expectedMode === 'manual_approval' ? 'human' : 'policy';
 
-  const store = database.prepare(`
+  const store = exactDatabaseRow(database, `
     SELECT store_id AS storeId, browser_profile_id AS browserProfileId,
            marketplace, currency, status
-    FROM stores WHERE store_id = ?
-  `).get(scope?.storeId);
+    FROM stores WHERE store_id = ? OR browser_profile_id = ?
+  `, [scope?.storeId, scope?.browserProfileId], `${label} store/Profile`, reasons);
   pushReason(
     reasons,
     store?.storeId === scope?.storeId
@@ -922,13 +1331,13 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
     `${label} store/Profile is not active US/USD authority in the database`,
   );
 
-  const sourceAuthority = database.prepare(`
+  const sourceAuthority = exactDatabaseRow(database, `
     SELECT authority_id AS authorityId, store_id AS storeId,
            ad_entity_id AS adEntityId, entity_revision AS entityRevision,
            entity_type AS entityType, proof_sha256 AS proofSha256
     FROM verified_ad_entity_authority
     WHERE store_id = ? AND authority_id = ?
-  `).get(scope?.storeId, authority?.authorityId);
+  `, [scope?.storeId, authority?.authorityId], `${label} verified ad-entity authority`, reasons);
   pushReason(
     reasons,
     sourceAuthority?.authorityId === authority?.authorityId
@@ -940,7 +1349,7 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
     `${label} verified ad-entity authority row does not match the canary object`,
   );
 
-  const identity = database.prepare(`
+  const identity = exactDatabaseRow(database, `
     SELECT identity_version_id AS identityVersionId, store_id AS storeId,
            marketplace, currency, canonical_keyword_id AS canonicalKeywordId,
            ad_entity_id AS adEntityId, entity_revision AS entityRevision,
@@ -949,10 +1358,16 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
            object_revision AS objectRevision, observed_bid_cents AS observedBidCents,
            page_identity_hash AS pageIdentityHash,
            source_authority_id AS sourceAuthorityId,
-           source_authority_proof_sha256 AS sourceAuthorityProofSha256
+           source_authority_proof_sha256 AS sourceAuthorityProofSha256,
+           resolved_session_generation AS resolvedSessionGeneration,
+           resolved_at AS resolvedAt, created_at AS createdAt
     FROM ad_keyword_identity_versions
-    WHERE store_id = ? AND identity_version_id = ?
-  `).get(scope?.storeId, object?.identityVersionId);
+    WHERE store_id = ? AND canonical_keyword_id = ? AND object_revision = ?
+  `, [
+    scope?.storeId,
+    object?.canonicalKeywordId,
+    object?.objectRevision,
+  ], `${label} canonical keyword identity`, reasons);
   pushReason(
     reasons,
     identity?.identityVersionId === object?.identityVersionId
@@ -974,21 +1389,27 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
     `${label} canonical keyword identity row does not match the canary object/authority`,
   );
 
-  const grant = database.prepare(`
+  const grant = exactDatabaseRow(database, `
     SELECT id, store_id AS storeId, marketplace, currency,
            mission_id AS missionId, mission_revision AS missionRevision,
            decision_ids_json AS decisionIdsJson,
            action_revision AS actionRevision,
            allowed_action_types_json AS allowedActionTypesJson,
            allowed_ad_entity_ids_json AS allowedAdEntityIdsJson,
-           max_change_pct AS maxChangePct, expires_at AS expiresAt,
+           max_change_pct AS maxChangePct, total_impact_budget AS totalImpactBudget,
+           expires_at AS expiresAt,
            policy_version_id AS policyVersionId, policy_revision AS policyRevision,
-           issuer_type AS issuerType
+           required_evidence_json AS requiredEvidenceJson,
+           stop_conditions_json AS stopConditionsJson,
+           issuer_type AS issuerType, issued_at AS issuedAt,
+           created_session_generation AS createdSessionGeneration
     FROM mission_grants WHERE store_id = ? AND id = ?
-  `).get(scope?.storeId, authority?.missionGrantId);
+  `, [scope?.storeId, authority?.missionGrantId], `${label} MissionGrant`, reasons);
   const decisionIds = parseJsonArray(grant?.decisionIdsJson);
   const allowedActions = parseJsonArray(grant?.allowedActionTypesJson);
   const allowedEntities = parseJsonArray(grant?.allowedAdEntityIdsJson);
+  const requiredEvidence = parseJsonArray(grant?.requiredEvidenceJson);
+  const stopConditions = parseStopConditionCodes(grant?.stopConditionsJson);
   const reloadRecord = bySlot.get('reload');
   const changePct = Number.isInteger(object?.expectedBidCents) && object.expectedBidCents > 0
     ? ((object.expectedBidCents - object.targetBidCents) / object.expectedBidCents) * 100
@@ -1005,33 +1426,48 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
       && grant?.policyVersionId === authority?.policyVersionId
       && grant?.policyRevision === authority?.policyRevision
       && grant?.issuerType === expectedIssuer
-      && decisionIds?.includes(authority?.decisionId)
-      && allowedActions?.includes('set_keyword_bid')
-      && allowedEntities?.includes(object?.adEntityId)
+      && stableEqual(decisionIds, [authority?.decisionId])
+      && stableEqual(allowedActions, ['set_keyword_bid'])
+      && stableEqual(allowedEntities, [object?.adEntityId])
       && Number(grant?.maxChangePct) >= changePct
+      && Number(grant?.totalImpactBudget) >= Math.abs(object?.expectedBidCents - object?.targetBidCents) / 100
+      && ['before_screenshot', 'after_screenshot', 'reload_screenshot', 'page_identity', 'readback_value']
+        .every((item) => requiredEvidence?.includes(item))
+      && ['identity_drift', 'expected_before_mismatch', 'unknown_result', 'data_stale', 'impact_budget_exhausted', 'kill_switch']
+        .every((item) => stopConditions?.includes(item))
+      && validTimestamp(grant?.issuedAt)
       && validTimestamp(grant?.expiresAt)
       && validTimestamp(reloadRecord?.capturedAt)
       && Date.parse(reloadRecord.capturedAt) <= Date.parse(grant.expiresAt),
     `${label} MissionGrant issuer/policy/scope does not authorize this exact execution`,
   );
   const grantEvents = database.prepare(`
-    SELECT event_type AS eventType FROM mission_grant_events
+    SELECT event_type AS eventType, created_at AS createdAt FROM mission_grant_events
     WHERE store_id = ? AND grant_id = ? ORDER BY created_at, id
   `).all(scope?.storeId, authority?.missionGrantId);
+  const issuedEvents = grantEvents.filter((event) => event.eventType === 'issued');
+  const consumedEvents = grantEvents.filter((event) => event.eventType === 'consumed');
   pushReason(
     reasons,
-    grantEvents.some((event) => event.eventType === 'consumed')
+    issuedEvents.length === 1
+      && consumedEvents.length === 1
+      && issuedEvents[0].createdAt === grant?.issuedAt
+      && validTimestamp(issuedEvents[0].createdAt)
+      && validTimestamp(consumedEvents[0].createdAt)
+      && Date.parse(issuedEvents[0].createdAt) < Date.parse(consumedEvents[0].createdAt)
       && !grantEvents.some((event) => event.eventType === 'revoked' || event.eventType === 'expired'),
-    `${label} MissionGrant is not consumed terminal authority or was revoked/expired`,
+    `${label} MissionGrant is not one exact issued then consumed terminal authority`,
   );
 
-  const batch = database.prepare(`
+  const batch = exactDatabaseRow(database, `
     SELECT id, store_id AS storeId, marketplace, currency,
            mission_id AS missionId, mission_revision AS missionRevision,
            grant_id AS grantId, action_revision AS actionRevision,
-           status, terminal_at AS terminalAt
+           status, created_session_generation AS createdSessionGeneration,
+           created_at AS createdAt, updated_at AS updatedAt,
+           terminal_at AS terminalAt
     FROM ad_execution_batches WHERE store_id = ? AND id = ?
-  `).get(scope?.storeId, authority?.batchId);
+  `, [scope?.storeId, authority?.batchId], `${label} execution batch`, reasons);
   pushReason(
     reasons,
     batch?.id === authority?.batchId
@@ -1047,7 +1483,7 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
     `${label} authority DB batch is not this terminal succeeded execution`,
   );
 
-  const job = database.prepare(`
+  const job = exactDatabaseRow(database, `
     SELECT id, store_id AS storeId, batch_id AS batchId,
            mission_id AS missionId, grant_id AS grantId,
            proposal_id AS proposalId, decision_id AS decisionId,
@@ -1060,9 +1496,11 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
            object_revision AS objectRevision, page_identity_hash AS pageIdentityHash,
            expected_bid_cents AS expectedBidCents,
            target_bid_cents AS targetBidCents, change_pct AS changePct,
-           status, terminal_at AS terminalAt
-    FROM ad_execution_jobs WHERE store_id = ? AND id = ?
-  `).get(scope?.storeId, authority?.jobId);
+           status, created_session_generation AS createdSessionGeneration,
+           created_at AS createdAt, updated_at AS updatedAt,
+           submitted_at AS submittedAt, terminal_at AS terminalAt
+    FROM ad_execution_jobs WHERE store_id = ? AND batch_id = ?
+  `, [scope?.storeId, authority?.batchId], `${label} single execution job`, reasons);
   const expectedSignedChangePct = Number.isFinite(changePct) ? -changePct : Number.NaN;
   pushReason(
     reasons,
@@ -1093,22 +1531,254 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
       && validTimestamp(job?.terminalAt),
     `${label} authority DB job/object is not this terminal succeeded execution`,
   );
+
+  const mission = exactDatabaseRow(database, `
+    SELECT id, store_id AS storeId, marketplace, currency,
+           policy_version_id AS policyVersionId, status, revision
+    FROM missions WHERE store_id = ? AND id = ?
+  `, [scope?.storeId, authority?.missionId], `${label} Mission`, reasons);
+  pushReason(
+    reasons,
+    mission?.id === authority?.missionId
+      && mission?.storeId === scope?.storeId
+      && mission?.marketplace === 'US'
+      && mission?.currency === 'USD'
+      && mission?.policyVersionId === authority?.policyVersionId
+      && mission?.revision === authority?.missionRevision
+      && ['active', 'completed'].includes(mission?.status),
+    `${label} Mission revision/policy binding does not match the execution`,
+  );
+
+  const policy = exactDatabaseRow(database, `
+    SELECT id, store_id AS storeId, status, rules_json AS rulesJson, revision
+    FROM policy_versions WHERE store_id = ? AND id = ?
+  `, [scope?.storeId, authority?.policyVersionId], `${label} immutable policy version`, reasons);
+  const policyRules = parseJsonObject(policy?.rulesJson);
+  pushReason(
+    reasons,
+    policy?.id === authority?.policyVersionId
+      && policy?.storeId === scope?.storeId
+      && policy?.status === 'enabled'
+      && policy?.revision === authority?.policyRevision
+      && policyRules?.killSwitch !== true,
+    `${label} enabled policy version is not the immutable MissionGrant policy`,
+  );
+
+  const runtime = exactDatabaseRow(database, `
+    SELECT store_id AS storeId, autonomy_mode AS autonomyMode,
+           kill_switch AS killSwitch, circuit_breaker_state AS circuitBreakerState,
+           active_policy_version_id AS activePolicyVersionId
+    FROM policy_runtime WHERE store_id = ?
+  `, [scope?.storeId], `${label} policy runtime`, reasons);
+  pushReason(
+    reasons,
+    runtime?.storeId === scope?.storeId
+      && ['manual_approval', 'policy_auto'].includes(runtime?.autonomyMode)
+      && runtime?.killSwitch === 0
+      && runtime?.circuitBreakerState === 'closed'
+      && runtime?.activePolicyVersionId === authority?.policyVersionId
+      && (expectedIssuer !== 'policy' || runtime?.autonomyMode === 'policy_auto'),
+    `${label} policy runtime is not enabled, safe, and exact for the issuer`,
+  );
+
+  const decision = exactDatabaseRow(database, `
+    SELECT id, store_id AS storeId, mission_id AS missionId,
+           policy_version_id AS policyVersionId, policy_revision AS policyRevision,
+           action_revision AS actionRevision, action_type AS actionType,
+           ad_entity_id AS adEntityId, status, revision, valid_until AS validUntil,
+           created_at AS createdAt, updated_at AS updatedAt
+    FROM decisions WHERE store_id = ? AND id = ?
+  `, [scope?.storeId, authority?.decisionId], `${label} decision`, reasons);
+  pushReason(
+    reasons,
+    decision?.id === authority?.decisionId
+      && decision?.storeId === scope?.storeId
+      && decision?.missionId === authority?.missionId
+      && decision?.policyVersionId === authority?.policyVersionId
+      && decision?.policyRevision === authority?.policyRevision
+      && decision?.actionRevision === authority?.actionRevision
+      && decision?.actionType === 'set_keyword_bid'
+      && decision?.adEntityId === object?.adEntityId
+      && decision?.revision === authority?.decisionRevision
+      && ['approved', 'executed', 'verified'].includes(decision?.status),
+    `${label} decision revision/action/entity/policy binding is not exact`,
+  );
+  const decisionApproval = exactDatabaseRow(database, `
+    SELECT decision_id AS decisionId, decision_revision AS decisionRevision,
+           event_type AS eventType, created_at AS createdAt
+    FROM decision_history
+    WHERE store_id = ? AND decision_id = ?
+      AND decision_revision = ? AND event_type = 'approved'
+  `, [
+    scope?.storeId,
+    authority?.decisionId,
+    authority?.decisionRevision,
+  ], `${label} decision approval history`, reasons);
+  pushReason(
+    reasons,
+    decisionApproval?.decisionId === authority?.decisionId
+      && decisionApproval?.decisionRevision === authority?.decisionRevision
+      && decisionApproval?.eventType === 'approved'
+      && validTimestamp(decisionApproval?.createdAt),
+    `${label} decision approval history is missing, duplicated, or not exact`,
+  );
+
+  const proposal = exactDatabaseRow(database, `
+    SELECT proposal.id, proposal.store_id AS storeId,
+           proposal.marketplace, proposal.currency,
+           proposal.mission_id AS missionId, proposal.mission_revision AS missionRevision,
+           proposal.policy_version_id AS policyVersionId,
+           proposal.policy_revision AS policyRevision,
+           proposal.action_revision AS actionRevision,
+           proposal.action_type AS actionType, proposal.entity_type AS entityType,
+           proposal.ad_entity_authority_id AS adEntityAuthorityId,
+           proposal.ad_entity_id AS adEntityId,
+           proposal.ad_entity_revision AS adEntityRevision,
+           proposal.current_bid_cents AS currentBidCents,
+           proposal.proposed_bid_cents AS proposedBidCents,
+           proposal.change_pct AS changePct,
+           proposal.authorization_json AS authorizationJson,
+           proposal.valid_until AS validUntil,
+           proposal.created_session_generation AS createdSessionGeneration,
+           proposal.created_at AS createdAt,
+           link.decision_id AS linkedDecisionId
+    FROM analysis_proposal_decision_links link
+    JOIN analysis_proposal_snapshots proposal
+      ON proposal.store_id = link.store_id AND proposal.id = link.proposal_id
+    WHERE link.store_id = ? AND link.proposal_id = ? AND link.decision_id = ?
+  `, [
+    scope?.storeId,
+    authority?.proposalId,
+    authority?.decisionId,
+  ], `${label} proposal/decision link`, reasons);
+  const proposalAuthorization = parseJsonObject(proposal?.authorizationJson);
+  const authorizationLane = proposalAuthorization?.[expectedIssuer];
+  pushReason(
+    reasons,
+    proposal?.id === authority?.proposalId
+      && proposal?.linkedDecisionId === authority?.decisionId
+      && proposal?.storeId === scope?.storeId
+      && proposal?.marketplace === 'US'
+      && proposal?.currency === 'USD'
+      && proposal?.missionId === authority?.missionId
+      && proposal?.missionRevision === authority?.missionRevision
+      && proposal?.policyVersionId === authority?.policyVersionId
+      && proposal?.policyRevision === authority?.policyRevision
+      && proposal?.actionRevision === authority?.actionRevision
+      && proposal?.actionType === 'set_keyword_bid'
+      && proposal?.entityType === 'keyword'
+      && proposal?.adEntityAuthorityId === authority?.authorityId
+      && proposal?.adEntityId === object?.adEntityId
+      && proposal?.adEntityRevision === object?.entityRevision
+      && proposal?.currentBidCents === object?.expectedBidCents
+      && proposal?.proposedBidCents === object?.targetBidCents
+      && Math.abs(Number(proposal?.changePct) - expectedSignedChangePct) < 0.000001
+      && authorizationLane?.eligible === true
+      && Array.isArray(authorizationLane?.blockers)
+      && authorizationLane.blockers.length === 0,
+    `${label} immutable proposal/action/decision/policy authorization binding is not exact`,
+  );
+
+  const capturedSessionGenerations = new Set(records.map((record) => record?.capturedSessionGeneration));
+  const capturedSessionGeneration = capturedSessionGenerations.size === 1
+    ? [...capturedSessionGenerations][0]
+    : null;
+  pushReason(
+    reasons,
+    isPositiveInteger(capturedSessionGeneration)
+      && identity?.resolvedSessionGeneration === capturedSessionGeneration
+      && grant?.createdSessionGeneration === capturedSessionGeneration
+      && batch?.createdSessionGeneration === capturedSessionGeneration
+      && job?.createdSessionGeneration === capturedSessionGeneration
+      && proposal?.createdSessionGeneration === capturedSessionGeneration,
+    `${label} job/grant/batch/proposal/identity session generation is not bound to capturedSessionGeneration`,
+  );
+
   const snapshotExportedAtMs = Date.parse(context.authoritySnapshotExportedAt);
   const queryExecutedAtMs = Date.parse(evidence.database?.authorityProof?.queryExecutedAt);
   const generatedAtMs = Date.parse(evidence.generatedAt);
+  const nowMs = Number(context.nowMs);
+  const identityResolvedAtMs = Date.parse(identity?.resolvedAt);
+  const identityCreatedAtMs = Date.parse(identity?.createdAt);
+  const proposalCreatedAtMs = Date.parse(proposal?.createdAt);
+  const decisionCreatedAtMs = Date.parse(decision?.createdAt);
+  const decisionApprovedAtMs = Date.parse(decisionApproval?.createdAt);
+  const decisionUpdatedAtMs = Date.parse(decision?.updatedAt);
+  const issuedAtMs = Date.parse(grant?.issuedAt);
+  const issuedEventAtMs = Date.parse(issuedEvents[0]?.createdAt);
+  const consumedAtMs = Date.parse(consumedEvents[0]?.createdAt);
+  const batchCreatedAtMs = Date.parse(batch?.createdAt);
+  const batchUpdatedAtMs = Date.parse(batch?.updatedAt);
+  const jobCreatedAtMs = Date.parse(job?.createdAt);
+  const jobSubmittedAtMs = Date.parse(job?.submittedAt);
+  const jobUpdatedAtMs = Date.parse(job?.updatedAt);
   const recordTimes = records.flatMap((record) => [Date.parse(record?.capturedAt), Date.parse(record?.createdAt)]);
+  const beforeCapturedAtMs = Date.parse(bySlot.get('before')?.capturedAt);
+  const beforeCreatedAtMs = Date.parse(bySlot.get('before')?.createdAt);
+  const afterCapturedAtMs = Date.parse(bySlot.get('after')?.capturedAt);
+  const afterCreatedAtMs = Date.parse(bySlot.get('after')?.createdAt);
+  const reloadCapturedAtMs = Date.parse(bySlot.get('reload')?.capturedAt);
   const latestRecordAtMs = Math.max(...recordTimes);
-  const terminalAtMs = Math.max(Date.parse(batch?.terminalAt), Date.parse(job?.terminalAt));
+  const batchTerminalAtMs = Date.parse(batch?.terminalAt);
+  const jobTerminalAtMs = Date.parse(job?.terminalAt);
+  const terminalTimes = [batchTerminalAtMs, jobTerminalAtMs];
+  const terminalAtMs = Math.max(...terminalTimes);
+  const executionFreshnessFloorMs = nowMs - MAX_CANARY_EVIDENCE_AGE_MS;
+  const executionTimes = [
+    identityResolvedAtMs,
+    identityCreatedAtMs,
+    proposalCreatedAtMs,
+    decisionCreatedAtMs,
+    decisionApprovedAtMs,
+    decisionUpdatedAtMs,
+    issuedAtMs,
+    issuedEventAtMs,
+    batchCreatedAtMs,
+    batchUpdatedAtMs,
+    jobCreatedAtMs,
+    jobSubmittedAtMs,
+    jobUpdatedAtMs,
+    ...recordTimes,
+    ...terminalTimes,
+    consumedAtMs,
+  ];
+  const publicationTimes = [snapshotExportedAtMs, queryExecutedAtMs, generatedAtMs];
   pushReason(
     reasons,
-    recordTimes.every((value) => Number.isFinite(value) && value >= context.packageBuiltAtMs)
-      && Number.isFinite(terminalAtMs)
-      && terminalAtMs >= latestRecordAtMs
-      && terminalAtMs <= snapshotExportedAtMs
+    executionTimes.every((value) => Number.isFinite(value)
+      && value >= context.packageBuiltAtMs
+      && value >= executionFreshnessFloorMs
+      && value <= nowMs + MAX_FUTURE_SKEW_MS)
+      && publicationTimes.every((value) => Number.isFinite(value)
+        && value <= nowMs + MAX_FUTURE_SKEW_MS)
+      && records.every((record) => Date.parse(record?.createdAt) >= Date.parse(record?.capturedAt))
+      && identityResolvedAtMs <= identityCreatedAtMs
+      && identityCreatedAtMs <= jobCreatedAtMs
+      && proposalCreatedAtMs <= decisionCreatedAtMs
+      && decisionCreatedAtMs <= decisionApprovedAtMs
+      && decisionApprovedAtMs <= decisionUpdatedAtMs
+      && decisionApprovedAtMs <= issuedAtMs
+      && issuedAtMs === issuedEventAtMs
+      && Math.max(issuedAtMs, identityResolvedAtMs) <= jobCreatedAtMs
+      && batchCreatedAtMs <= jobCreatedAtMs
+      && jobCreatedAtMs <= beforeCapturedAtMs
+      && beforeCreatedAtMs <= jobSubmittedAtMs
+      && jobSubmittedAtMs < afterCapturedAtMs
+      && afterCreatedAtMs <= reloadCapturedAtMs
+      && latestRecordAtMs <= jobTerminalAtMs
+      && jobTerminalAtMs <= jobUpdatedAtMs
+      && jobTerminalAtMs <= batchTerminalAtMs
+      && batchTerminalAtMs <= batchUpdatedAtMs
+      && Math.max(jobUpdatedAtMs, batchUpdatedAtMs) <= consumedAtMs
+      && snapshotExportedAtMs >= consumedAtMs
+      && decisionUpdatedAtMs <= snapshotExportedAtMs
       && queryExecutedAtMs >= snapshotExportedAtMs
       && queryExecutedAtMs >= terminalAtMs
-      && generatedAtMs >= queryExecutedAtMs,
-    `${label} captured/terminal/snapshot/query/generated timestamps are stale or out of order`,
+      && generatedAtMs >= queryExecutedAtMs
+      && Date.parse(grant?.expiresAt) >= Date.parse(reloadRecord?.capturedAt)
+      && (!decision?.validUntil || Date.parse(decision.validUntil) >= Date.parse(reloadRecord?.capturedAt))
+      && Date.parse(proposal?.validUntil) >= Date.parse(reloadRecord?.capturedAt),
+    `${label} authorization/captured/terminal/snapshot/query/generated timestamps are stale, replayed, or out of order`,
   );
 
   const databaseEvidence = database.prepare(`
@@ -1151,7 +1821,7 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
       `${label} ${slot} JSON evidence does not match the authority DB record`,
     );
     validateExecutionArtifact(record, databaseRecord, {
-      storesRoot: evidence.storesRoot,
+      storesRoot: context.canonicalStoresRoot,
       storeId: store?.storeId,
       batchId: batch?.id,
       jobId: job?.id,
@@ -1277,15 +1947,20 @@ function validateExecutionCanary(evidence, expectedMode, context = {}) {
   );
 
   const storesRoot = evidence.storesRoot;
+  const canonicalStoresRoot = context.canonicalStoresRoot;
   const normalizedStoreId = normalizeLogicalId(scope?.storeId);
   const normalizedProfileId = normalizeLogicalId(scope?.browserProfileId);
   pushReason(
     reasons,
     nonEmpty(storesRoot)
       && path.isAbsolute(storesRoot)
-      && fs.existsSync(storesRoot)
-      && fs.statSync(storesRoot).isDirectory(),
-    `${label} explicit storesRoot is missing or invalid`,
+      && nonEmpty(canonicalStoresRoot)
+      && samePath(storesRoot, canonicalStoresRoot)
+      && realpathEquals(storesRoot, canonicalStoresRoot)
+      && requestedPathEqualsRealpath(canonicalStoresRoot)
+      && fs.existsSync(canonicalStoresRoot)
+      && fs.statSync(canonicalStoresRoot).isDirectory(),
+    `${label} storesRoot is not the canonical USER_DATA_DIR/stores directory derived from the snapshot source`,
   );
   pushReason(
     reasons,
@@ -1312,14 +1987,10 @@ function validateExecutionCanary(evidence, expectedMode, context = {}) {
       && Date.parse(authorityProof.queryExecutedAt) <= Date.parse(evidence.generatedAt),
     `${label} authority query timestamp is later than the canary manifest`,
   );
-  if (nonEmpty(storesRoot) && path.isAbsolute(storesRoot) && fs.existsSync(storesRoot)) {
-    withVerifiedReadOnlyDatabase(evidence.database, label, reasons, (database) => {
-      validateCanaryAuthorityDatabase(database, evidence, expectedMode, label, reasons, context);
-      return true;
-    }, context);
-  } else {
-    withVerifiedReadOnlyDatabase(evidence.database, label, reasons, () => null, context);
-  }
+  withVerifiedReadOnlyDatabase(evidence.database, label, reasons, (database) => {
+    validateCanaryAuthorityDatabase(database, evidence, expectedMode, label, reasons, context);
+    return true;
+  }, context);
   return validationResult(reasons, {
     packageIdentity: evidence.packageIdentity,
     canaryBinding: {
@@ -1437,6 +2108,149 @@ function appendGateFailure(gate, reason) {
   gate.reason = gate.reason === 'Evidence passed its production contract.'
     ? reason
     : `${gate.reason}; ${reason}`;
+}
+
+function verifyFileArtifactsUnchanged(verifiedFileArtifacts) {
+  const reasons = [];
+  if (!Array.isArray(verifiedFileArtifacts) || verifiedFileArtifacts.length !== 2 * 7 * 8) {
+    return validationResult(['Final Store Capsule verification did not retain exactly 112 file artifacts.']);
+  }
+  const seenPaths = new Set();
+  for (const artifact of verifiedFileArtifacts) {
+    const filePath = artifact?.filePath;
+    if (
+      !nonEmpty(filePath)
+      || !path.isAbsolute(filePath)
+      || filePath.includes('\0')
+      || !isSha256(artifact?.sha256)
+      || !Number.isInteger(artifact?.sizeBytes)
+      || artifact.sizeBytes <= 0
+    ) {
+      reasons.push('Final Store Capsule verification retained an invalid file artifact proof.');
+      break;
+    }
+    const resolved = path.resolve(filePath);
+    const normalizedPath = resolved.toLowerCase();
+    if (!samePath(filePath, resolved) || seenPaths.has(normalizedPath)) {
+      reasons.push(`Final Store Capsule verification retained a duplicate or non-canonical file path: ${filePath}`);
+      break;
+    }
+    seenPaths.add(normalizedPath);
+    const expected = {
+      path: resolved,
+      sha256: artifact.sha256,
+      sizeBytes: artifact.sizeBytes,
+    };
+    try {
+      if (!currentFileMatches(expected) || !currentFileMatches(expected)) {
+        reasons.push(`Verified Store Capsule report file changed after continuous-operation verification: ${resolved}`);
+        break;
+      }
+    } catch (error) {
+      reasons.push(
+        `Verified Store Capsule report file could not be rechecked after continuous-operation verification: ${resolved} (${error instanceof Error ? error.message : String(error)})`,
+      );
+      break;
+    }
+  }
+  return validationResult(reasons);
+}
+
+function refreshReportState(report) {
+  const passed = report.gates.filter((gate) => gate.ok).length;
+  const allGatesPass = report.inputContractPassed && passed === report.gates.length;
+  report.summary = {
+    total: report.gates.length,
+    passed,
+    failed: report.gates.length - passed,
+  };
+  report.allGatesPass = allGatesPass;
+  report.appReady = allGatesPass;
+  report.status = allGatesPass ? 'APP_READY' : 'APP_NEEDS_WORK';
+  report.failures = [
+    ...report.gates.filter((gate) => !gate.ok).map((gate) => ({
+      gateId: gate.id,
+      evidencePath: gate.evidencePath,
+      reason: gate.reason,
+    })),
+    ...report.inputErrors.map((reason) => ({
+      gateId: 'explicit-input-contract',
+      evidencePath: null,
+      reason,
+    })),
+  ];
+}
+
+function appendFinalStoreCapsuleFailure(report, reason) {
+  const gate = report.gates.find((candidate) => candidate.id === 's7-continuous-operation');
+  if (!gate) return;
+  appendGateFailure(gate, reason);
+  refreshReportState(report);
+}
+
+function verifyFinalStoreCapsuleEvidence(report) {
+  const gate = report.gates.find((candidate) => candidate.id === 's7-continuous-operation');
+  if (!gate?.ok) return true;
+  const validation = verifyFileArtifactsUnchanged(report._verifiedFileArtifacts);
+  if (validation.ok) return true;
+  appendFinalStoreCapsuleFailure(
+    report,
+    `Final Store Capsule TOCTOU verification failed: ${validation.reason}`,
+  );
+  return false;
+}
+
+function appendFinalAuthorityCurrentnessFailure(report, reason) {
+  const state = report._authorityCurrentnessState;
+  if (state && !state.failures.includes(reason)) state.failures.push(reason);
+  report.authoritySnapshot.ok = false;
+  report.authoritySnapshot.reason = report.authoritySnapshot.reason === 'Evidence passed its production contract.'
+    ? reason
+    : `${report.authoritySnapshot.reason}; ${reason}`;
+  for (const gate of report.gates.filter((candidate) => (
+    AUTHORITY_SNAPSHOT_DEPENDENT_GATE_IDS.includes(candidate.id)
+  ))) {
+    appendGateFailure(gate, reason);
+  }
+  report.authoritySnapshot.currentness = publicAuthorityCurrentnessSummary(state);
+  refreshReportState(report);
+}
+
+function captureAndVerifyFinalAuthorityCurrentness(report, captureLabel) {
+  const state = report._authorityCurrentnessState;
+  if (!state) {
+    appendFinalAuthorityCurrentnessFailure(
+      report,
+      `WAL-aware authority currentness ${captureLabel} state is unavailable.`,
+    );
+    return false;
+  }
+  const capture = captureAuthorityCurrentness(
+    state.sourceDatabasePath,
+    state.expectedSnapshotArtifact,
+    captureLabel,
+    state.injectedContext,
+  );
+  if (!capture.ok) {
+    appendFinalAuthorityCurrentnessFailure(report, capture.reason);
+    return false;
+  }
+  state.proofs.push(capture.proof);
+  try {
+    assertMatchingAuthorityCurrentnessProofs(
+      state.proofs,
+      state.expectedSnapshotArtifact,
+      `Formal readiness ${captureLabel}`,
+    );
+  } catch (error) {
+    appendFinalAuthorityCurrentnessFailure(
+      report,
+      `WAL-aware authority currentness ${captureLabel} proof reconciliation failed closed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  }
+  report.authoritySnapshot.currentness = publicAuthorityCurrentnessSummary(state);
+  return true;
 }
 
 function reconcilePackageIdentity(gates) {
@@ -1585,7 +2399,13 @@ function publicGate(gate) {
 }
 
 function buildReport(parsed, injectedContext = null) {
-  const context = { ...defaultProductionContext(), ...(injectedContext || {}) };
+  const productionContext = defaultProductionContext(parsed.values['authority-db']);
+  const context = {
+    ...productionContext,
+    ...(injectedContext || {}),
+    authorityDbPath: productionContext.authorityDbPath,
+    authorityDbError: productionContext.authorityDbError,
+  };
   const selections = new Map();
   const selectedPaths = {};
   for (const spec of GATE_SPECS) {
@@ -1596,9 +2416,32 @@ function buildReport(parsed, injectedContext = null) {
   const canonicalPackage = inspectCanonicalPackage(context);
   const snapshotSpec = { id: 'authority-snapshot', name: 'Canonical authority database snapshot', option: 'authority-snapshot-manifest' };
   const snapshotSelection = readEvidenceSelection(snapshotSpec, parsed.values['authority-snapshot-manifest']);
-  const snapshotValidation = snapshotSelection.gate
+  const snapshotContractValidation = snapshotSelection.gate
     ? validationResult([snapshotSelection.gate.reason])
     : validateAuthoritySnapshotManifest(snapshotSelection, context, canonicalPackage);
+  const expectedSnapshotArtifact = expectedAuthoritySnapshotArtifact(snapshotSelection);
+  const initialCurrentnessCapture = snapshotContractValidation.ok
+    ? captureAuthorityCurrentness(
+      context.authorityDbPath,
+      expectedSnapshotArtifact,
+      'after-snapshot-selection',
+      injectedContext,
+    )
+    : {
+      ok: false,
+      proof: null,
+      reason: 'WAL-aware authority currentness was not credited because the authority snapshot contract did not pass.',
+    };
+  const snapshotValidation = snapshotContractValidation.ok
+    ? mergeSnapshotCurrentnessValidation(
+      snapshotContractValidation,
+      initialCurrentnessCapture,
+    )
+    : {
+      ...snapshotContractValidation,
+      initialCurrentnessProof: null,
+    };
+  const authoritySnapshotSourcePath = snapshotValidation.manifest?.source?.absolutePath;
   const validationContext = {
     packageLaunchPath: selections.get('package-launch').evidencePath,
     packageAdversarialPath: selections.get('package-adversarial-node-env').evidencePath,
@@ -1609,6 +2452,11 @@ function buildReport(parsed, injectedContext = null) {
       ? sha256File(snapshotSelection.evidencePath)
       : null,
     authoritySnapshotExportedAt: snapshotValidation.manifest?.exportedAt,
+    authoritySnapshotSourcePath,
+    canonicalStoresRoot: nonEmpty(authoritySnapshotSourcePath)
+      ? path.resolve(path.dirname(authoritySnapshotSourcePath), 'stores')
+      : null,
+    nowMs: context.nowMs,
     packageBuiltAtMs: canonicalPackage.builtAtMs,
     packageIdentity: canonicalPackage.packageIdentity,
   };
@@ -1637,6 +2485,7 @@ function buildReport(parsed, injectedContext = null) {
       explicitOnly: true,
       latestFallbackUsed: false,
       selectedPaths,
+      authorityDb: context.authorityDbPath,
       authoritySnapshotManifest: snapshotSelection.evidencePath,
     },
     authoritySnapshot: {
@@ -1657,18 +2506,65 @@ function buildReport(parsed, injectedContext = null) {
     })),
     ...parsed.errors.map((reason) => ({ gateId: 'explicit-input-contract', evidencePath: null, reason })),
   ];
+  const continuousValidation = internalGates.find(
+    (gate) => gate.id === 's7-continuous-operation',
+  )?._validation;
+  Object.defineProperty(report, '_verifiedFileArtifacts', {
+    configurable: false,
+    enumerable: false,
+    value: continuousValidation?.verifiedFileArtifacts ?? Object.freeze([]),
+    writable: false,
+  });
+  const authorityCurrentnessState = {
+    expectedSnapshotArtifact,
+    failures: initialCurrentnessCapture.ok
+      ? []
+      : [initialCurrentnessCapture.reason],
+    injectedContext,
+    proofs: initialCurrentnessCapture.ok
+      ? [initialCurrentnessCapture.proof]
+      : [],
+    sourceDatabasePath: context.authorityDbPath,
+  };
+  Object.defineProperty(report, '_authorityCurrentnessState', {
+    configurable: false,
+    enumerable: false,
+    value: authorityCurrentnessState,
+    writable: false,
+  });
+  report.authoritySnapshot.currentness =
+    publicAuthorityCurrentnessSummary(authorityCurrentnessState);
   return report;
 }
 
 function writeReport(outputPath, report) {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  const tempPath = path.join(
+    path.dirname(outputPath),
+    `.${path.basename(outputPath)}.${process.pid}.${crypto.randomUUID()}.tmp`,
+  );
+  try {
+    fs.writeFileSync(tempPath, `${JSON.stringify(report, null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
+    const handle = fs.openSync(tempPath, 'r+');
+    try {
+      fs.fsyncSync(handle);
+    } finally {
+      fs.closeSync(handle);
+    }
+    fs.renameSync(tempPath, outputPath);
+  } finally {
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+  }
 }
 
 function usage() {
   return [
     'Usage: node scripts/verify-mission-control-production-readiness.js',
     ...GATE_SPECS.map((spec) => `  --${spec.option} <evidence.json>`),
+    '  --authority-db <absolute live authority database>',
     '  --authority-snapshot-manifest <snapshot-provenance.json>',
     '  --out <readiness.json>',
   ].join('\n');
@@ -1682,6 +2578,40 @@ function run(argv = process.argv.slice(2), injectedContext = null) {
   }
   const outputPath = path.resolve(parsed.values.out || defaultOutputPath());
   const report = buildReport(parsed, injectedContext);
+  if (
+    injectedContext
+    && Object.prototype.hasOwnProperty.call(injectedContext, 'beforeFinalEvidenceRecheck')
+  ) {
+    if (typeof injectedContext.beforeFinalEvidenceRecheck !== 'function') {
+      appendFinalStoreCapsuleFailure(
+        report,
+        'Injected beforeFinalEvidenceRecheck test hook must be a function.',
+      );
+    } else {
+      try {
+        injectedContext.beforeFinalEvidenceRecheck({ outputPath });
+      } catch (error) {
+        appendFinalStoreCapsuleFailure(
+          report,
+          `Injected beforeFinalEvidenceRecheck test hook failed closed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+  captureAndVerifyFinalAuthorityCurrentness(report, 'before-final-report-write');
+  verifyFinalStoreCapsuleEvidence(report);
+  writeReport(outputPath, report);
+  const storeCapsuleStillValid = verifyFinalStoreCapsuleEvidence(report);
+  const authorityStillCurrent = captureAndVerifyFinalAuthorityCurrentness(
+    report,
+    'after-final-report-write',
+  );
+  if (!storeCapsuleStillValid || !authorityStillCurrent) {
+    refreshReportState(report);
+  }
+  // Persist the post-write recheck itself. This second atomic replace is the
+  // final reader-facing report; no protected authority or Store Capsule input
+  // is touched by writing it.
   writeReport(outputPath, report);
   process.stdout.write(`${report.status}: ${report.summary.passed}/${report.summary.total} production gates passed.\n`);
   process.stdout.write(`Evidence: ${outputPath}\n`);
@@ -1700,6 +2630,7 @@ if (require.main === module) {
 
 module.exports = {
   EXECUTION_CANARY_AUTHORITY_QUERY_CONTRACT,
+  AUTHORITY_SNAPSHOT_BACKUP_METHOD,
   AUTHORITY_SNAPSHOT_KIND,
   AUTHORITY_SNAPSHOT_SCHEMA_VERSION,
   EXECUTION_CANARY_KIND,
@@ -1719,6 +2650,7 @@ module.exports = {
   parseArgs,
   run,
   validateContinuousOperation,
+  validateAuthoritySnapshotManifest,
   validateExecutionCanary,
   validatePackageAdversarialNodeEnv,
   validatePackageLaunch,

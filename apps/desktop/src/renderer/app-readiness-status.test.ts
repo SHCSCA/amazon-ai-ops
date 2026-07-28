@@ -112,6 +112,22 @@ describe('login micro-response contract', () => {
     expect(busy.className).toContain('button-loading');
   });
 
+  it('requires an explicit visible Lingxing binding before login without exposing the username in DOM data', () => {
+    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const loginPage = source.slice(source.indexOf('function LoginPage()'), source.indexOf('function MissionControlRuntime'));
+
+    expect(loginPage).toContain('data-login-connection-status');
+    expect(loginPage).toContain('data-state={loginConnectionState}');
+    expect(loginPage).toContain('data-package-ui-evidence-action="bind-lingxing-connection"');
+    expect(loginPage).toContain('绑定当前领星账号');
+    expect(loginPage).toContain('更新当前领星账号绑定');
+    expect(loginPage).toContain('领星连接已绑定');
+    expect(loginPage).toContain('disabled={loading || !lingxingConnectionReady}');
+    expect(loginPage).toContain('lingxingConnection?.accountLabel?.trim() === username.trim()');
+    expect(loginPage).toContain('store.bindLingxingConnection(username.trim())');
+    expect(loginPage).not.toMatch(/data-[\\w-]*(?:user|account)[\\w-]*=\\{?username/i);
+  });
+
   it('keeps credential and loading feedback in one stable live region', () => {
     const loginStatusMessage = (AppModule as any).loginStatusMessage as
       | ((input: {
@@ -230,7 +246,7 @@ describe('login micro-response contract', () => {
     const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('if (loading) return;');
-    expect(source.match(/event\.key === 'Enter' && !loading && handleLogin\(\)/g)).toHaveLength(2);
+    expect(source.match(/event\.key === 'Enter' && !loading && lingxingConnectionReady && handleLogin\(\)/g)).toHaveLength(2);
     expect(source).toContain("disabled={savedCredentialState === 'encryption_unavailable'}");
     expect(source).toContain("const remember = encryptionAvailable && Boolean(saved.rememberPassword)");
     expect(source).toContain('<span>记住密码</span>');

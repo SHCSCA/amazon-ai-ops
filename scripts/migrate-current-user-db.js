@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const TARGET_VERSION = 8;
+const TARGET_VERSION = 9;
 const SCRIPT_SCHEMA_VERSION = 1;
 let loadedLocalDbRuntime;
 
@@ -151,10 +151,10 @@ function executeOfflineMigration(args) {
       throw new Error(`Business row preservation failed: ${JSON.stringify(preservationFailures)}`);
     }
 
-    const migration8 = upgraded.prepare(`
-      SELECT manifest_json AS manifestJson FROM schema_migrations WHERE version = 8
-    `).get();
-    const migration8Manifest = JSON.parse(migration8.manifestJson);
+    const targetMigration = upgraded.prepare(`
+      SELECT manifest_json AS manifestJson FROM schema_migrations WHERE version = ?
+    `).get(TARGET_VERSION);
+    const targetMigrationManifest = JSON.parse(targetMigration.manifestJson);
     const storeRepository = new runtime.StoreRepository(upgraded);
     const recoveryPreflight = storeRepository.getMigrationRecoveryPreflight(TARGET_VERSION);
     if (!recoveryPreflight.canRestore) {
@@ -196,7 +196,7 @@ function executeOfflineMigration(args) {
         tableRowCounts: upgradedRowCounts,
       },
       migrations,
-      migration8Manifest,
+      targetMigrationManifest,
       recoveryPreflight,
       restore: {
         ...restore,

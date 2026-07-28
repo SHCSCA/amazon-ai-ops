@@ -263,6 +263,29 @@ const loginStyles: Record<string, React.CSSProperties> = {
     padding: '10px 12px',
     fontSize: 13,
   },
+  connectionPanel: {
+    display: 'grid',
+    gap: 8,
+    border: '1px solid var(--aao-line)',
+    borderRadius: 8,
+    background: 'var(--aao-surface-subtle)',
+    padding: '10px 12px',
+  },
+  connectionStatus: {
+    margin: 0,
+    color: 'var(--aao-ink-2)',
+    fontSize: 13,
+    lineHeight: 1.45,
+  },
+  connectionButton: {
+    height: 38,
+    border: '1px solid var(--aao-brand-600)',
+    borderRadius: 8,
+    background: 'var(--aao-surface)',
+    color: 'var(--aao-brand-700)',
+    fontSize: 13,
+    fontWeight: 800,
+  },
   button: {
     height: 44,
     border: 0,
@@ -454,6 +477,7 @@ function headerReadinessClass(readiness: DeliveryReadinessView | null): string {
 }
 
 function LoginPage() {
+  const store = useMissionControlStoreContext();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberPassword, setRememberPassword] = useState(false);
@@ -465,7 +489,13 @@ function LoginPage() {
   const [credentialTone, setCredentialTone] = useState<LoginCredentialTone>('neutral');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [loginConnectionState, setLoginConnectionState] = useState<'missing' | 'binding' | 'ready' | 'error'>('missing');
   const setLoginState = useStore((state) => state.setLoginState);
+  const lingxingConnection = store.activeView?.connections.find(
+    (connection) => connection.provider === 'lingxing',
+  );
+  const lingxingConnectionReady = Boolean(username.trim())
+    && lingxingConnection?.accountLabel?.trim() === username.trim();
   const loginButtonView = loginSubmitButtonView(loading);
   const loginStatus = loginStatusMessage({ credentialSource, loading, credentialNotice, rememberPassword });
   const loginStatusClass = [
@@ -481,6 +511,16 @@ function LoginPage() {
     loading,
     passwordAvailable: savedPasswordAvailable,
   });
+
+  useEffect(() => {
+    setLoginConnectionState(lingxingConnectionReady ? 'ready' : 'missing');
+  }, [
+    lingxingConnection?.accountLabel,
+    lingxingConnection?.id,
+    lingxingConnectionReady,
+    store.authorityKey,
+    username,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -524,6 +564,10 @@ function LoginPage() {
 
   async function handleLogin() {
     if (loading) return;
+    if (!lingxingConnectionReady) {
+      setError('请先把当前领星账号绑定到所选店铺。');
+      return;
+    }
     const request = buildBrowserLoginRequest({
       credentialSource,
       password,
@@ -555,6 +599,33 @@ function LoginPage() {
     }
   }
 
+  async function handleBindLingxingConnection() {
+    if (loading || loginConnectionState === 'binding' || lingxingConnectionReady) return;
+    if (!username.trim()) {
+      setError('请输入领星用户名后再绑定。');
+      return;
+    }
+    setLoginConnectionState('binding');
+    setError('');
+    try {
+      await store.bindLingxingConnection(username.trim());
+      setLoginConnectionState('ready');
+    } catch (caught) {
+      setLoginConnectionState('error');
+      setError(toUserFacingError(caught, '领星连接绑定失败'));
+    }
+  }
+
+  const loginConnectionStatus = loginConnectionState === 'ready'
+    ? '领星连接已绑定'
+    : loginConnectionState === 'binding'
+      ? '正在绑定当前领星账号…'
+      : loginConnectionState === 'error'
+        ? '领星连接绑定失败，请检查后重试。'
+        : lingxingConnection
+          ? '当前用户名与店铺领星连接不一致，请更新绑定。'
+          : '当前店铺尚未绑定领星连接。';
+
   return (
     <div style={loginStyles.container}>
       <section style={loginStyles.card}>
@@ -585,7 +656,7 @@ function LoginPage() {
               }
             }}
             aria-label="领星用户名"
-            onKeyDown={(event) => event.key === 'Enter' && !loading && handleLogin()}
+            onKeyDown={(event) => event.key === 'Enter' && !loading && lingxingConnectionReady && handleLogin()}
             placeholder="领星用户名"
             style={loginStyles.input}
             type="text"
@@ -617,7 +688,7 @@ function LoginPage() {
               }
             }}
             aria-label="领星密码"
-            onKeyDown={(event) => event.key === 'Enter' && !loading && handleLogin()}
+            onKeyDown={(event) => event.key === 'Enter' && !loading && lingxingConnectionReady && handleLogin()}
             placeholder="领星密码"
             style={loginStyles.input}
             type="password"
@@ -659,12 +730,38 @@ function LoginPage() {
           <div className={loginStatusClass} role="status" aria-live="polite">
             {loginStatus}
           </div>
+          <div style={loginStyles.connectionPanel}>
+            <p
+              data-login-connection-status
+              data-state={loginConnectionState}
+              role="status"
+              aria-live="polite"
+              style={loginStyles.connectionStatus}
+            >
+              {loginConnectionStatus}
+            </p>
+            {!lingxingConnectionReady ? (
+              <button
+                data-package-ui-evidence-action="bind-lingxing-connection"
+                type="button"
+                disabled={loading || loginConnectionState === 'binding' || !username.trim()}
+                onClick={handleBindLingxingConnection}
+                style={loginStyles.connectionButton}
+              >
+                {loginConnectionState === 'binding'
+                  ? '绑定中…'
+                  : lingxingConnection
+                    ? '更新当前领星账号绑定'
+                    : '绑定当前领星账号'}
+              </button>
+            ) : null}
+          </div>
           <div style={loginStyles.hint}>登录流程：ERP 登录 {'->'} ERP 广告入口 {'->'} Ads 会话确认。</div>
           {error && <div role="alert" style={loginStyles.error}>{error}</div>}
           <button
             aria-busy={loginButtonView.ariaBusy}
             className={loginButtonView.className}
-            disabled={loading}
+            disabled={loading || !lingxingConnectionReady}
             onClick={handleLogin}
             style={loginStyles.button}
             type="button"

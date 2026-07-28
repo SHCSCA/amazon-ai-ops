@@ -102,6 +102,20 @@ describe('root package smoke scripts', () => {
       .toBeLessThan(exporter.indexOf('scripts/fill-ad-readback-evidence.js'));
   });
 
+  it('exposes the WAL-safe Mission Control authority snapshot exporter', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+    expect(packageJson.scripts['export:s7-authority-snapshot'])
+      .toBe('node scripts/export-mission-control-authority-snapshot.js');
+  });
+
+  it('exposes the read-only Mission Control execution canary evidence exporter', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+    expect(packageJson.scripts['export:s7-execution-canary'])
+      .toBe('node scripts/export-mission-control-execution-canary-evidence.js');
+  });
+
   it('documents the independent readback value and stable target identity inputs', () => {
     const runbook = fs.readFileSync(path.join(root, 'docs', 'REAL_AD_READBACK_RUNBOOK.md'), 'utf8');
     const userGuide = fs.readFileSync(path.join(root, 'docs', 'USER_GUIDE_v1_5.md'), 'utf8');

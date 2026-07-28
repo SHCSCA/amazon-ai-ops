@@ -26,6 +26,7 @@ export const STORE_IPC_CHANNELS = [
   'stores:switch',
   'stores:reconnect',
   'stores:get-active-context',
+  'stores:get-active-workspace-view',
 ] as const;
 
 export interface IpcHandlerRegistrar {
@@ -110,6 +111,8 @@ export function registerStoreIpcHandlers(
   });
   ipc.handle('stores:get-active-context', (): StoreContextEnvelope | null =>
     coordinator.getActiveStoreContext());
+  ipc.handle('stores:get-active-workspace-view', (): StoreWorkspaceView | null =>
+    coordinator.getActiveStoreWorkspaceView());
 }
 
 function guardCurrentActiveStoreMutation(

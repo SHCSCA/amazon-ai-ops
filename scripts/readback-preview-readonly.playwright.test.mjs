@@ -117,6 +117,11 @@ describe('readback development preview write isolation', () => {
         );
       });
       const response = await page.goto(`${url}?preview=1&scenario=delivery-ready`, { waitUntil: 'domcontentloaded' });
+      const storeSelector = page.locator('#mission-control-store-select');
+      if (await storeSelector.isVisible()) {
+        await storeSelector.selectOption({ label: 'SHC001-US · US · USD' });
+        await page.getByRole('button', { name: '进入所选店铺', exact: true }).click();
+      }
       try {
         await page.locator('.app-shell').waitFor({ state: 'visible', timeout: 15_000 });
       } catch (error) {
@@ -130,7 +135,7 @@ describe('readback development preview write isolation', () => {
       }
       await page.evaluate(() => {
         window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', {
-          detail: { workspace: 'readback', subview: 'evidence' },
+          detail: { workspace: 'execution', subview: 'evidence' },
         }));
       });
 

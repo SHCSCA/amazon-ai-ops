@@ -174,6 +174,8 @@ describe('preload business update bridge', () => {
     expect(source).toContain("ipcRenderer.invoke('stores:connections:create', input)");
     expect(source).toContain("ipcRenderer.invoke('stores:switch', { storeId })");
     expect(source).toContain("ipcRenderer.invoke('stores:get-active-context')");
+    expect(source).toContain("ipcRenderer.invoke('stores:get-active-workspace-view')");
+    expect(source).toContain("ipcRenderer.invoke('package-ui-evidence:database-checkpoint', { phase })");
     expect(source).toContain("ipcRenderer.on('store-context:changed', handler)");
     const storeBridgeStart = source.indexOf('listStores:');
     const settingsStart = source.indexOf('// Settings', storeBridgeStart);

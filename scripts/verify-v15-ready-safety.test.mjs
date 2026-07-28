@@ -13,6 +13,7 @@ import {
   bundleAdversarialNodeEnvEvidence,
   writeValidAdversarialNodeEnvEvidence,
 } from './package-adversarial-node-env.test-fixture.mjs';
+import { writeValidPackageLaunchSmoke } from './package-launch-smoke.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -102,35 +103,22 @@ function bundlePackageIndex(bundleManifestPath, finalIndex) {
 }
 
 function packageLaunchSmokeFromIndex(dir, finalIndex) {
-  const unpackedContent = 'unpacked app fixture\n';
-  const unpackedPath = path.join(dir, 'win-unpacked', 'AmazonAIOpsAgent.exe');
   const evidencePath = path.join(dir, 'package-launch-smoke.json');
-  fs.mkdirSync(path.dirname(unpackedPath), { recursive: true });
-  fs.writeFileSync(unpackedPath, unpackedContent, 'utf8');
   const portable = finalIndex.packages.find((item) => item.kind === 'portable');
-  const smoke = {
+  const evidence = writeValidPackageLaunchSmoke(dir, {
+    evidencePath,
+    generatedAt: '2026-07-17T00:00:00.000Z',
+    portablePath: portable?.sourcePath,
+    releaseDir: dir,
+  });
+  return {
     present: true,
     evidencePath,
+    generatedAt: evidence.generatedAt,
     passed: true,
-    artifacts: {
-      unpacked: {
-        path: unpackedPath,
-        sizeBytes: Buffer.byteLength(unpackedContent, 'utf8'),
-        sha256: sha256Text(unpackedContent),
-      },
-      portable: portable ? {
-        path: portable.sourcePath,
-        sizeBytes: portable.sizeBytes,
-        sha256: portable.sha256,
-      } : null,
-    },
-    checks: [
-      { kind: 'win-unpacked', ok: true, marker: '[App] ipc-ready' },
-      { kind: 'portable', ok: true, appChildCount: 1 },
-    ],
+    artifacts: evidence.artifacts,
+    checks: evidence.checks,
   };
-  writeJson(evidencePath, { kind: 'package-launch-smoke', ...smoke });
-  return smoke;
 }
 
 function writePackageSecurityEvidence(dir, packageLaunchSmoke) {
@@ -481,6 +469,24 @@ describe('verify v15 ready safety', () => {
     expect(result.stdout).toContain('current business UI smoke summary passed');
     expect(result.stdout).toContain('V15_READY_SAFETY verified');
     expect(result.stderr).not.toContain('UI smoke contains APP_READY state');
+
+    const completeLaunchEvidence = readJson(packageLaunchSmoke.evidencePath);
+    const missingRuntimeProof = structuredClone(completeLaunchEvidence);
+    delete missingRuntimeProof.checks.find((check) => check.kind === 'portable').runtimeProcess;
+    writeJson(packageLaunchSmoke.evidencePath, missingRuntimeProof);
+    const invalidLaunch = runNode('scripts/verify-v15-ready-safety.js', [
+      '--final-readiness', finalReadiness,
+      '--ui-smoke', smoke,
+      '--bundle-manifest', bundleManifest,
+      '--readme', readme,
+      '--package-ui-manifest', packageUiManifest,
+      '--package-security-evidence', packageSecurityEvidence,
+      '--package-adversarial-node-env-evidence', packageAdversarialNodeEnvEvidence,
+    ]);
+    expect(invalidLaunch.status).not.toBe(0);
+    expect(`${invalidLaunch.stdout}${invalidLaunch.stderr}`)
+      .toContain('final readiness records valid package launch smoke evidence');
+    writeJson(packageLaunchSmoke.evidencePath, completeLaunchEvidence);
 
     const currentFinalReadiness = readJson(finalReadiness);
     const legacyFinalReadiness = { ...currentFinalReadiness };

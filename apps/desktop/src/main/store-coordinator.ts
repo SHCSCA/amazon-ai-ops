@@ -51,6 +51,7 @@ export interface StoreAuthorityRepository {
   archiveStore(input: ArchiveStoreInput): StoreRecord;
   restoreStore(input: RestoreStoreInput): StoreRecord;
   createConnection(input: CreateStoreConnectionInput & { id: StoreCapabilityId }): StoreConnection;
+  /** Account-label or external-account identity changes clear verified/session state atomically. */
   updateConnection(input: UpdateStoreConnectionInput): StoreConnection;
   removeConnection(input: RemoveStoreConnectionInput): void;
   listConnections(storeId: StoreId): StoreConnection[];

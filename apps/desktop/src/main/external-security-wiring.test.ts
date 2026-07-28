@@ -3,6 +3,10 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+const providerActiveIdentitySource = fs.readFileSync(
+  path.join(__dirname, 'provider-active-identity.ts'),
+  'utf8',
+);
 
 describe('Electron external-distribution security wiring', () => {
   it('installs navigation, redirect, and external-open guards before loading the renderer', () => {
@@ -47,12 +51,48 @@ describe('Electron external-distribution security wiring', () => {
   it('applies the session credential policy before persisting or trusting a login identity', () => {
     expect(source).toContain('decideLoginSessionCredentialPolicy({');
     expect(source).toContain('credentialAction === \'save\' || credentialAction === \'clear\'');
-    expect(source).toContain('if (!credentialPolicy.sessionIdentityVerified)');
-    expect(source).toContain('assertProviderIdentity(connections.lingxing');
-    expect(source).toContain('assertProviderIdentity(adsConnection');
+    expect(source).toContain('isPackageUiSavedSessionContinuationAllowed({');
+    expect(source).toContain('packageUiReadOnlyRuntime,');
+    expect(source).toContain(
+      '&& !packageUiSavedSessionContinuationAllowed',
+    );
+    expect(source).toContain('await assertProviderPageActiveIdentity({');
+    expect(source).toContain('connection: connections.lingxing,');
+    expect(source).toContain('connection: adsConnection,');
+    expect(source).toContain(
+      "credentialSubmission: request.credentialSource === 'typed' && needsLogin",
+    );
+    expect(source).toContain('credentialsSubmitted: true,');
+    expect(source).not.toContain('assertProviderIdentity(');
+    expect(source).not.toMatch(
+      /assertProviderPageActiveIdentity\(\{[\s\S]*?(?:bodyText|title):\s*erpLoginState\./,
+    );
     expect(source.match(/assertBrowserLoginAttempt\(attemptId, loginContext\)/g)?.length).toBeGreaterThanOrEqual(2);
     expect(source).toContain('credentialPersistence: credentialPolicy.credentialPersistence');
+    expect(source).toContain('credentialSource: request.credentialSource');
     expect(source).toContain('sessionIdentityVerified: credentialPolicy.sessionIdentityVerified');
+    expect(source).not.toContain('sessionIdentityVerified: true,');
+  });
+
+  it('keeps active identity evidence Main-only and exact-match bounded', () => {
+    expect(source).toContain('PROVIDER_ACTIVE_IDENTITY_DOM_PROBES.map');
+    expect(source).toContain("element.closest('[hidden], [aria-hidden=\"true\"], [inert]')");
+    expect(source).toContain('.slice(0, 2)');
+    expect(providerActiveIdentitySource).toContain("origin: 'https://erp.lingxing.com'");
+    expect(providerActiveIdentitySource).toContain("queryParameters: ['account_id', 'seller_id', 'store_id']");
+    expect(providerActiveIdentitySource).toContain("origin: 'https://ads.lingxing.com'");
+    expect(providerActiveIdentitySource).toContain("queryParameters: ['profile_id']");
+    expect(providerActiveIdentitySource).toContain('candidates.every((candidate) => expectedSet.has(candidate))');
+    expect(providerActiveIdentitySource).not.toContain('bodyText');
+    expect(providerActiveIdentitySource).not.toContain('document.title');
+    expect(providerActiveIdentitySource).not.toContain('innerText');
+
+    const loginResultStart = source.indexOf('const loginResult: BrowserLoginResult');
+    const loginResultEnd = source.indexOf('state.loginSession = loginResult', loginResultStart);
+    const rendererLoginResult = source.slice(loginResultStart, loginResultEnd);
+    expect(rendererLoginResult).not.toContain('domObservations');
+    expect(rendererLoginResult).not.toContain('activeIdentity');
+    expect(rendererLoginResult).not.toContain('identityCandidates');
   });
 
   it('binds browser controllers to one store context and two provider-specific profiles', () => {
@@ -66,7 +106,7 @@ describe('Electron external-distribution security wiring', () => {
 
   it('requires Lingxing for collection login while keeping a missing Ads connection explicitly blocked', () => {
     const connectionStart = source.indexOf('function requireProviderConnections');
-    const connectionEnd = source.indexOf('function normalizeIdentityEvidence', connectionStart);
+    const connectionEnd = source.indexOf('async function handleBrowserLogin', connectionStart);
     const connectionContract = source.slice(connectionStart, connectionEnd);
     expect(connectionContract).toContain('if (!lingxing)');
     expect(connectionContract).not.toContain('if (!lingxing || !amazonAds)');

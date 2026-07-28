@@ -9,6 +9,8 @@ import packageUiEvidence from './package-ui-evidence.js';
 import packageSecurity from './smoke-package-security-boundaries.js';
 import packageAdversarialNodeEnv from './smoke-package-adversarial-node-env.js';
 import continuousOperationVerifier from './verify-s7-continuous-operation.js';
+import sqliteAuthorityCurrentness from './sqlite-authority-currentness.js';
+import { writeValidPackageLaunchSmoke } from './package-launch-smoke.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -38,7 +40,10 @@ const V15_GATE_IDS = [
 const {
   EXPECTED_OVERLAY_CHECK_IDS,
   EXPECTED_PACKAGE_UI_SCALES,
+  EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
   EXPECTED_PACKAGE_UI_WORKSPACES,
+  INTERACTIVE_LOGIN_CONTRACT,
+  ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
   PACKAGE_UI_WIDE_PROFILE,
   buildProcessIsolationEvidence,
 } = packageUiEvidence;
@@ -50,6 +55,7 @@ const {
   evaluateContinuousOperationSnapshot,
   readContinuousOperationSnapshot,
 } = continuousOperationVerifier;
+const { runReadonlySqliteOnlineBackupSync } = sqliteAuthorityCurrentness;
 
 fs.mkdirSync(testTempRoot, { recursive: true });
 
@@ -80,6 +86,7 @@ function createCanonicalPackageFixture(tempDir) {
   const installerPath = path.join(releaseRoot, 'AmazonAIOpsAgent-1.5.0.exe');
   fs.mkdirSync(path.join(appContentPath, 'dist', 'preload'), { recursive: true });
   fs.mkdirSync(path.join(appContentPath, 'dist', 'renderer'), { recursive: true });
+  fs.mkdirSync(path.join(appContentPath, 'playwright-browsers', 'chrome-win64'), { recursive: true });
   writeJson(path.join(appContentPath, 'package.json'), {
     name: '@amazon-ai-ops/desktop', version: '1.5.0', main: 'dist/main/index.js',
   });
@@ -88,6 +95,7 @@ function createCanonicalPackageFixture(tempDir) {
   fs.writeFileSync(mainBundlePath, 'canonical-main-bundle');
   fs.writeFileSync(path.join(appContentPath, 'dist', 'preload', 'index.js'), 'canonical-preload');
   fs.writeFileSync(path.join(appContentPath, 'dist', 'renderer', 'index.html'), '<!doctype html>');
+  fs.writeFileSync(path.join(appContentPath, 'playwright-browsers', 'chrome-win64', 'chrome.exe'), 'canonical-chromium-runtime');
   fs.writeFileSync(portablePath, 'canonical-portable-package');
   fs.writeFileSync(installerPath, 'canonical-installer-package');
   const builtAt = new Date('2026-07-10T00:30:00.000Z');
@@ -179,7 +187,29 @@ function validProcessIsolation() {
   return buildProcessIsolationEvidence(validProcessSnapshot(), validProcessSnapshot({ attempts: 1 }));
 }
 
+function validOperatorHandoff() {
+  return {
+    automationReadSecrets: false,
+    automationTypedSecrets: false,
+    completedAt: '2026-07-23T01:00:00.450Z',
+    kind: 'visible-user-handoff',
+    outcome: 'workspace-reached',
+    startedAt: '2026-07-23T01:00:00.150Z',
+  };
+}
+
 function validDiagnostics(profileId) {
+  const connectionBootstrap = {
+    completedAt: '2026-07-23T01:00:00.400Z',
+    outcome: 'existing-lingxing-connection',
+    startedAt: '2026-07-23T01:00:00.300Z',
+  };
+  const operatorHandoff = validOperatorHandoff();
+  const selectedStore = {
+    displayName: null,
+    idLength: 12,
+    idSha256: HASH_A,
+  };
   return {
     cleanupErrors: [],
     completedAt: '2026-07-23T01:00:01.000Z',
@@ -187,7 +217,9 @@ function validDiagnostics(profileId) {
     login: {
       attempts: [],
       completedAt: '2026-07-23T01:00:00.500Z',
-      outcome: 'existing-authenticated-session',
+      connectionBootstrap,
+      operatorHandoff,
+      outcome: 'interactive-operator-login',
       savedCredentials: null,
       startedAt: '2026-07-23T01:00:00.100Z',
     },
@@ -201,6 +233,16 @@ function validDiagnostics(profileId) {
     },
     schemaVersion: 'package-ui-run-diagnostics/v1',
     startedAt: '2026-07-23T01:00:00.000Z',
+    storeGate: {
+      completedAt: '2026-07-23T01:00:00.050Z',
+      createdEvidenceStore: false,
+      currency: 'USD',
+      marketplace: 'US',
+      outcome: 'selected-existing-store',
+      resultingSurface: 'login',
+      selectedStore,
+      startedAt: '2026-07-23T01:00:00.010Z',
+    },
     timeline: [
       { at: '2026-07-23T01:00:00.000Z', phase: 'created' },
       { at: '2026-07-23T01:00:01.000Z', phase: 'completed' },
@@ -208,7 +250,300 @@ function validDiagnostics(profileId) {
   };
 }
 
+function validPackageUiSession(profileId, { firstRun = false } = {}) {
+  const diagnostics = validDiagnostics(profileId);
+  return {
+    connectionBootstrap: { ...diagnostics.login.connectionBootstrap },
+    loginSessionAttestation: {
+      adsSessionReady: true,
+      credentialPersistence: firstRun ? 'saved' : 'main_managed',
+      credentialSource: firstRun ? 'typed' : 'saved',
+      erpSessionReady: true,
+      erpSessionReused: !firstRun,
+      ok: true,
+      sessionIdentityVerified: firstRun,
+    },
+    mode: 'interactive-operator-login',
+    operatorHandoff: { ...diagnostics.login.operatorHandoff },
+    savedCredentialsLoginUsed: false,
+    storeGate: {
+      createdEvidenceStore: false,
+      currency: 'USD',
+      marketplace: 'US',
+      outcome: 'selected-existing-store',
+      selectedStore: { ...diagnostics.storeGate.selectedStore },
+    },
+    storeAuthorityReadback: {
+      actualIdSha256: HASH_A,
+      currency: 'USD',
+      expectedIdSha256: HASH_A,
+      marketplace: 'US',
+      passed: true,
+    },
+  };
+}
+
+const PACKAGE_UI_USER_DATA_DIR = 'D:\\Temp\\amazon-ai-ops-package-ui\\profile-copy';
+const SCHEDULER_CONTEXT = {
+  storeId: 'store-us-001',
+  browserProfileId: 'profile-us-001',
+  marketplace: 'US',
+  currency: 'USD',
+  businessTimezone: 'America/Los_Angeles',
+  businessDate: '2026-07-23',
+  sessionGeneration: 4,
+};
+const EMPTY_SCHEDULER_COUNTS = {
+  workspaceQuery: 0,
+  schedulerGet: 0,
+  retentionPreview: 0,
+  runNow: 0,
+  runNowRejected: 0,
+  localSchedulerStart: 0,
+  storeSchedulerStart: 0,
+  reconcile: 0,
+  execute: 0,
+};
+
+function validPackageUiDatabaseMutationAudit() {
+  const metrics = {
+    digestSha256: 'D'.repeat(64),
+    serializedBytes: 18_000_000,
+    totalChanges: 12,
+    dataVersion: 1,
+    pageCount: 4_500,
+    pageSize: 4_096,
+    schemaVersion: 9,
+    userVersion: 9,
+  };
+  const checkpoints = [
+    {
+      sequence: 1,
+      phase: 'post-bootstrap',
+      capturedAt: '2026-07-23T01:00:00.600Z',
+      contextDigestSha256: 'E'.repeat(64),
+      metrics: { ...metrics },
+    },
+    {
+      sequence: 2,
+      phase: 'post-navigation',
+      capturedAt: '2026-07-23T01:00:00.900Z',
+      contextDigestSha256: 'E'.repeat(64),
+      metrics: { ...metrics },
+    },
+    {
+      sequence: 3,
+      phase: 'pre-close-terminal',
+      capturedAt: '2026-07-23T01:00:00.990Z',
+      contextDigestSha256: 'E'.repeat(64),
+      metrics: { ...metrics },
+    },
+  ];
+  return {
+    kind: 'package-ui-database-mutation-audit',
+    schemaVersion: 1,
+    requiredPhases: ['post-bootstrap', 'post-navigation', 'pre-close-terminal'],
+    checkpoints,
+    comparisons: {
+      contextDigestMatched: true,
+      digestMatched: true,
+      serializedBytesMatched: true,
+      totalChangesMatched: true,
+      dataVersionMatched: true,
+      pageCountMatched: true,
+      pageSizeMatched: true,
+      schemaVersionMatched: true,
+      userVersionMatched: true,
+    },
+    passed: true,
+  };
+}
+
+function schedulerAuditSnapshot({ counts = {}, events = [] } = {}) {
+  return {
+    kind: 'package-ui-scheduler-audit',
+    schemaVersion: 1,
+    generatedAt: '2026-07-23T01:00:00.000Z',
+    pid: 321,
+    evidenceMode: 'package-ui',
+    userDataDir: PACKAGE_UI_USER_DATA_DIR,
+    policies: { runNow: 'reject' },
+    counts: { ...EMPTY_SCHEDULER_COUNTS, ...counts },
+    suppressed: {
+      automaticReconcile: 0,
+      localSchedulerStart: 1,
+      startupReconcile: 1,
+      storeSchedulerStart: 1,
+    },
+    guards: {
+      localSchedulerStarted: false,
+      storeCollectionSchedulerStarted: false,
+      runNowIpcDisabled: true,
+      startupReconcileSuppressed: true,
+      automaticReconcileSuppressed: true,
+      readOnlyInvariantPassed: true,
+    },
+    databaseMutationAudit: validPackageUiDatabaseMutationAudit(),
+    events,
+  };
+}
+
+function validSchedulerIdentityEvidence(scalePercent) {
+  const schedulerSubview = EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS[0];
+  const requestId = `renderer-bootstrap-${scalePercent}-1`;
+  const events = [
+    {
+      sequence: 1,
+      at: '2026-07-23T01:00:00.100Z',
+      source: 'mission-control:query',
+      outcome: 'succeeded',
+      context: SCHEDULER_CONTEXT,
+      request: {
+        query: 'workspace-bootstrap',
+        requestId,
+        contextEpoch: 1,
+        context: SCHEDULER_CONTEXT,
+      },
+      response: {
+        query: 'workspace-bootstrap',
+        requestId,
+        contextEpoch: 1,
+        authoritativeContext: SCHEDULER_CONTEXT,
+        capabilities: schedulerSubview.capabilities.map((capability) => ({
+          ...capability,
+          view: 'settings/scheduler',
+          workspace: 'settings',
+        })),
+      },
+      errorCode: null,
+    },
+    {
+      sequence: 2,
+      at: '2026-07-23T01:00:00.200Z',
+      source: 'store-collection-scheduler:get',
+      outcome: 'succeeded',
+      context: SCHEDULER_CONTEXT,
+      request: { storeContext: SCHEDULER_CONTEXT },
+      response: {
+        businessDate: SCHEDULER_CONTEXT.businessDate,
+        detail: '等待当前店铺配置的采集时间。',
+        enabled: true,
+        state: 'waiting',
+        storeId: SCHEDULER_CONTEXT.storeId,
+      },
+      errorCode: null,
+    },
+    {
+      sequence: 3,
+      at: '2026-07-23T01:00:00.300Z',
+      source: 'store-evidence-retention:preview',
+      outcome: 'succeeded',
+      context: SCHEDULER_CONTEXT,
+      request: { storeContext: SCHEDULER_CONTEXT },
+      response: {
+        applyable: false,
+        blockerCount: 0,
+        candidateCount: 0,
+        currency: 'USD',
+        deletionSupported: false,
+        marketplace: 'US',
+        mode: 'dry-run',
+        profileId: SCHEDULER_CONTEXT.browserProfileId,
+        schemaVersion: 1,
+        storeId: SCHEDULER_CONTEXT.storeId,
+      },
+      errorCode: null,
+    },
+  ];
+  return {
+    dom: {
+      alertDialogCount: 0,
+      busyControlCount: 0,
+      confirmRunDialogCount: 0,
+      fixedScopeText: 'US USD',
+      heading: schedulerSubview.heading,
+      headingCount: 1,
+      legacyBoundaryCount: 1,
+      legacyCapabilityState: 'LEGACY_ADAPTER',
+      legacyRoute: 'scheduler',
+      legacyStoreId: SCHEDULER_CONTEXT.storeId,
+      pageCount: 1,
+      previewMarkerCount: 0,
+      loadingStateCount: 0,
+      retentionPreviewCapabilityId: 'settings.scheduler.retention-preview',
+      retentionPreviewControlCount: 1,
+      retentionPreviewEnabledCount: 1,
+      retentionBlockerCount: '0',
+      retentionCandidateCount: '0',
+      retentionCurrency: 'USD',
+      retentionMarketplace: 'US',
+      retentionProfileId: SCHEDULER_CONTEXT.browserProfileId,
+      retentionStoreId: SCHEDULER_CONTEXT.storeId,
+      retentionSummaryCount: 1,
+      rootCount: 1,
+      scheduleBusinessDate: SCHEDULER_CONTEXT.businessDate,
+      scheduleCurrency: 'USD',
+      scheduleEnabled: 'true',
+      scheduleMarketplace: 'US',
+      scheduleProjectionCount: 1,
+      scheduleRefreshEnabledCount: 1,
+      scheduleState: 'waiting',
+      scheduleStoreId: SCHEDULER_CONTEXT.storeId,
+      schedulerErrorCount: 0,
+      selectedStoreId: SCHEDULER_CONTEXT.storeId,
+      selectedTabCapabilityState: 'LEGACY_ADAPTER',
+      selectedTabCount: 1,
+      selectedTabId: schedulerSubview.tabId,
+      shellStoreId: SCHEDULER_CONTEXT.storeId,
+      subview: schedulerSubview.subview,
+      workspace: schedulerSubview.workspace,
+    },
+    ledgerBefore: schedulerAuditSnapshot(),
+    ledgerAfter: schedulerAuditSnapshot({
+      counts: { workspaceQuery: 1, schedulerGet: 1, retentionPreview: 1 },
+      events,
+    }),
+  };
+}
+
+function validPackageUiReadOnlyRuntime(
+  filePath,
+  profileId,
+  marker = validSchedulerIdentityEvidence(profileId).ledgerAfter,
+) {
+  const artifactRecord = writeArtifact(
+    filePath,
+    Buffer.from(JSON.stringify(marker), 'utf8'),
+  );
+  return packageUiEvidence.validatePackageUiReadOnlyRuntimeEvidence({
+    artifact: artifactRecord,
+    main: {
+      evidenceMode: 'package-ui',
+      pid: marker.pid,
+      userDataDir: PACKAGE_UI_USER_DATA_DIR,
+    },
+    marker,
+    processExitConfirmed: true,
+    profileId,
+  });
+}
+
 function validPackageUiRun(scale, screenshotRoot) {
+  const schedulerSubview = EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS[0];
+  const firstRun = scale.scalePercent === EXPECTED_PACKAGE_UI_SCALES[0].scalePercent;
+  const schedulerIdentityCapabilityEvidence = packageUiEvidence.validateSchedulerSubviewEvidence(
+    validSchedulerIdentityEvidence(scale.scalePercent),
+  );
+  const schedulerReadOnlyRuntime = validPackageUiReadOnlyRuntime(
+    path.join(
+      screenshotRoot,
+      `${scale.scalePercent}`,
+      'runtime',
+      'package-ui-scheduler-audit.json',
+    ),
+    `${scale.scalePercent}-compact`,
+    schedulerIdentityCapabilityEvidence.ledgerAfter,
+  );
   return {
     actualDeviceScaleFactor: scale.deviceScaleFactor,
     consoleErrors: [],
@@ -233,13 +568,36 @@ function validPackageUiRun(scale, screenshotRoot) {
     passed: true,
     profileProcessIsolation: validProcessIsolation(),
     scalePercent: scale.scalePercent,
+    schedulerReadOnlyRuntime,
+    databaseAuditCheckpoints: {
+      postBootstrap: schedulerReadOnlyRuntime.marker.databaseMutationAudit.checkpoints[0],
+      postNavigation: schedulerReadOnlyRuntime.marker.databaseMutationAudit.checkpoints[1],
+    },
+    session: validPackageUiSession(`${scale.scalePercent}-compact`, { firstRun }),
     screenshots: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
       ...writeArtifact(
         path.join(screenshotRoot, `${scale.scalePercent}`, 'workspaces', `${workspace.workspace}.png`),
         screenshotBytes(`package-ui:${scale.scalePercent}:workspace:${workspace.workspace}`),
       ),
+      subview: workspace.subview,
       workspace: workspace.workspace,
     })),
+    subviewChecks: [{
+      ...schedulerSubview,
+      compositeEvidence: { passed: true },
+      identityCapabilityEvidence: schedulerIdentityCapabilityEvidence,
+      passed: schedulerIdentityCapabilityEvidence.passed,
+      screenshot: {
+        ...writeArtifact(
+          path.join(screenshotRoot, `${scale.scalePercent}`, 'subviews', 'settings-scheduler.png'),
+          screenshotBytes(`package-ui:${scale.scalePercent}:subview:settings/scheduler`),
+        ),
+        subview: schedulerSubview.subview,
+        workspace: schedulerSubview.workspace,
+      },
+      settleEvidence: { passed: true },
+      violations: schedulerIdentityCapabilityEvidence.violations,
+    }],
     viewport: { height: 700, width: 1200 },
     workspaceChecks: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
       compositeEvidence: { passed: true },
@@ -248,12 +606,17 @@ function validPackageUiRun(scale, screenshotRoot) {
       keyboardEvidence: { passed: true },
       passed: true,
       settleEvidence: { passed: true },
+      subview: workspace.subview,
       workspace: workspace.workspace,
     })),
   };
 }
 
-function validWideRun() {
+function validWideRun(screenshotRoot) {
+  const schedulerReadOnlyRuntime = validPackageUiReadOnlyRuntime(
+    path.join(screenshotRoot, 'wide', 'runtime', 'package-ui-scheduler-audit.json'),
+    PACKAGE_UI_WIDE_PROFILE.id,
+  );
   return {
     actualDeviceScaleFactor: 1,
     consoleErrors: [],
@@ -265,6 +628,12 @@ function validWideRun() {
     profileId: PACKAGE_UI_WIDE_PROFILE.id,
     profileProcessIsolation: validProcessIsolation(),
     screenshots: [],
+    schedulerReadOnlyRuntime,
+    databaseAuditCheckpoints: {
+      postBootstrap: schedulerReadOnlyRuntime.marker.databaseMutationAudit.checkpoints[0],
+      postNavigation: schedulerReadOnlyRuntime.marker.databaseMutationAudit.checkpoints[1],
+    },
+    session: validPackageUiSession(PACKAGE_UI_WIDE_PROFILE.id),
     viewport: { height: 900, width: 1400 },
     workspaceChecks: [],
   };
@@ -273,8 +642,10 @@ function validWideRun() {
 function validPackageUiManifest(packageIdentity, screenshotRoot) {
   return {
     kind: 'package-ui-evidence',
-    schemaVersion: 5,
+    schemaVersion: 7,
     generatedAt: '2026-07-23T01:00:00.000Z',
+    interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
+    isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
     passed: true,
     artifactHashesStable: true,
     artifactsBefore: {
@@ -286,15 +657,21 @@ function validPackageUiManifest(packageIdentity, screenshotRoot) {
       appContent: { sha256: packageIdentity.appContentSha256 },
     },
     requested: {
+      allowInteractiveLogin: true,
+      allowSavedLogin: false,
       expectedExeSha256: packageIdentity.executableSha256,
       expectedAppContentSha256: packageIdentity.appContentSha256,
+      interactiveLoginTimeoutMs: 600_000,
+      loginMode: 'interactive-operator-each-run',
+      subviewChecks: EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
     },
     packageProcessIsolation: validProcessIsolation(),
+    profileDatabaseFileIsolation: { passed: true },
     profileDatabaseProvenance: { passed: true },
     profileProcessIsolation: validProcessIsolation(),
     protectedDatabase: { passed: true },
     runs: EXPECTED_PACKAGE_UI_SCALES.map((scale) => validPackageUiRun(scale, screenshotRoot)),
-    wideProfile: validWideRun(),
+    wideProfile: validWideRun(screenshotRoot),
     violations: [],
   };
 }
@@ -488,25 +865,33 @@ function installAuthoritySchema(database) {
     );
     CREATE TABLE lingxing_collection_report_checkpoints (
       store_id TEXT NOT NULL, job_id TEXT NOT NULL, report_type TEXT NOT NULL,
-      state TEXT NOT NULL, error_code TEXT, detail TEXT, updated_at TEXT NOT NULL
+      state TEXT NOT NULL, file_size_bytes INTEGER NOT NULL,
+      error_code TEXT, detail TEXT, updated_at TEXT NOT NULL
     );
     CREATE TABLE lingxing_report_batches (
       id TEXT NOT NULL, store_id TEXT NOT NULL, business_date TEXT NOT NULL,
+      request_id TEXT NOT NULL, browser_profile_id TEXT NOT NULL,
+      session_generation INTEGER NOT NULL, status TEXT NOT NULL,
+      created_at TEXT NOT NULL, completed_at TEXT NOT NULL,
       PRIMARY KEY (store_id, id)
     );
     CREATE TABLE report_import_runs (
       store_id TEXT NOT NULL, run_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
       input_fingerprint TEXT NOT NULL, batch_id TEXT NOT NULL, status TEXT NOT NULL,
       source_file_count INTEGER NOT NULL, metric_row_count INTEGER NOT NULL,
-      reconciliation_count INTEGER NOT NULL, completed_at TEXT NOT NULL
+      reconciliation_count INTEGER NOT NULL, started_at TEXT NOT NULL,
+      completed_at TEXT NOT NULL, created_at TEXT NOT NULL
     );
     CREATE TABLE report_import_file_snapshots (
       store_id TEXT NOT NULL, run_id TEXT NOT NULL, report_type TEXT NOT NULL,
-      file_hash TEXT NOT NULL, imported_rows INTEGER NOT NULL
+      batch_id TEXT NOT NULL, file_hash TEXT NOT NULL, file_path TEXT NOT NULL,
+      file_name TEXT NOT NULL, file_size_bytes INTEGER NOT NULL,
+      imported_rows INTEGER NOT NULL, captured_at TEXT NOT NULL
     );
     CREATE TABLE report_import_reconciliations (
       store_id TEXT NOT NULL, run_id TEXT NOT NULL, report_type TEXT NOT NULL,
-      status TEXT NOT NULL, within_tolerance INTEGER NOT NULL
+      batch_id TEXT NOT NULL, status TEXT NOT NULL,
+      within_tolerance INTEGER NOT NULL, reconciled_at TEXT NOT NULL
     );
     CREATE TABLE verified_ad_entity_authority (
       authority_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, ad_entity_id TEXT NOT NULL,
@@ -525,6 +910,46 @@ function installAuthoritySchema(database) {
       source_authority_id TEXT NOT NULL, source_authority_proof_sha256 TEXT NOT NULL,
       resolution_proof_sha256 TEXT NOT NULL, resolved_session_generation INTEGER NOT NULL,
       resolved_at TEXT NOT NULL, resolved_by TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE missions (
+      id TEXT PRIMARY KEY, store_id TEXT NOT NULL, marketplace TEXT NOT NULL,
+      currency TEXT NOT NULL, policy_version_id TEXT NOT NULL,
+      status TEXT NOT NULL, revision INTEGER NOT NULL
+    );
+    CREATE TABLE policy_versions (
+      id TEXT PRIMARY KEY, store_id TEXT NOT NULL, status TEXT NOT NULL,
+      rules_json TEXT NOT NULL, revision INTEGER NOT NULL
+    );
+    CREATE TABLE policy_runtime (
+      store_id TEXT NOT NULL, autonomy_mode TEXT NOT NULL, kill_switch INTEGER NOT NULL,
+      circuit_breaker_state TEXT NOT NULL, active_policy_version_id TEXT NOT NULL
+    );
+    CREATE TABLE decisions (
+      id TEXT PRIMARY KEY, store_id TEXT NOT NULL, mission_id TEXT NOT NULL,
+      policy_version_id TEXT NOT NULL, policy_revision INTEGER NOT NULL,
+      action_revision INTEGER NOT NULL, action_type TEXT NOT NULL,
+      ad_entity_id TEXT NOT NULL, status TEXT NOT NULL, revision INTEGER NOT NULL,
+      valid_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE decision_history (
+      id TEXT NOT NULL, store_id TEXT NOT NULL, decision_id TEXT NOT NULL,
+      decision_revision INTEGER NOT NULL, event_type TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE analysis_proposal_snapshots (
+      id TEXT PRIMARY KEY, store_id TEXT NOT NULL, marketplace TEXT NOT NULL,
+      currency TEXT NOT NULL, mission_id TEXT NOT NULL, mission_revision INTEGER NOT NULL,
+      policy_version_id TEXT NOT NULL, policy_revision INTEGER NOT NULL,
+      action_revision INTEGER NOT NULL, action_type TEXT NOT NULL, entity_type TEXT NOT NULL,
+      ad_entity_authority_id TEXT NOT NULL, ad_entity_id TEXT NOT NULL,
+      ad_entity_revision INTEGER NOT NULL, current_bid_cents INTEGER NOT NULL,
+      proposed_bid_cents INTEGER NOT NULL, change_pct REAL NOT NULL,
+      authorization_json TEXT NOT NULL, valid_until TEXT NOT NULL,
+      created_session_generation INTEGER NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE analysis_proposal_decision_links (
+      id TEXT PRIMARY KEY, store_id TEXT NOT NULL, proposal_id TEXT NOT NULL,
+      decision_id TEXT NOT NULL
     );
     CREATE TABLE mission_grants (
       id TEXT PRIMARY KEY, store_id TEXT NOT NULL, marketplace TEXT NOT NULL, currency TEXT NOT NULL,
@@ -601,6 +1026,100 @@ function insertCanaryAuthority(database, canary) {
     sessionGeneration, '2026-07-23T01:01:00.000Z', '2026-07-23T01:01:00.000Z',
   );
   database.prepare(`
+    INSERT INTO missions (
+      id, store_id, marketplace, currency, policy_version_id, status, revision
+    ) VALUES (?, ?, 'US', 'USD', ?, 'active', ?)
+  `).run(
+    authority.missionId,
+    scope.storeId,
+    authority.policyVersionId,
+    authority.missionRevision,
+  );
+  database.prepare(`
+    INSERT INTO policy_versions (id, store_id, status, rules_json, revision)
+    VALUES (?, ?, 'enabled', ?, ?)
+  `).run(
+    authority.policyVersionId,
+    scope.storeId,
+    JSON.stringify({ killSwitch: false }),
+    authority.policyRevision,
+  );
+  database.prepare(`
+    INSERT INTO policy_runtime (
+      store_id, autonomy_mode, kill_switch, circuit_breaker_state, active_policy_version_id
+    ) VALUES (?, ?, 0, 'closed', ?)
+  `).run(scope.storeId, canary.mode, authority.policyVersionId);
+  database.prepare(`
+    INSERT INTO decisions (
+      id, store_id, mission_id, policy_version_id, policy_revision, action_revision,
+      action_type, ad_entity_id, status, revision, valid_until, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'set_keyword_bid', ?, 'approved', ?, ?, ?, ?)
+  `).run(
+    authority.decisionId,
+    scope.storeId,
+    authority.missionId,
+    authority.policyVersionId,
+    authority.policyRevision,
+    authority.actionRevision,
+    object.adEntityId,
+    authority.decisionRevision,
+    '2026-07-24T00:00:00.000Z',
+    '2026-07-23T01:01:20.000Z',
+    '2026-07-23T01:01:40.000Z',
+  );
+  database.prepare(`
+    INSERT INTO decision_history (
+      id, store_id, decision_id, decision_revision, event_type, created_at
+    ) VALUES (?, ?, ?, ?, 'approved', ?)
+  `).run(
+    `decision-approved-${canary.mode}`,
+    scope.storeId,
+    authority.decisionId,
+    authority.decisionRevision,
+    '2026-07-23T01:01:30.000Z',
+  );
+  database.prepare(`
+    INSERT INTO analysis_proposal_snapshots (
+      id, store_id, marketplace, currency, mission_id, mission_revision,
+      policy_version_id, policy_revision, action_revision, action_type, entity_type,
+      ad_entity_authority_id, ad_entity_id, ad_entity_revision, current_bid_cents,
+      proposed_bid_cents, change_pct, authorization_json, valid_until,
+      created_session_generation, created_at
+    ) VALUES (?, ?, 'US', 'USD', ?, ?, ?, ?, ?, 'set_keyword_bid', 'keyword',
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    authority.proposalId,
+    scope.storeId,
+    authority.missionId,
+    authority.missionRevision,
+    authority.policyVersionId,
+    authority.policyRevision,
+    authority.actionRevision,
+    authority.authorityId,
+    object.adEntityId,
+    object.entityRevision,
+    object.expectedBidCents,
+    object.targetBidCents,
+    ((object.targetBidCents - object.expectedBidCents) / object.expectedBidCents) * 100,
+    JSON.stringify({
+      human: { eligible: true, blockers: [] },
+      policy: { eligible: true, blockers: [] },
+    }),
+    '2026-07-24T00:00:00.000Z',
+    sessionGeneration,
+    '2026-07-23T01:01:10.000Z',
+  );
+  database.prepare(`
+    INSERT INTO analysis_proposal_decision_links (
+      id, store_id, proposal_id, decision_id
+    ) VALUES (?, ?, ?, ?)
+  `).run(
+    `proposal-decision-link-${canary.mode}`,
+    scope.storeId,
+    authority.proposalId,
+    authority.decisionId,
+  );
+  database.prepare(`
     INSERT INTO mission_grants (
       id, store_id, marketplace, currency, mission_id, mission_revision, decision_ids_json,
       action_revision, allowed_action_types_json, allowed_ad_entity_ids_json, max_change_pct,
@@ -651,7 +1170,10 @@ function insertCanaryAuthority(database, canary) {
     sha256Text(`idempotency:${canary.mode}`).toUpperCase(), sessionGeneration,
     '2026-07-23T01:03:00.000Z', '2026-07-23T01:17:00.000Z', `intent-${canary.mode}`,
     sha256Text(`command:${canary.mode}`).toUpperCase(), '2026-07-23T01:03:30.000Z',
-    '2026-07-23T01:03:31.000Z', '2026-07-23T01:17:00.000Z',
+    canary.mode === 'manual_approval'
+      ? '2026-07-23T01:04:30.000Z'
+      : '2026-07-23T01:14:30.000Z',
+    '2026-07-23T01:17:00.000Z',
   );
   const evidenceInsert = database.prepare(`
     INSERT INTO ad_execution_evidence (
@@ -694,23 +1216,32 @@ function createAuthorityDatabase(databasePath, canaries) {
     `);
     const insertCheckpoint = database.prepare(`
       INSERT INTO lingxing_collection_report_checkpoints
-        (store_id, job_id, report_type, state, error_code, detail, updated_at)
-      VALUES (?, ?, ?, 'downloaded', NULL, 'downloaded', ?)
+        (store_id, job_id, report_type, state, file_size_bytes, error_code, detail, updated_at)
+      VALUES (?, ?, ?, 'downloaded', ?, NULL, 'downloaded', ?)
     `);
-    const insertBatch = database.prepare(`INSERT INTO lingxing_report_batches (id, store_id, business_date) VALUES (?, ?, ?)`);
+    const insertBatch = database.prepare(`
+      INSERT INTO lingxing_report_batches (
+        id, store_id, business_date, request_id, browser_profile_id,
+        session_generation, status, created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, 9, 'completed', ?, ?)
+    `);
     const insertRun = database.prepare(`
       INSERT INTO report_import_runs
         (store_id, run_id, idempotency_key, input_fingerprint, batch_id, status,
-         source_file_count, metric_row_count, reconciliation_count, completed_at)
-      VALUES (?, ?, ?, ?, ?, 'completed', 8, 80, 8, ?)
+         source_file_count, metric_row_count, reconciliation_count,
+         started_at, completed_at, created_at)
+      VALUES (?, ?, ?, ?, ?, 'completed', 8, 80, 8, ?, ?, ?)
     `);
     const insertFile = database.prepare(`
-      INSERT INTO report_import_file_snapshots (store_id, run_id, report_type, file_hash, imported_rows)
-      VALUES (?, ?, ?, ?, 10)
+      INSERT INTO report_import_file_snapshots (
+        store_id, run_id, report_type, batch_id, file_hash, file_path,
+        file_name, file_size_bytes, imported_rows, captured_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 10, ?)
     `);
     const insertReconciliation = database.prepare(`
-      INSERT INTO report_import_reconciliations (store_id, run_id, report_type, status, within_tolerance)
-      VALUES (?, ?, ?, 'matched', 1)
+      INSERT INTO report_import_reconciliations (
+        store_id, run_id, report_type, batch_id, status, within_tolerance, reconciled_at
+      ) VALUES (?, ?, ?, ?, 'matched', 1, ?)
     `);
     for (const store of storeFixtures) {
       for (const [index, businessDate] of businessDates().entries()) {
@@ -722,19 +1253,52 @@ function createAuthorityDatabase(databasePath, canaries) {
           store.browserProfileId, businessDate, businessDate, businessDate,
           JSON.stringify(EXPECTED_REPORT_TYPES), timestamp, timestamp, timestamp,
         );
-        insertBatch.run(jobId, store.storeId, businessDate);
+        insertBatch.run(
+          jobId,
+          store.storeId,
+          businessDate,
+          `${store.storeId}-request-${index}`,
+          store.browserProfileId,
+          timestamp,
+          timestamp,
+        );
         insertRun.run(
           store.storeId, runId, `${store.storeId}-idem-${index}`,
           sha256Text(`${store.storeId}:${businessDate}:fingerprint`).toUpperCase(), jobId,
-          `${businessDate}T17:00:00.000Z`,
+          timestamp, timestamp, timestamp,
         );
         for (const reportType of EXPECTED_REPORT_TYPES) {
-          insertCheckpoint.run(store.storeId, jobId, reportType, timestamp);
-          insertFile.run(
-            store.storeId, runId, reportType,
-            sha256Text(`${store.storeId}:${businessDate}:${reportType}`).toUpperCase(),
+          const reportPath = path.join(
+            path.dirname(databasePath),
+            'stores',
+            store.storeId,
+            'reports',
+            businessDate,
+            `${reportType}.csv`,
           );
-          insertReconciliation.run(store.storeId, runId, reportType);
+          const reportArtifact = writeArtifact(
+            reportPath,
+            `${store.storeId},${businessDate},${reportType},${runId}\n`,
+          );
+          insertCheckpoint.run(
+            store.storeId,
+            jobId,
+            reportType,
+            reportArtifact.sizeBytes,
+            timestamp,
+          );
+          insertFile.run(
+            store.storeId,
+            runId,
+            reportType,
+            jobId,
+            reportArtifact.sha256,
+            reportPath,
+            path.basename(reportPath),
+            reportArtifact.sizeBytes,
+            timestamp,
+          );
+          insertReconciliation.run(store.storeId, runId, reportType, jobId, timestamp);
         }
       }
     }
@@ -744,20 +1308,22 @@ function createAuthorityDatabase(databasePath, canaries) {
   }
 }
 
-function validContinuousOperationEvidence(databasePath) {
+function validContinuousOperationEvidence(databasePath, authoritySnapshot) {
   const dates = businessDates();
   const input = {
     stores: storeFixtures.map((store) => store.storeId),
     dates,
     dateFrom: dates[0],
     dateTo: dates.at(-1),
+    generatedAt: '2026-07-23T01:19:00.000Z',
+    storesRoot: authoritySnapshot.storesRoot,
   };
   const database = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
     const integrityCheck = database.pragma('integrity_check').map((row) => String(row.integrity_check));
     const result = evaluateContinuousOperationSnapshot(readContinuousOperationSnapshot(database, input), input);
     if (!result.passed) throw new Error(`continuous fixture is invalid: ${JSON.stringify(result.violations)}`);
-    return buildContinuousOperationManifest(databasePath, input, result, integrityCheck);
+    return buildContinuousOperationManifest(databasePath, input, result, integrityCheck, authoritySnapshot);
   } finally {
     database.close();
   }
@@ -805,14 +1371,26 @@ function passingEvidenceChain(tempDir) {
   const sourceDatabasePath = path.join(tempDir, 'live-appdata', 'amazon-ai-ops.db');
   const authoritySnapshotRoot = path.join(tempDir, 'authority-snapshots');
   const databasePath = path.join(authoritySnapshotRoot, 'authority-snapshot.db');
-  const storesRoot = path.join(tempDir, 'stores');
+  const storesRoot = path.join(path.dirname(sourceDatabasePath), 'stores');
   const packageUiScreenshotRoot = path.join(tempDir, 'package-ui-screenshots');
   const manualCanary = buildExecutionCanary('manual_approval', storesRoot);
   const policyCanary = buildExecutionCanary('policy_auto', storesRoot);
   fs.mkdirSync(path.dirname(sourceDatabasePath), { recursive: true });
   fs.mkdirSync(authoritySnapshotRoot, { recursive: true });
   createAuthorityDatabase(sourceDatabasePath, [manualCanary, policyCanary]);
-  fs.copyFileSync(sourceDatabasePath, databasePath);
+  const sourceWriter = new Database(sourceDatabasePath);
+  sourceWriter.pragma('journal_mode = WAL');
+  sourceWriter.pragma('wal_autocheckpoint = 0');
+  sourceWriter.pragma('wal_checkpoint(TRUNCATE)');
+  sourceWriter.close();
+  const onlineBackup = runReadonlySqliteOnlineBackupSync({
+    sourceDatabasePath,
+    destinationPath: databasePath,
+    ownedTempRoot: authoritySnapshotRoot,
+  });
+  const snapshotWriter = new Database(databasePath, { readonly: true, fileMustExist: true });
+  const snapshotTotalPages = Number(snapshotWriter.pragma('page_count', { simple: true }));
+  snapshotWriter.close();
   attachCanaryDatabaseProof(manualCanary, databasePath);
   attachCanaryDatabaseProof(policyCanary, databasePath);
   const paths = {
@@ -830,19 +1408,46 @@ function passingEvidenceChain(tempDir) {
     database: databasePath,
     storesRoot,
   };
+  const sourceArtifact = artifact(sourceDatabasePath);
+  const sourceStat = fs.statSync(sourceDatabasePath);
   const snapshotArtifact = artifact(databasePath);
   writeJson(paths.authoritySnapshotManifest, {
     kind: 'mission-control-authority-database-snapshot',
-    schemaVersion: 'mission-control-authority-database-snapshot/v1',
+    schemaVersion: 'mission-control-authority-database-snapshot/v2',
     exportedAt: '2026-07-23T01:18:00.000Z',
+    backup: {
+      method: 'sqlite-online-backup',
+      startedAt: '2026-07-23T01:17:59.000Z',
+      completedAt: '2026-07-23T01:18:00.000Z',
+      completed: true,
+      totalPages: onlineBackup.observedBackup.totalPages || snapshotTotalPages,
+      remainingPages: onlineBackup.observedBackup.remainingPages,
+    },
     source: {
       absolutePath: sourceDatabasePath,
       realPath: fs.realpathSync.native(sourceDatabasePath),
-      sha256: snapshotArtifact.sha256,
+      openedReadOnly: true,
+      queryOnly: true,
+      integrityCheck: ['ok'],
+      foreignKeyCheck: [],
+      artifactBefore: {
+        sha256: sourceArtifact.sha256,
+        sizeBytes: sourceArtifact.sizeBytes,
+        mtimeMs: sourceStat.mtimeMs,
+      },
+      artifactAfter: {
+        sha256: sourceArtifact.sha256,
+        sizeBytes: sourceArtifact.sizeBytes,
+        mtimeMs: sourceStat.mtimeMs,
+      },
     },
     snapshot: {
       absolutePath: databasePath,
       realPath: fs.realpathSync.native(databasePath),
+      openedReadOnly: true,
+      queryOnly: true,
+      integrityCheck: ['ok'],
+      foreignKeyCheck: [],
       sha256: snapshotArtifact.sha256,
       sizeBytes: snapshotArtifact.sizeBytes,
     },
@@ -855,23 +1460,22 @@ function passingEvidenceChain(tempDir) {
     canary.database.snapshotManifestSha256 = snapshotManifestSha256;
   }
   writeJson(paths.evidenceManifest, { kind: 'v15-final-readiness-evidence-manifest' });
-  const packageLaunch = {
-    kind: 'package-launch-smoke',
+  const packageLaunch = writeValidPackageLaunchSmoke(tempDir, {
+    evidencePath: paths.packageLaunch,
     generatedAt: '2026-07-23T01:00:00.000Z',
-    evidenceMode: 'package-launch-smoke',
-    userDataOverrideBundleContract: { passed: true, violations: [] },
-    artifacts: { unpacked: artifact(unpackedPath), portable: artifact(portablePath) },
-    checks: [
-      { kind: 'win-unpacked', ok: true, userDataEvidence: { passed: true } },
-      { kind: 'portable', ok: true, appChildCount: 1, userDataEvidence: { passed: true } },
-    ],
-    passed: true,
-  };
-  writeJson(paths.packageLaunch, packageLaunch);
+    portablePath,
+    releaseDir: canonicalPackage.releaseRoot,
+    unpackedPath,
+  });
   writeJson(paths.packageUi, validPackageUiManifest(packageIdentity, packageUiScreenshotRoot));
   writeJson(paths.packageSecurity, validSecurityEvidence(packageIdentity));
   writeJson(paths.packageAdversarial, validAdversarialEvidence(packageIdentity));
-  const continuousEvidence = validContinuousOperationEvidence(databasePath);
+  const continuousEvidence = validContinuousOperationEvidence(databasePath, {
+    manifestPath: paths.authoritySnapshotManifest,
+    packageIdentity,
+    snapshotManifestSha256,
+    storesRoot,
+  });
   continuousEvidence.generatedAt = '2026-07-23T01:19:00.000Z';
   continuousEvidence.packageIdentity = { ...packageIdentity };
   continuousEvidence.database.packageIdentity = { ...packageIdentity };
@@ -954,6 +1558,41 @@ function passingEvidenceChain(tempDir) {
   return { packageIdentity, paths, manualCanary, policyCanary };
 }
 
+function refreshAuthoritySnapshotBindings(paths) {
+  const snapshotArtifact = artifact(paths.database);
+  const snapshotManifest = readJson(paths.authoritySnapshotManifest);
+  snapshotManifest.snapshot.sha256 = snapshotArtifact.sha256;
+  snapshotManifest.snapshot.sizeBytes = snapshotArtifact.sizeBytes;
+  snapshotManifest.snapshot.realPath = fs.realpathSync.native(paths.database);
+  writeJson(paths.authoritySnapshotManifest, snapshotManifest);
+  const snapshotManifestSha256 = sha256File(paths.authoritySnapshotManifest);
+
+  for (const evidencePath of [paths.continuousOperation, paths.manualCanary, paths.policyCanary]) {
+    const evidence = readJson(evidencePath);
+    evidence.database.sha256 = snapshotArtifact.sha256;
+    evidence.database.sizeBytes = snapshotArtifact.sizeBytes;
+    evidence.database.snapshotManifestSha256 = snapshotManifestSha256;
+    if (evidence.database.authorityProof) {
+      evidence.database.authorityProof.databaseSha256 = snapshotArtifact.sha256;
+    }
+    if (evidence.authoritySnapshotManifest) {
+      evidence.authoritySnapshotManifest.sha256 = snapshotManifestSha256;
+    }
+    writeJson(evidencePath, evidence);
+  }
+  return { snapshotArtifact, snapshotManifestSha256 };
+}
+
+function mutateAuthoritySnapshot(paths, mutateDatabase) {
+  const database = new Database(paths.database);
+  try {
+    mutateDatabase(database);
+  } finally {
+    database.close();
+  }
+  return refreshAuthoritySnapshotBindings(paths);
+}
+
 function writeFullyReadyV15Baseline(paths) {
   const readiness = readJson(paths.finalReadiness);
   readiness.status = 'APP_READY';
@@ -1009,6 +1648,7 @@ function verifierArgs(paths, outputPath) {
     '--manual-canary-evidence', paths.manualCanary,
     '--policy-auto-canary-evidence', paths.policyCanary,
     '--authority-snapshot-manifest', paths.authoritySnapshotManifest,
+    '--authority-db', paths.sourceDatabase,
     '--out', outputPath,
   ];
   args.verificationContext = paths.verificationContext;
@@ -1074,6 +1714,28 @@ describe('Mission Control production readiness CLI', () => {
     expect(report.gates.find((gate) => gate.id === 'v15-final-readiness')).toEqual(expect.objectContaining({
       supersededBy: ['manual-canary', 'policy-auto-canary'],
     }));
+    const snapshotManifest = readJson(paths.authoritySnapshotManifest);
+    expect(snapshotManifest.source.artifactAfter.sha256).not.toBe(snapshotManifest.snapshot.sha256);
+  });
+
+  it('rejects package launch evidence when a required native runtime proof is deleted', () => {
+    const tempDir = makeTempDir('mission-control-readiness-launch-proof-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const launch = readJson(paths.packageLaunch);
+    delete launch.checks.find((check) => check.kind === 'portable').runtimeProcess;
+    writeJson(paths.packageLaunch, launch);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    const result = runVerifier(verifierArgs(paths, outputPath));
+
+    expect(result.status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'package-launch',
+        ok: false,
+        reason: expect.stringMatching(/strict contract|runtime process|PACKAGE_LAUNCH/i),
+      }),
+    ]));
   });
 
   it('also accepts a genuine legacy 8/8 APP_READY baseline', () => {
@@ -1152,6 +1814,97 @@ describe('Mission Control production readiness CLI', () => {
         id: 'package-ui',
         ok: false,
         reason: expect.stringMatching(/workspace screenshot files are missing or stale/i),
+      }),
+    ]));
+  });
+
+  it('rejects historical v5/v6 package UI evidence and a stale scheduler subview screenshot', () => {
+    for (const schemaVersion of [5, 6]) {
+      const legacyDir = makeTempDir(`mission-control-readiness-ui-v${schemaVersion}-`);
+      const legacy = passingEvidenceChain(legacyDir);
+      const legacyManifest = readJson(legacy.paths.packageUi);
+      legacyManifest.schemaVersion = schemaVersion;
+      writeJson(legacy.paths.packageUi, legacyManifest);
+      const legacyOutput = path.join(legacyDir, 'readiness.json');
+
+      expect(runVerifier(verifierArgs(legacy.paths, legacyOutput)).status).toBe(1);
+      expect(readJson(legacyOutput).gates).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'package-ui',
+          ok: false,
+          reason: expect.stringMatching(/schema v7/i),
+        }),
+      ]));
+    }
+
+    const staleDir = makeTempDir('mission-control-readiness-ui-subview-stale-');
+    const stale = passingEvidenceChain(staleDir);
+    const staleManifest = readJson(stale.paths.packageUi);
+    fs.appendFileSync(
+      staleManifest.runs[0].subviewChecks[0].screenshot.path,
+      Buffer.from('tampered-scheduler-subview'),
+    );
+    const staleOutput = path.join(staleDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(stale.paths, staleOutput)).status).toBe(1);
+    expect(readJson(staleOutput).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'package-ui',
+        ok: false,
+        reason: expect.stringMatching(/read-only subview screenshot files are missing or stale/i),
+      }),
+    ]));
+  });
+
+  it.each([
+    [
+      'that enables saved-login automation instead of the visible handoff',
+      (manifest) => {
+        manifest.requested.allowInteractiveLogin = false;
+        manifest.requested.allowSavedLogin = true;
+        manifest.requested.loginMode = 'app-owned-saved-login';
+      },
+      /INTERACTIVE_LOGIN_REQUEST_CONTRACT_MISMATCH|visible operator handoff/i,
+    ],
+    [
+      'whose first 100% run lacks fresh typed-and-saved identity proof',
+      (manifest) => {
+        manifest.runs[0].session.loginSessionAttestation = {
+          adsSessionReady: true,
+          credentialPersistence: 'main_managed',
+          credentialSource: 'saved',
+          erpSessionReady: true,
+          erpSessionReused: true,
+          ok: true,
+          sessionIdentityVerified: false,
+        };
+      },
+      /INTERACTIVE_LOGIN_FIRST_RUN_TYPED_PROOF_MISSING|typed-and-saved/i,
+    ],
+    [
+      'whose wide run omits its own interactive operator handoff',
+      (manifest) => {
+        manifest.wideProfile.session.mode = 'existing-authenticated-session';
+        delete manifest.wideProfile.session.operatorHandoff;
+        manifest.wideProfile.diagnostics.login.outcome = 'existing-authenticated-session';
+        delete manifest.wideProfile.diagnostics.login.operatorHandoff;
+      },
+      /WIDE_INTERACTIVE_LOGIN_HANDOFF_MISSING|own visible operator handoff/i,
+    ],
+  ])('rejects schema v7 package UI evidence %s', (_caseName, mutateManifest, reasonPattern) => {
+    const tempDir = makeTempDir('mission-control-readiness-ui-interactive-contract-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const manifest = readJson(paths.packageUi);
+    mutateManifest(manifest);
+    writeJson(paths.packageUi, manifest);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'package-ui',
+        ok: false,
+        reason: expect.stringMatching(reasonPattern),
       }),
     ]));
   });
@@ -1238,6 +1991,257 @@ describe('Mission Control production readiness CLI', () => {
     ]));
   });
 
+  it.each([
+    [
+      'a missing MissionGrant',
+      (database) => database.prepare('DELETE FROM mission_grants WHERE id = ?').run('grant-manual'),
+      /MissionGrant must resolve to exactly one authority DB row/i,
+    ],
+    [
+      'a duplicate MissionGrant',
+      (database) => database.exec(`
+        CREATE TABLE mission_grants_copy AS SELECT * FROM mission_grants;
+        DROP TABLE mission_grants;
+        ALTER TABLE mission_grants_copy RENAME TO mission_grants;
+        INSERT INTO mission_grants SELECT * FROM mission_grants WHERE id = 'grant-manual';
+      `),
+      /MissionGrant must resolve to exactly one authority DB row/i,
+    ],
+    [
+      'a duplicate execution job in the selected batch',
+      (database) => database.exec(`
+        CREATE TABLE ad_execution_jobs_copy AS SELECT * FROM ad_execution_jobs;
+        DROP TABLE ad_execution_jobs;
+        ALTER TABLE ad_execution_jobs_copy RENAME TO ad_execution_jobs;
+        INSERT INTO ad_execution_jobs SELECT * FROM ad_execution_jobs WHERE id = 'job-manual';
+      `),
+      /single execution job must resolve to exactly one authority DB row/i,
+    ],
+    [
+      'a duplicate policy runtime',
+      (database) => database.exec(`
+        INSERT INTO policy_runtime SELECT * FROM policy_runtime WHERE store_id = 'store-us-east';
+      `),
+      /policy runtime must resolve to exactly one authority DB row/i,
+    ],
+    [
+      'a missing Mission authority table',
+      (database) => database.exec('DROP TABLE missions;'),
+      /no such table: missions/i,
+    ],
+  ])('rejects authority snapshots with %s', (_caseName, mutateDatabase, reasonPattern) => {
+    const tempDir = makeTempDir('mission-control-readiness-authority-exact-');
+    const { paths } = passingEvidenceChain(tempDir);
+    mutateAuthoritySnapshot(paths, mutateDatabase);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: false,
+        reason: expect.stringMatching(reasonPattern),
+      }),
+    ]));
+  });
+
+  it.each([
+    [
+      'a deleted approval',
+      (database) => database.prepare(`
+        DELETE FROM decision_history WHERE decision_id = ?
+      `).run('decision-manual'),
+    ],
+    [
+      'a duplicate approval',
+      (database) => database.exec(`
+        INSERT INTO decision_history
+        SELECT * FROM decision_history WHERE decision_id = 'decision-manual';
+      `),
+    ],
+    [
+      'an approval forged for another decision revision',
+      (database) => database.prepare(`
+        UPDATE decision_history SET decision_revision = ?
+        WHERE decision_id = ?
+      `).run(2, 'decision-manual'),
+    ],
+  ])('rejects authority snapshots with %s in decision_history', (_caseName, mutateDatabase) => {
+    const tempDir = makeTempDir('mission-control-readiness-decision-approval-');
+    const { paths } = passingEvidenceChain(tempDir);
+    mutateAuthoritySnapshot(paths, mutateDatabase);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: false,
+        reason: expect.stringMatching(/decision approval history.*exactly one|missing, duplicated, or not exact/i),
+      }),
+    ]));
+  });
+
+  it.each([
+    [
+      'a stale immutable proposal',
+      (database) => database.prepare(`
+        UPDATE analysis_proposal_snapshots SET created_at = ?
+        WHERE id = ?
+      `).run('2026-07-19T01:01:10.000Z', 'proposal-manual'),
+    ],
+    [
+      'an approval recorded after the MissionGrant was issued',
+      (database) => database.prepare(`
+        UPDATE decision_history SET created_at = ?
+        WHERE decision_id = ?
+      `).run('2026-07-23T01:02:30.000Z', 'decision-manual'),
+    ],
+  ])('rejects authorization chain with %s', (_caseName, mutateDatabase) => {
+    const tempDir = makeTempDir('mission-control-readiness-authorization-time-');
+    const { paths } = passingEvidenceChain(tempDir);
+    mutateAuthoritySnapshot(paths, mutateDatabase);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: false,
+        reason: expect.stringMatching(/authorization\/captured\/terminal.*stale|replayed|out of order/i),
+      }),
+    ]));
+  });
+
+  it('rejects an authority source whose selected live DB is not named amazon-ai-ops.db', () => {
+    const tempDir = makeTempDir('mission-control-readiness-authority-name-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const renamedSource = path.join(path.dirname(paths.sourceDatabase), 'renamed-authority.db');
+    fs.renameSync(paths.sourceDatabase, renamedSource);
+    paths.sourceDatabase = renamedSource;
+    paths.verificationContext.authorityDbPath = renamedSource;
+    const snapshot = readJson(paths.authoritySnapshotManifest);
+    snapshot.source.absolutePath = renamedSource;
+    snapshot.source.realPath = fs.realpathSync.native(renamedSource);
+    writeJson(paths.authoritySnapshotManifest, snapshot);
+    refreshAuthoritySnapshotBindings(paths);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: false,
+        reason: expect.stringMatching(/amazon-ai-ops\.db filename/i),
+      }),
+    ]));
+  });
+
+  it('rejects canary evidence whose DB execution was created in another browser session generation', () => {
+    const tempDir = makeTempDir('mission-control-readiness-cross-session-');
+    const { paths } = passingEvidenceChain(tempDir);
+    mutateAuthoritySnapshot(paths, (database) => {
+      database.prepare(`
+        UPDATE ad_execution_jobs SET created_session_generation = ?
+        WHERE id = ?
+      `).run(999, 'job-manual');
+    });
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: false,
+        reason: expect.stringMatching(/session generation.*capturedSessionGeneration/i),
+      }),
+    ]));
+  });
+
+  it('rejects a self-reported storesRoot outside snapshot source USER_DATA_DIR/stores', () => {
+    const tempDir = makeTempDir('mission-control-readiness-stores-root-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const canary = readJson(paths.manualCanary);
+    canary.storesRoot = path.join(tempDir, 'wrong-stores-root');
+    fs.mkdirSync(canary.storesRoot, { recursive: true });
+    writeJson(paths.manualCanary, canary);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: false,
+        reason: expect.stringMatching(/canonical USER_DATA_DIR\/stores/i),
+      }),
+    ]));
+  });
+
+  it('rejects a hash-matching fake screenshot that is not a PNG with IHDR', () => {
+    const tempDir = makeTempDir('mission-control-readiness-fake-png-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const canary = readJson(paths.manualCanary);
+    const before = canary.execution.evidence.find((record) => record.slot === 'before');
+    fs.writeFileSync(before.artifactPath, Buffer.alloc(64, 0x41));
+    before.contentSha256 = sha256File(before.artifactPath);
+    before.sizeBytes = fs.statSync(before.artifactPath).size;
+    writeJson(paths.manualCanary, canary);
+    mutateAuthoritySnapshot(paths, (database) => {
+      database.prepare(`
+        UPDATE ad_execution_evidence SET content_sha256 = ? WHERE id = ?
+      `).run(before.contentSha256, before.id);
+    });
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: false,
+        reason: expect.stringMatching(/PNG.*IHDR/i),
+      }),
+    ]));
+  });
+
+  it('rejects a fresh snapshot/export that attempts to wash an execution older than 72 hours', () => {
+    const tempDir = makeTempDir('mission-control-readiness-old-execution-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const snapshot = readJson(paths.authoritySnapshotManifest);
+    snapshot.backup.startedAt = '2026-07-27T01:19:59.000Z';
+    snapshot.backup.completedAt = '2026-07-27T01:20:00.000Z';
+    snapshot.exportedAt = snapshot.backup.completedAt;
+    writeJson(paths.authoritySnapshotManifest, snapshot);
+    for (const [canaryPath, generatedAt, queryExecutedAt] of [
+      [paths.manualCanary, '2026-07-27T01:31:00.000Z', '2026-07-27T01:30:00.000Z'],
+      [paths.policyCanary, '2026-07-27T01:33:00.000Z', '2026-07-27T01:32:00.000Z'],
+    ]) {
+      const canary = readJson(canaryPath);
+      canary.generatedAt = generatedAt;
+      canary.database.authorityProof.queryExecutedAt = queryExecutedAt;
+      writeJson(canaryPath, canary);
+    }
+    const continuous = readJson(paths.continuousOperation);
+    continuous.generatedAt = '2026-07-27T01:21:00.000Z';
+    writeJson(paths.continuousOperation, continuous);
+    refreshAuthoritySnapshotBindings(paths);
+    paths.verificationContext.nowMs = Date.parse('2026-07-27T02:00:00.000Z');
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: false,
+        reason: expect.stringMatching(/authorization\/captured\/terminal.*stale|replayed/i),
+      }),
+      expect.objectContaining({
+        id: 'policy-auto-canary',
+        ok: false,
+        reason: expect.stringMatching(/authorization\/captured\/terminal.*stale|replayed/i),
+      }),
+    ]));
+  });
+
   it('rejects a continuous-operation outcome altered in the manifest but not in SQLite', () => {
     const tempDir = makeTempDir('mission-control-readiness-continuous-db-mismatch-');
     const { paths } = passingEvidenceChain(tempDir);
@@ -1254,6 +2258,80 @@ describe('Mission Control production readiness CLI', () => {
         id: 's7-continuous-operation',
         ok: false,
         reason: expect.stringMatching(/canonical stores\/dates\/outcomes do not match/i),
+      }),
+    ]));
+  });
+
+  it('rejects continuous-operation recomputation with a self-reported non-canonical storesRoot', () => {
+    const tempDir = makeTempDir('mission-control-readiness-continuous-stores-root-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const continuous = readJson(paths.continuousOperation);
+    continuous.storesRoot = path.join(tempDir, 'wrong-continuous-stores-root');
+    fs.mkdirSync(continuous.storesRoot, { recursive: true });
+    writeJson(paths.continuousOperation, continuous);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 's7-continuous-operation',
+        ok: false,
+        reason: expect.stringMatching(/storesRoot.*canonical.*USER_DATA_DIR\/stores/i),
+      }),
+    ]));
+  });
+
+  it.each([
+    ['generatedAt', /generatedAt|validation failed closed/i],
+    ['storesRoot', /storesRoot|validation failed closed/i],
+  ])('rejects continuous-operation evidence with required %s deleted', (field, reasonPattern) => {
+    const tempDir = makeTempDir(`mission-control-readiness-continuous-missing-${field}-`);
+    const { paths } = passingEvidenceChain(tempDir);
+    const continuous = readJson(paths.continuousOperation);
+    delete continuous[field];
+    writeJson(paths.continuousOperation, continuous);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 's7-continuous-operation',
+        ok: false,
+        reason: expect.stringMatching(reasonPattern),
+      }),
+    ]));
+  });
+
+  it('rechecks retained Store Capsule files before finalizing APP_READY', () => {
+    const tempDir = makeTempDir('mission-control-readiness-store-capsule-toctou-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const database = new Database(paths.database, { readonly: true, fileMustExist: true });
+    const { file_path: reportFilePath } = database.prepare(`
+      SELECT file_path
+      FROM report_import_file_snapshots
+      ORDER BY file_path ASC
+      LIMIT 1
+    `).get();
+    database.close();
+    paths.verificationContext.beforeFinalEvidenceRecheck = () => {
+      fs.appendFileSync(reportFilePath, 'changed-before-final-readiness-write');
+    };
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    const report = readJson(outputPath);
+    expect(report).toMatchObject({
+      status: 'APP_NEEDS_WORK',
+      appReady: false,
+      allGatesPass: false,
+      summary: { total: 8, passed: 7, failed: 1 },
+    });
+    expect(report).not.toHaveProperty('_verifiedFileArtifacts');
+    expect(report.gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 's7-continuous-operation',
+        ok: false,
+        reason: expect.stringMatching(/Store Capsule TOCTOU.*changed after continuous-operation verification/i),
       }),
     ]));
   });
@@ -1381,6 +2459,192 @@ describe('Mission Control production readiness CLI', () => {
 
     expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
     expect(readJson(outputPath).authoritySnapshot.reason).toMatch(/canonical live AppData database|source realpath/i);
+  });
+
+  it('rejects legacy v1 authority snapshot manifests instead of silently applying the old equal-hash contract', () => {
+    const tempDir = makeTempDir('mission-control-readiness-authority-v1-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const manifest = readJson(paths.authoritySnapshotManifest);
+    manifest.schemaVersion = 'mission-control-authority-database-snapshot/v1';
+    manifest.source.sha256 = manifest.snapshot.sha256;
+    writeJson(paths.authoritySnapshotManifest, manifest);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).authoritySnapshot).toEqual(expect.objectContaining({
+      ok: false,
+      reason: expect.stringMatching(/v2.*v1.*fail-closed/i),
+    }));
+  });
+
+  it('rejects an authority snapshot after the canonical live database drifts from artifactAfter', () => {
+    const tempDir = makeTempDir('mission-control-readiness-live-authority-drift-');
+    const { paths } = passingEvidenceChain(tempDir);
+    fs.appendFileSync(paths.sourceDatabase, 'live-database-drift-after-snapshot-export');
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    const report = readJson(outputPath);
+    expect(report.authoritySnapshot).toEqual(expect.objectContaining({
+      ok: false,
+      reason: expect.stringMatching(/live source bytes\/size\/mtime drifted after snapshot export/i),
+    }));
+    expect(report.gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 's7-continuous-operation', ok: false }),
+      expect.objectContaining({ id: 'manual-canary', ok: false }),
+      expect.objectContaining({ id: 'policy-auto-canary', ok: false }),
+    ]));
+  });
+
+  it('rejects an old authority snapshot after a committed WAL-only live change', () => {
+    const tempDir = makeTempDir('mission-control-readiness-live-wal-drift-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const database = new Database(paths.sourceDatabase);
+    try {
+      database.pragma('wal_autocheckpoint = 0');
+      database.pragma('wal_checkpoint(TRUNCATE)');
+      const mainBefore = artifact(paths.sourceDatabase);
+      const mainMtimeBefore = fs.statSync(paths.sourceDatabase).mtimeMs;
+      database.exec(`
+        CREATE TABLE authority_currentness_drift (
+          id TEXT PRIMARY KEY,
+          revoked INTEGER NOT NULL
+        );
+        INSERT INTO authority_currentness_drift VALUES ('grant-1', 1);
+      `);
+      expect(fs.statSync(`${paths.sourceDatabase}-wal`).size).toBeGreaterThan(0);
+      expect(artifact(paths.sourceDatabase)).toEqual(mainBefore);
+      expect(fs.statSync(paths.sourceDatabase).mtimeMs).toBe(mainMtimeBefore);
+      const outputPath = path.join(tempDir, 'readiness.json');
+
+      expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+      const report = readJson(outputPath);
+      expect(report.authoritySnapshot).toEqual(expect.objectContaining({
+        ok: false,
+        currentness: expect.objectContaining({
+          method: 'readonly-sqlite-online-backup',
+          passed: false,
+        }),
+        reason: expect.stringMatching(/online backup does not match the selected authority snapshot/i),
+      }));
+      expect(report.gates).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 's7-continuous-operation', ok: false }),
+        expect.objectContaining({ id: 'manual-canary', ok: false }),
+        expect.objectContaining({ id: 'policy-auto-canary', ok: false }),
+      ]));
+    } finally {
+      database.close();
+    }
+  });
+
+  it('rechecks WAL-aware live authority currentness before the final report write', () => {
+    const tempDir = makeTempDir('mission-control-readiness-live-wal-toctou-');
+    const { paths } = passingEvidenceChain(tempDir);
+    let database;
+    paths.verificationContext.beforeFinalEvidenceRecheck = () => {
+      database = new Database(paths.sourceDatabase);
+      database.pragma('wal_autocheckpoint = 0');
+      database.pragma('wal_checkpoint(TRUNCATE)');
+      database.exec(`
+        CREATE TABLE authority_finalization_drift (
+          id TEXT PRIMARY KEY,
+          revoked INTEGER NOT NULL
+        );
+        INSERT INTO authority_finalization_drift VALUES ('grant-1', 1);
+      `);
+    };
+    const outputPath = path.join(tempDir, 'readiness.json');
+    try {
+      expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+      const report = readJson(outputPath);
+      expect(report.authoritySnapshot).toEqual(expect.objectContaining({
+        ok: false,
+        currentness: expect.objectContaining({
+          beforeFinalWriteCapturedAt: null,
+          passed: false,
+        }),
+        reason: expect.stringMatching(/before-final-report-write.*failed closed|online backup does not match/i),
+      }));
+      expect(report.status).toBe('APP_NEEDS_WORK');
+    } finally {
+      if (database) database.close();
+    }
+  });
+
+  it.each([
+    [
+      'an incomplete online backup',
+      (manifest) => {
+        manifest.backup.remainingPages = 1;
+        manifest.backup.completed = false;
+      },
+      /completion|remaining pages/i,
+    ],
+    [
+      'a package identity from another release',
+      (manifest) => {
+        manifest.packageIdentity.mainBundleSha256 = HASH_A;
+      },
+      /current canonical package identity/i,
+    ],
+    [
+      'source bytes that changed during the online backup',
+      (manifest) => {
+        manifest.source.artifactBefore.sha256 = HASH_A;
+      },
+      /artifactBefore and artifactAfter.*unchanged live database/i,
+    ],
+  ])('rejects an authority snapshot manifest with %s', (_label, mutate, reasonPattern) => {
+    const tempDir = makeTempDir('mission-control-readiness-authority-contract-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const manifest = readJson(paths.authoritySnapshotManifest);
+    mutate(manifest);
+    writeJson(paths.authoritySnapshotManifest, manifest);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).authoritySnapshot.reason).toMatch(reasonPattern);
+  });
+
+  it('rejects changed snapshot bytes and a snapshot that escapes the canonical evidence root', () => {
+    const tamperDir = makeTempDir('mission-control-readiness-authority-tamper-');
+    const tampered = passingEvidenceChain(tamperDir);
+    fs.appendFileSync(tampered.paths.database, 'tampered-after-manifest');
+    const tamperOutput = path.join(tamperDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(tampered.paths, tamperOutput)).status).toBe(1);
+    expect(readJson(tamperOutput).authoritySnapshot.reason).toMatch(/bytes are missing, linked, or stale/i);
+
+    const escapeDir = makeTempDir('mission-control-readiness-authority-escape-');
+    const escaped = passingEvidenceChain(escapeDir);
+    const escapedDatabase = path.join(escapeDir, 'outside-authority-snapshot.db');
+    fs.copyFileSync(escaped.paths.database, escapedDatabase);
+    const escapedArtifact = artifact(escapedDatabase);
+    const manifest = readJson(escaped.paths.authoritySnapshotManifest);
+    manifest.snapshot.absolutePath = escapedDatabase;
+    manifest.snapshot.realPath = fs.realpathSync.native(escapedDatabase);
+    manifest.snapshot.sha256 = escapedArtifact.sha256;
+    manifest.snapshot.sizeBytes = escapedArtifact.sizeBytes;
+    writeJson(escaped.paths.authoritySnapshotManifest, manifest);
+    const escapeOutput = path.join(escapeDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(escaped.paths, escapeOutput)).status).toBe(1);
+    expect(readJson(escapeOutput).authoritySnapshot.reason).toMatch(/outside|escapes the canonical snapshot root/i);
+  });
+
+  it('requires the explicit live authority DB selector even when an injected test context knows a DB path', () => {
+    const tempDir = makeTempDir('mission-control-readiness-authority-selector-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const outputPath = path.join(tempDir, 'readiness.json');
+    const args = verifierArgs(paths, outputPath);
+    const authorityDbIndex = args.indexOf('--authority-db');
+    args.splice(authorityDbIndex, 2);
+
+    expect(runVerifier(args).status).toBe(1);
+    expect(readJson(outputPath)).toMatchObject({
+      inputContractPassed: false,
+      inputErrors: expect.arrayContaining([expect.stringMatching(/--authority-db/i)]),
+    });
   });
 
   it('rejects a selected evidence JSON with more than one filesystem hard link', () => {

@@ -49,7 +49,7 @@ describe('Analysis authority migration v7', () => {
       expect(columns).not.toContain('file_path');
       expect(columns).not.toContain('source_file');
       expect(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get())
-        .toEqual({ count: 8 });
+        .toEqual({ count: 9 });
       expect(database.pragma('foreign_key_check')).toEqual([]);
     } finally {
       database.close();

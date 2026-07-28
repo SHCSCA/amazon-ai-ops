@@ -684,7 +684,17 @@ export function SchedulerPage({
           </div>
         )}
         {projection && (
-          <div className="mission-control-automation-window" role="list" aria-label="当前采集窗口">
+          <div
+            aria-label="当前采集窗口"
+            className="mission-control-automation-window"
+            data-business-date={projection.businessDate}
+            data-currency={storeContext.currency}
+            data-marketplace={storeContext.marketplace}
+            data-schedule-enabled={String(projection.enabled)}
+            data-schedule-state={projection.state}
+            data-store-id={projection.storeId}
+            role="list"
+          >
             <AutomationFact
               icon={<CalendarBlank aria-hidden="true" size={18} />}
               label="采集日期"
@@ -782,7 +792,17 @@ export function SchedulerPage({
           />
         ) : retention ? (
           <>
-            <div className="mission-control-retention-metrics" role="list" aria-label="证据保留 dry-run 摘要">
+            <div
+              aria-label="证据保留 dry-run 摘要"
+              className="mission-control-retention-metrics"
+              data-blocker-count={retention.blockers.length}
+              data-browser-profile-id={retention.profileId}
+              data-candidate-count={retention.candidateCount}
+              data-currency={retention.currency}
+              data-marketplace={retention.marketplace}
+              data-store-id={retention.storeId}
+              role="list"
+            >
               <RetentionMetric icon={<Archive aria-hidden="true" size={18} />} label="保留期" value={`${retention.retentionDays} 天`} />
               <RetentionMetric icon={<CalendarBlank aria-hidden="true" size={18} />} label="截止时间" value={new Date(retention.cutoffAt).toLocaleString()} />
               <RetentionMetric icon={<Database aria-hidden="true" size={18} />} label="候选汇总" value={`${retention.candidateCount} 项 · ${formatBytes(retention.candidateBytes)}`} />

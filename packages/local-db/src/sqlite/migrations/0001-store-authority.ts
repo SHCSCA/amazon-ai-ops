@@ -14,7 +14,8 @@ import type {
 
 export const STORE_AUTHORITY_MIGRATION_VERSION = 1;
 export const STORE_AUTHORITY_MIGRATION_NAME = 'store-authority-v1';
-export const STORE_AUTHORITY_MIGRATION_CHECKSUM = 'store-authority-v1-20260722-02';
+export const LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM = 'store-authority-v1-20260722-02';
+export const STORE_AUTHORITY_MIGRATION_CHECKSUM = 'store-authority-v1-20260727-03';
 
 export const STORE_SCOPED_LEGACY_TABLES = [
   'products',
@@ -63,12 +64,33 @@ interface StoreAuthorityMigrationDefinition {
   up(database: Database.Database, manifest: StoreMigrationManifest): StoreMigrationResult;
 }
 
+export interface StoreAuthorityQuarantineRepairResult {
+  examinedRows: number;
+  repairedRows: number;
+  remainingPendingRows: number;
+  passes: number;
+}
+
 interface MigrationStateRow {
   checksum: string;
   status: string;
   manifest_json: string | null;
   result_json: string | null;
 }
+
+interface StoreAuthorityLegacyChecksumProvenance {
+  legacyChecksum: typeof LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM;
+  promotedToChecksum: typeof STORE_AUTHORITY_MIGRATION_CHECKSUM;
+  previousStatus: 'started' | 'failed';
+  previousStartedAt: string;
+  promotedAt: string;
+}
+
+type StoreAuthorityMigrationManifest = StoreMigrationManifest & {
+  legacyChecksumProvenance?: StoreAuthorityLegacyChecksumProvenance;
+};
+
+type PendingQuarantineScope = 'v1' | 'all_versions';
 
 const DIRECT_IDENTITY_TABLES = new Set<StoreScopedLegacyTable>([
   'products',
@@ -82,6 +104,12 @@ const DIRECT_IDENTITY_TABLES = new Set<StoreScopedLegacyTable>([
   'listing_content_versions',
   'listing_drafts',
 ]);
+
+const ASIN_SCOPE_AUTHORITY_TABLES = [
+  'products',
+  'listing_content',
+  'listing_drafts',
+] as const satisfies readonly StoreScopedLegacyTable[];
 
 export class StoreAuthorityMigrationError extends Error {
   readonly version: number;
@@ -123,10 +151,17 @@ export function prepareStoreAuthorityMigrationBackup(database: Database.Database
   ensureSchemaMigrationsTable(database);
   const migration = STORE_AUTHORITY_MIGRATION;
   const existing = readMigrationState(database, migration.version);
-  assertMigrationChecksum(existing, migration);
+  assertMigrationChecksumCompatibility(existing, migration);
   if (existing?.status === 'applied') return;
 
-  const previousManifest = parseJson<StoreMigrationManifest | undefined>(existing?.manifest_json, undefined);
+  const previousManifest = parseJson<StoreAuthorityMigrationManifest | undefined>(
+    existing?.manifest_json,
+    undefined,
+  );
+  if (existing?.checksum === LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM) {
+    promoteLegacyPendingMigration(database, migration, existing, previousManifest);
+    return;
+  }
   if (previousManifest && isBoundBackupManifest(database, previousManifest.backup)) {
     const verifiedBackup = createOrReuseBackup(
       database,
@@ -203,6 +238,51 @@ export function prepareStoreAuthorityMigrationBackup(database: Database.Database
     if (error instanceof StoreAuthorityMigrationError) throw error;
     throw new StoreAuthorityMigrationError(migration.version, failedResult.errorMessage || 'Backup preparation failed.');
   }
+}
+
+function promoteLegacyPendingMigration(
+  database: Database.Database,
+  migration: StoreAuthorityMigrationDefinition,
+  existing: MigrationStateRow,
+  previousManifest: StoreAuthorityMigrationManifest | undefined,
+): void {
+  if ((existing.status !== 'started' && existing.status !== 'failed')
+    || !previousManifest
+    || previousManifest.checksum !== LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM
+    || !isBoundBackupManifest(database, previousManifest.backup)) {
+    throw new StoreAuthorityMigrationError(
+      migration.version,
+      'Legacy migration 1 can be promoted only from a started/failed state with its original bound backup.',
+    );
+  }
+  const verifiedBackup = createOrReuseBackup(
+    database,
+    migration.version,
+    previousManifest.integrityCheck,
+    previousManifest.backup,
+  );
+  if (verifiedBackup.integrityCheck !== 'ok') {
+    throw new StoreAuthorityMigrationError(
+      migration.version,
+      `Backup integrity_check returned: ${verifiedBackup.integrityCheck}`,
+    );
+  }
+  const promotedAt = new Date().toISOString();
+  const promotedManifest: StoreAuthorityMigrationManifest = {
+    ...previousManifest,
+    checksum: migration.checksum,
+    startedAt: promotedAt,
+    backup: verifiedBackup,
+    legacyChecksumProvenance: {
+      legacyChecksum: LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
+      promotedToChecksum: STORE_AUTHORITY_MIGRATION_CHECKSUM,
+      previousStatus: existing.status,
+      previousStartedAt: previousManifest.startedAt,
+      promotedAt,
+    },
+  };
+  const startedResult = createStartedResult(migration, promotedAt);
+  upsertMigrationState(database, migration, promotedManifest, startedResult, 'started');
 }
 
 export function getStoreMigrationRecoveryPreflight(
@@ -320,11 +400,13 @@ function readMigrationState(
   `).get(version) as MigrationStateRow | undefined;
 }
 
-function assertMigrationChecksum(
+function assertMigrationChecksumCompatibility(
   existing: MigrationStateRow | undefined,
   migration: StoreAuthorityMigrationDefinition,
 ): void {
-  if (existing && existing.checksum !== migration.checksum) {
+  if (existing
+    && existing.checksum !== migration.checksum
+    && existing.checksum !== LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM) {
     throw new StoreAuthorityMigrationError(
       migration.version,
       `Migration ${migration.version} checksum does not match the recorded migration.`,
@@ -404,8 +486,18 @@ function runMigration(
   migration: StoreAuthorityMigrationDefinition,
 ): StoreMigrationResult {
   const existing = readMigrationState(database, migration.version);
-  assertMigrationChecksum(existing, migration);
+  assertMigrationChecksumCompatibility(existing, migration);
   if (existing?.status === 'applied') {
+    const appliedManifest = parseJson<StoreAuthorityMigrationManifest | undefined>(
+      existing.manifest_json,
+      undefined,
+    );
+    if (!appliedManifest || appliedManifest.checksum !== existing.checksum) {
+      throw new StoreAuthorityMigrationError(
+        migration.version,
+        `Migration ${migration.version} applied manifest checksum does not match recorded history.`,
+      );
+    }
     verifyStoreAuthoritySchema(database, migration.targetTables);
     return parseJson<StoreMigrationResult>(existing.result_json, {
       version: migration.version,
@@ -418,9 +510,17 @@ function runMigration(
       createdStores: 0,
     });
   }
+  if (existing?.checksum === LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM) {
+    throw new StoreAuthorityMigrationError(
+      migration.version,
+      'Legacy migration 1 must be promoted with its bound backup before execution.',
+    );
+  }
 
-  const manifest = parseJson<StoreMigrationManifest | undefined>(existing?.manifest_json, undefined);
-  if (!manifest || !isBoundBackupManifest(database, manifest.backup)) {
+  const manifest = parseJson<StoreAuthorityMigrationManifest | undefined>(existing?.manifest_json, undefined);
+  if (!manifest
+    || manifest.checksum !== migration.checksum
+    || !isBoundBackupManifest(database, manifest.backup)) {
     throw new StoreAuthorityMigrationError(
       migration.version,
       `Migration ${migration.version} does not have a bound pre-migration backup.`,
@@ -716,8 +816,14 @@ function applyStoreAuthorityMigration(
   manifest: StoreMigrationManifest,
 ): StoreMigrationResult {
   createStoreAuthorityTables(database);
+  const storeIdColumnAdditions = addLegacyStoreIdColumns(database);
   const createdStores = seedLegacyStores(database);
-  const tableResults = STORE_SCOPED_LEGACY_TABLES.map((table) => migrateLegacyTable(database, table));
+  primeDirectStoreOwnership(database);
+  const tableResults = STORE_SCOPED_LEGACY_TABLES.map((table) => migrateLegacyTable(
+    database,
+    table,
+    storeIdColumnAdditions.get(table) ?? false,
+  ));
   verifyStoreAuthoritySchema(database, STORE_SCOPED_LEGACY_TABLES);
 
   return {
@@ -731,6 +837,206 @@ function applyStoreAuthorityMigration(
     quarantinedRows: tableResults.reduce((total, result) => total + result.quarantinedRows, 0),
     createdStores,
   };
+}
+
+/**
+ * Revisit only the fail-closed v1 rows whose original blocker was missing
+ * ownership evidence. This is intentionally exported for the forward v9
+ * repair migration: already-applied legacy v1 history remains read-only while
+ * newly executed or explicitly promoted v1 work records the current checksum.
+ *
+ * Ambiguous, conflicting, unsupported, duplicate, and invalid-id quarantines
+ * remain operator-owned. A row is repaired only when current authority data
+ * proves exactly one store, or when the row already carries that same valid
+ * store id. Multiple passes allow a newly repaired parent to unlock a child.
+ */
+export function repairPendingStoreAuthorityQuarantines(
+  database: Database.Database,
+): StoreAuthorityQuarantineRepairResult {
+  const eligibleReasons = new Set<StoreMigrationQuarantineReason>([
+    'missing_store_identity',
+    'missing_parent_store',
+  ]);
+  const pending = database.prepare(`
+    SELECT id, source_table, source_row_id, reason
+    FROM store_migration_quarantine
+    WHERE migration_version = ?
+      AND status = 'pending'
+    ORDER BY id
+  `).all(STORE_AUTHORITY_MIGRATION_VERSION) as Array<{
+    id: number;
+    source_table: string;
+    source_row_id: string;
+    reason: StoreMigrationQuarantineReason;
+  }>;
+  const eligible = pending.filter((item) => (
+    (STORE_SCOPED_LEGACY_TABLES as readonly string[]).includes(item.source_table)
+    && eligibleReasons.has(item.reason)
+  ));
+  const repaired = new Set<number>();
+  let passes = 0;
+  let changed = true;
+  const maximumPasses = Math.max(1, eligible.length + 1);
+
+  while (changed && passes < maximumPasses) {
+    changed = false;
+    passes += 1;
+    for (const quarantine of eligible) {
+      if (repaired.has(quarantine.id)) continue;
+      const table = quarantine.source_table as StoreScopedLegacyTable;
+      if (!tableExists(database, table) || !hasColumn(database, table, 'store_id')) continue;
+      const identityColumn = hasColumn(database, table, 'id') ? 'id' : 'rowid';
+      const row = database.prepare(`
+        SELECT rowid AS __migration_rowid, *
+        FROM ${quoteIdentifier(table)}
+        WHERE CAST(${quoteIdentifier(identityColumn)} AS TEXT) = ?
+        LIMIT 1
+      `).get(quarantine.source_row_id) as SqlRow | undefined;
+      if (!row) continue;
+      const otherPendingQuarantine = database.prepare(`
+        SELECT 1
+        FROM store_migration_quarantine
+        WHERE source_table = ?
+          AND source_row_id = ?
+          AND status = 'pending'
+          AND id <> ?
+        LIMIT 1
+      `).get(table, quarantine.source_row_id, quarantine.id);
+      if (otherPendingQuarantine) continue;
+
+      const identity = identityFromRow(table, row);
+      const resolution = resolveRowStore(database, table, row, identity, 'all_versions');
+      if (resolution.forcedReason) continue;
+
+      const existingStoreId = nonEmptyString(row.store_id);
+      const existingIsValid = existingStoreId ? storeExists(database, existingStoreId) : false;
+      const uniqueCandidates = [...new Set(resolution.storeIds)];
+      let resolvedStoreId: string | undefined;
+      if (existingStoreId && existingIsValid) {
+        if (uniqueCandidates.length > 0 && uniqueCandidates.some((candidate) => candidate !== existingStoreId)) {
+          continue;
+        }
+        resolvedStoreId = existingStoreId;
+      } else if (!existingStoreId && uniqueCandidates.length === 1) {
+        resolvedStoreId = uniqueCandidates[0];
+      }
+      if (!resolvedStoreId) continue;
+
+      const hasQuarantineMarker = hasColumn(database, table, 'store_authority_quarantined');
+      const quarantineMarkerSet = hasQuarantineMarker
+        && Number(row.store_authority_quarantined ?? 0) !== 0;
+      if (!existingStoreId || quarantineMarkerSet) {
+        try {
+          const write = database.prepare(`
+            UPDATE ${quoteIdentifier(table)}
+            SET store_id = @resolvedStoreId
+              ${hasQuarantineMarker ? ', store_authority_quarantined = 0' : ''}
+            WHERE rowid = @rowId
+              AND (store_id IS NULL OR store_id = @resolvedStoreId)
+          `).run({
+            resolvedStoreId,
+            rowId: row.__migration_rowid,
+          });
+          if (write.changes !== 1) continue;
+        } catch (error) {
+          if (isSqliteConstraintError(error)) continue;
+          throw error;
+        }
+      }
+      const resolvedAt = new Date().toISOString();
+      const quarantineResolution = database.prepare(`
+        UPDATE store_migration_quarantine
+        SET status = 'resolved',
+            resolved_store_id = @resolvedStoreId,
+            resolution_note = @resolutionNote,
+            resolved_at = @resolvedAt,
+            updated_at = @resolvedAt
+        WHERE id = @id
+          AND migration_version = @migrationVersion
+          AND status = 'pending'
+      `).run({
+        id: quarantine.id,
+        migrationVersion: STORE_AUTHORITY_MIGRATION_VERSION,
+        resolvedAt,
+        resolvedStoreId,
+        resolutionNote: 'Automatically repaired by store-authority quarantine repair v9 from current unique authority evidence.',
+      });
+      if (quarantineResolution.changes !== 1) {
+        throw new StoreAuthorityMigrationError(
+          STORE_AUTHORITY_MIGRATION_VERSION,
+          `Store authority quarantine ${quarantine.id} changed concurrently during v9 repair.`,
+        );
+      }
+      repaired.add(quarantine.id);
+      changed = true;
+    }
+  }
+
+  const remainingPendingRows = Number((database.prepare(`
+    SELECT COUNT(*) AS count
+    FROM store_migration_quarantine
+    WHERE migration_version = ? AND status = 'pending'
+  `).get(STORE_AUTHORITY_MIGRATION_VERSION) as { count: number }).count);
+  return {
+    examinedRows: eligible.length,
+    repairedRows: repaired.size,
+    remainingPendingRows,
+    passes,
+  };
+}
+
+function isSqliteConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = String((error as { code?: unknown }).code ?? '');
+  return code === 'SQLITE_CONSTRAINT' || code.startsWith('SQLITE_CONSTRAINT_');
+}
+
+function addLegacyStoreIdColumns(
+  database: Database.Database,
+): ReadonlyMap<StoreScopedLegacyTable, boolean> {
+  const additions = new Map<StoreScopedLegacyTable, boolean>();
+  for (const table of STORE_SCOPED_LEGACY_TABLES) {
+    if (!tableExists(database, table)) {
+      additions.set(table, false);
+      continue;
+    }
+    const added = !hasColumn(database, table, 'store_id');
+    if (added) {
+      database.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN store_id TEXT`);
+    }
+    additions.set(table, added);
+  }
+  return additions;
+}
+
+function primeDirectStoreOwnership(database: Database.Database): void {
+  for (const table of ASIN_SCOPE_AUTHORITY_TABLES) {
+    if (!tableExists(database, table)
+      || !hasColumn(database, table, 'store_id')
+      || !hasColumn(database, table, 'store_name')
+      || !hasColumn(database, table, 'marketplace_code')) {
+      continue;
+    }
+    const rows = database.prepare(`
+      SELECT rowid AS __migration_rowid, store_id, store_name, marketplace_code
+      FROM ${quoteIdentifier(table)}
+      WHERE store_id IS NULL
+        AND store_name IS NOT NULL AND trim(store_name) <> ''
+        AND marketplace_code IS NOT NULL AND trim(marketplace_code) <> ''
+    `).all() as SqlRow[];
+    for (const row of rows) {
+      const storeName = normalizeStoreName(row.store_name);
+      const marketplaceCode = normalizeMarketplaceCode(row.marketplace_code);
+      if (!storeName || marketplaceCode !== 'US') continue;
+      const candidates = findStoresForIdentity(database, storeName, marketplaceCode);
+      if (candidates.length !== 1) continue;
+      database.prepare(`
+        UPDATE ${quoteIdentifier(table)}
+        SET store_id = ?
+        WHERE rowid = ? AND store_id IS NULL
+      `).run(candidates[0], row.__migration_rowid);
+    }
+  }
 }
 
 function seedLegacyStores(database: Database.Database): number {
@@ -812,6 +1118,7 @@ function seedLegacyStores(database: Database.Database): number {
 function migrateLegacyTable(
   database: Database.Database,
   table: StoreScopedLegacyTable,
+  storeIdColumnAdded: boolean,
 ): StoreMigrationTableResult {
   const indexName = `idx_${table}_store_id`;
   if (!tableExists(database, table)) {
@@ -826,10 +1133,6 @@ function migrateLegacyTable(
     };
   }
 
-  const storeIdColumnAdded = !hasColumn(database, table, 'store_id');
-  if (storeIdColumnAdded) {
-    database.exec(`ALTER TABLE ${quoteIdentifier(table)} ADD COLUMN store_id TEXT`);
-  }
   database.exec(`CREATE INDEX IF NOT EXISTS ${quoteIdentifier(indexName)} ON ${quoteIdentifier(table)}(store_id)`);
 
   const rows = database.prepare(`SELECT rowid AS __migration_rowid, * FROM ${quoteIdentifier(table)}`).all() as SqlRow[];
@@ -883,7 +1186,7 @@ function migrateLegacyRow(
   const identity = identityFromRow(table, row);
   const existingStoreId = nonEmptyString(row.store_id);
   const existingIsValid = existingStoreId ? storeExists(database, existingStoreId) : false;
-  const resolution = resolveRowStore(database, table, row, identity);
+  const resolution = resolveRowStore(database, table, row, identity, 'v1');
 
   if (existingStoreId && !existingIsValid) {
     quarantineRow(database, table, rowId, 'invalid_existing_store_id', identity, [], row);
@@ -947,8 +1250,9 @@ function resolveRowStore(
   table: StoreScopedLegacyTable,
   row: SqlRow,
   identity: LegacyIdentity,
+  pendingQuarantineScope: PendingQuarantineScope,
 ): CandidateResolution {
-  const explicitParent = explicitParentCandidates(database, table, row);
+  const explicitParent = explicitParentCandidates(database, table, row, pendingQuarantineScope);
   const normalizedStoreName = normalizeStoreName(identity.storeName);
   const marketplaceCode = normalizeMarketplaceCode(identity.marketplaceCode);
   const hasPartialDirectIdentity = Boolean(identity.storeName || identity.marketplaceCode);
@@ -1009,7 +1313,7 @@ function resolveRowStore(
   if (direct) return direct;
   if (explicitParent) return explicitParent;
 
-  const fileCandidates = fileScopeCandidates(database, table, row);
+  const fileCandidates = fileScopeCandidates(database, table, row, pendingQuarantineScope);
   if (fileCandidates) return fileCandidates;
 
   const scopeIdentities = scopeJsonIdentities(table, row);
@@ -1045,7 +1349,7 @@ function resolveRowStore(
     };
   }
 
-  const asinCandidates = asinScopeCandidates(database, row);
+  const asinCandidates = asinScopeCandidates(database, row, pendingQuarantineScope);
   if (asinCandidates) return asinCandidates;
 
   return { storeIds: [], reasonWhenEmpty: 'missing_store_identity', source: 'none' };
@@ -1055,6 +1359,7 @@ function explicitParentCandidates(
   database: Database.Database,
   table: StoreScopedLegacyTable,
   row: SqlRow,
+  pendingQuarantineScope: PendingQuarantineScope,
 ): CandidateResolution | undefined {
   const relationship: Partial<Record<StoreScopedLegacyTable, {
     parentTable: StoreScopedLegacyTable;
@@ -1081,8 +1386,8 @@ function explicitParentCandidates(
       AND NOT EXISTS (
         SELECT 1
         FROM store_migration_quarantine quarantine
-        WHERE quarantine.migration_version = ${STORE_AUTHORITY_MIGRATION_VERSION}
-          AND quarantine.source_table = ${sqlStringLiteral(link.parentTable)}
+        WHERE ${pendingQuarantineVersionPredicate(pendingQuarantineScope)}
+          quarantine.source_table = ${sqlStringLiteral(link.parentTable)}
           AND quarantine.source_row_id = CAST(parent.id AS TEXT)
           AND quarantine.status = 'pending'
       )
@@ -1098,6 +1403,7 @@ function fileScopeCandidates(
   database: Database.Database,
   table: StoreScopedLegacyTable,
   row: SqlRow,
+  pendingQuarantineScope: PendingQuarantineScope,
 ): CandidateResolution | undefined {
   if (table !== 'keyword_metrics') return undefined;
   const sourceFile = nonEmptyString(row.source_file);
@@ -1116,8 +1422,8 @@ function fileScopeCandidates(
       AND NOT EXISTS (
         SELECT 1
         FROM store_migration_quarantine quarantine
-        WHERE quarantine.migration_version = ${STORE_AUTHORITY_MIGRATION_VERSION}
-          AND quarantine.source_table = scoped.source_table
+        WHERE ${pendingQuarantineVersionPredicate(pendingQuarantineScope)}
+          quarantine.source_table = scoped.source_table
           AND quarantine.source_row_id = scoped.source_row_id
           AND quarantine.status = 'pending'
       )
@@ -1132,6 +1438,7 @@ function fileScopeCandidates(
 function asinScopeCandidates(
   database: Database.Database,
   row: SqlRow,
+  pendingQuarantineScope: PendingQuarantineScope,
 ): CandidateResolution | undefined {
   const asin = nonEmptyString(row.asin);
   if (!asin) return undefined;
@@ -1152,8 +1459,8 @@ function asinScopeCandidates(
       AND NOT EXISTS (
         SELECT 1
         FROM store_migration_quarantine quarantine
-        WHERE quarantine.migration_version = ${STORE_AUTHORITY_MIGRATION_VERSION}
-          AND quarantine.source_table = scoped.source_table
+        WHERE ${pendingQuarantineVersionPredicate(pendingQuarantineScope)}
+          quarantine.source_table = scoped.source_table
           AND quarantine.source_row_id = scoped.source_row_id
           AND quarantine.status = 'pending'
       )
@@ -1163,6 +1470,12 @@ function asinScopeCandidates(
     reasonWhenEmpty: 'missing_parent_store',
     source: 'asin',
   };
+}
+
+function pendingQuarantineVersionPredicate(scope: PendingQuarantineScope): string {
+  return scope === 'v1'
+    ? `quarantine.migration_version = ${STORE_AUTHORITY_MIGRATION_VERSION} AND`
+    : '';
 }
 
 function scopeJsonIdentities(table: StoreScopedLegacyTable, row: SqlRow): LegacyIdentity[] {

@@ -19,6 +19,7 @@ export type BrowserLoginCredentialPersistence =
 
 export interface BrowserLoginResult {
   ok: true;
+  credentialSource: 'saved' | 'typed';
   currentStore: string;
   erpSessionReady: true;
   erpSessionReused: boolean;

@@ -406,37 +406,73 @@ export class StoreRepository {
   updateConnection(input: UpdateStoreConnectionRecordInput): StoreConnection {
     const id = normalizeStoreCapabilityId(input.id);
     const store = this.requireWritableStore(input.storeId);
-    this.requireConnection(store.storeId, id);
-    const fields: string[] = [];
-    const params: Record<string, unknown> = { id, storeId: store.storeId, updatedAt: new Date().toISOString() };
-    for (const [inputKey, column] of [
-      ['accountLabel', 'account_label'],
-      ['externalAccountId', 'external_account_id'],
-      ['lastFailureCode', 'last_failure_code'],
-    ] as const) {
-      if (input[inputKey] !== undefined) {
-        fields.push(`${column} = @${inputKey}`);
-        params[inputKey] = nullableText(input[inputKey]);
+    const update = this.db.transaction(() => {
+      const existing = this.requireConnection(store.storeId, id);
+      const submittedAccountLabel = input.accountLabel === undefined
+        ? existing.accountLabel ?? null
+        : nullableText(input.accountLabel);
+      const submittedExternalAccountId = input.externalAccountId === undefined
+        ? existing.externalAccountId ?? null
+        : nullableText(input.externalAccountId);
+      const accountLabelChanged = input.accountLabel !== undefined
+        && submittedAccountLabel !== (existing.accountLabel ?? null);
+      const externalAccountIdChanged = input.externalAccountId !== undefined
+        && submittedExternalAccountId !== (existing.externalAccountId ?? null);
+      const identityChanged = accountLabelChanged || externalAccountIdChanged;
+      const fields: string[] = [];
+      const params: Record<string, unknown> = {
+        id,
+        storeId: store.storeId,
+        updatedAt: new Date().toISOString(),
+      };
+      if (input.accountLabel !== undefined) {
+        fields.push('account_label = @accountLabel');
+        params.accountLabel = submittedAccountLabel;
       }
-    }
-    if (input.lastVerifiedAt !== undefined) {
-      fields.push('last_verified_at = @lastVerifiedAt');
-      params.lastVerifiedAt = optionalTimestamp(input.lastVerifiedAt);
-    }
-    if (input.status !== undefined) {
-      fields.push('status = @status');
-      params.status = normalizeConnectionStatus(input.status);
-    }
-    if (fields.length === 0) {
-      throw new StoreRepositoryError('INVALID_STORE_INPUT', 'Connection update cannot be empty.');
-    }
-    fields.push('updated_at = @updatedAt');
-    this.db.prepare(`
-      UPDATE store_connections
-      SET ${fields.join(', ')}
-      WHERE id = @id AND store_id = @storeId
-    `).run(params);
-    return this.requireConnection(store.storeId, id);
+      if (identityChanged) {
+        fields.push(
+          'external_account_id = NULL',
+          "status = 'not_configured'",
+          'last_verified_at = NULL',
+          'last_failure_code = NULL',
+        );
+      } else {
+        for (const [inputKey, column] of [
+          ['externalAccountId', 'external_account_id'],
+          ['lastFailureCode', 'last_failure_code'],
+        ] as const) {
+          if (input[inputKey] !== undefined) {
+            fields.push(`${column} = @${inputKey}`);
+            params[inputKey] = nullableText(input[inputKey]);
+          }
+        }
+        if (input.lastVerifiedAt !== undefined) {
+          fields.push('last_verified_at = @lastVerifiedAt');
+          params.lastVerifiedAt = optionalTimestamp(input.lastVerifiedAt);
+        }
+        if (input.status !== undefined) {
+          fields.push('status = @status');
+          params.status = normalizeConnectionStatus(input.status);
+        }
+      }
+      if (fields.length === 0) {
+        throw new StoreRepositoryError('INVALID_STORE_INPUT', 'Connection update cannot be empty.');
+      }
+      fields.push('updated_at = @updatedAt');
+      this.db.prepare(`
+        UPDATE store_connections
+        SET ${fields.join(', ')}
+        WHERE id = @id AND store_id = @storeId
+      `).run(params);
+      if (identityChanged) {
+        this.db.prepare(`
+          DELETE FROM store_session_metadata
+          WHERE store_id = ? AND provider = ?
+        `).run(store.storeId, existing.provider);
+      }
+      return this.requireConnection(store.storeId, id);
+    });
+    return update();
   }
 
   getConnection(storeIdInput: StoreId, provider: StoreConnectionProvider): StoreConnection | undefined {

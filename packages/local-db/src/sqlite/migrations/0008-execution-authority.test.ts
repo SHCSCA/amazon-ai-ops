@@ -46,7 +46,7 @@ describe('Execution authority migration v8', () => {
       };
       expect(parsedManifest.upgradeBackup).toMatchObject({
         kind: 'schema-upgrade-backup',
-        targetVersion: 8,
+        targetVersion: 9,
       });
       const tables = new Set((database.prepare(`
         SELECT name FROM sqlite_master WHERE type = 'table'
@@ -88,7 +88,7 @@ describe('Execution authority migration v8', () => {
         name: 'trg_ad_execution_domain_reconciliations_append_only_update',
       });
       expect(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get())
-        .toEqual({ count: 8 });
+        .toEqual({ count: 9 });
       expect(database.pragma('foreign_key_check')).toEqual([]);
     } finally {
       database.close();

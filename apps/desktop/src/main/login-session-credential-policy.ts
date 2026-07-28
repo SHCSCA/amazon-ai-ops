@@ -15,6 +15,23 @@ export interface LoginSessionCredentialPolicy {
   trustRequestedUsername: boolean;
 }
 
+export interface PackageUiSavedSessionContinuationInput {
+  credentialSource: 'saved' | 'typed';
+  erpSessionReused: boolean;
+  packageUiReadOnlyRuntime: boolean;
+  policy: LoginSessionCredentialPolicy;
+}
+
+export function isPackageUiSavedSessionContinuationAllowed(
+  input: PackageUiSavedSessionContinuationInput,
+): boolean {
+  return input.packageUiReadOnlyRuntime
+    && input.credentialSource === 'saved'
+    && input.erpSessionReused
+    && input.policy.credentialPersistence === 'main_managed'
+    && input.policy.sessionIdentityVerified === false;
+}
+
 export function decideLoginSessionCredentialPolicy(
   input: LoginSessionCredentialPolicyInput,
 ): LoginSessionCredentialPolicy {

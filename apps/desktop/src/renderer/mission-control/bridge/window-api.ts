@@ -1,5 +1,6 @@
 import type {
   ArchiveStoreInput,
+  CreateStoreConnectionInput,
   CreateStoreInput,
   MissionControlCommandRequest,
   MissionControlCommandResponse,
@@ -7,9 +8,11 @@ import type {
   MissionControlQueryResponse,
   RestoreStoreInput,
   StoreContextEnvelope,
+  StoreConnection,
   StoreId,
   StoreRecord,
   StoreWorkspaceView,
+  UpdateStoreConnectionInput,
   UpdateStoreInput,
 } from '@amazon-ai-ops/shared-types';
 
@@ -26,8 +29,11 @@ export interface MissionControlWindowApi {
   updateStore(input: UpdateStoreInput): Promise<StoreRecord>;
   archiveStore(input: ArchiveStoreInput): Promise<StoreRecord>;
   restoreStore(input: RestoreStoreInput): Promise<StoreRecord>;
+  createStoreConnection(input: CreateStoreConnectionInput): Promise<StoreConnection>;
+  updateStoreConnection(input: UpdateStoreConnectionInput): Promise<StoreConnection>;
   switchStore(storeId: StoreId): Promise<StoreWorkspaceView>;
   getActiveStoreContext(): Promise<StoreContextEnvelope | null>;
+  getActiveStoreWorkspaceView(): Promise<StoreWorkspaceView | null>;
   onStoreContextChanged(callback: (view: StoreWorkspaceView) => void): () => void;
   onStoresChanged(callback: (store: StoreRecord) => void): () => void;
 }
@@ -36,7 +42,9 @@ export function getMissionControlWindowApi(): MissionControlWindowApi {
   const api = (window as unknown as { electronAPI?: Partial<MissionControlWindowApi> }).electronAPI;
   if (!api || !api.missionControl || !api.listStores || !api.getStore
     || !api.createStore || !api.updateStore || !api.archiveStore || !api.restoreStore
+    || !api.createStoreConnection || !api.updateStoreConnection
     || !api.switchStore || !api.getActiveStoreContext
+    || !api.getActiveStoreWorkspaceView
     || !api.onStoreContextChanged || !api.onStoresChanged) {
     throw new Error('MISSION_CONTROL_PRELOAD_API_UNAVAILABLE');
   }

@@ -99,9 +99,29 @@ class MemoryStoreRepository implements StoreAuthorityRepository {
   updateConnection(input: UpdateStoreConnectionInput): StoreConnection {
     this.lastUpdatedConnectionInput = input;
     const existing = this.connections.get(input.id)!;
+    const submittedAccountLabel = input.accountLabel === undefined
+      ? existing.accountLabel
+      : input.accountLabel.trim() || undefined;
+    const submittedExternalAccountId = input.externalAccountId === undefined
+      ? existing.externalAccountId
+      : input.externalAccountId.trim() || undefined;
+    const identityChanged = (
+      input.accountLabel !== undefined
+      && submittedAccountLabel !== existing.accountLabel
+    ) || (
+      input.externalAccountId !== undefined
+      && submittedExternalAccountId !== existing.externalAccountId
+    );
     const connection: StoreConnection = {
       ...existing,
       ...input,
+      ...(identityChanged ? {
+        externalAccountId: undefined,
+        status: 'not_configured' as const,
+        lastVerifiedAt: undefined,
+        lastFailureCode: undefined,
+        session: undefined,
+      } : {}),
       updatedAt: '2026-07-22T00:01:00.000Z',
     };
     this.connections.set(connection.id, connection);
@@ -291,12 +311,17 @@ describe('StoreCoordinator', () => {
     expect(() => coordinator.assertActiveStoreContext(initial)).toThrow(/stale generation/);
 
     const afterCreate = coordinator.getActiveStoreContext()!;
-    coordinator.updateConnection({
+    const rebound = coordinator.updateConnection({
       id: connection.id,
       storeId: row.storeId,
       accountLabel: 'old-account',
       externalAccountId: 'profile-new',
     });
+    expect(rebound).toEqual(expect.objectContaining({
+      accountLabel: 'old-account',
+      status: 'not_configured',
+    }));
+    expect(rebound.externalAccountId).toBeUndefined();
     expect(() => coordinator.assertActiveStoreContext(afterCreate)).toThrow(/stale generation/);
 
     const afterUpdate = coordinator.getActiveStoreContext()!;
@@ -360,6 +385,47 @@ describe('StoreCoordinator', () => {
       accountLabel: 'updated@example.com',
       externalAccountId: undefined,
     });
+  });
+
+  it('does not inherit verified readiness or external identity when rebinding an account label', () => {
+    const { coordinator, repository } = createHarness();
+    const store = coordinator.createStore({ displayName: 'One' });
+    const connection = coordinator.createConnection({
+      storeId: store.storeId,
+      provider: 'lingxing',
+      accountLabel: 'identity-a',
+      externalAccountId: 'external-a',
+    });
+    repository.connections.set(connection.id, {
+      ...connection,
+      status: 'ready',
+      lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+      session: {
+        storeId: store.storeId,
+        browserProfileId: store.browserProfileId,
+        provider: 'lingxing',
+        status: 'ready',
+        sessionGeneration: 2,
+        observedAt: '2026-07-22T02:00:00.000Z',
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+      },
+    });
+
+    const rebound = coordinator.updateConnection({
+      id: connection.id,
+      storeId: store.storeId,
+      accountLabel: 'identity-b',
+      externalAccountId: 'external-a',
+    });
+
+    expect(rebound).toEqual(expect.objectContaining({
+      accountLabel: 'identity-b',
+      status: 'not_configured',
+    }));
+    expect(rebound.externalAccountId).toBeUndefined();
+    expect(rebound.lastVerifiedAt).toBeUndefined();
+    expect(rebound.session).toBeUndefined();
   });
 
   it('persists generation watermarks across authority reconstruction', () => {

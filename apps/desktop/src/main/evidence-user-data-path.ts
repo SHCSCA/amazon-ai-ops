@@ -7,6 +7,18 @@ export const PACKAGE_UI_EVIDENCE_MODE = 'package-ui';
 export const PACKAGE_LAUNCH_SMOKE_MODE = 'package-launch-smoke';
 export const EVIDENCE_USER_DATA_LOG_PREFIX = '[App] evidence-user-data ';
 export const EVIDENCE_USER_DATA_RUNTIME_MARKER = 'evidence-user-data-runtime.json';
+export const PACKAGE_LAUNCH_WINDOW_READY_MARKER = 'package-launch-window-ready.json';
+
+export interface PackageLaunchWindowReadyMarker {
+  kind: 'package-launch-window-ready';
+  schemaVersion: 1;
+  pid: number;
+  browserWindowId: number;
+  evidenceMode: typeof PACKAGE_LAUNCH_SMOKE_MODE;
+  userDataDir: string;
+  rendererUrl: string;
+  generatedAt: string;
+}
 
 const ALLOWED_EVIDENCE_MODES = new Set([
   PACKAGE_UI_EVIDENCE_MODE,
@@ -36,6 +48,40 @@ const DEFAULT_IO: EvidencePathIo = {
 
 function comparisonPath(filePath: string): string {
   return path.win32.normalize(filePath).replace(/[\\/]+$/, '').toLowerCase();
+}
+
+export function isPackageLaunchWindowReadyMarker(
+  value: unknown,
+  expected: {
+    pid?: number;
+    browserWindowId?: number;
+    userDataDir?: string;
+  } = {},
+): value is PackageLaunchWindowReadyMarker {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const marker = value as Partial<PackageLaunchWindowReadyMarker>;
+  if (
+    marker.kind !== 'package-launch-window-ready'
+    || marker.schemaVersion !== 1
+    || !Number.isInteger(marker.pid)
+    || Number(marker.pid) < 1
+    || !Number.isInteger(marker.browserWindowId)
+    || Number(marker.browserWindowId) < 1
+    || marker.evidenceMode !== PACKAGE_LAUNCH_SMOKE_MODE
+    || typeof marker.userDataDir !== 'string'
+    || !marker.userDataDir.trim()
+    || typeof marker.rendererUrl !== 'string'
+    || !marker.rendererUrl.trim()
+    || typeof marker.generatedAt !== 'string'
+    || !Number.isFinite(Date.parse(marker.generatedAt))
+  ) return false;
+  if (expected.pid !== undefined && marker.pid !== expected.pid) return false;
+  if (
+    expected.browserWindowId !== undefined
+    && marker.browserWindowId !== expected.browserWindowId
+  ) return false;
+  return expected.userDataDir === undefined
+    || comparisonPath(marker.userDataDir) === comparisonPath(expected.userDataDir);
 }
 
 function normalizeRequestedPath(value: string): string {

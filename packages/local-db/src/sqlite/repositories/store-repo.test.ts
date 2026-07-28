@@ -260,6 +260,289 @@ describe('StoreRepository', () => {
     }
   });
 
+  it('resets verified provider identity and session metadata when the account label changes', () => {
+    const database = initSqlite(tempDbPath());
+    try {
+      const repo = new StoreRepository(database);
+      const store = createStore(repo, 'identity-rebind');
+      const connectionId = normalizeStoreCapabilityId('cap-identity-rebind');
+      repo.createConnection({
+        id: connectionId,
+        storeId: store.storeId,
+        provider: 'lingxing',
+        status: 'ready',
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+        lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+        lastFailureCode: 'old-failure',
+      });
+      repo.saveSessionMetadata({
+        storeId: store.storeId,
+        browserProfileId: store.browserProfileId,
+        provider: 'lingxing',
+        status: 'ready',
+        sessionGeneration: 3,
+        observedAt: '2026-07-22T02:00:00.000Z',
+        verifiedAt: '2026-07-22T02:00:00.000Z',
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+      });
+
+      const rebound = repo.updateConnection({
+        id: connectionId,
+        storeId: store.storeId,
+        accountLabel: 'identity-b',
+        externalAccountId: 'external-a',
+        status: 'ready',
+        lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+        lastFailureCode: 'forged-ready',
+      });
+
+      expect(rebound).toEqual(expect.objectContaining({
+        id: connectionId,
+        accountLabel: 'identity-b',
+        status: 'not_configured',
+      }));
+      expect(rebound.externalAccountId).toBeUndefined();
+      expect(rebound.lastVerifiedAt).toBeUndefined();
+      expect(rebound.lastFailureCode).toBeUndefined();
+      expect(rebound.session).toBeUndefined();
+      expect(repo.getSessionMetadata(store.storeId, 'lingxing')).toBeUndefined();
+      expect(JSON.stringify(rebound)).not.toContain('external-a');
+    } finally {
+      database.close();
+    }
+  });
+
+  it.each([
+    ['sets', undefined, 'external-b'],
+    ['replaces', 'external-a', 'external-b'],
+    ['clears', 'external-a', '   '],
+  ])(
+    'resets verified provider identity when an external account id %s',
+    (_operation, initialExternalAccountId, submittedExternalAccountId) => {
+      const database = initSqlite(tempDbPath());
+      try {
+        const repo = new StoreRepository(database);
+        const store = createStore(repo, `external-identity-${_operation}`);
+        const connectionId = normalizeStoreCapabilityId(`cap-external-identity-${_operation}`);
+        repo.createConnection({
+          id: connectionId,
+          storeId: store.storeId,
+          provider: 'lingxing',
+          status: 'ready',
+          accountLabel: 'identity-a',
+          externalAccountId: initialExternalAccountId,
+          lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+          lastFailureCode: 'old-failure',
+        });
+        repo.saveSessionMetadata({
+          storeId: store.storeId,
+          browserProfileId: store.browserProfileId,
+          provider: 'lingxing',
+          status: 'ready',
+          sessionGeneration: 3,
+          observedAt: '2026-07-22T02:00:00.000Z',
+          verifiedAt: '2026-07-22T02:00:00.000Z',
+          accountLabel: 'identity-a',
+          externalAccountId: initialExternalAccountId,
+        });
+
+        const rebound = repo.updateConnection({
+          id: connectionId,
+          storeId: store.storeId,
+          externalAccountId: submittedExternalAccountId,
+          status: 'ready',
+          lastVerifiedAt: '2026-07-22T03:00:00.000Z',
+          lastFailureCode: 'forged-ready',
+        });
+
+        expect(rebound).toEqual(expect.objectContaining({
+          accountLabel: 'identity-a',
+          status: 'not_configured',
+        }));
+        expect(rebound.externalAccountId).toBeUndefined();
+        expect(rebound.lastVerifiedAt).toBeUndefined();
+        expect(rebound.lastFailureCode).toBeUndefined();
+        expect(rebound.session).toBeUndefined();
+        expect(repo.getSessionMetadata(store.storeId, 'lingxing')).toBeUndefined();
+      } finally {
+        database.close();
+      }
+    },
+  );
+
+  it('keeps normalized-equivalent connection identity updates idempotent', () => {
+    const database = initSqlite(tempDbPath());
+    try {
+      const repo = new StoreRepository(database);
+      const store = createStore(repo, 'identity-idempotent');
+      const connectionId = normalizeStoreCapabilityId('cap-identity-idempotent');
+      repo.createConnection({
+        id: connectionId,
+        storeId: store.storeId,
+        provider: 'lingxing',
+        status: 'ready',
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+        lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+      });
+      repo.saveSessionMetadata({
+        storeId: store.storeId,
+        browserProfileId: store.browserProfileId,
+        provider: 'lingxing',
+        status: 'ready',
+        sessionGeneration: 3,
+        observedAt: '2026-07-22T02:00:00.000Z',
+        verifiedAt: '2026-07-22T02:00:00.000Z',
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+      });
+
+      const unchanged = repo.updateConnection({
+        id: connectionId,
+        storeId: store.storeId,
+        accountLabel: '  identity-a  ',
+        externalAccountId: '  external-a  ',
+      });
+
+      expect(unchanged).toEqual(expect.objectContaining({
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+        status: 'ready',
+        lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+        session: expect.objectContaining({
+          externalAccountId: 'external-a',
+          status: 'ready',
+        }),
+      }));
+    } finally {
+      database.close();
+    }
+  });
+
+  it('invalidates only the matching store/provider session on external identity replacement', () => {
+    const database = initSqlite(tempDbPath());
+    try {
+      const repo = new StoreRepository(database);
+      const targetStore = createStore(repo, 'identity-isolation-target');
+      const otherStore = createStore(repo, 'identity-isolation-other');
+      const targetConnectionId = normalizeStoreCapabilityId('cap-identity-isolation-target');
+      repo.createConnection({
+        id: targetConnectionId,
+        storeId: targetStore.storeId,
+        provider: 'lingxing',
+        status: 'ready',
+        accountLabel: 'target',
+        externalAccountId: 'external-a',
+        lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+      });
+      repo.createConnection({
+        id: normalizeStoreCapabilityId('cap-identity-isolation-target-ads'),
+        storeId: targetStore.storeId,
+        provider: 'amazon_ads',
+        status: 'ready',
+        accountLabel: 'target-ads',
+        externalAccountId: 'ads-a',
+        lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+      });
+      repo.createConnection({
+        id: normalizeStoreCapabilityId('cap-identity-isolation-other'),
+        storeId: otherStore.storeId,
+        provider: 'lingxing',
+        status: 'ready',
+        accountLabel: 'other',
+        externalAccountId: 'external-a',
+        lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+      });
+      for (const [store, provider, accountLabel, externalAccountId] of [
+        [targetStore, 'lingxing', 'target', 'external-a'],
+        [targetStore, 'amazon_ads', 'target-ads', 'ads-a'],
+        [otherStore, 'lingxing', 'other', 'external-a'],
+      ] as const) {
+        repo.saveSessionMetadata({
+          storeId: store.storeId,
+          browserProfileId: store.browserProfileId,
+          provider,
+          status: 'ready',
+          sessionGeneration: 3,
+          observedAt: '2026-07-22T02:00:00.000Z',
+          verifiedAt: '2026-07-22T02:00:00.000Z',
+          accountLabel,
+          externalAccountId,
+        });
+      }
+
+      repo.updateConnection({
+        id: targetConnectionId,
+        storeId: targetStore.storeId,
+        externalAccountId: 'external-b',
+      });
+
+      expect(repo.getSessionMetadata(targetStore.storeId, 'lingxing')).toBeUndefined();
+      expect(repo.getSessionMetadata(targetStore.storeId, 'amazon_ads')).toEqual(
+        expect.objectContaining({ externalAccountId: 'ads-a', status: 'ready' }),
+      );
+      expect(repo.getSessionMetadata(otherStore.storeId, 'lingxing')).toEqual(
+        expect.objectContaining({ externalAccountId: 'external-a', status: 'ready' }),
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  it('rolls back external identity reset and session invalidation with the authority transaction', () => {
+    const database = initSqlite(tempDbPath());
+    try {
+      const repo = new StoreRepository(database);
+      const store = createStore(repo, 'identity-rebind-rollback');
+      const connectionId = normalizeStoreCapabilityId('cap-identity-rebind-rollback');
+      repo.createConnection({
+        id: connectionId,
+        storeId: store.storeId,
+        provider: 'lingxing',
+        status: 'ready',
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+        lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+      });
+      repo.saveSessionMetadata({
+        storeId: store.storeId,
+        browserProfileId: store.browserProfileId,
+        provider: 'lingxing',
+        status: 'ready',
+        sessionGeneration: 3,
+        observedAt: '2026-07-22T02:00:00.000Z',
+        verifiedAt: '2026-07-22T02:00:00.000Z',
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+      });
+
+      expect(() => repo.transaction(() => {
+        repo.updateConnection({
+          id: connectionId,
+          storeId: store.storeId,
+          externalAccountId: 'external-b',
+        });
+        throw new Error('injected authority failure');
+      })).toThrow('injected authority failure');
+
+      expect(repo.getConnection(store.storeId, 'lingxing')).toEqual(expect.objectContaining({
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+        status: 'ready',
+        lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+        session: expect.objectContaining({
+          accountLabel: 'identity-a',
+          externalAccountId: 'external-a',
+          status: 'ready',
+        }),
+      }));
+    } finally {
+      database.close();
+    }
+  });
+
   it('never lets a raced stale session write roll back the durable generation', () => {
     const dbPath = tempDbPath();
     const database = initSqlite(dbPath);
@@ -391,7 +674,7 @@ describe('StoreRepository', () => {
     const database = initSqlite(dbPath);
     try {
       const repo = new StoreRepository(database);
-      expect(repo.listSchemaMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(repo.listSchemaMigrations().map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
       expect(repo.getMigrationManifest()).toMatchObject({ version: 1, integrityCheck: 'ok' });
       expect(repo.getMigrationResult()).toMatchObject({ status: 'applied' });
       expect(repo.getMigrationRecoveryPreflight()).toMatchObject({ canRestore: true });

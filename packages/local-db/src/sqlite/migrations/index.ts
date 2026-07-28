@@ -11,6 +11,7 @@ export {
 } from './upgrade-backup';
 export type { PrepareUpgradeBackupOptions, UpgradeBackupTarget } from './upgrade-backup';
 export {
+  LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM,
   STORE_AUTHORITY_MIGRATION_CHECKSUM,
   STORE_AUTHORITY_MIGRATION_NAME,
   STORE_AUTHORITY_MIGRATION_VERSION,
@@ -92,3 +93,13 @@ export {
   verifyExecutionAuthoritySchema,
 } from './0008-execution-authority';
 export type { ExecutionAuthorityMigrationResult } from './0008-execution-authority';
+export {
+  STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
+  STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
+  STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
+  runStoreAuthorityRepairMigration,
+  StoreAuthorityRepairMigrationError,
+} from './0009-store-authority-quarantine-repair';
+export type {
+  StoreAuthorityRepairMigrationResult,
+} from './0009-store-authority-quarantine-repair';

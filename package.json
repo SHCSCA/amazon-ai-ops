@@ -51,6 +51,8 @@
     "verify:s7-large-table": "node scripts/verify-mission-control-large-table.js",
     "verify:s7-continuous-operation": "node scripts/verify-s7-continuous-operation.js",
     "verify:s7-ui-evidence": "node scripts/mission-control-ui-evidence-contract.js",
+    "export:s7-authority-snapshot": "node scripts/export-mission-control-authority-snapshot.js",
+    "export:s7-execution-canary": "node scripts/export-mission-control-execution-canary-evidence.js",
     "verify:s7-production-readiness": "node scripts/verify-mission-control-production-readiness.js"
   },
   "devDependencies": {
