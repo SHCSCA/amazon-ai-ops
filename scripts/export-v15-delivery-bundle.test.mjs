@@ -24,6 +24,7 @@ const {
   EXPECTED_PACKAGE_UI_WORKSPACES,
   INTERACTIVE_LOGIN_CONTRACT,
   ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
+  PACKAGE_UI_PROFILE_SEQUENCE,
   PACKAGE_UI_WIDE_PROFILE,
 } = packageUiEvidence;
 const root = path.resolve(__dirname, '..');
@@ -451,7 +452,118 @@ function validPackageUiSession(profileId) {
   };
 }
 
+function validPackageUiLogicalArtifact() {
+  return {
+    method: 'readonly-sqlite-online-backup',
+    remainingPages: 0,
+    schemaVersion: 'sqlite-authority-currentness-proof/v1',
+    sha256: 'A'.repeat(64),
+    sizeBytes: 4_096,
+    totalPages: 1,
+  };
+}
+
+function validPackageUiProfileLineageState() {
+  return {
+    capturedAt: '2026-07-23T01:00:01.100Z',
+    logicalDatabase: validPackageUiLogicalArtifact(),
+    profileContent: {
+      fileCount: 10,
+      sha256: 'B'.repeat(64),
+      sizeBytes: 8_192,
+    },
+  };
+}
+
+function validPackageUiAttemptArtifacts(runDir, profileId) {
+  const attemptRoot = path.join(runDir, 'package-ui-attempts', profileId);
+  writeText(path.join(attemptRoot, 'runtime-proof.txt'), `immutable-${profileId}`);
+  return packageUiEvidence.buildPackageUiAttemptArtifactManifest(attemptRoot);
+}
+
+function validPackageUiChromiumLineage() {
+  const profilePathBindingSha256 = 'A'.repeat(64);
+  const profileBindingSha256 = packageUiEvidence.sha256Buffer(
+    Buffer.from(JSON.stringify([profilePathBindingSha256]), 'utf8'),
+  );
+  return {
+    chromium: { sha256: 'C'.repeat(64), sizeBytes: 1_234 },
+    cleanup: validProcessSnapshot({ attempts: 1 }),
+    descendantProcessIds: [902],
+    expectedProfileRootSha256: 'B'.repeat(64),
+    observedAt: '2026-07-23T01:00:00.600Z',
+    passed: true,
+    profileBindingSha256,
+    profileBindingTokenCount: 1,
+    rootProcessIds: [901],
+    snapshot: validProcessSnapshot({
+      expectedProfileRootSha256: 'B'.repeat(64),
+      matching: [
+        {
+          executablePath: 'D:\\App\\chrome.exe',
+          name: 'chrome.exe',
+          parentProcessId: 900,
+          processId: 901,
+          profileMatched: true,
+          profilePathBindingSha256,
+        },
+        {
+          executablePath: 'D:\\App\\chrome.exe',
+          name: 'chrome.exe',
+          parentProcessId: 901,
+          processId: 902,
+          profileMatched: false,
+          profilePathBindingSha256: null,
+        },
+      ],
+      matchingCount: 2,
+      observedCount: 2,
+      profileBindingSha256,
+      profileBindingTokenCount: 1,
+      rootProcessIds: [901],
+    }),
+  };
+}
+
+function validPackageUiCheckpointComposition(runDir, runGroupId, runnerContractSha256) {
+  const checkpointRecords = PACKAGE_UI_PROFILE_SEQUENCE.map((profileId, index) => {
+    const payload = {
+      kind: 'package-ui-profile-checkpoint',
+      profileId,
+      runGroupId,
+      runnerContractSha256,
+      schemaVersion: 'package-ui-profile-checkpoint/v1',
+      sequence: index + 1,
+    };
+    const file = packageUiEvidence.writeImmutableEnvelope(
+      path.join(runDir, 'package-ui-checkpoints', `${profileId}.json`),
+      payload,
+    );
+    const envelope = JSON.parse(fs.readFileSync(file.path, 'utf8'));
+    return {
+      file,
+      payloadSha256: envelope.payloadSha256,
+      profileId,
+    };
+  });
+  return {
+    checkpointRecords,
+    finalProfileState: validPackageUiProfileLineageState(),
+    packageLineage: { chromium: { sha256: 'C'.repeat(64) } },
+    passed: true,
+    runGroupId,
+    runnerContractSha256,
+  };
+}
+
 function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot = null) {
+  const runGroupId = `package-ui-${path.basename(runDir)}`;
+  const runnerContract = packageUiEvidence.buildPackageUiRunnerContract();
+  const checkpointComposition = validPackageUiCheckpointComposition(
+    runDir,
+    runGroupId,
+    runnerContract.sha256,
+  );
   const runtimes = [100, 125, 'wide'].map((profile, index) => (
     packageUiReadOnlyRuntime(
       path.join(runDir, `${profile}-package-ui-scheduler-audit-v7.json`),
@@ -464,21 +576,43 @@ function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot
     generatedAt: '2026-07-23T01:00:00.000Z',
     interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
     isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
+    checkpointComposition,
     passed: true,
     requested: {
       allowInteractiveLogin: true,
       allowSavedLogin: false,
       interactiveLoginTimeoutMs: 600_000,
       loginMode: 'interactive-operator-each-run',
+      resumeRunGroupId: null,
+      runGroupId,
+    },
+    runGroup: {
+      profileSequence: PACKAGE_UI_PROFILE_SEQUENCE,
+      runGroupId,
+      runnerContractSha256: runnerContract.sha256,
     },
     artifactHashesStable: true,
     protectedDatabase: { passed: true },
+    protectedDatabaseLogical: {
+      after: validPackageUiLogicalArtifact(),
+      before: validPackageUiLogicalArtifact(),
+      passed: true,
+    },
     profileDatabaseFileIsolation: { passed: true },
     profileDatabaseProvenance: { passed: true },
+    profileLineage: {
+      final: structuredClone(checkpointComposition.finalProfileState),
+      passed: true,
+    },
     packageProcessIsolation: validProcessIsolation(),
     profileProcessIsolation: validProcessIsolation(),
     runs: EXPECTED_PACKAGE_UI_SCALES.map((scale, index) => ({
       actualDeviceScaleFactor: scale.deviceScaleFactor,
+      attemptArtifacts: validPackageUiAttemptArtifacts(
+        runDir,
+        `${scale.scalePercent}-compact`,
+      ),
+      chromiumProcessLineage: validPackageUiChromiumLineage(),
       consoleErrors: [],
       diagnostics: validPackageUiDiagnostics(`${scale.scalePercent}-compact`),
       identity: { passed: true },
@@ -540,6 +674,8 @@ function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot
     })),
     wideProfile: {
       actualDeviceScaleFactor: 1,
+      attemptArtifacts: validPackageUiAttemptArtifacts(runDir, PACKAGE_UI_WIDE_PROFILE.id),
+      chromiumProcessLineage: validPackageUiChromiumLineage(),
       consoleErrors: [],
       diagnostics: validPackageUiDiagnostics(PACKAGE_UI_WIDE_PROFILE.id),
       identity: { passed: true },
@@ -554,9 +690,25 @@ function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot
         postNavigation: runtimes[2].marker.databaseMutationAudit.checkpoints[1],
       },
       session: validPackageUiSession(PACKAGE_UI_WIDE_PROFILE.id),
-      screenshots: [],
+      screenshots: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => {
+        const screenshotPath = writePng(path.join(
+          runDir,
+          `wide-${workspace.workspace}-${workspace.subview}.png`,
+        ));
+        return {
+          ...hashBoundFile(screenshotPath),
+          subview: workspace.subview,
+          workspace: workspace.workspace,
+        };
+      }),
       viewport: { width: 1400, height: 900 },
-      workspaceChecks: [],
+      workspaceChecks: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
+        ...workspace,
+        compositeEvidence: { passed: true },
+        keyboardEvidence: { passed: true },
+        passed: true,
+        settleEvidence: { passed: true },
+      })),
     },
   });
 }
@@ -1801,12 +1953,15 @@ describe('export v15 delivery bundle', () => {
     writeValidPackageUiBundleManifest(packageUiManifest, runDir);
     const packageUi = JSON.parse(fs.readFileSync(packageUiManifest, 'utf8'));
     packageUi.runs[0].workspaceChecks[0].inspectorEvidence = {
-      screenshot: { path: regularInspector },
+      screenshot: hashBoundFile(regularInspector),
     };
-    packageUi.wideProfile.screenshots = [{ path: wideWorkspace }];
-    packageUi.wideProfile.workspaceChecks = [{
-      inspectorEvidence: { screenshot: { path: wideInspector } },
-    }];
+    packageUi.wideProfile.screenshots[0] = {
+      ...packageUi.wideProfile.screenshots[0],
+      ...hashBoundFile(wideWorkspace),
+    };
+    packageUi.wideProfile.workspaceChecks[0].inspectorEvidence = {
+      screenshot: hashBoundFile(wideInspector),
+    };
     writeJson(packageUiManifest, packageUi);
     const schedulerSubviews = packageUi.runs.map((run) => run.subviewChecks[0].screenshot.path);
     const schedulerRuntimes = packageUi.runs.map((run) => run.schedulerReadOnlyRuntime);

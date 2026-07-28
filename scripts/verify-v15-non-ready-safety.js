@@ -13,7 +13,12 @@ const {
 } = require('./smoke-package-adversarial-node-env');
 const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
 const { validatePackageLaunchSmokeEvidence } = require('./smoke-package-launch');
-const { evaluatePackageUiEvidenceCompleteness } = require('./package-ui-evidence');
+const {
+  EXPECTED_OVERLAY_CHECK_IDS,
+  EXPECTED_PACKAGE_UI_WORKSPACES,
+  PACKAGE_UI_WIDE_PROFILE,
+  evaluatePackageUiEvidenceCompleteness,
+} = require('./package-ui-evidence');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -509,7 +514,7 @@ function packageUiEvidenceIsStrictlyValid({
     const expectedScales = new Map([[100, 1], [125, 1.25]]);
     const requestedProfileBrowserPath = packageUi.requested?.profileBrowserUserDataDir;
     const expectedProfileBrowserPath = packageUi.requested?.userDataDir
-      ? path.join(packageUi.requested.userDataDir, 'storage', 'browser-data')
+      ? path.join(packageUi.requested.userDataDir, 'stores')
       : null;
     const profileBrowserPathBound = Boolean(requestedProfileBrowserPath)
       && Boolean(expectedProfileBrowserPath)
@@ -532,51 +537,56 @@ function packageUiEvidenceIsStrictlyValid({
         && Array.isArray(run?.pageErrors)
         && run.pageErrors.length === 0
         && Array.isArray(run?.screenshots)
-        && run.screenshots.length >= 8
+        && run.screenshots.length >= EXPECTED_PACKAGE_UI_WORKSPACES.length
         && Array.isArray(run?.workspaceChecks)
-        && run.workspaceChecks.length >= 8
+        && run.workspaceChecks.length >= EXPECTED_PACKAGE_UI_WORKSPACES.length
         && run.workspaceChecks.every((item) => item?.passed === true)
         && Array.isArray(run?.overlayChecks)
-        && run.overlayChecks.length >= 3
+        && run.overlayChecks.length >= EXPECTED_OVERLAY_CHECK_IDS.length
         && run.overlayChecks.every((item) => item?.passed === true)
       ));
     const wideProfile = packageUi.wideProfile;
-    const wideWorkspaceNames = new Set(['product', 'diagnosis']);
+    const wideWorkspaceKeys = new Set(PACKAGE_UI_WIDE_PROFILE.workspaces.map(
+      (item) => `${item.workspace}/${item.subview}`,
+    ));
     const wideWorkspaceChecks = Array.isArray(wideProfile?.workspaceChecks) ? wideProfile.workspaceChecks : [];
     const wideScreenshots = Array.isArray(wideProfile?.screenshots) ? wideProfile.screenshots : [];
-    const wideProfileComplete = packageUi.requested?.wideProfile?.id === 'wide-1400x900-100'
-      && packageUi.requested?.wideProfile?.viewport?.width === 1400
-      && packageUi.requested?.wideProfile?.viewport?.height === 900
-      && Number(packageUi.requested?.wideProfile?.deviceScaleFactor) === 1
-      && wideProfile?.profileId === 'wide-1400x900-100'
+    const wideProfileComplete = packageUi.requested?.wideProfile?.id === PACKAGE_UI_WIDE_PROFILE.id
+      && packageUi.requested?.wideProfile?.viewport?.width === PACKAGE_UI_WIDE_PROFILE.viewport.width
+      && packageUi.requested?.wideProfile?.viewport?.height === PACKAGE_UI_WIDE_PROFILE.viewport.height
+      && Number(packageUi.requested?.wideProfile?.deviceScaleFactor)
+        === PACKAGE_UI_WIDE_PROFILE.deviceScaleFactor
+      && wideProfile?.profileId === PACKAGE_UI_WIDE_PROFILE.id
       && wideProfile?.passed === true
-      && wideProfile?.viewport?.width === 1400
-      && wideProfile?.viewport?.height === 900
-      && Number(wideProfile?.actualDeviceScaleFactor) === 1
+      && wideProfile?.viewport?.width === PACKAGE_UI_WIDE_PROFILE.viewport.width
+      && wideProfile?.viewport?.height === PACKAGE_UI_WIDE_PROFILE.viewport.height
+      && Number(wideProfile?.actualDeviceScaleFactor) === PACKAGE_UI_WIDE_PROFILE.deviceScaleFactor
       && wideProfile?.viewportContract?.passed === true
       && wideProfile?.identity?.passed === true
       && processIsolationIsStrictlyValid(wideProfile?.packageProcessIsolation)
       && processIsolationIsStrictlyValid(wideProfile?.profileProcessIsolation, requestedProfileBrowserPath)
-      && runDiagnosticsAreStrictlyValid(wideProfile?.diagnostics, wideProfile, 'wide-1400x900-100')
+      && runDiagnosticsAreStrictlyValid(wideProfile?.diagnostics, wideProfile, PACKAGE_UI_WIDE_PROFILE.id)
       && Array.isArray(wideProfile?.consoleErrors)
       && wideProfile.consoleErrors.length === 0
       && Array.isArray(wideProfile?.pageErrors)
       && wideProfile.pageErrors.length === 0
-      && wideWorkspaceChecks.length === wideWorkspaceNames.size
-      && new Set(wideWorkspaceChecks.map((item) => item?.workspace)).size === wideWorkspaceNames.size
+      && wideWorkspaceChecks.length === wideWorkspaceKeys.size
+      && new Set(wideWorkspaceChecks.map(
+        (item) => `${item?.workspace}/${item?.subview}`,
+      )).size === wideWorkspaceKeys.size
       && wideWorkspaceChecks.every((item) => (
-        wideWorkspaceNames.has(item?.workspace)
+        wideWorkspaceKeys.has(`${item?.workspace}/${item?.subview}`)
         && item?.passed === true
-        && item?.experienceEvidence?.passed === true
-        && item?.inspectorEvidence?.passed === true
-        && item?.inspectorEvidence?.inspector?.mode === 'inline'
-        && item?.inspectorEvidence?.inspector?.ariaModal !== 'true'
-        && /^[A-F0-9]{64}$/.test(String(item?.inspectorEvidence?.screenshot?.sha256 || ''))
+        && item?.compositeEvidence?.passed === true
+        && item?.keyboardEvidence?.passed === true
+        && item?.settleEvidence?.passed === true
       ))
-      && wideScreenshots.length === wideWorkspaceNames.size
-      && new Set(wideScreenshots.map((item) => item?.workspace)).size === wideWorkspaceNames.size
+      && wideScreenshots.length === wideWorkspaceKeys.size
+      && new Set(wideScreenshots.map(
+        (item) => `${item?.workspace}/${item?.subview}`,
+      )).size === wideWorkspaceKeys.size
       && wideScreenshots.every((item) => (
-        wideWorkspaceNames.has(item?.workspace)
+        wideWorkspaceKeys.has(`${item?.workspace}/${item?.subview}`)
         && /^[A-F0-9]{64}$/.test(String(item?.sha256 || ''))
       ));
     const currentPackageUiCompleteness = packageUi.schemaVersion === 7

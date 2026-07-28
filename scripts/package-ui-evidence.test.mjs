@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -21,6 +22,10 @@ const HASH_B = 'B'.repeat(64);
 const USER_DATA_DIR = 'D:\\Temp\\amazon-ai-ops-package-ui\\profile-copy';
 const PROTECTED_DB_PATH = 'C:\\Users\\wz\\AppData\\Roaming\\@amazon-ai-ops\\desktop\\amazon-ai-ops.db';
 const CURRENT_ARTIFACT_ROOT = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-current-'));
+const requireFromLocalDb = createRequire(
+  path.resolve('packages', 'local-db', 'package.json'),
+);
+const Database = requireFromLocalDb('better-sqlite3');
 
 afterAll(() => {
   rmSync(CURRENT_ARTIFACT_ROOT, { force: true, recursive: true });
@@ -34,16 +39,26 @@ const {
   INTERACTIVE_LOGIN_CONTRACT,
   ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
   PACKAGE_UI_WIDE_PROFILE,
+  PACKAGE_UI_PROFILE_SEQUENCE,
   READ_ONLY_INTERACTION_PLAN,
   buildAppContentManifest,
+  buildPackageUiAttemptArtifactManifest,
+  buildPackageUiRunnerContract,
+  assertPackageUiRuntimeLoginBoundary,
   buildProcessIsolationEvidence,
   buildProtectedFileEvidence,
   buildProductionBuildContentManifest,
   appendRendererDiagnostic,
   captureViewportScreenshot,
+  captureSqliteLogicalArtifact,
+  chromiumLineageEvidencePassed,
+  collectActiveBundledChromiumLineage,
   collectElectronIdentity,
   collectMatchingPackageProcesses,
   collectMatchingProfileBrowserProcesses,
+  composePackageUiRunGroup,
+  createPackageUiProfileAttemptContext,
+  initializePackageUiRunGroup,
   decisionsTabAccessibleNamePattern,
   evaluatePackageViewportContract,
   evaluatePackageUiEvidenceCompleteness,
@@ -56,6 +71,11 @@ const {
   isRetryableLoginNavigationError,
   latestProductionSourceWatermark,
   parsePackageUiEvidenceArgs,
+  packageUiAttemptArtifactManifestMatches,
+  packageUiAttemptCleanupPassed,
+  profileLineageStateMatches,
+  recordPackageUiProfileAttempt,
+  resolvePackageUiProfileCursor,
   sanitizeDiagnosticText,
   selectDeterministicEvidenceStoreCandidate,
   validateOverlayKeyboardEvidence,
@@ -80,6 +100,8 @@ const {
   waitForInteractiveAuthenticatedWorkspace,
   waitForRendererComposite,
   waitForWorkspaceSettled,
+  writeImmutableEnvelope,
+  writePackageUiProfileCheckpoint,
 } = evidenceModule;
 const { main: runPackageUiEvidenceCli } = runnerModule;
 
@@ -690,6 +712,7 @@ describe('durable protected-state evidence', () => {
       parentProcessId: 10,
       processId: 11,
       profileMatched: true,
+      profilePathBindingSha256: expect.stringMatching(/^[A-F0-9]{64}$/),
     });
     expect(JSON.stringify(snapshot)).not.toContain('CommandLine');
     expect(JSON.stringify(snapshot)).not.toContain('--user-data-dir');
@@ -780,7 +803,7 @@ describe('durable protected-state evidence', () => {
     expect(JSON.stringify(snapshot)).not.toContain('--user-data-dir');
   });
 
-  it('fails closed when any candidate profile browser command line cannot be read', () => {
+  it('ignores unrelated unreadable daily browsers but fails closed for the target profile or bundled executable', () => {
     const profilePath = path.join(USER_DATA_DIR, 'storage', 'browser-data');
     const snapshot = collectMatchingProfileBrowserProcesses(profilePath, () => ({
       status: 0,
@@ -795,14 +818,41 @@ describe('durable protected-state evidence', () => {
     }));
     expect(snapshot).toEqual(expect.objectContaining({
       matchingCount: 0,
+      ignoredUnresolvedCount: 1,
+      passed: true,
+      unresolvedCount: 0,
+    }));
+
+    const newlyUnreadable = collectMatchingProfileBrowserProcesses(
+      profilePath,
+      { baselineProcessIds: [11] },
+      () => ({
+        status: 0,
+        stdout: JSON.stringify([
+          {
+            CommandLine: null,
+            ExecutablePath: 'C:\\browser\\chrome.exe',
+            Name: 'chrome.exe',
+            ParentProcessId: 10,
+            ProcessId: 11,
+          },
+          {
+            CommandLine: null,
+            ExecutablePath: null,
+            Name: 'chrome.exe',
+            ParentProcessId: null,
+            ProcessId: 14,
+          },
+        ]),
+        stderr: '',
+      }),
+    );
+    expect(newlyUnreadable).toEqual(expect.objectContaining({
+      matchingCount: 0,
       passed: false,
       unresolvedCount: 1,
     }));
-    expect(snapshot.unresolved[0]).toEqual(expect.objectContaining({
-      name: 'chrome.exe',
-      processId: 11,
-      profileMatched: false,
-    }));
+    expect(newlyUnreadable.unresolved[0].processId).toBe(14);
 
     const missingPath = collectMatchingProfileBrowserProcesses(profilePath, () => ({
       status: 0,
@@ -820,6 +870,94 @@ describe('durable protected-state evidence', () => {
       passed: false,
       unresolvedCount: 1,
     }));
+
+    const bundledPath = 'D:\\App\\resources\\app\\playwright-browsers\\chrome-win64\\chrome.exe';
+    const unreadableBundled = collectMatchingProfileBrowserProcesses(
+      profilePath,
+      { expectedExecutablePath: bundledPath },
+      () => ({
+        status: 0,
+        stdout: JSON.stringify([{
+          CommandLine: null,
+          ExecutablePath: bundledPath,
+          Name: 'chrome.exe',
+          ParentProcessId: 10,
+          ProcessId: 13,
+        }]),
+        stderr: '',
+      }),
+    );
+    expect(unreadableBundled).toEqual(expect.objectContaining({
+      matchingCount: 0,
+      mismatchedCount: 1,
+      passed: false,
+      unresolvedCount: 0,
+    }));
+  });
+
+  it('binds the packaged Chromium hash, target root and descendants without retaining command lines', () => {
+    const appContentPath = 'D:\\App\\resources\\app';
+    const chromiumPath = path.join(
+      appContentPath,
+      'playwright-browsers',
+      'chrome-win64',
+      'chrome.exe',
+    );
+    const profilePath = path.join(USER_DATA_DIR, 'stores', 'store-one', 'browser', 'lingxing');
+    const evidence = collectActiveBundledChromiumLineage({
+      appContentPath,
+      chromiumArtifact: { sha256: HASH_A, sizeBytes: 1234 },
+      userDataDir: USER_DATA_DIR,
+    }, () => ({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          CommandLine: `"${chromiumPath}" --user-data-dir="${profilePath}"`,
+          ExecutablePath: chromiumPath,
+          Name: 'chrome.exe',
+          ParentProcessId: 900,
+          ProcessId: 901,
+        },
+        {
+          CommandLine: `"${chromiumPath}" --type=renderer`,
+          ExecutablePath: chromiumPath,
+          Name: 'chrome.exe',
+          ParentProcessId: 901,
+          ProcessId: 902,
+        },
+        {
+          CommandLine: null,
+          ExecutablePath: null,
+          Name: 'msedge.exe',
+          ParentProcessId: 50,
+          ProcessId: 51,
+        },
+      ]),
+      stderr: '',
+    }));
+
+    expect(evidence).toEqual(expect.objectContaining({
+      descendantProcessIds: [902],
+      expectedProfileRootSha256: expect.stringMatching(/^[A-F0-9]{64}$/),
+      passed: true,
+      profileBindingSha256: expect.stringMatching(/^[A-F0-9]{64}$/),
+      profileBindingTokenCount: 1,
+      rootProcessIds: [901],
+    }));
+    expect(evidence.chromium).toEqual(expect.objectContaining({
+      sha256: HASH_A,
+      sizeBytes: 1234,
+    }));
+    expect(chromiumLineageEvidencePassed(evidence)).toBe(true);
+    expect(chromiumLineageEvidencePassed({
+      ...evidence,
+      profileBindingSha256: HASH_B,
+      snapshot: {
+        ...evidence.snapshot,
+        profileBindingSha256: HASH_B,
+      },
+    })).toBe(false);
+    expect(JSON.stringify(evidence)).not.toContain('--user-data-dir');
   });
 
   it('returns a bounded structured failed run with sanitized diagnostics and both isolation attestations', async () => {
@@ -953,6 +1091,9 @@ describe('saved-login navigation retry contract', () => {
     expect(preauthenticatedBody).toContain('interactive evidence must begin');
     expect(interactiveBody).toContain('options.interactiveLoginTimeoutMs');
     expect(interactiveBody).toContain('waitForInteractiveAuthenticatedWorkspace');
+    expect(interactiveBody).toContain('options.requireFreshTypedProof');
+    expect(interactiveBody.indexOf('options.requireFreshTypedProof'))
+      .toBeLessThan(interactiveBody.indexOf('operatorHandoff.outcome = \'workspace-reached\''));
     expect(interactiveBody).toContain('interactive-operator-login');
     expect(interactiveBody).toContain('automationReadSecrets: false');
     expect(interactiveBody).not.toContain('ensureEvidenceLingxingConnection');
@@ -1163,6 +1304,136 @@ function validProcessSnapshot(overrides = {}) {
 
 function validProcessIsolation() {
   return buildProcessIsolationEvidence(validProcessSnapshot(), validProcessSnapshot({ attempts: 1 }));
+}
+
+function validLogicalArtifact() {
+  return {
+    method: 'readonly-sqlite-online-backup',
+    remainingPages: 0,
+    schemaVersion: 'sqlite-authority-currentness-proof/v1',
+    sha256: HASH_A,
+    sizeBytes: 4096,
+    totalPages: 1,
+  };
+}
+
+function validProfileLineageState() {
+  return {
+    capturedAt: '2026-07-17T06:00:01.100Z',
+    logicalDatabase: validLogicalArtifact(),
+    profileContent: {
+      fileCount: 10,
+      sha256: HASH_B,
+      sizeBytes: 8192,
+    },
+  };
+}
+
+function validAttemptArtifacts(label = 'fixture') {
+  const root = mkdtempSync(path.join(CURRENT_ARTIFACT_ROOT, 'attempt-artifacts-'));
+  writeFileSync(path.join(root, `${label}.txt`), `immutable-${label}`, 'utf8');
+  return buildPackageUiAttemptArtifactManifest(root);
+}
+
+function canonicalJsonForTest(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJsonForTest).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJsonForTest(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function changedRunnerContract(contract) {
+  const binding = {
+    evidenceScript: {
+      ...contract.evidenceScript,
+      sha256: contract.evidenceScript.sha256 === HASH_A ? HASH_B : HASH_A,
+    },
+    semanticContractSha256: contract.semanticContractSha256,
+  };
+  return {
+    ...binding,
+    sha256: evidenceModule.sha256Buffer(
+      Buffer.from(canonicalJsonForTest(binding), 'utf8'),
+    ),
+  };
+}
+
+function validCheckpointComposition(runGroupId, runnerContractSha256) {
+  const root = mkdtempSync(path.join(CURRENT_ARTIFACT_ROOT, 'checkpoints-'));
+  const checkpointRecords = PACKAGE_UI_PROFILE_SEQUENCE.map((profileId, index) => {
+    const payload = {
+      kind: 'package-ui-profile-checkpoint',
+      profileId,
+      runGroupId,
+      runnerContractSha256,
+      schemaVersion: 'package-ui-profile-checkpoint/v1',
+      sequence: index + 1,
+    };
+    const file = writeImmutableEnvelope(
+      path.join(root, `${profileId}.json`),
+      payload,
+    );
+    const envelope = JSON.parse(readFileSync(file.path, 'utf8'));
+    return {
+      file,
+      payloadSha256: envelope.payloadSha256,
+      profileId,
+    };
+  });
+  return {
+    checkpointRecords,
+    finalProfileState: validProfileLineageState(),
+    packageLineage: { chromium: { sha256: HASH_A } },
+    passed: true,
+    runGroupId,
+    runnerContractSha256,
+  };
+}
+
+function validChromiumLineage() {
+  const profilePathBindingSha256 = HASH_A;
+  const profileBindingSha256 = evidenceModule.sha256Buffer(
+    Buffer.from(canonicalJsonForTest([profilePathBindingSha256]), 'utf8'),
+  );
+  return {
+    chromium: { sha256: HASH_A, sizeBytes: 1234 },
+    cleanup: validProcessSnapshot({ attempts: 1 }),
+    descendantProcessIds: [902],
+    expectedProfileRootSha256: HASH_B,
+    observedAt: '2026-07-17T06:00:00.600Z',
+    passed: true,
+    profileBindingSha256,
+    profileBindingTokenCount: 1,
+    rootProcessIds: [901],
+    snapshot: validProcessSnapshot({
+      expectedProfileRootSha256: HASH_B,
+      matching: [
+        {
+          executablePath: 'D:\\App\\chrome.exe',
+          name: 'chrome.exe',
+          parentProcessId: 900,
+          processId: 901,
+          profileMatched: true,
+          profilePathBindingSha256,
+        },
+        {
+          executablePath: 'D:\\App\\chrome.exe',
+          name: 'chrome.exe',
+          parentProcessId: 901,
+          processId: 902,
+          profileMatched: false,
+          profilePathBindingSha256: null,
+        },
+      ],
+      matchingCount: 2,
+      observedCount: 2,
+      profileBindingSha256,
+      profileBindingTokenCount: 1,
+      rootProcessIds: [901],
+    }),
+  };
 }
 
 function validDiagnostics(profileId) {
@@ -1530,6 +1801,8 @@ function validRun(scale) {
   const schedulerReadOnlyRuntime = validReadOnlyRuntime(`${scale.scalePercent}-compact`);
   const run = {
     actualDeviceScaleFactor: scale.deviceScaleFactor,
+    attemptArtifacts: validAttemptArtifacts(`${scale.scalePercent}-compact`),
+    chromiumProcessLineage: validChromiumLineage(),
     consoleErrors: [],
     databaseAuditCheckpoints: databaseCheckpointReceipts(schedulerReadOnlyRuntime),
     diagnostics: validDiagnostics(`${scale.scalePercent}-compact`),
@@ -1654,6 +1927,8 @@ function validWideRun() {
   const schedulerReadOnlyRuntime = validReadOnlyRuntime(PACKAGE_UI_WIDE_PROFILE.id);
   const run = {
     actualDeviceScaleFactor: 1,
+    attemptArtifacts: validAttemptArtifacts(PACKAGE_UI_WIDE_PROFILE.id),
+    chromiumProcessLineage: validChromiumLineage(),
     consoleErrors: [],
     databaseAuditCheckpoints: databaseCheckpointReceipts(schedulerReadOnlyRuntime),
     diagnostics: validDiagnostics(PACKAGE_UI_WIDE_PROFILE.id),
@@ -1664,6 +1939,7 @@ function validWideRun() {
     screenshots: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
       path: `${workspace.workspace}-wide.png`,
       sha256: HASH_A,
+      subview: workspace.subview,
       workspace: workspace.workspace,
     })),
     schedulerReadOnlyRuntime,
@@ -1671,13 +1947,13 @@ function validWideRun() {
     profileProcessIsolation: validProcessIsolation(),
     viewport: { height: 900, width: 1400 },
     workspaceChecks: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
-      experienceEvidence: { passed: true },
-      inspectorEvidence: {
-        inspector: { ariaModal: null, mode: 'inline' },
-        passed: true,
-        screenshot: { path: `${workspace}-wide-inspector.png`, sha256: HASH_B },
-      },
+      compositeEvidence: { passed: true },
+      experienceEvidence: null,
+      inspectorEvidence: null,
+      keyboardEvidence: { passed: true },
       passed: true,
+      settleEvidence: { passed: true },
+      subview: workspace.subview,
       workspace: workspace.workspace,
     })),
   };
@@ -1685,6 +1961,24 @@ function validWideRun() {
 }
 
 describe('package UI evidence CLI contract', () => {
+  it('reasserts the schema-v7 secret-blind login boundary for direct runtime callers', () => {
+    expect(assertPackageUiRuntimeLoginBoundary({
+      allowInteractiveLogin: true,
+      allowSavedLogin: false,
+    })).toBe(true);
+    expect(() => assertPackageUiRuntimeLoginBoundary({
+      allowInteractiveLogin: false,
+      allowSavedLogin: true,
+    })).toThrow(/saved-login automation is forbidden/i);
+    const source = readFileSync('scripts/package-ui-evidence.js', 'utf8');
+    const runtimeStart = source.indexOf('async function runPackageUiEvidence(options)');
+    const runtimeBody = source.slice(
+      runtimeStart,
+      source.indexOf('const runGroupId = packageUiRunGroupId(options)', runtimeStart),
+    );
+    expect(runtimeBody).toContain('assertPackageUiRuntimeLoginBoundary(options)');
+  });
+
   it('requires immutable EXE and unpacked app-content hashes and keeps both paths fixed to win-unpacked', () => {
     expect(() => parsePackageUiEvidenceArgs([])).toThrow(/--expected-exe-sha256/);
     expect(() => parsePackageUiEvidenceArgs([
@@ -1701,6 +1995,7 @@ describe('package UI evidence CLI contract', () => {
       '--allow-interactive-login',
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
+      '--run-group', 'operator-run-001',
       '--output', 'output/custom-package-ui',
       '--settle-ms', '900',
     ]);
@@ -1713,6 +2008,8 @@ describe('package UI evidence CLI contract', () => {
     expect(parsed.settleMs).toBe(900);
     expect(parsed.userDataDir).toBe(USER_DATA_DIR);
     expect(parsed.protectedDatabasePath).toBe(path.resolve(PROTECTED_DB_PATH));
+    expect(parsed.runGroupId).toBe('operator-run-001');
+    expect(parsed.resumeRunGroupId).toBeNull();
     expect(parsed.executablePath).toBe(path.resolve('apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe'));
     expect(parsed.appContentPath).toBe(path.resolve('apps/desktop/release/win-unpacked/resources/app'));
   });
@@ -1755,12 +2052,14 @@ describe('package UI evidence CLI contract', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('real packaged Electron application');
     expect(result.stdout).toContain('all ten canonical Mission Control workspaces');
-    expect(result.stdout).toContain('50,000-row production virtualizer contract');
+    expect(result.stdout).toContain('50,000-row production');
+    expect(result.stdout).toContain('virtualizer contract');
     expect(result.stdout).toContain('--expected-app-content-sha256');
     expect(result.stdout).toContain('--print-package-hashes');
     expect(result.stdout).toContain('--user-data-dir');
     expect(result.stdout).toContain('--protected-db');
-    expect(result.stdout).toContain('first profile must establish a fresh typed-and-saved identity proof');
+    expect(result.stdout).toContain('--resume-run-group');
+    expect(result.stdout).toContain('fresh typed-and-saved identity proof');
     expect(result.stdout).not.toContain('--allow-saved-login');
     expect(result.stdout).toContain("app.setPath('userData')");
     expect(result.stdout).toContain('win-unpacked/resources/app');
@@ -1805,6 +2104,324 @@ describe('package UI evidence CLI contract', () => {
 });
 
 describe('isolated profile database provenance', () => {
+  it('captures committed WAL state through the shared read-only SQLite online-backup helper', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-wal-'));
+    const databasePath = path.join(root, 'authority.db');
+    const database = new Database(databasePath);
+    try {
+      database.pragma('journal_mode = WAL');
+      database.pragma('wal_autocheckpoint = 0');
+      database.exec('CREATE TABLE authority_state (id TEXT PRIMARY KEY, revision INTEGER NOT NULL)');
+      database.prepare('INSERT INTO authority_state VALUES (?, ?)').run('grant-1', 1);
+      const before = captureSqliteLogicalArtifact(databasePath, 'test-before');
+      database.prepare('UPDATE authority_state SET revision = 2 WHERE id = ?').run('grant-1');
+      const after = captureSqliteLogicalArtifact(databasePath, 'test-after');
+
+      expect(before).toEqual(expect.objectContaining({
+        method: 'readonly-sqlite-online-backup',
+        remainingPages: 0,
+        schemaVersion: 'sqlite-authority-currentness-proof/v1',
+      }));
+      expect(after.sha256).not.toBe(before.sha256);
+      expect(after.totalPages).toBeGreaterThan(0);
+    } finally {
+      database.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('writes immutable ordered checkpoints and resumes only the same package/profile lineage', () => {
+    const outputDir = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-checkpoint-'));
+    const genesis = validProfileLineageState();
+    const protectedDatabaseLogical = validLogicalArtifact();
+    const runnerContract = buildPackageUiRunnerContract();
+    const packageLineage = {
+      appContentSha256: HASH_A,
+      chromium: { relativePath: 'playwright-browsers/chrome-win64/chrome.exe', sha256: HASH_B, sizeBytes: 100 },
+      executableSha256: HASH_B,
+      profileBindingSha256: HASH_A,
+      profileBrowserBindingSha256: HASH_B,
+    };
+    try {
+      const manager = initializePackageUiRunGroup({
+        genesisProfileState: genesis,
+        options: { runGroupId: 'checkpoint-run-001' },
+        outputDir,
+        packageLineage,
+        protectedDatabaseLogical,
+      });
+      for (let index = 0; index < PACKAGE_UI_PROFILE_SEQUENCE.length; index += 1) {
+        const profileId = PACKAGE_UI_PROFILE_SEQUENCE[index];
+        const cursor = resolvePackageUiProfileCursor(manager, profileId);
+        const after = structuredClone(cursor.cursor);
+        after.capturedAt = `2026-07-17T06:00:0${index + 2}.000Z`;
+        after.profileContent.sha256 = String(index + 1).padStart(64, String(index + 1));
+        const profileState = { before: cursor.cursor, after };
+        const attemptContext = createPackageUiProfileAttemptContext(manager, profileId);
+        writeFileSync(
+          path.join(attemptContext.artifactDir, `${profileId}.txt`),
+          `immutable-${profileId}`,
+          'utf8',
+        );
+        const attemptArtifacts = buildPackageUiAttemptArtifactManifest(
+          attemptContext.artifactDir,
+        );
+        const runEvidence = {
+          attemptArtifacts,
+          passed: true,
+          profileId,
+        };
+        const attemptRecord = recordPackageUiProfileAttempt({
+          attemptArtifacts,
+          attemptContext,
+          manager,
+          profileId,
+          profileState,
+          resumable: true,
+          runEvidence,
+        });
+        writePackageUiProfileCheckpoint({
+          attemptRecord,
+          lineageStart: cursor.lineageStart,
+          manager,
+          profileId,
+          profileState,
+          runEvidence,
+        });
+        expect(() => writePackageUiProfileCheckpoint({
+          attemptRecord,
+          lineageStart: cursor.lineageStart,
+          manager,
+          profileId,
+          profileState,
+          runEvidence,
+        })).toThrow(/immutable/i);
+      }
+
+      const composed = composePackageUiRunGroup(manager);
+      expect(composed.passed).toBe(true);
+      expect(composed.checkpointRecords.map((item) => item.profileId))
+        .toEqual(PACKAGE_UI_PROFILE_SEQUENCE);
+      expect(composed.compactRuns).toHaveLength(2);
+      expect(composed.wideProfile.profileId).toBe(PACKAGE_UI_WIDE_PROFILE.id);
+      expect(profileLineageStateMatches(
+        composed.finalProfileState,
+        resolvePackageUiProfileCursor(manager, PACKAGE_UI_WIDE_PROFILE.id)
+          .checkpoint.payload.profileState.after,
+      )).toBe(true);
+
+      expect(initializePackageUiRunGroup({
+        genesisProfileState: structuredClone(composed.finalProfileState),
+        options: { resumeRunGroupId: 'checkpoint-run-001' },
+        outputDir,
+        packageLineage,
+        protectedDatabaseLogical,
+      }).resumed).toBe(true);
+      expect(() => initializePackageUiRunGroup({
+        genesisProfileState: structuredClone(composed.finalProfileState),
+        options: { resumeRunGroupId: 'checkpoint-run-001' },
+        outputDir,
+        packageLineage: { ...packageLineage, executableSha256: HASH_A },
+        protectedDatabaseLogical,
+      })).toThrow(/lineage changed/i);
+      expect(() => initializePackageUiRunGroup({
+        genesisProfileState: structuredClone(composed.finalProfileState),
+        options: { resumeRunGroupId: 'checkpoint-run-001' },
+        outputDir,
+        packageLineage,
+        protectedDatabaseLogical,
+        runnerContract: changedRunnerContract(runnerContract),
+      })).toThrow(/runner contract lineage changed/i);
+
+      const sequenceDriftRunGroupId = 'checkpoint-sequence-drift';
+      writeImmutableEnvelope(
+        path.join(
+          outputDir,
+          'run-groups',
+          sequenceDriftRunGroupId,
+          'run-group.json',
+        ),
+        {
+          ...manager.metadata,
+          profileSequence: [...PACKAGE_UI_PROFILE_SEQUENCE].reverse(),
+          runGroupId: sequenceDriftRunGroupId,
+        },
+      );
+      expect(() => initializePackageUiRunGroup({
+        genesisProfileState: genesis,
+        options: { resumeRunGroupId: sequenceDriftRunGroupId },
+        outputDir,
+        packageLineage,
+        protectedDatabaseLogical,
+      })).toThrow(/profile sequence.*lineage changed/i);
+    } finally {
+      rmSync(outputDir, { force: true, recursive: true });
+    }
+  });
+
+  it('keeps failed-attempt artifacts immutable and resumes from the cleanup-safe cursor before success', () => {
+    const outputDir = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-retry-'));
+    const genesis = validProfileLineageState();
+    const packageLineage = {
+      appContentSha256: HASH_A,
+      chromium: { relativePath: 'playwright-browsers/chrome-win64/chrome.exe', sha256: HASH_B, sizeBytes: 100 },
+      executableSha256: HASH_B,
+      profileBindingSha256: HASH_A,
+      profileBrowserBindingSha256: HASH_B,
+    };
+    const profileId = PACKAGE_UI_PROFILE_SEQUENCE[0];
+    try {
+      const manager = initializePackageUiRunGroup({
+        genesisProfileState: genesis,
+        options: { runGroupId: 'retry-run-001' },
+        outputDir,
+        packageLineage,
+        protectedDatabaseLogical: validLogicalArtifact(),
+      });
+      const firstContext = createPackageUiProfileAttemptContext(manager, profileId);
+      const firstArtifactPath = path.join(firstContext.artifactDir, 'first-failure.txt');
+      writeFileSync(firstArtifactPath, 'first-failure-is-immutable', 'utf8');
+      const firstArtifacts = buildPackageUiAttemptArtifactManifest(firstContext.artifactDir);
+      const firstAfter = structuredClone(genesis);
+      firstAfter.capturedAt = '2026-07-17T06:00:02.000Z';
+      firstAfter.profileContent.sha256 = 'C'.repeat(64);
+      recordPackageUiProfileAttempt({
+        attemptArtifacts: firstArtifacts,
+        attemptContext: firstContext,
+        manager,
+        profileId,
+        profileState: { before: genesis, after: firstAfter },
+        resumable: true,
+        runEvidence: {
+          attemptArtifacts: firstArtifacts,
+          failure: { message: 'renderer assertion failed after cleanup' },
+          passed: false,
+          profileId,
+        },
+      });
+
+      const retryCursor = resolvePackageUiProfileCursor(manager, profileId);
+      expect(retryCursor.checkpoint).toBeNull();
+      expect(retryCursor.receipts).toHaveLength(1);
+      expect(profileLineageStateMatches(retryCursor.cursor, firstAfter)).toBe(true);
+
+      const secondContext = createPackageUiProfileAttemptContext(manager, profileId);
+      expect(secondContext.ordinal).toBe(2);
+      expect(secondContext.artifactDir).not.toBe(firstContext.artifactDir);
+      writeFileSync(
+        path.join(secondContext.artifactDir, 'second-success.txt'),
+        'second-success-is-separate',
+        'utf8',
+      );
+      const secondArtifacts = buildPackageUiAttemptArtifactManifest(secondContext.artifactDir);
+      const secondAfter = structuredClone(firstAfter);
+      secondAfter.capturedAt = '2026-07-17T06:00:03.000Z';
+      secondAfter.profileContent.sha256 = 'D'.repeat(64);
+      const secondRun = {
+        attemptArtifacts: secondArtifacts,
+        passed: true,
+        profileId,
+      };
+      const secondAttempt = recordPackageUiProfileAttempt({
+        attemptArtifacts: secondArtifacts,
+        attemptContext: secondContext,
+        manager,
+        profileId,
+        profileState: { before: firstAfter, after: secondAfter },
+        resumable: true,
+        runEvidence: secondRun,
+      });
+      writePackageUiProfileCheckpoint({
+        attemptRecord: secondAttempt,
+        lineageStart: genesis,
+        manager,
+        profileId,
+        profileState: { before: firstAfter, after: secondAfter },
+        runEvidence: secondRun,
+      });
+
+      expect(readFileSync(firstArtifactPath, 'utf8')).toBe('first-failure-is-immutable');
+      expect(packageUiAttemptArtifactManifestMatches(firstArtifacts)).toBe(true);
+      expect(packageUiAttemptArtifactManifestMatches(secondArtifacts)).toBe(true);
+      expect(
+        profileLineageStateMatches(
+          resolvePackageUiProfileCursor(manager, profileId).checkpoint.payload.profileState.after,
+          secondAfter,
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(outputDir, { force: true, recursive: true });
+    }
+  });
+
+  it('records cleanup failure without an after cursor and makes the run group explicitly non-resumable', () => {
+    const outputDir = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-nonresumable-'));
+    const genesis = validProfileLineageState();
+    const profileId = PACKAGE_UI_PROFILE_SEQUENCE[0];
+    const packageLineage = {
+      appContentSha256: HASH_A,
+      chromium: { relativePath: 'playwright-browsers/chrome-win64/chrome.exe', sha256: HASH_B, sizeBytes: 100 },
+      executableSha256: HASH_B,
+      profileBindingSha256: HASH_A,
+      profileBrowserBindingSha256: HASH_B,
+    };
+    try {
+      const manager = initializePackageUiRunGroup({
+        genesisProfileState: genesis,
+        options: { runGroupId: 'cleanup-failure-run-001' },
+        outputDir,
+        packageLineage,
+        protectedDatabaseLogical: validLogicalArtifact(),
+      });
+      const attemptContext = createPackageUiProfileAttemptContext(manager, profileId);
+      writeFileSync(path.join(attemptContext.artifactDir, 'cleanup-failure.txt'), 'failed', 'utf8');
+      const attemptArtifacts = buildPackageUiAttemptArtifactManifest(
+        attemptContext.artifactDir,
+      );
+      const cleanupSafeRun = {
+        chromiumProcessLineage: null,
+        packageProcessIsolation: validProcessIsolation(),
+        profileProcessIsolation: validProcessIsolation(),
+      };
+      expect(packageUiAttemptCleanupPassed(cleanupSafeRun)).toBe(true);
+      expect(packageUiAttemptCleanupPassed({
+        ...cleanupSafeRun,
+        chromiumProcessLineage: {
+          cleanup: validProcessSnapshot({ attempts: 1 }),
+          passed: false,
+        },
+      })).toBe(true);
+      const cleanupFailedRun = {
+        ...cleanupSafeRun,
+        profileProcessIsolation: {
+          ...validProcessIsolation(),
+          passed: false,
+        },
+      };
+      expect(packageUiAttemptCleanupPassed(cleanupFailedRun)).toBe(false);
+      recordPackageUiProfileAttempt({
+        attemptArtifacts,
+        attemptContext,
+        manager,
+        profileId,
+        profileState: { before: genesis, after: null },
+        resumable: false,
+        runEvidence: {
+          ...cleanupFailedRun,
+          attemptArtifacts,
+          failure: { message: 'target Chromium cleanup unresolved' },
+          passed: false,
+          profileId,
+        },
+      });
+
+      expect(() => resolvePackageUiProfileCursor(manager, profileId))
+        .toThrow(/non-resumable.*fresh isolated profile\/run group/i);
+    } finally {
+      rmSync(outputDir, { force: true, recursive: true });
+    }
+  });
+
   it.runIf(process.platform === 'win32')('accepts a byte-for-byte copy with a distinct Windows file identity', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-copy-'));
     const protectedDatabasePath = path.join(root, 'protected.db');
@@ -1825,6 +2442,29 @@ describe('isolated profile database provenance', () => {
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
+  });
+
+  it('accepts one path-safe resume run group and rejects ambiguous or traversal-like ids', () => {
+    const base = [
+      '--expected-exe-sha256', HASH_A,
+      '--expected-app-content-sha256', HASH_B,
+      '--allow-interactive-login',
+      '--user-data-dir', USER_DATA_DIR,
+      '--protected-db', PROTECTED_DB_PATH,
+    ];
+    expect(parsePackageUiEvidenceArgs([
+      ...base,
+      '--resume-run-group', 'operator-run-001',
+    ]).resumeRunGroupId).toBe('operator-run-001');
+    expect(() => parsePackageUiEvidenceArgs([
+      ...base,
+      '--run-group', 'operator-run-001',
+      '--resume-run-group', 'operator-run-001',
+    ])).toThrow(/cannot be combined/);
+    expect(() => parsePackageUiEvidenceArgs([
+      ...base,
+      '--resume-run-group', '..\\escape',
+    ])).toThrow(/path-safe identifier/);
   });
 
   it('allows a bounded interactive operator login handoff but never combines it with saved-login automation', () => {
@@ -1890,7 +2530,7 @@ describe('isolated profile database provenance', () => {
       );
       expect(runBody.indexOf('manifest.profileDatabaseFileIsolation = evaluateProfileDatabaseFileIsolation')).toBeGreaterThan(-1);
       expect(runBody.indexOf('manifest.profileDatabaseFileIsolation = evaluateProfileDatabaseFileIsolation'))
-        .toBeLessThan(runBody.indexOf('const run = await runScaleEvidence'));
+        .toBeLessThan(runBody.indexOf('for (let profileIndex = 0;'));
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -2927,8 +3567,15 @@ describe('read-only interactions and evidence completeness', () => {
   });
 
   it('requires protected state, process cleanup, 100% and 125%, ten workspaces, keyboard evidence, three overlays and hashed screenshots', () => {
+    const runGroupId = 'package-ui-test-run-group';
+    const runnerContract = buildPackageUiRunnerContract();
+    const checkpointComposition = validCheckpointComposition(
+      runGroupId,
+      runnerContract.sha256,
+    );
     const valid = {
       artifactHashesStable: true,
+      checkpointComposition,
       schemaVersion: 7,
       interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
       isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
@@ -2936,17 +3583,82 @@ describe('read-only interactions and evidence completeness', () => {
       profileDatabaseFileIsolation: { passed: true },
       profileDatabaseProvenance: { passed: true },
       profileProcessIsolation: validProcessIsolation(),
+      profileLineage: {
+        final: structuredClone(checkpointComposition.finalProfileState),
+        passed: true,
+      },
       protectedDatabase: { passed: true },
+      protectedDatabaseLogical: {
+        after: validLogicalArtifact(),
+        before: validLogicalArtifact(),
+        passed: true,
+      },
       requested: {
         allowInteractiveLogin: true,
         allowSavedLogin: false,
         interactiveLoginTimeoutMs: 600_000,
         loginMode: 'interactive-operator-each-run',
+        resumeRunGroupId: null,
+        runGroupId,
+      },
+      runGroup: {
+        profileSequence: PACKAGE_UI_PROFILE_SEQUENCE,
+        runGroupId,
+        runnerContractSha256: runnerContract.sha256,
       },
       runs: EXPECTED_PACKAGE_UI_SCALES.map(validRun),
       wideProfile: validWideRun(),
     };
     expect(evaluatePackageUiEvidenceCompleteness(valid)).toEqual({ passed: true, violations: [] });
+
+    const missingLogicalProtection = structuredClone(valid);
+    delete missingLogicalProtection.protectedDatabaseLogical;
+    expect(evaluatePackageUiEvidenceCompleteness(
+      missingLogicalProtection,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'PROTECTED_DATABASE_LOGICAL_STATE_CHANGED' }),
+    ]));
+
+    const missingCheckpointComposition = structuredClone(valid);
+    delete missingCheckpointComposition.checkpointComposition;
+    expect(evaluatePackageUiEvidenceCompleteness(
+      missingCheckpointComposition,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'PROFILE_CHECKPOINT_COMPOSITION_MISSING_OR_FAILED' }),
+      expect.objectContaining({ code: 'TERMINAL_PROFILE_LINEAGE_MISSING_OR_FAILED' }),
+    ]));
+
+    const missingChromiumLineage = structuredClone(valid);
+    delete missingChromiumLineage.runs[0].chromiumProcessLineage;
+    expect(evaluatePackageUiEvidenceCompleteness(
+      missingChromiumLineage,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCALE_CHROMIUM_LINEAGE_MISSING_OR_FAILED' }),
+    ]));
+
+    const missingAttemptArtifacts = structuredClone(valid);
+    delete missingAttemptArtifacts.runs[0].attemptArtifacts;
+    expect(evaluatePackageUiEvidenceCompleteness(
+      missingAttemptArtifacts,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCALE_ATTEMPT_ARTIFACTS_MISSING_OR_CHANGED' }),
+    ]));
+
+    const changedRunnerLineage = structuredClone(valid);
+    changedRunnerLineage.runGroup.runnerContractSha256 = HASH_A;
+    expect(evaluatePackageUiEvidenceCompleteness(
+      changedRunnerLineage,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'RUNNER_CONTRACT_LINEAGE_MISSING_OR_CHANGED' }),
+    ]));
+
+    const emptyWideWorkspace = structuredClone(valid);
+    emptyWideWorkspace.wideProfile.workspaceChecks = [];
+    expect(evaluatePackageUiEvidenceCompleteness(
+      emptyWideWorkspace,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'WIDE_CANONICAL_WORKSPACE_MISSING_OR_FAILED' }),
+    ]));
 
     const missingScaleDatabaseReceipts = structuredClone(valid);
     delete missingScaleDatabaseReceipts.runs[0].databaseAuditCheckpoints;
