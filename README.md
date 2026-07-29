@@ -160,6 +160,7 @@ pnpm dev
 | `pnpm run smoke:package-security-boundaries -- ...` | 收集并验证打包主进程的导航、外链、凭证与三重哈希安全边界 |
 | `pnpm run verify:ad-execution` | 广告执行 fail-closed 安全验证 |
 | `pnpm run verify:ad-readback -- <evidence.json>` | 单个广告回读证据验证 |
+| `pnpm run gate:s8 -- ...` | 只读检查 Stage 8 live authority、全库双店覆盖、两店连接/会话和连续运行门；默认不写文件、不执行 Ads |
 | `pnpm run write:v15-evidence-manifest -- ...` | 固定 v1.5 legacy baseline 证据选择 |
 | `pnpm run verify:v15-final-readiness -- ...` | 生成/验证 v1.5 legacy baseline；不是正式 Mission 发布状态 |
 | `pnpm run export:s7-authority-snapshot -- ...` | 从明确指定的 live AppData DB 生成 WAL-safe、只读、包身份绑定的 authority snapshot v2 |
@@ -169,6 +170,37 @@ pnpm dev
 | `pnpm run export:v15-delivery-bundle -- ...` | 导出 manifest-driven 交付包 |
 | `pnpm run verify:v15-ready-safety -- ...` | READY 交付安全门 |
 | `pnpm run verify:v15-non-ready-safety -- ...` | APP_NEEDS_WORK 交付安全门 |
+
+### Stage 8 只读 Gate Operator
+
+默认诊断显式 live authority DB，不生成正式证据，也不迁移 SQLite、不请求网络、不执行 Amazon Ads：
+
+```powershell
+pnpm run gate:s8 -- --db <absolute-live-appdata-amazon-ai-ops.db>
+pnpm run gate:s8 -- --db <absolute-live-appdata-amazon-ai-ops.db> --store <store-1> --store <store-2>
+```
+
+不传 `--store` 时，operator 只会在全库恰好存在两家 `active`、`US`、`USD` 店铺时自动选择。显式传入两个不同的 `--store` 只固定要检查的两家，不会缩小全库覆盖门：只要另有第三家 active US/USD，店铺 authority 与 continuous verifier 都会 fail-closed，不能靠参数把第三家排除。两家选中店还必须使用不同且非空的 `browser_profile_id`，并且都是 `America/Los_Angeles`。
+
+每家店的 `lingxing` 与 `amazon_ads` 都必须各有一条 `ready` connection 和一条 `ready` session；session Profile 必须匹配店铺。`observed_at`、`verified_at` 必须是有效且不晚于本次检查时间的时间；`expires_at` 没有配置时不新增有效期业务语义，但一旦配置，就必须是有效且晚于检查时间的时间，已过期会立即阻断。输出只用 `store-1` / `store-2`、稳定 job/import 引用和安全 gap/violation 摘要，不公开原始店铺、Profile、job/import ID 或本地路径。
+
+如需保存非正式 monitoring ledger，必须显式给出一个尚不存在的绝对 JSON 路径：
+
+```powershell
+pnpm run gate:s8 -- --db <absolute-live-appdata-amazon-ai-ops.db> --export --out <absolute-new-monitoring-ledger.json>
+```
+
+状态与退出码：
+
+| 结果 | 顶层状态 | 退出码 |
+|---|---|---|
+| schema、全库双店 authority、两店 operational、连续运行全部通过 | `READY_FOR_EXPORT_PREFLIGHT` | `0` |
+| 任一只读门未通过 | `PARTIAL_MONITORING` | `2` |
+| 参数、输入、路径或运行错误 | 不生成可冒充 READY 的状态 | `1` |
+| 显式 `--execute-exports` 全链完成 | `EXPORT_CHAIN_COMPLETED` | `0` |
+| 显式 export 深预检被门禁阻断 / export 中断 | `PARTIAL_MONITORING` / `EXPORT_CHAIN_INTERRUPTED` | `2` / `1` |
+
+`--execute-exports` 仍只编排正式证据导出，并要求显式 `--export-root`、`--out` 和五项 package evidence；它不会执行 Ads，也不会修改 authority DB。正式 immutable authority snapshot 生成后会再次执行全库双店与 operational gate，并把安全摘要写入 monitoring ledger；复检失败会在 continuous/canary/readiness 导出前中断。
 
 生产交付顺序固定为：
 

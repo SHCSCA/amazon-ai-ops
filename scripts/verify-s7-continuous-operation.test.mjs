@@ -21,6 +21,7 @@ const {
   inclusiveDates,
   loadAuthoritySnapshotManifest,
   parseArgs,
+  readContinuousOperationSnapshot,
   recentCompletedUsBusinessDates,
   run,
   usFederalBusinessDates,
@@ -259,7 +260,15 @@ function validSnapshot({ storesRoot = evaluationStoresRoot } = {}) {
       }
     }
   }
-  return { stores, jobs, checkpoints, imports, importFiles, reconciliations };
+  return {
+    globalActiveUsUsdStoreCount: 2,
+    stores,
+    jobs,
+    checkpoints,
+    imports,
+    importFiles,
+    reconciliations,
+  };
 }
 
 function seedContinuousDatabase(database, storesRoot) {
@@ -512,10 +521,38 @@ describe('S7 continuous operation verifier', () => {
     expect(result.passed).toBe(true);
     expect(result.acceptanceContractVersion).toBe(ACCEPTANCE_CONTRACT_VERSION);
     expect(result.businessCalendarVersion).toBe(US_BUSINESS_CALENDAR_VERSION);
+    expect(result.globalActiveUsUsdStoreCount).toBe(2);
     expect(result.violations).toEqual([]);
     expect(result.stores).toHaveLength(2);
     expect(result.stores.every((store) => store.acceptedDayCount === 7)).toBe(true);
     expect(result.stores.flatMap((store) => store.days).every((day) => day.outcome === 'SUCCESS_8_OF_8')).toBe(true);
+  });
+
+  it('rejects two selected stores when a third active US/USD store exists globally', () => {
+    const database = new Database(':memory:');
+    seedContinuousDatabase(database, evaluationStoresRoot);
+    database.prepare(`
+      INSERT INTO stores (
+        store_id, browser_profile_id, marketplace, currency, status, business_timezone
+      ) VALUES ('shc003', 'profile-shc003', 'US', 'USD', 'active', 'America/Los_Angeles')
+    `).run();
+
+    const snapshot = readContinuousOperationSnapshot(database, input);
+    const result = evaluateContinuousOperationSnapshot(snapshot, input);
+
+    expect(snapshot.globalActiveUsUsdStoreCount).toBe(3);
+    expect(result).toMatchObject({
+      globalActiveUsUsdStoreCount: 3,
+      passed: false,
+    });
+    expect(result.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        actualCount: 3,
+        code: 'ACTIVE_US_USD_STORE_COUNT_NOT_TWO',
+        expectedCount: 2,
+      }),
+    ]));
+    database.close();
   });
 
   it('records an actionable blocked day but refuses production-readiness credit', () => {

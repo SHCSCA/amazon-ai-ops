@@ -315,8 +315,40 @@ function storeAliasMap(stores) {
     .map((store, index) => [normalizedId(store.storeId), `store-${index + 1}`]));
 }
 
-function inspectStores(database, selectedIds) {
+function providerGapPrefix(provider) {
+  return provider === 'amazon_ads' ? 'AMAZON_ADS' : 'LINGXING';
+}
+
+function timestampAtOrBefore(value, upperBoundMs) {
+  const parsed = Date.parse(String(value ?? ''));
+  return Number.isFinite(parsed) && parsed <= upperBoundMs;
+}
+
+function sessionOperationalGaps(session, generatedAtMs) {
+  const prefix = providerGapPrefix(session.provider);
+  const gaps = [];
+  if (!session.present) gaps.push(`${prefix}_SESSION_MISSING`);
+  else {
+    if (session.status !== 'ready') gaps.push(`${prefix}_SESSION_NOT_READY`);
+    if (!session.profileMatchesStore) gaps.push(`${prefix}_SESSION_PROFILE_MISMATCH`);
+    if (!timestampAtOrBefore(session.observedAt, generatedAtMs)) {
+      gaps.push(`${prefix}_SESSION_OBSERVED_AT_INVALID`);
+    }
+    if (!timestampAtOrBefore(session.verifiedAt, generatedAtMs)) {
+      gaps.push(`${prefix}_SESSION_VERIFIED_AT_INVALID`);
+    }
+    if (session.expiresAt !== null) {
+      const expiresAtMs = Date.parse(String(session.expiresAt));
+      if (!Number.isFinite(expiresAtMs)) gaps.push(`${prefix}_SESSION_EXPIRES_AT_INVALID`);
+      else if (expiresAtMs <= generatedAtMs) gaps.push(`${prefix}_SESSION_EXPIRED`);
+    }
+  }
+  return gaps;
+}
+
+function inspectStores(database, selectedIds, generatedAt = new Date().toISOString()) {
   const tables = tableSet(database);
+  const generatedAtMs = Date.parse(generatedAt);
   const allStoreCount = tables.has('stores')
     ? Number(database.prepare('SELECT COUNT(*) AS count FROM stores').get().count)
     : 0;
@@ -362,8 +394,9 @@ function inspectStores(database, selectedIds) {
       connections: ['lingxing', 'amazon_ads'].map((provider) => {
         const row = storeConnections.find((item) => item.provider === provider);
         return {
-          failureCode: row?.lastFailureCode || null,
+          hasFailureCode: Boolean(row?.lastFailureCode),
           lastVerifiedAt: row?.lastVerifiedAt || null,
+          present: Boolean(row),
           provider,
           status: row?.status || 'not_configured',
         };
@@ -373,9 +406,10 @@ function inspectStores(database, selectedIds) {
         const row = storeSessions.find((item) => item.provider === provider);
         return {
           expiresAt: row?.expiresAt || null,
-          failureCode: row?.failureCode || null,
           generation: Number(row?.sessionGeneration ?? 0),
+          hasFailureCode: Boolean(row?.failureCode),
           observedAt: row?.observedAt || null,
+          present: Boolean(row),
           profileMatchesStore: row
             ? normalizedId(row.browserProfileId) === normalizedId(store.browserProfileId)
             : false,
@@ -386,30 +420,117 @@ function inspectStores(database, selectedIds) {
       }),
     };
   });
+  for (const item of items) {
+    const gaps = [];
+    for (const connection of item.connections) {
+      const prefix = providerGapPrefix(connection.provider);
+      if (!connection.present) gaps.push(`${prefix}_CONNECTION_MISSING`);
+      else if (connection.status !== 'ready') gaps.push(`${prefix}_CONNECTION_NOT_READY`);
+    }
+    for (const session of item.sessions) {
+      gaps.push(...sessionOperationalGaps(session, generatedAtMs));
+    }
+    item.operationalStatus = {
+      gaps,
+      status: gaps.length === 0 ? 'READY' : 'BLOCKED',
+    };
+  }
   const profiles = selected.map((store) => normalizedId(store.browserProfileId)).filter(Boolean);
-  const valid = selected.length === 2
+  const authorityValid = activeUsUsdCount === 2
+    && selected.length === 2
     && new Set(profiles).size === 2
+    && profiles.length === 2
     && items.every((item) => (
       item.authority.active
       && item.authority.marketplace === 'US'
       && item.authority.currency === 'USD'
       && item.authority.businessTimezone === BUSINESS_TIMEZONE
     ));
+  const operationalReady = items.length === 2
+    && items.every((item) => item.operationalStatus.status === 'READY');
   return {
     activeUsUsdCount,
     allStoreCount,
     aliases,
     items,
+    operationalStatus: {
+      status: operationalReady ? 'READY' : 'BLOCKED',
+      stores: items.map((item) => ({
+        gaps: item.operationalStatus.gaps,
+        status: item.operationalStatus.status,
+        storeAlias: item.alias,
+      })),
+    },
     rawStores: selected,
     selectedCount: selected.length,
-    status: valid ? 'READY' : 'NEEDS_CONFIGURATION',
+    authorityStatus: authorityValid ? 'READY' : 'NEEDS_CONFIGURATION',
+    status: authorityValid && operationalReady ? 'READY' : 'NEEDS_CONFIGURATION',
   };
 }
 
-function latestBy(rows, field) {
-  return rows.slice().sort((left, right) => (
-    String(right[field] || '').localeCompare(String(left[field] || ''))
-  ))[0] || null;
+function violationAction(code) {
+  if (code === 'ACTIVE_US_USD_STORE_COUNT_NOT_TWO') {
+    return 'Restore the global active US/USD authority set to exactly two stores, then rerun.';
+  }
+  if (code === 'STORE_NOT_FOUND' || code === 'STORE_AUTHORITY_INVALID') {
+    return 'Repair the aliased store authority row before rerunning.';
+  }
+  if (code === 'SILENT_MISSING_DAY' || code === 'BLOCKER_NOT_ACTIONABLE') {
+    return 'Create a durable collection result or actionable blocker for this aliased store and date.';
+  }
+  if (code === 'DAY_BLOCKED') {
+    return 'Resolve the recorded blocker for this aliased store and date, then collect again.';
+  }
+  if (code.includes('IMPORT') || code.includes('RECONCILIATION')) {
+    return 'Repair the selected import and reconciliation lineage for this aliased store and date.';
+  }
+  if (code.includes('REPORT') || code.includes('CHECKPOINT')) {
+    return 'Repair the selected eight-report checkpoint set for this aliased store and date.';
+  }
+  if (code.includes('TIME') || code.includes('WINDOW')) {
+    return 'Repair the durable timestamp or business-date window for this aliased store and date.';
+  }
+  return 'Inspect this code for the aliased store and date, repair the authority evidence, then rerun.';
+}
+
+function safeViolationDetail(violation) {
+  const detail = {
+    action: violationAction(String(violation?.code || 'UNKNOWN')),
+  };
+  const source = isRecord(violation?.detail)
+    ? { ...violation, ...violation.detail }
+    : violation;
+  for (const key of [
+    'actualCount',
+    'checkpointCount',
+    'expectedCount',
+    'sessionGeneration',
+  ]) {
+    const value = source?.[key];
+    if (value === null || (typeof value === 'number' && Number.isFinite(value))) {
+      detail[key] = value;
+    }
+  }
+  for (const key of [
+    'completedAt',
+    'observedAt',
+    'reconciledAt',
+    'startedAt',
+    'updatedAt',
+    'verifiedAt',
+  ]) {
+    const parsed = Date.parse(String(source?.[key] ?? ''));
+    if (Number.isFinite(parsed)) detail[key] = new Date(parsed).toISOString();
+  }
+  if (Array.isArray(source?.missingReports)) {
+    detail.missingReports = source.missingReports.filter(
+      (reportType) => EXPECTED_REPORT_TYPES.includes(reportType),
+    );
+  }
+  if (Array.isArray(source?.unexpectedReports)) {
+    detail.unexpectedReportCount = source.unexpectedReports.length;
+  }
+  return detail;
 }
 
 function reportMatrix(snapshot, evaluation, stores, aliases, dates) {
@@ -424,10 +545,11 @@ function reportMatrix(snapshot, evaluation, stores, aliases, dates) {
       const dayResult = storeResult?.days?.find(
         (day) => day.businessDate === businessDate,
       ) || null;
-      const job = latestBy(snapshot.jobs.filter((row) => (
+      const job = snapshot.jobs.find((row) => (
         normalizedId(row.storeId) === storeId
         && row.businessDate === businessDate
-      )), 'updatedAt');
+        && row.jobId === dayResult?.jobId
+      )) || null;
       const checkpoints = job
         ? snapshot.checkpoints.filter((row) => (
           normalizedId(row.storeId) === storeId && row.jobId === job.jobId
@@ -462,6 +584,8 @@ function reportMatrix(snapshot, evaluation, stores, aliases, dates) {
       rows.push({
         accepted: dayResult?.accepted === true,
         businessDate,
+        importRef: stableRef('import-run', dayResult?.importRunId),
+        jobRef: stableRef('collection-job', dayResult?.jobId),
         outcome: dayResult?.outcome || 'MISSING',
         reports,
         storeAlias: aliases.get(storeId),
@@ -491,7 +615,12 @@ function inspectContinuous(database, stores, aliases, generatedAt) {
       matrix: [],
       passed: false,
       status: 'BLOCKED_BY_SCHEMA_OR_STORE_SELECTION',
-      violations: [{ code: 'CONTINUOUS_INPUT_NOT_READY' }],
+      violations: [{
+        businessDate: null,
+        code: 'CONTINUOUS_INPUT_NOT_READY',
+        detail: safeViolationDetail({ code: 'CONTINUOUS_INPUT_NOT_READY' }),
+        storeAlias: null,
+      }],
     };
   }
   const input = {
@@ -514,7 +643,12 @@ function inspectContinuous(database, stores, aliases, generatedAt) {
       matrix: [],
       passed: false,
       status: 'READ_ONLY_EVALUATION_FAILED',
-      violations: [{ code: 'CONTINUOUS_READ_ONLY_EVALUATION_FAILED' }],
+      violations: [{
+        businessDate: null,
+        code: 'CONTINUOUS_READ_ONLY_EVALUATION_FAILED',
+        detail: safeViolationDetail({ code: 'CONTINUOUS_READ_ONLY_EVALUATION_FAILED' }),
+        storeAlias: null,
+      }],
     };
   }
   const matrix = reportMatrix(snapshot, evaluation, stores, aliases, dates);
@@ -527,6 +661,7 @@ function inspectContinuous(database, stores, aliases, generatedAt) {
   const violations = evaluation.violations.map((violation) => ({
     businessDate: violation.businessDate || null,
     code: violation.code,
+    detail: safeViolationDetail(violation),
     storeAlias: violation.storeId
       ? aliasByRawStore.get(normalizedId(violation.storeId)) || null
       : null,
@@ -713,19 +848,24 @@ function buildOrchestrationPlan(ledger, packageEvidence = {}) {
     (option) => Boolean(packageEvidence[option]),
   );
   const schemaReady = ledger.database.live.schema.status === 'READY';
-  const storesReady = ledger.stores.status === 'READY';
+  const storesReady = (ledger.stores.authorityStatus ?? ledger.stores.status) === 'READY';
+  const operationalReady = (ledger.stores.operationalStatus?.status ?? ledger.stores.status)
+    === 'READY';
   const continuousReady = ledger.continuous.passed === true;
   const manualReady = ledger.canaryCandidates.manualApproval.precheckedCount > 0;
   const policyReady = ledger.canaryCandidates.policyAuto.precheckedCount > 0;
   const readinessReady = packageInputsPresent
+    && schemaReady
+    && storesReady
+    && operationalReady
     && continuousReady
     && manualReady
     && policyReady;
   const readinessById = {
-    'authority-snapshot': schemaReady && storesReady,
-    'continuous-operation': schemaReady && storesReady && continuousReady,
-    'manual-canary': schemaReady && storesReady && continuousReady && manualReady,
-    'policy-auto-canary': schemaReady && storesReady && continuousReady && policyReady,
+    'authority-snapshot': schemaReady && storesReady && operationalReady,
+    'continuous-operation': schemaReady && storesReady && operationalReady && continuousReady,
+    'manual-canary': schemaReady && storesReady && operationalReady && continuousReady && manualReady,
+    'policy-auto-canary': schemaReady && storesReady && operationalReady && continuousReady && policyReady,
     'production-readiness': readinessReady,
   };
   const prerequisites = {
@@ -753,7 +893,7 @@ function inspectOpenedDatabase(database, options = {}, context = {}) {
   const generatedAt = (context.now ? context.now() : new Date()).toISOString();
   database.pragma('query_only = ON');
   const schema = inspectSchema(database, context.migrationContract || migrationContract());
-  const stores = inspectStores(database, options.stores || []);
+  const stores = inspectStores(database, options.stores || [], generatedAt);
   const continuous = inspectContinuous(
     database,
     stores.rawStores,
@@ -768,34 +908,10 @@ function inspectOpenedDatabase(database, options = {}, context = {}) {
   );
   for (const task of today.tasks) {
     const store = stores.items.find((item) => item.alias === task.storeAlias);
-    const lingxingConnection = store?.connections.find(
-      (item) => item.provider === 'lingxing',
-    );
-    const adsConnection = store?.connections.find(
-      (item) => item.provider === 'amazon_ads',
-    );
-    const lingxingSession = store?.sessions.find(
-      (item) => item.provider === 'lingxing',
-    );
-    const adsSession = store?.sessions.find(
-      (item) => item.provider === 'amazon_ads',
-    );
-    if (lingxingConnection?.status !== 'ready') {
-      task.gaps.unshift('LINGXING_CONNECTION_NOT_READY');
-    }
-    if (adsConnection?.status !== 'ready') {
-      task.gaps.unshift('AMAZON_ADS_CONNECTION_NOT_READY');
-    }
-    if (lingxingSession?.status !== 'ready') {
-      task.gaps.unshift('LINGXING_SESSION_NOT_READY');
-    }
-    if (adsSession?.status !== 'ready') {
-      task.gaps.unshift('AMAZON_ADS_SESSION_NOT_READY');
-    }
-    if (store?.sessions.some((item) => !item.profileMatchesStore)) {
-      task.gaps.unshift('PROFILE_SESSION_BINDING_MISMATCH');
-    }
-    task.gaps = [...new Set(task.gaps)];
+    task.gaps = [...new Set([
+      ...(store?.operationalStatus.gaps || []),
+      ...task.gaps,
+    ])];
   }
   const storesRoot = path.resolve(options.storesRoot || path.join(
     path.dirname(options.dbPath || ROOT),
@@ -810,7 +926,9 @@ function inspectOpenedDatabase(database, options = {}, context = {}) {
   const publicStores = {
     activeUsUsdCount: stores.activeUsUsdCount,
     allStoreCount: stores.allStoreCount,
+    authorityStatus: stores.authorityStatus,
     items: stores.items,
+    operationalStatus: stores.operationalStatus,
     requiredCount: 2,
     selectedCount: stores.selectedCount,
     status: stores.status,
@@ -822,7 +940,8 @@ function inspectOpenedDatabase(database, options = {}, context = {}) {
     formalEvidence: false,
     mode: options.mode || 'diagnose',
     status: schema.status === 'READY'
-      && publicStores.status === 'READY'
+      && publicStores.authorityStatus === 'READY'
+      && publicStores.operationalStatus.status === 'READY'
       && continuous.passed
       ? 'READY_FOR_EXPORT_PREFLIGHT'
       : 'PARTIAL_MONITORING',
@@ -1039,7 +1158,12 @@ function validateExecuteInputs(ledger, options, context = {}) {
   if (ledger.database.live.schema.status !== 'READY') {
     blockers.push('LIVE_SCHEMA_NOT_READY');
   }
-  if (ledger.stores.status !== 'READY') blockers.push('TWO_STORE_SCOPE_NOT_READY');
+  if ((ledger.stores.authorityStatus ?? ledger.stores.status) !== 'READY') {
+    blockers.push('TWO_STORE_SCOPE_NOT_READY');
+  }
+  if ((ledger.stores.operationalStatus?.status ?? ledger.stores.status) !== 'READY') {
+    blockers.push('STORE_OPERATIONAL_NOT_READY');
+  }
   if (ledger.continuous.passed !== true) blockers.push('CONTINUOUS_OPERATION_NOT_PASSED');
   if (ledger.canaryCandidates.manualApproval.precheckedCount < 1) {
     blockers.push('MANUAL_CANARY_CANDIDATE_MISSING');
@@ -1392,17 +1516,38 @@ function captureSynchronousStdout(callback) {
   }
 }
 
+function inspectImmutableSnapshotStoreGate(databasePath, selectedIds, context = {}) {
+  const Database = context.Database || requireFromLocalDb('better-sqlite3');
+  const database = new Database(databasePath, { fileMustExist: true, readonly: true });
+  try {
+    database.pragma('query_only = ON');
+    const generatedAt = (context.now ? context.now() : new Date()).toISOString();
+    const stores = inspectStores(database, selectedIds, generatedAt);
+    return {
+      activeUsUsdCount: stores.activeUsUsdCount,
+      authorityStatus: stores.authorityStatus,
+      operationalStatus: stores.operationalStatus,
+      requiredCount: 2,
+      selectedCount: stores.selectedCount,
+      status: stores.status,
+    };
+  } finally {
+    database.close();
+  }
+}
+
 async function executeFormalExports(ledger, options, preflight, context = {}) {
   const written = [];
   try {
-    const {
-      exportAuthoritySnapshot,
-    } = require('./export-mission-control-authority-snapshot');
-    const continuousVerifier = require('./verify-s7-continuous-operation');
-    const {
-      exportExecutionCanaryEvidence,
-    } = require('./export-mission-control-execution-canary-evidence');
-    const readinessVerifier = require('./verify-mission-control-production-readiness');
+    const exportAuthoritySnapshot = context.exportAuthoritySnapshot
+      || require('./export-mission-control-authority-snapshot').exportAuthoritySnapshot;
+    const continuousVerifier = context.continuousVerifier
+      || require('./verify-s7-continuous-operation');
+    const exportExecutionCanaryEvidence = context.exportExecutionCanaryEvidence
+      || require('./export-mission-control-execution-canary-evidence')
+        .exportExecutionCanaryEvidence;
+    const readinessVerifier = context.readinessVerifier
+      || require('./verify-mission-control-production-readiness');
     const paths = formalOutputPaths(options.exportRoot, context);
     ensureFormalOutputsAbsent(paths);
     const snapshot = await exportAuthoritySnapshot({
@@ -1410,6 +1555,19 @@ async function executeFormalExports(ledger, options, preflight, context = {}) {
       outputDirectory: paths.authoritySnapshotDirectory,
     }, runtimeOverrides(context, path.dirname(paths.authoritySnapshotDirectory)));
     written.push(snapshot.manifestPath, snapshot.snapshotPath);
+    const formalStoreGate = inspectImmutableSnapshotStoreGate(
+      snapshot.snapshotPath,
+      ledger._internal.rawStoreIds,
+      context,
+    );
+    ledger.executeExports.formalAuthorityStoreGate = formalStoreGate;
+    if (
+      formalStoreGate.authorityStatus !== 'READY'
+      || formalStoreGate.operationalStatus.status !== 'READY'
+      || formalStoreGate.status !== 'READY'
+    ) {
+      fail('Immutable formal authority snapshot store gate did not pass.');
+    }
     fs.mkdirSync(path.dirname(paths.continuousPath), { recursive: true });
     let continuousText = '';
     const dates = ledger.continuous.businessDates;
@@ -1515,7 +1673,7 @@ async function run(argv = process.argv.slice(2), injectedContext = {}) {
   const packageEvidence = Object.fromEntries(
     PACKAGE_EVIDENCE_OPTIONS.map((option) => [option, parsed.values[option] || null]),
   );
-  const ledger = diagnose({
+  const ledger = (injectedContext.diagnose || diagnose)({
     dbPath: parsed.values.db,
     mode: parsed.executeExports
       ? 'execute-exports'
@@ -1546,7 +1704,7 @@ async function run(argv = process.argv.slice(2), injectedContext = {}) {
         : 'BLOCKED_ZERO_FORMAL_ARTIFACTS',
     };
     if (preflight.passed) {
-      const deepPreflight = await deepFormalPreflight(ledger, {
+      const deepPreflight = await (injectedContext.deepFormalPreflight || deepFormalPreflight)(ledger, {
         exportRoot: parsed.values['export-root'],
         packageEvidence,
       }, injectedContext);
@@ -1597,6 +1755,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  EXPECTED_REPORT_TYPES,
   EXPORT_SEQUENCE,
   LEDGER_KIND,
   LEDGER_SCHEMA_VERSION,
@@ -1605,12 +1764,14 @@ module.exports = {
   buildOrchestrationPlan,
   diagnose,
   inspectContinuous,
+  inspectImmutableSnapshotStoreGate,
   inspectOpenedDatabase,
   inspectSchema,
   inspectStores,
   migrationContract,
   parseArgs,
   publicCanaryCandidates,
+  reportMatrix,
   rawCanaryCandidates,
   run,
   stableRef,

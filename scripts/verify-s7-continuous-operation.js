@@ -496,6 +496,11 @@ function readContinuousOperationSnapshot(database, input) {
   const storePlaceholders = placeholders(input.stores);
   const datePlaceholders = placeholders(input.dates);
   const scope = [...input.stores, ...input.dates];
+  const globalActiveUsUsdStoreCount = Number(database.prepare(`
+    SELECT COUNT(*) AS count
+    FROM stores
+    WHERE status = 'active' AND marketplace = 'US' AND currency = 'USD'
+  `).get().count);
   const stores = database.prepare(`
     SELECT store_id AS storeId, browser_profile_id AS browserProfileId,
            marketplace, currency, status, business_timezone AS businessTimezone
@@ -589,14 +594,35 @@ function readContinuousOperationSnapshot(database, input) {
     WHERE reconciliation.store_id IN (${storePlaceholders})
       AND batch.business_date IN (${datePlaceholders})
   `).all(...scope);
-  return { stores, jobs, checkpoints, imports, importFiles, reconciliations };
+  return {
+    globalActiveUsUsdStoreCount,
+    stores,
+    jobs,
+    checkpoints,
+    imports,
+    importFiles,
+    reconciliations,
+  };
 }
 
 function evaluateContinuousOperationSnapshot(snapshot, input) {
   const violations = [];
   const storeResults = [];
+  const globalActiveUsUsdStoreCount = Number(snapshot.globalActiveUsUsdStoreCount);
   const storeById = new Map(snapshot.stores.map((store) => [String(store.storeId).toLowerCase(), store]));
   const addViolation = (code, message, detail = {}) => violations.push({ code, message, ...detail });
+  if (globalActiveUsUsdStoreCount !== 2) {
+    addViolation(
+      'ACTIVE_US_USD_STORE_COUNT_NOT_TWO',
+      'The authority database must contain exactly two active US/USD stores globally.',
+      {
+        actualCount: Number.isFinite(globalActiveUsUsdStoreCount)
+          ? globalActiveUsUsdStoreCount
+          : null,
+        expectedCount: 2,
+      },
+    );
+  }
   let canonicalDates = [];
   try {
     canonicalDates = recentCompletedUsBusinessDates(input.generatedAt);
@@ -661,6 +687,9 @@ function evaluateContinuousOperationSnapshot(snapshot, input) {
     expectedStoreCount: 2,
     expectedDayCountPerStore: 7,
     expectedReportCountPerSuccessfulDay: EXPECTED_REPORT_TYPES.length,
+    globalActiveUsUsdStoreCount: Number.isFinite(globalActiveUsUsdStoreCount)
+      ? globalActiveUsUsdStoreCount
+      : null,
     stores: storeResults,
     violations,
   };
