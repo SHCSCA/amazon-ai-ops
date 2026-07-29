@@ -16,7 +16,7 @@ const requireLocalDbDependency = createRequire(
 
 const ROOT = path.resolve(__dirname, '..');
 const SCHEMA_VERSION = 's7-continuous-operation-evidence/v1';
-const ACCEPTANCE_CONTRACT_VERSION = 's7-continuous-operation-success-only/v2';
+const ACCEPTANCE_CONTRACT_VERSION = 's7-continuous-operation-success-only/v3';
 const US_BUSINESS_CALENDAR_VERSION = 'us-federal-business-day/v1';
 const BUSINESS_TIMEZONE = 'America/Los_Angeles';
 const MAX_TERMINAL_TAIL_MS = 6 * 60 * 60 * 1000;
@@ -612,7 +612,8 @@ function evaluateContinuousOperationSnapshot(snapshot, input) {
       `Window must be the most recent seven completed US federal business dates in ${BUSINESS_TIMEZONE}.`,
     );
   }
-  const importProof = validateGlobalImportProofs(snapshot, input, addViolation);
+  const authoritativeSnapshot = selectAuthoritativeLineageSnapshot(snapshot, input);
+  const importProof = validateGlobalImportProofs(authoritativeSnapshot, input, addViolation);
 
   for (const storeId of input.stores) {
     const store = storeById.get(storeId);
@@ -648,7 +649,11 @@ function evaluateContinuousOperationSnapshot(snapshot, input) {
     });
   }
 
-  detectCrossStoreLeakage(snapshot, storeById, addViolation);
+  const authoritativeStoreById = new Map(authoritativeSnapshot.stores.map((store) => [
+    lower(store.storeId),
+    store,
+  ]));
+  detectCrossStoreLeakage(authoritativeSnapshot, authoritativeStoreById, addViolation);
   const result = {
     passed: violations.length === 0 && storeResults.length === 2 && storeResults.every((store) => store.acceptedDayCount === 7),
     acceptanceContractVersion: ACCEPTANCE_CONTRACT_VERSION,
@@ -669,14 +674,34 @@ function evaluateContinuousOperationSnapshot(snapshot, input) {
 }
 
 function evaluateStoreDay(snapshot, store, businessDate, input = {}, importProof = { invalidRunKeys: new Set() }) {
-  const jobs = snapshot.jobs
-    .filter((job) => lower(job.storeId) === lower(store.storeId) && job.businessDate === businessDate)
-    .sort(compareNewestRecord('updatedAt', 'jobId'));
+  const jobCandidates = snapshot.jobs
+    .filter((job) => lower(job.storeId) === lower(store.storeId) && job.businessDate === businessDate);
   const violations = [];
-  if (jobs.length === 0) {
+  if (jobCandidates.length === 0) {
     violations.push({ code: 'SILENT_MISSING_DAY', message: 'No collection job or explicit blocker exists for this business date.', detail: {} });
     return { businessDate, outcome: 'MISSING', accepted: false, jobId: null, reportCount: 0, importRunId: null, violations };
   }
+  const malformedJobCandidates = jobCandidates.filter((job) => !normalizedTimestamp(job.updatedAt));
+  if (malformedJobCandidates.length > 0) {
+    violations.push({
+      code: 'LATEST_JOB_IDENTITY_AMBIGUOUS',
+      message: 'Every competing store/day collection job must have a valid durable updatedAt before the latest identity can be selected.',
+      detail: {
+        jobIds: malformedJobCandidates.map((job) => job.jobId),
+        updatedAt: null,
+      },
+    });
+    return {
+      businessDate,
+      outcome: 'INCOMPLETE',
+      accepted: false,
+      jobId: null,
+      reportCount: 0,
+      importRunId: null,
+      violations,
+    };
+  }
+  const jobs = [...jobCandidates].sort(compareNewestRecord('updatedAt', 'jobId'));
   const latestJob = jobs[0];
   const latestTimestamp = normalizedTimestamp(latestJob.updatedAt);
   const equallyLatestJobs = jobs.filter((job) => normalizedTimestamp(job.updatedAt) === latestTimestamp);
@@ -714,17 +739,28 @@ function evaluateStoreDay(snapshot, store, businessDate, input = {}, importProof
     const downloaded = new Set(checkpoints.filter((row) => row.state === 'downloaded').map((row) => row.reportType));
     const missingReports = EXPECTED_REPORT_TYPES.filter((reportType) => !downloaded.has(reportType));
     const unexpectedReports = [...downloaded].filter((reportType) => !EXPECTED_REPORT_TYPES.includes(reportType));
-    const lineageImports = snapshot.imports
+    const importCandidates = snapshot.imports
       .filter((row) => lower(row.storeId) === lower(store.storeId)
         && row.businessDate === businessDate
-        && row.batchId === latestJob.jobId)
-      .sort(compareNewestRecord('completedAt', 'runId'));
-    const latestImport = lineageImports[0];
+        && row.batchId === latestJob.jobId);
+    const malformedImportCandidates = importCandidates
+      .filter((run) => !normalizedTimestamp(run.completedAt));
+    const lineageImports = [...importCandidates].sort(compareNewestRecord('completedAt', 'runId'));
+    const latestImport = malformedImportCandidates.length === 0 ? lineageImports[0] : null;
     const latestImportTimestamp = normalizedTimestamp(latestImport?.completedAt);
     const equallyLatestImports = latestImport
       ? lineageImports.filter((run) => normalizedTimestamp(run.completedAt) === latestImportTimestamp)
       : [];
-    if (latestImport && (!latestImportTimestamp || equallyLatestImports.length !== 1)) {
+    if (malformedImportCandidates.length > 0) {
+      violations.push({
+        code: 'LATEST_IMPORT_IDENTITY_AMBIGUOUS',
+        message: 'Every competing import in the completed job/batch lineage must have a valid durable completedAt before the latest identity can be selected.',
+        detail: {
+          runIds: malformedImportCandidates.map((run) => run.runId),
+          completedAt: null,
+        },
+      });
+    } else if (latestImport && (!latestImportTimestamp || equallyLatestImports.length !== 1)) {
       violations.push({
         code: 'LATEST_IMPORT_IDENTITY_AMBIGUOUS',
         message: 'The latest import for the completed job/batch lineage must have one unique durable completedAt.',
@@ -1051,6 +1087,66 @@ function compareNewestRecord(timestampField, identityField) {
   };
 }
 
+function collectionJobKey(storeId, jobId) {
+  return `${lower(storeId)}|${String(jobId ?? '')}`;
+}
+
+/**
+ * Select the one durable lineage that can speak for each requested store/day
+ * before validating bytes or replay identities. Historical attempts remain in
+ * the authority database for audit, but an older failed/retried run cannot
+ * poison a newer authoritative result.
+ */
+function selectAuthoritativeLineageSnapshot(snapshot, input) {
+  const selectedStoreIds = new Set((input.stores ?? []).map(lower));
+  const selectedJobKeys = new Set();
+  const selectedRunKeys = new Set();
+  for (const storeId of selectedStoreIds) {
+    for (const businessDate of input.dates ?? []) {
+      const jobCandidates = snapshot.jobs
+        .filter((job) => lower(job.storeId) === storeId && job.businessDate === businessDate);
+      if (jobCandidates.some((job) => !normalizedTimestamp(job.updatedAt))) continue;
+      const jobs = [...jobCandidates].sort(compareNewestRecord('updatedAt', 'jobId'));
+      const latestJob = jobs[0];
+      const latestJobTimestamp = normalizedTimestamp(latestJob?.updatedAt);
+      const equallyLatestJobs = latestJob
+        ? jobs.filter((job) => normalizedTimestamp(job.updatedAt) === latestJobTimestamp)
+        : [];
+      if (!latestJob || !latestJobTimestamp || equallyLatestJobs.length !== 1) continue;
+      selectedJobKeys.add(collectionJobKey(latestJob.storeId, latestJob.jobId));
+      if (latestJob.state !== 'completed') continue;
+
+      const importCandidates = snapshot.imports
+        .filter((run) => (
+          lower(run.storeId) === storeId
+          && run.businessDate === businessDate
+          && run.batchId === latestJob.jobId
+        ));
+      if (importCandidates.some((run) => !normalizedTimestamp(run.completedAt))) continue;
+      const lineageImports = [...importCandidates].sort(compareNewestRecord('completedAt', 'runId'));
+      const latestImport = lineageImports[0];
+      const latestImportTimestamp = normalizedTimestamp(latestImport?.completedAt);
+      const equallyLatestImports = latestImport
+        ? lineageImports.filter((run) => normalizedTimestamp(run.completedAt) === latestImportTimestamp)
+        : [];
+      if (!latestImport || !latestImportTimestamp || equallyLatestImports.length !== 1) continue;
+      selectedRunKeys.add(importRunKey(latestImport.storeId, latestImport.runId));
+    }
+  }
+  return {
+    stores: snapshot.stores.filter((store) => selectedStoreIds.has(lower(store.storeId))),
+    jobs: snapshot.jobs.filter((job) => selectedJobKeys.has(collectionJobKey(job.storeId, job.jobId))),
+    checkpoints: snapshot.checkpoints.filter((checkpoint) => (
+      selectedJobKeys.has(collectionJobKey(checkpoint.storeId, checkpoint.jobId))
+    )),
+    imports: snapshot.imports.filter((run) => selectedRunKeys.has(importRunKey(run.storeId, run.runId))),
+    importFiles: snapshot.importFiles.filter((file) => selectedRunKeys.has(importRunKey(file.storeId, file.runId))),
+    reconciliations: snapshot.reconciliations.filter((row) => (
+      selectedRunKeys.has(importRunKey(row.storeId, row.runId))
+    )),
+  };
+}
+
 function normalizedDirectPath(filePath) {
   return path.resolve(filePath).toLowerCase();
 }
@@ -1068,6 +1164,71 @@ function realpathIsContained(rootPath, candidatePath) {
 
 function importRunKey(storeId, runId) {
   return `${lower(storeId)}|${String(runId ?? '')}`;
+}
+
+function cleanNormalizedFilePath(filePath) {
+  if (
+    typeof filePath !== 'string'
+    || filePath !== filePath.trim()
+    || !path.isAbsolute(filePath)
+    || filePath.includes('\0')
+  ) return null;
+  return normalizedDirectPath(filePath);
+}
+
+function sameNonEmptyIdentity(left, right) {
+  const normalizedLeft = String(left ?? '').trim();
+  const normalizedRight = String(right ?? '').trim();
+  return normalizedLeft.length > 0 && normalizedLeft === normalizedRight;
+}
+
+function fileCaptureIdentity(file) {
+  const capturedAt = normalizedTimestamp(file.capturedAt);
+  if (!capturedAt) return '';
+  return [
+    lower(file.storeId),
+    String(file.runId ?? ''),
+    String(file.reportType ?? ''),
+    capturedAt,
+  ].join('|');
+}
+
+/**
+ * Identical bytes are legitimate only for independently captured empty reports.
+ * Any non-empty duplicate is replay evidence even when its other durable
+ * identities differ.
+ */
+function duplicateContentConflictReasons(existing, current, runByKey) {
+  const reasons = [];
+  const existingFile = existing.file;
+  const existingRun = runByKey.get(existing.runKey);
+  const currentRunKey = importRunKey(current.storeId, current.runId);
+  const currentRun = runByKey.get(currentRunKey);
+  const differentRun = existing.runKey !== currentRunKey;
+  const independentlyEmpty = Number.isSafeInteger(existingFile.importedRows)
+    && existingFile.importedRows === 0
+    && Number.isSafeInteger(current.importedRows)
+    && current.importedRows === 0;
+  if (!independentlyEmpty) reasons.push('content:non-empty');
+  if (
+    sameNonEmptyIdentity(existingFile.runId, current.runId)
+  ) reasons.push('lineage:run');
+  if (
+    sameNonEmptyIdentity(existingFile.batchId, current.batchId)
+  ) reasons.push('lineage:batch');
+
+  const existingPath = cleanNormalizedFilePath(existingFile.filePath);
+  const currentPath = cleanNormalizedFilePath(current.filePath);
+  if (existingPath && currentPath && existingPath === currentPath) reasons.push('path');
+
+  if (
+    differentRun
+    && sameNonEmptyIdentity(existingRun?.batchRequestId, currentRun?.batchRequestId)
+  ) reasons.push('request');
+  const existingCapture = fileCaptureIdentity(existingFile);
+  const currentCapture = fileCaptureIdentity(current);
+  if (existingCapture && existingCapture === currentCapture) reasons.push('capture');
+  return [...new Set(reasons)];
 }
 
 function validateGlobalImportProofs(snapshot, input, addViolation) {
@@ -1149,30 +1310,40 @@ function validateGlobalImportProofs(snapshot, input, addViolation) {
         { storeId: lower(file.storeId), runId: file.runId, reportType: file.reportType },
       );
     } else {
-      const existing = seenHashes.get(fileHash);
-      if (existing) {
+      const existingEntries = seenHashes.get(fileHash) ?? [];
+      const conflicts = existingEntries
+        .map((existing) => ({
+          existing,
+          reasons: duplicateContentConflictReasons(existing, file, runByKey),
+        }))
+        .filter(({ reasons }) => reasons.length > 0);
+      if (conflicts.length > 0) {
+        const { existing, reasons } = conflicts[0];
         invalidRunKeys.add(runKey);
-        invalidRunKeys.add(existing.runKey);
+        for (const conflict of conflicts) invalidRunKeys.add(conflict.existing.runKey);
         addViolation(
           'DUPLICATE_IMPORT_FILE_HASH',
-          'One report file SHA-256 may appear only once across all stores, days and report types.',
+          'Repeated report bytes are allowed only for independent empty reports and otherwise conflict with durable provenance.',
           {
             storeId: lower(file.storeId),
             runId: file.runId,
-            otherRunId: existing.runId,
+            otherRunId: existing.file.runId,
             reportType: file.reportType,
+            conflicts: reasons,
           },
         );
-        // Preserve the established public violation code consumed by existing
-        // acceptance reports while strengthening its scope globally.
         addViolation(
           'DUPLICATE_IMPORT_FILE',
-          'The same report file bytes were reused in the continuous-operation window.',
-          { storeId: lower(file.storeId), runIds: [existing.runId, file.runId] },
+          'The same report bytes were reused with conflicting durable provenance.',
+          {
+            storeId: lower(file.storeId),
+            runIds: [existing.file.runId, file.runId],
+            conflicts: reasons,
+          },
         );
-      } else {
-        seenHashes.set(fileHash, { runId: file.runId, runKey });
       }
+      existingEntries.push({ file, runKey });
+      seenHashes.set(fileHash, existingEntries);
     }
 
     let resolvedFilePath = null;
@@ -1280,7 +1451,22 @@ function detectCrossStoreLeakage(snapshot, storeById, addViolation) {
       addViolation('CROSS_STORE_JOB_IDENTITY', 'Collection job identity does not match its store authority.', { storeId: lower(job.storeId), jobId: job.jobId });
     }
   }
-  const runStores = new Map(snapshot.imports.map((run) => [String(run.runId), lower(run.storeId)]));
+  const runStores = new Map();
+  for (const run of snapshot.imports) {
+    const runId = String(run.runId);
+    const storeId = lower(run.storeId);
+    const existingOwner = runStores.get(runId);
+    if (existingOwner && existingOwner !== storeId) {
+      addViolation('CROSS_STORE_IMPORT_RUN_IDENTITY', 'One import run identity cannot be owned by different stores.', {
+        storeId,
+        otherStoreId: existingOwner,
+        runId,
+      });
+    } else {
+      runStores.set(runId, storeId);
+    }
+  }
+  const runByKey = new Map(snapshot.imports.map((run) => [importRunKey(run.storeId, run.runId), run]));
   const fingerprintOwners = new Map();
   for (const run of snapshot.imports) {
     const fingerprint = String(run.inputFingerprint ?? '').trim();
@@ -1298,15 +1484,30 @@ function detectCrossStoreLeakage(snapshot, storeById, addViolation) {
     if (runStores.get(String(file.runId)) !== lower(file.storeId)) {
       addViolation('CROSS_STORE_IMPORT_FILE', 'Import file snapshot references a run owned by another store.', { storeId: lower(file.storeId), runId: file.runId });
     }
-    const fileHash = String(file.fileHash ?? '').trim();
-    const owner = fileHashOwners.get(fileHash);
-    if (fileHash && owner && owner !== lower(file.storeId)) {
-      addViolation('CROSS_STORE_IMPORT_FILE_HASH', 'One imported report file hash cannot be shared by different stores.', {
+    const fileHash = String(file.fileHash ?? '').trim().toUpperCase();
+    const existingEntries = fileHashOwners.get(fileHash) ?? [];
+    const conflict = existingEntries
+      .filter((existing) => lower(existing.file.storeId) !== lower(file.storeId))
+      .map((existing) => ({
+        existing,
+        reasons: duplicateContentConflictReasons(existing, file, runByKey),
+      }))
+      .find(({ reasons }) => reasons.length > 0);
+    if (fileHash && conflict) {
+      addViolation('CROSS_STORE_IMPORT_FILE_HASH', 'Shared report bytes conflict with cross-store durable provenance.', {
         storeId: lower(file.storeId),
-        otherStoreId: owner,
+        otherStoreId: lower(conflict.existing.file.storeId),
         runId: file.runId,
+        conflicts: conflict.reasons,
       });
-    } else if (fileHash) fileHashOwners.set(fileHash, lower(file.storeId));
+    }
+    if (fileHash) {
+      existingEntries.push({
+        file,
+        runKey: importRunKey(file.storeId, file.runId),
+      });
+      fileHashOwners.set(fileHash, existingEntries);
+    }
   }
 }
 
@@ -1348,6 +1549,7 @@ function buildEvidenceManifest(databasePath, input, result, integrityCheck, auth
       sha256: authoritySnapshot.snapshotManifestSha256,
     },
     authorityCurrentness: input.authorityCurrentness,
+    publication: input.publication ?? null,
     window: {
       dateFrom: input.dateFrom,
       dateTo: input.dateTo,
@@ -1460,7 +1662,7 @@ function captureLiveAuthorityCurrentness(authoritySnapshot, context, captureLabe
   });
 }
 
-function writeExclusiveAtomic(outputBoundary, serialized, context, verifyAfterWrite) {
+function writeExclusiveAtomic(outputBoundary, initialSerialized, context, finalizeBeforePublish) {
   const { outputPath, outputRoot } = outputBoundary;
   assertSafeExistingAncestor(outputRoot, 'Continuous-operation output root');
   fs.mkdirSync(outputRoot, { recursive: true });
@@ -1474,22 +1676,35 @@ function writeExclusiveAtomic(outputBoundary, serialized, context, verifyAfterWr
   );
   let finalLinked = false;
   try {
-    fs.writeFileSync(tempPath, serialized, { encoding: 'utf8', flag: 'wx' });
-    const handle = fs.openSync(tempPath, 'r+');
-    try {
-      fs.fsyncSync(handle);
-    } finally {
-      fs.closeSync(handle);
+    fs.writeFileSync(tempPath, initialSerialized, { encoding: 'utf8', flag: 'wx' });
+    fsyncFile(tempPath);
+    const finalSerialized = finalizeBeforePublish({ stagingPath: tempPath });
+    if (typeof finalSerialized !== 'string' || finalSerialized.length === 0) {
+      fail('Continuous-operation final staged evidence is invalid.');
+    }
+    fs.writeFileSync(tempPath, finalSerialized, { encoding: 'utf8', flag: 'w' });
+    fsyncFile(tempPath);
+    if (fs.existsSync(outputPath)) {
+      fail(`Continuous-operation output already exists and will not be overwritten: ${outputPath}`);
     }
     fs.linkSync(tempPath, outputPath);
     finalLinked = true;
     fs.unlinkSync(tempPath);
     assertUniqueRegularFile(outputPath, 'Continuous-operation evidence output');
-    verifyAfterWrite();
+    return finalSerialized;
   } catch (error) {
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
     if (finalLinked && fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
     throw error;
+  }
+}
+
+function fsyncFile(filePath) {
+  const handle = fs.openSync(filePath, 'r+');
+  try {
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
   }
 }
 
@@ -1565,6 +1780,13 @@ function run(argv = process.argv.slice(2), injectedContext = {}) {
     captures: [currentnessBeforeWork, currentnessBeforeFinalOutput],
     passed: true,
   };
+  input.publication = outputBoundary
+    ? {
+        state: 'pending-staging-recheck',
+        outputPath: outputBoundary.outputPath,
+        stagedVerificationCaptureLabel: 'continuous-after-staging-output',
+      }
+    : null;
   manifest = buildEvidenceManifest(
     input.databasePath,
     input,
@@ -1572,9 +1794,9 @@ function run(argv = process.argv.slice(2), injectedContext = {}) {
     integrityCheck,
     authoritySnapshot,
   );
-  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  let serialized = `${JSON.stringify(manifest, null, 2)}\n`;
   if (outputBoundary && manifest.status === 'PASSED') {
-    writeExclusiveAtomic(outputBoundary, serialized, context, () => {
+    serialized = writeExclusiveAtomic(outputBoundary, serialized, context, ({ stagingPath }) => {
       if (context.afterOutputWritten !== undefined && context.afterOutputWritten !== null) {
         if (typeof context.afterOutputWritten !== 'function') {
           fail('afterOutputWritten must be null or a function.');
@@ -1582,6 +1804,8 @@ function run(argv = process.argv.slice(2), injectedContext = {}) {
         context.afterOutputWritten({
           authoritySnapshot,
           outputPath: outputBoundary.outputPath,
+          stagingPath,
+          finalPathPublished: false,
         });
       }
       verifyAuthorityInputsUnchanged(
@@ -1589,20 +1813,43 @@ function run(argv = process.argv.slice(2), injectedContext = {}) {
         context,
         result._verifiedFileArtifacts,
       );
-      const currentnessAfterFinalOutput = captureLiveAuthorityCurrentness(
+      const currentnessAfterStagingOutput = captureLiveAuthorityCurrentness(
         authoritySnapshot,
         context,
-        'continuous-after-final-output',
+        'continuous-after-staging-output',
       );
-      assertMatchingAuthorityCurrentnessProofs(
+      const finalCurrentnessValidation = assertMatchingAuthorityCurrentnessProofs(
         [
           currentnessBeforeWork,
           currentnessBeforeFinalOutput,
-          currentnessAfterFinalOutput,
+          currentnessAfterStagingOutput,
         ],
         authoritySnapshot.snapshotArtifact,
         'Continuous-operation final authority currentness',
       );
+      input.authorityCurrentness = {
+        method: finalCurrentnessValidation.method,
+        expectedSnapshot: finalCurrentnessValidation.expectedSnapshot,
+        captures: [
+          currentnessBeforeWork,
+          currentnessBeforeFinalOutput,
+          currentnessAfterStagingOutput,
+        ],
+        passed: true,
+      };
+      input.publication = {
+        state: 'atomic-published',
+        outputPath: outputBoundary.outputPath,
+        stagedVerificationCaptureLabel: 'continuous-after-staging-output',
+      };
+      manifest = buildEvidenceManifest(
+        input.databasePath,
+        input,
+        result,
+        integrityCheck,
+        authoritySnapshot,
+      );
+      return `${JSON.stringify(manifest, null, 2)}\n`;
     });
   }
   context.writeStdout(serialized);

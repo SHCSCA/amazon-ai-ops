@@ -161,10 +161,10 @@ function assertCurrentHashBoundEvidenceFile(record, label) {
   return path.resolve(filePath);
 }
 
-function assertPackageUiV7SchedulerAndInteractiveLoginEvidence(packageUi) {
-  if (packageUi?.kind !== 'package-ui-evidence' || packageUi?.schemaVersion !== 7) {
+function assertPackageUiV8SchedulerAndInteractiveLoginEvidence(packageUi) {
+  if (packageUi?.kind !== 'package-ui-evidence' || packageUi?.schemaVersion !== 8) {
     throw new Error(
-      'Refusing to export package UI evidence unless it uses current scheduler-read-only and interactive-login-attestation schema v7; schemas v5/v6 are historical and cannot be used for current export.',
+      'Refusing to export package UI evidence unless it uses current two-phase scheduler-read-only and interactive-login-attestation schema v8; schemas v5/v6/v7 are historical and cannot be used for current export.',
     );
   }
   const completeness = evaluatePackageUiEvidenceCompleteness(packageUi);
@@ -178,7 +178,7 @@ function assertPackageUiV7SchedulerAndInteractiveLoginEvidence(packageUi) {
   const runs = Array.isArray(packageUi.runs) ? packageUi.runs : [];
   const scales = runs.map((run) => run?.scalePercent).sort((left, right) => left - right);
   if (JSON.stringify(scales) !== JSON.stringify([100, 125])) {
-    throw new Error('Refusing to export package UI evidence without exact 100% and 125% v7 runs.');
+    throw new Error('Refusing to export package UI evidence without exact 100% and 125% v8 runs.');
   }
   for (const run of runs) {
     const subviews = Array.isArray(run?.subviewChecks) ? run.subviewChecks : [];
@@ -658,7 +658,7 @@ function collectEvidencePaths(finalReadiness, options = {}) {
   if (options.packageUiManifest) {
     paths.add(options.packageUiManifest);
     const packageUi = readJson(options.packageUiManifest);
-    assertPackageUiV7SchedulerAndInteractiveLoginEvidence(packageUi);
+    assertPackageUiV8SchedulerAndInteractiveLoginEvidence(packageUi);
     for (const run of packageUi.runs || []) {
       for (const screenshot of run.screenshots || []) {
         if (screenshot?.path) paths.add(path.resolve(screenshot.path));

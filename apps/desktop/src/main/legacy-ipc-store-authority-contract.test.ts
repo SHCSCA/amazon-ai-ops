@@ -135,3 +135,48 @@ describe('US business-date rollover authority contract', () => {
     expect(rollover).toContain('storeBusinessDateAuthorityTimer.unref?.()');
   });
 });
+
+describe('policy grant dispatch lifecycle contract', () => {
+  it('fails closed before browser setup when packaged proof is not fresh typed and remembered', () => {
+    const login = between(
+      'async function handleBrowserLogin',
+      'async function handleBrowserLogout',
+    );
+
+    expect(login).toContain('if (packageUiFreshTypedProofRequired');
+    expect(login).toContain("request.credentialSource !== 'typed'");
+    expect(login).toContain('request.rememberPassword !== true');
+    expect(login).toContain("typeof request.password !== 'string'");
+    expect(login).toContain('request.password.length === 0');
+    expect(login).toContain('正式 Package UI 首轮登录必须手动输入凭证并勾选记住密码。');
+    expect(login.indexOf('if (packageUiFreshTypedProofRequired'))
+      .toBeLessThan(login.indexOf('state.storeCoordinator.assertActiveStoreContext'));
+    expect(login.indexOf('if (packageUiFreshTypedProofRequired'))
+      .toBeLessThan(login.indexOf('detachBrowserRuntimeForStore'));
+  });
+
+  it('resumes durable pre-batch dispatches only after a verified Ads session is ready', () => {
+    const login = between(
+      'async function handleBrowserLogin',
+      'async function handleBrowserLogout',
+    );
+
+    expect(login).toContain('if (adsSession) {');
+    expect(login).toContain('resumePolicyGrantDispatches(');
+    expect(login).toContain("loginContext,\n        'session_ready'");
+    expect(login.indexOf('state.loginSession = loginResult'))
+      .toBeLessThan(login.indexOf('resumePolicyGrantDispatches('));
+  });
+
+  it('checks persisted pre-batch dispatches when an active store context is published', () => {
+    const handlers = between(
+      'function registerIpcHandlers',
+      'app.whenReady().then',
+    );
+
+    expect(handlers).toContain('onStoreChanged: (view) => {');
+    expect(handlers).toContain('reconcileActiveStore(view.context)');
+    expect(handlers).toContain('resumePolicyGrantDispatches(');
+    expect(handlers).toContain("view.context,\n        'store_activated'");
+  });
+});

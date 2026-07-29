@@ -3,6 +3,8 @@ import * as path from 'path';
 
 export const EVIDENCE_MODE_ENV = 'AMAZON_AI_OPS_EVIDENCE_MODE';
 export const EVIDENCE_USER_DATA_DIR_ENV = 'AMAZON_AI_OPS_USER_DATA_DIR';
+export const PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV =
+  'AMAZON_AI_OPS_PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF';
 export const PACKAGE_UI_EVIDENCE_MODE = 'package-ui';
 export const PACKAGE_LAUNCH_SMOKE_MODE = 'package-launch-smoke';
 export const EVIDENCE_USER_DATA_LOG_PREFIX = '[App] evidence-user-data ';

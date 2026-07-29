@@ -20,9 +20,15 @@ import {
 import {
   AnalysisAuthorityRepository,
   ExecutionAuthorityRepository,
+  ExecutionAuthorityRepositoryError,
+  isPolicyExecutionBatchSafelyRestartable,
   MissionDomainRepository,
+  type PolicyGrantDispatchCode,
+  type PolicyGrantDispatchRecord,
+  type PolicyGrantDispatchTrigger,
 } from '@amazon-ai-ops/local-db';
 import {
+  isTerminalAdExecutionStatus,
   missionControlContextKey,
   type AdExecutionProgressEvent,
   type AdExecutionBatchProjection,
@@ -69,6 +75,11 @@ export interface ExecutionAuthorityServiceOptions {
   resolveBrowserRuntime(context: StoreContextEnvelope): ExecutionBrowserRuntime;
   emitProgress?(event: AdExecutionProgressEvent): void;
   now?: () => Date;
+  policyDispatchRetryMs?: number;
+  policyDispatchTimer?: {
+    set(callback: () => void, delayMs: number): unknown;
+    clear(handle: unknown): void;
+  };
 }
 
 interface RunningBatch {
@@ -81,6 +92,19 @@ interface PreparedJob {
   command: KeywordBidCommand;
   preflight: Extract<KeywordBidPreflightResult, { status: 'READY' }>;
   pageIdentityHash: string;
+}
+
+interface PolicyDispatchLane {
+  context: StoreContextEnvelope;
+  trigger: PolicyGrantDispatchTrigger;
+  rerunRequested: boolean;
+  promise: Promise<void>;
+}
+
+interface PolicyDispatchRetryTimer {
+  context: StoreContextEnvelope;
+  nextRetryAt: string;
+  handle: unknown;
 }
 
 /**
@@ -97,7 +121,11 @@ export class ExecutionAuthorityService {
   private readonly resolveBrowserRuntime: ExecutionAuthorityServiceOptions['resolveBrowserRuntime'];
   private readonly emit: NonNullable<ExecutionAuthorityServiceOptions['emitProgress']>;
   private readonly now: () => Date;
+  private readonly policyDispatchRetryMs: number;
+  private readonly policyDispatchTimer: NonNullable<ExecutionAuthorityServiceOptions['policyDispatchTimer']>;
   private readonly running = new Map<string, RunningBatch>();
+  private readonly policyDispatchLanes = new Map<string, PolicyDispatchLane>();
+  private readonly policyDispatchRetryTimers = new Map<string, PolicyDispatchRetryTimer>();
   private readonly recoveredBatchReconciliations = new Map<string, Set<string>>();
   private stopping = false;
 
@@ -110,6 +138,11 @@ export class ExecutionAuthorityService {
     this.resolveBrowserRuntime = options.resolveBrowserRuntime;
     this.emit = options.emitProgress ?? (() => undefined);
     this.now = options.now ?? (() => new Date());
+    this.policyDispatchRetryMs = normalizePolicyDispatchRetryMs(options.policyDispatchRetryMs);
+    this.policyDispatchTimer = options.policyDispatchTimer ?? {
+      set: (callback, delayMs) => setTimeout(callback, delayMs),
+      clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    };
   }
 
   listBatches(contextInput: StoreContextEnvelope): readonly AdExecutionBatchProjection[] {
@@ -228,21 +261,7 @@ export class ExecutionAuthorityService {
     const context = this.assertContext(request.context);
     this.requireLiveGrant(context, request.grantId);
     const result = this.repository.createExactExecutionBatch(context, request.grantId);
-    const linkId = compactId('link-execution', [result.projection.batch.id]);
-    const hasLink = this.missionRepository.getMissionLineage(
-      context,
-      result.projection.batch.missionId,
-    ).links.some((link) => link.id === linkId);
-    if (!hasLink) {
-      this.missionRepository.appendMissionLink(context, {
-        id: linkId,
-        missionId: result.projection.batch.missionId,
-        linkType: 'execution',
-        targetId: result.projection.batch.id,
-        relation: 'authorized_execution_batch',
-        actorId: EXECUTOR_ACTOR,
-      });
-    }
+    this.ensureAuthorizedExecutionLink(context, result.projection);
     this.progress(context, result.projection.batch.id, undefined, 'queue', result.projection.batch.status,
       result.created ? '已从不可变授权创建完整串行执行批次。' : '已返回现有幂等执行批次。');
     return result;
@@ -277,18 +296,31 @@ export class ExecutionAuthorityService {
   ): Promise<void> {
     const context = this.assertContext(contextInput);
     if (grant.issuer.type !== 'policy') throw new Error('只有 policy MissionGrant 可进入自动执行入口。');
-    try {
-      for (const adEntityId of grant.allowedAdEntityIds) {
-        await this.resolveIdentity({ context, grantId: grant.id, adEntityId });
-      }
-      const created = this.createBatch({ context, grantId: grant.id });
-      await this.startBatch({ context, batchId: created.projection.batch.id });
-    } catch (error) {
-      this.progress(context, grant.id, undefined, 'terminal', 'blocked', safeMessage(
-        error,
-        '策略授权已签发，但当前可见浏览器/身份条件未满足，未进入保存边界。',
-      ));
+    const durable = this.missionRepository.getMissionGrant(context, grant.id);
+    if (!durable || durable.issuer.type !== 'policy') {
+      throw new Error('Policy MissionGrant 不存在、跨店铺或签发者不匹配。');
     }
+    const current = this.policyGrantDispatch(context, grant.id);
+    if (current.status === 'completed' || current.status === 'attention_required') return;
+    if (!current.eventId) {
+      this.repository.appendPolicyGrantDispatchEvent(context, {
+        grantId: grant.id,
+        status: 'pending',
+        trigger: 'grant_issued',
+        attempt: 0,
+        code: 'DISPATCH_PENDING',
+        detail: 'Policy grant was durably journaled before browser or identity work started.',
+      });
+    }
+    await this.wakePolicyGrantPump(context, 'grant_issued');
+  }
+
+  async resumePolicyGrantDispatches(
+    contextInput: StoreContextEnvelope,
+    trigger: Extract<PolicyGrantDispatchTrigger, 'store_activated' | 'session_ready'>,
+  ): Promise<void> {
+    const context = this.assertContext(contextInput);
+    await this.wakePolicyGrantPump(context, trigger);
   }
 
   cancelBatch(request: CancelAdExecutionBatchRequest): AdExecutionBatchProjection {
@@ -327,22 +359,43 @@ export class ExecutionAuthorityService {
 
   recoverStartup(): AdExecutionStartupRecoveryResult {
     const result = this.repository.recoverInterruptedExecutions();
+    const active = this.storeCoordinator.getActiveStoreContext();
+    if (active) {
+      this.reconcileExecutionMissionLinks(this.assertContext(active));
+    }
+    this.repository.recoverPolicyGrantDispatchesOnStartup();
     for (const item of result.domainReconciliations) {
       const batches = this.recoveredBatchReconciliations.get(String(item.storeId)) ?? new Set<string>();
       batches.add(item.batchId);
       this.recoveredBatchReconciliations.set(String(item.storeId), batches);
     }
-    const active = this.storeCoordinator.getActiveStoreContext();
-    if (active) this.reconcileRecoveredBatches(active);
+    if (active) {
+      this.reconcileRecoveredBatches(active);
+      void this.wakePolicyGrantPump(active, 'startup_recovery').catch(() => {
+        this.progress(
+          active,
+          'policy-dispatch-lane',
+          undefined,
+          'terminal',
+          'blocked',
+          '策略派发启动恢复暂未完成，已保留持久化状态。',
+        );
+      });
+    }
     return result;
   }
 
   reconcileActiveStore(contextInput: StoreContextEnvelope): void {
-    this.reconcileRecoveredBatches(this.assertContext(contextInput));
+    const context = this.assertContext(contextInput);
+    this.reconcileExecutionMissionLinks(context);
+    this.reconcileRecoveredBatches(context);
   }
 
   assertStoreMutationAllowed(contextInput: StoreContextEnvelope): void {
     const context = this.assertContext(contextInput);
+    if (this.policyDispatchLanes.has(String(context.storeId))) {
+      throw new Error('当前店铺有策略授权正在建立安全执行批次；派发落账或安全等待后才能切换店铺、重连或修改连接。');
+    }
     const active = this.running.get(String(context.storeId));
     if (active) {
       throw new Error(
@@ -353,11 +406,18 @@ export class ExecutionAuthorityService {
 
   async prepareForShutdown(timeoutMs = 60_000): Promise<void> {
     this.stopping = true;
+    for (const storeId of [...this.policyDispatchRetryTimers.keys()]) {
+      this.clearPolicyDispatchRetry(storeId);
+    }
     const running = [...this.running.values()];
+    const dispatching = [...this.policyDispatchLanes.values()].map((lane) => lane.promise);
     running.forEach((item) => { item.cancelRequested = true; });
-    if (running.length === 0) return;
+    if (running.length === 0 && dispatching.length === 0) return;
     await Promise.race([
-      Promise.allSettled(running.map((item) => item.promise)),
+      Promise.allSettled([
+        ...running.map((item) => item.promise),
+        ...dispatching,
+      ]),
       new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
     ]);
     const active = this.storeCoordinator.getActiveStoreContext();
@@ -420,6 +480,11 @@ export class ExecutionAuthorityService {
         const adapter = new KeywordBidAdapter(new PlaywrightLingxingKeywordBidPage(runtime.page), { now: this.now });
         const preflight = await adapter.preflight(command);
         if (preflight.status !== 'READY') {
+          if (grant.issuer.type === 'policy'
+            && preflight.error.code === 'PREFLIGHT_BLOCKED'
+            && isPolicyExecutionBatchSafelyRestartable(this.requireBatch(context, batchId))) {
+            throw new Error('Visible browser preflight is temporarily unavailable before submit intent.');
+          }
           this.repository.markBlocked(context, {
             jobId: job.id,
             expectedRevision: job.revision,
@@ -529,6 +594,12 @@ export class ExecutionAuthorityService {
         if (applyResult.status !== 'SUBMITTED') {
           job = this.requireJob(context, batchId, job.id);
           if (job.status === 'cancelled') return this.requireBatch(context, batchId);
+          if (grant.issuer.type === 'policy'
+            && applyResult.status === 'NOT_SUBMITTED'
+            && !applyResult.submitAttempted
+            && isPolicyExecutionBatchSafelyRestartable(this.requireBatch(context, batchId))) {
+            throw new Error('Final policy permit is temporarily unavailable before submit intent.');
+          }
           if (applyResult.status === 'UNKNOWN' || applyResult.submitAttempted) {
             this.markUnknownAndStop(context, batchId, job, applyResult.error.code, applyResult.error.message);
           } else if (job.status === 'intent_written') {
@@ -672,6 +743,527 @@ export class ExecutionAuthorityService {
       },
       evidencePaths,
     };
+  }
+
+  private policyGrantDispatch(
+    context: StoreContextEnvelope,
+    grantId: string,
+  ): PolicyGrantDispatchRecord {
+    const dispatch = this.repository.listPolicyGrantDispatches(context)
+      .find((candidate) => candidate.grantId === requiredId(grantId, 'grantId'));
+    if (!dispatch) throw new Error('Policy MissionGrant 尚未进入可恢复的派发账本。');
+    return dispatch;
+  }
+
+  private wakePolicyGrantPump(
+    contextInput: StoreContextEnvelope,
+    trigger: PolicyGrantDispatchTrigger,
+  ): Promise<void> {
+    const context = this.assertContext(contextInput);
+    if (this.stopping) return Promise.resolve();
+    const storeKey = String(context.storeId);
+    const active = this.policyDispatchLanes.get(storeKey);
+    if (active) {
+      active.rerunRequested = true;
+      active.trigger = trigger;
+      return active.promise;
+    }
+    this.clearPolicyDispatchRetry(storeKey);
+    const lane: PolicyDispatchLane = {
+      context,
+      trigger,
+      rerunRequested: false,
+      promise: Promise.resolve(),
+    };
+    lane.promise = this.runPolicyGrantPump(lane).finally(() => {
+      if (this.policyDispatchLanes.get(storeKey) === lane) {
+        this.policyDispatchLanes.delete(storeKey);
+      }
+    });
+    this.policyDispatchLanes.set(storeKey, lane);
+    return lane.promise;
+  }
+
+  private async runPolicyGrantPump(lane: PolicyDispatchLane): Promise<void> {
+    do {
+      lane.rerunRequested = false;
+      while (!this.stopping) {
+        const dispatches = this.repository.listPolicyGrantDispatches(lane.context);
+        const candidate = dispatches.find((dispatch) => (
+          dispatch.status === 'pending'
+          || dispatch.status === 'waiting_runtime'
+          || dispatch.status === 'queued_for_execution'
+        ));
+        if (!candidate) break;
+        if (candidate.status === 'waiting_runtime'
+          && lane.trigger === 'timer_retry'
+          && candidate.nextRetryAt
+          && Date.parse(candidate.nextRetryAt) > this.now().getTime()) {
+          this.schedulePolicyDispatchRetry(lane.context, candidate.nextRetryAt);
+          break;
+        }
+        const outcome = await this.runPolicyGrantPumpAttempt(
+          lane.context,
+          candidate,
+          lane.trigger,
+        );
+        if (outcome === 'wait') return;
+      }
+    } while (lane.rerunRequested && !this.stopping);
+  }
+
+  private async runPolicyGrantPumpAttempt(
+    context: StoreContextEnvelope,
+    candidate: PolicyGrantDispatchRecord,
+    trigger: PolicyGrantDispatchTrigger,
+  ): Promise<'continue' | 'wait'> {
+    const grantId = candidate.grantId;
+    let current = candidate;
+    if (!current.eventId) {
+      this.repository.appendPolicyGrantDispatchEvent(context, {
+        grantId,
+        status: 'pending',
+        trigger,
+        attempt: 0,
+        code: 'DISPATCH_PENDING',
+        detail: 'A policy grant is durably pending in the store execution lane.',
+      });
+      current = this.policyGrantDispatch(context, grantId);
+    }
+    const attempt = current.attemptCount + 1;
+    this.repository.appendPolicyGrantDispatchEvent(context, {
+      grantId,
+      status: 'attempting',
+      trigger,
+      attempt,
+      code: 'DISPATCH_ATTEMPT_STARTED',
+      detail: 'The store execution lane started a dispatch attempt.',
+      ...(current.batchId ? { batchId: current.batchId } : {}),
+    });
+    try {
+      this.assertPolicyPumpRunning();
+      const grant = this.requireDispatchablePolicyGrant(context, grantId);
+      this.requireRuntime(context);
+      let batch: AdExecutionBatchProjection;
+      const refreshed = this.policyGrantDispatch(context, grantId);
+      if (refreshed.batchId || refreshed.batchJobCount > 0) {
+        if (!refreshed.batchId) {
+          return this.completeUnsafeExistingDispatch(
+            context,
+            refreshed,
+            trigger,
+            attempt,
+          );
+        }
+        const existing = this.repository.getExecutionBatch(context, refreshed.batchId);
+        if (!existing || !isPolicyExecutionBatchSafelyRestartable(existing)) {
+          return this.completeUnsafeExistingDispatch(
+            context,
+            refreshed,
+            trigger,
+            attempt,
+          );
+        }
+        batch = existing;
+      } else {
+        for (const adEntityId of grant.allowedAdEntityIds) {
+          await this.resolveIdentity({ context, grantId: grant.id, adEntityId });
+        }
+        this.assertPolicyPumpRunning();
+        const created = this.createBatch({ context, grantId });
+        batch = created.projection;
+        if (!isPolicyExecutionBatchSafelyRestartable(batch)) {
+          return this.completeUnsafeExistingDispatch(
+            context,
+            this.policyGrantDispatch(context, grantId),
+            trigger,
+            attempt,
+          );
+        }
+        this.repository.appendPolicyGrantDispatchEvent(context, {
+          grantId,
+          status: 'queued_for_execution',
+          trigger,
+          attempt,
+          code: 'BATCH_QUEUED_FOR_EXECUTION',
+          detail: 'The durable batch is queued for the store execution lane.',
+          batchId: batch.batch.id,
+        });
+      }
+
+      this.ensureAuthorizedExecutionLink(context, batch);
+      this.assertPolicyPumpRunning();
+      this.requireDispatchablePolicyGrant(context, grantId);
+      const beforeStart = this.repository.getExecutionBatch(context, batch.batch.id);
+      if (!beforeStart || !isPolicyExecutionBatchSafelyRestartable(beforeStart)) {
+        return this.completeUnsafeExistingDispatch(
+          context,
+          this.policyGrantDispatch(context, grantId),
+          trigger,
+          attempt,
+        );
+      }
+      this.repository.appendPolicyGrantDispatchEvent(context, {
+        grantId,
+        status: 'queued_for_execution',
+        trigger,
+        attempt,
+        code: 'EXECUTION_START_ACQUIRED',
+        detail: 'The store execution lane acquired the pre-intent batch.',
+        batchId: beforeStart.batch.id,
+      });
+      let projection: AdExecutionBatchProjection;
+      try {
+        projection = await this.startBatch({
+          context,
+          batchId: beforeStart.batch.id,
+        });
+      } catch (error) {
+        const afterError = this.repository.getExecutionBatch(context, beforeStart.batch.id);
+        if (afterError && isPolicyExecutionBatchSafelyRestartable(afterError)) {
+          return this.waitPolicyGrantDispatch(
+            context,
+            grantId,
+            trigger,
+            attempt,
+            beforeStart.batch.id,
+            error,
+          );
+        }
+        return this.completeUnsafeExistingDispatch(
+          context,
+          this.policyGrantDispatch(context, grantId),
+          trigger,
+          attempt,
+        );
+      }
+      if (isPolicyExecutionBatchSafelyRestartable(projection)) {
+        return this.waitPolicyGrantDispatch(
+          context,
+          grantId,
+          trigger,
+          attempt,
+          projection.batch.id,
+          new Error('Execution returned before a durable terminal state.'),
+        );
+      }
+      this.repository.appendPolicyGrantDispatchEvent(context, {
+        grantId,
+        status: 'completed',
+        trigger,
+        attempt,
+        code: isTerminalAdExecutionStatus(projection.batch.status)
+          ? 'EXECUTION_TERMINAL'
+          : 'EXECUTION_STATE_REQUIRES_RECONCILIATION',
+        detail: 'The execution ledger now owns the durable terminal or reconciliation state.',
+        batchId: projection.batch.id,
+      });
+      return 'continue';
+    } catch (error) {
+      const failure = classifyPolicyGrantDispatchFailure(error);
+      const current = this.policyGrantDispatch(context, grantId);
+      if (current.batchId || current.batchJobCount > 0) {
+        if (failure.status === 'attention_required') {
+          this.repository.appendPolicyGrantDispatchEvent(context, {
+            grantId,
+            status: 'attention_required',
+            trigger,
+            attempt,
+            code: failure.code,
+            detail: failure.message,
+            ...(current.batchId ? { batchId: current.batchId } : {}),
+          });
+          return 'continue';
+        }
+        const currentBatch = current.batchId
+          ? this.repository.getExecutionBatch(context, current.batchId)
+          : undefined;
+        if (failure.status === 'waiting_runtime'
+          && currentBatch
+          && isPolicyExecutionBatchSafelyRestartable(currentBatch)) {
+          return this.waitPolicyGrantDispatch(
+            context,
+            grantId,
+            trigger,
+            attempt,
+            current.batchId,
+            error,
+          );
+        }
+        return this.completeUnsafeExistingDispatch(
+          context,
+          current,
+          trigger,
+          attempt,
+        );
+      }
+      if (failure.status === 'waiting_runtime') {
+        return this.waitPolicyGrantDispatch(
+          context,
+          grantId,
+          trigger,
+          attempt,
+          undefined,
+          error,
+        );
+      }
+      this.repository.appendPolicyGrantDispatchEvent(context, {
+        grantId,
+        status: 'attention_required',
+        trigger,
+        attempt,
+        code: failure.code,
+        detail: failure.message,
+      });
+      this.progress(
+        context,
+        grantId,
+        undefined,
+        'terminal',
+        'blocked',
+        `策略授权派发需要人工修复并重新分析授权：${failure.message}`,
+      );
+      return 'continue';
+    }
+  }
+
+  private completeUnsafeExistingDispatch(
+    context: StoreContextEnvelope,
+    dispatch: PolicyGrantDispatchRecord,
+    trigger: PolicyGrantDispatchTrigger,
+    attempt: number,
+  ): 'continue' {
+    if (!dispatch.batchId) {
+      this.repository.appendPolicyGrantDispatchEvent(context, {
+        grantId: dispatch.grantId,
+        status: 'attention_required',
+        trigger,
+        attempt,
+        code: 'UNSAFE_DISPATCH_FAILURE',
+        detail: 'Execution jobs exist without a durable batch lineage.',
+      });
+      return 'continue';
+    }
+    this.repository.appendPolicyGrantDispatchEvent(context, {
+      grantId: dispatch.grantId,
+      status: 'completed',
+      trigger,
+      attempt,
+      code: 'EXECUTION_STATE_REQUIRES_RECONCILIATION',
+      detail: 'Existing execution state is not safe for automatic restart.',
+      batchId: dispatch.batchId,
+    });
+    return 'continue';
+  }
+
+  private ensureAuthorizedExecutionLink(
+    context: StoreContextEnvelope,
+    projection: AdExecutionBatchProjection,
+  ): void {
+    const hasExpectedLink = (): boolean => this.missionRepository.getMissionLineage(
+      context,
+      projection.batch.missionId,
+    ).links.some((link) => (
+      link.linkType === 'execution'
+      && link.targetId === projection.batch.id
+      && link.relation === 'authorized_execution_batch'
+    ));
+    if (hasExpectedLink()) return;
+    try {
+      this.missionRepository.appendMissionLink(context, {
+        id: compactId('link-execution', [projection.batch.id]),
+        missionId: projection.batch.missionId,
+        linkType: 'execution',
+        targetId: projection.batch.id,
+        relation: 'authorized_execution_batch',
+        actorId: EXECUTOR_ACTOR,
+      });
+    } catch (error) {
+      if (!hasExpectedLink()) throw error;
+    }
+  }
+
+  private reconcileExecutionMissionLinks(context: StoreContextEnvelope): void {
+    for (const projection of this.repository.listExecutionBatchesForStoreReconciliation(context)) {
+      try {
+        this.ensureAuthorizedExecutionLink(context, projection);
+      } catch (error) {
+        this.progress(
+          context,
+          projection.batch.id,
+          undefined,
+          'terminal',
+          'blocked',
+          `执行批次 Mission 血缘补全暂未完成：${safeMessage(error)}`,
+        );
+      }
+    }
+  }
+
+  private waitPolicyGrantDispatch(
+    context: StoreContextEnvelope,
+    grantId: string,
+    trigger: PolicyGrantDispatchTrigger,
+    attempt: number,
+    batchId: string | undefined,
+    error: unknown,
+  ): 'wait' {
+    const nextRetryAt = new Date(this.now().getTime() + this.policyDispatchRetryMs).toISOString();
+    this.repository.appendPolicyGrantDispatchEvent(context, {
+      grantId,
+      status: 'waiting_runtime',
+      trigger,
+      attempt,
+      code: batchId ? 'EXECUTION_RETRY_SCHEDULED' : 'RUNTIME_UNAVAILABLE',
+      detail: safeMessage(error),
+      ...(batchId ? { batchId } : {}),
+      ...(!this.stopping ? { nextRetryAt } : {}),
+    });
+    this.progress(
+      context,
+      grantId,
+      undefined,
+      'terminal',
+      'blocked',
+      `策略授权已安全保留，等待受控恢复：${safeMessage(error)}`,
+    );
+    if (!this.stopping) this.schedulePolicyDispatchRetry(context, nextRetryAt);
+    return 'wait';
+  }
+
+  private schedulePolicyDispatchRetry(
+    context: StoreContextEnvelope,
+    nextRetryAt: string,
+  ): void {
+    if (this.stopping) return;
+    const storeKey = String(context.storeId);
+    const existing = this.policyDispatchRetryTimers.get(storeKey);
+    if (existing && Date.parse(existing.nextRetryAt) <= Date.parse(nextRetryAt)) return;
+    this.clearPolicyDispatchRetry(storeKey);
+    const delayMs = Math.max(1, Date.parse(nextRetryAt) - this.now().getTime());
+    const handle = this.policyDispatchTimer.set(() => {
+      const scheduled = this.policyDispatchRetryTimers.get(storeKey);
+      if (!scheduled || scheduled.handle !== handle) return;
+      this.policyDispatchRetryTimers.delete(storeKey);
+      if (this.stopping) return;
+      const active = this.storeCoordinator.getActiveStoreContext();
+      if (!active || String(active.storeId) !== storeKey) return;
+      void this.wakePolicyGrantPump(active, 'timer_retry').catch(() => {
+        this.progress(
+          active,
+          'policy-dispatch-lane',
+          undefined,
+          'terminal',
+          'blocked',
+          '策略派发定时恢复暂未完成，持久化状态保持不变。',
+        );
+      });
+    }, delayMs);
+    if (handle && typeof handle === 'object' && 'unref' in handle
+      && typeof (handle as { unref?: unknown }).unref === 'function') {
+      (handle as { unref(): void }).unref();
+    }
+    this.policyDispatchRetryTimers.set(storeKey, { context, nextRetryAt, handle });
+  }
+
+  private clearPolicyDispatchRetry(storeKey: string): void {
+    const scheduled = this.policyDispatchRetryTimers.get(storeKey);
+    if (!scheduled) return;
+    this.policyDispatchRetryTimers.delete(storeKey);
+    this.policyDispatchTimer.clear(scheduled.handle);
+  }
+
+  private assertPolicyPumpRunning(): void {
+    if (this.stopping) {
+      throw new PolicyGrantDispatchFailure(
+        'waiting_runtime',
+        'RUNTIME_UNAVAILABLE',
+        'Application shutdown is in progress.',
+      );
+    }
+  }
+
+  private requireDispatchablePolicyGrant(
+    context: StoreContextEnvelope,
+    grantIdInput: string,
+  ): MissionGrantRecord {
+    const grantId = requiredId(grantIdInput, 'grantId');
+    const grant = this.missionRepository.getMissionGrant(context, grantId);
+    if (!grant || grant.issuer.type !== 'policy') {
+      throw new PolicyGrantDispatchFailure(
+        'attention_required',
+        'UNSAFE_DISPATCH_FAILURE',
+        'The policy grant is missing or no longer has policy issuer authority.',
+      );
+    }
+    if (grant.createdSessionGeneration !== context.sessionGeneration) {
+      throw new PolicyGrantDispatchFailure(
+        'attention_required',
+        'SESSION_REAUTHORIZATION_REQUIRED',
+        'The grant belongs to an earlier store session and cannot be rebound automatically.',
+      );
+    }
+    if (Date.parse(grant.expiresAt) <= this.now().getTime()) {
+      throw new PolicyGrantDispatchFailure(
+        'attention_required',
+        'GRANT_EXPIRED',
+        'The policy grant expired before a durable execution batch was created.',
+      );
+    }
+    if (this.missionRepository.getMissionGrantTerminalEvent(context, grant.id)) {
+      throw new PolicyGrantDispatchFailure(
+        'attention_required',
+        'GRANT_TERMINAL',
+        'The policy grant is terminal and cannot be dispatched again.',
+      );
+    }
+    const mission = this.missionRepository.getMission(context, grant.missionId);
+    if (!mission || mission.status !== 'active'
+      || mission.revision !== grant.missionRevision
+      || mission.policyVersionId !== grant.policyVersionId) {
+      throw new PolicyGrantDispatchFailure(
+        'attention_required',
+        'MISSION_REVISION_CHANGED',
+        'The Mission authority changed; rerun analysis before issuing a fresh grant.',
+      );
+    }
+    const policy = this.missionRepository.getPolicyVersion(context, grant.policyVersionId);
+    if (!policy || policy.status !== 'enabled' || policy.revision !== grant.policyRevision) {
+      throw new PolicyGrantDispatchFailure(
+        'attention_required',
+        'POLICY_AUTHORITY_CHANGED',
+        'The enabled policy revision changed; rerun policy evaluation before execution.',
+      );
+    }
+    try {
+      assertExecutionWindowOpen(policy.rules, context, this.now());
+    } catch (error) {
+      const message = safeMessage(error);
+      if (message.includes('当前不在策略允许的执行窗口内')) {
+        throw new PolicyGrantDispatchFailure(
+          'waiting_runtime',
+          'RUNTIME_UNAVAILABLE',
+          'The policy execution window is currently closed.',
+        );
+      }
+      throw new PolicyGrantDispatchFailure(
+        'attention_required',
+        'POLICY_AUTHORITY_CHANGED',
+        message,
+      );
+    }
+    const runtime = this.missionRepository.getPolicyRuntime(context);
+    if (runtime.killSwitch
+      || runtime.circuitBreakerState !== 'closed'
+      || runtime.activePolicyVersionId !== grant.policyVersionId
+      || runtime.autonomyMode !== 'policy_auto') {
+      throw new PolicyGrantDispatchFailure(
+        'waiting_runtime',
+        'RUNTIME_UNAVAILABLE',
+        'Policy-auto runtime, kill switch, circuit breaker, or active policy is not ready.',
+      );
+    }
+    return grant;
   }
 
   private requireRuntime(context: StoreContextEnvelope): ExecutionBrowserRuntime {
@@ -1040,12 +1632,82 @@ function wallClockMinutes(value: string): number {
   return (hour * 60) + minute;
 }
 
+class PolicyGrantDispatchFailure extends Error {
+  constructor(
+    readonly status: 'waiting_runtime' | 'attention_required',
+    readonly code: PolicyGrantDispatchCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'PolicyGrantDispatchFailure';
+  }
+}
+
+function classifyPolicyGrantDispatchFailure(error: unknown): PolicyGrantDispatchFailure {
+  if (error instanceof PolicyGrantDispatchFailure) return error;
+  if (error instanceof ExecutionAuthorityRepositoryError) {
+    if (error.code === 'INVALID_CONTEXT' || error.code === 'STORE_NOT_ACTIVE') {
+      return new PolicyGrantDispatchFailure(
+        'waiting_runtime',
+        'RUNTIME_UNAVAILABLE',
+        'The current Amazon Ads connection or visible session is not ready.',
+      );
+    }
+    if (error.code === 'STALE_CONTEXT') {
+      return new PolicyGrantDispatchFailure(
+        'attention_required',
+        'SESSION_REAUTHORIZATION_REQUIRED',
+        'The store session changed; the prior grant cannot be rebound automatically.',
+      );
+    }
+    if (error.code === 'REFERENCE_CONFLICT' || error.code === 'REVISION_CONFLICT') {
+      return new PolicyGrantDispatchFailure(
+        'attention_required',
+        'ADS_IDENTITY_AUTHORITY_CHANGED',
+        'The durable Ads object identity or revision changed and requires a fresh analysis.',
+      );
+    }
+  }
+  const message = safeMessage(error);
+  if (/(不属于|不一致|已变化|漂移|重绑|stale|mismatch|drift|cross-session|cross-store|stage 5)/i.test(message)) {
+    return new PolicyGrantDispatchFailure(
+      'attention_required',
+      'ADS_IDENTITY_AUTHORITY_CHANGED',
+      message,
+    );
+  }
+  if (/(浏览器|会话|登录|连接|正在运行|租约|browser|session|login|connection|not ready|unavailable|disconnected|another external write|lease)/i.test(message)) {
+    return new PolicyGrantDispatchFailure(
+      'waiting_runtime',
+      'RUNTIME_UNAVAILABLE',
+      message,
+    );
+  }
+  return new PolicyGrantDispatchFailure(
+    'attention_required',
+    'UNSAFE_DISPATCH_FAILURE',
+    message,
+  );
+}
+
+function normalizePolicyDispatchRetryMs(value: number | undefined): number {
+  if (value === undefined) return 60_000;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 24 * 60 * 60 * 1000) {
+    throw new TypeError('policyDispatchRetryMs must be an integer between 1ms and 24h.');
+  }
+  return value;
+}
+
 function safeReason(value: unknown): string {
   const normalized = String(value ?? '')
     .replace(/\b[A-Za-z]:[\\/][^\s"'<>]*/g, '[local-path]')
     .replace(/\\\\[^\\/\s"'<>]+[\\/][^\s"'<>]*/g, '[local-path]')
     .replace(/\bfile:(?:\/{2,}|\\{2,})[^\s"'<>]*/gi, '[local-path]')
     .replace(/\bhttps?:\/\/[^\s"'<>?#]+[^\s"'<>]*[?#][^\s"'<>]*/gi, '[url-redacted]')
+    .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+    .replace(/\b(cookie|authorization|password|passwd|token|secret)\s*[=:]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/\b(account|profile|external_account_id|profile_id)\s*[=:]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email-redacted]')
     .trim()
     .replace(/[\u0000-\u001f\u007f]/g, ' ');
   return (normalized || 'execution stopped by authority').slice(0, 500);

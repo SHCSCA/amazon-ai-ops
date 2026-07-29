@@ -674,10 +674,10 @@ function packageUiEvidenceIsStrictlyValid({
         wideWorkspaceKeys.has(`${item?.workspace}/${item?.subview}`)
         && /^[A-F0-9]{64}$/.test(String(item?.sha256 || ''))
       ));
-    const currentPackageUiCompleteness = packageUi.schemaVersion === 7
+    const currentPackageUiCompleteness = packageUi.schemaVersion === 8
       ? evaluatePackageUiEvidenceCompleteness(packageUi)
       : null;
-    const packageUiSchemaContractValid = packageUi.schemaVersion === 7
+    const packageUiSchemaContractValid = packageUi.schemaVersion === 8
       && currentPackageUiCompleteness?.passed === true
       && Array.isArray(currentPackageUiCompleteness.violations)
       && currentPackageUiCompleteness.violations.length === 0;
@@ -732,7 +732,7 @@ function packageUiEvidenceIsStrictlyValid({
     const bundled = manifest.uiEvidence?.packageUiManifest?.present === true
       && samePath(manifest.uiEvidence?.packageUiManifest?.sourcePath, filePath)
       && bundleSourceFileMatches(manifest, bundleManifestPath, filePath);
-    const referencedArtifactsBundled = packageUi.schemaVersion === 7
+    const referencedArtifactsBundled = packageUi.schemaVersion === 8
       && packageUiReferencedArtifactsAreBundled(packageUi, manifest, bundleManifestPath);
     return packageUi.kind === 'package-ui-evidence'
       && packageUiSchemaContractValid

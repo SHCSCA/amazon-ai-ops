@@ -3,6 +3,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { performance } = require('node:perf_hooks');
 const { fileURLToPath } = require('node:url');
 const { _electron } = require('./playwright-loader');
 const {
@@ -15,6 +16,7 @@ const {
   EVIDENCE_MODE_ENV,
   EVIDENCE_USER_DATA_DIR_ENV,
   PACKAGE_UI_EVIDENCE_MODE,
+  PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV,
   buildEvidenceUserDataEnv,
   inspectPackagedUserDataOverrideContract,
   validateEvidenceUserDataIdentity,
@@ -42,7 +44,7 @@ const DEFAULT_APP_CONTENT_PATH = path.join(
 );
 const EXPECTED_RENDERER_ENTRY_PATH = path.join(DEFAULT_APP_CONTENT_PATH, 'dist', 'renderer', 'index.html');
 const DEFAULT_OUTPUT_DIR = 'output/codex-evidence/package-ui-evidence';
-const PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 7;
+const PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 8;
 const PACKAGE_UI_RUN_GROUP_SCHEMA_VERSION = 'package-ui-run-group/v1';
 const PACKAGE_UI_PROFILE_CHECKPOINT_SCHEMA_VERSION = 'package-ui-profile-checkpoint/v1';
 const PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION = 'package-ui-profile-attempt/v2';
@@ -229,10 +231,16 @@ const INTERACTIVE_LOGIN_CONTRACT = Object.freeze({
     'ok',
     'sessionIdentityVerified',
   ]),
+  authorizationStartSignal: 'visible-login-submit-aria-busy-or-authenticated-workspace',
   boundedTimeout: true,
   credentialStorageOwner: 'electron-main-safe-storage',
+  deadlineClock: 'monotonic-performance-now',
+  durationEvidence: 'monotonic-elapsed-ms',
   firstRunFreshTypedIdentityProof: true,
+  maximumTotalTimeoutMultiplier: 2,
   mode: 'visible-operator-each-run',
+  phaseModel: 'operator-preparation-then-browser-authorization',
+  phaseTimeoutAppliedSeparately: true,
   runnerClicksLogin: false,
   runnerReadsSecrets: false,
   runnerTypesSecrets: false,
@@ -380,7 +388,7 @@ function parsePackageUiEvidenceArgs(argv) {
   if (!values.userDataDir) fail('--user-data-dir is required and must point to an isolated D-drive profile copy.');
   if (!values.protectedDatabasePath) fail('--protected-db is required so the real AppData SQLite file is hashed before and after evidence capture.');
   if (!values.allowInteractiveLogin) {
-    fail('Package UI schema v7 requires --allow-interactive-login; saved-login or existing-session-only capture is historical and unsupported.');
+    fail('Package UI schema v8 requires --allow-interactive-login; saved-login or existing-session-only capture is historical and unsupported.');
   }
   values.executablePath = path.resolve(values.executablePath);
   values.appContentPath = path.resolve(values.appContentPath);
@@ -390,7 +398,7 @@ function parsePackageUiEvidenceArgs(argv) {
 function assertPackageUiRuntimeLoginBoundary(options) {
   if (options?.allowInteractiveLogin !== true || options?.allowSavedLogin === true) {
     fail(
-      'Package UI schema v7 runtime requires the visible secret-blind interactive login boundary; saved-login automation is forbidden.',
+      'Package UI schema v8 runtime requires the visible secret-blind interactive login boundary; saved-login automation is forbidden.',
     );
   }
   return true;
@@ -1094,6 +1102,45 @@ function validRunDiagnostics(diagnostics, run = {}) {
   const operatorHandoff = login?.operatorHandoff;
   const operatorHandoffStartedAt = Date.parse(operatorHandoff?.startedAt);
   const operatorHandoffCompletedAt = Date.parse(operatorHandoff?.completedAt);
+  const operatorHandoffPhaseTransitions = Array.isArray(operatorHandoff?.phaseTransitions)
+    ? operatorHandoff.phaseTransitions
+    : [];
+  const operatorPreparationStartedAt = Date.parse(
+    operatorHandoffPhaseTransitions[0]?.startedAt,
+  );
+  const browserAuthorizationStartedAt = Date.parse(
+    operatorHandoffPhaseTransitions[1]?.startedAt,
+  );
+  const operatorPreparationElapsedMs = Number(
+    operatorHandoffPhaseTransitions[0]?.elapsedMs,
+  );
+  const browserAuthorizationElapsedMs = Number(
+    operatorHandoffPhaseTransitions[1]?.elapsedMs,
+  );
+  const operatorHandoffElapsedMs = Number(operatorHandoff?.elapsedMs);
+  const operatorHandoffPhasesValid = Number.isInteger(operatorHandoff?.phaseTimeoutMs)
+    && operatorHandoff.phaseTimeoutMs >= 60_000
+    && operatorHandoff.phaseTimeoutMs <= 900_000
+    && operatorHandoff?.maximumTotalTimeoutMs === operatorHandoff.phaseTimeoutMs * 2
+    && operatorHandoff?.finalPhase === 'authorization'
+    && operatorHandoffPhaseTransitions.length === 2
+    && operatorHandoffPhaseTransitions[0]?.phase === 'preparation'
+    && operatorHandoffPhaseTransitions[1]?.phase === 'authorization'
+    && operatorHandoff?.durationClock === 'performance.now'
+    && typeof operatorHandoffPhaseTransitions[0]?.elapsedMs === 'number'
+    && typeof operatorHandoffPhaseTransitions[1]?.elapsedMs === 'number'
+    && typeof operatorHandoff?.elapsedMs === 'number'
+    && operatorPreparationElapsedMs === 0
+    && Number.isFinite(browserAuthorizationElapsedMs)
+    && browserAuthorizationElapsedMs >= 0
+    && browserAuthorizationElapsedMs <= operatorHandoff.phaseTimeoutMs
+    && Number.isFinite(operatorHandoffElapsedMs)
+    && operatorHandoffElapsedMs >= browserAuthorizationElapsedMs
+    && operatorHandoffElapsedMs - browserAuthorizationElapsedMs
+      <= operatorHandoff.phaseTimeoutMs
+    && operatorHandoffElapsedMs <= operatorHandoff.maximumTotalTimeoutMs
+    && Number.isFinite(operatorPreparationStartedAt)
+    && Number.isFinite(browserAuthorizationStartedAt);
   const operatorHandoffValid = session?.mode === 'interactive-operator-login'
     ? (
       operatorHandoff?.kind === 'visible-user-handoff'
@@ -1102,9 +1149,7 @@ function validRunDiagnostics(diagnostics, run = {}) {
       && operatorHandoff?.automationTypedSecrets === false
       && Number.isFinite(operatorHandoffStartedAt)
       && Number.isFinite(operatorHandoffCompletedAt)
-      && operatorHandoffStartedAt >= loginStartedAt
-      && operatorHandoffCompletedAt >= operatorHandoffStartedAt
-      && operatorHandoffCompletedAt <= loginCompletedAt
+      && operatorHandoffPhasesValid
       && canonicalJson(operatorHandoff) === canonicalJson(session?.operatorHandoff)
     )
     : operatorHandoff == null && session?.operatorHandoff == null;
@@ -2955,27 +3000,27 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   const legacyV5 = schemaVersion === LEGACY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
   const legacySchedulerReadOnlyV6 =
     schemaVersion === LEGACY_SCHEDULER_READ_ONLY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
-  const interactiveLoginV7 = schemaVersion === PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
-  const schedulerReadOnlyContract = legacySchedulerReadOnlyV6 || interactiveLoginV7;
+  const interactiveLoginV8 = schemaVersion === PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
+  const schedulerReadOnlyContract = legacySchedulerReadOnlyV6 || interactiveLoginV8;
   if (!legacyV5 && !schedulerReadOnlyContract) {
     violations.push(violation(
       'PACKAGE_UI_SCHEMA_UNSUPPORTED',
-      'Package UI evidence must use historical schema v5/v6 or current interactive-login schema v7.',
+      'Package UI evidence must use historical schema v5/v6 or current two-phase interactive-login schema v8; schema v7 is superseded.',
       { schemaVersion },
     ));
   }
   if (
-    interactiveLoginV7
+    interactiveLoginV8
     && canonicalJson(input.interactiveLoginContract) !== canonicalJson(INTERACTIVE_LOGIN_CONTRACT)
   ) {
     violations.push(violation(
       'INTERACTIVE_LOGIN_CONTRACT_MISSING_OR_CHANGED',
-      'Schema v7 must declare the exact visible, bounded, secret-blind operator login contract.',
+      'Schema v8 must declare the exact two-phase, bounded, secret-blind operator login contract.',
       input.interactiveLoginContract ?? null,
     ));
   }
   if (
-    interactiveLoginV7
+    interactiveLoginV8
     && (
       input.requested?.allowInteractiveLogin !== true
       || input.requested?.allowSavedLogin !== false
@@ -2988,14 +3033,18 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       || !Number.isInteger(input.requested?.interactiveLoginTimeoutMs)
       || input.requested.interactiveLoginTimeoutMs < 60_000
       || input.requested.interactiveLoginTimeoutMs > 900_000
+      || input.requested?.interactiveLoginMaximumTotalMs
+        !== input.requested.interactiveLoginTimeoutMs * 2
     )
   ) {
     violations.push(violation(
       'INTERACTIVE_LOGIN_REQUEST_CONTRACT_MISMATCH',
-      'Schema v7 must request a bounded visible operator handoff for every run and must not enable saved-login automation.',
+      'Schema v8 must request a two-phase bounded visible operator handoff for every run and must not enable saved-login automation.',
       {
         allowInteractiveLogin: input.requested?.allowInteractiveLogin ?? null,
         allowSavedLogin: input.requested?.allowSavedLogin ?? null,
+        interactiveLoginMaximumTotalMs:
+          input.requested?.interactiveLoginMaximumTotalMs ?? null,
         interactiveLoginTimeoutMs: input.requested?.interactiveLoginTimeoutMs ?? null,
         loginMode: input.requested?.loginMode ?? null,
         resumeRunGroupId: input.requested?.resumeRunGroupId ?? null,
@@ -3003,11 +3052,11 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       },
     ));
   }
-  const currentRunnerContract = interactiveLoginV7
+  const currentRunnerContract = interactiveLoginV8
     ? buildPackageUiRunnerContract()
     : null;
   if (
-    interactiveLoginV7
+    interactiveLoginV8
     && (
       canonicalJson(input.runGroup?.profileSequence)
         !== canonicalJson(PACKAGE_UI_PROFILE_SEQUENCE)
@@ -3018,7 +3067,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'RUNNER_CONTRACT_LINEAGE_MISSING_OR_CHANGED',
-      'Schema v7 must bind the immutable run group and composed checkpoints to the current evidence script and semantic contract.',
+      'Schema v8 must bind the immutable run group and composed checkpoints to the current evidence script and semantic contract.',
       {
         checkpointRunnerContractSha256:
           input.checkpointComposition?.runnerContractSha256 ?? null,
@@ -3046,7 +3095,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     ));
   }
   if (
-    interactiveLoginV7
+    interactiveLoginV8
     && (
       input.protectedDatabaseLogical?.passed !== true
       || !logicalSqliteArtifactMatches(
@@ -3057,12 +3106,12 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'PROTECTED_DATABASE_LOGICAL_STATE_CHANGED',
-      'Schema v7 must prove the protected authority DB is unchanged through WAL-aware read-only online backups.',
+      'Schema v8 must prove the protected authority DB is unchanged through WAL-aware read-only online backups.',
       input.protectedDatabaseLogical ?? null,
     ));
   }
   if (
-    interactiveLoginV7
+    interactiveLoginV8
     && (
       input.checkpointComposition?.passed !== true
       || input.checkpointComposition?.checkpointRecords?.length
@@ -3081,12 +3130,12 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'PROFILE_CHECKPOINT_COMPOSITION_MISSING_OR_FAILED',
-      'Schema v7 must compose immutable ordered 100/125/wide checkpoints from one run-group/package/profile lineage.',
+      'Schema v8 must compose immutable ordered 100/125/wide checkpoints from one run-group/package/profile lineage.',
       input.checkpointComposition ?? null,
     ));
   }
   if (
-    interactiveLoginV7
+    interactiveLoginV8
     && (
       input.profileLineage?.passed !== true
       || !profileLineageStateMatches(
@@ -3097,14 +3146,14 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'TERMINAL_PROFILE_LINEAGE_MISSING_OR_FAILED',
-      'Schema v7 must bind the terminal isolated-profile content/logical DB hash to the composed checkpoints.',
+      'Schema v8 must bind the terminal isolated-profile content/logical DB hash to the composed checkpoints.',
       input.profileLineage ?? null,
     ));
   }
   if (schedulerReadOnlyContract && input.profileDatabaseFileIsolation?.passed !== true) {
     violations.push(violation(
       'PROFILE_DATABASE_FILE_ISOLATION_FAILED',
-      'Schema v6/v7 evidence must prove that the isolated profile database is not a hardlink alias of --protected-db.',
+      'Schema v6/v8 evidence must prove that the isolated profile database is not a hardlink alias of --protected-db.',
       input.profileDatabaseFileIsolation,
     ));
   }
@@ -3115,7 +3164,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   ) {
     violations.push(violation(
       'ISOLATED_PROFILE_BOOTSTRAP_CONTRACT_MISSING_OR_CHANGED',
-      'Schema v6/v7 must declare the exact isolated-profile-only visible bootstrap contract with no business readiness credit.',
+      'Schema v6/v8 must declare the exact isolated-profile-only visible bootstrap contract with no business readiness credit.',
       input.isolatedProfileBootstrapContract ?? null,
     ));
   }
@@ -3149,21 +3198,40 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       violations.push(violation('SCALE_RUN_MISSING', `Missing ${scale.scalePercent}% packaged UI run.`));
       continue;
     }
-    if (interactiveLoginV7 && run.session?.mode !== 'interactive-operator-login') {
+    if (interactiveLoginV8 && run.session?.mode !== 'interactive-operator-login') {
       violations.push(violation(
         'SCALE_INTERACTIVE_LOGIN_HANDOFF_MISSING',
-        `The ${scale.scalePercent}% schema v7 run must be reached through its own visible operator handoff.`,
+        `The ${scale.scalePercent}% schema v8 run must be reached through its own visible operator handoff.`,
         { mode: run.session?.mode ?? null },
       ));
     }
     if (
-      interactiveLoginV7
+      interactiveLoginV8
+      && (
+        run.session?.operatorHandoff?.phaseTimeoutMs
+          !== input.requested?.interactiveLoginTimeoutMs
+        || run.session?.operatorHandoff?.maximumTotalTimeoutMs
+          !== input.requested?.interactiveLoginMaximumTotalMs
+      )
+    ) {
+      violations.push(violation(
+        'SCALE_INTERACTIVE_LOGIN_PHASE_BOUND_MISMATCH',
+        `The ${scale.scalePercent}% visible handoff phase bounds must match the requested immutable evidence contract.`,
+        {
+          maximumTotalTimeoutMs:
+            run.session?.operatorHandoff?.maximumTotalTimeoutMs ?? null,
+          phaseTimeoutMs: run.session?.operatorHandoff?.phaseTimeoutMs ?? null,
+        },
+      ));
+    }
+    if (
+      interactiveLoginV8
       && scale.scalePercent === EXPECTED_PACKAGE_UI_SCALES[0].scalePercent
       && !firstInteractiveLoginAttestationPassed(run.session?.loginSessionAttestation)
     ) {
       violations.push(violation(
         'INTERACTIVE_LOGIN_FIRST_RUN_TYPED_PROOF_MISSING',
-        'The first schema v7 run must establish a fresh typed-and-saved, non-reused, identity-verified ERP session before any saved-session continuation.',
+        'The first schema v8 run must establish a fresh typed-and-saved, non-reused, identity-verified ERP session before any saved-session continuation.',
         run.session?.loginSessionAttestation ?? null,
       ));
     }
@@ -3189,7 +3257,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     if (!processIsolationEvidencePassed(run.profileProcessIsolation)) {
       violations.push(violation('SCALE_PROFILE_PROCESS_ISOLATION_FAILED', `The ${scale.scalePercent}% profile browser isolation evidence is missing or failed.`, run.profileProcessIsolation));
     }
-    if (interactiveLoginV7 && !chromiumLineageEvidencePassed(run.chromiumProcessLineage)) {
+    if (interactiveLoginV8 && !chromiumLineageEvidencePassed(run.chromiumProcessLineage)) {
       violations.push(violation(
         'SCALE_CHROMIUM_LINEAGE_MISSING_OR_FAILED',
         `${scale.scalePercent}% did not bind the packaged Chromium hash, root/descendant PIDs, profile binding, and terminal cleanup.`,
@@ -3197,7 +3265,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       ));
     }
     if (
-      interactiveLoginV7
+      interactiveLoginV8
       && !packageUiAttemptArtifactManifestMatches(run.attemptArtifacts)
     ) {
       violations.push(violation(
@@ -3283,7 +3351,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       }
     }
     // Schema v5 is intentionally interpreted with its historical ten-workspace
-    // contract. Schemas v6/v7 prove the scheduler subview, Main read-only guard,
+    // contract. Schemas v6/v8 prove the scheduler subview, Main read-only guard,
     // and current screenshot bytes; v5 must never be silently upgraded in place.
     for (const expectedSubview of schedulerReadOnlyContract ? EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS : []) {
       const check = (run.subviewChecks || []).find((candidate) => (
@@ -3355,13 +3423,32 @@ function evaluatePackageUiEvidenceCompleteness(input) {
   if (!wideRun || wideRun.profileId !== PACKAGE_UI_WIDE_PROFILE.id) {
     violations.push(violation('WIDE_PROFILE_MISSING', 'Missing the fixed 1400x900@100 Product/Diagnosis package profile.', wideRun));
   } else {
-    if (interactiveLoginV7 && wideRun.session?.mode !== 'interactive-operator-login') {
-      violations.push(violation(
-        'WIDE_INTERACTIVE_LOGIN_HANDOFF_MISSING',
-        'The wide schema v7 run must be reached through its own visible operator handoff.',
-        { mode: wideRun.session?.mode ?? null },
-      ));
-    }
+  if (interactiveLoginV8 && wideRun.session?.mode !== 'interactive-operator-login') {
+    violations.push(violation(
+      'WIDE_INTERACTIVE_LOGIN_HANDOFF_MISSING',
+      'The wide schema v8 run must be reached through its own visible operator handoff.',
+      { mode: wideRun.session?.mode ?? null },
+    ));
+  }
+  if (
+    interactiveLoginV8
+    && (
+      wideRun.session?.operatorHandoff?.phaseTimeoutMs
+        !== input.requested?.interactiveLoginTimeoutMs
+      || wideRun.session?.operatorHandoff?.maximumTotalTimeoutMs
+        !== input.requested?.interactiveLoginMaximumTotalMs
+    )
+  ) {
+    violations.push(violation(
+      'WIDE_INTERACTIVE_LOGIN_PHASE_BOUND_MISMATCH',
+      'The wide-profile visible handoff phase bounds must match the requested immutable evidence contract.',
+      {
+        maximumTotalTimeoutMs:
+          wideRun.session?.operatorHandoff?.maximumTotalTimeoutMs ?? null,
+        phaseTimeoutMs: wideRun.session?.operatorHandoff?.phaseTimeoutMs ?? null,
+      },
+    ));
+  }
     const wideViewportContract = evaluatePackageViewportContract({
       actual: wideRun.viewport,
       actualDeviceScaleFactor: wideRun.actualDeviceScaleFactor,
@@ -3380,7 +3467,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     if (!processIsolationEvidencePassed(wideRun.profileProcessIsolation)) {
       violations.push(violation('WIDE_PROFILE_PROCESS_ISOLATION_FAILED', 'The wide profile browser isolation evidence is missing or failed.', wideRun.profileProcessIsolation));
     }
-    if (interactiveLoginV7 && !chromiumLineageEvidencePassed(wideRun.chromiumProcessLineage)) {
+    if (interactiveLoginV8 && !chromiumLineageEvidencePassed(wideRun.chromiumProcessLineage)) {
       violations.push(violation(
         'WIDE_CHROMIUM_LINEAGE_MISSING_OR_FAILED',
         'The wide profile did not bind the packaged Chromium hash, root/descendant PIDs, profile binding, and terminal cleanup.',
@@ -3388,7 +3475,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       ));
     }
     if (
-      interactiveLoginV7
+      interactiveLoginV8
       && !packageUiAttemptArtifactManifestMatches(wideRun.attemptArtifacts)
     ) {
       violations.push(violation(
@@ -3442,7 +3529,7 @@ function evaluatePackageUiEvidenceCompleteness(input) {
         pageErrors: wideRun.pageErrors,
       }));
     }
-    for (const workspace of interactiveLoginV7 ? PACKAGE_UI_WIDE_PROFILE.workspaces : []) {
+    for (const workspace of interactiveLoginV8 ? PACKAGE_UI_WIDE_PROFILE.workspaces : []) {
       const check = (wideRun.workspaceChecks || []).find((candidate) => (
         candidate.workspace === workspace.workspace
         && candidate.subview === workspace.subview
@@ -5191,28 +5278,110 @@ function throwInteractiveOperatorWindowError(page, error) {
   throw classified;
 }
 
+async function runBoundedHandoffProbe(probe, deadlineMs, monotonicNow) {
+  const remainingMs = deadlineMs - monotonicNow();
+  if (remainingMs <= 0) return { timedOut: true, value: null };
+  let timeoutId;
+  try {
+    return await Promise.race([
+      Promise.resolve()
+        .then(probe)
+        .then((value) => ({ timedOut: false, value })),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(
+          () => resolve({ timedOut: true, value: null }),
+          remainingMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 async function waitForInteractiveAuthenticatedWorkspace(page, timeoutMs, progress = {}) {
-  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+  const wallNow = typeof progress.now === 'function' ? progress.now : Date.now;
+  const monotonicNow = typeof progress.monotonicNow === 'function'
+    ? progress.monotonicNow
+    : () => performance.now();
+  const phaseTimeoutMs = Math.max(0, Number(timeoutMs) || 0);
+  const handoffStartedAt = wallNow();
+  const handoffStartedTick = monotonicNow();
+  const hardDeadline = handoffStartedTick + (phaseTimeoutMs * 2);
+  let phase = 'preparation';
+  let phaseDeadline = handoffStartedTick + phaseTimeoutMs;
   let nextProgressAt = 0;
-  do {
-    const now = Date.now();
-    if (typeof progress.onProgress === 'function' && now >= nextProgressAt) {
-      progress.onProgress({
-        remainingMs: Math.max(0, deadline - now),
+
+  const transitionTo = (nextPhase, startedTick = monotonicNow()) => {
+    if (phase === nextPhase) return;
+    phase = nextPhase;
+    phaseDeadline = Math.min(hardDeadline, startedTick + phaseTimeoutMs);
+    nextProgressAt = 0;
+    if (typeof progress.onPhaseChange === 'function') {
+      progress.onPhaseChange({
+        elapsedMs: Math.max(0, startedTick - handoffStartedTick),
+        phase,
+        startedAt: new Date(wallNow()).toISOString(),
+        timeoutMs: phaseTimeoutMs,
       });
-      nextProgressAt = now + 15_000;
     }
+  };
+
+  if (typeof progress.onPhaseChange === 'function') {
+    progress.onPhaseChange({
+      elapsedMs: 0,
+      phase,
+      startedAt: new Date(handoffStartedAt).toISOString(),
+      timeoutMs: phaseTimeoutMs,
+    });
+  }
+
+  do {
+    let observedAt = monotonicNow();
     try {
-      const workspaceVisible = await page.locator('nav[aria-label="主业务导航"]').isVisible();
-      const loginVisible = await page.locator('[data-login-connection-status]').isVisible();
+      const surfaceProbe = await runBoundedHandoffProbe(
+        () => Promise.all([
+          page.locator('nav[aria-label="主业务导航"]').isVisible(),
+          page.locator('[data-login-connection-status]').isVisible(),
+        ]),
+        phaseDeadline,
+        monotonicNow,
+      );
+      if (surfaceProbe.timedOut) return null;
+      const [workspaceVisible, loginVisible] = surfaceProbe.value;
       if (workspaceVisible && !loginVisible) {
-        const loginSessionAttestation = await collectLoginSessionAttestation(page);
+        if (phase === 'preparation') transitionTo('authorization');
+        const attestationProbe = await runBoundedHandoffProbe(
+          () => collectLoginSessionAttestation(page),
+          phaseDeadline,
+          monotonicNow,
+        );
+        if (attestationProbe.timedOut) return null;
+        const loginSessionAttestation = attestationProbe.value;
+        const attestedAt = monotonicNow();
         if (validateLoginSessionAttestation(
           loginSessionAttestation,
           'interactive-operator-login',
-        ).passed) {
+        ).passed && attestedAt <= phaseDeadline && attestedAt <= hardDeadline) {
+          if (typeof progress.onCompleted === 'function') {
+            progress.onCompleted({
+              completedAt: new Date(wallNow()).toISOString(),
+              elapsedMs: Math.max(0, attestedAt - handoffStartedTick),
+              phase,
+            });
+          }
           return loginSessionAttestation;
         }
+      }
+      if (phase === 'preparation') {
+        const submitProbe = await runBoundedHandoffProbe(
+          () => page.locator('.login-submit-button[aria-busy="true"]').isVisible(),
+          phaseDeadline,
+          monotonicNow,
+        );
+        if (submitProbe.timedOut) return null;
+        const authorizationStarted = submitProbe.value;
+        if (authorizationStarted) transitionTo('authorization');
       }
     } catch (error) {
       if (isInteractiveOperatorWindowClosedError(page, error)) {
@@ -5221,10 +5390,24 @@ async function waitForInteractiveAuthenticatedWorkspace(page, timeoutMs, progres
       if (!isWorkspaceProbeAbsenceError(error)) throw error;
     }
 
-    const remainingMs = deadline - Date.now();
+    observedAt = monotonicNow();
+    if (typeof progress.onProgress === 'function' && observedAt >= nextProgressAt) {
+      progress.onProgress({
+        phase,
+        remainingMs: Math.max(0, phaseDeadline - observedAt),
+        totalRemainingMs: Math.max(0, hardDeadline - observedAt),
+      });
+      nextProgressAt = observedAt + 15_000;
+    }
+    const remainingMs = phaseDeadline - observedAt;
     if (remainingMs <= 0) return null;
     try {
-      await page.waitForTimeout(Math.min(500, remainingMs));
+      const waitProbe = await runBoundedHandoffProbe(
+        () => page.waitForTimeout(Math.min(500, remainingMs)),
+        phaseDeadline,
+        monotonicNow,
+      );
+      if (waitProbe.timedOut) return null;
     } catch (error) {
       throwInteractiveOperatorWindowError(page, error);
     }
@@ -5560,7 +5743,7 @@ async function ensureAuthenticatedWorkspace(page, options) {
     if (options.allowInteractiveLogin) {
       completeLoginDiagnostics(loginDiagnostics, 'interactive-login-surface-missing');
       fail(
-        'Schema v7 interactive evidence must begin from the visible login surface',
+        'Schema v8 interactive evidence must begin from the visible login surface',
         'The packaged workspace was already authenticated before the operator handoff.',
       );
     }
@@ -5600,8 +5783,14 @@ async function ensureAuthenticatedWorkspace(page, options) {
       automationReadSecrets: false,
       automationTypedSecrets: false,
       completedAt: null,
+      durationClock: 'performance.now',
+      elapsedMs: null,
+      finalPhase: 'preparation',
       kind: 'visible-user-handoff',
+      maximumTotalTimeoutMs: options.interactiveLoginTimeoutMs * 2,
       outcome: 'waiting-for-user',
+      phaseTimeoutMs: options.interactiveLoginTimeoutMs,
+      phaseTransitions: [],
       startedAt: new Date().toISOString(),
     };
     if (loginDiagnostics) loginDiagnostics.operatorHandoff = operatorHandoff;
@@ -5610,35 +5799,64 @@ async function ensureAuthenticatedWorkspace(page, options) {
       profileId: options.profileId || null,
       total: PACKAGE_UI_PROFILE_SEQUENCE.length,
     };
-    const reportProgress = ({ remainingMs }) => {
+    let activeHandoffPhase = 'preparation';
+    let handoffCompletedAt = null;
+    const recordHandoffPhase = ({ elapsedMs, phase, startedAt }) => {
+      activeHandoffPhase = phase;
+      operatorHandoff.finalPhase = phase;
+      if (phase === 'preparation' && operatorHandoff.phaseTransitions.length === 0) {
+        operatorHandoff.startedAt = startedAt;
+      }
+      const previous = operatorHandoff.phaseTransitions.at(-1);
+      if (previous?.phase !== phase) {
+        operatorHandoff.phaseTransitions.push({ elapsedMs, phase, startedAt });
+      }
+    };
+    const recordHandoffCompletion = ({ completedAt, elapsedMs, phase }) => {
+      handoffCompletedAt = completedAt;
+      activeHandoffPhase = phase;
+      operatorHandoff.elapsedMs = elapsedMs;
+      operatorHandoff.finalPhase = phase;
+    };
+    const reportProgress = ({ phase, remainingMs, totalRemainingMs }) => {
       const stageLabel = Number.isInteger(stage.current)
         ? `${stage.current}/${stage.total}`
         : `?/${stage.total}`;
+      const phaseLabel = phase === 'authorization'
+        ? 'browser authorization'
+        : 'operator preparation';
       console.error(
-        `[HANDOFF ${stageLabel}] ${stage.profileId || 'package-ui'} waiting for the visible operator; `
-        + `${Math.ceil(Math.max(0, remainingMs) / 1000)}s remain; `
+        `[HANDOFF ${stageLabel}] ${stage.profileId || 'package-ui'} ${phaseLabel}; `
+        + `${Math.ceil(Math.max(0, remainingMs) / 1000)}s remain in this phase, `
+        + `${Math.ceil(Math.max(0, totalRemainingMs) / 1000)}s hard-bound total; `
         + `${options.requireFreshTypedProof ? 'fresh typed-and-saved identity proof required' : 'saved-session continuation allowed after the run-group fresh proof'}.`,
       );
     };
     console.error(
-      `[HANDOFF] Packaged UI is waiting up to ${options.interactiveLoginTimeoutMs} ms for the operator `
-      + 'to complete the visible connection binding and Lingxing/Amazon Ads login in this isolated profile. '
+      `[HANDOFF] Packaged UI allows up to ${options.interactiveLoginTimeoutMs} ms for visible operator preparation, `
+      + `then a fresh ${options.interactiveLoginTimeoutMs} ms after the login submit enters browser authorization `
+      + `(hard maximum ${options.interactiveLoginTimeoutMs * 2} ms). `
       + 'The evidence runner will not read, type, click, or retain credentials.',
     );
     const loginSessionAttestation = await waitForInteractiveAuthenticatedWorkspace(
       page,
       options.interactiveLoginTimeoutMs,
-      { onProgress: reportProgress },
+      {
+        onCompleted: recordHandoffCompletion,
+        onPhaseChange: recordHandoffPhase,
+        onProgress: reportProgress,
+      },
     );
-    operatorHandoff.completedAt = new Date().toISOString();
+    operatorHandoff.completedAt = handoffCompletedAt || new Date().toISOString();
+    operatorHandoff.finalPhase = activeHandoffPhase;
     if (!loginSessionAttestation) {
       operatorHandoff.outcome = 'timeout';
       completeLoginDiagnostics(loginDiagnostics, 'interactive-timeout', {
         operatorHandoff,
       });
       fail(
-        'Interactive operator login did not prove both ERP and Ads ready before the bounded timeout',
-        `${options.interactiveLoginTimeoutMs} ms`,
+        `Interactive operator login did not prove both ERP and Ads ready before the bounded ${activeHandoffPhase} phase timeout`,
+        `${options.interactiveLoginTimeoutMs} ms per phase; ${options.interactiveLoginTimeoutMs * 2} ms hard maximum`,
       );
     }
     const attestationContract = validateLoginSessionAttestation(
@@ -6776,6 +6994,7 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
       cwd: path.dirname(options.executablePath),
       env: {
         ...buildEvidenceUserDataEnv(process.env, PACKAGE_UI_EVIDENCE_MODE, options.userDataDir),
+        [PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV]: options.requireFreshTypedProof ? '1' : '0',
         ELECTRON_ENABLE_LOGGING: '1',
         ELECTRON_ENABLE_STACK_DUMPING: '1',
       },
@@ -7094,6 +7313,7 @@ async function runWideProfileEvidenceCore(options, artifacts, runDir, diagnostic
       cwd: path.dirname(options.executablePath),
       env: {
         ...buildEvidenceUserDataEnv(process.env, PACKAGE_UI_EVIDENCE_MODE, options.userDataDir),
+        [PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV]: options.requireFreshTypedProof ? '1' : '0',
         ELECTRON_ENABLE_LOGGING: '1',
         ELECTRON_ENABLE_STACK_DUMPING: '1',
       },
@@ -7504,6 +7724,7 @@ async function runPackageUiEvidence(options) {
       expectedAppContentSha256: options.expectedAppContentSha256,
       expectedExeSha256: options.expectedExeSha256,
       evidenceMode: PACKAGE_UI_EVIDENCE_MODE,
+      interactiveLoginMaximumTotalMs: options.interactiveLoginTimeoutMs * 2,
       interactiveLoginTimeoutMs: options.interactiveLoginTimeoutMs,
       loginMode: 'interactive-operator-each-run',
       protectedDatabasePath: options.protectedDatabasePath,

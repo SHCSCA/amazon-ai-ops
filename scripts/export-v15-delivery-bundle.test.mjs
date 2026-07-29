@@ -370,8 +370,17 @@ function validPackageUiDiagnostics(profileId) {
     automationReadSecrets: false,
     automationTypedSecrets: false,
     completedAt: '2026-07-23T01:00:00.450Z',
+    durationClock: 'performance.now',
+    elapsedMs: 250,
+    finalPhase: 'authorization',
     kind: 'visible-user-handoff',
+    maximumTotalTimeoutMs: 1_200_000,
     outcome: 'workspace-reached',
+    phaseTimeoutMs: 600_000,
+    phaseTransitions: [
+      { elapsedMs: 0, phase: 'preparation', startedAt: '2026-07-23T01:00:00.210Z' },
+      { elapsedMs: 90, phase: 'authorization', startedAt: '2026-07-23T01:00:00.300Z' },
+    ],
     startedAt: '2026-07-23T01:00:00.200Z',
   };
   const selectedStore = {
@@ -586,13 +595,13 @@ function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot
   );
   const runtimes = [100, 125, 'wide'].map((profile, index) => (
     packageUiReadOnlyRuntime(
-      path.join(runDir, `${profile}-package-ui-scheduler-audit-v7.json`),
+      path.join(runDir, `${profile}-package-ui-scheduler-audit-v8.json`),
       1_000 + index,
     )
   ));
   writeJson(manifestPath, {
     kind: 'package-ui-evidence',
-    schemaVersion: 7,
+    schemaVersion: 8,
     generatedAt: '2026-07-23T01:00:00.000Z',
     interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
     isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
@@ -601,6 +610,7 @@ function writeValidPackageUiBundleManifest(manifestPath, runDir, extraScreenshot
     requested: {
       allowInteractiveLogin: true,
       allowSavedLogin: false,
+      interactiveLoginMaximumTotalMs: 1_200_000,
       interactiveLoginTimeoutMs: 600_000,
       loginMode: 'interactive-operator-each-run',
       resumeRunGroupId: null,
@@ -2009,7 +2019,7 @@ describe('export v15 delivery bundle', () => {
     }
   });
 
-  it('refuses schema v7 package UI evidence without the bounded interactive-login attestation', () => {
+  it('refuses schema v8 package UI evidence without the bounded interactive-login attestation', () => {
     const runId = `${Date.now()}-${process.pid}`;
     const runDir = path.join(evidenceDir, `export-bundle-package-ui-login-attestation-${runId}`);
     cleanupPaths.push(runDir);
@@ -2054,7 +2064,7 @@ describe('export v15 delivery bundle', () => {
     expect(stale.status).toBe(1);
     expect(`${stale.stdout}${stale.stderr}`).toMatch(/SUBVIEW_SCREENSHOT_MISSING_OR_STALE|settings\/scheduler screenshot/i);
 
-    for (const historicalSchemaVersion of [5, 6]) {
+    for (const historicalSchemaVersion of [5, 6, 7]) {
       manifest.schemaVersion = historicalSchemaVersion;
       writeJson(packageUiManifest, manifest);
       const historical = runNode('scripts/export-v15-delivery-bundle.js', [
@@ -2066,7 +2076,7 @@ describe('export v15 delivery bundle', () => {
       ]);
       expect(historical.status).toBe(1);
       expect(`${historical.stdout}${historical.stderr}`).toMatch(
-        /schema v7.*schemas v5\/v6 are historical/i,
+        /schema v8.*schemas v5\/v6\/v7 are historical/i,
       );
     }
   });

@@ -21,7 +21,10 @@ import {
   initSqlite,
 } from '@amazon-ai-ops/local-db';
 import { normalizeStoreContextEnvelope, type StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
-import { ExecutionAuthorityService } from './execution-authority-service';
+import {
+  ExecutionAuthorityService,
+  type ExecutionAuthorityServiceOptions,
+} from './execution-authority-service';
 
 const NOW = '2026-07-23T02:00:00.000Z';
 const TARGET_PATH = '/ad_report/target/index/index';
@@ -69,7 +72,10 @@ class FakeLocator implements PlaywrightKeywordBidLocatorLike {
     return null;
   }
 
-  async inputValue(): Promise<string> { return this.kind === 'bid' ? this.page.bidValue : ''; }
+  async inputValue(): Promise<string> {
+    if (this.kind === 'bid' && this.page.inputValueError) throw this.page.inputValueError;
+    return this.kind === 'bid' ? this.page.bidValue : '';
+  }
   async fill(value: string): Promise<void> { if (this.kind === 'bid') this.page.bidValue = value; }
 
   async click(): Promise<void> {
@@ -97,6 +103,7 @@ class FakeExecutionPage implements PlaywrightKeywordBidPageLike {
   keywordId = 'keyword-1';
   clickCount = 0;
   clickError?: Error;
+  inputValueError?: Error;
   pauseBeforePermit = false;
   private screenshotCount = 0;
   private afterScreenshotSignalled = false;
@@ -117,7 +124,10 @@ class FakeExecutionPage implements PlaywrightKeywordBidPageLike {
 
   locator(selector: string): PlaywrightKeywordBidLocatorLike {
     if (selector === 'body') return new FakeLocator(this, 'body');
-    if (selector === `input.select-item[value="${this.keywordId}"]`) return new FakeLocator(this, 'marker');
+    if (selector === `input.select-item[value="${this.keywordId}"]`
+      || selector === 'input.select-item[value="opaque-keyword-1"]') {
+      return new FakeLocator(this, 'marker');
+    }
     return new FakeLocator(this, 'missing');
   }
 
@@ -125,7 +135,10 @@ class FakeExecutionPage implements PlaywrightKeywordBidPageLike {
     this.campaignId = campaignId;
     const second = campaignId === 'campaign-2';
     this.adGroupId = second ? 'ad-group-2' : 'ad-group-1';
-    this.keywordId = second ? 'keyword-2' : 'keyword-1';
+    const usesOpaqueStage5Id = this.keywordId.startsWith('opaque-keyword-');
+    this.keywordId = usesOpaqueStage5Id
+      ? (second ? 'opaque-keyword-2' : 'opaque-keyword-1')
+      : (second ? 'keyword-2' : 'keyword-1');
     this.bidValue = second ? '$2.00' : '$1.49';
   }
 
@@ -159,14 +172,54 @@ interface Harness {
   service: ExecutionAuthorityService;
   page: FakeExecutionPage;
   batchId: string;
+  leases: BrowserLeaseManager;
+  setRuntimeReady(ready: boolean): void;
+  setBringToFrontError(error: Error | undefined): void;
+  setNow(value: string): void;
 }
 
-function createHarness(actionCount = 1): Harness {
+interface HarnessOptions {
+  policyGrant?: boolean;
+  createBatch?: boolean;
+  registerIdentity?: boolean;
+  runtimeReady?: boolean;
+  adsReady?: boolean;
+  now?: string;
+  executionWindow?: {
+    timeZone: 'America/Los_Angeles';
+    daysOfWeek: number[];
+    start: string;
+    end: string;
+  };
+  policyDispatchRetryMs?: number;
+  policyDispatchTimer?: NonNullable<ExecutionAuthorityServiceOptions['policyDispatchTimer']>;
+}
+
+function createHarness(actionCount = 1, options: HarnessOptions = {}): Harness {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-execution-service-'));
   tempDirs.push(directory);
   const database = initSqlite(path.join(directory, 'app.db'));
   databases.push(database);
-  seedAuthority(database, actionCount);
+  seedAuthority(
+    database,
+    actionCount,
+    options.policyGrant ? 'policy' : 'human',
+    options.executionWindow,
+  );
+  if (options.adsReady === false) {
+    database.prepare(`
+      UPDATE store_connections
+      SET status = 'blocked', last_failure_code = 'offline', updated_at = ?
+      WHERE store_id = 'store-one' AND provider = 'amazon_ads'
+    `).run(NOW);
+    database.prepare(`
+      UPDATE store_session_metadata
+      SET status = 'blocked', failure_code = 'offline', updated_at = ?
+      WHERE store_id = 'store-one' AND provider = 'amazon_ads'
+    `).run(NOW);
+  }
+  let currentNow = options.now ?? NOW;
+  const now = () => new Date(currentNow);
   const context = normalizeStoreContextEnvelope({
     storeId: 'store-one',
     browserProfileId: 'profile-one',
@@ -176,33 +229,35 @@ function createHarness(actionCount = 1): Harness {
     businessDate: '2026-07-22',
     sessionGeneration: 4,
   });
-  const executionRepository = new ExecutionAuthorityRepository(database, { now: () => new Date(NOW) });
-  executionRepository.registerCanonicalKeywordIdentity(context, {
-    adEntityId: 'opaque-keyword-1',
-    entityRevision: 1,
-    adsAccountId: 'ads-account-1',
-    campaignId: 'campaign-1',
-    adGroupId: 'ad-group-1',
-    keywordId: 'keyword-1',
-    observedBidCents: 149,
-    pageIdentityHash: fingerprintKeywordBidPageSnapshot({
-      pageIdentity: {
-        url: `https://ads.lingxing.com${TARGET_PATH}?profile_id=ads-account-1&id=campaign-1`,
-        origin: 'https://ads.lingxing.com',
-        pathname: TARGET_PATH,
-        adsAccountId: 'ads-account-1',
-        campaignId: 'campaign-1',
-        marketplace: 'US',
-        currency: 'USD',
-        matchedTextMarkers: [],
-      },
-      keyword: { keywordId: 'keyword-1', adGroupId: 'ad-group-1', bidCents: 149 },
-    }),
-    resolutionProofSha256: '8'.repeat(64),
-    resolvedAt: NOW,
-    resolvedBy: 'operator',
-  });
-  if (actionCount > 1) {
+  const executionRepository = new ExecutionAuthorityRepository(database, { now });
+  if (options.registerIdentity !== false) {
+    executionRepository.registerCanonicalKeywordIdentity(context, {
+      adEntityId: 'opaque-keyword-1',
+      entityRevision: 1,
+      adsAccountId: 'ads-account-1',
+      campaignId: 'campaign-1',
+      adGroupId: 'ad-group-1',
+      keywordId: 'keyword-1',
+      observedBidCents: 149,
+      pageIdentityHash: fingerprintKeywordBidPageSnapshot({
+        pageIdentity: {
+          url: `https://ads.lingxing.com${TARGET_PATH}?profile_id=ads-account-1&id=campaign-1`,
+          origin: 'https://ads.lingxing.com',
+          pathname: TARGET_PATH,
+          adsAccountId: 'ads-account-1',
+          campaignId: 'campaign-1',
+          marketplace: 'US',
+          currency: 'USD',
+          matchedTextMarkers: [],
+        },
+        keyword: { keywordId: 'keyword-1', adGroupId: 'ad-group-1', bidCents: 149 },
+      }),
+      resolutionProofSha256: '8'.repeat(64),
+      resolvedAt: NOW,
+      resolvedBy: 'operator',
+    });
+  }
+  if (actionCount > 1 && options.registerIdentity !== false) {
     executionRepository.registerCanonicalKeywordIdentity(context, {
       adEntityId: 'opaque-keyword-2',
       entityRevision: 1,
@@ -229,13 +284,20 @@ function createHarness(actionCount = 1): Harness {
       resolvedBy: 'operator',
     });
   }
-  const missionRepository = new MissionDomainRepository(database, { now: () => new Date(NOW) });
+  const missionRepository = new MissionDomainRepository(database, { now });
   const page = new FakeExecutionPage();
+  if (options.registerIdentity === false) page.keywordId = 'opaque-keyword-1';
   const capsule = createCapsule(directory, context);
+  let runtimeReady = options.runtimeReady ?? true;
+  let bringToFrontError: Error | undefined;
+  const leases = new BrowserLeaseManager(
+    () => now().getTime(),
+    () => 'stage6-lease-token-0001',
+  );
   const service = new ExecutionAuthorityService({
     repository: executionRepository,
     missionRepository,
-    analysisRepository: new AnalysisAuthorityRepository(database, { now: () => new Date(NOW) }),
+    analysisRepository: new AnalysisAuthorityRepository(database, { now }),
     storeCoordinator: {
       assertActiveStoreContext: (input) => {
         expect(input).toEqual(context);
@@ -243,21 +305,46 @@ function createHarness(actionCount = 1): Harness {
       },
       getActiveStoreContext: () => context,
     },
-    leases: new BrowserLeaseManager(() => new Date(NOW).getTime(), () => 'stage6-lease-token-0001'),
-    resolveBrowserRuntime: () => ({
-      context,
-      externalAccountId: 'ads-account-1',
-      page,
-      capsule,
-      navigate: async (url) => {
-        page.selectCampaign(new URL(url).searchParams.get('id') ?? 'campaign-1');
-      },
-      bringToFront: async () => undefined,
-    }),
-    now: () => new Date(NOW),
+    leases,
+    resolveBrowserRuntime: () => {
+      if (!runtimeReady) throw new Error('visible browser runtime unavailable');
+      return {
+        context,
+        externalAccountId: 'ads-account-1',
+        page,
+        capsule,
+        navigate: async (url: string) => {
+          page.selectCampaign(new URL(url).searchParams.get('id') ?? 'campaign-1');
+        },
+        bringToFront: async () => {
+          if (bringToFrontError) throw bringToFrontError;
+        },
+      };
+    },
+    now,
+    ...(options.policyDispatchRetryMs !== undefined
+      ? { policyDispatchRetryMs: options.policyDispatchRetryMs }
+      : {}),
+    ...(options.policyDispatchTimer
+      ? { policyDispatchTimer: options.policyDispatchTimer }
+      : {}),
   });
-  const batchId = service.createBatch({ context, grantId: 'grant-1' }).projection.batch.id;
-  return { context, database, executionRepository, missionRepository, service, page, batchId };
+  const batchId = options.createBatch === false
+    ? ''
+    : service.createBatch({ context, grantId: 'grant-1' }).projection.batch.id;
+  return {
+    context,
+    database,
+    executionRepository,
+    missionRepository,
+    service,
+    page,
+    batchId,
+    leases,
+    setRuntimeReady: (ready) => { runtimeReady = ready; },
+    setBringToFrontError: (error) => { bringToFrontError = error; },
+    setNow: (value) => { currentNow = value; },
+  };
 }
 
 describe('ExecutionAuthorityService safety orchestration', () => {
@@ -424,6 +511,490 @@ describe('ExecutionAuthorityService safety orchestration', () => {
       WHERE store_id = 'store-one' AND batch_id = ?
     `).get(harness.batchId)).toEqual({ batchStatus: 'blocked' });
   });
+
+  it('persists a missing runtime and resumes the same policy grant once after session readiness', async () => {
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+      registerIdentity: false,
+      runtimeReady: false,
+    });
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+
+    await harness.service.enqueuePolicyGrant(harness.context, grant);
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'waiting_runtime',
+      attemptCount: 1,
+      code: 'RUNTIME_UNAVAILABLE',
+      batchJobCount: 0,
+    });
+    expect(harness.database.prepare(`
+      SELECT COUNT(*) AS count FROM ad_execution_batches
+      WHERE store_id = 'store-one' AND grant_id = 'grant-1'
+    `).get()).toEqual({ count: 0 });
+
+    harness.setRuntimeReady(true);
+    harness.page.allowAfterScreenshot();
+    await harness.service.resumePolicyGrantDispatches(harness.context, 'session_ready');
+    const completed = harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]!;
+    expect(completed).toMatchObject({
+      status: 'completed',
+      attemptCount: 2,
+      code: 'EXECUTION_TERMINAL',
+      batchJobCount: 1,
+      batchStatus: 'succeeded',
+    });
+    expect(harness.page.clickCount).toBe(1);
+
+    await harness.service.resumePolicyGrantDispatches(harness.context, 'session_ready');
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.database.prepare(`
+      SELECT COUNT(*) AS count FROM ad_execution_batches
+      WHERE store_id = 'store-one' AND grant_id = 'grant-1'
+    `).get()).toEqual({ count: 1 });
+  });
+
+  it('journals a policy grant while Amazon Ads is offline before any browser side effect', async () => {
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+      registerIdentity: false,
+      adsReady: false,
+    });
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+
+    await harness.service.enqueuePolicyGrant(harness.context, grant);
+
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'waiting_runtime',
+      attemptCount: 1,
+      code: 'RUNTIME_UNAVAILABLE',
+      batchJobCount: 0,
+    });
+    expect(harness.page.clickCount).toBe(0);
+    expect(harness.database.prepare(`
+      SELECT COUNT(*) AS count FROM causal_events
+      WHERE store_id = 'store-one'
+        AND entity_type = 'policy_grant_dispatch_v1'
+        AND entity_id = 'grant-1'
+    `).get()).toEqual({ count: 3 });
+  });
+
+  it('resumes the same created-but-not-started policy batch after startup recovery', async () => {
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+    });
+    const created = harness.executionRepository.createExactExecutionBatch(
+      harness.context,
+      'grant-1',
+    ).projection;
+    expect(harness.missionRepository.getMissionLineage(harness.context, 'mission-1').links
+      .filter((link) => (
+        link.linkType === 'execution'
+        && link.targetId === created.batch.id
+        && link.relation === 'authorized_execution_batch'
+      ))).toEqual([]);
+    harness.page.allowAfterScreenshot();
+
+    harness.service.recoverStartup();
+    await vi.waitFor(() => {
+      expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]?.status)
+        .toBe('completed');
+    });
+
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'completed',
+      attemptCount: 1,
+      batchId: created.batch.id,
+      batchStatus: 'succeeded',
+      code: 'EXECUTION_TERMINAL',
+    });
+    expect(harness.database.prepare(`
+      SELECT COUNT(*) AS count FROM ad_execution_batches
+      WHERE store_id = 'store-one' AND grant_id = 'grant-1'
+    `).get()).toEqual({ count: 1 });
+    expect(harness.missionRepository.getMissionLineage(harness.context, 'mission-1').links
+      .filter((link) => (
+        link.linkType === 'execution'
+        && link.targetId === created.batch.id
+        && link.relation === 'authorized_execution_batch'
+      ))).toHaveLength(1);
+  });
+
+  it('repairs a missing execution link for a terminal grant without starting its batch', async () => {
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+    });
+    const created = harness.executionRepository.createExactExecutionBatch(
+      harness.context,
+      'grant-1',
+    ).projection;
+    harness.database.prepare(`
+      INSERT INTO mission_grant_events (
+        id, store_id, grant_id, event_type, actor_id, reason, created_at
+      ) VALUES (
+        'grant-terminal-before-link-recovery', 'store-one', 'grant-1', 'revoked',
+        'policy-engine', 'grant closed before lineage recovery', ?
+      )
+    `).run(NOW);
+
+    harness.service.recoverStartup();
+    await Promise.resolve();
+
+    const matchingLinks = () => harness.missionRepository
+      .getMissionLineage(harness.context, 'mission-1').links
+      .filter((link) => (
+        link.linkType === 'execution'
+        && link.targetId === created.batch.id
+        && link.relation === 'authorized_execution_batch'
+      ));
+    expect(matchingLinks()).toHaveLength(1);
+    expect(harness.page.clickCount).toBe(0);
+    expect(harness.executionRepository.getExecutionBatch(harness.context, created.batch.id)?.batch.status)
+      .toBe('queued');
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'attention_required',
+      code: 'GRANT_TERMINAL',
+      batchId: created.batch.id,
+    });
+
+    harness.service.reconcileActiveStore(harness.context);
+    expect(matchingLinks()).toHaveLength(1);
+    expect(harness.page.clickCount).toBe(0);
+  });
+
+  it('resumes a partially succeeded policy batch and runs only its untouched action', async () => {
+    const harness = createHarness(2, {
+      policyGrant: true,
+      createBatch: false,
+    });
+    const created = harness.executionRepository.createExactExecutionBatch(
+      harness.context,
+      'grant-1',
+    ).projection;
+    driveFirstJobToSuccess(harness, created.batch.id);
+    expect(harness.executionRepository.getExecutionBatch(harness.context, created.batch.id)?.jobs
+      .map((job) => job.status)).toEqual(['succeeded', 'queued']);
+    expect(harness.missionRepository.getMissionGrantTerminalEvent(harness.context, 'grant-1'))
+      .toBeUndefined();
+    harness.page.allowAfterScreenshot();
+
+    harness.service.recoverStartup();
+    await vi.waitFor(() => {
+      expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]?.status)
+        .toBe('completed');
+    });
+
+    const completed = harness.executionRepository.getExecutionBatch(
+      harness.context,
+      created.batch.id,
+    )!;
+    expect(completed.batch.status).toBe('succeeded');
+    expect(completed.jobs.map((job) => job.status)).toEqual(['succeeded', 'succeeded']);
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.missionRepository.getMissionGrantTerminalEvent(harness.context, 'grant-1'))
+      .toEqual(expect.objectContaining({ eventType: 'consumed' }));
+  });
+
+  it('retries a start failure only while the existing policy batch is still pre-intent', async () => {
+    const timer = new FakePolicyDispatchTimer();
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+      policyDispatchRetryMs: 1_000,
+      policyDispatchTimer: timer.timer,
+    });
+    harness.setBringToFrontError(new Error(
+      'browser unavailable Bearer secret-token cookie=session@example.test profile_id=private-profile',
+    ));
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+
+    await harness.service.enqueuePolicyGrant(harness.context, grant);
+
+    const waiting = harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]!;
+    expect(waiting).toMatchObject({
+      status: 'waiting_runtime',
+      attemptCount: 1,
+      code: 'EXECUTION_RETRY_SCHEDULED',
+      batchStatus: 'queued',
+      batchJobStatuses: ['queued'],
+      batchHasPersistedIntent: false,
+    });
+    expect(waiting.nextRetryAt).toBe('2026-07-23T02:00:01.000Z');
+    expect(timer.activeCount()).toBe(1);
+    const persistedSignals = harness.database.prepare(`
+      SELECT signal FROM causal_events
+      WHERE store_id = 'store-one'
+        AND entity_type = 'policy_grant_dispatch_v1'
+        AND entity_id = 'grant-1'
+    `).all() as Array<{ signal: string }>;
+    expect(persistedSignals.every(({ signal }) => (
+      !signal.includes('secret-token')
+      && !signal.includes('session@example.test')
+      && !signal.includes('private-profile')
+    ))).toBe(true);
+
+    harness.setBringToFrontError(undefined);
+    harness.page.allowAfterScreenshot();
+    await harness.service.resumePolicyGrantDispatches(harness.context, 'session_ready');
+
+    expect(harness.page.clickCount).toBe(1);
+    expect(timer.activeCount()).toBe(0);
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'completed',
+      attemptCount: 2,
+      code: 'EXECUTION_TERMINAL',
+      batchStatus: 'succeeded',
+    });
+  });
+
+  it('waits and retries when adapter preflight loses the visible browser before intent', async () => {
+    const timer = new FakePolicyDispatchTimer();
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+      policyDispatchRetryMs: 1_000,
+      policyDispatchTimer: timer.timer,
+    });
+    harness.page.inputValueError = new Error('browser disconnected during preflight');
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+
+    await harness.service.enqueuePolicyGrant(harness.context, grant);
+
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'waiting_runtime',
+      code: 'EXECUTION_RETRY_SCHEDULED',
+      batchStatus: 'preflight',
+      batchJobStatuses: ['preflight'],
+      batchHasPersistedIntent: false,
+    });
+    expect(harness.page.clickCount).toBe(0);
+    expect(harness.missionRepository.getMissionGrantTerminalEvent(harness.context, 'grant-1'))
+      .toBeUndefined();
+
+    harness.page.inputValueError = undefined;
+    harness.page.allowAfterScreenshot();
+    await harness.service.resumePolicyGrantDispatches(harness.context, 'session_ready');
+
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'completed',
+      attemptCount: 2,
+      batchStatus: 'succeeded',
+    });
+  });
+
+  it('waits when the final lease permit expires before intent and succeeds after reacquiring it', async () => {
+    const timer = new FakePolicyDispatchTimer();
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+      policyDispatchRetryMs: 1_000,
+      policyDispatchTimer: timer.timer,
+    });
+    harness.page.pauseBeforePermit = true;
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+    const dispatching = harness.service.enqueuePolicyGrant(harness.context, grant);
+    await harness.page.prepareSaveReady;
+    harness.setNow('2026-07-23T03:01:00.000Z');
+    harness.page.allowPermitCheck();
+
+    await dispatching;
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'waiting_runtime',
+      code: 'EXECUTION_RETRY_SCHEDULED',
+      batchStatus: 'preflight',
+      batchJobStatuses: ['preflight'],
+      batchHasPersistedIntent: false,
+      nextRetryAt: '2026-07-23T03:01:01.000Z',
+    });
+    expect(harness.page.clickCount).toBe(0);
+    expect(harness.missionRepository.getMissionGrantTerminalEvent(harness.context, 'grant-1'))
+      .toBeUndefined();
+
+    harness.page.allowAfterScreenshot();
+    await harness.service.resumePolicyGrantDispatches(harness.context, 'session_ready');
+
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'completed',
+      attemptCount: 2,
+      batchStatus: 'succeeded',
+    });
+  });
+
+  it('serializes two policy grants for the same store through one durable lane', async () => {
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+    });
+    seedSecondSameStorePolicyGrant(harness.database);
+    registerSecondIdentity(harness);
+    const firstGrant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+    const secondGrant = harness.missionRepository.getMissionGrant(harness.context, 'grant-2')!;
+
+    const first = harness.service.enqueuePolicyGrant(harness.context, firstGrant);
+    await harness.page.afterScreenshotStarted;
+    const second = harness.service.enqueuePolicyGrant(harness.context, secondGrant);
+    await Promise.resolve();
+
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.database.prepare(`
+      SELECT COUNT(*) AS count FROM ad_execution_batches
+      WHERE store_id = 'store-one' AND grant_id = 'grant-2'
+    `).get()).toEqual({ count: 0 });
+
+    harness.page.allowAfterScreenshot();
+    await Promise.all([first, second]);
+
+    expect(harness.page.clickCount).toBe(2);
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          grantId: 'grant-1',
+          status: 'completed',
+          batchStatus: 'succeeded',
+        }),
+        expect.objectContaining({
+          grantId: 'grant-2',
+          status: 'completed',
+          batchStatus: 'succeeded',
+        }),
+      ]));
+  });
+
+  it('retries a closed policy window from its persisted timer without another user event', async () => {
+    const timer = new FakePolicyDispatchTimer();
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+      executionWindow: {
+        timeZone: 'America/Los_Angeles',
+        daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+        start: '00:00',
+        end: '00:30',
+      },
+      policyDispatchRetryMs: 5 * 60 * 60 * 1_000,
+      policyDispatchTimer: timer.timer,
+    });
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+
+    await harness.service.enqueuePolicyGrant(harness.context, grant);
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'waiting_runtime',
+      attemptCount: 1,
+      nextRetryAt: '2026-07-23T07:00:00.000Z',
+    });
+    expect(timer.setCalls[timer.setCalls.length - 1]?.delayMs)
+      .toBe(5 * 60 * 60 * 1_000);
+
+    harness.setNow('2026-07-23T07:00:00.000Z');
+    harness.page.allowAfterScreenshot();
+    timer.runLatest();
+    await vi.waitFor(() => {
+      expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]?.status)
+        .toBe('completed');
+    });
+
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'completed',
+      attemptCount: 2,
+      code: 'EXECUTION_TERMINAL',
+    });
+  });
+
+  it('clears policy retry timers on shutdown and ignores a late callback', async () => {
+    const timer = new FakePolicyDispatchTimer();
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+      registerIdentity: false,
+      runtimeReady: false,
+      policyDispatchRetryMs: 1_000,
+      policyDispatchTimer: timer.timer,
+    });
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+    await harness.service.enqueuePolicyGrant(harness.context, grant);
+    const before = harness.database.prepare(`
+      SELECT COUNT(*) AS count FROM causal_events
+      WHERE store_id = 'store-one' AND entity_type = 'policy_grant_dispatch_v1'
+    `).get() as { count: number };
+    expect(timer.activeCount()).toBe(1);
+
+    await harness.service.prepareForShutdown(10);
+    expect(timer.activeCount()).toBe(0);
+    expect(timer.cleared).toHaveLength(1);
+
+    timer.forceRunLatest();
+    await Promise.resolve();
+    expect(harness.page.clickCount).toBe(0);
+    expect(harness.database.prepare(`
+      SELECT COUNT(*) AS count FROM ad_execution_batches
+      WHERE store_id = 'store-one'
+    `).get()).toEqual({ count: 0 });
+    expect(harness.database.prepare(`
+      SELECT COUNT(*) AS count FROM causal_events
+      WHERE store_id = 'store-one' AND entity_type = 'policy_grant_dispatch_v1'
+    `).get()).toEqual(before);
+  });
+
+  it('surfaces a terminal pre-batch policy grant as attention-required without identity work', async () => {
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+      registerIdentity: false,
+    });
+    harness.database.prepare(`
+      INSERT INTO mission_grant_events (
+        id, store_id, grant_id, event_type, actor_id, reason, created_at
+      ) VALUES (
+        'grant-revoked-before-dispatch', 'store-one', 'grant-1', 'revoked',
+        'policy-engine', 'authority changed before dispatch', ?
+      )
+    `).run(NOW);
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+
+    await harness.service.enqueuePolicyGrant(harness.context, grant);
+
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'attention_required',
+      code: 'GRANT_TERMINAL',
+      batchJobCount: 0,
+    });
+    expect(harness.executionRepository.listCanonicalKeywordIdentities(harness.context)).toEqual([]);
+    expect(harness.page.clickCount).toBe(0);
+  });
+
+  it('never restarts an existing UNKNOWN policy batch during startup or session recovery', async () => {
+    const harness = createHarness(1, { policyGrant: true });
+    harness.page.clickError = new Error('browser disconnected during save');
+    const unknown = await harness.service.startBatch({
+      context: harness.context,
+      batchId: harness.batchId,
+    });
+    expect(unknown.batch.status).toBe('unknown');
+    expect(harness.page.clickCount).toBe(1);
+
+    harness.page.clickError = undefined;
+    harness.service.recoverStartup();
+    await harness.service.resumePolicyGrantDispatches(harness.context, 'session_ready');
+
+    expect(harness.page.clickCount).toBe(1);
+    expect(harness.executionRepository.listPolicyGrantDispatches(harness.context)[0]).toMatchObject({
+      status: 'completed',
+      batchId: harness.batchId,
+      batchStatus: 'unknown',
+      code: 'EXECUTION_STATE_REQUIRES_RECONCILIATION',
+    });
+    expect(harness.database.prepare(`
+      SELECT COUNT(*) AS count FROM ad_execution_batches
+      WHERE store_id = 'store-one' AND grant_id = 'grant-1'
+    `).get()).toEqual({ count: 1 });
+  });
 });
 
 function createCapsule(directory: string, context: StoreContextEnvelope): StoreCapsulePaths {
@@ -440,14 +1011,280 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
   return { promise, resolve };
 }
 
-function seedAuthority(database: Database.Database, actionCount = 1): void {
+class FakePolicyDispatchTimer {
+  private nextId = 1;
+  private readonly callbacks = new Map<number, () => void>();
+  private readonly callbackHistory = new Map<number, () => void>();
+  readonly setCalls: Array<{ id: number; delayMs: number }> = [];
+  readonly cleared: number[] = [];
+
+  readonly timer: NonNullable<ExecutionAuthorityServiceOptions['policyDispatchTimer']> = {
+    set: (callback, delayMs) => {
+      const id = this.nextId;
+      this.nextId += 1;
+      this.callbacks.set(id, callback);
+      this.callbackHistory.set(id, callback);
+      this.setCalls.push({ id, delayMs });
+      return id;
+    },
+    clear: (handle) => {
+      const id = Number(handle);
+      this.callbacks.delete(id);
+      this.cleared.push(id);
+    },
+  };
+
+  runLatest(): void {
+    const latest = this.setCalls[this.setCalls.length - 1];
+    if (!latest) throw new Error('No policy dispatch timer is scheduled.');
+    const callback = this.callbacks.get(latest.id);
+    if (!callback) return;
+    this.callbacks.delete(latest.id);
+    callback();
+  }
+
+  forceRunLatest(): void {
+    const latest = this.setCalls[this.setCalls.length - 1];
+    if (!latest) throw new Error('No policy dispatch timer was scheduled.');
+    this.callbackHistory.get(latest.id)?.();
+  }
+
+  activeCount(): number {
+    return this.callbacks.size;
+  }
+}
+
+function driveFirstJobToSuccess(harness: Harness, batchId: string): void {
+  const initial = harness.executionRepository.getExecutionBatch(harness.context, batchId)!;
+  const job = initial.jobs[0]!;
+  const started = harness.executionRepository.startJob(harness.context, {
+    jobId: job.id,
+    expectedRevision: job.revision,
+  });
+  const preflight = harness.executionRepository.recordPreflight(harness.context, {
+    jobId: job.id,
+    expectedRevision: started.job.revision,
+    observedBidCents: job.expectedBidCents,
+    pageIdentityHash: job.pageIdentityHash,
+    canonicalKeywordId: job.canonicalKeywordId,
+    objectRevision: job.identity.objectRevision,
+  });
+  const evidence = (observedBidCents: number, artifactRef: string) => ({
+    artifactRef,
+    contentSha256: '9'.repeat(64),
+    pageIdentityHash: job.pageIdentityHash,
+    canonicalKeywordId: job.canonicalKeywordId,
+    objectRevision: job.identity.objectRevision,
+    observedBidCents,
+    capturedAt: NOW,
+  });
+  const intent = harness.executionRepository.recordSubmitIntent(harness.context, {
+    jobId: job.id,
+    expectedRevision: preflight.job.revision,
+    submitIntentId: 'submit-intent-partial-success',
+    commandFingerprint: '5'.repeat(64),
+    before: evidence(job.expectedBidCents, 'partial-before-proof'),
+  });
+  const submitted = harness.executionRepository.recordSubmitted(harness.context, {
+    jobId: job.id,
+    expectedRevision: intent.job.revision,
+  });
+  const after = harness.executionRepository.recordAfterEvidence(harness.context, {
+    jobId: job.id,
+    expectedRevision: submitted.job.revision,
+    evidence: evidence(job.targetBidCents, 'partial-after-proof'),
+  });
+  harness.executionRepository.recordReloadVerified(harness.context, {
+    jobId: job.id,
+    expectedRevision: after.job.revision,
+    evidence: evidence(job.targetBidCents, 'partial-reload-proof'),
+  });
+}
+
+function seedSecondSameStorePolicyGrant(database: Database.Database): void {
+  database.prepare(`
+    INSERT INTO missions (
+      id, store_id, marketplace, currency, business_date, created_session_generation,
+      data_batch_id, policy_version_id, title, objective, status, phase, priority,
+      observation_starts_at, observation_ends_at, success_criteria_json,
+      guardrails_json, revision, created_at, updated_at
+    )
+    SELECT 'mission-2', store_id, marketplace, currency, business_date,
+      created_session_generation, data_batch_id, policy_version_id,
+      'Lower second keyword bid', objective, status, phase, priority,
+      observation_starts_at, observation_ends_at, success_criteria_json,
+      guardrails_json, revision, created_at, updated_at
+    FROM missions WHERE store_id = 'store-one' AND id = 'mission-1'
+  `).run();
+  database.prepare(`
+    INSERT INTO analysis_evidence_packages (
+      id, store_id, marketplace, currency, mission_id, data_batch_id, import_run_id,
+      date_from, date_to, asin, report_types_json, sources_json, metric_row_count,
+      reconciliation_hash, rule_revision, model_revision, package_hash, imported_at,
+      fresh_until, sealed_at, created_session_generation
+    )
+    SELECT 'evidence-2', store_id, marketplace, currency, 'mission-2',
+      data_batch_id, import_run_id, date_from, date_to, asin, report_types_json, sources_json,
+      metric_row_count, reconciliation_hash, rule_revision, model_revision, ?,
+      imported_at, fresh_until, sealed_at, created_session_generation
+    FROM analysis_evidence_packages
+    WHERE store_id = 'store-one' AND id = 'evidence-1'
+  `).run('a'.repeat(64));
+  database.prepare(`
+    INSERT INTO verified_ad_entity_authority (
+      authority_id, store_id, ad_entity_id, entity_revision, entity_type,
+      entity_name, campaign_name, ad_group_name, evidence_package_id,
+      source_report_type, source_file_hash, source_row, identity_source,
+      proof_sha256, verified_by, verified_at, created_at
+    )
+    SELECT 'stage5-authority-2', store_id, 'opaque-keyword-2', entity_revision,
+      entity_type, 'window lock', 'Campaign B', 'Ad Group B', 'evidence-2',
+      source_report_type, ?, source_row + 1, identity_source, ?, verified_by,
+      verified_at, created_at
+    FROM verified_ad_entity_authority
+    WHERE store_id = 'store-one' AND authority_id = 'stage5-authority-1'
+  `).run('2'.repeat(64), '3'.repeat(64));
+  database.prepare(`
+    INSERT INTO analysis_action_batches (
+      id, store_id, mission_id, mission_revision, evidence_package_id,
+      rule_revision, model_revision, action_revision, created_at,
+      created_session_generation
+    )
+    SELECT 'analysis-batch-2', store_id, 'mission-2', mission_revision,
+      'evidence-2', rule_revision, model_revision, action_revision, created_at,
+      created_session_generation
+    FROM analysis_action_batches
+    WHERE store_id = 'store-one' AND id = 'analysis-batch-1'
+  `).run();
+  database.prepare(`
+    INSERT INTO analysis_proposal_snapshots (
+      id, store_id, marketplace, currency, mission_id, mission_revision,
+      evidence_package_id, evidence_package_hash, data_batch_id, policy_version_id,
+      policy_revision, rule_revision, model_revision, action_batch_id, action_revision,
+      legacy_recommendation_id, action_type, entity_type, entity_name, campaign_name,
+      ad_group_name, ad_entity_authority_id, ad_entity_id, ad_entity_revision,
+      current_bid_cents, proposed_bid_cents, change_pct, confidence, source,
+      explanation, authorization_json, valid_until, created_at,
+      created_session_generation
+    )
+    SELECT 'proposal-mission-2', store_id, marketplace, currency, 'mission-2',
+      mission_revision, 'evidence-2', ?, data_batch_id, policy_version_id,
+      policy_revision, rule_revision, model_revision, 'analysis-batch-2',
+      action_revision, 2, action_type, entity_type, 'window lock', 'Campaign B',
+      'Ad Group B', 'stage5-authority-2', 'opaque-keyword-2', ad_entity_revision,
+      200, 190, -5, confidence, source, 'lower second inefficient bid',
+      authorization_json, valid_until, created_at, created_session_generation
+    FROM analysis_proposal_snapshots
+    WHERE store_id = 'store-one' AND id = 'proposal-1'
+  `).run('a'.repeat(64));
+  database.prepare(`
+    INSERT INTO decisions (
+      id, store_id, mission_id, data_batch_id, policy_version_id, policy_revision,
+      action_revision, title, rationale, recommendation, facts_json,
+      alternatives_json, valid_until, action_type, ad_entity_id,
+      current_value_json, recommended_value_json, confidence, status, revision,
+      created_at, updated_at
+    )
+    SELECT 'decision-mission-2', store_id, 'mission-2', data_batch_id,
+      policy_version_id, policy_revision, action_revision,
+      'Lower second keyword bid', rationale, recommendation, facts_json,
+      alternatives_json, valid_until, action_type, 'opaque-keyword-2',
+      '2.00', '1.90', confidence, status, revision, created_at, updated_at
+    FROM decisions
+    WHERE store_id = 'store-one' AND id = 'decision-1'
+  `).run();
+  database.prepare(`
+    INSERT INTO analysis_proposal_decision_links (
+      id, store_id, proposal_id, decision_id, created_at
+    )
+    SELECT 'proposal-link-mission-2', store_id, 'proposal-mission-2',
+      'decision-mission-2', created_at
+    FROM analysis_proposal_decision_links
+    WHERE store_id = 'store-one' AND id = 'proposal-link-1'
+  `).run();
+  database.prepare(`
+    INSERT INTO mission_grants (
+      id, store_id, marketplace, currency, mission_id, mission_revision,
+      decision_ids_json, action_revision, allowed_action_types_json,
+      allowed_ad_entity_ids_json, max_change_pct, total_impact_budget, expires_at,
+      policy_version_id, policy_revision, required_evidence_json,
+      stop_conditions_json, issuer_type, issuer_actor_id, issued_at,
+      created_session_generation
+    )
+    SELECT 'grant-2', store_id, marketplace, currency, 'mission-2',
+      mission_revision, '["decision-mission-2"]', action_revision,
+      allowed_action_types_json, '["opaque-keyword-2"]', max_change_pct,
+      total_impact_budget, expires_at, policy_version_id, policy_revision,
+      required_evidence_json, stop_conditions_json, 'policy', 'policy-engine',
+      issued_at, created_session_generation
+    FROM mission_grants
+    WHERE store_id = 'store-one' AND id = 'grant-1'
+  `).run();
+  database.prepare(`
+    INSERT INTO mission_grant_events (
+      id, store_id, grant_id, event_type, actor_id, created_at
+    ) VALUES (
+      'grant-event-mission-2', 'store-one', 'grant-2', 'issued',
+      'policy-engine', ?
+    )
+  `).run(NOW);
+}
+
+function registerSecondIdentity(harness: Harness): void {
+  harness.executionRepository.registerCanonicalKeywordIdentity(harness.context, {
+    adEntityId: 'opaque-keyword-2',
+    entityRevision: 1,
+    adsAccountId: 'ads-account-1',
+    campaignId: 'campaign-2',
+    adGroupId: 'ad-group-2',
+    keywordId: 'keyword-2',
+    observedBidCents: 200,
+    pageIdentityHash: fingerprintKeywordBidPageSnapshot({
+      pageIdentity: {
+        url: `https://ads.lingxing.com${TARGET_PATH}?profile_id=ads-account-1&id=campaign-2`,
+        origin: 'https://ads.lingxing.com',
+        pathname: TARGET_PATH,
+        adsAccountId: 'ads-account-1',
+        campaignId: 'campaign-2',
+        marketplace: 'US',
+        currency: 'USD',
+        matchedTextMarkers: [],
+      },
+      keyword: {
+        keywordId: 'keyword-2',
+        adGroupId: 'ad-group-2',
+        bidCents: 200,
+      },
+    }),
+    resolutionProofSha256: '6'.repeat(64),
+    resolvedAt: NOW,
+    resolvedBy: 'operator',
+  });
+}
+
+function seedAuthority(
+  database: Database.Database,
+  actionCount = 1,
+  issuerType: 'human' | 'policy' = 'human',
+  executionWindow: {
+    timeZone: 'America/Los_Angeles';
+    daysOfWeek: number[];
+    start: string;
+    end: string;
+  } = {
+    timeZone: 'America/Los_Angeles',
+    daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+    start: '00:00',
+    end: '23:59',
+  },
+): void {
   const rules = {
     allowedActionTypes: ['set_keyword_bid'],
     allowedAdEntityIds: actionCount > 1
       ? ['opaque-keyword-1', 'opaque-keyword-2']
       : ['opaque-keyword-1'],
     maxChangePct: 10, totalImpactBudget: 10, maxDailyActionCount: 10, cooldownMinutes: 0,
-    executionWindow: { timeZone: 'America/Los_Angeles', daysOfWeek: [0, 1, 2, 3, 4, 5, 6], start: '00:00', end: '23:59' },
+    executionWindow,
     requiredEvidence: ['page_identity', 'before_screenshot', 'after_screenshot', 'reload_screenshot', 'readback_value'],
     stopConditions: [{ code: 'unknown_result', detail: 'stop' }, { code: 'kill_switch', detail: 'stop' }],
     killSwitch: false,
@@ -496,8 +1333,8 @@ function seedAuthority(database: Database.Database, actionCount = 1): void {
     WHERE id = 'policy-1'`
   ).run();
   database.prepare(`UPDATE policy_runtime SET active_policy_version_id = 'policy-version-1',
-    updated_at = ? WHERE store_id = 'store-one'`
-  ).run(NOW);
+    autonomy_mode = ?, updated_at = ? WHERE store_id = 'store-one'`
+  ).run(issuerType === 'policy' ? 'policy_auto' : 'manual_approval', NOW);
   database.prepare(`INSERT INTO missions (
     id, store_id, marketplace, currency, business_date, created_session_generation,
     data_batch_id, policy_version_id, title, objective, status, phase, priority,
@@ -626,12 +1463,14 @@ function seedAuthority(database: Database.Database, actionCount = 1): void {
   ) VALUES ('grant-1', 'store-one', 'US', 'USD', 'mission-1', 1,
     ?, 1, '["set_keyword_bid"]', ?,
     10, 10, '2026-07-24T00:00:00.000Z', 'policy-version-1', 1, ?, ?,
-    'human', 'operator', ?, 4)`
+    ?, ?, ?, 4)`
   ).run(
     decisionIds,
     adEntityIds,
     JSON.stringify(rules.requiredEvidence),
     JSON.stringify(rules.stopConditions),
+    issuerType,
+    issuerType === 'policy' ? 'policy-engine' : 'operator',
     NOW,
   );
   database.prepare(`INSERT INTO mission_grant_events (

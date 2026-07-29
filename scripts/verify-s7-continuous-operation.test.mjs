@@ -578,6 +578,165 @@ describe('S7 continuous operation verifier', () => {
     });
   });
 
+  it('fails closed when any competing store-day job has a malformed latest-order timestamp', () => {
+    const snapshot = validSnapshot();
+    const oldSuccess = snapshot.jobs.find((job) => job.storeId === 'shc001' && job.businessDate === dates[0]);
+    snapshot.jobs.push({
+      ...oldSuccess,
+      jobId: `${oldSuccess.jobId}-unknown-order`,
+      requestId: `${oldSuccess.requestId}-unknown-order`,
+      state: 'failed',
+      blockerCode: 'LINGXING_SESSION_EXPIRED',
+      detail: 'This attempt cannot be ordered because its durable updatedAt is malformed.',
+      updatedAt: 'not-a-timestamp',
+    });
+
+    const result = evaluateContinuousOperationSnapshot(snapshot, input);
+    expect(result.passed).toBe(false);
+    expect(result.stores[0].days[0]).toMatchObject({
+      outcome: 'INCOMPLETE',
+      accepted: false,
+      jobId: null,
+    });
+    expect(result.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'LATEST_JOB_IDENTITY_AMBIGUOUS',
+        storeId: 'shc001',
+        businessDate: dates[0],
+      }),
+    ]));
+  });
+
+  it('accepts a newer successful authoritative lineage after an older failed import attempt', () => {
+    const snapshot = validSnapshot();
+    const successfulJob = snapshot.jobs.find((job) => job.storeId === 'shc001' && job.businessDate === dates[0]);
+    const successfulRun = snapshot.imports.find((run) => (
+      run.storeId === successfulJob.storeId
+      && run.batchId === successfulJob.jobId
+    ));
+    const failedRunId = `${successfulRun.runId}-failed-old`;
+    snapshot.imports.push({
+      ...successfulRun,
+      runId: failedRunId,
+      idempotencyKey: `${successfulRun.idempotencyKey}-failed-old`,
+      status: 'failed',
+      startedAt: `${dates[0]}T15:10:00.000Z`,
+      completedAt: `${dates[0]}T15:20:00.000Z`,
+      createdAt: `${dates[0]}T15:20:00.000Z`,
+    });
+    snapshot.importFiles.push(...snapshot.importFiles
+      .filter((file) => file.storeId === successfulJob.storeId && file.runId === successfulRun.runId)
+      .map((file) => ({
+        ...file,
+        runId: failedRunId,
+        capturedAt: `${dates[0]}T15:20:00.000Z`,
+      })));
+
+    const result = evaluateContinuousOperationSnapshot(snapshot, input);
+    expect(result.passed).toBe(true);
+    expect(result.violations).toEqual([]);
+    expect(result.stores[0].days[0]).toMatchObject({
+      outcome: 'SUCCESS_8_OF_8',
+      accepted: true,
+      jobId: successfulJob.jobId,
+      importRunId: successfulRun.runId,
+    });
+  });
+
+  it('fails closed when any competing import has a malformed latest-order timestamp', () => {
+    const snapshot = validSnapshot();
+    const successfulJob = snapshot.jobs.find((job) => job.storeId === 'shc001' && job.businessDate === dates[0]);
+    const successfulRun = snapshot.imports.find((run) => (
+      run.storeId === successfulJob.storeId
+      && run.batchId === successfulJob.jobId
+    ));
+    snapshot.imports.push({
+      ...successfulRun,
+      runId: `${successfulRun.runId}-unknown-order`,
+      idempotencyKey: `${successfulRun.idempotencyKey}-unknown-order`,
+      status: 'failed',
+      completedAt: 'not-a-timestamp',
+    });
+
+    const result = evaluateContinuousOperationSnapshot(snapshot, input);
+    expect(result.passed).toBe(false);
+    expect(result.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'LATEST_IMPORT_IDENTITY_AMBIGUOUS',
+        storeId: 'shc001',
+        businessDate: dates[0],
+      }),
+    ]));
+  });
+
+  it('accepts identical empty-report bytes from independent store lineages', () => {
+    const snapshot = validSnapshot();
+    const firstFile = snapshot.importFiles.find((file) => (
+      file.storeId === 'shc001'
+      && file.reportType === 'campaign'
+      && file.runId === `run-shc001-${dates[0]}`
+    ));
+    const secondFile = snapshot.importFiles.find((file) => (
+      file.storeId === 'shc002'
+      && file.reportType === 'campaign'
+      && file.runId === `run-shc002-${dates[0]}`
+    ));
+    const emptyReportBytes = 'campaign_id,campaign_name,spend,sales\n';
+    for (const file of [firstFile, secondFile]) {
+      fs.writeFileSync(file.filePath, emptyReportBytes);
+      file.fileSizeBytes = fs.statSync(file.filePath).size;
+      file.fileHash = sha256File(file.filePath);
+      file.importedRows = 0;
+      const checkpoint = snapshot.checkpoints.find((row) => (
+        row.storeId === file.storeId
+        && row.jobId === file.batchId
+        && row.reportType === file.reportType
+      ));
+      checkpoint.fileSizeBytes = file.fileSizeBytes;
+    }
+
+    const result = evaluateContinuousOperationSnapshot(snapshot, input);
+    expect(result.passed).toBe(true);
+    expect(result.violations.map(({ code }) => code)).not.toEqual(expect.arrayContaining([
+      'DUPLICATE_IMPORT_FILE_HASH',
+      'DUPLICATE_IMPORT_FILE',
+      'CROSS_STORE_IMPORT_FILE_HASH',
+    ]));
+  });
+
+  it('rejects identical non-empty report bytes even when every other lineage identity differs', () => {
+    const snapshot = validSnapshot();
+    const firstFile = snapshot.importFiles.find((file) => (
+      file.storeId === 'shc001'
+      && file.reportType === 'campaign'
+      && file.runId === `run-shc001-${dates[0]}`
+    ));
+    const secondFile = snapshot.importFiles.find((file) => (
+      file.storeId === 'shc002'
+      && file.reportType === 'campaign'
+      && file.runId === `run-shc002-${dates[0]}`
+    ));
+    fs.copyFileSync(firstFile.filePath, secondFile.filePath);
+    secondFile.fileSizeBytes = fs.statSync(secondFile.filePath).size;
+    secondFile.fileHash = sha256File(secondFile.filePath);
+    const secondCheckpoint = snapshot.checkpoints.find((row) => (
+      row.storeId === secondFile.storeId
+      && row.jobId === secondFile.batchId
+      && row.reportType === secondFile.reportType
+    ));
+    secondCheckpoint.fileSizeBytes = secondFile.fileSizeBytes;
+
+    const result = evaluateContinuousOperationSnapshot(snapshot, input);
+    expect(result.passed).toBe(false);
+    expect(result.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'DUPLICATE_IMPORT_FILE_HASH',
+        conflicts: expect.arrayContaining(['content:non-empty']),
+      }),
+      expect.objectContaining({ code: 'CROSS_STORE_IMPORT_FILE_HASH' }),
+    ]));
+  });
+
   it('rejects incomplete, out-of-order, cross-day and unbounded terminal timestamps', () => {
     const missingTerminal = validSnapshot();
     delete missingTerminal.jobs[0].completedAt;
@@ -636,9 +795,13 @@ describe('S7 continuous operation verifier', () => {
   it('fails duplicate fingerprints/files and cross-store profile identities', () => {
     const snapshot = validSnapshot();
     snapshot.imports[1].inputFingerprint = snapshot.imports[0].inputFingerprint;
-    snapshot.imports[1].businessDate = snapshot.imports[0].businessDate;
-    snapshot.importFiles[8].fileHash = snapshot.importFiles[0].fileHash;
-    snapshot.importFiles[8].reportType = snapshot.importFiles[0].reportType;
+    Object.assign(snapshot.importFiles[8], {
+      filePath: snapshot.importFiles[0].filePath,
+      fileName: snapshot.importFiles[0].fileName,
+      fileSizeBytes: snapshot.importFiles[0].fileSizeBytes,
+      fileHash: snapshot.importFiles[0].fileHash,
+      reportType: snapshot.importFiles[0].reportType,
+    });
     snapshot.jobs[0].browserProfileId = 'profile-shc002';
 
     const result = evaluateContinuousOperationSnapshot(snapshot, input);
@@ -661,9 +824,33 @@ describe('S7 continuous operation verifier', () => {
       ]));
 
     const crossDay = validSnapshot();
-    crossDay.importFiles[8].fileHash = crossDay.importFiles[0].fileHash;
+    Object.assign(crossDay.importFiles[8], {
+      filePath: crossDay.importFiles[0].filePath,
+      fileName: crossDay.importFiles[0].fileName,
+      fileSizeBytes: crossDay.importFiles[0].fileSizeBytes,
+      fileHash: crossDay.importFiles[0].fileHash,
+    });
     expect(evaluateContinuousOperationSnapshot(crossDay, input).violations.map(({ code }) => code))
-      .toContain('DUPLICATE_IMPORT_FILE_HASH');
+      .toEqual(expect.arrayContaining([
+        'DUPLICATE_IMPORT_FILE_HASH',
+        'DUPLICATE_IMPORT_FILE_PATH',
+      ]));
+
+    const sameLineage = validSnapshot();
+    const firstLineageFile = sameLineage.importFiles[0];
+    const secondLineageFile = sameLineage.importFiles[1];
+    expect(secondLineageFile.runId).toBe(firstLineageFile.runId);
+    expect(secondLineageFile.filePath).not.toBe(firstLineageFile.filePath);
+    fs.writeFileSync(secondLineageFile.filePath, fs.readFileSync(firstLineageFile.filePath));
+    secondLineageFile.fileSizeBytes = fs.statSync(secondLineageFile.filePath).size;
+    secondLineageFile.fileHash = sha256File(secondLineageFile.filePath);
+    const sameLineageCodes = evaluateContinuousOperationSnapshot(sameLineage, input)
+      .violations.map(({ code }) => code);
+    expect(sameLineageCodes).toEqual(expect.arrayContaining([
+      'DUPLICATE_IMPORT_FILE_HASH',
+      'DUPLICATE_IMPORT_FILE',
+    ]));
+    expect(sameLineageCodes).not.toContain('DUPLICATE_IMPORT_FILE_PATH');
 
     const crossTypePath = validSnapshot();
     crossTypePath.importFiles[1].filePath = crossTypePath.importFiles[0].filePath;
@@ -709,9 +896,12 @@ describe('S7 continuous operation verifier', () => {
     const firstStoreOneRun = snapshot.imports.find((row) => row.storeId === 'shc001');
     const firstStoreTwoRun = snapshot.imports.find((row) => row.storeId === 'shc002');
     firstStoreTwoRun.inputFingerprint = firstStoreOneRun.inputFingerprint;
+    firstStoreTwoRun.batchRequestId = firstStoreOneRun.batchRequestId;
     const firstStoreOneFile = snapshot.importFiles.find((row) => row.storeId === 'shc001');
     const firstStoreTwoFile = snapshot.importFiles.find((row) => row.storeId === 'shc002');
-    firstStoreTwoFile.fileHash = firstStoreOneFile.fileHash;
+    fs.writeFileSync(firstStoreTwoFile.filePath, fs.readFileSync(firstStoreOneFile.filePath));
+    firstStoreTwoFile.fileSizeBytes = fs.statSync(firstStoreTwoFile.filePath).size;
+    firstStoreTwoFile.fileHash = sha256File(firstStoreTwoFile.filePath);
 
     const result = evaluateContinuousOperationSnapshot(snapshot, input);
     expect(result.passed).toBe(false);
@@ -943,7 +1133,17 @@ describe('S7 continuous operation verifier', () => {
         storeCapsule: {
           verifiedFileCount: 112,
         },
+        publication: {
+          state: 'atomic-published',
+          outputPath,
+          stagedVerificationCaptureLabel: 'continuous-after-staging-output',
+        },
       });
+      expect(evidence.authorityCurrentness.captures.map(({ captureLabel }) => captureLabel)).toEqual([
+        'continuous-before-work',
+        'continuous-before-final-output',
+        'continuous-after-staging-output',
+      ]);
       expect(fs.readdirSync(path.dirname(outputPath)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
       expect(() => run(runnableArgs(fixture, outputPath), fixture.context)).toThrow(/already exists/);
     } finally {
@@ -977,7 +1177,7 @@ describe('S7 continuous operation verifier', () => {
     }
   });
 
-  it('removes final and temporary output when source, snapshot or package bytes change after write', () => {
+  it('never publishes final output when source, snapshot or package bytes change after the staging write', () => {
     for (const target of ['source', 'snapshot', 'package']) {
       const fixture = createRunnableAuthoritySnapshotFixture();
       try {
@@ -992,7 +1192,12 @@ describe('S7 continuous operation verifier', () => {
             : fixture.packageContext.executablePath;
         const context = {
           ...fixture.context,
-          afterOutputWritten: () => fs.appendFileSync(mutationPath, `changed-${target}`),
+          afterOutputWritten: ({ outputPath: finalPath, stagingPath, finalPathPublished }) => {
+            expect(fs.existsSync(stagingPath)).toBe(true);
+            expect(fs.existsSync(finalPath)).toBe(false);
+            expect(finalPathPublished).toBe(false);
+            fs.appendFileSync(mutationPath, `changed-${target}`);
+          },
         };
         expect(() => run(runnableArgs(fixture, outputPath), context))
           .toThrow(/changed|package identity/i);

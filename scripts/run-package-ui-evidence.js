@@ -39,13 +39,15 @@ app.setPath('userData') before any app.getPath('userData') use; APPDATA is not
 used as an isolation mechanism. Before launch, profile/amazon-ai-ops.db must
 match the explicit protected DB through a WAL-aware read-only SQLite online
 backup while remaining a distinct file. Raw main-file hashes are auxiliary.
-Schema v7 writes immutable 100/125/wide checkpoints under one run group, binds
+Schema v8 writes immutable 100/125/wide checkpoints under one run group, binds
 the packaged Chromium hash and target root/child PID lineage, and proves target
 cleanup without treating unrelated daily Chrome/Edge processes as failures.
 A failed later profile can resume with --resume-run-group. Every unfinished
 profile uses a visible secret-blind handoff; the first profile validates its
-fresh typed-and-saved identity proof immediately after login. Each attempt
-writes to its own immutable artifact directory. If target product/Chromium
+fresh typed-and-saved identity proof immediately after login. The interactive
+timeout applies separately to operator preparation and, after visible submit,
+browser authorization, with a hard total bound of two timeout phases. Each
+attempt writes to its own immutable artifact directory. If target product/Chromium
 cleanup cannot be attested, that run group is deliberately non-resumable:
 create a fresh isolated profile and run group instead of reusing its cursor.
 
@@ -59,7 +61,7 @@ Options:
   --resume-run-group <id>                Resume matching package/profile checkpoints
   --allow-interactive-login              Required: wait for visible operator login without secret capture
   --output <dir>                         Evidence output directory
-  --interactive-login-timeout-ms <ms>    Visible handoff timeout, 60000-900000 (default 900000)
+  --interactive-login-timeout-ms <ms>    Per-phase visible handoff timeout, 60000-900000 (default 900000; hard total <= 2x)
   --settle-ms <ms>                       Extra settle floor (default 800; capture enforces at least 2500)
   --help                                  Show this help without launching Electron`);
 }

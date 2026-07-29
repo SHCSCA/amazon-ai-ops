@@ -133,7 +133,7 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('绑定当前领星账号');
     expect(loginPage).toContain('更新当前领星账号绑定');
     expect(loginPage).toContain('领星连接已绑定');
-    expect(loginPage).toContain('disabled={loading || !loginConnectionsReady}');
+    expect(loginPage).toContain('disabled={loading || !loginWorkbenchReady}');
     expect(loginPage).toContain('lingxingConnection?.accountLabel?.trim() === username.trim()');
     expect(loginPage).toContain('store.bindLingxingConnection(username.trim())');
     expect(loginPage).not.toMatch(/data-[\\w-]*(?:user|account)[\\w-]*=\\{?username/i);
@@ -161,8 +161,38 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('amazonAdsConnection?.externalAccountId?.trim() === amazonAdsProfileId.trim()');
     expect(loginPage).toContain('store.bindAmazonAdsConnection(amazonAdsProfileId)');
     expect(loginPage).toContain('const loginConnectionsReady = lingxingConnectionReady && amazonAdsConnectionReady');
-    expect(loginPage).toContain('disabled={loading || !loginConnectionsReady}');
+    expect(loginPage).toContain('disabled={loading || !loginWorkbenchReady}');
     expect(loginPage).not.toMatch(/type="password"[\s\S]{0,200}value=\{amazonAdsProfileId\}/);
+  });
+
+  it('presents the formal login as a desktop three-step workbench with visible blockers', () => {
+    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const loginPage = source.slice(source.indexOf('function LoginPage()'), source.indexOf('function MissionControlRuntime'));
+
+    expect(loginPage).toContain('aria-label="登录与双连接工作台"');
+    expect(loginPage).toContain('data-login-workbench-store');
+    expect(loginPage).toContain('当前店铺');
+    expect(loginPage).toContain('美国站 · USD');
+    expect(loginPage).toContain('data-login-workbench-step="credentials"');
+    expect(loginPage).toContain('data-login-workbench-step="bindings"');
+    expect(loginPage).toContain('data-login-workbench-step="authorize"');
+    expect(loginPage).toContain('本次正式证据首轮必须重新输入密码并勾选“记住密码”');
+    expect(loginPage).toContain('需要刷新登录身份时，请重新输入密码并勾选“记住密码”');
+    expect(loginPage).toContain('分别确认领星账号和 Amazon Ads Profile ID');
+    expect(loginPage).toContain('保持 Electron 主窗口打开');
+    expect(loginPage).toContain('独立 Playwright Chromium');
+    expect(loginPage).toContain('Package UI 证据采集器不会读取、填写或点击你的账号密码');
+    expect(loginPage).toContain('应用 Main 进程只在本机解密并提交你明确选择使用的领星凭证');
+    expect(loginPage).toContain("data-login-workbench-readiness={loginWorkbenchReady ? 'ready' : 'blocked'}");
+    expect(loginPage).toContain('disabled={loading || !loginWorkbenchReady}');
+    expect(loginPage).toContain("freshTypedProofStorageReady");
+    expect(loginPage).toContain("credentialSource === 'typed'");
+    expect(loginPage).toContain('&& Boolean(password)');
+    expect(loginPage).toContain('&& rememberPassword');
+    expect(loginPage).toContain('本机加密不可用，无法建立可核验的新凭证会话。');
+    expect(loginPage).toContain('暂不能登录，请先处理以下项目');
+    expect(loginPage).toContain('未就绪：请先在步骤 1 输入领星用户名。');
+    expect(loginPage).toContain('未就绪：请填写 ads.lingxing.com 当前广告账户的 profile_id。');
   });
 
   it('does not erase a typed Ads profile id on an unrelated same-store authority revision', () => {
@@ -311,7 +341,8 @@ describe('login micro-response contract', () => {
     expect(source).toContain('if (loading) return;');
     expect(source.match(/event\.key === 'Enter' && !loading && loginConnectionsReady && handleLogin\(\)/g)).toHaveLength(2);
     expect(source).toContain("disabled={savedCredentialState === 'encryption_unavailable'}");
-    expect(source).toContain("const remember = encryptionAvailable && Boolean(saved.rememberPassword)");
+    expect(source).toContain('const remember = encryptionAvailable && (');
+    expect(source).toContain('requiresFreshTypedProof ? true : Boolean(saved.rememberPassword)');
     expect(source).toContain('<span>记住密码</span>');
   });
 });

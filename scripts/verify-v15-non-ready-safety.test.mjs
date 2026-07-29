@@ -353,8 +353,17 @@ function validOperatorHandoff() {
     automationReadSecrets: false,
     automationTypedSecrets: false,
     completedAt: '2026-07-16T08:08:09.400Z',
+    durationClock: 'performance.now',
+    elapsedMs: 300,
+    finalPhase: 'authorization',
     kind: 'visible-user-handoff',
+    maximumTotalTimeoutMs: 1_200_000,
     outcome: 'workspace-reached',
+    phaseTimeoutMs: 600_000,
+    phaseTransitions: [
+      { elapsedMs: 0, phase: 'preparation', startedAt: '2026-07-16T08:08:09.110Z' },
+      { elapsedMs: 90, phase: 'authorization', startedAt: '2026-07-16T08:08:09.200Z' },
+    ],
     startedAt: '2026-07-16T08:08:09.100Z',
   };
 }
@@ -987,7 +996,7 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
   );
   const packageUi = {
     kind: 'package-ui-evidence',
-    schemaVersion: 7,
+    schemaVersion: 8,
     generatedAt: '2026-07-16T08:08:00.000Z',
     completedAt: '2026-07-16T08:09:00.000Z',
     passed: true,
@@ -1002,6 +1011,7 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
       expectedAppContentSha256: appContentSha256,
       expectedExeSha256: smoke.artifacts.unpacked.sha256,
       evidenceMode: 'package-ui',
+      interactiveLoginMaximumTotalMs: 1_200_000,
       interactiveLoginTimeoutMs: 600_000,
       loginMode: 'interactive-operator-each-run',
       protectedDatabasePath: authorityDbPath,
@@ -1450,7 +1460,7 @@ function validReadbackEvidence(dir) {
 }
 
 describe('verify v15 non-ready safety', () => {
-  it('binds every schema v7 scheduler screenshot and runtime attestation to its bundle copy', () => {
+  it('binds every schema v8 scheduler screenshot and runtime attestation to its bundle copy', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-package-ui-bundle-binding-'));
     try {
       const bundleDir = path.join(dir, 'bundle');
@@ -1488,7 +1498,7 @@ describe('verify v15 non-ready safety', () => {
         ],
       };
       const packageUi = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         runs: [{
           screenshots: [],
           overlayChecks: [],

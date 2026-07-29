@@ -1268,8 +1268,17 @@ describe('saved-login navigation retry contract', () => {
       automationReadSecrets: false,
       automationTypedSecrets: false,
       completedAt: '2026-07-17T06:00:00.400Z',
+      durationClock: 'performance.now',
+      elapsedMs: 190,
+      finalPhase: 'authorization',
       kind: 'visible-user-handoff',
+      maximumTotalTimeoutMs: 1_200_000,
       outcome: 'workspace-reached',
+      phaseTimeoutMs: 600_000,
+      phaseTransitions: [
+        { elapsedMs: 0, phase: 'preparation', startedAt: '2026-07-17T06:00:00.210Z' },
+        { elapsedMs: 90, phase: 'authorization', startedAt: '2026-07-17T06:00:00.300Z' },
+      ],
       startedAt: '2026-07-17T06:00:00.200Z',
     };
     run.session.mode = 'interactive-operator-login';
@@ -1290,12 +1299,36 @@ describe('saved-login navigation retry contract', () => {
     expect(validRunDiagnostics(run.diagnostics, run)).toBe(true);
     run.session.operatorHandoff.automationReadSecrets = true;
     expect(validRunDiagnostics(run.diagnostics, run)).toBe(false);
+
+    const overlongPreparation = structuredClone(operatorHandoff);
+    overlongPreparation.phaseTransitions[1].elapsedMs = 600_001;
+    run.session.operatorHandoff = overlongPreparation;
+    run.diagnostics.login.operatorHandoff = structuredClone(overlongPreparation);
+    expect(validRunDiagnostics(run.diagnostics, run)).toBe(false);
+
+    const overlongAuthorization = structuredClone(operatorHandoff);
+    overlongAuthorization.elapsedMs = 600_091;
+    run.session.operatorHandoff = overlongAuthorization;
+    run.diagnostics.login.operatorHandoff = structuredClone(overlongAuthorization);
+    expect(validRunDiagnostics(run.diagnostics, run)).toBe(false);
+
+    const overlongTotal = structuredClone(operatorHandoff);
+    overlongTotal.elapsedMs = 1_200_001;
+    run.session.operatorHandoff = overlongTotal;
+    run.diagnostics.login.operatorHandoff = structuredClone(overlongTotal);
+    expect(validRunDiagnostics(run.diagnostics, run)).toBe(false);
   });
 
   it('requires typed-and-saved identity proof for the first handoff and a bounded saved-session continuation afterwards', () => {
     expect(INTERACTIVE_LOGIN_CONTRACT).toEqual(expect.objectContaining({
+      authorizationStartSignal: 'visible-login-submit-aria-busy-or-authenticated-workspace',
+      deadlineClock: 'monotonic-performance-now',
+      durationEvidence: 'monotonic-elapsed-ms',
       firstRunFreshTypedIdentityProof: true,
+      maximumTotalTimeoutMultiplier: 2,
       mode: 'visible-operator-each-run',
+      phaseModel: 'operator-preparation-then-browser-authorization',
+      phaseTimeoutAppliedSeparately: true,
       savedSessionContinuationRequiresFreshProof: true,
     }));
     expect(validateLoginSessionAttestation({
@@ -1354,7 +1387,7 @@ describe('saved-login navigation retry contract', () => {
     ]));
   });
 
-  it('waits on one bounded deadline for a ready Main projection and returns null on timeout', async () => {
+  it('waits on bounded phases for a ready Main projection and returns null on timeout', async () => {
     const waits = [];
     let readinessReads = 0;
     const ready = await waitForInteractiveAuthenticatedWorkspace({
@@ -1410,6 +1443,126 @@ describe('saved-login navigation retry contract', () => {
       }),
     }, 0);
     expect(timedOut).toBeNull();
+  });
+
+  it('starts a fresh bounded authorization phase after the visible submit enters busy state', async () => {
+    let currentTime = Date.parse('2026-07-17T06:00:00.000Z');
+    const phaseTransitions = [];
+    const ready = await waitForInteractiveAuthenticatedWorkspace({
+      evaluate: async () => ({
+        adsSessionReady: true,
+        credentialPersistence: 'saved',
+        credentialSource: 'typed',
+        erpSessionReady: true,
+        erpSessionReused: false,
+        ok: true,
+        sessionIdentityVerified: true,
+      }),
+      locator: (selector) => ({
+        isVisible: async () => {
+          const elapsed = currentTime - Date.parse('2026-07-17T06:00:00.000Z');
+          if (selector === 'nav[aria-label="主业务导航"]') return elapsed >= 1_500;
+          if (selector === '[data-login-connection-status]') return elapsed < 1_500;
+          if (selector === '.login-submit-button[aria-busy="true"]') return elapsed >= 1_000;
+          return false;
+        },
+      }),
+      waitForTimeout: async (waitMs) => {
+        currentTime += waitMs;
+      },
+    }, 1_100, {
+      monotonicNow: () => currentTime,
+      now: () => currentTime,
+      onPhaseChange: (transition) => phaseTransitions.push(transition),
+    });
+
+    expect(phaseTransitions.map(({ phase }) => phase)).toEqual([
+      'preparation',
+      'authorization',
+    ]);
+    expect(ready).toEqual(expect.objectContaining({
+      adsSessionReady: true,
+      erpSessionReady: true,
+      ok: true,
+    }));
+  });
+
+  it('uses a monotonic deadline even when the wall clock jumps forward', async () => {
+    let wallTime = Date.parse('2026-07-17T06:00:00.000Z');
+    let monotonicTime = 0;
+    const ready = await waitForInteractiveAuthenticatedWorkspace({
+      evaluate: async () => ({
+        adsSessionReady: monotonicTime >= 1_500,
+        credentialPersistence: monotonicTime >= 1_500 ? 'saved' : null,
+        credentialSource: monotonicTime >= 1_500 ? 'typed' : null,
+        erpSessionReady: monotonicTime >= 1_500,
+        erpSessionReused: false,
+        ok: monotonicTime >= 1_500,
+        sessionIdentityVerified: monotonicTime >= 1_500,
+      }),
+      locator: (selector) => ({
+        isVisible: async () => {
+          if (selector === 'nav[aria-label="主业务导航"]') return monotonicTime >= 1_500;
+          if (selector === '[data-login-connection-status]') return monotonicTime < 1_500;
+          if (selector === '.login-submit-button[aria-busy="true"]') return monotonicTime >= 1_000;
+          return false;
+        },
+      }),
+      waitForTimeout: async (waitMs) => {
+        monotonicTime += waitMs;
+        wallTime += waitMs + 86_400_000;
+      },
+    }, 1_100, {
+      monotonicNow: () => monotonicTime,
+      now: () => wallTime,
+    });
+
+    expect(ready).toEqual(expect.objectContaining({
+      adsSessionReady: true,
+      erpSessionReady: true,
+      ok: true,
+    }));
+  });
+
+  it('rejects a Main attestation that resolves after the monotonic authorization deadline', async () => {
+    let monotonicTime = 0;
+    const late = await waitForInteractiveAuthenticatedWorkspace({
+      evaluate: async () => {
+        monotonicTime = 1_001;
+        return {
+          adsSessionReady: true,
+          credentialPersistence: 'saved',
+          credentialSource: 'typed',
+          erpSessionReady: true,
+          erpSessionReused: false,
+          ok: true,
+          sessionIdentityVerified: true,
+        };
+      },
+      locator: (selector) => ({
+        isVisible: async () => selector === 'nav[aria-label="主业务导航"]',
+      }),
+      waitForTimeout: async () => undefined,
+    }, 1_000, {
+      monotonicNow: () => monotonicTime,
+      now: () => Date.parse('2026-07-17T06:00:00.000Z'),
+    });
+
+    expect(late).toBeNull();
+  });
+
+  it('bounds a hanging locator probe with the monotonic phase deadline', async () => {
+    const startedAt = performance.now();
+    const unresolved = await waitForInteractiveAuthenticatedWorkspace({
+      evaluate: async () => null,
+      locator: () => ({
+        isVisible: () => new Promise(() => undefined),
+      }),
+      waitForTimeout: async () => undefined,
+    }, 20);
+
+    expect(unresolved).toBeNull();
+    expect(performance.now() - startedAt).toBeLessThan(500);
   });
 
   it('never accepts an unresolved interactive Main projection when the bounded deadline has elapsed', async () => {
@@ -2067,8 +2220,17 @@ function applyInteractiveOperatorHandoff(run, { firstRun = false } = {}) {
     automationReadSecrets: false,
     automationTypedSecrets: false,
     completedAt: '2026-07-17T06:00:00.400Z',
+    durationClock: 'performance.now',
+    elapsedMs: 190,
+    finalPhase: 'authorization',
     kind: 'visible-user-handoff',
+    maximumTotalTimeoutMs: 1_200_000,
     outcome: 'workspace-reached',
+    phaseTimeoutMs: 600_000,
+    phaseTransitions: [
+      { elapsedMs: 0, phase: 'preparation', startedAt: '2026-07-17T06:00:00.210Z' },
+      { elapsedMs: 90, phase: 'authorization', startedAt: '2026-07-17T06:00:00.300Z' },
+    ],
     startedAt: '2026-07-17T06:00:00.200Z',
   };
   const connectionBootstrap = {
@@ -2143,7 +2305,7 @@ function validWideRun() {
 }
 
 describe('package UI evidence CLI contract', () => {
-  it('reasserts the schema-v7 secret-blind login boundary for direct runtime callers', () => {
+  it('reasserts the schema-v8 secret-blind login boundary for direct runtime callers', () => {
     expect(assertPackageUiRuntimeLoginBoundary({
       allowInteractiveLogin: true,
       allowSavedLogin: false,
@@ -2159,6 +2321,8 @@ describe('package UI evidence CLI contract', () => {
       source.indexOf('const runGroupId = packageUiRunGroupId(options)', runtimeStart),
     );
     expect(runtimeBody).toContain('assertPackageUiRuntimeLoginBoundary(options)');
+    expect(source.match(/\[PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV\]: options\.requireFreshTypedProof \? '1' : '0'/g))
+      .toHaveLength(2);
   });
 
   it('requires immutable EXE and unpacked app-content hashes and keeps both paths fixed to win-unpacked', () => {
@@ -2721,7 +2885,7 @@ describe('isolated profile database provenance', () => {
       '--allow-saved-login',
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
-    ])).toThrow(/schema v7.*--allow-interactive-login/i);
+    ])).toThrow(/schema v8.*--allow-interactive-login/i);
     expect(() => parsePackageUiEvidenceArgs([
       '--expected-exe-sha256', HASH_A,
       '--expected-app-content-sha256', HASH_B,
@@ -3817,7 +3981,7 @@ describe('read-only interactions and evidence completeness', () => {
     const valid = {
       artifactHashesStable: true,
       checkpointComposition,
-      schemaVersion: 7,
+      schemaVersion: 8,
       interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
       isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
       packageProcessIsolation: validProcessIsolation(),
@@ -3837,6 +4001,7 @@ describe('read-only interactions and evidence completeness', () => {
       requested: {
         allowInteractiveLogin: true,
         allowSavedLogin: false,
+        interactiveLoginMaximumTotalMs: 1_200_000,
         interactiveLoginTimeoutMs: 600_000,
         loginMode: 'interactive-operator-each-run',
         resumeRunGroupId: null,
@@ -3851,6 +4016,14 @@ describe('read-only interactions and evidence completeness', () => {
       wideProfile: validWideRun(),
     };
     expect(evaluatePackageUiEvidenceCompleteness(valid)).toEqual({ passed: true, violations: [] });
+
+    const mismatchedHandoffPhaseBound = structuredClone(valid);
+    mismatchedHandoffPhaseBound.runs[0].session.operatorHandoff.phaseTimeoutMs = 900_000;
+    expect(evaluatePackageUiEvidenceCompleteness(
+      mismatchedHandoffPhaseBound,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCALE_INTERACTIVE_LOGIN_PHASE_BOUND_MISMATCH' }),
+    ]));
 
     const missingLogicalProtection = structuredClone(valid);
     delete missingLogicalProtection.protectedDatabaseLogical;

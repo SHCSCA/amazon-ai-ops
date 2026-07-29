@@ -94,7 +94,7 @@ function gateEvidence(id, fixture) {
     const screenshot = artifact(screenshotPath);
     return {
       kind: 'package-ui-evidence',
-      schemaVersion: 7,
+      schemaVersion: 8,
       passed: true,
       screenshot: {
         path: screenshot.sourcePath,

@@ -61,6 +61,121 @@ export interface ExecutionAuthorityRepositoryOptions {
   now?: () => Date;
 }
 
+export const POLICY_GRANT_DISPATCH_ENTITY_TYPE = 'policy_grant_dispatch_v1';
+export const POLICY_GRANT_DISPATCH_SOURCE = 'policy-grant-dispatch-v1';
+
+export type PolicyGrantDispatchStatus =
+  | 'pending'
+  | 'attempting'
+  | 'queued_for_execution'
+  | 'waiting_runtime'
+  | 'completed'
+  | 'attention_required';
+
+export type PolicyGrantDispatchTrigger =
+  | 'grant_issued'
+  | 'startup_recovery'
+  | 'store_activated'
+  | 'session_ready'
+  | 'timer_retry';
+
+export type PolicyGrantDispatchCode =
+  | 'DISPATCH_PENDING'
+  | 'DISPATCH_ATTEMPT_STARTED'
+  | 'BATCH_QUEUED_FOR_EXECUTION'
+  | 'EXECUTION_START_ACQUIRED'
+  | 'EXECUTION_RETRY_SCHEDULED'
+  | 'EXECUTION_TERMINAL'
+  | 'EXECUTION_STATE_REQUIRES_RECONCILIATION'
+  | 'RUNTIME_UNAVAILABLE'
+  | 'STARTUP_ATTEMPT_INTERRUPTED'
+  | 'BATCH_CREATED'
+  | 'EXISTING_BATCH_RECOVERED'
+  | 'SESSION_REAUTHORIZATION_REQUIRED'
+  | 'GRANT_EXPIRED'
+  | 'GRANT_TERMINAL'
+  | 'MISSION_REVISION_CHANGED'
+  | 'POLICY_AUTHORITY_CHANGED'
+  | 'ADS_IDENTITY_AUTHORITY_CHANGED'
+  | 'UNSAFE_DISPATCH_FAILURE';
+
+export interface AppendPolicyGrantDispatchEventInput {
+  grantId: string;
+  status: PolicyGrantDispatchStatus;
+  trigger: PolicyGrantDispatchTrigger;
+  attempt: number;
+  code: PolicyGrantDispatchCode;
+  detail: string;
+  batchId?: string;
+  nextRetryAt?: string;
+}
+
+export interface PolicyGrantDispatchRecord {
+  storeId: StoreContextEnvelope['storeId'];
+  grantId: string;
+  missionId: string;
+  status: PolicyGrantDispatchStatus;
+  attemptCount: number;
+  eventId?: string;
+  trigger?: PolicyGrantDispatchTrigger;
+  code?: PolicyGrantDispatchCode;
+  detail?: string;
+  nextRetryAt?: string;
+  batchId?: string;
+  batchStatus?: AdExecutionStatus;
+  batchJobCount: number;
+  batchJobStatuses: readonly AdExecutionStatus[];
+  batchHasPersistedIntent: boolean;
+  grantExpiresAt: string;
+  grantSessionGeneration: number;
+  terminalGrantEventType?: 'revoked' | 'consumed' | 'expired';
+  updatedAt?: string;
+}
+
+export interface PolicyGrantDispatchStartupRecoveryResult {
+  recoveredAt: string;
+  discoveredPending: readonly string[];
+  interruptedToWaiting: readonly string[];
+  queuedExistingBatch: readonly string[];
+  completedExistingBatch: readonly string[];
+  attentionRequired: readonly string[];
+}
+
+export function isPolicyExecutionBatchSafelyRestartable(
+  projection: AdExecutionBatchProjection,
+): boolean {
+  if (projection.jobs.length === 0
+    || (projection.batch.status !== 'queued' && projection.batch.status !== 'preflight')) {
+    return false;
+  }
+  let unfinishedCount = 0;
+  let sawUnfinished = false;
+  for (const job of projection.jobs) {
+    if (job.status === 'succeeded') {
+      if (sawUnfinished) return false;
+      const evidenceSlots = new Set(job.evidence.map((item) => item.slot));
+      if (!job.submitIntentId
+        || !job.intentWrittenAt
+        || !job.submittedAt
+        || !evidenceSlots.has('before')
+        || !evidenceSlots.has('after')
+        || !evidenceSlots.has('reload')) {
+        return false;
+      }
+      continue;
+    }
+    unfinishedCount += 1;
+    sawUnfinished = true;
+    if ((job.status !== 'queued' && job.status !== 'preflight')
+      || job.submitIntentId
+      || job.intentWrittenAt
+      || job.submittedAt) {
+      return false;
+    }
+  }
+  return unfinishedCount > 0;
+}
+
 interface IdentityRow {
   identity_version_id: string;
   store_id: string;
@@ -205,6 +320,25 @@ interface CausalEvidenceRefRow {
   evidence_ref: string;
   sha256: string | null;
   created_at: string;
+}
+
+interface PolicyGrantDispatchEventRow {
+  id: string;
+  event_type: string;
+  signal: string | null;
+  status: string;
+  created_at: string;
+}
+
+interface PolicyGrantDispatchPayload {
+  schemaVersion: 1;
+  trigger: PolicyGrantDispatchTrigger;
+  status: PolicyGrantDispatchStatus;
+  attempt: number;
+  code: PolicyGrantDispatchCode;
+  detail: string;
+  batchId?: string;
+  nextRetryAt?: string;
 }
 
 interface GrantRow {
@@ -589,6 +723,17 @@ export class ExecutionAuthorityRepository {
     `).all(context.storeId) as Array<{ id: string }>).map((row) => this.requireProjection(context.storeId, row.id));
   }
 
+  listExecutionBatchesForStoreReconciliation(
+    contextInput: StoreContextEnvelope,
+  ): readonly AdExecutionBatchProjection[] {
+    const context = normalizeContext(contextInput);
+    this.assertStoreContext(context);
+    return (this.db.prepare(`
+      SELECT id FROM ad_execution_batches WHERE store_id = ? ORDER BY created_at, id
+    `).all(context.storeId) as Array<{ id: string }>)
+      .map((row) => this.requireProjection(context.storeId, row.id));
+  }
+
   startJob(
     contextInput: StoreContextEnvelope,
     input: Omit<AdExecutionJobTransitionRequest, 'context'>,
@@ -821,6 +966,265 @@ export class ExecutionAuthorityRepository {
       contextInput, input, ['queued', 'preflight'], 'cancelled', 'cancelled', 'executor',
       input.reasonCode, input.detail, { terminalAt: this.timestamp() }, true,
     );
+  }
+
+  appendPolicyGrantDispatchEvent(
+    contextInput: StoreContextEnvelope,
+    input: AppendPolicyGrantDispatchEventInput,
+  ): PolicyGrantDispatchRecord {
+    const context = normalizeContext(contextInput);
+    return this.immediate(() => {
+      this.assertStoreContext(context);
+      this.appendPolicyGrantDispatchEventInternal(context, input, this.timestamp());
+      const record = this.listPolicyGrantDispatchesInternal(context)
+        .find((candidate) => candidate.grantId === idOf(input.grantId, 'grantId'));
+      if (!record) throw notFound(`Policy grant dispatch ${input.grantId} was not found.`);
+      return record;
+    });
+  }
+
+  listPolicyGrantDispatches(
+    contextInput: StoreContextEnvelope,
+  ): readonly PolicyGrantDispatchRecord[] {
+    const context = normalizeContext(contextInput);
+    this.assertStoreContext(context);
+    return this.listPolicyGrantDispatchesInternal(context);
+  }
+
+  /**
+   * Repairs only the durable policy-grant delivery journal. Existing execution
+   * batches/jobs are never re-enqueued here; their original ledger recovery is
+   * authoritative, especially after a persisted submit intent.
+   */
+  recoverPolicyGrantDispatchesOnStartup(): PolicyGrantDispatchStartupRecoveryResult {
+    return this.immediate(() => {
+      const recoveredAt = this.timestamp();
+      const discoveredPending: string[] = [];
+      const interruptedToWaiting: string[] = [];
+      const queuedExistingBatch: string[] = [];
+      const completedExistingBatch: string[] = [];
+      const attentionRequired: string[] = [];
+      const candidates = this.db.prepare(`
+        SELECT
+          grant.id AS grantId,
+          grant.mission_id AS missionId,
+          grant.mission_revision AS missionRevision,
+          grant.policy_version_id AS policyVersionId,
+          grant.policy_revision AS policyRevision,
+          grant.expires_at AS expiresAt,
+          grant.created_session_generation AS grantSessionGeneration,
+          mission.business_date AS businessDate,
+          mission.status AS missionStatus,
+          mission.revision AS currentMissionRevision,
+          mission.policy_version_id AS currentMissionPolicyVersionId,
+          policy.status AS policyStatus,
+          policy.revision AS currentPolicyRevision,
+          store.store_id AS storeId,
+          store.browser_profile_id AS browserProfileId,
+          store.marketplace,
+          store.currency,
+          store.business_timezone AS businessTimezone,
+          store.status AS storeStatus
+        FROM mission_grants grant
+        JOIN missions mission
+          ON mission.store_id = grant.store_id AND mission.id = grant.mission_id
+        JOIN stores store ON store.store_id = grant.store_id
+        LEFT JOIN policy_versions policy
+          ON policy.store_id = grant.store_id AND policy.id = grant.policy_version_id
+        WHERE grant.issuer_type = 'policy'
+          AND EXISTS (
+            SELECT 1 FROM mission_grant_events issued
+            WHERE issued.store_id = grant.store_id
+              AND issued.grant_id = grant.id
+              AND issued.event_type = 'issued'
+          )
+        ORDER BY grant.store_id, grant.issued_at, grant.id
+      `).all() as Array<{
+        grantId: string;
+        missionId: string;
+        missionRevision: number;
+        policyVersionId: string;
+        policyRevision: number;
+        expiresAt: string;
+        grantSessionGeneration: number;
+        businessDate: string;
+        missionStatus: string;
+        currentMissionRevision: number;
+        currentMissionPolicyVersionId: string;
+        policyStatus: string | null;
+        currentPolicyRevision: number | null;
+        storeId: string;
+        browserProfileId: string;
+        marketplace: string;
+        currency: string;
+        businessTimezone: string;
+        storeStatus: string;
+      }>;
+
+      for (const candidate of candidates) {
+        if (candidate.storeStatus !== 'active'
+          || candidate.marketplace !== 'US'
+          || candidate.currency !== 'USD') {
+          continue;
+        }
+        const durableGeneration = this.durableStoreSessionGeneration(candidate.storeId);
+        if (!Number.isSafeInteger(durableGeneration) || durableGeneration < 0) continue;
+        const context = normalizeStoreContextEnvelope({
+          storeId: candidate.storeId,
+          browserProfileId: candidate.browserProfileId,
+          marketplace: 'US',
+          currency: 'USD',
+          businessTimezone: candidate.businessTimezone,
+          businessDate: candidate.businessDate,
+          sessionGeneration: durableGeneration,
+        });
+        const dispatches = this.listPolicyGrantDispatchesInternal(context);
+        const current = dispatches.find((item) => item.grantId === candidate.grantId);
+        if (!current) continue;
+        if (current.status === 'completed' || current.status === 'attention_required') continue;
+        const authorityFailure: {
+          code: Extract<PolicyGrantDispatchCode,
+            'GRANT_TERMINAL'
+            | 'SESSION_REAUTHORIZATION_REQUIRED'
+            | 'GRANT_EXPIRED'
+            | 'MISSION_REVISION_CHANGED'
+            | 'POLICY_AUTHORITY_CHANGED'>;
+          detail: string;
+        } | undefined = current.terminalGrantEventType
+          ? {
+              code: 'GRANT_TERMINAL',
+              detail: 'The grant reached a terminal state before safe execution.',
+            }
+          : candidate.grantSessionGeneration !== durableGeneration
+            ? {
+                code: 'SESSION_REAUTHORIZATION_REQUIRED',
+                detail: 'The policy grant belongs to an earlier store session.',
+              }
+            : Date.parse(candidate.expiresAt) <= this.now().getTime()
+              ? {
+                  code: 'GRANT_EXPIRED',
+                  detail: 'The policy grant expired before safe execution.',
+                }
+              : candidate.missionStatus !== 'active'
+                || candidate.currentMissionRevision !== candidate.missionRevision
+                || candidate.currentMissionPolicyVersionId !== candidate.policyVersionId
+                ? {
+                    code: 'MISSION_REVISION_CHANGED',
+                    detail: 'The Mission authority changed before safe execution.',
+                  }
+                : candidate.policyStatus !== 'enabled'
+                  || candidate.currentPolicyRevision !== candidate.policyRevision
+                  ? {
+                      code: 'POLICY_AUTHORITY_CHANGED',
+                      detail: 'The enabled policy authority changed before safe execution.',
+                    }
+                  : undefined;
+
+        if (current.batchId || current.batchJobCount > 0) {
+          const existingBatch = current.batchId
+            ? this.requireProjection(context.storeId, current.batchId)
+            : undefined;
+          const safelyRestartable = Boolean(
+            existingBatch && isPolicyExecutionBatchSafelyRestartable(existingBatch),
+          );
+          if (!safelyRestartable) {
+            this.appendPolicyGrantDispatchEventInternal(context, {
+              grantId: candidate.grantId,
+              status: 'completed',
+              trigger: 'startup_recovery',
+              attempt: current.attemptCount,
+              code: 'EXECUTION_STATE_REQUIRES_RECONCILIATION',
+              detail: 'Existing execution state is not safe for automatic restart.',
+              ...(current.batchId ? { batchId: current.batchId } : {}),
+            }, recoveredAt);
+            completedExistingBatch.push(candidate.grantId);
+            continue;
+          }
+          if (authorityFailure) {
+            this.appendPolicyGrantDispatchEventInternal(context, {
+              grantId: candidate.grantId,
+              status: 'attention_required',
+              trigger: 'startup_recovery',
+              attempt: current.attemptCount,
+              code: authorityFailure.code,
+              detail: authorityFailure.detail,
+              batchId: current.batchId,
+            }, recoveredAt);
+            attentionRequired.push(candidate.grantId);
+            continue;
+          }
+          if (current.status !== 'queued_for_execution') {
+            this.appendPolicyGrantDispatchEventInternal(context, {
+              grantId: candidate.grantId,
+              status: 'queued_for_execution',
+              trigger: 'startup_recovery',
+              attempt: current.attemptCount,
+              code: 'BATCH_QUEUED_FOR_EXECUTION',
+              detail: 'Startup recovered a pre-intent batch for the store execution lane.',
+              batchId: current.batchId,
+            }, recoveredAt);
+            queuedExistingBatch.push(candidate.grantId);
+          }
+          continue;
+        }
+
+        if (authorityFailure) {
+          this.appendPolicyGrantDispatchEventInternal(context, {
+            grantId: candidate.grantId,
+            status: 'attention_required',
+            trigger: 'startup_recovery',
+            attempt: current.attemptCount,
+            code: authorityFailure.code,
+            detail: authorityFailure.detail,
+          }, recoveredAt);
+          attentionRequired.push(candidate.grantId);
+          continue;
+        }
+        if (!current.eventId) {
+          this.appendPolicyGrantDispatchEventInternal(context, {
+            grantId: candidate.grantId,
+            status: 'pending',
+            trigger: 'startup_recovery',
+            attempt: 0,
+            code: 'DISPATCH_PENDING',
+            detail: 'Startup recovered a policy grant issued before its dispatch callback was journaled.',
+          }, recoveredAt);
+          discoveredPending.push(candidate.grantId);
+          continue;
+        }
+        if (current.status === 'attempting') {
+          this.appendPolicyGrantDispatchEventInternal(context, {
+            grantId: candidate.grantId,
+            status: 'waiting_runtime',
+            trigger: 'startup_recovery',
+            attempt: current.attemptCount,
+            code: 'STARTUP_ATTEMPT_INTERRUPTED',
+            detail: 'Startup recovered an interrupted pre-batch dispatch attempt; no external write was submitted.',
+          }, recoveredAt);
+          interruptedToWaiting.push(candidate.grantId);
+          continue;
+        }
+        if (current.status === 'queued_for_execution') {
+          this.appendPolicyGrantDispatchEventInternal(context, {
+            grantId: candidate.grantId,
+            status: 'attention_required',
+            trigger: 'startup_recovery',
+            attempt: current.attemptCount,
+            code: 'UNSAFE_DISPATCH_FAILURE',
+            detail: 'The dispatch journal references a missing execution batch.',
+          }, recoveredAt);
+          attentionRequired.push(candidate.grantId);
+        }
+      }
+      return {
+        recoveredAt,
+        discoveredPending,
+        interruptedToWaiting,
+        queuedExistingBatch,
+        completedExistingBatch,
+        attentionRequired,
+      };
+    });
   }
 
   recoverInterruptedExecutions(): AdExecutionStartupRecoveryResult {
@@ -1556,7 +1960,263 @@ export class ExecutionAuthorityRepository {
     return identity;
   }
 
-  private assertContext(contextInput: StoreContextEnvelope, expectedAdsAccountId?: string): StoreContextEnvelope {
+  private listPolicyGrantDispatchesInternal(
+    context: StoreContextEnvelope,
+  ): PolicyGrantDispatchRecord[] {
+    const grants = this.db.prepare(`
+      SELECT id, mission_id AS missionId, expires_at AS expiresAt,
+             created_session_generation AS grantSessionGeneration
+      FROM mission_grants
+      WHERE store_id = ? AND issuer_type = 'policy'
+        AND EXISTS (
+          SELECT 1 FROM mission_grant_events issued
+          WHERE issued.store_id = mission_grants.store_id
+            AND issued.grant_id = mission_grants.id
+            AND issued.event_type = 'issued'
+        )
+      ORDER BY issued_at, id
+    `).all(context.storeId) as Array<{
+      id: string;
+      missionId: string;
+      expiresAt: string;
+      grantSessionGeneration: number;
+    }>;
+    return grants.map((grant): PolicyGrantDispatchRecord => {
+      const event = this.db.prepare(`
+        SELECT id, event_type, signal, status, created_at
+        FROM causal_events
+        WHERE store_id = ? AND entity_type = ? AND entity_id = ? AND source = ?
+        ORDER BY sequence DESC, id DESC LIMIT 1
+      `).get(
+        context.storeId,
+        POLICY_GRANT_DISPATCH_ENTITY_TYPE,
+        grant.id,
+        POLICY_GRANT_DISPATCH_SOURCE,
+      ) as PolicyGrantDispatchEventRow | undefined;
+      const payload = event ? parsePolicyGrantDispatchPayload(event) : undefined;
+      const batch = this.db.prepare(`
+        SELECT id, status FROM ad_execution_batches
+        WHERE store_id = ? AND grant_id = ?
+        ORDER BY created_at, id LIMIT 1
+      `).get(context.storeId, grant.id) as { id: string; status: AdExecutionStatus } | undefined;
+      const batchJobs = this.db.prepare(`
+        SELECT status, submit_intent_id AS submitIntentId,
+               intent_written_at AS intentWrittenAt, submitted_at AS submittedAt
+        FROM ad_execution_jobs
+        WHERE store_id = ? AND grant_id = ?
+        ORDER BY ordinal, id
+      `).all(context.storeId, grant.id) as Array<{
+        status: AdExecutionStatus;
+        submitIntentId: string | null;
+        intentWrittenAt: string | null;
+        submittedAt: string | null;
+      }>;
+      const batchJobStatuses = batchJobs.map((job) => job.status);
+      const batchHasPersistedIntent = batchJobs.some((job) => (
+        job.submitIntentId !== null
+        || job.intentWrittenAt !== null
+        || job.submittedAt !== null
+        || ['intent_written', 'submitted', 'verifying', 'unknown'].includes(job.status)
+      ));
+      const terminal = this.db.prepare(`
+        SELECT event_type AS eventType FROM mission_grant_events
+        WHERE store_id = ? AND grant_id = ?
+          AND event_type IN ('revoked', 'consumed', 'expired')
+        ORDER BY created_at DESC, id DESC LIMIT 1
+      `).get(context.storeId, grant.id) as {
+        eventType: 'revoked' | 'consumed' | 'expired';
+      } | undefined;
+      const attemptCount = Number((this.db.prepare(`
+        SELECT COUNT(*) AS count FROM causal_events
+        WHERE store_id = ? AND entity_type = ? AND entity_id = ? AND source = ?
+          AND event_type = 'policy_grant_dispatch_attempt_started_v1'
+      `).get(
+        context.storeId,
+        POLICY_GRANT_DISPATCH_ENTITY_TYPE,
+        grant.id,
+        POLICY_GRANT_DISPATCH_SOURCE,
+      ) as { count: number }).count);
+      const corrupted = Boolean(event && !payload);
+      return {
+        storeId: context.storeId,
+        grantId: grant.id,
+        missionId: grant.missionId,
+        status: corrupted ? 'attention_required' : (payload?.status ?? 'pending'),
+        attemptCount,
+        ...(event ? { eventId: event.id, updatedAt: event.created_at } : {}),
+        ...(payload ? {
+          trigger: payload.trigger,
+          code: payload.code,
+          detail: payload.detail,
+          ...(payload.nextRetryAt ? { nextRetryAt: payload.nextRetryAt } : {}),
+        } : corrupted ? {
+          code: 'UNSAFE_DISPATCH_FAILURE' as const,
+          detail: 'The durable policy dispatch journal is invalid and requires repair.',
+        } : {}),
+        ...(batch ? { batchId: batch.id, batchStatus: batch.status } : {}),
+        batchJobCount: batchJobs.length,
+        batchJobStatuses,
+        batchHasPersistedIntent,
+        grantExpiresAt: grant.expiresAt,
+        grantSessionGeneration: grant.grantSessionGeneration,
+        ...(terminal ? { terminalGrantEventType: terminal.eventType } : {}),
+      };
+    });
+  }
+
+  private appendPolicyGrantDispatchEventInternal(
+    context: StoreContextEnvelope,
+    input: AppendPolicyGrantDispatchEventInput,
+    createdAt: string,
+  ): void {
+    const grantId = idOf(input.grantId, 'grantId');
+    if (!POLICY_GRANT_DISPATCH_STATUSES.includes(input.status)) {
+      throw invalid('Unknown policy grant dispatch status.');
+    }
+    if (!POLICY_GRANT_DISPATCH_TRIGGERS.includes(input.trigger)) {
+      throw invalid('Unknown policy grant dispatch trigger.');
+    }
+    if (!POLICY_GRANT_DISPATCH_CODES.includes(input.code)) {
+      throw invalid('Unknown policy grant dispatch code.');
+    }
+    if (!policyGrantDispatchCodeSupportsStatus(input.code, input.status)) {
+      throw invalid(`Policy grant dispatch code ${input.code} does not match status ${input.status}.`);
+    }
+    if (!Number.isSafeInteger(input.attempt) || input.attempt < 0) {
+      throw invalid('Policy grant dispatch attempt must be a non-negative integer.');
+    }
+    const grant = this.db.prepare(`
+      SELECT mission_id AS missionId, issuer_type AS issuerType
+      FROM mission_grants WHERE store_id = ? AND id = ?
+    `).get(context.storeId, grantId) as {
+      missionId: string;
+      issuerType: 'human' | 'policy';
+    } | undefined;
+    if (!grant) throw notFound(`Mission grant ${grantId} was not found.`);
+    if (grant.issuerType !== 'policy') {
+      throw stateConflict('Only a policy-issued MissionGrant may enter the policy dispatch journal.');
+    }
+    const batchId = input.batchId ? idOf(input.batchId, 'batchId') : undefined;
+    const nextRetryAt = input.nextRetryAt
+      ? timestampOf(input.nextRetryAt, 'nextRetryAt')
+      : undefined;
+    if (batchId) {
+      const batch = this.db.prepare(`
+        SELECT 1 FROM ad_execution_batches
+        WHERE store_id = ? AND id = ? AND grant_id = ?
+      `).get(context.storeId, batchId, grantId);
+      if (!batch) throw referenceConflict('Policy dispatch batch does not match the grant lineage.');
+    }
+    if ((input.status === 'completed' || input.status === 'queued_for_execution') && !batchId) {
+      throw invalid(`${input.status} policy dispatch events must reference a durable execution batch.`);
+    }
+    if (input.status !== 'waiting_runtime' && nextRetryAt) {
+      throw invalid('Only waiting_runtime dispatch events may carry nextRetryAt.');
+    }
+    const payload: PolicyGrantDispatchPayload = {
+      schemaVersion: 1,
+      trigger: input.trigger,
+      status: input.status,
+      attempt: input.attempt,
+      code: input.code,
+      detail: policyGrantDispatchDetail(input.code),
+      ...(batchId ? { batchId } : {}),
+      ...(nextRetryAt ? { nextRetryAt } : {}),
+    };
+    const signal = JSON.stringify(payload);
+    const eventType = policyGrantDispatchEventType(input.status);
+    const eventId = `causal:policy-dispatch:${hashObject([
+      context.storeId,
+      grantId,
+      eventType,
+      payload.attempt,
+      payload.code,
+      payload.batchId ?? null,
+    ]).slice(0, 40)}`;
+    const existing = this.db.prepare(`
+      SELECT event_type AS eventType, entity_type AS entityType, entity_id AS entityId,
+             mission_id AS missionId, signal, status, source
+      FROM causal_events WHERE store_id = ? AND id = ?
+    `).get(context.storeId, eventId) as {
+      eventType: string;
+      entityType: string;
+      entityId: string;
+      missionId: string | null;
+      signal: string | null;
+      status: string;
+      source: string;
+    } | undefined;
+    if (existing) {
+      if (existing.eventType !== eventType
+        || existing.entityType !== POLICY_GRANT_DISPATCH_ENTITY_TYPE
+        || existing.entityId !== grantId
+        || existing.missionId !== grant.missionId
+        || existing.signal !== signal
+        || existing.status !== input.status
+        || existing.source !== POLICY_GRANT_DISPATCH_SOURCE) {
+        throw referenceConflict(`Policy grant dispatch event ${eventId} conflicts with existing lineage.`);
+      }
+      return;
+    }
+    const latest = this.db.prepare(`
+      SELECT id, event_type, signal, status, created_at
+      FROM causal_events
+      WHERE store_id = ? AND entity_type = ? AND entity_id = ? AND source = ?
+      ORDER BY sequence DESC, id DESC LIMIT 1
+    `).get(
+      context.storeId,
+      POLICY_GRANT_DISPATCH_ENTITY_TYPE,
+      grantId,
+      POLICY_GRANT_DISPATCH_SOURCE,
+    ) as PolicyGrantDispatchEventRow | undefined;
+    const latestPayload = latest ? parsePolicyGrantDispatchPayload(latest) : undefined;
+    if (latest && !latestPayload) {
+      throw stateConflict('The existing policy grant dispatch journal is invalid and cannot transition.');
+    }
+    assertPolicyGrantDispatchTransition(latestPayload, payload);
+    const sequence = Number((this.db.prepare(`
+      SELECT COALESCE(MAX(sequence), 0) + 1 AS nextSequence
+      FROM causal_events WHERE store_id = ?
+    `).get(context.storeId) as { nextSequence: number }).nextSequence);
+    this.db.prepare(`
+      INSERT INTO causal_events (
+        id, store_id, stage, event_type, entity_type, entity_id,
+        mission_id, title, signal, intervention, expected_effect, observed_effect,
+        confidence, status, source, actor_id, business_date,
+        session_generation, corrects_event_id, sequence, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL,
+        NULL, ?, ?, 'policy-grant-dispatcher', ?, ?, NULL, ?, ?)
+    `).run(
+      eventId,
+      context.storeId,
+      input.status === 'attempting' || input.status === 'completed' ? 'ACTION' : 'DECISION',
+      eventType,
+      POLICY_GRANT_DISPATCH_ENTITY_TYPE,
+      grantId,
+      grant.missionId,
+      policyGrantDispatchTitle(input.status),
+      signal,
+      input.status,
+      POLICY_GRANT_DISPATCH_SOURCE,
+      context.businessDate,
+      context.sessionGeneration,
+      sequence,
+      createdAt,
+    );
+  }
+
+  private durableStoreSessionGeneration(storeId: string): number {
+    const setting = this.db.prepare(`SELECT value FROM app_settings WHERE key = ?`)
+      .get(`store_session_generation:${storeId}`) as { value: string | null } | undefined;
+    return setting?.value === undefined || setting.value === null
+      ? Number((this.db.prepare(`
+          SELECT COALESCE(MAX(session_generation), 0) AS generation
+          FROM store_session_metadata WHERE store_id = ?
+        `).get(storeId) as { generation: number }).generation)
+      : Number(setting.value);
+  }
+
+  private assertStoreContext(contextInput: StoreContextEnvelope): StoreContextEnvelope {
     const context = normalizeContext(contextInput);
     const store = this.db.prepare(`
       SELECT browser_profile_id AS browserProfileId, marketplace, currency,
@@ -1578,20 +2238,18 @@ export class ExecutionAuthorityRepository {
         'STORE_NOT_ACTIVE', `Store ${context.storeId} is ${store.status}; execution is blocked.`,
       );
     }
-    const setting = this.db.prepare(`SELECT value FROM app_settings WHERE key = ?`)
-      .get(`store_session_generation:${context.storeId}`) as { value: string | null } | undefined;
-    const durable = setting?.value === undefined || setting.value === null
-      ? Number((this.db.prepare(`
-          SELECT COALESCE(MAX(session_generation), 0) AS generation
-          FROM store_session_metadata WHERE store_id = ?
-        `).get(context.storeId) as { generation: number }).generation)
-      : Number(setting.value);
+    const durable = this.durableStoreSessionGeneration(context.storeId);
     if (!Number.isSafeInteger(durable) || durable < 0 || durable !== context.sessionGeneration) {
       throw new ExecutionAuthorityRepositoryError(
         'STALE_CONTEXT',
         `Store session generation is stale; expected ${durable}, received ${context.sessionGeneration}.`,
       );
     }
+    return context;
+  }
+
+  private assertContext(contextInput: StoreContextEnvelope, expectedAdsAccountId?: string): StoreContextEnvelope {
+    const context = this.assertStoreContext(contextInput);
     const connection = this.db.prepare(`
       SELECT status, external_account_id AS externalAccountId FROM store_connections
       WHERE store_id = ? AND provider = 'amazon_ads'
@@ -1875,6 +2533,197 @@ function mapDomainReconciliation(
     completedSessionGeneration: row.completed_session_generation,
     completedAt: row.completed_at,
   };
+}
+
+const POLICY_GRANT_DISPATCH_STATUSES: readonly PolicyGrantDispatchStatus[] = [
+  'pending',
+  'attempting',
+  'queued_for_execution',
+  'waiting_runtime',
+  'completed',
+  'attention_required',
+];
+const POLICY_GRANT_DISPATCH_TRIGGERS: readonly PolicyGrantDispatchTrigger[] = [
+  'grant_issued',
+  'startup_recovery',
+  'store_activated',
+  'session_ready',
+  'timer_retry',
+];
+const POLICY_GRANT_DISPATCH_CODES: readonly PolicyGrantDispatchCode[] = [
+  'DISPATCH_PENDING',
+  'DISPATCH_ATTEMPT_STARTED',
+  'BATCH_QUEUED_FOR_EXECUTION',
+  'EXECUTION_START_ACQUIRED',
+  'EXECUTION_RETRY_SCHEDULED',
+  'EXECUTION_TERMINAL',
+  'EXECUTION_STATE_REQUIRES_RECONCILIATION',
+  'RUNTIME_UNAVAILABLE',
+  'STARTUP_ATTEMPT_INTERRUPTED',
+  'BATCH_CREATED',
+  'EXISTING_BATCH_RECOVERED',
+  'SESSION_REAUTHORIZATION_REQUIRED',
+  'GRANT_EXPIRED',
+  'GRANT_TERMINAL',
+  'MISSION_REVISION_CHANGED',
+  'POLICY_AUTHORITY_CHANGED',
+  'ADS_IDENTITY_AUTHORITY_CHANGED',
+  'UNSAFE_DISPATCH_FAILURE',
+];
+
+function policyGrantDispatchEventType(status: PolicyGrantDispatchStatus): string {
+  if (status === 'pending') return 'policy_grant_dispatch_pending_v1';
+  if (status === 'attempting') return 'policy_grant_dispatch_attempt_started_v1';
+  if (status === 'queued_for_execution') return 'policy_grant_dispatch_queued_for_execution_v1';
+  if (status === 'waiting_runtime') return 'policy_grant_dispatch_waiting_runtime_v1';
+  if (status === 'completed') return 'policy_grant_dispatch_completed_v1';
+  return 'policy_grant_dispatch_attention_required_v1';
+}
+
+function policyGrantDispatchTitle(status: PolicyGrantDispatchStatus): string {
+  if (status === 'pending') return '策略授权派发：待处理';
+  if (status === 'attempting') return '策略授权派发：正在建立安全执行批次';
+  if (status === 'queued_for_execution') return '策略授权派发：等待串行执行';
+  if (status === 'waiting_runtime') return '策略授权派发：等待浏览器与会话条件';
+  if (status === 'completed') return '策略授权派发：已进入执行账本';
+  return '策略授权派发：需要人工修复';
+}
+
+function policyGrantDispatchCodeSupportsStatus(
+  code: PolicyGrantDispatchCode,
+  status: PolicyGrantDispatchStatus,
+): boolean {
+  const expected: Record<PolicyGrantDispatchCode, readonly PolicyGrantDispatchStatus[]> = {
+    DISPATCH_PENDING: ['pending'],
+    DISPATCH_ATTEMPT_STARTED: ['attempting'],
+    BATCH_QUEUED_FOR_EXECUTION: ['queued_for_execution'],
+    EXECUTION_START_ACQUIRED: ['queued_for_execution'],
+    EXECUTION_RETRY_SCHEDULED: ['waiting_runtime'],
+    EXECUTION_TERMINAL: ['completed'],
+    EXECUTION_STATE_REQUIRES_RECONCILIATION: ['completed'],
+    RUNTIME_UNAVAILABLE: ['waiting_runtime'],
+    STARTUP_ATTEMPT_INTERRUPTED: ['waiting_runtime'],
+    BATCH_CREATED: ['queued_for_execution'],
+    EXISTING_BATCH_RECOVERED: ['completed'],
+    SESSION_REAUTHORIZATION_REQUIRED: ['attention_required'],
+    GRANT_EXPIRED: ['attention_required'],
+    GRANT_TERMINAL: ['attention_required'],
+    MISSION_REVISION_CHANGED: ['attention_required'],
+    POLICY_AUTHORITY_CHANGED: ['attention_required'],
+    ADS_IDENTITY_AUTHORITY_CHANGED: ['attention_required'],
+    UNSAFE_DISPATCH_FAILURE: ['attention_required'],
+  };
+  return expected[code].includes(status);
+}
+
+function policyGrantDispatchDetail(code: PolicyGrantDispatchCode): string {
+  const details: Record<PolicyGrantDispatchCode, string> = {
+    DISPATCH_PENDING: 'A policy grant is durably pending in the store execution lane.',
+    DISPATCH_ATTEMPT_STARTED: 'The store execution lane started a durable dispatch attempt.',
+    BATCH_QUEUED_FOR_EXECUTION: 'A durable batch is queued for safe serial execution.',
+    EXECUTION_START_ACQUIRED: 'The store execution lane acquired the batch for a safe start attempt.',
+    EXECUTION_RETRY_SCHEDULED: 'A pre-intent execution retry is scheduled under the store lane.',
+    EXECUTION_TERMINAL: 'The execution batch reached a durable terminal state.',
+    EXECUTION_STATE_REQUIRES_RECONCILIATION: 'The execution ledger state is not safe for automatic restart.',
+    RUNTIME_UNAVAILABLE: 'Required runtime authority is temporarily unavailable.',
+    STARTUP_ATTEMPT_INTERRUPTED: 'Startup recovered an interrupted pre-batch dispatch attempt.',
+    BATCH_CREATED: 'A durable batch is queued for safe serial execution.',
+    EXISTING_BATCH_RECOVERED: 'An existing batch remains governed by the execution ledger.',
+    SESSION_REAUTHORIZATION_REQUIRED: 'The grant requires fresh authorization for the current store session.',
+    GRANT_EXPIRED: 'The policy grant expired before safe execution.',
+    GRANT_TERMINAL: 'The policy grant is terminal and cannot execute again.',
+    MISSION_REVISION_CHANGED: 'The Mission authority changed and requires fresh analysis.',
+    POLICY_AUTHORITY_CHANGED: 'The policy authority changed and requires fresh evaluation.',
+    ADS_IDENTITY_AUTHORITY_CHANGED: 'The Ads object identity authority changed and requires repair.',
+    UNSAFE_DISPATCH_FAILURE: 'Dispatch stopped at a fail-closed authority boundary.',
+  };
+  return details[code];
+}
+
+function assertPolicyGrantDispatchTransition(
+  previous: PolicyGrantDispatchPayload | undefined,
+  next: PolicyGrantDispatchPayload,
+): void {
+  if (!previous) {
+    if (next.attempt !== 0
+      || !['pending', 'queued_for_execution', 'completed', 'attention_required'].includes(next.status)) {
+      throw stateConflict('The first policy dispatch event must use attempt 0 and a recoverable initial state.');
+    }
+    return;
+  }
+  if (previous.status === 'completed' || previous.status === 'attention_required') {
+    throw terminalState(`Policy dispatch ${previous.status} is terminal and cannot transition.`);
+  }
+  if (next.status === 'attempting') {
+    if (!['pending', 'waiting_runtime', 'queued_for_execution'].includes(previous.status)
+      || next.attempt !== previous.attempt + 1) {
+      throw revisionConflict('Policy dispatch attempts must increase by exactly one from a resumable state.');
+    }
+    return;
+  }
+  if (next.attempt !== previous.attempt) {
+    throw revisionConflict('Policy dispatch attempt cannot move backward, jump, or change outside attempt start.');
+  }
+  const allowed: Record<
+    Exclude<PolicyGrantDispatchStatus, 'completed' | 'attention_required'>,
+    readonly PolicyGrantDispatchStatus[]
+  > = {
+    pending: ['queued_for_execution', 'completed', 'attention_required'],
+    attempting: ['queued_for_execution', 'waiting_runtime', 'completed', 'attention_required'],
+    queued_for_execution: ['queued_for_execution', 'waiting_runtime', 'completed', 'attention_required'],
+    waiting_runtime: ['queued_for_execution', 'completed', 'attention_required'],
+  };
+  if (!allowed[previous.status].includes(next.status)) {
+    throw stateConflict(`Policy dispatch cannot transition from ${previous.status} to ${next.status}.`);
+  }
+}
+
+function parsePolicyGrantDispatchPayload(
+  row: PolicyGrantDispatchEventRow,
+): PolicyGrantDispatchPayload | undefined {
+  if (!row.signal) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(row.signal);
+  } catch {
+    return undefined;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const payload = value as Partial<PolicyGrantDispatchPayload>;
+  if (payload.schemaVersion !== 1
+    || !POLICY_GRANT_DISPATCH_TRIGGERS.includes(payload.trigger as PolicyGrantDispatchTrigger)
+    || !POLICY_GRANT_DISPATCH_STATUSES.includes(payload.status as PolicyGrantDispatchStatus)
+    || !POLICY_GRANT_DISPATCH_CODES.includes(payload.code as PolicyGrantDispatchCode)
+    || !Number.isSafeInteger(payload.attempt)
+    || Number(payload.attempt) < 0
+    || typeof payload.detail !== 'string'
+    || payload.detail !== redactPolicyGrantDispatchDetail(payload.detail)
+    || (payload.batchId !== undefined && typeof payload.batchId !== 'string')
+    || (payload.nextRetryAt !== undefined && !isCanonicalTimestamp(payload.nextRetryAt))
+    || (payload.status !== 'waiting_runtime' && payload.nextRetryAt !== undefined)
+    || row.event_type !== policyGrantDispatchEventType(payload.status as PolicyGrantDispatchStatus)
+    || row.status !== payload.status) {
+    return undefined;
+  }
+  return payload as PolicyGrantDispatchPayload;
+}
+
+function isCanonicalTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
+function redactPolicyGrantDispatchDetail(value: unknown): string {
+  const normalized = String(value ?? '')
+    .replace(/\b[A-Za-z]:[\\/][^\s"'<>]*/g, '[local-path]')
+    .replace(/\\\\[^\\/\s"'<>]+[\\/][^\s"'<>]*/g, '[local-path]')
+    .replace(/\bfile:(?:\/{2,}|\\{2,})[^\s"'<>]*/gi, '[local-path]')
+    .replace(/\bhttps?:\/\/[^\s"'<>]*/gi, '[url-redacted]')
+    .replace(/\b(cookie|authorization|password|passwd|token|secret)\s*[=:]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .trim();
+  return (normalized || 'Policy grant dispatch stopped safely.').slice(0, 500);
 }
 
 function normalizeContext(input: StoreContextEnvelope): StoreContextEnvelope {

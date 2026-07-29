@@ -20,6 +20,12 @@ const {
   assertMatchingAuthorityCurrentnessProofs,
   captureAuthoritySnapshotCurrentness,
 } = require('./sqlite-authority-currentness');
+const {
+  PNG_EVIDENCE_MAX_FILE_BYTES,
+  PNG_EVIDENCE_MIN_HEIGHT,
+  PNG_EVIDENCE_MIN_WIDTH,
+  inspectPngEvidenceFile,
+} = require('./canary-png-evidence');
 
 const ROOT = path.resolve(__dirname, '..');
 const requireFromLocalDb = createRequire(path.join(ROOT, 'packages', 'local-db', 'package.json'));
@@ -29,8 +35,6 @@ const CANARY_MAX_AGE_MS = 72 * 60 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const AUTHORITY_DATABASE_NAME = 'amazon-ai-ops.db';
 const EXECUTION_CANARY_OUTPUT_DIRECTORY_NAME = 'execution-canaries';
-const PNG_SIGNATURE_HEX = '89504E470D0A1A0A';
-const PNG_IHDR_LENGTH = 13;
 const PACKAGE_IDENTITY_FIELDS = Object.freeze([
   'executableSha256',
   'appContentSha256',
@@ -400,26 +404,15 @@ function inspectCurrentPackage(context) {
 }
 
 function validatePngArtifact(filePath, label) {
-  const handle = fs.openSync(filePath, 'r');
-  const header = Buffer.alloc(33);
-  let bytesRead;
   try {
-    bytesRead = fs.readSync(handle, header, 0, header.length, 0);
-  } finally {
-    fs.closeSync(handle);
+    return inspectPngEvidenceFile(filePath);
+  } catch (error) {
+    fail(
+      `${label} is not complete, decodable production PNG evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
-  assertCondition(bytesRead === header.length, `${label} is too short to contain PNG signature and IHDR.`);
-  assertCondition(
-    header.subarray(0, 8).toString('hex').toUpperCase() === PNG_SIGNATURE_HEX,
-    `${label} does not have the PNG file signature.`,
-  );
-  assertCondition(
-    header.readUInt32BE(8) === PNG_IHDR_LENGTH
-      && header.subarray(12, 16).toString('ascii') === 'IHDR'
-      && header.readUInt32BE(16) > 0
-      && header.readUInt32BE(20) > 0,
-    `${label} does not contain a valid first IHDR chunk.`,
-  );
 }
 
 function validateStoreCapsulePaths(options, authority, canonicalStoresRoot) {
@@ -454,8 +447,11 @@ function validateStoreCapsulePaths(options, authority, canonicalStoresRoot) {
       isPathContained(resolvedStoreRoot, artifact.path),
       `${slot} Store Capsule artifact escapes the selected store boundary.`,
     );
-    validatePngArtifact(artifact.path, `${slot} Store Capsule artifact`);
-    artifactPaths[slot] = artifact;
+    const inspection = validatePngArtifact(
+      artifact.path,
+      `${slot} Store Capsule artifact`,
+    );
+    artifactPaths[slot] = { ...artifact, inspection };
   }
   return { storesRoot, artifactPaths };
 }
@@ -1074,7 +1070,7 @@ function attachArtifactProof(rows, pathProof) {
   return EXECUTION_SLOTS.map((slot) => {
     const record = bySlot.get(slot);
     const artifact = pathProof.artifactPaths[slot];
-    const currentSha256 = sha256File(artifact.path);
+    const currentSha256 = artifact.inspection.sha256;
     assertCondition(
       currentSha256 === normalizeSha256(record.contentSha256, `${slot} database content SHA`),
       `${slot} Store Capsule artifact SHA-256 does not match the authority DB.`,
@@ -1088,7 +1084,7 @@ function attachArtifactProof(rows, pathProof) {
       artifactPath: artifact.path,
       artifactRef: record.artifactRef,
       contentSha256: currentSha256,
-      sizeBytes: artifact.stat.size,
+      sizeBytes: artifact.inspection.sizeBytes,
       pageIdentityHash: normalizeSha256(record.pageIdentityHash, `${slot} page identity hash`),
       canonicalKeywordId: record.canonicalKeywordId,
       objectRevision: record.objectRevision,
@@ -1582,10 +1578,13 @@ function verifyPostWriteProvenance(
       record.artifactPath,
       `${record.slot} Store Capsule artifact`,
     );
-    validatePngArtifact(artifact.path, `${record.slot} Store Capsule artifact`);
+    const inspection = validatePngArtifact(
+      artifact.path,
+      `${record.slot} Store Capsule artifact`,
+    );
     assertCondition(
-      artifact.stat.size === record.sizeBytes
-        && sha256File(artifact.path) === record.contentSha256,
+      inspection.sizeBytes === record.sizeBytes
+        && inspection.sha256 === record.contentSha256,
       `${record.slot} Store Capsule artifact changed after the canary evidence write.`,
     );
   }
@@ -1641,6 +1640,7 @@ function usage() {
     '  --before-artifact <absolute-before.png>',
     '  --after-artifact <absolute-after.png>',
     '  --reload-artifact <absolute-reload.png>',
+    `    Each PNG must be CRC-valid, fully decodable, complete through IEND, at least ${PNG_EVIDENCE_MIN_WIDTH}x${PNG_EVIDENCE_MIN_HEIGHT}, and no larger than ${PNG_EVIDENCE_MAX_FILE_BYTES / (1024 * 1024)} MiB.`,
     '  --out <new-evidence.json>',
     '',
     'The exporter only reads the selected snapshot and Store Capsule artifacts.',

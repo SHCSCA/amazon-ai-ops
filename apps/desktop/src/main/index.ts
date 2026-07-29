@@ -78,6 +78,7 @@ import {
   PACKAGE_LAUNCH_SMOKE_MODE,
   PACKAGE_LAUNCH_WINDOW_READY_MARKER,
   PACKAGE_UI_EVIDENCE_MODE,
+  PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV,
 } from './evidence-user-data-path';
 import { PackageUiSchedulerAudit } from './package-ui-scheduler-audit';
 import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-preflight-export';
@@ -351,6 +352,8 @@ function currentStoreRuntimeAnalysisConfig(): StoreRuntimeAnalysisConfig {
 
 const evidenceUserDataIdentity = configureEvidenceUserDataPath(app);
 const packageUiReadOnlyRuntime = evidenceUserDataIdentity.mode === PACKAGE_UI_EVIDENCE_MODE;
+const packageUiFreshTypedProofRequired = packageUiReadOnlyRuntime
+  && process.env[PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV] === '1';
 const packageLaunchSmokeRuntime = evidenceUserDataIdentity.mode === PACKAGE_LAUNCH_SMOKE_MODE;
 const USER_DATA_DIR = app.getPath('userData');
 const packageUiSchedulerAudit = new PackageUiSchedulerAudit({
@@ -1083,11 +1086,20 @@ function emptySavedLoginCredentialStatus(): SavedLoginCredentialStatus {
   };
 }
 
-function handleGetSavedLoginCredentialStatus(): SavedLoginCredentialStatus {
-  if (!state.settingsRepo) {
-    return emptySavedLoginCredentialStatus();
-  }
-  return readSavedLoginCredentialStatus(state.settingsRepo, electronLoginCredentialCipher);
+type SavedLoginCredentialRuntimeStatus = SavedLoginCredentialStatus & {
+  packageUiEvidenceMode: boolean;
+  freshTypedProofRequired: boolean;
+};
+
+function handleGetSavedLoginCredentialStatus(): SavedLoginCredentialRuntimeStatus {
+  const credentialStatus = state.settingsRepo
+    ? readSavedLoginCredentialStatus(state.settingsRepo, electronLoginCredentialCipher)
+    : emptySavedLoginCredentialStatus();
+  return {
+    ...credentialStatus,
+    packageUiEvidenceMode: packageUiReadOnlyRuntime,
+    freshTypedProofRequired: packageUiFreshTypedProofRequired,
+  };
 }
 
 async function readLingxingPageState(page: NonNullable<ReturnType<BrowserController['getPage']>>) {
@@ -1298,6 +1310,13 @@ function assertBrowserLoginAttempt(attemptId: number, context: StoreContextEnvel
 }
 
 async function handleBrowserLogin(request: BrowserLoginRequest): Promise<BrowserLoginResult> {
+  if (packageUiFreshTypedProofRequired
+    && (request.credentialSource !== 'typed'
+      || request.rememberPassword !== true
+      || typeof request.password !== 'string'
+      || request.password.length === 0)) {
+    throw new Error('正式 Package UI 首轮登录必须手动输入凭证并勾选记住密码。');
+  }
   const username = request.username;
   const rememberPassword = request.rememberPassword;
   if (!state.storeCoordinator || !state.storeRepo) {
@@ -1595,6 +1614,14 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     state.loginSession = loginResult;
     if (pendingBrowserLogin?.attemptId === attemptId) {
       pendingBrowserLogin = null;
+    }
+    if (adsSession) {
+      void state.executionAuthorityService?.resumePolicyGrantDispatches(
+        loginContext,
+        'session_ready',
+      ).catch(() => {
+        console.error('[Execution] persisted policy-grant recovery failed after Ads session readiness');
+      });
     }
     reconcileStoreCollectionScheduler(loginContext, 'login');
     if (packageUiReadOnlyRuntime) {
@@ -10098,6 +10125,12 @@ function registerIpcHandlers(): void {
       } catch (error) {
         console.error('[Execution] recovered Mission stop reconciliation failed:', error);
       }
+      void state.executionAuthorityService?.resumePolicyGrantDispatches(
+        view.context,
+        'store_activated',
+      ).catch(() => {
+        console.error('[Execution] persisted policy-grant recovery failed after store activation');
+      });
       state.currentStore = view.store.displayName;
       publishStoreContextChanged(view);
       mainWindow?.webContents.send('business-ui:data-updated');

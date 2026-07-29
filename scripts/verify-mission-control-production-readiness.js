@@ -8,6 +8,9 @@ const {
   assertMatchingAuthorityCurrentnessProofs,
   captureAuthoritySnapshotCurrentness,
 } = require('./sqlite-authority-currentness');
+const {
+  inspectPngEvidenceFile,
+} = require('./canary-png-evidence');
 
 const ROOT = path.resolve(__dirname, '..');
 const requireFromLocalDb = createRequire(path.join(ROOT, 'packages', 'local-db', 'package.json'));
@@ -805,8 +808,8 @@ function validatePackageUi(evidence) {
   pushReason(reasons, evidence.kind === 'package-ui-evidence', 'unexpected package UI evidence kind');
   pushReason(
     reasons,
-    evidence.schemaVersion === 7,
-    'package UI evidence must use current production interactive-login schema v7; schema v5/v6 are historical only',
+    evidence.schemaVersion === 8,
+    'package UI evidence must use current production two-phase interactive-login schema v8; schemas v5/v6/v7 are historical only',
   );
   pushReason(reasons, validTimestamp(evidence.generatedAt), 'package UI generatedAt is invalid');
   pushReason(reasons, evidence.passed === true, 'package UI evidence did not pass');
@@ -1023,6 +1026,56 @@ function validateContinuousOperation(evidence, context = {}) {
   pushReason(reasons, evidence.passed === true && evidence.status === 'PASSED', 'continuous-operation evidence did not pass');
   pushReason(reasons, evidence.readinessImpact === 'CONTINUOUS_OPERATION_GATE_ONLY', 'continuous-operation readiness scope is invalid');
   pushReason(reasons, evidence.finalReadinessCredit === false, 'continuous-operation evidence must not rewrite the legacy v1.5 readiness contract');
+  pushReason(
+    reasons,
+    evidence.publication?.state === 'atomic-published'
+      && evidence.publication?.stagedVerificationCaptureLabel === 'continuous-after-staging-output'
+      && nonEmpty(evidence.publication?.outputPath)
+      && nonEmpty(context.evidencePath)
+      && samePath(evidence.publication?.outputPath, context.evidencePath),
+    'continuous-operation evidence is not bound to its atomically published final path',
+  );
+  const currentnessCaptures = Array.isArray(evidence.authorityCurrentness?.captures)
+    ? evidence.authorityCurrentness.captures
+    : [];
+  const requiredCurrentnessLabels = [
+    'continuous-before-work',
+    'continuous-before-final-output',
+    'continuous-after-staging-output',
+  ];
+  pushReason(
+    reasons,
+    evidence.authorityCurrentness?.passed === true
+      && evidence.authorityCurrentness?.method === 'readonly-sqlite-online-backup'
+      && stableEqual(
+        currentnessCaptures.map((capture) => capture?.captureLabel),
+        requiredCurrentnessLabels,
+      ),
+    'continuous-operation authority currentness must persist all three ordered staging-safe captures',
+  );
+  const continuousSnapshotArtifact = {
+    sha256: normalizeSha256(evidence.database?.sha256),
+    sizeBytes: evidence.database?.sizeBytes,
+  };
+  try {
+    const currentnessValidation = assertMatchingAuthorityCurrentnessProofs(
+      currentnessCaptures,
+      continuousSnapshotArtifact,
+      'Continuous-operation published authority currentness',
+    );
+    pushReason(
+      reasons,
+      stableEqual(
+        evidence.authorityCurrentness?.expectedSnapshot,
+        currentnessValidation.expectedSnapshot,
+      ),
+      'continuous-operation authority currentness expected snapshot does not match its database artifact',
+    );
+  } catch (error) {
+    reasons.push(
+      `continuous-operation authority currentness proof is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const dates = Array.isArray(evidence.window?.businessDates) ? evidence.window.businessDates : [];
   pushReason(reasons, dates.length === 7 && new Set(dates).size === 7, 'continuous-operation window must contain exactly seven distinct US business dates');
   pushReason(reasons, dates.every(isUsBusinessDate), 'continuous-operation window contains a weekend or invalid US business date');
@@ -1197,26 +1250,14 @@ function exactDatabaseRow(database, sql, parameters, label, reasons) {
 
 function validatePngArtifact(filePath, label, reasons) {
   try {
-    const handle = fs.openSync(filePath, 'r');
-    const header = Buffer.alloc(33);
-    let bytesRead;
-    try {
-      bytesRead = fs.readSync(handle, header, 0, header.length, 0);
-    } finally {
-      fs.closeSync(handle);
-    }
-    pushReason(
-      reasons,
-      bytesRead === header.length
-        && header.subarray(0, 8).toString('hex').toUpperCase() === '89504E470D0A1A0A'
-        && header.readUInt32BE(8) === 13
-        && header.subarray(12, 16).toString('ascii') === 'IHDR'
-        && header.readUInt32BE(16) > 0
-        && header.readUInt32BE(20) > 0,
-      `${label} is not a PNG with a valid first IHDR chunk`,
-    );
+    return inspectPngEvidenceFile(filePath);
   } catch (error) {
-    reasons.push(`${label} PNG header cannot be read: ${error instanceof Error ? error.message : String(error)}`);
+    reasons.push(
+      `${label} is not complete, decodable production PNG evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
   }
 }
 
@@ -1278,32 +1319,55 @@ function validateExecutionArtifact(record, databaseRecord, artifactContext, labe
     `${label} ${slot} artifact reference is not the deterministic opaque reference`,
   );
 
-  let currentHash = null;
+  let currentInspection = null;
   try {
     const root = path.resolve(artifactContext.storesRoot);
     const storeRoot = path.resolve(root, artifactContext.storeId);
     const rootReal = fs.realpathSync(root);
     const storeReal = fs.realpathSync(storeRoot);
     const artifactReal = fs.realpathSync(expectedPath);
-    const stat = fs.statSync(expectedPath);
     const physicallyContained = samePath(root, rootReal)
       && isPathContained(rootReal, storeReal)
       && isPathContained(storeReal, artifactReal)
       && !hasUnsafeFilesystemLink(root, expectedPath);
     pushReason(reasons, physicallyContained, `${label} ${slot} artifact escapes or links through the Store Capsule boundary`);
-    pushReason(reasons, stat.isFile() && stat.nlink === 1, `${label} ${slot} Store Capsule evidence must be a unique regular file`);
-    validatePngArtifact(expectedPath, `${label} ${slot} Store Capsule artifact`, reasons);
-    currentHash = sha256File(expectedPath);
+    currentInspection = validatePngArtifact(
+      expectedPath,
+      `${label} ${slot} Store Capsule artifact`,
+      reasons,
+    );
   } catch (error) {
     reasons.push(`${label} ${slot} Store Capsule artifact cannot be read: ${error instanceof Error ? error.message : String(error)}`);
   }
   pushReason(
     reasons,
-    currentHash !== null
-      && currentHash === normalizeSha256(record?.contentSha256)
-      && currentHash === normalizeSha256(databaseRecord?.contentSha256),
+    currentInspection !== null
+      && currentInspection.sha256 === normalizeSha256(record?.contentSha256)
+      && currentInspection.sha256 === normalizeSha256(databaseRecord?.contentSha256),
     `${label} ${slot} current artifact SHA-256 does not match both JSON and authority DB`,
   );
+  pushReason(
+    reasons,
+    Number.isSafeInteger(record?.sizeBytes)
+      && record.sizeBytes > 0
+      && record.sizeBytes === currentInspection?.sizeBytes,
+    `${label} ${slot} current artifact size does not match the JSON evidence`,
+  );
+  if (!currentInspection) return null;
+  return Object.freeze({
+    slot,
+    filePath: expectedPath,
+    sha256: currentInspection.sha256,
+    sizeBytes: currentInspection.sizeBytes,
+    width: currentInspection.width,
+    height: currentInspection.height,
+    bitDepth: currentInspection.bitDepth,
+    colorType: currentInspection.colorType,
+    idatChunks: currentInspection.idatChunks,
+    fileIdentity: Object.freeze({ ...currentInspection.fileIdentity }),
+    mtimeNs: currentInspection.mtimeNs,
+    ctimeNs: currentInspection.ctimeNs,
+  });
 }
 
 function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label, reasons, context = {}) {
@@ -1315,6 +1379,7 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
   const proof = evidence.database?.authorityProof;
   const recordIdentity = proof?.recordIdentity;
   const expectedIssuer = expectedMode === 'manual_approval' ? 'human' : 'policy';
+  const verifiedPngArtifacts = [];
 
   const store = exactDatabaseRow(database, `
     SELECT store_id AS storeId, browser_profile_id AS browserProfileId,
@@ -1820,12 +1885,13 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
         && databaseRecord?.createdAt === record?.createdAt,
       `${label} ${slot} JSON evidence does not match the authority DB record`,
     );
-    validateExecutionArtifact(record, databaseRecord, {
+    const verifiedPngArtifact = validateExecutionArtifact(record, databaseRecord, {
       storesRoot: context.canonicalStoresRoot,
       storeId: store?.storeId,
       batchId: batch?.id,
       jobId: job?.id,
     }, label, slot, reasons);
+    if (verifiedPngArtifact) verifiedPngArtifacts.push(verifiedPngArtifact);
   }
 
   pushReason(
@@ -1842,6 +1908,7 @@ function validateCanaryAuthorityDatabase(database, evidence, expectedMode, label
       && uniqueExactStrings(recordIdentity?.evidenceIds, databaseEvidence.map((item) => item.id)),
     `${label} authorityProof recordIdentity does not match the queried DB record set`,
   );
+  return Object.freeze(verifiedPngArtifacts);
 }
 
 function validateExecutionCanary(evidence, expectedMode, context = {}) {
@@ -1987,10 +2054,30 @@ function validateExecutionCanary(evidence, expectedMode, context = {}) {
       && Date.parse(authorityProof.queryExecutedAt) <= Date.parse(evidence.generatedAt),
     `${label} authority query timestamp is later than the canary manifest`,
   );
-  withVerifiedReadOnlyDatabase(evidence.database, label, reasons, (database) => {
-    validateCanaryAuthorityDatabase(database, evidence, expectedMode, label, reasons, context);
-    return true;
-  }, context);
+  const verifiedPngArtifacts = withVerifiedReadOnlyDatabase(
+    evidence.database,
+    label,
+    reasons,
+    (database) => validateCanaryAuthorityDatabase(
+      database,
+      evidence,
+      expectedMode,
+      label,
+      reasons,
+      context,
+    ),
+    context,
+  );
+  pushReason(
+    reasons,
+    Array.isArray(verifiedPngArtifacts)
+      && verifiedPngArtifacts.length === 3
+      && uniqueExactStrings(
+        verifiedPngArtifacts.map((artifact) => artifact.slot),
+        ['before', 'after', 'reload'],
+      ),
+    `${label} did not retain exactly three immutable PNG artifact proofs`,
+  );
   return validationResult(reasons, {
     packageIdentity: evidence.packageIdentity,
     canaryBinding: {
@@ -1999,6 +2086,11 @@ function validateExecutionCanary(evidence, expectedMode, context = {}) {
       jobId: authority?.jobId || null,
       missionGrantId: authority?.missionGrantId || null,
     },
+    verifiedPngArtifacts: Object.freeze(
+      Array.isArray(verifiedPngArtifacts)
+        ? verifiedPngArtifacts
+        : [],
+    ),
   });
 }
 
@@ -2076,7 +2168,10 @@ function validateSelection(spec, selection, context) {
         validation = validatePackageAdversarialNodeEnv(selection.evidence);
         break;
       case 's7-continuous-operation':
-        validation = validateContinuousOperation(selection.evidence, context);
+        validation = validateContinuousOperation(selection.evidence, {
+          ...context,
+          evidencePath: selection.evidencePath,
+        });
         break;
       case 'manual-canary':
         validation = validateExecutionCanary(selection.evidence, 'manual_approval', context);
@@ -2156,6 +2251,86 @@ function verifyFileArtifactsUnchanged(verifiedFileArtifacts) {
   return validationResult(reasons);
 }
 
+function verifyCanaryPngArtifactsUnchanged(verifiedPngArtifacts) {
+  const reasons = [];
+  if (!Array.isArray(verifiedPngArtifacts) || verifiedPngArtifacts.length !== 3) {
+    return validationResult([
+      'Final canary PNG verification did not retain exactly three immutable artifact proofs.',
+    ]);
+  }
+  const expectedSlots = ['before', 'after', 'reload'];
+  const seenPaths = new Set();
+  const slots = verifiedPngArtifacts.map((artifact) => artifact?.slot);
+  pushReason(
+    reasons,
+    uniqueExactStrings(slots, expectedSlots),
+    'Final canary PNG verification did not retain exact before/after/reload slots',
+  );
+  for (const artifact of verifiedPngArtifacts) {
+    const filePath = artifact?.filePath;
+    if (!nonEmpty(filePath)
+      || !path.isAbsolute(filePath)
+      || filePath.includes('\0')
+      || !samePath(filePath, path.resolve(filePath))
+      || !isSha256(artifact?.sha256)
+      || !Number.isSafeInteger(artifact?.sizeBytes)
+      || artifact.sizeBytes <= 0
+      || !Number.isSafeInteger(artifact?.width)
+      || !Number.isSafeInteger(artifact?.height)
+      || !Number.isSafeInteger(artifact?.bitDepth)
+      || !Number.isSafeInteger(artifact?.colorType)
+      || !Number.isSafeInteger(artifact?.idatChunks)
+      || !isRecord(artifact?.fileIdentity)
+      || !nonEmpty(artifact.fileIdentity.dev)
+      || !nonEmpty(artifact.fileIdentity.ino)
+      || !nonEmpty(artifact?.mtimeNs)
+      || !nonEmpty(artifact?.ctimeNs)) {
+      reasons.push('Final canary PNG verification retained an invalid immutable artifact proof.');
+      break;
+    }
+    const resolved = path.resolve(filePath);
+    const normalizedPath = resolved.toLowerCase();
+    if (seenPaths.has(normalizedPath)) {
+      reasons.push(`Final canary PNG verification retained a duplicate path: ${resolved}`);
+      break;
+    }
+    seenPaths.add(normalizedPath);
+    try {
+      const realPath = fs.realpathSync.native(resolved);
+      if (!samePath(realPath, resolved) || fs.lstatSync(resolved).isSymbolicLink()) {
+        reasons.push(`Final canary PNG path changed into a filesystem link: ${resolved}`);
+        break;
+      }
+      const current = inspectPngEvidenceFile(resolved);
+      const unchanged = current.sha256 === artifact.sha256
+        && current.sizeBytes === artifact.sizeBytes
+        && current.width === artifact.width
+        && current.height === artifact.height
+        && current.bitDepth === artifact.bitDepth
+        && current.colorType === artifact.colorType
+        && current.idatChunks === artifact.idatChunks
+        && current.fileIdentity.dev === artifact.fileIdentity.dev
+        && current.fileIdentity.ino === artifact.fileIdentity.ino
+        && current.mtimeNs === artifact.mtimeNs
+        && current.ctimeNs === artifact.ctimeNs;
+      if (!unchanged) {
+        reasons.push(
+          `Verified canary PNG changed in path identity, size, hash, dimensions, `
+          + `or strict decoding after initial verification: ${resolved}`,
+        );
+        break;
+      }
+    } catch (error) {
+      reasons.push(
+        `Verified canary PNG could not be strictly rechecked: ${resolved} `
+        + `(${error instanceof Error ? error.message : String(error)})`,
+      );
+      break;
+    }
+  }
+  return validationResult(reasons);
+}
+
 function refreshReportState(report) {
   const passed = report.gates.filter((gate) => gate.ok).length;
   const allGatesPass = report.inputContractPassed && passed === report.gates.length;
@@ -2198,6 +2373,24 @@ function verifyFinalStoreCapsuleEvidence(report) {
     `Final Store Capsule TOCTOU verification failed: ${validation.reason}`,
   );
   return false;
+}
+
+function verifyFinalCanaryPngEvidence(report) {
+  let allValid = true;
+  for (const gateId of ['manual-canary', 'policy-auto-canary']) {
+    const gate = report.gates.find((candidate) => candidate.id === gateId);
+    if (!gate?.ok) continue;
+    const proofs = report._verifiedCanaryPngArtifacts?.[gateId];
+    const validation = verifyCanaryPngArtifactsUnchanged(proofs);
+    if (validation.ok) continue;
+    appendGateFailure(
+      gate,
+      `Final canary PNG TOCTOU verification failed: ${validation.reason}`,
+    );
+    allValid = false;
+  }
+  if (!allValid) refreshReportState(report);
+  return allValid;
 }
 
 function appendFinalAuthorityCurrentnessFailure(report, reason) {
@@ -2515,6 +2708,24 @@ function buildReport(parsed, injectedContext = null) {
     value: continuousValidation?.verifiedFileArtifacts ?? Object.freeze([]),
     writable: false,
   });
+  const verifiedCanaryPngArtifacts = Object.freeze(Object.fromEntries(
+    ['manual-canary', 'policy-auto-canary'].map((gateId) => {
+      const validation = internalGates.find((gate) => gate.id === gateId)?._validation;
+      const proofs = Array.isArray(validation?.verifiedPngArtifacts)
+        ? validation.verifiedPngArtifacts.map((artifact) => Object.freeze({
+          ...artifact,
+          fileIdentity: Object.freeze({ ...artifact.fileIdentity }),
+        }))
+        : [];
+      return [gateId, Object.freeze(proofs)];
+    }),
+  ));
+  Object.defineProperty(report, '_verifiedCanaryPngArtifacts', {
+    configurable: false,
+    enumerable: false,
+    value: verifiedCanaryPngArtifacts,
+    writable: false,
+  });
   const authorityCurrentnessState = {
     expectedSnapshotArtifact,
     failures: initialCurrentnessCapture.ok
@@ -2560,6 +2771,34 @@ function writeReport(outputPath, report) {
   }
 }
 
+function buildPendingPublicationReport(report, outputPath) {
+  const pendingReport = JSON.parse(JSON.stringify(report));
+  const gates = Array.isArray(pendingReport.gates) ? pendingReport.gates : [];
+  gates.push({
+    id: 'final-publication-recheck',
+    ok: false,
+    status: 'needs_work',
+    evidencePath: outputPath,
+    reason:
+      'Final post-write Store Capsule, canary PNG, and authority currentness rechecks have not completed.',
+  });
+  pendingReport.gates = gates;
+  pendingReport.appReady = false;
+  pendingReport.allGatesPass = false;
+  pendingReport.status = 'APP_NEEDS_WORK';
+  pendingReport.summary = {
+    total: gates.length,
+    passed: gates.filter((gate) => gate?.ok === true).length,
+    failed: gates.filter((gate) => gate?.ok !== true).length,
+  };
+  pendingReport.publication = {
+    state: 'pending-post-write-recheck',
+    finalReaderFacing: false,
+    readyPublicationAllowed: false,
+  };
+  return pendingReport;
+}
+
 function usage() {
   return [
     'Usage: node scripts/verify-mission-control-production-readiness.js',
@@ -2600,18 +2839,25 @@ function run(argv = process.argv.slice(2), injectedContext = null) {
   }
   captureAndVerifyFinalAuthorityCurrentness(report, 'before-final-report-write');
   verifyFinalStoreCapsuleEvidence(report);
-  writeReport(outputPath, report);
+  verifyFinalCanaryPngEvidence(report);
+  // Replace any stale reader-facing READY file with an explicit fail-closed
+  // publication before the write-side rechecks begin. If the process exits or
+  // crashes during those rechecks, the durable path cannot retain APP_READY.
+  writeReport(outputPath, buildPendingPublicationReport(report, outputPath));
+  if (typeof injectedContext?.afterFailClosedReportWrite === 'function') {
+    injectedContext.afterFailClosedReportWrite({ outputPath });
+  }
   const storeCapsuleStillValid = verifyFinalStoreCapsuleEvidence(report);
+  const canaryPngsStillValid = verifyFinalCanaryPngEvidence(report);
   const authorityStillCurrent = captureAndVerifyFinalAuthorityCurrentness(
     report,
     'after-final-report-write',
   );
-  if (!storeCapsuleStillValid || !authorityStillCurrent) {
+  if (!storeCapsuleStillValid || !canaryPngsStillValid || !authorityStillCurrent) {
     refreshReportState(report);
   }
-  // Persist the post-write recheck itself. This second atomic replace is the
-  // final reader-facing report; no protected authority or Store Capsule input
-  // is touched by writing it.
+  // Only this atomic replace may publish APP_READY. No protected authority or
+  // Store Capsule input is touched by writing it.
   writeReport(outputPath, report);
   process.stdout.write(`${report.status}: ${report.summary.passed}/${report.summary.total} production gates passed.\n`);
   process.stdout.write(`Evidence: ${outputPath}\n`);

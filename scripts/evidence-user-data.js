@@ -3,6 +3,8 @@ const path = require('node:path');
 
 const EVIDENCE_MODE_ENV = 'AMAZON_AI_OPS_EVIDENCE_MODE';
 const EVIDENCE_USER_DATA_DIR_ENV = 'AMAZON_AI_OPS_USER_DATA_DIR';
+const PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV =
+  'AMAZON_AI_OPS_PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF';
 const PACKAGE_UI_EVIDENCE_MODE = 'package-ui';
 const PACKAGE_LAUNCH_SMOKE_MODE = 'package-launch-smoke';
 const EVIDENCE_USER_DATA_LOG_PREFIX = '[App] evidence-user-data ';
@@ -134,6 +136,7 @@ function inspectPackagedUserDataOverrideContract(mainBundlePath) {
     [EVIDENCE_MODE_ENV, 'EVIDENCE_MODE_ENV_MISSING'],
     [EVIDENCE_USER_DATA_DIR_ENV, 'USER_DATA_DIR_ENV_MISSING'],
     [EVIDENCE_USER_DATA_RUNTIME_MARKER, 'RUNTIME_MARKER_MISSING'],
+    [PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV, 'PACKAGE_UI_FRESH_TYPED_PROOF_ENV_MISSING'],
   ];
   for (const [marker, code] of requirements) {
     if (!source.includes(marker)) violations.push({ code, message: `Packaged main bundle is missing ${marker}.`, filePath });
@@ -150,6 +153,7 @@ module.exports = {
   EVIDENCE_USER_DATA_DIR_ENV,
   EVIDENCE_USER_DATA_LOG_PREFIX,
   EVIDENCE_USER_DATA_RUNTIME_MARKER,
+  PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV,
   PACKAGE_LAUNCH_SMOKE_MODE,
   PACKAGE_UI_EVIDENCE_MODE,
   buildEvidenceUserDataEnv,

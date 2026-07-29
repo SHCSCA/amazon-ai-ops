@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +25,15 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+const PNG_SIGNATURE = Buffer.from('89504E470D0A1A0A', 'hex');
+const CRC_TABLE = new Uint32Array(256);
+for (let index = 0; index < CRC_TABLE.length; index += 1) {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) !== 0 ? (0xEDB88320 ^ (value >>> 1)) : (value >>> 1);
+  }
+  CRC_TABLE[index] = value >>> 0;
+}
 const HASH_A = 'A'.repeat(64);
 const HASH_B = 'B'.repeat(64);
 const HASH_C = 'C'.repeat(64);
@@ -159,6 +169,42 @@ function writeArtifact(filePath, content) {
 
 function screenshotBytes(label) {
   return Buffer.concat([ONE_PIXEL_PNG, Buffer.from(`\n${label}\n`, 'utf8')]);
+}
+
+function crc32(buffer) {
+  let crc = 0xFFFFFFFF;
+  for (const byte of buffer) crc = CRC_TABLE[(crc ^ byte) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function pngChunk(type, data = Buffer.alloc(0)) {
+  const typeBytes = Buffer.from(type, 'ascii');
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  typeBytes.copy(chunk, 4);
+  data.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 8 + data.length);
+  return chunk;
+}
+
+function canaryScreenshotBytes(gray, { width = 1200, height = 700 } = {}) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 0;
+  const raw = Buffer.alloc((width + 1) * height);
+  for (let row = 0; row < height; row += 1) {
+    const offset = row * (width + 1);
+    raw[offset] = 0;
+    raw.fill(gray, offset + 1, offset + width + 1);
+  }
+  return Buffer.concat([
+    PNG_SIGNATURE,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw)),
+    pngChunk('IEND'),
+  ]);
 }
 
 function packageIndexArtifact(kind, filePath) {
@@ -302,8 +348,17 @@ function validOperatorHandoff() {
     automationReadSecrets: false,
     automationTypedSecrets: false,
     completedAt: '2026-07-23T01:00:00.450Z',
+    durationClock: 'performance.now',
+    elapsedMs: 300,
+    finalPhase: 'authorization',
     kind: 'visible-user-handoff',
+    maximumTotalTimeoutMs: 1_200_000,
     outcome: 'workspace-reached',
+    phaseTimeoutMs: 600_000,
+    phaseTransitions: [
+      { elapsedMs: 0, phase: 'preparation', startedAt: '2026-07-23T01:00:00.160Z' },
+      { elapsedMs: 140, phase: 'authorization', startedAt: '2026-07-23T01:00:00.300Z' },
+    ],
     startedAt: '2026-07-23T01:00:00.150Z',
   };
 }
@@ -801,7 +856,7 @@ function validPackageUiManifest(packageIdentity, screenshotRoot) {
   );
   return {
     kind: 'package-ui-evidence',
-    schemaVersion: 7,
+    schemaVersion: 8,
     generatedAt: '2026-07-23T01:00:00.000Z',
     interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
     isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
@@ -821,6 +876,7 @@ function validPackageUiManifest(packageIdentity, screenshotRoot) {
       allowSavedLogin: false,
       expectedExeSha256: packageIdentity.executableSha256,
       expectedAppContentSha256: packageIdentity.appContentSha256,
+      interactiveLoginMaximumTotalMs: 1_200_000,
       interactiveLoginTimeoutMs: 600_000,
       loginMode: 'interactive-operator-each-run',
       resumeRunGroupId: null,
@@ -983,11 +1039,9 @@ function buildExecutionCanary(mode, storesRoot) {
     const artifactPath = executionArtifactPath(storesRoot, binding);
     const artifactRecord = writeArtifact(
       artifactPath,
-      screenshotBytes(stableJson({
-        schemaVersion: 'mission-control-execution-artifact/v1',
-        ...binding,
-        observedBidCents: slot === 'before' ? beforeBid : targetBid,
-      })),
+      canaryScreenshotBytes(
+        (mode === 'manual_approval' ? 40 : 140) + (index * 20),
+      ),
     );
     return {
       id: `${suffix}-${slot}`,
@@ -1484,8 +1538,34 @@ function createAuthorityDatabase(databasePath, canaries) {
   }
 }
 
-function validContinuousOperationEvidence(databasePath, authoritySnapshot) {
+function validContinuousOperationEvidence(databasePath, authoritySnapshot, outputPath) {
   const dates = businessDates();
+  const snapshotArtifact = artifact(databasePath);
+  const currentnessCaptures = [
+    'continuous-before-work',
+    'continuous-before-final-output',
+    'continuous-after-staging-output',
+  ].map((captureLabel) => ({
+    schemaVersion: 'sqlite-authority-currentness-proof/v1',
+    method: 'readonly-sqlite-online-backup',
+    captureLabel,
+    capturedAt: '2026-07-23T01:19:00.000Z',
+    source: {
+      openedReadOnly: true,
+      queryOnly: true,
+    },
+    expectedSnapshot: {
+      sha256: snapshotArtifact.sha256,
+      sizeBytes: snapshotArtifact.sizeBytes,
+    },
+    observedBackup: {
+      sha256: snapshotArtifact.sha256,
+      sizeBytes: snapshotArtifact.sizeBytes,
+      totalPages: 1,
+      remainingPages: 0,
+    },
+    matchesSelectedSnapshot: true,
+  }));
   const input = {
     stores: storeFixtures.map((store) => store.storeId),
     dates,
@@ -1493,6 +1573,20 @@ function validContinuousOperationEvidence(databasePath, authoritySnapshot) {
     dateTo: dates.at(-1),
     generatedAt: '2026-07-23T01:19:00.000Z',
     storesRoot: authoritySnapshot.storesRoot,
+    authorityCurrentness: {
+      method: 'readonly-sqlite-online-backup',
+      expectedSnapshot: {
+        sha256: snapshotArtifact.sha256,
+        sizeBytes: snapshotArtifact.sizeBytes,
+      },
+      captures: currentnessCaptures,
+      passed: true,
+    },
+    publication: {
+      state: 'atomic-published',
+      outputPath,
+      stagedVerificationCaptureLabel: 'continuous-after-staging-output',
+    },
   };
   const database = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
@@ -1651,7 +1745,7 @@ function passingEvidenceChain(tempDir) {
     packageIdentity,
     snapshotManifestSha256,
     storesRoot,
-  });
+  }, paths.continuousOperation);
   continuousEvidence.generatedAt = '2026-07-23T01:19:00.000Z';
   continuousEvidence.packageIdentity = { ...packageIdentity };
   continuousEvidence.database.packageIdentity = { ...packageIdentity };
@@ -1769,6 +1863,21 @@ function mutateAuthoritySnapshot(paths, mutateDatabase) {
   return refreshAuthoritySnapshotBindings(paths);
 }
 
+function replaceCanaryArtifact(paths, canaryPath, slot, bytes) {
+  const canary = readJson(canaryPath);
+  const record = canary.execution.evidence.find((item) => item.slot === slot);
+  fs.writeFileSync(record.artifactPath, bytes);
+  record.contentSha256 = sha256File(record.artifactPath);
+  record.sizeBytes = fs.statSync(record.artifactPath).size;
+  writeJson(canaryPath, canary);
+  mutateAuthoritySnapshot(paths, (database) => {
+    database.prepare(`
+      UPDATE ad_execution_evidence SET content_sha256 = ? WHERE id = ?
+    `).run(record.contentSha256, record.id);
+  });
+  return record;
+}
+
 function writeFullyReadyV15Baseline(paths) {
   const readiness = readJson(paths.finalReadiness);
   readiness.status = 'APP_READY';
@@ -1872,8 +1981,27 @@ describe('Mission Control production readiness CLI', () => {
     const tempDir = makeTempDir('mission-control-readiness-pass-');
     const { packageIdentity, paths } = passingEvidenceChain(tempDir);
     const outputPath = path.join(tempDir, 'readiness.json');
+    const args = verifierArgs(paths, outputPath);
+    const inMemoryReport = readinessVerifier.buildReport(
+      readinessVerifier.parseArgs(args),
+      paths.verificationContext,
+    );
 
-    const result = runVerifier(verifierArgs(paths, outputPath));
+    expect(Object.values(inMemoryReport._verifiedCanaryPngArtifacts).flat()).toHaveLength(6);
+    expect(Object.values(inMemoryReport._verifiedCanaryPngArtifacts)).toEqual([
+      expect.arrayContaining([
+        expect.objectContaining({ slot: 'before', width: 1200, height: 700 }),
+        expect.objectContaining({ slot: 'after', width: 1200, height: 700 }),
+        expect.objectContaining({ slot: 'reload', width: 1200, height: 700 }),
+      ]),
+      expect.arrayContaining([
+        expect.objectContaining({ slot: 'before', width: 1200, height: 700 }),
+        expect.objectContaining({ slot: 'after', width: 1200, height: 700 }),
+        expect.objectContaining({ slot: 'reload', width: 1200, height: 700 }),
+      ]),
+    ]);
+
+    const result = runVerifier(args);
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const report = readJson(outputPath);
@@ -1887,6 +2015,7 @@ describe('Mission Control production readiness CLI', () => {
     expect(report.gates).toHaveLength(8);
     expect(report.gates.every((gate) => gate.ok === true && gate.status === 'passed')).toBe(true);
     expect(report.gates.every((gate) => path.isAbsolute(gate.evidencePath))).toBe(true);
+    expect(report).not.toHaveProperty('_verifiedCanaryPngArtifacts');
     expect(report.gates.find((gate) => gate.id === 'v15-final-readiness')).toEqual(expect.objectContaining({
       supersededBy: ['manual-canary', 'policy-auto-canary'],
     }));
@@ -1995,7 +2124,7 @@ describe('Mission Control production readiness CLI', () => {
   });
 
   it('rejects historical v5/v6 package UI evidence and a stale scheduler subview screenshot', () => {
-    for (const schemaVersion of [5, 6]) {
+    for (const schemaVersion of [5, 6, 7]) {
       const legacyDir = makeTempDir(`mission-control-readiness-ui-v${schemaVersion}-`);
       const legacy = passingEvidenceChain(legacyDir);
       const legacyManifest = readJson(legacy.paths.packageUi);
@@ -2008,7 +2137,7 @@ describe('Mission Control production readiness CLI', () => {
         expect.objectContaining({
           id: 'package-ui',
           ok: false,
-          reason: expect.stringMatching(/schema v7/i),
+          reason: expect.stringMatching(/schema v8/i),
         }),
       ]));
     }
@@ -2067,7 +2196,7 @@ describe('Mission Control production readiness CLI', () => {
       },
       /WIDE_INTERACTIVE_LOGIN_HANDOFF_MISSING|own visible operator handoff/i,
     ],
-  ])('rejects schema v7 package UI evidence %s', (_caseName, mutateManifest, reasonPattern) => {
+  ])('rejects schema v8 package UI evidence %s', (_caseName, mutateManifest, reasonPattern) => {
     const tempDir = makeTempDir('mission-control-readiness-ui-interactive-contract-');
     const { paths } = passingEvidenceChain(tempDir);
     const manifest = readJson(paths.packageUi);
@@ -2353,20 +2482,10 @@ describe('Mission Control production readiness CLI', () => {
     ]));
   });
 
-  it('rejects a hash-matching fake screenshot that is not a PNG with IHDR', () => {
+  it('rejects a hash-matching fake screenshot that is not a PNG', () => {
     const tempDir = makeTempDir('mission-control-readiness-fake-png-');
     const { paths } = passingEvidenceChain(tempDir);
-    const canary = readJson(paths.manualCanary);
-    const before = canary.execution.evidence.find((record) => record.slot === 'before');
-    fs.writeFileSync(before.artifactPath, Buffer.alloc(64, 0x41));
-    before.contentSha256 = sha256File(before.artifactPath);
-    before.sizeBytes = fs.statSync(before.artifactPath).size;
-    writeJson(paths.manualCanary, canary);
-    mutateAuthoritySnapshot(paths, (database) => {
-      database.prepare(`
-        UPDATE ad_execution_evidence SET content_sha256 = ? WHERE id = ?
-      `).run(before.contentSha256, before.id);
-    });
+    replaceCanaryArtifact(paths, paths.manualCanary, 'before', Buffer.alloc(64, 0x41));
     const outputPath = path.join(tempDir, 'readiness.json');
 
     expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
@@ -2374,7 +2493,65 @@ describe('Mission Control production readiness CLI', () => {
       expect.objectContaining({
         id: 'manual-canary',
         ok: false,
-        reason: expect.stringMatching(/PNG.*IHDR/i),
+        reason: expect.stringMatching(/PNG signature/i),
+      }),
+    ]));
+  });
+
+  it('rejects a hash-matching 1x1 PNG thumbnail below the production viewport contract', () => {
+    const tempDir = makeTempDir('mission-control-readiness-thumbnail-png-');
+    const { paths } = passingEvidenceChain(tempDir);
+    replaceCanaryArtifact(
+      paths,
+      paths.policyCanary,
+      'after',
+      canaryScreenshotBytes(77, { width: 1, height: 1 }),
+    );
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'policy-auto-canary',
+        ok: false,
+        reason: expect.stringMatching(/1x1.*below the 1200x700 evidence minimum/i),
+      }),
+    ]));
+  });
+
+  it.each([
+    [
+      'truncated',
+      (bytes) => bytes.subarray(0, bytes.length - 5),
+      /truncated|extends beyond/i,
+    ],
+    [
+      'bad-CRC',
+      (bytes) => {
+        const corrupted = Buffer.from(bytes);
+        const idatTypeOffset = corrupted.indexOf(Buffer.from('IDAT', 'ascii'));
+        corrupted[idatTypeOffset + 4] ^= 0x01;
+        return corrupted;
+      },
+      /IDAT chunk CRC is invalid/i,
+    ],
+  ])('rejects a hash-matching %s production-size PNG', (_label, mutate, reasonPattern) => {
+    const tempDir = makeTempDir('mission-control-readiness-damaged-png-');
+    const { paths } = passingEvidenceChain(tempDir);
+    replaceCanaryArtifact(
+      paths,
+      paths.manualCanary,
+      'reload',
+      mutate(canaryScreenshotBytes(88)),
+    );
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: false,
+        reason: expect.stringMatching(reasonPattern),
       }),
     ]));
   });
@@ -2478,6 +2655,35 @@ describe('Mission Control production readiness CLI', () => {
     ]));
   });
 
+  it.each([
+    [
+      'missing post-staging authority capture',
+      (continuous) => { continuous.authorityCurrentness.captures.pop(); },
+      /three ordered staging-safe captures/i,
+    ],
+    [
+      'staging-file replay under a different selected path',
+      (continuous) => { continuous.publication.outputPath = `${continuous.publication.outputPath}.final`; },
+      /atomically published final path/i,
+    ],
+  ])('rejects continuous-operation publication proof with %s', (_label, mutate, reasonPattern) => {
+    const tempDir = makeTempDir('mission-control-readiness-continuous-publication-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const continuous = readJson(paths.continuousOperation);
+    mutate(continuous);
+    writeJson(paths.continuousOperation, continuous);
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    expect(readJson(outputPath).gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 's7-continuous-operation',
+        ok: false,
+        reason: expect.stringMatching(reasonPattern),
+      }),
+    ]));
+  });
+
   it('rechecks retained Store Capsule files before finalizing APP_READY', () => {
     const tempDir = makeTempDir('mission-control-readiness-store-capsule-toctou-');
     const { paths } = passingEvidenceChain(tempDir);
@@ -2510,6 +2716,85 @@ describe('Mission Control production readiness CLI', () => {
         reason: expect.stringMatching(/Store Capsule TOCTOU.*changed after continuous-operation verification/i),
       }),
     ]));
+  });
+
+  it('leaves a durable APP_NEEDS_WORK publication when the process stops before post-write rechecks', () => {
+    const tempDir = makeTempDir('mission-control-readiness-publication-crash-window-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const outputPath = path.join(tempDir, 'readiness.json');
+    paths.verificationContext.afterFailClosedReportWrite = () => {
+      expect(readJson(outputPath)).toMatchObject({
+        status: 'APP_NEEDS_WORK',
+        appReady: false,
+        allGatesPass: false,
+        publication: {
+          state: 'pending-post-write-recheck',
+          finalReaderFacing: false,
+          readyPublicationAllowed: false,
+        },
+        gates: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'final-publication-recheck',
+            ok: false,
+            status: 'needs_work',
+          }),
+        ]),
+      });
+      throw new Error('simulated process termination before post-write rechecks');
+    };
+
+    expect(() => runVerifier(verifierArgs(paths, outputPath))).toThrow(
+      /simulated process termination before post-write rechecks/i,
+    );
+    expect(readJson(outputPath)).toMatchObject({
+      status: 'APP_NEEDS_WORK',
+      appReady: false,
+      allGatesPass: false,
+      publication: {
+        state: 'pending-post-write-recheck',
+        finalReaderFacing: false,
+        readyPublicationAllowed: false,
+      },
+    });
+  });
+
+  it('fails only the corresponding canary gate when beforeFinalEvidenceRecheck swaps a PNG for identical bytes under a new file identity', () => {
+    const tempDir = makeTempDir('mission-control-readiness-canary-png-toctou-');
+    const { paths } = passingEvidenceChain(tempDir);
+    const policyCanary = readJson(paths.policyCanary);
+    const artifactPath = policyCanary.execution.evidence.find(
+      (record) => record.slot === 'after',
+    ).artifactPath;
+    const originalBytes = fs.readFileSync(artifactPath);
+    paths.verificationContext.beforeFinalEvidenceRecheck = () => {
+      const displacedPath = `${artifactPath}.displaced`;
+      fs.renameSync(artifactPath, displacedPath);
+      fs.writeFileSync(artifactPath, originalBytes);
+    };
+    const outputPath = path.join(tempDir, 'readiness.json');
+
+    expect(runVerifier(verifierArgs(paths, outputPath)).status).toBe(1);
+    const report = readJson(outputPath);
+    expect(report).toMatchObject({
+      status: 'APP_NEEDS_WORK',
+      appReady: false,
+      allGatesPass: false,
+      summary: { total: 8, passed: 7, failed: 1 },
+    });
+    expect(report.gates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'manual-canary',
+        ok: true,
+      }),
+      expect.objectContaining({
+        id: 'policy-auto-canary',
+        ok: false,
+        reason: expect.stringMatching(
+          /Final canary PNG TOCTOU.*path identity, size, hash, dimensions, or strict decoding/i,
+        ),
+      }),
+    ]));
+    expect(report).not.toHaveProperty('_verifiedCanaryPngArtifacts');
   });
 
   it.each([

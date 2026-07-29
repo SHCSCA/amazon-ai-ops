@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -16,19 +17,56 @@ const {
 } = createRequire(import.meta.url)('./sqlite-authority-currentness.js');
 const tempRoot = path.join(root, 'output', 'codex-temp');
 const ownedTempDirs = [];
+const PNG_SIGNATURE = Buffer.from('89504E470D0A1A0A', 'hex');
+const CRC_TABLE = new Uint32Array(256);
+for (let index = 0; index < CRC_TABLE.length; index += 1) {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) !== 0 ? (0xEDB88320 ^ (value >>> 1)) : (value >>> 1);
+  }
+  CRC_TABLE[index] = value >>> 0;
+}
+
+function crc32(buffer) {
+  let crc = 0xFFFFFFFF;
+  for (const byte of buffer) crc = CRC_TABLE[(crc ^ byte) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function pngChunk(type, data = Buffer.alloc(0)) {
+  const typeBytes = Buffer.from(type, 'ascii');
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  typeBytes.copy(chunk, 4);
+  data.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 8 + data.length);
+  return chunk;
+}
+
+function productionPngBytes(gray, { width = 1200, height = 700 } = {}) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 0;
+  const raw = Buffer.alloc((width + 1) * height);
+  for (let row = 0; row < height; row += 1) {
+    const offset = row * (width + 1);
+    raw[offset] = 0;
+    raw.fill(gray, offset + 1, offset + width + 1);
+  }
+  return Buffer.concat([
+    PNG_SIGNATURE,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw)),
+    pngChunk('IEND'),
+  ]);
+}
+
 const MINIMAL_PNGS = [
-  Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xw5Z1QAAAABJRU5ErkJggg==',
-    'base64',
-  ),
-  Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
-    'base64',
-  ),
-  Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP4DwQACfsD/QHH2F8AAAAASUVORK5CYII=',
-    'base64',
-  ),
+  productionPngBytes(64),
+  productionPngBytes(128),
+  productionPngBytes(192),
 ];
 
 fs.mkdirSync(tempRoot, { recursive: true });
@@ -685,7 +723,7 @@ describe('Mission Control execution canary evidence exporter', () => {
     fs.appendFileSync(fixture.artifactPaths.after, Buffer.from('tampered'));
 
     expect(() => exporter.exportExecutionCanaryEvidence(fixture.options, fixture.context))
-      .toThrow(/after Store Capsule artifact SHA-256 does not match/i);
+      .toThrow(/after Store Capsule artifact.*(?:trailing bytes after IEND|SHA-256 does not match)/i);
   });
 
   it('rejects an artifact path redirected to another store capsule', () => {
@@ -850,7 +888,7 @@ describe('Mission Control execution canary evidence exporter', () => {
       .toThrow(/session generations do not match exactly/i);
   });
 
-  it('rejects bytes that match the authority DB hash but are not a PNG with first IHDR', () => {
+  it('rejects bytes that match the authority DB hash but are not a PNG', () => {
     const fixture = createFixture('manual_approval');
     bindArtifactBytes(
       fixture,
@@ -859,7 +897,19 @@ describe('Mission Control execution canary evidence exporter', () => {
     );
 
     expect(() => exporter.exportExecutionCanaryEvidence(fixture.options, fixture.context))
-      .toThrow(/after Store Capsule artifact does not have the PNG file signature/i);
+      .toThrow(/after Store Capsule artifact.*PNG signature is missing or invalid/i);
+  });
+
+  it('rejects an authority-bound 1x1 PNG thumbnail', () => {
+    const fixture = createFixture('manual_approval');
+    bindArtifactBytes(
+      fixture,
+      'after',
+      productionPngBytes(90, { width: 1, height: 1 }),
+    );
+
+    expect(() => exporter.exportExecutionCanaryEvidence(fixture.options, fixture.context))
+      .toThrow(/after Store Capsule artifact.*1x1.*below the 1200x700 evidence minimum/i);
   });
 
   it('rejects output outside the canonical execution-canaries directory', () => {

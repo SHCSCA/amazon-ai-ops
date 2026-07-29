@@ -224,5 +224,8 @@ describe('readback development preview write isolation', () => {
       await browser?.close().catch(() => {});
       await server.close().catch(() => {});
     }
-  }, 120_000);
+  // The full repository suite also runs the process-heavy production-readiness
+  // adversarial fixtures. Keep this browser isolation test bounded, but allow
+  // enough headroom for Chromium/Vite startup when those fixtures saturate CI.
+  }, 240_000);
 });
