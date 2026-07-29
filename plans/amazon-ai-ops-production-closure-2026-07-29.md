@@ -12,9 +12,27 @@
 
 任何门失败都保持 `APP_NEEDS_WORK` / `NON_READY`，不得把阶段成果描述为生产完成。
 
+## 当前执行状态
+
+- Stage 0 已完成只读选择：正式安装包 AppData 下的
+  `C:\Users\wz\AppData\Roaming\@amazon-ai-ops\desktop\amazon-ai-ops.db`
+  是唯一生产 authority DB；历史 `C:\Users\wz\AmazonAIOps\app-data\amazon-ai-ops.db`
+  仅登记为非权威恢复候选。
+- 当前 authority selection 回执：
+  `output/codex-evidence/production-authority-selection-20260729-production-p2.json`；
+  状态为 `SELECTED_MIGRATION_REQUIRED`，真实库仍未迁移。
+- Stage 1 的正式 Package UI run group
+  `production-p2-20df9d5b-20260729` 可安全续跑；上次仅因等待人工登录超时。
+  只有用户明确表示已经在电脑前准备登录后才继续，不新建 run group，不读取或代填凭证。
+- Stage 2 的离线演练工具已完成；真实 authority DB 的 v0→v9 启动迁移尚未获得用户明确批准。
+- Stage 3–6 尚未形成生产信用：真实两店配置、7 个完成业务日、112 份报表、两条
+  Ads canary、8/8 READY 都仍是待办。
+
 ## 冻结基线
 
-- Git HEAD：`20df9d5bf8da9b4d2b6ef220f9bc9b444515dc50`
+- 包内容冻结 Git commit：`20df9d5bf8da9b4d2b6ef220f9bc9b444515dc50`。
+  之后只允许增加不进入安装包的只读 operator/证据工具、测试和运行文档；这些提交会推进
+  仓库 HEAD，但不得改变下列包哈希。
 - win-unpacked EXE：
   `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`
 - app content：

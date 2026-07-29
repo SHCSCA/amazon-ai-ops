@@ -38,11 +38,12 @@ WAL/SHM/journal 出现、源路径/目录身份变化、hard-link 数不为 1 �
 恶意进程的安全边界；工作目录应放在仅当前操作者可写的位置。失败最多保留需人工
 清理的非最终工作文件，不得把临时 manifest 当成成功证据。
 
-完整合同见 `docs/S7_03_AUTHORITY_SELECTION.md`。两个 CLI 均支持无副作用帮助：
+完整合同见 `docs/S7_03_AUTHORITY_SELECTION.md`。以下三个 CLI 均支持无副作用帮助：
 
 ```powershell
 pnpm run verify:s7-authority-selection -- --help
 pnpm run migrate:s7-offline -- --help
+pnpm run verify:s7-live-migration-acceptance -- --help
 ```
 
 ## DB 离线升级
@@ -87,6 +88,62 @@ pnpm run verify:s7-migration-backup-restore -- --manifest $manifest
 - 恢复副本的版本、逐表行数、Schema 指纹、完整性和 SHA 均回到升级前快照；
 - 源库哈希在整个流程中保持不变。
 
+## 用户批准后的真实迁移验收时序
+
+真实 authority DB 的迁移不是离线演练的自动后续步骤。必须严格按以下顺序执行：
+
+1. 在真实库仍是迁移前版本且应用已完全退出时，使用
+   `verify:s7-authority-selection --export --out <绝对新文件>` 固化
+   `production-authority-selection-preflight/v1`。该证据的 selected main SHA 必须绑定
+   随后的 offline manifest `source.sha256`。
+2. 完成上节的离线副本升级，并把
+   `verify:s7-migration-backup-restore --manifest <绝对路径> --out <绝对新文件>`
+   生成的通过结果交给用户复核。此时仍不得迁移真实库。
+3. **只有用户明确批准真实迁移后**，才可由另行批准的生产迁移/启动流程处理真实
+   authority DB。本验收 CLI 不执行迁移、不启动应用，也不能替代该批准。
+4. 真实迁移结束后、恢复调度或任何 Ads 执行前，运行下方只读验收。`--out` 必须是
+   不存在的绝对 `.json` 路径；碰撞不会覆盖。
+
+```powershell
+$authoritySelection = 'D:\amazon-ai-ops-recovery\2026-07-29\authority-selection.json'
+$migrationManifest = 'D:\amazon-ai-ops-recovery\2026-07-29\s7-offline-upgrade.json'
+$migrationVerification = 'D:\amazon-ai-ops-recovery\2026-07-29\s7-migration-verification.json'
+$liveAcceptance = 'D:\amazon-ai-ops-recovery\2026-07-29\s7-live-migration-acceptance.json'
+
+pnpm run verify:s7-live-migration-acceptance -- `
+  --db $sourceDb `
+  --authority-selection $authoritySelection `
+  --migration-manifest $migrationManifest `
+  --migration-verification $migrationVerification `
+  --out $liveAcceptance
+```
+
+验收器不会用可写模式打开真实库。它只通过 WAL-aware、readonly、`query_only`
+SQLite online backup 把逻辑快照放入受控临时目录，后续完整性、FK、migration 1–9、
+必需表和业务行保留检查都针对该临时副本。发布前会再次执行独立的只读 online
+backup；两份逻辑快照的 SHA 与大小必须完全相同，期间出现 WAL-only 写入也会停止。
+输入 JSON 以同一个稳定文件句柄读取、计算 SHA 并解析，路径被替换或内容漂移会停止。
+offline manifest 必须带有持续到最终发布的 Windows `FileShare.None` lease、工作/恢复
+hash 和完整业务行保留证明；migration verification 必须包含官方 verifier 的完整、
+无重复且全通过 check-code 集合。验收器不会只相信这些 check code：它会再次以
+readonly + `query_only` 打开 manifest 绑定且彼此 distinct 的 working/restore 文件，
+独立核对当前 hash、完整性、FK、migration 1–9、逐表行数、业务行保留、v9 recovery
+preflight，以及恢复副本的源版本/基线行数；真实 source 文件已经迁移，不会拿迁移前
+SHA 再误验当前文件。working/restore 是已完成并封存的离线工件：检查开始前必须不存在
+`-wal`、`-shm` 或 `-journal`；验收器会记录 canonical path、dev/ino、birthtime、
+nlink、size、mtime 和同句柄 SHA，并在 readonly 语义检查关闭后重新核对身份与主文件
+hash，同时再次确认 sidecar 不存在。路径替换、hard link、主文件漂移或 pre/post
+sidecar 任一异常都会 fail-closed。验收器还要求 migration 9 内嵌的
+`upgradeBackup` 精确绑定真实库及相邻固定 `.bak` / `.manifest.json` 路径，并通过
+`StoreRepository.getMigrationRecoveryPreflight(9)` 的 SHA、完整性、Schema、行数和
+`canRestore` 复核。相邻最终 manifest 必须保持 `status=created`；只有数据库内嵌
+manifest 可因安全复用记录为 `created` 或 `reused`。失败不会留下正式回执；成功回执明确记录
+`authorityDatabaseMutated=false`、`adsExecutionInvoked=false`，也不包含业务行内容、
+密码、Cookie 或 Token。
+
+只有 `status=PASSED`、`passed=true`、全部 checks 通过且回执已独占发布，才说明
+“迁移后的真实库只读验收通过”。它仍不代表 Ads canary、package 或整体产品 READY。
+
 ## 恢复与切换
 
 验证器生成的 `restored-pre-v9.db` 是恢复演练副本，不会自动替换真实库。需要回滚时：
@@ -130,7 +187,8 @@ pnpm exec vitest run `
   packages/local-db/src/sqlite/repositories/store-repo.test.ts `
   packages/browser-worker/src/store-profile.test.ts `
   packages/browser-worker/src/store-profile-migration.test.ts `
-  scripts/verify-s7-migration-backup-restore.test.mjs
+  scripts/verify-s7-migration-backup-restore.test.mjs `
+  scripts/verify-s7-live-migration-acceptance.test.mjs
 
 pnpm --filter @amazon-ai-ops/local-db run typecheck
 pnpm --filter @amazon-ai-ops/browser-worker run typecheck
