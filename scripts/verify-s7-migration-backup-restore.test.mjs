@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
+  OFFLINE_MIGRATION_USAGE,
   evaluateBusinessRowPreservation,
   executeOfflineMigration,
   inspectOfflineMigration,
   loadLocalDbRuntime,
+  main: migrationMain,
   parseOfflineMigrationArgs,
   requireSqlite,
   sha256File,
@@ -28,6 +30,83 @@ afterEach(() => {
 });
 
 describe('S7 offline migration and recovery verifier', () => {
+  it('prints help successfully without validating paths or invoking migration operations', () => {
+    const root = tempDirectory();
+    const untouchedWorkDir = path.join(root, 'must-not-be-created');
+    const parsed = parseOfflineMigrationArgs([
+      'node',
+      'script',
+      '--db',
+      path.join(root, 'missing.db'),
+      '--expected-sha256',
+      'not-a-hash',
+      '--work-dir',
+      untouchedWorkDir,
+      '--execute',
+      '--help',
+    ]);
+    expect(parsed).toEqual({
+      db: '',
+      expectedSha256: '',
+      workDir: '',
+      out: '',
+      execute: false,
+      help: true,
+    });
+
+    const output = [];
+    const errors = [];
+    const exitCode = migrationMain(
+      [
+        'node',
+        'script',
+        '--db',
+        path.join(root, 'missing.db'),
+        '--work-dir',
+        untouchedWorkDir,
+        '--execute',
+        '--help',
+      ],
+      {
+        log: (message) => output.push(message),
+        error: (message) => errors.push(message),
+      },
+      {
+        inspectOfflineMigration: () => {
+          throw new Error('inspection must not run for --help');
+        },
+        executeOfflineMigration: () => {
+          throw new Error('migration must not run for --help');
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(output).toEqual([OFFLINE_MIGRATION_USAGE]);
+    expect(errors).toEqual([]);
+    expect(OFFLINE_MIGRATION_USAGE).toContain('--expected-sha256 <hash>');
+    expect(OFFLINE_MIGRATION_USAGE).toContain('never overwrite the source');
+    expect(fs.existsSync(untouchedWorkDir)).toBe(false);
+  });
+
+  it('keeps missing required arguments fail-closed through the main entry contract', () => {
+    const output = [];
+    const errors = [];
+    const exitCode = migrationMain(
+      ['node', 'script'],
+      {
+        log: (message) => output.push(message),
+        error: (message) => errors.push(message),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(output).toEqual([]);
+    expect(errors).toEqual([
+      '[S7 OFFLINE MIGRATION BLOCKED] --db is required; automatic AppData discovery is disabled.',
+    ]);
+  });
+
   it('requires explicit absolute source, SHA, and isolated work directory', () => {
     expect(() => parseOfflineMigrationArgs(['node', 'script'])).toThrow(/--db is required/i);
     expect(() => parseOfflineMigrationArgs([
@@ -37,6 +116,79 @@ describe('S7 offline migration and recovery verifier', () => {
     expect(() => parseS7VerifierArgs(['node', 'script', '--manifest', 'relative.json']))
       .toThrow(/absolute path/i);
   });
+
+  it('fails closed before copying when a WAL appears after inspection returns', () => {
+    const root = tempDirectory();
+    const sourceDirectory = path.join(root, 'source');
+    const workDir = path.join(root, 'work');
+    fs.mkdirSync(sourceDirectory);
+    const sourcePath = path.join(sourceDirectory, 'amazon-ai-ops.db');
+    createV7Source(sourcePath);
+    const sourceSha256 = sha256File(sourcePath);
+    const manifestPath = path.join(workDir, 'offline-upgrade-evidence.json');
+
+    expect(() => executeOfflineMigration(
+      {
+        db: sourcePath,
+        expectedSha256: sourceSha256,
+        workDir,
+        out: manifestPath,
+        execute: true,
+      },
+      {
+        afterInspection() {
+          fs.writeFileSync(`${sourcePath}-wal`, 'application restarted');
+        },
+      },
+    )).toThrow(/not offline/i);
+
+    expect(sha256File(sourcePath)).toBe(sourceSha256);
+    expect(fs.existsSync(workDir)).toBe(false);
+    expect(fs.existsSync(manifestPath)).toBe(false);
+  }, 30_000);
+
+  it('fails closed when another database handle prevents the Windows offline lease', () => {
+    const value = offlineMigrationFixture();
+    const blocker = fs.openSync(value.sourcePath, 'r');
+    try {
+      expect(() => executeOfflineMigration(value.args))
+        .toThrow(/Windows offline lease blocked/i);
+    } finally {
+      fs.closeSync(blocker);
+    }
+
+    expect(sha256File(value.sourcePath)).toBe(value.sourceSha256);
+    expect(fs.existsSync(value.manifestPath)).toBe(false);
+    expect(fs.existsSync(value.workDir)).toBe(true);
+    expect(fs.readdirSync(value.workDir)).toEqual([]);
+  }, 30_000);
+
+  it.each([
+    ['after-working-copy-wal', /not offline/i],
+    ['before-publish-wal', /not offline/i],
+    ['before-publish-failure', /injected failure/i],
+  ])('keeps final evidence absent for the %s lease fault', (faultMode, message) => {
+    const value = offlineMigrationFixture();
+
+    expect(() => executeOfflineMigration(value.args, { faultMode })).toThrow(message);
+
+    expect(sha256File(value.sourcePath)).toBe(value.sourceSha256);
+    expect(fs.readdirSync(value.sourceDirectory).sort()).toEqual(value.sourceDirectoryEntries);
+    expect(fs.existsSync(value.manifestPath)).toBe(false);
+    expect(fs.existsSync(value.workDir)).toBe(true);
+    expect(fs.readdirSync(value.workDir)).toEqual([]);
+  }, 30_000);
+
+  it('preserves a final-path collision and never replaces it with success evidence', () => {
+    const value = offlineMigrationFixture();
+
+    expect(() => executeOfflineMigration(value.args, { faultMode: 'publish-conflict' }))
+      .toThrow(/already exists/i);
+
+    expect(sha256File(value.sourcePath)).toBe(value.sourceSha256);
+    expect(fs.readFileSync(value.manifestPath, 'utf8')).toBe('preexisting evidence');
+    expect(fs.readdirSync(value.workDir)).toEqual(['offline-upgrade-evidence.json']);
+  }, 30_000);
 
   it('upgrades only a bound v7 copy and independently verifies its pre-v9 restore', () => {
     const root = tempDirectory();
@@ -313,6 +465,32 @@ function tempDirectory() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-s7-script-'));
   tempDirectories.push(directory);
   return directory;
+}
+
+function offlineMigrationFixture() {
+  const root = tempDirectory();
+  const sourceDirectory = path.join(root, 'source');
+  const workDir = path.join(root, 'work');
+  fs.mkdirSync(sourceDirectory);
+  const sourcePath = path.join(sourceDirectory, 'amazon-ai-ops.db');
+  createV7Source(sourcePath);
+  const sourceSha256 = sha256File(sourcePath);
+  const manifestPath = path.join(workDir, 'offline-upgrade-evidence.json');
+  return {
+    args: {
+      db: sourcePath,
+      expectedSha256: sourceSha256,
+      workDir,
+      out: manifestPath,
+      execute: true,
+    },
+    manifestPath,
+    sourceDirectory,
+    sourceDirectoryEntries: fs.readdirSync(sourceDirectory).sort(),
+    sourcePath,
+    sourceSha256,
+    workDir,
+  };
 }
 
 function listInspectionDirectories() {

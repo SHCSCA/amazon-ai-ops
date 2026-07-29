@@ -8,6 +8,43 @@
 - 浏览器 Profile 含 Cookie。迁移只允许一个物理源绑定一个店铺、一个 provider；身份不明确、浏览器未确认停止、目标非空或路径含 junction/symlink 时全部停止。
 - 证据 JSON 可以记录本地路径和业务表计数，不得写入密码、Cookie、Token 或表内容。
 
+## 先选择唯一生产库
+
+离线迁移前先运行只读 authority 预检。它只接受当前包
+`@amazon-ai-ops/desktop` 对应的 `%APPDATA%` userData，并会把
+`%USERPROFILE%\AmazonAIOps\app-data` 等历史候选登记为非权威库：
+
+```powershell
+$userData = Join-Path $env:APPDATA '@amazon-ai-ops\desktop'
+$sourceDb = Join-Path $userData 'amazon-ai-ops.db'
+$sourceSha = (Get-FileHash -LiteralPath $sourceDb -Algorithm SHA256).Hash
+
+pnpm run verify:s7-authority-selection -- `
+  --db $sourceDb `
+  --expected-user-data-dir $userData `
+  --expected-main-sha256 $sourceSha
+```
+
+预检使用一次 WAL-aware 只读在线备份识别逻辑状态；主文件 SHA 与逻辑备份 SHA
+是不同字段。存在 sidecar 时只会返回 `offlineMigrationEligible=false`，不得手工删除
+sidecar。关闭应用并确认 sidecar 自然收束后，必须重新计算源主文件 SHA，再进入下方
+离线升级。执行模式会用 Windows `FileShare.None` 从源 DB 取得连续排他句柄，
+从同一句柄计算 SHA 并创建工作副本；该句柄一直保持到临时 manifest 完整写入、
+`fsync`、关闭，并在同目录排他 hard-link 为最终文件之后。应用仍持有数据库、
+WAL/SHM/journal 出现、源路径/目录身份变化、hard-link 数不为 1 或最终证据名已存在
+都会拒绝继续，且不得以手工删除 sidecar 的方式绕过。
+
+这把锁用于防止正常 Electron/SQLite 在迁移期间误重启，不是对同一 Windows 用户下
+恶意进程的安全边界；工作目录应放在仅当前操作者可写的位置。失败最多保留需人工
+清理的非最终工作文件，不得把临时 manifest 当成成功证据。
+
+完整合同见 `docs/S7_03_AUTHORITY_SELECTION.md`。两个 CLI 均支持无副作用帮助：
+
+```powershell
+pnpm run verify:s7-authority-selection -- --help
+pnpm run migrate:s7-offline -- --help
+```
+
 ## DB 离线升级
 
 先关闭应用并计算源库哈希。以下路径仅为示例，工作目录应位于有足够空间的 D 盘隔离目录：
@@ -38,6 +75,8 @@ pnpm run verify:s7-migration-backup-restore -- --manifest $manifest
 
 成功证据必须同时证明：
 
+- `offlineLease.method=windows-file-share-none`，并绑定源句柄 file identity、源/副本 SHA
+  与 `lockHeldThroughFinalPublish=true`；
 - 源 SHA 与操作者提供值一致，源库 `integrity_check=ok`；
 - migration 1–9 全部为 `applied`，升级库 FK 检查为零；
 - migration 1 新执行记录 checksum `store-authority-v1-20260727-03`；历史 `store-authority-v1-20260722-02`

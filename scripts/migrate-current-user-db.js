@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -7,6 +8,23 @@ const ROOT = path.resolve(__dirname, '..');
 const TARGET_VERSION = 9;
 const SCRIPT_SCHEMA_VERSION = 1;
 const INSPECTION_TEMP_PREFIX = `amazon-ai-ops-s7-inspection-${process.pid}-`;
+const OFFLINE_MIGRATION_USAGE = `Usage:
+  node scripts/migrate-current-user-db.js --db <absolute-db-path> --expected-sha256 <64-hex-sha256> --work-dir <absolute-work-dir> [--out <absolute-manifest-path>] [--execute]
+  node scripts/migrate-current-user-db.js --help
+
+Safely inspect or migrate an explicitly bound offline Amazon AI Ops database copy.
+
+Options:
+  --db <path>                Absolute path to the offline source database.
+  --expected-sha256 <hash>   Expected 64-character SHA-256 of the source database.
+  --work-dir <path>          Absolute isolated directory for working copies and evidence.
+  --out <path>               Optional absolute manifest path inside --work-dir.
+  --execute                  Upgrade a working copy to v${TARGET_VERSION}; never overwrite the source.
+  --help                     Show this help and exit without reading files or loading SQLite.
+
+Without --execute, the command performs a read-only inspection and prints the migration plan.
+The source must be offline with no WAL, SHM, or journal sidecars.
+Execute mode holds a Windows FileShare.None source handle through exclusive manifest publication.`;
 let loadedLocalDbRuntime;
 
 function parseOfflineMigrationArgs(argv) {
@@ -16,7 +34,12 @@ function parseOfflineMigrationArgs(argv) {
     workDir: '',
     out: '',
     execute: false,
+    help: false,
   };
+  if (argv.slice(2).includes('--help')) {
+    args.help = true;
+    return args;
+  }
   for (let index = 2; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--db') args.db = argv[++index] || '';
@@ -47,15 +70,12 @@ function inspectOfflineMigration(args) {
   if (args.out && (!path.isAbsolute(args.out) || !isSameOrContainedPath(workDir, args.out))) {
     throw new Error('output manifest must be an absolute path inside the work directory.');
   }
-  assertRegularFile(sourcePath, 'source database');
-  assertOfflineSource(sourcePath);
-  const sourceDirectoryEntries = readDirectoryEntries(path.dirname(sourcePath));
-  const actualSha256 = sha256File(sourcePath);
+  const sourceIdentity = captureOfflineSourceIdentity(sourcePath);
+  const actualSha256 = sourceIdentity.sha256;
   if (actualSha256 !== expectedSha256) {
     throw new Error(`Source database SHA-256 mismatch: expected=${expectedSha256}, actual=${actualSha256}`);
   }
-  assertOfflineSource(sourcePath);
-  const sourceSizeBytes = fs.statSync(sourcePath).size;
+  const sourceSizeBytes = sourceIdentity.sizeBytes;
   if (isSameOrContainedPath(path.dirname(sourcePath), workDir)) {
     throw new Error('--work-dir must be outside the source database directory.');
   }
@@ -63,6 +83,9 @@ function inspectOfflineMigration(args) {
     const workDirStat = fs.lstatSync(workDir);
     if (workDirStat.isSymbolicLink() || !workDirStat.isDirectory()) {
       throw new Error('--work-dir must be a regular non-link directory.');
+    }
+    if (!samePath(fs.realpathSync(workDir), workDir)) {
+      throw new Error('--work-dir may not resolve through a junction, symlink, or reparse point.');
     }
   }
 
@@ -100,6 +123,9 @@ function inspectOfflineMigration(args) {
     const manifestPath = args.out
       ? path.resolve(args.out)
       : path.join(workDir, `s7-offline-upgrade-v${sourceVersion}-to-v${TARGET_VERSION}.json`);
+    if (!samePath(path.dirname(manifestPath), workDir)) {
+      throw new Error('output manifest must be a direct child of the isolated work directory.');
+    }
     for (const [label, candidate] of [
       ['working database', workingDatabasePath],
       ['restore database', restoreDatabasePath],
@@ -116,6 +142,7 @@ function inspectOfflineMigration(args) {
         path: sourcePath,
         sha256: actualSha256,
         sizeBytes: sourceSizeBytes,
+        offlineIdentity: sourceIdentity,
         integrityCheck,
         version: sourceVersion,
         tableRowCounts: sourceTableRowCounts,
@@ -146,19 +173,7 @@ function inspectOfflineMigration(args) {
 
   let sourceSafetyError;
   try {
-    assertRegularFile(sourcePath, 'source database');
-    assertOfflineSource(sourcePath);
-    const finalSourceSha256 = sha256File(sourcePath);
-    if (finalSourceSha256 !== actualSha256) {
-      throw new Error(`Source database changed during read-only inspection: ${finalSourceSha256}`);
-    }
-    const finalSourceDirectoryEntries = readDirectoryEntries(path.dirname(sourcePath));
-    if (JSON.stringify(finalSourceDirectoryEntries) !== JSON.stringify(sourceDirectoryEntries)) {
-      throw new Error(
-        `Source database directory changed during read-only inspection: before=${JSON.stringify(sourceDirectoryEntries)}, `
-        + `after=${JSON.stringify(finalSourceDirectoryEntries)}`,
-      );
-    }
+    assertOfflineSourceIdentity(sourcePath, sourceIdentity, 'read-only inspection');
   } catch (error) {
     sourceSafetyError = error;
   }
@@ -171,15 +186,146 @@ function inspectOfflineMigration(args) {
   return inspectionResult;
 }
 
-function executeOfflineMigration(args) {
+function executeOfflineMigration(args, hooks = {}) {
   const plan = inspectOfflineMigration({ ...args, execute: true });
+  invokeOfflineMigrationHook(hooks, 'afterInspection', plan);
+  assertOfflineSourceIdentity(
+    plan.source.path,
+    plan.source.offlineIdentity,
+    'the checkpoint immediately before acquiring the Windows offline lease',
+  );
+  if (process.platform !== 'win32') {
+    throw new Error('S7 offline execution requires Windows FileShare.None lease support.');
+  }
   fs.mkdirSync(plan.workDir, { recursive: true });
-  fs.copyFileSync(plan.source.path, plan.workingDatabasePath, fs.constants.COPYFILE_EXCL);
-  const copiedSha256 = sha256File(plan.workingDatabasePath);
-  if (copiedSha256 !== plan.source.sha256) {
-    throw new Error('Working database copy SHA-256 does not match the explicitly bound source.');
+  assertRegularDirectDirectory(plan.workDir, 'work directory');
+  const manifestParent = path.dirname(plan.manifestPath);
+  assertRegularDirectDirectory(manifestParent, 'manifest parent');
+  const nonce = crypto.randomUUID().replace(/[^A-Za-z0-9-]/g, '');
+  if (!nonce) throw new Error('Could not create a safe offline lease nonce.');
+  const requestPath = path.join(plan.workDir, `.s7-offline-request-${nonce}.json`);
+  const leaseProofPath = path.join(plan.workDir, `.s7-offline-lease-${nonce}.json`);
+  const temporaryManifestPath = path.join(
+    manifestParent,
+    `.s7-offline-manifest-${nonce}.tmp`,
+  );
+  const allowedFaultModes = new Set([
+    '',
+    'after-working-copy-wal',
+    'before-publish-wal',
+    'before-publish-failure',
+    'publish-conflict',
+  ]);
+  const faultMode = String(hooks.faultMode || '');
+  if (!allowedFaultModes.has(faultMode)) {
+    throw new Error(`Unsupported offline migration fault mode: ${faultMode}`);
   }
 
+  const request = {
+    kind: 's7-offline-migration-lease-request',
+    schemaVersion: 1,
+    nonce,
+    plan,
+    nodeExecutable: process.execPath,
+    migrationScriptPath: __filename,
+    temporaryManifestPath,
+    leaseProofPath,
+    faultMode,
+  };
+  writeTextExclusive(requestPath, `${JSON.stringify(request, null, 2)}\n`);
+  const helperPath = path.join(__dirname, 'run-s7-offline-migration-lease.ps1');
+  const windowsPowerShell = process.env.SystemRoot
+    ? path.join(
+      process.env.SystemRoot,
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe',
+    )
+    : 'powershell.exe';
+  let leaseResult;
+  try {
+    leaseResult = spawnSync(windowsPowerShell, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      helperPath,
+      '-RequestPath',
+      requestPath,
+    ], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      windowsHide: true,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  } finally {
+    removeOwnedTransientFile(requestPath, plan.workDir, '.s7-offline-request-');
+    removeOwnedTransientFile(leaseProofPath, plan.workDir, '.s7-offline-lease-');
+    removeOwnedTransientFile(
+      temporaryManifestPath,
+      manifestParent,
+      '.s7-offline-manifest-',
+    );
+  }
+  if (leaseResult.error) {
+    throw new Error(`Windows offline lease helper failed to start: ${leaseResult.error.message}`);
+  }
+  if (leaseResult.signal || leaseResult.status !== 0) {
+    const detail = String(leaseResult.stderr || leaseResult.stdout || '').trim();
+    throw new Error(
+      `Windows offline lease blocked the migration`
+      + `${leaseResult.signal ? ` (signal=${leaseResult.signal})` : ''}`
+      + `${Number.isInteger(leaseResult.status) ? ` (exit=${leaseResult.status})` : ''}`
+      + `${detail ? `: ${detail}` : '.'}`,
+    );
+  }
+  assertRegularFile(plan.manifestPath, 'published migration manifest');
+  const evidence = readJsonFile(plan.manifestPath, 'published migration manifest');
+  if (
+    evidence?.passed !== true
+    || normalizeSha256(evidence?.source?.sha256, 'manifest source SHA-256')
+      !== plan.source.sha256
+    || evidence?.offlineLease?.method !== 'windows-file-share-none'
+    || evidence?.offlineLease?.lockHeldThroughFinalPublish !== true
+  ) {
+    throw new Error('Published migration manifest is not bound to the Windows offline lease.');
+  }
+  return { ...evidence, manifestPath: plan.manifestPath };
+}
+
+function executeLockedWorkingCopy(plan, temporaryManifestPath, leaseProofPath) {
+  if (!plan || typeof plan !== 'object') {
+    throw new Error('Locked migration plan is invalid.');
+  }
+  if (!path.isAbsolute(plan.workingDatabasePath || '')
+    || !path.isAbsolute(plan.restoreDatabasePath || '')
+    || !path.isAbsolute(temporaryManifestPath || '')
+    || !path.isAbsolute(leaseProofPath || '')) {
+    throw new Error('Locked migration artifacts must use absolute paths.');
+  }
+  assertRegularFile(plan.workingDatabasePath, 'locked working database copy');
+  assertRegularFile(leaseProofPath, 'Windows offline lease proof');
+  const offlineLease = readJsonFile(leaseProofPath, 'Windows offline lease proof');
+  if (
+    offlineLease?.method !== 'windows-file-share-none'
+    || offlineLease?.lockHeldThroughFinalPublish !== true
+  ) {
+    throw new Error('Windows offline lease proof contract is invalid.');
+  }
+  const copiedSha256 = normalizeSha256(
+    offlineLease.workingCopySha256,
+    'lease working-copy SHA-256',
+  );
+  if (
+    copiedSha256 !== plan.source.sha256
+    || sha256File(plan.workingDatabasePath) !== copiedSha256
+    || normalizeSha256(offlineLease.sourceSha256, 'lease source SHA-256')
+      !== plan.source.sha256
+  ) {
+    throw new Error('Locked working database copy is not bound to the source snapshot.');
+  }
   const runtime = loadLocalDbRuntime();
   const upgraded = runtime.initSqlite(plan.workingDatabasePath);
   let evidence;
@@ -246,6 +392,7 @@ function executeOfflineMigration(args) {
       generatedAt: new Date().toISOString(),
       passed: true,
       source: plan.source,
+      offlineLease,
       targetVersion: TARGET_VERSION,
       workingDatabase: {
         path: plan.workingDatabasePath,
@@ -272,13 +419,30 @@ function executeOfflineMigration(args) {
   } finally {
     upgraded.close();
   }
-  const finalSourceSha256 = sha256File(plan.source.path);
-  if (finalSourceSha256 !== plan.source.sha256) {
-    throw new Error(`Source database changed during offline migration: ${finalSourceSha256}`);
-  }
   evidence.workingDatabase.upgradedSha256 = sha256File(plan.workingDatabasePath);
-  writeJsonExclusive(plan.manifestPath, evidence);
-  return { ...evidence, manifestPath: plan.manifestPath };
+  writeTextExclusive(temporaryManifestPath, `${JSON.stringify(evidence, null, 2)}\n`);
+  return evidence;
+}
+
+function executeLockedPlanRequest(requestPath) {
+  if (!path.isAbsolute(requestPath || '')) {
+    throw new Error('Locked migration request path must be absolute.');
+  }
+  assertRegularFile(requestPath, 'locked migration request');
+  const request = readJsonFile(requestPath, 'locked migration request');
+  if (
+    request?.kind !== 's7-offline-migration-lease-request'
+    || request?.schemaVersion !== 1
+    || typeof request?.nonce !== 'string'
+    || !/^[A-Za-z0-9-]+$/.test(request.nonce)
+  ) {
+    throw new Error('Locked migration request contract is invalid.');
+  }
+  return executeLockedWorkingCopy(
+    request.plan,
+    request.temporaryManifestPath,
+    request.leaseProofPath,
+  );
 }
 
 function loadLocalDbRuntime() {
@@ -349,6 +513,66 @@ function assertOfflineSource(sourcePath) {
   if (liveArtifacts.length > 0) {
     throw new Error(`Source database is not offline; close the app and remove no files manually: ${liveArtifacts.join(', ')}`);
   }
+}
+
+function captureOfflineSourceIdentity(sourcePath) {
+  const resolvedSourcePath = path.resolve(sourcePath);
+  assertRegularFile(resolvedSourcePath, 'source database');
+  assertOfflineSource(resolvedSourcePath);
+  const sourceStat = fs.statSync(resolvedSourcePath);
+  const sourceDirectoryPath = path.dirname(resolvedSourcePath);
+  const sourceDirectoryStat = fs.statSync(sourceDirectoryPath);
+  const sourceRealPath = fs.realpathSync(resolvedSourcePath);
+  const sourceDirectoryRealPath = fs.realpathSync(sourceDirectoryPath);
+  if (!samePath(sourceRealPath, resolvedSourcePath)
+    || !samePath(sourceDirectoryRealPath, sourceDirectoryPath)) {
+    throw new Error('Source database may not resolve through a junction, symlink, or reparse point.');
+  }
+  if (sourceStat.nlink !== 1) {
+    throw new Error(`Source database must have exactly one hard link; observed ${sourceStat.nlink}.`);
+  }
+  const identity = {
+    path: resolvedSourcePath,
+    realPath: sourceRealPath,
+    sha256: sha256File(resolvedSourcePath),
+    sizeBytes: sourceStat.size,
+    mtimeMs: sourceStat.mtimeMs,
+    birthtimeMs: sourceStat.birthtimeMs,
+    device: sourceStat.dev,
+    inode: sourceStat.ino,
+    hardLinkCount: sourceStat.nlink,
+    sourceDirectory: {
+      path: sourceDirectoryPath,
+      realPath: sourceDirectoryRealPath,
+      device: sourceDirectoryStat.dev,
+      inode: sourceDirectoryStat.ino,
+      birthtimeMs: sourceDirectoryStat.birthtimeMs,
+      entries: readDirectoryEntries(sourceDirectoryPath),
+    },
+    sidecarsAbsent: true,
+  };
+  assertOfflineSource(resolvedSourcePath);
+  return identity;
+}
+
+function assertOfflineSourceIdentity(sourcePath, expectedIdentity, phase) {
+  const actualIdentity = captureOfflineSourceIdentity(sourcePath);
+  if (JSON.stringify(actualIdentity) !== JSON.stringify(expectedIdentity)) {
+    throw new Error(
+      `Source database or directory identity changed during ${phase}: `
+      + `expected=${JSON.stringify(expectedIdentity)}, actual=${JSON.stringify(actualIdentity)}`,
+    );
+  }
+  return actualIdentity;
+}
+
+function invokeOfflineMigrationHook(hooks, name, plan) {
+  const hook = hooks?.[name];
+  if (hook === undefined) return;
+  if (typeof hook !== 'function') {
+    throw new Error(`Offline migration hook ${name} must be a function.`);
+  }
+  hook(plan);
 }
 
 function createControlledInspectionDirectory(sourceDirectoryPath) {
@@ -616,11 +840,47 @@ function assertRegularFile(filePath, label) {
   if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`${label} must be a regular non-link file.`);
 }
 
-function writeJsonExclusive(filePath, value) {
+function assertRegularDirectDirectory(directoryPath, label) {
+  if (!fs.existsSync(directoryPath)) {
+    throw new Error(`${label} does not exist: ${directoryPath}`);
+  }
+  const stat = fs.lstatSync(directoryPath);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`${label} must be a regular non-link directory.`);
+  }
+  if (!samePath(fs.realpathSync(directoryPath), directoryPath)) {
+    throw new Error(`${label} may not resolve through a junction, symlink, or reparse point.`);
+  }
+}
+
+function readJsonFile(filePath, label) {
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    throw new Error(`${label} is not valid JSON: ${error.message}`);
+  }
+  return parsed;
+}
+
+function removeOwnedTransientFile(filePath, expectedParent, requiredPrefix) {
+  if (!fs.existsSync(filePath)) return;
+  const resolved = path.resolve(filePath);
+  if (
+    !samePath(path.dirname(resolved), expectedParent)
+    || !path.basename(resolved).startsWith(requiredPrefix)
+  ) {
+    throw new Error(`Refusing to remove an unowned transient file: ${resolved}`);
+  }
+  assertRegularFile(resolved, 'owned transient file');
+  fs.unlinkSync(resolved);
+}
+
+function writeTextExclusive(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const handle = fs.openSync(filePath, 'wx');
   try {
-    fs.writeFileSync(handle, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(handle, value, 'utf8');
     fs.fsyncSync(handle);
   } finally {
     fs.closeSync(handle);
@@ -643,24 +903,56 @@ function quoteIdentifier(value) {
   return `"${String(value).replace(/"/g, '""')}"`;
 }
 
-function main() {
+function main(
+  argv = process.argv,
+  logger = console,
+  operations = { inspectOfflineMigration, executeOfflineMigration },
+) {
   try {
-    const args = parseOfflineMigrationArgs(process.argv);
-    const result = args.execute ? executeOfflineMigration(args) : inspectOfflineMigration(args);
-    console.log(JSON.stringify(result, null, 2));
+    const args = parseOfflineMigrationArgs(argv);
+    if (args.help) {
+      logger.log(OFFLINE_MIGRATION_USAGE);
+      return 0;
+    }
+    const result = args.execute
+      ? operations.executeOfflineMigration(args)
+      : operations.inspectOfflineMigration(args);
+    logger.log(JSON.stringify(result, null, 2));
+    return 0;
   } catch (error) {
-    console.error(`[S7 OFFLINE MIGRATION BLOCKED] ${error.message}`);
-    process.exitCode = 1;
+    logger.error(`[S7 OFFLINE MIGRATION BLOCKED] ${error.message}`);
+    return 1;
+  }
+}
+
+function cliMain(argv = process.argv, logger = console) {
+  if (argv[2] !== '--execute-locked-plan') {
+    return main(argv, logger);
+  }
+  try {
+    if (argv.length !== 4 || !path.isAbsolute(argv[3] || '')) {
+      throw new Error('--execute-locked-plan requires exactly one absolute request path.');
+    }
+    executeLockedPlanRequest(path.resolve(argv[3]));
+    return 0;
+  } catch (error) {
+    logger.error(`[S7 LOCKED WORKING COPY BLOCKED] ${error.message}`);
+    return 1;
   }
 }
 
 module.exports = {
+  OFFLINE_MIGRATION_USAGE,
   TARGET_VERSION,
+  cliMain,
   collectRowCounts,
   evaluateBusinessRowPreservation,
   executeOfflineMigration,
+  executeLockedPlanRequest,
+  executeLockedWorkingCopy,
   inspectOfflineMigration,
   loadLocalDbRuntime,
+  main,
   normalizeSha256,
   parseOfflineMigrationArgs,
   readAppliedVersion,
@@ -668,4 +960,4 @@ module.exports = {
   sha256File,
 };
 
-if (require.main === module) main();
+if (require.main === module) process.exitCode = cliMain();
