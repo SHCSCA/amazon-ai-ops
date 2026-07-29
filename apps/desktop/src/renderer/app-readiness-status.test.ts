@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import * as AppModule from './App';
 import {
   buildBrowserLoginRequest,
@@ -10,6 +11,16 @@ import {
   savedLoginCredentialNotice,
   savedLoginCredentialTone,
 } from './App';
+
+const LOGIN_STORE_CONTEXT = normalizeStoreContextEnvelope({
+  browserProfileId: 'profile-test',
+  businessDate: '2026-07-28',
+  businessTimezone: 'America/Los_Angeles',
+  currency: 'USD',
+  marketplace: 'US',
+  sessionGeneration: 1,
+  storeId: 'store-test',
+});
 
 describe('headerReadinessLabel', () => {
   it('labels final readiness as application package readiness instead of current business delivery', () => {
@@ -122,10 +133,52 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('绑定当前领星账号');
     expect(loginPage).toContain('更新当前领星账号绑定');
     expect(loginPage).toContain('领星连接已绑定');
-    expect(loginPage).toContain('disabled={loading || !lingxingConnectionReady}');
+    expect(loginPage).toContain('disabled={loading || !loginConnectionsReady}');
     expect(loginPage).toContain('lingxingConnection?.accountLabel?.trim() === username.trim()');
     expect(loginPage).toContain('store.bindLingxingConnection(username.trim())');
     expect(loginPage).not.toMatch(/data-[\\w-]*(?:user|account)[\\w-]*=\\{?username/i);
+  });
+
+  it('requires a visible US Amazon Ads Profile binding and keeps login blocked until both connections match', () => {
+    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const loginPage = source.slice(source.indexOf('function LoginPage()'), source.indexOf('function MissionControlRuntime'));
+
+    expect(loginPage).toContain("connection.provider === 'amazon_ads'");
+    expect(loginPage).toContain('aria-label="Amazon Ads Profile ID"');
+    expect(loginPage).toContain('data-package-ui-evidence-field="amazon-ads-profile-id"');
+    expect(loginPage).toContain('maxLength={256}');
+    expect(loginPage).toContain('void handleBindAmazonAdsConnection()');
+    expect(loginPage).toContain('void handleLogin()');
+    expect(loginPage).toContain('ads.lingxing.com');
+    expect(loginPage).toContain('profile_id');
+    expect(loginPage).toContain('美国站 · USD');
+    expect(loginPage).toContain('data-login-amazon-ads-connection-status');
+    expect(loginPage).toContain('data-state={amazonAdsConnectionState}');
+    expect(loginPage).toContain('data-package-ui-evidence-action="bind-amazon-ads-connection"');
+    expect(loginPage).toContain('绑定 Amazon Ads Profile');
+    expect(loginPage).toContain('更新 Amazon Ads Profile 绑定');
+    expect(loginPage).toContain('Amazon Ads Profile 已绑定');
+    expect(loginPage).toContain('amazonAdsConnection?.externalAccountId?.trim() === amazonAdsProfileId.trim()');
+    expect(loginPage).toContain('store.bindAmazonAdsConnection(amazonAdsProfileId)');
+    expect(loginPage).toContain('const loginConnectionsReady = lingxingConnectionReady && amazonAdsConnectionReady');
+    expect(loginPage).toContain('disabled={loading || !loginConnectionsReady}');
+    expect(loginPage).not.toMatch(/type="password"[\s\S]{0,200}value=\{amazonAdsProfileId\}/);
+  });
+
+  it('does not erase a typed Ads profile id on an unrelated same-store authority revision', () => {
+    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const loginPage = source.slice(source.indexOf('function LoginPage()'), source.indexOf('function MissionControlRuntime'));
+    const profileSyncStart = loginPage.indexOf(
+      'setAmazonAdsProfileId(amazonAdsConnection?.externalAccountId?.trim()',
+    );
+    const profileSyncEffect = loginPage.slice(
+      profileSyncStart,
+      loginPage.indexOf('setAmazonAdsConnectionState', profileSyncStart),
+    );
+
+    expect(profileSyncEffect).toContain('store.activeStore?.storeId');
+    expect(profileSyncEffect).toContain('amazonAdsConnection?.externalAccountId');
+    expect(profileSyncEffect).not.toContain('store.authorityKey');
   });
 
   it('keeps credential and loading feedback in one stable live region', () => {
@@ -175,41 +228,51 @@ describe('login micro-response contract', () => {
     })).toContain('本机安全区托管');
 
     expect(buildBrowserLoginRequest({
+      amazonAdsProfileId: '1234567890',
       credentialSource: 'saved',
       password: '',
       rememberPassword: true,
       savedCredentialUsername: 'operator@example.com',
       savedPasswordAvailable: true,
+      storeContext: LOGIN_STORE_CONTEXT,
       username: 'operator@example.com',
     })).toEqual({
+      amazonAdsProfileId: '1234567890',
       username: 'operator@example.com',
       credentialSource: 'saved',
       rememberPassword: true,
+      storeContext: LOGIN_STORE_CONTEXT,
     });
   });
 
   it('requires typed password when the username or remember choice no longer matches saved state', () => {
     expect(buildBrowserLoginRequest({
+      amazonAdsProfileId: '1234567890',
       credentialSource: 'saved',
       password: '',
       rememberPassword: true,
       savedCredentialUsername: 'saved-user',
       savedPasswordAvailable: true,
+      storeContext: LOGIN_STORE_CONTEXT,
       username: 'changed-user',
     })).toBeNull();
 
     expect(buildBrowserLoginRequest({
+      amazonAdsProfileId: '1234567890',
       credentialSource: 'typed',
       password: 'typed-for-this-login',
       rememberPassword: false,
       savedCredentialUsername: 'saved-user',
       savedPasswordAvailable: true,
+      storeContext: LOGIN_STORE_CONTEXT,
       username: 'changed-user',
     })).toEqual({
+      amazonAdsProfileId: '1234567890',
       username: 'changed-user',
       credentialSource: 'typed',
       password: 'typed-for-this-login',
       rememberPassword: false,
+      storeContext: LOGIN_STORE_CONTEXT,
     });
   });
 
@@ -246,7 +309,7 @@ describe('login micro-response contract', () => {
     const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
 
     expect(source).toContain('if (loading) return;');
-    expect(source.match(/event\.key === 'Enter' && !loading && lingxingConnectionReady && handleLogin\(\)/g)).toHaveLength(2);
+    expect(source.match(/event\.key === 'Enter' && !loading && loginConnectionsReady && handleLogin\(\)/g)).toHaveLength(2);
     expect(source).toContain("disabled={savedCredentialState === 'encryption_unavailable'}");
     expect(source).toContain("const remember = encryptionAvailable && Boolean(saved.rememberPassword)");
     expect(source).toContain('<span>记住密码</span>');

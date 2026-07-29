@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -41,6 +42,7 @@ const {
   INTERACTIVE_LOGIN_CONTRACT,
   ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
   PACKAGE_UI_WIDE_PROFILE,
+  PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION,
   PACKAGE_UI_PROFILE_SEQUENCE,
   READ_ONLY_INTERACTION_PLAN,
   buildAppContentManifest,
@@ -51,6 +53,7 @@ const {
   buildProtectedFileEvidence,
   buildProductionBuildContentManifest,
   appendRendererDiagnostic,
+  attachElectronLifecycleDiagnostics,
   captureViewportScreenshot,
   captureSqliteLogicalArtifact,
   chromiumLineageEvidencePassed,
@@ -59,6 +62,7 @@ const {
   collectMatchingPackageProcesses,
   collectMatchingProfileBrowserProcesses,
   composePackageUiRunGroup,
+  createRunDiagnostics,
   createPackageUiProfileAttemptContext,
   initializePackageUiRunGroup,
   decisionsTabAccessibleNamePattern,
@@ -75,7 +79,9 @@ const {
   parsePackageUiEvidenceArgs,
   packageUiAttemptArtifactManifestMatches,
   packageUiAttemptCleanupPassed,
+  packageUiAttemptDiagnosticsSnapshotMatches,
   profileLineageStateMatches,
+  markRunnerElectronCloseRequested,
   recordPackageUiProfileAttempt,
   resolvePackageUiProfileCursor,
   sanitizeDiagnosticText,
@@ -147,6 +153,24 @@ describe('workspace authentication probe', () => {
     }))).resolves.toBe(false);
   });
 
+  it('classifies an operator-window close during the visible login handoff', async () => {
+    const closedError = new Error('locator.isVisible: Target page, context or browser has been closed');
+    const page = {
+      isClosed: () => true,
+      locator: () => ({
+        isVisible: async () => {
+          throw closedError;
+        },
+      }),
+      waitForTimeout: async () => {
+        throw closedError;
+      },
+    };
+
+    await expect(waitForInteractiveAuthenticatedWorkspace(page, 1_000))
+      .rejects.toThrow(/PACKAGE_UI_OPERATOR_WINDOW_CLOSED/);
+  });
+
   it('selects the first explicit active Store Gate option deterministically without retaining an unbounded label', () => {
     expect(selectDeterministicEvidenceStoreCandidate([
       { label: '请选择店铺', value: '' },
@@ -212,6 +236,72 @@ describe('workspace authentication probe', () => {
     expect(validRunDiagnostics(run.diagnostics, run)).toBe(true);
     run.diagnostics.login.outcome = 'failed';
     expect(validRunDiagnostics(run.diagnostics, run)).toBe(false);
+  });
+
+  it.each([
+    ['missing lifecycle', (run) => { delete run.diagnostics.lifecycle; }],
+    ['unrequested close', (run) => { run.diagnostics.lifecycle.unexpectedCloseObserved = true; }],
+    ['non-zero Electron exit', (run) => {
+      run.diagnostics.lifecycle.processExit.code = 1;
+      const exitEvent = run.diagnostics.lifecycle.events.find(
+        (event) => event.kind === 'electron-process-exit',
+      );
+      exitEvent.code = 1;
+    }],
+    ['terminal event before runner close', (run) => {
+      const closedEvent = run.diagnostics.lifecycle.events.find(
+        (event) => event.kind === 'window-closed',
+      );
+      closedEvent.runnerCloseRequested = false;
+    }],
+    ['renderer crash', (run) => {
+      run.diagnostics.lifecycle.events.push({
+        at: '2026-07-17T06:00:00.775Z',
+        kind: 'window-crashed',
+        phase: 'electron-close',
+        runnerCloseRequested: true,
+        windowId: 1,
+      });
+    }],
+    ['duplicate runner-close marker', (run) => {
+      const marker = run.diagnostics.lifecycle.events.find(
+        (event) => event.kind === 'runner-close-requested',
+      );
+      run.diagnostics.lifecycle.events.splice(2, 0, { ...marker });
+    }],
+    ['detached process-exit timestamp', (run) => {
+      run.diagnostics.lifecycle.processExit.at = '2026-07-17T06:00:00.901Z';
+    }],
+    ['non-monotonic event order', (run) => {
+      const events = run.diagnostics.lifecycle.events;
+      [events[2], events[3]] = [events[3], events[2]];
+    }],
+    ['window attached only after runner close', (run) => {
+      const events = run.diagnostics.lifecycle.events;
+      const attached = events.shift();
+      attached.at = '2026-07-17T06:00:00.725Z';
+      attached.runnerCloseRequested = true;
+      events.splice(1, 0, attached);
+    }],
+    ['event recorded after process exit', (run) => {
+      run.diagnostics.lifecycle.events.push({
+        at: '2026-07-17T06:00:00.950Z',
+        kind: 'main-frame-navigated',
+        phase: 'electron-close',
+        runnerCloseRequested: true,
+        windowId: 1,
+      });
+    }],
+  ])('rejects completed evidence with %s', (_label, mutate) => {
+    const run = validRun(EXPECTED_PACKAGE_UI_SCALES[0]);
+    mutate(run);
+    expect(validRunDiagnostics(run.diagnostics, run)).toBe(false);
+  });
+
+  it('binds durable attempt diagnostics to the exact profile receipt', () => {
+    const diagnostics = validDiagnostics('100-compact');
+    expect(packageUiAttemptDiagnosticsSnapshotMatches(diagnostics, '100-compact')).toBe(true);
+    expect(packageUiAttemptDiagnosticsSnapshotMatches(diagnostics, '125-compact')).toBe(false);
   });
 
   it.each([
@@ -1015,7 +1105,77 @@ describe('durable protected-state evidence', () => {
     expect(sanitizeDiagnosticText('Authorization: Bearer abcdef123456')).toBe('Authorization: [REDACTED]');
     expect(sanitizeDiagnosticText('Cookie: sid=cookie-secret; session_token=session-secret')).toBe('Cookie: [REDACTED]');
     expect(sanitizeDiagnosticText('session_token=session-secret')).toBe('session_token=[REDACTED]');
+    expect(sanitizeDiagnosticText('登录 operator@example.com 失败')).toBe('登录 [REDACTED_ACCOUNT] 失败');
     expect(validRunDiagnostics(result.diagnostics, result)).toBe(false);
+  });
+
+  it('records whether Electron closed before or after the evidence runner requested shutdown', () => {
+    const diagnostics = createRunDiagnostics('100-compact', new Date('2026-07-28T08:00:00.000Z'));
+    const electronApp = new EventEmitter();
+    const electronContext = new EventEmitter();
+    const electronProcess = new EventEmitter();
+    electronApp.context = () => electronContext;
+    electronApp.process = () => electronProcess;
+    const observer = attachElectronLifecycleDiagnostics(electronApp, diagnostics);
+    const mainPage = new EventEmitter();
+    const mainFrame = {};
+    mainPage.mainFrame = () => mainFrame;
+
+    observer.attachPage(mainPage);
+    mainPage.emit('framenavigated', mainFrame);
+    mainPage.emit('close');
+    markRunnerElectronCloseRequested(diagnostics);
+    electronContext.emit('close');
+    electronApp.emit('close');
+    electronProcess.emit('exit', 0, null);
+
+    expect(diagnostics.lifecycle).toEqual(expect.objectContaining({
+      droppedCount: 0,
+      runnerCloseRequestedAt: expect.any(String),
+      unexpectedCloseObserved: true,
+    }));
+    expect(diagnostics.lifecycle.events.map((event) => event.kind)).toEqual([
+      'window-attached',
+      'main-frame-navigated',
+      'window-closed',
+      'runner-close-requested',
+      'electron-context-closed',
+      'electron-app-closed',
+      'electron-process-exit',
+    ]);
+    expect(diagnostics.lifecycle.events[2]).toEqual(expect.objectContaining({
+      runnerCloseRequested: false,
+      windowId: 1,
+    }));
+    expect(diagnostics.lifecycle.processExit).toEqual({
+      at: expect.any(String),
+      code: 0,
+      runnerCloseRequested: true,
+      signal: null,
+    });
+    expect(JSON.stringify(diagnostics.lifecycle)).not.toMatch(/url|title|username|password|cookie/i);
+
+    const expectedDiagnostics = createRunDiagnostics(
+      '125-compact',
+      new Date('2026-07-28T08:01:00.000Z'),
+    );
+    const expectedApp = new EventEmitter();
+    const expectedContext = new EventEmitter();
+    const expectedProcess = new EventEmitter();
+    expectedApp.context = () => expectedContext;
+    expectedApp.process = () => expectedProcess;
+    const expectedObserver = attachElectronLifecycleDiagnostics(expectedApp, expectedDiagnostics);
+    const expectedPage = new EventEmitter();
+    expectedObserver.attachPage(expectedPage);
+    markRunnerElectronCloseRequested(expectedDiagnostics);
+    expectedPage.emit('close');
+    expectedContext.emit('close');
+    expectedApp.emit('close');
+    expectedProcess.emit('exit', 0, null);
+
+    expect(expectedDiagnostics.lifecycle.unexpectedCloseObserved).toBe(false);
+    expect(expectedDiagnostics.lifecycle.events.find((event) => event.kind === 'window-closed'))
+      .toEqual(expect.objectContaining({ runnerCloseRequested: true, windowId: 1 }));
   });
 
   it('caps renderer diagnostics and records dropped entries without growing the manifest arrays', async () => {
@@ -1461,6 +1621,26 @@ function validDiagnostics(profileId) {
       savedCredentials: null,
       startedAt: '2026-07-17T06:00:00.100Z',
     },
+    lifecycle: {
+      droppedCount: 0,
+      events: [
+        { at: '2026-07-17T06:00:00.005Z', kind: 'window-attached', phase: 'electron-launch', runnerCloseRequested: false, windowId: 1 },
+        { at: '2026-07-17T06:00:00.700Z', kind: 'runner-close-requested', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-17T06:00:00.750Z', kind: 'window-closed', phase: 'electron-close', runnerCloseRequested: true, windowId: 1 },
+        { at: '2026-07-17T06:00:00.800Z', kind: 'electron-context-closed', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-17T06:00:00.850Z', kind: 'electron-app-closed', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-17T06:00:00.900Z', code: 0, kind: 'electron-process-exit', phase: 'electron-close', runnerCloseRequested: true, signal: null },
+      ],
+      limit: 100,
+      processExit: {
+        at: '2026-07-17T06:00:00.900Z',
+        code: 0,
+        runnerCloseRequested: true,
+        signal: null,
+      },
+      runnerCloseRequestedAt: '2026-07-17T06:00:00.700Z',
+      unexpectedCloseObserved: false,
+    },
     phase: 'completed',
     profileId,
     renderer: {
@@ -1469,7 +1649,7 @@ function validDiagnostics(profileId) {
       limits: { consoleErrors: 100, pageErrors: 100 },
       pageErrors: [],
     },
-    schemaVersion: 'package-ui-run-diagnostics/v1',
+    schemaVersion: 'package-ui-run-diagnostics/v2',
     startedAt: '2026-07-17T06:00:00.000Z',
     storeGate: {
       completedAt: '2026-07-17T06:00:00.050Z',
@@ -2170,6 +2350,7 @@ describe('isolated profile database provenance', () => {
         );
         const runEvidence = {
           attemptArtifacts,
+          diagnostics: validDiagnostics(profileId),
           passed: true,
           profileId,
         };
@@ -2287,7 +2468,20 @@ describe('isolated profile database provenance', () => {
       const firstAfter = structuredClone(genesis);
       firstAfter.capturedAt = '2026-07-17T06:00:02.000Z';
       firstAfter.profileContent.sha256 = 'C'.repeat(64);
-      recordPackageUiProfileAttempt({
+      const firstDiagnostics = createRunDiagnostics(
+        profileId,
+        new Date('2026-07-17T06:00:00.000Z'),
+      );
+      firstDiagnostics.login.failureMessage = 'username=operator@example.com password=hunter2';
+      Object.assign(firstDiagnostics, {
+        commandline: '--password bare-command-secret',
+        password: 'bare-secret',
+        passwordInputEmpty: true,
+        session: 'bare-session',
+        'set-cookie': 'sid=bare-cookie',
+        token: 'bare-token',
+      });
+      const firstAttempt = recordPackageUiProfileAttempt({
         attemptArtifacts: firstArtifacts,
         attemptContext: firstContext,
         manager,
@@ -2296,11 +2490,33 @@ describe('isolated profile database provenance', () => {
         resumable: true,
         runEvidence: {
           attemptArtifacts: firstArtifacts,
+          diagnostics: firstDiagnostics,
           failure: { message: 'renderer assertion failed after cleanup' },
           passed: false,
           profileId,
         },
       });
+      expect(PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION).toBe('package-ui-profile-attempt/v2');
+      const firstAttemptEnvelope = JSON.parse(readFileSync(firstAttempt.path, 'utf8'));
+      expect(firstAttemptEnvelope.payload.diagnostics).toEqual(expect.objectContaining({
+        login: expect.objectContaining({
+          failureMessage: 'username=[REDACTED] password=[REDACTED]',
+        }),
+        commandline: '[REDACTED]',
+        password: '[REDACTED]',
+        passwordInputEmpty: true,
+        schemaVersion: 'package-ui-run-diagnostics/v2',
+        session: '[REDACTED]',
+        'set-cookie': '[REDACTED]',
+        token: '[REDACTED]',
+      }));
+      expect(JSON.stringify(firstAttemptEnvelope.payload)).not.toContain('operator@example.com');
+      expect(JSON.stringify(firstAttemptEnvelope.payload)).not.toContain('hunter2');
+      expect(JSON.stringify(firstAttemptEnvelope.payload)).not.toContain('bare-secret');
+      expect(JSON.stringify(firstAttemptEnvelope.payload)).not.toContain('bare-token');
+      expect(JSON.stringify(firstAttemptEnvelope.payload)).not.toContain('bare-command-secret');
+      expect(JSON.stringify(firstAttemptEnvelope.payload)).not.toContain('bare-session');
+      expect(JSON.stringify(firstAttemptEnvelope.payload)).not.toContain('bare-cookie');
 
       const retryCursor = resolvePackageUiProfileCursor(manager, profileId);
       expect(retryCursor.checkpoint).toBeNull();
@@ -2321,6 +2537,7 @@ describe('isolated profile database provenance', () => {
       secondAfter.profileContent.sha256 = 'D'.repeat(64);
       const secondRun = {
         attemptArtifacts: secondArtifacts,
+        diagnostics: validDiagnostics(profileId),
         passed: true,
         profileId,
       };
@@ -2411,6 +2628,7 @@ describe('isolated profile database provenance', () => {
         runEvidence: {
           ...cleanupFailedRun,
           attemptArtifacts,
+          diagnostics: validDiagnostics(profileId),
           failure: { message: 'target Chromium cleanup unresolved' },
           passed: false,
           profileId,
@@ -2482,6 +2700,13 @@ describe('isolated profile database provenance', () => {
     expect(parsed.allowInteractiveLogin).toBe(true);
     expect(parsed.allowSavedLogin).toBe(false);
     expect(parsed.interactiveLoginTimeoutMs).toBe(600_000);
+    expect(parsePackageUiEvidenceArgs([
+      '--expected-exe-sha256', HASH_A,
+      '--expected-app-content-sha256', HASH_B,
+      '--allow-interactive-login',
+      '--user-data-dir', USER_DATA_DIR,
+      '--protected-db', PROTECTED_DB_PATH,
+    ]).interactiveLoginTimeoutMs).toBe(900_000);
     expect(() => parsePackageUiEvidenceArgs([
       '--expected-exe-sha256', HASH_A,
       '--expected-app-content-sha256', HASH_B,

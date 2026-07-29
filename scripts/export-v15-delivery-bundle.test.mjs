@@ -392,6 +392,26 @@ function validPackageUiDiagnostics(profileId) {
       savedCredentials: null,
       startedAt: '2026-07-23T01:00:00.100Z',
     },
+    lifecycle: {
+      droppedCount: 0,
+      events: [
+        { at: '2026-07-23T01:00:00.005Z', kind: 'window-attached', phase: 'electron-launch', runnerCloseRequested: false, windowId: 1 },
+        { at: '2026-07-23T01:00:00.700Z', kind: 'runner-close-requested', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-23T01:00:00.750Z', kind: 'window-closed', phase: 'electron-close', runnerCloseRequested: true, windowId: 1 },
+        { at: '2026-07-23T01:00:00.800Z', kind: 'electron-context-closed', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-23T01:00:00.850Z', kind: 'electron-app-closed', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-23T01:00:00.900Z', code: 0, kind: 'electron-process-exit', phase: 'electron-close', runnerCloseRequested: true, signal: null },
+      ],
+      limit: 100,
+      processExit: {
+        at: '2026-07-23T01:00:00.900Z',
+        code: 0,
+        runnerCloseRequested: true,
+        signal: null,
+      },
+      runnerCloseRequestedAt: '2026-07-23T01:00:00.700Z',
+      unexpectedCloseObserved: false,
+    },
     phase: 'completed',
     profileId,
     renderer: {
@@ -400,7 +420,7 @@ function validPackageUiDiagnostics(profileId) {
       limits: { consoleErrors: 100, pageErrors: 100 },
       pageErrors: [],
     },
-    schemaVersion: 'package-ui-run-diagnostics/v1',
+    schemaVersion: 'package-ui-run-diagnostics/v2',
     startedAt: '2026-07-23T01:00:00.000Z',
     storeGate: {
       completedAt: '2026-07-23T01:00:00.050Z',

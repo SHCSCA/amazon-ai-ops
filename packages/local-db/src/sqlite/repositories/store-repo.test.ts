@@ -260,7 +260,48 @@ describe('StoreRepository', () => {
     }
   });
 
-  it('resets verified provider identity and session metadata when the account label changes', () => {
+  it('rejects unbounded provider identity text at the repository authority boundary', () => {
+    const database = initSqlite(tempDbPath());
+    try {
+      const repo = new StoreRepository(database);
+      const store = createStore(repo, 'identity-bounds');
+      expectStoreError(() => repo.createConnection({
+        id: normalizeStoreCapabilityId('cap-invalid-long'),
+        storeId: store.storeId,
+        provider: 'amazon_ads',
+        externalAccountId: 'a'.repeat(257),
+      }), 'INVALID_STORE_INPUT');
+      expectStoreError(() => repo.createConnection({
+        id: normalizeStoreCapabilityId('cap-invalid-control'),
+        storeId: store.storeId,
+        provider: 'lingxing',
+        accountLabel: 'operator\u0000account',
+      }), 'INVALID_STORE_INPUT');
+
+      const valid = repo.createConnection({
+        id: normalizeStoreCapabilityId('cap-valid-identity'),
+        storeId: store.storeId,
+        provider: 'amazon_ads',
+        externalAccountId: 'profile-1',
+      });
+      expectStoreError(() => repo.updateConnection({
+        id: valid.id,
+        storeId: store.storeId,
+        externalAccountId: `profile-${'x'.repeat(257)}`,
+      }), 'INVALID_STORE_INPUT');
+      expect(repo.getConnection(store.storeId, 'amazon_ads')?.externalAccountId).toBe('profile-1');
+    } finally {
+      database.close();
+    }
+  });
+
+  it.each([
+    ['omits the external account id', {}],
+    ['submits a normalized-equivalent external account id', { externalAccountId: '  external-a  ' }],
+  ])('resets verified provider identity and session metadata when the account label changes and %s', (
+    _externalIdentityCase,
+    externalIdentityPatch,
+  ) => {
     const database = initSqlite(tempDbPath());
     try {
       const repo = new StoreRepository(database);
@@ -292,7 +333,7 @@ describe('StoreRepository', () => {
         id: connectionId,
         storeId: store.storeId,
         accountLabel: 'identity-b',
-        externalAccountId: 'external-a',
+        ...externalIdentityPatch,
         status: 'ready',
         lastVerifiedAt: '2026-07-22T02:00:00.000Z',
         lastFailureCode: 'forged-ready',
@@ -315,12 +356,12 @@ describe('StoreRepository', () => {
   });
 
   it.each([
-    ['sets', undefined, 'external-b'],
-    ['replaces', 'external-a', 'external-b'],
-    ['clears', 'external-a', '   '],
+    ['sets', undefined, 'external-b', 'external-b'],
+    ['replaces', 'external-a', 'external-b', 'external-b'],
+    ['clears', 'external-a', '   ', undefined],
   ])(
-    'resets verified provider identity when an external account id %s',
-    (_operation, initialExternalAccountId, submittedExternalAccountId) => {
+    'resets verification while persisting the new expected external account id when it %s',
+    (_operation, initialExternalAccountId, submittedExternalAccountId, expectedExternalAccountId) => {
       const database = initSqlite(tempDbPath());
       try {
         const repo = new StoreRepository(database);
@@ -361,7 +402,7 @@ describe('StoreRepository', () => {
           accountLabel: 'identity-a',
           status: 'not_configured',
         }));
-        expect(rebound.externalAccountId).toBeUndefined();
+        expect(rebound.externalAccountId).toBe(expectedExternalAccountId);
         expect(rebound.lastVerifiedAt).toBeUndefined();
         expect(rebound.lastFailureCode).toBeUndefined();
         expect(rebound.session).toBeUndefined();
@@ -371,6 +412,44 @@ describe('StoreRepository', () => {
       }
     },
   );
+
+  it('persists a normalized expected Amazon Ads profile id before login without accepting forged verification state', () => {
+    const database = initSqlite(tempDbPath());
+    try {
+      const repo = new StoreRepository(database);
+      const store = createStore(repo, 'pre-login-ads-identity');
+      const connectionId = normalizeStoreCapabilityId('cap-pre-login-ads-identity');
+      repo.createConnection({
+        id: connectionId,
+        storeId: store.storeId,
+        provider: 'amazon_ads',
+        status: 'not_configured',
+        accountLabel: 'US Ads',
+      });
+
+      const updated = repo.updateConnection({
+        id: connectionId,
+        storeId: store.storeId,
+        externalAccountId: '  1234567890  ',
+        status: 'ready',
+        lastVerifiedAt: '2026-07-22T03:00:00.000Z',
+        lastFailureCode: 'forged-ready',
+      });
+
+      expect(updated).toEqual(expect.objectContaining({
+        provider: 'amazon_ads',
+        accountLabel: 'US Ads',
+        externalAccountId: '1234567890',
+        status: 'not_configured',
+      }));
+      expect(updated.lastVerifiedAt).toBeUndefined();
+      expect(updated.lastFailureCode).toBeUndefined();
+      expect(updated.session).toBeUndefined();
+      expect(repo.getConnection(store.storeId, 'amazon_ads')).toEqual(updated);
+    } finally {
+      database.close();
+    }
+  });
 
   it('keeps normalized-equivalent connection identity updates idempotent', () => {
     const database = initSqlite(tempDbPath());

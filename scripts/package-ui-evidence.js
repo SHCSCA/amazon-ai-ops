@@ -45,7 +45,7 @@ const DEFAULT_OUTPUT_DIR = 'output/codex-evidence/package-ui-evidence';
 const PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 7;
 const PACKAGE_UI_RUN_GROUP_SCHEMA_VERSION = 'package-ui-run-group/v1';
 const PACKAGE_UI_PROFILE_CHECKPOINT_SCHEMA_VERSION = 'package-ui-profile-checkpoint/v1';
-const PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION = 'package-ui-profile-attempt/v1';
+const PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION = 'package-ui-profile-attempt/v2';
 const LEGACY_SCHEDULER_READ_ONLY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 6;
 const LEGACY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 5;
 const PACKAGE_UI_SCHEDULER_AUDIT_FILE = 'package-ui-scheduler-audit.json';
@@ -69,10 +69,12 @@ const BUNDLED_CHROMIUM_RELATIVE_PATH = path.join(
   'chrome.exe',
 );
 const WINDOWS_HARDLINK_ENUMERATION_TIMEOUT_MS = 5_000;
-const DEFAULT_INTERACTIVE_LOGIN_TIMEOUT_MS = 600_000;
+const DEFAULT_INTERACTIVE_LOGIN_TIMEOUT_MS = 900_000;
 const DIAGNOSTIC_MESSAGE_LIMIT = 2_000;
 const DIAGNOSTIC_STACK_LIMIT = 4_000;
+const DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT = 100;
 const DIAGNOSTIC_RENDERER_ENTRY_LIMIT = 100;
+const SENSITIVE_DIAGNOSTIC_KEY = /^(?:account|api[_-]?key|access[_-]?token|authorization|commandline|cookie|password|passwd|proxy-authorization|pwd|secret|session(?:[_-]?(?:id|key|token))?|set-cookie|token|username|user[_-]?name)$/i;
 const REQUIRED_APP_CONTENT_ENTRIES = Object.freeze([
   'package.json',
   'dist/main/index.js',
@@ -657,6 +659,7 @@ function evaluateProfileDatabaseProvenance({ profileDatabase, protectedDatabase 
 function redactDiagnosticSecrets(value) {
   return String(value || '')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_ACCOUNT]')
     .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gi, '[REDACTED_API_KEY]')
     .replace(/([?&](?:api[_-]?key|access[_-]?token|authorization|cookie|password|pwd|secret|session(?:[_-]?(?:id|key|token))?|token|username|user[_-]?name|account)=)[^&#\s]*/gi, '$1[REDACTED]')
     .replace(/(--(?:api[-_]?key|access[-_]?token|authorization|cookie|password|passwd|pwd|secret|session(?:[-_]?(?:id|key|token))?|token|username|user[-_]?name|account))(\s*=\s*|\s+)(?:"[^"]*"|'[^']*'|[^\s]+)/gi, '$1$2[REDACTED]')
@@ -672,6 +675,65 @@ function sanitizeDiagnosticText(value, maximumLength = DIAGNOSTIC_MESSAGE_LIMIT)
     : DIAGNOSTIC_MESSAGE_LIMIT;
   return redactDiagnosticSecrets(value)
     .slice(0, boundedMaximum);
+}
+
+function cloneSecretBlindDiagnosticRecord(value, depth = 0, seen = new WeakSet()) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return sanitizeDiagnosticText(value, DIAGNOSTIC_STACK_LIMIT);
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'object' || depth >= 12) {
+    return sanitizeDiagnosticText(String(value), DIAGNOSTIC_MESSAGE_LIMIT);
+  }
+  if (seen.has(value)) return '[CIRCULAR]';
+  seen.add(value);
+  if (Array.isArray(value)) {
+    const result = value
+      .slice(0, 200)
+      .map((entry) => cloneSecretBlindDiagnosticRecord(entry, depth + 1, seen));
+    seen.delete(value);
+    return result;
+  }
+  const result = {};
+  for (const [rawKey, entry] of Object.entries(value).slice(0, 200)) {
+    const key = sanitizeDiagnosticText(rawKey, 160);
+    result[key] = SENSITIVE_DIAGNOSTIC_KEY.test(key)
+      ? '[REDACTED]'
+      : cloneSecretBlindDiagnosticRecord(entry, depth + 1, seen);
+  }
+  seen.delete(value);
+  return result;
+}
+
+function packageUiAttemptDiagnosticsSnapshotMatches(diagnostics, expectedProfileId) {
+  const lifecycle = diagnostics?.lifecycle;
+  return diagnostics?.schemaVersion === 'package-ui-run-diagnostics/v2'
+    && diagnostics?.profileId === expectedProfileId
+    && lifecycle?.limit === DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT
+    && Number.isInteger(lifecycle?.droppedCount)
+    && lifecycle.droppedCount >= 0
+    && Array.isArray(lifecycle?.events)
+    && lifecycle.events.length <= DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT
+    && typeof lifecycle?.unexpectedCloseObserved === 'boolean'
+    && (
+      lifecycle.runnerCloseRequestedAt === null
+      || Number.isFinite(Date.parse(lifecycle.runnerCloseRequestedAt))
+    )
+    && (
+      lifecycle.processExit === null
+      || (
+        Number.isFinite(Date.parse(lifecycle.processExit?.at))
+        && (Number.isInteger(lifecycle.processExit?.code) || lifecycle.processExit?.code === null)
+        && typeof lifecycle.processExit?.runnerCloseRequested === 'boolean'
+        && (
+          lifecycle.processExit?.signal === null
+          || typeof lifecycle.processExit?.signal === 'string'
+        )
+      )
+    )
+    && canonicalJson(diagnostics) === canonicalJson(
+      cloneSecretBlindDiagnosticRecord(diagnostics),
+    );
 }
 
 function createStructuredFailure(error, phase = 'unknown') {
@@ -714,7 +776,7 @@ function createRunDiagnostics(profileId, startedAt = new Date()) {
       },
       pageErrors: [],
     },
-    schemaVersion: 'package-ui-run-diagnostics/v1',
+    schemaVersion: 'package-ui-run-diagnostics/v2',
     startedAt: timestamp,
     storeGate: {
       completedAt: null,
@@ -725,8 +787,132 @@ function createRunDiagnostics(profileId, startedAt = new Date()) {
       selectedStore: null,
       startedAt: null,
     },
+    lifecycle: {
+      droppedCount: 0,
+      events: [],
+      limit: DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT,
+      processExit: null,
+      runnerCloseRequestedAt: null,
+      unexpectedCloseObserved: false,
+    },
     timeline: [{ at: timestamp, phase: 'created' }],
   };
+}
+
+function appendElectronLifecycleDiagnostic(
+  diagnostics,
+  kind,
+  extra = {},
+  at = new Date().toISOString(),
+) {
+  const lifecycle = diagnostics?.lifecycle;
+  if (
+    !lifecycle
+    || !Array.isArray(lifecycle.events)
+    || lifecycle.limit !== DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT
+    || !Number.isInteger(lifecycle.droppedCount)
+  ) {
+    return null;
+  }
+  const record = {
+    ...extra,
+    at,
+    kind: sanitizeDiagnosticText(kind || 'unknown', 80),
+    phase: sanitizeDiagnosticText(diagnostics.phase || 'unknown', 160),
+    runnerCloseRequested: Boolean(lifecycle.runnerCloseRequestedAt),
+  };
+  if (lifecycle.events.length < lifecycle.limit) {
+    lifecycle.events.push(record);
+  } else {
+    lifecycle.droppedCount += 1;
+  }
+  return record;
+}
+
+function markRunnerElectronCloseRequested(diagnostics) {
+  const lifecycle = diagnostics?.lifecycle;
+  if (!lifecycle) return null;
+  if (lifecycle.runnerCloseRequestedAt) return lifecycle.runnerCloseRequestedAt;
+  lifecycle.runnerCloseRequestedAt = new Date().toISOString();
+  appendElectronLifecycleDiagnostic(
+    diagnostics,
+    'runner-close-requested',
+    {},
+    lifecycle.runnerCloseRequestedAt,
+  );
+  return lifecycle.runnerCloseRequestedAt;
+}
+
+function attachElectronLifecycleDiagnostics(electronApp, diagnostics) {
+  const attachedPages = new WeakSet();
+  let nextWindowId = 0;
+  const markUnexpectedClose = () => {
+    if (!diagnostics?.lifecycle?.runnerCloseRequestedAt) {
+      diagnostics.lifecycle.unexpectedCloseObserved = true;
+    }
+  };
+  const attachPage = (page) => {
+    if (!page || attachedPages.has(page)) return null;
+    attachedPages.add(page);
+    nextWindowId += 1;
+    const windowId = nextWindowId;
+    appendElectronLifecycleDiagnostic(diagnostics, 'window-attached', { windowId });
+    page.on?.('close', () => {
+      markUnexpectedClose();
+      appendElectronLifecycleDiagnostic(diagnostics, 'window-closed', { windowId });
+    });
+    page.on?.('crash', () => {
+      markUnexpectedClose();
+      appendElectronLifecycleDiagnostic(diagnostics, 'window-crashed', { windowId });
+    });
+    page.on?.('framenavigated', (frame) => {
+      let isMainFrame = false;
+      try {
+        isMainFrame = page.mainFrame?.() === frame;
+      } catch {
+        isMainFrame = false;
+      }
+      if (isMainFrame) {
+        appendElectronLifecycleDiagnostic(diagnostics, 'main-frame-navigated', { windowId });
+      }
+    });
+    return windowId;
+  };
+  electronApp?.on?.('close', () => {
+    markUnexpectedClose();
+    appendElectronLifecycleDiagnostic(diagnostics, 'electron-app-closed');
+  });
+  let electronContext = null;
+  try {
+    electronContext = electronApp?.context?.() || null;
+  } catch {
+    electronContext = null;
+  }
+  electronContext?.on?.('close', () => {
+    markUnexpectedClose();
+    appendElectronLifecycleDiagnostic(diagnostics, 'electron-context-closed');
+  });
+  let electronProcess = null;
+  try {
+    electronProcess = electronApp?.process?.() || null;
+  } catch {
+    electronProcess = null;
+  }
+  electronProcess?.once?.('exit', (code, signal) => {
+    markUnexpectedClose();
+    const processExit = {
+      at: new Date().toISOString(),
+      code: Number.isInteger(code) ? code : null,
+      runnerCloseRequested: Boolean(diagnostics?.lifecycle?.runnerCloseRequestedAt),
+      signal: signal ? sanitizeDiagnosticText(signal, 80) : null,
+    };
+    if (diagnostics?.lifecycle) diagnostics.lifecycle.processExit = processExit;
+    appendElectronLifecycleDiagnostic(diagnostics, 'electron-process-exit', {
+      code: processExit.code,
+      signal: processExit.signal,
+    }, processExit.at);
+  });
+  return { attachPage };
 }
 
 function appendRendererDiagnostic(diagnostics, kind, record) {
@@ -776,6 +962,88 @@ function completeRunDiagnostics(diagnostics, passed) {
   diagnostics.phase = passed ? 'completed' : 'failed';
   diagnostics.completedAt = new Date().toISOString();
   diagnostics.timeline.push({ at: diagnostics.completedAt, phase: diagnostics.phase });
+}
+
+function validSuccessfulElectronLifecycle(lifecycle, startedAt, completedAt) {
+  const events = lifecycle?.events;
+  const runnerCloseRequestedAt = Date.parse(lifecycle?.runnerCloseRequestedAt);
+  const processExitAt = Date.parse(lifecycle?.processExit?.at);
+  const terminalKinds = new Set([
+    'electron-app-closed',
+    'electron-context-closed',
+    'electron-process-exit',
+    'window-closed',
+    'window-crashed',
+  ]);
+  let previousEventAt = startedAt;
+  const eventsValid = Array.isArray(events)
+    && events.length >= 3
+    && events.length <= DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT
+    && events.every((event) => {
+      const at = Date.parse(event?.at);
+      const valid = Number.isFinite(at)
+        && at >= startedAt
+        && at <= completedAt
+        && at >= previousEventAt
+        && typeof event?.kind === 'string'
+        && event.kind.length > 0
+        && event.kind.length <= 80
+        && typeof event?.phase === 'string'
+        && event.phase.length > 0
+        && event.phase.length <= 160
+        && typeof event?.runnerCloseRequested === 'boolean'
+        && (!terminalKinds.has(event.kind) || event.runnerCloseRequested === true);
+      previousEventAt = Number.isFinite(at) ? at : previousEventAt;
+      return valid;
+    });
+  const runnerCloseEvents = Array.isArray(events)
+    ? events.filter((event) => event.kind === 'runner-close-requested')
+    : [];
+  const processExitEvents = Array.isArray(events)
+    ? events.filter((event) => event.kind === 'electron-process-exit')
+    : [];
+  const runnerCloseIndex = Array.isArray(events)
+    ? events.findIndex((event) => event.kind === 'runner-close-requested')
+    : -1;
+  const processExitIndex = Array.isArray(events)
+    ? events.findIndex((event) => event.kind === 'electron-process-exit')
+    : -1;
+  return lifecycle?.limit === DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT
+    && lifecycle?.droppedCount === 0
+    && lifecycle?.unexpectedCloseObserved === false
+    && Number.isFinite(runnerCloseRequestedAt)
+    && runnerCloseRequestedAt >= startedAt
+    && runnerCloseRequestedAt <= completedAt
+    && lifecycle?.processExit?.code === 0
+    && lifecycle?.processExit?.signal === null
+    && lifecycle?.processExit?.runnerCloseRequested === true
+    && Number.isFinite(processExitAt)
+    && processExitAt >= runnerCloseRequestedAt
+    && processExitAt <= completedAt
+    && eventsValid
+    && events.some((event, index) => (
+      event.kind === 'window-attached'
+      && event.runnerCloseRequested === false
+      && index < runnerCloseIndex
+    ))
+    && events.every((event, index) => (
+      event.kind !== 'window-attached'
+      || (event.runnerCloseRequested === false && index < runnerCloseIndex)
+    ))
+    && runnerCloseEvents.length === 1
+    && runnerCloseEvents[0].runnerCloseRequested === true
+    && runnerCloseEvents[0].at === lifecycle.runnerCloseRequestedAt
+    && processExitEvents.length === 1
+    && processExitEvents[0].runnerCloseRequested === true
+    && processExitEvents[0].code === lifecycle.processExit.code
+    && processExitEvents[0].signal === lifecycle.processExit.signal
+    && processExitEvents[0].at === lifecycle.processExit.at
+    && runnerCloseIndex >= 0
+    && processExitIndex === events.length - 1
+    && events.every((event, index) => (
+      !terminalKinds.has(event.kind) || index > runnerCloseIndex
+    ))
+    && !events.some((event) => event.kind === 'window-crashed');
 }
 
 function validRunDiagnostics(diagnostics, run = {}) {
@@ -844,7 +1112,7 @@ function validRunDiagnostics(diagnostics, run = {}) {
   const sessionStoreGate = session?.storeGate;
   const storeGateStartedAt = Date.parse(storeGate?.startedAt);
   const storeGateCompletedAt = Date.parse(storeGate?.completedAt);
-  return diagnostics?.schemaVersion === 'package-ui-run-diagnostics/v1'
+  return diagnostics?.schemaVersion === 'package-ui-run-diagnostics/v2'
     && Number.isFinite(startedAt)
     && Number.isFinite(completedAt)
     && completedAt >= startedAt
@@ -865,6 +1133,7 @@ function validRunDiagnostics(diagnostics, run = {}) {
     && Array.isArray(pageErrors)
     && pageErrors.length <= DIAGNOSTIC_RENDERER_ENTRY_LIMIT
     && pageErrors.length === 0
+    && validSuccessfulElectronLifecycle(diagnostics.lifecycle, startedAt, completedAt)
     && Array.isArray(run.consoleErrors)
     && run.consoleErrors.length === 0
     && Array.isArray(run.pageErrors)
@@ -3677,6 +3946,9 @@ function loadPackageUiAttemptRecords(manager, profileId) {
       if (!packageUiAttemptArtifactManifestMatches(record.payload.attemptArtifacts)) {
         fail('Package UI attempt artifacts are missing, changed, or escaped their immutable directory', record.file.path);
       }
+      if (!packageUiAttemptDiagnosticsSnapshotMatches(record.payload.diagnostics, profileId)) {
+        fail('Package UI attempt diagnostics are missing, unsafe, or malformed', record.file.path);
+      }
       return record;
     });
   records.forEach((record, index) => {
@@ -3792,10 +4064,15 @@ function recordPackageUiProfileAttempt({
     );
   }
   const { attemptId, ordinal } = attemptContext;
+  const attemptDiagnostics = cloneSecretBlindDiagnosticRecord(runEvidence?.diagnostics ?? null);
+  if (!packageUiAttemptDiagnosticsSnapshotMatches(attemptDiagnostics, profileId)) {
+    fail('Package UI attempt diagnostics are missing, unsafe, or malformed', profileId);
+  }
   const payload = {
     attemptArtifacts,
     attemptId,
     completedAt: new Date().toISOString(),
+    diagnostics: attemptDiagnostics,
     failure: runEvidence?.failure || null,
     kind: 'package-ui-profile-attempt',
     packageLineage: manager.metadata.packageLineage,
@@ -4899,6 +5176,21 @@ async function collectLoginSessionAttestation(page) {
   });
 }
 
+function isInteractiveOperatorWindowClosedError(page, error) {
+  if (page?.isClosed?.() === true) return true;
+  return /target (?:page|context|browser).*closed|page, context or browser has been closed/i
+    .test(String(error?.message || error || ''));
+}
+
+function throwInteractiveOperatorWindowError(page, error) {
+  if (!isInteractiveOperatorWindowClosedError(page, error)) throw error;
+  const classified = new Error(
+    'PACKAGE_UI_OPERATOR_WINDOW_CLOSED: The packaged Electron window closed before the visible login handoff completed.',
+  );
+  classified.cause = error;
+  throw classified;
+}
+
 async function waitForInteractiveAuthenticatedWorkspace(page, timeoutMs, progress = {}) {
   const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
   let nextProgressAt = 0;
@@ -4923,12 +5215,19 @@ async function waitForInteractiveAuthenticatedWorkspace(page, timeoutMs, progres
         }
       }
     } catch (error) {
+      if (isInteractiveOperatorWindowClosedError(page, error)) {
+        throwInteractiveOperatorWindowError(page, error);
+      }
       if (!isWorkspaceProbeAbsenceError(error)) throw error;
     }
 
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) return null;
-    await page.waitForTimeout(Math.min(500, remainingMs));
+    try {
+      await page.waitForTimeout(Math.min(500, remainingMs));
+    } catch (error) {
+      throwInteractiveOperatorWindowError(page, error);
+    }
   } while (true);
 }
 
@@ -6482,12 +6781,17 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
       },
       timeout: 60_000,
     });
+    const lifecycleObserver = attachElectronLifecycleDiagnostics(electronApp, diagnostics);
     const attachPage = (candidate) => attachRendererDiagnostics(candidate, diagnostics, attachedPages);
-    electronApp.on('window', attachPage);
-    for (const existingPage of electronApp.windows()) attachPage(existingPage);
+    const attachObservedPage = (candidate) => {
+      lifecycleObserver.attachPage(candidate);
+      attachPage(candidate);
+    };
+    electronApp.on('window', attachObservedPage);
+    for (const existingPage of electronApp.windows()) attachObservedPage(existingPage);
     setRunDiagnosticPhase(diagnostics, 'first-window');
     const page = await electronApp.firstWindow({ timeout: 60_000 });
-    attachPage(page);
+    attachObservedPage(page);
     setRunDiagnosticPhase(diagnostics, 'viewport');
     await setElectronViewport(electronApp, PACKAGE_UI_VIEWPORT);
     const viewportWait = {
@@ -6741,6 +7045,7 @@ async function runScaleEvidenceCore(options, scale, artifacts, runDir, diagnosti
   } finally {
     if (electronApp) {
       setRunDiagnosticPhase(diagnostics, 'electron-close');
+      markRunnerElectronCloseRequested(diagnostics);
       try {
         await electronApp.close();
         processExitConfirmed = true;
@@ -6794,12 +7099,17 @@ async function runWideProfileEvidenceCore(options, artifacts, runDir, diagnostic
       },
       timeout: 60_000,
     });
+    const lifecycleObserver = attachElectronLifecycleDiagnostics(electronApp, diagnostics);
     const attachPage = (candidate) => attachRendererDiagnostics(candidate, diagnostics, attachedPages);
-    electronApp.on('window', attachPage);
-    for (const existingPage of electronApp.windows()) attachPage(existingPage);
+    const attachObservedPage = (candidate) => {
+      lifecycleObserver.attachPage(candidate);
+      attachPage(candidate);
+    };
+    electronApp.on('window', attachObservedPage);
+    for (const existingPage of electronApp.windows()) attachObservedPage(existingPage);
     setRunDiagnosticPhase(diagnostics, 'first-window');
     const page = await electronApp.firstWindow({ timeout: 60_000 });
-    attachPage(page);
+    attachObservedPage(page);
     setRunDiagnosticPhase(diagnostics, 'viewport');
     await setElectronViewport(electronApp, profile.viewport);
     await page.waitForFunction(({ viewport, dpr, tolerance }) => (
@@ -6955,6 +7265,7 @@ async function runWideProfileEvidenceCore(options, artifacts, runDir, diagnostic
   } finally {
     if (electronApp) {
       setRunDiagnosticPhase(diagnostics, 'electron-close');
+      markRunnerElectronCloseRequested(diagnostics);
       try {
         await electronApp.close();
         processExitConfirmed = true;
@@ -7086,9 +7397,22 @@ async function executeEvidenceRunWithIsolation({
       'process-cleanup-attestation',
     );
   }
+  const lifecycleAttestationPassed = validSuccessfulElectronLifecycle(
+    diagnostics.lifecycle,
+    Date.parse(diagnostics.startedAt),
+    Date.now(),
+  );
+  if (coreEvidence?.passed === true && !lifecycleAttestationPassed && !diagnostics.failure) {
+    recordRunDiagnosticFailure(
+      diagnostics,
+      new Error('Packaged Electron lifecycle attestation was incomplete or observed an unrequested close.'),
+      'electron-lifecycle-attestation',
+    );
+  }
   const passed = coreEvidence?.passed === true
     && diagnostics.failure === null
     && diagnostics.cleanupErrors.length === 0
+    && lifecycleAttestationPassed
     && packageProcessIsolation.passed
     && profileProcessIsolation.passed
     && chromiumProcessLineage?.passed === true;
@@ -7103,6 +7427,7 @@ async function executeEvidenceRunWithIsolation({
     chromiumProcessLineage,
     diagnostics,
     failure: diagnostics.failure,
+    lifecycleAttestation: { passed: lifecycleAttestationPassed },
     packageProcessIsolation,
     pageErrors: diagnostics.renderer.pageErrors,
     passed,
@@ -7641,6 +7966,7 @@ module.exports = {
   PACKAGE_OBJECT_EXPERIENCE_CONTRACTS,
   PACKAGE_OBJECT_WORKSPACES,
   READ_ONLY_INTERACTION_PLAN,
+  attachElectronLifecycleDiagnostics,
   appendRendererDiagnostic,
   assertPackageUiRuntimeLoginBoundary,
   buildAppContentManifest,
@@ -7662,6 +7988,7 @@ module.exports = {
   collectMatchingProfileBrowserProcesses,
   collectProfileContentManifest,
   composePackageUiRunGroup,
+  createRunDiagnostics,
   createPackageUiProfileAttemptContext,
   createImmutableEnvelope,
   createPackageLineage,
@@ -7680,12 +8007,14 @@ module.exports = {
   extractProfileUserDataDirectories,
   hasAuthenticatedWorkspace,
   latestProductionSourceWatermark,
+  markRunnerElectronCloseRequested,
   isWorkspaceProbeAbsenceError,
   isRetryableLoginNavigationError,
   selectDeterministicEvidenceStoreCandidate,
   parsePackageUiEvidenceArgs,
   packageUiAttemptArtifactManifestMatches,
   packageUiAttemptCleanupPassed,
+  packageUiAttemptDiagnosticsSnapshotMatches,
   profileLineageStateMatches,
   readImmutableEnvelope,
   resolvePackageUiProfileCursor,

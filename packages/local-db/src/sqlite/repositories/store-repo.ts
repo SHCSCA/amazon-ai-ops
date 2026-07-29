@@ -384,8 +384,8 @@ export class StoreRepository {
         storeId: store.storeId,
         provider,
         status,
-        accountLabel: nullableText(input.accountLabel),
-        externalAccountId: nullableText(input.externalAccountId),
+        accountLabel: nullableProviderIdentity(input.accountLabel, 'accountLabel'),
+        externalAccountId: nullableProviderIdentity(input.externalAccountId, 'externalAccountId'),
         lastVerifiedAt: optionalTimestamp(input.lastVerifiedAt),
         lastFailureCode: nullableText(input.lastFailureCode),
         createdAt: now,
@@ -410,10 +410,10 @@ export class StoreRepository {
       const existing = this.requireConnection(store.storeId, id);
       const submittedAccountLabel = input.accountLabel === undefined
         ? existing.accountLabel ?? null
-        : nullableText(input.accountLabel);
+        : nullableProviderIdentity(input.accountLabel, 'accountLabel');
       const submittedExternalAccountId = input.externalAccountId === undefined
         ? existing.externalAccountId ?? null
-        : nullableText(input.externalAccountId);
+        : nullableProviderIdentity(input.externalAccountId, 'externalAccountId');
       const accountLabelChanged = input.accountLabel !== undefined
         && submittedAccountLabel !== (existing.accountLabel ?? null);
       const externalAccountIdChanged = input.externalAccountId !== undefined
@@ -430,8 +430,13 @@ export class StoreRepository {
         params.accountLabel = submittedAccountLabel;
       }
       if (identityChanged) {
+        if (!accountLabelChanged && externalAccountIdChanged) {
+          fields.push('external_account_id = @externalAccountId');
+          params.externalAccountId = submittedExternalAccountId;
+        } else {
+          fields.push('external_account_id = NULL');
+        }
         fields.push(
-          'external_account_id = NULL',
           "status = 'not_configured'",
           'last_verified_at = NULL',
           'last_failure_code = NULL',
@@ -443,7 +448,9 @@ export class StoreRepository {
         ] as const) {
           if (input[inputKey] !== undefined) {
             fields.push(`${column} = @${inputKey}`);
-            params[inputKey] = nullableText(input[inputKey]);
+            params[inputKey] = inputKey === 'externalAccountId'
+              ? nullableProviderIdentity(input[inputKey], 'externalAccountId')
+              : nullableText(input[inputKey]);
           }
         }
         if (input.lastVerifiedAt !== undefined) {
@@ -600,8 +607,8 @@ export class StoreRepository {
       status,
       sessionGeneration,
       observedAt,
-      accountLabel: nullableText(input.accountLabel),
-      externalAccountId: nullableText(input.externalAccountId),
+      accountLabel: nullableProviderIdentity(input.accountLabel, 'accountLabel'),
+      externalAccountId: nullableProviderIdentity(input.externalAccountId, 'externalAccountId'),
       verifiedAt: optionalTimestamp(input.verifiedAt),
       expiresAt: optionalTimestamp(input.expiresAt),
       failureCode: nullableText(input.failureCode),
@@ -1306,6 +1313,24 @@ function optionalText(value: unknown): string | undefined {
 
 function nullableText(value: unknown): string | null {
   return optionalText(value) ?? null;
+}
+
+const MAX_PROVIDER_IDENTITY_LENGTH = 256;
+const PROVIDER_IDENTITY_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+function nullableProviderIdentity(value: unknown, label: string): string | null {
+  const normalized = nullableText(value);
+  if (normalized === null) return null;
+  if (
+    normalized.length > MAX_PROVIDER_IDENTITY_LENGTH
+    || PROVIDER_IDENTITY_CONTROL_CHARACTERS.test(normalized)
+  ) {
+    throw new StoreRepositoryError(
+      'INVALID_STORE_INPUT',
+      `${label} must be at most ${MAX_PROVIDER_IDENTITY_LENGTH} characters without control characters.`,
+    );
+  }
+  return normalized;
 }
 
 function parseJson<T>(value: string | null | undefined): T | undefined {

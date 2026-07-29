@@ -441,32 +441,39 @@ export function savedLoginCredentialNotice(input: {
 }
 
 export function buildBrowserLoginRequest(input: {
+  amazonAdsProfileId: string;
   credentialSource: 'saved' | 'typed';
   password: string;
   rememberPassword: boolean;
   savedCredentialUsername: string;
   savedPasswordAvailable: boolean;
+  storeContext: StoreContextEnvelope | null;
   username: string;
 }): BrowserLoginRequest | null {
   const username = input.username.trim();
+  const amazonAdsProfileId = input.amazonAdsProfileId.trim();
   const useSavedCredential = input.credentialSource === 'saved'
     && input.savedPasswordAvailable
     && input.rememberPassword
     && username === input.savedCredentialUsername;
-  if (!username) return null;
+  if (!username || !amazonAdsProfileId || !input.storeContext) return null;
   if (useSavedCredential) {
     return {
+      amazonAdsProfileId,
       username,
       credentialSource: 'saved',
       rememberPassword: true,
+      storeContext: input.storeContext,
     };
   }
   if (!input.password) return null;
   return {
+    amazonAdsProfileId,
     username,
     credentialSource: 'typed',
     password: input.password,
     rememberPassword: input.rememberPassword,
+    storeContext: input.storeContext,
   };
 }
 
@@ -487,15 +494,24 @@ function LoginPage() {
   const [savedCredentialState, setSavedCredentialState] = useState<SavedLoginCredentialState>('none');
   const [credentialNotice, setCredentialNotice] = useState('');
   const [credentialTone, setCredentialTone] = useState<LoginCredentialTone>('neutral');
+  const [amazonAdsProfileId, setAmazonAdsProfileId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [loginConnectionState, setLoginConnectionState] = useState<'missing' | 'binding' | 'ready' | 'error'>('missing');
+  const [amazonAdsConnectionState, setAmazonAdsConnectionState] =
+    useState<'missing' | 'binding' | 'ready' | 'error'>('missing');
   const setLoginState = useStore((state) => state.setLoginState);
   const lingxingConnection = store.activeView?.connections.find(
     (connection) => connection.provider === 'lingxing',
   );
+  const amazonAdsConnection = store.activeView?.connections.find(
+    (connection) => connection.provider === 'amazon_ads',
+  );
   const lingxingConnectionReady = Boolean(username.trim())
     && lingxingConnection?.accountLabel?.trim() === username.trim();
+  const amazonAdsConnectionReady = Boolean(amazonAdsProfileId.trim())
+    && amazonAdsConnection?.externalAccountId?.trim() === amazonAdsProfileId.trim();
+  const loginConnectionsReady = lingxingConnectionReady && amazonAdsConnectionReady;
   const loginButtonView = loginSubmitButtonView(loading);
   const loginStatus = loginStatusMessage({ credentialSource, loading, credentialNotice, rememberPassword });
   const loginStatusClass = [
@@ -520,6 +536,24 @@ function LoginPage() {
     lingxingConnectionReady,
     store.authorityKey,
     username,
+  ]);
+
+  useEffect(() => {
+    setAmazonAdsProfileId(amazonAdsConnection?.externalAccountId?.trim() ?? '');
+  }, [
+    amazonAdsConnection?.externalAccountId,
+    amazonAdsConnection?.id,
+    store.activeStore?.storeId,
+  ]);
+
+  useEffect(() => {
+    setAmazonAdsConnectionState(amazonAdsConnectionReady ? 'ready' : 'missing');
+  }, [
+    amazonAdsConnection?.externalAccountId,
+    amazonAdsConnection?.id,
+    amazonAdsConnectionReady,
+    amazonAdsProfileId,
+    store.authorityKey,
   ]);
 
   useEffect(() => {
@@ -568,12 +602,18 @@ function LoginPage() {
       setError('请先把当前领星账号绑定到所选店铺。');
       return;
     }
+    if (!amazonAdsConnectionReady) {
+      setError('请先把 Amazon Ads Profile ID 绑定到所选店铺。');
+      return;
+    }
     const request = buildBrowserLoginRequest({
+      amazonAdsProfileId,
       credentialSource,
       password,
       rememberPassword,
       savedCredentialUsername,
       savedPasswordAvailable,
+      storeContext: store.authoritativeContext,
       username,
     });
     if (!request) {
@@ -616,6 +656,23 @@ function LoginPage() {
     }
   }
 
+  async function handleBindAmazonAdsConnection() {
+    if (loading || amazonAdsConnectionState === 'binding' || amazonAdsConnectionReady) return;
+    if (!amazonAdsProfileId.trim()) {
+      setError('请输入 Amazon Ads Profile ID 后再绑定。');
+      return;
+    }
+    setAmazonAdsConnectionState('binding');
+    setError('');
+    try {
+      await store.bindAmazonAdsConnection(amazonAdsProfileId);
+      setAmazonAdsConnectionState('ready');
+    } catch (caught) {
+      setAmazonAdsConnectionState('error');
+      setError(toUserFacingError(caught, 'Amazon Ads Profile 绑定失败'));
+    }
+  }
+
   const loginConnectionStatus = loginConnectionState === 'ready'
     ? '领星连接已绑定'
     : loginConnectionState === 'binding'
@@ -625,6 +682,16 @@ function LoginPage() {
         : lingxingConnection
           ? '当前用户名与店铺领星连接不一致，请更新绑定。'
           : '当前店铺尚未绑定领星连接。';
+
+  const amazonAdsConnectionStatus = amazonAdsConnectionState === 'ready'
+    ? 'Amazon Ads Profile 已绑定'
+    : amazonAdsConnectionState === 'binding'
+      ? '正在绑定 Amazon Ads Profile…'
+      : amazonAdsConnectionState === 'error'
+        ? 'Amazon Ads Profile 绑定失败，请检查后重试。'
+        : amazonAdsConnection
+          ? '当前 Profile ID 与店铺 Amazon Ads 连接不一致，请更新绑定。'
+          : '当前店铺尚未绑定 Amazon Ads Profile。';
 
   return (
     <div style={loginStyles.container}>
@@ -656,7 +723,7 @@ function LoginPage() {
               }
             }}
             aria-label="领星用户名"
-            onKeyDown={(event) => event.key === 'Enter' && !loading && lingxingConnectionReady && handleLogin()}
+            onKeyDown={(event) => event.key === 'Enter' && !loading && loginConnectionsReady && handleLogin()}
             placeholder="领星用户名"
             style={loginStyles.input}
             type="text"
@@ -688,12 +755,40 @@ function LoginPage() {
               }
             }}
             aria-label="领星密码"
-            onKeyDown={(event) => event.key === 'Enter' && !loading && lingxingConnectionReady && handleLogin()}
+            onKeyDown={(event) => event.key === 'Enter' && !loading && loginConnectionsReady && handleLogin()}
             placeholder="领星密码"
             style={loginStyles.input}
             type="password"
             value={password}
           />
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={loginStyles.notice}>Amazon Ads Profile ID</span>
+            <input
+              aria-label="Amazon Ads Profile ID"
+              autoComplete="off"
+              data-package-ui-evidence-field="amazon-ads-profile-id"
+              maxLength={256}
+              onChange={(event) => setAmazonAdsProfileId(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || loading) return;
+                if (loginConnectionsReady) {
+                  void handleLogin();
+                } else if (
+                  amazonAdsConnectionState !== 'binding'
+                  && amazonAdsProfileId.trim()
+                ) {
+                  void handleBindAmazonAdsConnection();
+                }
+              }}
+              placeholder="填写 ads.lingxing.com 的 profile_id"
+              style={loginStyles.input}
+              type="text"
+              value={amazonAdsProfileId}
+            />
+            <span style={loginStyles.notice}>
+              美国站 · USD；填写 ads.lingxing.com 当前广告账户显示的 profile_id。此字段不是密码或密钥。
+            </span>
+          </label>
           <div style={loginStyles.rememberRow}>
             <label style={loginStyles.rememberLabel}>
               <input
@@ -756,12 +851,38 @@ function LoginPage() {
               </button>
             ) : null}
           </div>
+          <div style={loginStyles.connectionPanel}>
+            <p
+              data-login-amazon-ads-connection-status
+              data-state={amazonAdsConnectionState}
+              role="status"
+              aria-live="polite"
+              style={loginStyles.connectionStatus}
+            >
+              {amazonAdsConnectionStatus}
+            </p>
+            {!amazonAdsConnectionReady ? (
+              <button
+                data-package-ui-evidence-action="bind-amazon-ads-connection"
+                type="button"
+                disabled={loading || amazonAdsConnectionState === 'binding' || !amazonAdsProfileId.trim()}
+                onClick={handleBindAmazonAdsConnection}
+                style={loginStyles.connectionButton}
+              >
+                {amazonAdsConnectionState === 'binding'
+                  ? '绑定中…'
+                  : amazonAdsConnection
+                    ? '更新 Amazon Ads Profile 绑定'
+                    : '绑定 Amazon Ads Profile'}
+              </button>
+            ) : null}
+          </div>
           <div style={loginStyles.hint}>登录流程：ERP 登录 {'->'} ERP 广告入口 {'->'} Ads 会话确认。</div>
           {error && <div role="alert" style={loginStyles.error}>{error}</div>}
           <button
             aria-busy={loginButtonView.ariaBusy}
             className={loginButtonView.className}
-            disabled={loading || !lingxingConnectionReady}
+            disabled={loading || !loginConnectionsReady}
             onClick={handleLogin}
             style={loginStyles.button}
             type="button"

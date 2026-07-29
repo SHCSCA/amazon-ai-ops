@@ -389,6 +389,26 @@ function validRunDiagnostics(profileId) {
       savedCredentials: null,
       startedAt: '2026-07-16T08:08:09.000Z',
     },
+    lifecycle: {
+      droppedCount: 0,
+      events: [
+        { at: '2026-07-16T08:08:00.100Z', kind: 'window-attached', phase: 'electron-launch', runnerCloseRequested: false, windowId: 1 },
+        { at: '2026-07-16T08:08:19.600Z', kind: 'runner-close-requested', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-16T08:08:19.700Z', kind: 'window-closed', phase: 'electron-close', runnerCloseRequested: true, windowId: 1 },
+        { at: '2026-07-16T08:08:19.750Z', kind: 'electron-context-closed', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-16T08:08:19.800Z', kind: 'electron-app-closed', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-16T08:08:19.900Z', code: 0, kind: 'electron-process-exit', phase: 'electron-close', runnerCloseRequested: true, signal: null },
+      ],
+      limit: 100,
+      processExit: {
+        at: '2026-07-16T08:08:19.900Z',
+        code: 0,
+        runnerCloseRequested: true,
+        signal: null,
+      },
+      runnerCloseRequestedAt: '2026-07-16T08:08:19.600Z',
+      unexpectedCloseObserved: false,
+    },
     phase: 'completed',
     profileId,
     renderer: {
@@ -397,7 +417,7 @@ function validRunDiagnostics(profileId) {
       limits: { consoleErrors: 100, pageErrors: 100 },
       pageErrors: [],
     },
-    schemaVersion: 'package-ui-run-diagnostics/v1',
+    schemaVersion: 'package-ui-run-diagnostics/v2',
     startedAt: '2026-07-16T08:08:00.000Z',
     storeGate: {
       completedAt: '2026-07-16T08:08:08.900Z',
@@ -1819,6 +1839,57 @@ describe('verify v15 non-ready safety', () => {
         delete packageUi.runs[1].diagnostics;
       });
     }],
+    ['Electron lifecycle diagnostics are missing', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        delete packageUi.runs[0].diagnostics.lifecycle;
+      });
+    }],
+    ['Electron lifecycle observed an unrequested close', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.wideProfile.diagnostics.lifecycle.unexpectedCloseObserved = true;
+      });
+    }],
+    ['Electron exited non-zero', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[1].diagnostics.lifecycle.processExit.code = 1;
+        packageUi.runs[1].diagnostics.lifecycle.events.find(
+          (event) => event.kind === 'electron-process-exit',
+        ).code = 1;
+      });
+    }],
+    ['Electron lifecycle markers are duplicated', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        const lifecycle = packageUi.runs[0].diagnostics.lifecycle;
+        const marker = lifecycle.events.find((event) => event.kind === 'runner-close-requested');
+        lifecycle.events.splice(2, 0, { ...marker });
+      });
+    }],
+    ['Electron lifecycle exit receipt is detached', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.wideProfile.diagnostics.lifecycle.processExit.at =
+          '2026-07-16T08:08:19.901Z';
+      });
+    }],
+    ['Electron window is attached only after close was requested', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        const events = packageUi.runs[0].diagnostics.lifecycle.events;
+        const attached = events.shift();
+        attached.at = '2026-07-16T08:08:19.650Z';
+        attached.runnerCloseRequested = true;
+        events.splice(1, 0, attached);
+      });
+    }],
+    ['Electron lifecycle records an event after process exit', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[1].diagnostics.lifecycle.events.push({
+          at: '2026-07-16T08:08:19.950Z',
+          kind: 'main-frame-navigated',
+          phase: 'electron-close',
+          runnerCloseRequested: true,
+          windowId: 1,
+        });
+      });
+    }],
     ['diagnostics retain a raw credential', (context) => {
       mutatePackageUiFixture(context, (packageUi) => {
         packageUi.wideProfile.diagnostics.login.failureMessage = 'password=hunter2';
@@ -1827,6 +1898,16 @@ describe('verify v15 non-ready safety', () => {
     ['diagnostics retain raw CLI credentials', (context) => {
       mutatePackageUiFixture(context, (packageUi) => {
         packageUi.runs[0].diagnostics.login.failureMessage = '--username operator@example.com --password hunter2';
+      });
+    }],
+    ['diagnostics retain a raw account email', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[0].diagnostics.login.failureMessage = 'operator@example.com';
+      });
+    }],
+    ['diagnostics retain a user-name field', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[0].diagnostics['user-name'] = '[REDACTED_ACCOUNT]';
       });
     }],
     ['diagnostics retain raw authorization, cookie, or session tokens', (context) => {

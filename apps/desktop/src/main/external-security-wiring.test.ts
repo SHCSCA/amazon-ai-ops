@@ -7,6 +7,14 @@ const providerActiveIdentitySource = fs.readFileSync(
   path.join(__dirname, 'provider-active-identity.ts'),
   'utf8',
 );
+const browserLoginProviderConnectionSource = fs.readFileSync(
+  path.join(__dirname, 'browser-login-provider-connections.ts'),
+  'utf8',
+);
+const browserLoginRequestSource = fs.readFileSync(
+  path.join(__dirname, 'browser-login-request.ts'),
+  'utf8',
+);
 
 describe('Electron external-distribution security wiring', () => {
   it('installs navigation, redirect, and external-open guards before loading the renderer', () => {
@@ -37,7 +45,10 @@ describe('Electron external-distribution security wiring', () => {
     expect(source).toContain("ipcMain.handle('browser:get-saved-credential-status'");
     expect(source).toContain('resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username)');
     expect(source).toContain('handleBrowserLogin(normalizeBrowserLoginRequest(input))');
-    expect(source).toContain("typeof candidate.rememberPassword !== 'boolean'");
+    expect(browserLoginRequestSource).toContain("typeof candidate.rememberPassword !== 'boolean'");
+    expect(source).toContain('normalizeBrowserLoginRequest(input)');
+    expect(source).toContain('state.storeCoordinator.assertActiveStoreContext(request.storeContext)');
+    expect(source).toContain('request.amazonAdsProfileId');
     expect(source).not.toContain("ipcMain.handle('browser:get-saved-credentials'");
     expect(source).not.toContain('password: saved');
   });
@@ -104,21 +115,23 @@ describe('Electron external-distribution security wiring', () => {
     expect(source).not.toContain("path.join(STORAGE_DIR, 'browser-data')");
   });
 
-  it('requires Lingxing for collection login while keeping a missing Ads connection explicitly blocked', () => {
-    const connectionStart = source.indexOf('function requireProviderConnections');
-    const connectionEnd = source.indexOf('async function handleBrowserLogin', connectionStart);
-    const connectionContract = source.slice(connectionStart, connectionEnd);
+  it('requires both provider identity mappings at the Main login boundary while keeping an unavailable Ads session blocked', () => {
+    const connectionContract = browserLoginProviderConnectionSource;
     expect(connectionContract).toContain('if (!lingxing)');
-    expect(connectionContract).not.toContain('if (!lingxing || !amazonAds)');
     expect(connectionContract).toContain('if (!amazonAds)');
-    expect(connectionContract).toContain('Amazon Ads 连接缺少账号标识，广告执行保持阻断');
+    expect(connectionContract).toContain('if (!amazonAds.externalAccountId?.trim())');
+    expect(connectionContract).toContain('必须先配置 Amazon Ads Profile 连接');
+    expect(connectionContract).toContain('Amazon Ads 连接缺少 Profile ID');
     expect(connectionContract).toContain('return { lingxing, amazon_ads: amazonAds }');
 
     const loginStart = source.indexOf('async function handleBrowserLogin');
     const loginEnd = source.indexOf('async function handleBrowserLogout', loginStart);
     const login = source.slice(loginStart, loginEnd);
-    expect(login).toContain('if (!adsConnection || !amazonAdsController)');
-    expect(login).toContain('adsUnavailableReason = connections.adsUnavailableReason');
+    expect(login).toContain('requireBrowserLoginProviderConnections');
+    expect(login).toContain('request.amazonAdsProfileId');
+    expect(login).toContain('waitForLingxingAdsSessionReady');
+    expect(login).toContain('PACKAGE_UI_AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS');
+    expect(login).toContain('独立 Amazon Ads Profile 未在正式 Package UI 时限内完成授权');
     expect(login).toContain('adsSessionReady: Boolean(adsSession)');
   });
 

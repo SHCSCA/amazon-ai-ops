@@ -60,11 +60,17 @@ import type {
   LingxingCollectionReportCheckpoint,
   LingxingCollectionResumeState,
 } from '@amazon-ai-ops/shared-types';
-import { canonicalizeAmazonAsin, missionControlContextKey, normalizeStoreId } from '@amazon-ai-ops/shared-types';
+import {
+  canonicalizeAmazonAsin,
+  missionControlContextKey,
+  normalizeStoreId,
+} from '@amazon-ai-ops/shared-types';
 import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
 import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithinRealDirectory, isSafeManifestPath, readLingxingManifestForAudit, safeFileSegment } from './acceptance-audit-export';
 import { cleanupAppResources, createBeforeQuitCoordinator } from './app-shutdown';
 import { summarizeBusinessReportCoverage } from './business-report-coverage';
+import { requireBrowserLoginProviderConnections } from './browser-login-provider-connections';
+import { normalizeBrowserLoginRequest } from './browser-login-request';
 import { countImportedRowsForReportFile } from './business-report-import-coverage';
 import {
   configureEvidenceUserDataPath,
@@ -1084,38 +1090,6 @@ function handleGetSavedLoginCredentialStatus(): SavedLoginCredentialStatus {
   return readSavedLoginCredentialStatus(state.settingsRepo, electronLoginCredentialCipher);
 }
 
-function normalizeBrowserLoginRequest(input: unknown): BrowserLoginRequest {
-  const candidate = input && typeof input === 'object'
-    ? input as Record<string, unknown>
-    : {};
-  const username = typeof candidate.username === 'string' ? candidate.username.trim() : '';
-  if (!username || username.length > 256 || /[\u0000-\u001f\u007f]/.test(username)) {
-    throw new Error('请输入有效的领星用户名。');
-  }
-  if (typeof candidate.rememberPassword !== 'boolean') {
-    throw new Error('登录凭证的记住选项无效。');
-  }
-  if (candidate.credentialSource === 'saved') {
-    if (candidate.rememberPassword !== true) {
-      throw new Error('保存凭证登录必须保持“记住密码”开启。');
-    }
-    return { username, credentialSource: 'saved', rememberPassword: true };
-  }
-  if (candidate.credentialSource !== 'typed') {
-    throw new Error('登录凭证来源无效，请重新输入密码。');
-  }
-  const password = typeof candidate.password === 'string' ? candidate.password : '';
-  if (!password || password.length > 4096 || /[\u0000\u007f]/.test(password)) {
-    throw new Error('请输入有效的领星密码。');
-  }
-  return {
-    username,
-    credentialSource: 'typed',
-    password,
-    rememberPassword: candidate.rememberPassword,
-  };
-}
-
 async function readLingxingPageState(page: NonNullable<ReturnType<BrowserController['getPage']>>) {
   return page.evaluate(() => ({
     url: window.location.href,
@@ -1123,6 +1097,35 @@ async function readLingxingPageState(page: NonNullable<ReturnType<BrowserControl
     bodyText: document.body?.innerText ?? '',
     hasAccountInput: Boolean(document.querySelector('input[name="account"]')),
   }));
+}
+
+const AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS = 120_000;
+const PACKAGE_UI_AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS = 900_000;
+const AMAZON_ADS_AUTHORIZATION_POLL_MS = 1_000;
+
+function isRetryableAdsAuthorizationNavigationError(error: unknown): boolean {
+  return /execution context was destroyed|most likely because of a navigation|cannot find context/i
+    .test(String(error instanceof Error ? error.message : error));
+}
+
+async function waitForLingxingAdsSessionReady(
+  controller: BrowserController,
+  assertAttemptActive: () => void,
+  timeoutMs: number,
+): Promise<Awaited<ReturnType<typeof readLingxingPageState>> | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    assertAttemptActive();
+    try {
+      const pageState = await readLingxingPageState(getControllerPageOrThrow(controller));
+      if (isLingxingAdsLoggedInPage(pageState)) return pageState;
+    } catch (error) {
+      if (!isRetryableAdsAuthorizationNavigationError(error)) throw error;
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return null;
+    await controller.waitForTimeout(Math.min(AMAZON_ADS_AUTHORIZATION_POLL_MS, remainingMs));
+  }
 }
 
 async function assertProviderPageActiveIdentity(input: {
@@ -1294,42 +1297,13 @@ function assertBrowserLoginAttempt(attemptId: number, context: StoreContextEnvel
   state.storeCoordinator.assertActiveStoreContext(context);
 }
 
-function requireProviderConnections(
-  connections: readonly StoreConnection[],
-): { lingxing: StoreConnection; amazon_ads?: StoreConnection; adsUnavailableReason?: string } {
-  const lingxing = connections.find((connection) => connection.provider === 'lingxing');
-  const amazonAds = connections.find((connection) => connection.provider === 'amazon_ads');
-  if (!lingxing) {
-    throw new Error('当前店铺必须先配置领星连接，浏览器登录已拒绝。');
-  }
-  if (!lingxing.accountLabel?.trim() && !lingxing.externalAccountId?.trim()) {
-    throw new Error('lingxing 连接缺少账号标识，不能验证浏览器会话归属。');
-  }
-  if (!amazonAds) {
-    return {
-      lingxing,
-      adsUnavailableReason: '当前店铺尚未配置 Amazon Ads 连接，广告执行保持阻断。',
-    };
-  }
-  if (!amazonAds.accountLabel?.trim() && !amazonAds.externalAccountId?.trim()) {
-    return {
-      lingxing,
-      adsUnavailableReason: '当前店铺 Amazon Ads 连接缺少账号标识，广告执行保持阻断。',
-    };
-  }
-  return { lingxing, amazon_ads: amazonAds };
-}
-
 async function handleBrowserLogin(request: BrowserLoginRequest): Promise<BrowserLoginResult> {
   const username = request.username;
   const rememberPassword = request.rememberPassword;
   if (!state.storeCoordinator || !state.storeRepo) {
     throw new Error('店铺会话尚未初始化。');
   }
-  const initialContext = state.storeCoordinator.getActiveStoreContext();
-  if (!initialContext) {
-    throw new Error('请先选择一个有效店铺，再启动浏览器登录。');
-  }
+  const initialContext = state.storeCoordinator.assertActiveStoreContext(request.storeContext);
   state.executionAuthorityService?.assertStoreMutationAllowed(initialContext);
 
   const password = request.credentialSource === 'saved'
@@ -1364,8 +1338,7 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     capsule: StoreCapsulePaths;
     connections: {
       lingxing: StoreConnection;
-      amazon_ads?: StoreConnection;
-      adsUnavailableReason?: string;
+      amazon_ads: StoreConnection;
     };
   };
   try {
@@ -1377,11 +1350,15 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     publishStoreContextChanged(view);
     const store = state.storeRepo.getStore(loginContext.storeId);
     if (!store) throw new Error('当前店铺授权记录不存在。');
+    const connections = requireBrowserLoginProviderConnections(
+      state.storeRepo.listConnections(loginContext.storeId),
+      request.amazonAdsProfileId,
+    );
     loginSetup = {
       loginContext,
       store,
       capsule: storeCapsuleFor(store),
-      connections: requireProviderConnections(state.storeRepo.listConnections(loginContext.storeId)),
+      connections,
     };
   } catch (error) {
     if (pendingBrowserLogin?.attemptId === attemptId) pendingBrowserLogin = null;
@@ -1394,14 +1371,12 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     headless: false,
     userDataDir: capsule.lingxingProfileDir,
   });
-  const amazonAdsController = connections.amazon_ads
-    ? new BrowserController({
-        headless: false,
-        userDataDir: capsule.amazonAdsProfileDir,
-      })
-    : null;
+  const amazonAdsController = new BrowserController({
+    headless: false,
+    userDataDir: capsule.amazonAdsProfileDir,
+  });
   pendingBrowserLogin.controllers.add(lingxingController);
-  if (amazonAdsController) pendingBrowserLogin.controllers.add(amazonAdsController);
+  pendingBrowserLogin.controllers.add(amazonAdsController);
 
   try {
     await lingxingController.launch();
@@ -1514,15 +1489,15 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
       context: loginContext,
       controllers: {
         lingxing: lingxingController,
-        ...(amazonAdsController ? { amazon_ads: amazonAdsController } : {}),
+        amazon_ads: amazonAdsController,
       },
       profileDirs: {
         lingxing: capsule.lingxingProfileDir,
-        ...(amazonAdsController ? { amazon_ads: capsule.amazonAdsProfileDir } : {}),
+        amazon_ads: capsule.amazonAdsProfileDir,
       },
       connections: {
         lingxing: connections.lingxing,
-        ...(connections.amazon_ads ? { amazon_ads: connections.amazon_ads } : {}),
+        amazon_ads: connections.amazon_ads,
       },
     };
     state.isLoggedIn = true;
@@ -1531,18 +1506,20 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     let adsSession: AdsSessionResult | null = null;
     let adsUnavailableReason: string | undefined;
     const adsConnection = connections.amazon_ads;
-    if (!adsConnection || !amazonAdsController) {
-      adsUnavailableReason = connections.adsUnavailableReason
-        || '当前店铺 Amazon Ads 连接不可用，广告执行保持阻断。';
-    } else try {
+    try {
       await amazonAdsController.launch();
       await amazonAdsController.navigate('https://ads.lingxing.com/');
-      await amazonAdsController.waitForTimeout(6000);
-      const adsPage = getControllerPageOrThrow(amazonAdsController);
-      const amazonAdsState = await readLingxingPageState(adsPage);
-      if (!isLingxingAdsLoggedInPage(amazonAdsState)) {
+      const amazonAdsState = await waitForLingxingAdsSessionReady(
+        amazonAdsController,
+        () => assertBrowserLoginAttempt(attemptId, loginContext),
+        packageUiReadOnlyRuntime
+          ? PACKAGE_UI_AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS
+          : AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS,
+      );
+      if (!amazonAdsState) {
         throw new Error('ADS_SESSION_NOT_READY');
       }
+      const adsPage = getControllerPageOrThrow(amazonAdsController);
       await assertProviderPageActiveIdentity({
         connection: adsConnection,
         page: adsPage,
@@ -1594,6 +1571,9 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
           failureCode: 'ADS_SESSION_NOT_READY',
         });
       })();
+      if (packageUiReadOnlyRuntime) {
+        throw new Error('独立 Amazon Ads Profile 未在正式 Package UI 时限内完成授权，登录已拒绝。');
+      }
     }
     assertBrowserLoginAttempt(attemptId, loginContext);
 
@@ -1624,7 +1604,7 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
   } catch (error) {
     await closeBrowserControllers([
       lingxingController,
-      ...(amazonAdsController ? [amazonAdsController] : []),
+      amazonAdsController,
     ]);
     if (state.browserRuntime?.controllers.lingxing === lingxingController) {
       state.browserRuntime = null;

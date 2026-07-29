@@ -1,5 +1,12 @@
-export type BrowserLoginRequest =
-  | {
+import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
+
+type BrowserLoginAuthority = {
+  storeContext: StoreContextEnvelope;
+  amazonAdsProfileId: string;
+};
+
+export type BrowserLoginRequest = BrowserLoginAuthority & (
+  {
       username: string;
       credentialSource: 'saved';
       rememberPassword: true;
@@ -9,7 +16,8 @@ export type BrowserLoginRequest =
       credentialSource: 'typed';
       password: string;
       rememberPassword: boolean;
-    };
+    }
+);
 
 export type BrowserLoginCredentialPersistence =
   | 'saved'

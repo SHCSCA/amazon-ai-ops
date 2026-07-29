@@ -59,7 +59,7 @@ Options:
   --resume-run-group <id>                Resume matching package/profile checkpoints
   --allow-interactive-login              Required: wait for visible operator login without secret capture
   --output <dir>                         Evidence output directory
-  --interactive-login-timeout-ms <ms>    Visible handoff timeout, 60000-900000 (default 600000)
+  --interactive-login-timeout-ms <ms>    Visible handoff timeout, 60000-900000 (default 900000)
   --settle-ms <ms>                       Extra settle floor (default 800; capture enforces at least 2500)
   --help                                  Show this help without launching Electron`);
 }

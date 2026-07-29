@@ -52,6 +52,22 @@ export interface MissionControlStoreContextValue extends MissionControlStoreStat
   archiveStore(input: ArchiveStoreInput): Promise<StoreRecord>;
   restoreStore(input: RestoreStoreInput): Promise<StoreRecord>;
   bindLingxingConnection(accountLabel: string): Promise<StoreConnection>;
+  bindAmazonAdsConnection(externalAccountId: string): Promise<StoreConnection>;
+}
+
+const MAX_AMAZON_ADS_PROFILE_ID_LENGTH = 256;
+const AMAZON_ADS_PROFILE_ID_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+export function normalizeAmazonAdsProfileId(externalAccountId: string): string {
+  const normalized = externalAccountId.trim();
+  if (!normalized) throw new Error('请输入 Amazon Ads Profile ID 后再绑定。');
+  if (
+    normalized.length > MAX_AMAZON_ADS_PROFILE_ID_LENGTH
+    || AMAZON_ADS_PROFILE_ID_CONTROL_CHARACTERS.test(normalized)
+  ) {
+    throw new Error('Amazon Ads Profile ID 无效：最多 256 个字符，且不能包含控制字符。');
+  }
+  return normalized;
 }
 
 export type MissionControlStoreAction =
@@ -332,6 +348,43 @@ export function MissionControlStoreContextProvider({
     return confirmed;
   }, [api, dispatch]);
 
+  const bindAmazonAdsConnection = useCallback(async (externalAccountId: string) => {
+    const activeView = stateRef.current.activeView;
+    if (!activeView) throw new Error('当前没有 Main 授权店铺，无法绑定 Amazon Ads 连接。');
+    const normalizedExternalAccountId = normalizeAmazonAdsProfileId(externalAccountId);
+    const existing = activeView.connections.find((connection) => connection.provider === 'amazon_ads');
+    if (existing?.externalAccountId?.trim() === normalizedExternalAccountId) return existing;
+    const changed = existing
+      ? await api.updateStoreConnection({
+        id: existing.id,
+        storeId: activeView.store.storeId,
+        externalAccountId: normalizedExternalAccountId,
+      })
+      : await api.createStoreConnection({
+        storeId: activeView.store.storeId,
+        provider: 'amazon_ads',
+        externalAccountId: normalizedExternalAccountId,
+      });
+    const confirmedView = await api.getActiveStoreWorkspaceView();
+    if (!confirmedView || !sameStoreAuthorityIdentity(activeView, confirmedView)) {
+      throw new Error('Amazon Ads 连接写入后店铺权限上下文已变化，请重新确认当前店铺。');
+    }
+    const confirmed = confirmedView.connections.find((candidate) =>
+      candidate.provider === 'amazon_ads'
+      && candidate.storeId === confirmedView.store.storeId
+      && candidate.id === changed.id
+      && candidate.externalAccountId?.trim() === normalizedExternalAccountId
+      && candidate.status === 'not_configured'
+      && !candidate.lastVerifiedAt
+      && !candidate.lastFailureCode
+      && !candidate.session);
+    if (!confirmed) {
+      throw new Error('Amazon Ads 连接写入后未能从 Main 权限上下文回读，请重新确认 Profile ID。');
+    }
+    dispatch({ type: 'authority', view: confirmedView });
+    return confirmed;
+  }, [api, dispatch]);
+
   const value = useMemo<MissionControlStoreContextValue>(() => ({
     ...state,
     switchStore,
@@ -342,6 +395,7 @@ export function MissionControlStoreContextProvider({
     archiveStore,
     restoreStore,
     bindLingxingConnection,
+    bindAmazonAdsConnection,
   }), [
     state,
     switchStore,
@@ -352,6 +406,7 @@ export function MissionControlStoreContextProvider({
     archiveStore,
     restoreStore,
     bindLingxingConnection,
+    bindAmazonAdsConnection,
   ]);
 
   return (

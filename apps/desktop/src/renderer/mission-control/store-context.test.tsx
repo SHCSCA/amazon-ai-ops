@@ -123,6 +123,7 @@ describe('Mission Control StoreContext state', () => {
     expect(bindBlock).toContain('accountLabel');
     expect(bindBlock).toContain('api.getActiveStoreWorkspaceView()');
     expect(bindBlock).toContain('sameStoreAuthorityIdentity');
+    expect(bindBlock).toContain('candidate.storeId === confirmedView.store.storeId');
     expect(bindBlock).toContain('candidate.id === changed.id');
     expect(bindBlock).toContain("candidate.status === 'not_configured'");
     expect(bindBlock).toContain('!candidate.externalAccountId');
@@ -130,6 +131,39 @@ describe('Mission Control StoreContext state', () => {
     expect(bindBlock).toContain("dispatch({ type: 'authority', view: confirmedView })");
     expect(bindBlock).not.toContain("await resyncAuthority('needs-selection')");
     expect(bindBlock).not.toMatch(/password|cookie|token/i);
+  });
+
+  it('binds an Amazon Ads profile id and only accepts a reset Main readback for the current authority', () => {
+    const source = fs.readFileSync(new URL('./store-context.tsx', import.meta.url), 'utf8');
+    const bindBlock = source.slice(
+      source.indexOf('const bindAmazonAdsConnection'),
+      source.indexOf('const value ='),
+    );
+
+    expect(source).toContain('bindAmazonAdsConnection(externalAccountId: string): Promise<StoreConnection>');
+    expect(bindBlock).toContain("connection.provider === 'amazon_ads'");
+    expect(bindBlock).toContain("provider: 'amazon_ads'");
+    expect(bindBlock).toContain('api.updateStoreConnection');
+    expect(bindBlock).toContain('externalAccountId: normalizedExternalAccountId');
+    expect(bindBlock).toContain('api.getActiveStoreWorkspaceView()');
+    expect(bindBlock).toContain('sameStoreAuthorityIdentity');
+    expect(bindBlock).toContain('candidate.id === changed.id');
+    expect(bindBlock).toContain("candidate.status === 'not_configured'");
+    expect(bindBlock).toContain('candidate.externalAccountId?.trim() === normalizedExternalAccountId');
+    expect(bindBlock).toContain('!candidate.lastVerifiedAt');
+    expect(bindBlock).toContain('!candidate.lastFailureCode');
+    expect(bindBlock).toContain('!candidate.session');
+    expect(bindBlock).toContain("dispatch({ type: 'authority', view: confirmedView })");
+    expect(bindBlock).not.toContain("await resyncAuthority('needs-selection')");
+    expect(bindBlock).not.toMatch(/password|cookie|token/i);
+  });
+
+  it('normalizes a bounded Amazon Ads profile id and rejects control characters before Main persistence', async () => {
+    const module = await import('./store-context');
+    expect(module.normalizeAmazonAdsProfileId('  1234567890  ')).toBe('1234567890');
+    expect(() => module.normalizeAmazonAdsProfileId('')).toThrow(/Profile ID/);
+    expect(() => module.normalizeAmazonAdsProfileId('a'.repeat(257))).toThrow(/256/);
+    expect(() => module.normalizeAmazonAdsProfileId('profile\u0000id')).toThrow(/控制字符/);
   });
 
   it('exposes real typed Store CRUD and never auto-switches after creation', () => {
