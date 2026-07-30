@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import {
   normalizeStoreContextEnvelope,
+  type BrowserProfileId,
   type LingxingCollectionJobSnapshot,
   type StoreContextEnvelope,
+  type StoreId,
+  type StoreRecord,
   type StoreRuntimeConfigProjection,
 } from '@amazon-ai-ops/shared-types';
 import {
@@ -122,18 +125,28 @@ function harness(options: {
   const recordCodec = options.recordCodec ?? new AuthenticatedTestCodec();
   const assertVisibleSession = vi.fn();
   const cancelActiveCollection = vi.fn();
+  const getActiveStoreContext = vi.fn(() => activeContext);
+  const assertActiveStoreContext = vi.fn((value: unknown) => {
+    expect(value).toEqual(activeContext);
+    return activeContext;
+  });
+  const getForStoreRecord = vi.fn((record: StoreRecord) => (
+    record.storeId === activeContext.storeId
+      ? currentConfig.value
+      : { current: null, versions: [] }
+  ));
   const startCollection = vi.fn(options.startCollection ?? (async (input) => ({
     result: { job: completedJob(activeContext, input.requestId) },
   })));
   const scheduler = new StoreCollectionScheduler({
     authority: {
-      getActiveStoreContext: () => activeContext,
-      assertActiveStoreContext(value) {
-        expect(value).toEqual(activeContext);
-        return activeContext;
-      },
+      getActiveStoreContext,
+      assertActiveStoreContext,
     },
-    config: { get: () => currentConfig.value },
+    config: {
+      get: () => currentConfig.value,
+      getForStoreRecord,
+    },
     settings,
     recordCodec,
     assertVisibleSession,
@@ -144,6 +157,9 @@ function harness(options: {
   return {
     activeContext,
     currentConfig,
+    getActiveStoreContext,
+    assertActiveStoreContext,
+    getForStoreRecord,
     settings,
     recordCodec,
     assertVisibleSession,
@@ -614,5 +630,129 @@ describe('StoreCollectionScheduler', () => {
       dateStart: '2026-07-09',
       dateEnd: '2026-07-22',
     })).toThrow(/invalid/);
+  });
+
+  it('inspects two stores independently without changing active UI authority, browser state, or history', () => {
+    const test = harness();
+    const storeOne: StoreRecord = {
+      storeId: test.activeContext.storeId,
+      browserProfileId: test.activeContext.browserProfileId,
+      displayName: 'One',
+      marketplace: 'US',
+      currency: 'USD',
+      status: 'active',
+      businessTimezone: 'America/Los_Angeles',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    };
+    const storeTwoContext = context({
+      storeId: 'store-two' as StoreId,
+      browserProfileId: 'profile-two' as BrowserProfileId,
+      sessionGeneration: 9,
+    });
+    const storeTwo: StoreRecord = {
+      ...storeOne,
+      storeId: storeTwoContext.storeId,
+      browserProfileId: storeTwoContext.browserProfileId,
+      displayName: 'Two',
+    };
+    const configs = new Map([
+      [String(storeOne.storeId), config(test.activeContext)],
+      [String(storeTwo.storeId), config(storeTwoContext, {
+        values: {
+          ...config(storeTwoContext).current!.values,
+          collectionLookbackDays: 7,
+        },
+      })],
+    ]);
+    test.getForStoreRecord.mockImplementation((record) => configs.get(String(record.storeId))!);
+
+    const window = deriveStoreCollectionWindow('2026-07-23', 14);
+    const fingerprint = storeCollectionScheduleSemanticFingerprint({
+      storeId: storeOne.storeId,
+      browserProfileId: storeOne.browserProfileId,
+      businessDate: '2026-07-23',
+      lookbackDays: 14,
+      ...window,
+    });
+    const attemptBase = {
+      schemaVersion: 1 as const,
+      fingerprint,
+      storeId: storeOne.storeId,
+      browserProfileId: storeOne.browserProfileId,
+      sessionGeneration: 4,
+      businessDate: test.activeContext.businessDate,
+      scheduleLocalTime: '08:00',
+      configRevision: 3,
+      lookbackDays: 14,
+      ...window,
+      requestId: `scheduled:${fingerprint}`,
+      trigger: 'scheduled' as const,
+      state: 'succeeded' as const,
+      claimedAt: '2026-07-23T15:00:00.000Z',
+      completedAt: '2026-07-23T15:01:00.000Z',
+    };
+    test.settings.values.set(
+      storeCollectionScheduleSettingKey(storeOne.storeId),
+      test.recordCodec.seal(JSON.stringify({
+        schemaVersion: 2,
+        storeId: storeOne.storeId,
+        browserProfileId: storeOne.browserProfileId,
+        attempts: [{
+          ...attemptBase,
+          integrityDigest: storeCollectionScheduleIntegrityDigest(attemptBase),
+        }],
+      })),
+    );
+    const beforeHistory = new Map(test.settings.values);
+    const settingsSet = vi.spyOn(test.settings, 'set');
+    const transaction = vi.spyOn(test.settings, 'transaction');
+
+    expect(test.scheduler.inspectForStore(storeOne, {
+      businessDate: '2026-07-23',
+      now: NOW,
+    })).toEqual({ state: 'not_due', expectedFingerprint: fingerprint });
+    expect(test.scheduler.inspectForStore(storeTwo, {
+      businessDate: '2026-07-23',
+      now: NOW,
+    })).toEqual({
+      state: 'due',
+      expectedFingerprint: storeCollectionScheduleSemanticFingerprint({
+        storeId: storeTwo.storeId,
+        browserProfileId: storeTwo.browserProfileId,
+        businessDate: '2026-07-23',
+        lookbackDays: 7,
+        ...deriveStoreCollectionWindow('2026-07-23', 7),
+      }),
+    });
+    expect(test.settings.values).toEqual(beforeHistory);
+    expect(settingsSet).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+    expect(test.getActiveStoreContext).not.toHaveBeenCalled();
+    expect(test.assertActiveStoreContext).not.toHaveBeenCalled();
+    expect(test.assertVisibleSession).not.toHaveBeenCalled();
+    expect(test.startCollection).not.toHaveBeenCalled();
+    expect(test.activeContext.storeId).toBe(storeOne.storeId);
+  });
+
+  it('rejects non-LA store inspection without consulting active UI authority', () => {
+    const test = harness();
+    const invalidStore: StoreRecord = {
+      storeId: test.activeContext.storeId,
+      browserProfileId: test.activeContext.browserProfileId,
+      displayName: 'Invalid',
+      marketplace: 'US',
+      currency: 'USD',
+      status: 'active',
+      businessTimezone: 'UTC',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    };
+    expect(() => test.scheduler.inspectForStore(invalidStore, {
+      businessDate: '2026-07-23',
+      now: NOW,
+    })).toThrow(/America\/Los_Angeles/);
+    expect(test.getForStoreRecord).not.toHaveBeenCalled();
+    expect(test.getActiveStoreContext).not.toHaveBeenCalled();
   });
 });

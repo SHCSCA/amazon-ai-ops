@@ -50,6 +50,7 @@ import {
   executionEvidencePath,
   executionIdentityResolutionProofPath,
 } from './execution-artifacts';
+import type { PolicyDispatchSuppressionReadPort } from './store-collection-policy-suppression';
 
 const EXECUTOR_ACTOR = 'execution-authority';
 const OPERATOR_ACTOR = 'operator';
@@ -80,6 +81,8 @@ export interface ExecutionAuthorityServiceOptions {
     set(callback: () => void, delayMs: number): unknown;
     clear(handle: unknown): void;
   };
+  /** Main-only read boundary; acquisition/release authority is intentionally absent. */
+  policyDispatchSuppression: PolicyDispatchSuppressionReadPort;
 }
 
 interface RunningBatch {
@@ -123,6 +126,7 @@ export class ExecutionAuthorityService {
   private readonly now: () => Date;
   private readonly policyDispatchRetryMs: number;
   private readonly policyDispatchTimer: NonNullable<ExecutionAuthorityServiceOptions['policyDispatchTimer']>;
+  private readonly policyDispatchSuppression: PolicyDispatchSuppressionReadPort;
   private readonly running = new Map<string, RunningBatch>();
   private readonly policyDispatchLanes = new Map<string, PolicyDispatchLane>();
   private readonly policyDispatchRetryTimers = new Map<string, PolicyDispatchRetryTimer>();
@@ -130,6 +134,10 @@ export class ExecutionAuthorityService {
   private stopping = false;
 
   constructor(options: ExecutionAuthorityServiceOptions) {
+    if (!options.policyDispatchSuppression
+      || typeof options.policyDispatchSuppression.isPolicyDispatchSuppressed !== 'function') {
+      throw new TypeError('policyDispatchSuppression read port is required');
+    }
     this.repository = options.repository;
     this.missionRepository = options.missionRepository;
     this.analysisRepository = options.analysisRepository;
@@ -143,6 +151,7 @@ export class ExecutionAuthorityService {
       set: (callback, delayMs) => setTimeout(callback, delayMs),
       clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     };
+    this.policyDispatchSuppression = options.policyDispatchSuppression;
   }
 
   listBatches(contextInput: StoreContextEnvelope): readonly AdExecutionBatchProjection[] {
@@ -312,6 +321,10 @@ export class ExecutionAuthorityService {
         detail: 'Policy grant was durably journaled before browser or identity work started.',
       });
     }
+    if (this.policyDispatchIsSuppressed()) {
+      this.clearPolicyDispatchRetry(String(context.storeId));
+      return;
+    }
     await this.wakePolicyGrantPump(context, 'grant_issued');
   }
 
@@ -320,6 +333,10 @@ export class ExecutionAuthorityService {
     trigger: Extract<PolicyGrantDispatchTrigger, 'store_activated' | 'session_ready'>,
   ): Promise<void> {
     const context = this.assertContext(contextInput);
+    if (this.policyDispatchIsSuppressed()) {
+      this.clearPolicyDispatchRetry(String(context.storeId));
+      return;
+    }
     await this.wakePolicyGrantPump(context, trigger);
   }
 
@@ -371,6 +388,7 @@ export class ExecutionAuthorityService {
     }
     if (active) {
       this.reconcileRecoveredBatches(active);
+      if (this.policyDispatchIsSuppressed()) return result;
       void this.wakePolicyGrantPump(active, 'startup_recovery').catch(() => {
         this.progress(
           active,
@@ -762,6 +780,10 @@ export class ExecutionAuthorityService {
     const context = this.assertContext(contextInput);
     if (this.stopping) return Promise.resolve();
     const storeKey = String(context.storeId);
+    if (this.policyDispatchIsSuppressed()) {
+      this.clearPolicyDispatchRetry(storeKey);
+      return Promise.resolve();
+    }
     const active = this.policyDispatchLanes.get(storeKey);
     if (active) {
       active.rerunRequested = true;
@@ -788,6 +810,10 @@ export class ExecutionAuthorityService {
     do {
       lane.rerunRequested = false;
       while (!this.stopping) {
+        if (this.policyDispatchIsSuppressed()) {
+          this.clearPolicyDispatchRetry(String(lane.context.storeId));
+          return;
+        }
         const dispatches = this.repository.listPolicyGrantDispatches(lane.context);
         const candidate = dispatches.find((dispatch) => (
           dispatch.status === 'pending'
@@ -795,6 +821,7 @@ export class ExecutionAuthorityService {
           || dispatch.status === 'queued_for_execution'
         ));
         if (!candidate) break;
+        if (this.policyDispatchIsSuppressed()) return;
         if (candidate.status === 'waiting_runtime'
           && lane.trigger === 'timer_retry'
           && candidate.nextRetryAt
@@ -807,7 +834,7 @@ export class ExecutionAuthorityService {
           candidate,
           lane.trigger,
         );
-        if (outcome === 'wait') return;
+        if (outcome === 'wait' || outcome === 'suppressed') return;
       }
     } while (lane.rerunRequested && !this.stopping);
   }
@@ -816,8 +843,9 @@ export class ExecutionAuthorityService {
     context: StoreContextEnvelope,
     candidate: PolicyGrantDispatchRecord,
     trigger: PolicyGrantDispatchTrigger,
-  ): Promise<'continue' | 'wait'> {
+  ): Promise<'continue' | 'wait' | 'suppressed'> {
     const grantId = candidate.grantId;
+    if (this.policyDispatchIsSuppressed()) return 'suppressed';
     let current = candidate;
     if (!current.eventId) {
       this.repository.appendPolicyGrantDispatchEvent(context, {
@@ -830,6 +858,7 @@ export class ExecutionAuthorityService {
       });
       current = this.policyGrantDispatch(context, grantId);
     }
+    if (this.policyDispatchIsSuppressed()) return 'suppressed';
     const attempt = current.attemptCount + 1;
     this.repository.appendPolicyGrantDispatchEvent(context, {
       grantId,
@@ -841,8 +870,14 @@ export class ExecutionAuthorityService {
       ...(current.batchId ? { batchId: current.batchId } : {}),
     });
     try {
+      if (this.policyDispatchIsSuppressed()) {
+        return this.holdPolicyGrantDispatchForSuppression(context, grantId, trigger, attempt);
+      }
       this.assertPolicyPumpRunning();
       const grant = this.requireDispatchablePolicyGrant(context, grantId);
+      if (this.policyDispatchIsSuppressed()) {
+        return this.holdPolicyGrantDispatchForSuppression(context, grantId, trigger, attempt);
+      }
       this.requireRuntime(context);
       let batch: AdExecutionBatchProjection;
       const refreshed = this.policyGrantDispatch(context, grantId);
@@ -867,9 +902,18 @@ export class ExecutionAuthorityService {
         batch = existing;
       } else {
         for (const adEntityId of grant.allowedAdEntityIds) {
+          if (this.policyDispatchIsSuppressed()) {
+            return this.holdPolicyGrantDispatchForSuppression(context, grantId, trigger, attempt);
+          }
           await this.resolveIdentity({ context, grantId: grant.id, adEntityId });
+          if (this.policyDispatchIsSuppressed()) {
+            return this.holdPolicyGrantDispatchForSuppression(context, grantId, trigger, attempt);
+          }
         }
         this.assertPolicyPumpRunning();
+        if (this.policyDispatchIsSuppressed()) {
+          return this.holdPolicyGrantDispatchForSuppression(context, grantId, trigger, attempt);
+        }
         const created = this.createBatch({ context, grantId });
         batch = created.projection;
         if (!isPolicyExecutionBatchSafelyRestartable(batch)) {
@@ -891,6 +935,9 @@ export class ExecutionAuthorityService {
         });
       }
 
+      if (this.policyDispatchIsSuppressed()) {
+        return this.holdPolicyGrantDispatchForSuppression(context, grantId, trigger, attempt);
+      }
       this.ensureAuthorizedExecutionLink(context, batch);
       this.assertPolicyPumpRunning();
       this.requireDispatchablePolicyGrant(context, grantId);
@@ -903,6 +950,9 @@ export class ExecutionAuthorityService {
           attempt,
         );
       }
+      if (this.policyDispatchIsSuppressed()) {
+        return this.holdPolicyGrantDispatchForSuppression(context, grantId, trigger, attempt);
+      }
       this.repository.appendPolicyGrantDispatchEvent(context, {
         grantId,
         status: 'queued_for_execution',
@@ -914,6 +964,9 @@ export class ExecutionAuthorityService {
       });
       let projection: AdExecutionBatchProjection;
       try {
+        if (this.policyDispatchIsSuppressed()) {
+          return this.holdPolicyGrantDispatchForSuppression(context, grantId, trigger, attempt);
+        }
         projection = await this.startBatch({
           context,
           batchId: beforeStart.batch.id,
@@ -1109,6 +1162,7 @@ export class ExecutionAuthorityService {
     error: unknown,
   ): 'wait' {
     const nextRetryAt = new Date(this.now().getTime() + this.policyDispatchRetryMs).toISOString();
+    const suppressed = this.policyDispatchIsSuppressed();
     this.repository.appendPolicyGrantDispatchEvent(context, {
       grantId,
       status: 'waiting_runtime',
@@ -1117,7 +1171,7 @@ export class ExecutionAuthorityService {
       code: batchId ? 'EXECUTION_RETRY_SCHEDULED' : 'RUNTIME_UNAVAILABLE',
       detail: safeMessage(error),
       ...(batchId ? { batchId } : {}),
-      ...(!this.stopping ? { nextRetryAt } : {}),
+      ...(!this.stopping && !suppressed ? { nextRetryAt } : {}),
     });
     this.progress(
       context,
@@ -1127,8 +1181,30 @@ export class ExecutionAuthorityService {
       'blocked',
       `策略授权已安全保留，等待受控恢复：${safeMessage(error)}`,
     );
-    if (!this.stopping) this.schedulePolicyDispatchRetry(context, nextRetryAt);
+    if (!this.stopping && !suppressed) this.schedulePolicyDispatchRetry(context, nextRetryAt);
     return 'wait';
+  }
+
+  private holdPolicyGrantDispatchForSuppression(
+    context: StoreContextEnvelope,
+    grantId: string,
+    trigger: PolicyGrantDispatchTrigger,
+    attempt: number,
+  ): 'suppressed' {
+    const current = this.policyGrantDispatch(context, grantId);
+    this.clearPolicyDispatchRetry(String(context.storeId));
+    if (current.status === 'attempting') {
+      this.repository.appendPolicyGrantDispatchEvent(context, {
+        grantId,
+        status: 'waiting_runtime',
+        trigger,
+        attempt,
+        code: 'RUNTIME_UNAVAILABLE',
+        detail: 'Policy dispatch is suppressed by active Main collection authority.',
+        ...(current.batchId ? { batchId: current.batchId } : {}),
+      });
+    }
+    return 'suppressed';
   }
 
   private schedulePolicyDispatchRetry(
@@ -1137,6 +1213,10 @@ export class ExecutionAuthorityService {
   ): void {
     if (this.stopping) return;
     const storeKey = String(context.storeId);
+    if (this.policyDispatchIsSuppressed()) {
+      this.clearPolicyDispatchRetry(storeKey);
+      return;
+    }
     const existing = this.policyDispatchRetryTimers.get(storeKey);
     if (existing && Date.parse(existing.nextRetryAt) <= Date.parse(nextRetryAt)) return;
     this.clearPolicyDispatchRetry(storeKey);
@@ -1146,6 +1226,7 @@ export class ExecutionAuthorityService {
       if (!scheduled || scheduled.handle !== handle) return;
       this.policyDispatchRetryTimers.delete(storeKey);
       if (this.stopping) return;
+      if (this.policyDispatchIsSuppressed()) return;
       const active = this.storeCoordinator.getActiveStoreContext();
       if (!active || String(active.storeId) !== storeKey) return;
       void this.wakePolicyGrantPump(active, 'timer_retry').catch(() => {
@@ -1180,6 +1261,14 @@ export class ExecutionAuthorityService {
         'RUNTIME_UNAVAILABLE',
         'Application shutdown is in progress.',
       );
+    }
+  }
+
+  private policyDispatchIsSuppressed(): boolean {
+    try {
+      return this.policyDispatchSuppression.isPolicyDispatchSuppressed() !== false;
+    } catch {
+      return true;
     }
   }
 

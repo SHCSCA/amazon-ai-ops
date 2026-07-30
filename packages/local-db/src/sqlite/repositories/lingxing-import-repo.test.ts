@@ -21,6 +21,10 @@ import {
 
 const databases: Database.Database[] = [];
 const tempDirectories: string[] = [];
+const AUTHORITY_REPORT_TYPES = [
+  'campaign', 'ad_group', 'placement', 'advertised_product',
+  'auto_targeting', 'keyword', 'product_targeting', 'user_search_term',
+] as const;
 
 afterEach(() => {
   while (databases.length) {
@@ -139,6 +143,93 @@ function terminalCollection(
   };
 }
 
+function fullAuthorityTerminal(
+  storeId: StoreId,
+  browserProfileId: string,
+  batchId: string,
+) {
+  const completedAt = '2026-07-22T00:05:00.000Z';
+  const context = normalizeStoreContextEnvelope({
+    storeId,
+    browserProfileId,
+    marketplace: 'US',
+    currency: 'USD',
+    businessTimezone: 'America/Los_Angeles',
+    businessDate: '2026-07-22',
+    sessionGeneration: 3,
+  });
+  const reports = AUTHORITY_REPORT_TYPES.map((reportType) => ({
+    reportType,
+    state: 'downloaded' as const,
+    attemptIndex: 0,
+    autoRetryCount: 0,
+    createdReportIdentity: {
+      provider: 'lingxing' as const,
+      reportType,
+      externalReportName: `${reportType}-2026-07-21`,
+      externalReportId: `external-${reportType}`,
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
+      createdAt: '2026-07-22T00:02:00.000Z',
+    },
+    fileSizeBytes: 2048,
+    updatedAt: completedAt,
+  }));
+  const job: LingxingCollectionJobSnapshot = {
+    jobId: batchId,
+    request: {
+      requestId: 'authority-request-1',
+      storeContext: context,
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
+      mode: 'create-and-download',
+      reportTypes: AUTHORITY_REPORT_TYPES,
+    },
+    lineage: {
+      lineageId: batchId,
+      rootJobId: batchId,
+      expectedReportTypes: AUTHORITY_REPORT_TYPES,
+      purpose: 'production_full',
+    },
+    state: 'completed',
+    reports,
+    createdAt: '2026-07-22T00:00:00.000Z',
+    updatedAt: completedAt,
+    completedAt,
+    importState: 'pending',
+    importAttemptedAt: '2026-07-22T00:05:01.000Z',
+  };
+  const batch: LingxingReportBatch = {
+    id: batchId,
+    requestId: job.request.requestId,
+    storeId,
+    browserProfileId: context.browserProfileId,
+    businessDate: context.businessDate,
+    sessionGeneration: context.sessionGeneration,
+    dateStart: job.request.dateStart,
+    dateEnd: job.request.dateEnd,
+    storeName: 'Shop Alpha',
+    marketplaceCode: 'US',
+    status: 'completed',
+    downloadDir: `C:/${batchId}`,
+    manifestPath: `C:/${batchId}/manifest.json`,
+    createdAt: job.createdAt,
+    completedAt,
+  };
+  const files: LingxingReportFile[] = AUTHORITY_REPORT_TYPES.map((reportType) => ({
+    id: `${batchId}-${reportType}`,
+    batchId,
+    reportType,
+    displayName: `${reportType}.xlsx`,
+    status: 'downloaded',
+    filePath: `C:/${batchId}/${reportType}.xlsx`,
+    fileSizeBytes: 2048,
+    createdAt: '2026-07-22T00:01:00.000Z',
+    updatedAt: completedAt,
+  }));
+  return { job, batch, files };
+}
+
 function insertStore(
   database: Database.Database,
   storeId: StoreId,
@@ -252,6 +343,191 @@ function importInput(
 }
 
 describe('LingxingImportRepository', () => {
+  it('reads an exact store/request uniquely and fails closed on duplicate durable jobs', () => {
+    const { repository, storeA, storeB } = createHarness();
+    const first = collectionJob(
+      storeA,
+      'profile-a',
+      'queued',
+      '2026-07-22T00:01:00.000Z',
+    );
+
+    expect(repository.findUniqueCollectionJobForStoreByRequestId(storeA, first.request.requestId))
+      .toBeUndefined();
+    repository.upsertCollectionJobSnapshotForStore(storeA, first);
+    expect(repository.findUniqueCollectionJobForStoreByRequestId(storeA, first.request.requestId))
+      .toEqual(first);
+    expect(repository.findUniqueCollectionJobForStoreByRequestId(storeB, first.request.requestId))
+      .toBeUndefined();
+
+    repository.upsertCollectionJobSnapshotForStore(storeA, {
+      ...first,
+      jobId: 'collection-job-duplicate',
+      updatedAt: '2026-07-22T00:02:00.000Z',
+      reports: first.reports.map((checkpoint) => ({
+        ...checkpoint,
+        updatedAt: '2026-07-22T00:02:00.000Z',
+      })),
+    });
+    expect(() => repository.findUniqueCollectionJobForStoreByRequestId(
+      storeA,
+      first.request.requestId,
+    )).toThrow(/多个 durable 采集任务/);
+  });
+
+  it('reads one transactionally coherent scheduler authority proof across job, 8 files and completed import evidence', () => {
+    const { repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'authority-batch');
+    const committed = repository.commitCollectionTerminalForStore(storeA, terminal);
+    repository.commitImportForStore(storeA, {
+      runId: 'authority-import-run',
+      idempotencyKey: 'authority-import-key',
+      batchId: terminal.batch.id,
+      files: terminal.files.map((file, index) => ({
+        lingxingFileId: file.id,
+        reportType: file.reportType,
+        filePath: file.filePath!,
+        fileName: file.displayName,
+        fileSizeBytes: file.fileSizeBytes!,
+        fileHash: `${index + 1}`.repeat(64),
+        importedRows: 0,
+      })),
+      metrics: [],
+      reconciliations: [],
+      startedAt: '2026-07-22T00:05:01.000Z',
+      completedAt: '2026-07-22T00:05:02.000Z',
+    });
+    repository.upsertCollectionJobSnapshotForStore(storeA, {
+      ...committed.job,
+      importState: 'succeeded',
+      importAttemptedAt: '2026-07-22T00:05:01.000Z',
+      importCompletedAt: '2026-07-22T00:05:02.000Z',
+      updatedAt: '2026-07-22T00:05:02.000Z',
+    });
+
+    const proof = repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      terminal.job.request.requestId,
+    );
+
+    expect(proof).toMatchObject({
+      job: {
+        jobId: terminal.job.jobId,
+        state: 'completed',
+        importState: 'succeeded',
+      },
+      jobRow: {
+        storeId: storeA,
+        jobId: terminal.job.jobId,
+        requestId: terminal.job.request.requestId,
+        browserProfileId: 'profile-a',
+        state: 'completed',
+      },
+      checkpointCount: 8,
+      batch: {
+        id: terminal.batch.id,
+        storeId: storeA,
+        status: 'completed',
+      },
+      lingxingFileCount: 8,
+      importRunCount: 1,
+      importFileSnapshotCount: 8,
+      importedReportFileCount: 8,
+    });
+    expect(proof?.lingxingFiles.map((file) => file.reportType).sort())
+      .toEqual([...AUTHORITY_REPORT_TYPES].sort());
+    expect(proof?.importRuns).toEqual([
+      expect.objectContaining({
+        runId: 'authority-import-run',
+        batchId: terminal.batch.id,
+        status: 'completed',
+        sourceFileCount: 8,
+      }),
+    ]);
+    expect(proof?.importFileSnapshots.every((snapshot) => (
+      snapshot.runId === 'authority-import-run'
+      && snapshot.batchId === terminal.batch.id
+      && snapshot.fileHash.length === 64
+      && snapshot.fileSizeBytes === 2048
+      && Boolean(snapshot.lingxingFileId)
+      && Number.isInteger(snapshot.reportFileId)
+    ))).toBe(true);
+    expect(proof?.importedReportFiles.every((file) => (
+      file.status === 'imported'
+      && file.fileHash?.length === 64
+      && file.fileSizeBytes === 2048
+    ))).toBe(true);
+
+    proof!.lingxingFiles[0]!.displayName = 'caller-mutation.xlsx';
+    expect(repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      terminal.job.request.requestId,
+    )?.lingxingFiles[0]?.displayName).not.toBe('caller-mutation.xlsx');
+  });
+
+  it.each([
+    {
+      name: 'SQL job identity drift',
+      tamper: (database: Database.Database, storeId: StoreId, jobId: string) => {
+        database.prepare(`
+          UPDATE lingxing_collection_jobs
+          SET browser_profile_id = 'profile-b'
+          WHERE store_id = ? AND job_id = ?
+        `).run(storeId, jobId);
+      },
+    },
+    {
+      name: 'checkpoint count drift',
+      tamper: (database: Database.Database, storeId: StoreId, jobId: string) => {
+        database.prepare(`
+          DELETE FROM lingxing_collection_report_checkpoints
+          WHERE store_id = ? AND job_id = ? AND report_type = 'keyword'
+        `).run(storeId, jobId);
+      },
+    },
+  ])('throws instead of returning a mixed authority proof after $name', ({ tamper }) => {
+    const { database, repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'tampered-authority-batch');
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    tamper(database, storeA, terminal.job.jobId);
+
+    expect(() => repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      terminal.job.request.requestId,
+    )).toThrow(/authority proof.*不一致/);
+  });
+
+  it.each([
+    {
+      name: 'batch created_at',
+      tamper: (database: Database.Database, storeId: StoreId, jobId: string) => {
+        database.prepare(`
+          UPDATE lingxing_report_batches SET created_at = '1'
+          WHERE store_id = ? AND id = ?
+        `).run(storeId, jobId);
+      },
+    },
+    {
+      name: 'Lingxing file updated_at',
+      tamper: (database: Database.Database, storeId: StoreId, jobId: string) => {
+        database.prepare(`
+          UPDATE lingxing_report_files SET updated_at = '1'
+          WHERE store_id = ? AND batch_id = ? AND report_type = 'keyword'
+        `).run(storeId, jobId);
+      },
+    },
+  ])('rejects non-canonical UTC authority-proof $name', ({ tamper }) => {
+    const { database, repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'timestamp-authority-batch');
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    tamper(database, storeA, terminal.job.jobId);
+
+    expect(() => repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      terminal.job.request.requestId,
+    )).toThrow(/非规范 ISO-8601 UTC/);
+  });
+
   it('persists a full-job lineage and rejects unbound or cross-window continuations', () => {
     const { repository, storeA, storeB } = createHarness();
     const expectedReportTypes = [

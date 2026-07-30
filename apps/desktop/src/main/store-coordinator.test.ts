@@ -176,6 +176,7 @@ class MemoryGenerationStorage implements StoreSessionGenerationStorage {
 
 class MemorySessions {
   private readonly generations = new Map<StoreId, number>();
+  readonly advanceManyCalls: StoreId[][] = [];
   failNextAdvance = false;
 
   current(storeId: StoreId): number {
@@ -193,6 +194,7 @@ class MemorySessions {
   }
 
   advanceMany(storeIds: readonly StoreId[]): ReadonlyMap<StoreId, number> {
+    this.advanceManyCalls.push([...storeIds]);
     return new Map(storeIds.map((storeId) => [storeId, this.advance(storeId)]));
   }
 
@@ -460,5 +462,120 @@ describe('StoreCoordinator', () => {
     expect(storage.transactionWrites.at(-1)).toEqual([first.storeId, second.storeId]);
     expect(sessions.current(first.storeId)).toBe(2);
     expect(sessions.current(second.storeId)).toBe(1);
+  });
+
+  it('performs null, cross-store, same-store and restore collection transitions with atomic generations', () => {
+    const { coordinator, sessions } = createHarness();
+    const first = coordinator.createStore({ displayName: 'One' });
+    const second = coordinator.createStore({ displayName: 'Two' });
+    const target = (record: StoreRecord) => ({
+      storeId: record.storeId,
+      browserProfileId: record.browserProfileId,
+      marketplace: 'US' as const,
+      currency: 'USD' as const,
+      businessTimezone: 'America/Los_Angeles' as const,
+    });
+    const transition = (
+      previous: ReturnType<typeof coordinator.getCollectionAuthority>,
+      record: StoreRecord | null,
+    ) => coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous,
+      target: record ? target(record) : null,
+    });
+
+    const nullToFirst = transition({ activeStoreId: null, context: null }, first);
+    expect(nullToFirst).toMatchObject({
+      previous: { activeStoreId: null, context: null },
+      current: { activeStoreId: first.storeId, context: { sessionGeneration: 1 } },
+      targetGenerationBefore: 0,
+      targetGenerationAfter: 1,
+    });
+
+    const sameFirst = transition(nullToFirst.current, first);
+    expect(sameFirst).toMatchObject({
+      previous: { context: { sessionGeneration: 1 } },
+      current: { activeStoreId: first.storeId, context: { sessionGeneration: 2 } },
+      targetGenerationBefore: 1,
+      targetGenerationAfter: 2,
+    });
+    expect(sessions.advanceManyCalls.at(-1)).toEqual([first.storeId]);
+
+    const firstToSecond = transition(sameFirst.current, second);
+    expect(firstToSecond).toMatchObject({
+      previous: { activeStoreId: first.storeId, context: { sessionGeneration: 2 } },
+      current: { activeStoreId: second.storeId, context: { sessionGeneration: 1 } },
+      targetGenerationBefore: 0,
+      targetGenerationAfter: 1,
+    });
+    expect(sessions.advanceManyCalls.at(-1)).toEqual([first.storeId, second.storeId]);
+
+    const restoreFirst = transition(firstToSecond.current, first);
+    expect(restoreFirst).toMatchObject({
+      previous: { activeStoreId: second.storeId, context: { sessionGeneration: 1 } },
+      current: { activeStoreId: first.storeId, context: { sessionGeneration: 4 } },
+      targetGenerationBefore: 3,
+      targetGenerationAfter: 4,
+    });
+    expect(sessions.advanceManyCalls.at(-1)).toEqual([second.storeId, first.storeId]);
+
+    const restoreNull = transition(restoreFirst.current, null);
+    expect(restoreNull).toMatchObject({
+      previous: { activeStoreId: first.storeId, context: { sessionGeneration: 4 } },
+      current: { activeStoreId: null, context: null },
+      targetGenerationBefore: null,
+      targetGenerationAfter: null,
+    });
+    expect(sessions.current(first.storeId)).toBe(5);
+  });
+
+  it('rejects forged capabilities, stale authority, UTC targets and duplicate active profiles', () => {
+    const { coordinator, repository } = createHarness();
+    const first = coordinator.createStore({ displayName: 'One' });
+    const second = coordinator.createStore({ displayName: 'Two' });
+    const firstTarget = {
+      storeId: first.storeId,
+      browserProfileId: first.browserProfileId,
+      marketplace: 'US' as const,
+      currency: 'USD' as const,
+      businessTimezone: 'America/Los_Angeles' as const,
+    };
+
+    expect(() => coordinator.transitionForCollection({
+      capability: Object.freeze({}) as never,
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous: { activeStoreId: null, context: null },
+      target: firstTarget,
+    })).toThrow(/live Main capability/);
+
+    const selected = coordinator.switchStore(first.storeId).context;
+    coordinator.reconnectStore(first.storeId);
+    expect(() => coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous: { activeStoreId: first.storeId, context: selected },
+      target: firstTarget,
+    })).toThrow(/stale/);
+
+    expect(() => coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous: coordinator.getCollectionAuthority(),
+      target: { ...firstTarget, businessTimezone: 'UTC' as never },
+    })).toThrow(/US\/USD\/LA/);
+
+    repository.rows.set(second.storeId, { ...second, browserProfileId: first.browserProfileId });
+    expect(() => coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous: coordinator.getCollectionAuthority(),
+      target: firstTarget,
+    })).toThrow(/more than one active store/);
   });
 });

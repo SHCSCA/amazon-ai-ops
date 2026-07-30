@@ -71,6 +71,34 @@ export interface StoreSessionGenerationStorage {
   write(storeId: StoreId, sessionGeneration: number): void;
 }
 
+declare const collectionTransitionCapabilityBrand: unique symbol;
+export type StoreCoordinatorCollectionTransitionCapability = Readonly<object> & {
+  readonly [collectionTransitionCapabilityBrand]: 'StoreCoordinatorCollectionTransitionCapability';
+};
+
+export interface StoreCoordinatorAuthorityReadback {
+  activeStoreId: StoreId | null;
+  context: StoreContextEnvelope | null;
+}
+
+export interface StoreCoordinatorCollectionTransitionTarget {
+  storeId: StoreId;
+  browserProfileId: BrowserProfileId;
+  marketplace: 'US';
+  currency: 'USD';
+  businessTimezone: typeof DEFAULT_US_BUSINESS_TIMEZONE;
+}
+
+export interface StoreCoordinatorCollectionTransitionReceipt {
+  capability: StoreCoordinatorCollectionTransitionCapability;
+  reason: 'collection_automation';
+  mode: 'collection_only';
+  previous: StoreCoordinatorAuthorityReadback;
+  current: StoreCoordinatorAuthorityReadback;
+  targetGenerationBefore: number | null;
+  targetGenerationAfter: number | null;
+}
+
 /**
  * Durable generation watermark used by Main. Every mutation is committed
  * before the coordinator publishes a new context, and multi-store switches
@@ -150,7 +178,10 @@ export class StoreCoordinatorError extends Error {
       | 'INVALID_STORE_STATUS'
       | 'INVALID_STORE_LIST_FILTER'
       | 'STALE_STORE_CONTEXT'
-      | 'STORE_CONTEXT_MISMATCH',
+      | 'STORE_CONTEXT_MISMATCH'
+      | 'INVALID_COLLECTION_CAPABILITY'
+      | 'INVALID_COLLECTION_TARGET'
+      | 'DUPLICATE_BROWSER_PROFILE',
     message: string,
   ) {
     super(message);
@@ -170,6 +201,7 @@ export class StoreCoordinator {
   private readonly createStoreId: () => StoreId;
   private readonly createBrowserProfileId: (storeId: StoreId) => BrowserProfileId;
   private readonly createStoreCapabilityId: () => StoreCapabilityId;
+  private readonly collectionTransitionCapabilities = new WeakSet<object>();
   private activeStoreId: StoreId | null = null;
 
   constructor(options: StoreCoordinatorOptions) {
@@ -372,6 +404,95 @@ export class StoreCoordinator {
     return this.buildWorkspaceView(store, this.sessions.current(store.storeId));
   }
 
+  /**
+   * Main-only collection transition capability. This method is intentionally
+   * absent from the Renderer IPC surface. Capabilities are object-identity
+   * bound, one-shot, and cannot be reconstructed from serialized input.
+   */
+  issueCollectionTransitionCapability(): StoreCoordinatorCollectionTransitionCapability {
+    const capability = Object.freeze({}) as StoreCoordinatorCollectionTransitionCapability;
+    this.collectionTransitionCapabilities.add(capability);
+    return capability;
+  }
+
+  /** Read the exact Main authority without exposing workspace or connection data. */
+  getCollectionAuthority(): StoreCoordinatorAuthorityReadback {
+    const context = this.getActiveStoreContext();
+    return {
+      activeStoreId: context?.storeId ?? null,
+      context: context ? normalizeStoreContextEnvelope(context) : null,
+    };
+  }
+
+  /**
+   * Collection-only Store/Profile authority transition. It advances the
+   * durable generation of both the previous and target stores in one
+   * `advanceMany` call; same-target transitions are deduplicated but still
+   * advance once. The in-memory active authority changes only after that
+   * atomic generation operation succeeds.
+   */
+  transitionForCollection(input: {
+    capability: StoreCoordinatorCollectionTransitionCapability;
+    reason: 'collection_automation';
+    mode: 'collection_only';
+    previous: StoreCoordinatorAuthorityReadback;
+    target: StoreCoordinatorCollectionTransitionTarget | null;
+  }): StoreCoordinatorCollectionTransitionReceipt {
+    if (!input
+      || input.reason !== 'collection_automation'
+      || input.mode !== 'collection_only'
+      || !input.capability
+      || typeof input.capability !== 'object'
+      || !this.collectionTransitionCapabilities.has(input.capability)) {
+      throw new StoreCoordinatorError(
+        'INVALID_COLLECTION_CAPABILITY',
+        'collection-only transition requires a live Main capability',
+      );
+    }
+    // Consume before validation so a failed or adversarial call cannot replay
+    // the same authority token against a changed active context.
+    this.collectionTransitionCapabilities.delete(input.capability);
+
+    const previous = this.normalizeCollectionAuthority(input.previous);
+    const actualPrevious = this.getCollectionAuthority();
+    if (!sameCollectionAuthority(previous, actualPrevious)) {
+      throw new StoreCoordinatorError(
+        'STALE_STORE_CONTEXT',
+        'collection-only previous authority is stale or does not match Main',
+      );
+    }
+    const targetStore = input.target === null
+      ? null
+      : this.requireCollectionTarget(input.target);
+    const targetGenerationBefore = targetStore
+      ? this.sessions.current(targetStore.storeId)
+      : null;
+    const storesToAdvance = [...new Set([
+      ...(actualPrevious.activeStoreId ? [actualPrevious.activeStoreId] : []),
+      ...(targetStore ? [targetStore.storeId] : []),
+    ])];
+    const advanced = this.sessions.advanceMany(storesToAdvance);
+    const targetGenerationAfter = targetStore
+      ? advanced.get(targetStore.storeId)!
+      : null;
+    this.activeStoreId = targetStore?.storeId ?? null;
+    const current = targetStore
+      ? {
+          activeStoreId: targetStore.storeId,
+          context: this.buildContext(targetStore, targetGenerationAfter!),
+        }
+      : { activeStoreId: null, context: null };
+    return {
+      capability: input.capability,
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous: actualPrevious,
+      current,
+      targetGenerationBefore,
+      targetGenerationAfter,
+    };
+  }
+
   /** Validate a captured store context without rebinding it to the current UI. */
   assertStoreContext(value: unknown): StoreContextEnvelope {
     const context = normalizeStoreContextEnvelope(value);
@@ -447,6 +568,83 @@ export class StoreCoordinator {
     }
     return store;
   }
+
+  private normalizeCollectionAuthority(value: unknown): StoreCoordinatorAuthorityReadback {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new StoreCoordinatorError('STORE_CONTEXT_MISMATCH', 'collection authority must be an object');
+    }
+    const candidate = value as Partial<StoreCoordinatorAuthorityReadback>;
+    if (candidate.activeStoreId === null) {
+      if (candidate.context !== null) {
+        throw new StoreCoordinatorError(
+          'STORE_CONTEXT_MISMATCH',
+          'null collection authority cannot carry a StoreContext',
+        );
+      }
+      return { activeStoreId: null, context: null };
+    }
+    const activeStoreId = normalizeStoreId(candidate.activeStoreId);
+    const context = normalizeStoreContextEnvelope(candidate.context);
+    const store = this.requireCollectionStore(activeStoreId);
+    if (context.storeId !== store.storeId
+      || context.browserProfileId !== store.browserProfileId
+      || context.marketplace !== 'US'
+      || context.currency !== 'USD'
+      || context.businessTimezone !== DEFAULT_US_BUSINESS_TIMEZONE) {
+      throw new StoreCoordinatorError(
+        'STORE_CONTEXT_MISMATCH',
+        'collection authority does not match the authoritative US/USD/LA Store/Profile',
+      );
+    }
+    return { activeStoreId, context };
+  }
+
+  private requireCollectionTarget(
+    targetInput: StoreCoordinatorCollectionTransitionTarget,
+  ): StoreRecord {
+    if (!targetInput || typeof targetInput !== 'object') {
+      throw new StoreCoordinatorError('INVALID_COLLECTION_TARGET', 'collection target is required');
+    }
+    const storeId = normalizeStoreId(targetInput.storeId);
+    const browserProfileId = normalizeBrowserProfileId(targetInput.browserProfileId);
+    const store = this.requireCollectionStore(storeId);
+    if (targetInput.marketplace !== 'US'
+      || targetInput.currency !== 'USD'
+      || targetInput.businessTimezone !== DEFAULT_US_BUSINESS_TIMEZONE
+      || browserProfileId !== store.browserProfileId) {
+      throw new StoreCoordinatorError(
+        'INVALID_COLLECTION_TARGET',
+        'collection target must exactly match its US/USD/LA Store/Profile authority',
+      );
+    }
+    return store;
+  }
+
+  private requireCollectionStore(storeId: StoreId): StoreRecord {
+    const store = this.requireActiveStore(storeId);
+    if (store.marketplace !== 'US'
+      || store.currency !== 'USD'
+      || store.businessTimezone !== DEFAULT_US_BUSINESS_TIMEZONE
+      || normalizeBrowserProfileId(store.browserProfileId) !== store.browserProfileId) {
+      throw new StoreCoordinatorError(
+        'INVALID_COLLECTION_TARGET',
+        'collection-only authority supports exact US/USD/America/Los_Angeles stores only',
+      );
+    }
+    const duplicateProfile = this.repository.listStores({ statuses: ['active'] })
+      .some((candidate) => (
+        candidate.status === 'active'
+        && candidate.storeId !== store.storeId
+        && candidate.browserProfileId === store.browserProfileId
+      ));
+    if (duplicateProfile) {
+      throw new StoreCoordinatorError(
+        'DUPLICATE_BROWSER_PROFILE',
+        `browser profile ${store.browserProfileId} is bound to more than one active store`,
+      );
+    }
+    return store;
+  }
 }
 
 function normalizeDisplayName(value: unknown): string {
@@ -473,4 +671,21 @@ function businessDateFor(now: Date, timeZone: string): BusinessDate {
   const valueFor = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value;
   return `${valueFor('year')}-${valueFor('month')}-${valueFor('day')}` as BusinessDate;
+}
+
+function sameCollectionAuthority(
+  left: StoreCoordinatorAuthorityReadback,
+  right: StoreCoordinatorAuthorityReadback,
+): boolean {
+  if (left.activeStoreId !== right.activeStoreId) return false;
+  if (left.context === null || right.context === null) return left.context === right.context;
+  const leftContext = normalizeStoreContextEnvelope(left.context);
+  const rightContext = normalizeStoreContextEnvelope(right.context);
+  return leftContext.storeId === rightContext.storeId
+    && leftContext.browserProfileId === rightContext.browserProfileId
+    && leftContext.marketplace === rightContext.marketplace
+    && leftContext.currency === rightContext.currency
+    && leftContext.businessTimezone === rightContext.businessTimezone
+    && leftContext.businessDate === rightContext.businessDate
+    && leftContext.sessionGeneration === rightContext.sessionGeneration;
 }

@@ -12,6 +12,7 @@ import {
   isStoreCollectionTransitionPhaseAllowed,
   storeCollectionTransitionPhaseFieldsValid,
   storeCollectionOrchestratorTransitionIntegrityDigest,
+  storeCollectionSchedulerRecoveryAdmissionScopeDigest,
   type StoreCollectionAutomationCapability,
   type StoreCollectionAutomationAuthority,
   type StoreCollectionAuthorityReadback,
@@ -23,6 +24,7 @@ import {
   type StoreCollectionOrchestratorTransitionPhase,
   type StoreCollectionOrchestratorTransitionPurpose,
   type StoreCollectionPolicySuppressionGuard,
+  type StoreCollectionSchedulerRecoveryAdmission,
   type StoreCollectionTransitionCapability,
 } from './store-collection-orchestrator';
 
@@ -39,6 +41,10 @@ function policyGuard(label: string): StoreCollectionPolicySuppressionGuard {
 
 function transitionCapability(label: string): StoreCollectionTransitionCapability {
   return Object.freeze({ label }) as unknown as StoreCollectionTransitionCapability;
+}
+
+function recoveryAdmission(label: string): StoreCollectionSchedulerRecoveryAdmission {
+  return Object.freeze({ label }) as unknown as StoreCollectionSchedulerRecoveryAdmission;
 }
 
 class MemoryHistory implements StoreCollectionOrchestratorHistoryPort {
@@ -119,8 +125,10 @@ function authority(value: StoreContextEnvelope | null): StoreCollectionAuthority
 type HarnessOptions = {
   stores?: StoreRecord[];
   initialContext?: StoreContextEnvelope | null;
+  businessDate?: string;
   inspection?: (value: StoreRecord) => { state: 'due' | 'not_due'; expectedFingerprint?: string };
   acquire?: StoreCollectionOrchestratorDependencies['acquireAutomationLease'];
+  registerRecovery?: StoreCollectionOrchestratorDependencies['registerSchedulerRecoveryAdmission'];
   deriveTransition?: StoreCollectionOrchestratorDependencies['deriveTransitionCapability'];
   acquirePolicy?: StoreCollectionOrchestratorDependencies['acquirePolicyDispatchSuppression'];
   readPolicy?: StoreCollectionOrchestratorDependencies['readPolicyDispatchSuppression'];
@@ -170,7 +178,24 @@ function harness(options: HarnessOptions = {}) {
     return acquired;
   });
   let transitionCapabilitySequence = 0;
+  let recoveryAdmissionSequence = 0;
   const transitionCapabilities: StoreCollectionTransitionCapability[] = [];
+  const registerSchedulerRecoveryAdmission = vi.fn(options.registerRecovery ?? (async (input) => ({
+    owner: input.owner,
+    capability: input.capability,
+    recoveryAdmission: recoveryAdmission(`recovery-admission-${++recoveryAdmissionSequence}`),
+    executionScope: input.executionScope,
+    context: input.context,
+    attemptId: input.attemptId,
+    requestId: input.requestId,
+    scopeDigest: storeCollectionSchedulerRecoveryAdmissionScopeDigest({
+      executionScope: input.executionScope,
+      context: input.context,
+      attemptId: input.attemptId,
+      requestId: input.requestId,
+    }),
+    registered: true as const,
+  })));
   const deriveTransitionCapability = vi.fn(options.deriveTransition ?? (async (input) => {
     const derived = transitionCapability(`transition-${++transitionCapabilitySequence}`);
     transitionCapabilities.push(derived);
@@ -180,6 +205,12 @@ function harness(options: HarnessOptions = {}) {
       transitionCapability: derived,
       transitionScope: input.scope,
       derived: true as const,
+      ...(input.recoveryAdmission ? {
+        recoveryAdmission: input.recoveryAdmission,
+        recoveryScopeDigest: input.recoveryScopeDigest,
+        schedulerAttemptId: input.schedulerAttemptId,
+        schedulerRequestId: input.schedulerRequestId,
+      } : {}),
     };
   }));
   let latestPolicyGuard: StoreCollectionPolicySuppressionGuard | undefined;
@@ -220,7 +251,12 @@ function harness(options: HarnessOptions = {}) {
     }
     const before = generations.get(input.target.storeId) ?? 0;
     const next = before + 1;
-    current = context(input.target.storeId, input.target.browserProfileId, next);
+    current = context(
+      input.target.storeId,
+      input.target.browserProfileId,
+      next,
+      options.businessDate,
+    );
     generations.set(input.target.storeId, next);
     return {
       owner: input.owner,
@@ -327,6 +363,7 @@ function harness(options: HarnessOptions = {}) {
     inspectStoreSchedule,
     getActiveStoreId,
     acquireAutomationLease,
+    registerSchedulerRecoveryAdmission,
     deriveTransitionCapability,
     acquirePolicyDispatchSuppression,
     readPolicyDispatchSuppression,
@@ -355,6 +392,7 @@ function harness(options: HarnessOptions = {}) {
     inspectStoreSchedule,
     getActiveStoreId,
     acquireAutomationLease,
+    registerSchedulerRecoveryAdmission,
     deriveTransitionCapability,
     acquirePolicyDispatchSuppression,
     readPolicyDispatchSuppression,
@@ -830,6 +868,161 @@ describe('StoreCollectionOrchestrator', () => {
     });
   });
 
+  it('registers one exact protected-history admission after scheduler acceptance and binds recovery derivation to it', async () => {
+    const test = harness({ stores: [store('store-a', 'profile-a')] });
+
+    await expect(test.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ state: 'succeeded' })],
+    });
+
+    expect(test.registerSchedulerRecoveryAdmission).toHaveBeenCalledOnce();
+    const registrationInput = test.registerSchedulerRecoveryAdmission.mock.calls[0][0];
+    const registration = await test.registerSchedulerRecoveryAdmission.mock.results[0].value;
+    expect(registrationInput.executionScope).toMatchObject({
+      capabilityDomain: 'transition_execution',
+      purpose: 'collection',
+    });
+    expect(registrationInput).toMatchObject({
+      attemptId: expect.stringMatching(/^sca:[a-f0-9]{64}$/),
+      requestId: expect.stringMatching(/^scr:[a-f0-9]{64}$/),
+    });
+    const recoveryDerivation = test.deriveTransitionCapability.mock.calls.find(
+      ([input]) => input.scope.capabilityDomain === 'recovery_existing_request_only',
+    )![0];
+    expect(recoveryDerivation).toMatchObject({
+      recoveryAdmission: registration.recoveryAdmission,
+      recoveryScopeDigest: registration.scopeDigest,
+      schedulerAttemptId: registration.attemptId,
+      schedulerRequestId: registration.requestId,
+    });
+    expect(recoveryDerivation.scope).toMatchObject({
+      capabilityDomain: 'recovery_existing_request_only',
+      capabilityId: `${registration.executionScope.capabilityId}:recovery`,
+      cycleId: registration.executionScope.cycleId,
+      transitionId: registration.executionScope.transitionId,
+    });
+  });
+
+  it.each([
+    {
+      name: 'missing registration',
+      patch: { registered: false as const },
+    },
+    {
+      name: 'wrong digest',
+      patch: { scopeDigest: 'f'.repeat(64) },
+    },
+    {
+      name: 'other request',
+      patch: { requestId: `scr:${'f'.repeat(64)}` },
+    },
+    {
+      name: 'other attempt',
+      patch: { attemptId: `sca:${'f'.repeat(64)}` },
+    },
+  ])('rejects protected-history admission receipt with $name before recovery capability issue', async ({ patch }) => {
+    const test = harness({
+      stores: [store('store-a', 'profile-a')],
+      registerRecovery: async (input) => ({
+        owner: input.owner,
+        capability: input.capability,
+        recoveryAdmission: recoveryAdmission('malformed-registration'),
+        executionScope: input.executionScope,
+        context: input.context,
+        attemptId: input.attemptId,
+        requestId: input.requestId,
+        scopeDigest: storeCollectionSchedulerRecoveryAdmissionScopeDigest({
+          executionScope: input.executionScope,
+          context: input.context,
+          attemptId: input.attemptId,
+          requestId: input.requestId,
+        }),
+        registered: true,
+        ...patch,
+      } as never),
+    });
+
+    await expect(test.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+    expect(test.registerSchedulerRecoveryAdmission).toHaveBeenCalledOnce();
+    expect(test.recover).not.toHaveBeenCalled();
+    expect(readHistory(test).transitions.find((item: any) => item.purpose === 'collection'))
+      .toMatchObject({ phase: 'scheduler_accepted' });
+  });
+
+  it('rejects a recovery admission aliased to another active capability domain', async () => {
+    const test = harness({
+      stores: [store('store-a', 'profile-a')],
+      registerRecovery: async (input) => ({
+        owner: input.owner,
+        capability: input.capability,
+        recoveryAdmission: input.capability as unknown as StoreCollectionSchedulerRecoveryAdmission,
+        executionScope: input.executionScope,
+        context: input.context,
+        attemptId: input.attemptId,
+        requestId: input.requestId,
+        scopeDigest: storeCollectionSchedulerRecoveryAdmissionScopeDigest({
+          executionScope: input.executionScope,
+          context: input.context,
+          attemptId: input.attemptId,
+          requestId: input.requestId,
+        }),
+        registered: true,
+      }),
+    });
+
+    await expect(test.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+    expect(test.recover).not.toHaveBeenCalled();
+  });
+
+  it('re-registers a fresh one-shot admission from verified pending history after restart', async () => {
+    const first = harness({
+      stores: [store('store-a', 'profile-a')],
+      recover: async (input) => ({
+        state: 'waiting',
+        authority: authority(input.context),
+        owner: input.owner,
+        capability: input.capability,
+        transitionCapability: input.transitionCapability,
+        transitionScope: input.transitionScope,
+        cycleId: input.cycleId,
+        transitionId: input.transitionId,
+        fingerprint: input.expectedFingerprint,
+        attemptId: input.attemptId,
+        requestId: input.requestId,
+      }),
+    });
+    await expect(first.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+    const firstRegistration = await first.registerSchedulerRecoveryAdmission.mock.results[0].value;
+
+    const restarted = harness({
+      stores: [store('store-a', 'profile-a')],
+      history: first.history,
+      codec: first.codec,
+      inspection: () => ({ state: 'not_due' }),
+    });
+    await expect(restarted.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ state: 'succeeded' })],
+    });
+    const restartedRegistration =
+      await restarted.registerSchedulerRecoveryAdmission.mock.results[0].value;
+
+    expect(first.registerSchedulerRecoveryAdmission).toHaveBeenCalledOnce();
+    expect(restarted.registerSchedulerRecoveryAdmission).toHaveBeenCalledOnce();
+    expect(restartedRegistration.recoveryAdmission).not.toBe(firstRegistration.recoveryAdmission);
+    expect(restartedRegistration).toMatchObject({
+      attemptId: firstRegistration.attemptId,
+      requestId: firstRegistration.requestId,
+      scopeDigest: firstRegistration.scopeDigest,
+    });
+    expect(restarted.execute).not.toHaveBeenCalled();
+  });
+
   it('rejects an execute receipt forged with a recovery-only capability and never calls recover', async () => {
     const forgedRecoveryCapability = transitionCapability('forged-recovery-for-execute');
     const test = harness({
@@ -1110,8 +1303,10 @@ describe('StoreCollectionOrchestrator', () => {
   it('keeps replayed ids from another transition nonterminal and sticky', async () => {
     let priorIdentity: { attemptId: string; requestId: string } | undefined;
     let calls = 0;
+    let expectedFingerprint = fingerprint('replayed-ids-first');
     const test = harness({
       stores: [store('store-a', 'profile-a')],
+      inspection: () => ({ state: 'due', expectedFingerprint }),
       recover: async (input) => {
         calls += 1;
         const currentIdentity = {
@@ -1139,6 +1334,7 @@ describe('StoreCollectionOrchestrator', () => {
     await expect(test.orchestrator.runCycle()).resolves.toMatchObject({
       outcomes: [expect.objectContaining({ state: 'succeeded' })],
     });
+    expectedFingerprint = fingerprint('replayed-ids-second');
     await expect(test.orchestrator.runCycle()).rejects.toMatchObject({ code: 'SAFETY_STATE_UNKNOWN' });
     const history = readHistory(test);
     const pending = history.transitions.find((item: any) => (
@@ -1152,19 +1348,182 @@ describe('StoreCollectionOrchestrator', () => {
     expect(test.orchestrator.isTransitionLocked()).toBe(true);
   });
 
-  it('uses current transition scope rather than retained history for scheduler identity uniqueness', async () => {
-    const test = harness({
+  it('retains an exact terminal attempt as the scheduler dedupe identity across restart', async () => {
+    const first = harness({
       stores: [store('store-a', 'profile-a')],
       historyRetentionLimit: 1,
     });
-    const first = await test.orchestrator.runCycle();
-    const second = await test.orchestrator.runCycle();
-    expect(second.outcomes[0]).toMatchObject({ state: 'succeeded' });
-    expect(second.outcomes[0].attemptId).not.toBe(first.outcomes[0].attemptId);
-    expect(second.outcomes[0].requestId).not.toBe(first.outcomes[0].requestId);
-    const history = readHistory(test);
+    await expect(first.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ state: 'succeeded' })],
+    });
+
+    const restarted = harness({
+      stores: [store('store-a', 'profile-a')],
+      history: first.history,
+      codec: first.codec,
+      historyRetentionLimit: 1,
+    });
+    await expect(restarted.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [],
+      skippedStoreIds: ['store-a'],
+      plannedDueStoreIds: [],
+      attemptedStoreIds: [],
+    });
+
+    expect(first.execute).toHaveBeenCalledOnce();
+    expect(restarted.execute).not.toHaveBeenCalled();
+    const history = readHistory(restarted);
     expect(history.outcomes).toHaveLength(1);
-    expect(history.outcomes[0].outcomeId).toBe(second.outcomes[0].outcomeId);
+  });
+
+  it('skips an exact collection attempt on a second scheduler cycle from protected history', async () => {
+    const test = harness({
+      stores: [store('store-a', 'profile-a')],
+    });
+
+    await expect(test.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ state: 'succeeded' })],
+    });
+    await expect(test.orchestrator.runCycle()).resolves.toMatchObject({
+      state: 'completed',
+      outcomes: [],
+      skippedStoreIds: ['store-a'],
+      plannedDueStoreIds: [],
+      attemptedStoreIds: [],
+    });
+
+    expect(test.execute).toHaveBeenCalledOnce();
+  });
+
+  it('does not suppress another Store/Profile with the same fingerprint', async () => {
+    const sharedFingerprint = fingerprint('shared-schedule');
+    const stores = [
+      store('store-a', 'profile-a'),
+      store('store-b', 'profile-b'),
+    ];
+    const first = harness({
+      stores,
+      inspection: (item) => item.storeId === 'store-a'
+        ? { state: 'due', expectedFingerprint: sharedFingerprint }
+        : { state: 'not_due' },
+    });
+    await expect(first.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ storeId: 'store-a', state: 'succeeded' })],
+    });
+
+    const restarted = harness({
+      stores,
+      history: first.history,
+      codec: first.codec,
+      inspection: () => ({ state: 'due', expectedFingerprint: sharedFingerprint }),
+    });
+    await expect(restarted.orchestrator.runCycle()).resolves.toMatchObject({
+      skippedStoreIds: ['store-a'],
+      plannedDueStoreIds: ['store-b'],
+      attemptedStoreIds: ['store-b'],
+      outcomes: [expect.objectContaining({ storeId: 'store-b', state: 'succeeded' })],
+    });
+
+    expect(restarted.execute).toHaveBeenCalledOnce();
+  });
+
+  it('skips an exact failed terminal attempt after restart', async () => {
+    const first = harness({
+      stores: [store('store-a', 'profile-a')],
+      recover: async (input) => ({
+        state: 'failed',
+        authority: authority(input.context),
+        owner: input.owner,
+        capability: input.capability,
+        transitionCapability: input.transitionCapability,
+        transitionScope: input.transitionScope,
+        cycleId: input.cycleId,
+        transitionId: input.transitionId,
+        fingerprint: input.expectedFingerprint,
+        accepted: true,
+        duplicate: false,
+        attemptId: input.attemptId,
+        requestId: input.requestId,
+      }),
+    });
+    await expect(first.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ state: 'failed' })],
+    });
+
+    const restarted = harness({
+      stores: [store('store-a', 'profile-a')],
+      history: first.history,
+      codec: first.codec,
+    });
+    await expect(restarted.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [],
+      skippedStoreIds: ['store-a'],
+      plannedDueStoreIds: [],
+      attemptedStoreIds: [],
+    });
+
+    expect(restarted.execute).not.toHaveBeenCalled();
+  });
+
+  it('recovers an exact pending attempt without planning or executing it again', async () => {
+    const first = harness({
+      stores: [store('store-a', 'profile-a')],
+      recover: async (input) => ({
+        state: 'waiting',
+        authority: authority(input.context),
+        owner: input.owner,
+        capability: input.capability,
+        transitionCapability: input.transitionCapability,
+        transitionScope: input.transitionScope,
+        cycleId: input.cycleId,
+        transitionId: input.transitionId,
+        fingerprint: input.expectedFingerprint,
+        attemptId: input.attemptId,
+        requestId: input.requestId,
+      }),
+    });
+    await expect(first.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+
+    const restarted = harness({
+      stores: [store('store-a', 'profile-a')],
+      history: first.history,
+      codec: first.codec,
+    });
+    await expect(restarted.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ storeId: 'store-a', state: 'succeeded' })],
+      skippedStoreIds: ['store-a'],
+      plannedDueStoreIds: [],
+      attemptedStoreIds: [],
+    });
+
+    expect(restarted.recover).toHaveBeenCalledOnce();
+    expect(restarted.execute).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when protected history has ambiguous exact collection attempts', async () => {
+    const seed = harness({
+      stores: [store('store-a', 'profile-a')],
+    });
+    await expect(seed.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ state: 'succeeded' })],
+    });
+    const corrupted = readHistory(seed);
+    corrupted.semanticAttempts.push({ ...corrupted.semanticAttempts[0] });
+    seed.history.value = seed.codec.seal(JSON.stringify(corrupted));
+    const restarted = harness({
+      stores: [store('store-a', 'profile-a')],
+      history: seed.history,
+      codec: seed.codec,
+    });
+
+    await expect(restarted.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+    expect(restarted.acquireAutomationLease).not.toHaveBeenCalled();
+    expect(restarted.execute).not.toHaveBeenCalled();
+    expect(restarted.orchestrator.isTransitionLocked()).toBe(true);
   });
 
   it('persists a legal failed terminal when scheduler succeeds but cleanup proof fails', async () => {
@@ -1409,6 +1768,79 @@ describe('StoreCollectionOrchestrator', () => {
     expect(() => test.orchestrator.start()).toThrow(/安全状态未知/);
   });
 
+  it('derives opaque initial and terminal cleanup intents when the first close fails once', async () => {
+    const closeIntents: Array<Parameters<
+      StoreCollectionOrchestratorDependencies['closeVisibleRuntime']
+    >[0]['visibleRuntimeIntent']> = [];
+    const leaseIntents: Array<Parameters<
+      StoreCollectionOrchestratorDependencies['assertCollectionLeaseReleased']
+    >[0]['visibleRuntimeIntent']> = [];
+    let closeAttempt = 0;
+    const test = harness({
+      stores: [store('store-a', 'profile-a')],
+      close: async (input) => {
+        closeIntents.push(input.visibleRuntimeIntent);
+        closeAttempt += 1;
+        if (closeAttempt === 1) throw new Error('transient initial close');
+        return {
+          owner: input.owner,
+          capability: input.capability,
+          transitionCapability: input.transitionCapability,
+          transitionScope: input.transitionScope,
+          closed: true,
+          authority: input.expectedAuthority,
+        };
+      },
+      collectionLease: async (input) => {
+        leaseIntents.push(input.visibleRuntimeIntent);
+        return {
+          owner: input.owner,
+          capability: input.capability,
+          transitionCapability: input.transitionCapability,
+          transitionScope: input.transitionScope,
+          released: true,
+          authority: input.expectedAuthority,
+        };
+      },
+    });
+
+    await Promise.allSettled([test.orchestrator.runCycle()]);
+
+    expect(closeIntents.length).toBeGreaterThanOrEqual(4);
+    const [
+      collectionInitial,
+      collectionTerminal,
+      restoreInitial,
+      restoreTerminal,
+    ] = closeIntents;
+    expect(collectionInitial.selectedCapability).toBe(
+      collectionInitial.initialCapability,
+    );
+    expect(collectionTerminal.domainCapability).toBe(
+      collectionInitial.domainCapability,
+    );
+    expect(collectionTerminal.selectedCapability).toBe(
+      collectionInitial.terminalCleanupCapability,
+    );
+    expect(leaseIntents[0]).toBe(collectionTerminal);
+    expect(restoreInitial.domainCapability).not.toBe(
+      collectionInitial.domainCapability,
+    );
+    expect(restoreInitial.selectedCapability).toBe(
+      restoreInitial.initialCapability,
+    );
+    expect(restoreTerminal.domainCapability).toBe(
+      restoreInitial.domainCapability,
+    );
+    expect(restoreTerminal.selectedCapability).toBe(
+      restoreInitial.terminalCleanupCapability,
+    );
+    expect(leaseIntents[1]).toBe(restoreInitial);
+    expect(leaseIntents[2]).toBe(restoreTerminal);
+    expect(test.startCollectionOnlyVisibleRuntime).not.toHaveBeenCalled();
+    expect(test.verifyVisibleLingxingIdentity).not.toHaveBeenCalled();
+  });
+
   it('still closes in finally when history persistence fails after runtime touch', async () => {
     const history = new MemoryHistory();
     history.failAtSet = 3;
@@ -1501,6 +1933,7 @@ describe('StoreCollectionOrchestrator', () => {
 
   it('rejects the same automation capability object when reissued across cycles without releasing it twice', async () => {
     const shared = runtimeCapability('cross-cycle-automation');
+    let expectedFingerprint = fingerprint('automation-reissue-first');
     const sharedRelease = vi.fn(async () => ({
       owner: OWNER,
       capability: shared,
@@ -1508,6 +1941,7 @@ describe('StoreCollectionOrchestrator', () => {
     }));
     const test = harness({
       stores: [store('store-a', 'profile-a')],
+      inspection: () => ({ state: 'due', expectedFingerprint }),
       acquire: async () => ({
         owner: OWNER,
         capability: shared,
@@ -1515,6 +1949,7 @@ describe('StoreCollectionOrchestrator', () => {
       }),
     });
     await expect(test.orchestrator.runCycle()).resolves.toMatchObject({ state: 'completed' });
+    expectedFingerprint = fingerprint('automation-reissue-second');
     await expect(test.orchestrator.runCycle()).rejects.toMatchObject({ code: 'SAFETY_STATE_UNKNOWN' });
     expect(sharedRelease).toHaveBeenCalledOnce();
   });
@@ -1522,6 +1957,7 @@ describe('StoreCollectionOrchestrator', () => {
   it('keeps a reissued cross-cycle policy guard suppressed and never calls its release again', async () => {
     const sharedGuard = policyGuard('cross-cycle-policy');
     let currentCapability: StoreCollectionAutomationCapability | undefined;
+    let expectedFingerprint = fingerprint('policy-reissue-first');
     const sharedRelease = vi.fn(async () => ({
       owner: OWNER,
       capability: currentCapability!,
@@ -1530,6 +1966,7 @@ describe('StoreCollectionOrchestrator', () => {
     }));
     const test = harness({
       stores: [store('store-a', 'profile-a')],
+      inspection: () => ({ state: 'due', expectedFingerprint }),
       acquirePolicy: async (input) => {
         currentCapability = input.capability;
         return {
@@ -1540,6 +1977,7 @@ describe('StoreCollectionOrchestrator', () => {
       },
     });
     await expect(test.orchestrator.runCycle()).resolves.toMatchObject({ state: 'completed' });
+    expectedFingerprint = fingerprint('policy-reissue-second');
     await expect(test.orchestrator.runCycle()).rejects.toMatchObject({ code: 'SAFETY_STATE_UNKNOWN' });
     expect(sharedRelease).toHaveBeenCalledOnce();
     expect(test.orchestrator.isTransitionLocked()).toBe(true);
@@ -1900,6 +2338,12 @@ describe('StoreCollectionOrchestrator', () => {
         transitionCapability: replayed,
         transitionScope: input.scope,
         derived: true,
+        ...(input.recoveryAdmission ? {
+          recoveryAdmission: input.recoveryAdmission,
+          recoveryScopeDigest: input.recoveryScopeDigest,
+          schedulerAttemptId: input.schedulerAttemptId,
+          schedulerRequestId: input.schedulerRequestId,
+        } : {}),
       }),
     });
     await expect(test.orchestrator.runCycle()).rejects.toMatchObject({ code: 'SAFETY_STATE_UNKNOWN' });
@@ -1913,8 +2357,10 @@ describe('StoreCollectionOrchestrator', () => {
 
   it('rejects a retired transition capability when it is reissued in a later cycle', async () => {
     const replayed = transitionCapability('cross-cycle-transition-capability');
+    let expectedFingerprint = fingerprint('transition-reissue-first');
     const test = harness({
       stores: [store('store-a', 'profile-a')],
+      inspection: () => ({ state: 'due', expectedFingerprint }),
       deriveTransition: async (input) => ({
         owner: input.owner,
         capability: input.capability,
@@ -1924,9 +2370,16 @@ describe('StoreCollectionOrchestrator', () => {
           : transitionCapability(`fresh-${input.scope.capabilityId}`),
         transitionScope: input.scope,
         derived: true,
+        ...(input.recoveryAdmission ? {
+          recoveryAdmission: input.recoveryAdmission,
+          recoveryScopeDigest: input.recoveryScopeDigest,
+          schedulerAttemptId: input.schedulerAttemptId,
+          schedulerRequestId: input.schedulerRequestId,
+        } : {}),
       }),
     });
     await expect(test.orchestrator.runCycle()).resolves.toMatchObject({ state: 'completed' });
+    expectedFingerprint = fingerprint('transition-reissue-second');
     await expect(test.orchestrator.runCycle()).rejects.toMatchObject({ code: 'SAFETY_STATE_UNKNOWN' });
     const collectionExecutionDerivations = test.deriveTransitionCapability.mock.calls
       .map(([input]) => input.scope)
@@ -2170,14 +2623,344 @@ describe('StoreCollectionOrchestrator', () => {
     ))).toBe(true);
   });
 
-  it('retains the newest equal-timestamp collection pair at retentionLimit=1', async () => {
-    const test = harness({ historyRetentionLimit: 1 });
-    await test.orchestrator.runCycle();
-    const history = readHistory(test);
+  it('retains two Store/Profile semantic attempts outside transition compaction at retentionLimit=1', async () => {
+    const first = harness({ historyRetentionLimit: 1 });
+    await first.orchestrator.runCycle();
+    const history = readHistory(first);
     expect(history.transitions).toHaveLength(1);
     expect(history.transitions[0]).toMatchObject({ toStoreId: 'store-b', purpose: 'collection' });
     expect(history.outcomes).toHaveLength(1);
     expect(history.outcomes[0].transitionId).toBe(history.transitions[0].transitionId);
+    expect(history.semanticAttempts).toHaveLength(2);
+
+    const restarted = harness({
+      history: first.history,
+      codec: first.codec,
+      historyRetentionLimit: 1,
+    });
+    await expect(restarted.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [],
+      skippedStoreIds: ['store-a', 'store-b'],
+      plannedDueStoreIds: [],
+      attemptedStoreIds: [],
+    });
+    expect(restarted.execute).not.toHaveBeenCalled();
+
+    const changed = harness({
+      history: first.history,
+      codec: first.codec,
+      historyRetentionLimit: 1,
+      inspection: (item) => ({
+        state: 'due',
+        expectedFingerprint: item.storeId === 'store-a'
+          ? fingerprint('store-a-new')
+          : fingerprint('store-b'),
+      }),
+    });
+    await expect(changed.orchestrator.runCycle()).resolves.toMatchObject({
+      skippedStoreIds: ['store-b'],
+      plannedDueStoreIds: ['store-a'],
+      attemptedStoreIds: ['store-a'],
+      outcomes: [expect.objectContaining({ storeId: 'store-a', state: 'succeeded' })],
+    });
+    expect(changed.execute).toHaveBeenCalledOnce();
+  });
+
+  it('keeps only each Store/Profile latest business-day semantic attempts across days', async () => {
+    const history = new MemoryHistory();
+    const codec = new AuthenticatedTestCodec();
+    const stores = [
+      store('store-a', 'profile-a'),
+      store('store-b', 'profile-b'),
+    ];
+
+    for (const businessDate of ['2026-07-23', '2026-07-24', '2026-07-25']) {
+      const daily = harness({
+        stores,
+        history,
+        codec,
+        businessDate,
+        inspection: (item) => ({
+          state: 'due',
+          expectedFingerprint: fingerprint(`${item.storeId}:${businessDate}`),
+        }),
+      });
+      await expect(daily.orchestrator.runCycle()).resolves.toMatchObject({
+        attemptedStoreIds: ['store-a', 'store-b'],
+      });
+      const protectedHistory = readHistory(daily);
+      expect(protectedHistory.semanticAttempts).toHaveLength(2);
+      expect(protectedHistory.semanticAttempts.map((attempt: any) => (
+        [attempt.storeId, attempt.browserProfileId, attempt.businessDate]
+      ))).toEqual([
+        ['store-a', 'profile-a', businessDate],
+        ['store-b', 'profile-b', businessDate],
+      ]);
+    }
+  });
+
+  it('fails closed before scheduler execute when businessDate rolls behind the protected watermark', async () => {
+    const history = new MemoryHistory();
+    const codec = new AuthenticatedTestCodec();
+    for (const businessDate of ['2026-07-23', '2026-07-24']) {
+      const daily = harness({
+        stores: [store('store-a', 'profile-a')],
+        history,
+        codec,
+        businessDate,
+        inspection: () => ({
+          state: 'due',
+          expectedFingerprint: fingerprint(`store-a:${businessDate}`),
+        }),
+      });
+      await expect(daily.orchestrator.runCycle()).resolves.toMatchObject({
+        outcomes: [expect.objectContaining({ state: 'succeeded' })],
+      });
+    }
+
+    const rolledBack = harness({
+      stores: [store('store-a', 'profile-a')],
+      history,
+      codec,
+      businessDate: '2026-07-23',
+      inspection: () => ({
+        state: 'due',
+        expectedFingerprint: fingerprint('store-a:rolled-back'),
+      }),
+    });
+    await expect(rolledBack.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+    expect(rolledBack.execute).not.toHaveBeenCalled();
+    expect(rolledBack.orchestrator.isTransitionLocked()).toBe(true);
+    expect(readHistory(rolledBack).semanticAttempts).toEqual([
+      expect.objectContaining({
+        storeId: 'store-a',
+        browserProfileId: 'profile-a',
+        businessDate: '2026-07-24',
+      }),
+    ]);
+  });
+
+  it('fails closed before the 33rd same-day semantic attempt for one Store/Profile', async () => {
+    const history = new MemoryHistory();
+    const codec = new AuthenticatedTestCodec();
+    for (let index = 0; index < 32; index += 1) {
+      const allowed = harness({
+        stores: [store('store-a', 'profile-a')],
+        history,
+        codec,
+        businessDate: '2026-07-24',
+        inspection: () => ({
+          state: 'due',
+          expectedFingerprint: fingerprint(`store-a:2026-07-24:${index}`),
+        }),
+      });
+      await expect(allowed.orchestrator.runCycle()).resolves.toMatchObject({
+        outcomes: [expect.objectContaining({ state: 'succeeded' })],
+      });
+    }
+    const protectedAttemptsBeforeOverflow = readHistory(
+      harness({ history, codec }),
+    ).semanticAttempts;
+
+    const overflow = harness({
+      stores: [store('store-a', 'profile-a')],
+      history,
+      codec,
+      businessDate: '2026-07-24',
+      inspection: () => ({
+        state: 'due',
+        expectedFingerprint: fingerprint('store-a:2026-07-24:overflow'),
+      }),
+    });
+    await expect(overflow.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+    expect(overflow.execute).not.toHaveBeenCalled();
+    expect(readHistory(overflow).semanticAttempts).toEqual(
+      protectedAttemptsBeforeOverflow,
+    );
+  });
+
+  it('retains all same-day fingerprints so A to B to A cannot execute A twice', async () => {
+    const history = new MemoryHistory();
+    const codec = new AuthenticatedTestCodec();
+    for (const expectedFingerprint of [
+      fingerprint('same-day-a'),
+      fingerprint('same-day-b'),
+    ]) {
+      const attempted = harness({
+        stores: [store('store-a', 'profile-a')],
+        history,
+        codec,
+        businessDate: '2026-07-24',
+        inspection: () => ({ state: 'due', expectedFingerprint }),
+      });
+      await expect(attempted.orchestrator.runCycle()).resolves.toMatchObject({
+        outcomes: [expect.objectContaining({ state: 'succeeded' })],
+      });
+      expect(attempted.execute).toHaveBeenCalledOnce();
+    }
+
+    const repeatedA = harness({
+      stores: [store('store-a', 'profile-a')],
+      history,
+      codec,
+      businessDate: '2026-07-24',
+      inspection: () => ({
+        state: 'due',
+        expectedFingerprint: fingerprint('same-day-a'),
+      }),
+    });
+    await expect(repeatedA.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [],
+      skippedStoreIds: ['store-a'],
+      plannedDueStoreIds: [],
+      attemptedStoreIds: [],
+    });
+    expect(repeatedA.execute).not.toHaveBeenCalled();
+    expect(readHistory(repeatedA).semanticAttempts).toHaveLength(2);
+  });
+
+  it('fully validates and compacts v4 scheduler-bound history before migrating its marker watermark', async () => {
+    const history = new MemoryHistory();
+    const codec = new AuthenticatedTestCodec();
+    const legacyFingerprints = new Map<string, string>();
+    for (const businessDate of ['2026-07-23', '2026-07-24']) {
+      const expectedFingerprint = fingerprint(`legacy:${businessDate}`);
+      legacyFingerprints.set(businessDate, expectedFingerprint);
+      const daily = harness({
+        stores: [store('store-a', 'profile-a')],
+        history,
+        codec,
+        businessDate,
+        inspection: () => ({ state: 'due', expectedFingerprint }),
+      });
+      await expect(daily.orchestrator.runCycle()).resolves.toMatchObject({
+        outcomes: [expect.objectContaining({ state: 'succeeded' })],
+      });
+    }
+    const v5 = readHistory(harness({ history, codec }));
+    history.value = codec.seal(JSON.stringify({
+      schemaVersion: 4,
+      transitions: v5.transitions,
+      outcomes: v5.outcomes,
+    }));
+
+    const rolledBack = harness({
+      stores: [store('store-a', 'profile-a')],
+      history,
+      codec,
+      businessDate: '2026-07-23',
+      inspection: () => ({
+        state: 'due',
+        expectedFingerprint: legacyFingerprints.get('2026-07-23')!,
+      }),
+    });
+    await expect(rolledBack.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+    expect(rolledBack.execute).not.toHaveBeenCalled();
+    const migrated = readHistory(rolledBack);
+    expect(migrated.schemaVersion).toBe(5);
+    expect(migrated.semanticAttempts).toEqual([
+      expect.objectContaining({
+        storeId: 'store-a',
+        browserProfileId: 'profile-a',
+        businessDate: '2026-07-24',
+        expectedFingerprint: legacyFingerprints.get('2026-07-24'),
+      }),
+    ]);
+  });
+
+  it('migrates a valid v4 scheduler-bound transition into a durable same-day marker', async () => {
+    const seed = harness({
+      stores: [store('store-a', 'profile-a')],
+      businessDate: '2026-07-24',
+      inspection: () => ({
+        state: 'due',
+        expectedFingerprint: fingerprint('legacy-positive-a'),
+      }),
+    });
+    await expect(seed.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ state: 'succeeded' })],
+    });
+    const v5 = readHistory(seed);
+    seed.history.value = seed.codec.seal(JSON.stringify({
+      schemaVersion: 4,
+      transitions: v5.transitions,
+      outcomes: v5.outcomes,
+    }));
+
+    const migrated = harness({
+      stores: [store('store-a', 'profile-a')],
+      history: seed.history,
+      codec: seed.codec,
+      businessDate: '2026-07-24',
+      inspection: () => ({
+        state: 'due',
+        expectedFingerprint: fingerprint('legacy-positive-b'),
+      }),
+    });
+    await expect(migrated.orchestrator.runCycle()).resolves.toMatchObject({
+      outcomes: [expect.objectContaining({ state: 'succeeded' })],
+    });
+    const protectedHistory = readHistory(migrated);
+    expect(protectedHistory.schemaVersion).toBe(5);
+    expect(protectedHistory.semanticAttempts).toEqual([
+      expect.objectContaining({
+        businessDate: '2026-07-24',
+        expectedFingerprint: fingerprint('legacy-positive-a'),
+      }),
+      expect.objectContaining({
+        businessDate: '2026-07-24',
+        expectedFingerprint: fingerprint('legacy-positive-b'),
+      }),
+    ]);
+  });
+
+  it('rejects a corrupt older v4 transition before compacting it away', async () => {
+    const history = new MemoryHistory();
+    const codec = new AuthenticatedTestCodec();
+    for (const businessDate of ['2026-07-23', '2026-07-24']) {
+      const daily = harness({
+        stores: [store('store-a', 'profile-a')],
+        history,
+        codec,
+        businessDate,
+        inspection: () => ({
+          state: 'due',
+          expectedFingerprint: fingerprint(`legacy-corrupt:${businessDate}`),
+        }),
+      });
+      await expect(daily.orchestrator.runCycle()).resolves.toMatchObject({
+        outcomes: [expect.objectContaining({ state: 'succeeded' })],
+      });
+    }
+    const v5 = readHistory(harness({ history, codec }));
+    const older = v5.transitions.find((transition: any) => (
+      transition.purpose === 'collection'
+      && transition.businessDate === '2026-07-23'
+    ));
+    older.integrityDigest = 'f'.repeat(64);
+    history.value = codec.seal(JSON.stringify({
+      schemaVersion: 4,
+      transitions: v5.transitions,
+      outcomes: v5.outcomes,
+    }));
+    const restarted = harness({
+      stores: [store('store-a', 'profile-a')],
+      history,
+      codec,
+      inspection: () => ({ state: 'not_due' }),
+    });
+
+    await expect(restarted.orchestrator.runCycle()).rejects.toMatchObject({
+      code: 'SAFETY_STATE_UNKNOWN',
+    });
+    expect(restarted.acquireAutomationLease).not.toHaveBeenCalled();
+    expect(restarted.execute).not.toHaveBeenCalled();
   });
 
   it('rejects exact-key history additions and makes persistence safety sticky', async () => {

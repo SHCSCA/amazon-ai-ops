@@ -29,6 +29,41 @@ export interface StoreScopedLingxingReportFile extends LingxingReportFile {
   storeId: StoreId;
 }
 
+export interface LingxingCollectionAuthorityProof {
+  job: LingxingCollectionJobSnapshot;
+  jobRow: {
+    storeId: StoreId;
+    jobId: string;
+    requestId: string;
+    browserProfileId: string;
+    marketplace: string;
+    currency: string;
+    businessTimezone: string;
+    businessDate: string;
+    sessionGeneration: number;
+    dateStart: string;
+    dateEnd: string;
+    mode: string;
+    reportTypesJson: string;
+    state: string;
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+    blockerCode: string | null;
+    detail: string | null;
+  };
+  checkpointCount: number;
+  batch?: StoreScopedLingxingReportBatch;
+  lingxingFileCount: number;
+  lingxingFiles: StoreScopedLingxingReportFile[];
+  importRunCount: number;
+  importRuns: ReportImportRunRecord[];
+  importFileSnapshotCount: number;
+  importFileSnapshots: ReportImportFileSnapshotRecord[];
+  importedReportFileCount: number;
+  importedReportFiles: StoreScopedImportedReportFile[];
+}
+
 export interface LingxingCollectionSnapshotInput {
   batch: LingxingReportBatch;
   files: readonly LingxingReportFile[];
@@ -337,6 +372,215 @@ export class LingxingImportRepository {
     return rows
       .map((row) => this.getCollectionJobForStore(storeId, row.jobId))
       .filter((job): job is LingxingCollectionJobSnapshot => Boolean(job));
+  }
+
+  /**
+   * Exact scheduler readback boundary. A request id is expected to identify at
+   * most one durable job per store. LIMIT 2 is intentional: legacy or corrupt
+   * duplicate rows must fail closed instead of silently selecting the newest.
+   */
+  readUniqueCollectionAuthorityProofForStoreByRequestId(
+    storeId: StoreId,
+    requestId: string,
+  ): LingxingCollectionAuthorityProof | undefined {
+    const exactRequestId = requiredText(requestId, 'requestId');
+    const read = this.db.transaction(() => {
+      const rows = this.db.prepare(`
+        SELECT
+          store_id AS storeId,
+          job_id AS jobId,
+          request_id AS requestId,
+          browser_profile_id AS browserProfileId,
+          marketplace,
+          currency,
+          business_timezone AS businessTimezone,
+          business_date AS businessDate,
+          session_generation AS sessionGeneration,
+          date_start AS dateStart,
+          date_end AS dateEnd,
+          mode,
+          report_types_json AS reportTypesJson,
+          state,
+          snapshot_json AS snapshotJson,
+          created_at AS createdAt,
+          updated_at AS updatedAt,
+          completed_at AS completedAt,
+          blocker_code AS blockerCode,
+          detail
+        FROM lingxing_collection_jobs
+        WHERE store_id = ? AND request_id = ?
+        ORDER BY updated_at DESC, job_id DESC
+        LIMIT 2
+      `).all(storeId, exactRequestId) as Array<{
+        storeId: StoreId;
+        jobId: string;
+        requestId: string;
+        browserProfileId: string;
+        marketplace: string;
+        currency: string;
+        businessTimezone: string;
+        businessDate: string;
+        sessionGeneration: number;
+        dateStart: string;
+        dateEnd: string;
+        mode: string;
+        reportTypesJson: string;
+        state: string;
+        snapshotJson: string;
+        createdAt: string;
+        updatedAt: string;
+        completedAt: string | null;
+        blockerCode: string | null;
+        detail: string | null;
+      }>;
+      if (rows.length > 1) {
+        throw new Error('同一店铺 requestId 对应多个 durable 采集任务，拒绝歧义回读。');
+      }
+      const row = rows[0];
+      if (!row) return undefined;
+
+      const snapshot = parseRequiredJson<LingxingCollectionJobSnapshot>(
+        row.snapshotJson,
+        '采集 job 快照',
+      );
+      const checkpointCount = Number((this.db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM lingxing_collection_report_checkpoints
+        WHERE store_id = ? AND job_id = ?
+      `).get(storeId, row.jobId) as { count: number }).count);
+      const checkpointRows = this.db.prepare(`
+        SELECT *
+        FROM lingxing_collection_report_checkpoints
+        WHERE store_id = ? AND job_id = ?
+        ORDER BY report_type
+        LIMIT 10
+      `).all(storeId, row.jobId);
+      const checkpoints = checkpointRows.map(mapCollectionCheckpoint);
+      assertCollectionAuthorityJobRow(
+        storeId,
+        exactRequestId,
+        row,
+        snapshot,
+        checkpointCount,
+        checkpoints,
+      );
+      const job: LingxingCollectionJobSnapshot = { ...snapshot, reports: checkpoints };
+
+      const batchRow = this.db.prepare(`
+        SELECT *
+        FROM lingxing_report_batches
+        WHERE store_id = ? AND id = ?
+      `).get(storeId, row.jobId);
+      const batch = batchRow ? mapBatch(batchRow, storeId) : undefined;
+
+      const lingxingFileCount = Number((this.db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM lingxing_report_files
+        WHERE store_id = ? AND batch_id = ?
+      `).get(storeId, row.jobId) as { count: number }).count);
+      const lingxingFiles = this.db.prepare(`
+        SELECT *
+        FROM lingxing_report_files
+        WHERE store_id = ? AND batch_id = ?
+        ORDER BY report_type, id
+        LIMIT 10
+      `).all(storeId, row.jobId).map((fileRow) => mapLingxingFile(fileRow, storeId));
+
+      const importRunCount = Number((this.db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM report_import_runs
+        WHERE store_id = ? AND batch_id = ? AND status = 'completed'
+      `).get(storeId, row.jobId) as { count: number }).count);
+      const importRuns = this.db.prepare(`
+        SELECT *
+        FROM report_import_runs
+        WHERE store_id = ? AND batch_id = ? AND status = 'completed'
+        ORDER BY completed_at DESC, run_id DESC
+        LIMIT 2
+      `).all(storeId, row.jobId).map((runRow) => mapRun(runRow, storeId));
+      const uniqueRun = importRunCount === 1 ? importRuns[0] : undefined;
+
+      const importFileSnapshotCount = uniqueRun
+        ? Number((this.db.prepare(`
+            SELECT COUNT(*) AS count
+            FROM report_import_file_snapshots
+            WHERE store_id = ? AND run_id = ? AND batch_id = ?
+          `).get(storeId, uniqueRun.runId, row.jobId) as { count: number }).count)
+        : 0;
+      const importFileSnapshots = uniqueRun
+        ? this.db.prepare(`
+            SELECT *
+            FROM report_import_file_snapshots
+            WHERE store_id = ? AND run_id = ? AND batch_id = ?
+            ORDER BY report_type, file_path, snapshot_id
+            LIMIT 10
+          `).all(storeId, uniqueRun.runId, row.jobId)
+            .map((snapshotRow) => mapFileSnapshot(snapshotRow, storeId))
+        : [];
+
+      const importedReportFileCount = Number((this.db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM report_files
+        WHERE store_id = ? AND batch_id = ?
+      `).get(storeId, row.jobId) as { count: number }).count);
+      const importedReportFiles = this.db.prepare(`
+        SELECT *
+        FROM report_files
+        WHERE store_id = ? AND batch_id = ?
+        ORDER BY report_type, file_path, id
+        LIMIT 10
+      `).all(storeId, row.jobId).map((reportFileRow) => (
+        mapImportedReportFile(reportFileRow, storeId)
+      ));
+
+      const proof: LingxingCollectionAuthorityProof = {
+        job,
+        jobRow: {
+          storeId: row.storeId,
+          jobId: row.jobId,
+          requestId: row.requestId,
+          browserProfileId: row.browserProfileId,
+          marketplace: row.marketplace,
+          currency: row.currency,
+          businessTimezone: row.businessTimezone,
+          businessDate: row.businessDate,
+          sessionGeneration: row.sessionGeneration,
+          dateStart: row.dateStart,
+          dateEnd: row.dateEnd,
+          mode: row.mode,
+          reportTypesJson: row.reportTypesJson,
+          state: row.state,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          completedAt: row.completedAt,
+          blockerCode: row.blockerCode,
+          detail: row.detail,
+        },
+        checkpointCount,
+        ...(batch ? { batch } : {}),
+        lingxingFileCount,
+        lingxingFiles,
+        importRunCount,
+        importRuns,
+        importFileSnapshotCount,
+        importFileSnapshots,
+        importedReportFileCount,
+        importedReportFiles,
+      };
+      assertCollectionAuthorityProofTimestamps(proof);
+      return proof;
+    });
+    return read.deferred();
+  }
+
+  findUniqueCollectionJobForStoreByRequestId(
+    storeId: StoreId,
+    requestId: string,
+  ): LingxingCollectionJobSnapshot | undefined {
+    return this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeId,
+      requestId,
+    )?.job;
   }
 
   /**
@@ -783,7 +1027,7 @@ export class LingxingImportRepository {
       || existing.mode !== snapshot.request.mode
       || existing.reportTypesJson !== reportTypesJson
       || (existingSnapshot?.lineage !== undefined
-        && JSON.stringify(existingSnapshot.lineage) !== JSON.stringify(snapshot.lineage))
+        && stableJson(existingSnapshot.lineage) !== stableJson(snapshot.lineage))
     )) {
       throw new Error('采集 jobId 已绑定不同的店铺权威请求，拒绝覆盖。');
     }
@@ -1590,6 +1834,99 @@ function mapCollectionCheckpoint(row: any): LingxingCollectionReportCheckpoint {
   };
 }
 
+function assertCollectionAuthorityJobRow(
+  storeId: StoreId,
+  requestId: string,
+  row: LingxingCollectionAuthorityProof['jobRow'],
+  snapshot: LingxingCollectionJobSnapshot,
+  checkpointCount: number,
+  checkpoints: readonly LingxingCollectionReportCheckpoint[],
+): void {
+  const context = normalizeStoreContextEnvelope(snapshot.request.storeContext);
+  const reportTypes = parseRequiredJson<unknown>(
+    row.reportTypesJson,
+    '采集 job SQL report_types_json',
+  );
+  const sortedSnapshotCheckpoints = [...snapshot.reports]
+    .sort((left, right) => String(left.reportType).localeCompare(String(right.reportType)));
+  const sortedRows = [...checkpoints]
+    .sort((left, right) => String(left.reportType).localeCompare(String(right.reportType)));
+  if (row.storeId !== storeId
+    || context.storeId !== storeId
+    || row.jobId !== snapshot.jobId
+    || row.requestId !== requestId
+    || row.requestId !== snapshot.request.requestId
+    || row.browserProfileId !== context.browserProfileId
+    || row.marketplace !== context.marketplace
+    || row.currency !== context.currency
+    || row.businessTimezone !== context.businessTimezone
+    || row.businessDate !== context.businessDate
+    || row.sessionGeneration !== context.sessionGeneration
+    || row.dateStart !== snapshot.request.dateStart
+    || row.dateEnd !== snapshot.request.dateEnd
+    || row.mode !== snapshot.request.mode
+    || stableJson(reportTypes) !== stableJson(snapshot.request.reportTypes)
+    || row.state !== snapshot.state
+    || row.createdAt !== snapshot.createdAt
+    || row.updatedAt !== snapshot.updatedAt
+    || row.completedAt !== (snapshot.completedAt ?? null)
+    || row.blockerCode !== (snapshot.blockerCode ?? null)
+    || row.detail !== (snapshot.detail ?? null)
+    || checkpointCount !== checkpoints.length
+    || checkpointCount !== snapshot.reports.length
+    || checkpointCount > COMPLETE_LINGXING_REPORT_TYPES.size
+    || stableJson(sortedRows) !== stableJson(sortedSnapshotCheckpoints)
+    || (snapshot.lineage?.purpose === 'production_full' && (
+      snapshot.lineage.lineageId !== row.jobId
+      || snapshot.lineage.rootJobId !== row.jobId
+      || snapshot.lineage.parentJobId !== undefined
+    ))) {
+    throw new Error('采集 authority proof 的 SQL row/snapshot/lineage/checkpoint 身份不一致。');
+  }
+}
+
+function assertCollectionAuthorityProofTimestamps(
+  proof: LingxingCollectionAuthorityProof,
+): void {
+  const required: unknown[] = [
+    proof.job.createdAt,
+    proof.job.updatedAt,
+    proof.jobRow.createdAt,
+    proof.jobRow.updatedAt,
+    ...proof.job.reports.flatMap((checkpoint) => [
+      checkpoint.updatedAt,
+      ...(checkpoint.createdReportIdentity
+        ? [checkpoint.createdReportIdentity.createdAt]
+        : []),
+    ]),
+    ...(proof.batch ? [proof.batch.createdAt] : []),
+    ...proof.lingxingFiles.flatMap((file) => [file.createdAt, file.updatedAt]),
+    ...proof.importRuns.flatMap((run) => [run.startedAt, run.completedAt, run.createdAt]),
+    ...proof.importFileSnapshots.map((snapshot) => snapshot.capturedAt),
+  ];
+  const optional: unknown[] = [
+    proof.job.completedAt,
+    proof.job.importAttemptedAt,
+    proof.job.importCompletedAt,
+    proof.jobRow.completedAt,
+    proof.batch?.completedAt,
+    ...proof.importedReportFiles.map((file) => file.lastImportedAt),
+  ];
+  if (required.some((value) => !isCanonicalUtcInstant(value))
+    || optional.some((value) => value !== undefined
+      && value !== null
+      && !isCanonicalUtcInstant(value))) {
+    throw new Error('采集 authority proof 包含非规范 ISO-8601 UTC 时间戳。');
+  }
+}
+
+function isCanonicalUtcInstant(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    && Number.isFinite(new Date(value).getTime())
+    && new Date(value).toISOString() === value;
+}
+
 function parseRequiredJson<T>(value: string, label: string): T {
   try {
     return JSON.parse(value) as T;
@@ -1813,6 +2150,23 @@ function mapFileSnapshot(row: any, storeId: StoreId): ReportImportFileSnapshotRe
     fileHash: row.file_hash,
     importedRows: row.imported_rows,
     capturedAt: row.captured_at,
+  };
+}
+
+function mapImportedReportFile(row: any, storeId: StoreId): StoreScopedImportedReportFile {
+  return {
+    id: row.id,
+    storeId,
+    batchId: row.batch_id,
+    reportType: row.report_type,
+    filePath: row.file_path,
+    fileName: row.file_name,
+    fileSizeBytes: row.file_size,
+    status: row.status,
+    importedRows: row.imported_rows,
+    fileHash: row.file_hash ?? undefined,
+    importError: row.import_error ?? undefined,
+    lastImportedAt: row.last_imported_at ?? undefined,
   };
 }
 

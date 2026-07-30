@@ -226,6 +226,7 @@ import {
 import { projectStoreEvidenceReferencePaths } from './store-evidence-reference-projection';
 import { StoreCollectionScheduler } from './store-collection-scheduler';
 import { registerStoreCollectionSchedulerIpcHandlers } from './store-collection-scheduler-ipc';
+import { StoreCollectionPolicySuppressionController } from './store-collection-policy-suppression';
 import {
   assertRuntimeAnalysisWindow,
   assertRuntimeConfigStore,
@@ -289,6 +290,7 @@ interface AppState {
   storeRuntimeConfigService: StoreRuntimeConfigService | null;
   storeEvidenceRetentionService: StoreEvidenceRetentionPreviewService | null;
   storeCollectionScheduler: StoreCollectionScheduler | null;
+  storeCollectionPolicySuppression: StoreCollectionPolicySuppressionController | null;
   ruleConfig: RuleConfig;
   isLoggedIn: boolean;
   currentStore: string;
@@ -323,6 +325,7 @@ const state: AppState = {
   storeRuntimeConfigService: null,
   storeEvidenceRetentionService: null,
   storeCollectionScheduler: null,
+  storeCollectionPolicySuppression: null,
   ruleConfig: DEFAULT_RULE_CONFIG,
   isLoggedIn: false,
   currentStore: '',
@@ -922,12 +925,14 @@ async function initApp(): Promise<void> {
     },
   });
   const executionAuthorityRepo = new ExecutionAuthorityRepository(state.db);
+  const storeCollectionPolicySuppression = new StoreCollectionPolicySuppressionController();
   const executionAuthorityService = new ExecutionAuthorityService({
     repository: executionAuthorityRepo,
     missionRepository: missionDomainRepo,
     analysisRepository: analysisAuthorityRepo,
     storeCoordinator,
     leases: browserOperationLeases,
+    policyDispatchSuppression: storeCollectionPolicySuppression,
     resolveBrowserRuntime: (context) => {
       const runtime = state.browserRuntime;
       if (!runtime || !state.isLoggedIn
@@ -979,6 +984,7 @@ async function initApp(): Promise<void> {
   state.analysisAuthorityService = analysisAuthorityService;
   state.executionAuthorityRepo = executionAuthorityRepo;
   state.executionAuthorityService = executionAuthorityService;
+  state.storeCollectionPolicySuppression = storeCollectionPolicySuppression;
   state.storeRuntimeConfigService = storeRuntimeConfigService;
   state.storeEvidenceRetentionService = storeEvidenceRetentionService;
   const executionRecovery = executionAuthorityService.recoverStartup();

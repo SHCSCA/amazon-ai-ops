@@ -7,11 +7,13 @@ import {
   type StoreRecord,
 } from '@amazon-ai-ops/shared-types';
 
-const HISTORY_SCHEMA_VERSION = 4;
+const LEGACY_HISTORY_SCHEMA_VERSION = 4;
+const HISTORY_SCHEMA_VERSION = 5;
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const DEFAULT_HISTORY_RETENTION_LIMIT = 500;
 const MAX_HISTORY_PLAINTEXT_BYTES = 1_048_576;
 const MAX_HISTORY_ENVELOPE_BYTES = 4_194_304;
+export const STORE_COLLECTION_MAX_DAILY_SEMANTIC_ATTEMPTS_PER_STORE_PROFILE = 32;
 const DIGEST = /^[a-f0-9]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9:_-]{1,160}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -25,6 +27,20 @@ export type StoreCollectionAutomationCapability = Readonly<object> & {
 declare const transitionCapabilityBrand: unique symbol;
 export type StoreCollectionTransitionCapability = Readonly<object> & {
   readonly [transitionCapabilityBrand]: 'StoreCollectionTransitionCapability';
+};
+
+declare const visibleRuntimeIntentBrand: unique symbol;
+export type StoreCollectionVisibleRuntimeIntent = Readonly<{
+  domainCapability: Readonly<object>;
+  initialCapability: Readonly<object>;
+  terminalCleanupCapability: Readonly<object>;
+  selectedCapability: Readonly<object>;
+  readonly [visibleRuntimeIntentBrand]: 'StoreCollectionVisibleRuntimeIntent';
+}>;
+
+declare const schedulerRecoveryAdmissionBrand: unique symbol;
+export type StoreCollectionSchedulerRecoveryAdmission = Readonly<object> & {
+  readonly [schedulerRecoveryAdmissionBrand]: 'StoreCollectionSchedulerRecoveryAdmission';
 };
 
 declare const policySuppressionGuardBrand: unique symbol;
@@ -72,6 +88,21 @@ export interface StoreCollectionTransitionCapabilityReceipt<
   Domain extends StoreCollectionTransitionCapabilityDomain = StoreCollectionTransitionCapabilityDomain,
 > extends StoreCollectionTransitionAutomationAuthority<Domain> {
   derived: true;
+  recoveryAdmission?: StoreCollectionSchedulerRecoveryAdmission;
+  recoveryScopeDigest?: string;
+  schedulerAttemptId?: string;
+  schedulerRequestId?: string;
+}
+
+export interface StoreCollectionSchedulerRecoveryAdmissionReceipt
+  extends StoreCollectionAutomationAuthority {
+  recoveryAdmission: StoreCollectionSchedulerRecoveryAdmission;
+  executionScope: StoreCollectionTransitionCapabilityScope<'transition_execution'>;
+  context: StoreContextEnvelope;
+  attemptId: string;
+  requestId: string;
+  scopeDigest: string;
+  registered: true;
 }
 
 export interface StoreCollectionAutomationLease extends StoreCollectionAutomationAuthority {
@@ -256,8 +287,30 @@ export interface StoreCollectionOrchestratorOutcome {
   integrityDigest: string;
 }
 
+interface StoreCollectionSemanticAttempt {
+  semanticAttemptId: string;
+  cycleId: string;
+  transitionId: string;
+  storeId: StoreId;
+  browserProfileId: BrowserProfileId;
+  expectedFingerprint: string;
+  businessDate: string;
+  sessionGeneration: number;
+  schedulerAttemptId: string;
+  schedulerRequestId: string;
+  attemptedAt: string;
+  integrityDigest: string;
+}
+
 interface StoreCollectionOrchestratorHistory {
   schemaVersion: typeof HISTORY_SCHEMA_VERSION;
+  transitions: StoreCollectionOrchestratorTransition[];
+  outcomes: StoreCollectionOrchestratorOutcome[];
+  semanticAttempts: StoreCollectionSemanticAttempt[];
+}
+
+interface LegacyStoreCollectionOrchestratorHistory {
+  schemaVersion: typeof LEGACY_HISTORY_SCHEMA_VERSION;
   transitions: StoreCollectionOrchestratorTransition[];
   outcomes: StoreCollectionOrchestratorOutcome[];
 }
@@ -290,8 +343,22 @@ export interface StoreCollectionOrchestratorDependencies {
   inspectStoreSchedule(store: StoreRecord): StoreCollectionScheduleInspection;
   getActiveStoreId(): StoreId | null;
   acquireAutomationLease(): Promise<StoreCollectionAutomationLease>;
+  registerSchedulerRecoveryAdmission(
+    input: StoreCollectionAutomationAuthority & {
+      executionScope: StoreCollectionTransitionCapabilityScope<'transition_execution'>;
+      context: StoreContextEnvelope;
+      attemptId: string;
+      requestId: string;
+    },
+  ): Promise<StoreCollectionSchedulerRecoveryAdmissionReceipt>;
   deriveTransitionCapability<Domain extends StoreCollectionTransitionCapabilityDomain>(
-    input: StoreCollectionAutomationAuthority & { scope: StoreCollectionTransitionCapabilityScope<Domain> },
+    input: StoreCollectionAutomationAuthority & {
+      scope: StoreCollectionTransitionCapabilityScope<Domain>;
+      recoveryAdmission?: StoreCollectionSchedulerRecoveryAdmission;
+      recoveryScopeDigest?: string;
+      schedulerAttemptId?: string;
+      schedulerRequestId?: string;
+    },
   ): Promise<StoreCollectionTransitionCapabilityReceipt<Domain>>;
   acquirePolicyDispatchSuppression(
     input: StoreCollectionAutomationAuthority,
@@ -312,18 +379,24 @@ export interface StoreCollectionOrchestratorDependencies {
   closeVisibleRuntime(
     input: StoreCollectionExecutionAutomationAuthority & {
       expectedAuthority: StoreCollectionAuthorityReadback;
+      visibleRuntimeIntent: StoreCollectionVisibleRuntimeIntent;
     },
   ): Promise<AuthorityBoundConfirmation & { closed: true }>;
   assertCollectionLeaseReleased(
     input: StoreCollectionExecutionAutomationAuthority & {
       expectedAuthority: StoreCollectionAuthorityReadback;
+      visibleRuntimeIntent: StoreCollectionVisibleRuntimeIntent;
     },
   ): Promise<AuthorityBoundConfirmation & { released: true }>;
   startCollectionOnlyVisibleRuntime(
-    input: AutomationPortInput,
+    input: AutomationPortInput & {
+      visibleRuntimeIntent: StoreCollectionVisibleRuntimeIntent;
+    },
   ): Promise<AuthorityBoundConfirmation & { started: true }>;
   verifyVisibleLingxingIdentity(
-    input: AutomationPortInput,
+    input: AutomationPortInput & {
+      visibleRuntimeIntent: StoreCollectionVisibleRuntimeIntent;
+    },
   ): Promise<AuthorityBoundConfirmation & { verified: true }>;
   scheduler: {
     execute(input: AutomationPortInput<'transition_execution'> & {
@@ -382,6 +455,7 @@ class SchedulerDefinitivelyFailedSignal extends Error {}
 type CapabilityIdentityDomain =
   | 'automation'
   | 'policy'
+  | 'recovery_admission'
   | 'transition_execution'
   | 'transition_recovery';
 type CapabilityIdentityLifecycle = 'active' | 'released' | 'retired';
@@ -399,6 +473,20 @@ interface PendingTransitionRecoveryPlan {
   disposition: 'interrupt' | 'scheduler_succeeded' | 'scheduler_failed' | 'scheduler_unresolved';
   transitionAuthority?: StoreCollectionRecoveryAutomationAuthority;
   error?: unknown;
+}
+
+interface ProtectedSchedulerRecoveryAdmission {
+  recoveryAdmission: StoreCollectionSchedulerRecoveryAdmission;
+  executionScope: StoreCollectionTransitionCapabilityScope<'transition_execution'>;
+  context: StoreContextEnvelope;
+  attemptId: string;
+  requestId: string;
+  scopeDigest: string;
+}
+
+interface VisibleRuntimeIntentRecord {
+  initial: StoreCollectionVisibleRuntimeIntent;
+  terminalCleanup: StoreCollectionVisibleRuntimeIntent;
 }
 
 /**
@@ -421,6 +509,7 @@ export class StoreCollectionOrchestrator {
   private safetyStateUnknown = false;
   private readonly capabilityIdentityRegistry = new WeakMap<object, CapabilityIdentityRecord>();
   private readonly issuedTransitionCapabilityIds = new Set<string>();
+  private readonly visibleRuntimeIntents = new WeakMap<object, VisibleRuntimeIntentRecord>();
 
   constructor(private readonly dependencies: StoreCollectionOrchestratorDependencies) {
     this.now = dependencies.now ?? (() => new Date());
@@ -527,8 +616,12 @@ export class StoreCollectionOrchestrator {
 
   private async executeCycle(): Promise<StoreCollectionOrchestratorCycleResult> {
     let pendingTransitions: StoreCollectionOrchestratorTransition[];
+    let attemptedCollectionKeys: ReadonlySet<string>;
     try {
-      pendingTransitions = this.readPendingTransitions();
+      const historySnapshot = this.readProtectedHistorySnapshot();
+      pendingTransitions = historySnapshot.transitions
+        .filter((transition) => !isTerminalPhase(transition.phase));
+      attemptedCollectionKeys = this.attemptedCollectionSemanticKeys(historySnapshot);
     } catch (error) {
       throw this.markSafetyUnknown(error);
     }
@@ -548,7 +641,7 @@ export class StoreCollectionOrchestrator {
     } catch (error) {
       throw this.markSafetyUnknown(error);
     }
-    const dueSnapshot = this.stableDueStoreSnapshot(activeStores);
+    const dueSnapshot = this.stableDueStoreSnapshot(activeStores, attemptedCollectionKeys);
     if (dueSnapshot.due.length === 0 && pendingTransitions.length === 0) {
       return {
         cycleId,
@@ -819,7 +912,7 @@ export class StoreCollectionOrchestrator {
     input.onTouched();
 
     try {
-      authority = await this.closeAndConfirm(transitionAuth, authority);
+      authority = await this.closeAndConfirm(transitionAuth, authority, 'initial');
       transition = this.updateTransition(transition, { phase: 'previous_closed' });
       this.throwIfStopping();
 
@@ -860,6 +953,7 @@ export class StoreCollectionOrchestrator {
         ...transitionAuth,
         context,
         expectedAuthority: cloneAuthorityReadback(authority),
+        visibleRuntimeIntent: this.visibleRuntimeIntent(transitionAuth, 'initial'),
       });
       this.validateConfirmation(started, transitionAuth, authority, 'started');
       transition = this.updateTransition(transition, { phase: 'runtime_started' });
@@ -870,6 +964,7 @@ export class StoreCollectionOrchestrator {
         ...transitionAuth,
         context,
         expectedAuthority: cloneAuthorityReadback(authority),
+        visibleRuntimeIntent: this.visibleRuntimeIntent(transitionAuth, 'initial'),
       });
       this.validateConfirmation(verified, transitionAuth, authority, 'verified');
       transition = this.updateTransition(transition, { phase: 'identity_verified' });
@@ -908,11 +1003,16 @@ export class StoreCollectionOrchestrator {
         expectedFingerprint: due.expectedFingerprint,
       });
       transition = this.updateTransition(transition, { phase: 'scheduler_accepted' });
+      const recoveryAdmission = await this.registerProtectedSchedulerRecoveryAdmission(
+        transition,
+        auth,
+      );
       const recoveryAuth = await this.deriveTransitionAuthority(
         transition,
         auth,
         input.policyGuard,
         'recovery_existing_request_only',
+        recoveryAdmission,
       );
       const projection = await this.dependencies.scheduler.recover({
         ...recoveryAuth,
@@ -1009,7 +1109,7 @@ export class StoreCollectionOrchestrator {
       }
       try {
         const expected = await this.readTransitionAuthority(transitionAuth, authority);
-        authority = await this.closeAndConfirm(transitionAuth, expected);
+        authority = await this.closeAndConfirm(transitionAuth, expected, 'terminal_cleanup');
       } catch (error) {
         criticalError = combineFailures(criticalError, this.markSafetyUnknown(error));
         failureCode = normalizeFailureCode(error, 'SAFETY_STATE_UNKNOWN');
@@ -1125,7 +1225,7 @@ export class StoreCollectionOrchestrator {
       );
       transition = this.updateTransition(transition, { phase: 'authority_touch_pending' });
       readback = await this.readTransitionAuthority(transitionAuth, readback);
-      readback = await this.closeAndConfirm(transitionAuth, readback);
+      readback = await this.closeAndConfirm(transitionAuth, readback, 'initial');
       transition = this.updateTransition(transition, { phase: 'previous_closed' });
 
       if (!authorityMatchesRestoreTarget(readback, operatorAuthority)) {
@@ -1163,7 +1263,7 @@ export class StoreCollectionOrchestrator {
       // A restore is not terminal until authority, runtime close and collection
       // lease release have all been independently re-read under this transition capability.
       readback = await this.readTransitionAuthority(transitionAuth, readback);
-      readback = await this.closeAndConfirm(transitionAuth, readback);
+      readback = await this.closeAndConfirm(transitionAuth, readback, 'terminal_cleanup');
       this.assertAuthorityExact(readback, activatedAuthority);
       if (!authorityMatchesRestoreTarget(readback, operatorAuthority)) {
         throw new StoreCollectionOrchestratorError(
@@ -1184,7 +1284,7 @@ export class StoreCollectionOrchestrator {
       if (transitionAuth) {
         try {
           readback = await this.readTransitionAuthority(transitionAuth, readback);
-          readback = await this.closeAndConfirm(transitionAuth, readback);
+          readback = await this.closeAndConfirm(transitionAuth, readback, 'terminal_cleanup');
           cleanupProven = authorityMatchesRestoreTarget(readback, operatorAuthority);
         } catch (cleanupError) {
           restoreFailure = combineFailures(restoreFailure, cleanupError);
@@ -1219,13 +1319,16 @@ export class StoreCollectionOrchestrator {
   private async closeAndConfirm(
     auth: StoreCollectionExecutionAutomationAuthority,
     expectedAuthority: StoreCollectionAuthorityReadback,
+    intent: 'initial' | 'terminal_cleanup',
   ): Promise<StoreCollectionAuthorityReadback> {
     this.assertAuthorityWithinTransitionScope(auth, expectedAuthority);
+    const visibleRuntimeIntent = this.visibleRuntimeIntent(auth, intent);
     let closeResult: Awaited<ReturnType<StoreCollectionOrchestratorDependencies['closeVisibleRuntime']>>;
     try {
       closeResult = await this.dependencies.closeVisibleRuntime({
         ...auth,
         expectedAuthority: cloneAuthorityReadback(expectedAuthority),
+        visibleRuntimeIntent,
       });
       if (!closeResult || closeResult.closed !== true) {
         throw new Error('invalid close confirmation');
@@ -1243,6 +1346,7 @@ export class StoreCollectionOrchestrator {
       const leaseResult = await this.dependencies.assertCollectionLeaseReleased({
         ...auth,
         expectedAuthority: cloneAuthorityReadback(expectedAuthority),
+        visibleRuntimeIntent,
       });
       if (!leaseResult || leaseResult.released !== true) {
         throw new Error('invalid collection lease confirmation');
@@ -1259,6 +1363,40 @@ export class StoreCollectionOrchestrator {
     const finalReadback = await this.readTransitionAuthority(auth, expectedAuthority);
     this.assertAuthorityExact(finalReadback, expectedAuthority);
     return finalReadback;
+  }
+
+  private visibleRuntimeIntent(
+    auth: StoreCollectionExecutionAutomationAuthority,
+    intent: 'initial' | 'terminal_cleanup',
+  ): StoreCollectionVisibleRuntimeIntent {
+    let record = this.visibleRuntimeIntents.get(auth.transitionCapability);
+    if (!record) {
+      if (intent !== 'initial') {
+        throw this.markSafetyUnknown(new StoreCollectionOrchestratorError(
+          'SAFETY_STATE_UNKNOWN',
+          'visible runtime terminal cleanup intent was requested before initial intent issuance.',
+        ));
+      }
+      const domainCapability = Object.freeze({});
+      const initialCapability = Object.freeze({});
+      const terminalCleanupCapability = Object.freeze({});
+      record = Object.freeze({
+        initial: Object.freeze({
+          domainCapability,
+          initialCapability,
+          terminalCleanupCapability,
+          selectedCapability: initialCapability,
+        }) as StoreCollectionVisibleRuntimeIntent,
+        terminalCleanup: Object.freeze({
+          domainCapability,
+          initialCapability,
+          terminalCleanupCapability,
+          selectedCapability: terminalCleanupCapability,
+        }) as StoreCollectionVisibleRuntimeIntent,
+      });
+      this.visibleRuntimeIntents.set(auth.transitionCapability, record);
+    }
+    return intent === 'initial' ? record.initial : record.terminalCleanup;
   }
 
   private async readAuthority(
@@ -1664,16 +1802,108 @@ export class StoreCollectionOrchestrator {
     this.capabilityIdentityRegistry.set(value, { ...record, lifecycle });
   }
 
+  private async registerProtectedSchedulerRecoveryAdmission(
+    transition: StoreCollectionOrchestratorTransition,
+    auth: StoreCollectionAutomationAuthority,
+  ): Promise<ProtectedSchedulerRecoveryAdmission> {
+    const verifiedMatches = this.readPendingTransitions().filter((candidate) => (
+      candidate.transitionId === transition.transitionId
+    ));
+    const verified = verifiedMatches[0];
+    if (verifiedMatches.length !== 1
+      || !verified
+      || verified.integrityDigest !== transition.integrityDigest
+      || !isSchedulerBoundPendingTransition(verified)) {
+      throw this.markSafetyUnknown(new StoreCollectionOrchestratorError(
+        'SAFETY_STATE_UNKNOWN',
+        'protected history 未唯一证明 scheduler-bound pending transition。',
+      ));
+    }
+    const context = contextFromTransition(verified);
+    const executionScope = freezeTransitionScope(
+      transitionScopeFromTransition(verified, 'transition_execution'),
+    );
+    const identity = deriveStoreCollectionSchedulerExecutionIdentity({
+      cycleId: verified.cycleId,
+      transitionId: verified.transitionId,
+      fingerprint: verified.expectedFingerprint!,
+      transitionScope: executionScope,
+      context,
+    });
+    if (identity.attemptId !== verified.schedulerAttemptId
+      || identity.requestId !== verified.schedulerRequestId) {
+      throw this.markSafetyUnknown(new StoreCollectionOrchestratorError(
+        'SAFETY_STATE_UNKNOWN',
+        'protected history 的 scheduler attempt/request 无法由 execution scope 复算。',
+      ));
+    }
+    const scopeDigest = storeCollectionSchedulerRecoveryAdmissionScopeDigest({
+      executionScope,
+      context,
+      attemptId: identity.attemptId,
+      requestId: identity.requestId,
+    });
+    const receipt = await this.dependencies.registerSchedulerRecoveryAdmission({
+      ...auth,
+      executionScope,
+      context,
+      attemptId: identity.attemptId,
+      requestId: identity.requestId,
+    });
+    this.assertCapabilityBound(receipt, auth);
+    if (!receipt
+      || receipt.registered !== true
+      || !runtimeCapability(receipt.recoveryAdmission)
+      || receipt.executionScope !== executionScope
+      || receipt.context !== context
+      || receipt.attemptId !== identity.attemptId
+      || receipt.requestId !== identity.requestId
+      || receipt.scopeDigest !== scopeDigest) {
+      throw this.markSafetyUnknown(new StoreCollectionOrchestratorError(
+        'SAFETY_STATE_UNKNOWN',
+        'recovery admission 回执未绑定 verified history execution scope/attempt/request。',
+      ));
+    }
+    this.registerCapabilityIdentity(receipt.recoveryAdmission, {
+      domain: 'recovery_admission',
+      lifecycle: 'active',
+      owner: auth.owner,
+      cycleId: verified.cycleId,
+      transitionId: verified.transitionId,
+    });
+    return {
+      recoveryAdmission: receipt.recoveryAdmission,
+      executionScope,
+      context,
+      attemptId: identity.attemptId,
+      requestId: identity.requestId,
+      scopeDigest,
+    };
+  }
+
   private async deriveTransitionAuthority<Domain extends StoreCollectionTransitionCapabilityDomain>(
     transition: StoreCollectionOrchestratorTransition,
     auth: StoreCollectionAutomationAuthority,
     policyGuard: StoreCollectionPolicySuppressionGuard,
     capabilityDomain: Domain,
+    recoveryAdmission?: ProtectedSchedulerRecoveryAdmission,
   ): Promise<StoreCollectionTransitionAutomationAuthority<Domain>> {
     const scope = freezeTransitionScope(transitionScopeFromTransition(transition, capabilityDomain));
     let receipt: StoreCollectionTransitionCapabilityReceipt<Domain>;
     try {
-      receipt = await this.dependencies.deriveTransitionCapability({ ...auth, scope });
+      if ((capabilityDomain === 'recovery_existing_request_only') !== Boolean(recoveryAdmission)) {
+        throw new Error('recovery transition capability requires one protected-history admission');
+      }
+      receipt = await this.dependencies.deriveTransitionCapability({
+        ...auth,
+        scope,
+        ...(recoveryAdmission ? {
+          recoveryAdmission: recoveryAdmission.recoveryAdmission,
+          recoveryScopeDigest: recoveryAdmission.scopeDigest,
+          schedulerAttemptId: recoveryAdmission.attemptId,
+          schedulerRequestId: recoveryAdmission.requestId,
+        } : {}),
+      });
       if (!receipt || receipt.derived !== true || !runtimeCapability(receipt.transitionCapability)) {
         throw new Error('invalid transition capability receipt');
       }
@@ -1681,6 +1911,24 @@ export class StoreCollectionOrchestrator {
       if (receipt.transitionScope !== scope
         || this.issuedTransitionCapabilityIds.has(scope.capabilityId)) {
         throw new Error('replayed, aliased, or scope-mismatched transition capability');
+      }
+      if (recoveryAdmission) {
+        this.assertCapabilityIdentity(
+          recoveryAdmission.recoveryAdmission,
+          'recovery_admission',
+          'active',
+        );
+        if (receipt.recoveryAdmission !== recoveryAdmission.recoveryAdmission
+          || receipt.recoveryScopeDigest !== recoveryAdmission.scopeDigest
+          || receipt.schedulerAttemptId !== recoveryAdmission.attemptId
+          || receipt.schedulerRequestId !== recoveryAdmission.requestId) {
+          throw new Error('recovery capability receipt did not consume the exact protected-history admission');
+        }
+      } else if (receipt.recoveryAdmission !== undefined
+        || receipt.recoveryScopeDigest !== undefined
+        || receipt.schedulerAttemptId !== undefined
+        || receipt.schedulerRequestId !== undefined) {
+        throw new Error('execution capability receipt carried an unauthorized recovery admission');
       }
       this.registerCapabilityIdentity(receipt.transitionCapability, {
         domain: capabilityIdentityDomain(capabilityDomain),
@@ -1691,6 +1939,13 @@ export class StoreCollectionOrchestrator {
       });
       this.assertCapabilityIdentity(policyGuard, 'policy', 'active');
       this.issuedTransitionCapabilityIds.add(scope.capabilityId);
+      if (recoveryAdmission) {
+        this.setCapabilityLifecycle(
+          recoveryAdmission.recoveryAdmission,
+          'recovery_admission',
+          'retired',
+        );
+      }
       return {
         ...auth,
         transitionCapability: receipt.transitionCapability,
@@ -1847,7 +2102,10 @@ export class StoreCollectionOrchestrator {
     return stores;
   }
 
-  private stableDueStoreSnapshot(activeStores: readonly StoreRecord[]): {
+  private stableDueStoreSnapshot(
+    activeStores: readonly StoreRecord[],
+    attemptedCollectionKeys: ReadonlySet<string>,
+  ): {
     due: Array<{ store: StoreRecord; expectedFingerprint: string }>;
     skipped: StoreRecord[];
   } {
@@ -1863,7 +2121,16 @@ export class StoreCollectionOrchestrator {
       if (inspected?.state === 'not_due') {
         skipped.push(store);
       } else if (inspected?.state === 'due' && validFingerprint(inspected.expectedFingerprint)) {
-        due.push({ store, expectedFingerprint: inspected.expectedFingerprint });
+        const expectedFingerprint = inspected.expectedFingerprint;
+        if (attemptedCollectionKeys.has(collectionAttemptSemanticKey({
+          storeId: store.storeId,
+          browserProfileId: store.browserProfileId,
+          expectedFingerprint,
+        }))) {
+          skipped.push(store);
+        } else {
+          due.push({ store, expectedFingerprint });
+        }
       } else {
         throw new StoreCollectionOrchestratorError('SCHEDULE_PRECHECK_FAILED', '采集预检缺少合法 expected fingerprint。');
       }
@@ -1924,7 +2191,52 @@ export class StoreCollectionOrchestrator {
       }
       const transitions = [...history.transitions];
       transitions[index] = next;
-      return { ...history, transitions };
+      if (next.purpose !== 'collection' || next.phase !== 'scheduler_request_bound') {
+        return { ...history, transitions };
+      }
+      const semanticAttempt = semanticAttemptFromTransition(next);
+      const semanticKey = collectionAttemptSemanticKey(semanticAttempt);
+      const latestProtectedBusinessDate = latestSemanticAttemptBusinessDate(
+        history.semanticAttempts,
+        semanticAttempt.storeId,
+        semanticAttempt.browserProfileId,
+      );
+      if (latestProtectedBusinessDate !== undefined
+        && semanticAttempt.businessDate < latestProtectedBusinessDate) {
+        throw new StoreCollectionOrchestratorError(
+          'SAFETY_STATE_UNKNOWN',
+          '采集业务日早于 protected semantic attempt watermark。',
+        );
+      }
+      const protectedAttemptsForBusinessDate = history.semanticAttempts.filter((attempt) => (
+        attempt.storeId === semanticAttempt.storeId
+        && attempt.browserProfileId === semanticAttempt.browserProfileId
+        && attempt.businessDate === semanticAttempt.businessDate
+      )).length;
+      if (protectedAttemptsForBusinessDate
+        >= STORE_COLLECTION_MAX_DAILY_SEMANTIC_ATTEMPTS_PER_STORE_PROFILE) {
+        throw new StoreCollectionOrchestratorError(
+          'SAFETY_STATE_UNKNOWN',
+          '单店铺单业务日 protected semantic attempts 已达到安全上限。',
+        );
+      }
+      if (history.semanticAttempts.some((attempt) => (
+        collectionAttemptSemanticKey(attempt) === semanticKey
+        || attempt.transitionId === semanticAttempt.transitionId
+        || attempt.semanticAttemptId === semanticAttempt.semanticAttemptId
+        || attempt.schedulerAttemptId === semanticAttempt.schedulerAttemptId
+        || attempt.schedulerRequestId === semanticAttempt.schedulerRequestId
+      ))) {
+        throw corruptHistory();
+      }
+      return {
+        ...history,
+        transitions,
+        semanticAttempts: compactSemanticAttemptsToLatestBusinessDate([
+          ...history.semanticAttempts,
+          semanticAttempt,
+        ]),
+      };
     });
     return next;
   }
@@ -1957,10 +2269,32 @@ export class StoreCollectionOrchestrator {
   }
 
   private readPendingTransitions(): StoreCollectionOrchestratorTransition[] {
-    const raw = this.dependencies.history.get();
-    if (!raw) return [];
-    return this.readHistoryFromEnvelope(raw).transitions
+    return this.readProtectedHistorySnapshot().transitions
       .filter((transition) => !isTerminalPhase(transition.phase));
+  }
+
+  private readProtectedHistorySnapshot(): StoreCollectionOrchestratorHistory {
+    const raw = this.dependencies.history.get();
+    return raw
+      ? this.readHistoryFromEnvelope(raw)
+      : {
+        schemaVersion: HISTORY_SCHEMA_VERSION,
+        transitions: [],
+        outcomes: [],
+        semanticAttempts: [],
+      };
+  }
+
+  private attemptedCollectionSemanticKeys(
+    history: StoreCollectionOrchestratorHistory,
+  ): ReadonlySet<string> {
+    const attempted = new Set<string>();
+    for (const semanticAttempt of history.semanticAttempts) {
+      const key = collectionAttemptSemanticKey(semanticAttempt);
+      if (attempted.has(key)) throw corruptHistory();
+      attempted.add(key);
+    }
+    return attempted;
   }
 
   private async recoverPendingTransitions(input: {
@@ -1978,11 +2312,16 @@ export class StoreCollectionOrchestrator {
       let transitionAuthority: StoreCollectionRecoveryAutomationAuthority | undefined;
       try {
         const context = contextFromTransition(transition);
+        const recoveryAdmission = await this.registerProtectedSchedulerRecoveryAdmission(
+          transition,
+          input.auth,
+        );
         transitionAuthority = await this.deriveTransitionAuthority(
           transition,
           input.auth,
           input.policyGuard,
           'recovery_existing_request_only',
+          recoveryAdmission,
         );
         const projection = await this.dependencies.scheduler.recover({
           ...transitionAuthority,
@@ -2199,7 +2538,12 @@ export class StoreCollectionOrchestrator {
         const raw = this.dependencies.history.get();
         const history = raw
           ? this.readHistoryFromEnvelope(raw)
-          : { schemaVersion: HISTORY_SCHEMA_VERSION, transitions: [], outcomes: [] } as StoreCollectionOrchestratorHistory;
+          : {
+            schemaVersion: HISTORY_SCHEMA_VERSION,
+            transitions: [],
+            outcomes: [],
+            semanticAttempts: [],
+          } as StoreCollectionOrchestratorHistory;
         this.writeHistory(this.compactHistory(mutate(history)));
       });
     } catch (error) {
@@ -2221,9 +2565,7 @@ export class StoreCollectionOrchestrator {
       if (Buffer.byteLength(plaintext, 'utf8') > MAX_HISTORY_PLAINTEXT_BYTES) {
         throw new Error('history plaintext too large');
       }
-      const history = JSON.parse(plaintext) as StoreCollectionOrchestratorHistory;
-      assertHistory(history);
-      return history;
+      return normalizeStoredHistory(JSON.parse(plaintext));
     } catch (error) {
       if (error instanceof StoreCollectionOrchestratorError) throw error;
       throw new StoreCollectionOrchestratorError('CORRUPT_PERSISTENCE', '切换历史损坏。');
@@ -2415,6 +2757,104 @@ export function deriveStoreCollectionSchedulerExecutionIdentity(
   };
 }
 
+export function storeCollectionSchedulerRecoveryAdmissionScopeDigest(input: {
+  executionScope: StoreCollectionTransitionCapabilityScope<'transition_execution'>;
+  context: StoreContextEnvelope;
+  attemptId: string;
+  requestId: string;
+}): string {
+  const context = normalizeStoreContextEnvelope(input.context);
+  const identity = deriveStoreCollectionSchedulerExecutionIdentity({
+    cycleId: input.executionScope.cycleId,
+    transitionId: input.executionScope.transitionId,
+    fingerprint: input.executionScope.expectedFingerprint ?? '',
+    transitionScope: input.executionScope,
+    context,
+  });
+  if (identity.attemptId !== input.attemptId || identity.requestId !== input.requestId) {
+    throw new StoreCollectionOrchestratorError(
+      'SAFETY_STATE_UNKNOWN',
+      'recovery admission attempt/request 与 execution scope 不一致。',
+    );
+  }
+  return sha256({
+    schemaVersion: 1,
+    kind: 'protected_scheduler_recovery_admission',
+    executionScope: canonicalTransitionScope(input.executionScope),
+    context,
+    attemptId: input.attemptId,
+    requestId: input.requestId,
+  });
+}
+
+function storeCollectionSemanticAttemptIntegrityDigest(
+  value: Omit<StoreCollectionSemanticAttempt, 'integrityDigest'> & { integrityDigest?: string },
+): string {
+  return sha256({
+    semanticAttemptId: value.semanticAttemptId,
+    cycleId: value.cycleId,
+    transitionId: value.transitionId,
+    storeId: value.storeId,
+    browserProfileId: value.browserProfileId,
+    expectedFingerprint: value.expectedFingerprint,
+    businessDate: value.businessDate,
+    sessionGeneration: value.sessionGeneration,
+    schedulerAttemptId: value.schedulerAttemptId,
+    schedulerRequestId: value.schedulerRequestId,
+    attemptedAt: value.attemptedAt,
+  });
+}
+
+function storeCollectionSemanticAttemptId(value: Pick<
+  StoreCollectionSemanticAttempt,
+  'cycleId' | 'transitionId' | 'schedulerAttemptId' | 'schedulerRequestId'
+>): string {
+  return `sam:${sha256({
+    cycleId: value.cycleId,
+    transitionId: value.transitionId,
+    schedulerAttemptId: value.schedulerAttemptId,
+    schedulerRequestId: value.schedulerRequestId,
+  })}`;
+}
+
+function semanticAttemptFromTransition(
+  transition: StoreCollectionOrchestratorTransition,
+): StoreCollectionSemanticAttempt {
+  if (transition.purpose !== 'collection'
+    || !transition.toStoreId
+    || !transition.browserProfileId
+    || !transition.expectedFingerprint
+    || !transition.businessDate
+    || transition.sessionGeneration === undefined
+    || !transition.schedulerAttemptId
+    || !transition.schedulerRequestId) {
+    throw corruptHistory();
+  }
+  const semanticAttemptId = storeCollectionSemanticAttemptId({
+    cycleId: transition.cycleId,
+    transitionId: transition.transitionId,
+    schedulerAttemptId: transition.schedulerAttemptId,
+    schedulerRequestId: transition.schedulerRequestId,
+  });
+  const value = {
+    semanticAttemptId,
+    cycleId: transition.cycleId,
+    transitionId: transition.transitionId,
+    storeId: transition.toStoreId,
+    browserProfileId: transition.browserProfileId,
+    expectedFingerprint: transition.expectedFingerprint,
+    businessDate: transition.businessDate,
+    sessionGeneration: transition.sessionGeneration,
+    schedulerAttemptId: transition.schedulerAttemptId,
+    schedulerRequestId: transition.schedulerRequestId,
+    attemptedAt: transition.startedAt,
+  };
+  return {
+    ...value,
+    integrityDigest: storeCollectionSemanticAttemptIntegrityDigest(value),
+  };
+}
+
 function withTransitionIntegrity(
   value: Omit<StoreCollectionOrchestratorTransition, 'integrityDigest'> & { integrityDigest?: string },
 ): StoreCollectionOrchestratorTransition {
@@ -2429,13 +2869,124 @@ function withOutcomeIntegrity(
   return { ...rest, integrityDigest: storeCollectionOrchestratorOutcomeIntegrityDigest(rest) };
 }
 
+function normalizeStoredHistory(value: unknown): StoreCollectionOrchestratorHistory {
+  if (value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && (value as { schemaVersion?: unknown }).schemaVersion === LEGACY_HISTORY_SCHEMA_VERSION) {
+    const legacy = value as LegacyStoreCollectionOrchestratorHistory;
+    assertExactKeys(legacy, ['schemaVersion', 'transitions', 'outcomes']);
+    if (!Array.isArray(legacy.transitions) || !Array.isArray(legacy.outcomes)) {
+      throw corruptHistory();
+    }
+    assertHistoryGraph(legacy);
+    const semanticAttempts = legacy.transitions
+      .filter((transition) => transition.purpose === 'collection'
+        && transition.schedulerAttemptId !== undefined)
+      .map((transition) => semanticAttemptFromTransition(transition));
+    const upgraded: StoreCollectionOrchestratorHistory = {
+      schemaVersion: HISTORY_SCHEMA_VERSION,
+      transitions: legacy.transitions,
+      outcomes: legacy.outcomes,
+      semanticAttempts,
+    };
+    assertHistory(upgraded);
+    const compacted = {
+      ...upgraded,
+      semanticAttempts: compactSemanticAttemptsToLatestBusinessDate(
+        upgraded.semanticAttempts,
+      ),
+    };
+    assertHistory(compacted);
+    return compacted;
+  }
+  const history = value as StoreCollectionOrchestratorHistory;
+  assertHistory(history);
+  const compacted = {
+    ...history,
+    semanticAttempts: compactSemanticAttemptsToLatestBusinessDate(
+      history.semanticAttempts,
+    ),
+  };
+  assertHistory(compacted);
+  return compacted;
+}
+
 function assertHistory(value: StoreCollectionOrchestratorHistory): void {
-  assertExactKeys(value, ['schemaVersion', 'transitions', 'outcomes']);
+  assertExactKeys(value, ['schemaVersion', 'transitions', 'outcomes', 'semanticAttempts']);
   if (value.schemaVersion !== HISTORY_SCHEMA_VERSION
     || !Array.isArray(value.transitions)
-    || !Array.isArray(value.outcomes)) {
+    || !Array.isArray(value.outcomes)
+    || !Array.isArray(value.semanticAttempts)) {
     throw corruptHistory();
   }
+  const transitions = assertHistoryGraph(value);
+  const semanticKeys = new Set<string>();
+  const semanticAttemptIds = new Set<string>();
+  const semanticTransitionIds = new Set<string>();
+  const schedulerAttemptIds = new Set<string>();
+  const schedulerRequestIds = new Set<string>();
+  const dailySemanticAttemptCounts = new Map<string, number>();
+  for (const semanticAttempt of value.semanticAttempts) {
+    assertSemanticAttempt(semanticAttempt);
+    const semanticKey = collectionAttemptSemanticKey(semanticAttempt);
+    const dailyKey = JSON.stringify([
+      semanticAttempt.storeId,
+      semanticAttempt.browserProfileId,
+      semanticAttempt.businessDate,
+    ]);
+    const dailyCount = (dailySemanticAttemptCounts.get(dailyKey) ?? 0) + 1;
+    if (semanticKeys.has(semanticKey)
+      || semanticAttemptIds.has(semanticAttempt.semanticAttemptId)
+      || semanticTransitionIds.has(semanticAttempt.transitionId)
+      || schedulerAttemptIds.has(semanticAttempt.schedulerAttemptId)
+      || schedulerRequestIds.has(semanticAttempt.schedulerRequestId)
+      || dailyCount > STORE_COLLECTION_MAX_DAILY_SEMANTIC_ATTEMPTS_PER_STORE_PROFILE) {
+      throw corruptHistory();
+    }
+    const transition = transitions.get(semanticAttempt.transitionId);
+    if (transition && (
+      transition.purpose !== 'collection'
+      || transition.cycleId !== semanticAttempt.cycleId
+      || transition.toStoreId !== semanticAttempt.storeId
+      || transition.browserProfileId !== semanticAttempt.browserProfileId
+      || transition.expectedFingerprint !== semanticAttempt.expectedFingerprint
+      || transition.businessDate !== semanticAttempt.businessDate
+      || transition.sessionGeneration !== semanticAttempt.sessionGeneration
+      || transition.schedulerAttemptId !== semanticAttempt.schedulerAttemptId
+      || transition.schedulerRequestId !== semanticAttempt.schedulerRequestId
+      || transition.startedAt !== semanticAttempt.attemptedAt
+    )) {
+      throw corruptHistory();
+    }
+    semanticKeys.add(semanticKey);
+    semanticAttemptIds.add(semanticAttempt.semanticAttemptId);
+    semanticTransitionIds.add(semanticAttempt.transitionId);
+    schedulerAttemptIds.add(semanticAttempt.schedulerAttemptId);
+    schedulerRequestIds.add(semanticAttempt.schedulerRequestId);
+    dailySemanticAttemptCounts.set(dailyKey, dailyCount);
+  }
+  for (const transition of value.transitions) {
+    if (transition.purpose === 'collection'
+      && transition.schedulerAttemptId !== undefined
+      && !semanticTransitionIds.has(transition.transitionId)) {
+      const latestProtectedBusinessDate = latestSemanticAttemptBusinessDate(
+        value.semanticAttempts,
+        transition.toStoreId!,
+        transition.browserProfileId!,
+      );
+      if (latestProtectedBusinessDate === undefined
+        || transition.businessDate === undefined
+        || transition.businessDate >= latestProtectedBusinessDate) {
+        throw corruptHistory();
+      }
+    }
+  }
+}
+
+function assertHistoryGraph(
+  value: Pick<StoreCollectionOrchestratorHistory, 'transitions' | 'outcomes'>,
+): Map<string, StoreCollectionOrchestratorTransition> {
   const transitions = new Map<string, StoreCollectionOrchestratorTransition>();
   const capabilityIds = new Set<string>();
   for (const transition of value.transitions) {
@@ -2490,6 +3041,32 @@ function assertHistory(value: StoreCollectionOrchestratorHistory): void {
       || (transition.purpose === 'restore' && hasOutcome)) {
       throw corruptHistory();
     }
+  }
+  return transitions;
+}
+
+function assertSemanticAttempt(value: StoreCollectionSemanticAttempt): void {
+  assertExactKeys(value, [
+    'semanticAttemptId', 'cycleId', 'transitionId', 'storeId', 'browserProfileId',
+    'expectedFingerprint', 'businessDate', 'sessionGeneration', 'schedulerAttemptId',
+    'schedulerRequestId', 'attemptedAt', 'integrityDigest',
+  ]);
+  if (!safeId(value.semanticAttemptId)
+    || !safeId(value.cycleId)
+    || !safeId(value.transitionId)
+    || !safeId(value.storeId)
+    || !safeId(value.browserProfileId)
+    || !validFingerprint(value.expectedFingerprint)
+    || !validIsoDate(value.businessDate)
+    || !Number.isInteger(value.sessionGeneration)
+    || value.sessionGeneration < 0
+    || !safeId(value.schedulerAttemptId)
+    || !safeId(value.schedulerRequestId)
+    || !validTimestamp(value.attemptedAt)
+    || value.semanticAttemptId !== storeCollectionSemanticAttemptId(value)
+    || !DIGEST.test(value.integrityDigest)
+    || value.integrityDigest !== storeCollectionSemanticAttemptIntegrityDigest(value)) {
+    throw corruptHistory();
   }
 }
 
@@ -2793,6 +3370,53 @@ function transitionTargetFromStore(store: StoreRecord): StoreCollectionTransitio
     currency: 'USD',
     businessTimezone: 'America/Los_Angeles',
   };
+}
+
+function collectionAttemptSemanticKey(input: {
+  storeId: StoreId;
+  browserProfileId: BrowserProfileId;
+  expectedFingerprint: string;
+}): string {
+  return JSON.stringify([
+    input.storeId,
+    input.browserProfileId,
+    input.expectedFingerprint,
+  ]);
+}
+
+function compactSemanticAttemptsToLatestBusinessDate(
+  attempts: readonly StoreCollectionSemanticAttempt[],
+): StoreCollectionSemanticAttempt[] {
+  const latestBusinessDateByStoreProfile = new Map<string, string>();
+  for (const attempt of attempts) {
+    const storeProfileKey = JSON.stringify([attempt.storeId, attempt.browserProfileId]);
+    const latest = latestBusinessDateByStoreProfile.get(storeProfileKey);
+    if (latest === undefined || attempt.businessDate > latest) {
+      latestBusinessDateByStoreProfile.set(storeProfileKey, attempt.businessDate);
+    }
+  }
+  return attempts.filter((attempt) => (
+    attempt.businessDate === latestBusinessDateByStoreProfile.get(
+      JSON.stringify([attempt.storeId, attempt.browserProfileId]),
+    )
+  ));
+}
+
+function latestSemanticAttemptBusinessDate(
+  attempts: readonly StoreCollectionSemanticAttempt[],
+  storeId: StoreId,
+  browserProfileId: BrowserProfileId,
+): string | undefined {
+  return attempts
+    .filter((attempt) => (
+      attempt.storeId === storeId
+      && attempt.browserProfileId === browserProfileId
+    ))
+    .reduce<string | undefined>((latest, attempt) => (
+      latest === undefined || attempt.businessDate > latest
+        ? attempt.businessDate
+        : latest
+    ), undefined);
 }
 
 function transitionTargetFromContext(context: StoreContextEnvelope): StoreCollectionTransitionTarget {

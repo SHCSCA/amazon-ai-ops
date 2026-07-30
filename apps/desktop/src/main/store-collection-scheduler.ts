@@ -7,9 +7,11 @@ import type {
   StoreCollectionScheduleTrigger,
   StoreContextEnvelope,
   StoreId,
+  StoreRecord,
   StoreRuntimeConfigProjection,
   StoreRuntimeConfigRecord,
 } from '@amazon-ai-ops/shared-types';
+import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import type { StartLingxingCollectionInput } from './lingxing-collection-coordinator';
 
 const CLOCK_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -57,6 +59,11 @@ export interface StoreCollectionScheduleRecordCodec {
   open(envelope: string): string;
 }
 
+export interface StoreCollectionScheduleInspection {
+  state: 'due' | 'not_due';
+  expectedFingerprint?: string;
+}
+
 export interface StoreCollectionSchedulerDependencies {
   authority: {
     getActiveStoreContext(): StoreContextEnvelope | null;
@@ -64,6 +71,7 @@ export interface StoreCollectionSchedulerDependencies {
   };
   config: {
     get(context: StoreContextEnvelope): StoreRuntimeConfigProjection;
+    getForStoreRecord(store: StoreRecord): StoreRuntimeConfigProjection;
   };
   settings: StoreCollectionScheduleSettingsPort;
   recordCodec: StoreCollectionScheduleRecordCodec;
@@ -164,6 +172,52 @@ export class StoreCollectionScheduler {
   get(contextInput: StoreContextEnvelope): StoreCollectionScheduleProjection {
     const context = this.authorize(contextInput);
     return this.inspect(context, this.now());
+  }
+
+  /**
+   * Pure Main-only inspection for orchestration across every active store. It
+   * never binds/switches active UI authority, repairs history, opens a browser,
+   * or writes scheduler state.
+   */
+  inspectForStore(
+    storeInput: StoreRecord,
+    timing: { businessDate: string; now?: Date },
+  ): StoreCollectionScheduleInspection {
+    const context = inspectionContextForStore(storeInput, timing?.businessDate);
+    const configProjection = this.dependencies.config.getForStoreRecord(storeInput);
+    const current = configProjection.current;
+    if (!current || current.status === 'archived') return { state: 'not_due' };
+    assertConfigIdentity(context, current);
+    const window = deriveStoreCollectionWindow(
+      context.businessDate,
+      current.values.collectionLookbackDays,
+    );
+    const fingerprint = storeCollectionScheduleSemanticFingerprint({
+      storeId: context.storeId,
+      browserProfileId: context.browserProfileId,
+      businessDate: context.businessDate,
+      lookbackDays: current.values.collectionLookbackDays,
+      ...window,
+    });
+    const history = this.readHistory(context, current);
+    if (history.attempts.some((attempt) => attempt.fingerprint === fingerprint)) {
+      return { state: 'not_due', expectedFingerprint: fingerprint };
+    }
+    const now = timing.now ?? this.now();
+    if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
+      throw new StoreCollectionSchedulerError('CONFIG_UNAVAILABLE', '采集检查时钟无效。');
+    }
+    const clock = localBusinessClock(now, context.businessTimezone);
+    if (clock.businessDate !== context.businessDate) {
+      throw new StoreCollectionSchedulerError(
+        'CONFIG_UNAVAILABLE',
+        '调度时钟与指定店铺业务日不一致，已失败关闭。',
+      );
+    }
+    return {
+      state: clock.localTime >= current.values.collectionScheduleLocalTime ? 'due' : 'not_due',
+      expectedFingerprint: fingerprint,
+    };
   }
 
   async reconcileCurrent(): Promise<StoreCollectionScheduleProjection | null> {
@@ -675,6 +729,44 @@ function localBusinessClock(now: Date, timeZone: string): { businessDate: string
     businessDate: `${part('year')}-${part('month')}-${part('day')}`,
     localTime: `${part('hour')}:${part('minute')}`,
   };
+}
+
+function inspectionContextForStore(
+  store: StoreRecord,
+  businessDate: string,
+): StoreContextEnvelope {
+  if (!store
+    || typeof store !== 'object'
+    || store.status !== 'active'
+    || store.marketplace !== 'US'
+    || store.currency !== 'USD'
+    || store.businessTimezone !== 'America/Los_Angeles'
+    || typeof store.browserProfileId !== 'string'
+    || store.browserProfileId.trim().length < 1
+    || !validIsoDate(businessDate)) {
+    throw new StoreCollectionSchedulerError(
+      'UNSUPPORTED_STORE',
+      '只读采集检查要求 active US/USD/America/Los_Angeles Store/Profile 与合法业务日。',
+    );
+  }
+  try {
+    return normalizeStoreContextEnvelope({
+      storeId: store.storeId,
+      browserProfileId: store.browserProfileId,
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+      businessDate,
+      // Fingerprints and history identity intentionally exclude generation;
+      // no visible session is authorized or created by this inspection path.
+      sessionGeneration: 0,
+    });
+  } catch {
+    throw new StoreCollectionSchedulerError(
+      'UNSUPPORTED_STORE',
+      '只读采集检查的 Store/Profile authority 无效。',
+    );
+  }
 }
 
 function assertConfigIdentity(context: StoreContextEnvelope, config: StoreRuntimeConfigRecord): void {
