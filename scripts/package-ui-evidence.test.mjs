@@ -3,14 +3,15 @@ import {
   linkSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { EventEmitter } from 'node:events';
+import { spawn, spawnSync } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -23,6 +24,7 @@ const HASH_A = 'A'.repeat(64);
 const HASH_B = 'B'.repeat(64);
 const USER_DATA_DIR = 'D:\\Temp\\amazon-ai-ops-package-ui\\profile-copy';
 const PROTECTED_DB_PATH = 'C:\\Users\\wz\\AppData\\Roaming\\@amazon-ai-ops\\desktop\\amazon-ai-ops.db';
+const AUTHORITY_SELECTION_PATH = 'C:\\Temp\\current-production-authority-selection.json';
 const CURRENT_ARTIFACT_ROOT = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-current-'));
 const requireFromLocalDb = createRequire(
   path.resolve('packages', 'local-db', 'package.json'),
@@ -45,8 +47,10 @@ const {
   PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION,
   PACKAGE_UI_PROFILE_SEQUENCE,
   READ_ONLY_INTERACTION_PLAN,
+  acquirePackageUiRunGroupLease,
   buildAppContentManifest,
   buildPackageUiAttemptArtifactManifest,
+  buildPackageUiAttemptArtifactReferences,
   buildPackageUiRunnerContract,
   assertPackageUiRuntimeLoginBoundary,
   buildProcessIsolationEvidence,
@@ -61,13 +65,17 @@ const {
   collectElectronIdentity,
   collectMatchingPackageProcesses,
   collectMatchingProfileBrowserProcesses,
+  collectPackageUiProfileLockEvidence,
   composePackageUiRunGroup,
+  consumePackageUiResumeInspectionReceipt,
   createRunDiagnostics,
   createPackageUiProfileAttemptContext,
   initializePackageUiRunGroup,
+  inspectPackageUiRunGroupLease,
   decisionsTabAccessibleNamePattern,
   evaluatePackageViewportContract,
   evaluatePackageUiEvidenceCompleteness,
+  evaluatePackageUiProfileEvidence,
   evaluateProfileDatabaseFileIsolation,
   evaluateProfileDatabaseProvenance,
   executeEvidenceRunWithIsolation,
@@ -83,6 +91,7 @@ const {
   profileLineageStateMatches,
   markRunnerElectronCloseRequested,
   recordPackageUiProfileAttempt,
+  releasePackageUiRunGroupLease,
   resolvePackageUiProfileCursor,
   sanitizeDiagnosticText,
   selectDeterministicEvidenceStoreCandidate,
@@ -92,7 +101,9 @@ const {
   validatePackageIdentity,
   validatePackageUiDatabaseCheckpointReceipts,
   validatePackageUiDatabaseMutationAudit,
+  validatePackageUiAttemptArtifactMembership,
   validatePackageUiReadOnlyRuntimeEvidence,
+  validatePackageUiResumeInspectionReceipt,
   validatePackageFreshness,
   validateReadOnlyInteractionPlan,
   validateIsolatedProfileBootstrapEvidence,
@@ -895,7 +906,7 @@ describe('durable protected-state evidence', () => {
     expect(JSON.stringify(snapshot)).not.toContain('--user-data-dir');
   });
 
-  it('ignores unrelated unreadable daily browsers but fails closed for the target profile or bundled executable', () => {
+  it('fails closed for every unreadable browser row, including unrelated daily browsers', () => {
     const profilePath = path.join(USER_DATA_DIR, 'storage', 'browser-data');
     const snapshot = collectMatchingProfileBrowserProcesses(profilePath, () => ({
       status: 0,
@@ -910,9 +921,9 @@ describe('durable protected-state evidence', () => {
     }));
     expect(snapshot).toEqual(expect.objectContaining({
       matchingCount: 0,
-      ignoredUnresolvedCount: 1,
-      passed: true,
-      unresolvedCount: 0,
+      ignoredUnresolvedCount: 0,
+      passed: false,
+      unresolvedCount: 1,
     }));
 
     const newlyUnreadable = collectMatchingProfileBrowserProcesses(
@@ -942,9 +953,9 @@ describe('durable protected-state evidence', () => {
     expect(newlyUnreadable).toEqual(expect.objectContaining({
       matchingCount: 0,
       passed: false,
-      unresolvedCount: 1,
+      unresolvedCount: 2,
     }));
-    expect(newlyUnreadable.unresolved[0].processId).toBe(14);
+    expect(newlyUnreadable.unresolved.map((item) => item.processId)).toEqual([11, 14]);
 
     const missingPath = collectMatchingProfileBrowserProcesses(profilePath, () => ({
       status: 0,
@@ -983,7 +994,7 @@ describe('durable protected-state evidence', () => {
       matchingCount: 0,
       mismatchedCount: 1,
       passed: false,
-      unresolvedCount: 0,
+      unresolvedCount: 1,
     }));
   });
 
@@ -1017,13 +1028,6 @@ describe('durable protected-state evidence', () => {
           ParentProcessId: 901,
           ProcessId: 902,
         },
-        {
-          CommandLine: null,
-          ExecutablePath: null,
-          Name: 'msedge.exe',
-          ParentProcessId: 50,
-          ProcessId: 51,
-        },
       ]),
       stderr: '',
     }));
@@ -1052,6 +1056,155 @@ describe('durable protected-state evidence', () => {
     expect(JSON.stringify(evidence)).not.toContain('--user-data-dir');
   });
 
+  it.runIf(process.platform === 'win32')(
+    'proves a bounded full-tree exclusive-open window and fails closed for an existing locked or hardlinked profile file',
+    async () => {
+      const root = mkdtempSync(path.join(
+        tmpdir(),
+        'amazon-ai-ops-profile-lock-proof-',
+      ));
+      const profileRoot = path.join(root, 'stores', 'store-one', 'Default');
+      const cookiePath = path.join(profileRoot, 'Cookies');
+      const databasePath = path.join(root, 'amazon-ai-ops.db');
+      let holder = null;
+      try {
+        mkdirSync(profileRoot, { recursive: true });
+        writeFileSync(cookiePath, 'synthetic-cookie-db', 'utf8');
+        writeFileSync(databasePath, 'synthetic-local-db', 'utf8');
+        writeFileSync(`${databasePath}-wal`, 'synthetic-wal', 'utf8');
+        writeFileSync(`${databasePath}-shm`, 'synthetic-shm', 'utf8');
+
+        const valid = collectPackageUiProfileLockEvidence(root, {
+          invocationId: 'profile-lock-test-invocation',
+          profileId: '100-compact',
+        });
+        expect(valid).toEqual(expect.objectContaining({
+          claim: 'bounded-quiescent-exclusive-open-attestation',
+          passed: true,
+          unresolvedCount: 0,
+        }));
+        expect(valid.exclusiveOpen).toEqual(expect.objectContaining({
+          allEntriesHeld: true,
+          closeFailureCount: 0,
+          heldHandleCount: valid.exclusiveOpen.entryCount,
+        }));
+        expect(valid.tree).toEqual(expect.objectContaining({
+          criticalEntryCount: expect.any(Number),
+          treeStable: true,
+        }));
+        expect(valid.tree.criticalEntryCount).toBeGreaterThanOrEqual(4);
+
+        const encodedPath = Buffer.from(cookiePath, 'utf8').toString('base64');
+        holder = spawn('powershell.exe', [
+          '-NoProfile',
+          '-Command',
+          [
+            `$path=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
+            '$stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)',
+            "[Console]::Out.WriteLine('READY')",
+            '[Console]::Out.Flush()',
+            '[Console]::In.ReadLine() | Out-Null',
+            '$stream.Dispose()',
+          ].join('; '),
+        ], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+        });
+        let ready = '';
+        while (!ready.includes('READY')) {
+          const [chunk] = await once(holder.stdout, 'data');
+          ready += chunk.toString('utf8');
+        }
+        const blocked = collectPackageUiProfileLockEvidence(root, {
+          invocationId: 'profile-lock-test-invocation',
+          profileId: '100-compact',
+        });
+        expect(blocked.passed).toBe(false);
+        expect(blocked.unresolved).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            pathSha256: expect.stringMatching(/^[A-F0-9]{64}$/),
+            reason: expect.stringMatching(/OPEN_FAILED/),
+          }),
+        ]));
+        const holderExit = once(holder, 'exit');
+        holder.stdin.write('\n');
+        holder.stdin.end();
+        await holderExit;
+        holder = null;
+
+        linkSync(cookiePath, path.join(profileRoot, 'Cookies-hardlink'));
+        const hardlinked = collectPackageUiProfileLockEvidence(root, {
+          invocationId: 'profile-lock-test-invocation',
+          profileId: '100-compact',
+        });
+        expect(hardlinked.passed).toBe(false);
+        expect(hardlinked.unresolved).toEqual(expect.arrayContaining([
+          expect.objectContaining({ reason: 'HARDLINKED_FILE' }),
+        ]));
+        expect(
+          readdirSync(root).some((name) =>
+            name.startsWith('.package-ui-exclusive-lock-probe-')),
+        ).toBe(false);
+      } finally {
+        if (holder) {
+          const holderExit = once(holder, 'exit');
+          holder.stdin.write('\n');
+          holder.stdin.end();
+          await holderExit.catch(() => undefined);
+        }
+        rmSync(root, { force: true, recursive: true });
+      }
+    },
+    120_000,
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'streams a single directory and rejects a child before storing beyond the injected lower entry limit',
+    () => {
+      const root = mkdtempSync(path.join(
+        tmpdir(),
+        'amazon-ai-ops-profile-lock-stream-limit-',
+      ));
+      try {
+        for (let index = 0; index < 8; index += 1) {
+          writeFileSync(
+            path.join(root, `synthetic-${String(index).padStart(2, '0')}.db`),
+            '',
+          );
+        }
+        const evidence = collectPackageUiProfileLockEvidence(root, {
+          invocationId: 'profile-lock-stream-limit-invocation',
+          probeLimits: {
+            maxCriticalEntries: 1_024,
+            maxEntries: 4,
+            maxPathCharacters: 2_000_000,
+          },
+          profileId: '100-compact',
+          testOnlyAllowLowerLimits: true,
+        });
+        expect(evidence.passed).toBe(false);
+        expect(evidence.tree.limits.maxEntries).toBe(4);
+        expect(evidence.unresolved).toEqual(expect.arrayContaining([
+          expect.objectContaining({ reason: 'ENTRY_LIMIT_EXCEEDED' }),
+        ]));
+        expect(
+          readdirSync(root).some((name) =>
+            name.startsWith('.package-ui-exclusive-lock-probe-')),
+        ).toBe(false);
+        const source = readFileSync('scripts/package-ui-evidence.js', 'utf8');
+        expect(source).toContain(
+          'Directory.EnumerateFileSystemEntries(current)',
+        );
+        expect(source).not.toContain(
+          'Directory.GetFileSystemEntries(current)',
+        );
+      } finally {
+        rmSync(root, { force: true, recursive: true });
+      }
+    },
+    60_000,
+  );
+
   it('returns a bounded structured failed run with sanitized diagnostics and both isolation attestations', async () => {
     const zero = validProcessSnapshot();
     const result = await executeEvidenceRunWithIsolation({
@@ -1060,6 +1213,7 @@ describe('durable protected-state evidence', () => {
       processApi: {
         collectPackage: () => zero,
         collectProfile: () => zero,
+        collectProfileLocks: () => validProfileLockIsolation().before,
         waitPackage: async () => ({ ...zero, attempts: 1 }),
         waitProfile: async () => ({ ...zero, attempts: 1 }),
       },
@@ -1186,6 +1340,7 @@ describe('durable protected-state evidence', () => {
       processApi: {
         collectPackage: () => zero,
         collectProfile: () => zero,
+        collectProfileLocks: () => validProfileLockIsolation().before,
         waitPackage: async () => ({ ...zero, attempts: 1 }),
         waitProfile: async () => ({ ...zero, attempts: 1 }),
       },
@@ -1621,6 +1776,214 @@ function validProcessIsolation() {
   return buildProcessIsolationEvidence(validProcessSnapshot(), validProcessSnapshot({ attempts: 1 }));
 }
 
+function validProfileLockIsolation(
+  profileId = 'fixture-profile',
+  invocationId = 'fixture-invocation',
+) {
+  const binding = {
+    invocationIdSha256: evidenceModule.sha256Buffer(
+      Buffer.from(invocationId, 'utf8'),
+    ),
+    profileId,
+    rootPathSha256: evidenceModule.sha256Buffer(Buffer.from(
+      path.resolve(USER_DATA_DIR).replace(/\\/g, '/').toLowerCase(),
+      'utf8',
+    )),
+  };
+  const snapshot = {
+    binding,
+    claim: 'bounded-quiescent-exclusive-open-attestation',
+    exclusiveOpen: {
+      allEntriesHeld: true,
+      closeFailureCount: 0,
+      closeFailures: [],
+      directoryCount: 1,
+      entryCount: 2,
+      fileCount: 1,
+      heldHandleCount: 2,
+      method: 'win32-createfile-share-none-stable-tree/v1',
+    },
+    exclusiveProbe: { created: true, removed: true },
+    kind: 'package-ui-profile-lock-snapshot',
+    observedAt: '2026-07-17T06:00:00.000Z',
+    passed: true,
+    rootIdentityStable: true,
+    schemaVersion: 'package-ui-profile-lock-snapshot/v2',
+    tree: {
+      criticalEntries: [],
+      criticalEntryCount: 0,
+      identitySetSha256: HASH_B,
+      limits: {
+        maxCriticalEntries: 1_024,
+        maxEntries: 20_000,
+        maxPathCharacters: 2_000_000,
+      },
+      pathSetSha256: HASH_A,
+      secondSnapshotEntryCount: 2,
+      totalPathCharacters: 42,
+      treeStable: true,
+    },
+    unresolved: [],
+    unresolvedCount: 0,
+  };
+  snapshot.tree.attestationSha256 = evidenceModule.sha256Buffer(Buffer.from(
+    canonicalJsonForTest({
+      binding: snapshot.binding,
+      criticalEntries: snapshot.tree.criticalEntries,
+      criticalEntryCount: snapshot.tree.criticalEntryCount,
+      directoryCount: snapshot.exclusiveOpen.directoryCount,
+      entryCount: snapshot.exclusiveOpen.entryCount,
+      fileCount: snapshot.exclusiveOpen.fileCount,
+      identitySetSha256: snapshot.tree.identitySetSha256,
+      pathSetSha256: snapshot.tree.pathSetSha256,
+      secondSnapshotEntryCount: snapshot.tree.secondSnapshotEntryCount,
+      totalPathCharacters: snapshot.tree.totalPathCharacters,
+    }),
+    'utf8',
+  ));
+  return {
+    after: structuredClone(snapshot),
+    before: structuredClone(snapshot),
+    passed: true,
+  };
+}
+
+function validRunEvidenceBinding(
+  profileId,
+  {
+    attemptId = `test-attempt-${profileId}`,
+    invocationId = `test-invocation-${profileId}`,
+    runGroupId = 'package-ui-test-run-group',
+    runnerContractSha256 = buildPackageUiRunnerContract().sha256,
+  } = {},
+) {
+  return {
+    attemptId,
+    invocationId,
+    profileId,
+    profileLockBinding:
+      validProfileLockIsolation(profileId, invocationId).before.binding,
+    runGroupId,
+    runnerContractSha256,
+    scalePercent: profileId === PACKAGE_UI_WIDE_PROFILE.id
+      ? PACKAGE_UI_WIDE_PROFILE.scalePercent
+      : Number.parseInt(profileId.split('-')[0], 10),
+  };
+}
+
+function runEvidenceBindingFromAttempt(manager, profileId, attemptContext) {
+  return validRunEvidenceBinding(profileId, {
+    attemptId: attemptContext.attemptId,
+    invocationId: attemptContext.invocationId,
+    runGroupId: manager.runGroupId,
+    runnerContractSha256: manager.metadata.runnerContractSha256,
+  });
+}
+
+function validAuthorityBinding() {
+  return {
+    authoritySelectionReceiptSha256: HASH_A,
+    canonicalDatabasePathSha256: HASH_B,
+    databaseFileIdentity: {
+      deviceId: '1',
+      fileId: '2',
+      hardLinkCount: 1,
+      stabilityTokenSha256: HASH_A,
+    },
+  };
+}
+
+function validInvocation(manager, suffix = '001') {
+  const invocationId = `test-invocation-${suffix}`;
+  const lease = {
+    payload: {
+      generation: `test-generation-${suffix}`,
+      invocationId,
+      runGroupId: manager.runGroupId,
+      runnerContractSha256: manager.metadata.runnerContractSha256,
+    },
+    payloadSha256: HASH_A,
+  };
+  return { invocationId, lease };
+}
+
+function artifactReferences(manifest, role = 'workspace-screenshot') {
+  return manifest.files.map((file) => ({
+    path: path.join(manifest.rootPath, ...file.path.split('/')),
+    role,
+    sha256: file.sha256,
+    sizeBytes: file.sizeBytes,
+  }));
+}
+
+function bindRunAttemptArtifacts(run, label) {
+  const binding = run.evidenceBinding;
+  const profileRoot = mkdtempSync(path.join(
+    CURRENT_ARTIFACT_ROOT,
+    'profile-attempt-artifacts-',
+  ));
+  const root = path.join(
+    profileRoot,
+    binding.profileId,
+    `0001-${binding.attemptId}`,
+  );
+  mkdirSync(root, { recursive: true });
+  const records = [];
+  const seenRecords = new Set();
+  const add = (record, role) => {
+    if (!record || seenRecords.has(record)) return;
+    seenRecords.add(record);
+    records.push({ record, role });
+  };
+  for (const screenshot of run.screenshots || []) add(screenshot, 'workspace');
+  for (const check of run.workspaceChecks || []) {
+    add(check.screenshot, 'workspace-check');
+    add(check.inspectorEvidence?.screenshot, 'inspector');
+  }
+  for (const check of run.subviewChecks || []) {
+    add(check.screenshot, 'subview');
+    add(check.inspectorEvidence?.screenshot, 'subview-inspector');
+  }
+  for (const check of run.overlayChecks || []) add(check.screenshot, 'overlay');
+  add(run.schedulerReadOnlyRuntime?.artifact, 'main-runtime');
+  records.forEach(({ record, role }, index) => {
+    const filePath = path.join(
+      root,
+      `${String(index + 1).padStart(3, '0')}-${role}-${label}.bin`,
+    );
+    const bytes = role === 'main-runtime'
+      ? Buffer.from(JSON.stringify(run.schedulerReadOnlyRuntime.marker), 'utf8')
+      : Buffer.from(`${role}-${label}-${index + 1}`);
+    writeFileSync(filePath, bytes);
+    record.path = filePath;
+    record.sha256 = evidenceModule.sha256File(filePath);
+    record.sizeBytes = readFileSync(filePath).byteLength;
+  });
+  run.attemptArtifacts = buildPackageUiAttemptArtifactManifest(root);
+  run.artifactReferences = buildPackageUiAttemptArtifactReferences(
+    run.attemptArtifacts,
+    run,
+  );
+  return run;
+}
+
+function bindSingleSuccessfulAttemptArtifact(run, manifest) {
+  const file = manifest.files[0];
+  run.schedulerReadOnlyRuntime = {
+    artifact: {
+      path: path.join(manifest.rootPath, ...file.path.split('/')),
+      sha256: file.sha256,
+      sizeBytes: file.sizeBytes,
+    },
+  };
+  run.screenshots = [];
+  run.artifactReferences = buildPackageUiAttemptArtifactReferences(
+    manifest,
+    run,
+  );
+  return run;
+}
+
 function validLogicalArtifact() {
   return {
     method: 'readonly-sqlite-online-backup',
@@ -1665,6 +2028,7 @@ function changedRunnerContract(contract) {
       ...contract.evidenceScript,
       sha256: contract.evidenceScript.sha256 === HASH_A ? HASH_B : HASH_A,
     },
+    protectedSqliteTempScript: contract.protectedSqliteTempScript,
     semanticContractSha256: contract.semanticContractSha256,
   };
   return {
@@ -1675,19 +2039,56 @@ function changedRunnerContract(contract) {
   };
 }
 
-function validCheckpointComposition(runGroupId, runnerContractSha256) {
+function validCheckpointComposition(
+  runGroupId,
+  runnerContractSha256,
+  profileRuns,
+) {
   const root = mkdtempSync(path.join(CURRENT_ARTIFACT_ROOT, 'checkpoints-'));
   const checkpointRecords = PACKAGE_UI_PROFILE_SEQUENCE.map((profileId, index) => {
-    const payload = {
-      kind: 'package-ui-profile-checkpoint',
+    const runEvidence = profileRuns.find(
+      (candidate) => candidate.profileId === profileId,
+    );
+    const profileState = validProfileLineageState();
+    const attemptPayload = {
+      attemptArtifacts: runEvidence.attemptArtifacts,
+      artifactReferences: runEvidence.artifactReferences,
+      attemptId: runEvidence.evidenceBinding.attemptId,
+      cleanupEvidence: {
+        chromiumProcessLineage: runEvidence.chromiumProcessLineage ?? null,
+        packageProcessIsolation: runEvidence.packageProcessIsolation,
+        profileLockIsolation: runEvidence.profileLockIsolation,
+        profileProcessIsolation: runEvidence.profileProcessIsolation,
+      },
+      diagnostics: runEvidence.diagnostics,
+      failure: runEvidence.failure,
+      invocationId: runEvidence.evidenceBinding.invocationId,
+      kind: 'package-ui-profile-attempt',
+      passed: true,
       profileId,
+      profileState,
+      resumable: true,
       runGroupId,
       runnerContractSha256,
-      schemaVersion: 'package-ui-profile-checkpoint/v1',
+      schemaVersion: 'package-ui-profile-attempt/v3',
+    };
+    const attemptReceipt = writeImmutableEnvelope(
+      path.join(root, 'attempts', profileId, '0001-attempt.json'),
+      attemptPayload,
+    );
+    const payload = {
+      attemptReceipt,
+      kind: 'package-ui-profile-checkpoint',
+      profileId,
+      profileState,
+      runEvidence,
+      runGroupId,
+      runnerContractSha256,
+      schemaVersion: 'package-ui-profile-checkpoint/v2',
       sequence: index + 1,
     };
     const file = writeImmutableEnvelope(
-      path.join(root, `${profileId}.json`),
+      path.join(root, 'checkpoints', `${profileId}.json`),
       payload,
     );
     const envelope = JSON.parse(readFileSync(file.path, 'utf8'));
@@ -1819,6 +2220,24 @@ function validDiagnostics(profileId) {
       { at: '2026-07-17T06:00:01.000Z', phase: 'completed' },
     ],
   };
+}
+
+function failedDiagnostics(profileId, message = 'synthetic failure') {
+  const diagnostics = validDiagnostics(profileId);
+  const failure = {
+    at: diagnostics.completedAt,
+    message,
+    name: 'Error',
+    phase: 'synthetic-test',
+    stack: `Error: ${message}`,
+  };
+  diagnostics.failure = failure;
+  diagnostics.phase = 'failed';
+  diagnostics.timeline[diagnostics.timeline.length - 1] = {
+    at: diagnostics.completedAt,
+    phase: 'failed',
+  };
+  return { diagnostics, failure };
 }
 
 function validSession(profileId) {
@@ -2099,6 +2518,7 @@ function validSubviewCheck(scale) {
     passed: true,
     screenshot: {
       path: screenshotPath,
+      scalePercent: scale.scalePercent,
       sha256: evidenceModule.sha256File(screenshotPath),
       sizeBytes: readFileSync(screenshotPath).byteLength,
       subview: expected.subview,
@@ -2133,28 +2553,43 @@ function validReadOnlyRuntime(profileId) {
 }
 
 function validRun(scale) {
+  const profileId = `${scale.scalePercent}-compact`;
+  const evidenceBinding = validRunEvidenceBinding(profileId);
   const schedulerReadOnlyRuntime = validReadOnlyRuntime(`${scale.scalePercent}-compact`);
   const run = {
     actualDeviceScaleFactor: scale.deviceScaleFactor,
-    attemptArtifacts: validAttemptArtifacts(`${scale.scalePercent}-compact`),
     chromiumProcessLineage: validChromiumLineage(),
     consoleErrors: [],
     databaseAuditCheckpoints: databaseCheckpointReceipts(schedulerReadOnlyRuntime),
     diagnostics: validDiagnostics(`${scale.scalePercent}-compact`),
     identity: { passed: true },
+    evidenceBinding,
+    failure: null,
     overlayChecks: EXPECTED_OVERLAY_CHECK_IDS.map((id) => ({
       compositeEvidence: { passed: true },
       id,
       overlayVisibleAfterCapture: true,
       overlayVisibleBeforeCapture: true,
       passed: true,
-      screenshot: { path: `${id}-${scale.scalePercent}.png`, sha256: HASH_B },
+      screenshot: {
+        overlayId: id,
+        path: `${id}-${scale.scalePercent}.png`,
+        scalePercent: scale.scalePercent,
+        sha256: HASH_B,
+      },
     })),
     pageErrors: [],
     packageProcessIsolation: validProcessIsolation(),
+    profileId,
+    profileLockIsolation: validProfileLockIsolation(
+      profileId,
+      evidenceBinding.invocationId,
+    ),
+    passed: true,
     scalePercent: scale.scalePercent,
     screenshots: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
       path: `${workspace.workspace}-${scale.scalePercent}.png`,
+      scalePercent: scale.scalePercent,
       sha256: HASH_A,
       subview: workspace.subview,
       workspace: workspace.workspace,
@@ -2182,9 +2617,17 @@ function validRun(scale) {
       };
     }),
   };
-  return applyInteractiveOperatorHandoff(run, {
-    firstRun: scale.scalePercent === EXPECTED_PACKAGE_UI_SCALES[0].scalePercent,
-  });
+  for (const check of run.workspaceChecks) {
+    check.screenshot = run.screenshots.find((record) => (
+      record.workspace === check.workspace && record.subview === check.subview
+    ));
+  }
+  return bindRunAttemptArtifacts(
+    applyInteractiveOperatorHandoff(run, {
+      firstRun: scale.scalePercent === EXPECTED_PACKAGE_UI_SCALES[0].scalePercent,
+    }),
+    `${scale.scalePercent}-compact`,
+  );
 }
 
 function validSavedLoginRun(scale) {
@@ -2268,20 +2711,27 @@ function applyInteractiveOperatorHandoff(run, { firstRun = false } = {}) {
 }
 
 function validWideRun() {
+  const evidenceBinding = validRunEvidenceBinding(PACKAGE_UI_WIDE_PROFILE.id);
   const schedulerReadOnlyRuntime = validReadOnlyRuntime(PACKAGE_UI_WIDE_PROFILE.id);
   const run = {
     actualDeviceScaleFactor: 1,
-    attemptArtifacts: validAttemptArtifacts(PACKAGE_UI_WIDE_PROFILE.id),
     chromiumProcessLineage: validChromiumLineage(),
     consoleErrors: [],
     databaseAuditCheckpoints: databaseCheckpointReceipts(schedulerReadOnlyRuntime),
     diagnostics: validDiagnostics(PACKAGE_UI_WIDE_PROFILE.id),
+    evidenceBinding,
+    failure: null,
     identity: { passed: true },
     pageErrors: [],
     packageProcessIsolation: validProcessIsolation(),
+    profileLockIsolation: validProfileLockIsolation(
+      PACKAGE_UI_WIDE_PROFILE.id,
+      evidenceBinding.invocationId,
+    ),
     profileId: PACKAGE_UI_WIDE_PROFILE.id,
     screenshots: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
       path: `${workspace.workspace}-wide.png`,
+      profileId: PACKAGE_UI_WIDE_PROFILE.id,
       sha256: HASH_A,
       subview: workspace.subview,
       workspace: workspace.workspace,
@@ -2289,6 +2739,7 @@ function validWideRun() {
     schedulerReadOnlyRuntime,
     session: validSession(PACKAGE_UI_WIDE_PROFILE.id),
     profileProcessIsolation: validProcessIsolation(),
+    passed: true,
     viewport: { height: 900, width: 1400 },
     workspaceChecks: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
       compositeEvidence: { passed: true },
@@ -2301,7 +2752,15 @@ function validWideRun() {
       workspace: workspace.workspace,
     })),
   };
-  return applyInteractiveOperatorHandoff(run);
+  for (const check of run.workspaceChecks) {
+    check.screenshot = run.screenshots.find((record) => (
+      record.workspace === check.workspace && record.subview === check.subview
+    ));
+  }
+  return bindRunAttemptArtifacts(
+    applyInteractiveOperatorHandoff(run),
+    PACKAGE_UI_WIDE_PROFILE.id,
+  );
 }
 
 describe('package UI evidence CLI contract', () => {
@@ -2315,7 +2774,7 @@ describe('package UI evidence CLI contract', () => {
       allowSavedLogin: true,
     })).toThrow(/saved-login automation is forbidden/i);
     const source = readFileSync('scripts/package-ui-evidence.js', 'utf8');
-    const runtimeStart = source.indexOf('async function runPackageUiEvidence(options)');
+    const runtimeStart = source.indexOf('async function runPackageUiEvidence(options, dependencies = {})');
     const runtimeBody = source.slice(
       runtimeStart,
       source.indexOf('const runGroupId = packageUiRunGroupId(options)', runtimeStart),
@@ -2341,6 +2800,7 @@ describe('package UI evidence CLI contract', () => {
       '--allow-interactive-login',
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
+      '--authority-selection', AUTHORITY_SELECTION_PATH,
       '--run-group', 'operator-run-001',
       '--output', 'output/custom-package-ui',
       '--settle-ms', '900',
@@ -2354,6 +2814,7 @@ describe('package UI evidence CLI contract', () => {
     expect(parsed.settleMs).toBe(900);
     expect(parsed.userDataDir).toBe(USER_DATA_DIR);
     expect(parsed.protectedDatabasePath).toBe(path.resolve(PROTECTED_DB_PATH));
+    expect(parsed.authoritySelectionPath).toBe(path.resolve(AUTHORITY_SELECTION_PATH));
     expect(parsed.runGroupId).toBe('operator-run-001');
     expect(parsed.resumeRunGroupId).toBeNull();
     expect(parsed.executablePath).toBe(path.resolve('apps/desktop/release/win-unpacked/AmazonAIOpsAgent.exe'));
@@ -2404,6 +2865,8 @@ describe('package UI evidence CLI contract', () => {
     expect(result.stdout).toContain('--print-package-hashes');
     expect(result.stdout).toContain('--user-data-dir');
     expect(result.stdout).toContain('--protected-db');
+    expect(result.stdout).toContain('--authority-selection');
+    expect(result.stdout).toContain('--resume-inspection-receipt');
     expect(result.stdout).toContain('--resume-run-group');
     expect(result.stdout).toContain('fresh typed-and-saved identity proof');
     expect(result.stdout).not.toContain('--allow-saved-login');
@@ -2476,6 +2939,130 @@ describe('isolated profile database provenance', () => {
     }
   });
 
+  it.runIf(process.platform === 'win32')(
+    'rejects a high-risk ACL readback before the runner can invoke SQLite backup',
+    () => {
+      const root = mkdtempSync(path.join(
+        tmpdir(),
+        'amazon-ai-ops-package-ui-runner-acl-',
+      ));
+      const tempParent = path.join(root, 'temp');
+      const databasePath = path.join(root, 'authority.db');
+      mkdirSync(tempParent);
+      const database = new Database(databasePath);
+      let backupCalls = 0;
+      try {
+        database.exec('CREATE TABLE proof(value TEXT)');
+        expect(() => captureSqliteLogicalArtifact(
+          databasePath,
+          'acl-readback-negative',
+          {
+            runReadonlySqliteOnlineBackupSync: () => {
+              backupCalls += 1;
+              throw new Error('backup must not run');
+            },
+            spawnSync: () => ({
+              error: null,
+              signal: null,
+              status: 0,
+              stderr: '',
+              stdout: JSON.stringify({
+                allowedSids: [
+                  'S-1-1-0',
+                  'S-1-5-18',
+                  'S-1-5-21-1000',
+                  'S-1-5-32-544',
+                ],
+                areAccessRulesProtected: true,
+                deniedRuleCount: 0,
+                exactRuleCount: 3,
+                inheritedRuleCount: 0,
+                ownerSid: 'S-1-5-21-1000',
+                ruleCount: 4,
+              }),
+            }),
+            tempParent,
+          },
+        )).toThrow(/high-risk principal/i);
+        expect(backupCalls).toBe(0);
+        expect(readdirSync(tempParent)).toEqual([]);
+      } finally {
+        database.close();
+        rmSync(root, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it('recursively removes an unexpected runner backup sidecar after an abnormal helper exit', () => {
+    const root = mkdtempSync(path.join(
+      tmpdir(),
+      'amazon-ai-ops-package-ui-runner-cleanup-',
+    ));
+    const tempParent = path.join(root, 'temp');
+    const databasePath = path.join(root, 'authority.db');
+    mkdirSync(tempParent);
+    const database = new Database(databasePath);
+    try {
+      database.exec('CREATE TABLE proof(value TEXT)');
+      expect(() => captureSqliteLogicalArtifact(
+        databasePath,
+        'cleanup-negative',
+        {
+          runReadonlySqliteOnlineBackupSync: ({
+            destinationPath,
+            ownedTempRoot,
+            sourceDatabasePath,
+          }) => {
+            copyFileSync(sourceDatabasePath, destinationPath);
+            const residue = path.join(ownedTempRoot, 'unexpected', 'backup.db-wal');
+            mkdirSync(path.dirname(residue));
+            copyFileSync(sourceDatabasePath, residue);
+            throw new Error('synthetic runner backup failure');
+          },
+          tempParent,
+        },
+      )).toThrow(/synthetic runner backup failure/);
+      expect(readdirSync(tempParent)).toEqual([]);
+    } finally {
+      database.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('fails closed on cleanup itself when the bounded runner temp-root cleanup cannot finish', () => {
+    const root = mkdtempSync(path.join(
+      tmpdir(),
+      'amazon-ai-ops-package-ui-runner-cleanup-fail-',
+    ));
+    const tempParent = path.join(root, 'temp');
+    const databasePath = path.join(root, 'authority.db');
+    mkdirSync(tempParent);
+    const database = new Database(databasePath);
+    try {
+      database.exec('CREATE TABLE proof(value TEXT)');
+      expect(() => captureSqliteLogicalArtifact(
+        databasePath,
+        'cleanup-fail-closed',
+        {
+          cleanupMaxEntries: 1,
+          cleanupRetries: 1,
+          runReadonlySqliteOnlineBackupSync: ({
+            destinationPath,
+            sourceDatabasePath,
+          }) => {
+            copyFileSync(sourceDatabasePath, destinationPath);
+            throw new Error('original synthetic backup failure');
+          },
+          tempParent,
+        },
+      )).toThrow(/could not be completely removed after bounded retries/i);
+      expect(readdirSync(tempParent)).toHaveLength(1);
+    } finally {
+      database.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it('writes immutable ordered checkpoints and resumes only the same package/profile lineage', () => {
     const outputDir = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-checkpoint-'));
     const genesis = validProfileLineageState();
@@ -2490,6 +3077,7 @@ describe('isolated profile database provenance', () => {
     };
     try {
       const manager = initializePackageUiRunGroup({
+        authorityBinding: validAuthorityBinding(),
         genesisProfileState: genesis,
         options: { runGroupId: 'checkpoint-run-001' },
         outputDir,
@@ -2503,7 +3091,11 @@ describe('isolated profile database provenance', () => {
         after.capturedAt = `2026-07-17T06:00:0${index + 2}.000Z`;
         after.profileContent.sha256 = String(index + 1).padStart(64, String(index + 1));
         const profileState = { before: cursor.cursor, after };
-        const attemptContext = createPackageUiProfileAttemptContext(manager, profileId);
+        const attemptContext = createPackageUiProfileAttemptContext(
+          manager,
+          profileId,
+          validInvocation(manager, `ordered-${index + 1}`),
+        );
         writeFileSync(
           path.join(attemptContext.artifactDir, `${profileId}.txt`),
           `immutable-${profileId}`,
@@ -2512,12 +3104,25 @@ describe('isolated profile database provenance', () => {
         const attemptArtifacts = buildPackageUiAttemptArtifactManifest(
           attemptContext.artifactDir,
         );
-        const runEvidence = {
+        const evidenceBinding = runEvidenceBindingFromAttempt(
+          manager,
+          profileId,
+          attemptContext,
+        );
+        const runEvidence = bindSingleSuccessfulAttemptArtifact({
           attemptArtifacts,
           diagnostics: validDiagnostics(profileId),
+          evidenceBinding,
+          failure: null,
+          packageProcessIsolation: validProcessIsolation(),
           passed: true,
           profileId,
-        };
+          profileLockIsolation: validProfileLockIsolation(
+            profileId,
+            evidenceBinding.invocationId,
+          ),
+          profileProcessIsolation: validProcessIsolation(),
+        }, attemptArtifacts);
         const attemptRecord = recordPackageUiProfileAttempt({
           attemptArtifacts,
           attemptContext,
@@ -2527,6 +3132,36 @@ describe('isolated profile database provenance', () => {
           resumable: true,
           runEvidence,
         });
+        if (index === 0) {
+          const detachedInvocationId = 'detached-invocation-001';
+          const detachedRun = structuredClone(runEvidence);
+          detachedRun.evidenceBinding = {
+            ...detachedRun.evidenceBinding,
+            invocationId: detachedInvocationId,
+            profileLockBinding: validProfileLockIsolation(
+              profileId,
+              detachedInvocationId,
+            ).before.binding,
+            runGroupId: 'detached-run-group-001',
+          };
+          detachedRun.profileLockIsolation = validProfileLockIsolation(
+            profileId,
+            detachedInvocationId,
+          );
+          detachedRun.artifactReferences =
+            buildPackageUiAttemptArtifactReferences(
+              attemptArtifacts,
+              detachedRun,
+            );
+          expect(() => writePackageUiProfileCheckpoint({
+            attemptRecord,
+            lineageStart: cursor.lineageStart,
+            manager,
+            profileId,
+            profileState,
+            runEvidence: detachedRun,
+          })).toThrow(/exact invocation binding.*detached/i);
+        }
         writePackageUiProfileCheckpoint({
           attemptRecord,
           lineageStart: cursor.lineageStart,
@@ -2558,6 +3193,7 @@ describe('isolated profile database provenance', () => {
       )).toBe(true);
 
       expect(initializePackageUiRunGroup({
+        authorityBinding: validAuthorityBinding(),
         genesisProfileState: structuredClone(composed.finalProfileState),
         options: { resumeRunGroupId: 'checkpoint-run-001' },
         outputDir,
@@ -2565,6 +3201,7 @@ describe('isolated profile database provenance', () => {
         protectedDatabaseLogical,
       }).resumed).toBe(true);
       expect(() => initializePackageUiRunGroup({
+        authorityBinding: validAuthorityBinding(),
         genesisProfileState: structuredClone(composed.finalProfileState),
         options: { resumeRunGroupId: 'checkpoint-run-001' },
         outputDir,
@@ -2572,6 +3209,7 @@ describe('isolated profile database provenance', () => {
         protectedDatabaseLogical,
       })).toThrow(/lineage changed/i);
       expect(() => initializePackageUiRunGroup({
+        authorityBinding: validAuthorityBinding(),
         genesisProfileState: structuredClone(composed.finalProfileState),
         options: { resumeRunGroupId: 'checkpoint-run-001' },
         outputDir,
@@ -2595,6 +3233,7 @@ describe('isolated profile database provenance', () => {
         },
       );
       expect(() => initializePackageUiRunGroup({
+        authorityBinding: validAuthorityBinding(),
         genesisProfileState: genesis,
         options: { resumeRunGroupId: sequenceDriftRunGroupId },
         outputDir,
@@ -2619,22 +3258,33 @@ describe('isolated profile database provenance', () => {
     const profileId = PACKAGE_UI_PROFILE_SEQUENCE[0];
     try {
       const manager = initializePackageUiRunGroup({
+        authorityBinding: validAuthorityBinding(),
         genesisProfileState: genesis,
         options: { runGroupId: 'retry-run-001' },
         outputDir,
         packageLineage,
         protectedDatabaseLogical: validLogicalArtifact(),
       });
-      const firstContext = createPackageUiProfileAttemptContext(manager, profileId);
+      const firstContext = createPackageUiProfileAttemptContext(
+        manager,
+        profileId,
+        validInvocation(manager, 'retry-1'),
+      );
       const firstArtifactPath = path.join(firstContext.artifactDir, 'first-failure.txt');
       writeFileSync(firstArtifactPath, 'first-failure-is-immutable', 'utf8');
       const firstArtifacts = buildPackageUiAttemptArtifactManifest(firstContext.artifactDir);
       const firstAfter = structuredClone(genesis);
       firstAfter.capturedAt = '2026-07-17T06:00:02.000Z';
       firstAfter.profileContent.sha256 = 'C'.repeat(64);
-      const firstDiagnostics = createRunDiagnostics(
+      const firstFailureState = failedDiagnostics(
         profileId,
-        new Date('2026-07-17T06:00:00.000Z'),
+        'renderer assertion failed after cleanup',
+      );
+      const firstDiagnostics = firstFailureState.diagnostics;
+      const firstEvidenceBinding = runEvidenceBindingFromAttempt(
+        manager,
+        profileId,
+        firstContext,
       );
       firstDiagnostics.login.failureMessage = 'username=operator@example.com password=hunter2';
       Object.assign(firstDiagnostics, {
@@ -2655,12 +3305,19 @@ describe('isolated profile database provenance', () => {
         runEvidence: {
           attemptArtifacts: firstArtifacts,
           diagnostics: firstDiagnostics,
-          failure: { message: 'renderer assertion failed after cleanup' },
+          evidenceBinding: firstEvidenceBinding,
+          failure: firstFailureState.failure,
+          packageProcessIsolation: validProcessIsolation(),
           passed: false,
           profileId,
+          profileLockIsolation: validProfileLockIsolation(
+            profileId,
+            firstEvidenceBinding.invocationId,
+          ),
+          profileProcessIsolation: validProcessIsolation(),
         },
       });
-      expect(PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION).toBe('package-ui-profile-attempt/v2');
+      expect(PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION).toBe('package-ui-profile-attempt/v3');
       const firstAttemptEnvelope = JSON.parse(readFileSync(firstAttempt.path, 'utf8'));
       expect(firstAttemptEnvelope.payload.diagnostics).toEqual(expect.objectContaining({
         login: expect.objectContaining({
@@ -2687,7 +3344,11 @@ describe('isolated profile database provenance', () => {
       expect(retryCursor.receipts).toHaveLength(1);
       expect(profileLineageStateMatches(retryCursor.cursor, firstAfter)).toBe(true);
 
-      const secondContext = createPackageUiProfileAttemptContext(manager, profileId);
+      const secondContext = createPackageUiProfileAttemptContext(
+        manager,
+        profileId,
+        validInvocation(manager, 'retry-2'),
+      );
       expect(secondContext.ordinal).toBe(2);
       expect(secondContext.artifactDir).not.toBe(firstContext.artifactDir);
       writeFileSync(
@@ -2699,12 +3360,25 @@ describe('isolated profile database provenance', () => {
       const secondAfter = structuredClone(firstAfter);
       secondAfter.capturedAt = '2026-07-17T06:00:03.000Z';
       secondAfter.profileContent.sha256 = 'D'.repeat(64);
-      const secondRun = {
+      const secondEvidenceBinding = runEvidenceBindingFromAttempt(
+        manager,
+        profileId,
+        secondContext,
+      );
+      const secondRun = bindSingleSuccessfulAttemptArtifact({
         attemptArtifacts: secondArtifacts,
         diagnostics: validDiagnostics(profileId),
+        evidenceBinding: secondEvidenceBinding,
+        failure: null,
+        packageProcessIsolation: validProcessIsolation(),
         passed: true,
         profileId,
-      };
+        profileLockIsolation: validProfileLockIsolation(
+          profileId,
+          secondEvidenceBinding.invocationId,
+        ),
+        profileProcessIsolation: validProcessIsolation(),
+      }, secondArtifacts);
       const secondAttempt = recordPackageUiProfileAttempt({
         attemptArtifacts: secondArtifacts,
         attemptContext: secondContext,
@@ -2750,20 +3424,31 @@ describe('isolated profile database provenance', () => {
     };
     try {
       const manager = initializePackageUiRunGroup({
+        authorityBinding: validAuthorityBinding(),
         genesisProfileState: genesis,
         options: { runGroupId: 'cleanup-failure-run-001' },
         outputDir,
         packageLineage,
         protectedDatabaseLogical: validLogicalArtifact(),
       });
-      const attemptContext = createPackageUiProfileAttemptContext(manager, profileId);
+      const attemptContext = createPackageUiProfileAttemptContext(
+        manager,
+        profileId,
+        validInvocation(manager, 'cleanup-failure'),
+      );
       writeFileSync(path.join(attemptContext.artifactDir, 'cleanup-failure.txt'), 'failed', 'utf8');
       const attemptArtifacts = buildPackageUiAttemptArtifactManifest(
         attemptContext.artifactDir,
       );
+      const cleanupFailureBinding = runEvidenceBindingFromAttempt(
+        manager,
+        profileId,
+        attemptContext,
+      );
       const cleanupSafeRun = {
         chromiumProcessLineage: null,
         packageProcessIsolation: validProcessIsolation(),
+        profileLockIsolation: validProfileLockIsolation(),
         profileProcessIsolation: validProcessIsolation(),
       };
       expect(packageUiAttemptCleanupPassed(cleanupSafeRun)).toBe(true);
@@ -2792,10 +3477,21 @@ describe('isolated profile database provenance', () => {
         runEvidence: {
           ...cleanupFailedRun,
           attemptArtifacts,
-          diagnostics: validDiagnostics(profileId),
-          failure: { message: 'target Chromium cleanup unresolved' },
+          diagnostics: failedDiagnostics(
+            profileId,
+            'target Chromium cleanup unresolved',
+          ).diagnostics,
+          evidenceBinding: cleanupFailureBinding,
+          failure: failedDiagnostics(
+            profileId,
+            'target Chromium cleanup unresolved',
+          ).failure,
           passed: false,
           profileId,
+          profileLockIsolation: validProfileLockIsolation(
+            profileId,
+            cleanupFailureBinding.invocationId,
+          ),
         },
       });
 
@@ -2835,20 +3531,33 @@ describe('isolated profile database provenance', () => {
       '--allow-interactive-login',
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
+      '--authority-selection', AUTHORITY_SELECTION_PATH,
     ];
     expect(parsePackageUiEvidenceArgs([
       ...base,
       '--resume-run-group', 'operator-run-001',
+      '--resume-inspection-receipt', 'D:\\Temp\\resume-inspections\\operator-run-001.json',
     ]).resumeRunGroupId).toBe('operator-run-001');
     expect(() => parsePackageUiEvidenceArgs([
       ...base,
       '--run-group', 'operator-run-001',
       '--resume-run-group', 'operator-run-001',
+      '--resume-inspection-receipt', 'D:\\Temp\\resume-inspections\\operator-run-001.json',
     ])).toThrow(/cannot be combined/);
     expect(() => parsePackageUiEvidenceArgs([
       ...base,
       '--resume-run-group', '..\\escape',
+      '--resume-inspection-receipt', 'D:\\Temp\\resume-inspections\\operator-run-001.json',
     ])).toThrow(/path-safe identifier/);
+    expect(() => parsePackageUiEvidenceArgs([
+      ...base,
+      '--resume-run-group', 'operator-run-001',
+    ])).toThrow(/--resume-inspection-receipt is required/i);
+    expect(() => parsePackageUiEvidenceArgs([
+      ...base,
+      '--run-group', 'operator-run-001',
+      '--resume-inspection-receipt', 'D:\\Temp\\resume-inspections\\operator-run-001.json',
+    ])).toThrow(/only with --resume-run-group/i);
   });
 
   it('allows a bounded interactive operator login handoff but never combines it with saved-login automation', () => {
@@ -2859,6 +3568,7 @@ describe('isolated profile database provenance', () => {
       '--interactive-login-timeout-ms', '600000',
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
+      '--authority-selection', AUTHORITY_SELECTION_PATH,
     ]);
 
     expect(parsed.allowInteractiveLogin).toBe(true);
@@ -2870,6 +3580,7 @@ describe('isolated profile database provenance', () => {
       '--allow-interactive-login',
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
+      '--authority-selection', AUTHORITY_SELECTION_PATH,
     ]).interactiveLoginTimeoutMs).toBe(900_000);
     expect(() => parsePackageUiEvidenceArgs([
       '--expected-exe-sha256', HASH_A,
@@ -2878,6 +3589,7 @@ describe('isolated profile database provenance', () => {
       '--interactive-login-timeout-ms', '900001',
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
+      '--authority-selection', AUTHORITY_SELECTION_PATH,
     ])).toThrow(/must not exceed 900000/i);
     expect(() => parsePackageUiEvidenceArgs([
       '--expected-exe-sha256', HASH_A,
@@ -2885,6 +3597,7 @@ describe('isolated profile database provenance', () => {
       '--allow-saved-login',
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
+      '--authority-selection', AUTHORITY_SELECTION_PATH,
     ])).toThrow(/schema v8.*--allow-interactive-login/i);
     expect(() => parsePackageUiEvidenceArgs([
       '--expected-exe-sha256', HASH_A,
@@ -2893,6 +3606,7 @@ describe('isolated profile database provenance', () => {
       '--allow-interactive-login',
       '--user-data-dir', USER_DATA_DIR,
       '--protected-db', PROTECTED_DB_PATH,
+      '--authority-selection', AUTHORITY_SELECTION_PATH,
     ])).toThrow(/cannot be combined/i);
   });
 
@@ -2916,7 +3630,7 @@ describe('isolated profile database provenance', () => {
 
       const source = readFileSync('scripts/package-ui-evidence.js', 'utf8');
       const runBody = source.slice(
-        source.indexOf('async function runPackageUiEvidence(options)'),
+        source.indexOf('async function runPackageUiEvidence(options, dependencies = {})'),
         source.indexOf('module.exports = {'),
       );
       expect(runBody.indexOf('manifest.profileDatabaseFileIsolation = evaluateProfileDatabaseFileIsolation')).toBeGreaterThan(-1);
@@ -3037,6 +3751,236 @@ describe('isolated profile database provenance', () => {
 
     expect(result.passed).toBe(false);
     expect(result.violations).toEqual(expect.arrayContaining([expect.objectContaining({ code })]));
+  });
+});
+
+describe('package UI invocation lease and resume receipt', () => {
+  it('acquires one atomic run-group lease and classifies concurrent, stale, and released states fail-closed', () => {
+    const outputDir = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-lease-'));
+    const runGroupId = 'lease-run-group-001';
+    const invocationId = 'lease-invocation-001';
+    const identity = {
+      alive: true,
+      identitySha256: HASH_B,
+      passed: true,
+      processId: process.pid,
+    };
+    try {
+      const lease = acquirePackageUiRunGroupLease({
+        collectProcessIdentity: () => identity,
+        invocationId,
+        outputDir,
+        randomUUID: () => '00000000-0000-4000-8000-000000000001',
+        runGroupId,
+        runnerContractSha256: HASH_A,
+      });
+      expect(inspectPackageUiRunGroupLease({
+        collectProcessIdentity: () => identity,
+        outputDir,
+        runGroupId,
+        runnerContractSha256: HASH_A,
+      })).toEqual(expect.objectContaining({
+        activeRunnerCount: 1,
+        invocationId,
+        reasonCode: 'RUNNER_LEASE_ACTIVE',
+        state: 'active',
+        supported: true,
+      }));
+      expect(() => acquirePackageUiRunGroupLease({
+        collectProcessIdentity: () => identity,
+        invocationId: 'lease-invocation-002',
+        outputDir,
+        runGroupId,
+        runnerContractSha256: HASH_A,
+      })).toThrow(/RUNNER_LEASE_ACTIVE.*fail closed/i);
+      expect(inspectPackageUiRunGroupLease({
+        collectProcessIdentity: () => ({
+          alive: false,
+          passed: true,
+          processId: process.pid,
+        }),
+        outputDir,
+        runGroupId,
+        runnerContractSha256: HASH_A,
+      })).toEqual(expect.objectContaining({
+        activeRunnerCount: null,
+        reasonCode: 'RUNNER_LEASE_STALE',
+        state: 'stale',
+      }));
+      expect(releasePackageUiRunGroupLease(lease)).toEqual(expect.objectContaining({
+        invocationId,
+        released: true,
+      }));
+      expect(inspectPackageUiRunGroupLease({
+        collectProcessIdentity: () => identity,
+        outputDir,
+        runGroupId,
+        runnerContractSha256: HASH_A,
+      })).toEqual(expect.objectContaining({
+        activeRunnerCount: 0,
+        passed: true,
+        state: 'absent',
+      }));
+    } finally {
+      rmSync(outputDir, { force: true, recursive: true });
+    }
+  });
+
+  it('validates exact resume argv and consumes the content-bound inspection receipt only once', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-resume-'));
+    const createdAt = new Date();
+    const core = {
+      authorityBinding: validAuthorityBinding(),
+      createdAt: createdAt.toISOString(),
+      cursor: {
+        logicalDatabaseSha256: HASH_A,
+        profileContentSha256: HASH_B,
+      },
+      expiresAt: new Date(createdAt.valueOf() + 60_000).toISOString(),
+      invocationId: 'resume-invocation-001',
+      kind: 'package-ui-resume-inspection',
+      nextProfileId: PACKAGE_UI_PROFILE_SEQUENCE[0],
+      runGroupId: 'resume-run-group-001',
+      runnerContractSha256: HASH_A,
+      schemaVersion: 'package-ui-resume-inspection/v1',
+    };
+    const intentBindingSha256 = evidenceModule.sha256Buffer(
+      Buffer.from(canonicalJsonForTest(core), 'utf8'),
+    );
+    const receiptPath = path.join(root, `${intentBindingSha256}.json`);
+    const argv = [
+      'scripts/run-package-ui-evidence.js',
+      '--output', path.join(root, 'evidence'),
+      '--resume-run-group', core.runGroupId,
+      '--expected-exe-sha256', HASH_A,
+      '--expected-app-content-sha256', HASH_B,
+      '--user-data-dir', USER_DATA_DIR,
+      '--protected-db', PROTECTED_DB_PATH,
+      '--authority-selection', AUTHORITY_SELECTION_PATH,
+      '--resume-inspection-receipt', receiptPath,
+      '--allow-interactive-login',
+    ];
+    const payload = { ...core, argv, intentBindingSha256 };
+    try {
+      writeFileSync(
+        receiptPath,
+        `${JSON.stringify(evidenceModule.createImmutableEnvelope(payload))}\n`,
+        'utf8',
+      );
+      const record = validatePackageUiResumeInspectionReceipt({
+        invocationArgv: argv.slice(1),
+        receiptPath,
+        runGroupId: core.runGroupId,
+        runnerContractSha256: HASH_A,
+      });
+      const consumed = consumePackageUiResumeInspectionReceipt(record);
+      expect(consumed).toEqual(expect.objectContaining({
+        consumedAt: expect.any(String),
+        payloadSha256: record.payloadSha256,
+      }));
+      expect(() => consumePackageUiResumeInspectionReceipt(record))
+        .toThrow(/already consumed/i);
+      expect(() => validatePackageUiResumeInspectionReceipt({
+        invocationArgv: [...argv.slice(1), '--settle-ms', '1'],
+        receiptPath: consumed.file.path,
+        runGroupId: core.runGroupId,
+        runnerContractSha256: HASH_A,
+      })).toThrow(/exact argv/i);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('requires the declared artifact collection to exactly match evidence-bearing attempt files', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'amazon-ai-ops-package-ui-membership-'));
+    try {
+      const screenshotPath = path.join(root, 'workspace.png');
+      writeFileSync(screenshotPath, 'synthetic-workspace-capture', 'utf8');
+      const attemptArtifacts = buildPackageUiAttemptArtifactManifest(root);
+      const file = attemptArtifacts.files[0];
+      const evidenceBinding = validRunEvidenceBinding('100-compact', {
+        attemptId: 'membership-attempt-001',
+        invocationId: 'membership-invocation-001',
+        runGroupId: 'membership-run-group-001',
+      });
+      const runEvidence = {
+        evidenceBinding,
+        passed: true,
+        screenshots: [{
+          path: screenshotPath,
+          sha256: file.sha256,
+          sizeBytes: file.sizeBytes,
+          subview: 'overview',
+          workspace: 'today',
+        }],
+      };
+      runEvidence.artifactReferences = buildPackageUiAttemptArtifactReferences(
+        attemptArtifacts,
+        runEvidence,
+      );
+      expect(validatePackageUiAttemptArtifactMembership(
+        attemptArtifacts,
+        runEvidence,
+      )).toEqual(expect.objectContaining({ passed: true, violations: [] }));
+      expect(validatePackageUiAttemptArtifactMembership(
+        attemptArtifacts,
+        { ...runEvidence, artifactReferences: [] },
+      )).toEqual(expect.objectContaining({
+        passed: false,
+        violations: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'ATTEMPT_ARTIFACT_DECLARATION_MISMATCH',
+          }),
+        ]),
+      }));
+
+      const aliasedReference = structuredClone(runEvidence);
+      aliasedReference.artifactReferences[0].path =
+        `${root}${path.sep}.${path.sep}workspace.png`;
+      expect(validatePackageUiAttemptArtifactMembership(
+        attemptArtifacts,
+        aliasedReference,
+      )).toEqual(expect.objectContaining({
+        passed: false,
+        violations: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'ATTEMPT_ARTIFACT_REFERENCE_INVALID',
+          }),
+        ]),
+      }));
+
+      const reusedSemanticFile = structuredClone(runEvidence);
+      reusedSemanticFile.overlayChecks = [{
+        id: EXPECTED_OVERLAY_CHECK_IDS[0],
+        screenshot: {
+          overlayId: EXPECTED_OVERLAY_CHECK_IDS[0],
+          path: screenshotPath,
+          scalePercent: 100,
+          sha256: file.sha256,
+          sizeBytes: file.sizeBytes,
+        },
+      }];
+      expect(() => buildPackageUiAttemptArtifactReferences(
+        attemptArtifacts,
+        reusedSemanticFile,
+      )).toThrow(/cannot satisfy multiple semantic slots/i);
+
+      const hardlinkPath = path.join(root, 'workspace-hardlink.png');
+      linkSync(screenshotPath, hardlinkPath);
+      expect(validatePackageUiAttemptArtifactMembership(
+        attemptArtifacts,
+        runEvidence,
+      )).toEqual(expect.objectContaining({
+        passed: false,
+        violations: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'ATTEMPT_ARTIFACT_MANIFEST_INVALID',
+          }),
+        ]),
+      }));
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
   });
 });
 
@@ -3971,20 +4915,55 @@ describe('read-only interactions and evidence completeness', () => {
     });
   });
 
+  it('returns structured profile-scoped violations for an incomplete wide checkpoint', () => {
+    const wide = validWideRun();
+    wide.workspaceChecks = [];
+    const result = evaluatePackageUiProfileEvidence(
+      PACKAGE_UI_WIDE_PROFILE.id,
+      wide,
+    );
+    expect(result.passed).toBe(false);
+    expect(result.relevantViolations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'WIDE_CANONICAL_WORKSPACE_MISSING_OR_FAILED',
+        profileId: PACKAGE_UI_WIDE_PROFILE.id,
+      }),
+    ]));
+  });
+
   it('requires protected state, process cleanup, 100% and 125%, ten workspaces, keyboard evidence, three overlays and hashed screenshots', () => {
     const runGroupId = 'package-ui-test-run-group';
     const runnerContract = buildPackageUiRunnerContract();
+    const runs = EXPECTED_PACKAGE_UI_SCALES.map(validRun);
+    const wideProfile = validWideRun();
     const checkpointComposition = validCheckpointComposition(
       runGroupId,
       runnerContract.sha256,
+      [...runs, wideProfile],
     );
+    const authorityBinding = validAuthorityBinding();
+    const invocationId = 'package-ui-test-invocation';
     const valid = {
       artifactHashesStable: true,
+      authority: { binding: authorityBinding },
       checkpointComposition,
+      failure: null,
+      invocation: {
+        attemptReceipts: [],
+        invocationId,
+        lease: {
+          generation: 'package-ui-test-generation',
+          payloadSha256: HASH_A,
+        },
+      },
       schemaVersion: 8,
       interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
       isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
       packageProcessIsolation: validProcessIsolation(),
+      profileLockIsolation: validProfileLockIsolation(
+        'run-group',
+        invocationId,
+      ),
       profileDatabaseFileIsolation: { passed: true },
       profileDatabaseProvenance: { passed: true },
       profileProcessIsolation: validProcessIsolation(),
@@ -4006,16 +4985,119 @@ describe('read-only interactions and evidence completeness', () => {
         loginMode: 'interactive-operator-each-run',
         resumeRunGroupId: null,
         runGroupId,
+        userDataDir: USER_DATA_DIR,
       },
       runGroup: {
+        authorityBinding,
+        invocationId,
         profileSequence: PACKAGE_UI_PROFILE_SEQUENCE,
         runGroupId,
         runnerContractSha256: runnerContract.sha256,
       },
-      runs: EXPECTED_PACKAGE_UI_SCALES.map(validRun),
-      wideProfile: validWideRun(),
+      runs,
+      wideProfile,
     };
     expect(evaluatePackageUiEvidenceCompleteness(valid)).toEqual({ passed: true, violations: [] });
+
+    const nonNullManifestFailure = structuredClone(valid);
+    nonNullManifestFailure.failure = {
+      at: '2026-07-17T06:00:01.000Z',
+      message: 'stale success failure',
+      name: 'Error',
+      phase: 'completed',
+      stack: 'Error: stale success failure',
+    };
+    expect(evaluatePackageUiEvidenceCompleteness(
+      nonNullManifestFailure,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'V8_MANIFEST_FAILURE_NOT_NULL' }),
+    ]));
+
+    const extraScaleRun = structuredClone(valid);
+    extraScaleRun.runs.push(structuredClone(extraScaleRun.runs[0]));
+    expect(evaluatePackageUiEvidenceCompleteness(
+      extraScaleRun,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'V8_SCALE_RUN_SET_NOT_EXACT' }),
+    ]));
+
+    const nestedProfileLockExtra = structuredClone(valid);
+    nestedProfileLockExtra.runs[0]
+      .profileLockIsolation.before.tree.unexpected = true;
+    expect(evaluatePackageUiEvidenceCompleteness(
+      nestedProfileLockExtra,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'SCALE_PROFILE_LOCK_HANDLE_ATTESTATION_FAILED',
+      }),
+    ]));
+
+    const duplicateWorkspaceKey = structuredClone(valid);
+    duplicateWorkspaceKey.runs[0].workspaceChecks.push(
+      structuredClone(duplicateWorkspaceKey.runs[0].workspaceChecks[0]),
+    );
+    expect(evaluatePackageUiEvidenceCompleteness(
+      duplicateWorkspaceKey,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'V8_WORKSPACE_CHECKS_NOT_EXACT' }),
+    ]));
+
+    const extraSubviewKey = structuredClone(valid);
+    extraSubviewKey.runs[0].subviewChecks.push({
+      ...structuredClone(extraSubviewKey.runs[0].subviewChecks[0]),
+      subview: 'delivery',
+    });
+    expect(evaluatePackageUiEvidenceCompleteness(
+      extraSubviewKey,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'V8_SUBVIEW_CHECKS_NOT_EXACT' }),
+    ]));
+
+    const duplicateOverlayKey = structuredClone(valid);
+    duplicateOverlayKey.runs[0].overlayChecks.push(
+      structuredClone(duplicateOverlayKey.runs[0].overlayChecks[0]),
+    );
+    expect(evaluatePackageUiEvidenceCompleteness(
+      duplicateOverlayKey,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'V8_OVERLAY_CHECKS_NOT_EXACT' }),
+    ]));
+
+    const extraScreenshotKey = structuredClone(valid);
+    extraScreenshotKey.runs[0].screenshots.push({
+      ...structuredClone(extraScreenshotKey.runs[0].screenshots[0]),
+      subview: 'events',
+    });
+    expect(evaluatePackageUiEvidenceCompleteness(
+      extraScreenshotKey,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'V8_SCREENSHOTS_NOT_EXACT' }),
+    ]));
+
+    const reusedScreenshotAcrossSlots = structuredClone(valid);
+    reusedScreenshotAcrossSlots.runs[0].screenshots[1] = {
+      ...reusedScreenshotAcrossSlots.runs[0].screenshots[1],
+      path: reusedScreenshotAcrossSlots.runs[0].screenshots[0].path,
+      sha256: reusedScreenshotAcrossSlots.runs[0].screenshots[0].sha256,
+      sizeBytes: reusedScreenshotAcrossSlots.runs[0].screenshots[0].sizeBytes,
+    };
+    reusedScreenshotAcrossSlots.runs[0].workspaceChecks[1].screenshot =
+      reusedScreenshotAcrossSlots.runs[0].screenshots[1];
+    expect(evaluatePackageUiEvidenceCompleteness(
+      reusedScreenshotAcrossSlots,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'V8_SCREENSHOT_PATH_REUSED' }),
+    ]));
+
+    const invocationProfileBindingDrift = structuredClone(valid);
+    invocationProfileBindingDrift.runs[0].evidenceBinding.invocationId =
+      'detached-profile-invocation';
+    expect(evaluatePackageUiEvidenceCompleteness(
+      invocationProfileBindingDrift,
+    ).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCALE_ATTEMPT_ARTIFACTS_MISSING_OR_CHANGED' }),
+      expect.objectContaining({ code: 'PROFILE_CHECKPOINT_COMPOSITION_MISSING_OR_FAILED' }),
+    ]));
 
     const mismatchedHandoffPhaseBound = structuredClone(valid);
     mismatchedHandoffPhaseBound.runs[0].session.operatorHandoff.phaseTimeoutMs = 900_000;
@@ -4371,7 +5453,15 @@ describe('read-only interactions and evidence completeness', () => {
 
     const rounded125 = structuredClone(valid);
     rounded125.runs.find((run) => run.scalePercent === 125).viewport.height = 702;
-    expect(evaluatePackageUiEvidenceCompleteness(rounded125)).toEqual({ passed: true, violations: [] });
+    const rounded125Result = evaluatePackageUiEvidenceCompleteness(rounded125);
+    expect(rounded125Result.violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'PROFILE_CHECKPOINT_COMPOSITION_MISSING_OR_FAILED',
+      }),
+    ]));
+    expect(rounded125Result.violations).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'SCALE_VIEWPORT_MISMATCH' }),
+    ]));
 
     const drifted125 = structuredClone(valid);
     drifted125.runs.find((run) => run.scalePercent === 125).viewport.height = 703;

@@ -39,6 +39,7 @@
     "evidence:workspace-ui": "node scripts/run-workspace-ui-evidence.js",
     "evidence:s7-workspace-ui": "node scripts/run-mission-control-ui-evidence.js",
     "evidence:package-ui": "node scripts/run-package-ui-evidence.js",
+    "inspect:package-ui-run-group": "node scripts/inspect-package-ui-run-group.js",
     "smoke:package-launch": "node scripts/smoke-package-launch.js",
     "smoke:package-security-boundaries": "node scripts/smoke-package-security-boundaries.js",
     "smoke:package-adversarial-node-env": "node scripts/smoke-package-adversarial-node-env.js",

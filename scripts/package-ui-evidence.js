@@ -11,6 +11,15 @@ const {
   SQLITE_AUTHORITY_CURRENTNESS_SCHEMA_VERSION,
   runReadonlySqliteOnlineBackupSync,
 } = require('./sqlite-authority-currentness');
+const {
+  cleanupOwnedSqliteTempRoot,
+  restrictWindowsTempAcl,
+} = require('./protected-sqlite-temp');
+const {
+  KIND: PRODUCTION_AUTHORITY_SELECTION_KIND,
+  SCHEMA_VERSION: PRODUCTION_AUTHORITY_SELECTION_SCHEMA_VERSION,
+  inspectProductionAuthoritySelection,
+} = require('./verify-production-authority-selection');
 const { collectWorkspaceDomMetrics } = require('./workspace-ui-evidence');
 const {
   EVIDENCE_MODE_ENV,
@@ -45,9 +54,14 @@ const DEFAULT_APP_CONTENT_PATH = path.join(
 const EXPECTED_RENDERER_ENTRY_PATH = path.join(DEFAULT_APP_CONTENT_PATH, 'dist', 'renderer', 'index.html');
 const DEFAULT_OUTPUT_DIR = 'output/codex-evidence/package-ui-evidence';
 const PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 8;
-const PACKAGE_UI_RUN_GROUP_SCHEMA_VERSION = 'package-ui-run-group/v1';
-const PACKAGE_UI_PROFILE_CHECKPOINT_SCHEMA_VERSION = 'package-ui-profile-checkpoint/v1';
-const PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION = 'package-ui-profile-attempt/v2';
+const PACKAGE_UI_RUN_GROUP_SCHEMA_VERSION = 'package-ui-run-group/v2';
+const PACKAGE_UI_PROFILE_CHECKPOINT_SCHEMA_VERSION = 'package-ui-profile-checkpoint/v2';
+const PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION = 'package-ui-profile-attempt/v3';
+const PACKAGE_UI_RUNNER_LEASE_SCHEMA_VERSION = 'package-ui-runner-lease/v1';
+const PACKAGE_UI_RESUME_INSPECTION_SCHEMA_VERSION = 'package-ui-resume-inspection/v1';
+const PACKAGE_UI_ATTEMPT_INVOCATION_SCHEMA_VERSION = 'package-ui-attempt-invocation/v1';
+const PACKAGE_UI_INVOCATION_RECEIPT_SCHEMA_VERSION = 'package-ui-invocation-receipt/v1';
+const PACKAGED_APP_NAME = '@amazon-ai-ops/desktop';
 const LEGACY_SCHEDULER_READ_ONLY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 6;
 const LEGACY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION = 5;
 const PACKAGE_UI_SCHEDULER_AUDIT_FILE = 'package-ui-scheduler-audit.json';
@@ -71,6 +85,13 @@ const BUNDLED_CHROMIUM_RELATIVE_PATH = path.join(
   'chrome.exe',
 );
 const WINDOWS_HARDLINK_ENUMERATION_TIMEOUT_MS = 5_000;
+const PACKAGE_UI_PROFILE_LOCK_MAX_ENTRIES = 20_000;
+const PACKAGE_UI_PROFILE_LOCK_MAX_PATH_CHARACTERS = 2_000_000;
+const PACKAGE_UI_PROFILE_LOCK_MAX_CRITICAL_ENTRIES = 1_024;
+const PACKAGE_UI_PROFILE_LOCK_PROBE_TIMEOUT_MS = 60_000;
+const PACKAGE_UI_PROFILE_LOCK_INTERNAL_DEADLINE_MS = 45_000;
+const PACKAGE_UI_SQLITE_TEMP_ROOT_PREFIX =
+  'amazon-ai-ops-package-ui-sqlite-';
 const DEFAULT_INTERACTIVE_LOGIN_TIMEOUT_MS = 900_000;
 const DIAGNOSTIC_MESSAGE_LIMIT = 2_000;
 const DIAGNOSTIC_STACK_LIMIT = 4_000;
@@ -311,6 +332,50 @@ function normalizeRunGroupId(value, name) {
   return normalized;
 }
 
+function resolveWindowsKnownFolder(specialFolder, label, run = spawnSync) {
+  if (process.platform !== 'win32') {
+    fail(`Windows Known Folder lookup for ${label} is supported only on Windows.`);
+  }
+  if (!new Set(['ApplicationData', 'UserProfile']).has(specialFolder)) {
+    fail(`Unsupported Windows Known Folder request for ${label}.`);
+  }
+  const result = run('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    `[Environment]::GetFolderPath([Environment+SpecialFolder]::${specialFolder})`,
+  ], {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    shell: false,
+    timeout: 20_000,
+    windowsHide: true,
+  });
+  const value = String(result?.stdout || '').trim();
+  if (
+    result?.error
+    || result?.status !== 0
+    || result?.signal
+    || !path.isAbsolute(value)
+  ) {
+    fail(`Windows Known Folder lookup for ${label} failed.`);
+  }
+  return path.resolve(value);
+}
+
+function canonicalPackageUiAuthorityPaths(injected = {}) {
+  const resolveKnownFolder = injected.resolveWindowsKnownFolder || resolveWindowsKnownFolder;
+  const roamingAppData = resolveKnownFolder('ApplicationData', 'Roaming AppData');
+  const userProfile = resolveKnownFolder('UserProfile', 'User Profile');
+  const userDataDir = path.join(roamingAppData, ...PACKAGED_APP_NAME.split('/'));
+  return {
+    databasePath: path.join(userDataDir, 'amazon-ai-ops.db'),
+    roamingAppData,
+    userDataDir,
+    userProfile,
+  };
+}
+
 function parsePackageUiEvidenceArgs(argv) {
   const values = {
     allowInteractiveLogin: false,
@@ -320,6 +385,7 @@ function parsePackageUiEvidenceArgs(argv) {
     interactiveLoginTimeoutMs: DEFAULT_INTERACTIVE_LOGIN_TIMEOUT_MS,
     loginTimeoutMs: 120_000,
     outputDir: DEFAULT_OUTPUT_DIR,
+    resumeInspectionReceiptPath: null,
     resumeRunGroupId: null,
     runGroupId: null,
     settleMs: 800,
@@ -363,6 +429,12 @@ function parsePackageUiEvidenceArgs(argv) {
       case '--protected-db':
         values.protectedDatabasePath = path.resolve(value);
         break;
+      case '--authority-selection':
+        values.authoritySelectionPath = path.resolve(value);
+        break;
+      case '--resume-inspection-receipt':
+        values.resumeInspectionReceiptPath = path.resolve(value);
+        break;
       case '--resume-run-group':
         values.resumeRunGroupId = normalizeRunGroupId(value, name);
         break;
@@ -386,12 +458,22 @@ function parsePackageUiEvidenceArgs(argv) {
     fail('--run-group cannot be combined with --resume-run-group.');
   }
   if (!values.userDataDir) fail('--user-data-dir is required and must point to an isolated D-drive profile copy.');
-  if (!values.protectedDatabasePath) fail('--protected-db is required so the real AppData SQLite file is hashed before and after evidence capture.');
+  if (!values.protectedDatabasePath) fail('--protected-db is required so the canonical authority SQLite file is hashed before and after evidence capture.');
+  if (!values.authoritySelectionPath) {
+    fail('--authority-selection is required and must be the current production authority-selection receipt.');
+  }
+  if (values.resumeRunGroupId && !values.resumeInspectionReceiptPath) {
+    fail('--resume-inspection-receipt is required with --resume-run-group.');
+  }
+  if (!values.resumeRunGroupId && values.resumeInspectionReceiptPath) {
+    fail('--resume-inspection-receipt may be used only with --resume-run-group.');
+  }
   if (!values.allowInteractiveLogin) {
     fail('Package UI schema v8 requires --allow-interactive-login; saved-login or existing-session-only capture is historical and unsupported.');
   }
   values.executablePath = path.resolve(values.executablePath);
   values.appContentPath = path.resolve(values.appContentPath);
+  values.invocationArgv = [...argv];
   return values;
 }
 
@@ -416,7 +498,7 @@ function currentFileRecordMatches(record) {
   const filePath = record?.path;
   if (!filePath || !path.isAbsolute(filePath) || !fs.existsSync(filePath)) return false;
   const lstat = fs.lstatSync(filePath);
-  if (!lstat.isFile() || lstat.isSymbolicLink()) return false;
+  if (!lstat.isFile() || lstat.isSymbolicLink() || lstat.nlink !== 1) return false;
   const stat = fs.statSync(filePath);
   return /^[A-F0-9]{64}$/.test(String(record?.sha256 || ''))
     && Number(record?.sizeBytes) === stat.size
@@ -468,6 +550,164 @@ function readWindowsFileIdentity(filePath) {
       stat.ctimeNs,
       stat.mtimeNs,
     ].join(':'),
+  };
+}
+
+function readStableUniqueFile(filePath, label) {
+  const resolvedPath = path.resolve(filePath);
+  const before = fs.lstatSync(resolvedPath, { bigint: true });
+  if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1n) {
+    fail(`${label} must be a unique direct regular file`, resolvedPath);
+  }
+  const realPath = fs.realpathSync.native(resolvedPath);
+  if (lexicalWindowsPath(realPath) !== lexicalWindowsPath(resolvedPath)) {
+    fail(`${label} may not traverse a symbolic link or junction`, resolvedPath);
+  }
+  const descriptor = fs.openSync(realPath, 'r');
+  try {
+    const handleBefore = fs.fstatSync(descriptor, { bigint: true });
+    const buffer = fs.readFileSync(descriptor);
+    const handleAfter = fs.fstatSync(descriptor, { bigint: true });
+    const pathAfter = fs.lstatSync(resolvedPath, { bigint: true });
+    const identity = (value) => [
+      value.dev,
+      value.ino,
+      value.nlink,
+      value.size,
+      value.ctimeNs,
+      value.mtimeNs,
+    ].join(':');
+    if (
+      identity(before) !== identity(handleBefore)
+      || identity(handleBefore) !== identity(handleAfter)
+      || identity(handleAfter) !== identity(pathAfter)
+      || buffer.length !== Number(handleAfter.size)
+      || fs.realpathSync.native(resolvedPath) !== realPath
+    ) {
+      fail(`${label} changed while it was being read`, resolvedPath);
+    }
+    return {
+      buffer,
+      file: {
+        path: realPath,
+        sha256: sha256Buffer(buffer),
+        sizeBytes: buffer.length,
+      },
+    };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function authorityLogicalArtifactFromSelection(evidence) {
+  const logical = evidence?.selection?.selected?.logicalCapture;
+  if (!logical) return null;
+  return {
+    method: logical.method,
+    remainingPages: logical.remainingPages,
+    schemaVersion: logical.schemaVersion,
+    sha256: logical.logicalBackupSha256,
+    sizeBytes: logical.logicalBackupSizeBytes,
+    totalPages: logical.totalPages,
+  };
+}
+
+function validatePackageUiAuthoritySelection({
+  authoritySelectionPath,
+  canonicalPaths = canonicalPackageUiAuthorityPaths(),
+  protectedDatabasePath,
+  verifier = inspectProductionAuthoritySelection,
+}) {
+  if (
+    lexicalWindowsPath(protectedDatabasePath)
+    !== lexicalWindowsPath(canonicalPaths.databasePath)
+  ) {
+    fail(
+      '--protected-db must resolve exactly to the Windows Known Folder authority database',
+      protectedDatabasePath,
+    );
+  }
+  const databaseIdentity = readWindowsFileIdentity(protectedDatabasePath);
+  if (databaseIdentity.hardLinkCount !== 1) {
+    fail('The canonical authority database must have exactly one hard link', protectedDatabasePath);
+  }
+  const receiptRecord = readStableUniqueFile(
+    authoritySelectionPath,
+    'Production authority-selection receipt',
+  );
+  let receipt;
+  try {
+    receipt = JSON.parse(receiptRecord.buffer.toString('utf8'));
+  } catch {
+    fail('Production authority-selection receipt is not valid JSON', authoritySelectionPath);
+  }
+  const expectedMainSha256 = String(
+    receipt?.selection?.selected?.mainFileSha256 || '',
+  ).toUpperCase();
+  if (!/^[A-F0-9]{64}$/.test(expectedMainSha256)) {
+    fail('Production authority-selection receipt has no valid selected main-file hash');
+  }
+  const current = verifier({
+    dbPath: protectedDatabasePath,
+    expectedMainSha256,
+    expectedUserDataDir: canonicalPaths.userDataDir,
+  }, {
+    env: {
+      ...process.env,
+      APPDATA: canonicalPaths.roamingAppData,
+      USERPROFILE: canonicalPaths.userProfile,
+    },
+    writeStdout: () => {},
+  });
+  if (
+    receipt?.kind !== PRODUCTION_AUTHORITY_SELECTION_KIND
+    || receipt?.schemaVersion !== PRODUCTION_AUTHORITY_SELECTION_SCHEMA_VERSION
+    || !['SELECTED_SCHEMA_READY', 'SELECTED_MIGRATION_REQUIRED'].includes(receipt?.status)
+    || receipt.status !== current?.status
+    || receipt.formalEvidence !== false
+    || receipt.authorityDatabaseMutated !== false
+    || receipt.adsExecutionInvoked !== false
+    || canonicalJson(receipt.selection) !== canonicalJson(current?.selection)
+    || lexicalWindowsPath(current?.selection?.expectedDatabasePath)
+      !== lexicalWindowsPath(protectedDatabasePath)
+    || lexicalWindowsPath(current?.selection?.selected?.realPath)
+      !== lexicalWindowsPath(protectedDatabasePath)
+  ) {
+    fail(
+      'Production authority-selection receipt is stale or detached from the canonical authority database',
+      authoritySelectionPath,
+    );
+  }
+  const logicalArtifact = authorityLogicalArtifactFromSelection(current);
+  if (
+    logicalArtifact?.schemaVersion !== SQLITE_AUTHORITY_CURRENTNESS_SCHEMA_VERSION
+    || logicalArtifact?.method !== CURRENTNESS_METHOD
+    || logicalArtifact?.remainingPages !== 0
+    || !/^[A-F0-9]{64}$/.test(String(logicalArtifact?.sha256 || ''))
+  ) {
+    fail('Production authority-selection receipt did not yield a valid current logical artifact');
+  }
+  return {
+    authorityBinding: {
+      authoritySelectionReceiptSha256: receiptRecord.file.sha256,
+      canonicalDatabasePathSha256: sha256Buffer(Buffer.from(
+        lexicalWindowsPath(canonicalPaths.databasePath),
+        'utf8',
+      )),
+      databaseFileIdentity: {
+        deviceId: databaseIdentity.deviceId,
+        fileId: databaseIdentity.fileId,
+        hardLinkCount: databaseIdentity.hardLinkCount,
+        stabilityTokenSha256: sha256Buffer(Buffer.from(
+          databaseIdentity.stabilityToken,
+          'utf8',
+        )),
+      },
+    },
+    canonicalPaths,
+    logicalArtifact,
+    receiptRecord,
+    status: current.status,
   };
 }
 
@@ -753,6 +993,51 @@ function createStructuredFailure(error, phase = 'unknown') {
     phase: sanitizeDiagnosticText(phase || 'unknown', 160),
     stack: sanitizeDiagnosticText(source.stack || '', DIAGNOSTIC_STACK_LIMIT),
   };
+}
+
+function validPackageUiStructuredFailure(failure) {
+  return Boolean(
+    failure
+    && typeof failure === 'object'
+    && !Array.isArray(failure)
+    && Object.keys(failure).sort().join(',')
+      === 'at,message,name,phase,stack'
+    && Number.isFinite(Date.parse(failure.at))
+    && typeof failure.message === 'string'
+    && failure.message.length > 0
+    && failure.message.length <= DIAGNOSTIC_MESSAGE_LIMIT
+    && typeof failure.name === 'string'
+    && failure.name.length > 0
+    && failure.name.length <= 120
+    && typeof failure.phase === 'string'
+    && failure.phase.length > 0
+    && failure.phase.length <= 160
+    && typeof failure.stack === 'string'
+    && failure.stack.length <= DIAGNOSTIC_STACK_LIMIT
+    && canonicalJson(failure) === canonicalJson(
+      cloneSecretBlindDiagnosticRecord(failure),
+    )
+  );
+}
+
+function packageUiAttemptOutcomeMatches(payload) {
+  if (
+    typeof payload?.passed !== 'boolean'
+    || typeof payload?.resumable !== 'boolean'
+  ) {
+    return false;
+  }
+  if (payload.passed === true) {
+    return payload.resumable === true
+      && payload.failure === null
+      && payload.diagnostics?.failure === null
+      && payload.diagnostics?.phase === 'completed'
+      && packageUiAttemptCleanupEvidencePassed(payload.cleanupEvidence);
+  }
+  return validPackageUiStructuredFailure(payload.failure)
+    && canonicalJson(payload.failure)
+      === canonicalJson(payload.diagnostics?.failure)
+    && payload.diagnostics?.phase === 'failed';
 }
 
 function createRunDiagnostics(profileId, startedAt = new Date()) {
@@ -1417,11 +1702,15 @@ function collectMatchingProfileBrowserProcesses(profilePath, options = {}, run =
     lineagePids.has(Number(entry.item.ProcessId))
     || entry.executableMatched
   ));
-  const newlyObservedUnreadableItems = enriched.filter((entry) => (
-    baselineProvided
-    && !baselineProcessIds.has(Number(entry.item.ProcessId))
-    && (!entry.item.CommandLine || !entry.item.ExecutablePath)
-  ));
+  /*
+   * An unreadable browser row cannot be proven unrelated to the isolated
+   * profile. Treat every such Chrome/Chromium/Edge row as unresolved both
+   * before and after launch. This intentionally fails closed instead of
+   * hiding it in ignoredUnresolvedCount.
+   */
+  const newlyObservedUnreadableItems = enriched.filter(
+    (entry) => !entry.item.CommandLine || !entry.item.ExecutablePath,
+  );
   const unresolvedItems = [...new Set([
     ...targetItems.filter((entry) => (
       !entry.item.ExecutablePath
@@ -1455,11 +1744,7 @@ function collectMatchingProfileBrowserProcesses(profilePath, options = {}, run =
     })
     .map((entry) => Number(entry.item.ProcessId))
     .sort((left, right) => left - right);
-  const ignoredUnresolvedCount = enriched.filter((entry) => (
-    !targetItems.includes(entry)
-    && !newlyObservedUnreadableItems.includes(entry)
-    && (!entry.item.CommandLine || !entry.item.ExecutablePath)
-  )).length;
+  const ignoredUnresolvedCount = 0;
   const observedProfileBindingTokens = [...new Set(
     matchingItems
       .filter((entry) => entry.profileMatched)
@@ -1517,7 +1802,12 @@ async function waitForProfileBrowserProcessCleanup(profilePath, options = {}) {
   let snapshot = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     snapshot = collect(profilePath, collectOptions);
-    if (snapshot.passed === true && snapshot.matchingCount === 0) {
+    if (
+      snapshot.passed === true
+      && snapshot.matchingCount === 0
+      && snapshot.unresolvedCount === 0
+      && (snapshot.ignoredUnresolvedCount ?? 0) === 0
+    ) {
       return { ...snapshot, attempts: attempt, passed: true };
     }
     if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -1542,6 +1832,10 @@ function processSnapshotEvidencePassed(snapshot) {
         && snapshot.mismatchedCount === snapshot.mismatched.length
         && snapshot.mismatchedCount === 0
       ))
+    && (
+      snapshot.ignoredUnresolvedCount === undefined
+      || snapshot.ignoredUnresolvedCount === 0
+    )
     && snapshot.observedCount >= snapshot.matchingCount + snapshot.unresolvedCount;
 }
 
@@ -1652,10 +1946,191 @@ function processIsolationEvidencePassed(evidence) {
     && evidence.after?.unresolvedCount === 0;
 }
 
+function packageProcessAbsencePassed(snapshot) {
+  return processSnapshotEvidencePassed(snapshot)
+    && snapshot.observedCount === 0
+    && snapshot.matchingCount === 0
+    && snapshot.unresolvedCount === 0;
+}
+
+function packageProcessIsolationEvidencePassed(evidence) {
+  return evidence?.passed === true
+    && packageProcessAbsencePassed(evidence.before)
+    && packageProcessAbsencePassed(evidence.after);
+}
+
+function packageUiProfileLockSnapshotPassed(snapshot, expectedBinding = null) {
+  if (
+    !exactObjectKeys(snapshot, [
+      'binding',
+      'claim',
+      'exclusiveOpen',
+      'exclusiveProbe',
+      'kind',
+      'observedAt',
+      'passed',
+      'rootIdentityStable',
+      'schemaVersion',
+      'tree',
+      'unresolved',
+      'unresolvedCount',
+    ])
+    || !exactObjectKeys(snapshot?.binding, [
+      'invocationIdSha256',
+      'profileId',
+      'rootPathSha256',
+    ])
+    || !exactObjectKeys(snapshot?.exclusiveOpen, [
+      'allEntriesHeld',
+      'closeFailureCount',
+      'closeFailures',
+      'directoryCount',
+      'entryCount',
+      'fileCount',
+      'heldHandleCount',
+      'method',
+    ])
+    || !exactObjectKeys(snapshot?.exclusiveProbe, ['created', 'removed'])
+    || !exactObjectKeys(snapshot?.tree, [
+      'attestationSha256',
+      'criticalEntries',
+      'criticalEntryCount',
+      'identitySetSha256',
+      'limits',
+      'pathSetSha256',
+      'secondSnapshotEntryCount',
+      'totalPathCharacters',
+      'treeStable',
+    ])
+    || !exactObjectKeys(snapshot?.tree?.limits, [
+      'maxCriticalEntries',
+      'maxEntries',
+      'maxPathCharacters',
+    ])
+    || snapshot?.kind !== 'package-ui-profile-lock-snapshot'
+    || snapshot?.schemaVersion !== 'package-ui-profile-lock-snapshot/v2'
+    || snapshot?.claim !== 'bounded-quiescent-exclusive-open-attestation'
+    || snapshot?.passed !== true
+    || !Number.isFinite(Date.parse(snapshot?.observedAt))
+    || snapshot?.rootIdentityStable !== true
+    || snapshot?.exclusiveProbe?.created !== true
+    || snapshot?.exclusiveProbe?.removed !== true
+    || snapshot?.unresolvedCount !== 0
+    || !Array.isArray(snapshot?.unresolved)
+    || snapshot.unresolved.length !== 0
+    || typeof snapshot?.binding?.profileId !== 'string'
+    || snapshot.binding.profileId.length < 1
+    || !/^[A-F0-9]{64}$/.test(String(
+      snapshot?.binding?.invocationIdSha256 || '',
+    ))
+    || !/^[A-F0-9]{64}$/.test(String(
+      snapshot?.binding?.rootPathSha256 || '',
+    ))
+    || snapshot?.exclusiveOpen?.method
+      !== 'win32-createfile-share-none-stable-tree/v1'
+    || snapshot.exclusiveOpen.allEntriesHeld !== true
+    || !Number.isInteger(snapshot.exclusiveOpen.entryCount)
+    || snapshot.exclusiveOpen.entryCount < 2
+    || snapshot.exclusiveOpen.entryCount > PACKAGE_UI_PROFILE_LOCK_MAX_ENTRIES
+    || !Number.isInteger(snapshot.exclusiveOpen.fileCount)
+    || snapshot.exclusiveOpen.fileCount < 1
+    || !Number.isInteger(snapshot.exclusiveOpen.directoryCount)
+    || snapshot.exclusiveOpen.directoryCount < 1
+    || snapshot.exclusiveOpen.fileCount
+      + snapshot.exclusiveOpen.directoryCount
+      !== snapshot.exclusiveOpen.entryCount
+    || snapshot.exclusiveOpen.heldHandleCount
+      !== snapshot.exclusiveOpen.entryCount
+    || snapshot.exclusiveOpen.closeFailureCount !== 0
+    || !Array.isArray(snapshot.exclusiveOpen.closeFailures)
+    || snapshot.exclusiveOpen.closeFailures.length !== 0
+    || snapshot?.tree?.treeStable !== true
+    || snapshot.tree.secondSnapshotEntryCount
+      !== snapshot.exclusiveOpen.entryCount
+    || !/^[A-F0-9]{64}$/.test(String(snapshot.tree.pathSetSha256 || ''))
+    || !/^[A-F0-9]{64}$/.test(String(
+      snapshot.tree.identitySetSha256 || '',
+    ))
+    || snapshot.tree.attestationSha256 !== envelopePayloadSha256({
+      binding: snapshot.binding,
+      criticalEntries: snapshot.tree.criticalEntries,
+      criticalEntryCount: snapshot.tree.criticalEntryCount,
+      directoryCount: snapshot.exclusiveOpen.directoryCount,
+      entryCount: snapshot.exclusiveOpen.entryCount,
+      fileCount: snapshot.exclusiveOpen.fileCount,
+      identitySetSha256: snapshot.tree.identitySetSha256,
+      pathSetSha256: snapshot.tree.pathSetSha256,
+      secondSnapshotEntryCount: snapshot.tree.secondSnapshotEntryCount,
+      totalPathCharacters: snapshot.tree.totalPathCharacters,
+    })
+    || snapshot.tree.limits?.maxEntries
+      !== PACKAGE_UI_PROFILE_LOCK_MAX_ENTRIES
+    || snapshot.tree.limits?.maxPathCharacters
+      !== PACKAGE_UI_PROFILE_LOCK_MAX_PATH_CHARACTERS
+    || snapshot.tree.limits?.maxCriticalEntries
+      !== PACKAGE_UI_PROFILE_LOCK_MAX_CRITICAL_ENTRIES
+    || !Number.isInteger(snapshot.tree.totalPathCharacters)
+    || snapshot.tree.totalPathCharacters < 1
+    || snapshot.tree.totalPathCharacters
+      > PACKAGE_UI_PROFILE_LOCK_MAX_PATH_CHARACTERS
+    || !Number.isInteger(snapshot.tree.criticalEntryCount)
+    || snapshot.tree.criticalEntryCount < 0
+    || snapshot.tree.criticalEntryCount
+      > PACKAGE_UI_PROFILE_LOCK_MAX_CRITICAL_ENTRIES
+    || !Array.isArray(snapshot.tree.criticalEntries)
+    || snapshot.tree.criticalEntries.length
+      !== snapshot.tree.criticalEntryCount
+    || snapshot.tree.criticalEntries.some((entry) => (
+      !exactObjectKeys(entry, [
+        'identitySha256',
+        'kind',
+        'linkCount',
+        'pathSha256',
+        'sizeBytes',
+      ])
+      || !['directory', 'file'].includes(entry?.kind)
+      || !/^[A-F0-9]{64}$/.test(String(entry?.pathSha256 || ''))
+      || !/^[A-F0-9]{64}$/.test(String(entry?.identitySha256 || ''))
+      || !Number.isInteger(entry?.linkCount)
+      || entry.linkCount < 1
+      || (entry.kind === 'file' && entry.linkCount !== 1)
+      || !Number.isInteger(entry?.sizeBytes)
+      || entry.sizeBytes < 0
+    ))
+  ) {
+    return false;
+  }
+  if (
+    expectedBinding
+    && (
+      snapshot.binding.profileId !== expectedBinding.profileId
+      || snapshot.binding.invocationIdSha256
+        !== expectedBinding.invocationIdSha256
+      || snapshot.binding.rootPathSha256 !== expectedBinding.rootPathSha256
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function packageUiProfileLockIsolationPassed(input, expectedBinding = null) {
+  return Boolean(
+    input?.passed === true
+    && packageUiProfileLockSnapshotPassed(input.before, expectedBinding)
+    && packageUiProfileLockSnapshotPassed(input.after, expectedBinding)
+    && canonicalJson(input.before.binding) === canonicalJson(input.after.binding),
+  );
+}
+
 function packageUiAttemptCleanupPassed(runEvidence) {
   if (
-    !processIsolationEvidencePassed(runEvidence?.packageProcessIsolation)
+    !packageProcessIsolationEvidencePassed(runEvidence?.packageProcessIsolation)
     || !processIsolationEvidencePassed(runEvidence?.profileProcessIsolation)
+    || !packageUiProfileLockIsolationPassed(
+      runEvidence?.profileLockIsolation,
+      runEvidence?.evidenceBinding?.profileLockBinding || null,
+    )
   ) {
     return false;
   }
@@ -1663,6 +2138,15 @@ function packageUiAttemptCleanupPassed(runEvidence) {
   return processSnapshotEvidencePassed(runEvidence.chromiumProcessLineage.cleanup)
     && runEvidence.chromiumProcessLineage.cleanup.matchingCount === 0
     && runEvidence.chromiumProcessLineage.cleanup.unresolvedCount === 0;
+}
+
+function packageUiAttemptCleanupEvidencePassed(cleanupEvidence) {
+  return packageUiAttemptCleanupPassed({
+    chromiumProcessLineage: cleanupEvidence?.chromiumProcessLineage,
+    packageProcessIsolation: cleanupEvidence?.packageProcessIsolation,
+    profileLockIsolation: cleanupEvidence?.profileLockIsolation,
+    profileProcessIsolation: cleanupEvidence?.profileProcessIsolation,
+  });
 }
 
 function collectMatchingPackageProcesses(executablePath, run = spawnSync) {
@@ -1761,7 +2245,7 @@ async function waitForPackageProcessCleanup(executablePath, options = {}) {
   let snapshot = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     snapshot = collect(executablePath);
-    if (snapshot.passed === true && snapshot.matchingCount === 0) {
+    if (packageProcessAbsencePassed(snapshot)) {
       return { ...snapshot, attempts: attempt, passed: true };
     }
     if (attempt < attempts) {
@@ -1769,6 +2253,869 @@ async function waitForPackageProcessCleanup(executablePath, options = {}) {
     }
   }
   return { ...snapshot, attempts, passed: false };
+}
+
+const PACKAGE_UI_PROFILE_LOCK_PROBE_SOURCE = String.raw`
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+public static class PackageUiProfileLockProbe
+{
+    private const uint GENERIC_READ = 0x80000000;
+    private const uint FILE_LIST_DIRECTORY = 0x00000001;
+    private const uint FILE_READ_ATTRIBUTES = 0x00000080;
+    private const uint FILE_SHARE_READ = 0x00000001;
+    private const uint FILE_SHARE_WRITE = 0x00000002;
+    private const uint FILE_SHARE_DELETE = 0x00000004;
+    private const uint OPEN_EXISTING = 3;
+    private const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400;
+    private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+    private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FILETIME
+    {
+        public uint Low;
+        public uint High;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BY_HANDLE_FILE_INFORMATION
+    {
+        public uint FileAttributes;
+        public FILETIME CreationTime;
+        public FILETIME LastAccessTime;
+        public FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle file,
+        out BY_HANDLE_FILE_INFORMATION information);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(
+        SafeFileHandle file,
+        StringBuilder path,
+        uint pathLength,
+        uint flags);
+
+    private sealed class ProbeException : Exception
+    {
+        public string Code;
+        public string PathHash;
+        public int NativeCode;
+
+        public ProbeException(string code, string path, int nativeCode)
+            : base(code)
+        {
+            Code = code;
+            PathHash = Hash(path ?? String.Empty);
+            NativeCode = nativeCode;
+        }
+    }
+
+    private sealed class Entry
+    {
+        public string FullPath;
+        public string RelativePath;
+        public string Kind;
+        public string Identity;
+        public string PathHash;
+        public uint LinkCount;
+        public long SizeBytes;
+    }
+
+    private sealed class Held
+    {
+        public SafeFileHandle Handle;
+        public string PathHash;
+    }
+
+    public sealed class CriticalEntry
+    {
+        public string identitySha256;
+        public string kind;
+        public uint linkCount;
+        public string pathSha256;
+        public long sizeBytes;
+    }
+
+    public sealed class CloseFailure
+    {
+        public int nativeCode;
+        public string pathSha256;
+    }
+
+    public sealed class Result
+    {
+        public bool allEntriesHeld;
+        public int closeFailureCount;
+        public List<CloseFailure> closeFailures;
+        public int criticalEntryCount;
+        public List<CriticalEntry> criticalEntries;
+        public int directoryCount;
+        public int entryCount;
+        public string errorCode;
+        public int errorNativeCode;
+        public string errorPathSha256;
+        public int fileCount;
+        public int heldHandleCount;
+        public string identitySetSha256;
+        public int maxCriticalEntries;
+        public int maxDurationMilliseconds;
+        public int maxEntries;
+        public int maxPathCharacters;
+        public string method;
+        public bool passed;
+        public string pathSetSha256;
+        public string rootPathSha256;
+        public int secondSnapshotEntryCount;
+        public int totalPathCharacters;
+        public bool treeStable;
+    }
+
+    private static string Hash(string value)
+    {
+        using (SHA256 sha = SHA256.Create())
+        {
+            byte[] bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(value ?? String.Empty));
+            return BitConverter.ToString(bytes).Replace("-", String.Empty);
+        }
+    }
+
+    private static string CanonicalPath(string value)
+    {
+        string full = Path.GetFullPath(value);
+        if (full.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            return @"\\" + full.Substring(8);
+        if (full.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+            return full.Substring(4);
+        return full;
+    }
+
+    private static void EnforceDeadline(long deadlineTimestamp, string path)
+    {
+        if (Stopwatch.GetTimestamp() > deadlineTimestamp)
+            throw new ProbeException("ENUMERATION_DEADLINE_EXCEEDED", path, 0);
+    }
+
+    private static string FinalPath(SafeFileHandle handle)
+    {
+        StringBuilder buffer = new StringBuilder(32768);
+        uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+        if (length == 0 || length >= buffer.Capacity)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return CanonicalPath(buffer.ToString());
+    }
+
+    private static Entry Inspect(string root, string fullPath, string kind, uint shareMode)
+    {
+        uint desired = kind == "directory"
+            ? FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
+            : GENERIC_READ | FILE_READ_ATTRIBUTES;
+        uint flags = FILE_FLAG_OPEN_REPARSE_POINT
+            | (kind == "directory" ? FILE_FLAG_BACKUP_SEMANTICS : 0);
+        SafeFileHandle handle = CreateFileW(
+            fullPath,
+            desired,
+            shareMode,
+            IntPtr.Zero,
+            OPEN_EXISTING,
+            flags,
+            IntPtr.Zero);
+        if (handle == null || handle.IsInvalid)
+        {
+            int code = Marshal.GetLastWin32Error();
+            if (handle != null) handle.Dispose();
+            throw new ProbeException(
+                shareMode == 0 ? "EXCLUSIVE_OPEN_FAILED" : "IDENTITY_OPEN_FAILED",
+                fullPath,
+                code);
+        }
+        try
+        {
+            BY_HANDLE_FILE_INFORMATION info;
+            if (!GetFileInformationByHandle(handle, out info))
+                throw new ProbeException("IDENTITY_QUERY_FAILED", fullPath, Marshal.GetLastWin32Error());
+            if ((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+                throw new ProbeException("REPARSE_POINT", fullPath, 0);
+            if (!String.Equals(FinalPath(handle), CanonicalPath(fullPath), StringComparison.OrdinalIgnoreCase))
+                throw new ProbeException("FINAL_PATH_CHANGED", fullPath, 0);
+            long size = ((long)info.FileSizeHigh << 32) | info.FileSizeLow;
+            string identity = info.VolumeSerialNumber.ToString("X8")
+                + ":" + info.FileIndexHigh.ToString("X8")
+                + info.FileIndexLow.ToString("X8")
+                + ":" + info.NumberOfLinks.ToString()
+                + ":" + size.ToString()
+                + ":" + info.FileAttributes.ToString("X8");
+            if (kind == "file" && info.NumberOfLinks != 1)
+                throw new ProbeException("HARDLINKED_FILE", fullPath, 0);
+            string relative = String.Equals(root, fullPath, StringComparison.OrdinalIgnoreCase)
+                ? "."
+                : fullPath.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar);
+            return new Entry {
+                FullPath = fullPath,
+                RelativePath = relative.Replace(Path.DirectorySeparatorChar, '/'),
+                Kind = kind,
+                Identity = identity,
+                PathHash = Hash(relative.Replace(Path.DirectorySeparatorChar, '/').ToLowerInvariant()),
+                LinkCount = info.NumberOfLinks,
+                SizeBytes = size
+            };
+        }
+        finally
+        {
+            handle.Dispose();
+        }
+    }
+
+    private static List<Tuple<string, string>> EnumeratePaths(
+        string root,
+        int maxEntries,
+        int maxPathCharacters,
+        long deadlineTimestamp,
+        out int totalPathCharacters)
+    {
+        List<Tuple<string, string>> rows = new List<Tuple<string, string>>();
+        HashSet<string> discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Stack<string> pending = new Stack<string>();
+        string prefix = root.EndsWith(Path.DirectorySeparatorChar.ToString())
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        string canonicalRoot = CanonicalPath(root);
+        discovered.Add(canonicalRoot);
+        pending.Push(canonicalRoot);
+        totalPathCharacters = canonicalRoot.Length;
+        if (maxEntries < 1)
+            throw new ProbeException("ENTRY_LIMIT_EXCEEDED", root, 0);
+        if (totalPathCharacters > maxPathCharacters)
+            throw new ProbeException("PATH_CHARACTER_LIMIT_EXCEEDED", root, 0);
+        while (pending.Count > 0)
+        {
+            EnforceDeadline(deadlineTimestamp, root);
+            string current = pending.Pop();
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(current); }
+            catch (Exception) { throw new ProbeException("ENUMERATION_ATTRIBUTE_FAILED", current, Marshal.GetLastWin32Error()); }
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new ProbeException("REPARSE_POINT", current, 0);
+            string kind = (attributes & FileAttributes.Directory) != 0 ? "directory" : "file";
+            rows.Add(Tuple.Create(current, kind));
+            if (kind == "directory")
+            {
+                List<string> children = new List<string>();
+                try
+                {
+                    foreach (string rawChild in Directory.EnumerateFileSystemEntries(current))
+                    {
+                        EnforceDeadline(deadlineTimestamp, current);
+                        string child = CanonicalPath(rawChild);
+                        if (!child.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                            throw new ProbeException("PATH_ESCAPE", child, 0);
+                        if (discovered.Contains(child))
+                            throw new ProbeException("PATH_CASE_COLLISION", child, 0);
+                        if (discovered.Count >= maxEntries)
+                            throw new ProbeException("ENTRY_LIMIT_EXCEEDED", root, 0);
+                        long nextPathCharacters =
+                            (long)totalPathCharacters + (long)child.Length;
+                        if (nextPathCharacters > maxPathCharacters)
+                            throw new ProbeException("PATH_CHARACTER_LIMIT_EXCEEDED", root, 0);
+                        discovered.Add(child);
+                        totalPathCharacters = (int)nextPathCharacters;
+                        children.Add(child);
+                    }
+                }
+                catch (ProbeException) { throw; }
+                catch (Exception) { throw new ProbeException("DIRECTORY_ENUMERATION_FAILED", current, Marshal.GetLastWin32Error()); }
+                children.Sort(StringComparer.OrdinalIgnoreCase);
+                for (int index = children.Count - 1; index >= 0; index -= 1)
+                    pending.Push(children[index]);
+            }
+        }
+        rows.Sort((left, right) => StringComparer.OrdinalIgnoreCase.Compare(left.Item1, right.Item1));
+        return rows;
+    }
+
+    private static bool CriticalName(string fullPath)
+    {
+        string name = Path.GetFileName(fullPath).ToLowerInvariant();
+        return name == "cookies"
+            || name == "cookies-journal"
+            || name == "history"
+            || name == "history-journal"
+            || name == "login data"
+            || name == "login data-journal"
+            || name == "web data"
+            || name == "web data-journal"
+            || name == "singletonlock"
+            || name == "singletoncookie"
+            || name == "singletonsocket"
+            || name == "devtoolsactiveport"
+            || name.EndsWith(".db")
+            || name.EndsWith(".sqlite")
+            || name.EndsWith(".sqlite3")
+            || name.EndsWith("-wal")
+            || name.EndsWith("-shm")
+            || name.EndsWith("-journal")
+            || name.Contains("lock");
+    }
+
+    public static Result Probe(
+        string requestedRoot,
+        int maxEntries,
+        int maxPathCharacters,
+        int maxCriticalEntries,
+        int maxDurationMilliseconds)
+    {
+        string root = CanonicalPath(requestedRoot).TrimEnd(Path.DirectorySeparatorChar);
+        long durationTicks = checked(
+            (long)Math.Ceiling(
+                ((double)Stopwatch.Frequency * (double)maxDurationMilliseconds)
+                / 1000.0));
+        long deadlineTimestamp = checked(Stopwatch.GetTimestamp() + durationTicks);
+        Result result = new Result {
+            allEntriesHeld = false,
+            closeFailureCount = 0,
+            closeFailures = new List<CloseFailure>(),
+            criticalEntries = new List<CriticalEntry>(),
+            errorCode = null,
+            errorNativeCode = 0,
+            errorPathSha256 = null,
+            maxCriticalEntries = maxCriticalEntries,
+            maxDurationMilliseconds = maxDurationMilliseconds,
+            maxEntries = maxEntries,
+            maxPathCharacters = maxPathCharacters,
+            method = "win32-createfile-share-none-stable-tree/v1",
+            passed = false,
+            rootPathSha256 = Hash(root.Replace(Path.DirectorySeparatorChar, '/').ToLowerInvariant())
+        };
+        List<Held> held = new List<Held>();
+        try
+        {
+            int firstChars;
+            List<Tuple<string, string>> firstPaths = EnumeratePaths(
+                root,
+                maxEntries,
+                maxPathCharacters,
+                deadlineTimestamp,
+                out firstChars);
+            List<Entry> first = firstPaths
+                .Select(row => Inspect(
+                    root,
+                    row.Item1,
+                    row.Item2,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE))
+                .ToList();
+
+            foreach (Entry expected in first.Where(item => item.Kind == "file"))
+            {
+                uint desired = expected.Kind == "directory"
+                    ? FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
+                    : GENERIC_READ | FILE_READ_ATTRIBUTES;
+                uint flags = FILE_FLAG_OPEN_REPARSE_POINT
+                    | (expected.Kind == "directory" ? FILE_FLAG_BACKUP_SEMANTICS : 0);
+                SafeFileHandle handle = CreateFileW(
+                    expected.FullPath,
+                    desired,
+                    0,
+                    IntPtr.Zero,
+                    OPEN_EXISTING,
+                    flags,
+                    IntPtr.Zero);
+                if (handle == null || handle.IsInvalid)
+                {
+                    int code = Marshal.GetLastWin32Error();
+                    if (handle != null) handle.Dispose();
+                    throw new ProbeException("EXCLUSIVE_OPEN_FAILED", expected.FullPath, code);
+                }
+                BY_HANDLE_FILE_INFORMATION info;
+                if (!GetFileInformationByHandle(handle, out info))
+                {
+                    int code = Marshal.GetLastWin32Error();
+                    handle.Dispose();
+                    throw new ProbeException("IDENTITY_QUERY_FAILED", expected.FullPath, code);
+                }
+                long size = ((long)info.FileSizeHigh << 32) | info.FileSizeLow;
+                string identity = info.VolumeSerialNumber.ToString("X8")
+                    + ":" + info.FileIndexHigh.ToString("X8")
+                    + info.FileIndexLow.ToString("X8")
+                    + ":" + info.NumberOfLinks.ToString()
+                    + ":" + size.ToString()
+                    + ":" + info.FileAttributes.ToString("X8");
+                if ((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+                {
+                    handle.Dispose();
+                    throw new ProbeException("REPARSE_POINT", expected.FullPath, 0);
+                }
+                if (!String.Equals(identity, expected.Identity, StringComparison.Ordinal)
+                    || !String.Equals(FinalPath(handle), CanonicalPath(expected.FullPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    handle.Dispose();
+                    throw new ProbeException("IDENTITY_CHANGED", expected.FullPath, 0);
+                }
+                held.Add(new Held { Handle = handle, PathHash = expected.PathHash });
+            }
+
+            int secondChars;
+            List<Tuple<string, string>> secondPaths = EnumeratePaths(
+                root,
+                maxEntries,
+                maxPathCharacters,
+                deadlineTimestamp,
+                out secondChars);
+            string firstSet = String.Join("\n", firstPaths.Select(row =>
+                row.Item2 + ":" + Hash(
+                    (String.Equals(root, row.Item1, StringComparison.OrdinalIgnoreCase)
+                        ? "."
+                        : row.Item1.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar))
+                    .Replace(Path.DirectorySeparatorChar, '/')
+                    .ToLowerInvariant())));
+            string secondSet = String.Join("\n", secondPaths.Select(row =>
+                row.Item2 + ":" + Hash(
+                    (String.Equals(root, row.Item1, StringComparison.OrdinalIgnoreCase)
+                        ? "."
+                        : row.Item1.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar))
+                    .Replace(Path.DirectorySeparatorChar, '/')
+                    .ToLowerInvariant())));
+            if (!String.Equals(firstSet, secondSet, StringComparison.Ordinal)
+                || firstChars != secondChars)
+                throw new ProbeException("TREE_CHANGED_DURING_PROBE", root, 0);
+
+            foreach (Entry expected in first.Where(item => item.Kind == "directory")
+                .OrderByDescending(item => item.RelativePath.Count(character => character == '/')))
+            {
+                uint desired = FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES;
+                uint flags = FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS;
+                SafeFileHandle handle = CreateFileW(
+                    expected.FullPath,
+                    desired,
+                    0,
+                    IntPtr.Zero,
+                    OPEN_EXISTING,
+                    flags,
+                    IntPtr.Zero);
+                if (handle == null || handle.IsInvalid)
+                {
+                    int code = Marshal.GetLastWin32Error();
+                    if (handle != null) handle.Dispose();
+                    throw new ProbeException("EXCLUSIVE_OPEN_FAILED", expected.FullPath, code);
+                }
+                BY_HANDLE_FILE_INFORMATION info;
+                if (!GetFileInformationByHandle(handle, out info))
+                {
+                    int code = Marshal.GetLastWin32Error();
+                    handle.Dispose();
+                    throw new ProbeException("IDENTITY_QUERY_FAILED", expected.FullPath, code);
+                }
+                long size = ((long)info.FileSizeHigh << 32) | info.FileSizeLow;
+                string identity = info.VolumeSerialNumber.ToString("X8")
+                    + ":" + info.FileIndexHigh.ToString("X8")
+                    + info.FileIndexLow.ToString("X8")
+                    + ":" + info.NumberOfLinks.ToString()
+                    + ":" + size.ToString()
+                    + ":" + info.FileAttributes.ToString("X8");
+                if ((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+                {
+                    handle.Dispose();
+                    throw new ProbeException("REPARSE_POINT", expected.FullPath, 0);
+                }
+                if (!String.Equals(identity, expected.Identity, StringComparison.Ordinal)
+                    || !String.Equals(FinalPath(handle), CanonicalPath(expected.FullPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    handle.Dispose();
+                    throw new ProbeException("IDENTITY_CHANGED", expected.FullPath, 0);
+                }
+                held.Add(new Held { Handle = handle, PathHash = expected.PathHash });
+            }
+
+            List<Entry> critical = first.Where(item => CriticalName(item.FullPath)).ToList();
+            if (critical.Count > maxCriticalEntries)
+                throw new ProbeException("CRITICAL_ENTRY_LIMIT_EXCEEDED", root, 0);
+            result.criticalEntries = critical.Select(item => new CriticalEntry {
+                identitySha256 = Hash(item.Identity),
+                kind = item.Kind,
+                linkCount = item.LinkCount,
+                pathSha256 = item.PathHash,
+                sizeBytes = item.SizeBytes
+            }).ToList();
+            result.criticalEntryCount = critical.Count;
+            result.directoryCount = first.Count(item => item.Kind == "directory");
+            result.entryCount = first.Count;
+            result.fileCount = first.Count(item => item.Kind == "file");
+            result.heldHandleCount = held.Count;
+            result.identitySetSha256 = Hash(String.Join("\n", first.Select(item =>
+                item.Kind + ":" + item.PathHash + ":" + Hash(item.Identity))));
+            result.pathSetSha256 = Hash(result.rootPathSha256 + "\n" + firstSet);
+            result.secondSnapshotEntryCount = secondPaths.Count;
+            result.totalPathCharacters = firstChars;
+            result.treeStable = true;
+            result.allEntriesHeld = held.Count == first.Count;
+            result.passed = result.allEntriesHeld;
+        }
+        catch (ProbeException error)
+        {
+            result.errorCode = error.Code;
+            result.errorNativeCode = error.NativeCode;
+            result.errorPathSha256 = error.PathHash;
+        }
+        catch (Exception error)
+        {
+            result.errorCode = "UNEXPECTED_PROBE_FAILURE_" + error.GetType().Name.ToUpperInvariant();
+            result.errorNativeCode = 0;
+            result.errorPathSha256 = result.rootPathSha256;
+        }
+        finally
+        {
+            for (int index = held.Count - 1; index >= 0; index -= 1)
+            {
+                Held item = held[index];
+                try
+                {
+                    IntPtr raw = item.Handle.DangerousGetHandle();
+                    bool closed = CloseHandle(raw);
+                    int nativeCode = closed ? 0 : Marshal.GetLastWin32Error();
+                    item.Handle.SetHandleAsInvalid();
+                    item.Handle.Dispose();
+                    if (!closed)
+                    {
+                        result.closeFailures.Add(new CloseFailure {
+                            nativeCode = nativeCode,
+                            pathSha256 = item.PathHash
+                        });
+                    }
+                }
+                catch (Exception)
+                {
+                    result.closeFailures.Add(new CloseFailure {
+                        nativeCode = Marshal.GetLastWin32Error(),
+                        pathSha256 = item.PathHash
+                    });
+                }
+            }
+            result.closeFailureCount = result.closeFailures.Count;
+            if (result.closeFailureCount != 0) result.passed = false;
+        }
+        return result;
+    }
+}
+`;
+
+function collectPackageUiProfileLockEvidence(userDataDir, options = {}) {
+  const root = path.resolve(userDataDir);
+  const observedAt = new Date().toISOString();
+  const unresolved = [];
+  const profileId = String(options.profileId || 'run-group');
+  const invocationId = String(options.invocationId || 'unbound-invocation');
+  const binding = {
+    invocationIdSha256: sha256Buffer(Buffer.from(invocationId, 'utf8')),
+    profileId,
+    rootPathSha256: sha256Buffer(Buffer.from(
+      root.replace(/\\/g, '/').toLowerCase(),
+      'utf8',
+    )),
+  };
+  let helper = null;
+  let probeCreated = false;
+  let probeRemoved = false;
+  let rootBefore = null;
+  let rootAfter = null;
+  let probeLimits = {
+    maxCriticalEntries: PACKAGE_UI_PROFILE_LOCK_MAX_CRITICAL_ENTRIES,
+    maxEntries: PACKAGE_UI_PROFILE_LOCK_MAX_ENTRIES,
+    maxPathCharacters: PACKAGE_UI_PROFILE_LOCK_MAX_PATH_CHARACTERS,
+  };
+  const probeName = `.package-ui-exclusive-lock-probe-${crypto.randomUUID()}`;
+  const probePath = path.join(root, probeName);
+  try {
+    if (process.platform !== 'win32') {
+      throw new Error('PROFILE_LOCK_PROBE_WINDOWS_ONLY');
+    }
+    if (options.probeLimits !== undefined) {
+      const candidate = options.probeLimits;
+      if (
+        options.testOnlyAllowLowerLimits !== true
+        || !exactObjectKeys(candidate, [
+          'maxCriticalEntries',
+          'maxEntries',
+          'maxPathCharacters',
+        ])
+        || !Number.isInteger(candidate.maxEntries)
+        || candidate.maxEntries < 1
+        || candidate.maxEntries > PACKAGE_UI_PROFILE_LOCK_MAX_ENTRIES
+        || !Number.isInteger(candidate.maxPathCharacters)
+        || candidate.maxPathCharacters < 1
+        || candidate.maxPathCharacters
+          > PACKAGE_UI_PROFILE_LOCK_MAX_PATH_CHARACTERS
+        || !Number.isInteger(candidate.maxCriticalEntries)
+        || candidate.maxCriticalEntries < 0
+        || candidate.maxCriticalEntries
+          > PACKAGE_UI_PROFILE_LOCK_MAX_CRITICAL_ENTRIES
+      ) {
+        throw new Error('PROFILE_LOCK_TEST_LIMITS_INVALID');
+      }
+      probeLimits = { ...candidate };
+    }
+    const leaf = fs.lstatSync(root, { bigint: true });
+    const realRoot = fs.realpathSync.native(root);
+    if (
+      leaf.isSymbolicLink()
+      || !leaf.isDirectory()
+      || realRoot.replace(/\\/g, '/').toLowerCase()
+        !== root.replace(/\\/g, '/').toLowerCase()
+    ) {
+      throw new Error('PROFILE_ROOT_LINKED_OR_INDIRECT');
+    }
+    rootBefore = {
+      deviceId: String(leaf.dev),
+      fileId: String(leaf.ino),
+    };
+    const descriptor = fs.openSync(probePath, 'wx', 0o600);
+    probeCreated = true;
+    try {
+      fs.writeFileSync(descriptor, `${process.pid}\n`, 'utf8');
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    const probeStat = fs.lstatSync(probePath, { bigint: true });
+    if (
+      probeStat.isSymbolicLink()
+      || !probeStat.isFile()
+      || probeStat.nlink !== 1n
+    ) {
+      throw new Error('PROFILE_PROBE_IDENTITY_CHANGED');
+    }
+    const source = Buffer.from(
+      PACKAGE_UI_PROFILE_LOCK_PROBE_SOURCE,
+      'utf8',
+    ).toString('base64');
+    const rootArgument = Buffer.from(root, 'utf8').toString('base64');
+    const command = [
+      "$ErrorActionPreference = 'Stop'",
+      `$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${source}'))`,
+      'Add-Type -TypeDefinition $source -Language CSharp',
+      `$root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${rootArgument}'))`,
+      `$result = [PackageUiProfileLockProbe]::Probe($root, ${probeLimits.maxEntries}, ${probeLimits.maxPathCharacters}, ${probeLimits.maxCriticalEntries}, ${PACKAGE_UI_PROFILE_LOCK_INTERNAL_DEADLINE_MS})`,
+      '$result | ConvertTo-Json -Compress -Depth 8',
+    ].join('; ');
+    const run = options.run || spawnSync;
+    const result = run('powershell.exe', ['-NoProfile', '-Command', command], {
+      encoding: 'utf8',
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: PACKAGE_UI_PROFILE_LOCK_PROBE_TIMEOUT_MS,
+      windowsHide: true,
+    });
+    if (
+      result?.status !== 0
+      || result?.error
+      || typeof result?.stdout !== 'string'
+      || !result.stdout.trim()
+      || Buffer.byteLength(result.stdout, 'utf8') > 4 * 1024 * 1024
+    ) {
+      throw new Error(
+        result?.error?.code === 'ETIMEDOUT'
+          ? 'PROFILE_LOCK_HELPER_TIMEOUT'
+          : 'PROFILE_LOCK_HELPER_FAILED',
+      );
+    }
+    helper = JSON.parse(result.stdout.trim());
+    if (
+      helper?.method !== 'win32-createfile-share-none-stable-tree/v1'
+      || helper?.rootPathSha256 !== binding.rootPathSha256
+      || helper?.maxEntries !== probeLimits.maxEntries
+      || helper?.maxPathCharacters !== probeLimits.maxPathCharacters
+      || helper?.maxCriticalEntries !== probeLimits.maxCriticalEntries
+      || helper?.maxDurationMilliseconds
+        !== PACKAGE_UI_PROFILE_LOCK_INTERNAL_DEADLINE_MS
+    ) {
+      throw new Error('PROFILE_LOCK_HELPER_CONTRACT_MISMATCH');
+    }
+    if (helper.passed !== true) {
+      unresolved.push({
+        nativeCode: Number.isInteger(helper.errorNativeCode)
+          ? helper.errorNativeCode
+          : null,
+        pathSha256: /^[A-F0-9]{64}$/.test(String(helper.errorPathSha256 || ''))
+          ? helper.errorPathSha256
+          : binding.rootPathSha256,
+        reason: sanitizeDiagnosticText(
+          helper.errorCode || 'PROFILE_LOCK_HELPER_UNRESOLVED',
+          160,
+        ),
+      });
+    }
+  } catch (error) {
+    unresolved.push({
+      nativeCode: null,
+      pathSha256: binding.rootPathSha256,
+      reason: sanitizeDiagnosticText(error?.message || error, 160),
+    });
+  } finally {
+    if (fs.existsSync(probePath)) {
+      try {
+        const probeStat = fs.lstatSync(probePath, { bigint: true });
+        if (
+          probeStat.isSymbolicLink()
+          || !probeStat.isFile()
+          || probeStat.nlink !== 1n
+          || path.dirname(probePath).replace(/\\/g, '/').toLowerCase()
+            !== root.replace(/\\/g, '/').toLowerCase()
+        ) {
+          throw new Error('PROFILE_PROBE_CLEANUP_IDENTITY_MISMATCH');
+        }
+        fs.unlinkSync(probePath);
+      } catch (error) {
+        unresolved.push({
+          nativeCode: null,
+          pathSha256: sha256Buffer(Buffer.from(probeName, 'utf8')),
+          reason: sanitizeDiagnosticText(error?.message || error, 160),
+        });
+      }
+    }
+    probeRemoved = probeCreated && !fs.existsSync(probePath);
+    try {
+      const finalRoot = fs.lstatSync(root, { bigint: true });
+      rootAfter = {
+        deviceId: String(finalRoot.dev),
+        fileId: String(finalRoot.ino),
+      };
+    } catch (error) {
+      unresolved.push({
+        nativeCode: null,
+        pathSha256: binding.rootPathSha256,
+        reason: sanitizeDiagnosticText(error?.message || error, 160),
+      });
+    }
+  }
+  const rootIdentityStable = rootBefore !== null
+    && rootAfter !== null
+    && canonicalJson(rootBefore) === canonicalJson(rootAfter);
+  const closeFailures = Array.isArray(helper?.closeFailures)
+    ? helper.closeFailures
+    : [];
+  const criticalEntries = Array.isArray(helper?.criticalEntries)
+    ? helper.criticalEntries
+    : [];
+  const exclusiveOpen = {
+    allEntriesHeld: helper?.allEntriesHeld === true,
+    closeFailureCount: Number.isInteger(helper?.closeFailureCount)
+      ? helper.closeFailureCount
+      : null,
+    closeFailures,
+    directoryCount: Number.isInteger(helper?.directoryCount)
+      ? helper.directoryCount
+      : null,
+    entryCount: Number.isInteger(helper?.entryCount)
+      ? helper.entryCount
+      : null,
+    fileCount: Number.isInteger(helper?.fileCount)
+      ? helper.fileCount
+      : null,
+    heldHandleCount: Number.isInteger(helper?.heldHandleCount)
+      ? helper.heldHandleCount
+      : null,
+    method: helper?.method || 'win32-createfile-share-none-stable-tree/v1',
+  };
+  const tree = {
+    attestationSha256: null,
+    criticalEntries,
+    criticalEntryCount: Number.isInteger(helper?.criticalEntryCount)
+      ? helper.criticalEntryCount
+      : null,
+    identitySetSha256: helper?.identitySetSha256 || null,
+    limits: {
+      maxCriticalEntries: Number.isInteger(helper?.maxCriticalEntries)
+        ? helper.maxCriticalEntries
+        : probeLimits.maxCriticalEntries,
+      maxEntries: Number.isInteger(helper?.maxEntries)
+        ? helper.maxEntries
+        : probeLimits.maxEntries,
+      maxPathCharacters: Number.isInteger(helper?.maxPathCharacters)
+        ? helper.maxPathCharacters
+        : probeLimits.maxPathCharacters,
+    },
+    pathSetSha256: helper?.pathSetSha256 || null,
+    secondSnapshotEntryCount: Number.isInteger(helper?.secondSnapshotEntryCount)
+      ? helper.secondSnapshotEntryCount
+      : null,
+    totalPathCharacters: Number.isInteger(helper?.totalPathCharacters)
+      ? helper.totalPathCharacters
+      : null,
+    treeStable: helper?.treeStable === true,
+  };
+  tree.attestationSha256 = envelopePayloadSha256({
+    binding,
+    criticalEntries: tree.criticalEntries,
+    criticalEntryCount: tree.criticalEntryCount,
+    directoryCount: exclusiveOpen.directoryCount,
+    entryCount: exclusiveOpen.entryCount,
+    fileCount: exclusiveOpen.fileCount,
+    identitySetSha256: tree.identitySetSha256,
+    pathSetSha256: tree.pathSetSha256,
+    secondSnapshotEntryCount: tree.secondSnapshotEntryCount,
+    totalPathCharacters: tree.totalPathCharacters,
+  });
+  const passed = helper?.passed === true
+    && unresolved.length === 0
+    && probeCreated
+    && probeRemoved
+    && rootIdentityStable
+    && exclusiveOpen.allEntriesHeld
+    && exclusiveOpen.closeFailureCount === 0
+    && exclusiveOpen.heldHandleCount === exclusiveOpen.entryCount
+    && tree.treeStable
+    && tree.secondSnapshotEntryCount === exclusiveOpen.entryCount
+    && tree.criticalEntryCount === tree.criticalEntries.length
+    && tree.limits.maxCriticalEntries
+      === PACKAGE_UI_PROFILE_LOCK_MAX_CRITICAL_ENTRIES
+    && tree.limits.maxEntries === PACKAGE_UI_PROFILE_LOCK_MAX_ENTRIES
+    && tree.limits.maxPathCharacters
+      === PACKAGE_UI_PROFILE_LOCK_MAX_PATH_CHARACTERS;
+  return {
+    binding,
+    claim: 'bounded-quiescent-exclusive-open-attestation',
+    exclusiveOpen,
+    exclusiveProbe: {
+      created: probeCreated,
+      removed: probeRemoved,
+    },
+    kind: 'package-ui-profile-lock-snapshot',
+    observedAt,
+    passed,
+    rootIdentityStable,
+    schemaVersion: 'package-ui-profile-lock-snapshot/v2',
+    tree,
+    unresolved,
+    unresolvedCount: unresolved.length,
+  };
 }
 
 function safeRealPath(filePath) {
@@ -2994,6 +4341,272 @@ function validateIsolatedProfileBootstrapEvidence(session, diagnostics) {
   };
 }
 
+function exactPackageUiCollection(actual, expectedKeys, keyOf) {
+  const observed = Array.isArray(actual) ? actual : [];
+  const expected = new Set(expectedKeys);
+  const counts = new Map();
+  const invalid = [];
+  for (const item of observed) {
+    const key = keyOf(item);
+    if (typeof key !== 'string' || key.length < 1) {
+      invalid.push(key ?? null);
+      continue;
+    }
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const duplicates = [...counts.entries()]
+    .filter(([, count]) => count !== 1)
+    .map(([key]) => key)
+    .sort();
+  const missing = [...expected]
+    .filter((key) => !counts.has(key))
+    .sort();
+  const extra = [...counts.keys()]
+    .filter((key) => !expected.has(key))
+    .sort();
+  return {
+    actualLength: observed.length,
+    duplicates,
+    expectedLength: expectedKeys.length,
+    extra,
+    invalid,
+    missing,
+    passed: observed.length === expectedKeys.length
+      && invalid.length === 0
+      && duplicates.length === 0
+      && missing.length === 0
+      && extra.length === 0,
+  };
+}
+
+function screenshotFileTuple(record) {
+  return {
+    path: normalizedWindowsPath(record?.path || ''),
+    sha256: record?.sha256 ?? null,
+    sizeBytes: record?.sizeBytes ?? null,
+  };
+}
+
+function validateSchemaV8ProfileExactSet(run, expected) {
+  const violations = [];
+  const expectedWorkspaceKeys = expected.workspaces.map(
+    (item) => `${item.workspace}/${item.subview}`,
+  );
+  const expectedSubviewKeys = expected.subviews.map(
+    (item) => `${item.workspace}/${item.subview}`,
+  );
+  const workspaceChecks = exactPackageUiCollection(
+    run?.workspaceChecks,
+    expectedWorkspaceKeys,
+    (item) => `${item?.workspace || ''}/${item?.subview || ''}`,
+  );
+  const workspaceScreenshots = exactPackageUiCollection(
+    run?.screenshots,
+    expectedWorkspaceKeys,
+    (item) => `${item?.workspace || ''}/${item?.subview || ''}`,
+  );
+  const subviewChecks = exactPackageUiCollection(
+    run?.subviewChecks || [],
+    expectedSubviewKeys,
+    (item) => `${item?.workspace || ''}/${item?.subview || ''}`,
+  );
+  const overlayChecks = exactPackageUiCollection(
+    run?.overlayChecks || [],
+    expected.overlays,
+    (item) => String(item?.id || ''),
+  );
+  for (const [name, result] of [
+    ['workspaceChecks', workspaceChecks],
+    ['screenshots', workspaceScreenshots],
+    ['subviewChecks', subviewChecks],
+    ['overlayChecks', overlayChecks],
+  ]) {
+    if (!result.passed) {
+      violations.push(violation(
+        `V8_${name.replace(/([A-Z])/g, '_$1').toUpperCase()}_NOT_EXACT`,
+        `Schema v8 ${name} must equal its canonical set with no missing, duplicate, or extra entries.`,
+        result,
+      ));
+    }
+  }
+  let binding = null;
+  try {
+    binding = canonicalPackageUiArtifactBinding(run);
+  } catch (error) {
+    violations.push(violation(
+      'V8_PROFILE_EVIDENCE_BINDING_INVALID',
+      'Schema v8 profile evidence must bind one exact attempt, invocation, profile, scale, run group, and runner contract.',
+      sanitizeDiagnosticText(error?.message || error),
+    ));
+  }
+  if (
+    binding
+    && (
+      binding.profileId !== expected.profileId
+      || binding.scalePercent !== expected.scalePercent
+      || binding.runGroupId !== expected.runGroupId
+      || binding.runnerContractSha256 !== expected.runnerContractSha256
+      || run?.profileId !== expected.profileId
+      || canonicalJson(run?.evidenceBinding?.profileLockBinding)
+        !== canonicalJson(run?.profileLockIsolation?.before?.binding)
+      || run?.evidenceBinding?.profileLockBinding?.profileId
+        !== expected.profileId
+      || run?.evidenceBinding?.profileLockBinding?.invocationIdSha256
+        !== sha256Buffer(Buffer.from(binding.invocationId, 'utf8'))
+      || (
+        expected.profileRootPathSha256 != null
+        && run?.evidenceBinding?.profileLockBinding?.rootPathSha256
+          !== expected.profileRootPathSha256
+      )
+    )
+  ) {
+    violations.push(violation(
+      'V8_PROFILE_EVIDENCE_BINDING_MISMATCH',
+      'Schema v8 profile evidence binding does not match its canonical profile/scale/run-group/lock lineage.',
+      {
+        actual: run?.evidenceBinding ?? null,
+        expected: {
+          profileId: expected.profileId,
+          profileRootPathSha256: expected.profileRootPathSha256,
+          runGroupId: expected.runGroupId,
+          runnerContractSha256: expected.runnerContractSha256,
+          scalePercent: expected.scalePercent,
+        },
+      },
+    ));
+  }
+  if (
+    run?.passed !== true
+    || run?.failure !== null
+    || run?.diagnostics?.failure !== null
+  ) {
+    violations.push(violation(
+      'V8_PROFILE_OUTCOME_NOT_EXACT_SUCCESS',
+      'A composed schema v8 profile must be a successful run with failure exactly null.',
+      {
+        diagnosticsFailure: run?.diagnostics?.failure ?? null,
+        failure: run?.failure ?? null,
+        passed: run?.passed ?? null,
+      },
+    ));
+  }
+  if (binding && run?.attemptArtifacts?.rootPath) {
+    const attemptRoot = path.resolve(run.attemptArtifacts.rootPath);
+    const expectedLeafSuffix = `-${binding.attemptId}`;
+    if (
+      path.basename(path.dirname(attemptRoot)).toLowerCase()
+        !== binding.profileId.toLowerCase()
+      || !path.basename(attemptRoot).endsWith(expectedLeafSuffix)
+      || !/^\d{4}-/.test(path.basename(attemptRoot))
+    ) {
+      violations.push(violation(
+        'V8_ATTEMPT_ARTIFACT_ROOT_BINDING_MISMATCH',
+        'Schema v8 attempt artifacts must be rooted under their exact profile and attempt id.',
+        {
+          attemptRootSha256: sha256Buffer(Buffer.from(
+            normalizedWindowsPath(attemptRoot),
+            'utf8',
+          )),
+          profileId: binding.profileId,
+        },
+      ));
+    }
+  }
+  const allScreenshotSlots = [];
+  const workspaceByKey = new Map((run?.screenshots || []).map(
+    (record) => [`${record?.workspace || ''}/${record?.subview || ''}`, record],
+  ));
+  for (const check of run?.workspaceChecks || []) {
+    const key = `${check?.workspace || ''}/${check?.subview || ''}`;
+    const primary = workspaceByKey.get(key);
+    if (
+      !primary
+      || canonicalJson(screenshotFileTuple(primary))
+        !== canonicalJson(screenshotFileTuple(check?.screenshot))
+    ) {
+      violations.push(violation(
+        'V8_WORKSPACE_SCREENSHOT_BINDING_MISMATCH',
+        'Each workspace check must bind the one canonical top-level screenshot for the same workspace/subview.',
+        key,
+      ));
+    }
+  }
+  for (const record of run?.screenshots || []) {
+    allScreenshotSlots.push({
+      path: record?.path,
+      slot: `workspace:${record?.workspace}/${record?.subview}`,
+    });
+    if (
+      expected.profileId === PACKAGE_UI_WIDE_PROFILE.id
+        ? record?.profileId !== expected.profileId
+        : record?.scalePercent !== expected.scalePercent
+    ) {
+      violations.push(violation(
+        'V8_WORKSPACE_SCREENSHOT_PROFILE_BINDING_MISMATCH',
+        'Workspace screenshot metadata must match its exact profile/scale.',
+        { profileId: record?.profileId ?? null, scalePercent: record?.scalePercent ?? null },
+      ));
+    }
+  }
+  for (const check of run?.subviewChecks || []) {
+    allScreenshotSlots.push({
+      path: check?.screenshot?.path,
+      slot: `subview:${check?.workspace}/${check?.subview}`,
+    });
+    if (check?.screenshot?.scalePercent !== expected.scalePercent) {
+      violations.push(violation(
+        'V8_SUBVIEW_SCREENSHOT_PROFILE_BINDING_MISMATCH',
+        'Subview screenshot metadata must match its exact compact scale.',
+        check?.screenshot ?? null,
+      ));
+    }
+  }
+  for (const check of run?.overlayChecks || []) {
+    allScreenshotSlots.push({
+      path: check?.screenshot?.path,
+      slot: `overlay:${check?.id}`,
+    });
+    if (
+      check?.screenshot?.overlayId !== check?.id
+      || check?.screenshot?.scalePercent !== expected.scalePercent
+    ) {
+      violations.push(violation(
+        'V8_OVERLAY_SCREENSHOT_BINDING_MISMATCH',
+        'Overlay screenshot metadata must match its exact overlay id and compact scale.',
+        check?.screenshot ?? null,
+      ));
+    }
+  }
+  const screenshotPathSlots = new Map();
+  for (const item of allScreenshotSlots) {
+    if (!path.isAbsolute(String(item.path || ''))) {
+      violations.push(violation(
+        'V8_SCREENSHOT_PATH_INVALID',
+        'Every schema v8 screenshot slot must use one absolute artifact path.',
+        item.slot,
+      ));
+      continue;
+    }
+    const key = normalizedWindowsPath(item.path);
+    if (screenshotPathSlots.has(key)) {
+      violations.push(violation(
+        'V8_SCREENSHOT_PATH_REUSED',
+        'One screenshot path cannot satisfy multiple schema v8 semantic slots.',
+        {
+          first: screenshotPathSlots.get(key),
+          second: item.slot,
+        },
+      ));
+      continue;
+    }
+    screenshotPathSlots.set(key, item.slot);
+  }
+  return {
+    passed: violations.length === 0,
+    violations,
+  };
+}
+
 function evaluatePackageUiEvidenceCompleteness(input) {
   const violations = [];
   const schemaVersion = Number(input.schemaVersion || 0);
@@ -3002,6 +4615,8 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     schemaVersion === LEGACY_SCHEDULER_READ_ONLY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
   const interactiveLoginV8 = schemaVersion === PACKAGE_UI_EVIDENCE_SCHEMA_VERSION;
   const schedulerReadOnlyContract = legacySchedulerReadOnlyV6 || interactiveLoginV8;
+  const runs = Array.isArray(input.runs) ? input.runs : [];
+  const wideRun = input.wideProfile;
   if (!legacyV5 && !schedulerReadOnlyContract) {
     violations.push(violation(
       'PACKAGE_UI_SCHEMA_UNSUPPORTED',
@@ -3017,6 +4632,13 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       'INTERACTIVE_LOGIN_CONTRACT_MISSING_OR_CHANGED',
       'Schema v8 must declare the exact two-phase, bounded, secret-blind operator login contract.',
       input.interactiveLoginContract ?? null,
+    ));
+  }
+  if (interactiveLoginV8 && input.failure !== null) {
+    violations.push(violation(
+      'V8_MANIFEST_FAILURE_NOT_NULL',
+      'A successful schema v8 manifest must carry failure exactly null.',
+      input.failure ?? null,
     ));
   }
   if (
@@ -3050,6 +4672,46 @@ function evaluatePackageUiEvidenceCompleteness(input) {
         resumeRunGroupId: input.requested?.resumeRunGroupId ?? null,
         runGroupId: input.requested?.runGroupId ?? null,
       },
+    ));
+  }
+  if (
+    interactiveLoginV8
+    && (
+      !validPackageUiAuthorityBinding(input.authority?.binding)
+      || canonicalJson(input.authority?.binding)
+        !== canonicalJson(input.runGroup?.authorityBinding)
+    )
+  ) {
+    violations.push(violation(
+      'AUTHORITY_BINDING_MISSING_OR_CHANGED',
+      'Schema v8 must bind the canonical Known Folder DB identity and current authority-selection receipt hash.',
+      {
+        authority: input.authority?.binding ?? null,
+        runGroup: input.runGroup?.authorityBinding ?? null,
+      },
+    ));
+  }
+  if (
+    interactiveLoginV8
+    && (
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(
+        String(input.invocation?.invocationId || ''),
+      )
+      || input.runGroup?.invocationId !== input.invocation?.invocationId
+      || input.invocation?.lease?.generation == null
+      || !/^[A-F0-9]{64}$/.test(
+        String(input.invocation?.lease?.payloadSha256 || ''),
+      )
+      || !Array.isArray(input.invocation?.attemptReceipts)
+      || input.invocation.attemptReceipts.some(
+        (record) => record?.invocationId !== input.invocation.invocationId,
+      )
+    )
+  ) {
+    violations.push(violation(
+      'INVOCATION_BINDING_MISSING_OR_CHANGED',
+      'Schema v8 manifest must bind one invocation id, lease generation, and exact attempt receipt collection.',
+      input.invocation ?? null,
     ));
   }
   const currentRunnerContract = interactiveLoginV8
@@ -3119,11 +4781,16 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       || input.checkpointComposition?.runGroupId !== input.runGroup?.runGroupId
       || !PACKAGE_UI_PROFILE_SEQUENCE.every((profileId, index) => {
         const record = input.checkpointComposition?.checkpointRecords?.[index];
+        const expectedRun = profileId === PACKAGE_UI_WIDE_PROFILE.id
+          ? wideRun
+          : runs.find((candidate) =>
+              candidate?.profileId === profileId);
         return packageUiCheckpointRecordMatches(
           record,
           input.runGroup?.runGroupId,
           profileId,
           input.runGroup?.runnerContractSha256,
+          expectedRun,
         );
       })
     )
@@ -3168,16 +4835,14 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       input.isolatedProfileBootstrapContract ?? null,
     ));
   }
-  if (!processSnapshotEvidencePassed(input.packageProcessIsolation?.before)
-    || input.packageProcessIsolation?.before?.matchingCount !== 0
-    || input.packageProcessIsolation?.before?.unresolvedCount !== 0) {
+  if (!packageProcessAbsencePassed(input.packageProcessIsolation?.before)) {
     violations.push(violation(
       'PACKAGE_PROCESS_PREEXISTING_OR_UNRESOLVED',
       'No matching packaged process may be running before evidence capture.',
       input.packageProcessIsolation?.before,
     ));
   }
-  if (!processIsolationEvidencePassed(input.packageProcessIsolation)) {
+  if (!packageProcessIsolationEvidencePassed(input.packageProcessIsolation)) {
     violations.push(violation(
       'PACKAGE_PROCESS_CLEANUP_FAILED',
       'All matching packaged processes must be gone after evidence capture.',
@@ -3191,12 +4856,85 @@ function evaluatePackageUiEvidenceCompleteness(input) {
       input.profileProcessIsolation,
     ));
   }
-  const runs = Array.isArray(input.runs) ? input.runs : [];
+  const topLevelProfileLockBinding = interactiveLoginV8
+    ? {
+        invocationIdSha256: sha256Buffer(Buffer.from(
+          String(input.invocation?.invocationId || ''),
+          'utf8',
+        )),
+        profileId: 'run-group',
+        rootPathSha256: sha256Buffer(Buffer.from(
+          path.resolve(String(input.requested?.userDataDir || ''))
+            .replace(/\\/g, '/')
+            .toLowerCase(),
+          'utf8',
+        )),
+      }
+    : null;
+  if (
+    interactiveLoginV8
+      ? !packageUiProfileLockIsolationPassed(
+          input.profileLockIsolation,
+          topLevelProfileLockBinding,
+        )
+      : input.profileLockIsolation?.passed !== true
+        || input.profileLockIsolation?.before?.passed !== true
+        || input.profileLockIsolation?.after?.passed !== true
+  ) {
+    violations.push(violation(
+      'PROFILE_LOCK_HANDLE_ATTESTATION_FAILED',
+      'The isolated browser profile must pass bounded full-tree exclusive-open attestation before and after evidence capture.',
+      input.profileLockIsolation ?? null,
+    ));
+  }
+  if (interactiveLoginV8) {
+    const exactScaleRuns = exactPackageUiCollection(
+      runs,
+      EXPECTED_PACKAGE_UI_SCALES.map(
+        (scale) => `${scale.scalePercent}-compact`,
+      ),
+      (candidate) => String(candidate?.profileId || ''),
+    );
+    if (!exactScaleRuns.passed) {
+      violations.push(violation(
+        'V8_SCALE_RUN_SET_NOT_EXACT',
+        'Schema v8 compact scale runs must exactly equal the canonical 100/125 profile set.',
+        exactScaleRuns,
+      ));
+    }
+  }
   for (const scale of EXPECTED_PACKAGE_UI_SCALES) {
-    const run = runs.find((candidate) => candidate.scalePercent === scale.scalePercent);
+    const profileId = `${scale.scalePercent}-compact`;
+    const profileViolationStart = violations.length;
+    const run = interactiveLoginV8
+      ? runs.find((candidate) => candidate?.profileId === profileId)
+      : runs.find((candidate) => candidate.scalePercent === scale.scalePercent);
     if (!run) {
-      violations.push(violation('SCALE_RUN_MISSING', `Missing ${scale.scalePercent}% packaged UI run.`));
+      violations.push({
+        ...violation('SCALE_RUN_MISSING', `Missing ${scale.scalePercent}% packaged UI run.`),
+        profileId,
+      });
       continue;
+    }
+    if (interactiveLoginV8) {
+      const exactProfile = validateSchemaV8ProfileExactSet(run, {
+        overlays: EXPECTED_OVERLAY_CHECK_IDS,
+        profileId,
+        profileRootPathSha256: input.profileValidationOnly === true
+          ? null
+          : sha256Buffer(Buffer.from(
+              path.resolve(String(input.requested?.userDataDir || ''))
+                .replace(/\\/g, '/')
+                .toLowerCase(),
+              'utf8',
+            )),
+        runGroupId: input.runGroup?.runGroupId,
+        runnerContractSha256: input.runGroup?.runnerContractSha256,
+        scalePercent: scale.scalePercent,
+        subviews: EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
+        workspaces: EXPECTED_PACKAGE_UI_WORKSPACES,
+      });
+      violations.push(...exactProfile.violations);
     }
     if (interactiveLoginV8 && run.session?.mode !== 'interactive-operator-login') {
       violations.push(violation(
@@ -3251,11 +4989,27 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     if (run.identity?.passed !== true) {
       violations.push(violation('SCALE_IDENTITY_FAILED', `The ${scale.scalePercent}% packaged identity check failed.`, run.identity?.violations));
     }
-    if (!processIsolationEvidencePassed(run.packageProcessIsolation)) {
+    if (!packageProcessIsolationEvidencePassed(run.packageProcessIsolation)) {
       violations.push(violation('SCALE_PACKAGE_PROCESS_ISOLATION_FAILED', `The ${scale.scalePercent}% product process isolation evidence is missing or failed.`, run.packageProcessIsolation));
     }
     if (!processIsolationEvidencePassed(run.profileProcessIsolation)) {
       violations.push(violation('SCALE_PROFILE_PROCESS_ISOLATION_FAILED', `The ${scale.scalePercent}% profile browser isolation evidence is missing or failed.`, run.profileProcessIsolation));
+    }
+    if (
+      interactiveLoginV8
+        ? !packageUiProfileLockIsolationPassed(
+            run.profileLockIsolation,
+            run.evidenceBinding?.profileLockBinding || null,
+          )
+        : run.profileLockIsolation?.passed !== true
+          || run.profileLockIsolation?.before?.passed !== true
+          || run.profileLockIsolation?.after?.passed !== true
+    ) {
+      violations.push(violation(
+        'SCALE_PROFILE_LOCK_HANDLE_ATTESTATION_FAILED',
+        `${scale.scalePercent}% bounded full-tree profile lock/handle evidence is missing or failed.`,
+        run.profileLockIsolation ?? null,
+      ));
     }
     if (interactiveLoginV8 && !chromiumLineageEvidencePassed(run.chromiumProcessLineage)) {
       violations.push(violation(
@@ -3266,7 +5020,13 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     }
     if (
       interactiveLoginV8
-      && !packageUiAttemptArtifactManifestMatches(run.attemptArtifacts)
+      && (
+        !packageUiAttemptArtifactManifestMatches(run.attemptArtifacts)
+        || !validatePackageUiAttemptArtifactMembership(
+          run.attemptArtifacts,
+          run,
+        ).passed
+      )
     ) {
       violations.push(violation(
         'SCALE_ATTEMPT_ARTIFACTS_MISSING_OR_CHANGED',
@@ -3418,11 +5178,37 @@ function evaluatePackageUiEvidenceCompleteness(input) {
         violations.push(violation('OVERLAY_SCREENSHOT_MISSING_OR_UNHASHED', `${scale.scalePercent}% ${overlayId} screenshot is missing or unhashed.`, check.screenshot));
       }
     }
+    for (let index = profileViolationStart; index < violations.length; index += 1) {
+      violations[index] = { ...violations[index], profileId };
+    }
   }
-  const wideRun = input.wideProfile;
   if (!wideRun || wideRun.profileId !== PACKAGE_UI_WIDE_PROFILE.id) {
-    violations.push(violation('WIDE_PROFILE_MISSING', 'Missing the fixed 1400x900@100 Product/Diagnosis package profile.', wideRun));
+    violations.push({
+      ...violation('WIDE_PROFILE_MISSING', 'Missing the fixed 1400x900@100 Product/Diagnosis package profile.', wideRun),
+      profileId: PACKAGE_UI_WIDE_PROFILE.id,
+    });
   } else {
+  const wideViolationStart = violations.length;
+  if (interactiveLoginV8) {
+    const exactWide = validateSchemaV8ProfileExactSet(wideRun, {
+      overlays: [],
+      profileId: PACKAGE_UI_WIDE_PROFILE.id,
+      profileRootPathSha256: input.profileValidationOnly === true
+        ? null
+        : sha256Buffer(Buffer.from(
+            path.resolve(String(input.requested?.userDataDir || ''))
+              .replace(/\\/g, '/')
+              .toLowerCase(),
+            'utf8',
+          )),
+      runGroupId: input.runGroup?.runGroupId,
+      runnerContractSha256: input.runGroup?.runnerContractSha256,
+      scalePercent: PACKAGE_UI_WIDE_PROFILE.scalePercent,
+      subviews: [],
+      workspaces: PACKAGE_UI_WIDE_PROFILE.workspaces,
+    });
+    violations.push(...exactWide.violations);
+  }
   if (interactiveLoginV8 && wideRun.session?.mode !== 'interactive-operator-login') {
     violations.push(violation(
       'WIDE_INTERACTIVE_LOGIN_HANDOFF_MISSING',
@@ -3461,11 +5247,27 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     if (wideRun.identity?.passed !== true) {
       violations.push(violation('WIDE_PROFILE_IDENTITY_FAILED', 'The wide package profile did not retain packaged runtime identity.', wideRun.identity));
     }
-    if (!processIsolationEvidencePassed(wideRun.packageProcessIsolation)) {
+    if (!packageProcessIsolationEvidencePassed(wideRun.packageProcessIsolation)) {
       violations.push(violation('WIDE_PACKAGE_PROCESS_ISOLATION_FAILED', 'The wide profile product process isolation evidence is missing or failed.', wideRun.packageProcessIsolation));
     }
     if (!processIsolationEvidencePassed(wideRun.profileProcessIsolation)) {
       violations.push(violation('WIDE_PROFILE_PROCESS_ISOLATION_FAILED', 'The wide profile browser isolation evidence is missing or failed.', wideRun.profileProcessIsolation));
+    }
+    if (
+      interactiveLoginV8
+        ? !packageUiProfileLockIsolationPassed(
+            wideRun.profileLockIsolation,
+            wideRun.evidenceBinding?.profileLockBinding || null,
+          )
+        : wideRun.profileLockIsolation?.passed !== true
+          || wideRun.profileLockIsolation?.before?.passed !== true
+          || wideRun.profileLockIsolation?.after?.passed !== true
+    ) {
+      violations.push(violation(
+        'WIDE_PROFILE_LOCK_HANDLE_ATTESTATION_FAILED',
+        'The wide bounded full-tree profile lock/handle evidence is missing or failed.',
+        wideRun.profileLockIsolation ?? null,
+      ));
     }
     if (interactiveLoginV8 && !chromiumLineageEvidencePassed(wideRun.chromiumProcessLineage)) {
       violations.push(violation(
@@ -3476,7 +5278,13 @@ function evaluatePackageUiEvidenceCompleteness(input) {
     }
     if (
       interactiveLoginV8
-      && !packageUiAttemptArtifactManifestMatches(wideRun.attemptArtifacts)
+      && (
+        !packageUiAttemptArtifactManifestMatches(wideRun.attemptArtifacts)
+        || !validatePackageUiAttemptArtifactMembership(
+          wideRun.attemptArtifacts,
+          wideRun,
+        ).passed
+      )
     ) {
       violations.push(violation(
         'WIDE_ATTEMPT_ARTIFACTS_MISSING_OR_CHANGED',
@@ -3577,8 +5385,100 @@ function evaluatePackageUiEvidenceCompleteness(input) {
         }));
       }
     }
+    for (let index = wideViolationStart; index < violations.length; index += 1) {
+      violations[index] = {
+        ...violations[index],
+        profileId: PACKAGE_UI_WIDE_PROFILE.id,
+      };
+    }
   }
   return { passed: violations.length === 0, violations };
+}
+
+function evaluatePackageUiProfileEvidence(profileId, runEvidence) {
+  const compactScale = profileId === '100-compact'
+    ? 100
+    : profileId === '125-compact'
+      ? 125
+      : null;
+  const wide = profileId === PACKAGE_UI_WIDE_PROFILE.id;
+  if (compactScale === null && !wide) {
+    return {
+      cleanupPassed: false,
+      diagnosticsPassed: false,
+      passed: false,
+      relevantViolations: [violation(
+        'PROFILE_ID_INVALID',
+        'Profile evidence validator received an unknown canonical profile id.',
+        profileId,
+      )],
+      shapePassed: false,
+    };
+  }
+  const timeout = Number(
+    runEvidence?.session?.operatorHandoff?.phaseTimeoutMs,
+  );
+  const syntheticRunGroupId = runEvidence?.evidenceBinding?.runGroupId
+    || 'profile-evidence-validation';
+  const runnerContract = buildPackageUiRunnerContract();
+  const evaluated = evaluatePackageUiEvidenceCompleteness({
+    checkpointComposition: {
+      checkpointRecords: [],
+      passed: false,
+      runGroupId: syntheticRunGroupId,
+      runnerContractSha256: runnerContract.sha256,
+    },
+    interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
+    isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
+    packageProcessIsolation: runEvidence?.packageProcessIsolation,
+    profileLockIsolation: runEvidence?.profileLockIsolation,
+    profileValidationOnly: true,
+    profileProcessIsolation: runEvidence?.profileProcessIsolation,
+    requested: {
+      allowInteractiveLogin: true,
+      allowSavedLogin: false,
+      interactiveLoginMaximumTotalMs: Number.isFinite(timeout) ? timeout * 2 : null,
+      interactiveLoginTimeoutMs: Number.isFinite(timeout) ? timeout : null,
+      loginMode: 'interactive-operator-each-run',
+      resumeRunGroupId: syntheticRunGroupId,
+      runGroupId: syntheticRunGroupId,
+    },
+    runGroup: {
+      profileSequence: PACKAGE_UI_PROFILE_SEQUENCE,
+      runGroupId: syntheticRunGroupId,
+      runnerContractSha256: runnerContract.sha256,
+    },
+    runs: compactScale === null ? [] : [runEvidence],
+    schemaVersion: PACKAGE_UI_EVIDENCE_SCHEMA_VERSION,
+    wideProfile: wide ? runEvidence : null,
+  });
+  const relevantViolations = (evaluated.violations || [])
+    .filter((entry) => entry?.profileId === profileId)
+    .map((entry) => ({
+      code: String(entry?.code || 'UNKNOWN'),
+      details: entry?.details ?? null,
+      message: String(entry?.message || ''),
+      profileId,
+    }));
+  const shapePassed = compactScale !== null
+    ? runEvidence?.scalePercent === compactScale
+    : runEvidence?.profileId === profileId;
+  const cleanupPassed = packageUiAttemptCleanupPassed(runEvidence);
+  const diagnosticsPassed = packageUiAttemptDiagnosticsSnapshotMatches(
+    runEvidence?.diagnostics,
+    profileId,
+  );
+  return {
+    cleanupPassed,
+    diagnosticsPassed,
+    passed: shapePassed
+      && runEvidence?.passed === true
+      && cleanupPassed
+      && diagnosticsPassed
+      && relevantViolations.length === 0,
+    relevantViolations,
+    shapePassed,
+  };
 }
 
 function readPngDimensions(buffer) {
@@ -3678,15 +5578,30 @@ function logicalSqliteArtifactMatches(left, right) {
   );
 }
 
-function captureSqliteLogicalArtifact(databasePath, label = 'package-ui-sqlite') {
-  const tempParent = fs.mkdtempSync(
-    path.join(os.tmpdir(), `amazon-ai-ops-${safeSegment(label)}-`),
+function captureSqliteLogicalArtifact(
+  databasePath,
+  label = 'package-ui-sqlite',
+  injected = {},
+) {
+  const tempBase = fs.realpathSync.native(path.resolve(
+    injected.tempParent || os.tmpdir(),
+  ));
+  const tempRoot = fs.mkdtempSync(
+    path.join(
+      tempBase,
+      `${PACKAGE_UI_SQLITE_TEMP_ROOT_PREFIX}${safeSegment(label)}-`,
+    ),
   );
-  const destinationPath = path.join(tempParent, 'logical-online-backup.db');
+  const destinationPath = path.join(tempRoot, 'logical-online-backup.db');
   try {
-    const proof = runReadonlySqliteOnlineBackupSync({
+    restrictWindowsTempAcl(tempRoot, {
+      spawnSync: injected.spawnSync || spawnSync,
+    });
+    const backupRunner = injected.runReadonlySqliteOnlineBackupSync
+      || runReadonlySqliteOnlineBackupSync;
+    const proof = backupRunner({
       destinationPath,
-      ownedTempRoot: tempParent,
+      ownedTempRoot: tempRoot,
       sourceDatabasePath: path.resolve(databasePath),
     });
     return {
@@ -3698,8 +5613,12 @@ function captureSqliteLogicalArtifact(databasePath, label = 'package-ui-sqlite')
       totalPages: proof.observedBackup.totalPages,
     };
   } finally {
-    if (fs.existsSync(destinationPath)) fs.unlinkSync(destinationPath);
-    if (fs.existsSync(tempParent)) fs.rmdirSync(tempParent);
+    cleanupOwnedSqliteTempRoot(
+      tempBase,
+      tempRoot,
+      PACKAGE_UI_SQLITE_TEMP_ROOT_PREFIX,
+      injected,
+    );
   }
 }
 
@@ -3782,6 +5701,17 @@ function profileLineageStateMatches(left, right) {
     && left.profileContent.sizeBytes === right?.profileContent?.sizeBytes;
 }
 
+function packageUiCursorBinding(state) {
+  return {
+    logicalDatabaseSha256: state?.logicalDatabase?.sha256 || null,
+    logicalDatabaseSizeBytes: state?.logicalDatabase?.sizeBytes ?? null,
+    logicalDatabaseTotalPages: state?.logicalDatabase?.totalPages ?? null,
+    profileContentFileCount: state?.profileContent?.fileCount ?? null,
+    profileContentSha256: state?.profileContent?.sha256 || null,
+    profileContentSizeBytes: state?.profileContent?.sizeBytes ?? null,
+  };
+}
+
 function envelopePayloadSha256(payload) {
   return sha256Buffer(Buffer.from(canonicalJson(payload), 'utf8'));
 }
@@ -3842,6 +5772,429 @@ function readImmutableEnvelope(filePath, expectedKind, expectedSchemaVersion) {
   };
 }
 
+function packageUiLeasePath(outputDir, runGroupId) {
+  return path.join(
+    path.resolve(outputDir),
+    'run-leases',
+    `${safeSegment(runGroupId)}.lease.json`,
+  );
+}
+
+function collectPackageUiProcessStartIdentity(processId = process.pid, run = spawnSync) {
+  if (!Number.isInteger(processId) || processId <= 0) {
+    return { alive: false, passed: false, processId, reasonCode: 'PROCESS_ID_INVALID' };
+  }
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    `$item = Get-CimInstance Win32_Process -Filter "ProcessId=${processId}" | Select-Object ProcessId,CreationDate,ExecutablePath`,
+    'ConvertTo-Json -InputObject $item -Compress',
+  ].join('; ');
+  const result = run('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    command,
+  ], {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    shell: false,
+    timeout: 20_000,
+    windowsHide: true,
+  });
+  if (result?.error || result?.status !== 0 || result?.signal) {
+    return {
+      alive: null,
+      passed: false,
+      processId,
+      reasonCode: 'PROCESS_IDENTITY_UNRESOLVED',
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(String(result.stdout || '').trim() || 'null');
+  } catch {
+    return {
+      alive: null,
+      passed: false,
+      processId,
+      reasonCode: 'PROCESS_IDENTITY_MALFORMED',
+    };
+  }
+  if (!parsed) {
+    return {
+      alive: false,
+      passed: true,
+      processId,
+      reasonCode: 'PROCESS_NOT_FOUND',
+    };
+  }
+  const observedProcessId = Number(parsed.ProcessId);
+  const creationDate = String(parsed.CreationDate || '').trim();
+  const executablePath = String(parsed.ExecutablePath || '').trim();
+  if (
+    observedProcessId !== processId
+    || !creationDate
+    || !path.isAbsolute(executablePath)
+  ) {
+    return {
+      alive: null,
+      passed: false,
+      processId,
+      reasonCode: 'PROCESS_IDENTITY_INCOMPLETE',
+    };
+  }
+  const binding = {
+    creationDate,
+    executablePathSha256: sha256Buffer(Buffer.from(
+      normalizedWindowsPath(executablePath),
+      'utf8',
+    )),
+    processId,
+  };
+  return {
+    ...binding,
+    alive: true,
+    identitySha256: envelopePayloadSha256(binding),
+    passed: true,
+    reasonCode: null,
+  };
+}
+
+function readPackageUiLeaseEnvelope(leasePath) {
+  const stable = readStableUniqueFile(leasePath, 'Package UI runner lease');
+  let envelope;
+  try {
+    envelope = JSON.parse(stable.buffer.toString('utf8'));
+  } catch {
+    fail('Package UI runner lease is not valid JSON', leasePath);
+  }
+  if (
+    !envelope?.payload
+    || envelope.payload.kind !== 'package-ui-runner-lease'
+    || envelope.payload.schemaVersion !== PACKAGE_UI_RUNNER_LEASE_SCHEMA_VERSION
+    || envelope.payloadSha256 !== envelopePayloadSha256(envelope.payload)
+  ) {
+    fail('Package UI runner lease is malformed or changed', leasePath);
+  }
+  return {
+    file: {
+      ...artifactInfo(leasePath),
+    },
+    payload: envelope.payload,
+    payloadSha256: envelope.payloadSha256,
+  };
+}
+
+function inspectPackageUiRunGroupLease({
+  collectProcessIdentity = collectPackageUiProcessStartIdentity,
+  outputDir,
+  runGroupId,
+  runnerContractSha256,
+}) {
+  const leasePath = packageUiLeasePath(outputDir, runGroupId);
+  if (!fs.existsSync(leasePath)) {
+    return {
+      activeRunnerCount: 0,
+      leasePathSha256: sha256Buffer(Buffer.from(
+        normalizedWindowsPath(leasePath),
+        'utf8',
+      )),
+      passed: true,
+      reasonCode: null,
+      runGroupId,
+      runnerContractSha256,
+      state: 'absent',
+      supported: true,
+    };
+  }
+  let record;
+  try {
+    record = readPackageUiLeaseEnvelope(leasePath);
+  } catch {
+    return {
+      activeRunnerCount: null,
+      passed: false,
+      reasonCode: 'RUNNER_LEASE_INVALID',
+      runGroupId,
+      runnerContractSha256,
+      state: 'unresolved',
+      supported: true,
+    };
+  }
+  const payload = record.payload;
+  if (
+    payload.runGroupId !== runGroupId
+    || payload.runnerContractSha256 !== runnerContractSha256
+    || !/^[A-F0-9]{64}$/.test(String(payload.processStartIdentitySha256 || ''))
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(String(payload.invocationId || ''))
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(String(payload.generation || ''))
+  ) {
+    return {
+      activeRunnerCount: null,
+      passed: false,
+      reasonCode: 'RUNNER_LEASE_LINEAGE_MISMATCH',
+      runGroupId,
+      runnerContractSha256,
+      state: 'unresolved',
+      supported: true,
+    };
+  }
+  const identity = collectProcessIdentity(payload.processId);
+  if (
+    identity?.passed === true
+    && identity.alive === true
+    && identity.identitySha256 === payload.processStartIdentitySha256
+  ) {
+    return {
+      activeRunnerCount: 1,
+      invocationId: payload.invocationId,
+      leaseGeneration: payload.generation,
+      passed: false,
+      reasonCode: 'RUNNER_LEASE_ACTIVE',
+      runGroupId,
+      runnerContractSha256,
+      state: 'active',
+      supported: true,
+    };
+  }
+  if (identity?.passed === true && identity.alive === false) {
+    return {
+      activeRunnerCount: null,
+      invocationId: payload.invocationId,
+      leaseGeneration: payload.generation,
+      passed: false,
+      reasonCode: 'RUNNER_LEASE_STALE',
+      runGroupId,
+      runnerContractSha256,
+      state: 'stale',
+      supported: true,
+    };
+  }
+  return {
+    activeRunnerCount: null,
+    invocationId: payload.invocationId,
+    leaseGeneration: payload.generation,
+    passed: false,
+    reasonCode: 'RUNNER_LEASE_UNRESOLVED',
+    runGroupId,
+    runnerContractSha256,
+    state: 'unresolved',
+    supported: true,
+  };
+}
+
+function acquirePackageUiRunGroupLease({
+  collectProcessIdentity = collectPackageUiProcessStartIdentity,
+  invocationId,
+  outputDir,
+  randomUUID = crypto.randomUUID,
+  runGroupId,
+  runnerContractSha256,
+}) {
+  const processIdentity = collectProcessIdentity(process.pid);
+  if (
+    processIdentity?.passed !== true
+    || processIdentity.alive !== true
+    || !/^[A-F0-9]{64}$/.test(String(processIdentity.identitySha256 || ''))
+  ) {
+    fail('Current runner PID/start identity could not be proven before acquiring the run-group lease');
+  }
+  const leasePath = packageUiLeasePath(outputDir, runGroupId);
+  const leaseRoot = path.dirname(leasePath);
+  fs.mkdirSync(leaseRoot, { recursive: true });
+  const leaseRootStat = fs.lstatSync(leaseRoot);
+  if (
+    leaseRootStat.isSymbolicLink()
+    || !leaseRootStat.isDirectory()
+    || normalizedWindowsPath(fs.realpathSync.native(leaseRoot))
+      !== normalizedWindowsPath(leaseRoot)
+  ) {
+    fail('Package UI lease root must be a direct real directory', leaseRoot);
+  }
+  const generation = `${timestampSegment()}-${randomUUID()}`;
+  const payload = {
+    acquiredAt: new Date().toISOString(),
+    generation,
+    invocationId,
+    kind: 'package-ui-runner-lease',
+    processId: process.pid,
+    processStartIdentitySha256: processIdentity.identitySha256,
+    runGroupId,
+    runnerContractSha256,
+    schemaVersion: PACKAGE_UI_RUNNER_LEASE_SCHEMA_VERSION,
+  };
+  let descriptor;
+  try {
+    descriptor = fs.openSync(leasePath, 'wx', 0o600);
+    fs.writeFileSync(
+      descriptor,
+      `${JSON.stringify(createImmutableEnvelope(payload), null, 2)}\n`,
+      'utf8',
+    );
+    fs.fsyncSync(descriptor);
+  } catch (error) {
+    if (error?.code === 'EEXIST') {
+      const state = inspectPackageUiRunGroupLease({
+        collectProcessIdentity,
+        outputDir,
+        runGroupId,
+        runnerContractSha256,
+      });
+      fail(
+        `Package UI run-group lease already exists (${state.reasonCode || state.state}); stale and concurrent leases fail closed`,
+        leasePath,
+      );
+    }
+    throw error;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+  const record = readPackageUiLeaseEnvelope(leasePath);
+  if (canonicalJson(record.payload) !== canonicalJson(payload)) {
+    fail('Package UI runner lease changed immediately after acquisition', leasePath);
+  }
+  return {
+    file: record.file,
+    leasePath,
+    payload,
+    payloadSha256: record.payloadSha256,
+  };
+}
+
+function releasePackageUiRunGroupLease(lease) {
+  if (!lease?.leasePath || !lease?.payload) {
+    fail('Package UI runner lease release requires the exact acquired lease.');
+  }
+  const current = readPackageUiLeaseEnvelope(lease.leasePath);
+  if (
+    current.payloadSha256 !== lease.payloadSha256
+    || canonicalJson(current.payload) !== canonicalJson(lease.payload)
+  ) {
+    fail('Package UI runner lease changed before release', lease.leasePath);
+  }
+  fs.unlinkSync(lease.leasePath);
+  if (fs.existsSync(lease.leasePath)) {
+    fail('Package UI runner lease still exists after release', lease.leasePath);
+  }
+  return {
+    generation: lease.payload.generation,
+    invocationId: lease.payload.invocationId,
+    released: true,
+  };
+}
+
+function packageUiResumeInspectionCore(payload) {
+  return {
+    authorityBinding: payload?.authorityBinding,
+    createdAt: payload?.createdAt,
+    cursor: payload?.cursor,
+    expiresAt: payload?.expiresAt,
+    invocationId: payload?.invocationId,
+    kind: payload?.kind,
+    nextProfileId: payload?.nextProfileId,
+    runGroupId: payload?.runGroupId,
+    runnerContractSha256: payload?.runnerContractSha256,
+    schemaVersion: payload?.schemaVersion,
+  };
+}
+
+function validatePackageUiResumeInspectionReceipt({
+  invocationArgv,
+  receiptPath,
+  runGroupId,
+  runnerContractSha256,
+}) {
+  const stable = readStableUniqueFile(
+    receiptPath,
+    'Package UI resume inspection receipt',
+  );
+  let envelope;
+  try {
+    envelope = JSON.parse(stable.buffer.toString('utf8'));
+  } catch {
+    fail('Package UI resume inspection receipt is not valid JSON', receiptPath);
+  }
+  const payload = envelope?.payload;
+  const expectedArgv = ['scripts/run-package-ui-evidence.js', ...invocationArgv];
+  if (
+    !payload
+    || payload.kind !== 'package-ui-resume-inspection'
+    || payload.schemaVersion !== PACKAGE_UI_RESUME_INSPECTION_SCHEMA_VERSION
+    || envelope.payloadSha256 !== envelopePayloadSha256(payload)
+    || payload.intentBindingSha256 !== envelopePayloadSha256(
+      packageUiResumeInspectionCore(payload),
+    )
+    || path.basename(stable.file.path) !== `${payload.intentBindingSha256}.json`
+    || payload.runGroupId !== runGroupId
+    || payload.runnerContractSha256 !== runnerContractSha256
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(String(payload.invocationId || ''))
+    || !PACKAGE_UI_PROFILE_SEQUENCE.includes(payload.nextProfileId)
+    || !Array.isArray(payload.argv)
+    || canonicalJson(payload.argv) !== canonicalJson(expectedArgv)
+    || !Number.isFinite(Date.parse(payload.createdAt))
+    || !Number.isFinite(Date.parse(payload.expiresAt))
+    || Date.parse(payload.expiresAt) <= Date.parse(payload.createdAt)
+    || Date.now() > Date.parse(payload.expiresAt)
+  ) {
+    fail(
+      'Package UI resume inspection receipt is stale, malformed, detached, or does not match the exact argv',
+      receiptPath,
+    );
+  }
+  return {
+    file: {
+      ...artifactInfo(stable.file.path),
+    },
+    payload,
+    payloadSha256: envelope.payloadSha256,
+  };
+}
+
+function consumePackageUiResumeInspectionReceipt(record) {
+  const sourcePath = record?.file?.path;
+  if (!sourcePath || !record?.payload?.invocationId) {
+    fail('Package UI resume inspection receipt consumption requires an exact validated record.');
+  }
+  const consumedRoot = path.join(path.dirname(sourcePath), 'consumed');
+  fs.mkdirSync(consumedRoot, { recursive: true });
+  const rootStat = fs.lstatSync(consumedRoot);
+  if (
+    rootStat.isSymbolicLink()
+    || !rootStat.isDirectory()
+    || normalizedWindowsPath(fs.realpathSync.native(consumedRoot))
+      !== normalizedWindowsPath(consumedRoot)
+  ) {
+    fail('Package UI consumed-receipt directory must be a direct real directory', consumedRoot);
+  }
+  const consumedPath = path.join(
+    consumedRoot,
+    `${path.basename(sourcePath, '.json')}-${safeSegment(record.payload.invocationId)}.json`,
+  );
+  if (fs.existsSync(consumedPath)) {
+    fail('Package UI resume inspection receipt was already consumed', consumedPath);
+  }
+  fs.renameSync(sourcePath, consumedPath);
+  if (fs.existsSync(sourcePath)) {
+    fail('Package UI resume inspection receipt still exists after atomic consumption', sourcePath);
+  }
+  const consumed = artifactInfo(consumedPath);
+  if (
+    consumed.sha256 !== record.file.sha256
+    || consumed.sizeBytes !== record.file.sizeBytes
+  ) {
+    fail('Package UI resume inspection receipt changed while being consumed', consumedPath);
+  }
+  return {
+    ...record,
+    consumedAt: new Date().toISOString(),
+    file: consumed,
+    originalPathSha256: sha256Buffer(Buffer.from(
+      normalizedWindowsPath(sourcePath),
+      'utf8',
+    )),
+  };
+}
+
 function packageUiRunGroupId(options = {}) {
   if (options.resumeRunGroupId) return options.resumeRunGroupId;
   if (options.runGroupId) return options.runGroupId;
@@ -3853,6 +6206,8 @@ function packageUiRunGroupPaths(outputDir, runGroupId) {
   return {
     attemptsDir: path.join(root, 'attempts'),
     checkpointsDir: path.join(root, 'checkpoints'),
+    invocationReceiptsDir: path.join(root, 'invocation-receipts'),
+    invocationsDir: path.join(root, 'invocations'),
     metadataPath: path.join(root, 'run-group.json'),
     root,
   };
@@ -3885,11 +6240,18 @@ function createPackageLineage(options, artifacts) {
 
 function buildPackageUiRunnerContract() {
   const evidenceScript = artifactInfo(__filename);
+  const protectedSqliteTempScript = artifactInfo(
+    path.join(__dirname, 'protected-sqlite-temp.js'),
+  );
   const semanticContract = {
     evidenceSchemaVersion: PACKAGE_UI_EVIDENCE_SCHEMA_VERSION,
     runGroupSchemaVersion: PACKAGE_UI_RUN_GROUP_SCHEMA_VERSION,
     attemptSchemaVersion: PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION,
     checkpointSchemaVersion: PACKAGE_UI_PROFILE_CHECKPOINT_SCHEMA_VERSION,
+    attemptInvocationSchemaVersion: PACKAGE_UI_ATTEMPT_INVOCATION_SCHEMA_VERSION,
+    invocationReceiptSchemaVersion: PACKAGE_UI_INVOCATION_RECEIPT_SCHEMA_VERSION,
+    runnerLeaseSchemaVersion: PACKAGE_UI_RUNNER_LEASE_SCHEMA_VERSION,
+    resumeInspectionSchemaVersion: PACKAGE_UI_RESUME_INSPECTION_SCHEMA_VERSION,
     profileSequence: PACKAGE_UI_PROFILE_SEQUENCE,
     scales: EXPECTED_PACKAGE_UI_SCALES,
     workspaces: EXPECTED_PACKAGE_UI_WORKSPACES,
@@ -3905,6 +6267,10 @@ function buildPackageUiRunnerContract() {
       sha256: evidenceScript.sha256,
       sizeBytes: evidenceScript.sizeBytes,
     },
+    protectedSqliteTempScript: {
+      sha256: protectedSqliteTempScript.sha256,
+      sizeBytes: protectedSqliteTempScript.sizeBytes,
+    },
     semanticContractSha256: envelopePayloadSha256(semanticContract),
   };
   return {
@@ -3918,6 +6284,11 @@ function validPackageUiRunnerContract(contract) {
     !/^[A-F0-9]{64}$/.test(String(contract?.evidenceScript?.sha256 || ''))
     || !Number.isInteger(contract?.evidenceScript?.sizeBytes)
     || contract.evidenceScript.sizeBytes < 1
+    || !/^[A-F0-9]{64}$/.test(String(
+      contract?.protectedSqliteTempScript?.sha256 || '',
+    ))
+    || !Number.isInteger(contract?.protectedSqliteTempScript?.sizeBytes)
+    || contract.protectedSqliteTempScript.sizeBytes < 1
     || !/^[A-F0-9]{64}$/.test(String(contract?.semanticContractSha256 || ''))
     || !/^[A-F0-9]{64}$/.test(String(contract?.sha256 || ''))
   ) {
@@ -3925,12 +6296,33 @@ function validPackageUiRunnerContract(contract) {
   }
   const binding = {
     evidenceScript: contract.evidenceScript,
+    protectedSqliteTempScript: contract.protectedSqliteTempScript,
     semanticContractSha256: contract.semanticContractSha256,
   };
   return contract.sha256 === envelopePayloadSha256(binding);
 }
 
+function validPackageUiAuthorityBinding(binding) {
+  return Boolean(
+    /^[A-F0-9]{64}$/.test(String(
+      binding?.authoritySelectionReceiptSha256 || '',
+    ))
+    && /^[A-F0-9]{64}$/.test(String(
+      binding?.canonicalDatabasePathSha256 || '',
+    ))
+    && /^[A-F0-9]{64}$/.test(String(
+      binding?.databaseFileIdentity?.stabilityTokenSha256 || '',
+    ))
+    && typeof binding?.databaseFileIdentity?.deviceId === 'string'
+    && binding.databaseFileIdentity.deviceId.length > 0
+    && typeof binding?.databaseFileIdentity?.fileId === 'string'
+    && binding.databaseFileIdentity.fileId.length > 0
+    && binding.databaseFileIdentity.hardLinkCount === 1
+  );
+}
+
 function initializePackageUiRunGroup({
+  authorityBinding,
   genesisProfileState,
   options,
   outputDir,
@@ -3940,6 +6332,9 @@ function initializePackageUiRunGroup({
 }) {
   if (!validPackageUiRunnerContract(runnerContract)) {
     fail('Package UI evidence runner contract is malformed or internally inconsistent');
+  }
+  if (!validPackageUiAuthorityBinding(authorityBinding)) {
+    fail('Package UI authority binding is malformed or incomplete');
   }
   const runGroupId = packageUiRunGroupId(options);
   const paths = packageUiRunGroupPaths(outputDir, runGroupId);
@@ -3956,6 +6351,7 @@ function initializePackageUiRunGroup({
       payload.runGroupId !== runGroupId
       || canonicalJson(payload.packageLineage) !== canonicalJson(packageLineage)
       || canonicalJson(payload.profileSequence) !== canonicalJson(PACKAGE_UI_PROFILE_SEQUENCE)
+      || canonicalJson(payload.authorityBinding) !== canonicalJson(authorityBinding)
       || payload.runnerContractSha256 !== runnerContract.sha256
       || canonicalJson(payload.runnerContract) !== canonicalJson(runnerContract)
       || !logicalSqliteArtifactMatches(
@@ -3972,6 +6368,7 @@ function initializePackageUiRunGroup({
   }
   fs.mkdirSync(paths.root, { recursive: true });
   const metadata = {
+    authorityBinding,
     createdAt: new Date().toISOString(),
     genesisProfileState,
     kind: 'package-ui-run-group',
@@ -4013,8 +6410,11 @@ function loadPackageUiCheckpoint(manager, profileId) {
 function loadPackageUiAttemptRecords(manager, profileId) {
   const directory = path.join(manager.paths.attemptsDir, safeSegment(profileId));
   if (!fs.existsSync(directory)) return [];
-  const records = fs.readdirSync(directory)
-    .filter((name) => name.endsWith('.json'))
+  const names = fs.readdirSync(directory);
+  if (names.some((name) => !name.endsWith('.json'))) {
+    fail('Package UI attempt receipt directory contains an unexpected entry', directory);
+  }
+  const records = names
     .sort((left, right) => left.localeCompare(right, 'en'))
     .map((name) => {
       const record = readImmutableEnvelope(
@@ -4026,15 +6426,81 @@ function loadPackageUiAttemptRecords(manager, profileId) {
         record.payload.runGroupId !== manager.runGroupId
         || record.payload.profileId !== profileId
         || canonicalJson(record.payload.packageLineage) !== canonicalJson(manager.metadata.packageLineage)
+        || canonicalJson(record.payload.authorityBinding)
+          !== canonicalJson(manager.metadata.authorityBinding)
         || record.payload.runnerContractSha256 !== manager.metadata.runnerContractSha256
+        || !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(
+          String(record.payload.invocationId || ''),
+        )
+        || record.payload.lease?.generation == null
+        || !/^[A-F0-9]{64}$/.test(
+          String(record.payload.lease?.payloadSha256 || ''),
+        )
       ) {
         fail('Package UI attempt receipt escaped its run-group/package/profile/runner lineage', record.file.path);
       }
       if (!packageUiAttemptArtifactManifestMatches(record.payload.attemptArtifacts)) {
         fail('Package UI attempt artifacts are missing, changed, or escaped their immutable directory', record.file.path);
       }
+      if (!validatePackageUiAttemptArtifactMembership(
+        record.payload.attemptArtifacts,
+        record.payload,
+      ).passed) {
+        fail('Package UI attempt artifact membership is incomplete or detached', record.file.path);
+      }
       if (!packageUiAttemptDiagnosticsSnapshotMatches(record.payload.diagnostics, profileId)) {
         fail('Package UI attempt diagnostics are missing, unsafe, or malformed', record.file.path);
+      }
+      if (!packageUiAttemptOutcomeMatches(record.payload)) {
+        fail('Package UI attempt outcome, failure, diagnostics, and cleanup evidence disagree', record.file.path);
+      }
+      if (
+        !currentFileRecordMatches(record.payload.attemptInvocationManifest)
+        || record.payload.manifestSha256
+          !== record.payload.attemptInvocationManifest.sha256
+        || normalizedWindowsPath(record.payload.attemptInvocationManifest.path)
+          !== normalizedWindowsPath(path.join(
+            manager.paths.invocationsDir,
+            safeSegment(record.payload.invocationId),
+            `${safeSegment(profileId)}-${String(record.payload.ordinal).padStart(4, '0')}-${record.payload.attemptId}.json`,
+          ))
+      ) {
+        fail('Package UI attempt invocation manifest is missing or changed', record.file.path);
+      }
+      const invocationManifest = readImmutableEnvelope(
+        record.payload.attemptInvocationManifest.path,
+        'package-ui-attempt-invocation',
+        PACKAGE_UI_ATTEMPT_INVOCATION_SCHEMA_VERSION,
+      );
+      if (
+        invocationManifest.file.sha256 !== record.payload.manifestSha256
+        || invocationManifest.payload.attemptId !== record.payload.attemptId
+        || invocationManifest.payload.invocationId !== record.payload.invocationId
+        || invocationManifest.payload.profileId !== record.payload.profileId
+        || invocationManifest.payload.ordinal !== record.payload.ordinal
+        || canonicalJson(invocationManifest.payload.cleanupEvidence)
+          !== canonicalJson(record.payload.cleanupEvidence)
+        || canonicalJson(invocationManifest.payload.profileState)
+          !== canonicalJson(record.payload.profileState)
+        || canonicalJson(invocationManifest.payload.attemptArtifacts)
+          !== canonicalJson(record.payload.attemptArtifacts)
+        || canonicalJson(invocationManifest.payload.artifactReferences)
+          !== canonicalJson(record.payload.artifactReferences)
+        || invocationManifest.payload.resumable !== record.payload.resumable
+        || invocationManifest.payload.passed !== record.payload.passed
+        || canonicalJson(invocationManifest.payload.lease)
+          !== canonicalJson(record.payload.lease)
+      ) {
+        fail('Package UI attempt receipt is detached from its exact invocation manifest', record.file.path);
+      }
+      const cleanupPassed = packageUiAttemptCleanupEvidencePassed(
+        record.payload.cleanupEvidence,
+      );
+      if (
+        (record.payload.resumable === true && !cleanupPassed)
+        || (record.payload.resumable !== true && cleanupPassed)
+      ) {
+        fail('Package UI attempt resumability disagrees with full cleanup evidence', record.file.path);
       }
       return record;
     });
@@ -4046,7 +6512,16 @@ function loadPackageUiAttemptRecords(manager, profileId) {
   return records;
 }
 
-function createPackageUiProfileAttemptContext(manager, profileId) {
+function createPackageUiProfileAttemptContext(manager, profileId, invocation = {}) {
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(String(invocation.invocationId || ''))
+    || invocation.lease?.payload?.invocationId !== invocation.invocationId
+    || invocation.lease?.payload?.runGroupId !== manager.runGroupId
+    || invocation.lease?.payload?.runnerContractSha256
+      !== manager.metadata.runnerContractSha256
+  ) {
+    fail('Package UI attempt context requires the exact active invocation and lease.');
+  }
   const ordinal = loadPackageUiAttemptRecords(manager, profileId).length + 1;
   const attemptId = `${timestampSegment()}-${crypto.randomUUID()}`;
   const artifactDir = path.join(
@@ -4062,6 +6537,9 @@ function createPackageUiProfileAttemptContext(manager, profileId) {
   return {
     artifactDir,
     attemptId,
+    invocationId: invocation.invocationId,
+    leaseGeneration: invocation.lease.payload.generation,
+    leasePayloadSha256: invocation.lease.payloadSha256,
     ordinal,
   };
 }
@@ -4117,6 +6595,13 @@ function recordPackageUiProfileAttempt({
     attemptContext?.ordinal !== expectedOrdinal
     || typeof attemptContext?.attemptId !== 'string'
     || !attemptContext.attemptId
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(
+      String(attemptContext?.invocationId || ''),
+    )
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(
+      String(attemptContext?.leaseGeneration || ''),
+    )
+    || !/^[A-F0-9]{64}$/.test(String(attemptContext?.leasePayloadSha256 || ''))
   ) {
     fail('Package UI attempt context is missing or out of order', profileId);
   }
@@ -4151,23 +6636,139 @@ function recordPackageUiProfileAttempt({
     );
   }
   const { attemptId, ordinal } = attemptContext;
+  const runBinding = canonicalPackageUiArtifactBinding(runEvidence);
+  const expectedRunBinding = {
+    attemptId,
+    invocationId: attemptContext.invocationId,
+    profileId,
+    runGroupId: manager.runGroupId,
+    runnerContractSha256: manager.metadata.runnerContractSha256,
+    scalePercent: profileId === PACKAGE_UI_WIDE_PROFILE.id
+      ? PACKAGE_UI_WIDE_PROFILE.scalePercent
+      : Number.parseInt(profileId.split('-')[0], 10),
+  };
+  if (
+    canonicalJson(runBinding) !== canonicalJson(expectedRunBinding)
+    || runEvidence?.profileId !== profileId
+    || runEvidence?.evidenceBinding?.profileLockBinding?.profileId !== profileId
+    || runEvidence.evidenceBinding.profileLockBinding.invocationIdSha256
+      !== sha256Buffer(Buffer.from(attemptContext.invocationId, 'utf8'))
+    || !packageUiProfileLockIsolationPassed(
+      runEvidence?.profileLockIsolation,
+      runEvidence.evidenceBinding.profileLockBinding,
+    )
+  ) {
+    fail(
+      'Package UI run evidence escaped its exact attempt/invocation/profile/scale/lock binding',
+      profileId,
+    );
+  }
   const attemptDiagnostics = cloneSecretBlindDiagnosticRecord(runEvidence?.diagnostics ?? null);
   if (!packageUiAttemptDiagnosticsSnapshotMatches(attemptDiagnostics, profileId)) {
     fail('Package UI attempt diagnostics are missing, unsafe, or malformed', profileId);
   }
-  const payload = {
+  const attemptFailure = cloneSecretBlindDiagnosticRecord(
+    runEvidence?.failure || null,
+  );
+  const cleanupEvidence = {
+    chromiumProcessLineage: cloneSecretBlindDiagnosticRecord(
+      runEvidence?.chromiumProcessLineage ?? null,
+    ),
+    packageProcessIsolation: cloneSecretBlindDiagnosticRecord(
+      runEvidence?.packageProcessIsolation ?? null,
+    ),
+    profileLockIsolation: cloneSecretBlindDiagnosticRecord(
+      runEvidence?.profileLockIsolation ?? null,
+    ),
+    profileProcessIsolation: cloneSecretBlindDiagnosticRecord(
+      runEvidence?.profileProcessIsolation ?? null,
+    ),
+  };
+  const artifactReferences = buildPackageUiAttemptArtifactReferences(
     attemptArtifacts,
+    runEvidence,
+  );
+  const artifactMembership = validatePackageUiAttemptArtifactMembership(
+    attemptArtifacts,
+    {
+      ...runEvidence,
+      artifactReferences,
+    },
+  );
+  if (!artifactMembership.passed) {
+    fail(
+      'Package UI attempt artifact membership is incomplete or detached',
+      JSON.stringify(artifactMembership.violations),
+    );
+  }
+  const attemptOutcome = {
+    cleanupEvidence,
+    diagnostics: attemptDiagnostics,
+    failure: attemptFailure,
+    passed: runEvidence?.passed === true,
+    resumable: resumable === true,
+  };
+  if (!packageUiAttemptOutcomeMatches(attemptOutcome)) {
+    fail(
+      'Package UI attempt outcome, failure, diagnostics, and cleanup evidence disagree',
+      profileId,
+    );
+  }
+  const invocationManifestPayload = {
+    attemptArtifacts,
+    artifactReferences,
     attemptId,
+    authorityBinding: manager.metadata.authorityBinding,
+    cleanupEvidence,
     completedAt: new Date().toISOString(),
     diagnostics: attemptDiagnostics,
-    failure: runEvidence?.failure || null,
-    kind: 'package-ui-profile-attempt',
-    packageLineage: manager.metadata.packageLineage,
+    failure: attemptFailure,
+    invocationId: attemptContext.invocationId,
+    kind: 'package-ui-attempt-invocation',
+    lease: {
+      generation: attemptContext.leaseGeneration,
+      payloadSha256: attemptContext.leasePayloadSha256,
+    },
     ordinal,
-    passed: runEvidence?.passed === true,
+    passed: attemptOutcome.passed,
     profileId,
     profileState,
-    resumable: resumable === true,
+    resumable: attemptOutcome.resumable,
+    runGroupId: manager.runGroupId,
+    runnerContractSha256: manager.metadata.runnerContractSha256,
+    schemaVersion: PACKAGE_UI_ATTEMPT_INVOCATION_SCHEMA_VERSION,
+  };
+  const invocationManifest = writeImmutableEnvelope(
+    path.join(
+      manager.paths.invocationsDir,
+      safeSegment(attemptContext.invocationId),
+      `${safeSegment(profileId)}-${String(ordinal).padStart(4, '0')}-${attemptId}.json`,
+    ),
+    invocationManifestPayload,
+  );
+  const payload = {
+    attemptArtifacts,
+    attemptInvocationManifest: invocationManifest,
+    attemptId,
+    artifactReferences,
+    authorityBinding: manager.metadata.authorityBinding,
+    cleanupEvidence,
+    completedAt: new Date().toISOString(),
+    diagnostics: attemptDiagnostics,
+    failure: attemptFailure,
+    invocationId: attemptContext.invocationId,
+    kind: 'package-ui-profile-attempt',
+    lease: {
+      generation: attemptContext.leaseGeneration,
+      payloadSha256: attemptContext.leasePayloadSha256,
+    },
+    manifestSha256: invocationManifest.sha256,
+    packageLineage: manager.metadata.packageLineage,
+    ordinal,
+    passed: attemptOutcome.passed,
+    profileId,
+    profileState,
+    resumable: attemptOutcome.resumable,
     runGroupId: manager.runGroupId,
     runnerContractSha256: manager.metadata.runnerContractSha256,
     schemaVersion: PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION,
@@ -4176,6 +6777,70 @@ function recordPackageUiProfileAttempt({
     path.join(directory, `${String(ordinal).padStart(4, '0')}-${attemptId}.json`),
     payload,
   );
+}
+
+function expectedPackageUiCheckpointEvidenceBinding(attemptPayload) {
+  const profileId = attemptPayload?.profileId;
+  return {
+    attemptId: attemptPayload?.attemptId,
+    invocationId: attemptPayload?.invocationId,
+    profileId,
+    profileLockBinding:
+      attemptPayload?.cleanupEvidence?.profileLockIsolation?.before?.binding,
+    runGroupId: attemptPayload?.runGroupId,
+    runnerContractSha256: attemptPayload?.runnerContractSha256,
+    scalePercent: profileId === PACKAGE_UI_WIDE_PROFILE.id
+      ? PACKAGE_UI_WIDE_PROFILE.scalePercent
+      : Number.parseInt(String(profileId || '').split('-')[0], 10),
+  };
+}
+
+function packageUiCheckpointRunEvidenceMatchesTerminalAttempt(
+  runEvidence,
+  attemptPayload,
+) {
+  try {
+    const expectedBinding =
+      expectedPackageUiCheckpointEvidenceBinding(attemptPayload);
+    const cleanupEvidence = {
+      chromiumProcessLineage:
+        runEvidence?.chromiumProcessLineage ?? null,
+      packageProcessIsolation:
+        runEvidence?.packageProcessIsolation ?? null,
+      profileLockIsolation:
+        runEvidence?.profileLockIsolation ?? null,
+      profileProcessIsolation:
+        runEvidence?.profileProcessIsolation ?? null,
+    };
+    return attemptPayload?.passed === true
+      && attemptPayload?.resumable === true
+      && runEvidence?.passed === attemptPayload.passed
+      && runEvidence?.profileId === attemptPayload.profileId
+      && canonicalJson(runEvidence?.evidenceBinding)
+        === canonicalJson(expectedBinding)
+      && canonicalJson(canonicalPackageUiArtifactBinding(runEvidence))
+        === canonicalJson({
+          attemptId: expectedBinding.attemptId,
+          invocationId: expectedBinding.invocationId,
+          profileId: expectedBinding.profileId,
+          runGroupId: expectedBinding.runGroupId,
+          runnerContractSha256: expectedBinding.runnerContractSha256,
+          scalePercent: expectedBinding.scalePercent,
+        })
+      && canonicalJson(runEvidence?.attemptArtifacts)
+        === canonicalJson(attemptPayload.attemptArtifacts)
+      && canonicalJson(runEvidence?.artifactReferences)
+        === canonicalJson(attemptPayload.artifactReferences)
+      && canonicalJson(cleanupEvidence)
+        === canonicalJson(attemptPayload.cleanupEvidence)
+      && canonicalJson(runEvidence?.diagnostics)
+        === canonicalJson(attemptPayload.diagnostics)
+      && canonicalJson(runEvidence?.failure)
+        === canonicalJson(attemptPayload.failure)
+      && packageUiAttemptOutcomeMatches(attemptPayload);
+  } catch {
+    return false;
+  }
 }
 
 function writePackageUiProfileCheckpoint({
@@ -4187,8 +6852,31 @@ function writePackageUiProfileCheckpoint({
   runEvidence,
 }) {
   if (runEvidence?.passed !== true) fail('A failed package UI run cannot become a profile checkpoint');
+  const attemptRecords = loadPackageUiAttemptRecords(manager, profileId);
+  const terminalAttempt = attemptRecords[attemptRecords.length - 1];
+  if (
+    attemptRecords.length < 1
+    || canonicalJson(terminalAttempt?.file) !== canonicalJson(attemptRecord)
+    || canonicalJson(profileState)
+      !== canonicalJson(terminalAttempt?.payload?.profileState)
+    || !packageUiCheckpointRunEvidenceMatchesTerminalAttempt(
+      runEvidence,
+      terminalAttempt?.payload,
+    )
+  ) {
+    fail(
+      'Package UI checkpoint terminal receipt, outcome, cleanup, artifacts, or exact invocation binding is detached from its full attempt chain',
+    );
+  }
   const payload = {
     attemptReceipt: attemptRecord,
+    attemptReceipts: attemptRecords.map((record) => ({
+      attemptId: record.payload.attemptId,
+      file: record.file,
+      invocationId: record.payload.invocationId,
+      ordinal: record.payload.ordinal,
+      payloadSha256: record.payloadSha256,
+    })),
     completedAt: new Date().toISOString(),
     kind: 'package-ui-profile-checkpoint',
     lineageStart,
@@ -4230,10 +6918,23 @@ function composePackageUiRunGroup(manager) {
     if (
       receipts.length < 1
       || receipts[receipts.length - 1].payload.passed !== true
+      || canonicalJson(checkpoint.payload.profileState)
+        !== canonicalJson(receipts[receipts.length - 1].payload.profileState)
       || !profileLineageStateMatches(attemptCursor, checkpoint.payload.profileState.after)
-      || checkpoint.payload.attemptReceipt?.sha256 !== receipts[receipts.length - 1].file.sha256
-      || canonicalJson(checkpoint.payload.runEvidence?.attemptArtifacts)
-        !== canonicalJson(receipts[receipts.length - 1].payload.attemptArtifacts)
+      || canonicalJson(checkpoint.payload.attemptReceipt)
+        !== canonicalJson(receipts[receipts.length - 1].file)
+      || !packageUiCheckpointRunEvidenceMatchesTerminalAttempt(
+        checkpoint.payload.runEvidence,
+        receipts[receipts.length - 1].payload,
+      )
+      || canonicalJson(checkpoint.payload.attemptReceipts)
+        !== canonicalJson(receipts.map((record) => ({
+          attemptId: record.payload.attemptId,
+          file: record.file,
+          invocationId: record.payload.invocationId,
+          ordinal: record.payload.ordinal,
+          payloadSha256: record.payloadSha256,
+        })))
     ) {
       fail('Package UI checkpoint is not bound to its terminal successful attempt lineage', checkpoint.file.path);
     }
@@ -4267,6 +6968,7 @@ function packageUiCheckpointRecordMatches(
   runGroupId,
   profileId,
   runnerContractSha256,
+  expectedRunEvidence = null,
 ) {
   try {
     if (
@@ -4281,11 +6983,44 @@ function packageUiCheckpointRecordMatches(
       'package-ui-profile-checkpoint',
       PACKAGE_UI_PROFILE_CHECKPOINT_SCHEMA_VERSION,
     );
+    if (
+      !currentFileRecordMatches(checkpoint.payload.attemptReceipt)
+    ) {
+      return false;
+    }
+    const terminalAttempt = readImmutableEnvelope(
+      checkpoint.payload.attemptReceipt.path,
+      'package-ui-profile-attempt',
+      PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION,
+    );
+    const runGroupRoot = path.dirname(path.dirname(checkpoint.file.path));
+    const expectedAttemptDirectory = path.join(
+      runGroupRoot,
+      'attempts',
+      safeSegment(profileId),
+    );
     return checkpoint.payloadSha256 === record.payloadSha256
       && checkpoint.payload.runGroupId === runGroupId
       && checkpoint.payload.profileId === profileId
       && checkpoint.payload.runnerContractSha256 === runnerContractSha256
-      && checkpoint.payload.sequence === PACKAGE_UI_PROFILE_SEQUENCE.indexOf(profileId) + 1;
+      && checkpoint.payload.sequence === PACKAGE_UI_PROFILE_SEQUENCE.indexOf(profileId) + 1
+      && expectedRunEvidence !== null
+      && canonicalJson(checkpoint.payload.runEvidence)
+        === canonicalJson(expectedRunEvidence)
+      && canonicalJson(checkpoint.payload.attemptReceipt)
+        === canonicalJson(terminalAttempt.file)
+      && normalizedWindowsPath(path.dirname(terminalAttempt.file.path))
+        === normalizedWindowsPath(expectedAttemptDirectory)
+      && terminalAttempt.payload.runGroupId === runGroupId
+      && terminalAttempt.payload.profileId === profileId
+      && terminalAttempt.payload.runnerContractSha256
+        === runnerContractSha256
+      && canonicalJson(checkpoint.payload.profileState)
+        === canonicalJson(terminalAttempt.payload.profileState)
+      && packageUiCheckpointRunEvidenceMatchesTerminalAttempt(
+        checkpoint.payload.runEvidence,
+        terminalAttempt.payload,
+      );
   } catch {
     return false;
   }
@@ -4301,7 +7036,9 @@ function stableFileRecord(rootPath, filePath) {
   if (before.isSymbolicLink()) {
     fail('Packaged app content may not contain symbolic links or junctions', filePath);
   }
-  if (!before.isFile()) fail('Packaged app content contains a non-file leaf', filePath);
+  if (!before.isFile() || before.nlink !== 1) {
+    fail('Packaged app content contains a non-unique file leaf', filePath);
+  }
   const realPath = fs.realpathSync.native(filePath);
   if (!isPathWithin(rootPath, realPath)) {
     fail('Packaged app content escapes the fixed resources/app directory', filePath);
@@ -4360,6 +7097,9 @@ function buildPackageUiAttemptArtifactManifest(attemptRoot) {
       if (!before.isFile()) {
         fail('Package UI attempt artifacts may contain only real files and directories', targetPath);
       }
+      if (before.nlink !== 1) {
+        fail('Package UI attempt artifacts may not be hard-linked', targetPath);
+      }
       const relativePath = path.relative(rootPath, realPath).split(path.sep).join('/');
       if (
         !relativePath
@@ -4374,6 +7114,7 @@ function buildPackageUiAttemptArtifactManifest(attemptRoot) {
       if (
         after.isSymbolicLink()
         || !after.isFile()
+        || after.nlink !== 1
         || before.size !== after.size
         || before.mtimeMs !== after.mtimeMs
         || before.ctimeMs !== after.ctimeMs
@@ -4425,6 +7166,454 @@ function packageUiAttemptArtifactManifestMatches(manifest) {
   } catch {
     return false;
   }
+}
+
+function canonicalPackageUiArtifactBinding(evidence) {
+  const source = evidence?.evidenceBinding || evidence || {};
+  const binding = {
+    attemptId: source.attemptId,
+    invocationId: source.invocationId,
+    profileId: source.profileId,
+    runGroupId: source.runGroupId,
+    runnerContractSha256: source.runnerContractSha256,
+    scalePercent: source.scalePercent,
+  };
+  const compactProfileMatch = /^(\d+)-compact$/.exec(
+    String(binding.profileId || ''),
+  );
+  const expectedScale = binding.profileId === PACKAGE_UI_WIDE_PROFILE.id
+    ? PACKAGE_UI_WIDE_PROFILE.scalePercent
+    : compactProfileMatch
+      ? Number(compactProfileMatch[1])
+      : null;
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{5,220}$/.test(
+      String(binding.attemptId || ''),
+    )
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(
+      String(binding.invocationId || ''),
+    )
+    || !PACKAGE_UI_PROFILE_SEQUENCE.includes(binding.profileId)
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{5,180}$/.test(
+      String(binding.runGroupId || ''),
+    )
+    || !/^[A-F0-9]{64}$/.test(String(
+      binding.runnerContractSha256 || '',
+    ))
+    || !Number.isInteger(binding.scalePercent)
+    || binding.scalePercent !== expectedScale
+  ) {
+    fail('Package UI artifact binding is malformed or detached');
+  }
+  return binding;
+}
+
+function packageUiArtifactSemanticKey(binding, role, slot) {
+  return envelopePayloadSha256({ binding, role, slot });
+}
+
+function packageUiAttemptKnownArtifactReferences(runEvidence) {
+  const binding = canonicalPackageUiArtifactBinding(runEvidence);
+  const byPath = new Map();
+  const bySemanticKey = new Map();
+  const add = (record, role, slot) => {
+    if (!record) return;
+    const semanticKey = packageUiArtifactSemanticKey(binding, role, slot);
+    const reference = {
+      binding,
+      path: record.path,
+      role,
+      semanticKey,
+      sha256: record.sha256,
+      sizeBytes: record.sizeBytes,
+      slot,
+    };
+    const semanticPrior = bySemanticKey.get(semanticKey);
+    if (semanticPrior) {
+      if (
+        normalizedWindowsPath(semanticPrior.path)
+          !== normalizedWindowsPath(reference.path)
+        || semanticPrior.sha256 !== reference.sha256
+        || semanticPrior.sizeBytes !== reference.sizeBytes
+        || canonicalJson(semanticPrior.slot) !== canonicalJson(reference.slot)
+      ) {
+        fail(
+          'One Package UI semantic artifact slot has conflicting files',
+          semanticKey,
+        );
+      }
+      return;
+    }
+    const pathKey = normalizedWindowsPath(reference.path || '');
+    const pathPrior = byPath.get(pathKey);
+    if (pathPrior && pathPrior.semanticKey !== semanticKey) {
+      fail(
+        'One Package UI artifact path cannot satisfy multiple semantic slots',
+        reference.path,
+      );
+    }
+    bySemanticKey.set(semanticKey, reference);
+    byPath.set(pathKey, reference);
+  };
+  for (const screenshot of runEvidence?.screenshots || []) {
+    add(screenshot, 'workspace-screenshot', {
+      kind: 'workspace',
+      overlayId: null,
+      pathSha256: null,
+      subview: screenshot?.subview || null,
+      workspace: screenshot?.workspace || null,
+    });
+  }
+  for (const check of runEvidence?.workspaceChecks || []) {
+    add(check?.screenshot, 'workspace-screenshot', {
+      kind: 'workspace',
+      overlayId: null,
+      pathSha256: null,
+      subview: check?.subview || null,
+      workspace: check?.workspace || null,
+    });
+    add(check?.inspectorEvidence?.screenshot, 'inspector-screenshot', {
+      kind: 'inspector',
+      overlayId: null,
+      pathSha256: null,
+      subview: check?.subview || null,
+      workspace: check?.workspace || null,
+    });
+  }
+  for (const check of runEvidence?.subviewChecks || []) {
+    add(check?.screenshot, 'subview-screenshot', {
+      kind: 'subview',
+      overlayId: null,
+      pathSha256: null,
+      subview: check?.subview || null,
+      workspace: check?.workspace || null,
+    });
+    add(check?.inspectorEvidence?.screenshot, 'inspector-screenshot', {
+      kind: 'inspector',
+      overlayId: null,
+      pathSha256: null,
+      subview: check?.subview || null,
+      workspace: check?.workspace || null,
+    });
+  }
+  for (const check of runEvidence?.overlayChecks || []) {
+    add(check?.screenshot, 'overlay-screenshot', {
+      kind: 'overlay',
+      overlayId: check?.id || null,
+      pathSha256: null,
+      subview: null,
+      workspace: null,
+    });
+  }
+  add(runEvidence?.schedulerReadOnlyRuntime?.artifact, 'main-runtime-artifact', {
+    kind: 'main-runtime',
+    overlayId: null,
+    pathSha256: null,
+    subview: null,
+    workspace: null,
+  });
+  return [...bySemanticKey.values()].sort((left, right) =>
+    left.semanticKey.localeCompare(right.semanticKey, 'en'));
+}
+
+function buildPackageUiAttemptArtifactReferences(attemptArtifacts, runEvidence) {
+  const references = packageUiAttemptKnownArtifactReferences(runEvidence);
+  const referenced = new Set(references.map((item) => normalizedWindowsPath(item.path)));
+  const binding = canonicalPackageUiArtifactBinding(runEvidence);
+  if (runEvidence?.passed !== true) {
+    for (const file of attemptArtifacts?.files || []) {
+      const absolutePath = path.join(attemptArtifacts.rootPath, ...file.path.split('/'));
+      if (referenced.has(normalizedWindowsPath(absolutePath))) continue;
+      const slot = {
+        kind: 'failed-capture',
+        overlayId: null,
+        pathSha256: sha256Buffer(Buffer.from(file.path, 'utf8')),
+        subview: null,
+        workspace: null,
+      };
+      references.push({
+        binding,
+        path: absolutePath,
+        role: 'failed-capture-artifact',
+        semanticKey: packageUiArtifactSemanticKey(
+          binding,
+          'failed-capture-artifact',
+          slot,
+        ),
+        sha256: file.sha256,
+        sizeBytes: file.sizeBytes,
+        slot,
+      });
+    }
+  }
+  references.sort((left, right) =>
+    left.semanticKey.localeCompare(right.semanticKey, 'en'));
+  return references;
+}
+
+function validatePackageUiAttemptArtifactMembership(attemptArtifacts, evidence) {
+  const violations = [];
+  if (!packageUiAttemptArtifactManifestMatches(attemptArtifacts)) {
+    return {
+      passed: false,
+      violations: [violation(
+        'ATTEMPT_ARTIFACT_MANIFEST_INVALID',
+        'Attempt artifact manifest is missing, changed, or detached.',
+      )],
+    };
+  }
+  const root = fs.realpathSync.native(path.resolve(attemptArtifacts.rootPath));
+  const manifestByPath = new Map(attemptArtifacts.files.map((file) => [
+    file.path,
+    file,
+  ]));
+  const persistedAttemptRecord = [
+    'package-ui-attempt-invocation',
+    'package-ui-profile-attempt',
+  ].includes(evidence?.kind);
+  let expectedBinding;
+  try {
+    expectedBinding = canonicalPackageUiArtifactBinding(
+      evidence?.evidenceBinding
+        ? evidence
+        : {
+            ...evidence,
+            scalePercent: evidence?.profileId === PACKAGE_UI_WIDE_PROFILE.id
+              ? PACKAGE_UI_WIDE_PROFILE.scalePercent
+              : Number.parseInt(
+                String(evidence?.profileId || '').split('-')[0],
+                10,
+              ),
+          },
+    );
+  } catch (error) {
+    return {
+      passed: false,
+      violations: [violation(
+        'ATTEMPT_ARTIFACT_BINDING_INVALID',
+        'Attempt evidence is missing its exact invocation/profile/scale binding.',
+        sanitizeDiagnosticText(error?.message || error),
+      )],
+    };
+  }
+  let expectedReferences;
+  try {
+    expectedReferences = persistedAttemptRecord
+      ? evidence?.artifactReferences
+      : buildPackageUiAttemptArtifactReferences(attemptArtifacts, evidence);
+  } catch (error) {
+    return {
+      passed: false,
+      violations: [violation(
+        'ATTEMPT_ARTIFACT_REFERENCE_CONFLICT',
+        'Attempt evidence contains conflicting references to one artifact path.',
+        sanitizeDiagnosticText(error?.message || error),
+      )],
+    };
+  }
+  if (!Array.isArray(expectedReferences)) {
+    return {
+      passed: false,
+      violations: [violation(
+        'ATTEMPT_ARTIFACT_DECLARATION_MISSING',
+        'Persisted attempt evidence is missing its exact artifact declaration.',
+      )],
+    };
+  }
+  const declared = Array.isArray(evidence?.artifactReferences)
+    ? evidence.artifactReferences
+    : expectedReferences;
+  if (canonicalJson(declared) !== canonicalJson(expectedReferences)) {
+    violations.push(violation(
+      'ATTEMPT_ARTIFACT_DECLARATION_MISMATCH',
+      'Declared attempt artifacts must exactly match every evidence-bearing file and explicit failed-capture remainder.',
+    ));
+  }
+  const declaredByRelative = new Map();
+  const declaredByPathIdentity = new Map();
+  const declaredBySemanticKey = new Map();
+  const exactKeys = (value, keys) => (
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.keys(value).sort().join(',')
+      === [...keys].sort().join(',')
+  );
+  const roleBySlotKind = {
+    'failed-capture': 'failed-capture-artifact',
+    inspector: 'inspector-screenshot',
+    'main-runtime': 'main-runtime-artifact',
+    overlay: 'overlay-screenshot',
+    subview: 'subview-screenshot',
+    workspace: 'workspace-screenshot',
+  };
+  for (const record of declared) {
+    if (
+      !exactKeys(record, [
+        'binding',
+        'path',
+        'role',
+        'semanticKey',
+        'sha256',
+        'sizeBytes',
+        'slot',
+      ])
+      || !exactKeys(record?.binding, [
+        'attemptId',
+        'invocationId',
+        'profileId',
+        'runGroupId',
+        'runnerContractSha256',
+        'scalePercent',
+      ])
+      || !exactKeys(record?.slot, [
+        'kind',
+        'overlayId',
+        'pathSha256',
+        'subview',
+        'workspace',
+      ])
+      || !path.isAbsolute(String(record.path || ''))
+      || String(record.path) !== path.resolve(String(record.path))
+      || !/^[A-F0-9]{64}$/.test(String(record.sha256 || ''))
+      || !/^[A-F0-9]{64}$/.test(String(record.semanticKey || ''))
+      || !Number.isInteger(record.sizeBytes)
+      || record.sizeBytes < 0
+      || !Object.hasOwn(roleBySlotKind, record.slot.kind)
+      || roleBySlotKind[record.slot.kind] !== record.role
+      || canonicalJson(record.binding) !== canonicalJson(expectedBinding)
+      || record.semanticKey !== packageUiArtifactSemanticKey(
+        record.binding,
+        record.role,
+        record.slot,
+      )
+      || (
+        record.slot.kind === 'overlay'
+          ? !EXPECTED_OVERLAY_CHECK_IDS.includes(record.slot.overlayId)
+            || record.slot.workspace !== null
+            || record.slot.subview !== null
+            || record.slot.pathSha256 !== null
+          : record.slot.overlayId !== null
+      )
+      || (
+        ['workspace', 'subview', 'inspector'].includes(record.slot.kind)
+          ? typeof record.slot.workspace !== 'string'
+            || record.slot.workspace.length < 1
+            || typeof record.slot.subview !== 'string'
+            || record.slot.subview.length < 1
+            || record.slot.pathSha256 !== null
+          : !['overlay', 'failed-capture'].includes(record.slot.kind)
+            && (
+              record.slot.workspace !== null
+              || record.slot.subview !== null
+              || record.slot.pathSha256 !== null
+            )
+      )
+      || (
+        record.slot.kind === 'failed-capture'
+          ? !/^[A-F0-9]{64}$/.test(String(record.slot.pathSha256 || ''))
+            || record.slot.workspace !== null
+            || record.slot.subview !== null
+          : record.slot.pathSha256 !== null
+      )
+    ) {
+      violations.push(violation(
+        'ATTEMPT_ARTIFACT_REFERENCE_INVALID',
+        'Attempt artifact reference has an invalid shape.',
+      ));
+      continue;
+    }
+    if (declaredBySemanticKey.has(record.semanticKey)) {
+      violations.push(violation(
+        'ATTEMPT_ARTIFACT_SEMANTIC_KEY_DUPLICATE',
+        'Each semantic artifact slot must have exactly one reference.',
+        record.semanticKey,
+      ));
+      continue;
+    }
+    const resolved = path.resolve(record.path);
+    let real;
+    let stat;
+    try {
+      const leaf = fs.lstatSync(resolved);
+      real = fs.realpathSync.native(resolved);
+      stat = fs.statSync(real);
+      if (
+        leaf.isSymbolicLink()
+        || !leaf.isFile()
+        || leaf.nlink !== 1
+        || stat.nlink !== 1
+        || real.replace(/\\/g, '/') !== resolved.replace(/\\/g, '/')
+        || normalizedWindowsPath(real) !== normalizedWindowsPath(resolved)
+        || !isPathWithin(root, real)
+      ) {
+        throw new Error('linked-or-escaped');
+      }
+    } catch {
+      violations.push(violation(
+        'ATTEMPT_ARTIFACT_REFERENCE_ESCAPED',
+        'Attempt artifact reference is linked, missing, or outside its exact attempt root.',
+      ));
+      continue;
+    }
+    const relativePath = path.relative(root, real).split(path.sep).join('/');
+    const manifestRecord = manifestByPath.get(relativePath);
+    if (
+      !manifestRecord
+      || manifestRecord.sha256 !== record.sha256
+      || manifestRecord.sizeBytes !== record.sizeBytes
+      || sha256File(real) !== record.sha256
+      || stat.size !== record.sizeBytes
+    ) {
+      violations.push(violation(
+        'ATTEMPT_ARTIFACT_REFERENCE_MISMATCH',
+        'Attempt artifact reference does not match the immutable manifest bytes.',
+      ));
+      continue;
+    }
+    const pathIdentity = normalizedWindowsPath(real);
+    if (
+      declaredByRelative.has(relativePath)
+      || declaredByPathIdentity.has(pathIdentity)
+    ) {
+      violations.push(violation(
+        'ATTEMPT_ARTIFACT_PATH_REUSED',
+        'One artifact path cannot satisfy multiple semantic evidence slots.',
+        relativePath,
+      ));
+      continue;
+    }
+    declaredBySemanticKey.set(record.semanticKey, record);
+    declaredByPathIdentity.set(pathIdentity, record);
+    declaredByRelative.set(relativePath, record);
+  }
+  for (const relativePath of manifestByPath.keys()) {
+    if (!declaredByRelative.has(relativePath)) {
+      violations.push(violation(
+        'ATTEMPT_ARTIFACT_CRITICAL_EXTRA',
+        'Attempt artifact manifest contains an unreferenced critical file.',
+        relativePath,
+      ));
+    }
+  }
+  if (
+    evidence?.passed === true
+    && [...declaredByRelative.values()].some(
+      (record) => record.role === 'failed-capture-artifact',
+    )
+  ) {
+    violations.push(violation(
+      'ATTEMPT_ARTIFACT_SUCCESS_HAS_FAILURE_EXTRA',
+      'A successful attempt may not classify an artifact as a failed capture.',
+    ));
+  }
+  return {
+    declaredFileCount: declaredByRelative.size,
+    manifestFileCount: manifestByPath.size,
+    passed: violations.length === 0
+      && declaredByRelative.size === manifestByPath.size,
+    violations,
+  };
 }
 
 function buildProductionBuildContentManifest(distPath) {
@@ -6281,6 +9470,7 @@ async function exerciseOverlayFocus(page, options) {
   const screenshot = screenshotRecord(screenshotPath, {
     capture: screenshotCapture,
     overlayId: options.id,
+    scalePercent: options.scalePercent,
   });
 
   await page.keyboard.press('Escape');
@@ -7529,6 +10719,8 @@ async function executeEvidenceRunWithIsolation({
   setRunDiagnosticPhase(diagnostics, 'process-preflight');
   const collectPackage = processApi.collectPackage || collectMatchingPackageProcesses;
   const collectProfile = processApi.collectProfile || collectMatchingProfileBrowserProcesses;
+  const collectProfileLocks = processApi.collectProfileLocks
+    || collectPackageUiProfileLockEvidence;
   const waitPackage = processApi.waitPackage || waitForPackageProcessCleanup;
   const waitProfile = processApi.waitProfile || waitForProfileBrowserProcessCleanup;
   const packageProcessesBefore = collectPackage(options.executablePath);
@@ -7538,6 +10730,14 @@ async function executeEvidenceRunWithIsolation({
   );
   const profileCollectOptions = { expectedExecutablePath: chromiumPath };
   const profileProcessesBefore = collectProfile(profileBrowserPath, profileCollectOptions);
+  const profileLockOptions = {
+    invocationId: options.invocationId || 'unbound-invocation',
+    profileId,
+  };
+  const profileLocksBefore = collectProfileLocks(
+    options.userDataDir,
+    profileLockOptions,
+  );
   const profileBrowserBaselineProcessIds = Array.isArray(profileProcessesBefore.observedProcessIds)
     ? profileProcessesBefore.observedProcessIds
     : [];
@@ -7549,11 +10749,18 @@ async function executeEvidenceRunWithIsolation({
   let coreEvidence = null;
 
   try {
-    if (packageProcessesBefore.passed !== true || packageProcessesBefore.matchingCount !== 0) {
-      fail('A matching packaged process was already running or unresolved before this evidence profile', JSON.stringify(packageProcessesBefore));
+    if (!packageProcessAbsencePassed(packageProcessesBefore)) {
+      fail('Every same-name packaged process must be absent before this evidence profile', JSON.stringify(packageProcessesBefore));
     }
-    if (profileProcessesBefore.passed !== true || profileProcessesBefore.matchingCount !== 0) {
+    if (
+      !processSnapshotEvidencePassed(profileProcessesBefore)
+      || profileProcessesBefore.matchingCount !== 0
+      || profileProcessesBefore.unresolvedCount !== 0
+    ) {
       fail('A Chromium profile process was already running or unresolved before this evidence profile', JSON.stringify(profileProcessesBefore));
+    }
+    if (!packageUiProfileLockSnapshotPassed(profileLocksBefore)) {
+      fail('The isolated profile bounded lock/handle preflight was incomplete', JSON.stringify(profileLocksBefore));
     }
     coreEvidence = await run(diagnostics);
   } catch (error) {
@@ -7563,11 +10770,16 @@ async function executeEvidenceRunWithIsolation({
   setRunDiagnosticPhase(diagnostics, 'process-cleanup-attestation');
   let packageProcessesAfter;
   let profileProcessesAfter;
+  let profileLocksAfter;
   try {
     [packageProcessesAfter, profileProcessesAfter] = await Promise.all([
       waitPackage(options.executablePath),
       waitProfile(profileBrowserPath, { collectOptions: profileCleanupCollectOptions }),
     ]);
+    profileLocksAfter = collectProfileLocks(
+      options.userDataDir,
+      profileLockOptions,
+    );
   } catch (error) {
     recordRunDiagnosticFailure(diagnostics, error, 'process-cleanup-attestation');
     packageProcessesAfter ||= {
@@ -7591,9 +10803,24 @@ async function executeEvidenceRunWithIsolation({
       unresolved: [],
       unresolvedCount: null,
     };
+    profileLocksAfter ||= {
+      error: sanitizeDiagnosticText(error?.message || error),
+      passed: false,
+      unresolved: [],
+      unresolvedCount: null,
+    };
   }
   const packageProcessIsolation = buildProcessIsolationEvidence(packageProcessesBefore, packageProcessesAfter);
   const profileProcessIsolation = buildProcessIsolationEvidence(profileProcessesBefore, profileProcessesAfter);
+  const profileLockIsolation = {
+    after: profileLocksAfter,
+    before: profileLocksBefore,
+    passed: packageUiProfileLockSnapshotPassed(profileLocksBefore)
+      && packageUiProfileLockSnapshotPassed(
+        profileLocksAfter,
+        profileLocksBefore.binding,
+      ),
+  };
   const chromiumProcessLineage = coreEvidence?.chromiumProcessLineage
     ? {
       ...coreEvidence.chromiumProcessLineage,
@@ -7610,7 +10837,14 @@ async function executeEvidenceRunWithIsolation({
       'electron-close',
     );
   }
-  if ((!packageProcessIsolation.passed || !profileProcessIsolation.passed) && !diagnostics.failure) {
+  if (
+    (
+      !packageProcessIsolationEvidencePassed(packageProcessIsolation)
+      || !processIsolationEvidencePassed(profileProcessIsolation)
+      || !profileLockIsolation.passed
+    )
+    && !diagnostics.failure
+  ) {
     recordRunDiagnosticFailure(
       diagnostics,
       new Error('Packaged product or profile browser process isolation failed.'),
@@ -7633,8 +10867,9 @@ async function executeEvidenceRunWithIsolation({
     && diagnostics.failure === null
     && diagnostics.cleanupErrors.length === 0
     && lifecycleAttestationPassed
-    && packageProcessIsolation.passed
-    && profileProcessIsolation.passed
+    && packageProcessIsolationEvidencePassed(packageProcessIsolation)
+    && processIsolationEvidencePassed(profileProcessIsolation)
+    && profileLockIsolation.passed
     && chromiumProcessLineage?.passed === true;
   if (diagnostics.login.outcome === 'not-started') diagnostics.login.outcome = 'not-reached';
   if (diagnostics.login.outcome === 'in-progress') diagnostics.login.outcome = passed ? 'completed' : 'failed-before-outcome';
@@ -7651,6 +10886,7 @@ async function executeEvidenceRunWithIsolation({
     packageProcessIsolation,
     pageErrors: diagnostics.renderer.pageErrors,
     passed,
+    profileLockIsolation,
     profileProcessIsolation,
   };
 }
@@ -7694,27 +10930,86 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-async function runPackageUiEvidence(options) {
+function writeJsonExclusive(filePath, value) {
+  const resolved = path.resolve(filePath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  if (fs.existsSync(resolved)) {
+    fail('Refusing to replace an immutable Package UI JSON record', resolved);
+  }
+  const temporaryPath = `${resolved}.tmp-${process.pid}-${crypto.randomUUID()}`;
+  let descriptor;
+  try {
+    descriptor = fs.openSync(temporaryPath, 'wx', 0o600);
+    fs.writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.linkSync(temporaryPath, resolved);
+    fs.unlinkSync(temporaryPath);
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+  }
+  return artifactInfo(resolved);
+}
+
+async function runPackageUiEvidence(options, dependencies = {}) {
   assertPackageUiRuntimeLoginBoundary(options);
   if (process.platform !== 'win32') fail('Package UI evidence currently supports Windows only', process.platform);
+  const runnerContract = buildPackageUiRunnerContract();
   const runGroupId = packageUiRunGroupId(options);
   options = { ...options, runGroupId };
-  const attemptId = timestampSegment();
+  const pendingInspectionReceipt = options.resumeRunGroupId
+    ? validatePackageUiResumeInspectionReceipt({
+      invocationArgv: options.invocationArgv,
+      receiptPath: options.resumeInspectionReceiptPath,
+      runGroupId,
+      runnerContractSha256: runnerContract.sha256,
+    })
+    : null;
+  const invocationId = pendingInspectionReceipt?.payload?.invocationId
+    || `${timestampSegment()}-${crypto.randomUUID()}`;
+  const attemptId = `${timestampSegment()}-${safeSegment(invocationId)}`;
   const runId = runGroupId;
   const outputDir = path.resolve(ROOT, options.outputDir);
   const runDir = packageUiRunGroupPaths(outputDir, runGroupId).root;
   const manifestPath = path.join(runDir, 'manifests', `${attemptId}.json`);
   const summaryPath = path.join(outputDir, `package-ui-evidence-${runId}-${attemptId}.json`);
+  const invocationReceiptPath = path.join(
+    runDir,
+    'invocation-receipts',
+    `${safeSegment(invocationId)}.json`,
+  );
   let runGroupManager = null;
+  let consumedInspectionReceipt = null;
+  let lease = null;
+  const collectProfileLocksForRun = dependencies.collectProfileLocks
+    || collectPackageUiProfileLockEvidence;
   const manifest = {
+    failure: null,
     kind: 'package-ui-evidence',
     schemaVersion: PACKAGE_UI_EVIDENCE_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     runId,
     runGroup: {
       attemptId,
+      invocationId,
+      profileSequence: PACKAGE_UI_PROFILE_SEQUENCE,
       resumed: Boolean(options.resumeRunGroupId),
       runGroupId,
+      runnerContractSha256: runnerContract.sha256,
+    },
+    invocation: {
+      attemptReceipts: [],
+      invocationId,
+      lease: null,
+      receiptPath: invocationReceiptPath,
+      resumeInspectionReceipt: pendingInspectionReceipt
+        ? {
+          payloadSha256: pendingInspectionReceipt.payloadSha256,
+          sha256: pendingInspectionReceipt.file.sha256,
+        }
+        : null,
     },
     requested: {
       allowInteractiveLogin: options.allowInteractiveLogin,
@@ -7727,9 +11022,11 @@ async function runPackageUiEvidence(options) {
       interactiveLoginMaximumTotalMs: options.interactiveLoginTimeoutMs * 2,
       interactiveLoginTimeoutMs: options.interactiveLoginTimeoutMs,
       loginMode: 'interactive-operator-each-run',
+      authoritySelectionPath: options.authoritySelectionPath,
       protectedDatabasePath: options.protectedDatabasePath,
       profileBrowserUserDataDir: path.join(options.userDataDir, 'stores'),
       resumeRunGroupId: options.resumeRunGroupId,
+      resumeInspectionReceiptPath: options.resumeInspectionReceiptPath,
       runGroupId,
       scales: EXPECTED_PACKAGE_UI_SCALES,
       subviewChecks: EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
@@ -7745,7 +11042,32 @@ async function runPackageUiEvidence(options) {
     violations: [],
   };
 
+  lease = acquirePackageUiRunGroupLease({
+    collectProcessIdentity: dependencies.collectProcessIdentity
+      || collectPackageUiProcessStartIdentity,
+    invocationId,
+    outputDir,
+    runGroupId,
+    runnerContractSha256: runnerContract.sha256,
+  });
+  manifest.invocation.lease = {
+    generation: lease.payload.generation,
+    payloadSha256: lease.payloadSha256,
+    processStartIdentitySha256: lease.payload.processStartIdentitySha256,
+  };
+
   try {
+    if (pendingInspectionReceipt) {
+      consumedInspectionReceipt = consumePackageUiResumeInspectionReceipt(
+        pendingInspectionReceipt,
+      );
+      manifest.invocation.resumeInspectionReceipt = {
+        consumedAt: consumedInspectionReceipt.consumedAt,
+        originalPathSha256: consumedInspectionReceipt.originalPathSha256,
+        payloadSha256: consumedInspectionReceipt.payloadSha256,
+        sha256: consumedInspectionReceipt.file.sha256,
+      };
+    }
     const interactionContract = validateReadOnlyInteractionPlan();
     manifest.interactionContract = interactionContract;
     if (!interactionContract.passed) fail('Read-only interaction contract failed', JSON.stringify(interactionContract.violations));
@@ -7765,12 +11087,88 @@ async function runPackageUiEvidence(options) {
       ));
     }
 
+    const chromiumPath = path.join(options.appContentPath, BUNDLED_CHROMIUM_RELATIVE_PATH);
+    const collectPackageProcesses = dependencies.collectPackageProcesses
+      || collectMatchingPackageProcesses;
+    const collectProfileProcesses = dependencies.collectProfileProcesses
+      || collectMatchingProfileBrowserProcesses;
+    const packageProcessesBefore = collectPackageProcesses(options.executablePath);
+    const profileBrowserProcessesBefore = collectProfileProcesses(
+      manifest.requested.profileBrowserUserDataDir,
+      { expectedExecutablePath: chromiumPath },
+    );
+    const runGroupProfileLockOptions = {
+      invocationId,
+      profileId: 'run-group',
+    };
+    const profileLocksBefore = collectProfileLocksForRun(
+      options.userDataDir,
+      runGroupProfileLockOptions,
+    );
+    manifest.packageProcessIsolation = {
+      before: packageProcessesBefore,
+      after: null,
+      passed: false,
+    };
+    manifest.profileProcessIsolation = {
+      before: profileBrowserProcessesBefore,
+      after: null,
+      passed: false,
+    };
+    manifest.profileLockIsolation = {
+      after: null,
+      before: profileLocksBefore,
+      passed: false,
+    };
+    if (!packageProcessAbsencePassed(packageProcessesBefore)) {
+      fail('Every same-name AmazonAIOpsAgent.exe process must be absent before evidence capture', JSON.stringify(packageProcessesBefore));
+    }
+    if (
+      !processSnapshotEvidencePassed(profileBrowserProcessesBefore)
+      || profileBrowserProcessesBefore.matchingCount !== 0
+      || profileBrowserProcessesBefore.unresolvedCount !== 0
+    ) {
+      fail('A Chromium profile process was already running or could not be resolved before evidence capture', JSON.stringify(profileBrowserProcessesBefore));
+    }
+    if (!packageUiProfileLockSnapshotPassed(profileLocksBefore)) {
+      fail('The isolated profile bounded lock/handle preflight was incomplete', JSON.stringify(profileLocksBefore));
+    }
+
+    const canonicalAuthorityPaths = (
+      dependencies.canonicalAuthorityPaths
+      || canonicalPackageUiAuthorityPaths
+    )();
+    const authorityValidation = (
+      dependencies.validateAuthoritySelection
+      || validatePackageUiAuthoritySelection
+    )({
+      authoritySelectionPath: options.authoritySelectionPath,
+      canonicalPaths: canonicalAuthorityPaths,
+      protectedDatabasePath: options.protectedDatabasePath,
+    });
+    manifest.authority = {
+      binding: authorityValidation.authorityBinding,
+      selectionStatus: authorityValidation.status,
+    };
+    if (
+      pendingInspectionReceipt
+      && canonicalJson(pendingInspectionReceipt.payload.authorityBinding)
+        !== canonicalJson(authorityValidation.authorityBinding)
+    ) {
+      fail('Resume inspection receipt authority binding changed before runner entry');
+    }
     const profileDatabasePath = path.join(options.userDataDir, 'amazon-ai-ops.db');
     const protectedDatabaseBefore = artifactInfo(options.protectedDatabasePath);
     const protectedDatabaseLogicalBefore = captureSqliteLogicalArtifact(
       options.protectedDatabasePath,
       'protected-before',
     );
+    if (!logicalSqliteArtifactMatches(
+      authorityValidation.logicalArtifact,
+      protectedDatabaseLogicalBefore,
+    )) {
+      fail('Current authority-selection receipt logical artifact changed before run-group entry');
+    }
     manifest.protectedDatabase = {
       before: protectedDatabaseBefore,
       after: null,
@@ -7783,28 +11181,6 @@ async function runPackageUiEvidence(options) {
       passed: false,
       unchanged: false,
     };
-    const chromiumPath = path.join(options.appContentPath, BUNDLED_CHROMIUM_RELATIVE_PATH);
-    const packageProcessesBefore = collectMatchingPackageProcesses(options.executablePath);
-    const profileBrowserProcessesBefore = collectMatchingProfileBrowserProcesses(
-      manifest.requested.profileBrowserUserDataDir,
-      { expectedExecutablePath: chromiumPath },
-    );
-    manifest.packageProcessIsolation = {
-      before: packageProcessesBefore,
-      after: null,
-      passed: false,
-    };
-    manifest.profileProcessIsolation = {
-      before: profileBrowserProcessesBefore,
-      after: null,
-      passed: false,
-    };
-    if (packageProcessesBefore.passed !== true || packageProcessesBefore.matchingCount !== 0) {
-      fail('A matching packaged process was already running or could not be resolved before evidence capture', JSON.stringify(packageProcessesBefore));
-    }
-    if (profileBrowserProcessesBefore.passed !== true || profileBrowserProcessesBefore.matchingCount !== 0) {
-      fail('A Chromium profile process was already running or could not be resolved before evidence capture', JSON.stringify(profileBrowserProcessesBefore));
-    }
 
     const artifacts = {
       appContent: buildAppContentManifest(options.appContentPath),
@@ -7820,13 +11196,13 @@ async function runPackageUiEvidence(options) {
     }
     options.chromiumArtifact = artifacts.chromium;
     const packageLineage = createPackageLineage(options, artifacts);
-    const runnerContract = buildPackageUiRunnerContract();
     const currentProfileState = captureProfileLineageState(
       options.userDataDir,
       profileDatabasePath,
       'run-group-entry',
     );
     runGroupManager = initializePackageUiRunGroup({
+      authorityBinding: authorityValidation.authorityBinding,
       genesisProfileState: currentProfileState,
       options,
       outputDir,
@@ -7836,11 +11212,35 @@ async function runPackageUiEvidence(options) {
     });
     manifest.runGroup = {
       ...manifest.runGroup,
+      authorityBinding: runGroupManager.metadata.authorityBinding,
       metadata: runGroupManager.metadataRecord.file,
       profileSequence: runGroupManager.metadata.profileSequence,
       resumed: runGroupManager.resumed,
       runnerContractSha256: runGroupManager.metadata.runnerContractSha256,
     };
+    if (pendingInspectionReceipt) {
+      let nextProfileId = null;
+      let nextCursor = null;
+      for (const candidateProfileId of PACKAGE_UI_PROFILE_SEQUENCE) {
+        const candidate = resolvePackageUiProfileCursor(
+          runGroupManager,
+          candidateProfileId,
+        );
+        if (!candidate.checkpoint) {
+          nextProfileId = candidateProfileId;
+          nextCursor = candidate.cursor;
+          break;
+        }
+      }
+      if (
+        nextProfileId === null
+        || pendingInspectionReceipt.payload.nextProfileId !== nextProfileId
+        || canonicalJson(pendingInspectionReceipt.payload.cursor)
+          !== canonicalJson(packageUiCursorBinding(nextCursor))
+      ) {
+        fail('Resume inspection receipt cursor no longer matches the run group');
+      }
+    }
     console.error(
       `[RUN GROUP] ${runGroupManager.runGroupId} `
       + `(${runGroupManager.resumed ? 'resumed' : 'created'}); `
@@ -7903,6 +11303,7 @@ async function runPackageUiEvidence(options) {
       }
       const profileOptions = {
         ...options,
+        invocationId,
         profileId,
         profileStage: {
           current: profileIndex + 1,
@@ -7918,6 +11319,7 @@ async function runPackageUiEvidence(options) {
       const attemptContext = createPackageUiProfileAttemptContext(
         runGroupManager,
         profileId,
+        { invocationId, lease },
       );
       const rawRun = profileId === PACKAGE_UI_WIDE_PROFILE.id
         ? await runWideProfileEvidence(
@@ -7939,7 +11341,25 @@ async function runPackageUiEvidence(options) {
       const run = {
         ...rawRun,
         attemptArtifacts,
+        profileId,
+        evidenceBinding: {
+          attemptId: attemptContext.attemptId,
+          invocationId,
+          profileId,
+          profileLockBinding:
+            rawRun?.profileLockIsolation?.before?.binding || null,
+          runGroupId: runGroupManager.runGroupId,
+          runnerContractSha256:
+            runGroupManager.metadata.runnerContractSha256,
+          scalePercent: profileId === PACKAGE_UI_WIDE_PROFILE.id
+            ? PACKAGE_UI_WIDE_PROFILE.scalePercent
+            : rawRun.scalePercent,
+        },
       };
+      run.artifactReferences = buildPackageUiAttemptArtifactReferences(
+        attemptArtifacts,
+        run,
+      );
       const resumable = packageUiAttemptCleanupPassed(run);
       const afterState = resumable
         ? captureProfileLineageState(
@@ -7957,6 +11377,20 @@ async function runPackageUiEvidence(options) {
         profileState,
         resumable,
         runEvidence: run,
+      });
+      const attemptEnvelope = readImmutableEnvelope(
+        attemptRecord.path,
+        'package-ui-profile-attempt',
+        PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION,
+      );
+      manifest.invocation.attemptReceipts.push({
+        attemptId: attemptEnvelope.payload.attemptId,
+        file: attemptEnvelope.file,
+        invocationId: attemptEnvelope.payload.invocationId,
+        invocationManifest: attemptEnvelope.payload.attemptInvocationManifest,
+        ordinal: attemptEnvelope.payload.ordinal,
+        payloadSha256: attemptEnvelope.payloadSha256,
+        profileId,
       });
       if (!resumable) {
         fail(
@@ -8050,11 +11484,24 @@ async function runPackageUiEvidence(options) {
         },
       ),
     ]);
+    const profileLocksAfter = collectProfileLocksForRun(
+      options.userDataDir,
+      runGroupProfileLockOptions,
+    );
     manifest.packageProcessIsolation = buildProcessIsolationEvidence(packageProcessesBefore, packageProcessesAfter);
     manifest.profileProcessIsolation = buildProcessIsolationEvidence(
       profileBrowserProcessesBefore,
       profileBrowserProcessesAfter,
     );
+    manifest.profileLockIsolation = {
+      after: profileLocksAfter,
+      before: profileLocksBefore,
+      passed: packageUiProfileLockSnapshotPassed(profileLocksBefore)
+        && packageUiProfileLockSnapshotPassed(
+          profileLocksAfter,
+          profileLocksBefore.binding,
+        ),
+    };
     const completeness = evaluatePackageUiEvidenceCompleteness(manifest);
     manifest.completeness = completeness;
     manifest.passed = completeness.passed;
@@ -8120,6 +11567,33 @@ async function runPackageUiEvidence(options) {
         });
       }
     }
+    if (manifest.profileLockIsolation?.before && !manifest.profileLockIsolation.after) {
+      try {
+        const profileLocksAfter = collectProfileLocksForRun(
+          options.userDataDir,
+          {
+            invocationId,
+            profileId: 'run-group',
+          },
+        );
+        manifest.profileLockIsolation = {
+          after: profileLocksAfter,
+          before: manifest.profileLockIsolation.before,
+          passed: packageUiProfileLockSnapshotPassed(
+            manifest.profileLockIsolation.before,
+          )
+            && packageUiProfileLockSnapshotPassed(
+              profileLocksAfter,
+              manifest.profileLockIsolation.before.binding,
+            ),
+        };
+      } catch (error) {
+        postRunAttestationErrors.push({
+          check: 'profile-lock-isolation',
+          message: sanitizeDiagnosticText(error?.message || error),
+        });
+      }
+    }
     if (
       manifest.protectedDatabaseLogical?.before
       && !manifest.protectedDatabaseLogical.after
@@ -8151,10 +11625,108 @@ async function runPackageUiEvidence(options) {
     if (postRunAttestationErrors.length > 0) {
       manifest.postRunAttestationErrors = postRunAttestationErrors;
       manifest.passed = false;
+      if (manifest.failure === null) {
+        manifest.failure = createStructuredFailure(
+          new Error('One or more terminal Package UI attestations failed.'),
+          'post-run-attestation',
+        );
+      }
+    }
+    const actualInvocationAttempts = [];
+    if (runGroupManager) {
+      for (const profileId of PACKAGE_UI_PROFILE_SEQUENCE) {
+        for (const record of loadPackageUiAttemptRecords(
+          runGroupManager,
+          profileId,
+        )) {
+          if (record.payload.invocationId !== invocationId) continue;
+          actualInvocationAttempts.push({
+            attemptId: record.payload.attemptId,
+            file: record.file,
+            invocationId: record.payload.invocationId,
+            invocationManifest: record.payload.attemptInvocationManifest,
+            ordinal: record.payload.ordinal,
+            payloadSha256: record.payloadSha256,
+            profileId,
+          });
+        }
+      }
+    }
+    actualInvocationAttempts.sort((left, right) => (
+      PACKAGE_UI_PROFILE_SEQUENCE.indexOf(left.profileId)
+        - PACKAGE_UI_PROFILE_SEQUENCE.indexOf(right.profileId)
+      || left.ordinal - right.ordinal
+    ));
+    const declaredInvocationAttempts = [...manifest.invocation.attemptReceipts]
+      .sort((left, right) => (
+        PACKAGE_UI_PROFILE_SEQUENCE.indexOf(left.profileId)
+          - PACKAGE_UI_PROFILE_SEQUENCE.indexOf(right.profileId)
+        || left.ordinal - right.ordinal
+      ));
+    if (
+      canonicalJson(actualInvocationAttempts)
+      !== canonicalJson(declaredInvocationAttempts)
+    ) {
+      manifest.passed = false;
+      manifest.failure = createStructuredFailure(
+        new Error('Invocation manifest attempt collection is incomplete or detached.'),
+        'invocation-attempt-collection',
+      );
+      manifest.violations.push(violation(
+        'INVOCATION_ATTEMPT_COLLECTION_MISMATCH',
+        'Manifest attempt collection must exactly match immutable attempts for this invocation.',
+      ));
+    }
+    manifest.invocation.attemptReceipts = actualInvocationAttempts;
+    manifest.invocation.collection = {
+      attemptCount: actualInvocationAttempts.length,
+      attemptInvocationManifestCount: actualInvocationAttempts.filter(
+        (entry) => entry.invocationManifest,
+      ).length,
+      passed: actualInvocationAttempts.every(
+        (entry) => entry.invocationId === invocationId,
+      ),
+    };
+    if (manifest.passed !== true && manifest.failure === null) {
+      manifest.failure = createStructuredFailure(
+        new Error('Package UI invocation failed without a prior structured failure.'),
+        'package-ui-evidence',
+      );
     }
     manifest.completedAt = new Date().toISOString();
-    writeJson(manifestPath, manifest);
-    writeJson(summaryPath, manifest);
+    manifest.invocation.leaseHeldThroughPersistence = true;
+    const manifestRecord = writeJsonExclusive(manifestPath, manifest);
+    const summaryRecord = writeJsonExclusive(summaryPath, manifest);
+    const invocationReceipt = writeImmutableEnvelope(
+      invocationReceiptPath,
+      {
+        attemptReceipts: actualInvocationAttempts,
+        authorityBinding: manifest.authority?.binding || null,
+        completedAt: new Date().toISOString(),
+        failure: manifest.failure,
+        invocationId,
+        kind: 'package-ui-invocation-receipt',
+        lease: {
+          generation: lease.payload.generation,
+          payloadSha256: lease.payloadSha256,
+          processStartIdentitySha256: lease.payload.processStartIdentitySha256,
+        },
+        manifest: manifestRecord,
+        passed: manifest.passed === true,
+        resumeInspectionReceipt: consumedInspectionReceipt
+          ? {
+            payloadSha256: consumedInspectionReceipt.payloadSha256,
+            sha256: consumedInspectionReceipt.file.sha256,
+          }
+          : null,
+        runGroupId,
+        runnerContractSha256: runnerContract.sha256,
+        schemaVersion: PACKAGE_UI_INVOCATION_RECEIPT_SCHEMA_VERSION,
+        summary: summaryRecord,
+      },
+    );
+    manifest.invocationReceipt = invocationReceipt;
+    releasePackageUiRunGroupLease(lease);
   }
 
   if (!manifest.passed) {
@@ -8162,7 +11734,12 @@ async function runPackageUiEvidence(options) {
     error.evidencePath = manifestPath;
     throw error;
   }
-  return { manifest, manifestPath, summaryPath };
+  return {
+    invocationReceiptPath,
+    manifest,
+    manifestPath,
+    summaryPath,
+  };
 }
 
 module.exports = {
@@ -8178,10 +11755,14 @@ module.exports = {
   LEGACY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION,
   LEGACY_SCHEDULER_READ_ONLY_PACKAGE_UI_EVIDENCE_SCHEMA_VERSION,
   PACKAGE_UI_EVIDENCE_SCHEMA_VERSION,
+  PACKAGE_UI_ATTEMPT_INVOCATION_SCHEMA_VERSION,
+  PACKAGE_UI_INVOCATION_RECEIPT_SCHEMA_VERSION,
   PACKAGE_UI_PROFILE_ATTEMPT_SCHEMA_VERSION,
   PACKAGE_UI_PROFILE_CHECKPOINT_SCHEMA_VERSION,
   PACKAGE_UI_PROFILE_SEQUENCE,
   PACKAGE_UI_RUN_GROUP_SCHEMA_VERSION,
+  PACKAGE_UI_RUNNER_LEASE_SCHEMA_VERSION,
+  PACKAGE_UI_RESUME_INSPECTION_SCHEMA_VERSION,
   PACKAGE_UI_VIEWPORT,
   PACKAGE_UI_WIDE_PROFILE,
   PACKAGE_OBJECT_EXPERIENCE_CONTRACTS,
@@ -8192,6 +11773,7 @@ module.exports = {
   assertPackageUiRuntimeLoginBoundary,
   buildAppContentManifest,
   buildPackageUiAttemptArtifactManifest,
+  buildPackageUiAttemptArtifactReferences,
   buildPackageUiRunnerContract,
   buildProcessIsolationEvidence,
   buildProtectedFileEvidence,
@@ -8199,6 +11781,7 @@ module.exports = {
   captureSqliteLogicalArtifact,
   captureProfileLineageState,
   captureViewportScreenshot,
+  canonicalPackageUiAuthorityPaths,
   chromiumLineageEvidencePassed,
   collectActiveBundledChromiumLineage,
   collectElectronIdentity,
@@ -8207,6 +11790,8 @@ module.exports = {
   collectPackageUiReadOnlyRuntimeEvidence,
   collectMatchingPackageProcesses,
   collectMatchingProfileBrowserProcesses,
+  collectPackageUiProcessStartIdentity,
+  collectPackageUiProfileLockEvidence,
   collectProfileContentManifest,
   composePackageUiRunGroup,
   createRunDiagnostics,
@@ -8222,6 +11807,7 @@ module.exports = {
   collectFixedPackageHashes,
   collectPackageWorkspaceMetrics,
   evaluatePackageUiEvidenceCompleteness,
+  evaluatePackageUiProfileEvidence,
   evaluateProfileDatabaseFileIsolation,
   evaluateProfileDatabaseProvenance,
   executeEvidenceRunWithIsolation,
@@ -8235,8 +11821,14 @@ module.exports = {
   parsePackageUiEvidenceArgs,
   packageUiAttemptArtifactManifestMatches,
   packageUiAttemptCleanupPassed,
+  packageUiAttemptCleanupEvidencePassed,
   packageUiAttemptDiagnosticsSnapshotMatches,
+  packageUiProfileLockIsolationPassed,
+  packageUiProfileLockSnapshotPassed,
   profileLineageStateMatches,
+  acquirePackageUiRunGroupLease,
+  consumePackageUiResumeInspectionReceipt,
+  inspectPackageUiRunGroupLease,
   readImmutableEnvelope,
   resolvePackageUiProfileCursor,
   readPngDimensions,
@@ -8245,6 +11837,10 @@ module.exports = {
   screenshotRecord,
   sha256Buffer,
   sha256File,
+  releasePackageUiRunGroupLease,
+  validatePackageUiAttemptArtifactMembership,
+  validatePackageUiAuthoritySelection,
+  validatePackageUiResumeInspectionReceipt,
   writeImmutableEnvelope,
   writePackageUiProfileCheckpoint,
   recordPackageUiProfileAttempt,

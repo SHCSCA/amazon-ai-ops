@@ -17,6 +17,7 @@ Usage:
     --expected-app-content-sha256 <64-hex> \\
     --user-data-dir <D:\\Temp\\amazon-ai-ops-...> \\
     --protected-db <C:\\Users\\...\\amazon-ai-ops.db> \\
+    --authority-selection <current-production-authority-selection.json> \\
     --run-group <operator-safe-id> \\
     --allow-interactive-login
 
@@ -42,7 +43,8 @@ backup while remaining a distinct file. Raw main-file hashes are auxiliary.
 Schema v8 writes immutable 100/125/wide checkpoints under one run group, binds
 the packaged Chromium hash and target root/child PID lineage, and proves target
 cleanup without treating unrelated daily Chrome/Edge processes as failures.
-A failed later profile can resume with --resume-run-group. Every unfinished
+A failed later profile can resume only with --resume-run-group plus the
+single-use --resume-inspection-receipt emitted by the read-only inspector. Every unfinished
 profile uses a visible secret-blind handoff; the first profile validates its
 fresh typed-and-saved identity proof immediately after login. The interactive
 timeout applies separately to operator preparation and, after visible submit,
@@ -57,8 +59,10 @@ Options:
   --expected-app-content-sha256 <hash>   Required immutable app tree hash
   --user-data-dir <absolute D path>      Required existing isolated profile copy
   --protected-db <absolute file path>    Required real AppData DB protected by WAL-aware before/after proof
+  --authority-selection <absolute path> Required current production authority-selection receipt
   --run-group <id>                       Optional new immutable run-group id
   --resume-run-group <id>                Resume matching package/profile checkpoints
+  --resume-inspection-receipt <path>     Required one-time inspector intent for resume
   --allow-interactive-login              Required: wait for visible operator login without secret capture
   --output <dir>                         Evidence output directory
   --interactive-login-timeout-ms <ms>    Per-phase visible handoff timeout, 60000-900000 (default 900000; hard total <= 2x)
