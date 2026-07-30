@@ -1,4 +1,10 @@
-export { initSqlite, getSqliteDb } from './sqlite/db';
+export {
+  initGuardedExistingSqlite,
+  initSqlite,
+  getSqliteDb,
+  type GuardedSqliteContext,
+  type GuardedSqliteInitialization,
+} from './sqlite/db';
 export * from './sqlite/ad-metric-grain';
 export * from './sqlite/migrations';
 export { initDuckDb, getDuckDb } from './duckdb/analytics';

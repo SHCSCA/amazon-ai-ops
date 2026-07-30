@@ -21,10 +21,17 @@
 - 当前 authority selection 回执：
   `output/codex-evidence/production-authority-selection-20260729-production-p2.json`；
   状态为 `SELECTED_MIGRATION_REQUIRED`，真实库仍未迁移。
-- Stage 1 的正式 Package UI run group
-  `production-p2-20df9d5b-20260729` 可安全续跑；上次仅因等待人工登录超时。
-  只有用户明确表示已经在电脑前准备登录后才继续，不新建 run group，不读取或代填凭证。
-- Stage 2 的离线演练工具已完成；真实 authority DB 的 v0→v9 启动迁移尚未获得用户明确批准。
+- Stage 1 的旧 Package UI run group
+  `production-p2-20df9d5b-20260729` 已固定为**历史证据，不得续跑**。首次 inspector 的
+  `RESUME_SAFE` 结论已在独立审查后撤回：同名非 canonical 应用进程、完整 v8
+  checkpoint、profile genesis/provenance 与 Windows hardlink 证明仍需按当前 runner
+  合同重新验证；而后续 packaged 代码又必然改变包 lineage，因此禁止复用其 profile
+  或 checkpoint。
+- Stage 2 的离线演练工具已完成；`operate:s7-live-migration` 现在以 Windows Known
+  Folder 的 canonical v0 DB、strict authority rerun、正式 Package UI evaluator、
+  verifier 精确 19 checks、全同名进程零存量只读确认和 `FileShare.None` 为 approval 前置条件，
+  并以持锁期间持久化的完整 intent 作为本地重放阻断证据。真实 authority DB 的
+  v0→v9 启动迁移仍未获得用户明确批准。
 - Stage 3–6 尚未形成生产信用：真实两店配置、7 个完成业务日、112 份报表、两条
   Ads canary、8/8 READY 都仍是待办。
 
@@ -40,14 +47,17 @@
 - Main bundle：
   `880A8A3034166EBADC00A5F9D2A5964C2C1380456FD60140EE4FC6618CCC8585`
 - 已通过：package launch、package security boundaries、adversarial `NODE_ENV`。
-- 正在完成：Package UI v8 的 100% / 125% / 1400×900 三档。
+- 下一步必须先集成并验证 packaged Main 启动时同名进程安全门、重建并冻结新包，再为
+  新包创建全新的 Package UI v8 run group，完成 100% / 125% / 1400×900 三档；
+  `production-p2-20df9d5b-20260729` 及当前旧包 run group 只保留为历史证据，禁止续跑。
 - 尚未开始形成正式信用：两店 7 个业务日、manual canary、policy-auto canary、Mission Control 8/8。
 
 冻结规则：
 
 - 只读检查、证据导出、运行手册和本计划不改变包身份。
 - 一旦修改任何被打包的应用代码、依赖、Main/Renderer bundle 或安装产物，必须重建，并从 Package UI 开始重新生成全部当前包证据；尚未完成的 7 日窗口也从新包首次有效日重新计算。
-- 当前审计没有发现阻断上线的代码 P0/P1，因此生产闭环期间不主动扩大产品功能范围。
+- 当前独立审查确认 packaged Main 启动时同名进程安全门仍是正式验收阻断依赖；仅允许
+  完成该安全门、重建与证据刷新，不借此扩大其他产品功能范围。
 
 ## Stage 0：唯一权威运行环境
 
@@ -85,7 +95,9 @@
 
 进入条件：
 
-- 继续使用 run group `production-p2-20df9d5b-20260729`；
+- packaged 代码、runner 和包哈希冻结后，创建与该新包绑定的全新 run group；
+- `production-p2-20df9d5b-20260729` 仅保留为历史诊断记录，禁止复用旧 profile、
+  continuation cursor 或 checkpoint；
 - 隔离 profile continuation cursor、包哈希和 protected live DB 均匹配；
 - 首次失败 attempt 为 `resumable=true`。
 
@@ -123,10 +135,70 @@
 2. 对复制件运行 `--execute`，再运行
    `verify:s7-migration-backup-restore`，证明 v0→v9、完整性、FK、业务行保留和 pre-v9 恢复副本。
 3. 不使用手工文件替换，也不新增一套与应用迁移逻辑竞争的 cutover 工具。
-4. 用户明确批准后，启动冻结的当前包一次，让现有事务化 migration 1–9 对唯一 live DB 执行正式升级。
-5. 迁移过程中不得强杀应用。异常时停止重复启动，保留源/备份/sidecar/日志，按
+4. 先使用 `operate:s7-live-migration -- --prepare` 固化完整 approval payload：
+   Windows Known Folder canonical DB 必须精确为 v0；strict authority selection 必须
+   当前有效；独立 migration verifier 必须重跑并得到精确 19/19；Package UI v8 必须
+   通过正式 evaluator 且 protected DB before/after 绑定当前 DB；任意路径的同名进程、
+   无法解析的进程身份或 `FileShare.None` 失败都阻止继续。token 同时覆盖 safety 与
+   instructions。
+5. approval packet 与 launch receipt 必须写入两个显式、相互独立的
+   `--recovery-root`；root/`--out` 不得与冻结包、app-content、canonical userData/DB/
+   sidecar/Profile 或任一输入证据树重叠。root 必须由当前 Windows 用户拥有、关闭 ACL
+   继承，且只允许当前用户/SYSTEM/Administrators 写入；高风险或未知主体写 ACE 直接
+   阻断，最终文件、intent 和 `.s7-main-startup-gate` 目录/收据也复核严格
+   owner/protected ACL，不能以 `0o600` 代替 Windows 证明。
+   用户明确批准并提供 packet 的精确 token 后，
+   使用 `--execute-approved` 启动冻结
+   当前包一次，让现有事务化 migration 1–9 对唯一 live DB 执行正式升级。Windows helper
+   连续持有 live DB 的 `FileShare.None`；Node 在锁内完成最终进程/sidecar/包身份复核及
+   canonical userData intent 最终路径的直接 `wx` 创建、写入和同句柄 fsync；任何中途
+   失败都保留该最终路径作为阻断证据。再由 helper 通过
+   `CreateProcessW(CREATE_SUSPENDED)` 创建固定 EXE。由于 suspended process 的 WMI
+   `ExecutablePath` 可为 null，helper 必须通过原生 process handle 的
+   `QueryFullProcessImageNameW` 证明 image path；WMI 只负责同名 PID 集合。helper 在
+   CreateProcess 前原子写 ACTIVE gate，在 suspended PID 已知后原子写 BOUND gate，
+   精确绑定 PID/thread、EXE/Main/package、DB、intent、gate/invocation 及 file
+   identity。Node 再在 release 前紧邻验证原生 image proof、ACTIVE/BOUND 和同名集合
+   仅含该 PID；
+   helper 收到 release 命令后、关闭 DB 句柄前还要独立重查唯一 PID 与原生 path，随后
+   `ResumeThread` 返回值必须精确
+   为 `1`。所有 helper 时间必须按 READY→SPAWNED→final inventory→release→RESUMED→CLOSED
+   单调且不得超出 60 秒未来偏差。完整 intent 或 ACTIVE gate
+   存在期间同一 packet 会被拒绝；删除或回滚属于证据完整性破坏，必须进入 `HOLD` 并
+   重新取得 packet 与人工批准；本地管理员删除无法由脚本绝对检测。child env 固定
+   APPDATA/USERPROFILE 并移除项目/Electron/Node/Vite/credential-like 覆盖项，只额外
+   注入六个明确 startup-gate identity 变量。回执绑定
+   `READY → INTENT → SPAWNED_SUSPENDED → ACTIVE/BOUND → PID/PROCESS_VERIFIED →
+   RELEASED/RESUMED → ADMISSION/CLOSED`
+   顺序及 pre-spawn/post-spawn/post-exit 三次包身份。
+6. packaged Main 在任何 initSqlite/canonical DB open、浏览器和窗口前同步验证 ACTIVE/
+   BOUND、自身 PID、canonical EXE/Main hash、DB、intent 与 gate identities；普通实例
+   无 ACTIVE 时取得 Electron single-instance lock 后也必须二次检查，ACTIVE 存在时未获
+   批准的实例 fail-before-DB。Main 只写一次 ADMISSION；helper 只在 child code 0 且 exact
+   ADMISSION 通过后原子写 CLOSED。只有该链完整时，本次回执才可写
+   `absoluteStartPrevention=true` 与 `packagedMainStartupSameNameGate=
+   INTEGRATED_AND_PROVEN`；仍必须 `formalAcceptance=false`，并等待独立只读迁移验收。
+7. 该工具不接受路径覆盖、不重试、不强杀、不回滚、不替换 DB；stdout/stderr 不进入
+   回执。它不是 migration-only 启动，用户须在场。只有 exact ADMISSION/CLOSED 后才
+   有界采集 post-exit 包身份、全同名进程和同一稳定 DB snapshot 的哈希/sidecar/schema；
+   child exit/DB open/preflight 失败、receipt 缺失或未知状态保留 ACTIVE/BOUND 并进入
+   HOLD；超时
+   记录 `RUNNING_UNRESOLVED`，已创建但未 resume 的 suspended PID 进入人工恢复。发生
+   launch attempt 后 `packageLaunched` 只能为已确认 `CONFIRMED_LAUNCHED` 或
+   `UNKNOWN_AFTER_HANDOFF`，不能用 `false` 表示丢失/失败/超时的 RESUMED proof；package
+   Ads 状态只能记录为 `UNKNOWN`。helper 错误 proof 只能作为有界 untrusted candidate
+   保存；READY acquisition 即使未向调用方返回 handle，也必须保留 helper PID、script
+   SHA、迟到 proof buffer、stdin close/unref 三态。child env 仅允许必要 Windows runtime
+   和 locale 白名单，不继承 cookie/session/key/token/credential 或任意 sentinel。
+   package CLOSED 后 helper-close 失败/超时时仍关闭 stdin 并 detach，不 kill。
+   即使失败或超时进入 `HOLD`，也不得删除 intent、ACTIVE、BOUND 或 ADMISSION 后重试。
+8. 迁移过程中不得强杀应用。异常时停止重复启动，保留源/备份/sidecar/日志/launch
+   intent 与 startup-gate 全部收据，按
    `docs/S7_02_RECOVERY_RUNBOOK.md` 和 migration recovery preflight 处理。
-6. 首次启动后先做只读复核：migration 1–9 为 `applied`、`integrity_check=ok`、FK=0、源业务行保留、v9 backup 绑定有效。
+9. 首次启动正常关闭、ADMISSION/CLOSED 精确绑定且 DB 到 v9 后仍先做独立只读验收：
+   migration 1–9 为 `applied`、
+   `integrity_check=ok`、FK=0、源业务行保留、v9 backup 绑定有效。启动回执固定为
+   `passed=false` / `formalAcceptance=false`，不得作为 Stage 2 退出或 READY 证据。
 
 退出条件：
 

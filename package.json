@@ -52,6 +52,7 @@
     "migrate:s7-offline": "node scripts/migrate-current-user-db.js",
     "verify:s7-migration-backup-restore": "node scripts/verify-s7-migration-backup-restore.js",
     "verify:s7-live-migration-acceptance": "node scripts/verify-s7-live-migration-acceptance.js",
+    "operate:s7-live-migration": "node scripts/operate-s7-live-migration-launch.js",
     "verify:s7-large-table": "node scripts/verify-mission-control-large-table.js",
     "verify:s7-continuous-operation": "node scripts/verify-s7-continuous-operation.js",
     "verify:s7-ui-evidence": "node scripts/mission-control-ui-evidence-contract.js",

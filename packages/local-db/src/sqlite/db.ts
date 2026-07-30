@@ -29,31 +29,69 @@ function getUserDataPath(): string {
 
 let db: Database.Database | null = null;
 
+export interface GuardedSqliteContext {
+  database: Database.Database;
+  resolvedPath: string;
+}
+
+export interface GuardedSqliteInitialization<T> {
+  database: Database.Database;
+  guardResult: T;
+}
+
 export function initSqlite(dbPath?: string): Database.Database {
   const finalPath = dbPath || path.join(getUserDataPath(), 'app-data', 'app.db');
   const opened = new Database(finalPath);
   db = opened;
   try {
-    // 启用 WAL 模式，提升并发性能
-    opened.pragma('journal_mode = WAL');
-    opened.pragma('foreign_keys = ON');
-
-    // Capture one immutable recovery point for the complete pending chain.
-    // This runs before CREATE/ALTER statements, including a v7 -> v8 startup.
-    const upgradeBackup = prepareUpgradeBackup(opened, {
-      targetVersion: STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
-      targetName: STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
-      targetChecksum: STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
-    });
-
-    // Bind and verify the Stage 1 recovery snapshot before any legacy startup
-    // migration can normalize, deduplicate, or otherwise mutate user rows.
-    prepareStoreAuthorityMigrationBackup(opened);
-
-    // 创建表
-    runMigrations(opened, upgradeBackup);
+    initializeSqlite(opened);
     return opened;
   } catch (error) {
+    if (opened.open) opened.close();
+    if (db === opened) db = null;
+    throw error;
+  }
+}
+
+export function initGuardedExistingSqlite<T>(
+  dbPath: string,
+  guard: (context: GuardedSqliteContext) => T,
+): GuardedSqliteInitialization<T> {
+  const resolvedPath = path.resolve(dbPath);
+  const opened = new Database(resolvedPath, { fileMustExist: true });
+  let guardTransactionActive = false;
+  try {
+    opened.pragma('busy_timeout = 0');
+    const lockingMode = opened.pragma('locking_mode = EXCLUSIVE', { simple: true });
+    if (String(lockingMode).toLowerCase() !== 'exclusive') {
+      throw new Error('SQLite guarded initialization could not acquire exclusive locking mode.');
+    }
+    opened.exec('BEGIN EXCLUSIVE');
+    guardTransactionActive = true;
+    const guardResult = guard({ database: opened, resolvedPath });
+    if (
+      guardResult !== null
+      && (typeof guardResult === 'object' || typeof guardResult === 'function')
+      && typeof (guardResult as { then?: unknown }).then === 'function'
+    ) {
+      throw new Error('SQLite guarded initialization guard must be synchronous.');
+    }
+    opened.exec('COMMIT');
+    guardTransactionActive = false;
+
+    // EXCLUSIVE locking mode keeps this same connection's file lock across
+    // COMMIT, so migrations can use their own transactions without a reopen.
+    initializeSqlite(opened);
+    db = opened;
+    return { database: opened, guardResult };
+  } catch (error) {
+    if (guardTransactionActive && opened.inTransaction) {
+      try {
+        opened.exec('ROLLBACK');
+      } catch {
+        // Preserve the original guard/initialization failure.
+      }
+    }
     if (opened.open) opened.close();
     if (db === opened) db = null;
     throw error;
@@ -65,6 +103,27 @@ export function getSqliteDb(): Database.Database {
     throw new Error('SQLite not initialized. Call initSqlite() first.');
   }
   return db;
+}
+
+function initializeSqlite(database: Database.Database): void {
+  // 启用 WAL 模式，提升并发性能
+  database.pragma('journal_mode = WAL');
+  database.pragma('foreign_keys = ON');
+
+  // Capture one immutable recovery point for the complete pending chain.
+  // This runs before CREATE/ALTER statements, including a v7 -> v8 startup.
+  const upgradeBackup = prepareUpgradeBackup(database, {
+    targetVersion: STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
+    targetName: STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
+    targetChecksum: STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
+  });
+
+  // Bind and verify the Stage 1 recovery snapshot before any legacy startup
+  // migration can normalize, deduplicate, or otherwise mutate user rows.
+  prepareStoreAuthorityMigrationBackup(database);
+
+  // 创建表
+  runMigrations(database, upgradeBackup);
 }
 
 function runMigrations(database: Database.Database, upgradeBackup: UpgradeBackupManifest): void {

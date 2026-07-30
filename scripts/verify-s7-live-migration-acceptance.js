@@ -50,6 +50,55 @@ const REQUIRED_MIGRATION_VERIFICATION_CHECK_CODES = Object.freeze([
   'EVIDENCE_MIGRATION_RECORDS_BOUND',
   'BUSINESS_ROWS_PRESERVED',
 ]);
+const REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES = Object.freeze([
+  'OFFLINE_MIGRATION_SCHEMA_PASSED',
+  'OFFLINE_MIGRATION_SOURCE_PATH_BOUND',
+  'OFFLINE_MIGRATION_TARGET_V9',
+  'OFFLINE_MIGRATION_SOURCE_BASELINE_VALID',
+  'OFFLINE_MIGRATION_LEASE_BOUND',
+  'OFFLINE_MIGRATION_ARTIFACT_HASHES_BOUND',
+  'OFFLINE_MIGRATION_RECORDS_PRESERVATION_PASSED',
+  'AUTHORITY_SELECTION_SCHEMA_BOUND',
+  'AUTHORITY_SELECTION_PATH_BOUND',
+  'AUTHORITY_SELECTION_PRE_MIGRATION_STATE',
+  'AUTHORITY_SELECTION_READONLY_SAFETY',
+  'PRE_MIGRATION_MAIN_SHA_BOUND',
+  'MIGRATION_VERIFICATION_SCHEMA_PASSED',
+  'MIGRATION_VERIFICATION_MANIFEST_BOUND',
+  'MIGRATION_VERIFICATION_INPUT_HASHED',
+  'OFFLINE_ARTIFACT_PATHS_DISTINCT',
+  'OFFLINE_WORKING_ARTIFACT_IDENTITY_BOUND',
+  'OFFLINE_RESTORE_ARTIFACT_IDENTITY_BOUND',
+  'OFFLINE_WORKING_ARTIFACT_HASH_BOUND',
+  'OFFLINE_RESTORE_ARTIFACT_HASH_BOUND',
+  'OFFLINE_WORKING_OPEN_IDENTITY_BOUND',
+  'OFFLINE_WORKING_QUERY_ONLY_INTEGRITY',
+  'OFFLINE_WORKING_MIGRATIONS_CURRENT',
+  'OFFLINE_WORKING_ROW_PRESERVATION_BOUND',
+  'OFFLINE_WORKING_V9_RECOVERY_PREFLIGHT',
+  'OFFLINE_WORKING_ARTIFACT_STABLE_AFTER_READ',
+  'OFFLINE_RESTORE_OPEN_IDENTITY_BOUND',
+  'OFFLINE_RESTORE_QUERY_ONLY_INTEGRITY',
+  'OFFLINE_RESTORE_SOURCE_BASELINE_BOUND',
+  'OFFLINE_RESTORE_ARTIFACT_STABLE_AFTER_READ',
+  'LIVE_WAL_AWARE_READONLY_BACKUP',
+  'LIVE_LOGICAL_SNAPSHOT_HASH_BOUND',
+  'LIVE_LOGICAL_SNAPSHOT_QUERY_ONLY',
+  'LIVE_LOGICAL_SNAPSHOT_INTEGRITY',
+  'LIVE_REQUIRED_TABLES_PRESENT',
+  'LIVE_MIGRATIONS_1_TO_9_CURRENT',
+  'LIVE_BUSINESS_ROWS_PRESERVED',
+  'LIVE_V9_UPGRADE_BACKUP_EMBEDDED',
+  'LIVE_V9_UPGRADE_BACKUP_PATHS_BOUND',
+  'LIVE_V9_UPGRADE_BACKUP_SOURCE_BOUND',
+  'LIVE_V9_UPGRADE_BACKUP_MANIFEST_MATCH',
+  'LIVE_V9_RECOVERY_PREFLIGHT_CAN_RESTORE',
+  'LIVE_V9_RECOVERY_BACKUP_SHA_INTEGRITY',
+  'LIVE_V9_RECOVERY_SCHEMA_ROWS',
+  'LIVE_FINAL_WAL_AWARE_READONLY_BACKUP',
+  'LIVE_LOGICAL_SNAPSHOT_STABLE',
+  'LIVE_MAIN_FILE_UNCHANGED',
+]);
 const CAPTURE_FILE_NAMES = Object.freeze([
   'live-authority-logical-snapshot.db',
   'live-authority-logical-snapshot.db-wal',
@@ -369,6 +418,313 @@ function addRequiredCheck(checks, code, condition, detail) {
   const passed = condition === true;
   checks.push({ code, passed, detail });
   if (!passed) fail(`${code}: ${detail}`);
+}
+
+function hasExactKeys(value, expectedKeys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...expectedKeys].sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
+}
+
+function requireExactKeys(value, expectedKeys, label) {
+  if (!hasExactKeys(value, expectedKeys)) {
+    fail(`${label} has extra or missing fields.`);
+  }
+  return value;
+}
+
+function requireAcceptanceArtifact(value, label) {
+  requireExactKeys(value, ['path', 'realPath', 'sha256', 'sizeBytes'], label);
+  if (
+    !isCleanAbsolutePath(value.path)
+    || !isCleanAbsolutePath(value.realPath)
+    || !isSha256(value.sha256)
+    || !Number.isSafeInteger(value.sizeBytes)
+    || value.sizeBytes < 1
+  ) {
+    fail(`${label} proof is invalid.`);
+  }
+}
+
+function requireAcceptanceOfflineArtifact(value, label, expectedKind) {
+  const sharedKeys = [
+    'path',
+    'identity',
+    'sha256',
+    'sizeBytes',
+    'openedReadOnly',
+    'queryOnly',
+    'integrityCheck',
+  ];
+  const expectedKeys = expectedKind === 'working'
+    ? [
+        ...sharedKeys,
+        'foreignKeyViolationCount',
+        'migrationCount',
+        'businessRowPreservationPassed',
+        'recoveryCanRestore',
+        'mtimeMs',
+        'sidecarsAbsentBeforeAndAfter',
+      ]
+    : [
+        ...sharedKeys,
+        'version',
+        'sourceBaselineRowsMatch',
+        'mtimeMs',
+        'sidecarsAbsentBeforeAndAfter',
+      ];
+  requireExactKeys(value, expectedKeys, label);
+  requireExactKeys(
+    value.identity,
+    ['realPath', 'dev', 'ino', 'birthtimeMs', 'nlink'],
+    `${label} identity`,
+  );
+  if (
+    !isCleanAbsolutePath(value.path)
+    || !isSha256(value.sha256)
+    || !Number.isSafeInteger(value.sizeBytes)
+    || value.sizeBytes < 1
+    || !Number.isFinite(value.mtimeMs)
+    || !samePath(value.path, value.identity.realPath)
+    || Number(value.identity.nlink) !== 1
+    || value.openedReadOnly !== true
+    || value.queryOnly !== true
+    || value.integrityCheck !== 'ok'
+    || value.sidecarsAbsentBeforeAndAfter !== true
+  ) {
+    fail(`${label} read-only artifact proof is invalid.`);
+  }
+  if (
+    expectedKind === 'working'
+    && (
+      value.foreignKeyViolationCount !== 0
+      || value.migrationCount !== TARGET_VERSION
+      || value.businessRowPreservationPassed !== true
+      || value.recoveryCanRestore !== true
+    )
+  ) {
+    fail(`${label} migration/preservation proof is invalid.`);
+  }
+  if (
+    expectedKind === 'restore'
+    && (
+      !Number.isInteger(value.version)
+      || value.version < 0
+      || value.version >= TARGET_VERSION
+      || value.sourceBaselineRowsMatch !== true
+    )
+  ) {
+    fail(`${label} source-baseline proof is invalid.`);
+  }
+}
+
+function validateS7LiveMigrationAcceptanceReceipt(receipt) {
+  requireExactKeys(receipt, [
+    'kind',
+    'schemaVersion',
+    'generatedAt',
+    'status',
+    'passed',
+    'formalEvidence',
+    'authorityDatabaseMutated',
+    'adsExecutionInvoked',
+    'inputs',
+    'checks',
+    'summary',
+    'safety',
+  ], 'Live migration acceptance receipt');
+  const generatedAt = new Date(receipt.generatedAt);
+  if (
+    receipt.kind !== KIND
+    || receipt.schemaVersion !== SCHEMA_VERSION
+    || receipt.status !== 'PASSED'
+    || receipt.passed !== true
+    || receipt.formalEvidence !== true
+    || receipt.authorityDatabaseMutated !== false
+    || receipt.adsExecutionInvoked !== false
+    || !Number.isFinite(generatedAt.valueOf())
+    || generatedAt.toISOString() !== receipt.generatedAt
+  ) {
+    fail('Live migration acceptance receipt top-level contract is invalid.');
+  }
+
+  requireExactKeys(
+    receipt.inputs,
+    ['database', 'authoritySelection', 'migrationManifest', 'migrationVerification'],
+    'Live migration acceptance inputs',
+  );
+  requireExactKeys(receipt.inputs.database, [
+    'path',
+    'realPath',
+    'sha256',
+    'sizeBytes',
+    'logicalSnapshotSha256',
+    'logicalSnapshotSizeBytes',
+  ], 'Live migration acceptance database');
+  if (
+    !isCleanAbsolutePath(receipt.inputs.database.path)
+    || !isCleanAbsolutePath(receipt.inputs.database.realPath)
+    || !isSha256(receipt.inputs.database.sha256)
+    || !Number.isSafeInteger(receipt.inputs.database.sizeBytes)
+    || receipt.inputs.database.sizeBytes < 1
+    || !isSha256(receipt.inputs.database.logicalSnapshotSha256)
+    || !Number.isSafeInteger(receipt.inputs.database.logicalSnapshotSizeBytes)
+    || receipt.inputs.database.logicalSnapshotSizeBytes < 1
+  ) {
+    fail('Live migration acceptance database proof is invalid.');
+  }
+  requireAcceptanceArtifact(
+    receipt.inputs.authoritySelection,
+    'Live migration acceptance authority selection',
+  );
+  requireAcceptanceArtifact(
+    receipt.inputs.migrationManifest,
+    'Live migration acceptance migration manifest',
+  );
+  requireAcceptanceArtifact(
+    receipt.inputs.migrationVerification,
+    'Live migration acceptance migration verification',
+  );
+
+  const checks = Array.isArray(receipt.checks) ? receipt.checks : [];
+  const checkCodes = checks.map((check) => check?.code);
+  const uniqueCodes = new Set(checkCodes);
+  if (
+    checks.length !== REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES.length
+    || uniqueCodes.size !== checks.length
+    || stableJson(checkCodes) !== stableJson(REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES)
+    || checks.some(
+      (check) => !hasExactKeys(check, ['code', 'passed', 'detail'])
+        || check.passed !== true
+        || typeof check.detail !== 'string'
+        || check.detail.length === 0,
+    )
+  ) {
+    fail('Live migration acceptance must contain the exact complete, unique, all-passed check set.');
+  }
+
+  const summary = receipt.summary;
+  requireExactKeys(summary, [
+    'total',
+    'passed',
+    'failed',
+    'integrityCheck',
+    'foreignKeyViolationCount',
+    'migrationCount',
+    'requiredTableCount',
+    'offlineArtifacts',
+    'businessRowPreservation',
+    'recovery',
+  ], 'Live migration acceptance summary');
+  if (
+    summary.total !== checks.length
+    || summary.passed !== checks.length
+    || summary.failed !== 0
+    || summary.integrityCheck !== 'ok'
+    || summary.foreignKeyViolationCount !== 0
+    || summary.migrationCount !== TARGET_VERSION
+    || summary.requiredTableCount !== REQUIRED_TABLES.length
+  ) {
+    fail('Live migration acceptance summary does not match the complete passed proof.');
+  }
+
+  requireExactKeys(
+    summary.offlineArtifacts,
+    ['pathsDistinct', 'working', 'restore'],
+    'Live migration acceptance offline artifacts',
+  );
+  if (summary.offlineArtifacts.pathsDistinct !== true) {
+    fail('Live migration acceptance offline artifact paths are not distinct.');
+  }
+  requireAcceptanceOfflineArtifact(
+    summary.offlineArtifacts.working,
+    'Live migration acceptance offline working artifact',
+    'working',
+  );
+  requireAcceptanceOfflineArtifact(
+    summary.offlineArtifacts.restore,
+    'Live migration acceptance offline restore artifact',
+    'restore',
+  );
+
+  requireExactKeys(summary.businessRowPreservation, [
+    'passed',
+    'failureCount',
+    'listingCurrentToHistoryTransferApplied',
+    'listingCurrentToHistoryTransferPassed',
+  ], 'Live migration acceptance business-row preservation');
+  if (
+    summary.businessRowPreservation.passed !== true
+    || summary.businessRowPreservation.failureCount !== 0
+    || typeof summary.businessRowPreservation.listingCurrentToHistoryTransferApplied !== 'boolean'
+    || summary.businessRowPreservation.listingCurrentToHistoryTransferPassed !== true
+  ) {
+    fail('Live migration acceptance business-row preservation proof is invalid.');
+  }
+
+  requireExactKeys(summary.recovery, [
+    'sourceVersion',
+    'targetVersion',
+    'backupPath',
+    'backupSha256',
+    'backupSizeBytes',
+    'manifestPath',
+    'manifestSha256',
+    'backupIntegrityCheck',
+    'schemaFingerprintMatches',
+    'tableRowCountsMatch',
+    'embeddedManifestMatchesAdjacentFile',
+    'canRestore',
+    'blockerCount',
+  ], 'Live migration acceptance recovery');
+  if (
+    !Number.isInteger(summary.recovery.sourceVersion)
+    || summary.recovery.sourceVersion < 0
+    || summary.recovery.sourceVersion >= TARGET_VERSION
+    || summary.recovery.targetVersion !== TARGET_VERSION
+    || !isCleanAbsolutePath(summary.recovery.backupPath)
+    || !isSha256(summary.recovery.backupSha256)
+    || !Number.isSafeInteger(summary.recovery.backupSizeBytes)
+    || summary.recovery.backupSizeBytes < 1
+    || !isCleanAbsolutePath(summary.recovery.manifestPath)
+    || !isSha256(summary.recovery.manifestSha256)
+    || summary.recovery.backupIntegrityCheck !== 'ok'
+    || summary.recovery.schemaFingerprintMatches !== true
+    || summary.recovery.tableRowCountsMatch !== true
+    || summary.recovery.embeddedManifestMatchesAdjacentFile !== true
+    || summary.recovery.canRestore !== true
+    || summary.recovery.blockerCount !== 0
+  ) {
+    fail('Live migration acceptance recovery proof is invalid.');
+  }
+
+  requireExactKeys(receipt.safety, [
+    'liveDatabaseAccess',
+    'liveDatabaseOpenedReadOnly',
+    'liveDatabaseQueryOnly',
+    'logicalSnapshotInspectedReadOnly',
+    'walAwareSnapshotProofCount',
+    'authorityDatabaseMutated',
+    'adsExecutionInvoked',
+    'businessRowContentIncluded',
+    'rawSecretsIncluded',
+  ], 'Live migration acceptance safety');
+  if (
+    receipt.safety.liveDatabaseAccess !== CURRENTNESS_METHOD
+    || receipt.safety.liveDatabaseOpenedReadOnly !== true
+    || receipt.safety.liveDatabaseQueryOnly !== true
+    || receipt.safety.logicalSnapshotInspectedReadOnly !== true
+    || receipt.safety.walAwareSnapshotProofCount !== 2
+    || receipt.safety.authorityDatabaseMutated !== false
+    || receipt.safety.adsExecutionInvoked !== false
+    || receipt.safety.businessRowContentIncluded !== false
+    || receipt.safety.rawSecretsIncluded !== false
+  ) {
+    fail('Live migration acceptance safety proof is invalid.');
+  }
+  return receipt;
 }
 
 function validateAuthoritySelection(selection, databaseArtifact, migrationManifest, checks) {
@@ -1528,6 +1884,7 @@ function verifyS7LiveMigrationAcceptance(options, injectedContext = {}) {
       },
     };
     if (!receipt.passed) fail('Acceptance receipt cannot be published with failed checks.');
+    validateS7LiveMigrationAcceptanceReceipt(receipt);
   } catch (error) {
     operationError = error;
   }
@@ -1636,6 +1993,7 @@ if (require.main === module) {
 module.exports = {
   KIND,
   LIVE_MIGRATION_ACCEPTANCE_USAGE,
+  REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES,
   REQUIRED_MIGRATION_VERIFICATION_CHECK_CODES,
   SCHEMA_VERSION,
   legacyV1Checksum,
@@ -1643,6 +2001,7 @@ module.exports = {
   readJsonArtifact,
   removeCaptureRoot,
   run,
+  validateS7LiveMigrationAcceptanceReceipt,
   verifyS7LiveMigrationAcceptance,
   writeJsonAtomicExclusive,
 };

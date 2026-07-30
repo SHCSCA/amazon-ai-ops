@@ -7,12 +7,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 const {
   LIVE_MIGRATION_ACCEPTANCE_USAGE,
+  REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES,
   REQUIRED_MIGRATION_VERIFICATION_CHECK_CODES,
   legacyV1Checksum,
   parseLiveMigrationAcceptanceArgs,
   readJsonArtifact,
   removeCaptureRoot,
   run,
+  validateS7LiveMigrationAcceptanceReceipt,
 } = require('./verify-s7-live-migration-acceptance.js');
 const {
   collectRowCounts,
@@ -125,9 +127,62 @@ describe('S7 live migration acceptance receipt CLI', () => {
       .toMatch(/^[A-F0-9]{64}$/);
     expect(result.receipt.checks.length).toBeGreaterThanOrEqual(20);
     expect(result.receipt.checks.every((check) => check.passed)).toBe(true);
+    expect(result.receipt.checks.map((check) => check.code))
+      .toEqual(REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES);
+    expect(validateS7LiveMigrationAcceptanceReceipt(result.receipt))
+      .toEqual(result.receipt);
     expect(JSON.parse(fs.readFileSync(value.outPath, 'utf8'))).toEqual(result.receipt);
     expect(stdout).toHaveLength(1);
     expect(captureDirectories(value.captureParent)).toEqual([]);
+  }, 30_000);
+
+  it('rejects incomplete, duplicated, extra, failed, summary-drifted, or unsafe receipts', async () => {
+    const value = acceptanceFixture();
+    const result = await run(cliArgs(value), quietContext(value));
+    const cases = [
+      ['missing check', (receipt) => {
+        receipt.checks.pop();
+        receipt.summary.total -= 1;
+        receipt.summary.passed -= 1;
+      }, /exact complete.*check/i],
+      ['duplicate check', (receipt) => {
+        receipt.checks[1] = structuredClone(receipt.checks[0]);
+      }, /exact complete.*check/i],
+      ['extra check', (receipt) => {
+        receipt.checks.push({
+          code: 'UNRECOGNIZED_ACCEPTANCE_CHECK',
+          passed: true,
+          detail: 'must be rejected',
+        });
+        receipt.summary.total += 1;
+        receipt.summary.passed += 1;
+      }, /exact complete.*check/i],
+      ['failed check', (receipt) => {
+        receipt.checks[0].passed = false;
+        receipt.summary.passed -= 1;
+        receipt.summary.failed = 1;
+      }, /all-passed check/i],
+      ['summary drift', (receipt) => {
+        receipt.summary.total -= 1;
+      }, /summary.*complete passed proof/i],
+      ['unsafe receipt', (receipt) => {
+        receipt.safety.rawSecretsIncluded = true;
+      }, /safety proof/i],
+      ['offline recovery drift', (receipt) => {
+        receipt.summary.offlineArtifacts.working.recoveryCanRestore = false;
+      }, /working artifact.*proof/i],
+      ['live recovery drift', (receipt) => {
+        receipt.summary.recovery.canRestore = false;
+      }, /recovery proof/i],
+    ];
+    for (const [label, mutate, message] of cases) {
+      const candidate = structuredClone(result.receipt);
+      mutate(candidate);
+      expect(
+        () => validateS7LiveMigrationAcceptanceReceipt(candidate),
+        label,
+      ).toThrow(message);
+    }
   }, 30_000);
 
   it.each([

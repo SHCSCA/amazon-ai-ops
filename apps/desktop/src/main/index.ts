@@ -17,7 +17,11 @@ import { AdQuantifier, RecommendationGenerator, DEFAULT_RULE_CONFIG, buildAdMetr
 import { ReportParser, keywordMetricDiagnosticsToCsv, parseKeywordMetricsWithDiagnostics, parseListingContent } from '@amazon-ai-ops/report-parser';
 import { assertLingxingParsedReportImportable } from './lingxing-report-import-validation';
 import { AdActionReasonExplainer, AdStrategyDiagnoser, OpenAICompatibleProvider, DailyReportGenerator, assessAdEvidenceSufficiency, type AdStrategyDiagnosisOutput, type AiEvidenceItem, type AiReasonedDecision, type ProductStrategyContext } from '@amazon-ai-ops/ai-adapter';
-import { initSqlite, getSqliteDb } from '@amazon-ai-ops/local-db/src/sqlite/db';
+import {
+  initGuardedExistingSqlite,
+  initSqlite,
+  getSqliteDb,
+} from '@amazon-ai-ops/local-db/src/sqlite/db';
 import {
   adMetricCanonicalWhere,
   adMetricGrainWhere,
@@ -80,6 +84,12 @@ import {
   PACKAGE_UI_EVIDENCE_MODE,
   PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV,
 } from './evidence-user-data-path';
+import {
+  completeS7MainStartupAdmission,
+  enforceS7MainStartupGate,
+  resolveCanonicalAuthorityUserDataDir,
+  type S7MainStartupAdmission,
+} from './s7-migration-startup-gate';
 import { PackageUiSchedulerAudit } from './package-ui-scheduler-audit';
 import { writeLingxingCollectionPreflightEvidenceBundle } from './collection-preflight-export';
 import { copyDiagnosticEvidenceFileToBundle, copyReportFailureEvidenceFilesToBundle, evaluateDownloadCenterDiagnosticEvidenceFiles } from './download-center-diagnostic-evidence-files';
@@ -356,6 +366,28 @@ const packageUiFreshTypedProofRequired = packageUiReadOnlyRuntime
   && process.env[PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV] === '1';
 const packageLaunchSmokeRuntime = evidenceUserDataIdentity.mode === PACKAGE_LAUNCH_SMOKE_MODE;
 const USER_DATA_DIR = app.getPath('userData');
+let mainStartupAdmission: S7MainStartupAdmission | null = null;
+try {
+  mainStartupAdmission = enforceS7MainStartupGate({
+    app: {
+      requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
+    },
+    currentUserDataDir: USER_DATA_DIR,
+    canonicalUserDataDir: resolveCanonicalAuthorityUserDataDir(),
+    evidenceUserDataIdentity,
+    isPackaged: app.isPackaged,
+    executablePath: process.execPath,
+    mainModulePath: __filename,
+  });
+  console.info('[Security] Main startup admission', JSON.stringify({
+    mode: mainStartupAdmission.mode,
+    admitted: mainStartupAdmission.admitted,
+    singleInstanceLockAcquired: mainStartupAdmission.singleInstanceLockAcquired,
+  }));
+} catch (error) {
+  console.error('[Security] Main startup blocked before initialization:', error);
+  app.exit(78);
+}
 const packageUiSchedulerAudit = new PackageUiSchedulerAudit({
   enabled: packageUiReadOnlyRuntime,
   evidenceMode: evidenceUserDataIdentity.mode,
@@ -739,12 +771,27 @@ function createWindow(): void {
 
 async function initApp(): Promise<void> {
   console.log('[App] init:start');
-  ensureDirs();
-  console.log('[App] init:dirs-ready');
 
   // Init database
-  state.db = initSqlite(DB_PATH);
+  if (mainStartupAdmission?.mode === 'S7_APPROVED_CHILD') {
+    state.db = initGuardedExistingSqlite(DB_PATH, ({ database, resolvedPath }) => (
+      completeS7MainStartupAdmission({
+        startup: mainStartupAdmission as Extract<
+          S7MainStartupAdmission,
+          { mode: 'S7_APPROVED_CHILD' }
+        >,
+        database,
+        resolvedDatabasePath: resolvedPath,
+        executablePath: process.execPath,
+        mainModulePath: __filename,
+      })
+    )).database;
+  } else {
+    state.db = initSqlite(DB_PATH);
+  }
   console.log('[App] init:sqlite-ready');
+  ensureDirs();
+  console.log('[App] init:dirs-ready');
 
   // Init repositories
   state.settingsRepo = new SettingsRepository(state.db);
@@ -10487,26 +10534,35 @@ function registerIpcHandlers(): void {
 // App Lifecycle
 // ============================================================================
 
-app.whenReady().then(async () => {
-  try {
-    console.log('[App] ready');
-    await initApp();
-    registerIpcHandlers();
-    console.log('[App] ipc-ready');
-    createWindow();
-    startStoreBusinessDateAuthorityMonitor();
-    console.log('[App] window-created');
+if (mainStartupAdmission) {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
-    });
-  } catch (error) {
-    console.error('[App] startup failed:', error);
-    throw error;
-  }
-});
+  app.whenReady().then(async () => {
+    try {
+      console.log('[App] ready');
+      await initApp();
+      registerIpcHandlers();
+      console.log('[App] ipc-ready');
+      createWindow();
+      startStoreBusinessDateAuthorityMonitor();
+      console.log('[App] window-created');
+
+      app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+          createWindow();
+        }
+      });
+    } catch (error) {
+      console.error('[App] startup failed:', error);
+      throw error;
+    }
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

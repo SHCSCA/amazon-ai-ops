@@ -2,8 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
-import { initSqlite } from './db';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { initGuardedExistingSqlite, initSqlite } from './db';
 import { ProductRepository } from './repositories/product-repo';
 
 const tempDirs: string[] = [];
@@ -511,6 +511,217 @@ describe('initSqlite v1.5 schema', () => {
       ]);
     } finally {
       upgradedDb.close();
+    }
+  });
+});
+
+describe('initGuardedExistingSqlite', () => {
+  it('requires an existing database file and never creates a missing authority DB', () => {
+    const dbPath = tempDbPath();
+    const guard = vi.fn();
+
+    expect(() => initGuardedExistingSqlite(dbPath, guard)).toThrow();
+    expect(fs.existsSync(dbPath)).toBe(false);
+    expect(guard).not.toHaveBeenCalled();
+  });
+
+  it('rejects an asynchronous guard before any migration can run', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    legacyDb.close();
+    let unexpected: ReturnType<typeof initGuardedExistingSqlite> | null = null;
+    let failure: unknown = null;
+
+    try {
+      unexpected = initGuardedExistingSqlite(dbPath, async () => 'not-synchronous');
+    } catch (error) {
+      failure = error;
+    } finally {
+      unexpected?.database.close();
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/synchronous/i);
+    const inspected = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      expect(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'schema_migrations'
+      `).get()).toEqual({ count: 0 });
+    } finally {
+      inspected.close();
+    }
+  });
+
+  it('runs the guard against the existing v0 database before migrations', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec(`
+        CREATE TABLE legacy_probe (
+          id INTEGER PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        INSERT INTO legacy_probe (id, value) VALUES (1, 'before-migration');
+      `);
+    } finally {
+      legacyDb.close();
+    }
+
+    const observed = initGuardedExistingSqlite(dbPath, ({ database, resolvedPath }) => {
+      const migrationsTable = database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'schema_migrations'
+      `).get() as { count: number };
+      const probe = database.prepare(`
+        SELECT value FROM legacy_probe WHERE id = 1
+      `).get() as { value: string };
+
+      return {
+        migrationsTableCount: migrationsTable.count,
+        probeValue: probe.value,
+        resolvedPath,
+      };
+    });
+
+    try {
+      expect(observed.guardResult).toEqual({
+        migrationsTableCount: 0,
+        probeValue: 'before-migration',
+        resolvedPath: path.resolve(dbPath),
+      });
+      expect(observed.database.prepare(`
+        SELECT MAX(version) AS version
+        FROM schema_migrations
+        WHERE status = 'applied'
+      `).get()).toEqual({ version: 9 });
+    } finally {
+      observed.database.close();
+    }
+  });
+
+  it('denies a competing SQLite writer while the guard holds the takeover lock', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec(`
+        CREATE TABLE legacy_probe (
+          id INTEGER PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        INSERT INTO legacy_probe (id, value) VALUES (1, 'unchanged');
+      `);
+    } finally {
+      legacyDb.close();
+    }
+
+    const initialized = initGuardedExistingSqlite(dbPath, () => {
+      const competitor = new Database(dbPath, { fileMustExist: true, timeout: 0 });
+      try {
+        expect(() => competitor.prepare(`
+          UPDATE legacy_probe SET value = 'competing-write' WHERE id = 1
+        `).run()).toThrow(/locked/i);
+      } finally {
+        competitor.close();
+      }
+      return 'exclusive-writer-denied';
+    });
+
+    try {
+      expect(initialized.guardResult).toBe('exclusive-writer-denied');
+      expect(initialized.database.prepare(`
+        SELECT value FROM legacy_probe WHERE id = 1
+      `).get()).toEqual({ value: 'unchanged' });
+    } finally {
+      initialized.database.close();
+    }
+  });
+
+  it('rolls back and closes without publishing a global database when the guard fails', async () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec(`
+        CREATE TABLE legacy_probe (
+          id INTEGER PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        INSERT INTO legacy_probe (id, value) VALUES (1, 'original');
+      `);
+    } finally {
+      legacyDb.close();
+    }
+    const before = fs.readFileSync(dbPath);
+    vi.resetModules();
+    const isolatedDbModule = await import('./db');
+
+    expect(() => isolatedDbModule.initGuardedExistingSqlite(dbPath, ({ database }) => {
+      database.prepare(`
+        UPDATE legacy_probe SET value = 'must-rollback' WHERE id = 1
+      `).run();
+      throw new Error('synthetic guard rejection');
+    })).toThrow(/synthetic guard rejection/);
+
+    expect(fs.readFileSync(dbPath)).toEqual(before);
+    expect(() => isolatedDbModule.getSqliteDb()).toThrow(/not initialized/i);
+
+    const inspected = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      expect(inspected.prepare(`
+        SELECT value FROM legacy_probe WHERE id = 1
+      `).get()).toEqual({ value: 'original' });
+      expect(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'schema_migrations'
+      `).get()).toEqual({ count: 0 });
+    } finally {
+      inspected.close();
+    }
+  });
+
+  it('returns the exact guarded connection and keeps its exclusive lock through initialization', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec('CREATE TABLE legacy_probe (id INTEGER PRIMARY KEY)');
+    } finally {
+      legacyDb.close();
+    }
+
+    let guardedConnection: Database.Database | null = null;
+    const guardToken = { admitted: true };
+    const initialized = initGuardedExistingSqlite(dbPath, ({ database }) => {
+      guardedConnection = database;
+      return { database, token: guardToken };
+    });
+
+    const competitor = new Database(dbPath, { fileMustExist: true, timeout: 0 });
+    try {
+      expect(initialized.database).toBe(guardedConnection);
+      expect(initialized.guardResult).toEqual({
+        database: initialized.database,
+        token: guardToken,
+      });
+      expect(initialized.database.inTransaction).toBe(false);
+      expect(initialized.database.pragma('locking_mode', { simple: true })).toBe('exclusive');
+      expect(() => competitor.exec(`
+        INSERT INTO legacy_probe (id) VALUES (1)
+      `)).toThrow(/locked/i);
+    } finally {
+      competitor.close();
+      initialized.database.close();
+    }
+
+    const afterClose = new Database(dbPath, { fileMustExist: true, timeout: 0 });
+    try {
+      expect(() => afterClose.exec(`
+        INSERT INTO legacy_probe (id) VALUES (1)
+      `)).not.toThrow();
+    } finally {
+      afterClose.close();
     }
   });
 });
