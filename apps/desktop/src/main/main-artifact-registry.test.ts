@@ -104,10 +104,10 @@ describe('MainArtifactRegistry', () => {
   it('keeps legacy path-returning report IPC endpoints out of the Main boundary', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
 
-    expect(source).not.toContain("ipcMain.handle('report:download'");
-    expect(source).not.toContain("ipcMain.handle('report:parse'");
-    expect(source).not.toContain("ipcMain.handle('report:select-file'");
-    expect(source).toContain("ipcMain.handle('v1_5:reports:open-artifact'");
-    expect(source).toContain("ipcMain.handle('v1_5:business-ui:export-data-reconciliation-artifacts'");
+    expect(source).not.toContain("registerTrackedIpcHandler('report:download'");
+    expect(source).not.toContain("registerTrackedIpcHandler('report:parse'");
+    expect(source).not.toContain("registerTrackedIpcHandler('report:select-file'");
+    expect(source).toContain("registerTrackedIpcHandler('v1_5:reports:open-artifact'");
+    expect(source).toContain("registerTrackedIpcHandler('v1_5:business-ui:export-data-reconciliation-artifacts'");
   });
 });

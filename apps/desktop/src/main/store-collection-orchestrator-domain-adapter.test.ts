@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  normalizeStoreContextEnvelope,
   type BrowserProfileId,
   type StoreConnection,
   type StoreId,
   type StoreRecord,
+  type StoreRuntimeConfigProjection,
   type StoreSessionMetadata,
 } from '@amazon-ai-ops/shared-types';
 import {
@@ -16,6 +18,10 @@ import {
   type StoreSessionGenerationAuthority,
 } from './store-coordinator';
 import { StoreCollectionOrchestratorDomainAdapter } from './store-collection-orchestrator-domain-adapter';
+import {
+  deriveStoreCollectionWindow,
+  storeCollectionScheduleSemanticFingerprint,
+} from './store-collection-scheduler';
 
 class MemoryRepository implements StoreAuthorityRepository {
   readonly stores = new Map<StoreId, StoreRecord>();
@@ -64,9 +70,40 @@ function store(storeId: string, profileId: string): StoreRecord {
   };
 }
 
-function harness() {
+function config(
+  storeId: StoreId,
+  lookbackDays = 7,
+  collectionScheduleLocalTime = '08:00',
+): StoreRuntimeConfigProjection {
+  return {
+    current: {
+      configId: `config-${storeId}`,
+      storeId,
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+      status: 'active',
+      revision: 1,
+      values: {
+        aiRecommendationsEnabled: true,
+        collectionScheduleLocalTime,
+        collectionLookbackDays: lookbackDays,
+        analysisWindowDays: 30,
+        defaultTargetAcosPercent: 28,
+        minimumRecommendationConfidencePercent: 75,
+        evidenceRetentionDays: 90,
+      },
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    },
+    versions: [],
+  };
+}
+
+function harness(options: { now?: Date } = {}) {
   const repository = new MemoryRepository();
   const sessions = new MemorySessions();
+  const now = options.now ?? new Date('2026-07-23T16:00:00.000Z');
   const storeA = store('store-a', 'profile-a');
   const storeB = store('store-b', 'profile-b');
   repository.stores.set(storeA.storeId, storeA);
@@ -74,21 +111,39 @@ function harness() {
   const coordinator = new StoreCoordinator({
     repository,
     sessions,
-    now: () => new Date('2026-07-23T16:00:00.000Z'),
+    now: () => now,
   });
+  const businessDate = '2026-07-23';
+  const window = deriveStoreCollectionWindow(businessDate, 7);
   const inspectForStore = vi.fn((record: StoreRecord) => ({
     state: record.storeId === storeA.storeId ? 'not_due' as const : 'due' as const,
-    ...(record.storeId === storeB.storeId ? { expectedFingerprint: 'a'.repeat(64) } : {}),
+    expectedFingerprint: storeCollectionScheduleSemanticFingerprint({
+      storeId: record.storeId,
+      browserProfileId: record.browserProfileId,
+      businessDate,
+      lookbackDays: 7,
+      ...window,
+    }),
   }));
+  const inspectUniqueCollectionJobForSemanticScope = vi.fn(() => undefined);
   const adapter = new StoreCollectionOrchestratorDomainAdapter({
     coordinator,
     scheduler: { inspectForStore },
-    now: () => new Date('2026-07-23T16:00:00.000Z'),
+    config: {
+      getForStoreRecord: (record) => config(
+        record.storeId,
+        7,
+        record.storeId === storeA.storeId ? '10:00' : '08:00',
+      ),
+    },
+    repository: { inspectUniqueCollectionJobForSemanticScope },
+    now: () => now,
   });
   return {
     adapter,
     coordinator,
     inspectForStore,
+    inspectUniqueCollectionJobForSemanticScope,
     repository,
     sessions,
     storeA,
@@ -103,17 +158,186 @@ describe('StoreCollectionOrchestratorDomainAdapter', () => {
 
     expect(test.adapter.listActiveStores().map((item) => item.storeId))
       .toEqual([test.storeA.storeId, test.storeB.storeId]);
-    expect(test.adapter.inspectStoreSchedule(test.storeA)).toEqual({ state: 'not_due' });
+    expect(test.adapter.inspectStoreSchedule(test.storeA)).toEqual({
+      state: 'not_due',
+      expectedFingerprint: storeCollectionScheduleSemanticFingerprint({
+        storeId: test.storeA.storeId,
+        browserProfileId: test.storeA.browserProfileId,
+        businessDate: '2026-07-23',
+        lookbackDays: 7,
+        dateStart: '2026-07-16',
+        dateEnd: '2026-07-22',
+      }),
+    });
     expect(test.adapter.inspectStoreSchedule(test.storeB)).toEqual({
       state: 'due',
-      expectedFingerprint: 'a'.repeat(64),
+      expectedFingerprint: storeCollectionScheduleSemanticFingerprint({
+        storeId: test.storeB.storeId,
+        browserProfileId: test.storeB.browserProfileId,
+        businessDate: '2026-07-23',
+        lookbackDays: 7,
+        dateStart: '2026-07-16',
+        dateEnd: '2026-07-22',
+      }),
     });
-    expect(test.inspectForStore).toHaveBeenNthCalledWith(1, test.storeA, {
-      businessDate: '2026-07-23',
-      now: new Date('2026-07-23T16:00:00.000Z'),
-    });
+    expect(test.inspectForStore).not.toHaveBeenCalled();
     expect(test.coordinator.getActiveStoreContext()).toEqual(activeBefore);
     expect(test.adapter.getActiveStoreId()).toBe(test.storeA.storeId);
+    expect(test.inspectUniqueCollectionJobForSemanticScope).toHaveBeenCalledWith({
+      storeId: test.storeB.storeId,
+      browserProfileId: test.storeB.browserProfileId,
+      businessDate: '2026-07-23',
+      dateStart: '2026-07-16',
+      dateEnd: '2026-07-22',
+      mode: 'create-and-download',
+      reportTypes: [
+        'campaign', 'ad_group', 'placement', 'advertised_product',
+        'auto_targeting', 'keyword', 'product_targeting', 'user_search_term',
+      ],
+    });
+  });
+
+  it('suppresses a due schedule when protected history is absent but the exact durable DB scope exists', () => {
+    const test = harness();
+    test.inspectUniqueCollectionJobForSemanticScope.mockReturnValue({
+      job: { state: 'queued' },
+    } as never);
+
+    expect(test.adapter.inspectStoreSchedule(test.storeB)).toEqual({
+      state: 'not_due',
+      expectedFingerprint: storeCollectionScheduleSemanticFingerprint({
+        storeId: test.storeB.storeId,
+        browserProfileId: test.storeB.browserProfileId,
+        businessDate: '2026-07-23',
+        lookbackDays: 7,
+        dateStart: '2026-07-16',
+        dateEnd: '2026-07-22',
+      }),
+    });
+    expect(test.inspectUniqueCollectionJobForSemanticScope).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let legacy history alone suppress a due scope without exact durable DB authority', () => {
+    const test = harness();
+    const expectedFingerprint = storeCollectionScheduleSemanticFingerprint({
+      storeId: test.storeB.storeId,
+      browserProfileId: test.storeB.browserProfileId,
+      businessDate: '2026-07-23',
+      lookbackDays: 7,
+      dateStart: '2026-07-16',
+      dateEnd: '2026-07-22',
+    });
+    test.inspectForStore.mockImplementation(() => {
+      throw new Error('legacy history must not be consulted');
+    });
+
+    expect(test.adapter.inspectStoreSchedule(test.storeB)).toEqual({
+      state: 'due',
+      expectedFingerprint,
+    });
+    expect(test.inspectForStore).not.toHaveBeenCalled();
+    expect(test.inspectUniqueCollectionJobForSemanticScope).toHaveBeenCalledTimes(1);
+  });
+
+  it('manual eligibility ignores legacy history and scheduled time, using only exact durable DB scope', () => {
+    const test = harness();
+    const exactContext = normalizeStoreContextEnvelope({
+      storeId: test.storeA.storeId,
+      browserProfileId: test.storeA.browserProfileId,
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+      businessDate: '2026-07-23',
+      sessionGeneration: 1,
+    });
+
+    const eligible = test.adapter.inspectManualStoreSchedule(test.storeA, exactContext);
+    expect(eligible).toEqual({
+      state: 'eligible',
+      expectedFingerprint: storeCollectionScheduleSemanticFingerprint({
+        storeId: test.storeA.storeId,
+        browserProfileId: test.storeA.browserProfileId,
+        businessDate: '2026-07-23',
+        lookbackDays: 7,
+        dateStart: '2026-07-16',
+        dateEnd: '2026-07-22',
+      }),
+    });
+    expect(test.inspectUniqueCollectionJobForSemanticScope).toHaveBeenNthCalledWith(1, {
+      storeId: test.storeA.storeId,
+      browserProfileId: test.storeA.browserProfileId,
+      businessDate: exactContext.businessDate,
+      dateStart: '2026-07-16',
+      dateEnd: '2026-07-22',
+      mode: 'create-and-download',
+      reportTypes: [
+        'campaign', 'ad_group', 'placement', 'advertised_product',
+        'auto_targeting', 'keyword', 'product_targeting', 'user_search_term',
+      ],
+    });
+    expect(test.inspectForStore).not.toHaveBeenCalled();
+
+    test.inspectUniqueCollectionJobForSemanticScope.mockReturnValue({
+      job: { state: 'failed' },
+    } as never);
+    expect(test.adapter.inspectManualStoreSchedule(test.storeA, exactContext)).toEqual({
+      state: 'duplicate',
+      expectedFingerprint: eligible.expectedFingerprint,
+    });
+    expect(test.inspectForStore).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'wrong Store',
+      now: undefined,
+      context: (test: ReturnType<typeof harness>) => ({
+        storeId: test.storeB.storeId,
+        browserProfileId: test.storeB.browserProfileId,
+        businessDate: '2026-07-23',
+      }),
+    },
+    {
+      name: 'wrong Profile',
+      now: undefined,
+      context: (test: ReturnType<typeof harness>) => ({
+        storeId: test.storeA.storeId,
+        browserProfileId: test.storeB.browserProfileId,
+        businessDate: '2026-07-23',
+      }),
+    },
+    {
+      name: 'cross-midnight businessDate',
+      now: new Date('2026-07-24T07:01:00.000Z'),
+      context: (test: ReturnType<typeof harness>) => ({
+        storeId: test.storeA.storeId,
+        browserProfileId: test.storeA.browserProfileId,
+        businessDate: '2026-07-23',
+      }),
+    },
+  ])('manual inspection fails closed on $name context drift', ({ now, context }) => {
+    const test = harness({ ...(now ? { now } : {}) });
+    const partial = context(test);
+    const exactContext = normalizeStoreContextEnvelope({
+      ...partial,
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+      sessionGeneration: 1,
+    });
+
+    expect(() => test.adapter.inspectManualStoreSchedule(test.storeA, exactContext)).toThrow();
+    expect(test.inspectUniqueCollectionJobForSemanticScope).not.toHaveBeenCalled();
+  });
+
+  it('propagates duplicate or corrupt durable semantic authority as fail-closed inspection errors', () => {
+    const test = harness();
+    test.inspectUniqueCollectionJobForSemanticScope.mockImplementation(() => {
+      throw new Error('duplicate/corrupt semantic authority');
+    });
+
+    expect(() => test.adapter.inspectStoreSchedule(test.storeB))
+      .toThrow(/duplicate\/corrupt semantic authority/);
   });
 
   it('maps exact capability-bound A to B and B to A authority transitions', async () => {

@@ -235,6 +235,6 @@ describe('recommendation review resolution', () => {
     expect(handler).toContain('resolveWritableAdTargetAuthority(');
     expect(handler).toContain('resolveRecommendationReview({');
     expect(handler).toContain('updateStatusWithEvidenceIfCurrent(');
-    expect(source).toContain("ipcMain.handle('recommendations:resolve-review'");
+    expect(source).toContain("registerTrackedIpcHandler('recommendations:resolve-review'");
   });
 });

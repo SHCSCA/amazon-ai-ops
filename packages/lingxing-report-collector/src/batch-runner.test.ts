@@ -11,6 +11,7 @@ import {
 import {
   downloadExistingLingxingReportBatch,
   runLingxingReportBatch,
+  type LingxingInPlaceResumeState,
   type RunBatchOptions,
 } from './batch-runner';
 
@@ -123,6 +124,64 @@ function runTestBatch(options: LegacyTestOptions) {
 
 function downloadExistingTestBatch(options: LegacyTestOptions) {
   return downloadExistingLingxingReportBatch(normalizeLegacyTestOptions(options));
+}
+
+async function createThreeOfEightResumeFixture() {
+  const rootDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingxing-in-place-source-'));
+  const source = await runTestBatch({
+    dateStart: '2026-05-01',
+    dateEnd: '2026-05-25',
+    rootDownloadDir,
+    automation: {
+      async navigateToDownloadCenter() {},
+      async createReport() {},
+      async waitForReportReady() {},
+      async downloadReport(report, downloadDir) {
+        fs.mkdirSync(downloadDir, { recursive: true });
+        const filePath = path.join(
+          downloadDir,
+          `${report.expectedFilenameKeyword}_2026-05-01_2026-05-25_report.xlsx`,
+        );
+        writeSemanticReportFixture(filePath, report);
+        return filePath;
+      },
+    },
+  });
+  const failedAt = new Date(Date.parse(source.job.updatedAt) + 1).toISOString();
+  const reports = source.job.reports.map((checkpoint, index) => index < 3
+    ? checkpoint
+    : {
+        reportType: checkpoint.reportType,
+        state: 'failed' as const,
+        attemptIndex: 0,
+        autoRetryCount: 0,
+        errorCode: 'LINGXING_COLLECTION_STEP_FAILED',
+        detail: 'safe pre-create failure',
+        updatedAt: failedAt,
+      });
+  const job = {
+    ...source.job,
+    state: 'failed' as const,
+    reports,
+    blockerCode: 'LINGXING_COLLECTION_STEP_FAILED',
+    detail: 'resume fixture',
+    completedAt: failedAt,
+    updatedAt: failedAt,
+  };
+  const batch = {
+    ...source.batch,
+    status: 'failed' as const,
+    completedAt: failedAt,
+  };
+  const resumeFrom: LingxingInPlaceResumeState = {
+    jobId: job.jobId,
+    request: job.request,
+    reports,
+    job,
+    batch,
+    files: source.files.slice(0, 3),
+  };
+  return { rootDownloadDir, source, resumeFrom };
 }
 
 describe('runLingxingReportBatch', () => {
@@ -734,5 +793,188 @@ describe('runLingxingReportBatch', () => {
       maxRetries: -1,
       automation,
     })).rejects.toThrow('maxRetries');
+  });
+
+  it('resumes the same full-eight job in place and performs zero browser work for three verified files', async () => {
+    const { rootDownloadDir, resumeFrom } = await createThreeOfEightResumeFixture();
+    const calls: string[] = [];
+    const guardGenerations: number[] = [];
+    const progressIds: string[] = [];
+    const executionStoreContext = normalizeStoreContextEnvelope({
+      ...resumeFrom.request.storeContext,
+      sessionGeneration: resumeFrom.request.storeContext.sessionGeneration + 1,
+    });
+    const result = await runLingxingReportBatch({
+      requestId: resumeFrom.request.requestId,
+      storeContext: resumeFrom.request.storeContext,
+      executionStoreContext,
+      progressEventNamespace: 'attempt-in-place-1',
+      storeDisplayName: resumeFrom.batch.storeName ?? 'SHC001 · 美国站',
+      dateStart: resumeFrom.request.dateStart,
+      dateEnd: resumeFrom.request.dateEnd,
+      rootDownloadDir,
+      reportTypes: resumeFrom.request.reportTypes,
+      resumeFrom,
+      async progressSink(event) {
+        progressIds.push(event.eventId);
+      },
+      authorityGuard(context) {
+        guardGenerations.push(context.storeContext.sessionGeneration);
+        return { allowed: true } as const;
+      },
+      cancellationGuard() {
+        return { allowed: true } as const;
+      },
+      automation: {
+        async navigateToDownloadCenter() {
+          calls.push('navigate');
+        },
+        async createReport(report, dateRange) {
+          calls.push(`create:${report.type}`);
+          return createdOutcome(report, dateRange);
+        },
+        async waitForReportReady(report) {
+          calls.push(`ready:${report.type}`);
+        },
+        async downloadReport(report, downloadDir) {
+          calls.push(`download:${report.type}`);
+          fs.mkdirSync(downloadDir, { recursive: true });
+          const filePath = path.join(
+            downloadDir,
+            `${report.expectedFilenameKeyword}_2026-05-01_2026-05-25_resumed.xlsx`,
+          );
+          writeSemanticReportFixture(filePath, report);
+          return filePath;
+        },
+      },
+    });
+
+    expect(result.job.jobId).toBe(resumeFrom.jobId);
+    expect(result.job.request.requestId).toBe(resumeFrom.request.requestId);
+    expect(result.job.request.storeContext.sessionGeneration)
+      .toBe(resumeFrom.request.storeContext.sessionGeneration);
+    expect(result.batch.id).toBe(resumeFrom.batch.id);
+    expect(result.batch.createdAt).toBe(resumeFrom.batch.createdAt);
+    expect(result.batch.downloadDir).toBe(resumeFrom.batch.downloadDir);
+    expect(result.files).toHaveLength(8);
+    expect(result.files.every((file) => file.status === 'downloaded')).toBe(true);
+    expect(result.files.slice(0, 3).map((file) => file.id))
+      .toEqual(resumeFrom.files.map((file) => file.id));
+    expect(calls.filter((call) => call === 'navigate')).toHaveLength(5);
+    expect(calls.filter((call) => call.startsWith('create:'))).toHaveLength(5);
+    expect(calls.filter((call) => call.startsWith('download:'))).toHaveLength(5);
+    expect(guardGenerations.length).toBeGreaterThan(0);
+    expect(new Set(guardGenerations)).toEqual(new Set([executionStoreContext.sessionGeneration]));
+    expect(progressIds.every((eventId) => eventId.startsWith('attempt-in-place-1:'))).toBe(true);
+  });
+
+  it('honors a durable attemptIndex 3 without a retry downgrade and preserves prior failure evidence', async () => {
+    const { rootDownloadDir, resumeFrom } = await createThreeOfEightResumeFixture();
+    const target = resumeFrom.reports[3];
+    const priorEvidence = {
+      failureScreenshotPath: path.join(resumeFrom.batch.downloadDir, 'prior-failure.png'),
+      failureDomSnapshotPath: path.join(resumeFrom.batch.downloadDir, 'prior-failure.html'),
+      failureTracePath: path.join(resumeFrom.batch.downloadDir, 'prior-failure.zip'),
+      traceUnavailableReason: 'prior trace note',
+    };
+    const resumeWithAttemptThree: LingxingInPlaceResumeState = {
+      ...resumeFrom,
+      reports: resumeFrom.reports.map((checkpoint, index) => index === 3
+        ? { ...checkpoint, attemptIndex: 3, autoRetryCount: 3 }
+        : checkpoint),
+      files: [
+        ...resumeFrom.files,
+        {
+          id: `${resumeFrom.jobId}-${target.reportType}-durable`,
+          batchId: resumeFrom.jobId,
+          reportType: target.reportType,
+          displayName: `${target.reportType}.xlsx`,
+          status: 'failed',
+          maxAutoRetries: 5,
+          autoRetryCount: 3,
+          attemptErrors: ['prior durable failure'],
+          ...priorEvidence,
+          createdAt: resumeFrom.batch.createdAt,
+          updatedAt: target.updatedAt,
+        },
+      ],
+    };
+    const calls: string[] = [];
+    const result = await runLingxingReportBatch({
+      requestId: resumeWithAttemptThree.request.requestId,
+      storeContext: resumeWithAttemptThree.request.storeContext,
+      executionStoreContext: resumeWithAttemptThree.request.storeContext,
+      progressEventNamespace: 'attempt-index-three',
+      storeDisplayName: resumeWithAttemptThree.batch.storeName ?? 'SHC001 · 美国站',
+      dateStart: resumeWithAttemptThree.request.dateStart,
+      dateEnd: resumeWithAttemptThree.request.dateEnd,
+      rootDownloadDir,
+      reportTypes: resumeWithAttemptThree.request.reportTypes,
+      resumeFrom: resumeWithAttemptThree,
+      async progressSink() {},
+      authorityGuard() { return { allowed: true } as const; },
+      cancellationGuard() { return { allowed: true } as const; },
+      automation: {
+        async navigateToDownloadCenter() { calls.push('navigate'); },
+        async createReport(report, dateRange) {
+          calls.push(`create:${report.type}`);
+          return createdOutcome(report, dateRange);
+        },
+        async waitForReportReady() {},
+        async downloadReport(report, downloadDir) {
+          fs.mkdirSync(downloadDir, { recursive: true });
+          const filePath = path.join(
+            downloadDir,
+            `${report.expectedFilenameKeyword}_2026-05-01_2026-05-25_attempt3.xlsx`,
+          );
+          writeSemanticReportFixture(filePath, report);
+          return filePath;
+        },
+      },
+    });
+
+    const resumedFile = result.files.find((file) => file.reportType === target.reportType)!;
+    expect(result.job.jobId).toBe(resumeFrom.jobId);
+    expect(result.batch.id).toBe(resumeFrom.batch.id);
+    expect(calls.filter((call) => call.startsWith('create:'))).toHaveLength(5);
+    expect(resumedFile).toEqual(expect.objectContaining({
+      id: `${resumeFrom.jobId}-${target.reportType}-durable`,
+      status: 'downloaded',
+      maxAutoRetries: 3,
+      ...priorEvidence,
+    }));
+    expect(resumedFile.attemptErrors).toEqual(expect.arrayContaining(['prior durable failure']));
+  });
+
+  it('rejects a tampered downloaded resume file before the first browser action', async () => {
+    const { rootDownloadDir, resumeFrom } = await createThreeOfEightResumeFixture();
+    fs.appendFileSync(resumeFrom.files[0].filePath!, 'tampered');
+    let browserCalls = 0;
+    const never = async () => {
+      browserCalls += 1;
+      throw new Error('browser must not run');
+    };
+    await expect(runLingxingReportBatch({
+      requestId: resumeFrom.request.requestId,
+      storeContext: resumeFrom.request.storeContext,
+      executionStoreContext: resumeFrom.request.storeContext,
+      progressEventNamespace: 'attempt-tampered',
+      storeDisplayName: resumeFrom.batch.storeName ?? 'SHC001 · 美国站',
+      dateStart: resumeFrom.request.dateStart,
+      dateEnd: resumeFrom.request.dateEnd,
+      rootDownloadDir,
+      reportTypes: resumeFrom.request.reportTypes,
+      resumeFrom,
+      async progressSink() {},
+      authorityGuard() { return { allowed: true } as const; },
+      cancellationGuard() { return { allowed: true } as const; },
+      automation: {
+        navigateToDownloadCenter: never,
+        createReport: never,
+        waitForReportReady: never,
+        downloadReport: never,
+      },
+    })).rejects.toThrow(/durable verification metadata|file size|verification/i);
+    expect(browserCalls).toBe(0);
   });
 });

@@ -163,7 +163,7 @@ describe('pending recommendation writable target binding', () => {
     expect(handler).toContain('assertRecommendationMetricSourceAuthority(state.db');
     expect(handler).toContain('resolveWritableAdTargetAuthority(state.db!');
     expect(handler).toContain('bindWritableTargetIfCurrent(');
-    expect(source).toContain("ipcMain.handle('recommendations:bind-writable-target'");
+    expect(source).toContain("registerTrackedIpcHandler('recommendations:bind-writable-target'");
   });
 
   it('never overwrites an existing writable target even when its binding audit is absent', () => {

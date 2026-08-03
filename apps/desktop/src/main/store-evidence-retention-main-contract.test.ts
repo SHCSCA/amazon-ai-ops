@@ -7,8 +7,8 @@ describe('store evidence retention Main wiring contract', () => {
   it('registers the Main-authorized preview service without a deletion IPC', () => {
     expect(source).toContain('registerStoreEvidenceRetentionIpcHandlers(');
     expect(source).toContain('state.storeEvidenceRetentionService');
-    expect(source).not.toContain("ipcMain.handle('store-evidence-retention:delete'");
-    expect(source).not.toContain("ipcMain.handle('store-evidence-retention:apply'");
+    expect(source).not.toContain("registerTrackedIpcHandler('store-evidence-retention:delete'");
+    expect(source).not.toContain("registerTrackedIpcHandler('store-evidence-retention:apply'");
   });
 
   it('keeps legacy data_cleanup disabled and dry-run only', () => {

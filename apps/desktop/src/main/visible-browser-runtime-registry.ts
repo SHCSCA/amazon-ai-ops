@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import {
   normalizeStoreContextEnvelope,
   type StoreConnection,
@@ -88,6 +89,21 @@ export interface VisibleBrowserRuntimeEmptyProof {
   epoch: number;
 }
 
+declare const amazonAdsIdentityClaimBrand: unique symbol;
+export type AmazonAdsVisibleIdentityClaim = Readonly<{
+  capability: Readonly<object>;
+  runtimeId: string;
+  epoch: number;
+  context: StoreContextEnvelope;
+  readonly [amazonAdsIdentityClaimBrand]: 'AmazonAdsVisibleIdentityClaim';
+}>;
+
+export interface AmazonAdsVisibleIdentityClaimInput {
+  runtimeId: string;
+  epoch: number;
+  context: StoreContextEnvelope;
+}
+
 export class VisibleBrowserRuntimeRegistryError extends Error {
   constructor(
     readonly code:
@@ -102,7 +118,13 @@ export class VisibleBrowserRuntimeRegistryError extends Error {
       | 'RUNTIME_CLOSE_FAILED'
       | 'RUNTIME_RESIDUE'
       | 'CONTEXT_REBIND_FORBIDDEN'
-      | 'INVALID_EMPTY_PROOF',
+      | 'INVALID_EMPTY_PROOF'
+      | 'AMAZON_ADS_IDENTITY_FORBIDDEN'
+      | 'AMAZON_ADS_IDENTITY_CLAIM_HELD'
+      | 'INVALID_AMAZON_ADS_IDENTITY_CLAIM'
+      | 'AMAZON_ADS_IDENTITY_CLAIM_REPLAYED'
+      | 'AMAZON_ADS_IDENTITY_TRANSITION_FORBIDDEN'
+      | 'RUNTIME_REGISTRY_SEALED',
     message: string,
     options?: { cause?: unknown },
   ) {
@@ -112,6 +134,13 @@ export class VisibleBrowserRuntimeRegistryError extends Error {
 }
 
 interface RuntimeClaimRecord {
+  runtime: VisibleBrowserRuntime;
+  epoch: number;
+  used: boolean;
+}
+
+interface AmazonAdsIdentityClaimRecord {
+  claim: AmazonAdsVisibleIdentityClaim;
   runtime: VisibleBrowserRuntime;
   epoch: number;
   used: boolean;
@@ -131,7 +160,13 @@ export class VisibleBrowserRuntimeRegistry {
   private closeOperation: Promise<VisibleBrowserRuntimeEmptyProof> | null = null;
   private liveClaim: VisibleBrowserRuntimeClaim | null = null;
   private readonly claims = new WeakMap<object, RuntimeClaimRecord>();
+  private liveAmazonAdsIdentityClaim: AmazonAdsVisibleIdentityClaim | null = null;
+  private readonly amazonAdsIdentityClaims = new WeakMap<object, AmazonAdsIdentityClaimRecord>();
   private readonly emptyProofs = new WeakMap<object, VisibleBrowserRuntimeEmptyProof>();
+  private terminalSealing = false;
+  private terminalSealed = false;
+  private terminalEmptyProof: VisibleBrowserRuntimeEmptyProof | null = null;
+  private terminalSealOperation: Promise<VisibleBrowserRuntimeEmptyProof> | null = null;
 
   constructor(
     private readonly createRuntimeId: () => string = () => randomUUID(),
@@ -142,6 +177,7 @@ export class VisibleBrowserRuntimeRegistry {
   }
 
   publishCandidate(input: VisibleBrowserRuntimeCandidate): VisibleBrowserRuntimeClaim {
+    this.assertNotTerminalSealed();
     if (this.closing) {
       throw new VisibleBrowserRuntimeRegistryError(
         'RUNTIME_CLOSING',
@@ -194,6 +230,7 @@ export class VisibleBrowserRuntimeRegistry {
   }
 
   claimCurrent(expectedContext?: StoreContextEnvelope): VisibleBrowserRuntimeClaim {
+    this.assertNotTerminalSealed();
     const runtime = this.requireCurrent();
     if (this.closing) {
       throw new VisibleBrowserRuntimeRegistryError(
@@ -229,6 +266,7 @@ export class VisibleBrowserRuntimeRegistry {
   }
 
   verifyLingxingCandidate(claim: VisibleBrowserRuntimeClaim): VisibleBrowserRuntimeClaim {
+    this.assertNotTerminalSealed();
     const record = this.consumeClaim(claim);
     const runtime = record.runtime;
     if (runtime.providerIdentityStatus.lingxing !== 'pending') {
@@ -254,7 +292,82 @@ export class VisibleBrowserRuntimeRegistry {
     return this.issueClaim(verified);
   }
 
+  claimAmazonAdsIdentity(
+    input: AmazonAdsVisibleIdentityClaimInput,
+  ): AmazonAdsVisibleIdentityClaim {
+    this.assertNotTerminalSealed();
+    if (this.closing) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'RUNTIME_CLOSING',
+        'visible browser runtime is closing',
+      );
+    }
+    const runtime = this.requireCurrent();
+    let expectedContext: StoreContextEnvelope;
+    try {
+      expectedContext = normalizeStoreContextEnvelope(input?.context);
+    } catch (error) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'INVALID_AMAZON_ADS_IDENTITY_CLAIM',
+        'Amazon Ads identity claim context is invalid',
+        { cause: error },
+      );
+    }
+    if (input?.runtimeId !== runtime.runtimeId
+      || input?.epoch !== runtime.epoch
+      || !sameContext(runtime.context, expectedContext)) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'RUNTIME_CAS_MISMATCH',
+        'Amazon Ads identity claim does not match the exact runtime, epoch, or context',
+      );
+    }
+    if (runtime.purpose !== 'operator_full'
+      || !runtime.controllers.amazonAds
+      || runtime.providerIdentityStatus.amazonAds === 'not_present') {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'AMAZON_ADS_IDENTITY_FORBIDDEN',
+        'Amazon Ads identity claims require an operator_full runtime with an Ads controller',
+      );
+    }
+    if (runtime.providerIdentityStatus.lingxing !== 'verified') {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'AMAZON_ADS_IDENTITY_FORBIDDEN',
+        'Amazon Ads identity cannot transition before Lingxing identity is verified',
+      );
+    }
+    if (this.liveAmazonAdsIdentityClaim) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'AMAZON_ADS_IDENTITY_CLAIM_HELD',
+        'the exact runtime already has a live Amazon Ads identity claim',
+      );
+    }
+    const capability = Object.freeze({});
+    const claim = Object.freeze({
+      capability,
+      runtimeId: runtime.runtimeId,
+      epoch: runtime.epoch,
+      context: Object.freeze(normalizeStoreContextEnvelope(runtime.context)),
+    }) as AmazonAdsVisibleIdentityClaim;
+    this.amazonAdsIdentityClaims.set(capability, {
+      claim,
+      runtime,
+      epoch: runtime.epoch,
+      used: false,
+    });
+    this.liveAmazonAdsIdentityClaim = claim;
+    return claim;
+  }
+
+  verifyAmazonAdsIdentity(claim: AmazonAdsVisibleIdentityClaim): VisibleBrowserRuntime {
+    return this.transitionAmazonAdsIdentity(claim, 'verified');
+  }
+
+  blockAmazonAdsIdentity(claim: AmazonAdsVisibleIdentityClaim): VisibleBrowserRuntime {
+    return this.transitionAmazonAdsIdentity(claim, 'blocked');
+  }
+
   strictClose(claim: VisibleBrowserRuntimeClaim): Promise<VisibleBrowserRuntimeEmptyProof> {
+    this.assertNotTerminalSealed();
     if (this.closing) {
       throw new VisibleBrowserRuntimeRegistryError(
         'RUNTIME_CLOSING',
@@ -270,6 +383,7 @@ export class VisibleBrowserRuntimeRegistry {
   strictCloseCurrent(
     expectedContext?: StoreContextEnvelope,
   ): Promise<VisibleBrowserRuntimeEmptyProof> {
+    this.assertNotTerminalSealed();
     if (this.closing) {
       const runtime = this.currentRuntime;
       if (expectedContext && (!runtime || !sameContext(runtime.context, expectedContext))) {
@@ -346,6 +460,7 @@ export class VisibleBrowserRuntimeRegistry {
         }
       }
       this.assertRuntimeCas(runtime, record.epoch);
+      this.revokeAmazonAdsIdentityClaim();
       this.currentRuntime = null;
       this.epoch = nextEpoch(this.epoch);
       return this.issueEmptyProof();
@@ -358,12 +473,102 @@ export class VisibleBrowserRuntimeRegistry {
   }
 
   closeAll(): Promise<VisibleBrowserRuntimeEmptyProof> {
+    if (this.terminalSealed) {
+      return Promise.resolve(this.requireTerminalEmptyProof());
+    }
+    if (this.terminalSealing) {
+      if (this.terminalSealOperation) return this.terminalSealOperation;
+      throw new VisibleBrowserRuntimeRegistryError(
+        'RUNTIME_CLOSING',
+        'visible browser runtime registry is entering its terminal shutdown seal',
+      );
+    }
+    return this.closeAllUnsealed();
+  }
+
+  /**
+   * Irreversibly closes and seals the registry for process shutdown. The exact
+   * terminal empty proof is stable across repeated calls; no runtime or claim
+   * can be published after terminal sealing begins.
+   */
+  closeAllAndSeal(): Promise<VisibleBrowserRuntimeEmptyProof> {
+    if (this.terminalSealed) {
+      return Promise.resolve(this.requireTerminalEmptyProof());
+    }
+    if (this.terminalSealOperation) return this.terminalSealOperation;
+
+    this.terminalSealing = true;
+    let resolveSeal!: (proof: VisibleBrowserRuntimeEmptyProof) => void;
+    let rejectSeal!: (error: unknown) => void;
+    const operation = new Promise<VisibleBrowserRuntimeEmptyProof>((resolve, reject) => {
+      resolveSeal = resolve;
+      rejectSeal = reject;
+    });
+    // Publish the terminal attempt before a controller close can synchronously
+    // re-enter shutdown. Publication/claim admission remains sealed from this
+    // point onward, regardless of whether this particular close attempt wins.
+    this.terminalSealOperation = operation;
+    try {
+      void this.completeTerminalSeal(this.closeAllForTerminalSeal())
+        .then(resolveSeal, rejectSeal);
+    } catch (error) {
+      rejectSeal(error);
+    }
+
+    void operation.catch(() => {
+      // The terminal admission seal is irreversible, but a failed controller
+      // close or residue proof is retryable. A later attempt reuses the same
+      // attached runtime and can only advance toward an exact empty proof.
+      if (!this.terminalSealed && this.terminalSealOperation === operation) {
+        this.terminalSealOperation = null;
+      }
+    }).catch(() => undefined);
+    return operation;
+  }
+
+  private async completeTerminalSeal(
+    closeOperation: Promise<VisibleBrowserRuntimeEmptyProof>,
+  ): Promise<VisibleBrowserRuntimeEmptyProof> {
+    const proof = await closeOperation;
+    this.assertEmptyProofCurrent(proof);
+    this.terminalEmptyProof = proof;
+    this.terminalSealed = true;
+    this.terminalSealing = false;
+    return proof;
+  }
+
+  private closeAllForTerminalSeal(): Promise<VisibleBrowserRuntimeEmptyProof> {
+    if (this.closing && this.closeOperation) return this.closeOperation;
+    if (!this.currentRuntime) return Promise.resolve(this.issueEmptyProof());
+    const runtime = this.currentRuntime;
+    // Terminal shutdown consumes any candidate/login claim by exact identity,
+    // but never reopens the public claim surface between retry attempts.
+    if (this.liveClaim) {
+      const liveRecord = this.requireClaim(this.liveClaim, false);
+      liveRecord.used = true;
+      this.liveClaim = null;
+    }
+    const closeClaim = this.issueClaim(runtime);
+    const record = this.consumeClaim(closeClaim);
+    const operation = this.performStrictClose(record);
+    this.closeOperation = operation;
+    return operation;
+  }
+
+  private closeAllUnsealed(): Promise<VisibleBrowserRuntimeEmptyProof> {
     if (this.closing && this.closeOperation) return this.closeOperation;
     if (!this.currentRuntime) return Promise.resolve(this.proveEmpty());
     return this.strictCloseCurrent(this.currentRuntime.context);
   }
 
   proveEmpty(): VisibleBrowserRuntimeEmptyProof {
+    if (this.terminalSealed) return this.requireTerminalEmptyProof();
+    if (this.terminalSealing) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'RUNTIME_CLOSING',
+        'cannot issue an independently consumable proof while terminal sealing is in progress',
+      );
+    }
     if (this.currentRuntime || this.closing) {
       throw new VisibleBrowserRuntimeRegistryError(
         'RUNTIME_ALREADY_ACTIVE',
@@ -374,6 +579,19 @@ export class VisibleBrowserRuntimeRegistry {
   }
 
   consumeEmptyProof(proof: VisibleBrowserRuntimeEmptyProof): void {
+    if (this.terminalSealing && !this.terminalSealed) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'RUNTIME_CLOSING',
+        'cannot consume an empty proof while terminal sealing is in progress',
+      );
+    }
+    this.assertEmptyProofCurrent(proof);
+    // A terminal shutdown proof remains stable and idempotently verifiable.
+    if (this.terminalSealed && proof === this.terminalEmptyProof) return;
+    this.emptyProofs.delete(proof.capability);
+  }
+
+  private assertEmptyProofCurrent(proof: VisibleBrowserRuntimeEmptyProof): void {
     if (!proof
       || proof.empty !== true
       || !runtimeObject(proof.capability)
@@ -386,7 +604,26 @@ export class VisibleBrowserRuntimeRegistry {
         'visible runtime empty proof is forged, replayed, stale, or no longer true',
       );
     }
-    this.emptyProofs.delete(proof.capability);
+  }
+
+  private requireTerminalEmptyProof(): VisibleBrowserRuntimeEmptyProof {
+    if (!this.terminalSealed || !this.terminalEmptyProof) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'INVALID_EMPTY_PROOF',
+        'terminal visible runtime empty proof is unavailable',
+      );
+    }
+    this.assertEmptyProofCurrent(this.terminalEmptyProof);
+    return this.terminalEmptyProof;
+  }
+
+  private assertNotTerminalSealed(): void {
+    if (this.terminalSealed || this.terminalSealing) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'RUNTIME_REGISTRY_SEALED',
+        'visible browser runtime registry is terminally sealed for shutdown',
+      );
+    }
   }
 
   private requireCurrent(): VisibleBrowserRuntime {
@@ -465,6 +702,85 @@ export class VisibleBrowserRuntimeRegistry {
     return record;
   }
 
+  private transitionAmazonAdsIdentity(
+    claim: AmazonAdsVisibleIdentityClaim,
+    nextStatus: Extract<AmazonAdsVisibleIdentityStatus, 'verified' | 'blocked'>,
+  ): VisibleBrowserRuntime {
+    this.assertNotTerminalSealed();
+    const record = claim && runtimeObject(claim.capability)
+      ? this.amazonAdsIdentityClaims.get(claim.capability)
+      : undefined;
+    if (!record || record.claim !== claim) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'INVALID_AMAZON_ADS_IDENTITY_CLAIM',
+        'Amazon Ads identity claim is forged or unknown',
+      );
+    }
+    if (record.used) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'AMAZON_ADS_IDENTITY_CLAIM_REPLAYED',
+        'Amazon Ads identity claim was already consumed or replayed',
+      );
+    }
+    this.assertRuntimeCas(record.runtime, record.epoch);
+    record.used = true;
+    if (this.liveAmazonAdsIdentityClaim === claim) {
+      this.liveAmazonAdsIdentityClaim = null;
+    }
+    const runtime = record.runtime;
+    if (runtime.purpose !== 'operator_full'
+      || !runtime.controllers.amazonAds
+      || runtime.providerIdentityStatus.amazonAds === 'not_present') {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'AMAZON_ADS_IDENTITY_FORBIDDEN',
+        'Amazon Ads identity transitions require the exact operator_full runtime',
+      );
+    }
+    if (nextStatus === 'verified'
+      && runtime.providerIdentityStatus.amazonAds === 'blocked') {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'AMAZON_ADS_IDENTITY_TRANSITION_FORBIDDEN',
+        'a blocked Amazon Ads identity cannot become verified',
+      );
+    }
+    if (runtime.providerIdentityStatus.amazonAds === nextStatus) {
+      throw new VisibleBrowserRuntimeRegistryError(
+        'AMAZON_ADS_IDENTITY_TRANSITION_FORBIDDEN',
+        `Amazon Ads identity is already ${nextStatus}`,
+      );
+    }
+    const epoch = nextEpoch(this.epoch);
+    const nextRuntime = freezeRuntime({
+      ...runtime,
+      epoch,
+      providerIdentityStatus: {
+        ...runtime.providerIdentityStatus,
+        amazonAds: nextStatus,
+      },
+    });
+    this.assertRuntimeCas(runtime, record.epoch);
+    this.revokeVisibleRuntimeClaim();
+    this.epoch = epoch;
+    this.currentRuntime = nextRuntime;
+    return nextRuntime;
+  }
+
+  private revokeVisibleRuntimeClaim(): void {
+    if (!this.liveClaim) return;
+    const record = this.requireClaim(this.liveClaim, false);
+    record.used = true;
+    this.liveClaim = null;
+  }
+
+  private revokeAmazonAdsIdentityClaim(): void {
+    if (!this.liveAmazonAdsIdentityClaim) return;
+    const record = this.amazonAdsIdentityClaims.get(
+      this.liveAmazonAdsIdentityClaim.capability,
+    );
+    if (record) record.used = true;
+    this.liveAmazonAdsIdentityClaim = null;
+  }
+
   private assertRuntimeCas(runtime: VisibleBrowserRuntime, epoch: number): void {
     if (this.currentRuntime !== runtime || this.epoch !== epoch) {
       throw new VisibleBrowserRuntimeRegistryError(
@@ -493,6 +809,18 @@ export interface StoreMutationLaneReleaseReceipt {
   sequence: number;
 }
 
+export interface StoreMutationLaneSnapshot {
+  state: 'available' | 'held' | 'sticky_unknown';
+  held: boolean;
+  stickyUnknown: boolean;
+  sequence: number;
+  current?: Readonly<{
+    kind: StoreMutationLaneKind;
+    owner: string;
+    sequence: number;
+  }>;
+}
+
 interface MutationAuthorityRecord {
   kind: StoreMutationLaneKind;
   owner: string;
@@ -512,7 +840,8 @@ export class StoreMutationLaneError extends Error {
       | 'AUTHORITY_REPLAYED'
       | 'INVALID_CLAIM'
       | 'CLAIM_REPLAYED'
-      | 'SEQUENCE_EXHAUSTED',
+      | 'SEQUENCE_EXHAUSTED'
+      | 'SAFETY_STATE_UNKNOWN',
     message: string,
   ) {
     super(message);
@@ -530,12 +859,14 @@ export class StoreMutationLane {
   private readonly claims = new WeakMap<object, MutationClaimRecord>();
   private current: StoreMutationLaneClaim | null = null;
   private sequence = 0;
+  private stickyUnknown = false;
 
   registerAuthority(input: {
     kind: StoreMutationLaneKind;
     owner: string;
     capability: Readonly<object>;
   }): void {
+    this.assertSafetyKnown();
     const owner = normalizeOwner(input?.owner);
     if ((input.kind !== 'user' && input.kind !== 'automation')
       || !runtimeObject(input.capability)) {
@@ -566,6 +897,7 @@ export class StoreMutationLane {
     owner: string;
     capability: Readonly<object>;
   }): StoreMutationLaneClaim {
+    this.assertSafetyKnown();
     const owner = normalizeOwner(input?.owner);
     const record = runtimeObject(input?.capability)
       ? this.authorities.get(input.capability)
@@ -613,6 +945,7 @@ export class StoreMutationLane {
   }
 
   release(claim: StoreMutationLaneClaim): StoreMutationLaneReleaseReceipt {
+    this.assertSafetyKnown();
     const record = claim && runtimeObject(claim.claimCapability)
       ? this.claims.get(claim.claimCapability)
       : undefined;
@@ -645,9 +978,46 @@ export class StoreMutationLane {
   isHeld(): boolean {
     return this.current !== null;
   }
+
+  markSafetyStateUnknown(): StoreMutationLaneSnapshot {
+    this.stickyUnknown = true;
+    return this.inspect();
+  }
+
+  inspect(): StoreMutationLaneSnapshot {
+    const current = this.current
+      ? Object.freeze({
+        kind: this.current.kind,
+        owner: this.current.owner,
+        sequence: this.current.sequence,
+      })
+      : undefined;
+    return Object.freeze({
+      state: this.stickyUnknown
+        ? 'sticky_unknown'
+        : current
+          ? 'held'
+          : 'available',
+      held: current !== undefined,
+      stickyUnknown: this.stickyUnknown,
+      sequence: this.sequence,
+      ...(current ? { current } : {}),
+    });
+  }
+
+  private assertSafetyKnown(): void {
+    if (this.stickyUnknown) {
+      throw new StoreMutationLaneError(
+        'SAFETY_STATE_UNKNOWN',
+        'store mutation lane safety state is unknown',
+      );
+    }
+  }
 }
 
 function assertCandidate(input: VisibleBrowserRuntimeCandidate): void {
+  const lingxingProfileDir = normalizedProfileDir(input?.profileDirs?.lingxing);
+  const amazonAdsProfileDir = normalizedProfileDir(input?.profileDirs?.amazonAds);
   if (!input
     || (input.purpose !== 'operator_full' && input.purpose !== 'collection_only')
     || !input.controllers
@@ -662,6 +1032,26 @@ function assertCandidate(input: VisibleBrowserRuntimeCandidate): void {
     throw new VisibleBrowserRuntimeRegistryError(
       'INVALID_RUNTIME',
       'visible runtime candidate has an invalid purpose or controller set',
+    );
+  }
+  if (input.purpose === 'operator_full' && (
+    !controllerLike(input.controllers.amazonAds)
+    || input.controllers.lingxing === input.controllers.amazonAds
+    || !lingxingProfileDir
+    || !amazonAdsProfileDir
+    || lingxingProfileDir === amazonAdsProfileDir
+    || !input.connections?.lingxing
+    || !input.connections.amazonAds
+  )) {
+    throw new VisibleBrowserRuntimeRegistryError(
+      'INVALID_RUNTIME',
+      'operator_full runtime requires distinct Lingxing/Amazon Ads controllers, profiles, and connections',
+    );
+  }
+  if (input.profileDirs?.lingxing !== undefined && !lingxingProfileDir) {
+    throw new VisibleBrowserRuntimeRegistryError(
+      'INVALID_RUNTIME',
+      'visible runtime Lingxing profile directory must be non-empty',
     );
   }
   if (input.amazonAdsIdentityStatus !== undefined
@@ -694,6 +1084,14 @@ function assertCandidate(input: VisibleBrowserRuntimeCandidate): void {
       );
     }
   }
+}
+
+function normalizedProfileDir(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const normalized = path.win32.normalize(value.trim())
+    .replace(/[\\/]+$/u, '')
+    .toLocaleLowerCase('en-US');
+  return normalized || null;
 }
 
 function freezeRuntime(input: VisibleBrowserRuntime): VisibleBrowserRuntime {

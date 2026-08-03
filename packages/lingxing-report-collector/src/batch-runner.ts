@@ -51,7 +51,20 @@ export interface RunBatchOptions {
   progressSink: LingxingCollectionProgressSink;
   authorityGuard: LingxingCollectionAuthorityGuard;
   cancellationGuard: LingxingCollectionCancellationGuard;
-  resumeFrom?: LingxingCollectionResumeState;
+  /**
+   * The durable request context stays immutable across an in-place resume.
+   * Main may provide a newer session generation solely for guarded browser
+   * execution; it must still describe the same stable store axes.
+   */
+  executionStoreContext?: StoreContextEnvelope;
+  progressEventNamespace?: string;
+  resumeFrom?: LingxingCollectionResumeState | LingxingInPlaceResumeState;
+}
+
+export interface LingxingInPlaceResumeState extends LingxingCollectionResumeState {
+  job: LingxingCollectionJobSnapshot;
+  batch: LingxingReportBatch;
+  files: readonly LingxingReportFile[];
 }
 
 export interface RunBatchResult {
@@ -111,6 +124,14 @@ let lastGeneratedTimestampMs = 0;
 
 function isoNow(): string {
   const nextTimestampMs = Math.max(Date.now(), lastGeneratedTimestampMs + 1);
+  lastGeneratedTimestampMs = nextTimestampMs;
+  return new Date(nextTimestampMs).toISOString();
+}
+
+function isoAfter(value: string): string {
+  const floor = Date.parse(value);
+  if (!Number.isFinite(floor)) throw new Error('resume updatedAt must be a valid timestamp');
+  const nextTimestampMs = Math.max(Date.now(), lastGeneratedTimestampMs + 1, floor + 1);
   lastGeneratedTimestampMs = nextTimestampMs;
   return new Date(nextTimestampMs).toISOString();
 }
@@ -198,6 +219,45 @@ function storeContextKey(context: StoreContextEnvelope): string {
   ].join('|');
 }
 
+function stableStoreContextKey(context: StoreContextEnvelope): string {
+  return [
+    context.storeId,
+    context.browserProfileId,
+    context.marketplace,
+    context.currency,
+    context.businessTimezone,
+    context.businessDate,
+  ].join('|');
+}
+
+function isInPlaceResumeState(
+  value: LingxingCollectionResumeState | LingxingInPlaceResumeState | undefined,
+): value is LingxingInPlaceResumeState {
+  return Boolean(
+    value
+    && 'job' in value
+    && 'batch' in value
+    && 'files' in value
+    && Array.isArray(value.files),
+  );
+}
+
+function cloneReportFile(file: LingxingReportFile): LingxingReportFile {
+  return {
+    ...file,
+    ...(file.attemptErrors ? { attemptErrors: [...file.attemptErrors] } : {}),
+  };
+}
+
+function assertPathWithin(rootPath: string, candidatePath: string, label: string): void {
+  const root = path.resolve(rootPath);
+  const candidate = path.resolve(candidatePath);
+  const relative = path.relative(root, candidate);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`${label} must remain inside the authorized store download root`);
+  }
+}
+
 function cloneCreatedIdentity(
   identity: LingxingCreatedReportIdentity,
 ): LingxingCreatedReportIdentity {
@@ -279,12 +339,22 @@ function normalizeCreatedIdentity(
   });
 }
 
+interface ValidatedResumeState {
+  checkpoints: Map<LingxingReportType, LingxingCollectionReportCheckpoint>;
+  downloadedFiles: Map<LingxingReportType, LingxingReportFile>;
+  inPlace?: LingxingInPlaceResumeState;
+}
+
 function validateResumeState(
-  resumeFrom: LingxingCollectionResumeState | undefined,
+  resumeFrom: LingxingCollectionResumeState | LingxingInPlaceResumeState | undefined,
   request: LingxingCollectionRequestDto,
   maxRetries: number,
-): Map<LingxingReportType, LingxingCollectionReportCheckpoint> {
-  if (!resumeFrom) return new Map();
+  rootDownloadDir: string,
+): ValidatedResumeState {
+  if (!resumeFrom) {
+    return { checkpoints: new Map(), downloadedFiles: new Map() };
+  }
+  const inPlace = isInPlaceResumeState(resumeFrom) ? resumeFrom : undefined;
   if (!/^[A-Za-z0-9._-]{1,180}$/.test(resumeFrom.jobId)) {
     throw new Error('resume jobId is invalid');
   }
@@ -300,8 +370,45 @@ function validateResumeState(
     throw new Error('resume state does not match the current store-authoritative request');
   }
 
+  if (inPlace) {
+    if (
+      inPlace.job.jobId !== inPlace.jobId
+      || stableJsonForIdentity(inPlace.job.request) !== stableJsonForIdentity(inPlace.request)
+      || inPlace.batch.id !== inPlace.jobId
+      || inPlace.batch.requestId !== request.requestId
+      || inPlace.batch.storeId !== request.storeContext.storeId
+      || inPlace.batch.browserProfileId !== request.storeContext.browserProfileId
+      || inPlace.batch.marketplaceCode !== request.storeContext.marketplace
+      || inPlace.batch.businessDate !== request.storeContext.businessDate
+      || inPlace.batch.sessionGeneration !== request.storeContext.sessionGeneration
+      || inPlace.batch.dateStart !== request.dateStart
+      || inPlace.batch.dateEnd !== request.dateEnd
+    ) {
+      throw new Error('in-place resume batch/job identity does not match the durable request');
+    }
+    if (request.reportTypes.length !== LINGXING_AD_REPORTS.length) {
+      throw new Error('in-place resume requires the complete eight-report request');
+    }
+    assertPathWithin(rootDownloadDir, inPlace.batch.downloadDir, 'resume batch downloadDir');
+  }
+
   const allowedReports = new Set(request.reportTypes);
   const checkpoints = new Map<LingxingReportType, LingxingCollectionReportCheckpoint>();
+  const downloadedFiles = new Map<LingxingReportType, LingxingReportFile>();
+  const filesByType = new Map<LingxingReportType, LingxingReportFile[]>();
+  if (inPlace) {
+    for (const rawFile of inPlace.files) {
+      if (rawFile.batchId !== inPlace.jobId || !allowedReports.has(rawFile.reportType)) {
+        throw new Error('in-place resume contains an out-of-scope durable file');
+      }
+      const current = filesByType.get(rawFile.reportType) ?? [];
+      current.push(rawFile);
+      if (current.length > 1) {
+        throw new Error('in-place resume contains duplicate durable files for one report type');
+      }
+      filesByType.set(rawFile.reportType, current);
+    }
+  }
   for (const rawCheckpoint of resumeFrom.reports) {
     if (!allowedReports.has(rawCheckpoint.reportType) || checkpoints.has(rawCheckpoint.reportType)) {
       throw new Error('resume state contains a duplicate or out-of-scope report checkpoint');
@@ -317,17 +424,72 @@ function validateResumeState(
       if (rawCheckpoint.createdReportIdentity) {
         throw new Error('queued resume checkpoints must not contain a created report identity');
       }
+      checkpoints.set(rawCheckpoint.reportType, cloneCheckpoint(rawCheckpoint));
       continue;
     }
-    if (!rawCheckpoint.createdReportIdentity && rawCheckpoint.state === 'navigating') {
+    if (
+      !rawCheckpoint.createdReportIdentity
+      && (rawCheckpoint.state === 'navigating' || rawCheckpoint.state === 'failed')
+    ) {
       // Navigating without an identity is durably before report creation, so
       // restarting it from queued is safe.
+      checkpoints.set(rawCheckpoint.reportType, {
+        ...cloneCheckpoint(rawCheckpoint),
+        state: 'queued',
+        fileSizeBytes: undefined,
+        errorCode: undefined,
+      });
       continue;
     }
     if (rawCheckpoint.state === 'downloaded') {
-      throw new Error(
-        'downloaded resume checkpoints must be resolved by Main from the persisted verified file and are never redownloaded automatically',
+      if (!inPlace) {
+        throw new Error(
+          'downloaded resume checkpoints must be resolved by Main from the persisted verified file and are never redownloaded automatically',
+        );
+      }
+      const matchingFiles = filesByType.get(rawCheckpoint.reportType) ?? [];
+      if (matchingFiles.length !== 1) {
+        throw new Error('downloaded resume checkpoint requires exactly one durable file');
+      }
+      const durableFile = matchingFiles[0];
+      if (!rawCheckpoint.createdReportIdentity) {
+        throw new Error('downloaded resume checkpoint requires a confirmed created report identity');
+      }
+      normalizeCreatedIdentity(
+        rawCheckpoint.createdReportIdentity,
+        rawCheckpoint.reportType,
+        request.dateStart,
+        request.dateEnd,
       );
+      if (
+        durableFile.status !== 'downloaded'
+        || !durableFile.filePath
+        || !Number.isSafeInteger(durableFile.fileSizeBytes)
+        || durableFile.fileSizeBytes! <= 0
+        || durableFile.fileSizeBytes !== rawCheckpoint.fileSizeBytes
+      ) {
+        throw new Error('downloaded resume checkpoint has invalid durable file metadata');
+      }
+      const report = LINGXING_AD_REPORTS.find((candidate) => (
+        candidate.type === rawCheckpoint.reportType
+      ));
+      if (!report) throw new Error('downloaded resume checkpoint report type is unknown');
+      const verification = verifyDownloadedFile(durableFile.filePath, {
+        minBytes: 128,
+        expectedFilenameKeyword: report.expectedFilenameKeyword,
+        expectedDateRange: { start: request.dateStart, end: request.dateEnd },
+        expectedDownloadDir: inPlace.batch.downloadDir,
+        expectedReportType: report.type,
+      });
+      if (!verification.valid || verification.fileSizeBytes !== durableFile.fileSizeBytes) {
+        throw new Error(
+          verification.errorMessage
+          || 'downloaded resume file no longer matches its durable verification metadata',
+        );
+      }
+      checkpoints.set(rawCheckpoint.reportType, cloneCheckpoint(rawCheckpoint));
+      downloadedFiles.set(rawCheckpoint.reportType, cloneReportFile(durableFile));
+      continue;
     }
     if (rawCheckpoint.state === 'create_unknown' || rawCheckpoint.state === 'creating') {
       throw new Error(
@@ -359,7 +521,25 @@ function validateResumeState(
       createdReportIdentity: identity,
     });
   }
-  return checkpoints;
+  if (inPlace && checkpoints.size !== request.reportTypes.length) {
+    throw new Error('in-place resume must contain exactly one checkpoint for every report type');
+  }
+  if (inPlace && resumeFrom.reports.length !== request.reportTypes.length) {
+    throw new Error('in-place resume must contain exactly eight report checkpoints');
+  }
+  return { checkpoints, downloadedFiles, ...(inPlace ? { inPlace } : {}) };
+}
+
+function stableJsonForIdentity(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJsonForIdentity).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, child]) => child !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${stableJsonForIdentity(child)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function legacyStatusForState(
@@ -416,12 +596,40 @@ async function runLingxingReportBatchInternal(
 ): Promise<RunBatchResult> {
   const requestId = validateRequestId(options.requestId);
   const storeContext = Object.freeze({ ...normalizeStoreContextEnvelope(options.storeContext) });
+  const executionStoreContext = Object.freeze({
+    ...normalizeStoreContextEnvelope(options.executionStoreContext ?? options.storeContext),
+  });
+  if (
+    stableStoreContextKey(storeContext) !== stableStoreContextKey(executionStoreContext)
+    || executionStoreContext.sessionGeneration < storeContext.sessionGeneration
+  ) {
+    throw new Error(
+      'executionStoreContext must match the durable store axes and cannot use an older session generation',
+    );
+  }
+  const progressEventNamespace = options.progressEventNamespace === undefined
+    ? undefined
+    : validateRequestId(options.progressEventNamespace);
   const storeDisplayName = validateStoreDisplayName(options.storeDisplayName);
   validateDateRange(options.dateStart, options.dateEnd);
-  const maxRetries = options.maxRetries ?? 2;
-  if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 10) {
+  const requestedMaxRetries = options.maxRetries ?? 2;
+  if (
+    !Number.isInteger(requestedMaxRetries)
+    || requestedMaxRetries < 0
+    || requestedMaxRetries > 10
+  ) {
     throw new Error('maxRetries must be an integer between 0 and 10');
   }
+  const durableAttemptFloor = options.resumeFrom?.reports.reduce((highest, checkpoint) => (
+    Number.isInteger(checkpoint.attemptIndex)
+      && checkpoint.attemptIndex >= 0
+      && checkpoint.attemptIndex <= 10
+      ? Math.max(highest, checkpoint.attemptIndex)
+      : highest
+  ), 0) ?? 0;
+  // A resume may not lower the retry ceiling beneath a durable checkpoint.
+  // This keeps historical jobs resumable when composition omitted maxRetries.
+  const maxRetries = Math.max(requestedMaxRetries, durableAttemptFloor);
   const selectedReports = selectReports(options.reportTypes);
   const request: LingxingCollectionRequestDto = Object.freeze({
     requestId,
@@ -431,49 +639,86 @@ async function runLingxingReportBatchInternal(
     mode,
     reportTypes: Object.freeze(selectedReports.map((report) => report.type)),
   });
-  const resumeCheckpoints = validateResumeState(options.resumeFrom, request, maxRetries);
+  const validatedResume = validateResumeState(
+    options.resumeFrom,
+    request,
+    maxRetries,
+    options.rootDownloadDir,
+  );
+  const resumeCheckpoints = validatedResume.checkpoints;
   const batchId = options.resumeFrom?.jobId ?? `batch_${stamp()}`;
-  const downloadDir = path.join(
+  const downloadDir = validatedResume.inPlace?.batch.downloadDir ?? path.join(
     options.rootDownloadDir,
     'lingxing-ad-reports',
     `${options.dateStart}_${options.dateEnd}`,
     batchId,
   );
-  const createdAt = isoNow();
-  const batch: LingxingReportBatch = {
-    id: batchId,
-    requestId,
-    storeId: storeContext.storeId,
-    browserProfileId: storeContext.browserProfileId,
-    businessDate: storeContext.businessDate,
-    sessionGeneration: storeContext.sessionGeneration,
-    appVersion: options.appVersion,
-    dateStart: options.dateStart,
-    dateEnd: options.dateEnd,
-    storeName: storeDisplayName,
-    marketplaceCode: storeContext.marketplace,
-    status: 'running',
-    downloadDir,
-    createdAt,
-  };
-  const job: MutableCollectionJob = {
-    jobId: batchId,
-    request,
-    state: 'running',
-    reports: selectedReports.map((report) => (
-      resumeCheckpoints.get(report.type) ?? {
-        reportType: report.type,
-        state: 'queued',
-        attemptIndex: 0,
-        autoRetryCount: 0,
-        updatedAt: createdAt,
+  const createdAt = validatedResume.inPlace?.batch.createdAt ?? isoNow();
+  if (validatedResume.inPlace?.batch.appVersion
+    && options.appVersion
+    && validatedResume.inPlace.batch.appVersion !== options.appVersion) {
+    throw new Error('in-place resume cannot change the durable batch appVersion');
+  }
+  const batch: LingxingReportBatch = validatedResume.inPlace
+    ? {
+        ...validatedResume.inPlace.batch,
+        status: 'running',
+        completedAt: undefined,
+        manifestPath: undefined,
       }
-    )),
-    createdAt,
-    updatedAt: createdAt,
-  };
+    : {
+        id: batchId,
+        requestId,
+        storeId: storeContext.storeId,
+        browserProfileId: storeContext.browserProfileId,
+        businessDate: storeContext.businessDate,
+        sessionGeneration: storeContext.sessionGeneration,
+        appVersion: options.appVersion,
+        dateStart: options.dateStart,
+        dateEnd: options.dateEnd,
+        storeName: storeDisplayName,
+        marketplaceCode: storeContext.marketplace,
+        status: 'running',
+        downloadDir,
+        createdAt,
+      };
+  const initialJobTimestamp = validatedResume.inPlace
+    ? isoAfter(validatedResume.inPlace.job.updatedAt)
+    : createdAt;
+  const job: MutableCollectionJob = validatedResume.inPlace
+    ? {
+        ...validatedResume.inPlace.job,
+        request,
+        state: 'running',
+        reports: selectedReports.map((report) => (
+          resumeCheckpoints.get(report.type)!
+        )),
+        completedAt: undefined,
+        blockerCode: undefined,
+        detail: undefined,
+        updatedAt: initialJobTimestamp,
+      }
+    : {
+        jobId: batchId,
+        request,
+        state: 'running',
+        reports: selectedReports.map((report) => (
+          resumeCheckpoints.get(report.type) ?? {
+            reportType: report.type,
+            state: 'queued',
+            attemptIndex: 0,
+            autoRetryCount: 0,
+            updatedAt: createdAt,
+          }
+        )),
+        createdAt,
+        updatedAt: createdAt,
+      };
   const page = new DownloadCenterPage(options.automation);
   const files: LingxingReportFile[] = [];
+  const durableFilesByType = new Map<LingxingReportType, LingxingReportFile>(
+    (validatedResume.inPlace?.files ?? []).map((file) => [file.reportType, file]),
+  );
   let progressSequence = 0;
   let progressSinkFailed = false;
   let aborted: GuardBlockedError | null = null;
@@ -486,7 +731,7 @@ async function runLingxingReportBatchInternal(
     job.updatedAt = isoNow();
     progressSequence += 1;
     const event: LingxingCollectionProgressEvent = {
-      eventId: `${job.jobId}:${progressSequence}`,
+      eventId: `${progressEventNamespace ?? job.jobId}:${progressSequence}`,
       emittedAt: job.updatedAt,
       ...(changedReportType ? { changedReportType } : {}),
       ...(externalStep ? { externalStep } : {}),
@@ -525,7 +770,7 @@ async function runLingxingReportBatchInternal(
     const context: LingxingCollectionGuardContext = {
       jobId: job.jobId,
       requestId,
-      storeContext,
+      storeContext: executionStoreContext,
       ...(reportType ? { reportType } : {}),
       attemptIndex,
       step,
@@ -577,16 +822,28 @@ async function runLingxingReportBatchInternal(
   for (let reportIndex = 0; reportIndex < selectedReports.length; reportIndex += 1) {
     const report = selectedReports[reportIndex];
     const checkpoint = job.reports[reportIndex];
+    const downloadedFile = validatedResume.downloadedFiles.get(report.type);
+    if (downloadedFile) {
+      files.push(cloneReportFile(downloadedFile));
+      continue;
+    }
+    const durableFile = durableFilesByType.get(report.type);
+    const {
+      filePath: _staleFilePath,
+      fileSizeBytes: _staleFileSizeBytes,
+      ...durableFileBase
+    } = durableFile ? cloneReportFile(durableFile) : {};
     const file: LingxingReportFile = {
-      id: `${batchId}_${report.type}`,
+      ...durableFileBase,
+      id: durableFile?.id ?? `${batchId}_${report.type}`,
       batchId,
       reportType: report.type,
-      displayName: report.displayName,
+      displayName: durableFile?.displayName ?? report.displayName,
       status: legacyStatusForState(checkpoint.state),
       maxAutoRetries: maxRetries,
       autoRetryCount: checkpoint.autoRetryCount,
-      attemptErrors: [],
-      createdAt,
+      attemptErrors: [...(durableFile?.attemptErrors ?? [])],
+      createdAt: durableFile?.createdAt ?? createdAt,
       updatedAt: checkpoint.updatedAt,
     };
     let createdReportIdentity = checkpoint.createdReportIdentity;

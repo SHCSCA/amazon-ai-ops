@@ -2,10 +2,11 @@ import Database from 'better-sqlite3';
 import { createHash } from 'crypto';
 import * as path from 'path';
 import {
+  COLLECTION_RESUME_AUTHORITY_MIGRATION_CHECKSUM,
+  COLLECTION_RESUME_AUTHORITY_MIGRATION_NAME,
+  COLLECTION_RESUME_AUTHORITY_MIGRATION_VERSION,
   runAnalysisAuthorityMigration,
-  STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
-  STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
-  STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
+  runCollectionResumeAuthorityMigration,
   prepareUpgradeBackup,
   runExecutionAuthorityMigration,
   prepareStoreAuthorityMigrationBackup,
@@ -113,9 +114,9 @@ function initializeSqlite(database: Database.Database): void {
   // Capture one immutable recovery point for the complete pending chain.
   // This runs before CREATE/ALTER statements, including a v7 -> v8 startup.
   const upgradeBackup = prepareUpgradeBackup(database, {
-    targetVersion: STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
-    targetName: STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
-    targetChecksum: STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
+    targetVersion: COLLECTION_RESUME_AUTHORITY_MIGRATION_VERSION,
+    targetName: COLLECTION_RESUME_AUTHORITY_MIGRATION_NAME,
+    targetChecksum: COLLECTION_RESUME_AUTHORITY_MIGRATION_CHECKSUM,
   });
 
   // Bind and verify the Stage 1 recovery snapshot before any legacy startup
@@ -720,6 +721,7 @@ function runMigrations(database: Database.Database, upgradeBackup: UpgradeBackup
   runAnalysisAuthorityMigration(database);
   runExecutionAuthorityMigration(database, upgradeBackup);
   runStoreAuthorityRepairMigration(database, upgradeBackup);
+  runCollectionResumeAuthorityMigration(database, upgradeBackup);
 }
 
 function installStoreScopedMetricIdentitySafeguards(database: Database.Database): void {

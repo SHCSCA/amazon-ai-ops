@@ -6,7 +6,10 @@ export interface BeforeQuitCoordinatorOptions {
   cleanup(): Promise<void> | void;
   requestQuit(): void;
   reportError(error: unknown): void;
+  cleanupFailurePolicy?: BeforeQuitCleanupFailurePolicy;
 }
+
+export type BeforeQuitCleanupFailurePolicy = 'request-quit' | 'fail-closed';
 
 export type BeforeQuitHandler = (event: BeforeQuitEvent) => Promise<void> | undefined;
 
@@ -46,6 +49,23 @@ export class AppResourceCleanupTimeoutError extends Error {
     this.name = 'AppResourceCleanupTimeoutError';
     this.resource = resource;
     this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Starts a shutdown operation in the current call stack while still turning a
+ * synchronous exception into a rejected promise. Shutdown admission guards
+ * must close before Electron can synchronously re-enter `before-quit`; using a
+ * `Promise.resolve().then(...)` wrapper would defer that guard by one
+ * microtask.
+ */
+export function invokeShutdownOperationNow(
+  operation: () => Promise<void> | void,
+): Promise<void> {
+  try {
+    return Promise.resolve(operation());
+  } catch (error) {
+    return Promise.reject(error);
   }
 }
 
@@ -118,9 +138,23 @@ export function createBeforeQuitCoordinator({
   cleanup,
   requestQuit,
   reportError,
+  cleanupFailurePolicy = 'request-quit',
 }: BeforeQuitCoordinatorOptions): BeforeQuitHandler {
   let quitRequested = false;
   let cleanupPromise: Promise<void> | null = null;
+
+  const requestControlledQuit = (): void => {
+    // Set the flag before calling Electron because app.quit() synchronously
+    // re-enters before-quit. Roll it back if the adapter throws so lifecycle
+    // recovery can surface the failure and a later retry is still admitted.
+    quitRequested = true;
+    try {
+      requestQuit();
+    } catch (error) {
+      quitRequested = false;
+      reportError(error);
+    }
+  };
 
   return (event) => {
     if (quitRequested) {
@@ -130,19 +164,38 @@ export function createBeforeQuitCoordinator({
     event.preventDefault();
 
     if (!cleanupPromise) {
-      let cleanupResult: Promise<void> | void;
-      try {
-        cleanupResult = cleanup();
-      } catch (error) {
-        cleanupResult = Promise.reject(error);
-      }
-
-      cleanupPromise = Promise.resolve(cleanupResult)
-        .catch(reportError)
+      let resolveCleanup!: () => void;
+      let rejectCleanup!: (error: unknown) => void;
+      const cleanupAttempt = new Promise<void>((resolve, reject) => {
+        resolveCleanup = resolve;
+        rejectCleanup = reject;
+      });
+      // Publish the single in-flight promise before cleanup starts. Cleanup can
+      // synchronously re-enter Electron's before-quit path (directly or through
+      // a dependency), while scheduler/execution admission still needs to close
+      // in this same call stack rather than one microtask later.
+      cleanupPromise = cleanupAttempt
+        .then(
+          () => {
+            requestControlledQuit();
+          },
+          (error) => {
+            reportError(error);
+            if (cleanupFailurePolicy === 'request-quit') {
+              requestControlledQuit();
+            }
+          },
+        )
         .finally(() => {
-          quitRequested = true;
-          requestQuit();
+          if (!quitRequested) {
+            cleanupPromise = null;
+          }
         });
+      try {
+        void Promise.resolve(cleanup()).then(resolveCleanup, rejectCleanup);
+      } catch (error) {
+        rejectCleanup(error);
+      }
     }
 
     return cleanupPromise;

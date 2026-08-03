@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  normalizeBrowserProfileId,
+  normalizeStoreId,
   normalizeStoreContextEnvelope,
   type BrowserProfileId,
   type StoreContextEnvelope,
@@ -204,6 +206,11 @@ export interface StoreCollectionScheduleInspection {
   expectedFingerprint?: string;
 }
 
+export interface StoreCollectionManualScheduleInspection {
+  state: 'eligible' | 'duplicate';
+  expectedFingerprint: string;
+}
+
 export type StoreCollectionOrchestratorSchedulerState =
   | 'accepted'
   | 'succeeded'
@@ -287,7 +294,7 @@ export interface StoreCollectionOrchestratorOutcome {
   integrityDigest: string;
 }
 
-interface StoreCollectionSemanticAttempt {
+export interface StoreCollectionSemanticAttempt {
   semanticAttemptId: string;
   cycleId: string;
   transitionId: string;
@@ -300,6 +307,17 @@ interface StoreCollectionSemanticAttempt {
   schedulerRequestId: string;
   attemptedAt: string;
   integrityDigest: string;
+}
+
+export interface StoreCollectionProtectedSemanticAttemptQuery {
+  storeId: StoreId;
+  browserProfileId: BrowserProfileId;
+  expectedFingerprint: string;
+}
+
+export interface StoreCollectionProtectedSemanticAttemptReadback {
+  semanticAttempt: Readonly<StoreCollectionSemanticAttempt>;
+  terminalOutcome: Readonly<StoreCollectionOrchestratorOutcome> | null;
 }
 
 interface StoreCollectionOrchestratorHistory {
@@ -341,6 +359,10 @@ interface AuthorityBoundConfirmation extends StoreCollectionExecutionAutomationA
 export interface StoreCollectionOrchestratorDependencies {
   listActiveStores(): readonly StoreRecord[];
   inspectStoreSchedule(store: StoreRecord): StoreCollectionScheduleInspection;
+  inspectManualStoreSchedule(
+    store: StoreRecord,
+    exactContext: StoreContextEnvelope,
+  ): StoreCollectionManualScheduleInspection;
   getActiveStoreId(): StoreId | null;
   acquireAutomationLease(): Promise<StoreCollectionAutomationLease>;
   registerSchedulerRecoveryAdmission(
@@ -434,6 +456,17 @@ export interface StoreCollectionOrchestratorCycleResult {
   attemptedStoreIds: readonly StoreId[];
 }
 
+function emptyCycleResult(cycleId: string): StoreCollectionOrchestratorCycleResult {
+  return {
+    cycleId,
+    state: 'completed',
+    outcomes: [],
+    skippedStoreIds: [],
+    plannedDueStoreIds: [],
+    attemptedStoreIds: [],
+  };
+}
+
 export class StoreCollectionOrchestratorError extends Error {
   constructor(
     readonly code:
@@ -451,6 +484,7 @@ export class StoreCollectionOrchestratorError extends Error {
 class StopRequestedSignal extends Error {}
 class SchedulerResolutionUnknownSignal extends Error {}
 class SchedulerDefinitivelyFailedSignal extends Error {}
+class ManualContextDriftSignal extends Error {}
 
 type CapabilityIdentityDomain =
   | 'automation'
@@ -489,6 +523,16 @@ interface VisibleRuntimeIntentRecord {
   terminalCleanup: StoreCollectionVisibleRuntimeIntent;
 }
 
+type StoreCollectionOrchestratorCycleMode = 'normal' | 'recover_existing_only' | 'manual';
+
+type StoreCollectionOrchestratorCycleRequest =
+  | { mode: 'normal' | 'recover_existing_only' }
+  | {
+    mode: 'manual';
+    context: StoreContextEnvelope;
+    manualKey: string;
+  };
+
 /**
  * Main-only multi-store visible collection coordinator. Credentials, account
  * challenge handling, execution controls and policy dispatch are deliberately
@@ -503,6 +547,8 @@ export class StoreCollectionOrchestrator {
   private readonly cancelInterval: NonNullable<StoreCollectionOrchestratorDependencies['clearInterval']>;
   private timer: ReturnType<typeof setInterval> | null = null;
   private cycle: Promise<StoreCollectionOrchestratorCycleResult> | null = null;
+  private cycleMode: StoreCollectionOrchestratorCycleMode | null = null;
+  private cycleManualKey: string | null = null;
   private transitionLocked = false;
   private stopRequested = false;
   private drainRequested = false;
@@ -590,18 +636,108 @@ export class StoreCollectionOrchestrator {
     }
   }
 
+  readProtectedSemanticAttempt(
+    input: StoreCollectionProtectedSemanticAttemptQuery,
+  ): Readonly<StoreCollectionProtectedSemanticAttemptReadback> | null {
+    if (this.safetyStateUnknown) throw this.safetyError();
+    try {
+      const storeIdValue = input?.storeId;
+      const browserProfileIdValue = input?.browserProfileId;
+      const expectedFingerprintValue = input?.expectedFingerprint;
+      const storeId = normalizeStoreId(storeIdValue);
+      const browserProfileId = normalizeBrowserProfileId(browserProfileIdValue);
+      if (storeIdValue !== storeId
+        || browserProfileIdValue !== browserProfileId
+        || !validFingerprint(expectedFingerprintValue)) {
+        throw corruptHistory();
+      }
+      const history = this.readProtectedHistorySnapshot();
+      const matches = history.semanticAttempts.filter((attempt) => (
+        attempt.storeId === storeId
+        && attempt.browserProfileId === browserProfileId
+        && attempt.expectedFingerprint === expectedFingerprintValue
+      ));
+      if (matches.length === 0) return null;
+      if (matches.length !== 1) throw corruptHistory();
+      const semanticAttempt = matches[0];
+      const outcomes = history.outcomes.filter((outcome) => (
+        outcome.transitionId === semanticAttempt.transitionId
+      ));
+      if (outcomes.length > 1) throw corruptHistory();
+      const terminalOutcome = outcomes[0] ?? null;
+      if (terminalOutcome) {
+        const transition = history.transitions.find((candidate) => (
+          candidate.transitionId === semanticAttempt.transitionId
+        ));
+        if (!transition || !isTerminalPhase(transition.phase)) throw corruptHistory();
+      }
+      return Object.freeze({
+        semanticAttempt: Object.freeze({ ...semanticAttempt }),
+        terminalOutcome: terminalOutcome
+          ? Object.freeze({ ...terminalOutcome })
+          : null,
+      });
+    } catch (error) {
+      throw this.markSafetyUnknown(error);
+    }
+  }
+
   runCycle(): Promise<StoreCollectionOrchestratorCycleResult> {
-    if (this.cycle) return this.cycle;
+    return this.startCycle({ mode: 'normal' });
+  }
+
+  recoverExistingTransitionsOnly(): Promise<StoreCollectionOrchestratorCycleResult> {
+    return this.startCycle({ mode: 'recover_existing_only' });
+  }
+
+  runStoreNow(value: StoreContextEnvelope): Promise<StoreCollectionOrchestratorCycleResult> {
+    let context: StoreContextEnvelope;
+    try {
+      context = Object.freeze(normalizeStoreContextEnvelope(value));
+    } catch (error) {
+      const rejected = new StoreCollectionOrchestratorError(
+        'USER_OPERATION_BLOCKED',
+        '手动采集上下文无效；Main 已拒绝执行。',
+      );
+      (rejected as StoreCollectionOrchestratorError & { cause?: unknown }).cause = error;
+      return Promise.reject(rejected);
+    }
+    return this.startCycle({
+      mode: 'manual',
+      context,
+      manualKey: manualCollectionCycleKey(context),
+    });
+  }
+
+  private startCycle(
+    request: StoreCollectionOrchestratorCycleRequest,
+  ): Promise<StoreCollectionOrchestratorCycleResult> {
     try {
       this.assertCanStart();
     } catch (error) {
       return Promise.reject(error);
     }
+    if (this.cycle) {
+      if (request.mode === this.cycleMode
+        && (request.mode !== 'manual' || request.manualKey === this.cycleManualKey)) {
+        return this.cycle;
+      }
+      return Promise.reject(new StoreCollectionOrchestratorError(
+        'USER_OPERATION_BLOCKED',
+        '另一条采集或恢复链正在运行；Main 已拒绝复用不相关的 in-flight Promise。',
+      ));
+    }
     this.transitionLocked = true;
-    const cycle = this.executeCycle();
+    this.cycleMode = request.mode;
+    this.cycleManualKey = request.mode === 'manual' ? request.manualKey : null;
+    const cycle = this.executeCycle(request);
     this.cycle = cycle;
     void cycle.finally(() => {
-      if (this.cycle === cycle) this.cycle = null;
+      if (this.cycle === cycle) {
+        this.cycle = null;
+        this.cycleMode = null;
+        this.cycleManualKey = null;
+      }
       if (!this.safetyStateUnknown) this.transitionLocked = false;
     }).catch(() => undefined);
     return cycle;
@@ -614,7 +750,9 @@ export class StoreCollectionOrchestrator {
     }
   }
 
-  private async executeCycle(): Promise<StoreCollectionOrchestratorCycleResult> {
+  private async executeCycle(
+    request: StoreCollectionOrchestratorCycleRequest,
+  ): Promise<StoreCollectionOrchestratorCycleResult> {
     let pendingTransitions: StoreCollectionOrchestratorTransition[];
     let attemptedCollectionKeys: ReadonlySet<string>;
     try {
@@ -626,7 +764,20 @@ export class StoreCollectionOrchestrator {
       throw this.markSafetyUnknown(error);
     }
     const cycleId = this.createCycleId();
-    const activeStores = this.stableActiveStoreSnapshot();
+    const manualRecoveryOnly = request.mode === 'manual' && pendingTransitions.length > 0;
+    if (request.mode === 'recover_existing_only' && pendingTransitions.length === 0) {
+      return emptyCycleResult(cycleId);
+    }
+    let activeStores: StoreRecord[];
+    try {
+      activeStores = this.stableActiveStoreSnapshot();
+    } catch (error) {
+      if (error instanceof StoreCollectionOrchestratorError
+        && error.code === 'UNSUPPORTED_STORE') {
+        throw error;
+      }
+      throw this.markSafetyUnknown(error);
+    }
     try {
       // Validate every persisted authority snapshot before even terminalizing an
       // untouched claim. Otherwise an unknown Store/Profile could be rewritten
@@ -641,8 +792,26 @@ export class StoreCollectionOrchestrator {
     } catch (error) {
       throw this.markSafetyUnknown(error);
     }
-    const dueSnapshot = this.stableDueStoreSnapshot(activeStores, attemptedCollectionKeys);
-    if (dueSnapshot.due.length === 0 && pendingTransitions.length === 0) {
+    if ((request.mode === 'recover_existing_only' || manualRecoveryOnly)
+      && pendingTransitions.length === 0) {
+      return emptyCycleResult(cycleId);
+    }
+    let dueSnapshot: {
+      due: Array<{
+        store: StoreRecord;
+        expectedFingerprint: string;
+        requiredBusinessDate?: string;
+      }>;
+      skipped: StoreRecord[];
+    } = request.mode === 'normal'
+      ? this.stableDueStoreSnapshot(activeStores, attemptedCollectionKeys)
+      : { due: [], skipped: [] };
+    const manualStore = request.mode === 'manual' && !manualRecoveryOnly
+      ? this.exactActiveManualStore(request.context, activeStores)
+      : undefined;
+    if (request.mode !== 'manual'
+      && dueSnapshot.due.length === 0
+      && pendingTransitions.length === 0) {
       return {
         cycleId,
         state: 'completed',
@@ -686,6 +855,41 @@ export class StoreCollectionOrchestrator {
       await this.assertPolicySuppressed(auth, policyLease.guard);
       currentAuthority = await this.readAuthority(auth);
       this.assertAuthorityAgainstActiveStoreSnapshot(currentAuthority, activeStores);
+
+      let operatorStoreId: StoreId | null | undefined;
+      if (request.mode === 'manual' && manualStore) {
+        this.assertManualContextCurrent(request.context, currentAuthority);
+        try {
+          operatorStoreId = this.dependencies.getActiveStoreId();
+        } catch (error) {
+          throw this.markSafetyUnknown(error);
+        }
+        if (operatorStoreId !== request.context.storeId) {
+          throw new StoreCollectionOrchestratorError(
+            'USER_OPERATION_BLOCKED',
+            '手动采集上下文已过期；Main 当前活动店铺不一致。',
+          );
+        }
+        dueSnapshot = this.stableManualStoreSnapshot(
+          manualStore,
+          request.context,
+          attemptedCollectionKeys,
+        );
+        currentAuthority = await this.readAuthority(auth);
+        this.assertAuthorityAgainstActiveStoreSnapshot(currentAuthority, activeStores);
+        this.assertManualContextCurrent(request.context, currentAuthority);
+        try {
+          operatorStoreId = this.dependencies.getActiveStoreId();
+        } catch (error) {
+          throw this.markSafetyUnknown(error);
+        }
+        if (operatorStoreId !== request.context.storeId) {
+          throw new StoreCollectionOrchestratorError(
+            'USER_OPERATION_BLOCKED',
+            '手动采集资格预检后 Main 活动店铺已改变；未创建 scheduler request。',
+          );
+        }
+      }
 
       if (pendingTransitions.length > 0) {
         handledRecovery = true;
@@ -732,11 +936,12 @@ export class StoreCollectionOrchestrator {
         }
       }
 
-      let operatorStoreId: StoreId | null;
-      try {
-        operatorStoreId = this.dependencies.getActiveStoreId();
-      } catch (error) {
-        throw this.markSafetyUnknown(error);
+      if (operatorStoreId === undefined) {
+        try {
+          operatorStoreId = this.dependencies.getActiveStoreId();
+        } catch (error) {
+          throw this.markSafetyUnknown(error);
+        }
       }
       if (operatorStoreId !== currentAuthority.activeStoreId) {
         throw this.markSafetyUnknown(new StoreCollectionOrchestratorError(
@@ -855,7 +1060,11 @@ export class StoreCollectionOrchestrator {
     cycleId: string;
     currentAuthority: StoreCollectionAuthorityReadback;
     originAuthority: StoreCollectionAuthorityReadback;
-    due: { store: StoreRecord; expectedFingerprint: string };
+    due: {
+      store: StoreRecord;
+      expectedFingerprint: string;
+      requiredBusinessDate?: string;
+    };
     auth: StoreCollectionAutomationAuthority;
     policyGuard: StoreCollectionPolicySuppressionGuard;
     onTouched(): void;
@@ -946,6 +1155,10 @@ export class StoreCollectionOrchestrator {
         businessDate: context.businessDate,
         sessionGeneration: context.sessionGeneration,
       });
+      if (due.requiredBusinessDate !== undefined
+        && context.businessDate !== due.requiredBusinessDate) {
+        throw new ManualContextDriftSignal();
+      }
       this.throwIfStopping();
 
       stage = 'runtime_start';
@@ -1063,6 +1276,11 @@ export class StoreCollectionOrchestrator {
         failureCode = 'SCHEDULER_FAILED';
         outcomeState = 'failed';
         bodyFinished = true;
+      } else if (error instanceof ManualContextDriftSignal) {
+        failureCode = 'SCHEDULE_PRECHECK_FAILED';
+        outcomeState = 'blocked';
+        bodyFinished = true;
+        mustStop = true;
       } else if (error instanceof SchedulerResolutionUnknownSignal
         || transition.phase === 'scheduler_request_bound'
         || transition.phase === 'scheduler_accepted') {
@@ -2100,6 +2318,92 @@ export class StoreCollectionOrchestrator {
       profiles.add(store.browserProfileId);
     }
     return stores;
+  }
+
+  private exactActiveManualStore(
+    context: StoreContextEnvelope,
+    activeStores: readonly StoreRecord[],
+  ): StoreRecord {
+    const exact = activeStores.find((store) => (
+      store.storeId === context.storeId
+      && store.browserProfileId === context.browserProfileId
+      && store.marketplace === context.marketplace
+      && store.currency === context.currency
+      && store.businessTimezone === context.businessTimezone
+    ));
+    if (!exact) {
+      throw new StoreCollectionOrchestratorError(
+        'USER_OPERATION_BLOCKED',
+        '手动采集目标不是当前 active US/USD/America/Los_Angeles Store/Profile。',
+      );
+    }
+    return exact;
+  }
+
+  private assertManualContextCurrent(
+    context: StoreContextEnvelope,
+    currentAuthority: StoreCollectionAuthorityReadback,
+  ): void {
+    const expected: StoreCollectionAuthorityReadback = {
+      activeStoreId: context.storeId,
+      context,
+    };
+    if (!sameAuthority(currentAuthority, expected)) {
+      throw new StoreCollectionOrchestratorError(
+        'USER_OPERATION_BLOCKED',
+        '手动采集上下文已过期；Store/Profile/业务日/会话代次与 Main authority 不完全一致。',
+      );
+    }
+  }
+
+  private stableManualStoreSnapshot(
+    store: StoreRecord,
+    exactContext: StoreContextEnvelope,
+    attemptedCollectionKeys: ReadonlySet<string>,
+  ): {
+    due: Array<{
+      store: StoreRecord;
+      expectedFingerprint: string;
+      requiredBusinessDate: string;
+    }>;
+    skipped: StoreRecord[];
+  } {
+    let inspected: StoreCollectionManualScheduleInspection;
+    try {
+      inspected = this.dependencies.inspectManualStoreSchedule(
+        cloneStoreRecord(store),
+        Object.freeze(normalizeStoreContextEnvelope(exactContext)),
+      );
+    } catch {
+      throw new StoreCollectionOrchestratorError(
+        'SCHEDULE_PRECHECK_FAILED',
+        'Main-only 手动采集资格预检失败。',
+      );
+    }
+    if ((inspected?.state !== 'eligible' && inspected?.state !== 'duplicate')
+      || !validFingerprint(inspected.expectedFingerprint)) {
+      throw new StoreCollectionOrchestratorError(
+        'SCHEDULE_PRECHECK_FAILED',
+        '手动采集资格预检缺少合法状态或 expected fingerprint。',
+      );
+    }
+    const expectedFingerprint = inspected.expectedFingerprint;
+    const protectedDuplicate = attemptedCollectionKeys.has(collectionAttemptSemanticKey({
+      storeId: store.storeId,
+      browserProfileId: store.browserProfileId,
+      expectedFingerprint,
+    }));
+    if (inspected.state === 'duplicate' || protectedDuplicate) {
+      return { due: [], skipped: [store] };
+    }
+    return {
+      due: [{
+        store,
+        expectedFingerprint,
+        requiredBusinessDate: exactContext.businessDate,
+      }],
+      skipped: [],
+    };
   }
 
   private stableDueStoreSnapshot(
@@ -3370,6 +3674,18 @@ function transitionTargetFromStore(store: StoreRecord): StoreCollectionTransitio
     currency: 'USD',
     businessTimezone: 'America/Los_Angeles',
   };
+}
+
+function manualCollectionCycleKey(context: StoreContextEnvelope): string {
+  return JSON.stringify([
+    context.storeId,
+    context.browserProfileId,
+    context.marketplace,
+    context.currency,
+    context.businessTimezone,
+    context.businessDate,
+    context.sessionGeneration,
+  ]);
 }
 
 function collectionAttemptSemanticKey(input: {

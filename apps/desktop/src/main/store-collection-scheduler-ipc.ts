@@ -1,8 +1,9 @@
 import type {
+  StoreCollectionScheduleProjection,
   StoreCollectionScheduleRequest,
+  StoreCollectionScheduleRunResult,
   StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
-import type { StoreCollectionScheduler } from './store-collection-scheduler';
 
 export const STORE_COLLECTION_SCHEDULER_IPC_CHANNELS = [
   'store-collection-scheduler:get',
@@ -13,11 +14,16 @@ export interface StoreCollectionSchedulerIpcRegistrar {
   handle(channel: string, listener: (event: unknown, input?: unknown) => unknown): void;
 }
 
-type StoreCollectionSchedulerPort = Pick<StoreCollectionScheduler, 'get' | 'runNow'>;
+export interface StoreCollectionSchedulerIpcPort {
+  get(
+    context: StoreContextEnvelope,
+  ): StoreCollectionScheduleProjection | Promise<StoreCollectionScheduleProjection>;
+  runNow(context: StoreContextEnvelope): Promise<StoreCollectionScheduleRunResult>;
+}
 
 export function registerStoreCollectionSchedulerIpcHandlers(
   ipc: StoreCollectionSchedulerIpcRegistrar,
-  scheduler: StoreCollectionSchedulerPort,
+  scheduler: StoreCollectionSchedulerIpcPort,
 ): void {
   ipc.handle('store-collection-scheduler:get', (_event, raw) => {
     const request = readRequest(raw);

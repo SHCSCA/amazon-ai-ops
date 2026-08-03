@@ -1,12 +1,14 @@
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import {
   normalizeStoreContextEnvelope,
+  type StoreConnection,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
 import {
   StoreMutationLane,
   VisibleBrowserRuntimeRegistry,
   type VisibleBrowserControllerLike,
+  type VisibleBrowserRuntimeCandidate,
 } from './visible-browser-runtime-registry';
 
 function context(
@@ -66,7 +68,192 @@ function candidate(
   };
 }
 
+function operatorCandidate(options: {
+  lingxing?: ReturnType<typeof controller>;
+  amazonAds?: ReturnType<typeof controller>;
+  contextOverride?: Partial<StoreContextEnvelope>;
+  amazonAdsIdentityStatus?: 'unknown' | 'pending' | 'blocked';
+  attempt?: VisibleBrowserRuntimeCandidate['attempt'];
+} = {}): VisibleBrowserRuntimeCandidate {
+  const runtimeContext = context(options.contextOverride);
+  return {
+    purpose: 'operator_full',
+    context: runtimeContext,
+    controllers: {
+      lingxing: options.lingxing ?? controller(),
+      amazonAds: options.amazonAds ?? controller(),
+    },
+    profileDirs: {
+      lingxing: 'D:\\capsules\\store-one\\lingxing',
+      amazonAds: 'D:\\capsules\\store-one\\amazon-ads',
+    },
+    connections: {
+      lingxing: {
+        id: 'connection-lingxing' as StoreConnection['id'],
+        provider: 'lingxing',
+        storeId: runtimeContext.storeId,
+        status: 'ready',
+        externalAccountId: 'seller-one',
+        createdAt: '2026-07-01T00:00:00.000Z',
+        updatedAt: '2026-07-01T00:00:00.000Z',
+      },
+      amazonAds: {
+        id: 'connection-amazon-ads' as StoreConnection['id'],
+        provider: 'amazon_ads',
+        storeId: runtimeContext.storeId,
+        status: 'ready',
+        externalAccountId: 'ads-one',
+        createdAt: '2026-07-01T00:00:00.000Z',
+        updatedAt: '2026-07-01T00:00:00.000Z',
+      },
+    },
+    amazonAdsIdentityStatus: options.amazonAdsIdentityStatus ?? 'pending',
+    ...(options.attempt ? { attempt: options.attempt } : {}),
+  };
+}
+
 describe('VisibleBrowserRuntimeRegistry', () => {
+  it('CAS-verifies Amazon Ads identity only for the exact operator runtime and invalidates old claims', () => {
+    const registry = new VisibleBrowserRuntimeRegistry(() => 'operator-runtime');
+    const published = registry.publishCandidate(operatorCandidate({
+      attempt: { kind: 'manual', attemptId: 'operator-login', attemptEpoch: 9 },
+    }));
+    const lingxingVerified = registry.verifyLingxingCandidate(published);
+    const identityClaim = registry.claimAmazonAdsIdentity({
+      runtimeId: lingxingVerified.runtime.runtimeId,
+      epoch: lingxingVerified.runtime.epoch,
+      context: context(),
+    });
+
+    const verified = registry.verifyAmazonAdsIdentity(identityClaim);
+
+    expect(verified.providerIdentityStatus).toEqual({
+      lingxing: 'verified',
+      amazonAds: 'verified',
+    });
+    expect(Object.isFrozen(verified)).toBe(true);
+    expect(verified.epoch).toBe(lingxingVerified.runtime.epoch + 1);
+    expect(registry.read()).toBe(verified);
+    expect(() => registry.assertClaimCurrent(lingxingVerified)).toThrow(/replayed|changed/);
+    expect(() => registry.verifyAmazonAdsIdentity(identityClaim)).toThrow(/replayed/);
+  });
+
+  it('rejects collection-only, forged, cross-context, and blocked-to-verified Ads transitions', () => {
+    const collection = new VisibleBrowserRuntimeRegistry(() => 'collection-runtime');
+    const collectionClaim = collection.publishCandidate(candidate());
+    expect(() => collection.claimAmazonAdsIdentity({
+      runtimeId: collectionClaim.runtime.runtimeId,
+      epoch: collectionClaim.runtime.epoch,
+      context: context(),
+    })).toThrow(/operator_full/);
+
+    const operator = new VisibleBrowserRuntimeRegistry(() => 'operator-runtime');
+    const published = operator.publishCandidate(operatorCandidate({
+      amazonAdsIdentityStatus: 'blocked',
+    }));
+    const lingxingVerified = operator.verifyLingxingCandidate(published);
+    expect(() => operator.claimAmazonAdsIdentity({
+      runtimeId: lingxingVerified.runtime.runtimeId,
+      epoch: lingxingVerified.runtime.epoch,
+      context: context({ businessDate: '2026-07-31' as StoreContextEnvelope['businessDate'] }),
+    })).toThrow(/exact runtime, epoch, or context/);
+
+    const blockedClaim = operator.claimAmazonAdsIdentity({
+      runtimeId: lingxingVerified.runtime.runtimeId,
+      epoch: lingxingVerified.runtime.epoch,
+      context: context(),
+    });
+    expect(() => operator.verifyAmazonAdsIdentity({ ...blockedClaim })).toThrow(/forged/);
+    expect(() => operator.verifyAmazonAdsIdentity(blockedClaim)).toThrow(/blocked.*cannot become verified/);
+    expect(() => operator.verifyAmazonAdsIdentity(blockedClaim)).toThrow(/replayed/);
+  });
+
+  it('revokes an unconsumed Ads claim across strict close and a fresh runtime epoch', async () => {
+    const registry = new VisibleBrowserRuntimeRegistry(() => 'stable-runtime-name');
+    const firstPublished = registry.publishCandidate(operatorCandidate());
+    const firstVerified = registry.verifyLingxingCandidate(firstPublished);
+    const oldAdsClaim = registry.claimAmazonAdsIdentity({
+      runtimeId: firstVerified.runtime.runtimeId,
+      epoch: firstVerified.runtime.epoch,
+      context: context(),
+    });
+    await registry.strictCloseCurrent(context());
+    const secondPublished = registry.publishCandidate(operatorCandidate({
+      contextOverride: { sessionGeneration: 8 },
+    }));
+    registry.verifyLingxingCandidate(secondPublished);
+
+    expect(() => registry.verifyAmazonAdsIdentity(oldAdsClaim)).toThrow(/replayed|changed/);
+    expect(registry.read()?.epoch).toBeGreaterThan(oldAdsClaim.epoch);
+  });
+
+  it('can fail closed from verified to blocked but never return blocked to verified', () => {
+    const registry = new VisibleBrowserRuntimeRegistry(() => 'operator-runtime');
+    const published = registry.publishCandidate(operatorCandidate());
+    const lingxingVerified = registry.verifyLingxingCandidate(published);
+    const verifyClaim = registry.claimAmazonAdsIdentity({
+      runtimeId: lingxingVerified.runtime.runtimeId,
+      epoch: lingxingVerified.runtime.epoch,
+      context: context(),
+    });
+    const verified = registry.verifyAmazonAdsIdentity(verifyClaim);
+    const blockClaim = registry.claimAmazonAdsIdentity({
+      runtimeId: verified.runtimeId,
+      epoch: verified.epoch,
+      context: context(),
+    });
+    const blocked = registry.blockAmazonAdsIdentity(blockClaim);
+    const forbiddenVerify = registry.claimAmazonAdsIdentity({
+      runtimeId: blocked.runtimeId,
+      epoch: blocked.epoch,
+      context: context(),
+    });
+
+    expect(blocked.providerIdentityStatus.amazonAds).toBe('blocked');
+    expect(blocked.epoch).toBe(verified.epoch + 1);
+    expect(() => registry.verifyAmazonAdsIdentity(forbiddenVerify))
+      .toThrow(/blocked.*cannot become verified/);
+  });
+
+  it.each([
+    ['missing Ads controller', () => {
+      const valid = operatorCandidate();
+      return { ...valid, controllers: { lingxing: valid.controllers.lingxing } };
+    }],
+    ['aliased provider controllers', () => {
+      const valid = operatorCandidate();
+      const shared = controller();
+      return { ...valid, controllers: { lingxing: shared, amazonAds: shared } };
+    }],
+    ['missing Ads profile', () => {
+      const valid = operatorCandidate();
+      return { ...valid, profileDirs: { lingxing: valid.profileDirs!.lingxing } };
+    }],
+    ['normalized profile alias', () => {
+      const valid = operatorCandidate();
+      return {
+        ...valid,
+        profileDirs: {
+          lingxing: 'D:\\Capsules\\Store-One\\LingXing\\',
+          amazonAds: 'd:/capsules/store-one/lingxing',
+        },
+      };
+    }],
+    ['missing Ads connection', () => {
+      const valid = operatorCandidate();
+      return {
+        ...valid,
+        connections: { lingxing: valid.connections!.lingxing },
+      };
+    }],
+  ])('rejects incomplete or aliased operator_full provider isolation: %s', (_label, build) => {
+    const registry = new VisibleBrowserRuntimeRegistry(() => 'invalid-operator-runtime');
+
+    expect(() => registry.publishCandidate(build() as VisibleBrowserRuntimeCandidate))
+      .toThrow(/distinct Lingxing\/Amazon Ads controllers, profiles, and connections/);
+    expect(registry.read()).toBeNull();
+  });
+
   it('publishes pending, CAS-verifies, strictly closes, and consumes exact proofs', async () => {
     const registry = new VisibleBrowserRuntimeRegistry(() => 'runtime-one');
     const browser = controller();
@@ -133,12 +320,11 @@ describe('VisibleBrowserRuntimeRegistry', () => {
       },
     });
     const amazonAds = controller();
-    const claim = registry.publishCandidate({
-      purpose: 'operator_full',
-      context: context(),
-      controllers: { lingxing, amazonAds },
+    const claim = registry.publishCandidate(operatorCandidate({
+      lingxing,
+      amazonAds,
       attempt: { kind: 'manual', attemptId: 'login-one', attemptEpoch: 4 },
-    });
+    }));
 
     await expect(registry.strictClose(claim)).rejects.toThrow(/close failed/);
     expect(lingxing.close).toHaveBeenCalledOnce();
@@ -189,20 +375,14 @@ describe('VisibleBrowserRuntimeRegistry', () => {
 
   it('supports pending manual attempt epochs without allowing collection Ads controllers', () => {
     const manual = new VisibleBrowserRuntimeRegistry(() => 'manual-runtime');
-    const claim = manual.publishCandidate({
-      purpose: 'operator_full',
-      context: context(),
-      controllers: {
-        lingxing: controller(),
-        amazonAds: controller(),
-      },
+    const claim = manual.publishCandidate(operatorCandidate({
       attempt: {
         kind: 'manual',
         attemptId: 'login-attempt',
         attemptEpoch: 12,
       },
       amazonAdsIdentityStatus: 'blocked',
-    });
+    }));
     expect(claim.runtime.attempt).toEqual({
       kind: 'manual',
       attemptId: 'login-attempt',
@@ -232,13 +412,11 @@ describe('VisibleBrowserRuntimeRegistry', () => {
   it('revokes a manual live claim for an opaque Main strict-close handoff', async () => {
     const registry = new VisibleBrowserRuntimeRegistry(() => 'manual-runtime');
     const browser = controller();
-    const manualClaim = registry.publishCandidate({
-      purpose: 'operator_full',
-      context: context(),
-      controllers: { lingxing: browser, amazonAds: controller() },
+    const manualClaim = registry.publishCandidate(operatorCandidate({
+      lingxing: browser,
       attempt: { kind: 'manual', attemptId: 'manual-login', attemptEpoch: 3 },
       amazonAdsIdentityStatus: 'unknown',
-    });
+    }));
     const verifiedClaim = registry.verifyLingxingCandidate(manualClaim);
     expect(verifiedClaim.runtime.providerIdentityStatus).toEqual({
       lingxing: 'verified',
@@ -275,9 +453,98 @@ describe('VisibleBrowserRuntimeRegistry', () => {
     expect(browser.close).toHaveBeenCalledOnce();
     expect(registry.read()).toBeNull();
   });
+
+  it('terminally seals shutdown close and keeps its exact empty proof idempotent', async () => {
+    let releaseClose!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    const registry = new VisibleBrowserRuntimeRegistry(() => 'terminal-runtime');
+    const browser = controller({
+      close: async () => {
+        await closeGate;
+        browser.setResidue(null, null);
+      },
+    });
+    registry.publishCandidate(candidate(browser));
+
+    const sealing = registry.closeAllAndSeal();
+    const concurrentClose = registry.closeAll();
+    expect(concurrentClose).toBe(sealing);
+    expect(() => registry.publishCandidate(candidate())).toThrow(/terminally sealed/);
+    expect(() => registry.claimCurrent()).toThrow(/terminally sealed/);
+
+    releaseClose();
+    const firstProof = await sealing;
+    const secondProof = await registry.closeAllAndSeal();
+    const ordinaryCloseProof = await registry.closeAll();
+
+    expect(firstProof).toBe(secondProof);
+    expect(firstProof).toBe(ordinaryCloseProof);
+    expect(browser.close).toHaveBeenCalledOnce();
+    registry.consumeEmptyProof(firstProof);
+    registry.consumeEmptyProof(firstProof);
+    expect(() => registry.publishCandidate(candidate())).toThrow(/terminally sealed/);
+    expect(() => registry.claimCurrent()).toThrow(/terminally sealed/);
+    expect(registry.read()).toBeNull();
+  });
+
+  it('keeps terminal admission sealed while retrying a failed controller close', async () => {
+    const registry = new VisibleBrowserRuntimeRegistry(() => 'failed-terminal-runtime');
+    let closeAttempts = 0;
+    const browser = controller({
+      close: async () => {
+        closeAttempts += 1;
+        if (closeAttempts === 1) throw new Error('terminal close failed');
+        browser.setResidue(null, null);
+      },
+    });
+    registry.publishCandidate(candidate(browser));
+
+    const sealing = registry.closeAllAndSeal();
+    await expect(sealing).rejects.toThrow(/close failed/i);
+
+    expect(() => registry.publishCandidate(candidate())).toThrow(/terminally sealed/i);
+    expect(() => registry.claimCurrent()).toThrow(/terminally sealed/i);
+    expect(registry.read()).not.toBeNull();
+    expect(browser.close).toHaveBeenCalledOnce();
+
+    const retriedProof = await registry.closeAllAndSeal();
+    expect(browser.close).toHaveBeenCalledTimes(2);
+    expect(registry.read()).toBeNull();
+    expect(await registry.closeAllAndSeal()).toBe(retriedProof);
+    expect(await registry.closeAll()).toBe(retriedProof);
+    expect(() => registry.publishCandidate(candidate())).toThrow(/terminally sealed/i);
+    expect(() => registry.claimCurrent()).toThrow(/terminally sealed/i);
+  });
 });
 
 describe('StoreMutationLane', () => {
+  it('enters an irreversible sticky-unknown state and retains the exact held claim', () => {
+    const lane = new StoreMutationLane();
+    const capability = Object.freeze({});
+    lane.registerAuthority({ kind: 'user', owner: 'renderer-store-ipc', capability });
+    const claim = lane.claim({ kind: 'user', owner: 'renderer-store-ipc', capability });
+
+    const snapshot = lane.markSafetyStateUnknown();
+
+    expect(snapshot).toEqual({
+      state: 'sticky_unknown',
+      held: true,
+      stickyUnknown: true,
+      sequence: 1,
+      current: { kind: 'user', owner: 'renderer-store-ipc', sequence: 1 },
+    });
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(() => lane.release(claim)).toThrow(/safety state is unknown/i);
+    expect(() => lane.registerAuthority({
+      kind: 'automation',
+      owner: 'daily-collection',
+      capability: Object.freeze({}),
+    })).toThrow(/safety state is unknown/i);
+    expect(lane.inspect()).toEqual(snapshot);
+  });
+
   it('mutually excludes user and automation after synchronous admission', () => {
     const lane = new StoreMutationLane();
     const userCapability = Object.freeze({});

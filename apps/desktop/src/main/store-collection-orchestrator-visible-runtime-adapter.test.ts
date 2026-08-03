@@ -70,6 +70,19 @@ function connection(value = context()): StoreConnection {
   };
 }
 
+function amazonAdsConnection(value = context()): StoreConnection {
+  return {
+    id: `ads-connection-${value.storeId}` as StoreConnection['id'],
+    storeId: value.storeId,
+    provider: 'amazon_ads',
+    status: 'ready',
+    accountLabel: `ads-account-${value.storeId}`,
+    externalAccountId: `ads-${value.storeId}`,
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+  };
+}
+
 function page() {
   return {
     url: () => 'https://erp.lingxing.com/erp/home',
@@ -735,10 +748,19 @@ describe('StoreCollectionOrchestratorVisibleRuntimeAdapter', () => {
       },
     });
     const test = harness({ controller: manualBrowser });
+    const amazonAdsBrowser = controller();
     test.registry.publishCandidate({
       purpose: 'operator_full',
       context: test.input.context,
-      controllers: { lingxing: manualBrowser },
+      controllers: { lingxing: manualBrowser, amazonAds: amazonAdsBrowser },
+      profileDirs: {
+        lingxing: 'C:\\profiles\\manual-lingxing',
+        amazonAds: 'C:\\profiles\\manual-amazon-ads',
+      },
+      connections: {
+        lingxing: connection(test.input.context),
+        amazonAds: amazonAdsConnection(test.input.context),
+      },
       attempt: { kind: 'manual', attemptId: 'manual-transient', attemptEpoch: 1 },
     });
 
@@ -795,10 +817,19 @@ describe('StoreCollectionOrchestratorVisibleRuntimeAdapter', () => {
       },
     });
     const test = harness({ controller: manualBrowser });
+    const amazonAdsBrowser = controller();
     const manualClaim = test.registry.publishCandidate({
       purpose: 'operator_full',
       context: test.input.context,
-      controllers: { lingxing: manualBrowser },
+      controllers: { lingxing: manualBrowser, amazonAds: amazonAdsBrowser },
+      profileDirs: {
+        lingxing: 'C:\\profiles\\manual-lingxing',
+        amazonAds: 'C:\\profiles\\manual-amazon-ads',
+      },
+      connections: {
+        lingxing: connection(test.input.context),
+        amazonAds: amazonAdsConnection(test.input.context),
+      },
       attempt: { kind: 'manual', attemptId: 'manual-login-one', attemptEpoch: 1 },
     });
 

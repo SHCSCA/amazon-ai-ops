@@ -10,6 +10,11 @@ import type {
 } from '@amazon-ai-ops/shared-types';
 import { normalizeStoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import type { RunBatchOptions, RunBatchResult } from '@amazon-ai-ops/lingxing-report-collector';
+import type {
+  CollectionInPlaceResumeState,
+  CollectionResumeAttemptReceipt,
+  CollectionResumeClaim,
+} from '@amazon-ai-ops/local-db';
 import { deriveStoreCapsulePaths } from '@amazon-ai-ops/browser-worker';
 import {
   LingxingCollectionCoordinator,
@@ -55,6 +60,58 @@ function capsuleFor(storeContext = context()) {
 
 function jobRequest(storeContext = context()): LingxingCollectionRequestDto {
   return normalizeCollectionRequest(request(storeContext));
+}
+
+function fullEightResumeState(): CollectionInPlaceResumeState {
+  const durableContext = context('store-one', 3);
+  const durableRequest = normalizeCollectionRequest({
+    ...request(durableContext),
+    requestId: 'collect-resume-001',
+    reportTypes: undefined,
+  });
+  const updatedAt = '2026-07-22T07:59:00.000Z';
+  const reports = durableRequest.reportTypes.map((reportType) => ({
+    reportType,
+    state: 'queued' as const,
+    attemptIndex: 0,
+    autoRetryCount: 0,
+    updatedAt,
+  }));
+  return {
+    jobId: 'batch-1',
+    request: durableRequest,
+    reports,
+    job: {
+      jobId: 'batch-1',
+      request: durableRequest,
+      state: 'failed',
+      reports,
+      blockerCode: 'LINGXING_COLLECTION_STEP_FAILED',
+      detail: 'safe pre-create failure',
+      createdAt: '2026-07-22T07:58:00.000Z',
+      completedAt: updatedAt,
+      updatedAt,
+    },
+    batch: {
+      id: 'batch-1',
+      requestId: durableRequest.requestId,
+      storeId: durableContext.storeId,
+      browserProfileId: durableContext.browserProfileId,
+      businessDate: durableContext.businessDate,
+      sessionGeneration: durableContext.sessionGeneration,
+      dateStart: durableRequest.dateStart,
+      dateEnd: durableRequest.dateEnd,
+      storeName: 'SHC001 主店',
+      marketplaceCode: 'US',
+      status: 'failed',
+      downloadDir: path.join(capsuleFor(context()).downloadsDir, 'batch-1'),
+      createdAt: '2026-07-22T07:58:00.000Z',
+      completedAt: updatedAt,
+    },
+    files: [],
+    expectedJobUpdatedAt: updatedAt,
+    authorityProofSha256: 'a'.repeat(64),
+  };
 }
 
 function resultFor(options: RunBatchOptions): RunBatchResult {
@@ -158,11 +215,58 @@ function progressFor(options: RunBatchOptions): LingxingCollectionProgressEvent 
 
 function harness() {
   let active = context();
+  let cancelled = false;
   const persistedProgress: LingxingCollectionProgressEvent[] = [];
   const published: LingxingCollectionProgressEvent[] = [];
   const persistedResults: RunBatchResult[] = [];
   const persistedImportStates: LingxingCollectionJobSnapshot[] = [];
+  const resumeProgress: LingxingCollectionProgressEvent[] = [];
+  const resumeFinalized: Array<{ outcome: string; claimVersion: number }> = [];
+  let resumeClaimSequence = 0;
+  const nextResumeClaim = (claim?: any) => {
+    resumeClaimSequence += 1;
+    return {
+      storeId: context().storeId,
+      attemptId: claim?.attemptId ?? 'attempt-coordinator-resume',
+      jobId: claim?.jobId ?? 'batch-1',
+      requestId: claim?.requestId ?? 'collect-resume-001',
+      claimToken: `token-${resumeClaimSequence}`,
+      expectedJobUpdatedAt: claim?.expectedJobUpdatedAt ?? '2026-07-22T07:59:00.000Z',
+      expectedAuthorityProofSha256: 'a'.repeat(64),
+      version: (claim?.version ?? 0) + 1,
+      claimedAt: claim?.claimedAt ?? '2026-07-22T07:59:30.000Z',
+    };
+  };
   const importResult = vi.fn(async () => ({ inserted: 12 }));
+  const receiptFor = (
+    claim: CollectionResumeClaim,
+    outcome: CollectionResumeAttemptReceipt['outcome'],
+    completedAt = claim.expectedJobUpdatedAt,
+  ): CollectionResumeAttemptReceipt => ({
+    storeId: claim.storeId,
+    attemptId: claim.attemptId,
+    jobId: claim.jobId,
+    requestId: claim.requestId,
+    outcome,
+    baseJobUpdatedAt: '2026-07-22T07:59:00.000Z',
+    finalJobUpdatedAt: claim.expectedJobUpdatedAt,
+    baseAuthorityProofSha256: 'a'.repeat(64),
+    finalAuthorityProofSha256: 'b'.repeat(64),
+    durableSessionGeneration: 3,
+    executionSessionGeneration: 4,
+    executionContextSha256: 'c'.repeat(64),
+    claimedAt: claim.claimedAt,
+    completedAt,
+  });
+  const resumeFinalize = vi.fn((_storeId: string, input: any) => {
+    resumeFinalized.push({ outcome: input.outcome, claimVersion: input.claim.version });
+    return receiptFor(input.claim, input.outcome, input.completedAt);
+  });
+  const resumeInterrupt = vi.fn((_storeId: string, input: any) => {
+    resumeFinalized.push({ outcome: 'interrupted', claimVersion: input.claim.version });
+    return receiptFor(input.claim, 'interrupted');
+  });
+  const clearCancellation = vi.fn();
   const operation = {
     assertStepCurrent: vi.fn(() => {
       if (active.storeId !== 'store-one' || active.sessionGeneration !== 4) {
@@ -217,8 +321,39 @@ function harness() {
       persistProgress(event) { persistedProgress.push(event); },
       persistResult(result) { persistedResults.push(result); },
       persistImportState(job) { persistedImportStates.push(job); },
+      acquireCollectionResumeClaimForStore(_storeId, input) {
+        return nextResumeClaim({
+          jobId: input.jobId,
+          requestId: input.requestId,
+          expectedJobUpdatedAt: input.expectedJobUpdatedAt,
+          version: 0,
+        });
+      },
+      commitCollectionResumeProgressForStore(_storeId, input) {
+        resumeProgress.push(input.event);
+        return nextResumeClaim({
+          ...input.claim,
+          expectedJobUpdatedAt: input.event.job.updatedAt,
+        });
+      },
+      commitCollectionResumeRunnerResultForStore(_storeId, input) {
+        return {
+          claim: nextResumeClaim({
+            ...input.claim,
+            expectedJobUpdatedAt: input.job.updatedAt,
+          }),
+          result: { job: input.job, batch: input.batch as any, files: input.files as any },
+        };
+      },
+      advanceCollectionResumeClaimAfterImportForStore(_storeId, input) {
+        return nextResumeClaim(input.claim);
+      },
+      finalizeCollectionResumeAttemptForStore: resumeFinalize,
+      interruptCollectionResumeClaimForStore: resumeInterrupt,
     },
     importResult,
+    isCancelled: () => cancelled,
+    clearCancellation,
     publishProgress(event) { published.push(event); },
     runCreateBatch,
   });
@@ -233,6 +368,14 @@ function harness() {
     importResult,
     published,
     runCreateBatch,
+    resumeProgress,
+    resumeFinalized,
+    resumeFinalize,
+    resumeInterrupt,
+    clearCancellation,
+    get cancelled() { return cancelled; },
+    set cancelled(value: boolean) { cancelled = value; },
+    receiptFor,
   };
 }
 
@@ -256,8 +399,129 @@ describe('LingxingCollectionCoordinator', () => {
     expect(test.persistedResults[0].job.importState).toBe('pending');
     expect(test.persistedImportStates.map((job) => job.importState))
       .toEqual(['pending', 'succeeded']);
+    expect(test.persistedImportStates[0].updatedAt)
+      .toBe(test.persistedImportStates[0].importAttemptedAt);
+    expect(test.persistedImportStates[1].updatedAt)
+      .toBe(test.persistedImportStates[1].importCompletedAt);
+    expect(test.importResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        job: expect.objectContaining({ importState: 'pending' }),
+      }),
+      {
+        startedAt: test.persistedImportStates[0].importAttemptedAt,
+      },
+    );
     expect(output.result.job.importState).toBe('succeeded');
     expect(output.importSummary).toEqual({ inserted: 12 });
+  });
+
+  it('resumes the original full-eight job under the current execution generation and finalizes after import', async () => {
+    const test = harness();
+    const resumeFrom = fullEightResumeState();
+
+    const output = await test.coordinator.resumeInPlace({
+      currentStoreContext: context(),
+      resumeFrom,
+    });
+
+    expect(test.runCreateBatch).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: resumeFrom.request.requestId,
+      storeContext: resumeFrom.request.storeContext,
+      executionStoreContext: context(),
+      progressEventNamespace: 'attempt-coordinator-resume',
+      rootDownloadDir: capsuleFor().downloadsDir,
+      reportTypes: resumeFrom.request.reportTypes,
+      resumeFrom,
+    }));
+    expect(output.result.job).toEqual(expect.objectContaining({
+      jobId: resumeFrom.jobId,
+      importState: 'succeeded',
+    }));
+    expect(output.result.batch.id).toBe(resumeFrom.batch.id);
+    expect(output.importSummary).toEqual({ inserted: 12 });
+    expect(test.resumeProgress.map((event) => event.job.importState ?? 'runner'))
+      .toEqual(['runner', 'pending', 'succeeded']);
+    expect(test.resumeFinalized).toEqual([
+      expect.objectContaining({ outcome: 'succeeded' }),
+    ]);
+  });
+
+  it('resolves a durably finalized import failure as a failed terminal result', async () => {
+    const test = harness();
+    test.importResult.mockRejectedValueOnce(new Error('resume parser rejected report'));
+
+    const output = await test.coordinator.resumeInPlace({
+      currentStoreContext: context(),
+      resumeFrom: fullEightResumeState(),
+    });
+
+    expect(output.result.job).toEqual(expect.objectContaining({
+      state: 'completed',
+      importState: 'failed',
+      importError: 'resume parser rejected report',
+    }));
+    expect(test.resumeFinalized).toEqual([
+      expect.objectContaining({ outcome: 'failed' }),
+    ]);
+    expect(test.resumeInterrupt).not.toHaveBeenCalled();
+  });
+
+  it('reconciles a finalize error against the already durable succeeded proof', async () => {
+    const test = harness();
+    test.resumeFinalize.mockRejectedValueOnce(new Error('simulated post-success finalize failure'));
+    test.resumeInterrupt.mockImplementationOnce((_storeId, input) => (
+      test.receiptFor(input.claim, 'succeeded')
+    ));
+
+    const output = await test.coordinator.resumeInPlace({
+      currentStoreContext: context(),
+      resumeFrom: fullEightResumeState(),
+    });
+
+    expect(output.result.job.importState).toBe('succeeded');
+    expect(test.resumeFinalize).toHaveBeenCalledOnce();
+    expect(test.resumeInterrupt).toHaveBeenCalledOnce();
+    expect(test.resumeInterrupt.mock.results[0].value).toEqual(
+      expect.objectContaining({ outcome: 'succeeded' }),
+    );
+  });
+
+  it('clears a volatile cancellation only after the cancelled terminal receipt is durable', async () => {
+    const test = harness();
+    test.cancelled = true;
+
+    const output = await test.coordinator.resumeInPlace({
+      currentStoreContext: context(),
+      resumeFrom: fullEightResumeState(),
+    });
+
+    expect(output.result.job).toEqual(expect.objectContaining({
+      state: 'cancelled',
+      importState: 'not_applicable',
+    }));
+    expect(test.resumeFinalized).toEqual([
+      expect.objectContaining({ outcome: 'failed' }),
+    ]);
+    expect(test.clearCancellation).toHaveBeenCalledWith({
+      storeId: context().storeId,
+      requestId: 'collect-resume-001',
+      jobId: 'batch-1',
+    });
+    expect(test.importResult).not.toHaveBeenCalled();
+  });
+
+  it('retains a volatile cancellation when the cancelled receipt is not durable', async () => {
+    const test = harness();
+    test.cancelled = true;
+    test.resumeFinalize.mockRejectedValueOnce(new Error('cancel receipt unavailable'));
+
+    await expect(test.coordinator.resumeInPlace({
+      currentStoreContext: context(),
+      resumeFrom: fullEightResumeState(),
+    })).rejects.toThrow('cancel receipt unavailable');
+
+    expect(test.clearCancellation).not.toHaveBeenCalled();
+    expect(test.resumeInterrupt).toHaveBeenCalledOnce();
   });
 
   it('does not publish an earlier store progress event after the selected store changes', async () => {
@@ -562,6 +826,10 @@ describe('LingxingCollectionCoordinator', () => {
       importState: 'failed',
       importError: 'parser rejected real report',
     }));
+    expect(test.persistedImportStates.at(-1)?.importAttemptedAt)
+      .toBe(test.persistedImportStates[0].importAttemptedAt);
+    expect(test.persistedImportStates.at(-1)?.updatedAt)
+      .toBe(test.persistedImportStates.at(-1)?.importCompletedAt);
     expect(test.published.at(-1)?.job.importState).toBe('failed');
   });
 

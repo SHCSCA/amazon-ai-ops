@@ -36,11 +36,29 @@ interface CronParts {
   dayOfWeek?: string;
 }
 
+type LocalSchedulerErrorCode =
+  | 'DRAIN_TIMEOUT'
+  | 'DRAIN_CALLBACK_FAILED'
+  | 'SCHEDULER_STOPPED';
+
+class LocalSchedulerError extends Error {
+  readonly code: LocalSchedulerErrorCode;
+
+  constructor(code: LocalSchedulerErrorCode, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'LocalSchedulerError';
+    this.code = code;
+  }
+}
+
 export class LocalScheduler extends EventEmitter {
   private tasks: Map<TaskName, ScheduledTask> = new Map();
   private timers: Map<TaskName, NodeJS.Timeout> = new Map();
+  private inFlight: Set<Promise<void>> = new Set();
   private config: Required<SchedulerConfig>;
   private running: boolean = false;
+  private admissionClosed: boolean = false;
+  private drainPromise: Promise<void> | null = null;
 
   constructor(config: SchedulerConfig = {}) {
     super();
@@ -69,6 +87,7 @@ export class LocalScheduler extends EventEmitter {
    * 启动调度器
    */
   start(): void {
+    this.assertAdmissionOpen();
     if (this.running) return;
     this.running = true;
 
@@ -91,6 +110,30 @@ export class LocalScheduler extends EventEmitter {
   }
 
   /**
+   * 终止新任务准入并等待已经进入执行阶段的任务全部结束。
+   */
+  stopAndDrain(timeoutMs = 5_000): Promise<void> {
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 0) {
+      return Promise.reject(new RangeError('local scheduler drain timeout must be a non-negative integer'));
+    }
+    if (this.drainPromise) {
+      return this.drainPromise;
+    }
+
+    this.admissionClosed = true;
+    this.stop();
+    const admitted = [...this.inFlight];
+    const drainAttempt = this.awaitSettlement(admitted, timeoutMs);
+    this.drainPromise = drainAttempt;
+    void drainAttempt.catch(() => {
+      if (this.drainPromise === drainAttempt) {
+        this.drainPromise = null;
+      }
+    });
+    return drainAttempt;
+  }
+
+  /**
    * 手动触发任务
    */
   async runNow(taskName: TaskName): Promise<void> {
@@ -98,7 +141,7 @@ export class LocalScheduler extends EventEmitter {
     if (!task) {
       throw new Error(`Task ${taskName} not found`);
     }
-    await this.executeTask(taskName, task);
+    await this.admitTask(taskName, task);
   }
 
   /**
@@ -108,6 +151,9 @@ export class LocalScheduler extends EventEmitter {
     const task = this.tasks.get(taskName);
     if (!task) {
       throw new Error(`Task ${taskName} not found`);
+    }
+    if (enabled) {
+      this.assertAdmissionOpen();
     }
 
     task.enabled = enabled;
@@ -138,19 +184,88 @@ export class LocalScheduler extends EventEmitter {
 
     const delay = nextRun.getTime() - Date.now();
     
-    const timer = setTimeout(async () => {
-      try {
-        await this.executeTask(taskName, task);
-      } catch {
+    const timer = setTimeout(() => {
+      this.timers.delete(taskName);
+      void this.admitTask(taskName, task).catch(() => {
         // Timed runs report failures through task:error/onTaskError; only manual callers receive the rejection.
-      } finally {
+      }).finally(() => {
         if (this.running && task.enabled) {
           this.scheduleTask(taskName);
         }
-      }
+      });
     }, Math.max(0, delay));
 
     this.timers.set(taskName, timer);
+  }
+
+  private admitTask(taskName: TaskName, task: ScheduledTask): Promise<void> {
+    if (this.admissionClosed) {
+      return Promise.reject(new LocalSchedulerError(
+        'SCHEDULER_STOPPED',
+        'Local scheduler is stopping; new task admission is closed',
+      ));
+    }
+
+    let resolveTracked!: () => void;
+    let rejectTracked!: (error: unknown) => void;
+    const tracked = new Promise<void>((resolve, reject) => {
+      resolveTracked = resolve;
+      rejectTracked = reject;
+    });
+    this.inFlight.add(tracked);
+    void this.executeTask(taskName, task).then(resolveTracked, rejectTracked);
+    void tracked.then(
+      () => { this.inFlight.delete(tracked); },
+      () => { this.inFlight.delete(tracked); },
+    );
+    return tracked;
+  }
+
+  private assertAdmissionOpen(): void {
+    if (this.admissionClosed) {
+      throw new LocalSchedulerError(
+        'SCHEDULER_STOPPED',
+        'Local scheduler is stopping; new task admission is closed',
+      );
+    }
+  }
+
+  private async awaitSettlement(admitted: Promise<void>[], timeoutMs: number): Promise<void> {
+    if (admitted.length === 0) {
+      return;
+    }
+
+    let timeout: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(new LocalSchedulerError(
+          'DRAIN_TIMEOUT',
+          'Local scheduler drain timed out before all admitted tasks settled',
+        ));
+      }, timeoutMs);
+    });
+
+    try {
+      const results = await Promise.race([
+        Promise.allSettled(admitted),
+        timeoutPromise,
+      ]);
+      const rejected = results.find((result) => result.status === 'rejected');
+      if (rejected?.status === 'rejected') {
+        const callbackError = rejected.reason instanceof Error
+          ? rejected.reason
+          : new Error(String(rejected.reason));
+        throw new LocalSchedulerError(
+          'DRAIN_CALLBACK_FAILED',
+          `Local scheduler drain observed a failed admitted callback: ${callbackError.message}`,
+          { cause: callbackError },
+        );
+      }
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
   }
 
   private async executeTask(taskName: TaskName, task: ScheduledTask): Promise<void> {

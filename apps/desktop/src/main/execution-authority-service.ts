@@ -110,6 +110,24 @@ interface PolicyDispatchRetryTimer {
   handle: unknown;
 }
 
+interface AdmittedAuthorityOperation {
+  readonly settlement: Promise<void>;
+  settle(): void;
+}
+
+export class ExecutionAuthorityShutdownError extends Error {
+  readonly code = 'DRAIN_TIMEOUT' as const;
+
+  constructor(
+    readonly timeoutMs: number,
+    message = 'Execution authority did not drain before the shutdown deadline.',
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = 'ExecutionAuthorityShutdownError';
+  }
+}
+
 /**
  * Main-only Stage 6 coordinator. Renderer input can select only an existing
  * grant/batch/entity; all stable Ads ids, bid values, paths and click targets
@@ -131,6 +149,7 @@ export class ExecutionAuthorityService {
   private readonly policyDispatchLanes = new Map<string, PolicyDispatchLane>();
   private readonly policyDispatchRetryTimers = new Map<string, PolicyDispatchRetryTimer>();
   private readonly recoveredBatchReconciliations = new Map<string, Set<string>>();
+  private readonly admittedOperations = new Set<Promise<void>>();
   private stopping = false;
 
   constructor(options: ExecutionAuthorityServiceOptions) {
@@ -160,10 +179,36 @@ export class ExecutionAuthorityService {
     return this.repository.listExecutionBatches(context);
   }
 
-  async resolveIdentity(
+  /**
+   * Main-only admission boundary for visible-browser work that still lives in
+   * a legacy IPC adapter. Registration happens synchronously before `work` is
+   * invoked, so shutdown can prove that every already-admitted browser owner
+   * has settled before the registry or authority database is closed.
+   */
+  async withAdmittedBrowserOperation<Result>(
+    label: string,
+    work: () => Promise<Result> | Result,
+  ): Promise<Result> {
+    const admitted = this.admitAuthorityOperation(label);
+    try {
+      return await work();
+    } finally {
+      admitted.settle();
+    }
+  }
+
+  resolveIdentity(
     request: ResolveAdExecutionIdentityRequest,
   ): Promise<AdKeywordIdentityVersionRecord> {
-    this.assertNotStopping();
+    return this.withAdmittedBrowserOperation(
+      'resolve-identity',
+      () => this.resolveIdentityAdmitted(request),
+    );
+  }
+
+  private async resolveIdentityAdmitted(
+    request: ResolveAdExecutionIdentityRequest,
+  ): Promise<AdKeywordIdentityVersionRecord> {
     const context = this.assertContext(request.context);
     const grant = this.requireLiveGrant(context, request.grantId);
     const adEntityId = requiredId(request.adEntityId, 'adEntityId');
@@ -276,8 +321,16 @@ export class ExecutionAuthorityService {
     return result;
   }
 
-  async startBatch(request: StartAdExecutionBatchRequest): Promise<AdExecutionBatchProjection> {
-    this.assertNotStopping();
+  startBatch(request: StartAdExecutionBatchRequest): Promise<AdExecutionBatchProjection> {
+    return this.withAdmittedBrowserOperation(
+      'start-execution-batch',
+      () => this.startBatchAdmitted(request),
+    );
+  }
+
+  private async startBatchAdmitted(
+    request: StartAdExecutionBatchRequest,
+  ): Promise<AdExecutionBatchProjection> {
     const context = this.assertContext(request.context);
     const batchId = requiredId(request.batchId, 'batchId');
     const active = this.running.get(String(context.storeId));
@@ -299,7 +352,17 @@ export class ExecutionAuthorityService {
     return running.promise;
   }
 
-  async enqueuePolicyGrant(
+  enqueuePolicyGrant(
+    contextInput: StoreContextEnvelope,
+    grant: MissionGrantRecord,
+  ): Promise<void> {
+    return this.withAdmittedBrowserOperation(
+      'enqueue-policy-grant',
+      () => this.enqueuePolicyGrantAdmitted(contextInput, grant),
+    );
+  }
+
+  private async enqueuePolicyGrantAdmitted(
     contextInput: StoreContextEnvelope,
     grant: MissionGrantRecord,
   ): Promise<void> {
@@ -328,7 +391,17 @@ export class ExecutionAuthorityService {
     await this.wakePolicyGrantPump(context, 'grant_issued');
   }
 
-  async resumePolicyGrantDispatches(
+  resumePolicyGrantDispatches(
+    contextInput: StoreContextEnvelope,
+    trigger: Extract<PolicyGrantDispatchTrigger, 'store_activated' | 'session_ready'>,
+  ): Promise<void> {
+    return this.withAdmittedBrowserOperation(
+      'resume-policy-grant-dispatches',
+      () => this.resumePolicyGrantDispatchesAdmitted(contextInput, trigger),
+    );
+  }
+
+  private async resumePolicyGrantDispatchesAdmitted(
     contextInput: StoreContextEnvelope,
     trigger: Extract<PolicyGrantDispatchTrigger, 'store_activated' | 'session_ready'>,
   ): Promise<void> {
@@ -365,13 +438,37 @@ export class ExecutionAuthorityService {
     return this.requireBatch(context, batchId);
   }
 
-  async takeOverVisibleBrowser(request: StartAdExecutionBatchRequest): Promise<{ status: 'VISIBLE'; batchId: string }> {
+  takeOverVisibleBrowser(
+    request: StartAdExecutionBatchRequest,
+  ): Promise<{ status: 'VISIBLE'; batchId: string }> {
+    return this.withAdmittedBrowserOperation(
+      'take-over-visible-browser',
+      () => this.takeOverVisibleBrowserAdmitted(request),
+    );
+  }
+
+  private async takeOverVisibleBrowserAdmitted(
+    request: StartAdExecutionBatchRequest,
+  ): Promise<{ status: 'VISIBLE'; batchId: string }> {
     const context = this.assertContext(request.context);
     const batchId = requiredId(request.batchId, 'batchId');
     this.requireBatch(context, batchId);
-    await this.requireRuntime(context).bringToFront();
-    this.progress(context, batchId, undefined, 'takeover', 'ready', '已将当前店铺的可见 Ads 浏览器置于前台。');
-    return { status: 'VISIBLE', batchId };
+    const lease = this.leases.acquire({
+      storeId: context.storeId,
+      purpose: 'external_write',
+      owner: `takeover:${batchId}`,
+      ttlMs: EXECUTION_LEASE_TTL_MS,
+    });
+    try {
+      const runtime = this.requireRuntime(context);
+      this.assertLeaseAndRuntime(lease, context, runtime.externalAccountId);
+      await runtime.bringToFront();
+      this.assertLeaseAndRuntime(lease, context, runtime.externalAccountId);
+      this.progress(context, batchId, undefined, 'takeover', 'ready', '已将当前店铺的可见 Ads 浏览器置于前台。');
+      return { status: 'VISIBLE', batchId };
+    } finally {
+      releaseLeaseQuietly(this.leases, lease);
+    }
   }
 
   recoverStartup(): AdExecutionStartupRecoveryResult {
@@ -427,17 +524,42 @@ export class ExecutionAuthorityService {
     for (const storeId of [...this.policyDispatchRetryTimers.keys()]) {
       this.clearPolicyDispatchRetry(storeId);
     }
-    const running = [...this.running.values()];
-    const dispatching = [...this.policyDispatchLanes.values()].map((lane) => lane.promise);
-    running.forEach((item) => { item.cancelRequested = true; });
-    if (running.length === 0 && dispatching.length === 0) return;
-    await Promise.race([
-      Promise.allSettled([
-        ...running.map((item) => item.promise),
-        ...dispatching,
-      ]),
-      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-    ]);
+    [...this.running.values()].forEach((item) => { item.cancelRequested = true; });
+    const admitted = [...this.admittedOperations];
+    if (admitted.length === 0) return;
+    try {
+      await waitForExecutionAuthorityDrain(admitted, timeoutMs);
+    } catch (error) {
+      let reconciliationError: unknown;
+      try {
+        this.markPostIntentJobsUnknownForShutdown();
+      } catch (failure) {
+        reconciliationError = failure;
+      }
+      throw new ExecutionAuthorityShutdownError(
+        timeoutMs,
+        'Execution authority still owns admitted work at the shutdown deadline.',
+        { cause: reconciliationError ?? error },
+      );
+    }
+    const admittedStillTracked = admitted.some((operation) => this.admittedOperations.has(operation));
+    if (admittedStillTracked) {
+      let reconciliationError: unknown;
+      try {
+        this.markPostIntentJobsUnknownForShutdown();
+      } catch (failure) {
+        reconciliationError = failure;
+      }
+      throw new ExecutionAuthorityShutdownError(
+        timeoutMs,
+        'Execution authority settlement did not clear the tracked admitted operations.',
+        { cause: reconciliationError },
+      );
+    }
+    this.markPostIntentJobsUnknownForShutdown();
+  }
+
+  private markPostIntentJobsUnknownForShutdown(): void {
     const active = this.storeCoordinator.getActiveStoreContext();
     if (!active) return;
     const context = this.assertContext(active);
@@ -797,11 +919,18 @@ export class ExecutionAuthorityService {
       rerunRequested: false,
       promise: Promise.resolve(),
     };
-    lane.promise = this.runPolicyGrantPump(lane).finally(() => {
-      if (this.policyDispatchLanes.get(storeKey) === lane) {
-        this.policyDispatchLanes.delete(storeKey);
-      }
-    });
+    lane.promise = this.withAdmittedBrowserOperation(
+      'policy-grant-dispatch',
+      async () => {
+        try {
+          await this.runPolicyGrantPump(lane);
+        } finally {
+          if (this.policyDispatchLanes.get(storeKey) === lane) {
+            this.policyDispatchLanes.delete(storeKey);
+          }
+        }
+      },
+    );
     this.policyDispatchLanes.set(storeKey, lane);
     return lane.promise;
   }
@@ -1615,6 +1744,27 @@ export class ExecutionAuthorityService {
     return this.storeCoordinator.assertActiveStoreContext(context);
   }
 
+  private admitAuthorityOperation(labelInput: string): AdmittedAuthorityOperation {
+    this.assertNotStopping();
+    const label = String(labelInput ?? '').trim();
+    if (!label) throw new TypeError('admitted authority operation label is required');
+    let resolveSettlement!: () => void;
+    const settlement = new Promise<void>((resolve) => {
+      resolveSettlement = resolve;
+    });
+    this.admittedOperations.add(settlement);
+    let settled = false;
+    return {
+      settlement,
+      settle: () => {
+        if (settled) return;
+        settled = true;
+        this.admittedOperations.delete(settlement);
+        resolveSettlement();
+      },
+    };
+  }
+
   private assertNotStopping(): void {
     if (this.stopping) throw new Error('应用正在退出，禁止启动新的外部写入。');
   }
@@ -1777,6 +1927,27 @@ function classifyPolicyGrantDispatchFailure(error: unknown): PolicyGrantDispatch
     'UNSAFE_DISPATCH_FAILURE',
     message,
   );
+}
+
+async function waitForExecutionAuthorityDrain(
+  operations: readonly Promise<unknown>[],
+  timeoutMs: number,
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = Object.freeze({});
+  try {
+    const result = await Promise.race<Readonly<object>>([
+      Promise.allSettled(operations).then(() => Object.freeze({})),
+      new Promise<Readonly<object>>((resolve) => {
+        timeout = setTimeout(() => resolve(timedOut), timeoutMs);
+      }),
+    ]);
+    if (result === timedOut) {
+      throw new ExecutionAuthorityShutdownError(timeoutMs);
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function normalizePolicyDispatchRetryMs(value: number | undefined): number {

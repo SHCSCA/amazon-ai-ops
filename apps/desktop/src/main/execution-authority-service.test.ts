@@ -180,6 +180,7 @@ interface Harness {
   runtimeResolutionCount(): number;
   setRuntimeReady(ready: boolean): void;
   setBringToFrontError(error: Error | undefined): void;
+  setBringToFrontWork(work: (() => Promise<void>) | undefined): void;
   setNow(value: string): void;
 }
 
@@ -315,6 +316,7 @@ function createHarness(actionCount = 1, options: HarnessOptions = {}): Harness {
   let runtimeReady = options.runtimeReady ?? true;
   let resolvedRuntimeCount = 0;
   let bringToFrontError: Error | undefined;
+  let bringToFrontWork: (() => Promise<void>) | undefined;
   const leases = new BrowserLeaseManager(
     () => now().getTime(),
     () => 'stage6-lease-token-0001',
@@ -344,6 +346,7 @@ function createHarness(actionCount = 1, options: HarnessOptions = {}): Harness {
         },
         bringToFront: async () => {
           if (bringToFrontError) throw bringToFrontError;
+          await bringToFrontWork?.();
         },
       };
     },
@@ -372,6 +375,7 @@ function createHarness(actionCount = 1, options: HarnessOptions = {}): Harness {
     runtimeResolutionCount: () => resolvedRuntimeCount,
     setRuntimeReady: (ready) => { runtimeReady = ready; },
     setBringToFrontError: (error) => { bringToFrontError = error; },
+    setBringToFrontWork: (work) => { bringToFrontWork = work; },
     setNow: (value) => { currentNow = value; },
   };
 }
@@ -385,6 +389,138 @@ describe('ExecutionAuthorityService safety orchestration', () => {
     expect(() => new ExecutionAuthorityService(
       {} as ExecutionAuthorityServiceOptions,
     )).toThrow('policyDispatchSuppression read port is required');
+  });
+
+  it('holds an exact external-write lease through visible browser takeover', async () => {
+    const harness = createHarness();
+    const started = deferred();
+    const release = deferred();
+    harness.setBringToFrontWork(async () => {
+      started.resolve();
+      await release.promise;
+    });
+
+    const takeover = harness.service.takeOverVisibleBrowser({
+      context: harness.context,
+      batchId: harness.batchId,
+    });
+    await started.promise;
+
+    expect(harness.leases.current(harness.context.storeId)).toMatchObject({
+      purpose: 'external_write',
+      owner: `takeover:${harness.batchId}`,
+    });
+    expect(() => harness.leases.enterTransitionBarrier('store-switch'))
+      .toThrowError(expect.objectContaining({ code: 'LEASES_ACTIVE' }));
+
+    release.resolve();
+    await expect(takeover).resolves.toEqual({ status: 'VISIBLE', batchId: harness.batchId });
+    expect(harness.leases.current(harness.context.storeId)).toBeUndefined();
+  });
+
+  it('cannot start browser takeover while a user transition barrier is held', async () => {
+    const harness = createHarness();
+    harness.leases.enterTransitionBarrier('store-switch');
+
+    await expect(harness.service.takeOverVisibleBrowser({
+      context: harness.context,
+      batchId: harness.batchId,
+    })).rejects.toMatchObject({ code: 'TRANSITION_BARRIER_HELD' });
+    expect(harness.runtimeResolutionCount()).toBe(0);
+  });
+
+  it('drains an admitted visible-browser takeover and rejects later browser admission', async () => {
+    const harness = createHarness();
+    const started = deferred();
+    const release = deferred();
+    harness.setBringToFrontWork(async () => {
+      started.resolve();
+      await release.promise;
+    });
+    const events: string[] = [];
+
+    const takeover = harness.service.takeOverVisibleBrowser({
+      context: harness.context,
+      batchId: harness.batchId,
+    }).then((result) => {
+      events.push('takeover-settled');
+      return result;
+    });
+    await started.promise;
+    const shutdown = harness.service.prepareForShutdown(1_000).then(() => {
+      events.push('shutdown-settled');
+    });
+
+    await expect(harness.service.takeOverVisibleBrowser({
+      context: harness.context,
+      batchId: harness.batchId,
+    })).rejects.toThrow('应用正在退出，禁止启动新的外部写入。');
+    await Promise.resolve();
+    expect(events).toEqual([]);
+
+    release.resolve();
+    await takeover;
+    await shutdown;
+    expect(events).toEqual(['takeover-settled', 'shutdown-settled']);
+  });
+
+  it('drains identity resolution admitted before shutdown', async () => {
+    const harness = createHarness(1, { registerIdentity: false, createBatch: false });
+    const started = deferred();
+    const release = deferred();
+    harness.setBringToFrontWork(async () => {
+      started.resolve();
+      await release.promise;
+    });
+    const events: string[] = [];
+
+    const resolving = harness.service.resolveIdentity({
+      context: harness.context,
+      grantId: 'grant-1',
+      adEntityId: 'opaque-keyword-1',
+    }).then((identity) => {
+      events.push('identity-settled');
+      return identity;
+    });
+    await started.promise;
+    const shutdown = harness.service.prepareForShutdown(1_000).then(() => {
+      events.push('shutdown-settled');
+    });
+    await Promise.resolve();
+    expect(events).toEqual([]);
+
+    release.resolve();
+    await expect(resolving).resolves.toMatchObject({ adEntityId: 'opaque-keyword-1' });
+    await shutdown;
+    expect(events).toEqual(['identity-settled', 'shutdown-settled']);
+  });
+
+  it('drains admitted legacy browser work and keeps admission closed after a timeout retry', async () => {
+    const harness = createHarness();
+    const started = deferred();
+    const release = deferred();
+    const legacy = harness.service.withAdmittedBrowserOperation(
+      'legacy:collect-ad-report',
+      async () => {
+        started.resolve();
+        await release.promise;
+        return 'done';
+      },
+    );
+    await started.promise;
+
+    await expect(harness.service.prepareForShutdown(10)).rejects.toMatchObject({
+      name: 'ExecutionAuthorityShutdownError',
+      code: 'DRAIN_TIMEOUT',
+    });
+    await expect(harness.service.withAdmittedBrowserOperation(
+      'legacy:late-work',
+      async () => 'not-run',
+    )).rejects.toThrow('应用正在退出，禁止启动新的外部写入。');
+
+    release.resolve();
+    await expect(legacy).resolves.toBe('done');
+    await expect(harness.service.prepareForShutdown(100)).resolves.toBeUndefined();
   });
 
   it('cancels before submit intent without clicking save', () => {
@@ -825,6 +961,99 @@ describe('ExecutionAuthorityService safety orchestration', () => {
       startupRecoverySafe: true,
     });
     expect(controller.isPolicyDispatchSuppressed()).toBe(false);
+  });
+
+  it('rejects shutdown with DRAIN_TIMEOUT while an admitted execution still owns the save boundary', async () => {
+    const harness = createHarness();
+    const running = harness.service.startBatch({
+      context: harness.context,
+      batchId: harness.batchId,
+    });
+    await harness.page.afterScreenshotStarted;
+
+    const shutdown = harness.service.prepareForShutdown(10);
+    try {
+      await expect(shutdown).rejects.toMatchObject({
+        name: 'ExecutionAuthorityShutdownError',
+        code: 'DRAIN_TIMEOUT',
+      });
+      expect(harness.executionRepository.getExecutionBatch(harness.context, harness.batchId))
+        .toEqual(expect.objectContaining({
+          batch: expect.objectContaining({ status: 'unknown' }),
+          jobs: [expect.objectContaining({ status: 'unknown' })],
+        }));
+    } finally {
+      harness.page.allowAfterScreenshot();
+      await running.catch(() => undefined);
+    }
+  });
+
+  it('waits for the exact admitted execution to settle before reporting a successful drain', async () => {
+    const harness = createHarness();
+    const running = harness.service.startBatch({
+      context: harness.context,
+      batchId: harness.batchId,
+    });
+    await harness.page.afterScreenshotStarted;
+
+    let shutdownSettled = false;
+    const shutdown = harness.service.prepareForShutdown(1_000);
+    void shutdown.then(
+      () => { shutdownSettled = true; },
+      () => { shutdownSettled = true; },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(shutdownSettled).toBe(false);
+
+    harness.page.allowAfterScreenshot();
+    await running;
+    await expect(shutdown).resolves.toBeUndefined();
+    expect(shutdownSettled).toBe(true);
+  });
+
+  it('removes a rejected policy dispatch lane before reporting the shutdown drain complete', async () => {
+    const harness = createHarness(1, {
+      policyGrant: true,
+      createBatch: false,
+    });
+    const grant = harness.missionRepository.getMissionGrant(harness.context, 'grant-1')!;
+    const appendDispatchEvent = harness.executionRepository.appendPolicyGrantDispatchEvent
+      .bind(harness.executionRepository);
+    let rejectSettledLaneWrite = false;
+    const appendSpy = vi.spyOn(harness.executionRepository, 'appendPolicyGrantDispatchEvent')
+      .mockImplementation((context, input) => {
+        if (rejectSettledLaneWrite) throw new Error('injected settled policy lane rejection');
+        return appendDispatchEvent(context, input);
+      });
+
+    harness.page.pauseBeforePermit = true;
+    const dispatching = harness.service.enqueuePolicyGrant(harness.context, grant);
+    await harness.page.prepareSaveReady;
+    const shutdown = harness.service.prepareForShutdown(1_000);
+    rejectSettledLaneWrite = true;
+    harness.page.allowPermitCheck();
+
+    await expect(dispatching).rejects.toThrow('injected settled policy lane rejection');
+    appendSpy.mockRestore();
+    await expect(shutdown).resolves.toBeUndefined();
+    expect(() => harness.service.assertStoreMutationAllowed(harness.context)).not.toThrow();
+  });
+
+  it('keeps external-write admission closed across repeated successful shutdown calls', async () => {
+    const harness = createHarness();
+
+    await expect(harness.service.prepareForShutdown(10)).resolves.toBeUndefined();
+    await expect(harness.service.prepareForShutdown(10)).resolves.toBeUndefined();
+
+    expect(() => harness.service.createBatch({
+      context: harness.context,
+      grantId: 'grant-1',
+    })).toThrow('应用正在退出，禁止启动新的外部写入。');
+    await expect(harness.service.startBatch({
+      context: harness.context,
+      batchId: harness.batchId,
+    })).rejects.toThrow('应用正在退出，禁止启动新的外部写入。');
   });
 
   it('persists a missing runtime and resumes the same policy grant once after session readiness', async () => {

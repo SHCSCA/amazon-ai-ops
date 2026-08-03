@@ -20,7 +20,7 @@ describe('legacy IPC store authority contract', () => {
       'operation-events:update',
       'operation-events:delete',
     ]) {
-      expect(source).not.toContain(`ipcMain.handle('${channel}'`);
+      expect(source).not.toContain(`registerTrackedIpcHandler('${channel}'`);
       expect(preload).not.toContain(`ipcRenderer.invoke('${channel}'`);
     }
     expect(source).toContain('registerStoreScopedObjectsIpcHandlers(');
@@ -33,14 +33,14 @@ describe('legacy IPC store authority contract', () => {
       'products:save-config',
       'products:bulk-update-target-acos',
     ]) {
-      expect(source).not.toContain(`ipcMain.handle('${channel}'`);
+      expect(source).not.toContain(`registerTrackedIpcHandler('${channel}'`);
       expect(preload).not.toContain(`ipcRenderer.invoke('${channel}'`);
     }
     expect(preload).toContain("ipcRenderer.invoke('store-objects:products:update', { storeContext, input })");
   });
 
   it('retires the path-bearing legacy keyword opportunity bridge', () => {
-    expect(source).not.toContain("ipcMain.handle('v1_5:business-ui:keyword-opportunities'");
+    expect(source).not.toContain("registerTrackedIpcHandler('v1_5:business-ui:keyword-opportunities'");
     expect(preload).not.toContain("ipcRenderer.invoke('v1_5:business-ui:keyword-opportunities'");
     expect(preload).toContain("ipcRenderer.invoke('store-ad-listing:keyword-facts:list', { storeContext, input })");
   });
@@ -63,6 +63,96 @@ describe('legacy IPC store authority contract', () => {
 });
 
 describe('collection Renderer boundary contract', () => {
+  it('closes orphan resume claims before generic startup import and job recovery', () => {
+    const resumeRecovery = source.indexOf(
+      '.interruptOrphanedCollectionResumeClaimsForStartup();',
+    );
+    const importRecovery = source.indexOf(
+      'const importRecovery = recoverPendingLingxingCollectionImportsOnStartup();',
+    );
+    const importAuthorityGate = source.indexOf(
+      'assertLingxingImportStartupRecoverySafe(importRecovery)',
+    );
+    const genericJobRecovery = source.indexOf(
+      'const collectionRecovery = recoverInterruptedLingxingCollectionJobsOnStartup();',
+    );
+    const runtimeRecovery = source.indexOf(
+      'await state.storeCollectionMainRuntime!.recoverStartupThenConfirm();',
+    );
+
+    expect(resumeRecovery).toBeGreaterThanOrEqual(0);
+    expect(resumeRecovery).toBeLessThan(importRecovery);
+    expect(importRecovery).toBeLessThan(importAuthorityGate);
+    expect(importAuthorityGate).toBeLessThan(genericJobRecovery);
+    expect(genericJobRecovery).toBeLessThan(runtimeRecovery);
+  });
+
+  it('binds the durable pending timestamp to the production import run start', () => {
+    const wiring = between(
+      'function initializeLingxingCollectionCoordinator',
+      'function initializeStoreCollectionProductionRuntime',
+    );
+
+    expect(wiring).toContain('importResult: (result, options)');
+    expect(wiring).toContain('importStoreScopedLingxingDownloadedReportMetrics(result, options)');
+  });
+
+  it('routes the legacy full-eight collection action through MainRuntime semantic admission', () => {
+    const handler = between(
+      'async function handleCollectLingxingReports',
+      'function handleImportCurrentBusinessReports',
+    );
+
+    expect(handler).toContain('state.storeCollectionSchedulerReadModel.runNow(context)');
+    expect(handler).toContain('state.storeCollectionSchedulerReadModel.get(context)');
+    expect(handler).toContain('readUniqueCollectionAuthorityProofForStoreByRequestId(');
+    expect(handler).toContain('before.dateStart !== request.start');
+    expect(handler).toContain('before.dateEnd !== request.end');
+    expect(handler).not.toContain('runAuthorizedLingxingCollection(');
+    expect(handler).not.toContain('state.lingxingCollectionCoordinator.start(');
+    expect(handler).not.toContain('requestId: request.requestId');
+  });
+
+  it('routes cancellation through MainRuntime cooperative settlement instead of an out-of-lane tombstone', () => {
+    const cancellation = between(
+      'async function handleCancelLingxingCollection',
+      'function validatedDownloadedResumeReportTypes',
+    );
+    const runtimeAdmission = cancellation.indexOf(
+      'await state.storeCollectionMainRuntime.cancelCollection({',
+    );
+    const idleTombstone = cancellation.indexOf(
+      'repository.cancelCollectionJobForStore(context.storeId, jobId',
+    );
+
+    expect(runtimeAdmission).toBeGreaterThanOrEqual(0);
+    expect(idleTombstone).toBeGreaterThan(runtimeAdmission);
+    expect(cancellation).toContain('signalActiveCancellation: () =>');
+    expect(cancellation).toContain('clearCancellationSignal: clearCancellation');
+    expect(cancellation).toContain("current.state !== 'queued' && current.state !== 'running'");
+    expect(cancellation).toContain('Treat that as a safe late-cancel race');
+    expect(cancellation).toContain('readDurableSettlement: ({ requireNewResumeReceipt }) =>');
+    expect(cancellation).toContain('readLatestCollectionResumeAttemptReceiptForStore');
+    expect(cancellation).toContain("latestResumeReceipt.outcome === 'failed'");
+    expect(cancellation).toContain('latestResumeReceipt.finalAuthorityProofSha256');
+    expect(cancellation).toContain('fingerprintLingxingCollectionAuthorityProof(proof)');
+    expect(cancellation).toContain('if (requireNewResumeReceipt && !receiptIsNew)');
+  });
+
+  it('uses one exact Store/request/job composite cancellation key', () => {
+    const key = between(
+      'function lingxingCollectionCancellationKey',
+      'function authorizedLingxingCollectionTarget',
+    );
+
+    expect(key).toContain('if (!input.requestId || !input.jobId) return []');
+    expect(key).toContain(
+      'JSON.stringify([input.storeId, input.requestId, input.jobId])',
+    );
+    expect(key).not.toContain('request:${input.storeId}');
+    expect(key).not.toContain('job:${input.storeId}');
+  });
+
   it('returns a path-free minimal DTO from resume instead of spreading the runner result', () => {
     const handler = between(
       'async function handleResumeLingxingCollection',
@@ -76,16 +166,88 @@ describe('collection Renderer boundary contract', () => {
     expect(handler).not.toContain('output.result.files');
   });
 
-  it('does not claim matched reconciliation without an independent source total', () => {
+  it('routes full8 resume to MainRuntime and forbids legacy creation of a second durable job', () => {
+    const downloadExisting = between(
+      'async function handleDownloadExistingLingxingReports',
+      'async function handleRunLingxingCanaryReport',
+    );
+    const resume = between(
+      'async function handleResumeLingxingCollection',
+      'const DEFAULT_DOWNLOAD_CENTER_ACTION_SELECTORS',
+    );
+
+    expect(downloadExisting).toContain('isExactLingxingFull8ReportSet(selectedReportTypes)');
+    expect(downloadExisting.indexOf('FULL8_REMEDIATION_MAIN_RUNTIME_REQUIRED'))
+      .toBeLessThan(downloadExisting.indexOf('runAuthorizedLingxingCollection('));
+    expect(resume).toContain('isExactLingxingFull8ReportSet(job.request.reportTypes)');
+    expect(resume).toContain('state.storeCollectionSchedulerReadModel.resumeJob(');
+    expect(resume).toContain('job.jobId');
+    expect(resume.indexOf('state.storeCollectionSchedulerReadModel.resumeJob('))
+      .toBeLessThan(resume.indexOf('assertLegacyLingxingResumeMayCreateJob(job)'));
+    expect(resume).toContain('assertLegacyLingxingResumeMayCreateJob(job)');
+    expect(resume.indexOf('assertLegacyLingxingResumeMayCreateJob(job)'))
+      .toBeLessThan(resume.indexOf('runAuthorizedLingxingCollection({'));
+    expect(resume).not.toContain("job.request.mode === 'create-and-download'");
+  });
+
+  it('fails closed before commit when the collector has no independent per-report control totals', () => {
+    const controlTotalGuard = between(
+      'function assertExactIndependentLingxingReportControlTotals',
+      'function importStoreScopedLingxingDownloadedReportMetrics',
+    );
     const importer = between(
       'function importStoreScopedLingxingDownloadedReportMetrics',
       'function loadLatestImportableLingxingBatchForScope',
     );
 
-    expect(importer).toContain('reconciliations: []');
-    expect(importer).not.toContain('const reconciliationGroups = new Map');
+    const evidenceRead = importer.indexOf('readIndependentLingxingReportControlTotals');
+    const missingGuard = importer.indexOf('LINGXING_IMPORT_RECONCILIATION_EVIDENCE_MISSING');
+    const exactCoverage = importer.indexOf('assertExactIndependentLingxingReportControlTotals');
+    const commit = importer.indexOf('commitImportForStore');
+    expect(evidenceRead).toBeGreaterThanOrEqual(0);
+    expect(missingGuard).toBeGreaterThan(evidenceRead);
+    expect(exactCoverage).toBeGreaterThan(missingGuard);
+    expect(commit).toBeGreaterThan(exactCoverage);
+    expect(importer).toContain('未写入 completed import run');
+    expect(importer).not.toContain('reconciliations: []');
     expect(importer).not.toContain('expectedRows: 0');
     expect(importer).not.toContain('expectedCost: 0');
+    expect(controlTotalGuard).toContain('reconciliation.dateStart !== result.batch.dateStart');
+    expect(controlTotalGuard).toContain('reconciliation.dateEnd !== result.batch.dateEnd');
+    expect(controlTotalGuard).toContain('reconciliation.metricDate !== result.batch.dateEnd');
+  });
+
+  it('never upgrades a recovered completed run without exact full-eight reconciliation proof', () => {
+    const proof = between(
+      'function assertPersistedFullLingxingReconciliationProof',
+      'function recoverCompletedLingxingCollectionImport',
+    );
+    const recovery = between(
+      'function recoverCompletedLingxingCollectionImport',
+      'function recoverPendingLingxingCollectionImportsOnStartup',
+    );
+
+    expect(proof).toContain('readUniqueCollectionAuthorityProofForStoreByRequestId');
+    expect(proof).toContain('assertStoreCollectionCommittedImportProofForRecovery(proof');
+    expect(proof).toContain('context: job.request.storeContext');
+    expect(proof).toContain('requestId: job.request.requestId');
+    expect(proof).toContain('dateStart: job.request.dateStart');
+    expect(proof).toContain('dateEnd: job.request.dateEnd');
+    expect(proof).toContain('expectedJob: job');
+    expect(proof).toContain('expectedRun: run');
+    expect(proof).not.toContain('classifyStoreCollectionDurableProof(proof');
+    expect(recovery.indexOf('assertPersistedFullLingxingReconciliationProof')).toBeLessThan(
+      recovery.indexOf("job.importState === 'succeeded'"),
+    );
+    expect(recovery).toContain('completeRecoveredCollectionImportForStore(');
+    expect(recovery).toContain('receipt.casToken');
+    expect(recovery).not.toContain("persistLingxingCollectionImportState(job, 'failed'");
+    expect(recovery).toContain(
+      'importStoreScopedLingxingDownloadedReportMetrics(snapshot, { startedAt: attemptedAt })',
+    );
+    expect(recovery).toContain('assertPersistedFullLingxingReconciliationProof(pending, committedRun)');
+    expect(recovery).toContain('currentJob.updatedAt !== pending.updatedAt');
+    expect(recovery).not.toContain("persistLingxingCollectionImportState(pending, 'succeeded'");
   });
 
   it('walks the complete pending and failed import recovery queue by cursor', () => {
@@ -99,6 +261,21 @@ describe('collection Renderer boundary contract', () => {
     expect(recovery).toContain('cursor = page.nextCursor');
     expect(recovery).not.toContain('listCollectionJobsForStore');
     expect(recovery).not.toContain("checkpoint.state !== 'downloaded'");
+    expect(recovery).toContain('isKnownLingxingImportRecoveryFailure(error)');
+    expect(recovery).toContain('authorityFailed += 1');
+    expect(recovery).toContain('knownFailed += 1');
+  });
+
+  it('delegates startup recovery classification to the unit-tested fail-closed gate', () => {
+    const recovery = between(
+      'function recoverCompletedLingxingCollectionImport',
+      'function recoverPendingLingxingCollectionImportsOnStartup',
+    );
+
+    expect(recovery).toContain('const discoveredRun = committedRun ??');
+    expect(recovery).toContain('throw classifyLingxingImportRecoveryFailure({');
+    expect(recovery).toContain('immutableImportRunPresent: Boolean(discoveredRun)');
+    expect(source).toContain('assertLingxingImportStartupRecoverySafe(importRecovery)');
   });
 
   it('builds Today facts from US/USD metrics and per-report immutable import proofs', () => {
@@ -122,15 +299,25 @@ describe('collection Renderer boundary contract', () => {
 });
 
 describe('US business-date rollover authority contract', () => {
-  it('rebroadcasts fresh authority, rebinds the visible runtime and keeps old requests stale', () => {
+  it('uses the shared user lane, strictly closes runtime authority and never rebinds context', () => {
     const rollover = between(
       'function refreshActiveStoreBusinessDateAuthority',
       'function stopStoreBusinessDateAuthorityMonitor',
     );
 
     expect(rollover).toContain('previous.businessDate === next.businessDate');
-    expect(rollover).toContain('state.browserRuntime = { ...state.browserRuntime');
-    expect(rollover).toContain('publishStoreContextChanged(view)');
+    expect(rollover).toContain('runtime.withUserStoreMutation({');
+    expect(rollover).toContain("operation: 'business-date-rollover'");
+    expect(rollover).toContain('runUserVisibleBrowserTransition({');
+    expect(rollover).toContain('closeRuntime: closeUserVisibleBrowserRuntimeForTransition');
+    expect(rollover).toContain('assertRuntimeClosed: assertUserVisibleBrowserRuntimeClosed');
+    expect(rollover).toContain('getActiveStoreWorkspaceView()');
+    expect(rollover).toContain('publishStoreContextChanged(freshView)');
+    expect(rollover).toContain("code === 'USER_OPERATION_BLOCKED'");
+    expect(rollover).toContain("code === 'LANE_HELD'");
+    expect(rollover).toContain("code === 'VISIBLE_BROWSER_TRANSITION_BUSY'");
+    expect(rollover).not.toContain('state.browserRuntime');
+    expect(rollover).not.toContain('context: Object.freeze({ ...fresh })');
     expect(rollover).toContain('setInterval(');
     expect(rollover).toContain('storeBusinessDateAuthorityTimer.unref?.()');
   });
@@ -138,11 +325,19 @@ describe('US business-date rollover authority contract', () => {
 
 describe('policy grant dispatch lifecycle contract', () => {
   it('fails closed before browser setup when packaged proof is not fresh typed and remembered', () => {
-    const login = between(
+    const packageLogin = between(
       'async function handleBrowserLogin',
+      'async function performBrowserLoginInUserLane',
+    );
+    const login = between(
+      'async function performBrowserLoginInUserLane',
       'async function handleBrowserLogout',
     );
 
+    expect(packageLogin).toContain('if (packageUiReadOnlyRuntime)');
+    expect(packageLogin).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
+    expect(packageLogin.indexOf('if (packageUiReadOnlyRuntime)'))
+      .toBeLessThan(packageLogin.indexOf('state.storeCoordinator.assertActiveStoreContext'));
     expect(login).toContain('if (packageUiFreshTypedProofRequired');
     expect(login).toContain("request.credentialSource !== 'typed'");
     expect(login).toContain('request.rememberPassword !== true');
@@ -151,8 +346,7 @@ describe('policy grant dispatch lifecycle contract', () => {
     expect(login).toContain('正式 Package UI 首轮登录必须手动输入凭证并勾选记住密码。');
     expect(login.indexOf('if (packageUiFreshTypedProofRequired'))
       .toBeLessThan(login.indexOf('state.storeCoordinator.assertActiveStoreContext'));
-    expect(login.indexOf('if (packageUiFreshTypedProofRequired'))
-      .toBeLessThan(login.indexOf('detachBrowserRuntimeForStore'));
+    expect(source).not.toContain('detachBrowserRuntimeForStore');
   });
 
   it('resumes durable pre-batch dispatches only after a verified Ads session is ready', () => {
@@ -161,22 +355,99 @@ describe('policy grant dispatch lifecycle contract', () => {
       'async function handleBrowserLogout',
     );
 
-    expect(login).toContain('if (adsSession) {');
+    expect(login).toContain('if (outcome.value.adsSessionReady');
     expect(login).toContain('resumePolicyGrantDispatches(');
-    expect(login).toContain("loginContext,\n        'session_ready'");
-    expect(login.indexOf('state.loginSession = loginResult'))
+    expect(login).toContain("runtime.context,\n      'session_ready'");
+    expect(login.indexOf('if (!outcome.ok) throw outcome.error'))
       .toBeLessThan(login.indexOf('resumePolicyGrantDispatches('));
   });
 
   it('checks persisted pre-batch dispatches when an active store context is published', () => {
     const handlers = between(
       'function registerIpcHandlers',
-      'app.whenReady().then',
+      'const lifecycleRecovery = createAppLifecycleRecoveryController',
     );
 
-    expect(handlers).toContain('onStoreChanged: (view) => {');
-    expect(handlers).toContain('reconcileActiveStore(view.context)');
+    expect(handlers).toContain('onStoreChanged: async (view) => {');
+    expect(handlers).toContain('reconcileActiveStore(freshView.context)');
     expect(handlers).toContain('resumePolicyGrantDispatches(');
-    expect(handlers).toContain("view.context,\n        'store_activated'");
+    expect(handlers).toContain("fresh,\n          'store_activated'");
+    const wrapperEnd = handlers.indexOf('beforeActiveStoreMutation:');
+    const storeChangedStart = handlers.indexOf('onStoreChanged:');
+    const storeChangedEnd = handlers.indexOf('onStoreRecordChanged:', storeChangedStart);
+    expect(handlers.indexOf('resumePolicyGrantDispatches(')).toBeLessThan(wrapperEnd);
+    expect(handlers.slice(storeChangedStart, storeChangedEnd)).not.toContain('resumePolicyGrantDispatches(');
+  });
+
+  it('binds every Store IPC mutation to MainRuntime and closes browser authority in-lane', () => {
+    const handlers = between(
+      'function registerIpcHandlers',
+      'registerMissionControlIpcHandlers',
+    );
+
+    expect(handlers).toContain('withUserStoreMutation: async (scope, work) => {');
+    expect(handlers).toContain('assertStoreMutationAllowed(active)');
+    expect(handlers).toContain('state.storeCollectionMainRuntime!.withUserStoreMutation(');
+    expect(handlers).toContain('const laneActive = state.storeCoordinator!.getActiveStoreContext()');
+    expect(handlers).toContain('storeMutationRequiresVisibleBrowserTransition(');
+    expect(handlers).toContain('if (!requiresTransition) return work()');
+    expect(handlers).toContain('runUserVisibleBrowserTransition({');
+    expect(handlers).toContain('closeRuntime: closeUserVisibleBrowserRuntimeForTransition');
+    expect(handlers).toContain('assertRuntimeClosed: assertUserVisibleBrowserRuntimeClosed');
+    expect(handlers).toContain('readFinalState: readEmptyUserVisibleBrowserTransitionState');
+    expect(handlers).toContain('beforeActiveStoreMutation: async (context) => {');
+    expect(handlers).toContain('assertStoreMutationAllowed(context)');
+    expect(handlers).not.toContain('beforeActiveStoreMutation: async (context) => {\n      const pendingControllers');
+    expect(handlers).not.toContain('void closeBrowserControllers');
+    expect(handlers).not.toContain('void Promise.all');
+  });
+
+  it('keeps collection_only runtime out of every legacy operator action and leases nested Listing work once', () => {
+    const controller = between(
+      'function browserRuntimeController',
+      'function browserControllerFromVisibleRuntime',
+    );
+    const listing = between(
+      'function handleExtractListingFromLingxing',
+      'function persistListingContent',
+    );
+
+    expect(controller).toContain("runtime.purpose !== 'operator_full'");
+    expect(controller).toContain('clearBrowserLoginState()');
+    expect(source).toContain('function withLegacyOperatorBrowserLease<Result>');
+    expect(source).toContain('state.executionAuthorityService.withAdmittedBrowserOperation(');
+    expect(source.indexOf('state.executionAuthorityService.withAdmittedBrowserOperation('))
+      .toBeLessThan(source.indexOf('const lease = browserOperationLeases.acquire({'));
+    expect(source).toContain("purpose: 'external_write'");
+    expect(listing).toContain("'legacy-listing-extract'");
+    expect(listing).toContain('extractListingFromLingxingCore(controller, options)');
+    expect(listing).not.toContain("browserOperationLeases.acquire({");
+  });
+
+  it('tracks direct legacy collection and download-center diagnostics before browser work starts', () => {
+    const collection = between(
+      'async function runAuthorizedLingxingCollection',
+      'async function handleCollectLingxingReports',
+    );
+    const diagnostic = between(
+      'async function handleDiagnoseLingxingDownloadCenter',
+      'function appendDiagnosticError',
+    );
+
+    const collectionAdmission = collection.indexOf(
+      'state.executionAuthorityService.withAdmittedBrowserOperation(',
+    );
+    const collectionStart = collection.indexOf('state.lingxingCollectionCoordinator!.start(');
+    expect(collectionAdmission).toBeGreaterThan(0);
+    expect(collectionStart).toBeGreaterThan(collectionAdmission);
+    expect(collection).toContain("'legacy:lingxing-collection'");
+
+    const diagnosticAdmission = diagnostic.indexOf(
+      'state.executionAuthorityService.withAdmittedBrowserOperation(',
+    );
+    const diagnosticStart = diagnostic.indexOf('state.lingxingCollectionOperations!.run(');
+    expect(diagnosticAdmission).toBeGreaterThan(0);
+    expect(diagnosticStart).toBeGreaterThan(diagnosticAdmission);
+    expect(diagnostic).toContain("'legacy:lingxing-download-center-diagnostic'");
   });
 });

@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import type { Database } from 'better-sqlite3';
 import type {
   AdDailyMetrics,
@@ -10,11 +10,16 @@ import type {
   LingxingReportFile,
   LingxingReportType,
   StoreId,
+  StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
 import {
   LINGXING_COLLECTION_IMPORT_STATES,
   normalizeStoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
+import {
+  hashCanonicalMetrics,
+  readCanonicalMetrics,
+} from '../migrations/0010-collection-resume-authority';
 
 const COMPLETE_LINGXING_REPORT_TYPES = new Set<LingxingReportType>([
   'campaign', 'ad_group', 'placement', 'advertised_product',
@@ -62,7 +67,181 @@ export interface LingxingCollectionAuthorityProof {
   importFileSnapshots: ReportImportFileSnapshotRecord[];
   importedReportFileCount: number;
   importedReportFiles: StoreScopedImportedReportFile[];
+  reconciliationRowCount: number;
+  reconciliations: ReportImportReconciliationRecord[];
+  metricEvidenceCount: number;
+  metricEvidence: ReportImportMetricEvidenceRecord[];
 }
+
+export interface ReportImportMetricEvidenceRecord {
+  storeId: StoreId;
+  runId: string;
+  batchId: string;
+  rowCount: number;
+  payloadSha256: string;
+  createdAt: string;
+}
+
+export interface CollectionInPlaceResumeState extends LingxingCollectionResumeState {
+  job: LingxingCollectionJobSnapshot;
+  batch: StoreScopedLingxingReportBatch;
+  files: StoreScopedLingxingReportFile[];
+  expectedJobUpdatedAt: string;
+  authorityProofSha256: string;
+}
+
+export interface AcquireCollectionResumeClaimInput {
+  jobId: string;
+  requestId: string;
+  expectedJobUpdatedAt: string;
+  expectedAuthorityProofSha256: string;
+  executionStoreContext: StoreContextEnvelope;
+  attemptId?: string;
+  claimedAt?: string;
+}
+
+export interface CollectionResumeClaim {
+  storeId: StoreId;
+  attemptId: string;
+  jobId: string;
+  requestId: string;
+  claimToken: string;
+  expectedJobUpdatedAt: string;
+  expectedAuthorityProofSha256: string;
+  version: number;
+  claimedAt: string;
+}
+
+export interface CommitCollectionResumeProgressInput {
+  claim: CollectionResumeClaim;
+  event: LingxingCollectionProgressEvent;
+}
+
+export interface CommitCollectionResumeRunnerResultInput extends CommitCollectionTerminalInput {
+  claim: CollectionResumeClaim;
+}
+
+export interface CommitCollectionResumeRunnerResultOutput {
+  claim: CollectionResumeClaim;
+  result: CollectionTerminalCommitResult;
+}
+
+export interface AdvanceCollectionResumeClaimAfterImportInput {
+  claim: CollectionResumeClaim;
+  advancedAt?: string;
+}
+
+export interface FinalizeCollectionResumeAttemptInput {
+  claim: CollectionResumeClaim;
+  outcome: 'succeeded' | 'failed';
+  completedAt?: string;
+  detail?: string;
+}
+
+export interface InterruptCollectionResumeClaimInput {
+  claim: CollectionResumeClaim;
+  interruptedAt?: string;
+  detail?: string;
+}
+
+export interface CollectionResumeAttemptReceipt {
+  storeId: StoreId;
+  attemptId: string;
+  jobId: string;
+  requestId: string;
+  outcome: 'succeeded' | 'failed' | 'interrupted';
+  baseJobUpdatedAt: string;
+  finalJobUpdatedAt: string;
+  baseAuthorityProofSha256: string;
+  finalAuthorityProofSha256: string;
+  durableSessionGeneration: number;
+  executionSessionGeneration: number;
+  executionContextSha256: string;
+  claimedAt: string;
+  completedAt: string;
+  detail?: string;
+}
+
+interface ActiveCollectionResumeClaimRow {
+  storeId: StoreId;
+  jobId: string;
+  requestId: string;
+  attemptId: string;
+  claimTokenSha256: string;
+  expectedJobUpdatedAt: string;
+  expectedAuthorityProofSha256: string;
+  version: number;
+  claimedAt: string;
+  baseJobUpdatedAt: string;
+  baseAuthorityProofSha256: string;
+  durableSessionGeneration: number;
+  executionSessionGeneration: number;
+  executionContextSha256: string;
+}
+
+export interface CollectionImportRecoveryCasToken {
+  storeId: StoreId;
+  jobId: string;
+  requestId: string;
+  expectedJobUpdatedAt: string;
+  expectedImportState: 'pending' | 'failed';
+  expectedRunId: string;
+  expectedAuthorityProofSha256: string;
+}
+
+export interface CompleteRecoveredCollectionImportInput {
+  attemptedAt: string;
+  completedAt: string;
+}
+
+export function fingerprintLingxingCollectionAuthorityProof(
+  proof: LingxingCollectionAuthorityProof,
+): string {
+  const canonical = {
+    ...proof,
+    job: {
+      ...proof.job,
+      reports: [...proof.job.reports].sort((left, right) => (
+        String(left.reportType).localeCompare(String(right.reportType))
+      )),
+    },
+    lingxingFiles: [...proof.lingxingFiles].sort(compareByStableJson),
+    importRuns: [...proof.importRuns].sort(compareByStableJson),
+    importFileSnapshots: [...proof.importFileSnapshots].sort(compareByStableJson),
+    importedReportFiles: [...proof.importedReportFiles].sort(compareByStableJson),
+    reconciliations: [...proof.reconciliations].sort(compareByStableJson),
+    metricEvidence: [...proof.metricEvidence].sort(compareByStableJson),
+  };
+  return createHash('sha256').update(stableJson(canonical)).digest('hex');
+}
+
+export function fingerprintCollectionResumeExecutionContext(
+  value: StoreContextEnvelope,
+): string {
+  const normalized = normalizeStoreContextEnvelope(value);
+  return createHash('sha256').update(stableJson({
+    storeId: normalized.storeId,
+    browserProfileId: normalized.browserProfileId,
+    marketplace: normalized.marketplace,
+    currency: normalized.currency,
+    businessTimezone: normalized.businessTimezone,
+    businessDate: normalized.businessDate,
+    sessionGeneration: normalized.sessionGeneration,
+  })).digest('hex');
+}
+
+export interface LingxingCollectionSemanticScope {
+  storeId: StoreId;
+  browserProfileId: string;
+  businessDate: string;
+  dateStart: string;
+  dateEnd: string;
+  mode: 'create-and-download';
+  reportTypes: readonly LingxingReportType[];
+}
+
+type LingxingCollectionAuthorityJobRow =
+  LingxingCollectionAuthorityProof['jobRow'] & { snapshotJson: string };
 
 export interface LingxingCollectionSnapshotInput {
   batch: LingxingReportBatch;
@@ -121,6 +300,8 @@ export interface ReportImportFileInput {
 }
 
 export interface ReportImportReconciliationInput {
+  dateStart: string;
+  dateEnd: string;
   metricDate: string;
   reportType: string;
   expectedRows: number;
@@ -197,6 +378,8 @@ export interface ReportImportReconciliationRecord {
   reconciliationId: string;
   runId: string;
   batchId: string;
+  dateStart: string;
+  dateEnd: string;
   metricDate: string;
   reportType: string;
   currency: 'USD';
@@ -274,6 +457,109 @@ export class LingxingImportRepository {
   }
 
   /**
+   * Closes only the crash window after one immutable import transaction has
+   * committed but the mutable collection job still projects pending/failed.
+   * The complete authority proof is re-read and fingerprinted while holding
+   * the immediate write transaction, so neither a job write nor appended
+   * import evidence can slip between verification and the succeeded write.
+   */
+  completeRecoveredCollectionImportForStore(
+    token: CollectionImportRecoveryCasToken,
+    input: CompleteRecoveredCollectionImportInput,
+  ): LingxingCollectionJobSnapshot {
+    const storeId = requiredText(token.storeId, 'recovery token.storeId') as StoreId;
+    const jobId = requiredText(token.jobId, 'recovery token.jobId');
+    const requestId = requiredText(token.requestId, 'recovery token.requestId');
+    const expectedJobUpdatedAt = canonicalUtcInstant(
+      token.expectedJobUpdatedAt,
+      'recovery token.expectedJobUpdatedAt',
+    );
+    const expectedRunId = requiredText(token.expectedRunId, 'recovery token.expectedRunId');
+    const expectedAuthorityProofSha256 = requiredSha256(
+      token.expectedAuthorityProofSha256,
+      'recovery token.expectedAuthorityProofSha256',
+    );
+    if (token.expectedImportState !== 'pending' && token.expectedImportState !== 'failed') {
+      throw new Error('COLLECTION_IMPORT_RECOVERY_CAS_INVALID: expectedImportState 必须是 pending/failed。');
+    }
+    const attemptedAt = canonicalUtcInstant(input.attemptedAt, 'recovery attemptedAt');
+    const completedAt = canonicalUtcInstant(input.completedAt, 'recovery completedAt');
+
+    const complete = this.db.transaction(() => {
+      let proof: LingxingCollectionAuthorityProof | undefined;
+      try {
+        proof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(storeId, requestId);
+      } catch (error) {
+        throw new Error(
+          `COLLECTION_IMPORT_RECOVERY_CAS_CONFLICT: authority proof 无法唯一重读：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      const uniqueRun = proof?.importRunCount === 1 && proof.importRuns.length === 1
+        ? proof.importRuns[0]
+        : undefined;
+      if (!proof
+        || proof.job.jobId !== jobId
+        || proof.job.updatedAt !== expectedJobUpdatedAt
+        || proof.job.state !== 'completed'
+        || proof.job.importState !== token.expectedImportState
+        || uniqueRun?.runId !== expectedRunId
+        || fingerprintLingxingCollectionAuthorityProof(proof) !== expectedAuthorityProofSha256) {
+        throw new Error(
+          'COLLECTION_IMPORT_RECOVERY_CAS_CONFLICT: job 或 immutable import authority proof 已漂移。',
+        );
+      }
+      if (!proof.job.completedAt
+        || !proof.job.importAttemptedAt
+        || proof.job.importAttemptedAt !== attemptedAt
+        || Date.parse(proof.job.completedAt) > Date.parse(attemptedAt)
+        || Date.parse(uniqueRun.startedAt) < Date.parse(attemptedAt)
+        || Date.parse(uniqueRun.completedAt) > Date.parse(completedAt)
+        || Date.parse(uniqueRun.createdAt) > Date.parse(completedAt)
+        || Date.parse(proof.job.updatedAt) >= Date.parse(completedAt)) {
+        throw new Error(
+          'COLLECTION_IMPORT_RECOVERY_CAS_INVALID: recovery succeeded 时间线无效。',
+        );
+      }
+
+      const {
+        importState: _importState,
+        importAttemptedAt: _importAttemptedAt,
+        importCompletedAt: _importCompletedAt,
+        importError: _importError,
+        ...base
+      } = proof.job;
+      const next: LingxingCollectionJobSnapshot = {
+        ...base,
+        importState: 'succeeded',
+        importAttemptedAt: attemptedAt,
+        importCompletedAt: completedAt,
+        updatedAt: completedAt,
+      };
+      const saved = this.persistCollectionJobSnapshotRows(storeId, next, {
+        eventId: `${jobId}:import-recovery:succeeded`,
+        emittedAt: completedAt,
+      });
+      const finalProof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+        storeId,
+        requestId,
+      );
+      if (!finalProof || finalProof.job.jobId !== jobId) {
+        throw new Error('COLLECTION_IMPORT_RECOVERY_CAS_CONFLICT: succeeded proof 无法回读。');
+      }
+      this.appendRecoveredSucceededResumeReceiptIfNeeded(
+        storeId,
+        finalProof,
+        completedAt,
+        expectedJobUpdatedAt,
+      );
+      return saved;
+    });
+    return complete.immediate();
+  }
+
+  /**
    * Atomically turns one queued/running job into a durable cancelled terminal.
    * This row is the cancellation tombstone: callers must not acknowledge the
    * operator request until this transaction has committed.
@@ -316,9 +602,15 @@ export class LingxingImportRepository {
     const recover = this.db.transaction(() => {
       const rows = this.db.prepare(`
         SELECT job_id AS jobId
-        FROM lingxing_collection_jobs
-        WHERE store_id = ? AND state IN ('queued', 'running')
-        ORDER BY updated_at ASC, job_id ASC
+        FROM lingxing_collection_jobs AS jobs
+        WHERE jobs.store_id = ? AND jobs.state IN ('queued', 'running')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM lingxing_collection_resume_active_claims AS claims
+            WHERE claims.store_id = jobs.store_id
+              AND claims.job_id = jobs.job_id
+          )
+        ORDER BY jobs.updated_at ASC, jobs.job_id ASC
       `).all(storeId) as Array<{ jobId: string }>;
       return rows.map(({ jobId }) => {
         const current = this.getCollectionJobForStore(storeId, jobId);
@@ -438,139 +730,324 @@ export class LingxingImportRepository {
       }
       const row = rows[0];
       if (!row) return undefined;
-
-      const snapshot = parseRequiredJson<LingxingCollectionJobSnapshot>(
-        row.snapshotJson,
-        '采集 job 快照',
-      );
-      const checkpointCount = Number((this.db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM lingxing_collection_report_checkpoints
-        WHERE store_id = ? AND job_id = ?
-      `).get(storeId, row.jobId) as { count: number }).count);
-      const checkpointRows = this.db.prepare(`
-        SELECT *
-        FROM lingxing_collection_report_checkpoints
-        WHERE store_id = ? AND job_id = ?
-        ORDER BY report_type
-        LIMIT 10
-      `).all(storeId, row.jobId);
-      const checkpoints = checkpointRows.map(mapCollectionCheckpoint);
-      assertCollectionAuthorityJobRow(
+      return this.readCollectionAuthorityProofForSelectedRow(
         storeId,
         exactRequestId,
         row,
-        snapshot,
-        checkpointCount,
-        checkpoints,
       );
-      const job: LingxingCollectionJobSnapshot = { ...snapshot, reports: checkpoints };
-
-      const batchRow = this.db.prepare(`
-        SELECT *
-        FROM lingxing_report_batches
-        WHERE store_id = ? AND id = ?
-      `).get(storeId, row.jobId);
-      const batch = batchRow ? mapBatch(batchRow, storeId) : undefined;
-
-      const lingxingFileCount = Number((this.db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM lingxing_report_files
-        WHERE store_id = ? AND batch_id = ?
-      `).get(storeId, row.jobId) as { count: number }).count);
-      const lingxingFiles = this.db.prepare(`
-        SELECT *
-        FROM lingxing_report_files
-        WHERE store_id = ? AND batch_id = ?
-        ORDER BY report_type, id
-        LIMIT 10
-      `).all(storeId, row.jobId).map((fileRow) => mapLingxingFile(fileRow, storeId));
-
-      const importRunCount = Number((this.db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM report_import_runs
-        WHERE store_id = ? AND batch_id = ? AND status = 'completed'
-      `).get(storeId, row.jobId) as { count: number }).count);
-      const importRuns = this.db.prepare(`
-        SELECT *
-        FROM report_import_runs
-        WHERE store_id = ? AND batch_id = ? AND status = 'completed'
-        ORDER BY completed_at DESC, run_id DESC
-        LIMIT 2
-      `).all(storeId, row.jobId).map((runRow) => mapRun(runRow, storeId));
-      const uniqueRun = importRunCount === 1 ? importRuns[0] : undefined;
-
-      const importFileSnapshotCount = uniqueRun
-        ? Number((this.db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM report_import_file_snapshots
-            WHERE store_id = ? AND run_id = ? AND batch_id = ?
-          `).get(storeId, uniqueRun.runId, row.jobId) as { count: number }).count)
-        : 0;
-      const importFileSnapshots = uniqueRun
-        ? this.db.prepare(`
-            SELECT *
-            FROM report_import_file_snapshots
-            WHERE store_id = ? AND run_id = ? AND batch_id = ?
-            ORDER BY report_type, file_path, snapshot_id
-            LIMIT 10
-          `).all(storeId, uniqueRun.runId, row.jobId)
-            .map((snapshotRow) => mapFileSnapshot(snapshotRow, storeId))
-        : [];
-
-      const importedReportFileCount = Number((this.db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM report_files
-        WHERE store_id = ? AND batch_id = ?
-      `).get(storeId, row.jobId) as { count: number }).count);
-      const importedReportFiles = this.db.prepare(`
-        SELECT *
-        FROM report_files
-        WHERE store_id = ? AND batch_id = ?
-        ORDER BY report_type, file_path, id
-        LIMIT 10
-      `).all(storeId, row.jobId).map((reportFileRow) => (
-        mapImportedReportFile(reportFileRow, storeId)
-      ));
-
-      const proof: LingxingCollectionAuthorityProof = {
-        job,
-        jobRow: {
-          storeId: row.storeId,
-          jobId: row.jobId,
-          requestId: row.requestId,
-          browserProfileId: row.browserProfileId,
-          marketplace: row.marketplace,
-          currency: row.currency,
-          businessTimezone: row.businessTimezone,
-          businessDate: row.businessDate,
-          sessionGeneration: row.sessionGeneration,
-          dateStart: row.dateStart,
-          dateEnd: row.dateEnd,
-          mode: row.mode,
-          reportTypesJson: row.reportTypesJson,
-          state: row.state,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-          completedAt: row.completedAt,
-          blockerCode: row.blockerCode,
-          detail: row.detail,
-        },
-        checkpointCount,
-        ...(batch ? { batch } : {}),
-        lingxingFileCount,
-        lingxingFiles,
-        importRunCount,
-        importRuns,
-        importFileSnapshotCount,
-        importFileSnapshots,
-        importedReportFileCount,
-        importedReportFiles,
-      };
-      assertCollectionAuthorityProofTimestamps(proof);
-      return proof;
     });
     return read.deferred();
+  }
+
+  /**
+   * Exact scheduler semantic-scope tombstone lookup. This intentionally has no
+   * supporting migration/index in v9: the frozen authority schema is scanned
+   * inside one deferred transaction. Every row on the immutable core scope is
+   * subjected to the same row/snapshot/checkpoint and timestamp validation as
+   * request-id readback before partial report sets are ignored. That ordering
+   * prevents a drifted SQL report set from hiding an exact snapshot tombstone.
+   */
+  inspectUniqueCollectionJobForSemanticScope(
+    input: LingxingCollectionSemanticScope,
+  ): LingxingCollectionAuthorityProof | undefined {
+    const scope = normalizeCollectionSemanticScope(input);
+    const read = this.db.transaction(() => {
+      const malformedReportSet = this.db.prepare(`
+        SELECT job_id AS jobId
+        FROM lingxing_collection_jobs
+        WHERE store_id = ?
+          AND browser_profile_id = ?
+          AND marketplace = 'US'
+          AND currency = 'USD'
+          AND business_timezone = 'America/Los_Angeles'
+          AND business_date = ?
+          AND date_start = ?
+          AND date_end = ?
+          AND mode = ?
+          AND CASE
+            WHEN COALESCE(json_valid(report_types_json), 0) <> 1 THEN 1
+            WHEN COALESCE(json_type(report_types_json), '') <> 'array' THEN 1
+            ELSE 0
+          END = 1
+        ORDER BY updated_at DESC, job_id DESC
+        LIMIT 1
+      `).get(
+        scope.storeId,
+        scope.browserProfileId,
+        scope.businessDate,
+        scope.dateStart,
+        scope.dateEnd,
+        scope.mode,
+      ) as { jobId: string } | undefined;
+      if (malformedReportSet) {
+        throw new Error('exact semantic scope 包含损坏的 durable report-set，拒绝继续采集。');
+      }
+      const rows = this.db.prepare(`
+        SELECT
+          store_id AS storeId,
+          job_id AS jobId,
+          request_id AS requestId,
+          browser_profile_id AS browserProfileId,
+          marketplace,
+          currency,
+          business_timezone AS businessTimezone,
+          business_date AS businessDate,
+          session_generation AS sessionGeneration,
+          date_start AS dateStart,
+          date_end AS dateEnd,
+          mode,
+          report_types_json AS reportTypesJson,
+          state,
+          snapshot_json AS snapshotJson,
+          created_at AS createdAt,
+          updated_at AS updatedAt,
+          completed_at AS completedAt,
+          blocker_code AS blockerCode,
+          detail
+        FROM lingxing_collection_jobs
+        WHERE store_id = ?
+          AND browser_profile_id = ?
+          AND marketplace = 'US'
+          AND currency = 'USD'
+          AND business_timezone = 'America/Los_Angeles'
+          AND business_date = ?
+          AND date_start = ?
+          AND date_end = ?
+          AND mode = ?
+        ORDER BY updated_at DESC, job_id DESC
+      `).all(
+        scope.storeId,
+        scope.browserProfileId,
+        scope.businessDate,
+        scope.dateStart,
+        scope.dateEnd,
+        scope.mode,
+      ) as LingxingCollectionAuthorityJobRow[];
+      let exactProof: LingxingCollectionAuthorityProof | undefined;
+      for (const row of rows) {
+        const proof = this.readCollectionAuthorityProofForSelectedRow(
+          scope.storeId,
+          row.requestId,
+          row,
+        );
+        const rowReportTypes = parseRequiredJson<unknown>(
+          proof.jobRow.reportTypesJson,
+          '采集 job SQL report_types_json',
+        );
+        if (!sameCompleteLingxingReportTypeSet(rowReportTypes)
+          && !sameCompleteLingxingReportTypeSet(proof.job.request.reportTypes)) {
+          continue;
+        }
+        assertCollectionAuthorityProofSemanticScope(scope, proof);
+        if (exactProof) {
+          throw new Error('同一 Store/Profile/businessDate/window/report-set 对应多个 durable 采集任务，拒绝歧义回读。');
+        }
+        exactProof = proof;
+      }
+      return exactProof;
+    });
+    return read.deferred();
+  }
+
+  private readCollectionAuthorityProofForSelectedRow(
+    storeId: StoreId,
+    exactRequestId: string,
+    row: LingxingCollectionAuthorityJobRow,
+  ): LingxingCollectionAuthorityProof {
+    const snapshot = parseRequiredJson<LingxingCollectionJobSnapshot>(
+      row.snapshotJson,
+      '采集 job 快照',
+    );
+    const checkpointCount = Number((this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM lingxing_collection_report_checkpoints
+      WHERE store_id = ? AND job_id = ?
+    `).get(storeId, row.jobId) as { count: number }).count);
+    const checkpointRows = this.db.prepare(`
+      SELECT *
+      FROM lingxing_collection_report_checkpoints
+      WHERE store_id = ? AND job_id = ?
+      ORDER BY report_type
+      LIMIT 10
+    `).all(storeId, row.jobId);
+    const checkpoints = checkpointRows.map(mapCollectionCheckpoint);
+    assertCollectionAuthorityJobRow(
+      storeId,
+      exactRequestId,
+      row,
+      snapshot,
+      checkpointCount,
+      checkpoints,
+    );
+    const job: LingxingCollectionJobSnapshot = { ...snapshot, reports: checkpoints };
+
+    const batchRow = this.db.prepare(`
+      SELECT *
+      FROM lingxing_report_batches
+      WHERE store_id = ? AND id = ?
+    `).get(storeId, row.jobId);
+    const batch = batchRow ? mapBatch(batchRow, storeId) : undefined;
+
+    const lingxingFileCount = Number((this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM lingxing_report_files
+      WHERE store_id = ? AND batch_id = ?
+    `).get(storeId, row.jobId) as { count: number }).count);
+    const lingxingFiles = this.db.prepare(`
+      SELECT *
+      FROM lingxing_report_files
+      WHERE store_id = ? AND batch_id = ?
+      ORDER BY report_type, id
+      LIMIT 10
+    `).all(storeId, row.jobId).map((fileRow) => mapLingxingFile(fileRow, storeId));
+
+    const importRunCount = Number((this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM report_import_runs
+      WHERE store_id = ? AND batch_id = ? AND status = 'completed'
+    `).get(storeId, row.jobId) as { count: number }).count);
+    const importRuns = this.db.prepare(`
+      SELECT *
+      FROM report_import_runs
+      WHERE store_id = ? AND batch_id = ? AND status = 'completed'
+      ORDER BY completed_at DESC, run_id DESC
+      LIMIT 2
+    `).all(storeId, row.jobId).map((runRow) => mapRun(runRow, storeId));
+    const uniqueRun = importRunCount === 1 ? importRuns[0] : undefined;
+
+    const importFileSnapshotCount = uniqueRun
+      ? Number((this.db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM report_import_file_snapshots
+          WHERE store_id = ? AND run_id = ? AND batch_id = ?
+        `).get(storeId, uniqueRun.runId, row.jobId) as { count: number }).count)
+      : 0;
+    const importFileSnapshots = uniqueRun
+      ? this.db.prepare(`
+          SELECT *
+          FROM report_import_file_snapshots
+          WHERE store_id = ? AND run_id = ? AND batch_id = ?
+          ORDER BY report_type, file_path, snapshot_id
+          LIMIT 10
+        `).all(storeId, uniqueRun.runId, row.jobId)
+          .map((snapshotRow) => mapFileSnapshot(snapshotRow, storeId))
+      : [];
+
+    const importedReportFileCount = Number((this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM report_files
+      WHERE store_id = ? AND batch_id = ?
+    `).get(storeId, row.jobId) as { count: number }).count);
+    const importedReportFiles = this.db.prepare(`
+      SELECT *
+      FROM report_files
+      WHERE store_id = ? AND batch_id = ?
+      ORDER BY report_type, file_path, id
+      LIMIT 10
+    `).all(storeId, row.jobId).map((reportFileRow) => (
+      mapImportedReportFile(reportFileRow, storeId)
+    ));
+
+    const reconciliationRowCount = uniqueRun
+      ? Number((this.db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM report_import_reconciliations
+          WHERE store_id = ? AND run_id = ? AND batch_id = ?
+        `).get(storeId, uniqueRun.runId, row.jobId) as { count: number }).count)
+      : 0;
+    const reconciliations = uniqueRun
+      ? this.db.prepare(`
+          SELECT reconciliation.*,
+                 batch.date_start AS reconciliation_date_start,
+                 batch.date_end AS reconciliation_date_end
+          FROM report_import_reconciliations AS reconciliation
+          INNER JOIN lingxing_report_batches AS batch
+            ON batch.store_id = reconciliation.store_id
+           AND batch.id = reconciliation.batch_id
+          WHERE reconciliation.store_id = ?
+            AND reconciliation.run_id = ?
+            AND reconciliation.batch_id = ?
+          ORDER BY reconciliation.metric_date,
+                   reconciliation.report_type,
+                   reconciliation.reconciliation_id
+          LIMIT 10
+        `).all(storeId, uniqueRun.runId, row.jobId)
+          .map((reconciliationRow) => mapReconciliation(reconciliationRow, storeId))
+      : [];
+
+    const metricEvidenceCount = uniqueRun
+      ? Number((this.db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM report_import_metric_evidence
+          WHERE store_id = ? AND run_id = ? AND batch_id = ?
+        `).get(storeId, uniqueRun.runId, row.jobId) as { count: number }).count)
+      : 0;
+    const metricEvidence = uniqueRun
+      ? this.db.prepare(`
+          SELECT store_id AS storeId, run_id AS runId, batch_id AS batchId,
+                 row_count AS rowCount, payload_sha256 AS payloadSha256,
+                 created_at AS createdAt
+          FROM report_import_metric_evidence
+          WHERE store_id = ? AND run_id = ? AND batch_id = ?
+          ORDER BY run_id
+          LIMIT 2
+        `).all(storeId, uniqueRun.runId, row.jobId) as ReportImportMetricEvidenceRecord[]
+      : [];
+    if (uniqueRun) {
+      if (metricEvidenceCount !== 1 || metricEvidence.length !== 1) {
+        throw new Error('唯一导入运行缺少唯一不可变指标证据，拒绝权威回读。');
+      }
+      const currentMetrics = readCanonicalMetrics(this.db, storeId, row.jobId);
+      const currentPayloadSha256 = hashCanonicalMetrics(currentMetrics);
+      if (
+        currentMetrics.length !== metricEvidence[0].rowCount
+        || currentMetrics.length !== uniqueRun.metricRowCount
+        || currentPayloadSha256 !== metricEvidence[0].payloadSha256
+      ) {
+        throw new Error('当前广告指标与不可变导入证据不一致，拒绝权威回读。');
+      }
+    }
+
+    const proof: LingxingCollectionAuthorityProof = {
+      job,
+      jobRow: {
+        storeId: row.storeId,
+        jobId: row.jobId,
+        requestId: row.requestId,
+        browserProfileId: row.browserProfileId,
+        marketplace: row.marketplace,
+        currency: row.currency,
+        businessTimezone: row.businessTimezone,
+        businessDate: row.businessDate,
+        sessionGeneration: row.sessionGeneration,
+        dateStart: row.dateStart,
+        dateEnd: row.dateEnd,
+        mode: row.mode,
+        reportTypesJson: row.reportTypesJson,
+        state: row.state,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        completedAt: row.completedAt,
+        blockerCode: row.blockerCode,
+        detail: row.detail,
+      },
+      checkpointCount,
+      ...(batch ? { batch } : {}),
+      lingxingFileCount,
+      lingxingFiles,
+      importRunCount,
+      importRuns,
+      importFileSnapshotCount,
+      importFileSnapshots,
+      importedReportFileCount,
+      importedReportFiles,
+      reconciliationRowCount,
+      reconciliations,
+      metricEvidenceCount,
+      metricEvidence,
+    };
+    assertCollectionAuthorityProofTimestamps(proof);
+    return proof;
   }
 
   findUniqueCollectionJobForStoreByRequestId(
@@ -662,6 +1139,612 @@ export class LingxingImportRepository {
     const job = this.getCollectionJobForStore(storeId, jobId);
     if (!job) return undefined;
     return { jobId: job.jobId, request: job.request, reports: job.reports };
+  }
+
+  /**
+   * Returns a complete, fail-closed same-job resume packet. Unsafe durable
+   * states are rejected; crash-safe states are normalized only in the cloned
+   * packet and never mutate the original authority row during this read.
+   */
+  getCollectionInPlaceResumeStateForStore(
+    storeId: StoreId,
+    jobId: string,
+  ): CollectionInPlaceResumeState | undefined {
+    const exactJobId = requiredText(jobId, 'jobId');
+    const selected = this.db.prepare(`
+      SELECT request_id AS requestId
+      FROM lingxing_collection_jobs
+      WHERE store_id = ? AND job_id = ?
+    `).get(storeId, exactJobId) as { requestId: string } | undefined;
+    if (!selected) return undefined;
+    const proof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeId,
+      selected.requestId,
+    );
+    if (!proof || proof.job.jobId !== exactJobId) {
+      throw new Error('续跑任务无法绑定唯一 store/job/request authority proof。');
+    }
+    const reports = normalizeInPlaceResumeReports(proof);
+    if (!proof.batch) throw new Error('原地续跑缺少原始 durable batch。');
+    const active = this.db.prepare(`
+      SELECT 1 FROM lingxing_collection_resume_active_claims
+      WHERE store_id = ? AND job_id = ?
+    `).get(storeId, exactJobId);
+    if (active) throw new Error('该采集任务已有 active resume claim。');
+    const job: LingxingCollectionJobSnapshot = {
+      ...proof.job,
+      request: {
+        ...proof.job.request,
+        storeContext: { ...proof.job.request.storeContext },
+        reportTypes: [...proof.job.request.reportTypes],
+      },
+      reports: proof.job.reports.map(cloneCollectionCheckpoint),
+    };
+    return {
+      jobId: job.jobId,
+      request: job.request,
+      reports,
+      job,
+      batch: { ...proof.batch },
+      files: proof.lingxingFiles.map((file) => ({
+        ...file,
+        ...(file.attemptErrors ? { attemptErrors: [...file.attemptErrors] } : {}),
+      })),
+      expectedJobUpdatedAt: proof.job.updatedAt,
+      authorityProofSha256: fingerprintLingxingCollectionAuthorityProof(proof),
+    };
+  }
+
+  acquireCollectionResumeClaimForStore(
+    storeId: StoreId,
+    input: AcquireCollectionResumeClaimInput,
+  ): CollectionResumeClaim {
+    const executionContext = normalizeStoreContextEnvelope(input.executionStoreContext);
+    const attemptId = safeResumeIdentifier(
+      input.attemptId ?? `resume_${randomBytes(16).toString('hex')}`,
+      'attemptId',
+    );
+    const jobId = safeResumeIdentifier(input.jobId, 'jobId');
+    const requestId = requiredText(input.requestId, 'requestId');
+    const expectedJobUpdatedAt = canonicalUtcInstant(
+      input.expectedJobUpdatedAt,
+      'expectedJobUpdatedAt',
+    );
+    const expectedAuthorityProofSha256 = sha256Text(
+      input.expectedAuthorityProofSha256,
+      'expectedAuthorityProofSha256',
+    );
+    const claimedAt = input.claimedAt === undefined
+      ? canonicalMonotonicAfter(
+          new Date().toISOString(),
+          expectedJobUpdatedAt,
+          'claimedAt',
+        )
+      : canonicalUtcInstant(input.claimedAt, 'claimedAt');
+    if (Date.parse(claimedAt) < Date.parse(expectedJobUpdatedAt)) {
+      throw new Error('claimedAt 不能早于 base job.updatedAt。');
+    }
+    const claim = this.db.transaction(() => {
+      const packet = this.getCollectionInPlaceResumeStateForStore(storeId, jobId);
+      if (!packet) throw new Error('续跑任务不存在。');
+      if (
+        packet.request.requestId !== requestId
+        || packet.expectedJobUpdatedAt !== expectedJobUpdatedAt
+        || packet.authorityProofSha256 !== expectedAuthorityProofSha256
+      ) {
+        throw new Error('COLLECTION_RESUME_CAS_CONFLICT: durable authority proof 已变化。');
+      }
+      assertExecutionContextCanResume(packet.request.storeContext, executionContext);
+      const rawToken = randomBytes(32).toString('base64url');
+      const tokenSha256 = hashOpaqueClaimToken(rawToken);
+      const executionContextSha256 = fingerprintCollectionResumeExecutionContext(
+        executionContext,
+      );
+      this.db.prepare(`
+        INSERT INTO lingxing_collection_resume_attempts (
+          store_id, attempt_id, job_id, request_id,
+          base_job_updated_at, base_authority_proof_sha256,
+          durable_session_generation, execution_session_generation,
+          execution_context_sha256, claimed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        storeId,
+        attemptId,
+        jobId,
+        requestId,
+        expectedJobUpdatedAt,
+        expectedAuthorityProofSha256,
+        packet.request.storeContext.sessionGeneration,
+        executionContext.sessionGeneration,
+        executionContextSha256,
+        claimedAt,
+      );
+      this.db.prepare(`
+        INSERT INTO lingxing_collection_resume_active_claims (
+          store_id, job_id, request_id, attempt_id, claim_token_sha256,
+          expected_job_updated_at, expected_authority_proof_sha256,
+          version, claimed_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      `).run(
+        storeId,
+        jobId,
+        requestId,
+        attemptId,
+        tokenSha256,
+        expectedJobUpdatedAt,
+        expectedAuthorityProofSha256,
+        claimedAt,
+        claimedAt,
+      );
+      this.db.prepare(`
+        INSERT INTO lingxing_collection_resume_events (
+          store_id, event_id, attempt_id, job_id, request_id, event_kind,
+          consumed_claim_token_sha256, next_claim_token_sha256,
+          base_job_updated_at, final_job_updated_at,
+          base_authority_proof_sha256, final_authority_proof_sha256,
+          detail, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'claimed', NULL, ?, ?, ?, ?, ?, NULL, ?)
+      `).run(
+        storeId,
+        `${attemptId}:claimed`,
+        attemptId,
+        jobId,
+        requestId,
+        tokenSha256,
+        expectedJobUpdatedAt,
+        expectedJobUpdatedAt,
+        expectedAuthorityProofSha256,
+        expectedAuthorityProofSha256,
+        claimedAt,
+      );
+      return {
+        storeId,
+        attemptId,
+        jobId,
+        requestId,
+        claimToken: rawToken,
+        expectedJobUpdatedAt,
+        expectedAuthorityProofSha256,
+        version: 1,
+        claimedAt,
+      } satisfies CollectionResumeClaim;
+    });
+    try {
+      return claim.immediate();
+    } catch (error) {
+      if (/UNIQUE constraint failed|active resume claim/i.test(errorMessage(error))) {
+        throw new Error('COLLECTION_RESUME_CLAIM_CONFLICT: 该任务已有续跑声明。');
+      }
+      throw error;
+    }
+  }
+
+  commitCollectionResumeProgressForStore(
+    storeId: StoreId,
+    input: CommitCollectionResumeProgressInput,
+  ): CollectionResumeClaim {
+    const commit = this.db.transaction(() => {
+      const active = this.assertActiveResumeClaim(storeId, input.claim);
+      const proof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+        storeId,
+        active.requestId,
+      );
+      if (!proof || proof.job.jobId !== active.jobId) {
+        throw new Error('COLLECTION_RESUME_CAS_CONFLICT: active claim 无法回读原任务。');
+      }
+      const currentProofSha256 = fingerprintLingxingCollectionAuthorityProof(proof);
+      if (
+        proof.job.updatedAt !== active.expectedJobUpdatedAt
+        || currentProofSha256 !== active.expectedAuthorityProofSha256
+      ) {
+        throw new Error('COLLECTION_RESUME_CAS_CONFLICT: progress 前 authority proof 已变化。');
+      }
+      if (
+        input.event.job.jobId !== active.jobId
+        || input.event.job.request.requestId !== active.requestId
+      ) {
+        throw new Error('续跑 progress 不属于 active claim 的原 job/request。');
+      }
+      const emittedAt = canonicalUtcInstant(input.event.emittedAt, 'resume progress.emittedAt');
+      if (input.event.job.updatedAt !== emittedAt
+        || Date.parse(emittedAt) <= Date.parse(active.expectedJobUpdatedAt)
+        || Date.parse(emittedAt) < Date.parse(active.claimedAt)) {
+        throw new Error('续跑 progress 必须以严格递增的 canonical updatedAt 提交。');
+      }
+      const savedJob = this.persistCollectionJobSnapshotRows(storeId, input.event.job, {
+        eventId: input.event.eventId,
+        emittedAt,
+      });
+      const nextProof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+        storeId,
+        active.requestId,
+      );
+      if (!nextProof || nextProof.job.jobId !== active.jobId) {
+        throw new Error('续跑 progress 写入后无法回读 authority proof。');
+      }
+      const nextAuthorityProofSha256 = fingerprintLingxingCollectionAuthorityProof(nextProof);
+      const nextRawToken = randomBytes(32).toString('base64url');
+      const nextTokenSha256 = hashOpaqueClaimToken(nextRawToken);
+      const changed = this.db.prepare(`
+        UPDATE lingxing_collection_resume_active_claims
+        SET claim_token_sha256 = ?, expected_job_updated_at = ?,
+            expected_authority_proof_sha256 = ?, version = version + 1,
+            updated_at = ?
+        WHERE store_id = ? AND job_id = ? AND attempt_id = ?
+          AND claim_token_sha256 = ? AND version = ?
+          AND expected_job_updated_at = ?
+          AND expected_authority_proof_sha256 = ?
+      `).run(
+        nextTokenSha256,
+        savedJob.updatedAt,
+        nextAuthorityProofSha256,
+        emittedAt,
+        storeId,
+        active.jobId,
+        active.attemptId,
+        active.claimTokenSha256,
+        active.version,
+        active.expectedJobUpdatedAt,
+        active.expectedAuthorityProofSha256,
+      );
+      if (changed.changes !== 1) {
+        throw new Error('COLLECTION_RESUME_CAS_CONFLICT: progress claim token 已被消费。');
+      }
+      this.db.prepare(`
+        INSERT INTO lingxing_collection_resume_events (
+          store_id, event_id, attempt_id, job_id, request_id, event_kind,
+          consumed_claim_token_sha256, next_claim_token_sha256,
+          base_job_updated_at, final_job_updated_at,
+          base_authority_proof_sha256, final_authority_proof_sha256,
+          detail, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'progress', ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        storeId,
+        `${active.attemptId}:progress:${active.version}`,
+        active.attemptId,
+        active.jobId,
+        active.requestId,
+        active.claimTokenSha256,
+        nextTokenSha256,
+        active.baseJobUpdatedAt,
+        savedJob.updatedAt,
+        active.baseAuthorityProofSha256,
+        nextAuthorityProofSha256,
+        input.event.changedReportType ?? null,
+        emittedAt,
+      );
+      return {
+        ...input.claim,
+        claimToken: nextRawToken,
+        expectedJobUpdatedAt: savedJob.updatedAt,
+        expectedAuthorityProofSha256: nextAuthorityProofSha256,
+        version: active.version + 1,
+      };
+    });
+    return commit.immediate();
+  }
+
+  commitCollectionResumeRunnerResultForStore(
+    storeId: StoreId,
+    input: CommitCollectionResumeRunnerResultInput,
+  ): CommitCollectionResumeRunnerResultOutput {
+    const job = normalizeCollectionJobSnapshot(input.job);
+    const commit = this.db.transaction(() => {
+      const active = this.assertActiveResumeClaim(storeId, input.claim);
+      this.assertResumeClaimAuthorityCurrent(storeId, active);
+      if (job.jobId !== active.jobId || job.request.requestId !== active.requestId) {
+        throw new Error('续跑 runner result 不属于 active claim 的原 job/request。');
+      }
+      if (
+        Date.parse(job.updatedAt) <= Date.parse(active.expectedJobUpdatedAt)
+        || Date.parse(job.updatedAt) < Date.parse(active.claimedAt)
+      ) {
+        throw new Error('续跑 runner result 必须晚于当前 proof 且不早于 claimedAt。');
+      }
+      const authority = this.getStoreAuthority(storeId);
+      validateCollectionTerminalIdentity(storeId, authority, job, input.batch, input.files);
+      const savedJob = this.persistCollectionJobSnapshotRows(storeId, job);
+      const savedCollection = this.persistCollectionSnapshotRows(storeId, authority, {
+        batch: input.batch,
+        files: input.files,
+      });
+      const nextProof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+        storeId,
+        active.requestId,
+      );
+      if (!nextProof || nextProof.job.jobId !== active.jobId) {
+        throw new Error('续跑 runner result 写入后无法回读 authority proof。');
+      }
+      const finalProofSha256 = fingerprintLingxingCollectionAuthorityProof(nextProof);
+      const nextClaim = this.rotateActiveResumeClaim(
+        active,
+        savedJob.updatedAt,
+        finalProofSha256,
+        savedJob.updatedAt,
+        'runner-result',
+      );
+      return {
+        claim: nextClaim,
+        result: {
+          job: savedJob,
+          batch: savedCollection.batch,
+          files: savedCollection.files,
+        },
+      };
+    });
+    return commit.immediate();
+  }
+
+  advanceCollectionResumeClaimAfterImportForStore(
+    storeId: StoreId,
+    input: AdvanceCollectionResumeClaimAfterImportInput,
+  ): CollectionResumeClaim {
+    const advance = this.db.transaction(() => {
+      const active = this.assertActiveResumeClaim(storeId, input.claim);
+      const proof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+        storeId,
+        active.requestId,
+      );
+      if (!proof
+        || proof.job.jobId !== active.jobId
+        || proof.job.updatedAt !== active.expectedJobUpdatedAt
+        || proof.job.importState !== 'pending'
+        || proof.importRunCount !== 1
+        || proof.importRuns.length !== 1
+        || proof.metricEvidenceCount !== 1
+        || proof.metricEvidence.length !== 1
+        || proof.job.state !== 'completed'
+        || proof.job.reports.length !== COMPLETE_LINGXING_REPORT_TYPES.size
+        || proof.job.reports.some((checkpoint) => checkpoint.state !== 'downloaded')) {
+        throw new Error(
+          'COLLECTION_RESUME_IMPORT_SUCCESSOR_INVALID: import 后继不是唯一完整权威证据。',
+        );
+      }
+      const currentProofSha256 = fingerprintLingxingCollectionAuthorityProof(proof);
+      if (currentProofSha256 === active.expectedAuthorityProofSha256) {
+        throw new Error('COLLECTION_RESUME_IMPORT_SUCCESSOR_INVALID: authority proof 未产生导入后继。');
+      }
+      const advancedAt = canonicalUtcInstant(
+        input.advancedAt ?? proof.importRuns[0].createdAt,
+        'resume import advancedAt',
+      );
+      if (Date.parse(advancedAt) < Date.parse(active.expectedJobUpdatedAt)) {
+        throw new Error('resume import advancedAt 不能早于当前 job.updatedAt。');
+      }
+      return this.rotateActiveResumeClaim(
+        active,
+        proof.job.updatedAt,
+        currentProofSha256,
+        advancedAt,
+        'import-authority-successor',
+      );
+    });
+    return advance.immediate();
+  }
+
+  finalizeCollectionResumeAttemptForStore(
+    storeId: StoreId,
+    input: FinalizeCollectionResumeAttemptInput,
+  ): CollectionResumeAttemptReceipt {
+    const finalize = this.db.transaction(() => {
+      const active = this.assertActiveResumeClaim(storeId, input.claim);
+      const proof = this.assertResumeClaimAuthorityCurrent(storeId, active);
+      if (input.outcome === 'succeeded') {
+        if (
+          proof.job.state !== 'completed'
+          || proof.job.importState !== 'succeeded'
+          || proof.job.reports.length !== COMPLETE_LINGXING_REPORT_TYPES.size
+          || proof.job.reports.some((checkpoint) => checkpoint.state !== 'downloaded')
+          || proof.lingxingFileCount !== COMPLETE_LINGXING_REPORT_TYPES.size
+          || proof.lingxingFiles.length !== COMPLETE_LINGXING_REPORT_TYPES.size
+          || proof.batch?.status !== 'completed'
+          || proof.importRunCount !== 1
+          || proof.metricEvidenceCount !== 1
+        ) {
+          throw new Error('续跑 succeeded receipt 必须绑定最终导入成功的完整八报表 proof。');
+        }
+      } else if (
+        proof.job.state === 'completed'
+        && proof.job.importState !== 'failed'
+      ) {
+        throw new Error('续跑 failed receipt 必须绑定 collector 或 import 失败终态。');
+      }
+      const completedAt = canonicalMonotonicAfter(
+        input.completedAt ?? new Date().toISOString(),
+        latestCanonicalInstant(
+          [proof.job.updatedAt, active.claimedAt],
+          'resume finalize floor',
+        ),
+        'resume finalize.completedAt',
+      );
+      this.appendResumeTerminalEvent(
+        active,
+        input.outcome,
+        proof.job.updatedAt,
+        fingerprintLingxingCollectionAuthorityProof(proof),
+        completedAt,
+        input.detail,
+      );
+      this.consumeActiveResumeClaim(active);
+      return this.requireResumeReceipt(storeId, active.attemptId);
+    });
+    return finalize.immediate();
+  }
+
+  interruptCollectionResumeClaimForStore(
+    storeId: StoreId,
+    input: InterruptCollectionResumeClaimInput,
+  ): CollectionResumeAttemptReceipt {
+    const interrupt = this.db.transaction(() => {
+      const active = this.assertActiveResumeClaim(storeId, input.claim);
+      let proof = this.assertResumeClaimAuthorityCurrent(storeId, active);
+      if (Date.parse(proof.job.updatedAt) < Date.parse(active.claimedAt)) {
+        const advancedJobAt = canonicalMonotonicAfter(
+          input.interruptedAt ?? new Date().toISOString(),
+          latestCanonicalInstant(
+            [proof.job.updatedAt, active.claimedAt],
+            'interrupted job floor',
+          ),
+          'interrupted job.updatedAt',
+        );
+        this.persistCollectionJobSnapshotRows(storeId, {
+          ...proof.job,
+          updatedAt: advancedJobAt,
+        });
+        proof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+          storeId,
+          active.requestId,
+        )!;
+      }
+      const resumeSucceeded = isFinalSucceededResumeProof(proof);
+      const interruptedAt = canonicalMonotonicAfter(
+        input.interruptedAt ?? new Date().toISOString(),
+        latestCanonicalInstant(
+          [proof.job.updatedAt, active.claimedAt],
+          'interruptedAt floor',
+        ),
+        'interruptedAt',
+      );
+      this.appendResumeTerminalEvent(
+        active,
+        resumeSucceeded ? 'succeeded' : 'interrupted',
+        proof.job.updatedAt,
+        fingerprintLingxingCollectionAuthorityProof(proof),
+        interruptedAt,
+        resumeSucceeded
+          ? input.detail ?? 'manual interruption reconciled an already durable succeeded resume'
+          : input.detail,
+      );
+      this.consumeActiveResumeClaim(active);
+      return this.requireResumeReceipt(storeId, active.attemptId);
+    });
+    return interrupt.immediate();
+  }
+
+  /**
+   * Startup-only recovery. It deliberately requires no raw in-memory token,
+   * performs no browser action, closes every orphan claim atomically, and
+   * converts uncertain creation into create_unknown instead of retrying it.
+   */
+  interruptOrphanedCollectionResumeClaimsForStartup(
+    interruptedAt = new Date().toISOString(),
+  ): CollectionResumeAttemptReceipt[] {
+    const requestedInterruptedAt = canonicalUtcInstant(interruptedAt, 'startup interruptedAt');
+    const recover = this.db.transaction(() => {
+      const rows = this.db.prepare(`
+        SELECT store_id AS storeId, job_id AS jobId, attempt_id AS attemptId
+        FROM lingxing_collection_resume_active_claims
+        ORDER BY store_id, job_id
+      `).all() as Array<{ storeId: StoreId; jobId: string; attemptId: string }>;
+      const receipts: CollectionResumeAttemptReceipt[] = [];
+      for (const row of rows) {
+        const active = this.readActiveResumeClaimByAttempt(row.storeId, row.attemptId);
+        if (!active) throw new Error('startup resume claim disappeared inside immediate transaction。');
+        const job = this.getCollectionJobForStore(row.storeId, row.jobId);
+        if (!job) throw new Error('startup resume claim 原任务不存在。');
+        const finalJobAt = canonicalMonotonicAfter(
+          requestedInterruptedAt,
+          latestCanonicalInstant(
+            [job.updatedAt, active.claimedAt],
+            'startup final job floor',
+          ),
+          'startup final job.updatedAt',
+        );
+        let finalJob = job;
+        if (job.state === 'running' || job.state === 'queued') {
+          const reports = normalizeInterruptedResumeReports(job.reports, finalJobAt);
+          const hasUnknownCreate = reports.some((checkpoint) => checkpoint.state === 'create_unknown');
+          finalJob = normalizeCollectionJobSnapshot({
+            ...job,
+            state: 'failed',
+            reports,
+            blockerCode: hasUnknownCreate
+              ? 'LINGXING_CREATE_OUTCOME_UNKNOWN_AFTER_RESTART'
+              : 'LINGXING_RESUME_INTERRUPTED_ON_RESTART',
+            detail: hasUnknownCreate
+              ? '应用重启时存在未确认的报表创建调用，必须人工核对下载中心。'
+              : '应用重启已安全中断原地续跑；需由操作员重新发起。',
+            completedAt: finalJobAt,
+            updatedAt: finalJobAt,
+          });
+          this.persistCollectionJobSnapshotRows(row.storeId, finalJob);
+        } else if (Date.parse(job.updatedAt) < Date.parse(active.claimedAt)) {
+          finalJob = normalizeCollectionJobSnapshot({
+            ...job,
+            updatedAt: finalJobAt,
+          });
+          this.persistCollectionJobSnapshotRows(row.storeId, finalJob);
+        }
+        const proof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+          row.storeId,
+          active.requestId,
+        );
+        if (!proof || proof.job.jobId !== row.jobId) {
+          throw new Error('startup interruption 后无法回读 authority proof。');
+        }
+        const finalProofSha256 = fingerprintLingxingCollectionAuthorityProof(proof);
+        const resumeSucceeded = isFinalSucceededResumeProof(proof);
+        const terminalAt = canonicalMonotonicAfter(
+          requestedInterruptedAt,
+          latestCanonicalInstant(
+            [finalJob.updatedAt, active.claimedAt],
+            'startup terminal floor',
+          ),
+          'startup interruptedAt',
+        );
+        this.appendResumeTerminalEvent(
+          active,
+          resumeSucceeded ? 'succeeded' : 'interrupted',
+          finalJob.updatedAt,
+          finalProofSha256,
+          terminalAt,
+          resumeSucceeded
+            ? 'startup finalized an already durable succeeded resume without browser execution'
+            : 'startup orphan resume claim interrupted without browser execution',
+        );
+        this.consumeActiveResumeClaim(active);
+        receipts.push(this.requireResumeReceipt(row.storeId, row.attemptId));
+      }
+      return receipts;
+    });
+    return recover.immediate();
+  }
+
+  readLatestCollectionResumeAttemptReceiptForStore(
+    storeId: StoreId,
+    jobId: string,
+    requestId: string,
+  ): CollectionResumeAttemptReceipt | undefined {
+    const rows = this.readResumeReceiptRows(
+      storeId,
+      requiredText(jobId, 'jobId'),
+      requiredText(requestId, 'requestId'),
+      2,
+    );
+    if (rows.length > 1
+      && rows[0].completedAt === rows[1].completedAt
+      && rows[0].attemptId === rows[1].attemptId) {
+      throw new Error('续跑 terminal receipt 存在歧义重复。');
+    }
+    return rows[0];
+  }
+
+  readUniqueSucceededCollectionResumeReceiptForStore(
+    storeId: StoreId,
+    jobId: string,
+    requestId: string,
+  ): CollectionResumeAttemptReceipt | undefined {
+    const rows = this.readResumeReceiptRows(
+      storeId,
+      requiredText(jobId, 'jobId'),
+      requiredText(requestId, 'requestId'),
+      2,
+      'succeeded',
+    );
+    if (rows.length > 1) {
+      throw new Error('同一原任务存在多个 succeeded resume receipt，拒绝歧义回读。');
+    }
+    return rows[0];
   }
 
   findLatestCollectionResumeStateForStore(
@@ -758,11 +1841,29 @@ export class LingxingImportRepository {
       const duplicate = this.findExistingRun(storeId, normalizedInput.runId, normalizedInput.idempotencyKey);
       if (duplicate) return this.resolveDuplicate(duplicate, normalizedInput, fingerprint);
       const authority = this.getWritableStoreAuthority(storeId);
-      this.assertBatchOwnership(storeId, normalizedInput.batchId);
+      const batchWindow = this.assertBatchOwnership(storeId, normalizedInput.batchId);
+      for (const reconciliation of normalizedInput.reconciliations) {
+        if (reconciliation.dateStart !== batchWindow.dateStart
+          || reconciliation.dateEnd !== batchWindow.dateEnd
+          || reconciliation.metricDate !== batchWindow.dateEnd) {
+          throw new Error(
+            'IMPORT_RECONCILIATION_WINDOW_MISMATCH: control-total 必须严格绑定批次完整日期窗口，'
+            + '且兼容字段 metricDate 必须等于 dateEnd。',
+          );
+        }
+      }
 
       const now = new Date().toISOString();
       const startedAt = normalizedInput.startedAt ?? now;
-      const completedAt = normalizedInput.completedAt ?? now;
+      const completedAt = normalizedInput.completedAt
+        ?? (Date.parse(now) >= Date.parse(startedAt) ? now : startedAt);
+      const createdAt = Date.parse(now) >= Date.parse(completedAt) ? now : completedAt;
+      if (Date.parse(startedAt) > Date.parse(completedAt)
+        || Date.parse(completedAt) > Date.parse(createdAt)) {
+        throw new Error(
+          'IMPORT_RUN_TIMELINE_INVALID: 必须满足 startedAt <= completedAt <= createdAt。',
+        );
+      }
       this.db.prepare(`
         INSERT INTO report_import_runs (
           store_id, run_id, idempotency_key, input_fingerprint, batch_id,
@@ -784,7 +1885,7 @@ export class LingxingImportRepository {
         reconciliationCount: normalizedInput.reconciliations.length,
         startedAt,
         completedAt,
-        createdAt: now,
+        createdAt,
       });
 
       normalizedInput.files.forEach((file, index) => {
@@ -820,6 +1921,9 @@ export class LingxingImportRepository {
 
       const metricIdentities = new Set<string>();
       for (const metric of normalizedInput.metrics) {
+        if (metric.date < batchWindow.dateStart || metric.date > batchWindow.dateEnd) {
+          throw new Error('广告指标日期超出导入批次授权窗口。');
+        }
         const identity = metricIdentity(metric);
         if (metricIdentities.has(identity)) {
           throw new Error('同一导入运行包含重复的广告指标数据粒度，拒绝覆盖后伪造行数。');
@@ -828,9 +1932,40 @@ export class LingxingImportRepository {
         this.insertMetricRow(storeId, authority, normalizedInput.batchId, metric);
       }
 
+      assertExactReportImportCoverage(normalizedInput);
+
+      const committedMetrics = readCanonicalMetrics(
+        this.db,
+        storeId,
+        normalizedInput.batchId,
+      );
+      const expectedMetricPayloadSha256 = hashCanonicalMetrics(normalizedInput.metrics);
+      const committedMetricPayloadSha256 = hashCanonicalMetrics(committedMetrics);
+      if (
+        committedMetrics.length !== normalizedInput.metrics.length
+        || committedMetricPayloadSha256 !== expectedMetricPayloadSha256
+      ) {
+        throw new Error(
+          'IMPORT_METRIC_EVIDENCE_MISMATCH: 当前批次广告指标与规范化导入载荷不一致。',
+        );
+      }
+      this.db.prepare(`
+        INSERT INTO report_import_metric_evidence (
+          store_id, run_id, batch_id, row_count, payload_sha256, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        storeId,
+        normalizedInput.runId,
+        normalizedInput.batchId,
+        committedMetrics.length,
+        committedMetricPayloadSha256,
+        completedAt,
+      );
+
       normalizedInput.reconciliations.forEach((reconciliation, index) => {
         const actualMetrics = normalizedInput.metrics.filter((metric) => (
-          metric.date === reconciliation.metricDate
+          metric.date >= reconciliation.dateStart
+          && metric.date <= reconciliation.dateEnd
           && String(metric.reportType ?? '') === reconciliation.reportType
         ));
         const amount = reconcileUsdAmount(
@@ -842,7 +1977,8 @@ export class LingxingImportRepository {
         const withinTolerance = rowsMatch && amount.withinTolerance;
         if (!withinTolerance) {
           throw new Error(
-            `IMPORT_RECONCILIATION_MISMATCH ${reconciliation.metricDate} ${reconciliation.reportType}: `
+            `IMPORT_RECONCILIATION_MISMATCH ${reconciliation.dateStart}..${reconciliation.dateEnd} `
+            + `${reconciliation.reportType}: `
             + `rows ${actualMetrics.length}/${reconciliation.expectedRows}, `
             + `cost delta ${(amount.absoluteDelta1e4 / 10_000).toFixed(4)} USD `
             + `exceeds ${(amount.tolerance1e4 / 10_000).toFixed(4)} USD.`,
@@ -982,10 +2118,360 @@ export class LingxingImportRepository {
     runId: string,
   ): ReportImportReconciliationRecord[] {
     return this.db.prepare(`
-      SELECT * FROM report_import_reconciliations
-      WHERE store_id = ? AND run_id = ?
-      ORDER BY metric_date, report_type, reconciliation_id
+      SELECT reconciliation.*,
+             batch.date_start AS reconciliation_date_start,
+             batch.date_end AS reconciliation_date_end
+      FROM report_import_reconciliations AS reconciliation
+      INNER JOIN lingxing_report_batches AS batch
+        ON batch.store_id = reconciliation.store_id
+       AND batch.id = reconciliation.batch_id
+      WHERE reconciliation.store_id = ? AND reconciliation.run_id = ?
+      ORDER BY reconciliation.metric_date,
+               reconciliation.report_type,
+               reconciliation.reconciliation_id
     `).all(storeId, runId).map((row) => mapReconciliation(row, storeId));
+  }
+
+  private readActiveResumeClaimByAttempt(
+    storeId: StoreId,
+    attemptId: string,
+  ): ActiveCollectionResumeClaimRow | undefined {
+    return this.db.prepare(`
+      SELECT claims.store_id AS storeId,
+             claims.job_id AS jobId,
+             claims.request_id AS requestId,
+             claims.attempt_id AS attemptId,
+             claims.claim_token_sha256 AS claimTokenSha256,
+             claims.expected_job_updated_at AS expectedJobUpdatedAt,
+             claims.expected_authority_proof_sha256 AS expectedAuthorityProofSha256,
+             claims.version,
+             claims.claimed_at AS claimedAt,
+             attempts.base_job_updated_at AS baseJobUpdatedAt,
+             attempts.base_authority_proof_sha256 AS baseAuthorityProofSha256,
+             attempts.durable_session_generation AS durableSessionGeneration,
+             attempts.execution_session_generation AS executionSessionGeneration,
+             attempts.execution_context_sha256 AS executionContextSha256
+      FROM lingxing_collection_resume_active_claims AS claims
+      INNER JOIN lingxing_collection_resume_attempts AS attempts
+        ON attempts.store_id = claims.store_id
+       AND attempts.attempt_id = claims.attempt_id
+       AND attempts.job_id = claims.job_id
+       AND attempts.request_id = claims.request_id
+      WHERE claims.store_id = ? AND claims.attempt_id = ?
+    `).get(storeId, attemptId) as ActiveCollectionResumeClaimRow | undefined;
+  }
+
+  private assertActiveResumeClaim(
+    storeId: StoreId,
+    claim: CollectionResumeClaim,
+  ): ActiveCollectionResumeClaimRow {
+    if (claim.storeId !== storeId) {
+      throw new Error('resume claim storeId 与调用边界不一致。');
+    }
+    const active = this.readActiveResumeClaimByAttempt(
+      storeId,
+      safeResumeIdentifier(claim.attemptId, 'claim.attemptId'),
+    );
+    if (!active
+      || active.jobId !== claim.jobId
+      || active.requestId !== claim.requestId
+      || active.version !== claim.version
+      || active.expectedJobUpdatedAt !== claim.expectedJobUpdatedAt
+      || active.expectedAuthorityProofSha256 !== claim.expectedAuthorityProofSha256
+      || active.claimedAt !== claim.claimedAt
+      || active.claimTokenSha256 !== hashOpaqueClaimToken(claim.claimToken)) {
+      throw new Error('COLLECTION_RESUME_CAS_CONFLICT: claim token 已失效或被消费。');
+    }
+    return active;
+  }
+
+  private assertResumeClaimAuthorityCurrent(
+    storeId: StoreId,
+    active: ActiveCollectionResumeClaimRow,
+  ): LingxingCollectionAuthorityProof {
+    const proof = this.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeId,
+      active.requestId,
+    );
+    if (!proof
+      || proof.job.jobId !== active.jobId
+      || proof.job.updatedAt !== active.expectedJobUpdatedAt
+      || fingerprintLingxingCollectionAuthorityProof(proof)
+        !== active.expectedAuthorityProofSha256) {
+      throw new Error('COLLECTION_RESUME_CAS_CONFLICT: active authority proof 已漂移。');
+    }
+    return proof;
+  }
+
+  private appendResumeTerminalEvent(
+    active: ActiveCollectionResumeClaimRow,
+    outcome: 'succeeded' | 'failed' | 'interrupted',
+    finalJobUpdatedAt: string,
+    finalAuthorityProofSha256: string,
+    completedAt: string,
+    detail?: string,
+  ): void {
+    this.db.prepare(`
+      INSERT INTO lingxing_collection_resume_events (
+        store_id, event_id, attempt_id, job_id, request_id, event_kind,
+        consumed_claim_token_sha256, next_claim_token_sha256,
+        base_job_updated_at, final_job_updated_at,
+        base_authority_proof_sha256, final_authority_proof_sha256,
+        detail, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+    `).run(
+      active.storeId,
+      `${active.attemptId}:${outcome}`,
+      active.attemptId,
+      active.jobId,
+      active.requestId,
+      outcome,
+      active.claimTokenSha256,
+      active.baseJobUpdatedAt,
+      finalJobUpdatedAt,
+      active.baseAuthorityProofSha256,
+      sha256Text(finalAuthorityProofSha256, 'finalAuthorityProofSha256'),
+      detail ? String(detail).slice(0, 2_000) : null,
+      completedAt,
+    );
+  }
+
+  private rotateActiveResumeClaim(
+    active: ActiveCollectionResumeClaimRow,
+    finalJobUpdatedAt: string,
+    finalAuthorityProofSha256: string,
+    createdAt: string,
+    detail: string,
+  ): CollectionResumeClaim {
+    const nextRawToken = randomBytes(32).toString('base64url');
+    const nextTokenSha256 = hashOpaqueClaimToken(nextRawToken);
+    const exactProofSha256 = sha256Text(
+      finalAuthorityProofSha256,
+      'finalAuthorityProofSha256',
+    );
+    const changed = this.db.prepare(`
+      UPDATE lingxing_collection_resume_active_claims
+      SET claim_token_sha256 = ?, expected_job_updated_at = ?,
+          expected_authority_proof_sha256 = ?, version = version + 1,
+          updated_at = ?
+      WHERE store_id = ? AND job_id = ? AND attempt_id = ?
+        AND claim_token_sha256 = ? AND version = ?
+        AND expected_job_updated_at = ?
+        AND expected_authority_proof_sha256 = ?
+    `).run(
+      nextTokenSha256,
+      finalJobUpdatedAt,
+      exactProofSha256,
+      createdAt,
+      active.storeId,
+      active.jobId,
+      active.attemptId,
+      active.claimTokenSha256,
+      active.version,
+      active.expectedJobUpdatedAt,
+      active.expectedAuthorityProofSha256,
+    );
+    if (changed.changes !== 1) {
+      throw new Error('COLLECTION_RESUME_CAS_CONFLICT: claim rotation failed。');
+    }
+    this.db.prepare(`
+      INSERT INTO lingxing_collection_resume_events (
+        store_id, event_id, attempt_id, job_id, request_id, event_kind,
+        consumed_claim_token_sha256, next_claim_token_sha256,
+        base_job_updated_at, final_job_updated_at,
+        base_authority_proof_sha256, final_authority_proof_sha256,
+        detail, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'progress', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      active.storeId,
+      `${active.attemptId}:progress:${active.version}`,
+      active.attemptId,
+      active.jobId,
+      active.requestId,
+      active.claimTokenSha256,
+      nextTokenSha256,
+      active.baseJobUpdatedAt,
+      finalJobUpdatedAt,
+      active.baseAuthorityProofSha256,
+      exactProofSha256,
+      detail,
+      createdAt,
+    );
+    return {
+      storeId: active.storeId,
+      attemptId: active.attemptId,
+      jobId: active.jobId,
+      requestId: active.requestId,
+      claimToken: nextRawToken,
+      expectedJobUpdatedAt: finalJobUpdatedAt,
+      expectedAuthorityProofSha256: exactProofSha256,
+      version: active.version + 1,
+      claimedAt: active.claimedAt,
+    };
+  }
+
+  private consumeActiveResumeClaim(active: ActiveCollectionResumeClaimRow): void {
+    const removed = this.db.prepare(`
+      DELETE FROM lingxing_collection_resume_active_claims
+      WHERE store_id = ? AND job_id = ? AND attempt_id = ?
+        AND claim_token_sha256 = ? AND version = ?
+    `).run(
+      active.storeId,
+      active.jobId,
+      active.attemptId,
+      active.claimTokenSha256,
+      active.version,
+    );
+    if (removed.changes !== 1) {
+      throw new Error('COLLECTION_RESUME_CAS_CONFLICT: terminal claim token 已被消费。');
+    }
+  }
+
+  private readResumeReceiptRows(
+    storeId: StoreId,
+    jobId: string,
+    requestId: string,
+    limit: number,
+    outcome?: 'succeeded',
+  ): CollectionResumeAttemptReceipt[] {
+    const outcomeClause = outcome ? 'AND events.event_kind = ?' : `AND events.event_kind IN (
+      'succeeded', 'failed', 'interrupted'
+    )`;
+    const params: unknown[] = [storeId, jobId, requestId];
+    if (outcome) params.push(outcome);
+    params.push(limit);
+    return (this.db.prepare(`
+      SELECT events.store_id AS storeId,
+             events.attempt_id AS attemptId,
+             events.job_id AS jobId,
+             events.request_id AS requestId,
+             events.event_kind AS outcome,
+             events.base_job_updated_at AS baseJobUpdatedAt,
+             events.final_job_updated_at AS finalJobUpdatedAt,
+             events.base_authority_proof_sha256 AS baseAuthorityProofSha256,
+             events.final_authority_proof_sha256 AS finalAuthorityProofSha256,
+             attempts.durable_session_generation AS durableSessionGeneration,
+             attempts.execution_session_generation AS executionSessionGeneration,
+             attempts.execution_context_sha256 AS executionContextSha256,
+             attempts.claimed_at AS claimedAt,
+             events.created_at AS completedAt,
+             events.detail
+      FROM lingxing_collection_resume_events AS events
+      INNER JOIN lingxing_collection_resume_attempts AS attempts
+        ON attempts.store_id = events.store_id
+       AND attempts.attempt_id = events.attempt_id
+       AND attempts.job_id = events.job_id
+       AND attempts.request_id = events.request_id
+       AND attempts.base_job_updated_at = events.base_job_updated_at
+       AND attempts.base_authority_proof_sha256 = events.base_authority_proof_sha256
+      WHERE events.store_id = ? AND events.job_id = ? AND events.request_id = ?
+        ${outcomeClause}
+      ORDER BY events.created_at DESC, events.event_id DESC
+      LIMIT ?
+    `).all(...params) as Array<CollectionResumeAttemptReceipt & { detail: string | null }>)
+      .map((row) => ({
+        ...row,
+        ...(row.detail ? { detail: row.detail } : {}),
+      }));
+  }
+
+  private requireResumeReceipt(
+    storeId: StoreId,
+    attemptId: string,
+  ): CollectionResumeAttemptReceipt {
+    const row = this.db.prepare(`
+      SELECT job_id AS jobId, request_id AS requestId
+      FROM lingxing_collection_resume_attempts
+      WHERE store_id = ? AND attempt_id = ?
+    `).get(storeId, attemptId) as { jobId: string; requestId: string } | undefined;
+    if (!row) throw new Error('resume receipt attempt 不存在。');
+    const receipt = this.readResumeReceiptRows(
+      storeId,
+      row.jobId,
+      row.requestId,
+      100,
+    ).find((candidate) => candidate.attemptId === attemptId);
+    if (!receipt) throw new Error('resume terminal receipt 写入后无法回读。');
+    return receipt;
+  }
+
+  private appendRecoveredSucceededResumeReceiptIfNeeded(
+    storeId: StoreId,
+    proof: LingxingCollectionAuthorityProof,
+    completedAt: string,
+    predecessorJobUpdatedAt: string,
+  ): void {
+    if (!isFinalSucceededResumeProof(proof)) return;
+    const rows = this.db.prepare(`
+      SELECT attempts.attempt_id AS attemptId,
+             attempts.job_id AS jobId,
+             attempts.request_id AS requestId,
+             attempts.base_job_updated_at AS baseJobUpdatedAt,
+             attempts.base_authority_proof_sha256 AS baseAuthorityProofSha256
+      FROM lingxing_collection_resume_attempts AS attempts
+      INNER JOIN lingxing_collection_resume_events AS terminal
+        ON terminal.store_id = attempts.store_id
+       AND terminal.attempt_id = attempts.attempt_id
+       AND terminal.job_id = attempts.job_id
+       AND terminal.request_id = attempts.request_id
+       AND terminal.event_kind IN ('interrupted', 'failed')
+      WHERE attempts.store_id = ?
+        AND attempts.job_id = ?
+        AND attempts.request_id = ?
+        AND terminal.final_job_updated_at IN (?, ?, ?)
+        AND NOT EXISTS (
+          SELECT 1 FROM lingxing_collection_resume_events AS succeeded
+          WHERE succeeded.store_id = attempts.store_id
+            AND succeeded.attempt_id = attempts.attempt_id
+            AND succeeded.event_kind = 'succeeded'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM lingxing_collection_resume_active_claims AS active
+          WHERE active.store_id = attempts.store_id
+            AND active.attempt_id = attempts.attempt_id
+        )
+      ORDER BY attempts.claimed_at DESC, attempts.attempt_id DESC
+      LIMIT 2
+    `).all(
+      storeId,
+      proof.job.jobId,
+      proof.job.request.requestId,
+      proof.job.completedAt,
+      proof.job.importAttemptedAt,
+      predecessorJobUpdatedAt,
+    ) as Array<{
+      attemptId: string;
+      jobId: string;
+      requestId: string;
+      baseJobUpdatedAt: string;
+      baseAuthorityProofSha256: string;
+    }>;
+    if (rows.length > 1) {
+      throw new Error('import recovery 对应多个 resume terminal predecessor，拒绝追加成功后继。');
+    }
+    const attempt = rows[0];
+    if (!attempt) return;
+    this.db.prepare(`
+      INSERT INTO lingxing_collection_resume_events (
+        store_id, event_id, attempt_id, job_id, request_id, event_kind,
+        consumed_claim_token_sha256, next_claim_token_sha256,
+        base_job_updated_at, final_job_updated_at,
+        base_authority_proof_sha256, final_authority_proof_sha256,
+        detail, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'succeeded', NULL, NULL, ?, ?, ?, ?, ?, ?)
+    `).run(
+      storeId,
+      `${attempt.attemptId}:recovered-succeeded`,
+      attempt.attemptId,
+      attempt.jobId,
+      attempt.requestId,
+      attempt.baseJobUpdatedAt,
+      proof.job.updatedAt,
+      attempt.baseAuthorityProofSha256,
+      fingerprintLingxingCollectionAuthorityProof(proof),
+      'append-only successor: interrupted resume completed through exact import recovery CAS',
+      completedAt,
+    );
   }
 
   private persistCollectionJobSnapshotRows(
@@ -1227,10 +2713,96 @@ export class LingxingImportRepository {
 
   private upsertBatchRow(storeId: StoreId, batch: LingxingReportBatch): void {
     const existing = this.db.prepare(`
-      SELECT store_id AS storeId FROM lingxing_report_batches WHERE id = ?
-    `).get(batch.id) as { storeId?: string | null } | undefined;
+      SELECT store_id AS storeId,
+             request_id AS requestId,
+             browser_profile_id AS browserProfileId,
+             business_date AS businessDate,
+             session_generation AS sessionGeneration,
+             app_version AS appVersion,
+             date_start AS dateStart,
+             date_end AS dateEnd,
+             store_name AS storeName,
+             marketplace_code AS marketplaceCode,
+             status,
+             download_dir AS downloadDir,
+             manifest_path AS manifestPath,
+             created_at AS createdAt,
+             completed_at AS completedAt,
+             EXISTS(
+               SELECT 1 FROM report_import_runs AS run
+               WHERE run.store_id = lingxing_report_batches.store_id
+                 AND run.batch_id = lingxing_report_batches.id
+             ) AS hasCommittedImport
+      FROM lingxing_report_batches
+      WHERE id = ?
+    `).get(batch.id) as {
+      storeId?: string | null;
+      requestId?: string | null;
+      browserProfileId?: string | null;
+      businessDate?: string | null;
+      sessionGeneration?: number | null;
+      appVersion?: string | null;
+      dateStart: string;
+      dateEnd: string;
+      storeName?: string | null;
+      marketplaceCode?: string | null;
+      status: string;
+      downloadDir: string;
+      manifestPath?: string | null;
+      createdAt: string;
+      completedAt?: string | null;
+      hasCommittedImport: number;
+    } | undefined;
     if (existing && existing.storeId !== storeId) {
       throw new Error(`领星批次 ${batch.id} 已属于其他店铺或尚未完成归属确认。`);
+    }
+    const next = {
+      requestId: batch.requestId ?? null,
+      browserProfileId: batch.browserProfileId ?? null,
+      businessDate: batch.businessDate ?? null,
+      sessionGeneration: batch.sessionGeneration ?? null,
+      appVersion: batch.appVersion ?? null,
+      dateStart: batch.dateStart,
+      dateEnd: batch.dateEnd,
+      storeName: batch.storeName ?? null,
+      marketplaceCode: batch.marketplaceCode ?? 'US',
+      status: batch.status,
+      downloadDir: batch.downloadDir,
+      manifestPath: batch.manifestPath ?? null,
+      createdAt: batch.createdAt,
+      completedAt: batch.completedAt ?? null,
+    };
+    if (existing && (
+      existing.dateStart !== next.dateStart
+      || existing.dateEnd !== next.dateEnd
+      || existing.createdAt !== next.createdAt
+      || existing.marketplaceCode !== next.marketplaceCode
+      || (existing.requestId !== null && existing.requestId !== next.requestId)
+      || (existing.browserProfileId !== null
+        && existing.browserProfileId !== next.browserProfileId)
+      || (existing.businessDate !== null && existing.businessDate !== next.businessDate)
+      || (existing.sessionGeneration !== null
+        && existing.sessionGeneration !== next.sessionGeneration)
+    )) {
+      throw new Error(
+        'LINGXING_BATCH_AUTHORITY_IMMUTABLE: 既有批次的日期窗口或 Store/Profile 核心身份不可改写。',
+      );
+    }
+    if (existing?.hasCommittedImport === 1 && (
+      existing.requestId !== next.requestId
+      || existing.browserProfileId !== next.browserProfileId
+      || existing.businessDate !== next.businessDate
+      || existing.sessionGeneration !== next.sessionGeneration
+      || existing.appVersion !== next.appVersion
+      || existing.storeName !== next.storeName
+      || existing.status !== next.status
+      || existing.downloadDir !== next.downloadDir
+      || existing.manifestPath !== next.manifestPath
+      || existing.completedAt !== next.completedAt
+    )) {
+      throw new Error(
+        'IMPORTED_BATCH_AUTHORITY_IMMUTABLE: 已提交导入证据的批次身份与来源元数据不可改写。',
+      );
     }
     this.db.prepare(`
       INSERT INTO lingxing_report_batches (
@@ -1259,20 +2831,7 @@ export class LingxingImportRepository {
       WHERE lingxing_report_batches.store_id = excluded.store_id
     `).run({
       id: batch.id,
-      requestId: batch.requestId ?? null,
-      browserProfileId: batch.browserProfileId ?? null,
-      businessDate: batch.businessDate ?? null,
-      sessionGeneration: batch.sessionGeneration ?? null,
-      appVersion: batch.appVersion ?? null,
-      dateStart: batch.dateStart,
-      dateEnd: batch.dateEnd,
-      storeName: batch.storeName ?? null,
-      marketplaceCode: batch.marketplaceCode ?? 'US',
-      status: batch.status,
-      downloadDir: batch.downloadDir,
-      manifestPath: batch.manifestPath ?? null,
-      createdAt: batch.createdAt,
-      completedAt: batch.completedAt ?? null,
+      ...next,
       storeId,
     });
   }
@@ -1432,11 +2991,24 @@ export class LingxingImportRepository {
     `).run(params);
   }
 
-  private assertBatchOwnership(storeId: StoreId, batchId: string): void {
+  private assertBatchOwnership(
+    storeId: StoreId,
+    batchId: string,
+  ): { dateStart: string; dateEnd: string } {
     const row = this.db.prepare(`
-      SELECT store_id AS storeId FROM lingxing_report_batches WHERE id = ?
-    `).get(batchId) as { storeId?: string | null } | undefined;
+      SELECT store_id AS storeId, date_start AS dateStart, date_end AS dateEnd
+      FROM lingxing_report_batches
+      WHERE id = ?
+    `).get(batchId) as {
+      storeId?: string | null;
+      dateStart?: string | null;
+      dateEnd?: string | null;
+    } | undefined;
     if (!row || row.storeId !== storeId) throw new Error(`报表批次 ${batchId} 不属于店铺 ${storeId}。`);
+    const dateStart = canonicalIsoDate(row.dateStart, '批次 dateStart');
+    const dateEnd = canonicalIsoDate(row.dateEnd, '批次 dateEnd');
+    if (dateStart > dateEnd) throw new Error('报表批次日期窗口无效。');
+    return { dateStart, dateEnd };
   }
 
   private findExistingRun(
@@ -1903,6 +3475,7 @@ function assertCollectionAuthorityProofTimestamps(
     ...proof.lingxingFiles.flatMap((file) => [file.createdAt, file.updatedAt]),
     ...proof.importRuns.flatMap((run) => [run.startedAt, run.completedAt, run.createdAt]),
     ...proof.importFileSnapshots.map((snapshot) => snapshot.capturedAt),
+    ...proof.metricEvidence.map((evidence) => evidence.createdAt),
   ];
   const optional: unknown[] = [
     proof.job.completedAt,
@@ -1918,6 +3491,301 @@ function assertCollectionAuthorityProofTimestamps(
       && !isCanonicalUtcInstant(value))) {
     throw new Error('采集 authority proof 包含非规范 ISO-8601 UTC 时间戳。');
   }
+
+  assertAuthorityTimestampOrder('job.createdAt <= job.updatedAt', proof.job.createdAt, proof.job.updatedAt);
+  if (proof.job.completedAt) {
+    assertAuthorityTimestampOrder(
+      'job.createdAt <= job.completedAt',
+      proof.job.createdAt,
+      proof.job.completedAt,
+    );
+    assertAuthorityTimestampOrder(
+      'job.completedAt <= job.updatedAt',
+      proof.job.completedAt,
+      proof.job.updatedAt,
+    );
+  }
+  for (const checkpoint of proof.job.reports) {
+    assertAuthorityTimestampOrder(
+      `job.createdAt <= checkpoint.${checkpoint.reportType}.updatedAt`,
+      proof.job.createdAt,
+      checkpoint.updatedAt,
+    );
+    assertAuthorityTimestampOrder(
+      `checkpoint.${checkpoint.reportType}.updatedAt <= job.updatedAt`,
+      checkpoint.updatedAt,
+      proof.job.updatedAt,
+    );
+    if (checkpoint.createdReportIdentity) {
+      assertAuthorityTimestampOrder(
+        `job.createdAt <= checkpoint.${checkpoint.reportType}.createdReportIdentity.createdAt`,
+        proof.job.createdAt,
+        checkpoint.createdReportIdentity.createdAt,
+      );
+      assertAuthorityTimestampOrder(
+        `checkpoint.${checkpoint.reportType}.createdReportIdentity.createdAt <= checkpoint.updatedAt`,
+        checkpoint.createdReportIdentity.createdAt,
+        checkpoint.updatedAt,
+      );
+    }
+  }
+  if (proof.batch) {
+    assertAuthorityTimestampOrder(
+      'job.createdAt <= batch.createdAt',
+      proof.job.createdAt,
+      proof.batch.createdAt,
+    );
+    assertAuthorityTimestampOrder(
+      'batch.createdAt <= job.updatedAt',
+      proof.batch.createdAt,
+      proof.job.updatedAt,
+    );
+    if (proof.batch.completedAt) {
+      assertAuthorityTimestampOrder(
+        'batch.createdAt <= batch.completedAt',
+        proof.batch.createdAt,
+        proof.batch.completedAt,
+      );
+      assertAuthorityTimestampOrder(
+        'batch.completedAt <= job.updatedAt',
+        proof.batch.completedAt,
+        proof.job.updatedAt,
+      );
+    }
+  }
+  for (const file of proof.lingxingFiles) {
+    assertAuthorityTimestampOrder(
+      `lingxingFile.${file.id}.createdAt <= updatedAt`,
+      file.createdAt,
+      file.updatedAt,
+    );
+    assertAuthorityTimestampOrder(
+      `job.createdAt <= lingxingFile.${file.id}.createdAt`,
+      proof.job.createdAt,
+      file.createdAt,
+    );
+    assertAuthorityTimestampOrder(
+      `lingxingFile.${file.id}.updatedAt <= job.updatedAt`,
+      file.updatedAt,
+      proof.job.updatedAt,
+    );
+    if (proof.batch?.completedAt) {
+      assertAuthorityTimestampOrder(
+        `lingxingFile.${file.id}.updatedAt <= batch.completedAt`,
+        file.updatedAt,
+        proof.batch.completedAt,
+      );
+    }
+  }
+  if (proof.job.importAttemptedAt) {
+    if (proof.job.completedAt) {
+      assertAuthorityTimestampOrder(
+        'job.completedAt <= job.importAttemptedAt',
+        proof.job.completedAt,
+        proof.job.importAttemptedAt,
+      );
+    }
+    assertAuthorityTimestampOrder(
+      'job.importAttemptedAt <= job.updatedAt',
+      proof.job.importAttemptedAt,
+      proof.job.updatedAt,
+    );
+  }
+  if (proof.job.importCompletedAt) {
+    if (proof.job.importAttemptedAt) {
+      assertAuthorityTimestampOrder(
+        'job.importAttemptedAt <= job.importCompletedAt',
+        proof.job.importAttemptedAt,
+        proof.job.importCompletedAt,
+      );
+    }
+    assertAuthorityTimestampOrder(
+      'job.importCompletedAt <= job.updatedAt',
+      proof.job.importCompletedAt,
+      proof.job.updatedAt,
+    );
+  }
+  const runsById = new Map(proof.importRuns.map((run) => [run.runId, run]));
+  for (const run of proof.importRuns) {
+    assertAuthorityTimestampOrder(
+      `importRun.${run.runId}.startedAt <= completedAt`,
+      run.startedAt,
+      run.completedAt,
+    );
+    assertAuthorityTimestampOrder(
+      `importRun.${run.runId}.completedAt <= createdAt`,
+      run.completedAt,
+      run.createdAt,
+    );
+    if (proof.job.completedAt) {
+      assertAuthorityTimestampOrder(
+        `job.completedAt <= importRun.${run.runId}.startedAt`,
+        proof.job.completedAt,
+        run.startedAt,
+      );
+    }
+    if (proof.job.importAttemptedAt) {
+      assertAuthorityTimestampOrder(
+        `job.importAttemptedAt <= importRun.${run.runId}.startedAt`,
+        proof.job.importAttemptedAt,
+        run.startedAt,
+      );
+    }
+    if (proof.job.importCompletedAt) {
+      assertAuthorityTimestampOrder(
+        `importRun.${run.runId}.completedAt <= job.importCompletedAt`,
+        run.completedAt,
+        proof.job.importCompletedAt,
+      );
+    }
+  }
+  for (const snapshot of proof.importFileSnapshots) {
+    const run = runsById.get(snapshot.runId);
+    if (!run) continue;
+    assertAuthorityTimestampOrder(
+      `importRun.${run.runId}.startedAt <= snapshot.${snapshot.snapshotId}.capturedAt`,
+      run.startedAt,
+      snapshot.capturedAt,
+    );
+    assertAuthorityTimestampOrder(
+      `snapshot.${snapshot.snapshotId}.capturedAt <= importRun.${run.runId}.completedAt`,
+      snapshot.capturedAt,
+      run.completedAt,
+    );
+  }
+  const uniqueRun = proof.importRunCount === 1 && proof.importRuns.length === 1
+    ? proof.importRuns[0]
+    : undefined;
+  for (const file of proof.importedReportFiles) {
+    if (!file.lastImportedAt) continue;
+    if (!uniqueRun) {
+      throw new Error(
+        `采集 authority proof 时间顺序无效：importedReportFile.${file.id} 缺少唯一 import run。`,
+      );
+    }
+    assertAuthorityTimestampOrder(
+      `importRun.${uniqueRun.runId}.startedAt <= importedReportFile.${file.id}.lastImportedAt`,
+      uniqueRun.startedAt,
+      file.lastImportedAt,
+    );
+    assertAuthorityTimestampOrder(
+      `importedReportFile.${file.id}.lastImportedAt <= importRun.${uniqueRun.runId}.completedAt`,
+      file.lastImportedAt,
+      uniqueRun.completedAt,
+    );
+    if (proof.job.completedAt) {
+      assertAuthorityTimestampOrder(
+        `job.completedAt <= importedReportFile.${file.id}.lastImportedAt`,
+        proof.job.completedAt,
+        file.lastImportedAt,
+      );
+    }
+    if (proof.job.importCompletedAt) {
+      assertAuthorityTimestampOrder(
+        `importedReportFile.${file.id}.lastImportedAt <= job.importCompletedAt`,
+        file.lastImportedAt,
+        proof.job.importCompletedAt,
+      );
+    }
+  }
+}
+
+function assertAuthorityTimestampOrder(label: string, earlier: string, later: string): void {
+  if (Date.parse(earlier) > Date.parse(later)) {
+    throw new Error(`采集 authority proof 时间顺序无效：${label}。`);
+  }
+}
+
+function normalizeCollectionSemanticScope(
+  input: LingxingCollectionSemanticScope,
+): LingxingCollectionSemanticScope {
+  if (!input || typeof input !== 'object') {
+    throw new Error('采集 semantic scope 无效。');
+  }
+  const storeId = requiredText(input.storeId, 'semantic scope.storeId') as StoreId;
+  const browserProfileId = requiredText(
+    input.browserProfileId,
+    'semantic scope.browserProfileId',
+  );
+  const businessDate = canonicalIsoDate(input.businessDate, 'semantic scope.businessDate');
+  const dateStart = canonicalIsoDate(input.dateStart, 'semantic scope.dateStart');
+  const dateEnd = canonicalIsoDate(input.dateEnd, 'semantic scope.dateEnd');
+  if (dateStart > dateEnd) {
+    throw new Error('采集 semantic scope date window 无效。');
+  }
+  if (input.mode !== 'create-and-download') {
+    throw new Error('采集 semantic scope 仅接受 create-and-download。');
+  }
+  if (!Array.isArray(input.reportTypes)
+    || input.reportTypes.length !== COMPLETE_LINGXING_REPORT_TYPES.size
+    || new Set(input.reportTypes).size !== COMPLETE_LINGXING_REPORT_TYPES.size
+    || input.reportTypes.some((reportType) => (
+      !COMPLETE_LINGXING_REPORT_TYPES.has(reportType)
+    ))) {
+    throw new Error('采集 semantic scope 必须是严格且不重复的 8/8 领星广告报表集合。');
+  }
+  return {
+    storeId,
+    browserProfileId,
+    businessDate,
+    dateStart,
+    dateEnd,
+    mode: 'create-and-download',
+    reportTypes: [...COMPLETE_LINGXING_REPORT_TYPES],
+  };
+}
+
+function assertCollectionAuthorityProofSemanticScope(
+  scope: LingxingCollectionSemanticScope,
+  proof: LingxingCollectionAuthorityProof,
+): void {
+  const context = normalizeStoreContextEnvelope(proof.job.request.storeContext);
+  const rowReportTypes = parseRequiredJson<unknown>(
+    proof.jobRow.reportTypesJson,
+    '采集 job SQL report_types_json',
+  );
+  if (proof.jobRow.storeId !== scope.storeId
+    || context.storeId !== scope.storeId
+    || proof.jobRow.browserProfileId !== scope.browserProfileId
+    || context.browserProfileId !== scope.browserProfileId
+    || proof.jobRow.marketplace !== 'US'
+    || context.marketplace !== 'US'
+    || proof.jobRow.currency !== 'USD'
+    || context.currency !== 'USD'
+    || proof.jobRow.businessTimezone !== 'America/Los_Angeles'
+    || context.businessTimezone !== 'America/Los_Angeles'
+    || proof.jobRow.businessDate !== scope.businessDate
+    || context.businessDate !== scope.businessDate
+    || proof.jobRow.dateStart !== scope.dateStart
+    || proof.job.request.dateStart !== scope.dateStart
+    || proof.jobRow.dateEnd !== scope.dateEnd
+    || proof.job.request.dateEnd !== scope.dateEnd
+    || proof.jobRow.mode !== scope.mode
+    || proof.job.request.mode !== scope.mode
+    || !sameCompleteLingxingReportTypeSet(rowReportTypes)
+    || !sameCompleteLingxingReportTypeSet(proof.job.request.reportTypes)) {
+    throw new Error('采集 authority proof 与 exact semantic scope 身份不一致。');
+  }
+}
+
+function sameCompleteLingxingReportTypeSet(value: unknown): value is LingxingReportType[] {
+  return Array.isArray(value)
+    && value.length === COMPLETE_LINGXING_REPORT_TYPES.size
+    && new Set(value).size === COMPLETE_LINGXING_REPORT_TYPES.size
+    && value.every((reportType) => (
+      typeof reportType === 'string'
+      && COMPLETE_LINGXING_REPORT_TYPES.has(reportType as LingxingReportType)
+    ));
+}
+
+function canonicalIsoDate(value: unknown, label: string): string {
+  const text = requiredText(value, label);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)
+    || !Number.isFinite(Date.parse(`${text}T00:00:00.000Z`))
+    || new Date(`${text}T00:00:00.000Z`).toISOString().slice(0, 10) !== text) {
+    throw new Error(`${label} 必须是规范 YYYY-MM-DD。`);
+  }
+  return text;
 }
 
 function isCanonicalUtcInstant(value: unknown): value is string {
@@ -1925,6 +3793,37 @@ function isCanonicalUtcInstant(value: unknown): value is string {
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
     && Number.isFinite(new Date(value).getTime())
     && new Date(value).toISOString() === value;
+}
+
+function canonicalUtcInstant(value: unknown, label: string): string {
+  if (!isCanonicalUtcInstant(value)) {
+    throw new Error(`${label} 必须是规范 ISO-8601 UTC 时间戳。`);
+  }
+  return value;
+}
+
+function canonicalMonotonicAfter(
+  requestedValue: unknown,
+  floorValue: unknown,
+  label: string,
+): string {
+  const requested = canonicalUtcInstant(requestedValue, label);
+  const floor = canonicalUtcInstant(floorValue, `${label} floor`);
+  return new Date(Math.max(Date.parse(requested), Date.parse(floor) + 1)).toISOString();
+}
+
+function latestCanonicalInstant(values: readonly unknown[], label: string): string {
+  if (values.length === 0) throw new Error(`${label} 至少需要一个时间戳。`);
+  return values.map((value, index) => canonicalUtcInstant(value, `${label}[${index}]`))
+    .reduce((latest, value) => (
+      Date.parse(value) > Date.parse(latest) ? value : latest
+    ));
+}
+
+function requiredSha256(value: unknown, label: string): string {
+  const text = requiredText(value, label).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(text)) throw new Error(`${label} 必须是 SHA-256。`);
+  return text;
 }
 
 function parseRequiredJson<T>(value: string, label: string): T {
@@ -1949,10 +3848,23 @@ function normalizeCommitInput(input: CommitReportImportInput): CommitReportImpor
   }));
   const reconciliations = input.reconciliations.map((reconciliation) => ({
     ...reconciliation,
-    metricDate: requiredText(reconciliation.metricDate, 'metricDate'),
+    dateStart: canonicalIsoDate(reconciliation.dateStart, 'reconciliation.dateStart'),
+    dateEnd: canonicalIsoDate(reconciliation.dateEnd, 'reconciliation.dateEnd'),
+    metricDate: canonicalIsoDate(reconciliation.metricDate, 'reconciliation.metricDate'),
     reportType: requiredText(reconciliation.reportType, 'reportType'),
     tolerance: reconciliation.tolerance ?? 0.01,
   }));
+  const startedAt = input.startedAt === undefined
+    ? undefined
+    : canonicalUtcInstant(input.startedAt, 'startedAt');
+  const completedAt = input.completedAt === undefined
+    ? undefined
+    : canonicalUtcInstant(input.completedAt, 'completedAt');
+  if (startedAt !== undefined
+    && completedAt !== undefined
+    && Date.parse(startedAt) > Date.parse(completedAt)) {
+    throw new Error('IMPORT_RUN_TIMELINE_INVALID: completedAt 不能早于 startedAt。');
+  }
   return {
     ...input,
     runId,
@@ -1961,7 +3873,304 @@ function normalizeCommitInput(input: CommitReportImportInput): CommitReportImpor
     files,
     metrics: input.metrics.map(normalizeMetricForImport),
     reconciliations,
+    ...(startedAt === undefined ? {} : { startedAt }),
+    ...(completedAt === undefined ? {} : { completedAt }),
   };
+}
+
+function assertExactReportImportCoverage(input: CommitReportImportInput): void {
+  const filesByType = new Map<string, ReportImportFileInput>();
+  for (const file of input.files) {
+    if (filesByType.has(file.reportType)) {
+      throw new Error(
+        `IMPORT_REPORT_TYPE_NOT_UNIQUE: report file ${file.reportType} 在同一运行中重复。`,
+      );
+    }
+    filesByType.set(file.reportType, file);
+  }
+
+  const reconciliationsByType = new Map<string, ReportImportReconciliationInput>();
+  for (const reconciliation of input.reconciliations) {
+    if (!Number.isSafeInteger(reconciliation.expectedRows) || reconciliation.expectedRows < 0) {
+      throw new Error(
+        `IMPORT_RECONCILIATION_MISMATCH: ${reconciliation.reportType} expectedRows 必须是非负安全整数。`,
+      );
+    }
+    if (reconciliationsByType.has(reconciliation.reportType)) {
+      throw new Error(
+        `IMPORT_REPORT_TYPE_NOT_UNIQUE: reconciliation ${reconciliation.reportType} 在同一运行中重复。`,
+      );
+    }
+    reconciliationsByType.set(reconciliation.reportType, reconciliation);
+  }
+
+  if (filesByType.size !== reconciliationsByType.size
+    || [...filesByType.keys()].some((reportType) => !reconciliationsByType.has(reportType))) {
+    throw new Error(
+      'IMPORT_REPORT_COVERAGE_MISMATCH: 每种报表必须唯一对应一个文件和一条 reconciliation。',
+    );
+  }
+
+  const metricRowsByType = new Map<string, number>();
+  for (const metric of input.metrics) {
+    const reportType = requiredText(metric.reportType, 'metric.reportType');
+    if (!reconciliationsByType.has(reportType)) {
+      throw new Error(
+        `IMPORT_METRIC_REPORT_TYPE_UNCOVERED: 指标 reportType ${reportType} 没有唯一 reconciliation。`,
+      );
+    }
+    metricRowsByType.set(reportType, (metricRowsByType.get(reportType) ?? 0) + 1);
+  }
+
+  let coveredMetricRows = 0;
+  for (const [reportType, reconciliation] of reconciliationsByType) {
+    const file = filesByType.get(reportType)!;
+    const actualRows = metricRowsByType.get(reportType) ?? 0;
+    if (actualRows !== file.importedRows || actualRows !== reconciliation.expectedRows) {
+      throw new Error(
+        `IMPORT_RECONCILIATION_MISMATCH IMPORT_REPORT_ROW_COUNT_MISMATCH ${reportType}: `
+        + `metrics ${actualRows}, file ${file.importedRows}, reconciliation ${reconciliation.expectedRows}。`,
+      );
+    }
+    coveredMetricRows += actualRows;
+  }
+  if (!Number.isSafeInteger(coveredMetricRows) || coveredMetricRows !== input.metrics.length) {
+    throw new Error(
+      `IMPORT_METRIC_ROW_TOTAL_MISMATCH: metrics ${input.metrics.length}, covered ${coveredMetricRows}。`,
+    );
+  }
+}
+
+function normalizeInPlaceResumeReports(
+  proof: LingxingCollectionAuthorityProof,
+): LingxingCollectionReportCheckpoint[] {
+  if (
+    proof.job.state !== 'failed'
+    || proof.job.request.mode !== 'create-and-download'
+    || !sameCompleteLingxingReportTypeSet(proof.job.request.reportTypes)
+    || proof.checkpointCount !== COMPLETE_LINGXING_REPORT_TYPES.size
+    || proof.job.reports.length !== COMPLETE_LINGXING_REPORT_TYPES.size
+  ) {
+    throw new Error('原地续跑只接受原任务失败的完整八报表 create-and-download 快照。');
+  }
+  if (
+    !proof.batch
+    || proof.batch.id !== proof.job.jobId
+    || proof.batch.requestId !== proof.job.request.requestId
+    || proof.batch.storeId !== proof.job.request.storeContext.storeId
+    || proof.batch.browserProfileId !== proof.job.request.storeContext.browserProfileId
+    || proof.batch.businessDate !== proof.job.request.storeContext.businessDate
+    || proof.batch.sessionGeneration !== proof.job.request.storeContext.sessionGeneration
+    || proof.batch.dateStart !== proof.job.request.dateStart
+    || proof.batch.dateEnd !== proof.job.request.dateEnd
+  ) {
+    throw new Error('原地续跑 job/request/batch durable identity 不一致。');
+  }
+  const filesByType = new Map<LingxingReportType, StoreScopedLingxingReportFile[]>();
+  if (
+    proof.lingxingFileCount !== proof.lingxingFiles.length
+    || proof.lingxingFileCount > COMPLETE_LINGXING_REPORT_TYPES.size
+  ) {
+    throw new Error('原地续跑 durable file rows 被截断或超过完整八报表范围。');
+  }
+  for (const file of proof.lingxingFiles) {
+    if (
+      file.storeId !== proof.job.request.storeContext.storeId
+      || file.batchId !== proof.job.jobId
+      || !COMPLETE_LINGXING_REPORT_TYPES.has(file.reportType)
+    ) {
+      throw new Error('原地续跑 durable file 不属于 exact store/batch/report scope。');
+    }
+    const current = filesByType.get(file.reportType) ?? [];
+    current.push(file);
+    filesByType.set(file.reportType, current);
+    if (current.length > 1) {
+      throw new Error(`原地续跑 reportType ${file.reportType} 存在重复 durable file。`);
+    }
+  }
+  return proof.job.reports.map((checkpoint) => {
+    const identity = checkpoint.createdReportIdentity;
+    if (identity) assertResumeCreatedIdentity(identity, checkpoint, proof.job);
+    if (
+      checkpoint.state === 'creating'
+      || checkpoint.state === 'create_unknown'
+      || checkpoint.state === 'cancelled'
+      || checkpoint.state === 'stale_authority'
+    ) {
+      throw new Error(`checkpoint ${checkpoint.reportType}/${checkpoint.state} 禁止自动原地续跑。`);
+    }
+    if (checkpoint.state === 'downloaded') {
+      const files = filesByType.get(checkpoint.reportType) ?? [];
+      if (!identity
+        || files.length !== 1
+        || files[0].status !== 'downloaded'
+        || !files[0].filePath
+        || !Number.isSafeInteger(files[0].fileSizeBytes)
+        || files[0].fileSizeBytes! <= 0
+        || checkpoint.fileSizeBytes !== files[0].fileSizeBytes) {
+        throw new Error(`downloaded checkpoint ${checkpoint.reportType} 缺少唯一 durable file proof。`);
+      }
+      return cloneCollectionCheckpoint(checkpoint);
+    }
+    if (checkpoint.state === 'queued') {
+      if (identity) throw new Error('queued checkpoint 不能携带 created identity。');
+      return cloneCollectionCheckpoint(checkpoint);
+    }
+    if (checkpoint.state === 'created' || checkpoint.state === 'ready') {
+      if (!identity) throw new Error(`${checkpoint.state} checkpoint 必须携带 created identity。`);
+      return cloneCollectionCheckpoint(checkpoint);
+    }
+    if (checkpoint.state === 'waiting_ready' && !identity) {
+      throw new Error('waiting_ready checkpoint 缺少 created identity，拒绝猜测创建结果。');
+    }
+    if ((checkpoint.state === 'downloading' || checkpoint.state === 'verifying') && !identity) {
+      throw new Error(`${checkpoint.state} checkpoint 缺少 created identity。`);
+    }
+    const normalizedState = checkpoint.state === 'downloading' || checkpoint.state === 'verifying'
+      ? 'ready'
+      : identity
+        ? 'created'
+        : 'queued';
+    return {
+      ...cloneCollectionCheckpoint(checkpoint),
+      state: normalizedState,
+      fileSizeBytes: undefined,
+      errorCode: undefined,
+      detail: '由 Main durable recovery 归一化，尚未执行任何浏览器动作。',
+    };
+  });
+}
+
+function isFinalSucceededResumeProof(proof: LingxingCollectionAuthorityProof): boolean {
+  return proof.job.state === 'completed'
+    && proof.job.importState === 'succeeded'
+    && proof.job.reports.length === COMPLETE_LINGXING_REPORT_TYPES.size
+    && proof.job.reports.every((checkpoint) => checkpoint.state === 'downloaded')
+    && proof.lingxingFileCount === COMPLETE_LINGXING_REPORT_TYPES.size
+    && proof.lingxingFiles.length === COMPLETE_LINGXING_REPORT_TYPES.size
+    && proof.batch?.status === 'completed'
+    && proof.importRunCount === 1
+    && proof.metricEvidenceCount === 1;
+}
+
+function normalizeInterruptedResumeReports(
+  reports: readonly LingxingCollectionReportCheckpoint[],
+  updatedAt: string,
+): LingxingCollectionReportCheckpoint[] {
+  return reports.map((checkpoint) => {
+    if (checkpoint.state === 'downloaded'
+      || checkpoint.state === 'queued'
+      || checkpoint.state === 'created'
+      || checkpoint.state === 'ready'
+      || checkpoint.state === 'create_unknown'
+      || checkpoint.state === 'cancelled'
+      || checkpoint.state === 'stale_authority') {
+      return cloneCollectionCheckpoint(checkpoint);
+    }
+    if (checkpoint.state === 'creating') {
+      return {
+        ...cloneCollectionCheckpoint(checkpoint),
+        state: 'create_unknown',
+        errorCode: 'LINGXING_CREATE_OUTCOME_UNKNOWN_AFTER_RESTART',
+        detail: '应用重启时创建调用尚无确定结果，必须人工核对。',
+        updatedAt,
+      };
+    }
+    const identity = checkpoint.createdReportIdentity;
+    const state = checkpoint.state === 'downloading' || checkpoint.state === 'verifying'
+      ? (identity ? 'ready' : 'create_unknown')
+      : identity
+        ? 'created'
+        : 'queued';
+    return {
+      ...cloneCollectionCheckpoint(checkpoint),
+      state,
+      fileSizeBytes: state === 'queued' || state === 'created' || state === 'ready'
+        ? undefined
+        : checkpoint.fileSizeBytes,
+      errorCode: state === 'create_unknown'
+        ? 'LINGXING_CREATE_OUTCOME_UNKNOWN_AFTER_RESTART'
+        : undefined,
+      detail: state === 'create_unknown'
+        ? '应用重启后无法证明安全恢复点，必须人工核对。'
+        : '应用重启已恢复到最近可证明的安全状态，等待人工重新发起。',
+      updatedAt,
+    };
+  });
+}
+
+function assertResumeCreatedIdentity(
+  identity: NonNullable<LingxingCollectionReportCheckpoint['createdReportIdentity']>,
+  checkpoint: LingxingCollectionReportCheckpoint,
+  job: LingxingCollectionJobSnapshot,
+): void {
+  if (
+    identity.provider !== 'lingxing'
+    || identity.reportType !== checkpoint.reportType
+    || identity.dateStart !== job.request.dateStart
+    || identity.dateEnd !== job.request.dateEnd
+    || !requiredText(identity.externalReportName, 'created identity externalReportName')
+    || !isCanonicalUtcInstant(identity.createdAt)
+  ) {
+    throw new Error(`checkpoint ${checkpoint.reportType} created identity 与原请求不一致。`);
+  }
+}
+
+function cloneCollectionCheckpoint(
+  checkpoint: LingxingCollectionReportCheckpoint,
+): LingxingCollectionReportCheckpoint {
+  return {
+    ...checkpoint,
+    ...(checkpoint.createdReportIdentity
+      ? { createdReportIdentity: { ...checkpoint.createdReportIdentity } }
+      : {}),
+  };
+}
+
+function assertExecutionContextCanResume(
+  durableValue: StoreContextEnvelope,
+  executionValue: StoreContextEnvelope,
+): void {
+  const durable = normalizeStoreContextEnvelope(durableValue);
+  const execution = normalizeStoreContextEnvelope(executionValue);
+  const stableDurable = {
+    ...durable,
+    sessionGeneration: 0,
+  };
+  const stableExecution = {
+    ...execution,
+    sessionGeneration: 0,
+  };
+  if (stableJson(stableDurable) !== stableJson(stableExecution)
+    || execution.sessionGeneration < durable.sessionGeneration) {
+    throw new Error('当前执行上下文与 durable store axes 不一致或 generation 回退。');
+  }
+}
+
+function safeResumeIdentifier(value: unknown, label: string): string {
+  const normalized = requiredText(value, label);
+  if (!/^[A-Za-z0-9._:-]{1,180}$/.test(normalized)) {
+    throw new Error(`${label} 必须是安全标识符。`);
+  }
+  return normalized;
+}
+
+function sha256Text(value: unknown, label: string): string {
+  const normalized = requiredText(value, label).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) {
+    throw new Error(`${label} 必须是 sha256 hex。`);
+  }
+  return normalized;
+}
+
+function hashOpaqueClaimToken(value: unknown): string {
+  return createHash('sha256')
+    .update(requiredText(value, 'claimToken'))
+    .digest('hex');
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function validateImportFile(file: ReportImportFileInput): void {
@@ -1978,7 +4187,7 @@ function normalizeMetricForImport(metric: AdDailyMetrics): AdDailyMetrics {
     batchId: metric.batchId,
     reportType: metric.reportType,
     portfolioName: metric.portfolioName,
-    date: metric.date,
+    date: canonicalIsoDate(metric.date, 'metric.date'),
     storeName: metric.storeName,
     marketplaceCode: metric.marketplaceCode,
     asin: metric.asin,
@@ -2176,6 +4385,8 @@ function mapReconciliation(row: any, storeId: StoreId): ReportImportReconciliati
     reconciliationId: row.reconciliation_id,
     runId: row.run_id,
     batchId: row.batch_id,
+    dateStart: canonicalIsoDate(row.reconciliation_date_start, 'reconciliation.dateStart'),
+    dateEnd: canonicalIsoDate(row.reconciliation_date_end, 'reconciliation.dateEnd'),
     metricDate: row.metric_date,
     reportType: row.report_type,
     currency: 'USD',

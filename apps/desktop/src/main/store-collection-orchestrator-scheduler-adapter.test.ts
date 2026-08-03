@@ -12,7 +12,10 @@ import {
   type StoreSessionMetadata,
 } from '@amazon-ai-ops/shared-types';
 import { LINGXING_AD_REPORTS } from '@amazon-ai-ops/lingxing-report-collector';
-import type { LingxingCollectionAuthorityProof } from '@amazon-ai-ops/local-db';
+import type {
+  LingxingCollectionAuthorityProof,
+  LingxingCollectionSemanticScope,
+} from '@amazon-ai-ops/local-db';
 import {
   deriveStoreCollectionSchedulerExecutionIdentity,
   type StoreCollectionAutomationAuthority,
@@ -20,7 +23,11 @@ import {
   type StoreCollectionTransitionCapabilityScope,
 } from './store-collection-orchestrator';
 import { StoreCollectionOrchestratorDomainAdapter } from './store-collection-orchestrator-domain-adapter';
-import { StoreCollectionOrchestratorSchedulerAdapter } from './store-collection-orchestrator-scheduler-adapter';
+import {
+  assertStoreCollectionCommittedImportProofForRecovery,
+  classifyStoreCollectionDurableProof,
+  StoreCollectionOrchestratorSchedulerAdapter,
+} from './store-collection-orchestrator-scheduler-adapter';
 import {
   deriveStoreCollectionWindow,
   storeCollectionScheduleSemanticFingerprint,
@@ -33,6 +40,15 @@ import {
 
 const REPORT_TYPES = LINGXING_AD_REPORTS.map((report) => report.type);
 const NOW = new Date('2026-07-23T16:00:00.000Z');
+
+function sameReportSet(
+  left: readonly LingxingReportType[],
+  right: readonly LingxingReportType[],
+): boolean {
+  return left.length === right.length
+    && new Set(left).size === left.length
+    && left.every((reportType) => right.includes(reportType));
+}
 
 class MemoryStoreRepository implements StoreAuthorityRepository {
   readonly stores = new Map<StoreId, StoreRecord>();
@@ -69,6 +85,27 @@ class MemorySessions implements StoreSessionGenerationAuthority {
 class MemoryJobs {
   readonly rows: LingxingCollectionJobSnapshot[] = [];
   mutateProof?: (proof: LingxingCollectionAuthorityProof) => LingxingCollectionAuthorityProof;
+  beforeSemanticInspection?: (scope: LingxingCollectionSemanticScope) => void;
+  readonly inspectUniqueCollectionJobForSemanticScope = vi.fn((
+    scope: LingxingCollectionSemanticScope,
+  ): LingxingCollectionAuthorityProof | undefined => {
+    this.beforeSemanticInspection?.(scope);
+    const rows = this.rows.filter((job) => {
+      const context = normalizeStoreContextEnvelope(job.request.storeContext);
+      return context.storeId === scope.storeId
+        && context.browserProfileId === scope.browserProfileId
+        && context.marketplace === 'US'
+        && context.currency === 'USD'
+        && context.businessTimezone === 'America/Los_Angeles'
+        && context.businessDate === scope.businessDate
+        && job.request.dateStart === scope.dateStart
+        && job.request.dateEnd === scope.dateEnd
+        && job.request.mode === scope.mode
+        && sameReportSet(job.request.reportTypes, scope.reportTypes);
+    });
+    if (rows.length > 1) throw new Error('duplicate durable semantic ambiguity');
+    return rows[0] ? authorityProofForJob(structuredClone(rows[0])) : undefined;
+  });
   readUniqueCollectionAuthorityProofForStoreByRequestId(
     storeId: StoreId,
     requestId: string,
@@ -183,6 +220,7 @@ function completeJob(
 
 function authorityProofForJob(
   job: LingxingCollectionJobSnapshot,
+  options: { committedImportEvidence?: boolean } = {},
 ): LingxingCollectionAuthorityProof {
   const context = normalizeStoreContextEnvelope(job.request.storeContext);
   const terminal = job.state === 'completed'
@@ -218,15 +256,16 @@ function authorityProofForJob(
     id: `lingxing-${checkpoint.reportType}`,
     batchId: job.jobId,
     reportType: checkpoint.reportType,
-    displayName: `${checkpoint.reportType}.xlsx`,
+    displayName: `${checkpoint.reportType} 人类可读报表标签`,
     status: 'downloaded' as const,
     filePath: `C:\\reports\\${job.jobId}\\${checkpoint.reportType}.xlsx`,
     fileSizeBytes: checkpoint.fileSizeBytes ?? 1024,
     createdAt: job.createdAt,
-    updatedAt: job.updatedAt,
+    updatedAt: checkpoint.updatedAt,
   }));
-  const succeeded = job.state === 'completed' && job.importState === 'succeeded';
-  const run = succeeded ? {
+  const committed = job.state === 'completed'
+    && (options.committedImportEvidence === true || job.importState === 'succeeded');
+  const run = committed ? {
     storeId: context.storeId,
     runId: `run-${job.jobId}`,
     idempotencyKey: `import-${job.jobId}`,
@@ -238,22 +277,22 @@ function authorityProofForJob(
     reconciliationCount: REPORT_TYPES.length,
     startedAt: job.importAttemptedAt ?? job.updatedAt,
     completedAt: job.importCompletedAt ?? job.updatedAt,
-    createdAt: job.importAttemptedAt ?? job.updatedAt,
+    createdAt: job.importCompletedAt ?? job.updatedAt,
   } : undefined;
-  const importedReportFiles = succeeded ? lingxingFiles.map((file, index) => ({
+  const importedReportFiles = committed ? lingxingFiles.map((file, index) => ({
     id: index + 1,
     storeId: context.storeId,
     batchId: job.jobId,
     reportType: file.reportType,
     filePath: file.filePath!,
-    fileName: file.displayName,
+    fileName: file.filePath!.split('\\').pop()!,
     fileSizeBytes: file.fileSizeBytes!,
     status: 'imported',
     importedRows: 10,
     fileHash: `${(index + 1).toString(16)}`.repeat(64).slice(0, 64),
     lastImportedAt: run!.completedAt,
   })) : [];
-  const importFileSnapshots = succeeded ? lingxingFiles.map((file, index) => ({
+  const importFileSnapshots = committed ? lingxingFiles.map((file, index) => ({
     storeId: context.storeId,
     snapshotId: `snapshot-${file.reportType}`,
     runId: run!.runId,
@@ -262,12 +301,40 @@ function authorityProofForJob(
     reportFileId: importedReportFiles[index]!.id,
     reportType: file.reportType,
     filePath: file.filePath!,
-    fileName: file.displayName,
+    fileName: file.filePath!.split('\\').pop()!,
     fileSizeBytes: file.fileSizeBytes!,
     fileHash: importedReportFiles[index]!.fileHash!,
     importedRows: importedReportFiles[index]!.importedRows,
     capturedAt: run!.completedAt,
   })) : [];
+  const reconciliations = committed ? lingxingFiles.map((file, index) => ({
+    storeId: context.storeId,
+    reconciliationId: `reconciliation-${file.reportType}`,
+    runId: run!.runId,
+    batchId: job.jobId,
+    dateStart: job.request.dateStart,
+    dateEnd: job.request.dateEnd,
+    metricDate: job.request.dateEnd,
+    reportType: file.reportType,
+    currency: 'USD' as const,
+    expectedRows: 10,
+    actualRows: 10,
+    expectedCost: index + 1,
+    actualCost: index + 1,
+    absoluteCostDelta: 0,
+    tolerance: 0.01,
+    withinTolerance: true,
+    status: 'matched' as const,
+    reconciledAt: run!.completedAt,
+  })) : [];
+  const metricEvidence = committed ? [{
+    storeId: context.storeId,
+    runId: run!.runId,
+    batchId: job.jobId,
+    rowCount: run!.metricRowCount,
+    payloadSha256: 'f'.repeat(64),
+    createdAt: run!.completedAt,
+  }] : [];
   return {
     job,
     jobRow: {
@@ -301,6 +368,10 @@ function authorityProofForJob(
     importFileSnapshots,
     importedReportFileCount: importedReportFiles.length,
     importedReportFiles,
+    reconciliationRowCount: reconciliations.length,
+    reconciliations,
+    metricEvidenceCount: metricEvidence.length,
+    metricEvidence,
   };
 }
 
@@ -378,9 +449,18 @@ async function harness(options: {
     now: () => NOW,
   });
   coordinatorAuthority.switchStore(storeA.storeId);
+  let currentConfig = config(storeB.storeId);
+  const getForStoreId = vi.fn(() => currentConfig);
+  const jobs = new MemoryJobs();
   const domain = new StoreCollectionOrchestratorDomainAdapter({
     coordinator: coordinatorAuthority,
     scheduler: { inspectForStore: () => ({ state: 'not_due' }) } as never,
+    config: {
+      getForStoreRecord: (record) => (
+        record.storeId === storeB.storeId ? currentConfig : config(record.storeId)
+      ),
+    },
+    repository: jobs,
     now: () => NOW,
   });
   const automation = domain.issueAutomationAuthority('orchestrator-owner');
@@ -443,9 +523,6 @@ async function harness(options: {
     expectedFingerprint: fingerprint,
     ...identity,
   };
-  let currentConfig = config(storeB.storeId);
-  const getForStoreId = vi.fn(() => currentConfig);
-  const jobs = new MemoryJobs();
   const start = vi.fn(async (input: Parameters<
     StoreCollectionOrchestratorSchedulerAdapterOptionsForTest['start']
   >[0]) => {
@@ -529,6 +606,240 @@ type StoreCollectionOrchestratorSchedulerAdapterOptionsForTest = {
 };
 
 describe('StoreCollectionOrchestratorSchedulerAdapter', () => {
+  it.each([
+    {
+      state: 'pending' as const,
+      job: (base: LingxingCollectionJobSnapshot) => {
+        const pending = {
+          ...base,
+          importState: 'pending' as const,
+          importAttemptedAt: '2026-07-23T16:06:00.000Z',
+          updatedAt: '2026-07-23T16:06:00.000Z',
+        };
+        delete pending.importCompletedAt;
+        delete pending.importError;
+        return pending;
+      },
+      expectsCas: true,
+    },
+    {
+      state: 'failed' as const,
+      job: (base: LingxingCollectionJobSnapshot) => ({
+        ...base,
+        importState: 'failed' as const,
+        importAttemptedAt: '2026-07-23T16:06:00.000Z',
+        importCompletedAt: '2026-07-23T16:08:00.000Z',
+        importError: 'projection write interrupted',
+        updatedAt: '2026-07-23T16:08:00.000Z',
+      }),
+      expectsCas: true,
+    },
+    {
+      state: 'succeeded' as const,
+      job: (base: LingxingCollectionJobSnapshot) => ({
+        ...base,
+        importState: 'succeeded' as const,
+        importAttemptedAt: '2026-07-23T16:06:00.000Z',
+        importCompletedAt: '2026-07-23T16:08:00.000Z',
+        updatedAt: '2026-07-23T16:08:00.000Z',
+      }),
+      expectsCas: false,
+    },
+  ])('accepts exact committed import evidence with a $state job projection', async ({
+    job: projectJob,
+    expectsCas,
+    state,
+  }) => {
+    const test = await harness();
+    const base = completeJob({
+      requestId: test.identity.requestId,
+      storeContext: test.context,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      mode: 'create-and-download',
+      reportTypes: REPORT_TYPES,
+    });
+    const job = projectJob(base);
+    const proof = authorityProofForJob(job, { committedImportEvidence: true });
+    const expectation = {
+      context: test.context,
+      requestId: test.identity.requestId,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      expectedJob: job,
+      expectedRun: proof.importRuns[0]!,
+    };
+
+    const receipt = assertStoreCollectionCommittedImportProofForRecovery(proof, expectation);
+    expect(receipt).toMatchObject({
+      storeId: test.context.storeId,
+      jobId: job.jobId,
+      requestId: test.identity.requestId,
+      browserProfileId: test.context.browserProfileId,
+      sessionGeneration: test.context.sessionGeneration,
+      jobUpdatedAt: job.updatedAt,
+      runId: proof.importRuns[0]!.runId,
+    });
+    expect(Boolean(receipt.casToken)).toBe(expectsCas);
+    if (state === 'pending' || state === 'failed') {
+      expect(() => classifyStoreCollectionDurableProof(proof, expectation))
+        .toThrow(/SAFETY_STATE_UNKNOWN|lifecycle or authority evidence incomplete/);
+    } else {
+      expect(classifyStoreCollectionDurableProof(proof, expectation)).toBe('succeeded');
+    }
+  });
+
+  it('rejects committed import evidence whose reconciliation rows are not bound to file rows', async () => {
+    const test = await harness();
+    const base = completeJob({
+      requestId: test.identity.requestId,
+      storeContext: test.context,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      mode: 'create-and-download',
+      reportTypes: REPORT_TYPES,
+    });
+    const job = {
+      ...base,
+      importAttemptedAt: '2026-07-23T16:06:00.000Z',
+      importCompletedAt: '2026-07-23T16:08:00.000Z',
+      updatedAt: '2026-07-23T16:08:00.000Z',
+    };
+    const proof = authorityProofForJob(job);
+    const [first, ...rest] = proof.reconciliations;
+    expect(first).toBeDefined();
+    const drifted = {
+      ...proof,
+      reconciliations: [
+        { ...first!, expectedRows: 1, actualRows: 1 },
+        ...rest,
+      ],
+    };
+
+    expect(() => assertStoreCollectionCommittedImportProofForRecovery(drifted, {
+      context: test.context,
+      requestId: test.identity.requestId,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      expectedJob: job,
+      expectedRun: proof.importRuns[0]!,
+    })).toThrow(/committed full-eight import evidence incomplete/);
+  });
+
+  it('rejects committed import evidence whose metric digest row is missing or drifted', async () => {
+    const test = await harness();
+    const job = completeJob({
+      requestId: test.identity.requestId,
+      storeContext: test.context,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      mode: 'create-and-download',
+      reportTypes: REPORT_TYPES,
+    }, {
+      importAttemptedAt: '2026-07-23T16:06:00.000Z',
+      importCompletedAt: '2026-07-23T16:08:00.000Z',
+      updatedAt: '2026-07-23T16:08:00.000Z',
+    });
+    const proof = authorityProofForJob(job);
+    const expectation = {
+      context: test.context,
+      requestId: test.identity.requestId,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      expectedJob: job,
+      expectedRun: proof.importRuns[0]!,
+    };
+
+    expect(() => assertStoreCollectionCommittedImportProofForRecovery({
+      ...proof,
+      metricEvidenceCount: 0,
+      metricEvidence: [],
+    }, expectation)).toThrow(/committed full-eight import evidence incomplete/);
+    expect(() => assertStoreCollectionCommittedImportProofForRecovery({
+      ...proof,
+      metricEvidence: [{
+        ...proof.metricEvidence[0]!,
+        rowCount: proof.importRuns[0]!.metricRowCount + 1,
+      }],
+    }, expectation)).toThrow(/committed full-eight import evidence incomplete/);
+  });
+
+  it('rejects stale expected job/run identities before issuing a recovery CAS receipt', async () => {
+    const test = await harness();
+    const base = completeJob({
+      requestId: test.identity.requestId,
+      storeContext: test.context,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      mode: 'create-and-download',
+      reportTypes: REPORT_TYPES,
+    });
+    const job = {
+      ...base,
+      importState: 'pending' as const,
+      importAttemptedAt: '2026-07-23T16:06:00.000Z',
+      updatedAt: '2026-07-23T16:06:00.000Z',
+    };
+    delete job.importCompletedAt;
+    const proof = authorityProofForJob(job, { committedImportEvidence: true });
+    const expectation = {
+      context: test.context,
+      requestId: test.identity.requestId,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      expectedJob: job,
+      expectedRun: proof.importRuns[0]!,
+    };
+
+    expect(() => assertStoreCollectionCommittedImportProofForRecovery(proof, {
+      ...expectation,
+      expectedJob: { ...job, updatedAt: '2026-07-23T16:06:01.000Z' },
+    })).toThrow(/expected job/);
+    expect(() => assertStoreCollectionCommittedImportProofForRecovery(proof, {
+      ...expectation,
+      expectedRun: { ...proof.importRuns[0]!, inputFingerprint: 'b'.repeat(64) },
+    })).toThrow(/expected unique completed import run/);
+    expect(() => assertStoreCollectionCommittedImportProofForRecovery({
+      ...proof,
+      jobRow: { ...proof.jobRow, browserProfileId: 'profile-drifted' },
+    }, expectation)).toThrow(/SQL authority row drifted/);
+  });
+
+  it('rejects committed evidence whose imported-file timestamp is outside the unique run', async () => {
+    const test = await harness();
+    const base = completeJob({
+      requestId: test.identity.requestId,
+      storeContext: test.context,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      mode: 'create-and-download',
+      reportTypes: REPORT_TYPES,
+    });
+    const job = {
+      ...base,
+      importState: 'pending' as const,
+      importAttemptedAt: '2026-07-23T16:06:00.000Z',
+      updatedAt: '2026-07-23T16:06:00.000Z',
+    };
+    delete job.importCompletedAt;
+    const proof = authorityProofForJob(job, { committedImportEvidence: true });
+    const drifted = {
+      ...proof,
+      importedReportFiles: proof.importedReportFiles.map((row, index) => (
+        index === 0 ? { ...row, lastImportedAt: '2026-07-23T16:05:59.000Z' } : row
+      )),
+    };
+
+    expect(() => assertStoreCollectionCommittedImportProofForRecovery(drifted, {
+      context: test.context,
+      requestId: test.identity.requestId,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      expectedJob: job,
+      expectedRun: proof.importRuns[0]!,
+    })).toThrow(/authority proof timeline incomplete/);
+  });
+
   it('executes one non-canary full-eight create/download request and proves its durable binding', async () => {
     const test = await harness();
 
@@ -543,6 +854,15 @@ describe('StoreCollectionOrchestratorSchedulerAdapter', () => {
       mode: 'create-and-download',
       reportTypes: REPORT_TYPES,
       canary: false,
+    });
+    expect(test.jobs.inspectUniqueCollectionJobForSemanticScope).toHaveBeenCalledWith({
+      storeId: test.context.storeId,
+      browserProfileId: test.context.browserProfileId,
+      businessDate: test.context.businessDate,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      mode: 'create-and-download',
+      reportTypes: REPORT_TYPES,
     });
     expect(projection).toMatchObject({
       state: 'accepted',
@@ -572,6 +892,82 @@ describe('StoreCollectionOrchestratorSchedulerAdapter', () => {
     }));
 
     await expect(test.adapter.execute(test.executeInput)).rejects.toThrow(/拒绝复用既有/);
+    expect(test.start).not.toHaveBeenCalled();
+    expect(test.jobs.inspectUniqueCollectionJobForSemanticScope).not.toHaveBeenCalled();
+  });
+
+  it('blocks a history-lost exact semantic job even when its request id differs', async () => {
+    const test = await harness();
+    test.jobs.rows.push(completeJob({
+      requestId: 'durable-request-from-an-earlier-cycle',
+      storeContext: test.context,
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      mode: 'create-and-download',
+      reportTypes: REPORT_TYPES,
+    }));
+
+    await expect(test.adapter.execute(test.executeInput))
+      .rejects.toThrow(/durable semantic collection scope/);
+    expect(test.start).not.toHaveBeenCalled();
+  });
+
+  it('performs the semantic gate immediately before start and blocks a TOCTOU insertion', async () => {
+    const test = await harness();
+    test.jobs.beforeSemanticInspection = () => {
+      test.jobs.rows.push(completeJob({
+        requestId: 'durable-request-inserted-at-second-gate',
+        storeContext: test.context,
+        dateStart: test.window.dateStart,
+        dateEnd: test.window.dateEnd,
+        mode: 'create-and-download',
+        reportTypes: REPORT_TYPES,
+      }));
+    };
+
+    await expect(test.adapter.execute(test.executeInput))
+      .rejects.toThrow(/durable semantic collection scope/);
+    expect(test.jobs.inspectUniqueCollectionJobForSemanticScope).toHaveBeenCalledTimes(1);
+    expect(test.start).not.toHaveBeenCalled();
+  });
+
+  it('does not suppress execution for a durable job on a different Profile axis', async () => {
+    const test = await harness();
+    test.jobs.rows.push(completeJob({
+      requestId: 'durable-request-other-profile',
+      storeContext: normalizeStoreContextEnvelope({
+        ...test.context,
+        browserProfileId: 'profile-other',
+      }),
+      dateStart: test.window.dateStart,
+      dateEnd: test.window.dateEnd,
+      mode: 'create-and-download',
+      reportTypes: REPORT_TYPES,
+    }, { jobId: 'job-other-profile' }));
+
+    await expect(test.adapter.execute(test.executeInput)).resolves.toMatchObject({
+      state: 'accepted',
+    });
+    expect(test.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed on duplicate semantic-scope ambiguity without coordinator side effects', async () => {
+    const test = await harness();
+    for (const [index, requestId] of [
+      'durable-semantic-request-a',
+      'durable-semantic-request-b',
+    ].entries()) {
+      test.jobs.rows.push(completeJob({
+        requestId,
+        storeContext: test.context,
+        dateStart: test.window.dateStart,
+        dateEnd: test.window.dateEnd,
+        mode: 'create-and-download',
+        reportTypes: REPORT_TYPES,
+      }, { jobId: `durable-semantic-job-${index}` }));
+    }
+
+    await expect(test.adapter.execute(test.executeInput)).rejects.toThrow(/semantic ambiguity/);
     expect(test.start).not.toHaveBeenCalled();
   });
 
@@ -1128,6 +1524,145 @@ describe('StoreCollectionOrchestratorSchedulerAdapter', () => {
       }),
     },
     {
+      name: 'completed run count claims a reconciliation row that is absent',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        reconciliations: proof.reconciliations.slice(1),
+      }),
+    },
+    {
+      name: 'completed run metric row count differs from exact per-report totals',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        importRuns: proof.importRuns.map((run, index) => (
+          index === 0 ? { ...run, metricRowCount: run.metricRowCount + 1 } : run
+        )),
+      }),
+    },
+    {
+      name: 'reconciliation row records a mismatch',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        reconciliations: proof.reconciliations.map((row, index) => (
+          index === 0
+            ? { ...row, status: 'mismatch' as const, withinTolerance: false }
+            : row
+        )),
+      }),
+    },
+    {
+      name: 'reconciliation row belongs to another import run',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        reconciliations: proof.reconciliations.map((row, index) => (
+          index === 0 ? { ...row, runId: 'foreign-run' } : row
+        )),
+      }),
+    },
+    {
+      name: 'reconciliation row covers only part of the authorized window',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        reconciliations: proof.reconciliations.map((row, index) => (
+          index === 0 ? { ...row, dateStart: row.dateEnd } : row
+        )),
+      }),
+    },
+    {
+      name: 'reconciliation compatibility date is not the window end',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        reconciliations: proof.reconciliations.map((row, index) => (
+          index === 0 ? { ...row, metricDate: row.dateStart } : row
+        )),
+      }),
+    },
+    {
+      name: 'reconciliation absolute delta conflicts with its amounts',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        reconciliations: proof.reconciliations.map((row, index) => (
+          index === 0 ? { ...row, absoluteCostDelta: 0.01 } : row
+        )),
+      }),
+    },
+    {
+      name: 'import completion precedes import start',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        importRuns: proof.importRuns.map((run, index) => (
+          index === 0
+            ? { ...run, completedAt: '2026-07-23T16:03:59.000Z' }
+            : run
+        )),
+      }),
+    },
+    {
+      name: 'import run creation precedes its completion',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        importRuns: proof.importRuns.map((run, index) => (
+          index === 0
+            ? { ...run, createdAt: '2026-07-23T16:04:30.000Z' }
+            : run
+        )),
+      }),
+    },
+    {
+      name: 'imported report timestamp precedes its unique run',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        importedReportFiles: proof.importedReportFiles.map((file, index) => (
+          index === 0
+            ? { ...file, lastImportedAt: '2026-07-23T16:03:59.000Z' }
+            : file
+        )),
+      }),
+    },
+    {
+      name: 'job terminal timestamp follows its updated timestamp',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        job: { ...proof.job, completedAt: '2026-07-23T16:06:00.000Z' },
+      }),
+    },
+    {
+      name: 'batch completion precedes batch creation',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        batch: { ...proof.batch!, createdAt: '2026-07-23T16:06:00.000Z' },
+      }),
+    },
+    {
+      name: 'created-report timestamp follows its checkpoint update',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        job: {
+          ...proof.job,
+          reports: proof.job.reports.map((checkpoint, index) => (
+            index === 0
+              ? {
+                  ...checkpoint,
+                  createdReportIdentity: {
+                    ...checkpoint.createdReportIdentity!,
+                    createdAt: '2026-07-23T16:06:00.000Z',
+                  },
+                }
+              : checkpoint
+          )),
+        },
+      }),
+    },
+    {
+      name: 'Lingxing file update precedes file creation',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        lingxingFiles: proof.lingxingFiles.map((file, index) => (
+          index === 0 ? { ...file, createdAt: '2026-07-23T16:06:00.000Z' } : file
+        )),
+      }),
+    },
+    {
       name: 'immutable import snapshot hash is malformed',
       mutate: (proof: LingxingCollectionAuthorityProof) => ({
         ...proof,
@@ -1233,6 +1768,15 @@ describe('StoreCollectionOrchestratorSchedulerAdapter', () => {
         ...proof,
         importedReportFiles: proof.importedReportFiles.map((file, index) => (
           index === 0 ? { ...file, lastImportedAt: '1' } : file
+        )),
+      }),
+    },
+    {
+      name: 'reconciliation timestamp',
+      mutate: (proof: LingxingCollectionAuthorityProof) => ({
+        ...proof,
+        reconciliations: proof.reconciliations.map((row, index) => (
+          index === 0 ? { ...row, reconciledAt: '1' } : row
         )),
       }),
     },

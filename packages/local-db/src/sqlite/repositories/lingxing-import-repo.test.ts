@@ -14,6 +14,7 @@ import {
 } from '@amazon-ai-ops/shared-types';
 import { initSqlite } from '../db';
 import {
+  fingerprintLingxingCollectionAuthorityProof,
   LingxingImportRepository,
   reconcileUsdAmount,
   type CommitReportImportInput,
@@ -197,7 +198,6 @@ function fullAuthorityTerminal(
     updatedAt: completedAt,
     completedAt,
     importState: 'pending',
-    importAttemptedAt: '2026-07-22T00:05:01.000Z',
   };
   const batch: LingxingReportBatch = {
     id: batchId,
@@ -230,6 +230,44 @@ function fullAuthorityTerminal(
   return { job, batch, files };
 }
 
+function failedFullAuthorityTerminal(
+  storeId: StoreId,
+  batchId: string,
+  downloadedCount = 3,
+) {
+  const terminal = fullAuthorityTerminal(storeId, 'profile-a', batchId);
+  const failedAt = '2026-07-22T00:05:00.000Z';
+  terminal.job = {
+    ...terminal.job,
+    state: 'failed',
+    reports: terminal.job.reports.map((checkpoint, index) => (
+      index < downloadedCount
+        ? checkpoint
+        : {
+            reportType: checkpoint.reportType,
+            state: 'failed' as const,
+            attemptIndex: 0,
+            autoRetryCount: 0,
+            errorCode: 'LINGXING_COLLECTION_STEP_FAILED',
+            detail: 'safe failure before report creation',
+            updatedAt: failedAt,
+          }
+    )),
+    blockerCode: 'LINGXING_COLLECTION_STEP_FAILED',
+    detail: 'resume fixture',
+    updatedAt: failedAt,
+    completedAt: failedAt,
+    importState: 'not_applicable',
+  };
+  terminal.batch = {
+    ...terminal.batch,
+    status: 'failed',
+    completedAt: failedAt,
+  };
+  terminal.files = terminal.files.slice(0, downloadedCount);
+  return terminal;
+}
+
 function insertStore(
   database: Database.Database,
   storeId: StoreId,
@@ -248,14 +286,18 @@ function collectionSnapshot(
   storeId: StoreId,
   storeName: string,
   batchId: string,
+  window: { dateStart: string; dateEnd: string } = {
+    dateStart: '2026-07-21',
+    dateEnd: '2026-07-21',
+  },
 ): { batch: LingxingReportBatch; files: LingxingReportFile[] } {
   const fileId = `${batchId}-keyword`;
   return {
     batch: {
       id: batchId,
       storeId,
-      dateStart: '2026-07-21',
-      dateEnd: '2026-07-21',
+      dateStart: window.dateStart,
+      dateEnd: window.dateEnd,
       storeName,
       marketplaceCode: 'US',
       status: 'completed',
@@ -331,6 +373,8 @@ function importInput(
     }],
     metrics: [metric(storeName, batchId)],
     reconciliations: [{
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
       metricDate: '2026-07-21',
       reportType: 'keyword',
       expectedRows: 1,
@@ -340,6 +384,72 @@ function importInput(
     completedAt: '2026-07-22T00:07:00.000Z',
     ...overrides,
   };
+}
+
+function fullAuthorityImportInput(
+  terminal: ReturnType<typeof fullAuthorityTerminal>,
+  startedAt: string,
+  completedAt: string,
+): CommitReportImportInput {
+  return {
+    runId: `import_${terminal.job.jobId}`,
+    idempotencyKey: `lingxing:${terminal.job.jobId}`,
+    batchId: terminal.job.jobId,
+    files: terminal.files.map((file) => ({
+      lingxingFileId: file.id,
+      reportType: file.reportType,
+      filePath: file.filePath!,
+      fileName: path.basename(file.filePath!),
+      fileSizeBytes: file.fileSizeBytes!,
+      fileHash: 'a'.repeat(64),
+      importedRows: 1,
+    })),
+    metrics: terminal.files.map((file, index) => metric('Shop Alpha', terminal.job.jobId, {
+      reportType: file.reportType,
+      sourceFile: file.filePath,
+      sourceRow: index + 2,
+      searchTerm: `authority-${file.reportType}`,
+      cost: index + 1,
+    })),
+    reconciliations: terminal.files.map((file, index) => ({
+      dateStart: terminal.job.request.dateStart,
+      dateEnd: terminal.job.request.dateEnd,
+      metricDate: terminal.job.request.dateEnd,
+      reportType: file.reportType,
+      expectedRows: 1,
+      expectedCost: index + 1,
+    })),
+    startedAt,
+    completedAt,
+  };
+}
+
+function persistSucceededAuthorityProof(
+  repository: LingxingImportRepository,
+  storeId: StoreId,
+  batchId: string,
+): ReturnType<typeof fullAuthorityTerminal> {
+  const terminal = fullAuthorityTerminal(storeId, 'profile-a', batchId);
+  const attemptedAt = '2026-07-22T00:06:00.000Z';
+  terminal.job = {
+    ...terminal.job,
+    importState: 'pending',
+    importAttemptedAt: attemptedAt,
+    updatedAt: attemptedAt,
+  };
+  repository.commitCollectionTerminalForStore(storeId, terminal);
+  const commit = repository.commitImportForStore(
+    storeId,
+    fullAuthorityImportInput(terminal, attemptedAt, '2026-07-22T00:07:00.000Z'),
+  );
+  const completedAt = new Date(Date.parse(commit.run.createdAt) + 1).toISOString();
+  terminal.job = repository.upsertCollectionJobSnapshotForStore(storeId, {
+    ...terminal.job,
+    importState: 'succeeded',
+    importCompletedAt: completedAt,
+    updatedAt: completedAt,
+  });
+  return terminal;
 }
 
 describe('LingxingImportRepository', () => {
@@ -375,6 +485,293 @@ describe('LingxingImportRepository', () => {
     )).toThrow(/多个 durable 采集任务/);
   });
 
+  it('finds an exact full-eight semantic collection scope while keeping every scope axis isolated', () => {
+    const { repository, storeA, storeB } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-authority-batch');
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    const exactScope = {
+      storeId: storeA,
+      browserProfileId: 'profile-a',
+      businessDate: terminal.job.request.storeContext.businessDate,
+      dateStart: terminal.job.request.dateStart,
+      dateEnd: terminal.job.request.dateEnd,
+      mode: 'create-and-download' as const,
+      reportTypes: AUTHORITY_REPORT_TYPES,
+    };
+
+    expect(repository.inspectUniqueCollectionJobForSemanticScope(exactScope)?.job.jobId)
+      .toBe(terminal.job.jobId);
+    expect(repository.inspectUniqueCollectionJobForSemanticScope({
+      ...exactScope,
+      storeId: storeB,
+      browserProfileId: 'profile-b',
+    })).toBeUndefined();
+    expect(repository.inspectUniqueCollectionJobForSemanticScope({
+      ...exactScope,
+      browserProfileId: 'profile-b',
+    })).toBeUndefined();
+    expect(repository.inspectUniqueCollectionJobForSemanticScope({
+      ...exactScope,
+      businessDate: '2026-07-23',
+    })).toBeUndefined();
+    expect(repository.inspectUniqueCollectionJobForSemanticScope({
+      ...exactScope,
+      dateStart: '2026-07-20',
+    })).toBeUndefined();
+    expect(repository.inspectUniqueCollectionJobForSemanticScope({
+      ...exactScope,
+      dateEnd: '2026-07-22',
+    })).toBeUndefined();
+    expect(repository.inspectUniqueCollectionJobForSemanticScope({
+      ...exactScope,
+      reportTypes: [...AUTHORITY_REPORT_TYPES].reverse(),
+    })?.job.jobId).toBe(terminal.job.jobId);
+    expect(() => repository.inspectUniqueCollectionJobForSemanticScope({
+      ...exactScope,
+      reportTypes: AUTHORITY_REPORT_TYPES.slice(0, 7),
+    } as never)).toThrow(/严格且不重复的 8\/8/);
+  });
+
+  it('returns queued authority for an exact semantic scope regardless of durable state', () => {
+    const { repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-queued');
+    const queued: LingxingCollectionJobSnapshot = {
+      ...terminal.job,
+      state: 'queued',
+      reports: terminal.job.reports.map((checkpoint) => ({
+        reportType: checkpoint.reportType,
+        state: 'queued',
+        attemptIndex: checkpoint.attemptIndex,
+        autoRetryCount: checkpoint.autoRetryCount,
+        updatedAt: terminal.job.createdAt,
+      })),
+      updatedAt: terminal.job.createdAt,
+    };
+    delete queued.completedAt;
+    delete queued.importState;
+    delete queued.importAttemptedAt;
+    delete queued.importCompletedAt;
+    repository.upsertCollectionJobSnapshotForStore(storeA, queued);
+
+    expect(repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: storeA,
+      browserProfileId: 'profile-a',
+      businessDate: '2026-07-22',
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
+      mode: 'create-and-download',
+      reportTypes: AUTHORITY_REPORT_TYPES,
+    })?.job.state).toBe('queued');
+  });
+
+  it('matches the exact full-eight report set independent of durable JSON array order', () => {
+    const { repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-reordered');
+    const reversedTypes = [...AUTHORITY_REPORT_TYPES].reverse();
+    repository.commitCollectionTerminalForStore(storeA, {
+      ...terminal,
+      job: {
+        ...terminal.job,
+        request: {
+          ...terminal.job.request,
+          reportTypes: reversedTypes,
+        },
+        lineage: terminal.job.lineage ? {
+          ...terminal.job.lineage,
+          expectedReportTypes: reversedTypes,
+        } : undefined,
+      },
+    });
+
+    expect(repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: storeA,
+      browserProfileId: 'profile-a',
+      businessDate: '2026-07-22',
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
+      mode: 'create-and-download',
+      reportTypes: AUTHORITY_REPORT_TYPES,
+    })?.job.jobId).toBe(terminal.job.jobId);
+  });
+
+  it('does not treat wrong mode or a partial report set as the exact full-eight scope', () => {
+    const { repository, storeA } = createHarness();
+    const wrongModeBase = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-wrong-mode');
+    repository.commitCollectionTerminalForStore(storeA, {
+      ...wrongModeBase,
+      job: {
+        ...wrongModeBase.job,
+        request: {
+          ...wrongModeBase.job.request,
+          requestId: 'semantic-wrong-mode-request',
+          mode: 'download-existing',
+        },
+      },
+      batch: {
+        ...wrongModeBase.batch,
+        requestId: 'semantic-wrong-mode-request',
+      },
+    });
+    const partialBase = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-partial');
+    repository.commitCollectionTerminalForStore(storeA, {
+      ...partialBase,
+      job: {
+        ...partialBase.job,
+        request: {
+          ...partialBase.job.request,
+          requestId: 'semantic-partial-request',
+          reportTypes: AUTHORITY_REPORT_TYPES.slice(0, 7),
+        },
+        lineage: undefined,
+        reports: partialBase.job.reports.slice(0, 7),
+      },
+      batch: {
+        ...partialBase.batch,
+        requestId: 'semantic-partial-request',
+      },
+      files: partialBase.files.slice(0, 7),
+    });
+
+    expect(repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: storeA,
+      browserProfileId: 'profile-a',
+      businessDate: '2026-07-22',
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
+      mode: 'create-and-download',
+      reportTypes: AUTHORITY_REPORT_TYPES,
+    })).toBeUndefined();
+  });
+
+  it('fails closed when two durable jobs claim the same semantic collection scope', () => {
+    const { repository, storeA } = createHarness();
+    const first = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-duplicate-a');
+    const secondBase = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-duplicate-b');
+    const second = {
+      ...secondBase,
+      job: {
+        ...secondBase.job,
+        request: {
+          ...secondBase.job.request,
+          requestId: 'authority-request-2',
+        },
+      },
+      batch: {
+        ...secondBase.batch,
+        requestId: 'authority-request-2',
+      },
+    };
+    repository.commitCollectionTerminalForStore(storeA, first);
+    repository.commitCollectionTerminalForStore(storeA, second);
+
+    expect(() => repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: storeA,
+      browserProfileId: 'profile-a',
+      businessDate: '2026-07-22',
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
+      mode: 'create-and-download',
+      reportTypes: AUTHORITY_REPORT_TYPES,
+    })).toThrow(/多个 durable 采集任务|拒绝歧义回读/);
+  });
+
+  it.each([
+    {
+      name: 'row/snapshot identity drift',
+      tamper: (
+        database: Database.Database,
+        storeId: StoreId,
+        terminal: ReturnType<typeof fullAuthorityTerminal>,
+      ) => {
+        const snapshot = {
+          ...terminal.job,
+          request: {
+            ...terminal.job.request,
+            storeContext: {
+              ...terminal.job.request.storeContext,
+              browserProfileId: 'profile-b',
+            },
+          },
+        };
+        database.prepare(`
+          UPDATE lingxing_collection_jobs
+          SET snapshot_json = ?
+          WHERE store_id = ? AND job_id = ?
+        `).run(JSON.stringify(snapshot), storeId, terminal.job.jobId);
+      },
+    },
+    {
+      name: 'checkpoint mismatch',
+      tamper: (
+        database: Database.Database,
+        storeId: StoreId,
+        terminal: ReturnType<typeof fullAuthorityTerminal>,
+      ) => {
+        database.prepare(`
+          DELETE FROM lingxing_collection_report_checkpoints
+          WHERE store_id = ? AND job_id = ? AND report_type = 'keyword'
+        `).run(storeId, terminal.job.jobId);
+      },
+    },
+  ])('fails closed on semantic authority $name', ({ tamper }) => {
+    const { database, repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-tampered');
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    tamper(database, storeA, terminal);
+
+    expect(() => repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: storeA,
+      browserProfileId: 'profile-a',
+      businessDate: '2026-07-22',
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
+      mode: 'create-and-download',
+      reportTypes: AUTHORITY_REPORT_TYPES,
+    })).toThrow(/authority proof.*不一致/);
+  });
+
+  it('fails closed when the exact core scope contains malformed durable report-set JSON', () => {
+    const { database, repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-malformed-report-set');
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    database.prepare(`
+      UPDATE lingxing_collection_jobs
+      SET report_types_json = '{'
+      WHERE store_id = ? AND job_id = ?
+    `).run(storeA, terminal.job.jobId);
+
+    expect(() => repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: storeA,
+      browserProfileId: 'profile-a',
+      businessDate: '2026-07-22',
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
+      mode: 'create-and-download',
+      reportTypes: AUTHORITY_REPORT_TYPES,
+    })).toThrow(/损坏的 durable report-set/);
+  });
+
+  it('fails closed when a core-scope row carries a valid JSON report set that drifts from its snapshot', () => {
+    const { database, repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'semantic-valid-json-drift');
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    database.prepare(`
+      UPDATE lingxing_collection_jobs
+      SET report_types_json = ?
+      WHERE store_id = ? AND job_id = ?
+    `).run(JSON.stringify(AUTHORITY_REPORT_TYPES.slice(0, 7)), storeA, terminal.job.jobId);
+
+    expect(() => repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: storeA,
+      browserProfileId: 'profile-a',
+      businessDate: '2026-07-22',
+      dateStart: '2026-07-21',
+      dateEnd: '2026-07-21',
+      mode: 'create-and-download',
+      reportTypes: AUTHORITY_REPORT_TYPES,
+    })).toThrow(/authority proof.*不一致|损坏的 durable report-set/);
+  });
+
   it('reads one transactionally coherent scheduler authority proof across job, 8 files and completed import evidence', () => {
     const { repository, storeA } = createHarness();
     const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'authority-batch');
@@ -393,7 +790,14 @@ describe('LingxingImportRepository', () => {
         importedRows: 0,
       })),
       metrics: [],
-      reconciliations: [],
+      reconciliations: AUTHORITY_REPORT_TYPES.map((reportType) => ({
+        dateStart: '2026-07-21',
+        dateEnd: '2026-07-21',
+        metricDate: '2026-07-21',
+        reportType,
+        expectedRows: 0,
+        expectedCost: 0,
+      })),
       startedAt: '2026-07-22T00:05:01.000Z',
       completedAt: '2026-07-22T00:05:02.000Z',
     });
@@ -433,6 +837,7 @@ describe('LingxingImportRepository', () => {
       importRunCount: 1,
       importFileSnapshotCount: 8,
       importedReportFileCount: 8,
+      reconciliationRowCount: 8,
     });
     expect(proof?.lingxingFiles.map((file) => file.reportType).sort())
       .toEqual([...AUTHORITY_REPORT_TYPES].sort());
@@ -456,6 +861,12 @@ describe('LingxingImportRepository', () => {
       file.status === 'imported'
       && file.fileHash?.length === 64
       && file.fileSizeBytes === 2048
+    ))).toBe(true);
+    expect(proof?.reconciliations.every((row) => (
+      row.runId === 'authority-import-run'
+      && row.batchId === terminal.batch.id
+      && row.status === 'matched'
+      && row.withinTolerance
     ))).toBe(true);
 
     proof!.lingxingFiles[0]!.displayName = 'caller-mutation.xlsx';
@@ -526,6 +937,76 @@ describe('LingxingImportRepository', () => {
       storeA,
       terminal.job.request.requestId,
     )).toThrow(/非规范 ISO-8601 UTC/);
+  });
+
+  it('rejects canonical succeeded-import timestamps when completed precedes started', () => {
+    const { database, repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'inverted-import-timeline');
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    expect(() => repository.commitImportForStore(storeA, {
+      runId: 'inverted-import-run',
+      idempotencyKey: 'inverted-import-key',
+      batchId: terminal.batch.id,
+      files: terminal.files.map((file, index) => ({
+        lingxingFileId: file.id,
+        reportType: file.reportType,
+        filePath: file.filePath!,
+        fileName: file.displayName,
+        fileSizeBytes: file.fileSizeBytes!,
+        fileHash: `${index + 1}`.repeat(64),
+        importedRows: 0,
+      })),
+      metrics: [],
+      reconciliations: [],
+      startedAt: '2026-07-22T00:05:03.000Z',
+      completedAt: '2026-07-22T00:05:02.000Z',
+    })).toThrow(/IMPORT_RUN_TIMELINE_INVALID/);
+    expect(database.prepare(`
+      SELECT COUNT(*) AS count FROM report_import_runs WHERE store_id = ? AND run_id = ?
+    `).get(storeA, 'inverted-import-run')).toEqual({ count: 0 });
+    expect(repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      terminal.job.request.requestId,
+    )).toMatchObject({ importRunCount: 0, importRuns: [] });
+  });
+
+  it.each([
+    {
+      name: 'run createdAt before completedAt',
+      batchId: 'authority-timeline-run-created',
+      tamper: (database: Database.Database, storeId: StoreId, batchId: string) => {
+        database.exec('DROP TRIGGER trg_report_import_runs_immutable_update');
+        database.prepare(`
+          UPDATE report_import_runs
+          SET created_at = '2026-07-22T00:06:59.000Z'
+          WHERE store_id = ? AND batch_id = ?
+        `).run(storeId, batchId);
+      },
+    },
+    {
+      name: 'imported file lastImportedAt before unique run start',
+      batchId: 'authority-timeline-file-imported',
+      tamper: (database: Database.Database, storeId: StoreId, batchId: string) => {
+        database.prepare(`
+          UPDATE report_files
+          SET last_imported_at = '2026-07-22T00:05:30.000Z'
+          WHERE store_id = ? AND batch_id = ?
+        `).run(storeId, batchId);
+      },
+    },
+  ])('rejects persisted succeeded authority proof with $name', ({ batchId, tamper }) => {
+    const { database, repository, storeA } = createHarness();
+    const terminal = persistSucceededAuthorityProof(
+      repository,
+      storeA,
+      batchId,
+    );
+    tamper(database, storeA, terminal.job.jobId);
+
+    expect(() => repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      terminal.job.request.requestId,
+    )).toThrow(/authority proof.*时间顺序/);
   });
 
   it('persists a full-job lineage and rejects unbound or cross-window continuations', () => {
@@ -1050,6 +1531,54 @@ describe('LingxingImportRepository', () => {
     expect(database.prepare('SELECT COUNT(*) AS count FROM ad_daily_metrics').get()).toEqual({ count: 1 });
   });
 
+  it('keeps implicit import completion/creation at or after an explicit future startedAt', () => {
+    const { repository, storeA } = createHarness();
+    repository.saveCollectionSnapshotForStore(
+      storeA,
+      collectionSnapshot(storeA, 'Shop Alpha', 'batch-future-start'),
+    );
+    const startedAt = new Date(Date.now() + 60_000).toISOString();
+
+    const result = repository.commitImportForStore(storeA, importInput(
+      'Shop Alpha',
+      'batch-future-start',
+      {
+        runId: 'run-future-start',
+        idempotencyKey: 'future-start-key',
+        startedAt,
+        completedAt: undefined,
+      },
+    ));
+
+    expect(Date.parse(result.run.completedAt)).toBeGreaterThanOrEqual(Date.parse(startedAt));
+    expect(Date.parse(result.run.createdAt)).toBeGreaterThanOrEqual(
+      Date.parse(result.run.completedAt),
+    );
+  });
+
+  it('rejects a past explicit completedAt when startedAt defaults to now without durable side effects', () => {
+    const { database, repository, storeA } = createHarness();
+    repository.saveCollectionSnapshotForStore(
+      storeA,
+      collectionSnapshot(storeA, 'Shop Alpha', 'batch-reversed-run'),
+    );
+
+    const completedAt = new Date(Date.now() - 60_000).toISOString();
+    expect(() => repository.commitImportForStore(storeA, importInput(
+      'Shop Alpha',
+      'batch-reversed-run',
+      {
+        runId: 'run-reversed',
+        idempotencyKey: 'reversed-key',
+        startedAt: undefined,
+        completedAt,
+      },
+    ))).toThrow(/IMPORT_RUN_TIMELINE_INVALID/);
+    expect(database.prepare(`
+      SELECT COUNT(*) AS count FROM report_import_runs WHERE store_id = ? AND run_id = ?
+    `).get(storeA, 'run-reversed')).toEqual({ count: 0 });
+  });
+
   it('rolls back run, report file, immutable snapshot and metrics when a later metric is invalid', () => {
     const { database, repository, storeA } = createHarness();
     repository.saveCollectionSnapshotForStore(storeA, collectionSnapshot(storeA, 'Shop Alpha', 'batch-a'));
@@ -1060,6 +1589,249 @@ describe('LingxingImportRepository', () => {
       metrics: [valid, invalid],
       reconciliations: [],
     }))).toThrow(/权威记录不一致/);
+
+    for (const table of [
+      'report_import_runs',
+      'report_import_file_snapshots',
+      'report_import_reconciliations',
+      'report_files',
+      'ad_daily_metrics',
+    ]) {
+      expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
+    }
+  });
+
+  it('reconciles one control-total across the complete two-day batch window', () => {
+    const { repository, storeA } = createHarness();
+    repository.saveCollectionSnapshotForStore(storeA, collectionSnapshot(
+      storeA,
+      'Shop Alpha',
+      'batch-two-day',
+      { dateStart: '2026-07-20', dateEnd: '2026-07-21' },
+    ));
+
+    repository.commitImportForStore(storeA, importInput('Shop Alpha', 'batch-two-day', {
+      runId: 'run-two-day',
+      idempotencyKey: 'two-day-window',
+      files: [{
+        ...importInput('Shop Alpha', 'batch-two-day').files[0]!,
+        lingxingFileId: 'batch-two-day-keyword',
+        importedRows: 2,
+      }],
+      metrics: [
+        metric('Shop Alpha', 'batch-two-day', {
+          date: '2026-07-20',
+          cost: 4,
+          sourceRow: 2,
+        }),
+        metric('Shop Alpha', 'batch-two-day', {
+          date: '2026-07-21',
+          cost: 6,
+          searchTerm: 'smart lock second day',
+          sourceRow: 3,
+        }),
+      ],
+      reconciliations: [{
+        dateStart: '2026-07-20',
+        dateEnd: '2026-07-21',
+        metricDate: '2026-07-21',
+        reportType: 'keyword',
+        expectedRows: 2,
+        expectedCost: 10,
+      }],
+    }));
+
+    expect(repository.listReconciliationsForStore(storeA, 'run-two-day')).toEqual([
+      expect.objectContaining({
+        dateStart: '2026-07-20',
+        dateEnd: '2026-07-21',
+        metricDate: '2026-07-21',
+        actualRows: 2,
+        actualCost: 10,
+        status: 'matched',
+      }),
+    ]);
+  });
+
+  it('keeps an imported two-day batch window immutable when the same batch id is replayed as one day', () => {
+    const { repository, storeA } = createHarness();
+    const original = collectionSnapshot(
+      storeA,
+      'Shop Alpha',
+      'batch-two-day-immutable',
+      { dateStart: '2026-07-20', dateEnd: '2026-07-21' },
+    );
+    repository.saveCollectionSnapshotForStore(storeA, original);
+    repository.commitImportForStore(storeA, importInput('Shop Alpha', original.batch.id, {
+      runId: 'run-two-day-immutable',
+      idempotencyKey: 'two-day-immutable',
+      files: [{
+        ...importInput('Shop Alpha', original.batch.id).files[0]!,
+        lingxingFileId: `${original.batch.id}-keyword`,
+        importedRows: 2,
+      }],
+      metrics: [
+        metric('Shop Alpha', original.batch.id, { date: '2026-07-20', cost: 4, sourceRow: 2 }),
+        metric('Shop Alpha', original.batch.id, {
+          date: '2026-07-21',
+          cost: 6,
+          sourceRow: 3,
+          searchTerm: 'immutable second day',
+        }),
+      ],
+      reconciliations: [{
+        dateStart: '2026-07-20',
+        dateEnd: '2026-07-21',
+        metricDate: '2026-07-21',
+        reportType: 'keyword',
+        expectedRows: 2,
+        expectedCost: 10,
+      }],
+    }));
+
+    expect(() => repository.saveCollectionSnapshotForStore(storeA, {
+      ...original,
+      batch: {
+        ...original.batch,
+        dateStart: '2026-07-21',
+        dateEnd: '2026-07-21',
+      },
+    })).toThrow(/LINGXING_BATCH_AUTHORITY_IMMUTABLE/);
+    expect(() => repository.saveCollectionSnapshotForStore(storeA, {
+      ...original,
+      batch: {
+        ...original.batch,
+        downloadDir: 'C:/drifted-download-directory',
+        manifestPath: 'C:/drifted-download-directory/manifest.json',
+      },
+    })).toThrow(/IMPORTED_BATCH_AUTHORITY_IMMUTABLE/);
+    expect(repository.listBatchesForStore(storeA)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: original.batch.id,
+        dateStart: '2026-07-20',
+        dateEnd: '2026-07-21',
+      }),
+    ]));
+    expect(repository.listReconciliationsForStore(storeA, 'run-two-day-immutable')).toEqual([
+      expect.objectContaining({
+        dateStart: '2026-07-20',
+        dateEnd: '2026-07-21',
+        actualRows: 2,
+        actualCost: 10,
+      }),
+    ]);
+    expect(repository.getImportRunForStore(storeA, 'run-two-day-immutable')).toMatchObject({
+      batchId: original.batch.id,
+      status: 'completed',
+      sourceFileCount: 1,
+      reconciliationCount: 1,
+    });
+  });
+
+  it.each([
+    {
+      label: 'partial control-total window',
+      reconciliation: {
+        dateStart: '2026-07-21',
+        dateEnd: '2026-07-21',
+        metricDate: '2026-07-21',
+        reportType: 'keyword',
+        expectedRows: 1,
+        expectedCost: 6,
+      },
+      error: /IMPORT_RECONCILIATION_WINDOW_MISMATCH/,
+    },
+    {
+      label: 'wrong complete-window total',
+      reconciliation: {
+        dateStart: '2026-07-20',
+        dateEnd: '2026-07-21',
+        metricDate: '2026-07-21',
+        reportType: 'keyword',
+        expectedRows: 2,
+        expectedCost: 9,
+      },
+      error: /IMPORT_RECONCILIATION_MISMATCH/,
+    },
+  ])('atomically rejects a two-day import with $label', ({ reconciliation, error }) => {
+    const { database, repository, storeA } = createHarness();
+    const batchId = `batch-two-day-failure-${reconciliation.expectedCost}`;
+    const runId = `run-two-day-failure-${reconciliation.expectedCost}`;
+    repository.saveCollectionSnapshotForStore(storeA, collectionSnapshot(
+      storeA,
+      'Shop Alpha',
+      batchId,
+      { dateStart: '2026-07-20', dateEnd: '2026-07-21' },
+    ));
+    const input = importInput('Shop Alpha', batchId, {
+      runId,
+      idempotencyKey: `${runId}-key`,
+      metrics: [
+        metric('Shop Alpha', batchId, { date: '2026-07-20', cost: 4, sourceRow: 2 }),
+        metric('Shop Alpha', batchId, {
+          date: '2026-07-21',
+          cost: 6,
+          searchTerm: 'smart lock second day',
+          sourceRow: 3,
+        }),
+      ],
+      reconciliations: [reconciliation],
+    });
+
+    expect(() => repository.commitImportForStore(storeA, input)).toThrow(error);
+    for (const [table, predicate] of [
+      ['report_import_runs', 'run_id = ?'],
+      ['report_import_file_snapshots', 'run_id = ?'],
+      ['report_import_reconciliations', 'run_id = ?'],
+      ['report_files', 'batch_id = ?'],
+      ['ad_daily_metrics', 'batch_id = ?'],
+    ] as const) {
+      const identity = predicate.startsWith('run_id') ? runId : batchId;
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM ${table} WHERE store_id = ? AND ${predicate}`,
+      ).get(storeA, identity)).toEqual({ count: 0 });
+    }
+  });
+
+  it.each([
+    {
+      label: 'an extra metric report type without a reconciliation',
+      build: (batchId: string) => importInput('Shop Alpha', batchId, {
+        runId: 'run-extra-report-type',
+        idempotencyKey: 'extra-report-type',
+        metrics: [
+          metric('Shop Alpha', batchId),
+          metric('Shop Alpha', batchId, {
+            reportType: 'campaign',
+            campaignName: 'uncovered campaign',
+            searchTerm: 'uncovered campaign metric',
+            sourceRow: 3,
+          }),
+        ],
+      }),
+      error: /IMPORT_METRIC_REPORT_TYPE_UNCOVERED/,
+    },
+    {
+      label: 'a file imported-row count that differs from its metrics and reconciliation',
+      build: (batchId: string) => importInput('Shop Alpha', batchId, {
+        runId: 'run-file-row-drift',
+        idempotencyKey: 'file-row-drift',
+        files: [{
+          ...importInput('Shop Alpha', batchId).files[0]!,
+          importedRows: 2,
+        }],
+      }),
+      error: /IMPORT_REPORT_ROW_COUNT_MISMATCH/,
+    },
+  ])('atomically rejects exact-count drift from $label', ({ build, error }) => {
+    const { database, repository, storeA } = createHarness();
+    const batchId = 'batch-exact-count-drift';
+    repository.saveCollectionSnapshotForStore(
+      storeA,
+      collectionSnapshot(storeA, 'Shop Alpha', batchId),
+    );
+
+    expect(() => repository.commitImportForStore(storeA, build(batchId))).toThrow(error);
 
     for (const table of [
       'report_import_runs',
@@ -1089,7 +1861,10 @@ describe('LingxingImportRepository', () => {
     repository.commitImportForStore(storeA, importInput('Shop Alpha', 'batch-a', {
       metrics: [metric('Shop Alpha', 'batch-a', { cost: 10.01 })],
       reconciliations: [
-        { metricDate: '2026-07-21', reportType: 'keyword', expectedRows: 1, expectedCost: 10 },
+        {
+          dateStart: '2026-07-21', dateEnd: '2026-07-21', metricDate: '2026-07-21',
+          reportType: 'keyword', expectedRows: 1, expectedCost: 10,
+        },
       ],
     }));
 
@@ -1103,7 +1878,10 @@ describe('LingxingImportRepository', () => {
       idempotencyKey: 'mismatch-key',
       metrics: [metric('Shop Alpha', 'batch-b', { cost: 10.0101 })],
       reconciliations: [
-        { metricDate: '2026-07-21', reportType: 'keyword', expectedRows: 1, expectedCost: 10 },
+        {
+          dateStart: '2026-07-21', dateEnd: '2026-07-21', metricDate: '2026-07-21',
+          reportType: 'keyword', expectedRows: 1, expectedCost: 10,
+        },
       ],
     }))).toThrow(/IMPORT_RECONCILIATION_MISMATCH/);
     expect(repository.getImportRunForStore(storeA, 'run-mismatch')).toBeUndefined();
@@ -1127,4 +1905,668 @@ describe('LingxingImportRepository', () => {
       UPDATE report_import_reconciliations SET status = 'mismatch' WHERE store_id = ?
     `).run(storeA)).toThrow(/immutable/);
   });
+
+  it('atomically completes an exact pending import recovery proof and rejects stale replay', () => {
+    const { database, databasePath, repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'authority-recovery-batch');
+    const attemptedAt = '2026-07-22T00:06:00.000Z';
+    terminal.job = {
+      ...terminal.job,
+      importState: 'pending',
+      importAttemptedAt: attemptedAt,
+      updatedAt: attemptedAt,
+    };
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    repository.commitImportForStore(
+      storeA,
+      fullAuthorityImportInput(terminal, attemptedAt, '2026-07-22T00:07:00.000Z'),
+    );
+    database.close();
+    const reopenedDatabase = initSqlite(databasePath);
+    databases.push(reopenedDatabase);
+    const reopenedRepository = new LingxingImportRepository(reopenedDatabase);
+    const proof = reopenedRepository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      terminal.job.request.requestId,
+    )!;
+    const recoveryCompletedAt = new Date(
+      Date.parse(proof.importRuns[0]!.createdAt) + 1,
+    ).toISOString();
+    const token = {
+      storeId: storeA,
+      jobId: terminal.job.jobId,
+      requestId: terminal.job.request.requestId,
+      expectedJobUpdatedAt: terminal.job.updatedAt,
+      expectedImportState: 'pending' as const,
+      expectedRunId: `import_${terminal.job.jobId}`,
+      expectedAuthorityProofSha256: fingerprintLingxingCollectionAuthorityProof(proof),
+    };
+
+    expect(() => reopenedRepository.completeRecoveredCollectionImportForStore(token, {
+      attemptedAt,
+      completedAt: proof.importRuns[0]!.completedAt,
+    })).toThrow(/COLLECTION_IMPORT_RECOVERY_CAS_INVALID/);
+    expect(reopenedRepository.getCollectionJobForStore(storeA, terminal.job.jobId)).toMatchObject({
+      importState: 'pending',
+      updatedAt: attemptedAt,
+    });
+
+    const succeeded = reopenedRepository.completeRecoveredCollectionImportForStore(token, {
+      attemptedAt,
+      completedAt: recoveryCompletedAt,
+    });
+    expect(succeeded).toMatchObject({
+      importState: 'succeeded',
+      importAttemptedAt: attemptedAt,
+      importCompletedAt: recoveryCompletedAt,
+      updatedAt: recoveryCompletedAt,
+    });
+    expect(() => reopenedRepository.completeRecoveredCollectionImportForStore(token, {
+      attemptedAt,
+      completedAt: '2026-07-22T00:09:00.000Z',
+    })).toThrow(/COLLECTION_IMPORT_RECOVERY_CAS_CONFLICT/);
+    expect(reopenedRepository.getCollectionJobForStore(storeA, terminal.job.jobId)?.importCompletedAt)
+      .toBe(recoveryCompletedAt);
+  });
+
+  it('does not overwrite pending state when immutable authority evidence drifts before recovery CAS', () => {
+    const { database, repository, storeA } = createHarness();
+    const terminal = fullAuthorityTerminal(storeA, 'profile-a', 'authority-recovery-drift');
+    const attemptedAt = '2026-07-22T00:06:00.000Z';
+    terminal.job = {
+      ...terminal.job,
+      importState: 'pending',
+      importAttemptedAt: attemptedAt,
+      updatedAt: attemptedAt,
+    };
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    repository.commitImportForStore(
+      storeA,
+      fullAuthorityImportInput(terminal, attemptedAt, '2026-07-22T00:07:00.000Z'),
+    );
+    const proof = repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      terminal.job.request.requestId,
+    )!;
+    const token = {
+      storeId: storeA,
+      jobId: terminal.job.jobId,
+      requestId: terminal.job.request.requestId,
+      expectedJobUpdatedAt: terminal.job.updatedAt,
+      expectedImportState: 'pending' as const,
+      expectedRunId: `import_${terminal.job.jobId}`,
+      expectedAuthorityProofSha256: fingerprintLingxingCollectionAuthorityProof(proof),
+    };
+    database.prepare(`
+      INSERT INTO report_import_runs (
+        store_id, run_id, idempotency_key, input_fingerprint, batch_id,
+        status, source_file_count, metric_row_count, reconciliation_count,
+        started_at, completed_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'completed', 0, 0, 0, ?, ?, ?)
+    `).run(
+      storeA,
+      'foreign-completed-run',
+      'foreign-completed-run-key',
+      'b'.repeat(64),
+      terminal.job.jobId,
+      attemptedAt,
+      '2026-07-22T00:07:30.000Z',
+      '2026-07-22T00:07:30.000Z',
+    );
+
+    expect(() => repository.completeRecoveredCollectionImportForStore(token, {
+      attemptedAt,
+      completedAt: '2026-07-22T00:08:00.000Z',
+    })).toThrow(/COLLECTION_IMPORT_RECOVERY_CAS_CONFLICT/);
+    expect(repository.getCollectionJobForStore(storeA, terminal.job.jobId)).toMatchObject({
+      importState: 'pending',
+      updatedAt: attemptedAt,
+    });
+  });
+
+  it('acquires one same-job resume claim, rotates it on progress, and consumes it once on success', () => {
+    const { repository, storeA } = createHarness();
+    const terminal = failedFullAuthorityTerminal(storeA, 'same-job-resume-1');
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    const packet = repository.getCollectionInPlaceResumeStateForStore(
+      storeA,
+      terminal.job.jobId,
+    )!;
+    expect(packet.jobId).toBe(terminal.job.jobId);
+    expect(packet.files).toHaveLength(3);
+    expect(packet.reports.filter((checkpoint) => checkpoint.state === 'downloaded'))
+      .toHaveLength(3);
+    expect(packet.reports.filter((checkpoint) => checkpoint.state === 'queued'))
+      .toHaveLength(5);
+    const executionStoreContext = normalizeStoreContextEnvelope({
+      ...packet.request.storeContext,
+      sessionGeneration: 4,
+    });
+    const claimInput = {
+      jobId: packet.jobId,
+      requestId: packet.request.requestId,
+      expectedJobUpdatedAt: packet.expectedJobUpdatedAt,
+      expectedAuthorityProofSha256: packet.authorityProofSha256,
+      executionStoreContext,
+      claimedAt: '2026-07-22T00:05:30.000Z',
+    };
+    const claim = repository.acquireCollectionResumeClaimForStore(storeA, {
+      ...claimInput,
+      attemptId: 'attempt-same-job-1',
+    });
+    expect(() => repository.acquireCollectionResumeClaimForStore(storeA, {
+      ...claimInput,
+      attemptId: 'attempt-double-click',
+    })).toThrow(/CLAIM_CONFLICT/);
+
+    const runningAt = '2026-07-22T00:06:00.000Z';
+    const runningJob: LingxingCollectionJobSnapshot = {
+      ...packet.job,
+      state: 'running',
+      reports: packet.reports,
+      blockerCode: undefined,
+      detail: undefined,
+      completedAt: undefined,
+      updatedAt: runningAt,
+    };
+    const nextClaim = repository.commitCollectionResumeProgressForStore(storeA, {
+      claim,
+      event: {
+        eventId: `${claim.attemptId}:runner:1`,
+        emittedAt: runningAt,
+        job: runningJob,
+      },
+    });
+    expect(nextClaim.version).toBe(2);
+    expect(nextClaim.claimToken).not.toBe(claim.claimToken);
+    expect(() => repository.commitCollectionResumeProgressForStore(storeA, {
+      claim,
+      event: {
+        eventId: `${claim.attemptId}:runner:replay`,
+        emittedAt: '2026-07-22T00:06:01.000Z',
+        job: { ...runningJob, updatedAt: '2026-07-22T00:06:01.000Z' },
+      },
+    })).toThrow(/CAS_CONFLICT/);
+
+    const completedAt = '2026-07-22T00:07:00.000Z';
+    const reports = packet.reports.map((checkpoint) => ({
+      ...checkpoint,
+      state: 'downloaded' as const,
+      createdReportIdentity: checkpoint.createdReportIdentity ?? {
+        provider: 'lingxing' as const,
+        reportType: checkpoint.reportType,
+        externalReportName: `${checkpoint.reportType}-resumed`,
+        externalReportId: `external-resumed-${checkpoint.reportType}`,
+        dateStart: packet.request.dateStart,
+        dateEnd: packet.request.dateEnd,
+        createdAt: '2026-07-22T00:06:30.000Z',
+      },
+      fileSizeBytes: 2048,
+      updatedAt: completedAt,
+    }));
+    const files: LingxingReportFile[] = reports.map((checkpoint) => (
+      packet.files.find((file) => file.reportType === checkpoint.reportType) ?? {
+        id: `${packet.jobId}-${checkpoint.reportType}`,
+        batchId: packet.jobId,
+        reportType: checkpoint.reportType,
+        displayName: `${checkpoint.reportType}.xlsx`,
+        status: 'downloaded' as const,
+        filePath: `C:/${packet.jobId}/${checkpoint.reportType}.xlsx`,
+        fileSizeBytes: 2048,
+        createdAt: '2026-07-22T00:06:30.000Z',
+        updatedAt: completedAt,
+      }
+    )).map((file) => ({ ...file, status: 'downloaded', updatedAt: completedAt }));
+    const prepared = repository.commitCollectionResumeRunnerResultForStore(storeA, {
+      claim: nextClaim,
+      job: {
+        ...runningJob,
+        state: 'completed',
+        reports,
+        completedAt,
+        updatedAt: completedAt,
+        importState: 'pending',
+      },
+      batch: {
+        ...packet.batch,
+        status: 'completed',
+        completedAt,
+      },
+      files,
+    });
+    expect(prepared.result.job.jobId).toBe(packet.jobId);
+    expect(prepared.result.files).toHaveLength(8);
+    expect(repository.readUniqueSucceededCollectionResumeReceiptForStore(
+      storeA,
+      packet.jobId,
+      packet.request.requestId,
+    )).toBeUndefined();
+
+    const attemptedAt = '2026-07-22T00:07:01.000Z';
+    const attemptedClaim = repository.commitCollectionResumeProgressForStore(storeA, {
+      claim: prepared.claim,
+      event: {
+        eventId: `${claim.attemptId}:import:pending`,
+        emittedAt: attemptedAt,
+        job: {
+          ...prepared.result.job,
+          importState: 'pending',
+          importAttemptedAt: attemptedAt,
+          updatedAt: attemptedAt,
+        },
+      },
+    });
+    const importCompletedAt = '2026-07-22T00:07:02.000Z';
+    const crashImportInput = fullAuthorityImportInput(
+      {
+        job: { ...prepared.result.job, importAttemptedAt: attemptedAt, updatedAt: attemptedAt },
+        batch: prepared.result.batch,
+        files: prepared.result.files,
+      },
+      attemptedAt,
+      importCompletedAt,
+    );
+    const imported = repository.commitImportForStore(storeA, crashImportInput);
+    const importedClaim = repository.advanceCollectionResumeClaimAfterImportForStore(storeA, {
+      claim: attemptedClaim,
+      advancedAt: imported.run.createdAt,
+    });
+    const succeededAt = new Date(Date.parse(imported.run.createdAt) + 1).toISOString();
+    const finalClaim = repository.commitCollectionResumeProgressForStore(storeA, {
+      claim: importedClaim,
+      event: {
+        eventId: `${claim.attemptId}:import:succeeded`,
+        emittedAt: succeededAt,
+        job: {
+          ...prepared.result.job,
+          importState: 'succeeded',
+          importAttemptedAt: attemptedAt,
+          importCompletedAt: succeededAt,
+          updatedAt: succeededAt,
+        },
+      },
+    });
+    const receipt = repository.finalizeCollectionResumeAttemptForStore(storeA, {
+      claim: finalClaim,
+      outcome: 'succeeded',
+      completedAt: succeededAt,
+    });
+    expect(receipt).toMatchObject({
+      attemptId: claim.attemptId,
+      outcome: 'succeeded',
+      durableSessionGeneration: 3,
+      executionSessionGeneration: 4,
+    });
+    expect(repository.readUniqueSucceededCollectionResumeReceiptForStore(
+      storeA,
+      packet.jobId,
+      packet.request.requestId,
+    )).toEqual(receipt);
+    expect(() => repository.finalizeCollectionResumeAttemptForStore(storeA, {
+      claim: finalClaim,
+      outcome: 'succeeded',
+      completedAt: succeededAt,
+    })).toThrow(/CAS_CONFLICT/);
+  });
+
+  it('interrupts an orphaned creating resume at startup without browser work or a reusable claim', () => {
+    const { repository, storeA } = createHarness();
+    const terminal = failedFullAuthorityTerminal(storeA, 'startup-resume-1', 0);
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    const packet = repository.getCollectionInPlaceResumeStateForStore(storeA, terminal.job.jobId)!;
+    const claim = repository.acquireCollectionResumeClaimForStore(storeA, {
+      jobId: packet.jobId,
+      requestId: packet.request.requestId,
+      expectedJobUpdatedAt: packet.expectedJobUpdatedAt,
+      expectedAuthorityProofSha256: packet.authorityProofSha256,
+      executionStoreContext: packet.request.storeContext,
+      attemptId: 'attempt-startup-1',
+      claimedAt: '2026-07-22T00:05:30.000Z',
+    });
+    const progressAt = '2026-07-22T00:06:00.000Z';
+    repository.commitCollectionResumeProgressForStore(storeA, {
+      claim,
+      event: {
+        eventId: `${claim.attemptId}:runner:1`,
+        emittedAt: progressAt,
+        changedReportType: packet.reports[0].reportType,
+        job: {
+          ...packet.job,
+          state: 'running',
+          completedAt: undefined,
+          blockerCode: undefined,
+          detail: undefined,
+          reports: packet.reports.map((checkpoint, index) => index === 0
+            ? { ...checkpoint, state: 'creating', updatedAt: progressAt }
+            : checkpoint),
+          updatedAt: progressAt,
+        },
+      },
+    });
+
+    const receipts = repository.interruptOrphanedCollectionResumeClaimsForStartup(
+      '2020-01-01T00:00:00.000Z',
+    );
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      attemptId: claim.attemptId,
+      outcome: 'interrupted',
+    });
+    expect(Date.parse(receipts[0].completedAt)).toBeGreaterThan(Date.parse(progressAt));
+    const interrupted = repository.getCollectionJobForStore(storeA, packet.jobId)!;
+    expect(interrupted.state).toBe('failed');
+    expect(interrupted.reports).toEqual(expect.arrayContaining([
+      expect.objectContaining({ state: 'create_unknown' }),
+    ]));
+    expect(() => repository.getCollectionInPlaceResumeStateForStore(storeA, packet.jobId))
+      .toThrow(/create_unknown/);
+    expect(repository.interruptOrphanedCollectionResumeClaimsForStartup(
+      '2026-07-22T00:07:00.000Z',
+    )).toEqual([]);
+  });
+
+  it('keeps general recovery away from a no-progress resume claim and preserves its receipt timeline', () => {
+    const { repository, storeA } = createHarness();
+    const terminal = failedFullAuthorityTerminal(storeA, 'startup-no-progress', 3);
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    const packet = repository.getCollectionInPlaceResumeStateForStore(storeA, terminal.job.jobId)!;
+    const claimedAt = '2026-07-22T00:05:30.000Z';
+    const claim = repository.acquireCollectionResumeClaimForStore(storeA, {
+      jobId: packet.jobId,
+      requestId: packet.request.requestId,
+      expectedJobUpdatedAt: packet.expectedJobUpdatedAt,
+      expectedAuthorityProofSha256: packet.authorityProofSha256,
+      executionStoreContext: packet.request.storeContext,
+      attemptId: 'attempt-no-progress',
+      claimedAt,
+    });
+
+    expect(repository.recoverInterruptedCollectionJobsForStore(storeA, {
+      completedAt: '2026-07-22T00:06:00.000Z',
+    })).toEqual([]);
+    const receipt = repository.interruptOrphanedCollectionResumeClaimsForStartup(
+      '2020-01-01T00:00:00.000Z',
+    )[0];
+    expect(receipt).toMatchObject({
+      attemptId: claim.attemptId,
+      outcome: 'interrupted',
+    });
+    expect(Date.parse(receipt.finalJobUpdatedAt)).toBeGreaterThanOrEqual(Date.parse(claimedAt));
+    expect(Date.parse(receipt.completedAt)).toBeGreaterThan(Date.parse(receipt.finalJobUpdatedAt));
+    expect(repository.getCollectionJobForStore(storeA, packet.jobId)).toEqual(
+      expect.objectContaining({ state: 'failed', updatedAt: receipt.finalJobUpdatedAt }),
+    );
+  });
+
+  it('rejects an in-place packet with duplicate durable files for one report type', () => {
+    const { database, repository, storeA } = createHarness();
+    const terminal = failedFullAuthorityTerminal(storeA, 'duplicate-resume-file', 1);
+    repository.commitCollectionTerminalForStore(storeA, terminal);
+    database.prepare(`
+      INSERT INTO lingxing_report_files (
+        id, batch_id, report_type, display_name, status,
+        max_auto_retries, auto_retry_count, file_path, file_size_bytes,
+        error_message, attempt_errors_json, failure_screenshot_path,
+        failure_dom_snapshot_path, failure_trace_path, trace_unavailable_reason,
+        created_at, updated_at, store_id
+      )
+      SELECT id || '-duplicate', batch_id, report_type, display_name, status,
+             max_auto_retries, auto_retry_count, file_path, file_size_bytes,
+             error_message, attempt_errors_json, failure_screenshot_path,
+             failure_dom_snapshot_path, failure_trace_path, trace_unavailable_reason,
+             created_at, updated_at, store_id
+      FROM lingxing_report_files
+      WHERE store_id = ? AND batch_id = ?
+      LIMIT 1
+    `).run(storeA, terminal.job.jobId);
+
+    expect(() => repository.getCollectionInPlaceResumeStateForStore(
+      storeA,
+      terminal.job.jobId,
+    )).toThrow(/重复 durable file/);
+  });
+
+  it('appends a succeeded successor after startup interrupts the import-commit crash window', () => {
+    const { repository, storeA } = createHarness();
+    const failed = failedFullAuthorityTerminal(storeA, 'resume-import-crash', 3);
+    repository.commitCollectionTerminalForStore(storeA, failed);
+    const packet = repository.getCollectionInPlaceResumeStateForStore(storeA, failed.job.jobId)!;
+    const claim = repository.acquireCollectionResumeClaimForStore(storeA, {
+      jobId: packet.jobId,
+      requestId: packet.request.requestId,
+      expectedJobUpdatedAt: packet.expectedJobUpdatedAt,
+      expectedAuthorityProofSha256: packet.authorityProofSha256,
+      executionStoreContext: packet.request.storeContext,
+      attemptId: 'attempt-import-crash',
+      claimedAt: '2026-07-22T00:05:30.000Z',
+    });
+    const succeeded = fullAuthorityTerminal(storeA, 'profile-a', packet.jobId);
+    const runnerCompletedAt = '2026-07-22T00:07:00.000Z';
+    succeeded.job = {
+      ...succeeded.job,
+      request: packet.request,
+      lineage: packet.job.lineage,
+      importState: 'pending',
+      completedAt: runnerCompletedAt,
+      updatedAt: runnerCompletedAt,
+    };
+    succeeded.batch = {
+      ...succeeded.batch,
+      requestId: packet.request.requestId,
+      downloadDir: packet.batch.downloadDir,
+      createdAt: packet.batch.createdAt,
+      completedAt: runnerCompletedAt,
+    };
+    const prepared = repository.commitCollectionResumeRunnerResultForStore(storeA, {
+      claim,
+      ...succeeded,
+    });
+    const attemptedAt = '2026-07-22T00:07:01.000Z';
+    const attemptedClaim = repository.commitCollectionResumeProgressForStore(storeA, {
+      claim: prepared.claim,
+      event: {
+        eventId: `${claim.attemptId}:import:pending`,
+        emittedAt: attemptedAt,
+        job: {
+          ...prepared.result.job,
+          importState: 'pending',
+          importAttemptedAt: attemptedAt,
+          updatedAt: attemptedAt,
+        },
+      },
+    });
+    const importCompletedAt = '2026-07-22T00:07:02.000Z';
+    const crashImportInput = fullAuthorityImportInput(
+      {
+        job: { ...prepared.result.job, importAttemptedAt: attemptedAt, updatedAt: attemptedAt },
+        batch: prepared.result.batch,
+        files: prepared.result.files,
+      },
+      attemptedAt,
+      importCompletedAt,
+    );
+    const imported = repository.commitImportForStore(storeA, crashImportInput);
+    expect(imported.deduplicated).toBe(false);
+    // Simulate process loss before advanceCollectionResumeClaimAfterImportForStore.
+    const interrupted = repository.interruptOrphanedCollectionResumeClaimsForStartup(
+      '2020-01-01T00:00:00.000Z',
+    );
+    expect(interrupted).toHaveLength(1);
+    expect(interrupted[0].outcome).toBe('interrupted');
+    expect(() => repository.advanceCollectionResumeClaimAfterImportForStore(storeA, {
+      claim: attemptedClaim,
+    })).toThrow(/CAS_CONFLICT/);
+
+    const pendingProof = repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      packet.request.requestId,
+    )!;
+    const recoveryCompletedAt = new Date(Date.parse(imported.run.createdAt) + 2).toISOString();
+    repository.completeRecoveredCollectionImportForStore({
+      storeId: storeA,
+      jobId: packet.jobId,
+      requestId: packet.request.requestId,
+      expectedJobUpdatedAt: pendingProof.job.updatedAt,
+      expectedImportState: 'pending',
+      expectedRunId: imported.run.runId,
+      expectedAuthorityProofSha256: fingerprintLingxingCollectionAuthorityProof(pendingProof),
+    }, {
+      attemptedAt,
+      completedAt: recoveryCompletedAt,
+    });
+    const finalProof = repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      packet.request.requestId,
+    )!;
+    expect(repository.readUniqueSucceededCollectionResumeReceiptForStore(
+      storeA,
+      packet.jobId,
+      packet.request.requestId,
+    )).toMatchObject({
+      attemptId: claim.attemptId,
+      outcome: 'succeeded',
+      finalJobUpdatedAt: finalProof.job.updatedAt,
+      finalAuthorityProofSha256: fingerprintLingxingCollectionAuthorityProof(finalProof),
+    });
+    expect(repository.commitImportForStore(storeA, crashImportInput).deduplicated).toBe(true);
+  });
+
+  it('appends a succeeded successor when startup interrupts before the first import run', () => {
+    const { repository, storeA } = createHarness();
+    const failed = failedFullAuthorityTerminal(storeA, 'resume-before-import', 3);
+    repository.commitCollectionTerminalForStore(storeA, failed);
+    const packet = repository.getCollectionInPlaceResumeStateForStore(storeA, failed.job.jobId)!;
+    const claim = repository.acquireCollectionResumeClaimForStore(storeA, {
+      jobId: packet.jobId,
+      requestId: packet.request.requestId,
+      expectedJobUpdatedAt: packet.expectedJobUpdatedAt,
+      expectedAuthorityProofSha256: packet.authorityProofSha256,
+      executionStoreContext: packet.request.storeContext,
+      attemptId: 'attempt-before-import',
+      claimedAt: '2026-07-22T00:05:30.000Z',
+    });
+    const completed = fullAuthorityTerminal(storeA, 'profile-a', packet.jobId);
+    const runnerCompletedAt = '2026-07-22T00:07:00.000Z';
+    completed.job = {
+      ...completed.job,
+      request: packet.request,
+      lineage: packet.job.lineage,
+      importState: 'pending',
+      completedAt: runnerCompletedAt,
+      updatedAt: runnerCompletedAt,
+    };
+    completed.batch = {
+      ...completed.batch,
+      requestId: packet.request.requestId,
+      downloadDir: packet.batch.downloadDir,
+      createdAt: packet.batch.createdAt,
+      completedAt: runnerCompletedAt,
+    };
+    const prepared = repository.commitCollectionResumeRunnerResultForStore(storeA, {
+      claim,
+      ...completed,
+    });
+    const attemptedAt = '2026-07-22T00:07:01.000Z';
+    repository.commitCollectionResumeProgressForStore(storeA, {
+      claim: prepared.claim,
+      event: {
+        eventId: `${claim.attemptId}:import:pending`,
+        emittedAt: attemptedAt,
+        job: {
+          ...prepared.result.job,
+          importState: 'pending',
+          importAttemptedAt: attemptedAt,
+          updatedAt: attemptedAt,
+        },
+      },
+    });
+
+    const interrupted = repository.interruptOrphanedCollectionResumeClaimsForStartup(
+      '2020-01-01T00:00:00.000Z',
+    );
+    expect(interrupted).toEqual([
+      expect.objectContaining({ attemptId: claim.attemptId, outcome: 'interrupted' }),
+    ]);
+    expect(repository.listImportRunsForStore(storeA)).toEqual([]);
+
+    const importInput = fullAuthorityImportInput(
+      {
+        job: { ...prepared.result.job, importAttemptedAt: attemptedAt, updatedAt: attemptedAt },
+        batch: prepared.result.batch,
+        files: prepared.result.files,
+      },
+      attemptedAt,
+      '2026-07-22T00:07:02.000Z',
+    );
+    const imported = repository.commitImportForStore(storeA, importInput);
+    const pendingProof = repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+      storeA,
+      packet.request.requestId,
+    )!;
+    const recoveryCompletedAt = new Date(Date.parse(imported.run.createdAt) + 2).toISOString();
+    repository.completeRecoveredCollectionImportForStore({
+      storeId: storeA,
+      jobId: packet.jobId,
+      requestId: packet.request.requestId,
+      expectedJobUpdatedAt: pendingProof.job.updatedAt,
+      expectedImportState: 'pending',
+      expectedRunId: imported.run.runId,
+      expectedAuthorityProofSha256: fingerprintLingxingCollectionAuthorityProof(pendingProof),
+    }, {
+      attemptedAt,
+      completedAt: recoveryCompletedAt,
+    });
+
+    expect(repository.readUniqueSucceededCollectionResumeReceiptForStore(
+      storeA,
+      packet.jobId,
+      packet.request.requestId,
+    )).toEqual(expect.objectContaining({
+      attemptId: claim.attemptId,
+      outcome: 'succeeded',
+    }));
+    expect(repository.commitImportForStore(storeA, importInput).deduplicated).toBe(true);
+  });
+
+  it.each(['update', 'delete', 'insert'] as const)(
+    'rejects authority proof when committed ad metrics drift by %s',
+    (operation) => {
+      const { database, repository, storeA } = createHarness();
+      const terminal = persistSucceededAuthorityProof(
+        repository,
+        storeA,
+        `metric-evidence-${operation}`,
+      );
+      expect(repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+        storeA,
+        terminal.job.request.requestId,
+      )?.metricEvidenceCount).toBe(1);
+      if (operation === 'update') {
+        database.prepare(`
+          UPDATE ad_daily_metrics SET clicks = clicks + 1
+          WHERE store_id = ? AND batch_id = ?
+        `).run(storeA, terminal.job.jobId);
+      } else if (operation === 'delete') {
+        database.prepare(`
+          DELETE FROM ad_daily_metrics
+          WHERE id = (
+            SELECT id FROM ad_daily_metrics WHERE store_id = ? AND batch_id = ? LIMIT 1
+          )
+        `).run(storeA, terminal.job.jobId);
+      } else {
+        database.prepare(`
+          INSERT INTO ad_daily_metrics (
+            store_id, batch_id, report_type, date, store_name, marketplace_code,
+            impressions, clicks, cost, orders, sales, currency,
+            acos, cpc, cvr, source_file, source_row
+          ) VALUES (?, ?, 'campaign', '2026-07-21', 'Shop Alpha', 'US',
+                    1, 1, 1, 1, 1, 'USD', 1, 1, 1, 'tampered.xlsx', 999)
+        `).run(storeA, terminal.job.jobId);
+      }
+      expect(() => repository.readUniqueCollectionAuthorityProofForStoreByRequestId(
+        storeA,
+        terminal.job.request.requestId,
+      )).toThrow(/广告指标与不可变导入证据不一致/);
+    },
+  );
 });

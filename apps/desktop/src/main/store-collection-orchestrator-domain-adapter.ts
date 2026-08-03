@@ -2,10 +2,14 @@ import {
   normalizeStoreContextEnvelope,
   type StoreContextEnvelope,
   type StoreRecord,
+  type StoreRuntimeConfigProjection,
 } from '@amazon-ai-ops/shared-types';
+import { LINGXING_AD_REPORTS } from '@amazon-ai-ops/lingxing-report-collector';
+import type { LingxingImportRepository } from '@amazon-ai-ops/local-db';
 import {
   type StoreCollectionAutomationAuthority,
   type StoreCollectionAuthorityReadback,
+  type StoreCollectionManualScheduleInspection,
   type StoreCollectionOrchestratorDependencies,
   type StoreCollectionSchedulerRecoveryAdmission,
   type StoreCollectionSchedulerRecoveryAdmissionReceipt,
@@ -20,12 +24,17 @@ import {
   type StoreCoordinator,
   type StoreCoordinatorCollectionTransitionCapability,
 } from './store-coordinator';
-import type { StoreCollectionScheduler } from './store-collection-scheduler';
+import {
+  deriveStoreCollectionWindow,
+  storeCollectionScheduleSemanticFingerprint,
+  type StoreCollectionScheduler,
+} from './store-collection-scheduler';
 
 type AdapterPorts = Pick<
   StoreCollectionOrchestratorDependencies,
   | 'listActiveStores'
   | 'inspectStoreSchedule'
+  | 'inspectManualStoreSchedule'
   | 'getActiveStoreId'
   | 'registerSchedulerRecoveryAdmission'
   | 'deriveTransitionCapability'
@@ -41,7 +50,16 @@ export interface StoreCollectionOrchestratorDomainAdapterOptions {
     | 'issueCollectionTransitionCapability'
     | 'transitionForCollection'
   >;
-  scheduler: Pick<StoreCollectionScheduler, 'inspectForStore'>;
+  /** Legacy scheduler remains injectable during composition migration but is
+   * deliberately not consulted for semantic duplicate authority. */
+  scheduler?: Pick<StoreCollectionScheduler, 'inspectForStore'>;
+  config: {
+    getForStoreRecord(store: StoreRecord): StoreRuntimeConfigProjection;
+  };
+  repository: Pick<
+    LingxingImportRepository,
+    'inspectUniqueCollectionJobForSemanticScope'
+  >;
   now?: () => Date;
 }
 
@@ -127,10 +145,98 @@ export class StoreCollectionOrchestratorDomainAdapter implements AdapterPorts {
   inspectStoreSchedule(storeInput: StoreRecord) {
     const store = this.requireSnapshotStore(storeInput);
     const now = this.now();
-    return this.options.scheduler.inspectForStore(store, {
-      businessDate: businessDateFor(now),
-      now,
+    const clock = businessClockFor(now);
+    const businessDate = clock.businessDate;
+
+    const config = this.options.config.getForStoreRecord(store).current;
+    if (!config || config.status === 'archived') return { state: 'not_due' as const };
+    if (config.storeId !== store.storeId
+      || config.marketplace !== 'US'
+      || config.currency !== 'USD'
+      || config.businessTimezone !== 'America/Los_Angeles') {
+      throw new Error('scheduler semantic scope runtime config 身份漂移。');
+    }
+    const window = deriveStoreCollectionWindow(
+      businessDate,
+      config.values.collectionLookbackDays,
+    );
+    const expectedFingerprint = storeCollectionScheduleSemanticFingerprint({
+      storeId: store.storeId,
+      browserProfileId: store.browserProfileId,
+      businessDate,
+      lookbackDays: config.values.collectionLookbackDays,
+      ...window,
     });
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(config.values.collectionScheduleLocalTime)) {
+      throw new Error('scheduler semantic scope collection schedule time 无效。');
+    }
+    if (clock.localTime < config.values.collectionScheduleLocalTime) {
+      return { state: 'not_due' as const, expectedFingerprint };
+    }
+    const durable = this.options.repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: store.storeId,
+      browserProfileId: store.browserProfileId,
+      businessDate,
+      ...window,
+      mode: 'create-and-download',
+      reportTypes: LINGXING_AD_REPORTS.map((report) => report.type),
+    });
+    return durable
+      ? { state: 'not_due' as const, expectedFingerprint }
+      : { state: 'due' as const, expectedFingerprint };
+  }
+
+  inspectManualStoreSchedule(
+    storeInput: StoreRecord,
+    exactContextInput: StoreContextEnvelope,
+  ): StoreCollectionManualScheduleInspection {
+    const exactContext = normalizeStoreContextEnvelope(exactContextInput);
+    const store = this.requireSnapshotStore(storeInput);
+    this.requireSnapshotStore(exactContext);
+    if (exactContext.storeId !== store.storeId
+      || exactContext.browserProfileId !== store.browserProfileId
+      || exactContext.marketplace !== store.marketplace
+      || exactContext.currency !== store.currency
+      || exactContext.businessTimezone !== store.businessTimezone) {
+      throw new Error('manual scheduler exact context 与 Store/Profile/US/USD/LA 不一致。');
+    }
+    const clock = businessClockFor(this.now());
+    if (clock.businessDate !== exactContext.businessDate) {
+      throw new Error('manual scheduler exact context businessDate 已跨越 LA 业务日边界。');
+    }
+    const config = this.options.config.getForStoreRecord(store).current;
+    if (!config || config.status !== 'active') {
+      throw new Error('manual scheduler semantic scope 缺少 active store runtime config。');
+    }
+    if (config.storeId !== store.storeId
+      || config.marketplace !== 'US'
+      || config.currency !== 'USD'
+      || config.businessTimezone !== 'America/Los_Angeles') {
+      throw new Error('manual scheduler semantic scope runtime config 身份漂移。');
+    }
+    const window = deriveStoreCollectionWindow(
+      exactContext.businessDate,
+      config.values.collectionLookbackDays,
+    );
+    const expectedFingerprint = storeCollectionScheduleSemanticFingerprint({
+      storeId: exactContext.storeId,
+      browserProfileId: exactContext.browserProfileId,
+      businessDate: exactContext.businessDate,
+      lookbackDays: config.values.collectionLookbackDays,
+      ...window,
+    });
+    const durable = this.options.repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: exactContext.storeId,
+      browserProfileId: exactContext.browserProfileId,
+      businessDate: exactContext.businessDate,
+      ...window,
+      mode: 'create-and-download',
+      reportTypes: LINGXING_AD_REPORTS.map((report) => report.type),
+    });
+    return {
+      state: durable ? 'duplicate' as const : 'eligible' as const,
+      expectedFingerprint,
+    };
   }
 
   getActiveStoreId() {
@@ -653,18 +759,24 @@ function sameRecoveryScope(
     && recovery.expectedFingerprint === execution.expectedFingerprint;
 }
 
-function businessDateFor(now: Date): string {
+function businessClockFor(now: Date): { businessDate: string; localTime: string } {
   if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error('adapter clock is invalid');
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Los_Angeles',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
   }).formatToParts(now);
   const part = (type: Intl.DateTimeFormatPartTypes) => (
     parts.find((candidate) => candidate.type === type)?.value ?? ''
   );
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  return {
+    businessDate: `${part('year')}-${part('month')}-${part('day')}`,
+    localTime: `${part('hour')}:${part('minute')}`,
+  };
 }
 
 function normalizeOwner(value: unknown): string {

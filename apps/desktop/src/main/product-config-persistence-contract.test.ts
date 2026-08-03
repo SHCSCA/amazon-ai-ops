@@ -6,8 +6,8 @@ describe('desktop product config persistence contract', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     const preload = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8');
 
-    expect(source).not.toContain("ipcMain.handle('products:save-config'");
-    expect(source).not.toContain("ipcMain.handle('products:bulk-update-target-acos'");
+    expect(source).not.toContain("registerTrackedIpcHandler('products:save-config'");
+    expect(source).not.toContain("registerTrackedIpcHandler('products:bulk-update-target-acos'");
     expect(preload).not.toContain("ipcRenderer.invoke('products:save-config'");
     expect(preload).not.toContain("ipcRenderer.invoke('products:bulk-update-target-acos'");
   });

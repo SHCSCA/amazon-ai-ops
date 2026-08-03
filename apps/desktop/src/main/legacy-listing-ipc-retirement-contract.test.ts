@@ -20,7 +20,7 @@ describe('retired legacy Listing/keyword renderer mutation channels', () => {
       'v1_5:listing:probe-detail-and-extract',
     ];
     for (const channel of retiredChannels) {
-      expect(main).not.toContain(`ipcMain.handle('${channel}'`);
+      expect(main).not.toContain(`registerTrackedIpcHandler('${channel}'`);
       expect(preload).not.toContain(`ipcRenderer.invoke('${channel}'`);
     }
     expect(preload).not.toMatch(/import(?:KeywordReport|ListingContent):\s*\(filePath/);

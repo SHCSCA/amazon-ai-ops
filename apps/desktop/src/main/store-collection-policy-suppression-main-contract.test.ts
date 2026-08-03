@@ -32,18 +32,22 @@ function findStartupRecoveryConfirmationReferences(candidate: string): string[] 
 }
 
 describe('Main policy-dispatch suppression composition root', () => {
-  it('publishes one fail-closed controller to Execution Authority without confirming startup', () => {
+  it('shares one fail-closed controller through a delayed Execution read port and MainRuntime', () => {
     const constructor = 'const storeCollectionPolicySuppression = new StoreCollectionPolicySuppressionController();';
     const authority = 'const executionAuthorityService = new ExecutionAuthorityService({';
-    const publish = 'state.storeCollectionPolicySuppression = storeCollectionPolicySuppression;';
 
     expect(source).toContain(
       "import { StoreCollectionPolicySuppressionController } from './store-collection-policy-suppression';",
     );
+    expect(source.match(/new StoreCollectionPolicySuppressionController\(\)/g)).toHaveLength(1);
     expect(source.indexOf(constructor)).toBeGreaterThan(0);
     expect(source.indexOf(constructor)).toBeLessThan(source.indexOf(authority));
-    expect(source).toContain('policyDispatchSuppression: storeCollectionPolicySuppression,');
-    expect(source.indexOf(publish)).toBeGreaterThan(source.indexOf(authority));
+    expect(source).toContain('const executionPolicyDispatchSuppression = Object.freeze({');
+    expect(source).toContain('state.storeCollectionMainRuntime?.isPolicyDispatchSuppressed()');
+    expect(source).toContain('?? storeCollectionPolicySuppression.isPolicyDispatchSuppressed()');
+    expect(source).toContain('policyDispatchSuppression: executionPolicyDispatchSuppression,');
+    expect(source).toContain('policySuppression: storeCollectionPolicySuppression,');
+    expect(source).toContain('await state.storeCollectionMainRuntime!.recoverStartupThenConfirm()');
     expect(findStartupRecoveryConfirmationReferences(source)).toEqual([]);
     expect(source).not.toContain('storeCollectionPolicySuppression.resume');
     expect(source).not.toContain('storeCollectionPolicySuppression.pump');

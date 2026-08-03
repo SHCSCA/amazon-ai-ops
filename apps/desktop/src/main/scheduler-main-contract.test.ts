@@ -1,205 +1,275 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+
+function between(startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  expect(start, `missing start marker: ${startMarker}`).toBeGreaterThanOrEqual(0);
+  expect(end, `missing end marker: ${endMarker}`).toBeGreaterThan(start);
+  return source.slice(start, end);
+}
+
 describe('desktop scheduler scope contract', () => {
   it('runs scheduled recommendation generation with the persisted operation scope', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     const registration = source.match(/name: 'daily_recommendation_generate',[\s\S]*?\n\s*\}\);/)?.[0] || '';
 
     expect(registration).toContain('runRecommendationGeneration(handleGetOperationScope())');
     expect(registration).not.toContain('runRecommendationGeneration();');
   });
 
-  it('keeps legacy unscoped scheduler mutations fail-closed and registers the StoreContext scheduler IPC', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-
+  it('retires the legacy collection scheduler and exposes only the production read model IPC', () => {
+    expect(source).not.toContain("from './store-collection-scheduler';");
+    expect(source).not.toContain('new StoreCollectionScheduler(');
+    expect(source).not.toContain('state.storeCollectionScheduler =');
+    expect(source).not.toContain('reconcileStoreCollectionScheduler');
+    expect(source).not.toContain('.reconcile(context)');
+    expect(source).toContain('createStoreCollectionProductionComposition({');
+    expect(source).toContain('state.storeCollectionSchedulerReadModel = composition.schedulerReadModel');
     expect(source).toContain('registerStoreCollectionSchedulerIpcHandlers(');
-    expect(source).toContain(': state.storeCollectionScheduler');
-    expect(source).toContain('LEGACY_SCHEDULER_IPC_DISABLED');
-    const legacyStart = source.indexOf("ipcMain.handle('scheduler:set-task-enabled'");
+    expect(source).toContain(': state.storeCollectionSchedulerReadModel');
+
+    const legacyStart = source.indexOf("registerTrackedIpcHandler('scheduler:set-task-enabled'");
     const legacyEnd = source.indexOf('// Logs', legacyStart);
     const legacyHandlers = source.slice(legacyStart, legacyEnd);
+    expect(legacyHandlers).toContain('LEGACY_SCHEDULER_IPC_DISABLED');
     expect(legacyHandlers).not.toContain('setTaskEnabled(');
     expect(legacyHandlers).not.toContain('runNow(');
   });
 
-  it('binds collection scheduling to the visible Lingxing profile/session without requiring Ads readiness', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const targetStart = source.indexOf('function authorizedLingxingCollectionTarget');
-    const targetEnd = source.indexOf('function projectBusinessReportFileForRenderer', targetStart);
-    const targetAuthority = source.slice(targetStart, targetEnd);
-    const start = source.indexOf('function assertVisibleLingxingCollectionSession');
-    const end = source.indexOf('function buildAuthoritativeMissionControlTodayProjection', start);
-    const authority = source.slice(start, end);
-    const coordinatorStart = source.indexOf('function initializeLingxingCollectionCoordinator');
-    const coordinatorEnd = source.indexOf('function initializeStoreCollectionScheduler', coordinatorStart);
-    const coordinator = source.slice(coordinatorStart, coordinatorEnd);
+  it('constructs the production runtime with one registry, lane, suppression controller and durable ports', () => {
+    const composition = between(
+      'function initializeStoreCollectionProductionRuntime',
+      'function assertVisibleLingxingCollectionSession',
+    );
 
-    expect(targetAuthority).toContain("getConnection(context.storeId, 'lingxing')");
-    expect(targetAuthority).toContain('connection.externalAccountId?.trim()');
-    expect(targetAuthority).not.toContain("'amazon_ads'");
-    expect(targetAuthority).not.toContain('Amazon Ads');
-    expect(authority).toContain("getSessionMetadata(authorized.storeId, 'lingxing')");
-    expect(authority).toContain('runtime.controllers.lingxing.getPage()');
-    expect(authority).not.toContain("getSessionMetadata(authorized.storeId, 'amazon_ads')");
-    expect(authority).not.toContain('controllers.amazon_ads.getPage()');
-    expect(coordinator).toContain('browserRuntime.controllers.lingxing');
-    expect(coordinator).not.toContain('browserRuntime.controllers.amazon_ads');
-
-    const navigationStart = source.indexOf('async function navigateToLingxingDownloadCenter');
-    const navigationEnd = source.indexOf('async function waitForCreateReportPage', navigationStart);
-    const navigation = source.slice(navigationStart, navigationEnd);
-    expect(navigation).toContain('page.goto(model.candidateUrls[0]');
-    expect(navigation).not.toContain('ensureLingxingAdsSession');
-    expect(source).not.toContain('async function ensureLingxingAdsSession');
+    expect(source.match(/new VisibleBrowserRuntimeRegistry\(\)/g)).toHaveLength(1);
+    expect(source.match(/new StoreMutationLane\(\)/g)).toHaveLength(1);
+    expect(source.match(/new StoreCollectionPolicySuppressionController\(\)/g)).toHaveLength(1);
+    expect(composition).toContain('registry: visibleBrowserRuntimeRegistry');
+    expect(composition).toContain('mutationLane: storeMutationLane');
+    expect(composition).toContain('policySuppression: storeCollectionPolicySuppression');
+    expect(composition).toContain('STORE_COLLECTION_ORCHESTRATOR_HISTORY_KEY');
+    expect(composition).toContain('transaction: (work) => state.settingsRepo!.transaction(work)');
+    expect(composition).toContain('electronLoginCredentialCipher.encrypt(plaintext)');
+    expect(composition).toContain('headless: false');
+    expect(composition).toContain('userDataDir: input.userDataDir');
+    expect(composition).toContain('state.db!.transaction(() => work({');
+    expect(composition).toContain('readCurrentAuthority: () => state.storeCoordinator!.getCollectionAuthority()');
   });
 
-  it('publishes a Lingxing-ready runtime before the independent Ads probe and keeps Ads writes fail-closed', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const loginStart = source.indexOf('async function handleBrowserLogin');
-    const loginEnd = source.indexOf('async function handleBrowserLogout', loginStart);
-    const login = source.slice(loginStart, loginEnd);
-    const lingxingReady = login.indexOf("provider: 'lingxing'");
-    const runtimePublished = login.indexOf('state.browserRuntime = {');
+  it('orders normal startup recovery before collection automation starts', () => {
+    const init = between('async function initApp', '// Browser / Session');
+    const imports = init.indexOf('recoverPendingLingxingCollectionImportsOnStartup()');
+    const failedImportAuthorityGate = init.indexOf(
+      'assertLingxingImportStartupRecoverySafe(importRecovery)',
+    );
+    const interrupted = init.indexOf('recoverInterruptedLingxingCollectionJobsOnStartup()');
+    const failedStoreGate = init.indexOf('if (collectionRecovery.failedStores !== 0)');
+    const runtimeRecovery = init.indexOf('await state.storeCollectionMainRuntime!.recoverStartupThenConfirm()');
+    const execution = init.indexOf('executionAuthorityService.recoverStartup()');
+    const runtimeStart = init.indexOf('state.storeCollectionMainRuntime!.start()');
+
+    expect(imports).toBeGreaterThan(0);
+    expect(failedImportAuthorityGate).toBeGreaterThan(imports);
+    expect(interrupted).toBeGreaterThan(failedImportAuthorityGate);
+    expect(failedStoreGate).toBeGreaterThan(interrupted);
+    expect(runtimeRecovery).toBeGreaterThan(failedStoreGate);
+    expect(execution).toBeGreaterThan(runtimeRecovery);
+    expect(runtimeStart).toBeGreaterThan(execution);
+  });
+
+  it('binds collection reads to the exact registry Lingxing identity without requiring Ads', () => {
+    const authority = between(
+      'function assertVisibleLingxingCollectionSession',
+      'function buildAuthoritativeMissionControlTodayProjection',
+    );
+    const coordinator = between(
+      'function initializeLingxingCollectionCoordinator',
+      'function initializeStoreCollectionProductionRuntime',
+    );
+
+    expect(authority).toContain('visibleBrowserRuntimeRegistry.read()');
+    expect(authority).toContain("browserControllerFromVisibleRuntime(runtime, 'lingxing')");
+    expect(authority).toContain("runtime.providerIdentityStatus.lingxing !== 'verified'");
+    expect(authority).toContain("getSessionMetadata(authorized.storeId, 'lingxing')");
+    expect(authority).not.toContain("getSessionMetadata(authorized.storeId, 'amazon_ads')");
+    expect(authority).not.toContain('providerIdentityStatus.amazonAds');
+    expect(coordinator).toContain('visibleBrowserRuntimeRegistry.read()');
+    expect(coordinator).toContain("browserControllerFromVisibleRuntime(browserRuntime, 'lingxing')");
+  });
+
+  it('publishes one operator_full candidate and gates both provider identities before Ads execution', () => {
+    const login = between(
+      'async function performBrowserLoginInUserLane',
+      'async function handleBrowserLogout',
+    );
+    const readyMetadata = login.indexOf("provider: 'lingxing'");
+    const publish = login.indexOf('visibleBrowserRuntimeRegistry.publishCandidate({');
+    const verifyLingxing = login.indexOf('.verifyLingxingCandidate(candidateClaim)');
     const adsProbe = login.indexOf('await amazonAdsController.launch()');
 
-    expect(lingxingReady).toBeGreaterThan(0);
-    expect(runtimePublished).toBeGreaterThan(lingxingReady);
-    expect(adsProbe).toBeGreaterThan(runtimePublished);
-    expect(login).toContain("provider: 'amazon_ads'");
-    expect(login).toContain("status: 'blocked'");
-    expect(login).toContain("failureCode: 'ADS_SESSION_NOT_READY'");
-    expect(login).toContain('erpSessionReady: true');
-    expect(login).toContain('adsSessionReady: Boolean(adsSession)');
-    expect(login).toContain("reconcileStoreCollectionScheduler(loginContext, 'login')");
+    expect(publish).toBeGreaterThan(readyMetadata);
+    expect(verifyLingxing).toBeGreaterThan(publish);
+    expect(adsProbe).toBeGreaterThan(verifyLingxing);
+    expect(login).toContain("purpose: 'operator_full'");
+    expect(login).toContain('amazonAds: amazonAdsController');
+    expect(login).toContain('amazonAds: capsule.amazonAdsProfileDir');
+    expect(login).toContain('amazonAds: connections.amazon_ads');
+    expect(login).toContain('claimAmazonAdsIdentity({');
+    expect(login).toContain('runtimeId: lingxingVerifiedRuntime.runtimeId');
+    expect(login).toContain('epoch: lingxingVerifiedRuntime.epoch');
+    expect(login).toContain('context: lingxingVerifiedRuntime.context');
+    expect(login).toContain('verifyAmazonAdsIdentity(adsIdentityClaim)');
+    expect(login).toContain('blockAmazonAdsIdentity(adsIdentityClaim)');
 
-    const executionStart = source.indexOf('resolveBrowserRuntime: (context) => {');
-    const executionEnd = source.indexOf('emitProgress:', executionStart);
-    const execution = source.slice(executionStart, executionEnd);
+    const execution = between('resolveBrowserRuntime: (context) => {', 'emitProgress:');
+    expect(execution).toContain("runtime.purpose !== 'operator_full'");
+    expect(execution).toContain("runtime.providerIdentityStatus.lingxing !== 'verified'");
+    expect(execution).toContain("runtime.providerIdentityStatus.amazonAds !== 'verified'");
+    expect(execution).toContain('!sameExactStoreContext(runtime.context, context)');
     expect(execution).toContain("getSessionMetadata(context.storeId, 'amazon_ads')");
-    expect(execution).toContain("adsSession.status !== 'ready'");
-    expect(execution).toContain('adsSession.browserProfileId !== context.browserProfileId');
-    expect(execution).toContain('adsSession.sessionGeneration !== context.sessionGeneration');
   });
 
-  it('only publishes store automation readiness when both scheduler and retention services exist', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const registrationStart = source.indexOf('createMissionControlLegacyAdapter({');
-    const registrationEnd = source.indexOf('registerMissionDomainIpcHandlers', registrationStart);
-    const registration = source.slice(registrationStart, registrationEnd);
+  it('publishes automation readiness from MainRuntime plus retention and settles fresh authority', () => {
+    const registration = between(
+      'createMissionControlLegacyAdapter({',
+      'registerMissionDomainIpcHandlers',
+    );
+    const composition = between(
+      'function initializeStoreCollectionProductionRuntime',
+      'function assertVisibleLingxingCollectionSession',
+    );
 
-    expect(registration).toContain('storeAutomationReady: Boolean(');
     expect(registration).toContain(
-      'state.storeCollectionScheduler && state.storeEvidenceRetentionService',
+      'state.storeCollectionMainRuntime && state.storeEvidenceRetentionService',
     );
+    expect(composition).toContain('onAuthoritySettled: () => {');
+    expect(composition).toContain('getActiveStoreWorkspaceView()');
+    expect(composition).toContain('state.currentStore = view.store.displayName');
+    expect(composition).toContain('publishStoreContextChanged(view)');
+    expect(composition).toContain("send('business-ui:data-updated')");
   });
 
-  it('keeps package UI evidence read-only while leaving normal scheduler startup unchanged', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const evidenceIdentity = source.indexOf(
-      'const packageUiReadOnlyRuntime = evidenceUserDataIdentity.mode === PACKAGE_UI_EVIDENCE_MODE',
+  it('keeps package UI collection and account operations read-only with audited scheduler get', () => {
+    const init = between('async function initApp', '// Browser / Session');
+    const schedulerIpc = between(
+      'registerStoreCollectionSchedulerIpcHandlers(',
+      'registerStoreScopedObjectsIpcHandlers(',
     );
-    const startupStart = source.indexOf(
-      '// Package UI evidence must exercise the production read APIs',
-    );
-    const startupEnd = source.indexOf("console.log('[App] Initialized successfully')", startupStart);
-    const startup = source.slice(startupStart, startupEnd);
-    const reconcileStart = source.indexOf('function reconcileStoreCollectionScheduler(');
-    const reconcileEnd = source.indexOf('function reportNavigationSecurityBoundary', reconcileStart);
-    const reconcile = source.slice(reconcileStart, reconcileEnd);
-    const ipcStart = source.indexOf('registerStoreCollectionSchedulerIpcHandlers(');
-    const ipcEnd = source.indexOf('registerStoreScopedObjectsIpcHandlers(', ipcStart);
-    const schedulerIpc = source.slice(ipcStart, ipcEnd);
+    const login = between('async function handleBrowserLogin', 'async function performBrowserLoginInUserLane');
 
-    expect(evidenceIdentity).toBeGreaterThan(0);
-    expect(startup).toContain('if (packageUiReadOnlyRuntime)');
-    expect(startup).toContain("packageUiSchedulerAudit.recordSuppressed('localSchedulerStart')");
-    expect(startup).toContain("packageUiSchedulerAudit.recordSuppressed('storeSchedulerStart')");
-    expect(startup).toContain("packageUiSchedulerAudit.recordSuppressed('startupReconcile')");
-    expect(startup).toContain('} else {');
-    expect(startup).toContain('state.scheduler.start()');
-    expect(startup).toContain('state.storeCollectionScheduler?.start()');
-    expect(reconcile).toContain('if (packageUiReadOnlyRuntime)');
-    expect(reconcile).toContain("packageUiSchedulerAudit.recordSuppressed('automaticReconcile')");
-    expect(reconcile).toContain('reconciliation suppressed');
-    expect(reconcile).toContain('state.storeCollectionScheduler?.reconcile(context)');
-    expect(schedulerIpc).toContain('packageUiReadOnlyRuntime');
+    expect(init).toContain('if (packageUiReadOnlyRuntime)');
+    expect(init).toContain("recordSuppressed('startupReconcile')");
+    expect(init).toContain("recordSuppressed('localSchedulerStart')");
+    expect(init).toContain("recordSuppressed('storeSchedulerStart')");
+    expect(init).toContain('state.storeCollectionMainRuntime!.start()');
+    expect(schedulerIpc).toContain('state.storeCollectionSchedulerReadModel!.get(context)');
     expect(schedulerIpc).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
-    expect(source).toContain('packageUiSchedulerAudit.wrapRegistrar(ipcMain)');
-    expect(source).toContain('database: () => state.db');
-    expect(source).toContain('authorizeDatabaseCheckpoint: () => authorizePackageUiDatabaseCheckpoint()');
-    expect(source).toContain('packageUiSchedulerAudit.registerDatabaseCheckpointIpc(ipcMain)');
-    expect(source).toContain("packageUiSchedulerAudit.recordControl('execute', input.storeContext)");
-
-    const checkpointAuthorityStart = source.indexOf(
-      'function authorizePackageUiDatabaseCheckpoint()',
-    );
-    const checkpointAuthorityEnd = source.indexOf(
-      'function detachBrowserRuntimeForStore',
-      checkpointAuthorityStart,
-    );
-    const checkpointAuthority = source.slice(checkpointAuthorityStart, checkpointAuthorityEnd);
-    expect(checkpointAuthority).toContain('if (!packageUiReadOnlyRuntime)');
-    expect(checkpointAuthority).toContain('if (!state.db)');
-    expect(checkpointAuthority).toContain('coordinator.assertActiveStoreContext(activeContext)');
-    expect(checkpointAuthority).toContain("authorized.marketplace !== 'US'");
-    expect(checkpointAuthority).toContain("authorized.currency !== 'USD'");
-    expect(checkpointAuthority).toContain(
-      'missionControlContextKey(runtime.context) !== missionControlContextKey(authorized)',
-    );
-    expect(checkpointAuthority).toContain('!state.loginSession.adsSessionReady');
-    expect(checkpointAuthority).toContain(
-      "isProviderBrowserSessionReady(authorized, 'lingxing')",
-    );
-    expect(checkpointAuthority).toContain(
-      "isProviderBrowserSessionReady(authorized, 'amazon_ads')",
-    );
-
-    const loginStart = source.indexOf('async function handleBrowserLogin');
-    const loginEnd = source.indexOf('async function handleBrowserLogout', loginStart);
-    const login = source.slice(loginStart, loginEnd);
-    const suppressedReconcile = login.indexOf(
-      "reconcileStoreCollectionScheduler(loginContext, 'login')",
-    );
-    const mainBaseline = login.indexOf(
-      'packageUiSchedulerAudit.capturePostBootstrapDatabaseBaseline()',
-    );
-    const loginReturn = login.indexOf('return loginResult;', mainBaseline);
-    expect(suppressedReconcile).toBeGreaterThan(0);
-    expect(mainBaseline).toBeGreaterThan(suppressedReconcile);
-    expect(loginReturn).toBeGreaterThan(mainBaseline);
+    expect(login).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
+    expect(source).toContain('package UI evidence cannot start or resume collection');
+    expect(source).toContain('package UI evidence cannot cancel collection');
   });
 
-  it('drains durable collection claims before browser and database shutdown', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const schedulerStart = source.indexOf('function initializeStoreCollectionScheduler');
-    const schedulerEnd = source.indexOf('function assertVisibleLingxingCollectionSession', schedulerStart);
-    const schedulerWiring = source.slice(schedulerStart, schedulerEnd);
-    expect(schedulerWiring).toContain('cancelActiveCollection({ requestId, storeId })');
-    expect(schedulerWiring).toContain('cancelledLingxingCollectionRequests.add(key)');
-
-    const shutdownStart = source.indexOf('const handleBeforeQuit = createBeforeQuitCoordinator');
-    const shutdown = source.slice(shutdownStart, source.indexOf("app.on('before-quit'", shutdownStart));
-    const drain = shutdown.indexOf('await storeCollectionScheduler?.stopAndDrain()');
-    const resourceCleanup = shutdown.indexOf('await cleanupAppResources');
-    const terminalCheckpoint = shutdown.indexOf(
-      'packageUiSchedulerAudit.capturePreCloseTerminalDatabaseCheckpoint()',
+  it('starts every drain before awaiting one barrier and closes authority only after full success', () => {
+    const shutdown = between(
+      'const handleBeforeQuit = createBeforeQuitCoordinator',
+      "app.on('before-quit'",
     );
-    const databaseClose = shutdown.indexOf('await db.close()', terminalCheckpoint);
+    const barrierDeclaration = shutdown.indexOf('const shutdownBarrierSteps = [');
+    const barrierAwait = shutdown.indexOf('await Promise.allSettled(');
+    const barrierAbort = shutdown.indexOf('if (barrierFailures.length > 0)');
+    const registryClose = shutdown.indexOf('await mainRuntime?.closeRegistry(shutdownTimeoutMs)');
+    const pendingClose = shutdown.indexOf('await closeBrowserControllers(pendingControllers)');
+    const loginProjectionClear = shutdown.indexOf('clearBrowserLoginState()');
+    const checkpoint = shutdown.indexOf('capturePreCloseTerminalDatabaseCheckpoint()');
+    const database = shutdown.indexOf('await db?.close()');
 
-    expect(resourceCleanup).toBeGreaterThan(0);
-    expect(drain).toBeGreaterThan(resourceCleanup);
-    expect(terminalCheckpoint).toBeGreaterThan(drain);
-    expect(databaseClose).toBeGreaterThan(terminalCheckpoint);
-    expect(shutdown).toContain('browserController: runtime || pendingControllers.length > 0');
-    expect(shutdown).toContain('db: db && packageUiReadOnlyRuntime');
-    expect(shutdown.slice(terminalCheckpoint, databaseClose)).toContain('} finally {');
+    expect(barrierDeclaration).toBeGreaterThan(0);
+    expect(barrierAwait).toBeGreaterThan(barrierDeclaration);
+    expect(barrierAbort).toBeGreaterThan(barrierAwait);
+    expect(registryClose).toBeGreaterThan(barrierAbort);
+    expect(pendingClose).toBeGreaterThan(registryClose);
+    expect(loginProjectionClear).toBeGreaterThan(pendingClose);
+    expect(checkpoint).toBeGreaterThan(loginProjectionClear);
+    expect(database).toBeGreaterThan(checkpoint);
+    expect(shutdown).toContain('localScheduler?.stopAndDrain(shutdownTimeoutMs)');
+    expect(shutdown).toContain('mainRuntime?.stopAndDrain(shutdownTimeoutMs)');
+    expect(shutdown).toContain('executionAuthority?.prepareForShutdown(shutdownTimeoutMs)');
+    expect(shutdown).toContain('mainIpcOperationTracker.stopAndDrain(shutdownTimeoutMs)');
+    expect(shutdown.match(/invokeShutdownOperationNow\(/g)).toHaveLength(4);
+    expect(shutdown).not.toContain('Promise.resolve().then');
+    expect(shutdown).toContain('throw new AggregateError(');
+    expect(shutdown).toContain('await mainRuntime?.closeRegistry(shutdownTimeoutMs)');
+    expect(shutdown).toContain("cleanupFailurePolicy: 'fail-closed'");
+    expect(source).toContain('pendingBrowserControllerCleanup.retain(controllers)');
+    expect(source).toContain('pendingBrowserControllerCleanup.closeRetained()');
+    expect(source).toContain('pendingBrowserControllerCleanup.hasRetainedControllers()');
+    expect(shutdown).not.toContain('shutdownStep(');
+    expect(shutdown).not.toContain('state.storeCollectionScheduler =');
   });
 
-  it('fails the daily report task when no artifact can be produced and propagates generation failures', () => {
-    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const start = source.indexOf('async function runDailyReportGeneration');
-    const body = source.slice(start, source.indexOf('// IPC Handlers', start));
+  it('routes every invoke handler through the process-wide Main IPC drain barrier', () => {
+    const directRegistrations = source.match(/ipcMain\.handle\(/g) ?? [];
+    const trackedRegistrations = source.match(/registerTrackedIpcHandler\('/g) ?? [];
+
+    expect(directRegistrations).toHaveLength(1);
+    expect(source).toContain('ipcMain.handle(channel, (event, ...args) => (');
+    expect(trackedRegistrations.length).toBeGreaterThan(70);
+    expect(source).toContain('mainIpcOperationTracker.run(channel');
+    expect(source).toContain(
+      'packageUiSchedulerAudit.wrapRegistrar(trackedIpcRegistrar)',
+    );
+    expect(source).toContain(
+      'packageUiSchedulerAudit.registerDatabaseCheckpointIpc(schedulerEvidenceIpc)',
+    );
+    expect(source).not.toMatch(/registerStoreIpcHandlers\(ipcMain/);
+    expect(source).not.toMatch(/registerMissionDomainIpcHandlers\(ipcMain/);
+    expect(source).not.toMatch(/registerAnalysisAuthorityIpcHandlers\(ipcMain/);
+    expect(source).not.toMatch(/registerExecutionAuthorityIpcHandlers\(ipcMain/);
+    expect(source).not.toMatch(/registerStoreRuntimeConfigIpcHandlers\(\s*ipcMain/);
+    expect(source).not.toMatch(/registerStoreScopedObjectsIpcHandlers\(\s*ipcMain/);
+    expect(source).not.toMatch(/registerStoreScopedAdListingIpcHandlers\(\s*ipcMain/);
+  });
+
+  it('routes startup and strict-cleanup failures through one visible fail-closed lifecycle', () => {
+    const recovery = source.indexOf('const lifecycleRecovery = createAppLifecycleRecoveryController');
+    const beforeQuitRegistration = source.indexOf("app.on('before-quit', handleBeforeQuit)");
+    const startup = source.indexOf('void lifecycleRecovery.runStartupBootstrap(async () => {');
+    const lifecycle = source.slice(recovery);
+
+    expect(recovery).toBeGreaterThan(0);
+    expect(beforeQuitRegistration).toBeGreaterThan(recovery);
+    expect(startup).toBeGreaterThan(beforeQuitRegistration);
+    expect(source).toContain('await app.whenReady()');
+    expect(source).toContain('void lifecycleRecovery.handleCleanupFailure(error)');
+    expect(source).toContain("buttons: ['重试安全退出', '暂不退出']");
+    expect(source).toContain("return result.response === 0 ? 'retry-safe-quit' : 'keep-app-open'");
+    expect(source).toContain('createWindow({ forceVisible: true })');
+    expect(source).toContain("throw new Error('LIFECYCLE_RECOVERY_WINDOW_NOT_VISIBLE')");
+    expect(source).not.toContain('app.whenReady().then(');
+    expect(lifecycle).not.toContain('app.exit(');
+  });
+
+  it('shows a recovery shell immediately and contains renderer load rejection', () => {
+    const createWindowSource = between('interface CreateMainWindowOptions', '// Initialization');
+    const forcedShow = createWindowSource.indexOf('if (options.forceVisible)');
+    const rendererLoad = createWindowSource.indexOf('const rendererLoad = development');
+    const loadFailure = createWindowSource.indexOf('void rendererLoad.catch((error) => {');
+
+    expect(forcedShow).toBeGreaterThan(0);
+    expect(rendererLoad).toBeGreaterThan(forcedShow);
+    expect(loadFailure).toBeGreaterThan(rendererLoad);
+    expect(createWindowSource.slice(forcedShow, rendererLoad)).toContain('createdWindow.show()');
+    expect(createWindowSource).toContain("dialog.showErrorBox(");
+    expect(createWindowSource).toContain("'界面加载失败'");
+    expect(createWindowSource).not.toContain("void createdWindow.loadFile(rendererFilePath)");
+    expect(createWindowSource).not.toContain("void createdWindow.loadURL('http://localhost:5173')");
+  });
+
+  it('fails the daily report task when no artifact can be produced and propagates failures', () => {
+    const body = between('async function runDailyReportGeneration', '// IPC Handlers');
 
     expect(body).toContain("if (!settings.aiApiKey)");
     expect(body).toContain("throw new Error('AI Key 未配置，无法生成每日运营报告。')");

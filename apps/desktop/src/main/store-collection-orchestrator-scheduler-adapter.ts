@@ -8,9 +8,12 @@ import {
   type StoreRuntimeConfigProjection,
 } from '@amazon-ai-ops/shared-types';
 import { LINGXING_AD_REPORTS } from '@amazon-ai-ops/lingxing-report-collector';
-import type {
-  LingxingCollectionAuthorityProof,
-  LingxingImportRepository,
+import {
+  fingerprintLingxingCollectionAuthorityProof,
+  type CollectionImportRecoveryCasToken,
+  type LingxingCollectionAuthorityProof,
+  type LingxingImportRepository,
+  type ReportImportRunRecord,
 } from '@amazon-ai-ops/local-db';
 import type { LingxingCollectionCoordinator } from './lingxing-collection-coordinator';
 import {
@@ -50,8 +53,53 @@ export interface StoreCollectionOrchestratorSchedulerAdapterOptions {
   coordinator: Pick<LingxingCollectionCoordinator, 'start'>;
   repository: Pick<
     LingxingImportRepository,
-    'readUniqueCollectionAuthorityProofForStoreByRequestId'
+    | 'readUniqueCollectionAuthorityProofForStoreByRequestId'
+    | 'inspectUniqueCollectionJobForSemanticScope'
   >;
+}
+
+export interface StoreCollectionDurableProofScope {
+  context: StoreContextEnvelope;
+  requestId: string;
+  dateStart: string;
+  dateEnd: string;
+}
+
+export type StoreCollectionDurableProofClassification =
+  | 'claimed'
+  | 'succeeded'
+  | 'failed';
+
+export interface StoreCollectionCommittedImportRecoveryExpectation
+  extends StoreCollectionDurableProofScope {
+  expectedJob: LingxingCollectionJobSnapshot;
+  expectedRun: ReportImportRunRecord;
+}
+
+export interface StoreCollectionCommittedImportRecoveryReceipt {
+  storeId: StoreId;
+  jobId: string;
+  requestId: string;
+  browserProfileId: string;
+  businessDate: string;
+  sessionGeneration: number;
+  dateStart: string;
+  dateEnd: string;
+  jobUpdatedAt: string;
+  runId: string;
+  runCompletedAt: string;
+  authorityProofSha256: string;
+  run: ReportImportRunRecord;
+  casToken?: CollectionImportRecoveryCasToken;
+}
+
+export class StoreCollectionDurableProofUnknownError extends Error {
+  readonly code = 'SAFETY_STATE_UNKNOWN' as const;
+
+  constructor(detail: string) {
+    super(`durable collection proof UNKNOWN: ${detail}`);
+    this.name = 'StoreCollectionDurableProofUnknownError';
+  }
 }
 
 interface AuthorizedSchedulerRequest<
@@ -132,6 +180,18 @@ export class StoreCollectionOrchestratorSchedulerAdapter implements SchedulerPor
     if (preexisting) {
       throw new Error('scheduler execute 拒绝复用既有 durable Store/Request 任务。');
     }
+    const semanticPreexisting = this.options.repository.inspectUniqueCollectionJobForSemanticScope({
+      storeId: authorized.context.storeId,
+      browserProfileId: authorized.context.browserProfileId,
+      businessDate: authorized.context.businessDate,
+      dateStart: authorized.dateStart,
+      dateEnd: authorized.dateEnd,
+      mode: 'create-and-download',
+      reportTypes: FULL_REPORT_TYPES,
+    });
+    if (semanticPreexisting) {
+      throw new Error('scheduler execute 拒绝重复执行既有 durable semantic collection scope。');
+    }
 
     const output = await this.options.coordinator.start({
       requestId: input.requestId,
@@ -153,7 +213,12 @@ export class StoreCollectionOrchestratorSchedulerAdapter implements SchedulerPor
     if (!durable) {
       throw new Error('Lingxing coordinator 返回后 exact durable Store/Request job 不存在。');
     }
-    const identityProblem = exactJobIdentityProblem(durable.job, authorized);
+    const identityProblem = exactJobIdentityProblem(durable.job, {
+      context: authorized.context,
+      requestId: input.requestId,
+      dateStart: authorized.dateStart,
+      dateEnd: authorized.dateEnd,
+    });
     if (identityProblem) {
       throw new Error(`durable Lingxing job identity mismatch: ${identityProblem}`);
     }
@@ -193,14 +258,27 @@ export class StoreCollectionOrchestratorSchedulerAdapter implements SchedulerPor
       executionScope: claim.executionScope,
       ...window,
     };
-    const identityProblem = exactJobIdentityProblem(durable.job, authorized);
-    if (identityProblem) {
-      return projection(input, authorized.expectedAuthority, 'unknown');
+    let classification: StoreCollectionDurableProofClassification;
+    try {
+      classification = classifyStoreCollectionDurableProof(durable, {
+        context: authorized.context,
+        requestId: input.requestId,
+        dateStart: authorized.dateStart,
+        dateEnd: authorized.dateEnd,
+      });
+    } catch (error) {
+      if (error instanceof StoreCollectionDurableProofUnknownError) {
+        return projection(input, authorized.expectedAuthority, 'unknown');
+      }
+      throw error;
     }
+    const state = classification === 'claimed'
+      ? durable.job.state === 'queued' ? 'accepted' : 'waiting'
+      : classification;
     return projection(
       input,
       authorized.expectedAuthority,
-      classifyDurableProof(durable, authorized),
+      state,
     );
   }
 
@@ -269,12 +347,12 @@ export class StoreCollectionOrchestratorSchedulerAdapter implements SchedulerPor
 
 function exactJobIdentityProblem(
   job: LingxingCollectionJobSnapshot,
-  authorized: AuthorizedSchedulerRequest<StoreCollectionTransitionCapabilityDomain>,
+  authorized: StoreCollectionDurableProofScope,
 ): string | null {
   if (!job || typeof job !== 'object' || !SAFE_JOB_ID.test(job.jobId)) return 'jobId';
   const request = job.request;
   if (!request
-    || request.requestId !== authorized.input.requestId
+    || request.requestId !== authorized.requestId
     || request.requestId.startsWith('canary:')
     || request.mode !== 'create-and-download'
     || request.dateStart !== authorized.dateStart
@@ -341,10 +419,209 @@ function deriveHistoricalCollectionWindow(
   return { dateStart, dateEnd };
 }
 
+export function classifyStoreCollectionDurableProof(
+  proof: LingxingCollectionAuthorityProof,
+  input: StoreCollectionDurableProofScope,
+): StoreCollectionDurableProofClassification {
+  const scope = normalizeDurableProofScope(input);
+  const identityProblem = exactJobIdentityProblem(proof.job, scope);
+  if (identityProblem) {
+    throw new StoreCollectionDurableProofUnknownError(`identity mismatch: ${identityProblem}`);
+  }
+  const state = classifyDurableProof(proof, scope);
+  if (state === 'accepted' || state === 'waiting') return 'claimed';
+  if (state === 'succeeded' || state === 'failed') return state;
+  throw new StoreCollectionDurableProofUnknownError('lifecycle or authority evidence incomplete');
+}
+
+/**
+ * Verifies a committed full-eight import independently of the job's final
+ * import projection. This is the crash-recovery seam for the interval after
+ * the import transaction commits but before Main persists importState=succeeded.
+ */
+export function assertStoreCollectionCommittedImportProofForRecovery(
+  proof: LingxingCollectionAuthorityProof,
+  input: StoreCollectionCommittedImportRecoveryExpectation,
+): StoreCollectionCommittedImportRecoveryReceipt {
+  const scope = normalizeDurableProofScope(input);
+  const identityProblem = exactJobIdentityProblem(proof.job, scope);
+  if (identityProblem) {
+    throw new StoreCollectionDurableProofUnknownError(`identity mismatch: ${identityProblem}`);
+  }
+  if (!authorityProofTimelineExact(proof)) {
+    throw new StoreCollectionDurableProofUnknownError('authority proof timeline incomplete');
+  }
+  if (!sameCoordinatorAndDurableJob(input.expectedJob, proof.job)
+    || !authorityJobRowExact(proof, scope)) {
+    throw new StoreCollectionDurableProofUnknownError(
+      'expected job or SQL authority row drifted',
+    );
+  }
+  const run = proof.importRunCount === 1 && proof.importRuns.length === 1
+    ? proof.importRuns[0]
+    : undefined;
+  if (!run || !isDeepStrictEqual(run, input.expectedRun)) {
+    throw new StoreCollectionDurableProofUnknownError(
+      'expected unique completed import run drifted',
+    );
+  }
+  if (!committedImportRecoveryLifecycleExact(proof, run)) {
+    throw new StoreCollectionDurableProofUnknownError(
+      'job is not an import-recoverable completed lifecycle',
+    );
+  }
+  if (!succeededImportProofExact(proof, scope)) {
+    throw new StoreCollectionDurableProofUnknownError(
+      'committed full-eight import evidence incomplete',
+    );
+  }
+  const authorityProofSha256 = fingerprintLingxingCollectionAuthorityProof(proof);
+  const context = normalizeStoreContextEnvelope(proof.job.request.storeContext);
+  const expectedImportState = proof.job.importState;
+  return {
+    storeId: context.storeId,
+    jobId: proof.job.jobId,
+    requestId: proof.job.request.requestId,
+    browserProfileId: context.browserProfileId,
+    businessDate: context.businessDate,
+    sessionGeneration: context.sessionGeneration,
+    dateStart: proof.job.request.dateStart,
+    dateEnd: proof.job.request.dateEnd,
+    jobUpdatedAt: proof.job.updatedAt,
+    runId: run.runId,
+    runCompletedAt: run.completedAt,
+    authorityProofSha256,
+    run: { ...run },
+    ...(expectedImportState === 'pending' || expectedImportState === 'failed'
+      ? {
+          casToken: {
+            storeId: context.storeId,
+            jobId: proof.job.jobId,
+            requestId: proof.job.request.requestId,
+            expectedJobUpdatedAt: proof.job.updatedAt,
+            expectedImportState,
+            expectedRunId: run.runId,
+            expectedAuthorityProofSha256: authorityProofSha256,
+          },
+        }
+      : {}),
+  };
+}
+
+function authorityJobRowExact(
+  proof: LingxingCollectionAuthorityProof,
+  authorized: StoreCollectionDurableProofScope,
+): boolean {
+  const { job, jobRow } = proof;
+  const context = normalizeStoreContextEnvelope(job.request.storeContext);
+  let rowReportTypes: unknown;
+  try {
+    rowReportTypes = JSON.parse(jobRow.reportTypesJson);
+  } catch {
+    return false;
+  }
+  return jobRow.storeId === authorized.context.storeId
+    && jobRow.storeId === context.storeId
+    && jobRow.jobId === job.jobId
+    && jobRow.requestId === authorized.requestId
+    && jobRow.requestId === job.request.requestId
+    && jobRow.browserProfileId === authorized.context.browserProfileId
+    && jobRow.browserProfileId === context.browserProfileId
+    && jobRow.marketplace === 'US'
+    && jobRow.currency === 'USD'
+    && jobRow.businessTimezone === 'America/Los_Angeles'
+    && jobRow.businessDate === authorized.context.businessDate
+    && jobRow.businessDate === context.businessDate
+    && jobRow.sessionGeneration === authorized.context.sessionGeneration
+    && jobRow.sessionGeneration === context.sessionGeneration
+    && jobRow.dateStart === authorized.dateStart
+    && jobRow.dateStart === job.request.dateStart
+    && jobRow.dateEnd === authorized.dateEnd
+    && jobRow.dateEnd === job.request.dateEnd
+    && jobRow.mode === 'create-and-download'
+    && sameFullReportSet(rowReportTypes as LingxingReportType[])
+    && jobRow.state === job.state
+    && jobRow.createdAt === job.createdAt
+    && jobRow.updatedAt === job.updatedAt
+    && jobRow.completedAt === (job.completedAt ?? null)
+    && jobRow.blockerCode === (job.blockerCode ?? null)
+    && jobRow.detail === (job.detail ?? null);
+}
+
+function committedImportRecoveryLifecycleExact(
+  proof: LingxingCollectionAuthorityProof,
+  run: ReportImportRunRecord,
+): boolean {
+  const { job } = proof;
+  if (job.state !== 'completed'
+    || !isIsoInstant(job.completedAt)
+    || !isIsoInstant(job.importAttemptedAt)
+    || !orderedIsoInstants(job.completedAt, job.importAttemptedAt)
+    || !orderedIsoInstants(job.importAttemptedAt, run.startedAt)
+    || !orderedIsoInstants(run.startedAt, run.completedAt)
+    || !orderedIsoInstants(run.completedAt, run.createdAt)
+    || proof.importFileSnapshots.some((row) => (
+      row.runId !== run.runId
+      || !orderedIsoInstants(run.startedAt, row.capturedAt)
+      || !orderedIsoInstants(row.capturedAt, run.completedAt)
+    ))
+    || proof.reconciliations.some((row) => (
+      row.runId !== run.runId
+      || !orderedIsoInstants(run.startedAt, row.reconciledAt)
+      || !orderedIsoInstants(row.reconciledAt, run.completedAt)
+    ))
+    || proof.importedReportFiles.some((row) => (
+      !orderedIsoInstants(run.startedAt, row.lastImportedAt)
+      || !orderedIsoInstants(row.lastImportedAt, run.completedAt)
+    ))) {
+    return false;
+  }
+  if (job.importState === 'pending') {
+    return job.importCompletedAt === undefined
+      && job.importError === undefined
+      && orderedIsoInstants(job.updatedAt, run.startedAt);
+  }
+  if (job.importState === 'failed' || job.importState === 'succeeded') {
+    return isIsoInstant(job.importCompletedAt)
+      && orderedIsoInstants(run.completedAt, job.importCompletedAt)
+      && orderedIsoInstants(job.importCompletedAt, job.updatedAt)
+      && (job.importState === 'failed'
+        ? requiredNonBlank(job.importError)
+        : job.importError === undefined);
+  }
+  return false;
+}
+
+function normalizeDurableProofScope(
+  input: StoreCollectionDurableProofScope,
+): StoreCollectionDurableProofScope {
+  let context: StoreContextEnvelope;
+  try {
+    context = normalizeStoreContextEnvelope(input.context);
+    assertUsStoreContext(context);
+  } catch {
+    throw new StoreCollectionDurableProofUnknownError('exact Store/Profile context invalid');
+  }
+  if (!SAFE_ID.test(input.requestId)
+    || input.requestId.startsWith('canary:')
+    || !isIsoDate(input.dateStart)
+    || !isIsoDate(input.dateEnd)
+    || input.dateStart > input.dateEnd) {
+    throw new StoreCollectionDurableProofUnknownError('exact request/date window invalid');
+  }
+  return {
+    context,
+    requestId: input.requestId,
+    dateStart: input.dateStart,
+    dateEnd: input.dateEnd,
+  };
+}
+
 function classifyDurableProof(
   proof: LingxingCollectionAuthorityProof,
-  authorized: AuthorizedSchedulerRequest<'recovery_existing_request_only'>,
+  authorized: StoreCollectionDurableProofScope,
 ): StoreCollectionOrchestratorSchedulerProjection['state'] {
+  if (!authorityProofTimelineExact(proof)) return 'unknown';
   const shape = durableLifecycleShape(proof, authorized);
   switch (shape) {
     case 'queued':
@@ -373,6 +650,97 @@ function classifyDurableProof(
   }
 }
 
+function authorityProofTimelineExact(proof: LingxingCollectionAuthorityProof): boolean {
+  const { job } = proof;
+  if (!orderedIsoInstants(job.createdAt, job.updatedAt)) return false;
+  if (job.completedAt !== undefined
+    && (!orderedIsoInstants(job.createdAt, job.completedAt)
+      || !orderedIsoInstants(job.completedAt, job.updatedAt))) {
+    return false;
+  }
+  if (job.importAttemptedAt !== undefined
+    && !orderedIsoInstants(job.importAttemptedAt, job.updatedAt)) {
+    return false;
+  }
+  if (job.importCompletedAt !== undefined
+    && (!orderedIsoInstants(job.importAttemptedAt, job.importCompletedAt)
+      || !orderedIsoInstants(job.importCompletedAt, job.updatedAt))) {
+    return false;
+  }
+  if (job.reports.some((checkpoint) => (
+    !orderedIsoInstants(job.createdAt, checkpoint.updatedAt)
+    || !orderedIsoInstants(checkpoint.updatedAt, job.updatedAt)
+    || (checkpoint.createdReportIdentity !== undefined
+      && (!orderedIsoInstants(
+        job.createdAt,
+        checkpoint.createdReportIdentity.createdAt,
+      )
+        || !orderedIsoInstants(
+          checkpoint.createdReportIdentity.createdAt,
+          checkpoint.updatedAt,
+        )))
+  ))) {
+    return false;
+  }
+  if (proof.batch
+    && (!orderedIsoInstants(job.createdAt, proof.batch.createdAt)
+      || !orderedIsoInstants(proof.batch.createdAt, job.updatedAt)
+      || (proof.batch.completedAt !== undefined
+        && (!orderedIsoInstants(proof.batch.createdAt, proof.batch.completedAt)
+          || !orderedIsoInstants(proof.batch.completedAt, job.updatedAt))))) {
+    return false;
+  }
+  if (proof.lingxingFiles.some((file) => (
+    !orderedIsoInstants(job.createdAt, file.createdAt)
+    || !orderedIsoInstants(file.createdAt, file.updatedAt)
+    || !orderedIsoInstants(file.updatedAt, job.updatedAt)
+    || (proof.batch?.completedAt !== undefined
+      && !orderedIsoInstants(file.updatedAt, proof.batch.completedAt))
+  ))) {
+    return false;
+  }
+  if (proof.importRuns.some((run) => (
+    !orderedIsoInstants(run.startedAt, run.completedAt)
+    || !orderedIsoInstants(run.completedAt, run.createdAt)
+  ))) {
+    return false;
+  }
+  const runsById = new Map(proof.importRuns.map((run) => [run.runId, run]));
+  if (proof.importFileSnapshots.some((snapshot) => {
+    const run = runsById.get(snapshot.runId);
+    return !run
+      || !orderedIsoInstants(run.startedAt, snapshot.capturedAt)
+      || !orderedIsoInstants(snapshot.capturedAt, run.completedAt);
+  })) {
+    return false;
+  }
+  if (proof.reconciliations.some((reconciliation) => {
+    const run = runsById.get(reconciliation.runId);
+    return !run
+      || !orderedIsoInstants(run.startedAt, reconciliation.reconciledAt)
+      || !orderedIsoInstants(reconciliation.reconciledAt, run.completedAt);
+  })) {
+    return false;
+  }
+  const uniqueRun = proof.importRunCount === 1 && proof.importRuns.length === 1
+    ? proof.importRuns[0]
+    : undefined;
+  return proof.importedReportFiles.every((file) => (
+    file.lastImportedAt === undefined
+    || (Boolean(uniqueRun)
+      && orderedIsoInstants(uniqueRun!.startedAt, file.lastImportedAt)
+      && orderedIsoInstants(file.lastImportedAt, uniqueRun!.completedAt)
+      && (job.importCompletedAt === undefined
+        || orderedIsoInstants(file.lastImportedAt, job.importCompletedAt)))
+  ));
+}
+
+function orderedIsoInstants(earlier: unknown, later: unknown): boolean {
+  return isIsoInstant(earlier)
+    && isIsoInstant(later)
+    && Date.parse(earlier) <= Date.parse(later);
+}
+
 type DurableLifecycleShape =
   | 'queued'
   | 'running'
@@ -387,7 +755,7 @@ type DurableLifecycleShape =
  */
 function durableLifecycleShape(
   proof: LingxingCollectionAuthorityProof,
-  authorized: AuthorizedSchedulerRequest<'recovery_existing_request_only'>,
+  authorized: StoreCollectionDurableProofScope,
 ): DurableLifecycleShape | null {
   const { job, batch } = proof;
   if (!isIsoInstant(job.createdAt) || !isIsoInstant(job.updatedAt)) return null;
@@ -466,7 +834,7 @@ function allImportLifecycleFieldsEmpty(job: LingxingCollectionJobSnapshot): bool
 
 function queuedProofReasonable(
   proof: LingxingCollectionAuthorityProof,
-  _authorized: AuthorizedSchedulerRequest<'recovery_existing_request_only'>,
+  _authorized: StoreCollectionDurableProofScope,
 ): boolean {
   return proof.lingxingFileCount === 0
     && proof.lingxingFiles.length === 0
@@ -476,7 +844,7 @@ function queuedProofReasonable(
 
 function runningProofReasonable(
   proof: LingxingCollectionAuthorityProof,
-  authorized: AuthorizedSchedulerRequest<'recovery_existing_request_only'>,
+  authorized: StoreCollectionDurableProofScope,
 ): boolean {
   return proof.lingxingFileCount === proof.lingxingFiles.length
     && uniqueReportSubset(proof.lingxingFiles.map((file) => file.reportType))
@@ -490,7 +858,7 @@ function runningProofReasonable(
 
 function terminalFailureProofExact(
   proof: LingxingCollectionAuthorityProof,
-  authorized: AuthorizedSchedulerRequest<'recovery_existing_request_only'>,
+  authorized: StoreCollectionDurableProofScope,
 ): boolean {
   return proof.lingxingFileCount === proof.lingxingFiles.length
     && uniqueReportSubset(proof.lingxingFiles.map((file) => file.reportType))
@@ -502,7 +870,7 @@ function terminalFailureProofExact(
 
 function downloadProofExact(
   proof: LingxingCollectionAuthorityProof,
-  authorized: AuthorizedSchedulerRequest<'recovery_existing_request_only'>,
+  authorized: StoreCollectionDurableProofScope,
 ): boolean {
   if (!proof.batch
     || !batchIdentityExact(proof.batch, proof.job, authorized, 'completed')
@@ -541,24 +909,50 @@ function downloadProofExact(
 
 function succeededImportProofExact(
   proof: LingxingCollectionAuthorityProof,
-  authorized: AuthorizedSchedulerRequest<'recovery_existing_request_only'>,
+  authorized: StoreCollectionDurableProofScope,
 ): boolean {
   if (!downloadProofExact(proof, authorized)
     || proof.importRunCount !== 1
     || proof.importRuns.length !== 1
+    || proof.metricEvidenceCount !== 1
+    || proof.metricEvidence.length !== 1
     || proof.importFileSnapshotCount !== FULL_REPORT_TYPES.length
     || proof.importFileSnapshots.length !== FULL_REPORT_TYPES.length
     || proof.importedReportFileCount !== FULL_REPORT_TYPES.length
     || proof.importedReportFiles.length !== FULL_REPORT_TYPES.length
+    || proof.reconciliationRowCount !== FULL_REPORT_TYPES.length
+    || proof.reconciliations.length !== FULL_REPORT_TYPES.length
     || !sameFullReportSet(proof.importFileSnapshots.map((row) => row.reportType as LingxingReportType))
-    || !sameFullReportSet(proof.importedReportFiles.map((row) => row.reportType as LingxingReportType))) {
+    || !sameFullReportSet(proof.importedReportFiles.map((row) => row.reportType as LingxingReportType))
+    || !sameFullReportSet(proof.reconciliations.map((row) => row.reportType as LingxingReportType))) {
     return false;
   }
   const run = proof.importRuns[0]!;
+  const metricEvidence = proof.metricEvidence[0]!;
+  const importedMetricRowCount = proof.importFileSnapshots.reduce(
+    (total, snapshot) => total + snapshot.importedRows,
+    0,
+  );
   if (run.storeId !== authorized.context.storeId
     || run.batchId !== proof.job.jobId
     || run.status !== 'completed'
     || run.sourceFileCount !== FULL_REPORT_TYPES.length
+    || run.reconciliationCount !== FULL_REPORT_TYPES.length
+    || !Number.isSafeInteger(run.metricRowCount)
+    || run.metricRowCount < 0
+    || !Number.isSafeInteger(importedMetricRowCount)
+    || run.metricRowCount !== importedMetricRowCount
+    || metricEvidence.storeId !== authorized.context.storeId
+    || metricEvidence.runId !== run.runId
+    || metricEvidence.batchId !== proof.job.jobId
+    || metricEvidence.rowCount !== run.metricRowCount
+    || !SHA256.test(metricEvidence.payloadSha256)
+    || !isIsoInstant(metricEvidence.createdAt)
+    || !orderedIsoInstants(run.startedAt, metricEvidence.createdAt)
+    // Fresh commits bind this to completedAt; v10 backfills bind it to the
+    // immutable run createdAt. Both are inside the unique run's durable
+    // timeline and neither may be later than that recorded commit boundary.
+    || !orderedIsoInstants(metricEvidence.createdAt, run.createdAt)
     || !requiredNonBlank(run.runId)
     || !requiredNonBlank(run.idempotencyKey)
     || !SHA256.test(run.inputFingerprint)
@@ -571,10 +965,17 @@ function succeededImportProofExact(
   const importedByType = new Map(
     proof.importedReportFiles.map((row) => [row.reportType, row]),
   );
+  const reconciliationByType = new Map(
+    proof.reconciliations.map((row) => [row.reportType, row]),
+  );
   return proof.importFileSnapshots.every((snapshot) => {
     const reportType = snapshot.reportType as LingxingReportType;
     const live = liveByType.get(reportType);
     const imported = importedByType.get(reportType);
+    const reconciliation = reconciliationByType.get(reportType);
+    const reconciliationDelta = reconciliation
+      ? Math.abs(reconciliation.expectedCost - reconciliation.actualCost)
+      : Number.NaN;
     return snapshot.storeId === authorized.context.storeId
       && snapshot.runId === run.runId
       && snapshot.batchId === proof.job.jobId
@@ -584,13 +985,13 @@ function succeededImportProofExact(
       && Number.isInteger(snapshot.fileSizeBytes)
       && snapshot.fileSizeBytes > 0
       && SHA256.test(snapshot.fileHash)
-      && Number.isInteger(snapshot.importedRows)
+      && Number.isSafeInteger(snapshot.importedRows)
       && snapshot.importedRows >= 0
       && isIsoInstant(snapshot.capturedAt)
       && Boolean(live)
       && snapshot.lingxingFileId === live!.id
       && snapshot.filePath === live!.filePath
-      && snapshot.fileName === live!.displayName
+      && snapshot.fileName === portablePathBasename(live!.filePath!)
       && snapshot.fileSizeBytes === live!.fileSizeBytes
       && Boolean(imported)
       && snapshot.reportFileId === imported!.id
@@ -609,8 +1010,40 @@ function succeededImportProofExact(
       && imported!.fileSizeBytes === snapshot.fileSizeBytes
       && imported!.importedRows === snapshot.importedRows
       && isIsoInstant(imported!.lastImportedAt)
-      && !imported!.importError;
+      && !imported!.importError
+      && Boolean(reconciliation)
+      && reconciliation!.storeId === authorized.context.storeId
+      && reconciliation!.runId === run.runId
+      && reconciliation!.batchId === proof.job.jobId
+      && requiredNonBlank(reconciliation!.reconciliationId)
+      && reconciliation!.currency === 'USD'
+      && reconciliation!.dateStart === authorized.dateStart
+      && reconciliation!.dateEnd === authorized.dateEnd
+      && reconciliation!.metricDate === authorized.dateEnd
+      && Number.isSafeInteger(reconciliation!.expectedRows)
+      && reconciliation!.expectedRows >= 0
+      && reconciliation!.expectedRows === reconciliation!.actualRows
+      && reconciliation!.expectedRows === snapshot.importedRows
+      && reconciliation!.actualRows === snapshot.importedRows
+      && Number.isFinite(reconciliation!.expectedCost)
+      && reconciliation!.expectedCost >= 0
+      && Number.isFinite(reconciliation!.actualCost)
+      && reconciliation!.actualCost >= 0
+      && Number.isFinite(reconciliation!.absoluteCostDelta)
+      && reconciliation!.absoluteCostDelta >= 0
+      && Number.isFinite(reconciliation!.tolerance)
+      && reconciliation!.tolerance >= 0
+      && reconciliation!.withinTolerance
+      && reconciliation!.status === 'matched'
+      && Math.abs(reconciliation!.absoluteCostDelta - reconciliationDelta) <= 1e-9
+      && reconciliationDelta <= reconciliation!.tolerance + 1e-9
+      && isIsoInstant(reconciliation!.reconciledAt);
   });
+}
+
+function portablePathBasename(value: string): string {
+  const normalized = value.replaceAll('\\', '/');
+  return normalized.slice(normalized.lastIndexOf('/') + 1);
 }
 
 function noCompletedImportProof(proof: LingxingCollectionAuthorityProof): boolean {
@@ -619,18 +1052,22 @@ function noCompletedImportProof(proof: LingxingCollectionAuthorityProof): boolea
     && proof.importFileSnapshotCount === 0
     && proof.importFileSnapshots.length === 0
     && proof.importedReportFileCount === 0
-    && proof.importedReportFiles.length === 0;
+    && proof.importedReportFiles.length === 0
+    && proof.reconciliationRowCount === 0
+    && proof.reconciliations.length === 0
+    && proof.metricEvidenceCount === 0
+    && proof.metricEvidence.length === 0;
 }
 
 function batchIdentityExact(
   batch: NonNullable<LingxingCollectionAuthorityProof['batch']>,
   job: LingxingCollectionJobSnapshot,
-  authorized: AuthorizedSchedulerRequest<'recovery_existing_request_only'>,
+  authorized: StoreCollectionDurableProofScope,
   expectedStatus: NonNullable<LingxingCollectionAuthorityProof['batch']>['status'],
 ): boolean {
   return batch.id === job.jobId
     && batch.storeId === authorized.context.storeId
-    && batch.requestId === authorized.input.requestId
+    && batch.requestId === authorized.requestId
     && batch.browserProfileId === authorized.context.browserProfileId
     && batch.businessDate === authorized.context.businessDate
     && batch.sessionGeneration === authorized.context.sessionGeneration

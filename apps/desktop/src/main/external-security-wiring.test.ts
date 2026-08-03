@@ -42,14 +42,14 @@ describe('Electron external-distribution security wiring', () => {
   });
 
   it('exposes saved-credential status only and resolves saved passwords inside Main', () => {
-    expect(source).toContain("ipcMain.handle('browser:get-saved-credential-status'");
+    expect(source).toContain("registerTrackedIpcHandler('browser:get-saved-credential-status'");
     expect(source).toContain('resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username)');
     expect(source).toContain('handleBrowserLogin(normalizeBrowserLoginRequest(input))');
     expect(browserLoginRequestSource).toContain("typeof candidate.rememberPassword !== 'boolean'");
     expect(source).toContain('normalizeBrowserLoginRequest(input)');
     expect(source).toContain('state.storeCoordinator.assertActiveStoreContext(request.storeContext)');
     expect(source).toContain('request.amazonAdsProfileId');
-    expect(source).not.toContain("ipcMain.handle('browser:get-saved-credentials'");
+    expect(source).not.toContain("registerTrackedIpcHandler('browser:get-saved-credentials'");
     expect(source).not.toContain('password: saved');
   });
 
@@ -106,12 +106,17 @@ describe('Electron external-distribution security wiring', () => {
     expect(rendererLoginResult).not.toContain('identityCandidates');
   });
 
-  it('binds browser controllers to one store context and two provider-specific profiles', () => {
-    expect(source).toContain('interface StoreBrowserRuntime');
-    expect(source).toContain('context: StoreContextEnvelope;');
+  it('binds browser controllers to one registry candidate and two provider-specific profiles', () => {
+    expect(source).not.toContain('interface StoreBrowserRuntime');
+    expect(source).not.toContain('state.browserRuntime');
+    expect(source).toContain('const visibleBrowserRuntimeRegistry = new VisibleBrowserRuntimeRegistry()');
     expect(source).toContain('userDataDir: capsule.lingxingProfileDir');
     expect(source).toContain('userDataDir: capsule.amazonAdsProfileDir');
-    expect(source).toContain("browserRuntimeController('amazon_ads')");
+    expect(source).toContain("purpose: 'operator_full'");
+    expect(source).toContain('amazonAds: amazonAdsController');
+    expect(source).toContain('amazonAds: capsule.amazonAdsProfileDir');
+    expect(source).toContain('legacy-amazon-ads-screenshot:${label}');
+    expect(source).toContain("runtime.purpose !== 'operator_full'");
     expect(source).not.toContain("path.join(STORAGE_DIR, 'browser-data')");
   });
 
@@ -130,15 +135,22 @@ describe('Electron external-distribution security wiring', () => {
     expect(login).toContain('requireBrowserLoginProviderConnections');
     expect(login).toContain('request.amazonAdsProfileId');
     expect(login).toContain('waitForLingxingAdsSessionReady');
-    expect(login).toContain('PACKAGE_UI_AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS');
-    expect(login).toContain('独立 Amazon Ads Profile 未在正式 Package UI 时限内完成授权');
+    expect(login).toContain('AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS');
     expect(login).toContain('adsSessionReady: Boolean(adsSession)');
+    const packageLogin = source.slice(
+      source.indexOf('async function handleBrowserLogin'),
+      source.indexOf('async function performBrowserLoginInUserLane'),
+    );
+    expect(packageLogin).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
+    expect(packageLogin).toContain('package UI evidence cannot start a real account login');
   });
 
-  it('captures screenshots inside the active store capsule and closes by store id', () => {
+  it('captures screenshots inside the active store capsule and closes through exact registry proof', () => {
     expect(source).toContain('storeCapsuleFor(store).screenshotsDir');
     expect(source).toContain('controller.screenshotToPath(screenshotPath, label)');
-    expect(source).toContain('state.browserRuntime?.context.storeId === store.storeId');
+    expect(source).toContain('visibleBrowserRuntimeRegistry.strictCloseCurrent(runtime.context)');
+    expect(source).toContain('visibleBrowserRuntimeRegistry.consumeEmptyProof(proof)');
+    expect(source).not.toContain('state.browserRuntime');
     expect(source).not.toContain('state.currentStore === store.displayName');
   });
 

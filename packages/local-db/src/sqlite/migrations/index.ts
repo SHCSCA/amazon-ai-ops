@@ -103,3 +103,17 @@ export {
 export type {
   StoreAuthorityRepairMigrationResult,
 } from './0009-store-authority-quarantine-repair';
+export {
+  COLLECTION_RESUME_AUTHORITY_MIGRATION_CHECKSUM,
+  COLLECTION_RESUME_AUTHORITY_MIGRATION_NAME,
+  COLLECTION_RESUME_AUTHORITY_MIGRATION_VERSION,
+  COLLECTION_RESUME_AUTHORITY_TABLES,
+  CollectionResumeAuthorityMigrationError,
+  hashCanonicalMetrics,
+  readCanonicalMetrics,
+  runCollectionResumeAuthorityMigration,
+  verifyCollectionResumeAuthoritySchema,
+} from './0010-collection-resume-authority';
+export type {
+  CollectionResumeAuthorityMigrationResult,
+} from './0010-collection-resume-authority';
