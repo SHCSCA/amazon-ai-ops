@@ -4,7 +4,7 @@
 
 它把领星广告报表采集、产品级广告量化、关键词与 Listing 优化、AI + 规则建议、人工审批、Ads UI 执行回读和最终交付验收串成一个可审计的本地闭环。
 
-**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY ONLY.** 当前候选已进入 Mission Control Stage 8：第一版固定 Amazon US / USD，正式桌面导航为 10 个 Mission Control 工作区，店铺数据、浏览器 Profile、任务、证据与运行配置按 StoreContext 隔离。当前 v1.5 manifest-driven final-readiness 是 7/8，但它只作为正式 Mission 八门聚合器的 legacy baseline 输入；最新正式 Mission production readiness 已绑定明确 live authority DB 与 WAL-safe snapshot v2，仍为 4/8。项目自带的 Playwright Chromium 已进入包体，schema v7 package UI 要求每轮 visible operator handoff，首轮必须形成 fresh typed + saved、non-reused、identity-verified 的 Main 有界证明；本轮首轮在 15 分钟内未形成 ERP + Ads ready，runner 已 fail-closed，尚未得到通过的 package UI manifest。当前四个未通过的正式门是 package UI、两店连续七个美国业务日、人工 canary 和 policy-auto canary，严格 NON_READY bundle 仍待生成。应用内广告写入继续 fail-closed，当前不得声明 `APP_READY`。
+**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY ONLY.** 当前 Windows 包由源码提交 `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda` 构建。第一版固定 Amazon US / USD，正式桌面导航为 10 个 Mission Control 工作区；左侧 `店铺与站点` 是新增、维护与切换店铺的唯一入口，店铺 DB 范围、Lingxing/Ads Profile、会话、任务、配置、授权、执行和证据均按 Store Capsule 隔离。内部 UI、当前业务 smoke、包体启动、安全边界和敌对 `NODE_ENV` 已通过；正式 package UI schema v8、真实 authority DB 升级、每店 8/8、两店连续七个美国业务日、人工 canary 和 policy-auto canary 尚未完成。本候选尚未生成新的正式八门聚合结果或匹配 bundle；旧 `7/8`、Mission `4/8`、旧 manifest 和旧 bundle 仅为历史，不得复用为当前信用。应用内广告写入继续 fail-closed，当前不得声明 `APP_READY`。
 
 ## 当前交付
 
@@ -12,23 +12,24 @@
 |---|---|
 | 产品形态 | Windows 本地优先 Electron 桌面应用 |
 | 当前版本 | `1.5.0` |
-| 当前状态 | `APP_NEEDS_WORK`（内部 NON_READY 候选；正式 Mission readiness 仍为 4/8，package UI pending） |
+| 当前状态 | `APP_NEEDS_WORK`（内部 NON_READY 候选；当前八门聚合尚未生成） |
+| 当前包源码 | `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda` |
 | 无安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0-portable.exe` |
 | 安装版 EXE | `apps\desktop\release\AmazonAIOpsAgent-1.5.0.exe` |
-| 无安装版 SHA-256 | `17B881F2FAEDC717AC3E98A027C4EB51EC2DC8AEC9D59B1DE350B9A83F76B811` |
-| 安装版 SHA-256 | `AA3F15BBDFFD3ACE4B498019F81D4069B473704127DF34A21FC2F9BBA8FB0C14` |
+| 无安装版 SHA-256 | `58C6D501329547654FCBCBE429AAE2CA73738DC17B17A28A3CCEC965411DEDE4` |
+| 安装版 SHA-256 | `EDEC273C4B6FCC172D75160E3809FD2E8618B001BC3C3855E40EDC05CB61B96A` |
 | win-unpacked EXE SHA-256 | `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89` |
-| app content SHA-256 | `2FA784EFF7864F84F9F501E25DCE918ACF6838C63CD92DCF5D6300B33D0B30D5` |
-| main bundle SHA-256 | `2DEB3823C52BCFEBCB369FF87F5B6CDB6B27791C69441E8068985BA4338C4838` |
-| 当前 live authority DB 主文件 / Package UI 保护基线 SHA-256 | `9E82065E780B38A4D3348F4EE723DDF1A50142F3900192E612730CC1C8017439`（只用于主文件保护，不代表包含 WAL 的完整 SQLite authority 状态） |
-| 当前 authority snapshot v2 | `output\codex-evidence\authority-snapshots\2026-07-27T08-27-40-681Z-0faeb2d2-2280-4b75-a1b2-083f8da806a6\snapshot-manifest.json`；snapshot SHA-256 `7E3C7B62E6FB5A993332E38883500DE027CF74E7C4E4E979B0BA5A4EE453A5DD`；正式聚合器在选择后、最终写入前、首次写入后三次对 live DB 做只读 SQLite online backup，均与该 snapshot 的 18,448,384 bytes / SHA-256 完全一致 |
-| v1.5 legacy baseline | `output\codex-evidence\final-readiness-20260727-stage8-non-ready-v7.json`（`APP_NEEDS_WORK`；7/8，仅作为 Mission 聚合输入） |
-| 正式 Mission readiness | `output\codex-evidence\mission-control-production-readiness-20260728-stage8-wal-currentness-4-of-8.json`（输入合同、snapshot v2 与 WAL-aware live authority currentness 通过；v1.5 baseline、launch、security、adversarial 四门通过；整体仍为 4/8） |
-| Package launch smoke | `output\codex-evidence\package-launch-smoke-1785134748920.json`（win-unpacked + portable PASS） |
-| Package UI evidence | schema v7 pending；`output\codex-evidence\package-ui-evidence-20260727-stage8-final-v7\2026-07-27T08-10-15-137Z\manifest.json` 因 100% 首轮 15 分钟内未形成 ERP + Ads ready 而 `passed: false`；protected DB 前后哈希不变 |
-| Package security evidence | `output\codex-evidence\package-security-boundaries-20260727-stage8-final-v7.json`（11/11 PASS；绑定当前 EXE、app content、main bundle） |
-| Adversarial `NODE_ENV` | `output\codex-evidence\package-adversarial-node-env-20260727-stage8-final-v7.json`（PASS） |
-| 本轮 NON_READY bundle | pending；通过的 schema v7 package UI manifest 与刷新后的 Mission readiness 生成前不得导出为当前最终 bundle |
+| app content SHA-256 | `FC173A2EE64C949F2EDF4237D8B447AF2C3D721EC8F9AFDE3E97A59674C8DE43` |
+| main bundle SHA-256 | `9B0C43D5383F679567D74F8A63735829156926CB1290F603378A48CF7F5AF32A` |
+| 内部交互 UI | `output\codex-evidence\mission-control-ui-3f6fbec3\manifest.json`（20 个工作区捕获 + 3 个门禁/隔离/最小窗口场景，共 23 PNG；`NO_FINAL_READINESS_CREDIT`） |
+| 当前业务 UI smoke | `output\codex-evidence\current-business-ui-smoke-1785830923177.json`（5/5 PASS） |
+| Package launch smoke | `output\codex-evidence\package-launch-smoke-1785831535965.json`（win-unpacked + portable PASS） |
+| Package security evidence | `output\codex-evidence\package-security-boundaries-3f6fbec3.json`（11/11 PASS） |
+| Adversarial `NODE_ENV` | `output\codex-evidence\package-adversarial-node-env-3f6fbec3.json`（PASS） |
+| Package UI evidence | schema v8 pending；当前包尚未完成 visible operator handoff 和正式 package manifest |
+| 当前 authority / 真实运行证据 | 真实 DB 升级、逐店 8/8、两店连续七日、人工 canary、policy-auto canary 均 pending / blocked，不复用旧快照 |
+| 正式八门 / bundle | 当前候选尚未重新生成；旧 4/8、7/8 与旧 bundle 仅作历史记录 |
+| 详细状态 | `docs\MISSION_CONTROL_RELEASE_STATUS_2026-08-04.md` |
 
 > 注意：`output/`、`storage/`、AppData DB、raw 领星报表、release EXE 和密钥都是本地交付/运行产物，不进入 Git 提交。
 >
@@ -56,8 +57,8 @@
 | 页面结构 | `StoreGate -> App Shell -> 10 个 Mission Control 工作区 -> canonical 子视图 -> 当前主任务 -> 业务明细` |
 | 10 个工作区 | 今日任务、任务中心、决策与审批、经营实验、实时执行、因果记忆、店铺与广告对象、数据采集、策略与风控、系统设置 |
 | 首屏任务 | 每个核心子视图先展示当前状态、唯一主动作和安全边界，技术依据与长明细下沉到辅助区 |
-| 开发 UI 证据 | `mission-control-stage2-ui-20260722-final\manifest.json` 覆盖 10 个工作区各 100%/125%，但明确 `NO_FINAL_READINESS_CREDIT`，不能替代 package UI |
-| Package UI 合同 | schema v7；包体必须包含项目自带 `playwright-browsers\chrome-win64\chrome.exe`，100%/125% 各覆盖十工作区、三项只读 overlay、canonical 子视图与宽屏隔离档 |
+| 开发 UI 证据 | `output\codex-evidence\mission-control-ui-3f6fbec3\manifest.json` 覆盖 10 个工作区各 100%/125%，另含 Store Gate、双店隔离与 1200×900 执行布局；明确 `NO_FINAL_READINESS_CREDIT`，不能替代 package UI |
+| Package UI 合同 | schema v8；包体必须包含项目自带 `playwright-browsers\chrome-win64\chrome.exe`，100%/125% 各覆盖十工作区、三项只读 overlay、canonical 子视图与宽屏/最小窗口隔离档 |
 | 登录证据合同 | 每轮由可见 operator handoff 完成登录；runner 不读、不填、不点击秘密。首轮必须证明 fresh typed + saved、非复用会话和精确身份，saved continuation 也必须重新形成有界 Main 证明 |
 | 当前数据事实 | 最新批次 `batch_20260625013151957_ajw0nb` 为 8/8 类逐类入库、6827 条导入指标；产品页 1879 条仅代表当前 ASIN |
 | 产品字段 | 已明确为产品成本、FBA 费用、当前售价、最低可接受售价、目标 ACOS、目标 TACOS、目标净利率 |
@@ -94,37 +95,34 @@
 
 ## 外部分发阻断与剩余工作
 
-当前 v1.5 legacy baseline 是 7/8，但正式发布状态由 Mission 八门聚合器决定，最新已生成结果仍为 4/8。项目随包 Playwright Chromium、package launch、安全边界和 adversarial `NODE_ENV` 已验证；当前不存在“唯一阻断”，剩余四门如下：
+当前包的内部 UI、业务 smoke、package launch、安全边界和 adversarial `NODE_ENV` 已验证，但还没有为该包生成新的正式八门聚合结果。除 package UI 外，真实 authority DB 升级、逐店采集、自然观察窗和两种执行 canary 都不能用历史数据或模拟证据替代：
 
 | 正式门 | 当前状态 | 完成条件 |
 |---|---|---|
-| Package UI | pending | 重新完成 schema v7 每轮 visible operator handoff；首轮形成 fresh typed + saved/non-reused/identity-verified 证明，并通过 100%/125% 十工作区、overlay、子视图与宽屏合同 |
-| 两店连续运行 | blocked by time/real sessions | 两家真实店铺自然经过连续 7 个美国业务日，并形成 14/14 `SUCCESS_8_OF_8` |
-| 人工 canary | blocked by current authority | 当前低风险真实对象、当前人工 MissionGrant、可见 Ads 会话以及 before/after/reload 回读全部闭合 |
-| Policy-auto canary | blocked by current authority | 人工 canary 完成后，以当前启用策略、kill switch、真实对象和会话完成独立策略自动 canary |
+| Package UI | pending | 完成 schema v8 每轮 visible operator handoff，并通过 100%/125% 十工作区、overlay、canonical 子视图、宽屏/最小窗口和跨店隔离合同 |
+| 真实 authority DB | pending explicit approval | 对明确选定的 live DB 做可恢复升级，验证 stores、Store Capsule 与 execution authority；不得猜测或原地覆盖 |
+| 每店 8/8 / 两店连续运行 | blocked by time/real sessions | 每店完成真实 8 类下载、导入和对账；两家真实店铺自然经过连续 7 个美国业务日，形成 14/14 `SUCCESS_8_OF_8` |
+| 人工 canary | blocked by current authority/session | 当前低风险真实对象、当前人工 MissionGrant、可见 Ads 会话以及 before/after/reload 回读全部闭合 |
+| Policy-auto canary | blocked by current authority/session | 人工 canary 完成后，以当前启用策略、限额、kill switch、真实对象和独立授权完成策略自动 canary |
+| 八门聚合与 bundle | pending | 当前证据齐备后重新聚合，导出同一包/DB lineage 的严格 READY 或 NON_READY bundle 并通过 safety verifier |
 
-因此当前包只允许内部验证和受控交接；通过 package UI、刷新 Mission readiness、生成匹配的严格 bundle 并完成其安全校验前，不能作为 `APP_READY` 外部分发版本。
+因此当前包只允许内部验证和受控交接；通过当前全部门禁、重新生成 Mission readiness，并生成匹配的严格 bundle 及安全校验前，不能作为 `APP_READY` 外部分发版本。
 
 ## 当前验证状态
 
 | 验证门 | 状态 | 证据 |
 |---|---|---|
-| 全量测试 | 当前完整回归通过 | `output\codex-evidence\full-vitest-stage8-20260728-final-v7.json`；829/829 suites、3096/3096 tests，0 failed |
-| Authority/evidence 聚焦回归 | 通过 | 6 个文件、133/133 tests；覆盖 WAL-only live authority drift、fresh online-backup currentness、Store Capsule TOCTOU、连续运行与两类 canary |
-| TypeScript / build | 阶段验证通过 | Main、Preload、Renderer 与相关 workspace 阶段门已通过；正式发布仍以包体和 Mission evidence 为准 |
-| 当前业务 UI smoke | 失败，不计当前通过 | `output\codex-evidence\current-business-ui-smoke-1785136536629.json`；5/5 旧 v1.5 脚本因等待旧标题/旧动作超时，需适配 Mission Control 后重跑 |
-| 开发工作区 UI 证据 | 通过但无正式信用 | `output\codex-evidence\mission-control-stage2-ui-20260722-final\manifest.json`；10 个工作区各 100%/125%，明确 `NO_FINAL_READINESS_CREDIT` |
-| 广告执行 fail-closed | 通过 | `pnpm run verify:ad-execution` |
-| Windows 打包 | 通过 | installer `AA3F...0C14`、portable `17B8...B811`、win-unpacked `67DC...5E89`、app content `2FA7...30D5`、main bundle `2DEB...4838` |
-| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1785134748920.json` |
-| Package security boundaries | 11/11 通过 | `output\codex-evidence\package-security-boundaries-20260727-stage8-final-v7.json` |
-| Adversarial `NODE_ENV` | 通过 | `output\codex-evidence\package-adversarial-node-env-20260727-stage8-final-v7.json` |
-| v1.5 legacy final-readiness | `APP_NEEDS_WORK` 7/8 | `output\codex-evidence\final-readiness-20260727-stage8-non-ready-v7.json`；仅是正式 Mission 聚合器的一门输入，不代表 Mission 7/8 |
-| Authority snapshot v2 | 快照合同与 WAL-aware currentness 通过，业务权威内容仍不足 | WAL-safe online backup、源/快照只读完整性、当前包三重身份，以及 live DB 三次 fresh online-backup 比对均通过；当前 snapshot 只有 24 张 legacy 表，尚无 Mission `stores` / execution authority 表，因此不能生成两店连续运行或 canary 通过证据 |
-| 正式 Mission readiness | `APP_NEEDS_WORK` 4/8 | `output\codex-evidence\mission-control-production-readiness-20260728-stage8-wal-currentness-4-of-8.json`；显式 live DB、snapshot v2、WAL-aware currentness 与输入合同通过，当前仍只通过 v1.5 baseline、launch、security、adversarial 四门 |
-| Package UI | schema v7 pending | 项目 Chromium 已进入包体；最新 `2026-07-27T08-10-15-137Z\manifest.json` 因 100% 首轮 15 分钟内未形成 ERP + Ads ready 而失败，protected DB 前后哈希不变 |
-| 当前数据导入 | 通过 | 最新批次 `batch_20260625013151957_ajw0nb`：8/8 imported report types，6827 imported total rows；1879 是当前 ASIN 指标，不是全库总量 |
-| NON_READY 交付包/安全门 | pending | 旧 2026-07-17 bundle 仅为历史；通过的 schema v7 manifest、刷新后的 Mission readiness 与当前证据选择冻结前不得复用 |
+| TypeScript / build | 通过 | 14 个 workspace / project typecheck 通过；当前 package 已生成 |
+| 当前业务 UI smoke | 通过 | `output\codex-evidence\current-business-ui-smoke-1785830923177.json`；5/5 PASS |
+| 开发工作区 UI 证据 | 通过但无正式信用 | `output\codex-evidence\mission-control-ui-3f6fbec3\manifest.json`；20 个 workspace captures + 3 个门禁/隔离/最小窗口场景，共 23 PNG，明确 `NO_FINAL_READINESS_CREDIT` |
+| 广告执行 fail-closed | 代码合同已通过 | 仅允许经授权的低风险 keyword bid 下调；执行前重检，任何 `UNKNOWN` 停止；真实人工/policy-auto canary 尚未完成 |
+| Windows 打包 | 通过 | installer `EDEC...B96A`、portable `58C6...DEDE4`、win-unpacked `67DC...5E89`、app content `FC17...E43`、main bundle `9B0C...32A` |
+| Package launch smoke | 通过 | `output\codex-evidence\package-launch-smoke-1785831535965.json` |
+| Package security boundaries | 11/11 通过 | `output\codex-evidence\package-security-boundaries-3f6fbec3.json` |
+| Adversarial `NODE_ENV` | 通过 | `output\codex-evidence\package-adversarial-node-env-3f6fbec3.json` |
+| Package UI | schema v8 pending | 项目 Chromium 已进入包体；正式 visible operator handoff 与通过 manifest 尚未形成 |
+| 真实数据 / DB / canary | pending / blocked | 真实 DB 升级、当前每店 8/8、两店连续七日、人工和 policy-auto canary 均未完成；历史批次和旧快照不授予当前信用 |
+| 正式 Mission readiness / bundle | 未生成 | 旧 7/8、4/8、旧 package UI 和旧 bundle 全部是历史；当前候选不得复用 |
 
 ## 开发环境
 
@@ -220,8 +218,8 @@ pnpm run export:s7-execution-canary -- --authority-snapshot-manifest <snapshot-m
 pnpm run export:s7-execution-canary -- --authority-snapshot-manifest <snapshot-manifest.json> --mode policy_auto --store-id <store-id> --authority-id <authority-id> --mission-grant-id <grant-id> --batch-id <batch-id> --job-id <job-id> --stores-root <absolute-stores-root> --before-artifact <before.png> --after-artifact <after.png> --reload-artifact <reload.png> --out <repo>\output\codex-evidence\execution-canaries\<new-policy-auto-canary>.json
 # 正式发布状态只认 Mission 八门聚合结果
 pnpm run verify:s7-production-readiness -- --authority-db <absolute-live-appdata-amazon-ai-ops.db> --v15-final-readiness <v15-legacy-final-readiness.json> --package-launch-smoke <package-launch-smoke.json> --package-ui-manifest <package-ui-manifest.json> --package-security-evidence <package-security-evidence.json> --package-adversarial-node-env-evidence <package-adversarial-node-env.json> --s7-continuous-operation-evidence <continuous-operation.json> --manual-canary-evidence <manual-canary.json> --policy-auto-canary-evidence <policy-auto-canary.json> --authority-snapshot-manifest <snapshot-manifest.json> --out <mission-production-readiness.json>
-# 当前正式结果仍为 4/8；package UI、连续运行、人工 canary、policy-auto canary 未通过时不得把 bundle 称为最终交付
-# 以下 legacy-named export/safety 只有在通过的 schema v7 manifest 与当前 NON_READY 证据选择冻结后才运行；当前状态仍为 pending
+# 当前候选尚未生成正式八门结果；package UI、真实 DB、连续运行、人工 canary、policy-auto canary 未通过时不得把 bundle 称为最终交付
+# 以下 legacy-named export/safety 只有在通过的 schema v8 manifest 与当前证据选择冻结后才运行；当前状态仍为 pending
 # 如果最终验收为 `APP_NEEDS_WORK`，README 顶部 DELIVERY 行必须保持非 READY
 pnpm run export:v15-delivery-bundle -- --final-readiness <v15-legacy-final-readiness.json> --package-ui-manifest <package-ui-manifest.json> --package-security-evidence <package-security-evidence.json> --package-adversarial-node-env-evidence <package-adversarial-node-env.json> --workspace-ui-manifest <workspace-ui-manifest.json> --business-ui-smoke <current-business-ui-smoke.json> --full-test-evidence <full-vitest.json> --data-reconciliation <reconciliation.json> --data-reconciliation-md <matching-reconciliation.md> --release-dir apps\desktop\release --readme README.md --db <amazon-ai-ops.db> --skip-latest-extras true --out <non-ready-bundle>
 pnpm run verify:v15-non-ready-safety -- --final-readiness <v15-legacy-final-readiness.json> --bundle-manifest <non-ready-bundle>\delivery-bundle-manifest.json --package-launch-smoke <package-launch-smoke.json> --package-ui-manifest <package-ui-manifest.json> --package-security-evidence <package-security-evidence.json> --package-adversarial-node-env-evidence <package-adversarial-node-env.json> --readme README.md --db <amazon-ai-ops.db>

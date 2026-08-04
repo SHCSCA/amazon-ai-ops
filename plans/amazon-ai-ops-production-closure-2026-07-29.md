@@ -1,5 +1,7 @@
 # Amazon AI Ops 生产闭环计划（2026-07-29）
 
+> **状态更新（2026-08-04）**：本文件中的冻结 commit、包体哈希、schema v8 早期 run 和 authority selection 是 2026-07-29 的历史执行基线。当前包由源码 `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda` 构建；新的 installer/portable、内部 UI、business smoke、launch、安全与 adversarial 证据已经形成，但正式 package UI、真实 DB 迁移、逐店 8/8、两店七日、两条 Ads canary、八门聚合和匹配 bundle 仍未完成。当前交付事实以 `docs/MISSION_CONTROL_RELEASE_STATUS_2026-08-04.md` 和 `plans/mission-control-production-task-ledger.md` 顶部检查点为准；本计划不得作为当前 `APP_READY` 或执行授权。
+
 ## 目标
 
 以当前 Windows 包为冻结候选，在不伪造数据、不绕过人工登录与授权、不复用历史 READY 证据的前提下，完成：

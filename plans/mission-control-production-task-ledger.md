@@ -10,6 +10,13 @@
 - `DONE`：阶段验证通过且 commit 已推送。
 - `BLOCKED`：外部条件阻断且没有安全替代路径。
 
+## 2026-08-04 当前集成检查点
+
+- 当前包对应源码提交 `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda`，状态仍是 `APP_NEEDS_WORK` / internal NON_READY。installer `EDEC273C...B96A`、portable `58C6D501...DEDE4`、win-unpacked `67DC2A70...5E89`、app content `FC173A2E...E43`、main bundle `9B0C43D5...32A`。
+- 当前内部证据：`mission-control-ui-3f6fbec3\manifest.json` 完成 20 个 workspace captures + Store Gate + SHC001→SHC002 隔离 + 1200×900 执行布局，共 23 PNG，明确 `NO_FINAL_READINESS_CREDIT`；当前业务 UI smoke 5/5、package launch、package security 11/11、adversarial `NODE_ENV` 和 14 个 workspace/project typecheck 均通过。
+- 当前生产阻断：schema v8 正式 package UI visible operator handoff、真实 authority DB 可恢复升级、每店真实 8/8、两店连续 7 个美国业务日、人工 Ads canary、policy-auto Ads canary、当前八门聚合与匹配 bundle。旧 `7/8`、Mission `4/8`、schema v7 manifest、旧 authority snapshot 和旧 bundle 只保留为历史证据，不能计入当前候选。
+- 当前详细事实源为 `docs/MISSION_CONTROL_RELEASE_STATUS_2026-08-04.md`。下方 2026-07-22 至 2026-07-29 的阶段记录保留实现和审查轨迹；其中带“当前”的句子以本检查点为准。
+
 ## 阶段 0：基线与计划
 
 | ID | 状态 | Owner / 文件边界 | 交付物 | 阶段验证 / 提交边界 |
@@ -106,8 +113,8 @@
 | S7-01 | DONE | Renderer/性能 | S6 | 十工作区正式矩阵、设置 CRUD、5 万行、键盘、100%/125% package 证据合同已收口并推送；真实 package 截图归 S7-04 |
 | S7-02 | DONE | migration/backup/security | S6 | v7→v8 全链升级备份、只恢复到新文件、显式离线迁移、Profile 单店绑定/回滚/防篡改已完成并推送 |
 | S7-03 | BLOCKED | 连续运行验收 | S3..S6 | 只读验收器已完成；仍需两家真实店铺自然经过连续 7 个美国业务日并形成每天 8/8 或明确终态 BLOCKED 的外部证据 |
-| S7-04 | ACTIVE | package/evidence | S7-01..03 | 当前 installer/portable、launch、安全与 adversarial `NODE_ENV` 已通过；项目随包 Playwright Chromium 已解决运行时来源，最新 schema v7 100% 首轮因 15 分钟内未形成 ERP + Ads ready 而 fail-closed；需用户在线完成三轮 visible operator handoff，通过 manifest 与严格 NON_READY bundle 仍 pending |
-| S7-05 | DONE | 总负责人 | S7-04 | 8 门生产就绪聚合器与逐项审计已完成并失败关闭为 4/8；阶段提交 `b8075d38` 已推送，四项外部证据继续由 S7-03/S7-04 阻塞 |
+| S7-04 | ACTIVE | package/evidence | S7-01..03 | 当前 package source `3f6fbec3` 的 installer/portable、launch、安全与 adversarial `NODE_ENV` 已通过；项目随包 Playwright Chromium 已解决运行时来源，schema v8 正式 package UI 仍需用户完成 visible operator handoff；通过 manifest 与匹配 bundle pending |
+| S7-05 | REVIEW | 总负责人 | S7-04 | 8 门生产就绪聚合器与逐项审计代码已完成；当前候选尚未生成新的聚合结果，历史 4/8 不复用，等待 S7-03/S7-04 与两条真实 canary 的当前证据后重跑 |
 
 阶段 7A/7B 内部验证（2026-07-23）：第一版继续固定 Amazon US / USD；新增店铺级运行配置的创建、修改、可恢复归档与版本历史，并把目标 ACOS、分析窗口、最低建议置信度和店铺 AI 开关接入正式分析 Authority。10 个正式工作区的 package UI 基线已替换旧 8 页矩阵，要求 100%/125% 各一份、唯一 H1、无横向溢出、canonical 子视图 End/Home 键盘往返和三项只读 overlay 焦点证据；真实 package 截图仍由 S7-04 生成。5 万行验证使用生产同款 TanStack virtualizer，在首段/中段/末段分别只渲染 22/32/22 行，并验证稳定行键、Enter/Space 选择与粘性表头合同。数据库升级在任何待执行迁移前创建完整恢复点，校验 integrity/schema/行数/SHA；离线升级必须显式绑定绝对源路径与 SHA，禁止猜测 AppData 或原地覆盖。浏览器 Profile 迁移要求当前店铺、Provider、停止状态与身份凭证一致，拒绝 junction、歧义绑定、非空目标、哈希复用与篡改恢复。两店 7 美国业务日验收器要求每日 8 个下载检查点、8 类导入、8 份匹配对账且无 Profile/指纹/文件哈希串店；当前没有自然经过的 7 日真实证据，S7-03 保持 BLOCKED。集中验证 18/18 个聚焦测试文件、197/197 项通过；14/14 含 typecheck 的 workspace 通过；全量非浏览器回归 268/268 个文件、2713 项通过、2 项既有条件跳过；Main、Preload、Renderer 生产构建通过。迁移恢复 CLI 在没有显式离线 manifest 时按设计失败关闭，未触碰当前用户数据库；当前不得声明 READY。
 
@@ -125,7 +132,7 @@
 | S8-02 | DONE | Main scheduler/collection + Renderer | S3/S7 | 当前店铺/Profile 可见领星会话、美国业务日、采集窗口和持久幂等调度闭环；“当前店铺自动化”七状态与二次确认已接入 |
 | S8-03 | DONE | Store Capsule/evidence retention | S7 | 路径无关 StoreContext-only dry-run 摘要、全引用保护、只读派生 Capsule 和旧全局删除器禁用已完成 |
 | S8-04 | BLOCKED | 真实运行验收 | S6/S8-02 | 两店七个美国业务日、低风险人工 canary、策略自动 canary；依赖真实登录会话、当次对象与授权 |
-| S8-05 | REVIEW | 总负责人 | S8-01..04 | authority snapshot/continuous/canary 生产工具、WAL-aware currentness 与正式聚合合同已收口并组合测试 133/133；正式 Mission 状态仍为 4/8，schema v7 package UI pass manifest 与严格 NON_READY bundle pending，连续运行、人工 canary、policy-auto canary 仍依赖真实时间/会话/对象与授权 |
+| S8-05 | REVIEW | 总负责人 | S8-01..04 | authority snapshot/continuous/canary 生产工具、WAL-aware currentness 与正式聚合合同已收口；当前 package source `3f6fbec3` 尚无 schema v8 pass manifest、当前 authority lineage、连续运行、人工 canary、policy-auto canary 或新聚合结果，严格 bundle pending |
 
 阶段 8 固定边界：第一版只支持 Amazon 美国站和 USD；店铺数据、浏览器 Profile、任务、证据与运行配置相互隔离。AI 连接继续是系统级配置，店铺只持有启停和分析规则；采集调度不会自动切换店铺或复用别店 Profile。真实写入仍只允许人工批准或命中已启用策略的整批授权，`UNKNOWN` 继续停止并交由人工核对。
 
