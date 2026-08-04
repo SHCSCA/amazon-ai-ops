@@ -166,7 +166,7 @@ const WORKSPACE_SPECS: Record<CanonicalWorkspaceKey, CanonicalWorkspaceSpec> = {
     disabledOperations: [
       { label: '人工接管', capabilityId: 'execution.queue.takeover' },
       { label: '对账 UNKNOWN', capabilityId: 'execution.queue.reconcile-unknown' },
-      { label: '跳过', capabilityId: 'execution.queue.skip' },
+      { label: '取消未提交批次', capabilityId: 'execution.queue.cancel' },
       { label: '终止队列', capabilityId: 'execution.queue.kill-switch' },
     ],
   },
@@ -373,6 +373,7 @@ export function CanonicalWorkspace({
       >
         <ExecutionWorkspace
           blockedReason={blockedReason}
+          capabilities={capabilities}
           onInspectBoundary={() => setInspectorOpen(true)}
           previewEnabled={previewEnabled}
           storeContext={storeContext}

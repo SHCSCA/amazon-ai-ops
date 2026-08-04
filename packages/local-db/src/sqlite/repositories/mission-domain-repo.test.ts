@@ -550,6 +550,25 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       stopConditions: policyRules(contextOne.storeId).stopConditions,
       issuer: { type: 'policy' as const, actorId: 'policy-engine' },
     };
+    const initialRuntime = repository.getPolicyRuntime(contextOne);
+    const inactiveRuntime = repository.updatePolicyRuntime(contextOne, {
+      expectedRevision: initialRuntime.revision,
+      actorId: 'operator-one',
+      patch: { activePolicyVersionId: null },
+    });
+    expectRepositoryError(
+      () => repository.issueMissionGrant(contextOne, {
+        ...grantInput,
+        id: 'grant-human-inactive-policy',
+        issuer: { type: 'human', actorId: 'operator-one' },
+      }),
+      'STATE_CONFLICT',
+    );
+    repository.updatePolicyRuntime(contextOne, {
+      expectedRevision: inactiveRuntime.revision,
+      actorId: 'operator-one',
+      patch: { activePolicyVersionId: version.id },
+    });
     expectRepositoryError(
       () => repository.issueMissionGrant(contextOne, grantInput),
       'STATE_CONFLICT',
@@ -651,13 +670,15 @@ describe('MissionDomainRepository mission lineage and grants', () => {
       () => repository.issueMissionGrant(contextOne, retiredAttempt),
       'STATE_CONFLICT',
     );
-    const humanGrant = repository.issueMissionGrant(contextOne, {
-      ...retiredAttempt,
-      id: 'grant-human-retired-snapshot',
-      issuer: { type: 'human', actorId: 'operator-one' },
-    });
-    expect(humanGrant.issuer.type).toBe('human');
-    expect(repository.getMissionLineage(contextOne, mission.id).grants).toHaveLength(2);
+    expectRepositoryError(
+      () => repository.issueMissionGrant(contextOne, {
+        ...retiredAttempt,
+        id: 'grant-human-retired-snapshot',
+        issuer: { type: 'human', actorId: 'operator-one' },
+      }),
+      'STATE_CONFLICT',
+    );
+    expect(repository.getMissionLineage(contextOne, mission.id).grants).toHaveLength(1);
 
     const decisionFive = createApprovedDecision(repository, contextOne, mission, version, 5);
     const pausedMission = repository.transitionMission(contextOne, {

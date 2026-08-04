@@ -1148,22 +1148,17 @@ export class MissionDomainRepository {
       this.assertRevision(policyVersion.revision, input.policyRevision, 'Policy version');
       const issuedAt = this.timestamp();
       const approvedDecisions = this.requireApprovedDecisionsForGrant(context, mission, input, issuedAt);
-      if (input.issuer.type === 'policy' && policyVersion.status !== 'enabled') {
-        throw stateConflict('Policy-issued MissionGrant requires the Mission policy version to remain enabled.');
+      if (policyVersion.status !== 'enabled') {
+        throw stateConflict('MissionGrant issuance requires the Mission policy version to remain enabled.');
       }
-      if (input.issuer.type === 'human' && !['enabled', 'retired'].includes(policyVersion.status)) {
-        throw stateConflict('Human MissionGrant must bind an enabled or retired immutable Mission policy snapshot.');
-      }
-      if (input.issuer.type === 'policy') {
-        const runtime = this.getPolicyRuntime(context);
-        if (runtime.autonomyMode !== 'policy_auto'
-          || runtime.killSwitch
-          || runtime.circuitBreakerState !== 'closed'
-          || runtime.activePolicyVersionId !== policyVersion.id) {
-          throw stateConflict(
-            'Policy issuer is blocked by autonomy mode, kill switch, circuit breaker, or active policy mismatch.',
-          );
-        }
+      const runtime = this.getPolicyRuntime(context);
+      if (runtime.killSwitch
+        || runtime.circuitBreakerState !== 'closed'
+        || runtime.activePolicyVersionId !== policyVersion.id
+        || (input.issuer.type === 'policy' && runtime.autonomyMode !== 'policy_auto')) {
+        throw stateConflict(
+          'MissionGrant issuer is blocked by autonomy mode, kill switch, circuit breaker, or active policy mismatch.',
+        );
       }
       this.assertGrantWithinPolicy(input, policyVersion, issuedAt);
       this.assertAdEntities(context, input.allowedAdEntityIds);

@@ -359,6 +359,8 @@ describe('prototype-aligned canonical first screens', () => {
             ? 'decisions.recommendations.view'
             : view === 'experiments/ledger'
               ? 'experiments.experiment.view'
+              : view === 'execution/live'
+                ? 'execution.queue.view'
               : view === 'memory/timeline'
                 ? 'memory.timeline.view'
             : view === 'policy/rules'
@@ -398,7 +400,13 @@ describe('prototype-aligned canonical first screens', () => {
   it('keeps real execution disabled while allowing a clearly-labelled in-memory preview flow', () => {
     const markup = renderToStaticMarkup(
       <MissionControlWorkspaceView
-        capabilities={[capability('execution/live', 'view', 'PROTOTYPE_ONLY')]}
+        capabilities={[
+          capability('execution/live', 'view', 'PROTOTYPE_ONLY', 'execution.queue.view'),
+          capability('execution/live', 'start', 'BLOCKED', 'execution.queue.start'),
+          capability('execution/live', 'takeover', 'BLOCKED', 'execution.queue.takeover'),
+          capability('execution/live', 'cancel', 'BLOCKED', 'execution.queue.cancel'),
+          capability('execution/live', 'reconcile-unknown', 'BLOCKED', 'execution.queue.reconcile-unknown'),
+        ]}
         intent={{ workspace: 'execution', subview: 'live' }}
         onNavigate={vi.fn()}
         previewMode
@@ -411,13 +419,14 @@ describe('prototype-aligned canonical first screens', () => {
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?检查 \/ 接管浏览器<\/button>/);
     expect(markup).toContain('UNKNOWN');
     expect(markup).toContain('人工对账');
+    expect(markup).toContain('取消未提交批次');
     expect(markup).not.toContain('执行成功');
   });
 
   it('does not expose preview example facts when the production view is blocked', () => {
     const markup = renderToStaticMarkup(
       <MissionControlWorkspaceView
-        capabilities={[capability('execution/live', 'view', 'BLOCKED')]}
+        capabilities={[capability('execution/live', 'view', 'BLOCKED', 'execution.queue.view')]}
         intent={{ workspace: 'execution', subview: 'live' }}
         onNavigate={vi.fn()}
         previewMode={false}
@@ -425,7 +434,7 @@ describe('prototype-aligned canonical first screens', () => {
       />,
     );
     expect(markup).toContain('实时执行 Authority 未就绪');
-    expect(markup).toContain('不会回退到预览数据');
+    expect(markup).toContain('Renderer 不会调用 Execution API');
     expect(markup).not.toContain('USD 1.20');
     expect(markup).not.toContain('smart lock bedroom');
   });

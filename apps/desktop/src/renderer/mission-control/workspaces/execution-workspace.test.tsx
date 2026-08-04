@@ -9,13 +9,16 @@ import type {
   MissionAnalysisProjection,
   MissionGrantEventRecord,
   MissionGrantRecord,
+  MissionControlCapabilityProjection,
   MissionRecord,
   StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
 import { createPreviewExecutionAuthorityApi } from './execution-authority-window-api';
 import {
   buildExecutableGrantSelections,
+  EXECUTION_CAPABILITY_IDS,
   ExecutionWorkspace,
+  executionCapabilityReady,
   preferredExecutionBatchId,
   selectableExecutionMissions,
 } from './execution-workspace';
@@ -29,6 +32,22 @@ const context = {
   businessDate: '2026-07-23',
   sessionGeneration: 7,
 } as StoreContextEnvelope;
+
+function executionCapability(
+  capabilityId: string,
+  action: MissionControlCapabilityProjection['action'],
+  state: MissionControlCapabilityProjection['state'],
+): MissionControlCapabilityProjection {
+  return { capabilityId, workspace: 'execution', view: 'execution/live', action, state, detail: `${capabilityId} ${state}` };
+}
+
+const previewExecutionCapabilities = [
+  executionCapability(EXECUTION_CAPABILITY_IDS.view, 'view', 'PROTOTYPE_ONLY'),
+  executionCapability(EXECUTION_CAPABILITY_IDS.start, 'start', 'PROTOTYPE_ONLY'),
+  executionCapability(EXECUTION_CAPABILITY_IDS.takeover, 'takeover', 'PROTOTYPE_ONLY'),
+  executionCapability(EXECUTION_CAPABILITY_IDS.cancel, 'cancel', 'PROTOTYPE_ONLY'),
+  executionCapability(EXECUTION_CAPABILITY_IDS.reconcileUnknown, 'reconcile-unknown', 'BLOCKED'),
+] as const;
 
 function authorityFixture() {
   const mission: MissionRecord = {
@@ -156,6 +175,7 @@ describe('execution workspace', () => {
     const markup = renderToStaticMarkup(<ExecutionWorkspace
       apiOverride={createPreviewExecutionAuthorityApi()}
       blockedReason="仅开发预览"
+      capabilities={previewExecutionCapabilities}
       previewEnabled
       storeContext={context}
     />);
@@ -178,11 +198,13 @@ describe('execution workspace', () => {
     const liveMarkup = renderToStaticMarkup(<ExecutionWorkspace
       apiOverride={createPreviewExecutionAuthorityApi()}
       blockedReason="仅开发预览"
+      capabilities={previewExecutionCapabilities}
       previewEnabled
       storeContext={context}
     />);
     const blockedMarkup = renderToStaticMarkup(<ExecutionWorkspace
       blockedReason="Execution Main Authority 未接入"
+      capabilities={[]}
       previewEnabled={false}
       storeContext={context}
     />);
@@ -200,6 +222,7 @@ describe('execution workspace', () => {
   it('fails closed when the production preload API is absent', () => {
     const markup = renderToStaticMarkup(<ExecutionWorkspace
       blockedReason="Execution Main Authority 未接入"
+      capabilities={[executionCapability(EXECUTION_CAPABILITY_IDS.view, 'view', 'PRODUCTION_NATIVE')]}
       previewEnabled={false}
       storeContext={context}
     />);
@@ -208,13 +231,35 @@ describe('execution workspace', () => {
     expect(markup).not.toContain('preview-grant-human');
   });
 
-  it('exposes UNKNOWN only as takeover and reconciliation, never retry', () => {
+  it('keeps UNKNOWN reconciliation explicitly blocked until a real Main authority exists', () => {
     const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
     expect(source).toContain('UNKNOWN · 队列已停止');
     expect(source).toContain('禁止自动重试');
     expect(source).toContain('人工接管');
-    expect(source).toContain('进入对账');
+    expect(source).toContain('UNKNOWN 对账 BLOCKED');
+    expect(source).toContain('const reconciliationAuthorityReady = false');
+    expect(source).not.toContain('setReconciliation');
     expect(source).not.toMatch(/重试(?:执行|队列|UNKNOWN)/);
+  });
+
+  it('matches exact action capabilities and guards every mutating API entry point', () => {
+    expect(executionCapabilityReady(previewExecutionCapabilities, EXECUTION_CAPABILITY_IDS.cancel, true)).toBe(true);
+    expect(executionCapabilityReady(previewExecutionCapabilities, EXECUTION_CAPABILITY_IDS.cancel, false)).toBe(false);
+    expect(executionCapabilityReady(previewExecutionCapabilities, 'execution.queue.kill-switch', true)).toBe(false);
+
+    const source = readFileSync(new URL('./execution-workspace.tsx', import.meta.url), 'utf8');
+    expect(source.indexOf('if (!startCapabilityReady)', source.indexOf('const resolveIdentity')))
+      .toBeLessThan(source.indexOf('api.resolveIdentity', source.indexOf('const resolveIdentity')));
+    expect(source.indexOf('if (!startCapabilityReady)', source.indexOf('const createBatch')))
+      .toBeLessThan(source.indexOf('api.createBatch', source.indexOf('const createBatch')));
+    expect(source.indexOf('if (!takeoverCapabilityReady)', source.indexOf('const inspectBrowser')))
+      .toBeLessThan(source.indexOf('api.takeOverVisibleBrowser', source.indexOf('const inspectBrowser')));
+    expect(source.indexOf('if (!startCapabilityReady)', source.indexOf('const startBatch')))
+      .toBeLessThan(source.indexOf('api.startBatch', source.indexOf('const startBatch')));
+    expect(source.indexOf('if (!cancelCapabilityReady)', source.indexOf('const cancelBatch')))
+      .toBeLessThan(source.indexOf('api.cancelBatch', source.indexOf('const cancelBatch')));
+    expect(source).toContain('取消未提交批次');
+    expect(source).not.toContain('跳过此对象');
   });
 
   it('uses readable authority selectors instead of typed opaque production ids', () => {

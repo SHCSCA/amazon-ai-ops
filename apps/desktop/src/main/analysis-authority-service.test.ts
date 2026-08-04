@@ -68,6 +68,7 @@ function createHarness(options: {
   ) => CapturedAnalysisGenerationAuthority;
   onAutomaticGrantIssued?: AnalysisAuthorityServiceOptions['onAutomaticGrantIssued'];
   batchStoreName?: string;
+  recommendationEvidencePatch?: Partial<ActionRecommendation['evidence']>;
 } = {}): Harness {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-analysis-service-'));
   tempDirs.push(directory);
@@ -263,6 +264,7 @@ function createHarness(options: {
               decisionSource: 'rule',
               aiFallbackReason: 'provider unavailable',
             } : {}),
+            ...options.recommendationEvidencePatch,
           },
         });
         recommendationIds.push(recommendationRepository.insertForStore(context.storeId, rec));
@@ -579,6 +581,38 @@ describe('AnalysisAuthorityService', () => {
     expect(authorized.grant?.id).toBe(result.automaticAuthorization?.grant?.id);
     const decision = harness.missionRepository.getDecision(harness.context, authorized.decisionIds[0]);
     expect(decision?.status).toBe('approved');
+  });
+
+  it('does not issue or dispatch a policy grant for legacy metadata without an explicit aligned rule-AI decision', async () => {
+    const onAutomaticGrantIssued = vi.fn();
+    const harness = createHarness({
+      autonomyMode: 'policy_auto',
+      onAutomaticGrantIssued,
+      recommendationEvidencePatch: {
+        decisionSource: undefined,
+        decisionAgreement: undefined,
+        decisionRequiresReview: undefined,
+        aiStrategySource: 'ai',
+        explanationSource: 'ai',
+      },
+    });
+
+    const result = await runRequest(harness);
+    expect(result.proposals[0]).toMatchObject({
+      source: 'rule',
+      authorization: {
+        policy: {
+          eligible: false,
+          blockers: expect.arrayContaining(['POLICY_REQUIRES_RULE_AI_ALIGNMENT']),
+        },
+      },
+    });
+    expect(result.automaticAuthorization).toMatchObject({
+      authorized: false,
+      mode: 'policy_auto',
+    });
+    expect(onAutomaticGrantIssued).not.toHaveBeenCalled();
+    expect(harness.missionRepository.listMissionGrants(harness.context, harness.missionId)).toEqual([]);
   });
 
   it('notifies execution exactly once for a policy-auto grant and never for manual authorization', async () => {

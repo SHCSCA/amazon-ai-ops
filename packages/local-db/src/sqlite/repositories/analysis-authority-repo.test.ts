@@ -364,6 +364,20 @@ function registerAuthority(harness: Harness, evidencePackageId: string) {
   });
 }
 
+function enablePolicyAuto(harness: Harness): void {
+  const runtime = harness.missionRepository.getPolicyRuntime(harness.context);
+  harness.missionRepository.updatePolicyRuntime(harness.context, {
+    expectedRevision: runtime.revision,
+    actorId: 'operator',
+    patch: {
+      autonomyMode: 'policy_auto',
+      activePolicyVersionId: harness.policyVersionId,
+      killSwitch: false,
+      circuitBreakerState: 'closed',
+    },
+  });
+}
+
 describe('AnalysisAuthorityRepository', () => {
   it('seals a path-free exact 8/8 evidence package and remains append-only', () => {
     const harness = createHarness();
@@ -517,6 +531,88 @@ describe('AnalysisAuthorityRepository', () => {
       decisionId: decision.id,
     });
     expect(link).toMatchObject({ proposalId: proposal.id, decisionId: decision.id });
+  });
+
+  it('only marks an explicit aligned rule-AI decision without review as policy eligible', () => {
+    const harness = createHarness();
+    enablePolicyAuto(harness);
+    const evidence = seal(harness);
+    const authority = registerAuthority(harness, evidence.id);
+    const cases = [
+      {
+        name: 'explicit aligned rule-AI decision',
+        patch: {},
+        source: 'rule_ai',
+        eligible: true,
+        blockers: [],
+      },
+      {
+        name: 'legacy dual-AI metadata without an explicit decision',
+        patch: {
+          decisionSource: undefined,
+          decisionAgreement: undefined,
+          decisionRequiresReview: undefined,
+          aiStrategySource: 'ai',
+          explanationSource: 'ai',
+        },
+        source: 'rule',
+        eligible: false,
+        blockers: ['POLICY_REQUIRES_RULE_AI_ALIGNMENT'],
+      },
+      {
+        name: 'rule-AI decision without an agreement',
+        patch: { decisionAgreement: undefined },
+        source: 'rule',
+        eligible: false,
+        blockers: ['POLICY_REQUIRES_RULE_AI_ALIGNMENT'],
+      },
+      {
+        name: 'conflicting rule-AI decision metadata',
+        patch: { decisionAgreement: 'conflict' },
+        source: 'rule',
+        eligible: false,
+        blockers: ['AI_RULE_CONFLICT', 'POLICY_REQUIRES_RULE_AI_ALIGNMENT'],
+      },
+      {
+        name: 'aligned decision that still requires review',
+        patch: { decisionRequiresReview: true },
+        source: 'rule',
+        eligible: false,
+        blockers: ['REVIEW_REQUIRED', 'POLICY_REQUIRES_RULE_AI_ALIGNMENT'],
+      },
+    ] as const;
+
+    const results = cases.map((testCase, index) => {
+      const recommendationId = insertRecommendation(harness, testCase.patch);
+      const actionBatch = harness.repository.createActionBatch(harness.context, {
+        id: `analysis-source-batch-${index + 1}`,
+        missionId: harness.missionId,
+        evidencePackageId: evidence.id,
+        expectedMissionRevision: 1,
+      });
+      const proposal = harness.repository.createProposalSnapshot(harness.context, {
+        id: `analysis-source-proposal-${index + 1}`,
+        missionId: harness.missionId,
+        evidencePackageId: evidence.id,
+        actionBatchId: actionBatch.id,
+        legacyRecommendationId: recommendationId,
+        adEntityAuthorityId: authority.authorityId,
+        validUntil: '2026-07-23T12:00:00.000Z',
+      });
+      return {
+        name: testCase.name,
+        source: proposal.source,
+        eligible: proposal.authorization.policy.eligible,
+        blockers: proposal.authorization.policy.blockers,
+      };
+    });
+
+    expect(results).toEqual(cases.map((testCase) => ({
+      name: testCase.name,
+      source: testCase.source,
+      eligible: testCase.eligible,
+      blockers: testCase.blockers,
+    })));
   });
 
   it('never makes rule fallback or unverified display identity grant-eligible', () => {

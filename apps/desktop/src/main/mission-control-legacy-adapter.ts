@@ -123,6 +123,7 @@ export const MISSION_CONTROL_CAPABILITIES: readonly MissionControlCapabilityProj
   serviceBlocked('experiments.experiment.delete', 'experiments', 'experiments/ledger', 'delete', '实验删除服务尚未接入 Main。'),
   serviceBlocked('execution.queue.view', 'execution', 'execution/live', 'view', '真实执行队列尚未接入 Main。'),
   serviceBlocked('execution.queue.start', 'execution', 'execution/live', 'start', '真实执行启动服务尚未接入 Main。'),
+  serviceBlocked('execution.queue.cancel', 'execution', 'execution/live', 'cancel', 'intent 前整批取消服务尚未接入 Main。'),
   serviceBlocked('execution.queue.takeover', 'execution', 'execution/live', 'takeover', '执行接管服务尚未接入 Main。'),
   serviceBlocked('execution.queue.reconcile-unknown', 'execution', 'execution/live', 'reconcile-unknown', 'UNKNOWN 对账服务尚未接入 Main。'),
   serviceBlocked('execution.queue.skip', 'execution', 'execution/live', 'skip', '执行跳过服务尚未接入 Main。'),
@@ -219,6 +220,7 @@ export function createMissionControlLegacyAdapter(
         if (options.executionAuthorityReady && [
           'execution.queue.view',
           'execution.queue.start',
+          'execution.queue.cancel',
           'execution.queue.takeover',
           'execution.evidence.view',
         ].includes(capability.capabilityId)) {

@@ -1188,6 +1188,8 @@ describe('Mission Control development preview bridge', () => {
       .toBe('decisions/decided');
     expect(response.data.capabilities.find((row: any) => row.capabilityId === 'decisions.grants.revoke')?.view)
       .toBe('decisions/decided');
+    expect(response.data.capabilities.find((row: any) => row.capabilityId === 'execution.queue.cancel'))
+      .toEqual(expect.objectContaining({ view: 'execution/live', action: 'cancel', state: 'PROTOTYPE_ONLY' }));
     const serialized = JSON.stringify(response);
     expect(serialized).not.toMatch(/password|cookie|token|apiKey|filePath|profilePath/i);
     expect(serialized).not.toMatch(/[A-Za-z]:[\\/]/);

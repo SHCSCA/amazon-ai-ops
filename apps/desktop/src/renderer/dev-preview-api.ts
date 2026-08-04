@@ -341,6 +341,7 @@ const PREVIEW_MISSION_CAPABILITY_SPECS: readonly PreviewCapabilitySpec[] = [
   ['experiments.experiment.delete', 'experiments', 'experiments/ledger', 'delete'],
   ['execution.queue.view', 'execution', 'execution/live', 'view'],
   ['execution.queue.start', 'execution', 'execution/live', 'start'],
+  ['execution.queue.cancel', 'execution', 'execution/live', 'cancel'],
   ['execution.queue.takeover', 'execution', 'execution/live', 'takeover'],
   ['execution.queue.reconcile-unknown', 'execution', 'execution/live', 'reconcile-unknown'],
   ['execution.queue.skip', 'execution', 'execution/live', 'skip'],

@@ -1188,9 +1188,12 @@ function proposalSource(evidence: Record<string, unknown>): AnalysisProposalSour
     return 'rule_fallback';
   }
   const decisionSource = String(evidence.decisionSource ?? '');
-  if (decisionSource === 'rule_ai') return 'rule_ai';
   if (decisionSource === 'ai') return 'ai';
-  if (evidence.aiStrategySource === 'ai' && evidence.explanationSource === 'ai') return 'rule_ai';
+  if (decisionSource === 'rule_ai'
+    && evidence.decisionAgreement === 'aligned'
+    && evidence.decisionRequiresReview !== true) {
+    return 'rule_ai';
+  }
   return 'rule';
 }
 

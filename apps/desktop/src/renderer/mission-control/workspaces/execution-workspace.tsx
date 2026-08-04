@@ -12,7 +12,6 @@ import {
   Pause,
   Play,
   ShieldWarning,
-  SkipForward,
   StopCircle,
   Warning,
 } from '@phosphor-icons/react';
@@ -28,6 +27,7 @@ import {
   type MissionGrantEventRecord,
   type MissionGrantRecord,
   type MissionRecord,
+  type MissionControlCapabilityProjection,
   type StoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
 import { WorkspaceState } from '../../components/workspace';
@@ -61,11 +61,31 @@ export interface ExecutionSelectionAuthorityApi {
 export type ExecutionWorkspaceProps = {
   apiOverride?: ExecutionAuthorityRendererApi;
   blockedReason: string;
+  capabilities?: readonly MissionControlCapabilityProjection[];
   onInspectBoundary?: () => void;
   previewEnabled: boolean;
   selectionApiOverride?: ExecutionSelectionAuthorityApi;
   storeContext: StoreContextEnvelope | null;
 };
+
+export const EXECUTION_CAPABILITY_IDS = {
+  view: 'execution.queue.view',
+  start: 'execution.queue.start',
+  takeover: 'execution.queue.takeover',
+  cancel: 'execution.queue.cancel',
+  reconcileUnknown: 'execution.queue.reconcile-unknown',
+} as const;
+
+export function executionCapabilityReady(
+  capabilities: readonly MissionControlCapabilityProjection[],
+  capabilityId: string,
+  previewEnabled: boolean,
+): boolean {
+  const expectedState = previewEnabled ? 'PROTOTYPE_ONLY' : 'PRODUCTION_NATIVE';
+  return capabilities.some((capability) => (
+    capability.capabilityId === capabilityId && capability.state === expectedState
+  ));
+}
 
 export interface ExecutionGrantSelection {
   grant: MissionGrantRecord;
@@ -346,21 +366,32 @@ function PreviewBanner({ onInspectBoundary }: { onInspectBoundary?: () => void }
 export function ExecutionWorkspace({
   apiOverride,
   blockedReason,
+  capabilities = [],
   onInspectBoundary,
   previewEnabled,
   selectionApiOverride,
   storeContext,
 }: ExecutionWorkspaceProps) {
+  const viewCapabilityReady = executionCapabilityReady(capabilities, EXECUTION_CAPABILITY_IDS.view, previewEnabled);
+  const startCapabilityReady = executionCapabilityReady(capabilities, EXECUTION_CAPABILITY_IDS.start, previewEnabled);
+  const takeoverCapabilityReady = executionCapabilityReady(capabilities, EXECUTION_CAPABILITY_IDS.takeover, previewEnabled);
+  const cancelCapabilityReady = executionCapabilityReady(capabilities, EXECUTION_CAPABILITY_IDS.cancel, previewEnabled);
+  const reconcileCapabilityProjected = executionCapabilityReady(capabilities, EXECUTION_CAPABILITY_IDS.reconcileUnknown, previewEnabled);
+  // No Main reconciliation command exists yet. A projected row alone must never create local fake authority.
+  const reconciliationAuthorityReady = false;
+  const canReconcileUnknown = reconcileCapabilityProjected && reconciliationAuthorityReady;
   const previewApiRef = useRef<ExecutionAuthorityRendererApi>();
   if (previewEnabled && !previewApiRef.current) previewApiRef.current = createPreviewExecutionAuthorityApi();
-  const api = useMemo(
+  const authorityApi = useMemo(
     () => apiOverride ?? (previewEnabled ? previewApiRef.current ?? null : readExecutionAuthorityWindowApi()),
     [apiOverride, previewEnabled],
   );
-  const selectionApi = useMemo(
+  const api = viewCapabilityReady ? authorityApi : null;
+  const selectionAuthorityApi = useMemo(
     () => selectionApiOverride ?? (previewEnabled ? null : readExecutionSelectionAuthorityApi()),
     [previewEnabled, selectionApiOverride],
   );
+  const selectionApi = viewCapabilityReady ? selectionAuthorityApi : null;
   const authorityKey = storeContext ? missionControlContextKey(storeContext) : 'missing';
   const authorityKeyRef = useRef(authorityKey);
   const requestSequence = useRef(0);
@@ -379,12 +410,13 @@ export function ExecutionWorkspace({
   const [resolvedEntityIds, setResolvedEntityIds] = useState<Set<string>>(() => new Set());
   const [browserSession, setBrowserSession] = useState<BrowserSessionState>(previewEnabled ? 'ready' : 'unchecked');
   const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(() => !api && !previewEnabled
-    ? 'Execution production window API 未接入；Renderer 不会回退到预览数据。'
-    : null);
+  const [error, setError] = useState<string | null>(() => !viewCapabilityReady
+    ? `${EXECUTION_CAPABILITY_IDS.view} BLOCKED；Renderer 不会调用 Execution API。`
+    : !api && !previewEnabled
+      ? 'Execution production window API 未接入；Renderer 不会回退到预览数据。'
+      : null);
   const [feedback, setFeedback] = useState('');
   const [progressEvents, setProgressEvents] = useState<AdExecutionProgressEvent[]>([]);
-  const [reconciliation, setReconciliation] = useState(false);
   const [issuerByGrantId, setIssuerByGrantId] = useState<Record<string, 'human' | 'policy'>>({});
   const [authorityOpen, setAuthorityOpen] = useState(false);
   const [browserTab, setBrowserTab] = useState<ExecutionBrowserTab>('ads');
@@ -418,7 +450,9 @@ export function ExecutionWorkspace({
       setBatches([]);
       setSelectedId('');
       setPhase('blocked');
-      setError('Execution production window API 未接入；Renderer 不会回退到预览数据。');
+      setError(!viewCapabilityReady
+        ? `${EXECUTION_CAPABILITY_IDS.view} BLOCKED；Renderer 不会调用 Execution API。`
+        : 'Execution production window API 未接入；Renderer 不会回退到预览数据。');
       return;
     }
     setPhase('loading');
@@ -466,7 +500,6 @@ export function ExecutionWorkspace({
     setBrowserSession(previewEnabled ? 'ready' : 'unchecked');
     setProgressEvents([]);
     setIssuerByGrantId({});
-    setReconciliation(false);
     setAuthorityOpen(false);
     setBrowserTab('ads');
     setDetailTab('action');
@@ -594,6 +627,7 @@ export function ExecutionWorkspace({
   };
 
   const resolveIdentity = () => mutate('identity', async () => {
+    if (!startCapabilityReady) throw new Error(`${EXECUTION_CAPABILITY_IDS.start} BLOCKED；身份解析不会调用 Execution API。`);
     if (!api || !storeContext || !grantId.trim() || !adEntityId.trim()) {
       throw new Error('请选择当前 Mission 的有效 Grant 与已决定广告对象。');
     }
@@ -614,6 +648,7 @@ export function ExecutionWorkspace({
   });
 
   const createBatch = () => mutate('create', async () => {
+    if (!startCapabilityReady) throw new Error(`${EXECUTION_CAPABILITY_IDS.start} BLOCKED；不会创建执行批次。`);
     if (!api || !storeContext || !grantId.trim()) throw new Error('请选择已有 MissionGrant。');
     if (!allSelectedEntitiesResolved) throw new Error('请先解析该 Grant 完整批次中每个对象的当前 Ads 页身份。');
     const result = await api.createBatch({ context: storeContext, grantId: grantId.trim() });
@@ -628,6 +663,7 @@ export function ExecutionWorkspace({
   });
 
   const inspectBrowser = () => mutate('takeover', async () => {
+    if (!takeoverCapabilityReady) throw new Error(`${EXECUTION_CAPABILITY_IDS.takeover} BLOCKED；不会调用浏览器接管 API。`);
     if (!api || !storeContext || !selected) throw new Error('请先选择一个执行批次。');
     await api.takeOverVisibleBrowser({ context: storeContext, batchId: selected.batch.id });
     setBrowserSession('ready');
@@ -635,6 +671,7 @@ export function ExecutionWorkspace({
   });
 
   const startBatch = () => mutate('start', async () => {
+    if (!startCapabilityReady) throw new Error(`${EXECUTION_CAPABILITY_IDS.start} BLOCKED；不会启动执行批次。`);
     if (!api || !storeContext || !selected) throw new Error('请先选择一个执行批次。');
     if (!hasCanonicalIdentity(selected) || browserSession !== 'ready') {
       throw new Error('稳定关键词身份与当前可见浏览器会话必须同时就绪。');
@@ -647,6 +684,7 @@ export function ExecutionWorkspace({
   });
 
   const cancelBatch = () => mutate('cancel', async () => {
+    if (!cancelCapabilityReady) throw new Error(`${EXECUTION_CAPABILITY_IDS.cancel} BLOCKED；不会取消执行批次。`);
     if (!api || !storeContext || !selected) throw new Error('请先选择一个执行批次。');
     if (!confirmStop()) return;
     const projection = await api.cancelBatch({
@@ -655,15 +693,16 @@ export function ExecutionWorkspace({
       reason: 'operator_confirmed_stop_before_intent',
     });
     replaceProjection(projection);
-    setFeedback('队列已在 intent 前终止；审计记录继续保留。');
+    setFeedback('未提交批次已在 intent 前整体取消；审计记录继续保留。');
   });
 
   const selectedUnknown = selected?.batch.status === 'unknown'
     || selected?.jobs.some((job) => job.status === 'unknown');
   const selectedIssuer = selected ? grantIssuer(selected, issuerByGrantId[selected.batch.grantId]) : null;
-  const canCancel = Boolean(selected)
+  const canTakeover = takeoverCapabilityReady && Boolean(selected);
+  const canCancel = cancelCapabilityReady && Boolean(selected)
     && selected!.jobs.every((job) => ['queued', 'preflight'].includes(job.status));
-  const canStart = Boolean(selected)
+  const canStart = startCapabilityReady && Boolean(selected)
     && !running
     && selectedIssuer !== '策略签发'
     && !selectedUnknown
@@ -671,7 +710,7 @@ export function ExecutionWorkspace({
     && browserSession === 'ready'
     && selected!.jobs.some((job) => ['queued', 'preflight'].includes(job.status));
 
-  if (phase === 'blocked' && !previewEnabled) {
+  if (!viewCapabilityReady || (phase === 'blocked' && !previewEnabled)) {
     return (
       <div className="execution-workspace" data-canonical-surface="execution" data-capability-state="BLOCKED">
         <h1 className="execution-page-title">实时执行</h1>
@@ -738,7 +777,6 @@ export function ExecutionWorkspace({
           ? 'PRODUCTION_NATIVE'
           : 'BLOCKED'}
       data-store-actions-locked={running || undefined}
-      data-reconciliation-active={reconciliation || undefined}
       data-mutations-disabled={previewEnabled || undefined}
     >
       <h1 className="execution-page-title">实时执行</h1>
@@ -750,8 +788,8 @@ export function ExecutionWorkspace({
         </div>
         <div className="execution-mission-actions" role="group" aria-label="Mission 执行控制">
           <button aria-pressed={authorityOpen} className="execution-button execution-button--secondary" onClick={() => setAuthorityOpen((value) => !value)} type="button"><IdentificationCard size={16} />执行来源</button>
-          <button className="execution-button execution-button--secondary" disabled={!selected || Boolean(pending)} onClick={inspectBrowser} type="button"><Hand size={16} />{pending === 'takeover' ? '置前中…' : '接管浏览器'}</button>
-          <button className="execution-button execution-button--secondary" disabled={!canCancel || Boolean(pending)} onClick={cancelBatch} type="button"><SkipForward size={16} />跳过此对象</button>
+          <button className="execution-button execution-button--secondary" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Hand size={16} />{pending === 'takeover' ? '置前中…' : '接管浏览器'}</button>
+          <button className="execution-button execution-button--secondary" disabled={!canCancel || Boolean(pending)} onClick={cancelBatch} type="button"><StopCircle size={16} />取消未提交批次</button>
           <button aria-label="更多执行选项" className="execution-icon-button" onClick={() => setAuthorityOpen(true)} type="button"><DotsThree size={20} weight="bold" /></button>
         </div>
       </header>
@@ -837,8 +875,8 @@ export function ExecutionWorkspace({
               </select>
             )}
           </label>
-          <button className="execution-button execution-button--secondary" disabled={running || Boolean(pending) || !grantId || !adEntityId || resolvedEntityIds.has(adEntityId)} onClick={resolveIdentity} type="button"><IdentificationCard size={16} />{pending === 'identity' ? '解析中…' : resolvedEntityIds.has(adEntityId) ? '当前对象身份已解析' : '解析当前 Ads 页身份'}</button>
-          <button className="execution-button execution-button--primary" disabled={running || Boolean(pending) || !allSelectedEntitiesResolved} onClick={createBatch} type="button">{pending === 'create' ? '建队列中…' : '从完整 Grant 建队列'}</button>
+          <button className="execution-button execution-button--secondary" disabled={!startCapabilityReady || running || Boolean(pending) || !grantId || !adEntityId || resolvedEntityIds.has(adEntityId)} onClick={resolveIdentity} type="button"><IdentificationCard size={16} />{pending === 'identity' ? '解析中…' : resolvedEntityIds.has(adEntityId) ? '当前对象身份已解析' : '解析当前 Ads 页身份'}</button>
+          <button className="execution-button execution-button--primary" disabled={!startCapabilityReady || running || Boolean(pending) || !allSelectedEntitiesResolved} onClick={createBatch} type="button">{pending === 'create' ? '建队列中…' : '从完整 Grant 建队列'}</button>
           <div className="execution-selection-ids" aria-label="Authority 只读标识">
             <span>Mission <code>{selectedMissionId || '—'}</code></span>
             <span>Grant <code>{grantId || '—'}</code></span>
@@ -883,7 +921,7 @@ export function ExecutionWorkspace({
             <header><div><span>EXECUTION QUEUE</span><strong>串行批次</strong></div><b>{batches.length}</b></header>
             <div className="execution-queue__list" role="listbox" aria-label="选择执行批次">
               {batches.map((projection) => (
-                <button aria-selected={projection.batch.id === selectedId} data-status={projection.batch.status} key={projection.batch.id} onClick={() => { setSelectedId(projection.batch.id); setReconciliation(false); }} role="option" type="button">
+                <button aria-selected={projection.batch.id === selectedId} data-status={projection.batch.status} key={projection.batch.id} onClick={() => setSelectedId(projection.batch.id)} role="option" type="button">
                   <span><b>{shortId(projection.batch.id)}</b><em>{STATUS_LABELS[projection.batch.status]}</em></span>
                   <small>{projection.jobs.length} 个动作 · {grantIssuer(projection, issuerByGrantId[projection.batch.grantId])}</small>
                 </button>
@@ -901,14 +939,14 @@ export function ExecutionWorkspace({
               <div className="execution-browser-header-actions"><b data-session={browserSession}>{browserSession === 'ready' ? '会话可用' : browserSession === 'resolving' ? '身份解析中' : browserSession === 'blocked' ? '会话阻断' : '待检查'}</b><button aria-label="刷新当前执行投影" onClick={() => void load(true)} type="button"><ArrowClockwise size={15} /></button></div>
             </header>
             <div className="execution-browser-tabs" role="tablist" aria-label="领星页面标签">
-              {([{ id: 'home', label: '首页' }, { id: 'ads', label: '广告管理' }, { id: 'search', label: '搜索词报告' }] as const).map((tab) => <button aria-selected={browserTab === tab.id} key={tab.id} onClick={() => setBrowserTab(tab.id)} role="tab" type="button">{tab.label}</button>)}
-              <button aria-label="新建领星标签" className="execution-browser-new-tab" disabled={previewEnabled} type="button">＋</button>
+              {([{ id: 'home', label: '首页' }, { id: 'ads', label: '广告管理' }, { id: 'search', label: '搜索词报告' }] as const).map((tab) => <button aria-selected={browserTab === tab.id} disabled={!previewEnabled} key={tab.id} onClick={() => setBrowserTab(tab.id)} role="tab" type="button">{tab.label}</button>)}
+              <button aria-label="新建领星标签（未接入）" className="execution-browser-new-tab" disabled type="button">＋</button>
             </div>
             <div className="execution-browser-chrome"><i /><i /><i /><span><ShieldWarning size={13} />{previewEnabled ? 'preview://visible-ads-session · 不会访问真实页面' : 'Main 管理的当前店铺可见 Ads 页面 · URL/路径不暴露给 Renderer'}</span></div>
 
             {browserTab === 'ads' ? <div className="execution-browser-workbench" role="tabpanel" aria-label="广告管理">
               <nav aria-label="领星广告管理导航">
-                {['概览', '广告活动', '广告组', '关键词', '搜索词报告', '商品投放', '否定关键词', '广告设置'].map((item) => <button aria-current={item === '关键词' ? 'page' : undefined} key={item} type="button">{item}</button>)}
+                {['概览', '广告活动', '广告组', '关键词', '搜索词报告', '商品投放', '否定关键词', '广告设置'].map((item) => <button aria-current={item === '关键词' ? 'page' : undefined} disabled key={item} type="button">{item}</button>)}
               </nav>
               <div className="execution-browser-table-stage">
                 <header><div><strong>关键词</strong><span>当前表格是 Main Authority 的受控动作投影。</span></div></header>
@@ -929,7 +967,7 @@ export function ExecutionWorkspace({
                     </tbody>
                   </table>
                 </div>
-                <footer>共 {visibleSelectedJobs.length || visibleSelectableEntities.length || (previewEnabled ? 2 : 0)} 条 <button disabled type="button">上一页</button><button aria-current="page" type="button">1</button><button disabled type="button">下一页</button></footer>
+                <footer>共 {visibleSelectedJobs.length || visibleSelectableEntities.length || (previewEnabled ? 2 : 0)} 条 <button disabled type="button">上一页</button><button aria-current="page" disabled type="button">1</button><button disabled type="button">下一页</button></footer>
               </div>
             </div> : <div className="execution-browser-empty" role="tabpanel"><Browser size={30} weight="duotone" /><strong>{browserTab === 'home' ? '领星首页' : '搜索词报告'}</strong><p>{previewEnabled ? '仅开发预览：此标签用于验证页面切换，不读取领星数据。' : '当前标签由 Main 管理的可见浏览器提供。'}</p></div>}
           </section>
@@ -958,18 +996,18 @@ export function ExecutionWorkspace({
               <div><dt>执行模式</dt><dd>{selectedIssuer ?? '人工签发'}</dd></div>
             </dl>
             <div className="execution-action-reason"><section><h3>调整原因</h3><p>近 7 日 CPC 上扬但转化率稳定，温和降价用于修复 ACOS，并避免破坏曝光。</p></section><section><h3>风险校验</h3><p>US / USD、当前 Session、完整 MissionGrant、只降价与 10% 上限必须同时通过。</p></section></div>
-            {selectedUnknown ? <section className="execution-unknown" role="alert"><Warning size={22} weight="fill" /><strong>UNKNOWN · 队列已停止</strong><p>外部结果无法确认，禁止自动重试。仅允许人工接管当前可见浏览器并进入 append-only 对账。</p><button className="execution-button execution-button--danger" disabled={Boolean(pending)} onClick={inspectBrowser} type="button"><Hand size={16} />人工接管</button><button className="execution-button execution-button--secondary" onClick={() => setReconciliation(true)} type="button">进入对账</button></section> : <div className="execution-controls" role="group" aria-label="执行控制"><button className="execution-button execution-button--secondary" disabled={!selected || Boolean(pending)} onClick={inspectBrowser} type="button"><Browser size={16} />检查 / 接管浏览器</button><button className="execution-button execution-button--primary" disabled={!canStart || Boolean(pending)} onClick={startBatch} type="button"><Play size={16} />{selectedIssuer === '策略签发' ? '策略队列由 Main 自动推进' : pending === 'start' ? '串行执行中…' : '开始串行执行'}</button><button className="execution-button execution-button--danger" disabled={!canCancel || Boolean(pending)} onClick={cancelBatch} type="button"><StopCircle size={16} />终止队列</button></div>}
+            {selectedUnknown ? <section className="execution-unknown" role="alert"><Warning size={22} weight="fill" /><strong>UNKNOWN · 队列已停止</strong><p>外部结果无法确认，禁止自动重试。仅允许人工接管当前可见浏览器；UNKNOWN 对账 Main Authority 尚未接入。</p><button className="execution-button execution-button--danger" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Hand size={16} />人工接管</button><button className="execution-button execution-button--secondary" disabled={!canReconcileUnknown} title={`${EXECUTION_CAPABILITY_IDS.reconcileUnknown} BLOCKED · Main Authority 未接入`} type="button">UNKNOWN 对账 BLOCKED</button></section> : <div className="execution-controls" role="group" aria-label="执行控制"><button className="execution-button execution-button--secondary" disabled={!canTakeover || Boolean(pending)} onClick={inspectBrowser} type="button"><Browser size={16} />检查 / 接管浏览器</button><button className="execution-button execution-button--primary" disabled={!canStart || Boolean(pending)} onClick={startBatch} type="button"><Play size={16} />{selectedIssuer === '策略签发' ? '策略队列由 Main 自动推进' : pending === 'start' ? '串行执行中…' : '开始串行执行'}</button><button className="execution-button execution-button--danger" disabled={!canCancel || Boolean(pending)} onClick={cancelBatch} type="button"><StopCircle size={16} />取消未提交批次</button></div>}
           </div>}
           {detailTab === 'compare' && <section className="execution-evidence"><h3>before / after / reload</h3>{(['before', 'after', 'reload'] as const).map((slot) => { const evidence = selected ? evidenceFor(selected, slot) : undefined; return <article data-state={evidence ? 'ready' : 'pending'} key={slot}><span>{evidence ? <CheckCircle size={17} weight="fill" /> : <Circle size={17} />}</span><div><strong>{slot}</strong><small>{evidence ? `${money(evidence.observedBidCents)} · ${formatTime(evidence.capturedAt)}` : slot === 'before' ? 'intent 前捕获' : slot === 'after' ? '提交后捕获' : '刷新后同对象核验'}</small>{evidence && <code>{evidence.contentSha256.slice(0, 12)}…</code>}</div></article>; })}</section>}
-          {detailTab === 'readback' && <div className="execution-readback-panel"><ShieldWarning size={24} weight="duotone" /><strong>{selected?.batch.status === 'succeeded' ? '三段回读已验证' : selectedUnknown ? 'UNKNOWN · 等待人工对账' : '等待真实执行后回读'}</strong><p>after 与 reload 必须独立证明同一 canonical 关键词和目标值；任何不确定性都停止队列且不自动重试。</p><button className="execution-button execution-button--secondary" disabled={!selected} onClick={() => setReconciliation(true)} type="button">打开回读对账</button></div>}
+          {detailTab === 'readback' && <div className="execution-readback-panel"><ShieldWarning size={24} weight="duotone" /><strong>{selected?.batch.status === 'succeeded' ? '三段回读已验证' : selectedUnknown ? 'UNKNOWN · 人工对账 BLOCKED' : '等待真实执行后回读'}</strong><p>after 与 reload 必须独立证明同一 canonical 关键词和目标值；任何不确定性都停止队列且不自动重试。当前没有真实 UNKNOWN 对账 Main Authority。</p><button className="execution-button execution-button--secondary" disabled={!canReconcileUnknown} title={`${EXECUTION_CAPABILITY_IDS.reconcileUnknown} BLOCKED · Main Authority 未接入`} type="button">UNKNOWN 对账 BLOCKED</button></div>}
           {detailTab === 'evidence' && <div className="execution-archive-panel"><h3>证据与归档</h3><p>批次、Grant 终态、causal event、before / after / reload 截图与内容哈希均为 append-only。</p><dl><div><dt>批次</dt><dd>{selected?.batch.id ?? '待生成'}</dd></div><div><dt>Grant</dt><dd>{(selected?.batch.grantId ?? grantId) || '待选择'}</dd></div><div><dt>事件数</dt><dd>{consoleRows.length}</dd></div><div><dt>归档状态</dt><dd>{selected?.batch.status === 'succeeded' ? '可归档' : '等待终态'}</dd></div></dl></div>}
-          {detailTab === 'experiment' && <div className="execution-experiment-panel"><span>关联实验</span><strong>核心词竞价弹性 · 7 日</strong><dl><div><dt>假设</dt><dd>竞价下降不超过 10% 可降低 CPC，同时守住订单量。</dd></div><div><dt>观察窗口</dt><dd>7 个美国业务日</dd></div><div><dt>守护栏</dt><dd>转化率、订单量、目标 ACOS 与数据新鲜度</dd></div></dl><button className="execution-button execution-button--secondary" type="button">实验详情</button></div>}
+          {detailTab === 'experiment' && <div className="execution-experiment-panel"><span>关联实验</span><strong>核心词竞价弹性 · 7 日</strong><dl><div><dt>假设</dt><dd>竞价下降不超过 10% 可降低 CPC，同时守住订单量。</dd></div><div><dt>观察窗口</dt><dd>7 个美国业务日</dd></div><div><dt>守护栏</dt><dd>转化率、订单量、目标 ACOS 与数据新鲜度</dd></div></dl><button className="execution-button execution-button--secondary" disabled type="button">实验详情（未接入）</button></div>}
         </div>
         <p className="execution-safety-note"><Pause size={15} />取消仅在 intent 前开放；intent 后必须完成回读或进入 UNKNOWN 人工对账。</p>
       </section>
 
       <section className="execution-console" aria-label="append-only 执行事件控制台">
-        <header><div><span>EVENT CONSOLE</span><strong>{reconciliation ? 'UNKNOWN 人工对账视图' : 'Authority 事件流'}</strong></div><b>append-only · {consoleRows.length} 条</b></header>
+        <header><div><span>EVENT CONSOLE</span><strong>Authority 事件流</strong></div><b>append-only · {consoleRows.length} 条</b></header>
         <div className="execution-console__body" role="log" aria-live="polite">{consoleRows.map((row) => <div data-status={row.status} key={row.id}><time>{formatTime(row.at)}</time><span>{row.message}</span></div>)}{consoleRows.length === 0 && <p>等待 Main Authority 事件。这里不允许编辑或删除审计记录。</p>}</div>
       </section>
     </div>

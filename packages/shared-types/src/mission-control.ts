@@ -103,6 +103,7 @@ export type MissionControlCapabilityAction =
   | 'export'
   | 'verify'
   | 'takeover'
+  | 'cancel'
   | 'skip'
   | 'enable'
   | 'disable'

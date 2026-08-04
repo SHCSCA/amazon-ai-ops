@@ -240,6 +240,7 @@ describe('Mission Control legacy adapter', () => {
     const implementedExecutionCapabilities = [
       'execution.queue.view',
       'execution.queue.start',
+      'execution.queue.cancel',
       'execution.queue.takeover',
       'execution.evidence.view',
     ];
