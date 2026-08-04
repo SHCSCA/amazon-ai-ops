@@ -3,24 +3,111 @@ import type {
   BindRecommendationWritableTargetRequest,
   BindRecommendationWritableTargetResult,
   ArchiveStoreInput,
+  ArchiveStoreRuntimeConfigInput,
+  CreateStoreRuntimeConfigInput,
   CreateStoreConnectionInput,
   CreateStoreInput,
   ExportAdReadbackEvidenceRequest,
+  LingxingCollectionJobSnapshot,
+  LingxingCollectionProgressEvent,
+  ListStoreDailyStatusesInput,
   ListStoresInput,
+  OperatorWorkspaceSelection,
   RestoreStoreInput,
+  RestoreStoreRuntimeConfigInput,
   RemoveStoreConnectionInput,
   ResolveRecommendationReviewRequest,
   ResolveRecommendationReviewResult,
   StoreContextEnvelope,
+  StoreCollectionScheduleProjection,
+  StoreCollectionScheduleRunResult,
+  StoreEvidenceRetentionPreviewSummary,
   StoreId,
   StoreRecord,
+  StoreScopeRef,
+  StoreDailyStatusListProjection,
+  StoreRuntimeConfigProjection,
   StoreConnection,
   StoreWorkspaceView,
   UpdateStoreConnectionInput,
   UpdateStoreInput,
+  UpdateStoreRuntimeConfigInput,
 } from '@amazon-ai-ops/shared-types';
-import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
+import type {
+  BrowserLoginRequest,
+  BrowserLoginResult,
+  StoreScopedSavedLoginCredentialStatus,
+} from '../shared/login-contract';
+import type {
+  StoreOperationEventCreateInput,
+  StoreOperationEventDeleteInput,
+  StoreOperationEventListInput,
+  StoreOperationEventUpdateInput,
+  StoreProductArchiveInput,
+  StoreProductCreateInput,
+  StoreProductListInput,
+  StoreProductLookupInput,
+  StoreProductUpdateInput,
+  VersionedStoreOperationEvent,
+  VersionedStoreProduct,
+} from '../main/store-scoped-objects-service';
+import type {
+  StoreAdObjectListInput,
+  StoreKeywordFactListInput,
+  StoreListingContentCreateInput,
+  StoreListingContentDeleteInput,
+  StoreListingContentListInput,
+  StoreListingContentLookupInput,
+  StoreListingContentUpdateInput,
+  StoreListingContentVersion,
+  StoreListingVersionListInput,
+  StoreScopedAdObjectFact,
+  StoreScopedKeywordFact,
+  VersionedStoreListingContent,
+} from '../main/store-scoped-ad-listing-service';
 import { createMissionControlPreloadApi } from './mission-control-api';
+import { createMissionDomainPreloadApi } from './mission-domain-api';
+import { createAnalysisAuthorityPreloadApi } from './analysis-authority-api';
+import { createExecutionAuthorityPreloadApi } from './execution-authority-api';
+
+type AuthoritativeLingxingCollectionRange = {
+  start: string;
+  end: string;
+  requestId: string;
+  storeContext: StoreContextEnvelope;
+  storeName?: string;
+  marketplaceCode?: string;
+};
+
+type LingxingCollectionJobListInput = {
+  storeContext: StoreContextEnvelope;
+  limit?: number;
+};
+
+type LingxingCollectionCancelInput = {
+  jobId: string;
+  requestId: string;
+  storeContext: StoreContextEnvelope;
+};
+
+type LingxingCollectionResumeInput = LingxingCollectionCancelInput;
+
+type BusinessUiScope = {
+  dateFrom: string;
+  dateTo: string;
+  storeName: string;
+  marketplaceCode: string;
+  asin?: string;
+  batchId?: string;
+};
+
+type AuthoritativeBusinessImportScope = BusinessUiScope & {
+  storeContext: StoreContextEnvelope;
+};
+
+// Opaque compatibility reference. Main reduces any legacy absolute value to a
+// current-store-capsule-relative identifier before touching the filesystem.
+type ReadbackArtifactReference = string;
 
 ipcRenderer.on('business-ui:data-updated', () => {
   window.dispatchEvent(new Event('business-ui:data-updated'));
@@ -30,6 +117,9 @@ ipcRenderer.on('business-ui:data-updated', () => {
 // ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
   missionControl: createMissionControlPreloadApi(ipcRenderer),
+  missionDomain: createMissionDomainPreloadApi(ipcRenderer),
+  analysisAuthority: createAnalysisAuthorityPreloadApi(ipcRenderer),
+  executionAuthority: createExecutionAuthorityPreloadApi(ipcRenderer),
 
   // App
   getVersion: () => ipcRenderer.invoke('app:get-version'),
@@ -54,12 +144,115 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('stores:connections:update', input) as Promise<StoreConnection>,
   removeStoreConnection: (input: RemoveStoreConnectionInput): Promise<{ success: true }> =>
     ipcRenderer.invoke('stores:connections:remove', input) as Promise<{ success: true }>,
-  switchStore: (storeId: StoreId): Promise<StoreWorkspaceView> =>
-    ipcRenderer.invoke('stores:switch', { storeId }) as Promise<StoreWorkspaceView>,
+  switchStore: (scope: StoreScopeRef): Promise<StoreWorkspaceView> =>
+    ipcRenderer.invoke('stores:switch', scope) as Promise<StoreWorkspaceView>,
   reconnectStore: (storeId: StoreId): Promise<StoreWorkspaceView> =>
     ipcRenderer.invoke('stores:reconnect', { storeId }) as Promise<StoreWorkspaceView>,
+  getOperatorWorkspaceSelection: (): Promise<OperatorWorkspaceSelection | null> =>
+    ipcRenderer.invoke('stores:get-selection') as Promise<OperatorWorkspaceSelection | null>,
+  listStoreDailyStatuses: (
+    input: ListStoreDailyStatusesInput,
+  ): Promise<StoreDailyStatusListProjection> =>
+    ipcRenderer.invoke('stores:daily-status:list', input) as Promise<StoreDailyStatusListProjection>,
   getActiveStoreContext: (): Promise<StoreContextEnvelope | null> =>
     ipcRenderer.invoke('stores:get-active-context') as Promise<StoreContextEnvelope | null>,
+  getActiveStoreWorkspaceView: (): Promise<StoreWorkspaceView | null> =>
+    ipcRenderer.invoke('stores:get-active-workspace-view') as Promise<StoreWorkspaceView | null>,
+  packageUiDatabaseCheckpoint: (
+    phase: 'post-bootstrap' | 'post-navigation',
+  ): Promise<unknown> =>
+    ipcRenderer.invoke('package-ui-evidence:database-checkpoint', { phase }),
+
+  // Main-authorized product and operation-event objects. Every request carries
+  // the complete captured StoreContext and every write uses expectedRevision.
+  listStoreProducts: (
+    storeContext: StoreContextEnvelope,
+    input: StoreProductListInput = {},
+  ): Promise<VersionedStoreProduct[]> =>
+    ipcRenderer.invoke('store-objects:products:list', { storeContext, input }) as Promise<VersionedStoreProduct[]>,
+  getStoreProduct: (
+    storeContext: StoreContextEnvelope,
+    input: StoreProductLookupInput,
+  ): Promise<VersionedStoreProduct> =>
+    ipcRenderer.invoke('store-objects:products:get', { storeContext, input }) as Promise<VersionedStoreProduct>,
+  createStoreProduct: (
+    storeContext: StoreContextEnvelope,
+    input: StoreProductCreateInput,
+  ): Promise<VersionedStoreProduct> =>
+    ipcRenderer.invoke('store-objects:products:create', { storeContext, input }) as Promise<VersionedStoreProduct>,
+  updateStoreProduct: (
+    storeContext: StoreContextEnvelope,
+    input: StoreProductUpdateInput,
+  ): Promise<VersionedStoreProduct> =>
+    ipcRenderer.invoke('store-objects:products:update', { storeContext, input }) as Promise<VersionedStoreProduct>,
+  archiveStoreProduct: (
+    storeContext: StoreContextEnvelope,
+    input: StoreProductArchiveInput,
+  ): Promise<VersionedStoreProduct> =>
+    ipcRenderer.invoke('store-objects:products:archive', { storeContext, input }) as Promise<VersionedStoreProduct>,
+  listStoreOperationEvents: (
+    storeContext: StoreContextEnvelope,
+    input: StoreOperationEventListInput = {},
+  ): Promise<VersionedStoreOperationEvent[]> =>
+    ipcRenderer.invoke('store-objects:operation-events:list', { storeContext, input }) as Promise<VersionedStoreOperationEvent[]>,
+  createStoreOperationEvent: (
+    storeContext: StoreContextEnvelope,
+    input: StoreOperationEventCreateInput,
+  ): Promise<VersionedStoreOperationEvent> =>
+    ipcRenderer.invoke('store-objects:operation-events:create', { storeContext, input }) as Promise<VersionedStoreOperationEvent>,
+  updateStoreOperationEvent: (
+    storeContext: StoreContextEnvelope,
+    input: StoreOperationEventUpdateInput,
+  ): Promise<VersionedStoreOperationEvent> =>
+    ipcRenderer.invoke('store-objects:operation-events:update', { storeContext, input }) as Promise<VersionedStoreOperationEvent>,
+  deleteStoreOperationEvent: (
+    storeContext: StoreContextEnvelope,
+    input: StoreOperationEventDeleteInput,
+  ): Promise<VersionedStoreOperationEvent> =>
+    ipcRenderer.invoke('store-objects:operation-events:delete', { storeContext, input }) as Promise<VersionedStoreOperationEvent>,
+
+  // Main-authorized imported advertising facts and local Listing content.
+  // Only sanitized store_id-owned projections cross this boundary.
+  listStoreAdObjects: (
+    storeContext: StoreContextEnvelope,
+    input: StoreAdObjectListInput = {},
+  ): Promise<StoreScopedAdObjectFact[]> =>
+    ipcRenderer.invoke('store-ad-listing:ad-objects:list', { storeContext, input }) as Promise<StoreScopedAdObjectFact[]>,
+  listStoreKeywordFacts: (
+    storeContext: StoreContextEnvelope,
+    input: StoreKeywordFactListInput = {},
+  ): Promise<StoreScopedKeywordFact[]> =>
+    ipcRenderer.invoke('store-ad-listing:keyword-facts:list', { storeContext, input }) as Promise<StoreScopedKeywordFact[]>,
+  listStoreListingContent: (
+    storeContext: StoreContextEnvelope,
+    input: StoreListingContentListInput = {},
+  ): Promise<VersionedStoreListingContent[]> =>
+    ipcRenderer.invoke('store-ad-listing:listing:list', { storeContext, input }) as Promise<VersionedStoreListingContent[]>,
+  getStoreListingContent: (
+    storeContext: StoreContextEnvelope,
+    input: StoreListingContentLookupInput,
+  ): Promise<VersionedStoreListingContent> =>
+    ipcRenderer.invoke('store-ad-listing:listing:get', { storeContext, input }) as Promise<VersionedStoreListingContent>,
+  createStoreListingContent: (
+    storeContext: StoreContextEnvelope,
+    input: StoreListingContentCreateInput,
+  ): Promise<VersionedStoreListingContent> =>
+    ipcRenderer.invoke('store-ad-listing:listing:create', { storeContext, input }) as Promise<VersionedStoreListingContent>,
+  updateStoreListingContent: (
+    storeContext: StoreContextEnvelope,
+    input: StoreListingContentUpdateInput,
+  ): Promise<VersionedStoreListingContent> =>
+    ipcRenderer.invoke('store-ad-listing:listing:update', { storeContext, input }) as Promise<VersionedStoreListingContent>,
+  deleteStoreListingContent: (
+    storeContext: StoreContextEnvelope,
+    input: StoreListingContentDeleteInput,
+  ): Promise<{ id: number; deleted: true }> =>
+    ipcRenderer.invoke('store-ad-listing:listing:delete', { storeContext, input }) as Promise<{ id: number; deleted: true }>,
+  listStoreListingContentVersions: (
+    storeContext: StoreContextEnvelope,
+    input: StoreListingVersionListInput = {},
+  ): Promise<StoreListingContentVersion[]> =>
+    ipcRenderer.invoke('store-ad-listing:listing-versions:list', { storeContext, input }) as Promise<StoreListingContentVersion[]>,
 
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
@@ -68,11 +261,48 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listAiCallLogs: (params?: { limit?: number }) => ipcRenderer.invoke('settings:ai-call-logs', params),
   getRuleConfig: () => ipcRenderer.invoke('settings:get-rule-config'),
   saveRuleConfig: (config: any) => ipcRenderer.invoke('settings:save-rule-config', config),
-  getOperationScope: () => ipcRenderer.invoke('settings:get-operation-scope'),
-  saveOperationScope: (scope: any) => ipcRenderer.invoke('settings:save-operation-scope', scope),
+  getOperationScope: (storeContext: StoreContextEnvelope) =>
+    ipcRenderer.invoke('settings:get-operation-scope', storeContext),
+  saveOperationScope: (storeContext: StoreContextEnvelope, scope: any) =>
+    ipcRenderer.invoke('settings:save-operation-scope', { storeContext, scope }),
+  getStoreRuntimeConfig: (storeContext: StoreContextEnvelope): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:get', { storeContext }) as Promise<StoreRuntimeConfigProjection>,
+  createStoreRuntimeConfig: (
+    storeContext: StoreContextEnvelope,
+    input: CreateStoreRuntimeConfigInput,
+  ): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:create', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
+  updateStoreRuntimeConfig: (
+    storeContext: StoreContextEnvelope,
+    input: UpdateStoreRuntimeConfigInput,
+  ): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:update', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
+  archiveStoreRuntimeConfig: (
+    storeContext: StoreContextEnvelope,
+    input: ArchiveStoreRuntimeConfigInput,
+  ): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:archive', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
+  restoreStoreRuntimeConfig: (
+    storeContext: StoreContextEnvelope,
+    input: RestoreStoreRuntimeConfigInput,
+  ): Promise<StoreRuntimeConfigProjection> =>
+    ipcRenderer.invoke('store-runtime-config:restore', { storeContext, input }) as Promise<StoreRuntimeConfigProjection>,
+  previewStoreEvidenceRetention: (
+    storeContext: StoreContextEnvelope,
+  ): Promise<StoreEvidenceRetentionPreviewSummary> =>
+    ipcRenderer.invoke('store-evidence-retention:preview', { storeContext }) as Promise<StoreEvidenceRetentionPreviewSummary>,
+  getStoreCollectionSchedule: (
+    storeContext: StoreContextEnvelope,
+  ): Promise<StoreCollectionScheduleProjection> =>
+    ipcRenderer.invoke('store-collection-scheduler:get', { storeContext }) as Promise<StoreCollectionScheduleProjection>,
+  runStoreCollectionScheduleNow: (
+    storeContext: StoreContextEnvelope,
+  ): Promise<StoreCollectionScheduleRunResult> =>
+    ipcRenderer.invoke('store-collection-scheduler:run-now', { storeContext }) as Promise<StoreCollectionScheduleRunResult>,
 
   // Browser
-  getSavedLoginCredentialStatus: () => ipcRenderer.invoke('browser:get-saved-credential-status'),
+  getSavedLoginCredentialStatus: (): Promise<StoreScopedSavedLoginCredentialStatus> =>
+    ipcRenderer.invoke('browser:get-saved-credential-status') as Promise<StoreScopedSavedLoginCredentialStatus>,
   browserLogin: (request: BrowserLoginRequest): Promise<BrowserLoginResult> =>
     ipcRenderer.invoke('browser:login', request) as Promise<BrowserLoginResult>,
   browserLogout: () => ipcRenderer.invoke('browser:logout'),
@@ -81,19 +311,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isBrowserReady: () => ipcRenderer.invoke('browser:is-ready'),
 
   // Reports
-  downloadReport: (dateRange: { start: string; end: string }) =>
-    ipcRenderer.invoke('report:download', dateRange),
-  parseReport: (filePath: string) => ipcRenderer.invoke('report:parse', filePath),
-  selectReportFile: () => ipcRenderer.invoke('report:select-file'),
-  collectLingxingReports: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
+  collectLingxingReports: (dateRange: AuthoritativeLingxingCollectionRange) =>
     ipcRenderer.invoke('v1_5:reports:collect-lingxing', dateRange),
-  getBusinessUiDataPipeline: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+  getBusinessUiDataPipeline: (scope: BusinessUiScope) =>
     ipcRenderer.invoke('v1_5:business-ui:data-pipeline', scope),
-  getBusinessBatchOptions: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+  getBusinessBatchOptions: (scope: BusinessUiScope) =>
     ipcRenderer.invoke('v1_5:business-ui:batch-options', scope),
-  importCurrentBusinessReports: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+  importCurrentBusinessReports: (scope: AuthoritativeBusinessImportScope) =>
     ipcRenderer.invoke('v1_5:business-ui:import-current-reports', scope),
-  importLocalBusinessReportFiles: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+  importLocalBusinessReportFiles: (scope: AuthoritativeBusinessImportScope) =>
     ipcRenderer.invoke('v1_5:business-ui:import-local-report-files', scope),
   getDeliveryReadiness: () => ipcRenderer.invoke('v1_5:delivery:readiness'),
   refreshFinalReadiness: (input?: { adReadbackPath?: string }) =>
@@ -104,41 +330,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:delivery:export-bundle', scope),
   exportDataReconciliation: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
     ipcRenderer.invoke('v1_5:delivery:export-data-reconciliation', scope),
+  exportDataReconciliationArtifacts: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
+    ipcRenderer.invoke('v1_5:business-ui:export-data-reconciliation-artifacts', scope),
   getStoragePaths: () => ipcRenderer.invoke('v1_5:settings:storage-paths'),
-  getBusinessKeywordOpportunities: (scope: { dateFrom: string; dateTo: string; storeName: string; marketplaceCode: string; asin?: string; batchId?: string }) =>
-    ipcRenderer.invoke('v1_5:business-ui:keyword-opportunities', scope),
-  listOperationEvents: (filter: any) =>
-    ipcRenderer.invoke('operation-events:list', filter),
-  createOperationEvent: (input: any) =>
-    ipcRenderer.invoke('operation-events:create', input),
-  updateOperationEvent: (input: any) =>
-    ipcRenderer.invoke('operation-events:update', input),
-  deleteOperationEvent: (input: number | { id: number }) =>
-    ipcRenderer.invoke('operation-events:delete', input),
-  preflightLingxingCollection: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
+  preflightLingxingCollection: (dateRange: AuthoritativeLingxingCollectionRange) =>
     ipcRenderer.invoke('v1_5:reports:preflight-lingxing-collection', dateRange),
-  exportLingxingCollectionPreflight: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
+  exportLingxingCollectionPreflight: (dateRange: AuthoritativeLingxingCollectionRange) =>
     ipcRenderer.invoke('v1_5:reports:export-lingxing-collection-preflight', dateRange),
-  retryLingxingReport: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, reportType: string) =>
+  retryLingxingReport: (dateRange: AuthoritativeLingxingCollectionRange, reportType: string) =>
     ipcRenderer.invoke('v1_5:reports:retry-lingxing-report', { dateRange, reportType }),
-  downloadExistingLingxingReports: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, reportTypes: string[]) =>
+  downloadExistingLingxingReports: (dateRange: AuthoritativeLingxingCollectionRange, reportTypes: string[]) =>
     ipcRenderer.invoke('v1_5:reports:download-existing-lingxing-reports', { dateRange, reportTypes }),
-  runLingxingCanaryReport: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, reportType: string) =>
+  runLingxingCanaryReport: (dateRange: AuthoritativeLingxingCollectionRange, reportType: string) =>
     ipcRenderer.invoke('v1_5:reports:run-lingxing-canary-report', { dateRange, reportType }),
   exportLingxingAcceptanceAudit: (batchId: string, diagnosticId?: number) =>
     ipcRenderer.invoke('v1_5:reports:export-acceptance-audit', { batchId, diagnosticId }),
-  diagnoseLingxingDownloadCenter: (dateRange?: { start: string; end: string; storeName?: string; marketplaceCode?: string }) =>
+  diagnoseLingxingDownloadCenter: (dateRange: AuthoritativeLingxingCollectionRange) =>
     ipcRenderer.invoke('v1_5:reports:diagnose-download-center', dateRange),
   exportDownloadCenterDiagnosticBundle: (diagnosticId: number) =>
     ipcRenderer.invoke('v1_5:reports:export-download-center-diagnostic-bundle', { diagnosticId }),
   exportDownloadCenterPageModelDraft: (diagnosticId: number) =>
     ipcRenderer.invoke('v1_5:reports:export-download-center-page-model-draft', { diagnosticId }),
-  exportDownloadCenterPageModelEnablementAudit: (dateRange: { start: string; end: string; storeName?: string; marketplaceCode?: string }, diagnosticId?: number) =>
+  exportDownloadCenterPageModelEnablementAudit: (dateRange: AuthoritativeLingxingCollectionRange, diagnosticId?: number) =>
     ipcRenderer.invoke('v1_5:reports:export-download-center-page-model-enablement-audit', { dateRange, diagnosticId }),
+  listLingxingCollectionJobs: (input: LingxingCollectionJobListInput): Promise<LingxingCollectionJobSnapshot[]> =>
+    ipcRenderer.invoke('v1_5:reports:list-lingxing-collection-jobs', input) as Promise<LingxingCollectionJobSnapshot[]>,
+  resumeLingxingCollection: (input: LingxingCollectionResumeInput) =>
+    ipcRenderer.invoke('v1_5:reports:resume-lingxing-collection', input),
+  cancelLingxingCollection: (input: LingxingCollectionCancelInput) =>
+    ipcRenderer.invoke('v1_5:reports:cancel-lingxing-collection', input),
   getDownloadCenterPageModel: () => ipcRenderer.invoke('v1_5:reports:get-download-center-page-model'),
   saveDownloadCenterPageModel: (model: any) => ipcRenderer.invoke('v1_5:reports:save-download-center-page-model', model),
   resetDownloadCenterPageModel: () => ipcRenderer.invoke('v1_5:reports:reset-download-center-page-model'),
-  openReportPath: (targetPath: string) => ipcRenderer.invoke('v1_5:reports:open-path', targetPath),
+  openReportArtifact: (artifactId: string, storeContext: StoreContextEnvelope) =>
+    ipcRenderer.invoke('v1_5:reports:open-artifact', { artifactId, storeContext }),
 
   // Recommendations
   getRecommendations: (params: {
@@ -189,28 +414,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   executeRecommendation: (id: number) => ipcRenderer.invoke('recommendations:execute', id),
   exportAdReadbackEvidence: (input: ExportAdReadbackEvidenceRequest) =>
     ipcRenderer.invoke('recommendations:export-ad-readback-evidence', input),
-  prepareAdReadbackSession: (input: { sourcePath: string; outDir?: string }) =>
+  prepareAdReadbackSession: (input: { sourcePath: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:prepare-ad-readback-session', input),
-  verifyAdReadbackSession: (input: { sessionDir: string }) =>
+  verifyAdReadbackSession: (input: { sessionDir: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:verify-ad-readback-session', input),
-  fillAdReadbackSession: (input: { sessionDir: string }) =>
+  fillAdReadbackSession: (input: { sessionDir: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:fill-ad-readback-session', input),
-  verifyAdReadbackEvidence: (input: { evidencePath: string }) =>
+  verifyAdReadbackEvidence: (input: { evidencePath: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:verify-ad-readback-evidence', input),
-  saveReadbackCapture: (input: { slot: 'approval' | 'before' | 'after' | 'readback'; dataUrl: string; fileName?: string; sessionDir?: string }) =>
+  saveReadbackCapture: (input: { slot: 'approval' | 'before' | 'after' | 'readback'; dataUrl: string; fileName?: string; sessionDir?: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:save-readback-capture', input),
 
   // Scheduler
+  // Legacy unscoped scheduler bridge. Main keeps mutation channels fail-closed;
+  // store collection uses the StoreContext-authorized methods above.
   getScheduledTasks: () => ipcRenderer.invoke('scheduler:get-tasks'),
   setTaskEnabled: (name: string, enabled: boolean) =>
     ipcRenderer.invoke('scheduler:set-task-enabled', { name, enabled }),
   runTaskNow: (name: string) => ipcRenderer.invoke('scheduler:run-now', name),
-
-  // Products
-  getProducts: () => ipcRenderer.invoke('products:get'),
-  addProduct: (product: any) => ipcRenderer.invoke('products:add', product),
-  saveProductConfig: (input: any) => ipcRenderer.invoke('products:save-config', input),
-  bulkUpdateProductTargetAcos: (input: any) => ipcRenderer.invoke('products:bulk-update-target-acos', input),
 
   // Logs
   getLogs: (params: { dateFrom: string; dateTo: string; limit?: number }) =>
@@ -221,26 +442,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMetricsSummary: (date: string) => ipcRenderer.invoke('metrics:get-summary', date),
 
   // v1.5 Keyword / Listing
-  importKeywordReport: (filePath: string, source?: string, duplicateStrategy?: 'overwrite' | 'merge' | 'skip') =>
-    ipcRenderer.invoke('v1_5:keywords:import-report', { filePath, source, duplicateStrategy }),
   exportKeywordDiagnostics: (diagnostics: any) =>
     ipcRenderer.invoke('v1_5:keywords:export-diagnostics', { diagnostics }),
   buildKeywordOpportunities: (metrics: any[], options?: any) =>
     ipcRenderer.invoke('v1_5:keywords:build-opportunities', { metrics, options }),
   analyzeListingCoverage: (listing: any, keywords: string[]) =>
     ipcRenderer.invoke('v1_5:listing:analyze-coverage', { listing, keywords }),
-  importListingContent: (filePath: string) =>
-    ipcRenderer.invoke('v1_5:listing:import-content', { filePath }),
-  saveManualListingContent: (listing: any, scope?: { storeName?: string; marketplaceCode?: string }) =>
-    ipcRenderer.invoke('v1_5:listing:save-manual-content', { listing, scope }),
-  listListingContentVersions: (input: { asin: string; storeName?: string; marketplaceCode?: string; limit?: number }) =>
-    ipcRenderer.invoke('v1_5:listing:list-content-versions', input),
-  extractListingFromLingxing: (options?: { expectedAsin?: string; persist?: boolean; scope?: { storeName?: string; marketplaceCode?: string } }) =>
-    ipcRenderer.invoke('v1_5:listing:extract-from-lingxing', options ?? {}),
-  openLingxingListingAndExtract: (url: string) =>
-    ipcRenderer.invoke('v1_5:listing:open-and-extract-from-lingxing', { url }),
-  probeLingxingListingDetailAndExtract: (input?: string | { url?: string; expectedAsin?: string; persist?: boolean; scope?: { storeName?: string; marketplaceCode?: string } }) =>
-    ipcRenderer.invoke('v1_5:listing:probe-detail-and-extract', typeof input === 'string' ? { url: input } : input ?? {}),
   buildListingSuggestions: (listing: any, opportunities: any[]) =>
     ipcRenderer.invoke('v1_5:listing:build-suggestions', { listing, opportunities }),
   updateListingSuggestionStatus: (id: number, status: 'pending' | 'accepted' | 'ignored') =>
@@ -253,8 +460,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:listing:export-drafts', { drafts, format }),
 
   // Event listeners
-  onStoreContextChanged: (callback: (view: StoreWorkspaceView) => void) => {
-    const handler = (_: unknown, view: StoreWorkspaceView) => callback(view);
+  onStoreContextChanged: (callback: (view: StoreWorkspaceView | null) => void) => {
+    const handler = (_: unknown, view: StoreWorkspaceView | null) => callback(view);
     ipcRenderer.on('store-context:changed', handler);
     return () => ipcRenderer.removeListener('store-context:changed', handler);
   },
@@ -262,6 +469,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_: unknown, store: StoreRecord) => callback(store);
     ipcRenderer.on('stores:changed', handler);
     return () => ipcRenderer.removeListener('stores:changed', handler);
+  },
+  onLingxingCollectionProgress: (callback: (event: LingxingCollectionProgressEvent) => void) => {
+    const handler = (_: unknown, event: LingxingCollectionProgressEvent) => callback(event);
+    ipcRenderer.on('lingxing-collection:progress', handler);
+    return () => ipcRenderer.removeListener('lingxing-collection:progress', handler);
   },
   onSchedulerTaskStart: (callback: (taskName: string) => void) => {
     const handler = (_: any, taskName: string) => callback(taskName);

@@ -21,8 +21,33 @@ describe('summarizeBusinessReportCoverage', () => {
 
     expect(summary.realReportTypeCount).toBe(4);
     expect(summary.realReportFileCount).toBe(4);
+    expect(summary.importedReportTypeCount).toBe(4);
     expect(summary.missingReportTypes).toEqual([]);
     expect(summary.statusWithImportedRows(100)).toBe('ready');
+  });
+
+  it('treats a successful zero-row import receipt as complete coverage', () => {
+    const summary = summarizeBusinessReportCoverage({
+      expectedTypes,
+      realReportFiles: expectedTypes.map((reportType) => ({
+        reportType,
+        importedRows: 0,
+        status: 'imported',
+      })),
+    });
+
+    expect(summary.importedReportTypeCount).toBe(4);
+    expect(summary.statusWithImportedRows(0)).toBe('ready');
+  });
+
+  it('does not trust a zero-row downloaded file without an import receipt', () => {
+    const summary = summarizeBusinessReportCoverage({
+      expectedTypes,
+      realReportFiles: expectedTypes.map((reportType) => ({ reportType, importedRows: 0, status: 'downloaded' })),
+    });
+
+    expect(summary.importedReportTypeCount).toBe(0);
+    expect(summary.statusWithImportedRows(0)).toBe('partial');
   });
 
   it('does not mark duplicate files as full coverage when expected types are missing', () => {

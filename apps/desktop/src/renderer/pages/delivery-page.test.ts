@@ -56,6 +56,17 @@ describe('deliverySummaryStatusLabel', () => {
   });
 });
 
+describe('delivery collection artifacts', () => {
+  it('keeps report folder and manifest opens on the store-bound artifact bridge', () => {
+    const source = readFileSync(new URL('./delivery-page.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('apiSurface.openReportArtifact(artifactId, { ...storeContext })');
+    expect(source).toContain('reportFolderArtifact?.artifactId');
+    expect(source).toContain('reportManifestArtifact?.artifactId');
+    expect(source).not.toContain('collection?.evidencePaths');
+    expect(source).not.toContain('file.filePath');
+  });
+});
+
 describe('buildDeliveryOverviewFacts', () => {
   it('keeps the delivery first screen to short operator facts instead of long manifest paths', () => {
     const facts = buildDeliveryOverviewFacts({

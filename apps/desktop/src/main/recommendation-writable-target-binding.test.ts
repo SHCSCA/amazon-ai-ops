@@ -159,11 +159,14 @@ describe('pending recommendation writable target binding', () => {
 
     expect(start).toBeGreaterThan(-1);
     expect(handler).toContain('bindRecommendationWritableTarget({');
-    expect(handler).toContain("getBusinessRecommendationGate(request.scope, 'approval')");
+    expect(handler).toContain("getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval')");
+    expect(handler).toContain('findByIdForStore(context.storeId, request.recommendationId)');
+    expect(handler).toContain('storeId: context.storeId');
     expect(handler).toContain('assertRecommendationMetricSourceAuthority(state.db');
     expect(handler).toContain('resolveWritableAdTargetAuthority(state.db!');
-    expect(handler).toContain('bindWritableTargetIfCurrent(');
-    expect(source).toContain("ipcMain.handle('recommendations:bind-writable-target'");
+    expect(handler).toContain('bindWritableTargetIfCurrentForStore(');
+    expect(handler).not.toContain('.bindWritableTargetIfCurrent(');
+    expect(source).toContain("registerTrackedIpcHandler('recommendations:bind-writable-target'");
   });
 
   it('never overwrites an existing writable target even when its binding audit is absent', () => {

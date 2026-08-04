@@ -21,3 +21,14 @@ export type {
   StoreDraftErrors,
   StoreManagementPanelProps,
 } from './store-management-panel';
+export {
+  DEFAULT_STORE_RUNTIME_CONFIG_VALUES,
+  STORE_RUNTIME_CONFIG_CAPABILITY_IDS,
+  StoreRuntimeConfigPanel,
+  readStoreRuntimeConfigApi,
+  validateStoreRuntimeConfigDraft,
+} from './store-runtime-config-panel';
+export type {
+  StoreRuntimeConfigPanelProps,
+  StoreRuntimeConfigRendererApi,
+} from './store-runtime-config-panel';

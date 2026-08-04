@@ -14,7 +14,7 @@ import {
   summarizeViewCapability,
 } from '../components';
 import type { LegacyWorkspaceSlot, LegacyWorkspaceSlotInput } from './types';
-import { ObjectsWorkspace } from './objects-workspace';
+import { ObjectsWorkspace, type ObjectsWorkspaceSubview } from './objects-workspace';
 
 export type LegacyWorkspaceProps = {
   intent: NavigationIntent;
@@ -104,10 +104,11 @@ export function LegacyWorkspace({
     ? renderLegacySlot(legacySlot, { route, intent, capabilities: viewCapabilities })
     : undefined;
 
-  if (intent.workspace === 'objects' && intent.subview === 'products') {
+  if (intent.workspace === 'objects') {
     return (
       <div className="mission-control-workspace-root" data-legacy-route={route} data-workspace={intent.workspace}>
         <ObjectsWorkspace
+          activeSubview={intent.subview as ObjectsWorkspaceSubview}
           capabilities={capabilities}
           legacyContent={legacyContent}
           previewMode={previewMode}
@@ -129,6 +130,7 @@ export function LegacyWorkspace({
             create: 'settings.store-config.create',
             update: 'settings.store-config.update',
             archive: 'settings.store-config.archive',
+            restore: 'settings.store-config.restore',
           }}
           description="店铺级 AI、本地任务和运行参数必须与当前 StoreContext 绑定。"
           previewMode={previewMode}
@@ -139,6 +141,45 @@ export function LegacyWorkspace({
         </NativeCrudSlot>
       )
       : null;
+
+  if (intent.workspace === 'settings' && intent.subview === 'ai-and-local') {
+    const summary = summarizeViewCapability(capabilities, view);
+    return (
+      <div className="mission-control-workspace-root" data-legacy-route={route} data-workspace={intent.workspace}>
+        <PageFrame
+          className="mission-control-settings-page"
+          description="先确认当前美国站店铺的数据域，再维护该店铺的运行参数和系统级 AI 连接。站点固定为 US，币种固定为 USD。"
+          pageId="settings-ai-and-local"
+          title="店铺与运行设置"
+        >
+          {nativeSlot}
+          {legacyContent ? (
+            <section
+              aria-label={`${title}生产适配内容`}
+              className="mission-control-legacy-adapter"
+              data-capability-state={viewCapability?.state ?? 'BLOCKED'}
+              data-legacy-route={route}
+            >
+              <div className="mission-control-legacy-adapter__context" role="note">
+                <span>系统级连接</span>
+                <strong>{storeContext ? String(storeContext.storeId) : '等待店铺'}</strong>
+                <span>{storeContext ? `${storeContext.marketplace} / ${storeContext.currency}` : 'US / USD'}</span>
+                <small>{viewCapability?.detail ?? '当前视图缺少 Main 能力投影，已按受阻处理。'}</small>
+              </div>
+              {legacyContent}
+            </section>
+          ) : (
+            <WorkspaceState
+              description={summary?.detail ?? '正在从 Main 读取系统级 AI 连接能力。'}
+              details={storeContext ? `${storeContext.marketplace} / ${storeContext.currency} · ${String(storeContext.storeId)}` : undefined}
+              kind={capabilities === undefined ? 'loading' : 'blocked'}
+              title={capabilities === undefined ? '正在确认设置边界' : '系统级连接尚未接入'}
+            />
+          )}
+        </PageFrame>
+      </div>
+    );
+  }
 
   return (
     <div className="mission-control-workspace-root" data-legacy-route={route} data-workspace={intent.workspace}>

@@ -1,5 +1,7 @@
 export interface NormalizedAiSettings {
   [key: string]: string;
+  aiProvider: SystemAiProvider;
+  ai_provider: SystemAiProvider;
   aiApiKey: string;
   ai_api_key: string;
   aiBaseUrl: string;
@@ -26,9 +28,13 @@ export interface NormalizedAiSettings {
   ai_last_test_message: string;
 }
 
+export const SYSTEM_AI_PROVIDER = 'openai-compatible' as const;
+export type SystemAiProvider = typeof SYSTEM_AI_PROVIDER;
+
 export const STRUCTURED_AI_OUTPUT_TOKEN_FLOOR = 8192;
 
 export function normalizeAiSettingsRecord(settings: Record<string, unknown> = {}): NormalizedAiSettings {
+  const provider = normalizeSystemAiProvider(settings.ai_provider ?? settings.aiProvider);
   const apiKey = stringSetting(settings.ai_api_key) || stringSetting(settings.aiApiKey);
   const baseUrl = (stringSetting(settings.ai_base_url) || stringSetting(settings.aiBaseUrl) || 'https://api.deepseek.com').replace(/\/+$/, '');
   const model = stringSetting(settings.ai_model) || stringSetting(settings.aiModel) || 'deepseek-v4-flash';
@@ -46,6 +52,8 @@ export function normalizeAiSettingsRecord(settings: Record<string, unknown> = {}
   const lastTestModel = stringSetting(settings.ai_last_test_model) || stringSetting(settings.aiLastTestModel);
   const lastTestMessage = stringSetting(settings.ai_last_test_message) || stringSetting(settings.aiLastTestMessage);
   return {
+    aiProvider: provider,
+    ai_provider: provider,
     aiApiKey: apiKey,
     ai_api_key: apiKey,
     aiBaseUrl: baseUrl,
@@ -82,6 +90,8 @@ export function normalizeStructuredAiMaxTokens(value: unknown): string {
 export function sanitizeAiSettingsForRenderer(settings: Record<string, unknown> = {}): Record<string, string | boolean> {
   const normalized = normalizeAiSettingsRecord(settings);
   return {
+    aiProvider: normalized.aiProvider,
+    ai_provider: normalized.ai_provider,
     aiApiKey: '',
     ai_api_key: '',
     aiKeyConfigured: Boolean(normalized.aiApiKey.trim()),
@@ -109,6 +119,16 @@ export function sanitizeAiSettingsForRenderer(settings: Record<string, unknown> 
     aiLastTestMessage: normalized.aiLastTestMessage || '',
     ai_last_test_message: normalized.aiLastTestMessage || '',
   };
+}
+
+/**
+ * V1 has one deliberately closed provider contract. Historical labels such as
+ * `deepseek` and `openai` described the endpoint behind the same OpenAI-
+ * compatible wire protocol, so they migrate to the canonical value instead of
+ * widening Main's provider dispatch surface.
+ */
+export function normalizeSystemAiProvider(_value: unknown): SystemAiProvider {
+  return SYSTEM_AI_PROVIDER;
 }
 
 export function normalizeAiSettingsForSaveInput(

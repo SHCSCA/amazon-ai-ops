@@ -38,11 +38,13 @@ describe('getLatestDownloadCenterDiagnosticRowForModel', () => {
     };
 
     const row = getLatestDownloadCenterDiagnosticRowForModel(db, activeModel, '2026-05-01', '2026-05-31', {
+      storeId: 'store-shc-us',
       storeName: 'SHC US',
       marketplaceCode: 'US',
     });
 
     expect(row).toEqual({ id: 7 });
+    expect(captured.sql).toContain('store_id = ?');
     expect(captured.sql).toContain('page_model = ?');
     expect(captured.sql).toContain('page_model_snapshot_json = ?');
     expect(captured.sql).toContain('date_start = ?');
@@ -50,6 +52,7 @@ describe('getLatestDownloadCenterDiagnosticRowForModel', () => {
     expect(captured.sql).toContain('store_name');
     expect(captured.sql).toContain('marketplace_code');
     expect(captured.params).toEqual([
+      'store-shc-us',
       'lingxing-download-center',
       JSON.stringify(activeModel),
       '2026-05-01',

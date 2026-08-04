@@ -66,14 +66,23 @@ export interface BusinessReportOptionStatus {
   importedRows: number;
 }
 
+/** Opaque, store-bound handle issued by Main for a local file or directory. */
+export type RendererArtifactId = `artifact:v1:${string}`;
+
 export interface BusinessReportFile {
   id: string;
+  /** Authoritative collection/import batch identity used for lineage checks. */
+  batchId?: string;
   reportType: string;
   displayName: string;
   status: string;
-  filePath: string;
-  folderPath: string;
+  artifactId?: RendererArtifactId;
+  sourceArtifactId?: RendererArtifactId;
+  artifactDisplayName?: string;
+  folderArtifactId?: RendererArtifactId;
+  folderDisplayName?: string;
   fileName: string;
+  fileExtension: string;
   fileSizeBytes: number;
   importedRows: number;
   fileHash?: string;
@@ -82,9 +91,10 @@ export interface BusinessReportFile {
   updatedAt?: string;
 }
 
-export interface BusinessEvidencePath {
+export interface BusinessEvidenceArtifact {
   label: string;
-  path: string;
+  artifactId: RendererArtifactId;
+  displayName: string;
   kind: 'folder' | 'file' | 'audit';
 }
 
@@ -95,8 +105,10 @@ export interface BusinessBatchOption {
   dateEnd: string;
   storeName?: string;
   marketplaceCode?: string;
-  downloadDir?: string;
-  manifestPath?: string;
+  downloadArtifactId?: RendererArtifactId;
+  downloadDisplayName?: string;
+  manifestArtifactId?: RendererArtifactId;
+  manifestDisplayName?: string;
   createdAt?: string;
   completedAt?: string;
   totalFileRecords: number;
@@ -115,15 +127,17 @@ export interface BusinessCollectionState {
     dateEnd: string;
     storeName?: string;
     marketplaceCode?: string;
-    downloadDir?: string;
-    manifestPath?: string;
+    downloadArtifactId?: RendererArtifactId;
+    downloadDisplayName?: string;
+    manifestArtifactId?: RendererArtifactId;
+    manifestDisplayName?: string;
     completedAt?: string;
   } | null;
   sourceBatchIds?: string[];
   availableBatches?: BusinessBatchOption[];
   reportOptions: BusinessReportOptionStatus[];
   realReportFiles: BusinessReportFile[];
-  evidencePaths: BusinessEvidencePath[];
+  evidenceArtifacts: BusinessEvidenceArtifact[];
   fileAudit: {
     totalFileRecords: number;
     downloadedFileRecords: number;
@@ -132,8 +146,10 @@ export interface BusinessCollectionState {
     importedRowCount: number;
     rejectedEvidenceFileCount: number;
     missingReportLabels: string[];
-    downloadDir?: string;
-    manifestPath?: string;
+    downloadArtifactId?: RendererArtifactId;
+    downloadDisplayName?: string;
+    manifestArtifactId?: RendererArtifactId;
+    manifestDisplayName?: string;
   };
   blockers: string[];
   audit: {
@@ -490,6 +506,7 @@ export interface OperationEventView {
   title: string;
   impactExpectation?: string;
   notes?: string;
+  /** Legacy-only draft field. Production business-pipeline projections omit this Main path. */
   evidencePath?: string;
   createdAt: string;
   updatedAt: string;

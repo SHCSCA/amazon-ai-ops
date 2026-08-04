@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { spawnSync } from 'child_process';
+import { createRequire } from 'module';
 import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'url';
 import {
@@ -13,12 +14,35 @@ import {
   bundleAdversarialNodeEnvEvidence,
   writeValidAdversarialNodeEnvEvidence,
 } from './package-adversarial-node-env.test-fixture.mjs';
+import { writeValidPackageLaunchSmoke } from './package-launch-smoke.test-fixture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const bundleRoot = path.join(root, 'output', 'delivery-bundles');
 const PACKAGE_MAIN_BUNDLE_SHA256 = 'C'.repeat(64);
+const HASH_A = 'A'.repeat(64);
+const HASH_B = 'B'.repeat(64);
+const require = createRequire(import.meta.url);
+const {
+  packageUiReferencedArtifactsAreBundled,
+} = require('./verify-v15-non-ready-safety.js');
+const {
+  EXPECTED_OVERLAY_CHECK_IDS,
+  EXPECTED_PACKAGE_UI_SCALES,
+  EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
+  EXPECTED_PACKAGE_UI_WORKSPACES,
+  INTERACTIVE_LOGIN_CONTRACT,
+  ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
+  PACKAGE_UI_PROFILE_SEQUENCE,
+  PACKAGE_UI_WIDE_PROFILE,
+  buildPackageUiAttemptArtifactManifest,
+  buildPackageUiRunnerContract,
+  evaluatePackageUiEvidenceCompleteness,
+  validatePackageUiReadOnlyRuntimeEvidence,
+  validateSchedulerSubviewEvidence,
+  writeImmutableEnvelope,
+} = require('./package-ui-evidence.js');
 
 function runNode(script, args = []) {
   return spawnSync(process.execPath, [path.join(root, script), ...args], {
@@ -30,6 +54,14 @@ function runNode(script, args = []) {
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function artifactRecord(filePath) {
+  return {
+    path: filePath,
+    sizeBytes: fs.statSync(filePath).size,
+    sha256: sha256File(filePath),
+  };
 }
 
 function writeValidReadbackWithDb(fixtureDir, evidencePath) {
@@ -110,34 +142,12 @@ function finalPackageIndex(dir) {
 }
 
 function validPackageLaunchSmoke(dir, portablePackage) {
-  const unpackedContent = 'unpacked exe fixture\n';
-  const portableContent = 'portable exe fixture\n';
-  const unpackedPath = path.join(dir, 'win-unpacked', 'AmazonAIOpsAgent.exe');
   const portablePath = portablePackage?.sourcePath || path.join(dir, 'AmazonAIOpsAgent-1.5.0-portable.exe');
-  fs.mkdirSync(path.dirname(unpackedPath), { recursive: true });
-  fs.writeFileSync(unpackedPath, unpackedContent, 'utf8');
-  if (!portablePackage) fs.writeFileSync(portablePath, portableContent, 'utf8');
-  return {
-    kind: 'package-launch-smoke',
+  return writeValidPackageLaunchSmoke(dir, {
     generatedAt: '2026-07-16T08:07:10.078Z',
-    passed: true,
-    artifacts: {
-      unpacked: {
-        path: unpackedPath,
-        sizeBytes: Buffer.byteLength(unpackedContent, 'utf8'),
-        sha256: sha256Text(unpackedContent),
-      },
-      portable: {
-        path: portablePath,
-        sizeBytes: portablePackage?.sizeBytes || Buffer.byteLength(portableContent, 'utf8'),
-        sha256: portablePackage?.sha256 || sha256Text(portableContent),
-      },
-    },
-    checks: [
-      { kind: 'win-unpacked', ok: true, marker: '[App] ipc-ready' },
-      { kind: 'portable', ok: true, appChildCount: 1 },
-    ],
-  };
+    portablePath,
+    releaseDir: dir,
+  });
 }
 
 function validPackageSecurityEvidence(smoke, packageUi) {
@@ -187,7 +197,194 @@ function validProcessIsolation(profilePath = null) {
   };
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function validLogicalSqliteArtifact(sha256 = HASH_A, sizeBytes = 4096) {
+  return {
+    method: 'readonly-sqlite-online-backup',
+    remainingPages: 0,
+    schemaVersion: 'sqlite-authority-currentness-proof/v1',
+    sha256,
+    sizeBytes,
+    totalPages: 1,
+  };
+}
+
+function validProfileLineageState(logicalDatabase) {
+  return {
+    capturedAt: '2026-07-16T08:08:20.100Z',
+    logicalDatabase: structuredClone(logicalDatabase),
+    profileContent: {
+      fileCount: 3,
+      sha256: HASH_B,
+      sizeBytes: 8192,
+    },
+  };
+}
+
+function validAttemptArtifacts(dir, profileId) {
+  const attemptRoot = path.join(dir, 'package-ui-attempts', profileId);
+  fs.mkdirSync(attemptRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(attemptRoot, `${profileId}-runtime.json`),
+    `${JSON.stringify({ profileId, status: 'completed' })}\n`,
+    'utf8',
+  );
+  writePng(path.join(attemptRoot, `${profileId}-workspace.png`));
+  return buildPackageUiAttemptArtifactManifest(attemptRoot);
+}
+
+function validChromiumLineage(profileBrowserUserDataDir, chromiumArtifact) {
+  const profilePathBindingSha256 = sha256Text(path.resolve(profileBrowserUserDataDir));
+  const profileBindingSha256 = sha256Text(canonicalJson([profilePathBindingSha256]));
+  const chromiumPath = path.join(
+    path.dirname(path.dirname(profileBrowserUserDataDir)),
+    'release',
+    'win-unpacked',
+    'resources',
+    'app',
+    'playwright-browsers',
+    'chrome-win64',
+    'chrome.exe',
+  );
+  return {
+    chromium: {
+      relativePath: 'playwright-browsers/chrome-win64/chrome.exe',
+      sha256: chromiumArtifact.sha256,
+      sizeBytes: chromiumArtifact.sizeBytes,
+    },
+    cleanup: {
+      error: null,
+      matching: [],
+      matchingCount: 0,
+      observedCount: 0,
+      passed: true,
+      unresolved: [],
+      unresolvedCount: 0,
+      attempts: 1,
+    },
+    descendantProcessIds: [902],
+    expectedProfileRootSha256: HASH_B,
+    observedAt: '2026-07-16T08:08:19.500Z',
+    passed: true,
+    profileBindingSha256,
+    profileBindingTokenCount: 1,
+    rootProcessIds: [901],
+    snapshot: {
+      error: null,
+      expectedProfileRootSha256: HASH_B,
+      matching: [
+        {
+          executablePath: chromiumPath,
+          name: 'chrome.exe',
+          parentProcessId: 900,
+          processId: 901,
+          profileMatched: true,
+          profilePathBindingSha256,
+        },
+        {
+          executablePath: chromiumPath,
+          name: 'chrome.exe',
+          parentProcessId: 901,
+          processId: 902,
+          profileMatched: false,
+          profilePathBindingSha256: null,
+        },
+      ],
+      matchingCount: 2,
+      observedCount: 2,
+      passed: true,
+      profileBindingSha256,
+      profileBindingTokenCount: 1,
+      rootProcessIds: [901],
+      unresolved: [],
+      unresolvedCount: 0,
+    },
+  };
+}
+
+function validCheckpointComposition(
+  dir,
+  runGroupId,
+  runnerContractSha256,
+  finalProfileState,
+  packageLineage,
+) {
+  const checkpointDir = path.join(dir, 'package-ui-checkpoints');
+  const checkpointRecords = PACKAGE_UI_PROFILE_SEQUENCE.map((profileId, index) => {
+    const payload = {
+      kind: 'package-ui-profile-checkpoint',
+      profileId,
+      runGroupId,
+      runnerContractSha256,
+      schemaVersion: 'package-ui-profile-checkpoint/v1',
+      sequence: index + 1,
+    };
+    const file = writeImmutableEnvelope(
+      path.join(checkpointDir, `${profileId}.json`),
+      payload,
+    );
+    const envelope = JSON.parse(fs.readFileSync(file.path, 'utf8'));
+    return {
+      file,
+      payloadSha256: envelope.payloadSha256,
+      profileId,
+    };
+  });
+  return {
+    checkpointRecords,
+    finalProfileState: structuredClone(finalProfileState),
+    packageLineage: structuredClone(packageLineage),
+    passed: true,
+    runGroupId,
+    runnerContractSha256,
+  };
+}
+
+function validOperatorHandoff() {
+  return {
+    automationReadSecrets: false,
+    automationTypedSecrets: false,
+    completedAt: '2026-07-16T08:08:09.400Z',
+    durationClock: 'performance.now',
+    elapsedMs: 300,
+    finalPhase: 'authorization',
+    kind: 'visible-user-handoff',
+    maximumTotalTimeoutMs: 1_200_000,
+    outcome: 'workspace-reached',
+    phaseTimeoutMs: 600_000,
+    phaseTransitions: [
+      { elapsedMs: 0, phase: 'preparation', startedAt: '2026-07-16T08:08:09.110Z' },
+      { elapsedMs: 90, phase: 'authorization', startedAt: '2026-07-16T08:08:09.200Z' },
+    ],
+    startedAt: '2026-07-16T08:08:09.100Z',
+  };
+}
+
+function validInteractiveConnectionBootstrap() {
+  const operatorHandoff = validOperatorHandoff();
+  return {
+    completedAt: operatorHandoff.completedAt,
+    outcome: 'operator-established-lingxing-connection-and-session',
+    startedAt: operatorHandoff.startedAt,
+  };
+}
+
 function validRunDiagnostics(profileId) {
+  const connectionBootstrap = validInteractiveConnectionBootstrap();
+  const operatorHandoff = validOperatorHandoff();
+  const selectedStore = {
+    displayName: null,
+    idLength: 12,
+    idSha256: HASH_A,
+  };
   return {
     cleanupErrors: [],
     completedAt: '2026-07-16T08:08:20.000Z',
@@ -195,9 +392,31 @@ function validRunDiagnostics(profileId) {
     login: {
       attempts: [],
       completedAt: '2026-07-16T08:08:10.000Z',
-      outcome: 'existing-authenticated-session',
+      connectionBootstrap,
+      operatorHandoff,
+      outcome: 'interactive-operator-login',
       savedCredentials: null,
       startedAt: '2026-07-16T08:08:09.000Z',
+    },
+    lifecycle: {
+      droppedCount: 0,
+      events: [
+        { at: '2026-07-16T08:08:00.100Z', kind: 'window-attached', phase: 'electron-launch', runnerCloseRequested: false, windowId: 1 },
+        { at: '2026-07-16T08:08:19.600Z', kind: 'runner-close-requested', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-16T08:08:19.700Z', kind: 'window-closed', phase: 'electron-close', runnerCloseRequested: true, windowId: 1 },
+        { at: '2026-07-16T08:08:19.750Z', kind: 'electron-context-closed', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-16T08:08:19.800Z', kind: 'electron-app-closed', phase: 'electron-close', runnerCloseRequested: true },
+        { at: '2026-07-16T08:08:19.900Z', code: 0, kind: 'electron-process-exit', phase: 'electron-close', runnerCloseRequested: true, signal: null },
+      ],
+      limit: 100,
+      processExit: {
+        at: '2026-07-16T08:08:19.900Z',
+        code: 0,
+        runnerCloseRequested: true,
+        signal: null,
+      },
+      runnerCloseRequestedAt: '2026-07-16T08:08:19.600Z',
+      unexpectedCloseObserved: false,
     },
     phase: 'completed',
     profileId,
@@ -207,8 +426,18 @@ function validRunDiagnostics(profileId) {
       limits: { consoleErrors: 100, pageErrors: 100 },
       pageErrors: [],
     },
-    schemaVersion: 'package-ui-run-diagnostics/v1',
+    schemaVersion: 'package-ui-run-diagnostics/v2',
     startedAt: '2026-07-16T08:08:00.000Z',
+    storeGate: {
+      completedAt: '2026-07-16T08:08:08.900Z',
+      createdEvidenceStore: false,
+      currency: 'USD',
+      marketplace: 'US',
+      outcome: 'selected-existing-store',
+      resultingSurface: 'login',
+      selectedStore,
+      startedAt: '2026-07-16T08:08:08.800Z',
+    },
     timeline: [
       { at: '2026-07-16T08:08:00.000Z', phase: 'created' },
       { at: '2026-07-16T08:08:20.000Z', phase: 'completed' },
@@ -216,19 +445,481 @@ function validRunDiagnostics(profileId) {
   };
 }
 
+function validPackageUiSession(profileId, { firstRun = false } = {}) {
+  const diagnostics = validRunDiagnostics(profileId);
+  return {
+    connectionBootstrap: { ...diagnostics.login.connectionBootstrap },
+    loginSessionAttestation: firstRun
+      ? {
+          adsSessionReady: true,
+          credentialPersistence: 'saved',
+          credentialSource: 'typed',
+          erpSessionReady: true,
+          erpSessionReused: false,
+          ok: true,
+          sessionIdentityVerified: true,
+        }
+      : {
+          adsSessionReady: true,
+          credentialPersistence: 'main_managed',
+          credentialSource: 'saved',
+          erpSessionReady: true,
+          erpSessionReused: true,
+          ok: true,
+          sessionIdentityVerified: false,
+        },
+    mode: 'interactive-operator-login',
+    operatorHandoff: { ...diagnostics.login.operatorHandoff },
+    savedCredentialsLoginUsed: false,
+    storeGate: {
+      createdEvidenceStore: false,
+      currency: 'USD',
+      marketplace: 'US',
+      outcome: 'selected-existing-store',
+      selectedStore: { ...diagnostics.storeGate.selectedStore },
+    },
+    storeAuthorityReadback: {
+      actualIdSha256: HASH_A,
+      currency: 'USD',
+      expectedIdSha256: HASH_A,
+      marketplace: 'US',
+      passed: true,
+    },
+  };
+}
+
+const SCHEDULER_CONTEXT = {
+  storeId: 'store-us-001',
+  browserProfileId: 'profile-us-001',
+  marketplace: 'US',
+  currency: 'USD',
+  businessTimezone: 'America/Los_Angeles',
+  businessDate: '2026-07-16',
+  sessionGeneration: 4,
+};
+
+const EMPTY_SCHEDULER_COUNTS = {
+  workspaceQuery: 0,
+  schedulerGet: 0,
+  retentionPreview: 0,
+  runNow: 0,
+  runNowRejected: 0,
+  localSchedulerStart: 0,
+  storeSchedulerStart: 0,
+  reconcile: 0,
+  execute: 0,
+};
+
+function validDatabaseMutationAudit() {
+  const metrics = {
+    digestSha256: HASH_A,
+    serializedBytes: 49_152,
+    totalChanges: 8,
+    dataVersion: 1,
+    pageCount: 12,
+    pageSize: 4096,
+    schemaVersion: 9,
+    userVersion: 9,
+  };
+  return {
+    kind: 'package-ui-database-mutation-audit',
+    schemaVersion: 1,
+    requiredPhases: ['post-bootstrap', 'post-navigation', 'pre-close-terminal'],
+    checkpoints: [
+      {
+        sequence: 1,
+        phase: 'post-bootstrap',
+        capturedAt: '2026-07-16T08:08:09.500Z',
+        contextDigestSha256: HASH_B,
+        metrics: { ...metrics },
+      },
+      {
+        sequence: 2,
+        phase: 'post-navigation',
+        capturedAt: '2026-07-16T08:08:19.000Z',
+        contextDigestSha256: HASH_B,
+        metrics: { ...metrics },
+      },
+      {
+        sequence: 3,
+        phase: 'pre-close-terminal',
+        capturedAt: '2026-07-16T08:08:19.500Z',
+        contextDigestSha256: HASH_B,
+        metrics: { ...metrics },
+      },
+    ],
+    comparisons: {
+      contextDigestMatched: true,
+      digestMatched: true,
+      serializedBytesMatched: true,
+      totalChangesMatched: true,
+      dataVersionMatched: true,
+      pageCountMatched: true,
+      pageSizeMatched: true,
+      schemaVersionMatched: true,
+      userVersionMatched: true,
+    },
+    passed: true,
+  };
+}
+
+function databaseCheckpointReceipts(runtime) {
+  const checkpoints = runtime.marker.databaseMutationAudit.checkpoints;
+  return {
+    postBootstrap: structuredClone(checkpoints[0]),
+    postNavigation: structuredClone(checkpoints[1]),
+  };
+}
+
+function schedulerAuditSnapshot(userDataDir, { counts = {}, events = [], pid = 321 } = {}) {
+  const mergedCounts = { ...EMPTY_SCHEDULER_COUNTS, ...counts };
+  return {
+    kind: 'package-ui-scheduler-audit',
+    schemaVersion: 1,
+    generatedAt: '2026-07-16T08:08:09.500Z',
+    pid,
+    evidenceMode: 'package-ui',
+    userDataDir,
+    policies: { runNow: 'reject' },
+    counts: mergedCounts,
+    suppressed: {
+      automaticReconcile: 0,
+      localSchedulerStart: 1,
+      startupReconcile: 1,
+      storeSchedulerStart: 1,
+    },
+    guards: {
+      localSchedulerStarted: false,
+      storeCollectionSchedulerStarted: false,
+      runNowIpcDisabled: true,
+      startupReconcileSuppressed: true,
+      automaticReconcileSuppressed: true,
+      readOnlyInvariantPassed: true,
+    },
+    databaseMutationAudit: validDatabaseMutationAudit(),
+    events,
+  };
+}
+
+function validSchedulerSubviewEvidence(userDataDir) {
+  const expected = EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS[0];
+  const requestId = 'renderer-bootstrap-1784786120654-1';
+  const events = [
+    {
+      sequence: 1,
+      at: '2026-07-16T08:08:10.100Z',
+      source: 'mission-control:query',
+      outcome: 'succeeded',
+      context: SCHEDULER_CONTEXT,
+      request: {
+        query: 'workspace-bootstrap',
+        requestId,
+        contextEpoch: 1,
+        context: SCHEDULER_CONTEXT,
+      },
+      response: {
+        query: 'workspace-bootstrap',
+        requestId,
+        contextEpoch: 1,
+        authoritativeContext: SCHEDULER_CONTEXT,
+        capabilities: expected.capabilities.map((capability) => ({
+          ...capability,
+          view: 'settings/scheduler',
+          workspace: 'settings',
+        })),
+      },
+      errorCode: null,
+    },
+    {
+      sequence: 2,
+      at: '2026-07-16T08:08:10.200Z',
+      source: 'store-collection-scheduler:get',
+      outcome: 'succeeded',
+      context: SCHEDULER_CONTEXT,
+      request: { storeContext: SCHEDULER_CONTEXT },
+      response: {
+        businessDate: SCHEDULER_CONTEXT.businessDate,
+        detail: '等待当前店铺配置的采集时间。',
+        enabled: true,
+        state: 'waiting',
+        storeId: SCHEDULER_CONTEXT.storeId,
+      },
+      errorCode: null,
+    },
+    {
+      sequence: 3,
+      at: '2026-07-16T08:08:10.300Z',
+      source: 'store-evidence-retention:preview',
+      outcome: 'succeeded',
+      context: SCHEDULER_CONTEXT,
+      request: { storeContext: SCHEDULER_CONTEXT },
+      response: {
+        applyable: false,
+        blockerCount: 0,
+        candidateCount: 0,
+        currency: 'USD',
+        deletionSupported: false,
+        marketplace: 'US',
+        mode: 'dry-run',
+        profileId: SCHEDULER_CONTEXT.browserProfileId,
+        schemaVersion: 1,
+        storeId: SCHEDULER_CONTEXT.storeId,
+      },
+      errorCode: null,
+    },
+  ];
+  return {
+    dom: {
+      alertDialogCount: 0,
+      busyControlCount: 0,
+      confirmRunDialogCount: 0,
+      fixedScopeText: 'US USD',
+      heading: expected.heading,
+      headingCount: 1,
+      legacyBoundaryCount: 1,
+      legacyCapabilityState: 'LEGACY_ADAPTER',
+      legacyRoute: 'scheduler',
+      legacyStoreId: SCHEDULER_CONTEXT.storeId,
+      pageCount: 1,
+      previewMarkerCount: 0,
+      loadingStateCount: 0,
+      retentionPreviewCapabilityId: 'settings.scheduler.retention-preview',
+      retentionPreviewControlCount: 1,
+      retentionPreviewEnabledCount: 1,
+      retentionBlockerCount: '0',
+      retentionCandidateCount: '0',
+      retentionCurrency: 'USD',
+      retentionMarketplace: 'US',
+      retentionProfileId: SCHEDULER_CONTEXT.browserProfileId,
+      retentionStoreId: SCHEDULER_CONTEXT.storeId,
+      retentionSummaryCount: 1,
+      rootCount: 1,
+      scheduleBusinessDate: SCHEDULER_CONTEXT.businessDate,
+      scheduleCurrency: 'USD',
+      scheduleEnabled: 'true',
+      scheduleMarketplace: 'US',
+      scheduleProjectionCount: 1,
+      scheduleRefreshEnabledCount: 1,
+      scheduleState: 'waiting',
+      scheduleStoreId: SCHEDULER_CONTEXT.storeId,
+      schedulerErrorCount: 0,
+      selectedStoreId: SCHEDULER_CONTEXT.storeId,
+      selectedTabCapabilityState: 'LEGACY_ADAPTER',
+      selectedTabCount: 1,
+      selectedTabId: expected.tabId,
+      shellStoreId: SCHEDULER_CONTEXT.storeId,
+      subview: expected.subview,
+      workspace: expected.workspace,
+    },
+    ledgerBefore: schedulerAuditSnapshot(userDataDir),
+    ledgerAfter: schedulerAuditSnapshot(userDataDir, {
+      counts: { workspaceQuery: 1, schedulerGet: 1, retentionPreview: 1 },
+      events,
+    }),
+  };
+}
+
+function validPackageUiReadOnlyRuntime(dir, profileId, userDataDir) {
+  const marker = validSchedulerSubviewEvidence(userDataDir).ledgerAfter;
+  const artifactPath = path.join(dir, 'package-ui-artifacts', `${profileId}-scheduler-audit.json`);
+  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+  fs.writeFileSync(artifactPath, JSON.stringify(marker), 'utf8');
+  return validatePackageUiReadOnlyRuntimeEvidence({
+    artifact: artifactRecord(artifactPath),
+    main: {
+      evidenceMode: 'package-ui',
+      pid: marker.pid,
+      userDataDir,
+    },
+    marker,
+    processExitConfirmed: true,
+  });
+}
+
+function validPackageUiSubviewCheck(dir, scale, userDataDir) {
+  const expected = EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS[0];
+  const screenshotPath = path.join(
+    dir,
+    'package-ui-artifacts',
+    `${expected.workspace}-${expected.subview}-${scale.scalePercent}.png`,
+  );
+  fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
+  fs.writeFileSync(screenshotPath, `scheduler-${scale.scalePercent}`, 'utf8');
+  return {
+    ...expected,
+    compositeEvidence: { passed: true },
+    identityCapabilityEvidence: validateSchedulerSubviewEvidence(
+      validSchedulerSubviewEvidence(userDataDir),
+      expected,
+    ),
+    passed: true,
+    screenshot: {
+      ...artifactRecord(screenshotPath),
+      subview: expected.subview,
+      workspace: expected.workspace,
+    },
+    settleEvidence: { passed: true },
+    violations: [],
+  };
+}
+
+function validPackageUiRun(
+  dir,
+  scale,
+  userDataDir,
+  profileBrowserUserDataDir,
+  chromiumArtifact,
+) {
+  const profileId = `${scale.scalePercent}-compact`;
+  const schedulerReadOnlyRuntime = validPackageUiReadOnlyRuntime(dir, profileId, userDataDir);
+  return {
+    actualDeviceScaleFactor: scale.deviceScaleFactor,
+    attemptArtifacts: validAttemptArtifacts(dir, profileId),
+    chromiumProcessLineage: validChromiumLineage(
+      profileBrowserUserDataDir,
+      chromiumArtifact,
+    ),
+    consoleErrors: [],
+    databaseAuditCheckpoints: databaseCheckpointReceipts(schedulerReadOnlyRuntime),
+    diagnostics: validRunDiagnostics(profileId),
+    identity: { passed: true },
+    overlayChecks: EXPECTED_OVERLAY_CHECK_IDS.map((id) => ({
+      compositeEvidence: { passed: true },
+      id,
+      overlayVisibleAfterCapture: true,
+      overlayVisibleBeforeCapture: true,
+      passed: true,
+      screenshot: artifactRecord(writePng(path.join(
+        dir,
+        'package-ui-artifacts',
+        `${profileId}-${id}.png`,
+      ))),
+    })),
+    packageProcessIsolation: validProcessIsolation(),
+    pageErrors: [],
+    passed: true,
+    profileProcessIsolation: validProcessIsolation(profileBrowserUserDataDir),
+    scalePercent: scale.scalePercent,
+    schedulerReadOnlyRuntime,
+    screenshots: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => ({
+      ...artifactRecord(writePng(path.join(
+        dir,
+        'package-ui-artifacts',
+        `${profileId}-${workspace.workspace}-${workspace.subview}.png`,
+      ))),
+      subview: workspace.subview,
+      workspace: workspace.workspace,
+    })),
+    session: validPackageUiSession(profileId, {
+      firstRun: scale.scalePercent === EXPECTED_PACKAGE_UI_SCALES[0].scalePercent,
+    }),
+    subviewChecks: [validPackageUiSubviewCheck(dir, scale, userDataDir)],
+    viewport: { width: 1200, height: 700 },
+    viewportContract: {
+      actual: { width: 1200, height: 700, deviceScaleFactor: scale.deviceScaleFactor },
+      delta: { width: 0, height: 0, deviceScaleFactor: 0 },
+      passed: true,
+      requested: { width: 1200, height: 700, deviceScaleFactor: scale.deviceScaleFactor },
+      tolerance: { width: 2, height: 2, deviceScaleFactor: 0.02 },
+      violations: [],
+    },
+    workspaceChecks: EXPECTED_PACKAGE_UI_WORKSPACES.map((workspace) => {
+      const objectWorkspace = workspace.workspace === 'product' || workspace.workspace === 'diagnosis';
+      return {
+        compositeEvidence: { passed: true },
+        experienceEvidence: objectWorkspace ? { passed: true } : null,
+        inspectorEvidence: objectWorkspace ? {
+          passed: true,
+          inspector: { mode: 'drawer', ariaModal: 'true' },
+          screenshot: { sha256: HASH_B },
+        } : null,
+        keyboardEvidence: { passed: true },
+        passed: true,
+        settleEvidence: { passed: true },
+        subview: workspace.subview,
+        workspace: workspace.workspace,
+      };
+    }),
+  };
+}
+
+function validWidePackageUiRun(
+  dir,
+  userDataDir,
+  profileBrowserUserDataDir,
+  chromiumArtifact,
+) {
+  const profileId = PACKAGE_UI_WIDE_PROFILE.id;
+  const schedulerReadOnlyRuntime = validPackageUiReadOnlyRuntime(
+    dir,
+    profileId,
+    userDataDir,
+  );
+  return {
+    actualDeviceScaleFactor: 1,
+    attemptArtifacts: validAttemptArtifacts(dir, profileId),
+    chromiumProcessLineage: validChromiumLineage(
+      profileBrowserUserDataDir,
+      chromiumArtifact,
+    ),
+    consoleErrors: [],
+    databaseAuditCheckpoints: databaseCheckpointReceipts(schedulerReadOnlyRuntime),
+    diagnostics: validRunDiagnostics(profileId),
+    identity: { passed: true, violations: [] },
+    packageProcessIsolation: validProcessIsolation(),
+    pageErrors: [],
+    passed: true,
+    profileId,
+    profileProcessIsolation: validProcessIsolation(profileBrowserUserDataDir),
+    schedulerReadOnlyRuntime,
+    screenshots: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
+      ...artifactRecord(writePng(path.join(
+        dir,
+        'package-ui-artifacts',
+        `${profileId}-${workspace.workspace}-${workspace.subview}.png`,
+      ))),
+      subview: workspace.subview,
+      workspace: workspace.workspace,
+    })),
+    session: validPackageUiSession(profileId),
+    viewport: { width: 1400, height: 900 },
+    viewportContract: {
+      actual: { width: 1400, height: 900, deviceScaleFactor: 1 },
+      delta: { width: 0, height: 0, deviceScaleFactor: 0 },
+      passed: true,
+      requested: { width: 1400, height: 900, deviceScaleFactor: 1 },
+      tolerance: { width: 2, height: 2, deviceScaleFactor: 0.02 },
+      violations: [],
+    },
+    workspaceChecks: PACKAGE_UI_WIDE_PROFILE.workspaces.map((workspace) => ({
+      compositeEvidence: { passed: true },
+      experienceEvidence: null,
+      inspectorEvidence: null,
+      keyboardEvidence: { passed: true },
+      passed: true,
+      settleEvidence: { passed: true },
+      subview: workspace.subview,
+      workspace: workspace.workspace,
+    })),
+  };
+}
+
 function validPackageUiEvidence(dir, smoke, authorityDbPath) {
   const protectedDbStat = fs.statSync(authorityDbPath);
+  const protectedDatabaseSha256 = sha256File(authorityDbPath);
   const protectedDatabaseArtifact = {
     path: authorityDbPath,
-    sha256: sha256File(authorityDbPath),
+    sha256: protectedDatabaseSha256,
     sizeBytes: protectedDbStat.size,
     mtime: protectedDbStat.mtime.toISOString(),
     mtimeMs: protectedDbStat.mtimeMs,
   };
   const appContentPath = path.join(dir, 'release', 'win-unpacked', 'resources', 'app');
   const profileDatabasePath = path.join(dir, 'profile', 'amazon-ai-ops.db');
-  const profileBrowserUserDataDir = path.join(path.dirname(profileDatabasePath), 'storage', 'browser-data');
+  const userDataDir = path.dirname(profileDatabasePath);
+  const profileBrowserUserDataDir = path.join(userDataDir, 'stores');
   fs.mkdirSync(path.dirname(profileDatabasePath), { recursive: true });
+  fs.mkdirSync(profileBrowserUserDataDir, { recursive: true });
   fs.copyFileSync(authorityDbPath, profileDatabasePath);
   const profileDatabaseArtifact = {
     path: profileDatabasePath,
@@ -236,92 +927,142 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
     sizeBytes: fs.statSync(profileDatabasePath).size,
   };
   const appContentSha256 = 'A'.repeat(64);
+  const chromiumPath = path.join(
+    appContentPath,
+    'playwright-browsers',
+    'chrome-win64',
+    'chrome.exe',
+  );
+  fs.mkdirSync(path.dirname(chromiumPath), { recursive: true });
+  fs.writeFileSync(chromiumPath, 'bundled Playwright Chromium fixture\n', 'utf8');
+  const chromiumArtifact = artifactRecord(chromiumPath);
   const appContentArtifact = {
     kind: 'unpacked-app-content-manifest',
     rootPath: appContentPath,
-    fileCount: 1,
-    totalSizeBytes: 1,
+    fileCount: 2,
+    totalSizeBytes: 1 + chromiumArtifact.sizeBytes,
     sha256: appContentSha256,
-    files: [{
-      path: 'dist/main/index.js',
-      sizeBytes: 1,
-      sha256: PACKAGE_MAIN_BUNDLE_SHA256,
-    }],
+    files: [
+      {
+        path: 'dist/main/index.js',
+        sizeBytes: 1,
+        sha256: PACKAGE_MAIN_BUNDLE_SHA256,
+      },
+      {
+        path: 'playwright-browsers/chrome-win64/chrome.exe',
+        sizeBytes: chromiumArtifact.sizeBytes,
+        sha256: chromiumArtifact.sha256,
+      },
+    ],
   };
-  const run = (scalePercent, deviceScaleFactor) => ({
-    actualDeviceScaleFactor: deviceScaleFactor,
-    consoleErrors: [],
-    diagnostics: validRunDiagnostics(`${scalePercent}-compact`),
-    overlayChecks: Array.from({ length: 3 }, (_, index) => ({ id: `overlay-${index + 1}`, passed: true })),
-    packageProcessIsolation: validProcessIsolation(),
-    pageErrors: [],
-    passed: true,
-    profileProcessIsolation: validProcessIsolation(profileBrowserUserDataDir),
-    scalePercent,
-    screenshots: Array.from({ length: 8 }, (_, index) => ({ workspace: `workspace-${index + 1}` })),
-    viewport: { width: 1200, height: 700 },
-    viewportContract: { passed: true, violations: [] },
-    workspaceChecks: Array.from({ length: 8 }, (_, index) => ({ workspace: `workspace-${index + 1}`, passed: true })),
-  });
-  const wideWorkspaceCheck = (workspace) => ({
-    workspace,
-    passed: true,
-    experienceEvidence: { passed: true },
-    inspectorEvidence: {
-      passed: true,
-      inspector: { mode: 'inline', ariaModal: null },
-      screenshot: { sha256: 'D'.repeat(64) },
+  const runGroupId = 'v15-non-ready-package-ui-run-group';
+  const runnerContract = buildPackageUiRunnerContract();
+  const logicalDatabase = validLogicalSqliteArtifact(
+    protectedDatabaseSha256,
+    protectedDbStat.size,
+  );
+  const finalProfileState = validProfileLineageState(logicalDatabase);
+  const packageLineage = {
+    appContentSha256,
+    chromium: {
+      relativePath: 'playwright-browsers/chrome-win64/chrome.exe',
+      sha256: chromiumArtifact.sha256,
+      sizeBytes: chromiumArtifact.sizeBytes,
     },
-  });
-  return {
+    executableSha256: smoke.artifacts.unpacked.sha256,
+    profileBindingSha256: HASH_A,
+    profileBrowserBindingSha256: HASH_B,
+  };
+  const runGroupMetadata = writeImmutableEnvelope(
+    path.join(dir, 'package-ui-checkpoints', 'run-group.json'),
+    {
+      genesisProfileState: finalProfileState,
+      kind: 'package-ui-run-group',
+      packageLineage,
+      profileSequence: PACKAGE_UI_PROFILE_SEQUENCE,
+      protectedDatabaseLogical: logicalDatabase,
+      runGroupId,
+      runnerContract,
+      runnerContractSha256: runnerContract.sha256,
+      schemaVersion: 'package-ui-run-group/v1',
+    },
+  );
+  const checkpointComposition = validCheckpointComposition(
+    dir,
+    runGroupId,
+    runnerContract.sha256,
+    finalProfileState,
+    packageLineage,
+  );
+  const packageUi = {
     kind: 'package-ui-evidence',
-    schemaVersion: 5,
+    schemaVersion: 8,
     generatedAt: '2026-07-16T08:08:00.000Z',
     completedAt: '2026-07-16T08:09:00.000Z',
     passed: true,
     violations: [],
+    interactiveLoginContract: INTERACTIVE_LOGIN_CONTRACT,
+    isolatedProfileBootstrapContract: ISOLATED_PROFILE_BOOTSTRAP_CONTRACT,
     requested: {
+      allowInteractiveLogin: true,
+      allowSavedLogin: false,
       appContentPath,
       executablePath: smoke.artifacts.unpacked.path,
       expectedAppContentSha256: appContentSha256,
       expectedExeSha256: smoke.artifacts.unpacked.sha256,
       evidenceMode: 'package-ui',
+      interactiveLoginMaximumTotalMs: 1_200_000,
+      interactiveLoginTimeoutMs: 600_000,
+      loginMode: 'interactive-operator-each-run',
       protectedDatabasePath: authorityDbPath,
       profileBrowserUserDataDir,
-      userDataDir: path.dirname(profileDatabasePath),
-      scales: [
-        { scalePercent: 100, deviceScaleFactor: 1 },
-        { scalePercent: 125, deviceScaleFactor: 1.25 },
-      ],
+      resumeRunGroupId: null,
+      runGroupId,
+      userDataDir,
+      scales: EXPECTED_PACKAGE_UI_SCALES,
+      subviewChecks: EXPECTED_PACKAGE_UI_SUBVIEW_CHECKS,
       viewport: { width: 1200, height: 700 },
       wideProfile: {
-        id: 'wide-1400x900-100',
+        id: PACKAGE_UI_WIDE_PROFILE.id,
         viewport: { width: 1400, height: 900 },
         deviceScaleFactor: 1,
       },
     },
-    runs: [run(100, 1), run(125, 1.25)],
-    wideProfile: {
-      actualDeviceScaleFactor: 1,
-      consoleErrors: [],
-      diagnostics: validRunDiagnostics('wide-1400x900-100'),
-      identity: { passed: true, violations: [] },
-      packageProcessIsolation: validProcessIsolation(),
-      pageErrors: [],
+    runs: EXPECTED_PACKAGE_UI_SCALES.map((scale) => validPackageUiRun(
+      dir,
+      scale,
+      userDataDir,
+      profileBrowserUserDataDir,
+      chromiumArtifact,
+    )),
+    wideProfile: validWidePackageUiRun(
+      dir,
+      userDataDir,
+      profileBrowserUserDataDir,
+      chromiumArtifact,
+    ),
+    runGroup: {
+      attemptId: 'v15-non-ready-package-ui-attempt',
+      metadata: runGroupMetadata,
+      profileSequence: PACKAGE_UI_PROFILE_SEQUENCE,
+      resumed: false,
+      runGroupId,
+      runnerContractSha256: runnerContract.sha256,
+    },
+    checkpointComposition,
+    profileLineage: {
+      final: structuredClone(checkpointComposition.finalProfileState),
       passed: true,
-      profileId: 'wide-1400x900-100',
-      profileProcessIsolation: validProcessIsolation(profileBrowserUserDataDir),
-      screenshots: [
-        { workspace: 'product', sha256: 'E'.repeat(64) },
-        { workspace: 'diagnosis', sha256: 'F'.repeat(64) },
-      ],
-      viewport: { width: 1400, height: 900 },
-      viewportContract: { passed: true, violations: [] },
-      workspaceChecks: [wideWorkspaceCheck('product'), wideWorkspaceCheck('diagnosis')],
     },
     protectedDatabase: {
       before: protectedDatabaseArtifact,
       after: protectedDatabaseArtifact,
+      passed: true,
+      unchanged: true,
+    },
+    protectedDatabaseLogical: {
+      after: structuredClone(logicalDatabase),
+      before: structuredClone(logicalDatabase),
       passed: true,
       unchanged: true,
     },
@@ -334,6 +1075,7 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
       sizeMatches: true,
       violations: [],
     },
+    profileDatabaseFileIsolation: { passed: true },
     packageProcessIsolation: validProcessIsolation(),
     profileProcessIsolation: validProcessIsolation(profileBrowserUserDataDir),
     artifactsBefore: {
@@ -346,8 +1088,11 @@ function validPackageUiEvidence(dir, smoke, authorityDbPath) {
     },
     artifactHashesStable: true,
     freshness: { passed: true, violations: [] },
-    completeness: { passed: true, violations: [] },
   };
+  packageUi.completeness = evaluatePackageUiEvidenceCompleteness(packageUi);
+  packageUi.passed = packageUi.completeness.passed;
+  packageUi.violations = packageUi.completeness.violations;
+  return packageUi;
 }
 
 const strictNonReadyGates = () => [
@@ -360,6 +1105,43 @@ const strictNonReadyGates = () => [
   { id: 'release-package-hash', name: 'Release package hash', ok: true, status: 'passed' },
   { id: 'package-launch-smoke', name: 'Package launch smoke', ok: true, status: 'passed' },
 ];
+
+function bundlePackageUiReferencedArtifacts(packageUi, bundleManifest) {
+  const artifacts = [];
+  const pushArtifact = (artifact) => {
+    if (artifact?.path) artifacts.push(artifact);
+  };
+  for (const run of packageUi.runs || []) {
+    for (const screenshot of run.screenshots || []) pushArtifact(screenshot);
+    for (const overlay of run.overlayChecks || []) pushArtifact(overlay?.screenshot);
+    for (const workspace of run.workspaceChecks || []) {
+      pushArtifact(workspace?.inspectorEvidence?.screenshot);
+    }
+    for (const subview of run.subviewChecks || []) pushArtifact(subview?.screenshot);
+    pushArtifact(run.schedulerReadOnlyRuntime?.artifact);
+  }
+  for (const screenshot of packageUi.wideProfile?.screenshots || []) pushArtifact(screenshot);
+  for (const workspace of packageUi.wideProfile?.workspaceChecks || []) {
+    pushArtifact(workspace?.inspectorEvidence?.screenshot);
+  }
+  pushArtifact(packageUi.wideProfile?.schedulerReadOnlyRuntime?.artifact);
+
+  const bundleDir = path.dirname(bundleManifest);
+  const targetDir = path.join(bundleDir, 'evidence', 'package-ui-referenced');
+  fs.mkdirSync(targetDir, { recursive: true });
+  return [...new Map(artifacts.map((artifact) => [path.resolve(artifact.path), artifact])).values()]
+    .map((artifact, index) => {
+      const targetPath = path.join(targetDir, `${index + 1}-${path.basename(artifact.path)}`);
+      fs.copyFileSync(artifact.path, targetPath);
+      return {
+        label: `package-ui-referenced:${path.basename(artifact.path)}`,
+        sourcePath: artifact.path,
+        bundlePath: path.relative(bundleDir, targetPath),
+        sizeBytes: artifact.sizeBytes,
+        sha256: artifact.sha256,
+      };
+    });
+}
 
 function writeStrictNonReadyFixture(options) {
   const {
@@ -433,6 +1215,10 @@ function writeStrictNonReadyFixture(options) {
   const bundlePackageIndexPath = path.join(path.dirname(bundleManifest), 'evidence', 'release-package-index.json');
   const bundledPackageUiManifestPath = path.join(path.dirname(bundleManifest), 'evidence', 'package-ui-manifest.json');
   const bundledPackageSecurityEvidencePath = path.join(path.dirname(bundleManifest), 'evidence', 'package-security-boundaries.json');
+  const bundledPackageUiReferencedArtifacts = bundlePackageUiReferencedArtifacts(
+    packageUi,
+    bundleManifest,
+  );
   const bundledAdversarial = bundleAdversarialNodeEnvEvidence(
     bundleManifest,
     packageAdversarialNodeEnvEvidence,
@@ -476,6 +1262,7 @@ function writeStrictNonReadyFixture(options) {
         sizeBytes: fs.statSync(bundledPackageSecurityEvidencePath).size,
         sha256: sha256File(bundledPackageSecurityEvidencePath),
       },
+      ...bundledPackageUiReferencedArtifacts,
       bundledAdversarial.file,
     ],
     packageIndex: {
@@ -673,6 +1460,83 @@ function validReadbackEvidence(dir) {
 }
 
 describe('verify v15 non-ready safety', () => {
+  it('binds every schema v8 scheduler screenshot and runtime attestation to its bundle copy', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-package-ui-bundle-binding-'));
+    try {
+      const bundleDir = path.join(dir, 'bundle');
+      const sourceDir = path.join(dir, 'source');
+      const bundledEvidenceDir = path.join(bundleDir, 'evidence');
+      const bundledScreenshotDir = path.join(bundleDir, 'screenshots');
+      fs.mkdirSync(sourceDir, { recursive: true });
+      fs.mkdirSync(bundledEvidenceDir, { recursive: true });
+      fs.mkdirSync(bundledScreenshotDir, { recursive: true });
+      const sourceScreenshot = path.join(sourceDir, 'settings-scheduler.png');
+      const sourceRuntime = path.join(sourceDir, 'scheduler-runtime.json');
+      const bundledScreenshot = path.join(bundledScreenshotDir, 'settings-scheduler.png');
+      const bundledRuntime = path.join(bundledEvidenceDir, 'scheduler-runtime.json');
+      fs.writeFileSync(sourceScreenshot, 'current scheduler screenshot bytes', 'utf8');
+      fs.writeFileSync(sourceRuntime, '{"kind":"scheduler-read-only-runtime"}\n', 'utf8');
+      fs.copyFileSync(sourceScreenshot, bundledScreenshot);
+      fs.copyFileSync(sourceRuntime, bundledRuntime);
+      const screenshot = artifactRecord(sourceScreenshot);
+      const runtime = artifactRecord(sourceRuntime);
+      const manifestPath = path.join(bundleDir, 'delivery-bundle-manifest.json');
+      const manifest = {
+        files: [
+          {
+            sourcePath: sourceScreenshot,
+            bundlePath: path.relative(bundleDir, bundledScreenshot),
+            sizeBytes: screenshot.sizeBytes,
+            sha256: screenshot.sha256,
+          },
+          {
+            sourcePath: sourceRuntime,
+            bundlePath: path.relative(bundleDir, bundledRuntime),
+            sizeBytes: runtime.sizeBytes,
+            sha256: runtime.sha256,
+          },
+        ],
+      };
+      const packageUi = {
+        schemaVersion: 8,
+        runs: [{
+          screenshots: [],
+          overlayChecks: [],
+          workspaceChecks: [],
+          subviewChecks: [{ screenshot }],
+          schedulerReadOnlyRuntime: { artifact: runtime },
+        }],
+        wideProfile: {
+          screenshots: [],
+          workspaceChecks: [],
+        },
+      };
+
+      expect(packageUiReferencedArtifactsAreBundled(
+        packageUi,
+        manifest,
+        manifestPath,
+      )).toBe(true);
+
+      fs.rmSync(bundledScreenshot);
+      expect(packageUiReferencedArtifactsAreBundled(
+        packageUi,
+        manifest,
+        manifestPath,
+      )).toBe(false);
+
+      fs.copyFileSync(sourceScreenshot, bundledScreenshot);
+      fs.appendFileSync(bundledRuntime, 'tampered', 'utf8');
+      expect(packageUiReferencedArtifactsAreBundled(
+        packageUi,
+        manifest,
+        manifestPath,
+      )).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('accepts the current IN_PROGRESS README delivery state as non-ready', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v15-non-ready-safety-'));
     const evidenceManifest = path.join(dir, 'evidence-manifest.json');
@@ -879,9 +1743,49 @@ describe('verify v15 non-ready safety', () => {
   });
 
   it.each([
-    ['schema is older than v5', (context) => {
+    ['historical schema v5 cannot satisfy the current production safety gate', (context) => {
       mutatePackageUiFixture(context, (packageUi) => {
-        packageUi.schemaVersion = 4;
+        packageUi.schemaVersion = 5;
+      });
+    }],
+    ['historical schema v6 cannot satisfy the current production safety gate', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.schemaVersion = 6;
+      });
+    }],
+    ['interactive operator login request is downgraded to saved-login automation', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.requested.allowInteractiveLogin = false;
+        packageUi.requested.allowSavedLogin = true;
+        packageUi.requested.loginMode = 'app-owned-saved-login';
+      });
+    }],
+    ['first 100% handoff lacks typed-and-saved fresh identity proof', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs.find((run) => run.scalePercent === 100).session.loginSessionAttestation = {
+          adsSessionReady: true,
+          credentialPersistence: 'main_managed',
+          credentialSource: 'saved',
+          erpSessionReady: true,
+          erpSessionReused: true,
+          ok: true,
+          sessionIdentityVerified: false,
+        };
+      });
+    }],
+    ['125% run omits its interactive operator handoff mode', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs.find((run) => run.scalePercent === 125).session.mode = 'existing-authenticated-session';
+      });
+    }],
+    ['wide run omits its interactive operator handoff mode', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.wideProfile.session.mode = 'existing-authenticated-session';
+      });
+    }],
+    ['operator handoff claims automation read secrets', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[0].session.operatorHandoff.automationReadSecrets = true;
       });
     }],
     ['EXE hash is not bound to package smoke', (context) => {
@@ -910,7 +1814,7 @@ describe('verify v15 non-ready safety', () => {
         packageUi.packageProcessIsolation.after.matchingCount = 1;
       });
     }],
-    ['package process isolation omits strict v5 snapshot fields', (context) => {
+    ['package process isolation omits strict current snapshot fields', (context) => {
       mutatePackageUiFixture(context, (packageUi) => {
         packageUi.packageProcessIsolation.before = {
           error: null,
@@ -945,6 +1849,57 @@ describe('verify v15 non-ready safety', () => {
         delete packageUi.runs[1].diagnostics;
       });
     }],
+    ['Electron lifecycle diagnostics are missing', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        delete packageUi.runs[0].diagnostics.lifecycle;
+      });
+    }],
+    ['Electron lifecycle observed an unrequested close', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.wideProfile.diagnostics.lifecycle.unexpectedCloseObserved = true;
+      });
+    }],
+    ['Electron exited non-zero', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[1].diagnostics.lifecycle.processExit.code = 1;
+        packageUi.runs[1].diagnostics.lifecycle.events.find(
+          (event) => event.kind === 'electron-process-exit',
+        ).code = 1;
+      });
+    }],
+    ['Electron lifecycle markers are duplicated', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        const lifecycle = packageUi.runs[0].diagnostics.lifecycle;
+        const marker = lifecycle.events.find((event) => event.kind === 'runner-close-requested');
+        lifecycle.events.splice(2, 0, { ...marker });
+      });
+    }],
+    ['Electron lifecycle exit receipt is detached', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.wideProfile.diagnostics.lifecycle.processExit.at =
+          '2026-07-16T08:08:19.901Z';
+      });
+    }],
+    ['Electron window is attached only after close was requested', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        const events = packageUi.runs[0].diagnostics.lifecycle.events;
+        const attached = events.shift();
+        attached.at = '2026-07-16T08:08:19.650Z';
+        attached.runnerCloseRequested = true;
+        events.splice(1, 0, attached);
+      });
+    }],
+    ['Electron lifecycle records an event after process exit', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[1].diagnostics.lifecycle.events.push({
+          at: '2026-07-16T08:08:19.950Z',
+          kind: 'main-frame-navigated',
+          phase: 'electron-close',
+          runnerCloseRequested: true,
+          windowId: 1,
+        });
+      });
+    }],
     ['diagnostics retain a raw credential', (context) => {
       mutatePackageUiFixture(context, (packageUi) => {
         packageUi.wideProfile.diagnostics.login.failureMessage = 'password=hunter2';
@@ -953,6 +1908,16 @@ describe('verify v15 non-ready safety', () => {
     ['diagnostics retain raw CLI credentials', (context) => {
       mutatePackageUiFixture(context, (packageUi) => {
         packageUi.runs[0].diagnostics.login.failureMessage = '--username operator@example.com --password hunter2';
+      });
+    }],
+    ['diagnostics retain a raw account email', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[0].diagnostics.login.failureMessage = 'operator@example.com';
+      });
+    }],
+    ['diagnostics retain a user-name field', (context) => {
+      mutatePackageUiFixture(context, (packageUi) => {
+        packageUi.runs[0].diagnostics['user-name'] = '[REDACTED_ACCOUNT]';
       });
     }],
     ['diagnostics retain raw authorization, cookie, or session tokens', (context) => {
@@ -985,9 +1950,9 @@ describe('verify v15 non-ready safety', () => {
         packageUi.profileDatabaseProvenance.hashMatches = false;
       });
     }],
-    ['wide Product/Diagnosis profile is incomplete', (context) => {
+    ['wide canonical Decisions/Objects profile is incomplete', (context) => {
       mutatePackageUiFixture(context, (packageUi) => {
-        packageUi.wideProfile.workspaceChecks.find((item) => item.workspace === 'diagnosis').passed = false;
+        packageUi.wideProfile.workspaceChecks.find((item) => item.workspace === 'objects').passed = false;
       });
     }],
   ])('rejects APP_NEEDS_WORK when package UI %s', (_label, mutate) => {
@@ -1034,9 +1999,7 @@ describe('verify v15 non-ready safety', () => {
     const result = runStrictNonReadySafetyFixture({
       mutateAfterWrite({ paths }) {
         const smoke = JSON.parse(fs.readFileSync(paths.packageSmoke, 'utf8'));
-        smoke.checks = smoke.checks.map((check) => (
-          check.kind === 'portable' ? { ...check, ok: false } : check
-        ));
+        delete smoke.checks.find((check) => check.kind === 'portable').runtimeProcess;
         writeJson(paths.packageSmoke, smoke);
       },
     });

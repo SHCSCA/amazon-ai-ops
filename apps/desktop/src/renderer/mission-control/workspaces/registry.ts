@@ -12,7 +12,7 @@ export const MISSION_CONTROL_WORKSPACE_REGISTRY = [
     description: '只呈现当前店铺今天应先处理的事实与安全动作。',
     subviews: [
       { id: 'overview', label: '今日总览', description: '下一安全动作与运营事实', view: 'today/overview', kind: 'legacy', legacyRoute: 'dashboard' },
-      { id: 'events', label: '运营事件', description: '记录会影响当日判断的上下文', view: 'today/events', kind: 'legacy', legacyRoute: 'operation-events' },
+      { id: 'events', label: '运营事件', description: '记录会影响当日判断的上下文', view: 'today/events', kind: 'canonical' },
     ],
   },
   {
@@ -21,7 +21,7 @@ export const MISSION_CONTROL_WORKSPACE_REGISTRY = [
     description: '管理 Mission 的目标、约束、检查点与停驻原因。',
     subviews: [
       { id: 'overview', label: 'Mission 队列', description: '目标、约束与检查点', view: 'missions/overview', kind: 'canonical' },
-      { id: 'facts', label: '广告事实', description: '复用真实广告诊断与量化事实', view: 'missions/facts', kind: 'legacy', legacyRoute: 'ad-quant' },
+      { id: 'facts', label: '广告事实', description: '核验 Mission 事实检查点与数据 lineage', view: 'missions/facts', kind: 'canonical' },
     ],
   },
   {
@@ -65,9 +65,9 @@ export const MISSION_CONTROL_WORKSPACE_REGISTRY = [
     description: '维护店铺数据域、产品、经营目标、关键词与 Listing。',
     subviews: [
       { id: 'products', label: '店铺与产品', description: '原生店铺 CRUD 与产品维护', view: 'objects/products', kind: 'legacy', legacyRoute: 'product-management' },
-      { id: 'targets', label: '成本与目标', description: '利润边界与广告目标', view: 'objects/targets', kind: 'legacy', legacyRoute: 'product-config' },
-      { id: 'keywords', label: '关键词机会', description: '可行动的真实关键词机会', view: 'objects/keywords', kind: 'legacy', legacyRoute: 'keyword-opportunities' },
-      { id: 'listing', label: 'Listing 草案', description: '生成并导出仅本地使用的草案', view: 'objects/listing', kind: 'legacy', legacyRoute: 'listing-optimization' },
+      { id: 'targets', label: '广告对象', description: 'Campaign、广告组、Target 与 Search Term 事实', view: 'objects/targets', kind: 'legacy', legacyRoute: 'product-config' },
+      { id: 'keywords', label: '关键词事实', description: '当前店铺关键词指标与机会证据', view: 'objects/keywords', kind: 'legacy', legacyRoute: 'keyword-opportunities' },
+      { id: 'listing', label: 'Listing 内容', description: '店铺级内容、版本与本地草案', view: 'objects/listing', kind: 'legacy', legacyRoute: 'listing-optimization' },
     ],
   },
   {
@@ -127,3 +127,17 @@ export function missionControlViewIdForIntent(intent: NavigationIntent): Mission
   return subviewDefinitionForIntent(intent).view;
 }
 
+export function navigationIntentForMissionControlView(
+  view: MissionControlViewId,
+): NavigationIntent {
+  for (const workspace of MISSION_CONTROL_WORKSPACE_REGISTRY) {
+    const subview = workspace.subviews.find((candidate) => candidate.view === view);
+    if (subview) {
+      return {
+        workspace: workspace.id,
+        subview: subview.id,
+      } as NavigationIntent;
+    }
+  }
+  throw new Error(`Mission Control view ${view} is not registered`);
+}

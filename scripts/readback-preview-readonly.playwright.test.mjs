@@ -1,13 +1,16 @@
 import { createRequire } from 'node:module';
-import { createServer as createTcpServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('./playwright-loader.js');
-const desktopRequire = createRequire(new URL('../apps/desktop/package.json', import.meta.url));
-const { createServer } = desktopRequire('vite');
+const {
+  enterPreviewStore,
+  installPreviewApiBridge,
+  navigateLegacyRoute,
+  startBusinessUiDevServer,
+} = require('./business-ui-smoke-navigation.js');
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(SCRIPT_DIR, '..');
@@ -30,80 +33,55 @@ const READBACK_WRITE_ACTIONS = [
   { action: 'verify-evidence', labels: ['校验证据文件', '校验回读证据'] },
 ];
 
-async function startRendererDevServer() {
-  const port = await new Promise((resolve, reject) => {
-    const probe = createTcpServer();
-    probe.once('error', reject);
-    probe.listen(0, '127.0.0.1', () => {
-      const address = probe.address();
-      if (!address || typeof address === 'string') {
-        probe.close();
-        reject(new Error('Unable to reserve an ephemeral TCP port for Vite.'));
-        return;
-      }
-      probe.close((error) => (error ? reject(error) : resolve(address.port)));
-    });
-  });
-  const server = await createServer({
-    configFile: join(REPO_ROOT, 'apps', 'desktop', 'vite.config.ts'),
-    logLevel: 'error',
-    server: {
-      host: '127.0.0.1',
-      port,
-      strictPort: true,
-    },
-  });
-  await server.listen();
-  const address = server.httpServer?.address();
-  if (!address || typeof address === 'string') {
-    await server.close();
-    throw new Error('Vite preview server did not expose a TCP address.');
+async function waitForStage(
+  page,
+  locator,
+  stage,
+  browserErrors,
+  { state = 'visible', timeout = 15_000 } = {},
+) {
+  try {
+    await locator.waitFor({ state, timeout });
+  } catch (error) {
+    const bodyText = await page.locator('body').innerText().catch(() => '');
+    throw new Error([
+      `Readback preview isolation stalled at stage: ${stage}.`,
+      `URL: ${page.url()}`,
+      `Body: ${bodyText.slice(0, 2_000) || '(empty)'}`,
+      `Browser errors: ${browserErrors.join(' | ') || '(none)'}`,
+      error instanceof Error ? error.message : String(error),
+    ].join('\n'));
   }
-  return {
-    server,
-    url: `http://127.0.0.1:${address.port}/`,
-  };
 }
 
 describe('readback development preview write isolation', () => {
   it('keeps every pre-injected readback evidence API at zero calls after hostile UI attempts', async () => {
-    const { server, url } = await startRendererDevServer();
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ viewport: { height: 900, width: 1400 } });
+    const server = await startBusinessUiDevServer(REPO_ROOT, 'delivery-ready');
+    let browser;
+    let context;
 
     try {
-      await context.addInitScript(({ writeMethods }) => {
+      browser = await chromium.launch({ headless: true });
+      context = await browser.newContext({ viewport: { height: 900, width: 1400 } });
+      const page = await context.newPage();
+      await installPreviewApiBridge(page);
+      await page.addInitScript(({ writeMethods }) => {
         const calls = Object.fromEntries(writeMethods.map((method) => [method, 0]));
-        let exposedApi;
         Object.defineProperty(window, '__readbackWriteProbe', {
           configurable: false,
           enumerable: false,
           value: calls,
           writable: false,
         });
-        Object.defineProperty(window, 'electronAPI', {
-          configurable: true,
-          enumerable: true,
-          get() {
-            return exposedApi;
+        window.__businessUiSmokeOverrides = Object.fromEntries(writeMethods.map((method) => [
+          method,
+          async () => {
+            calls[method] += 1;
+            return { maliciousProbe: true };
           },
-          set(nextApi) {
-            exposedApi = new Proxy(nextApi || {}, {
-              get(target, property, receiver) {
-                if (typeof property === 'string' && writeMethods.includes(property)) {
-                  return async () => {
-                    calls[property] += 1;
-                    return { maliciousProbe: true };
-                  };
-                }
-                return Reflect.get(target, property, receiver);
-              },
-            });
-          },
-        });
+        ]));
       }, { writeMethods: READBACK_WRITE_METHODS });
 
-      const page = await context.newPage();
       const browserErrors = [];
       page.on('pageerror', (error) => browserErrors.push(`pageerror: ${error.message}`));
       page.on('console', (message) => {
@@ -116,9 +94,9 @@ describe('readback development preview write isolation', () => {
           `response ${browserResponse.status()}: ${browserResponse.url()} ${responseText.slice(0, 1_000)}`,
         );
       });
-      const response = await page.goto(`${url}?preview=1&scenario=delivery-ready`, { waitUntil: 'domcontentloaded' });
+      const response = await page.goto(server.url, { waitUntil: 'domcontentloaded' });
       try {
-        await page.locator('.app-shell').waitFor({ state: 'visible', timeout: 15_000 });
+        await enterPreviewStore(page, 'SHC001-US · US · USD');
       } catch (error) {
         const bodyText = (await page.locator('body').innerText()).slice(0, 1_000);
         throw new Error([
@@ -128,21 +106,26 @@ describe('readback development preview write isolation', () => {
           error instanceof Error ? error.message : String(error),
         ].join('\n'));
       }
-      await page.evaluate(() => {
-        window.dispatchEvent(new CustomEvent('amazon-ai-ops:navigate', {
-          detail: { workspace: 'readback', subview: 'evidence' },
-        }));
-      });
+      await navigateLegacyRoute(page, 'readback');
 
-      const readbackRoot = page.locator([
-        '[data-workspace-evidence-root]',
-        '[data-workspace="readback"]',
-        '[data-workspace-subview="evidence"]',
-        '[data-readback-mode="preview-readonly"]',
-        '[data-preview-scenario="delivery-ready"]',
-      ].join(''));
-      await readbackRoot.waitFor({ state: 'visible' });
-      await expect(page.locator('.readback-preview-only-banner').textContent()).resolves.toMatch(
+      const readbackRoot = page.locator(
+        '[data-workspace-evidence-root]'
+        + '[data-workspace="readback"]'
+        + '[data-workspace-subview="evidence"]'
+        + '[data-readback-mode="preview-readonly"]'
+        + '[data-preview-scenario="delivery-ready"]',
+      );
+      await waitForStage(page, readbackRoot, 'execution/evidence route', browserErrors);
+      expect(await readbackRoot.count()).toBe(1);
+      const previewBanner = page.locator('.readback-preview-only-banner');
+      await waitForStage(
+        page,
+        previewBanner,
+        'preview-readonly authority banner',
+        browserErrors,
+        { timeout: 10_000 },
+      );
+      await expect(previewBanner.textContent()).resolves.toMatch(
         /仅开发预览，不代表正式交付就绪.*delivery-ready.*所有证据写入与真实校验均已锁定/s,
       );
 
@@ -153,8 +136,25 @@ describe('readback development preview write isolation', () => {
         READBACK_WRITE_METHODS.map((method) => [method, 'function']),
       ));
 
-      await page.locator('button[aria-label="查看技术与证据详情"]').click();
-      await page.locator('.responsive-inspector').waitFor({ state: 'attached', timeout: 10_000 });
+      const inspectorTrigger = readbackRoot.getByRole(
+        'button',
+        { name: '查看技术与证据详情', exact: true },
+      );
+      await waitForStage(
+        page,
+        inspectorTrigger,
+        'technical evidence trigger',
+        browserErrors,
+        { timeout: 10_000 },
+      );
+      await inspectorTrigger.dispatchEvent('click');
+      await waitForStage(
+        page,
+        page.locator('.responsive-inspector'),
+        'technical evidence inspector',
+        browserErrors,
+        { timeout: 10_000 },
+      );
 
       const buttonAttempts = await page.evaluate((actions) => actions.map(({ action, labels }) => {
         const button = Array.from(document.querySelectorAll('button')).find(
@@ -167,6 +167,17 @@ describe('readback development preview write isolation', () => {
         ? { action, disabled: null, found: false }
         : { action, disabled: true, found: true }));
 
+      const captureTargets = page.locator(
+        '[data-capture-slot][aria-label$="拖拽或粘贴存证"]',
+      );
+      await waitForStage(
+        page,
+        captureTargets.first(),
+        'readback capture slots',
+        browserErrors,
+        { state: 'attached', timeout: 10_000 },
+      );
+      expect(await captureTargets.count()).toBe(4);
       const captureAttempts = await page.evaluate(() => {
         const targets = Array.from(document.querySelectorAll('[data-capture-slot][aria-label$="拖拽或粘贴存证"]'));
         const file = new File(['hostile-preview-probe'], 'hostile-preview-probe.png', { type: 'image/png' });
@@ -209,9 +220,12 @@ describe('readback development preview write isolation', () => {
         READBACK_WRITE_METHODS.map((method) => [method, 0]),
       ));
     } finally {
-      await context.close();
-      await browser.close();
-      await server.close();
+      await context?.close().catch(() => {});
+      await browser?.close().catch(() => {});
+      await server.close().catch(() => {});
     }
-  }, 60_000);
+  // The full repository suite also runs the process-heavy production-readiness
+  // adversarial fixtures. Keep this browser isolation test bounded, but allow
+  // enough headroom for Chromium/Vite startup when those fixtures saturate CI.
+  }, 240_000);
 });

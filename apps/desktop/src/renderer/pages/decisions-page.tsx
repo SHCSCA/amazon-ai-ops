@@ -858,9 +858,10 @@ function decisionsWritableTargetFormBlockers(input: DecisionsWritableTargetFormI
   const evidenceSourceFiles = input.row.evidence?.sourceFiles || [];
   if (
     evidenceSourceFiles.length === 0
-    || evidenceSourceFiles.some((filePath) => !allowedFiles.has(normalizePath(filePath)))
+    || evidenceSourceFiles.some((sourceRef) => !allowedFiles.has(normalizePath(sourceRef)))
   ) {
     blockers.push('建议来源证据不属于当前锁定批次');
+    blockers.push('建议来源未能与不透明报表工件对应（旧路径证据已阻断）');
   }
   const evidenceSourceRow = Number(input.row.evidence?.sourceRow);
   if (!Number.isInteger(evidenceSourceRow) || evidenceSourceRow <= 0) {
@@ -881,6 +882,7 @@ function decisionsWritableTargetFormBlockers(input: DecisionsWritableTargetFormI
   const sourceFile = normalizePath(input.form.sourceFile);
   if (!sourceFile || !allowedFiles.has(sourceFile)) {
     blockers.push('可写对象来源文件不属于当前锁定批次');
+    blockers.push('可写对象来源未能与不透明报表工件对应');
   }
   const sourceRow = Number(input.form.sourceRow);
   if (!Number.isInteger(sourceRow) || sourceRow <= 0) blockers.push('缺少唯一来源行');
@@ -1234,8 +1236,8 @@ function DecisionsWritableTargetForm(props: {
           value={form.sourceFile}
         >
           <option value="">请选择当前批次报表</option>
-          {sourceFiles.map((filePath) => (
-            <option key={filePath} value={filePath}>{filePath}</option>
+          {sourceFiles.map((sourceRef) => (
+            <option key={sourceRef} value={sourceRef}>{sourceRef}</option>
           ))}
         </select>
       </label>
@@ -1345,7 +1347,9 @@ export function DecisionsPage({ activeSubview }: DecisionsPageProps) {
     sourceBatchIds: data?.collection.sourceBatchIds,
   });
   const currentRealReportSourceFiles = useMemo(
-    () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
+    () => (data?.collection.realReportFiles || [])
+      .map((file) => file.artifactDisplayName || file.fileName || file.displayName)
+      .filter(Boolean),
     [data?.collection.realReportFiles],
   );
   const queryFilter = useMemo(() => ({
@@ -2472,8 +2476,8 @@ export function DecisionsPage({ activeSubview }: DecisionsPageProps) {
                       value={reviewForm.sourceFile}
                     >
                       <option value="">请选择当前批次报表</option>
-                      {currentRealReportSourceFiles.map((filePath) => (
-                        <option key={filePath} value={filePath}>{filePath}</option>
+                      {currentRealReportSourceFiles.map((sourceRef) => (
+                        <option key={sourceRef} value={sourceRef}>{sourceRef}</option>
                       ))}
                     </select>
                   </label>

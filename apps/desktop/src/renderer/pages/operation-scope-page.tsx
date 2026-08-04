@@ -1,20 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { LingxingCollectionJobSnapshot, StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
 import { useBusinessDataPipeline } from '../components/business-data';
-import { PageHeader, Panel, StatusPill } from '../components/ui';
+import { FormTable, FormTableRow, PageHeader, Panel, StatusPill } from '../components/ui';
 import { TaskBanner } from '../components/workspace';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDataReadinessLedger, type DataReadinessLedger } from '../data-readiness-ledger';
-import { importedReportTypeCoverageCount } from '../report-coverage';
+import {
+  buildProductionCollectionLineageReadiness,
+  type ProductionCollectionReportBinding,
+} from '../lingxing-collection-lineage';
 import { useScopeStore } from '../scope-store';
 import { toUserFacingError } from '../user-facing-error';
 import type { AppRoute, OperationScope } from '../types';
 
 function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
-}
-
-function openScopeEditor() {
-  window.dispatchEvent(new CustomEvent('amazon-ai-ops:open-scope-editor'));
 }
 
 export type OperationScopeSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -121,37 +121,125 @@ export function buildOperationScopeTaskState(input: {
   };
 }
 
-export function OperationScopePage() {
+export function OperationScopePage({ storeContext }: { storeContext: StoreContextEnvelope }) {
   const { data, scope, loading, error } = useBusinessDataPipeline();
   const setScope = useScopeStore((state) => state.setScope);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<OperationScope>(scope);
   const [saveStatus, setSaveStatus] = useState<OperationScopeSaveStatus>('idle');
   const [saveError, setSaveError] = useState('');
+  const [collectionJobs, setCollectionJobs] = useState<LingxingCollectionJobSnapshot[]>([]);
+  const [collectionJobsLoading, setCollectionJobsLoading] = useState(false);
+  const [collectionJobsError, setCollectionJobsError] = useState('');
+  const [collectionJobsPreviewOnly, setCollectionJobsPreviewOnly] = useState(false);
+  const collectionJobsLoadSequenceRef = useRef(0);
   const collection = data?.collection;
-  const quant = data?.quant;
-  const activeBatch = scope.batchId || collection?.latestBatch?.id || '';
   const reportOptions = collection?.reportOptions || [];
-  const realReportCount = collection?.fileAudit?.realReportFileCount ?? collection?.realReportFiles.length ?? 0;
-  const importedReportTypeCount = importedReportTypeCoverageCount(collection);
-  const importedRows = collection?.fileAudit?.importedRowCount ?? quant?.importedRows ?? 0;
-  const dataLedger = buildDataReadinessLedger({
+  const realFiles = collection?.realReportFiles || [];
+  const aggregateRealReportCount = collection?.fileAudit?.realReportFileCount ?? realFiles.length;
+  const aggregateImportedRows = collection?.fileAudit?.importedRowCount ?? data?.quant?.importedRows ?? 0;
+  const scopedCollectionJobs = useMemo(() => {
+    const explicitBatchId = String(scope.batchId || '').trim();
+    if (!explicitBatchId) return collectionJobs;
+    return collectionJobs.filter((job) => (
+      job.jobId === explicitBatchId
+      || job.lineage?.rootJobId === explicitBatchId
+      || job.lineage?.lineageId === explicitBatchId
+    ));
+  }, [collectionJobs, scope.batchId]);
+  const lineageReadiness = useMemo(() => buildProductionCollectionLineageReadiness({
+    currentContext: storeContext,
+    dateStart: scope.dateFrom,
+    dateEnd: scope.dateTo,
+    jobs: scopedCollectionJobs,
+    files: realFiles,
+  }), [realFiles, scope.dateFrom, scope.dateTo, scopedCollectionJobs, storeContext]);
+  const productionBindingByType = useMemo(() => new Map(
+    lineageReadiness.reportBindings.map((binding) => [binding.reportType, binding]),
+  ), [lineageReadiness.reportBindings]);
+  const productionReportOptions = useMemo(() => reportOptions.map((option) => {
+    const binding = productionBindingByType.get(option.type as ProductionCollectionReportBinding['reportType']);
+    return {
+      ...option,
+      realFileAvailable: Boolean(binding?.fileBatchId && binding.fileBatchId === binding.expectedBatchId),
+      importedRows: binding?.state === 'imported' ? binding.importedRows : 0,
+      status: binding?.state || 'missing',
+    };
+  }), [productionBindingByType, reportOptions]);
+  const realReportCount = lineageReadiness.sourceMatchedReportCount;
+  const importedReportTypeCount = lineageReadiness.importedReportCount;
+  const importedRows = lineageReadiness.importedRows;
+  const activeBatch = scope.batchId || lineageReadiness.latestJobId || '';
+  const dataLedger = useMemo(() => buildDataReadinessLedger({
     requiredReportCount: 8,
-    reportOptions,
+    reportOptions: productionReportOptions,
     realReportFileCount: realReportCount,
     importedRowCount: importedRows,
     rejectedEvidenceFileCount: collection?.fileAudit?.rejectedEvidenceFileCount ?? 0,
-  });
-  const canQuantify = dataLedger.canEnterDiagnosis;
+  }), [collection?.fileAudit?.rejectedEvidenceFileCount, importedRows, productionReportOptions, realReportCount]);
+  const canQuantify = !collectionJobsLoading
+    && !collectionJobsError
+    && dataLedger.canEnterDiagnosis
+    && lineageReadiness.canEnterDiagnosis;
+  const effectiveReadiness: Pick<DataReadinessLedger, 'status' | 'canEnterDiagnosis' | 'nextStep'> = {
+    status: canQuantify ? 'ready' : dataLedger.status,
+    canEnterDiagnosis: canQuantify,
+    nextStep: canQuantify
+      ? 'diagnose'
+      : lineageReadiness.sourceMatchedReportCount >= 8 && lineageReadiness.importedReportCount < 8
+        ? 'import'
+        : 'collect',
+  };
   const taskState = buildOperationScopeTaskState({
     realReportCount,
     importedReportTypeCount,
     importedRows,
     activeBatch,
     saveStatus,
-    readiness: dataLedger,
+    readiness: effectiveReadiness,
   });
 
-  const confirmScope = async () => {
-    const normalizedDraft = normalizeOperationScopeDraft(scope);
+  useEffect(() => {
+    if (!editing) setDraft(scope);
+  }, [editing, scope]);
+
+  useEffect(() => {
+    const sequence = ++collectionJobsLoadSequenceRef.current;
+    const api = (window as any).electronAPI;
+    setCollectionJobs([]);
+    setCollectionJobsError('');
+    setCollectionJobsLoading(true);
+    setCollectionJobsPreviewOnly(api?.lingxingCollectionJobsPreviewOnly === true);
+    void (async () => {
+      try {
+        if (!api?.listLingxingCollectionJobs) {
+          throw new Error('生产采集任务接口未暴露，请检查 preload IPC。');
+        }
+        const jobs = await api.listLingxingCollectionJobs({
+          storeContext: { ...storeContext },
+          limit: 100,
+        });
+        if (sequence !== collectionJobsLoadSequenceRef.current) return;
+        setCollectionJobs(Array.isArray(jobs) ? jobs : []);
+      } catch (caught) {
+        if (sequence !== collectionJobsLoadSequenceRef.current) return;
+        setCollectionJobs([]);
+        setCollectionJobsError(toUserFacingError(caught, '生产采集任务读取失败。'));
+      } finally {
+        if (sequence === collectionJobsLoadSequenceRef.current) {
+          setCollectionJobsLoading(false);
+        }
+      }
+    })();
+    return () => {
+      if (collectionJobsLoadSequenceRef.current === sequence) {
+        collectionJobsLoadSequenceRef.current += 1;
+      }
+    };
+  }, [storeContext.browserProfileId, storeContext.currency, storeContext.marketplace, storeContext.storeId]);
+
+  const confirmScope = async (candidate: OperationScope = scope) => {
+    const normalizedDraft = normalizeOperationScopeDraft(candidate);
     if (!normalizedDraft.dateFrom || !normalizedDraft.dateTo) {
       setSaveStatus('error');
       setSaveError('请填写开始日期和结束日期。');
@@ -177,8 +265,10 @@ export function OperationScopePage() {
     try {
       const api = (window as any).electronAPI;
       if (!api?.saveOperationScope) throw new Error('范围保存接口未暴露');
-      await api.saveOperationScope(normalizedDraft);
+      await api.saveOperationScope(storeContext, normalizedDraft);
       setScope(normalizedDraft);
+      setDraft(normalizedDraft);
+      setEditing(false);
       setSaveStatus('saved');
       window.dispatchEvent(new CustomEvent('business-ui:data-updated'));
     } catch (caught) {
@@ -196,8 +286,13 @@ export function OperationScopePage() {
       />
 
       <TaskBanner
-        description={saveError || taskState.detail}
-        meta={`报表文件 ${Math.min(realReportCount, 8)}/8 类 · 逐类入库 ${importedReportTypeCount}/8 类 · ${importedRows} 行指标`}
+        description={saveError
+          || (collectionJobsLoading
+            ? '正在按当前店铺、日期窗和批次核对生产采集任务；完成前不会放行广告表现。'
+            : collectionJobsError
+              ? `生产采集任务读取失败：${collectionJobsError}`
+              : taskState.detail)}
+        meta={`生产血缘文件 ${Math.min(realReportCount, 8)}/8 类 · 逐类入库 ${importedReportTypeCount}/8 类 · ${importedRows} 行指标`}
         primaryAction={{
           label: taskState.primaryActionLabel,
           onClick: () => { void confirmScope(); },
@@ -205,15 +300,101 @@ export function OperationScopePage() {
           busyLabel: taskState.primaryActionBusyLabel,
         }}
         secondaryActions={[
-          { label: '编辑范围', onClick: openScopeEditor, disabled: taskState.primaryActionBusy },
+          {
+            label: editing ? '收起编辑' : '编辑范围',
+            onClick: () => {
+              setDraft(scope);
+              setSaveError('');
+              setEditing((current) => !current);
+            },
+            disabled: taskState.primaryActionBusy,
+          },
           { label: taskState.nextActionLabel, onClick: () => navigate(taskState.nextRoute), disabled: taskState.primaryActionBusy },
         ]}
-        status={operationScopeSaveFeedbackLabel(saveStatus)}
+        status={collectionJobsLoading ? '核对生产血缘中' : canQuantify ? operationScopeSaveFeedbackLabel(saveStatus) : '生产血缘未闭合'}
         title={taskState.title}
-        tone={taskState.tone === 'ready' ? 'confirmed' : taskState.tone === 'warning' ? 'attention' : 'blocked'}
+        tone={canQuantify ? 'confirmed' : taskState.tone === 'warning' ? 'attention' : 'blocked'}
       />
 
       <div className="business-stack">
+        {editing && (
+          <Panel
+            className="operation-scope-editor-panel"
+            title="编辑当前店铺范围"
+            tone={saveStatus === 'error' ? 'blocked' : 'default'}
+            titleAccessory={<StatusPill tone="pending">美国站 · USD</StatusPill>}
+          >
+            <FormTable>
+              <FormTableRow label="开始日期" required hint="按美国站业务日期读取领星报表。">
+                <input
+                  aria-label="运营范围开始日期"
+                  max={draft.dateTo}
+                  onChange={(event) => setDraft((current) => ({ ...current, dateFrom: event.target.value }))}
+                  type="date"
+                  value={draft.dateFrom}
+                />
+              </FormTableRow>
+              <FormTableRow label="结束日期" required hint="不得早于开始日期；默认以当前美国站业务日为结束日。">
+                <input
+                  aria-label="运营范围结束日期"
+                  min={draft.dateFrom}
+                  onChange={(event) => setDraft((current) => ({ ...current, dateTo: event.target.value }))}
+                  type="date"
+                  value={draft.dateTo}
+                />
+              </FormTableRow>
+              <FormTableRow label="店铺 / 站点" hint="店铺、站点和币种由当前 Main StoreContext 锁定，不能跨店修改。">
+                <div className="operation-scope-locked-authority" aria-label="当前锁定店铺站点币种">
+                  <strong>{scope.storeName}</strong>
+                  <StatusPill tone="ready">US</StatusPill>
+                  <StatusPill tone="ready">USD</StatusPill>
+                </div>
+              </FormTableRow>
+              <FormTableRow label="ASIN" hint="可选；留空读取当前店铺全部产品。">
+                <input
+                  aria-label="运营范围 ASIN"
+                  maxLength={10}
+                  onChange={(event) => setDraft((current) => ({ ...current, asin: event.target.value.toUpperCase() }))}
+                  placeholder="例如 B0GTTJFQTM"
+                  value={draft.asin || ''}
+                />
+              </FormTableRow>
+              <FormTableRow label="采集批次" hint="可选；留空时自动匹配当前范围最新完整批次。">
+                <input
+                  aria-label="运营范围采集批次"
+                  maxLength={200}
+                  onChange={(event) => setDraft((current) => ({ ...current, batchId: event.target.value }))}
+                  placeholder="自动匹配"
+                  value={draft.batchId || ''}
+                />
+              </FormTableRow>
+            </FormTable>
+            <div className="action-row operation-scope-editor-actions" aria-label="范围编辑动作">
+              <button
+                className="secondary-button"
+                disabled={saveStatus === 'saving'}
+                onClick={() => {
+                  setDraft(scope);
+                  setSaveError('');
+                  setEditing(false);
+                }}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                aria-busy={saveStatus === 'saving'}
+                className="primary-button"
+                disabled={saveStatus === 'saving'}
+                onClick={() => { void confirmScope(draft); }}
+                type="button"
+              >
+                {saveStatus === 'saving' ? '保存中...' : '保存范围'}
+              </button>
+            </div>
+            {saveError && <p className="blocked-line" role="alert">{saveError}</p>}
+          </Panel>
+        )}
         <Panel
           className="operation-scope-confirm-panel"
           title="范围字段确认"
@@ -254,8 +435,20 @@ export function OperationScopePage() {
               </div>
             </div>
           </div>
+          {collectionJobsPreviewOnly && (
+            <p className="warning-line" role="status">DEV 预览不会注入伪造任务、lineage 或入库成功；此状态不提供生产就绪证明。</p>
+          )}
+          {collectionJobsError && <p className="blocked-line" role="alert">生产任务读取失败：{collectionJobsError}</p>}
+          {!collectionJobsLoading && !collectionJobsError && !canQuantify && (
+            <p className="warning-line" role="status">{lineageReadiness.detail}</p>
+          )}
+          {(aggregateRealReportCount !== realReportCount || aggregateImportedRows !== importedRows) && (
+            <p className="warning-line">
+              当前日期窗聚合检测到 {aggregateRealReportCount}/8 类文件、{aggregateImportedRows} 行指标；其中只有 {realReportCount}/8 类、{importedRows} 行属于当前生产授权链，其他批次不参与放行。
+            </p>
+          )}
         </Panel>
-        {loading && <p className="muted-line">正在读取当前范围数据状态...</p>}
+        {(loading || collectionJobsLoading) && <p className="muted-line">正在读取当前范围数据与生产任务状态...</p>}
         {error && <p className="blocked-line">范围数据读取异常：{error}</p>}
 
         <details className="folded-ops-panel operation-scope-impact-panel">

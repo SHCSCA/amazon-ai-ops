@@ -1,7 +1,13 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
-import { missionControlContextKey, type StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
-import type { AppRoute, DeliveryReadinessView } from './types';
+import {
+  missionControlContextKey,
+  normalizeLingxingCollectionStoreName,
+  normalizeProviderExternalAccountId,
+  type StoreConnection,
+  type StoreContextEnvelope,
+} from '@amazon-ai-ops/shared-types';
+import type { AppRoute, DeliveryReadinessView, OperationScope } from './types';
 import type {
   BrowserLoginCredentialPersistence,
   BrowserLoginRequest,
@@ -35,7 +41,8 @@ import {
 } from './mission-control/mission-control-shell';
 import { LegacyAdapterRouter } from './mission-control/router';
 import { MissionControlWorkspaceView } from './mission-control/workspaces';
-import { StoreManagementPanel } from './mission-control/components';
+import { StoreManagementPanel, StoreRuntimeConfigPanel } from './mission-control/components';
+import { useOverlayFocusScope } from './components/workspace/overlay-focus-scope';
 import './styles.css';
 import './styles/tokens.css';
 import './styles/foundations.css';
@@ -49,11 +56,14 @@ import './styles/states-motion.css';
 import './styles/mission-control-shell.css';
 
 interface LoginSessionInfo {
+  erpSessionReady?: boolean;
   erpSessionReused?: boolean;
   sessionIdentityVerified?: boolean;
+  adsSessionReady?: boolean;
   adsEntryMode?: string;
   adsUrl?: string;
   adsTitle?: string;
+  adsUnavailableReason?: string;
   credentialPersistence?: BrowserLoginCredentialPersistence;
 }
 
@@ -199,37 +209,167 @@ const loginStyles: Record<string, React.CSSProperties> = {
   container: {
     display: 'grid',
     minHeight: '100vh',
-    placeItems: 'center',
+    alignItems: 'start',
+    justifyItems: 'center',
     background: 'var(--aao-bg)',
-    padding: 24,
+    overflow: 'auto',
+    padding: '18px 20px',
   },
   card: {
     display: 'grid',
+    gap: 12,
+    width: 'min(1120px, 100%)',
+    border: '1px solid var(--aao-line)',
+    borderRadius: 12,
+    background: 'var(--aao-surface)',
+    boxSizing: 'border-box',
+    padding: 18,
+    boxShadow: '0 16px 40px rgba(15, 23, 42, 0.12)',
+  },
+  topbar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 20,
+  },
+  brand: {
+    display: 'grid',
+    gap: 3,
+  },
+  title: { margin: 0, color: 'var(--aao-ink)', fontSize: 24, lineHeight: 1.15 },
+  subtitle: { margin: 0, color: 'var(--aao-ink-2)', fontSize: 13, fontWeight: 700 },
+  version: {
+    border: '1px solid var(--aao-line)',
+    borderRadius: 999,
+    background: 'var(--aao-surface-subtle)',
+    color: 'var(--aao-ink-2)',
+    padding: '5px 9px',
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  contextBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 16,
-    width: 'min(420px, 100%)',
+    borderTop: '1px solid var(--aao-line)',
+    borderBottom: '1px solid var(--aao-line)',
+    padding: '10px 2px',
+  },
+  contextIdentity: {
+    display: 'grid',
+    gap: 2,
+    minWidth: 0,
+  },
+  contextLabel: {
+    color: 'var(--aao-ink-3)',
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+  },
+  contextValue: {
+    overflow: 'hidden',
+    color: 'var(--aao-ink)',
+    fontSize: 14,
+    fontWeight: 800,
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  marketPill: {
+    flex: '0 0 auto',
+    border: '1px solid var(--tone-ready-border)',
+    borderRadius: 999,
+    background: 'var(--tone-ready-bg)',
+    color: 'var(--tone-ready-text)',
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  workflowGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1.55fr) minmax(310px, 0.75fr)',
+    gap: 12,
+    alignItems: 'stretch',
+  },
+  leftColumn: {
+    display: 'grid',
+    gap: 12,
+  },
+  stepCard: {
+    display: 'grid',
+    alignContent: 'start',
+    gap: 10,
     border: '1px solid var(--aao-line)',
     borderRadius: 10,
     background: 'var(--aao-surface)',
-    padding: 28,
-    boxShadow: '0 16px 40px rgba(15, 23, 42, 0.12)',
+    padding: 14,
   },
-  title: { margin: 0, color: 'var(--aao-ink)', fontSize: 26, lineHeight: 1.15 },
-  subtitle: { margin: 0, color: 'var(--aao-ink-2)', fontSize: 13, fontWeight: 700 },
-  form: { display: 'grid', gap: 12 },
+  stepHeader: {
+    display: 'grid',
+    gridTemplateColumns: '28px minmax(0, 1fr)',
+    gap: 10,
+    alignItems: 'start',
+  },
+  stepIndex: {
+    display: 'grid',
+    width: 28,
+    height: 28,
+    placeItems: 'center',
+    borderRadius: 8,
+    background: 'var(--aao-brand-600)',
+    color: 'white',
+    fontSize: 13,
+    fontWeight: 900,
+  },
+  stepHeadingGroup: {
+    display: 'grid',
+    gap: 2,
+  },
+  stepTitle: {
+    margin: 0,
+    color: 'var(--aao-ink)',
+    fontSize: 15,
+    lineHeight: 1.3,
+  },
+  stepDescription: {
+    margin: 0,
+    color: 'var(--aao-ink-2)',
+    fontSize: 12,
+    lineHeight: 1.45,
+  },
+  fieldsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+    gap: 10,
+  },
+  fieldLabel: {
+    display: 'grid',
+    gap: 5,
+    minWidth: 0,
+  },
+  fieldName: {
+    color: 'var(--aao-ink-2)',
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  form: { display: 'grid', gap: 10 },
   input: {
-    height: 42,
+    width: '100%',
+    height: 38,
     border: '1px solid var(--aao-line-strong)',
     borderRadius: 8,
+    boxSizing: 'border-box',
     padding: '0 12px',
-    fontSize: 15,
+    fontSize: 14,
   },
   hint: {
     border: '1px solid var(--tone-pending-border)',
     borderRadius: 8,
     background: 'var(--tone-pending-bg)',
     color: 'var(--aao-ink-2)',
-    padding: '10px 12px',
-    fontSize: 13,
+    padding: '8px 10px',
+    fontSize: 12,
     lineHeight: 1.45,
   },
   rememberRow: {
@@ -247,9 +387,27 @@ const loginStyles: Record<string, React.CSSProperties> = {
     gap: 8,
     cursor: 'pointer',
   },
+  enrollmentResetRow: {
+    display: 'grid',
+    gridTemplateColumns: '18px minmax(0, 1fr)',
+    alignItems: 'start',
+    gap: 9,
+    border: '1px solid var(--tone-pending-border)',
+    borderRadius: 8,
+    background: 'var(--tone-pending-bg)',
+    color: 'var(--aao-ink-2)',
+    padding: '9px 10px',
+    cursor: 'pointer',
+  },
+  enrollmentResetCopy: {
+    display: 'grid',
+    gap: 2,
+    fontSize: 12,
+    lineHeight: 1.45,
+  },
   notice: {
     color: 'var(--aao-ink-2)',
-    fontSize: 12,
+    fontSize: 11,
     lineHeight: 1.4,
   },
   error: {
@@ -260,12 +418,92 @@ const loginStyles: Record<string, React.CSSProperties> = {
     padding: '10px 12px',
     fontSize: 13,
   },
+  connectionPanel: {
+    display: 'grid',
+    alignContent: 'start',
+    gap: 7,
+    border: '1px solid var(--aao-line)',
+    borderRadius: 8,
+    background: 'var(--aao-surface-subtle)',
+    padding: 10,
+  },
+  connectionGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 0.85fr) minmax(0, 1.15fr)',
+    gap: 10,
+  },
+  connectionName: {
+    margin: 0,
+    color: 'var(--aao-ink)',
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  connectionStatus: {
+    margin: 0,
+    color: 'var(--aao-ink-2)',
+    fontSize: 12,
+    lineHeight: 1.4,
+  },
+  connectionButton: {
+    minHeight: 34,
+    border: '1px solid var(--aao-brand-600)',
+    borderRadius: 8,
+    background: 'var(--aao-surface)',
+    color: 'var(--aao-brand-700)',
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  actionCard: {
+    display: 'grid',
+    alignContent: 'start',
+    gap: 12,
+    border: '1px solid var(--aao-brand-200)',
+    borderRadius: 10,
+    background: 'var(--aao-surface)',
+    padding: 14,
+  },
+  readinessPanel: {
+    display: 'grid',
+    gap: 7,
+    borderRadius: 8,
+    background: 'var(--aao-surface-subtle)',
+    padding: 10,
+  },
+  readinessTitle: {
+    margin: 0,
+    color: 'var(--aao-ink)',
+    fontSize: 12,
+    fontWeight: 900,
+  },
+  readinessList: {
+    display: 'grid',
+    gap: 5,
+    margin: 0,
+    padding: 0,
+    listStyle: 'none',
+  },
+  readinessItem: {
+    color: 'var(--aao-ink-2)',
+    fontSize: 12,
+    lineHeight: 1.4,
+  },
+  guidanceList: {
+    display: 'grid',
+    gap: 7,
+    margin: 0,
+    padding: '0 0 0 18px',
+    color: 'var(--aao-ink-2)',
+    fontSize: 12,
+    lineHeight: 1.45,
+  },
   button: {
-    height: 44,
+    minHeight: 44,
     border: 0,
     borderRadius: 8,
     background: 'var(--aao-brand-600)',
     color: 'white',
+    padding: '10px 14px',
     fontSize: 15,
     fontWeight: 800,
   },
@@ -284,7 +522,11 @@ export function describeLoginSession(session?: LoginSessionInfo | null): string 
     return `ERP 已复用登录态；${identity}，本机安全区未更改；${ads}`;
   }
   const erp = session.erpSessionReused ? 'ERP 已复用登录态' : 'ERP 已完成登录';
-  const ads = session.adsTitle || session.adsUrl ? `Ads 已进入：${session.adsTitle || session.adsUrl}` : 'Ads 会话待确认';
+  const ads = session.adsSessionReady === false
+    ? `Ads 未连接：${session.adsUnavailableReason || '独立 Profile 待授权，广告执行保持阻断'}`
+    : session.adsTitle || session.adsUrl
+      ? `Ads 已进入：${session.adsTitle || session.adsUrl}`
+      : 'Ads 会话待确认';
   return `${erp}；${ads}`;
 }
 
@@ -296,9 +538,11 @@ export function headerSessionStatusLabel(session?: LoginSessionInfo | null): str
   ) {
     return 'ERP 会话复用 · 身份未核验';
   }
-  const erpReady = Boolean(session.erpSessionReused);
-  const adsReady = Boolean(session.adsTitle || session.adsUrl || session.adsEntryMode);
+  const erpReady = session.erpSessionReady === true || Boolean(session.erpSessionReused);
+  const adsReady = session.adsSessionReady === true
+    || (session.adsSessionReady === undefined && Boolean(session.adsTitle || session.adsUrl || session.adsEntryMode));
   if (erpReady && adsReady) return 'ERP/Ads 已连接';
+  if (erpReady && session.adsSessionReady === false) return 'ERP 已连接 · Ads 待授权';
   if (adsReady) return 'Ads 已连接';
   if (erpReady) return 'ERP 已连接';
   return '会话确认中';
@@ -409,32 +653,46 @@ export function savedLoginCredentialNotice(input: {
 }
 
 export function buildBrowserLoginRequest(input: {
+  amazonAdsProfileId: string;
   credentialSource: 'saved' | 'typed';
   password: string;
+  resetLingxingSessionForEnrollment?: boolean;
   rememberPassword: boolean;
   savedCredentialUsername: string;
   savedPasswordAvailable: boolean;
+  storeContext: StoreContextEnvelope | null;
+  lingxingCollectionStoreName: string;
   username: string;
 }): BrowserLoginRequest | null {
   const username = input.username.trim();
+  const amazonAdsProfileId = input.amazonAdsProfileId.trim();
+  const lingxingCollectionStoreName = input.lingxingCollectionStoreName.trim();
   const useSavedCredential = input.credentialSource === 'saved'
     && input.savedPasswordAvailable
     && input.rememberPassword
+    && input.resetLingxingSessionForEnrollment !== true
     && username === input.savedCredentialUsername;
-  if (!username) return null;
+  if (!username || !lingxingCollectionStoreName || !amazonAdsProfileId || !input.storeContext) return null;
   if (useSavedCredential) {
     return {
+      amazonAdsProfileId,
       username,
       credentialSource: 'saved',
       rememberPassword: true,
+      storeContext: input.storeContext,
     };
   }
   if (!input.password) return null;
   return {
+    amazonAdsProfileId,
     username,
     credentialSource: 'typed',
     password: input.password,
     rememberPassword: input.rememberPassword,
+    storeContext: input.storeContext,
+    ...(input.resetLingxingSessionForEnrollment === true
+      ? { resetLingxingSessionForEnrollment: true }
+      : {}),
   };
 }
 
@@ -445,6 +703,7 @@ function headerReadinessClass(readiness: DeliveryReadinessView | null): string {
 }
 
 function LoginPage() {
+  const store = useMissionControlStoreContext();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberPassword, setRememberPassword] = useState(false);
@@ -452,11 +711,55 @@ function LoginPage() {
   const [savedCredentialUsername, setSavedCredentialUsername] = useState('');
   const [savedPasswordAvailable, setSavedPasswordAvailable] = useState(false);
   const [savedCredentialState, setSavedCredentialState] = useState<SavedLoginCredentialState>('none');
+  const [packageUiEvidenceMode, setPackageUiEvidenceMode] = useState(false);
+  const [freshTypedProofRequired, setFreshTypedProofRequired] = useState(false);
   const [credentialNotice, setCredentialNotice] = useState('');
   const [credentialTone, setCredentialTone] = useState<LoginCredentialTone>('neutral');
+  const [lingxingCollectionStoreName, setLingxingCollectionStoreName] = useState('');
+  const [amazonAdsProfileId, setAmazonAdsProfileId] = useState('');
+  const [resetLingxingSessionForEnrollment, setResetLingxingSessionForEnrollment] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [loginConnectionState, setLoginConnectionState] = useState<'missing' | 'binding' | 'unbinding' | 'ready' | 'error'>('missing');
+  const [amazonAdsConnectionState, setAmazonAdsConnectionState] =
+    useState<'missing' | 'binding' | 'unbinding' | 'ready' | 'error'>('missing');
+  const [confirmUnbindConnection, setConfirmUnbindConnection] = useState<StoreConnection | null>(null);
   const setLoginState = useStore((state) => state.setLoginState);
+  const lingxingConnection = store.activeView?.connections.find(
+    (connection) => connection.provider === 'lingxing',
+  );
+  const amazonAdsConnection = store.activeView?.connections.find(
+    (connection) => connection.provider === 'amazon_ads',
+  );
+  const normalizedLingxingCollectionStoreName = normalizeLingxingCollectionStoreName(
+    lingxingCollectionStoreName,
+  );
+  const lingxingConnectionReady = Boolean(username.trim())
+    && Boolean(normalizedLingxingCollectionStoreName)
+    && lingxingConnection?.accountLabel?.trim() === username.trim()
+    && lingxingConnection?.normalizedCollectionStoreName === normalizedLingxingCollectionStoreName;
+  const normalizedAmazonAdsProfileId = normalizeProviderExternalAccountId(
+    'amazon_ads',
+    amazonAdsProfileId,
+  );
+  const amazonAdsConnectionReady = Boolean(normalizedAmazonAdsProfileId)
+    && amazonAdsConnection?.normalizedExternalAccountId === normalizedAmazonAdsProfileId;
+  const loginConnectionsReady = lingxingConnectionReady && amazonAdsConnectionReady;
+  const lingxingEnrollmentPending = lingxingConnectionReady
+    && !lingxingConnection?.externalAccountId;
+  const freshTypedProofStorageReady = savedCredentialState !== 'encryption_unavailable';
+  const freshTypedProofReady = !freshTypedProofRequired
+    || (
+      freshTypedProofStorageReady
+      && credentialSource === 'typed'
+      && Boolean(password)
+      && rememberPassword
+    );
+  const enrollmentTypedProofReady = !lingxingEnrollmentPending
+    || (credentialSource === 'typed' && Boolean(password));
+  const loginWorkbenchReady = loginConnectionsReady
+    && freshTypedProofReady
+    && enrollmentTypedProofReady;
   const loginButtonView = loginSubmitButtonView(loading);
   const loginStatus = loginStatusMessage({ credentialSource, loading, credentialNotice, rememberPassword });
   const loginStatusClass = [
@@ -472,33 +775,115 @@ function LoginPage() {
     loading,
     passwordAvailable: savedPasswordAvailable,
   });
+  const unbindBusy = loginConnectionState === 'unbinding' || amazonAdsConnectionState === 'unbinding';
+  const unbindDialogFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    dismissDisabled: unbindBusy,
+    onDismiss: () => setConfirmUnbindConnection(null),
+    open: confirmUnbindConnection !== null,
+  });
+
+  useEffect(() => {
+    setLoginConnectionState(lingxingConnectionReady ? 'ready' : 'missing');
+  }, [
+    lingxingConnection?.accountLabel,
+    lingxingConnection?.id,
+    lingxingConnectionReady,
+    store.authorityKey,
+    username,
+    lingxingCollectionStoreName,
+  ]);
+
+  useEffect(() => {
+    setLingxingCollectionStoreName(lingxingConnection?.collectionStoreName?.trim() ?? '');
+  }, [
+    lingxingConnection?.collectionStoreName,
+    lingxingConnection?.id,
+    store.activeStore?.storeId,
+  ]);
+
+  useEffect(() => {
+    setAmazonAdsProfileId(amazonAdsConnection?.externalAccountId?.trim() ?? '');
+  }, [
+    amazonAdsConnection?.externalAccountId,
+    amazonAdsConnection?.id,
+    store.activeStore?.storeId,
+  ]);
+
+  useEffect(() => {
+    setAmazonAdsConnectionState(amazonAdsConnectionReady ? 'ready' : 'missing');
+  }, [
+    amazonAdsConnection?.externalAccountId,
+    amazonAdsConnection?.id,
+    amazonAdsConnectionReady,
+    amazonAdsProfileId,
+    store.authorityKey,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
+    const requestedStoreId = store.activeStore?.storeId ?? null;
+    const connectionUsername = lingxingConnection?.accountLabel?.trim() ?? '';
+    setUsername(connectionUsername);
+    setPassword('');
+    setSavedCredentialUsername('');
+    setSavedPasswordAvailable(false);
+    setSavedCredentialState('none');
+    setPackageUiEvidenceMode(false);
+    setFreshTypedProofRequired(false);
+    setRememberPassword(false);
+    setCredentialSource('typed');
+    setCredentialNotice('正在读取当前店铺的本机凭证状态…');
+    setCredentialTone('neutral');
+    setResetLingxingSessionForEnrollment(false);
     async function loadSavedCredentialStatus() {
-      const api = appElectronApi(username);
+      const api = appElectronApi(connectionUsername);
       if (!api?.getSavedLoginCredentialStatus) return;
       try {
         const saved = await api.getSavedLoginCredentialStatus();
         if (cancelled || !saved) return;
+        if (String(saved.storeId ?? '') !== String(requestedStoreId ?? '')) return;
         const savedUsername = typeof saved.username === 'string' ? saved.username : '';
+        const effectiveUsername = savedUsername || connectionUsername;
         const passwordAvailable = Boolean(saved.passwordAvailable);
         const credentialState = saved.credentialState || 'none';
+        const requiresFreshTypedProof = Boolean(saved.freshTypedProofRequired);
+        const enrollmentPending = Boolean(
+          lingxingConnection
+          && !lingxingConnection.externalAccountId,
+        );
         const encryptionAvailable = credentialState !== 'encryption_unavailable';
-        const remember = encryptionAvailable && Boolean(saved.rememberPassword);
-        setUsername(savedUsername);
+        const remember = encryptionAvailable && (
+          requiresFreshTypedProof ? true : Boolean(saved.rememberPassword)
+        );
+        setUsername(effectiveUsername);
         setSavedCredentialUsername(savedUsername);
         setSavedPasswordAvailable(passwordAvailable);
         setSavedCredentialState(credentialState);
+        setPackageUiEvidenceMode(Boolean(saved.packageUiEvidenceMode));
+        setFreshTypedProofRequired(requiresFreshTypedProof);
         setRememberPassword(remember);
         setPassword('');
-        setCredentialSource(passwordAvailable && remember ? 'saved' : 'typed');
-        setCredentialNotice(savedLoginCredentialNotice({
-          credentialState,
-          passwordAvailable,
-          rememberPassword: remember,
-        }));
-        setCredentialTone(savedLoginCredentialTone({ credentialState, passwordAvailable }));
+        setCredentialSource(
+          !enrollmentPending && !requiresFreshTypedProof && passwordAvailable && remember
+            ? 'saved'
+            : 'typed',
+        );
+        setCredentialNotice(enrollmentPending
+          ? '当前店铺需要首次建立领星稳定身份，请手动输入本次密码；不会复用其他店铺或旧会话的身份。'
+          : requiresFreshTypedProof
+          ? encryptionAvailable
+            ? '本次为正式证据首轮：请重新输入密码并保持“记住密码”勾选，以建立可核验的新会话。'
+            : '本次正式证据首轮需要本机加密保存密码，但当前系统加密不可用，暂不能开始正式取证。'
+          : savedLoginCredentialNotice({
+              credentialState,
+              passwordAvailable,
+              rememberPassword: remember,
+            }));
+        setCredentialTone(enrollmentPending
+          ? 'warning'
+          : requiresFreshTypedProof
+          ? encryptionAvailable ? 'warning' : 'blocked'
+          : savedLoginCredentialTone({ credentialState, passwordAvailable }));
       } catch {
         if (!cancelled) {
           setCredentialNotice('无法读取本机凭证状态，请重新输入密码。');
@@ -511,16 +896,40 @@ function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [
+    lingxingConnection?.accountLabel,
+    lingxingConnection?.externalAccountId,
+    lingxingConnection?.id,
+    store.activeStore?.storeId,
+  ]);
 
   async function handleLogin() {
     if (loading) return;
+    if (!lingxingConnectionReady) {
+      setError('请先把当前领星账号绑定到所选店铺。');
+      return;
+    }
+    if (!amazonAdsConnectionReady) {
+      setError('请先把 Amazon Ads Profile ID 绑定到所选店铺。');
+      return;
+    }
+    if (!freshTypedProofReady) {
+      setError(freshTypedProofStorageReady
+        ? '本次正式证据首轮必须重新输入密码并勾选“记住密码”。'
+        : '本次正式证据首轮需要本机加密保存密码，但当前系统加密不可用。');
+      return;
+    }
     const request = buildBrowserLoginRequest({
+      amazonAdsProfileId,
       credentialSource,
       password,
+      resetLingxingSessionForEnrollment:
+        lingxingEnrollmentPending && resetLingxingSessionForEnrollment,
       rememberPassword,
       savedCredentialUsername,
       savedPasswordAvailable,
+      storeContext: store.authoritativeContext,
+      lingxingCollectionStoreName,
       username,
     });
     if (!request) {
@@ -546,127 +955,561 @@ function LoginPage() {
     }
   }
 
+  async function handleBindLingxingConnection() {
+    if (loading || loginConnectionState === 'binding' || lingxingConnectionReady) return;
+    if (!username.trim() || !lingxingCollectionStoreName.trim()) {
+      setError('请同时输入领星用户名和领星下载中心店铺名称后再绑定。');
+      return;
+    }
+    setLoginConnectionState('binding');
+    setError('');
+    try {
+      await store.bindLingxingConnection(username.trim(), lingxingCollectionStoreName.trim());
+      setLoginConnectionState('ready');
+    } catch (caught) {
+      setLoginConnectionState('error');
+      setError(toUserFacingError(caught, '领星连接绑定失败'));
+    }
+  }
+
+  async function handleUnbindConnection(connection: StoreConnection) {
+    if (loading || unbindBusy) return;
+    const provider = connection.provider;
+    if (provider === 'lingxing') setLoginConnectionState('unbinding');
+    else setAmazonAdsConnectionState('unbinding');
+    setError('');
+    try {
+      await store.unbindStoreConnection(connection);
+      if (provider === 'lingxing') setLoginConnectionState('missing');
+      else setAmazonAdsConnectionState('missing');
+      setConfirmUnbindConnection(null);
+      setCredentialNotice('连接映射已解绑；本机保存的领星密码没有被清除。');
+      setCredentialTone('warning');
+    } catch (caught) {
+      if (provider === 'lingxing') setLoginConnectionState('error');
+      else setAmazonAdsConnectionState('error');
+      setError(toUserFacingError(caught, provider === 'lingxing' ? '领星连接解绑失败' : 'Amazon Ads 连接解绑失败'));
+    }
+  }
+
+  async function handleBindAmazonAdsConnection() {
+    if (loading || amazonAdsConnectionState === 'binding' || amazonAdsConnectionReady) return;
+    if (!amazonAdsProfileId.trim()) {
+      setError('请输入 Amazon Ads Profile ID 后再绑定。');
+      return;
+    }
+    setAmazonAdsConnectionState('binding');
+    setError('');
+    try {
+      await store.bindAmazonAdsConnection(amazonAdsProfileId);
+      setAmazonAdsConnectionState('ready');
+    } catch (caught) {
+      setAmazonAdsConnectionState('error');
+      setError(toUserFacingError(caught, 'Amazon Ads Profile 绑定失败'));
+    }
+  }
+
+  const loginConnectionStatus = loginConnectionState === 'ready'
+    ? lingxingConnection?.externalAccountId
+      ? '领星连接已绑定；稳定身份已由 Main 识别。'
+      : '领星连接已绑定；稳定身份待首次新鲜登录识别。'
+    : loginConnectionState === 'binding'
+      ? '正在绑定当前领星账号与店铺身份…'
+      : loginConnectionState === 'unbinding'
+        ? '正在解绑领星连接映射…'
+      : loginConnectionState === 'error'
+        ? '领星连接绑定失败，请检查后重试。'
+        : lingxingConnection
+          ? '当前用户名与店铺领星连接不一致，请更新绑定。'
+          : '当前店铺尚未绑定领星连接。';
+
+  const amazonAdsConnectionStatus = amazonAdsConnectionState === 'ready'
+    ? 'Amazon Ads Profile 已绑定'
+    : amazonAdsConnectionState === 'binding'
+      ? '正在绑定 Amazon Ads Profile…'
+      : amazonAdsConnectionState === 'unbinding'
+        ? '正在解绑 Amazon Ads Profile…'
+      : amazonAdsConnectionState === 'error'
+        ? 'Amazon Ads Profile 绑定失败，请检查后重试。'
+        : amazonAdsConnection
+          ? '当前 Profile ID 与店铺 Amazon Ads 连接不一致，请更新绑定。'
+          : '当前店铺尚未绑定 Amazon Ads Profile。';
+  const lingxingReadinessDetail = lingxingConnectionReady
+    ? lingxingConnection?.externalAccountId
+      ? '已就绪：账号与下载中心店铺名称一致，稳定身份已识别。'
+      : enrollmentTypedProofReady
+        ? '待登记：已输入本次密码；稳定身份将在首次新鲜登录时由 Main 识别。'
+        : '待登记：请手动输入本次密码，旧会话不会直接作为稳定身份。'
+    : !username.trim()
+      ? '未就绪：请先在步骤 1 输入领星用户名。'
+      : !lingxingCollectionStoreName.trim()
+        ? '未就绪：请填写与领星下载中心显示完全一致的店铺名称。'
+      : `未就绪：${loginConnectionStatus}`;
+  const amazonAdsReadinessDetail = amazonAdsConnectionReady
+    ? '已就绪：当前 Profile ID 与店铺 Amazon Ads 连接一致。'
+    : !amazonAdsProfileId.trim()
+      ? '未就绪：请填写 ads.lingxing.com 当前广告账户的 profile_id。'
+      : `未就绪：${amazonAdsConnectionStatus}`;
+
   return (
     <div style={loginStyles.container}>
-      <section style={loginStyles.card}>
-        <div>
-          <h1 style={loginStyles.title}>Amazon AI Ops Agent</h1>
-          <p style={loginStyles.subtitle}>v1.5.0</p>
-        </div>
-        <div style={loginStyles.form}>
-          <input
-            onChange={(event) => {
-              const nextUsername = event.target.value;
-              const canReuseSaved = savedPasswordAvailable
-                && rememberPassword
-                && !password
-                && nextUsername.trim() === savedCredentialUsername;
-              setUsername(nextUsername);
-              setCredentialSource(canReuseSaved ? 'saved' : 'typed');
-              if (savedPasswordAvailable && !canReuseSaved) {
-                setCredentialNotice('账号已修改；请输入密码以建立新的登录会话。');
-                setCredentialTone('warning');
-              } else if (canReuseSaved) {
-                setCredentialNotice(savedLoginCredentialNotice({
-                  credentialState: 'encrypted_ready',
-                  passwordAvailable: true,
-                  rememberPassword: true,
-                }));
-                setCredentialTone('ready');
-              }
-            }}
-            aria-label="领星用户名"
-            onKeyDown={(event) => event.key === 'Enter' && !loading && handleLogin()}
-            placeholder="领星用户名"
-            style={loginStyles.input}
-            type="text"
-            value={username}
-          />
-          <input
-            data-credential-source={credentialSource}
-            onChange={(event) => {
-              const nextPassword = event.target.value;
-              const canReuseSaved = !nextPassword
-                && savedPasswordAvailable
-                && rememberPassword
-                && username.trim() === savedCredentialUsername;
-              setPassword(nextPassword);
-              setCredentialSource(canReuseSaved ? 'saved' : 'typed');
-              if (canReuseSaved) {
-                setCredentialNotice(savedLoginCredentialNotice({
-                  credentialState: 'encrypted_ready',
-                  passwordAvailable: true,
-                  rememberPassword: true,
-                }));
-                setCredentialTone('ready');
-              } else if (savedCredentialState === 'encryption_unavailable') {
-                setCredentialNotice('当前系统无法使用本机加密；本次仅登录、不保存密码。');
-                setCredentialTone('warning');
-              } else {
-                setCredentialNotice('本次将使用当前页面输入的密码；已保存密码不会发送到当前页面。');
-                setCredentialTone('neutral');
-              }
-            }}
-            aria-label="领星密码"
-            onKeyDown={(event) => event.key === 'Enter' && !loading && handleLogin()}
-            placeholder="领星密码"
-            style={loginStyles.input}
-            type="password"
-            value={password}
-          />
-          <div style={loginStyles.rememberRow}>
-            <label style={loginStyles.rememberLabel}>
-              <input
-                checked={rememberPassword}
-                disabled={savedCredentialState === 'encryption_unavailable'}
-                onChange={(event) => {
-                  const remember = event.target.checked;
-                  const canReuseSaved = remember
-                    && savedPasswordAvailable
-                    && !password
-                    && username.trim() === savedCredentialUsername;
-                  setRememberPassword(remember);
-                  setCredentialSource(canReuseSaved ? 'saved' : 'typed');
-                  if (!remember && savedPasswordAvailable) {
-                    setCredentialNotice('取消后请重新输入密码；登录成功会清除本机保存的密码，账号仍保留。');
-                    setCredentialTone('warning');
-                  } else if (canReuseSaved) {
-                    setCredentialNotice(savedLoginCredentialNotice({
-                      credentialState: 'encrypted_ready',
-                      passwordAvailable: true,
-                      rememberPassword: true,
-                    }));
-                    setCredentialTone('ready');
-                  } else {
-                    setCredentialTone('neutral');
-                  }
-                }}
-                type="checkbox"
-              />
-              <span>记住密码</span>
-            </label>
-            <span className={securityTagView.className}>{securityTagView.label}</span>
+      <main aria-label="登录与双连接工作台" style={loginStyles.card}>
+        <header style={loginStyles.topbar}>
+          <div style={loginStyles.brand}>
+            <h1 style={loginStyles.title}>Amazon AI Ops Agent</h1>
+            <p style={loginStyles.subtitle}>登录与广告授权工作台</p>
           </div>
-          <div className={loginStatusClass} role="status" aria-live="polite">
-            {loginStatus}
-          </div>
-          <div style={loginStyles.hint}>登录流程：ERP 登录 {'->'} ERP 广告入口 {'->'} Ads 会话确认。</div>
-          {error && <div role="alert" style={loginStyles.error}>{error}</div>}
-          <button
-            aria-busy={loginButtonView.ariaBusy}
-            className={loginButtonView.className}
-            disabled={loading}
-            onClick={handleLogin}
-            style={loginStyles.button}
-            type="button"
-          >
-            <span className="button-content">
-              {loginButtonView.loading && <span className="button-spinner" aria-hidden="true" />}
-              <span>{loginButtonView.label}</span>
+          <span style={loginStyles.version}>v1.5.0</span>
+        </header>
+
+        <section
+          aria-label="当前店铺上下文"
+          data-login-workbench-store
+          style={loginStyles.contextBar}
+        >
+          <div style={loginStyles.contextIdentity}>
+            <span style={loginStyles.contextLabel}>当前店铺</span>
+            <span style={loginStyles.contextValue}>
+              {store.activeStore?.displayName || '店铺待确认'} · {store.activeStore?.storeId || '未选择'}
             </span>
-          </button>
+          </div>
+          <span style={loginStyles.marketPill}>美国站 · USD</span>
+        </section>
+
+        <div style={loginStyles.workflowGrid}>
+          <div style={loginStyles.leftColumn}>
+            <section
+              aria-labelledby="login-step-credentials-title"
+              data-login-workbench-step="credentials"
+              style={loginStyles.stepCard}
+            >
+              <div style={loginStyles.stepHeader}>
+                <span aria-hidden="true" style={loginStyles.stepIndex}>1</span>
+                <div style={loginStyles.stepHeadingGroup}>
+                  <h2 id="login-step-credentials-title" style={loginStyles.stepTitle}>输入领星凭证</h2>
+                  <p style={loginStyles.stepDescription}>
+                    {freshTypedProofRequired
+                      ? '本次正式证据首轮必须重新输入密码并勾选“记住密码”；密码仅由 Main 进程写入本机安全区。'
+                      : '需要刷新登录身份时，请重新输入密码并勾选“记住密码”；密码仅由 Main 进程写入本机安全区。'}
+                  </p>
+                </div>
+              </div>
+              <div style={loginStyles.fieldsGrid}>
+                <label style={loginStyles.fieldLabel}>
+                  <span style={loginStyles.fieldName}>领星用户名</span>
+                  <input
+                    onChange={(event) => {
+                      const nextUsername = event.target.value;
+                      const canReuseSaved = savedPasswordAvailable
+                        && !lingxingEnrollmentPending
+                        && rememberPassword
+                        && !password
+                        && nextUsername.trim() === savedCredentialUsername;
+                      setUsername(nextUsername);
+                      setCredentialSource(canReuseSaved ? 'saved' : 'typed');
+                      if (savedPasswordAvailable && !canReuseSaved) {
+                        setCredentialNotice('账号已修改；请输入密码以建立新的登录会话。');
+                        setCredentialTone('warning');
+                      } else if (canReuseSaved) {
+                        setCredentialNotice(savedLoginCredentialNotice({
+                          credentialState: 'encrypted_ready',
+                          passwordAvailable: true,
+                          rememberPassword: true,
+                        }));
+                        setCredentialTone('ready');
+                      }
+                    }}
+                    aria-label="领星用户名"
+                    onKeyDown={(event) => event.key === 'Enter' && !loading && loginConnectionsReady && handleLogin()}
+                    placeholder="领星用户名"
+                    style={loginStyles.input}
+                    type="text"
+                    value={username}
+                  />
+                </label>
+                <label style={loginStyles.fieldLabel}>
+                  <span style={loginStyles.fieldName}>领星密码</span>
+                  <input
+                    data-credential-source={credentialSource}
+                    onChange={(event) => {
+                      const nextPassword = event.target.value;
+                      const canReuseSaved = !nextPassword
+                        && !lingxingEnrollmentPending
+                        && savedPasswordAvailable
+                        && rememberPassword
+                        && username.trim() === savedCredentialUsername;
+                      setPassword(nextPassword);
+                      setCredentialSource(canReuseSaved ? 'saved' : 'typed');
+                      if (canReuseSaved) {
+                        setCredentialNotice(savedLoginCredentialNotice({
+                          credentialState: 'encrypted_ready',
+                          passwordAvailable: true,
+                          rememberPassword: true,
+                        }));
+                        setCredentialTone('ready');
+                      } else if (savedCredentialState === 'encryption_unavailable') {
+                        setCredentialNotice('当前系统无法使用本机加密；本次仅登录、不保存密码。');
+                        setCredentialTone('warning');
+                      } else {
+                        setCredentialNotice('本次将使用当前页面输入的密码；已保存密码不会发送到当前页面。');
+                        setCredentialTone('neutral');
+                      }
+                    }}
+                    aria-label="领星密码"
+                    onKeyDown={(event) => event.key === 'Enter' && !loading && loginConnectionsReady && handleLogin()}
+                    placeholder="领星密码"
+                    style={loginStyles.input}
+                    type="password"
+                    value={password}
+                  />
+                </label>
+              </div>
+              <div style={loginStyles.rememberRow}>
+                <label style={loginStyles.rememberLabel}>
+                  <input
+                    checked={rememberPassword}
+                    disabled={savedCredentialState === 'encryption_unavailable'}
+                    onChange={(event) => {
+                      const remember = event.target.checked;
+                      const canReuseSaved = remember
+                        && !lingxingEnrollmentPending
+                        && savedPasswordAvailable
+                        && !password
+                        && username.trim() === savedCredentialUsername;
+                      setRememberPassword(remember);
+                      setCredentialSource(canReuseSaved ? 'saved' : 'typed');
+                      if (!remember && savedPasswordAvailable) {
+                        setCredentialNotice('取消后请重新输入密码；登录成功会清除本机保存的密码，账号仍保留。');
+                        setCredentialTone('warning');
+                      } else if (canReuseSaved) {
+                        setCredentialNotice(savedLoginCredentialNotice({
+                          credentialState: 'encrypted_ready',
+                          passwordAvailable: true,
+                          rememberPassword: true,
+                        }));
+                        setCredentialTone('ready');
+                      } else {
+                        setCredentialTone('neutral');
+                      }
+                    }}
+                    type="checkbox"
+                  />
+                  <span>记住密码</span>
+                </label>
+                <span className={securityTagView.className}>{securityTagView.label}</span>
+              </div>
+              {lingxingEnrollmentPending && (
+                <label style={loginStyles.enrollmentResetRow}>
+                  <input
+                    aria-label="允许重置当前店铺领星会话"
+                    checked={resetLingxingSessionForEnrollment}
+                    disabled={loading || credentialSource !== 'typed'}
+                    onChange={(event) => setResetLingxingSessionForEnrollment(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span style={loginStyles.enrollmentResetCopy}>
+                    <strong>若检测到旧登录，允许重置当前店铺领星会话</strong>
+                    <span>
+                      只清理当前店铺独立 Chromium 中的登录会话并重新进入可见登录页；不会删除 Profile、报表或其他店铺数据。
+                    </span>
+                  </span>
+                </label>
+              )}
+              <div className={loginStatusClass} role="status" aria-live="polite">
+                {loginStatus}
+              </div>
+            </section>
+
+            <section
+              aria-labelledby="login-step-bindings-title"
+              data-login-workbench-step="bindings"
+              style={loginStyles.stepCard}
+            >
+              <div style={loginStyles.stepHeader}>
+                <span aria-hidden="true" style={loginStyles.stepIndex}>2</span>
+                <div style={loginStyles.stepHeadingGroup}>
+                  <h2 id="login-step-bindings-title" style={loginStyles.stepTitle}>绑定当前店铺的双连接身份</h2>
+                  <p style={loginStyles.stepDescription}>
+                    同时确认领星登录账号、下载中心店铺名称与 Amazon Ads Profile ID；绑定只归属上方当前店铺。
+                  </p>
+                </div>
+              </div>
+              <div style={loginStyles.connectionGrid}>
+                <div style={loginStyles.connectionPanel}>
+                  <p style={loginStyles.connectionName}>领星 ERP</p>
+                  <label style={loginStyles.fieldLabel}>
+                    <span style={loginStyles.notice}>领星下载中心店铺名称</span>
+                    <input
+                      aria-label="领星下载中心店铺名称"
+                      autoComplete="off"
+                      data-package-ui-evidence-field="lingxing-shop-identity"
+                      maxLength={256}
+                      onChange={(event) => setLingxingCollectionStoreName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === 'Enter'
+                          && !loading
+                          && loginConnectionState !== 'binding'
+                          && username.trim()
+                          && lingxingCollectionStoreName.trim()
+                        ) void handleBindLingxingConnection();
+                      }}
+                      placeholder="必须与领星下载中心显示完全一致"
+                      style={loginStyles.input}
+                      type="text"
+                      value={lingxingCollectionStoreName}
+                    />
+                  </label>
+                  <div className="login-stable-identity" role="status" aria-live="polite">
+                    <span>稳定身份（Main 首次新鲜登录识别）</span>
+                    <output aria-label="领星稳定身份只读状态">
+                      {lingxingConnection?.externalAccountId
+                        ? `已识别：${lingxingConnection.externalAccountId}`
+                        : '待首次新鲜登录识别'}
+                    </output>
+                  </div>
+                  <p
+                    data-login-connection-status
+                    data-state={loginConnectionState}
+                    role="status"
+                    aria-live="polite"
+                    style={loginStyles.connectionStatus}
+                  >
+                    {loginConnectionStatus}
+                  </p>
+                  {!lingxingConnectionReady ? (
+                    <button
+                      data-package-ui-evidence-action="bind-lingxing-connection"
+                      type="button"
+                      disabled={loading || loginConnectionState === 'binding' || !username.trim() || !lingxingCollectionStoreName.trim()}
+                      onClick={handleBindLingxingConnection}
+                      style={loginStyles.connectionButton}
+                    >
+                      {loginConnectionState === 'binding'
+                        ? '绑定中…'
+                        : lingxingConnection
+                          ? '更新领星账号与店铺绑定'
+                          : '绑定领星账号与店铺'}
+                    </button>
+                  ) : null}
+                  {lingxingConnection && (
+                    <button
+                      className="login-connection-unbind"
+                      disabled={loading || unbindBusy}
+                      onClick={() => setConfirmUnbindConnection({ ...lingxingConnection })}
+                      type="button"
+                    >
+                      解绑领星映射
+                    </button>
+                  )}
+                </div>
+                <div style={loginStyles.connectionPanel}>
+                  <p style={loginStyles.connectionName}>Amazon Ads · US / USD</p>
+                  <label style={loginStyles.fieldLabel}>
+                    <span style={loginStyles.notice}>Amazon Ads Profile ID</span>
+                    <input
+                      aria-label="Amazon Ads Profile ID"
+                      autoComplete="off"
+                      data-package-ui-evidence-field="amazon-ads-profile-id"
+                      maxLength={256}
+                      onChange={(event) => setAmazonAdsProfileId(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' || loading) return;
+                        if (loginConnectionsReady) {
+                          void handleLogin();
+                        } else if (
+                          amazonAdsConnectionState !== 'binding'
+                          && amazonAdsProfileId.trim()
+                        ) {
+                          void handleBindAmazonAdsConnection();
+                        }
+                      }}
+                      placeholder="填写 ads.lingxing.com 的 profile_id"
+                      style={loginStyles.input}
+                      type="text"
+                      value={amazonAdsProfileId}
+                    />
+                  </label>
+                  <p
+                    data-login-amazon-ads-connection-status
+                    data-state={amazonAdsConnectionState}
+                    role="status"
+                    aria-live="polite"
+                    style={loginStyles.connectionStatus}
+                  >
+                    {amazonAdsConnectionStatus}
+                  </p>
+                  {!amazonAdsConnectionReady ? (
+                    <button
+                      data-package-ui-evidence-action="bind-amazon-ads-connection"
+                      type="button"
+                      disabled={loading || amazonAdsConnectionState === 'binding' || !amazonAdsProfileId.trim()}
+                      onClick={handleBindAmazonAdsConnection}
+                      style={loginStyles.connectionButton}
+                    >
+                      {amazonAdsConnectionState === 'binding'
+                        ? '绑定中…'
+                        : amazonAdsConnection
+                          ? '更新 Amazon Ads Profile 绑定'
+                          : '绑定 Amazon Ads Profile'}
+                    </button>
+                  ) : null}
+                  {amazonAdsConnection && (
+                    <button
+                      className="login-connection-unbind"
+                      disabled={loading || unbindBusy}
+                      onClick={() => setConfirmUnbindConnection({ ...amazonAdsConnection })}
+                      type="button"
+                    >
+                      解绑 Amazon Ads 映射
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div style={loginStyles.hint}>
+                领星下载中心店铺名称必须与下载中心当前可见名称完全一致；Profile ID 来自 ads.lingxing.com 当前广告账户地址。解绑映射不会清除本机保存的密码。
+              </div>
+            </section>
+          </div>
+
+          <section
+            aria-labelledby="login-step-authorize-title"
+            data-login-workbench-step="authorize"
+            style={loginStyles.actionCard}
+          >
+            <div style={loginStyles.stepHeader}>
+              <span aria-hidden="true" style={loginStyles.stepIndex}>3</span>
+              <div style={loginStyles.stepHeadingGroup}>
+                <h2 id="login-step-authorize-title" style={loginStyles.stepTitle}>登录并完成可见授权</h2>
+                <p style={loginStyles.stepDescription}>
+                  双绑定就绪后启动；整个授权过程中请保持主窗口打开。
+                </p>
+              </div>
+            </div>
+
+            <div
+              aria-live="polite"
+              data-login-workbench-readiness={loginWorkbenchReady ? 'ready' : 'blocked'}
+              role="status"
+              style={loginStyles.readinessPanel}
+            >
+              <p style={loginStyles.readinessTitle}>
+                {loginWorkbenchReady ? '登录条件已就绪，可以开始授权' : '暂不能登录，请先处理以下项目'}
+              </p>
+              <ul style={loginStyles.readinessList}>
+                <li style={loginStyles.readinessItem}>领星：{lingxingReadinessDetail}</li>
+                <li style={loginStyles.readinessItem}>Amazon Ads：{amazonAdsReadinessDetail}</li>
+                {lingxingEnrollmentPending && (
+                  <li style={loginStyles.readinessItem}>
+                    首次身份登记：{resetLingxingSessionForEnrollment
+                      ? '若发现旧登录，会仅重置当前店铺的领星会话后重新登录。'
+                      : '默认不清理会话；若检测到旧登录，系统会停下并要求你确认重置。'}
+                  </li>
+                )}
+                {freshTypedProofRequired && (
+                  <li style={loginStyles.readinessItem}>
+                    首轮证据：{!freshTypedProofStorageReady
+                      ? '本机加密不可用，无法建立可核验的新凭证会话。'
+                      : freshTypedProofReady
+                        ? '已重新输入密码并选择保存。'
+                        : '请重新输入密码并勾选“记住密码”。'}
+                  </li>
+                )}
+              </ul>
+            </div>
+
+            <ol style={loginStyles.guidanceList}>
+              <li>点击登录后，保持 Electron 主窗口打开；可以最小化，但不要关闭。</li>
+              <li>在项目自带的独立 Playwright Chromium 中，依次完成领星 ERP 与 Amazon Ads 授权。</li>
+              <li>
+                {packageUiEvidenceMode
+                  ? 'Package UI 证据采集器不会读取、填写或点击你的账号密码；应用 Main 进程只在本机解密并提交你明确选择使用的领星凭证。'
+                  : '应用 Main 进程只在本机解密并提交你明确选择使用的领星凭证；验证码、MFA 与 Amazon Ads 授权由你在可见窗口完成。'}
+              </li>
+            </ol>
+
+            {store.postCommitSyncWarning && (
+              <div className="store-post-commit-sync-warning" role="status">
+                {store.postCommitSyncWarning}
+              </div>
+            )}
+            {error && <div role="alert" style={loginStyles.error}>{error}</div>}
+            <button
+              aria-busy={loginButtonView.ariaBusy}
+              className={loginButtonView.className}
+              disabled={loading || !loginWorkbenchReady}
+              onClick={handleLogin}
+              style={loginStyles.button}
+              type="button"
+            >
+              <span className="button-content">
+                {loginButtonView.loading && <span className="button-spinner" aria-hidden="true" />}
+                <span>{loginButtonView.label}</span>
+              </span>
+            </button>
+            <div style={loginStyles.notice}>
+              主动作保持禁用时，上方会逐项说明未就绪原因；不会以静默禁用代替操作指引。
+            </div>
+          </section>
         </div>
-      </section>
+      </main>
+      {confirmUnbindConnection && (
+        <div
+          className="mission-control-dialog-backdrop login-unbind-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !unbindBusy) setConfirmUnbindConnection(null);
+          }}
+          ref={unbindDialogFocus.overlayRootRef}
+          role="presentation"
+        >
+          <section
+            aria-describedby="login-unbind-description"
+            aria-labelledby="login-unbind-title"
+            aria-modal="true"
+            className="mission-control-dialog mission-control-dialog--confirm login-unbind-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            ref={unbindDialogFocus.surfaceRef}
+            role="alertdialog"
+            tabIndex={-1}
+          >
+            <header>
+              <div>
+                <span>REMOVE STORE MAPPING</span>
+                <h2 id="login-unbind-title">
+                  解绑{confirmUnbindConnection.provider === 'lingxing' ? '领星下载中心店铺映射' : 'Amazon Ads Profile'}？
+                </h2>
+                <p id="login-unbind-description">
+                  解绑只移除当前店铺的连接映射并使会话失效；不会清除本机保存的领星密码。
+                </p>
+                <dl className="store-connection-unbind-facts">
+                  <div><dt>账号</dt><dd>{confirmUnbindConnection.accountLabel || '未记录'}</dd></div>
+                  {confirmUnbindConnection.provider === 'lingxing' ? (
+                    <>
+                      <div><dt>下载中心店铺名称</dt><dd>{confirmUnbindConnection.collectionStoreName || '未记录'}</dd></div>
+                      <div><dt>稳定身份</dt><dd>{confirmUnbindConnection.externalAccountId || '待首次新鲜登录识别'}</dd></div>
+                    </>
+                  ) : (
+                    <div><dt>Profile ID</dt><dd>{confirmUnbindConnection.externalAccountId || '未记录'}</dd></div>
+                  )}
+                </dl>
+              </div>
+            </header>
+            <footer>
+              <button disabled={unbindBusy} onClick={() => setConfirmUnbindConnection(null)} type="button">取消</button>
+              <button
+                aria-busy={unbindBusy || undefined}
+                autoFocus
+                className="workspace-button workspace-button--primary"
+                disabled={unbindBusy}
+                onClick={() => void handleUnbindConnection(confirmUnbindConnection)}
+                type="button"
+              >
+                {unbindBusy ? '解绑中…' : '确认解绑映射'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -692,6 +1535,7 @@ function MissionControlRuntime({
   );
   const contentRef = useRef<HTMLElement | null>(null);
   const navigationTimerRef = useRef<number | null>(null);
+  const operationScopeLoadSequenceRef = useRef(0);
 
   const requestNavigate = useCallback((target: AppRoute | NavigationIntent) => {
     const intent = normalizeNavigationTarget(target);
@@ -730,15 +1574,28 @@ function MissionControlRuntime({
 
   useEffect(() => {
     if (!store.authoritativeContext || !store.activeStore) return;
+    const context = store.authoritativeContext;
+    const storeName = store.activeStore.displayName;
+    const authorityKey = missionControlContextKey(context);
+    const requestSequence = ++operationScopeLoadSequenceRef.current;
     setDeliveryReadiness(null);
     setWorkflowEvidence(deriveWorkflowEvidence({}));
-    setScope({
-      storeName: store.activeStore.displayName,
-      marketplaceCode: store.authoritativeContext.marketplace,
-      currency: store.authoritativeContext.currency,
-      asin: undefined,
-      batchId: undefined,
-    });
+    setScope(defaultOperationScopeForAuthority(context, storeName));
+    const api = (window as any).electronAPI;
+    void api?.getOperationScope?.(context)
+      .then((savedScope: unknown) => {
+        if (
+          requestSequence !== operationScopeLoadSequenceRef.current
+          || store.authorityKey !== authorityKey
+        ) return;
+        if (operationScopeBelongsToAuthority(savedScope, context, storeName)) {
+          setScope(savedScope);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      operationScopeLoadSequenceRef.current += 1;
+    };
   }, [setScope, store.authorityKey]);
 
   useEffect(() => {
@@ -842,9 +1699,9 @@ function MissionControlRuntime({
     <span
       aria-label={describeLoginSession(loginSession)}
       aria-live="polite"
-      className={`session-line${loginSession?.sessionIdentityVerified === false ? ' session-line-warning' : ''}`}
+      className={`session-line${loginSession?.sessionIdentityVerified === false || loginSession?.adsSessionReady === false ? ' session-line-warning' : ''}`}
       role="status"
-      tabIndex={loginSession?.sessionIdentityVerified === false ? 0 : undefined}
+      tabIndex={loginSession?.sessionIdentityVerified === false || loginSession?.adsSessionReady === false ? 0 : undefined}
       title={describeLoginSession(loginSession)}
     >
       {headerSessionStatusLabel(loginSession)}
@@ -860,19 +1717,31 @@ function MissionControlRuntime({
       brandBadges={brandBadges}
       capabilities={missionControl.capabilities}
       contentRef={contentRef}
+      dailyStatusError={store.dailyStatusError}
+      dailyStatusPhase={store.dailyStatusPhase}
+      dailyStatuses={store.dailyStatuses}
+      onCreateStore={store.createStore}
       onLogout={handleLogout}
       onNavigate={requestNavigate}
+      onRetryStores={async () => {
+        await store.retryBootstrap();
+        await store.refreshDailyStatuses().catch(() => undefined);
+      }}
       onSetAutonomyMode={missionControl.setAutonomyMode}
       onSwitchStore={store.switchStore}
       pendingIntent={pendingNavigationIntent}
       sessionStatus={sessionStatus}
       storeError={store.error}
+      storeSyncWarning={store.postCommitSyncWarning}
       storePhase={store.phase}
       stores={store.stores}
     >
       <div key={store.authorityKey} data-authority-key={store.authorityKey}>
         <MissionControlWorkspaceView
           autonomy={missionControl.autonomy}
+          today={missionControl.today}
+          bridgeError={missionControl.error}
+          bridgePhase={missionControl.phase}
           capabilities={missionControl.phase === 'loading' ? undefined : missionControl.capabilities}
           intent={activeNavigation}
           legacySlot={({ route, intent, capabilities }) => (
@@ -888,24 +1757,63 @@ function MissionControlRuntime({
             />
           )}
           onNavigate={requestNavigate}
+          onRefreshAuthority={missionControl.refreshBootstrap}
           previewMode={browserPreviewBootstrap.enabled}
           storeCrudSlot={(
             <StoreManagementPanel
               activeStoreId={store.activeStore.storeId}
+              connections={store.activeView?.connections ?? []}
               error={store.error}
               onArchive={store.archiveStore}
-              onCreate={store.createStore}
+              onBindAmazonAds={store.bindAmazonAdsConnection}
+              onBindLingxing={store.bindLingxingConnection}
               onRestore={store.restoreStore}
-              onSwitch={store.switchStore}
+              onUnbindConnection={store.unbindStoreConnection}
               onUpdate={store.updateStore}
               stores={store.stores}
+              syncWarning={store.postCommitSyncWarning}
             />
+          )}
+          settingsCrudSlot={(
+            <StoreRuntimeConfigPanel storeContext={store.authoritativeContext} />
           )}
           storeContext={store.authoritativeContext}
         />
       </div>
     </MissionControlShell>
   );
+}
+
+export function defaultOperationScopeForAuthority(
+  context: StoreContextEnvelope,
+  storeName: string,
+): OperationScope {
+  const end = new Date(`${context.businessDate}T12:00:00.000Z`);
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 13);
+  return {
+    dateFrom: start.toISOString().slice(0, 10),
+    dateTo: context.businessDate,
+    storeName,
+    marketplaceCode: 'US',
+    currency: 'USD',
+    asin: undefined,
+    batchId: undefined,
+  };
+}
+
+export function operationScopeBelongsToAuthority(
+  value: unknown,
+  context: StoreContextEnvelope,
+  storeName: string,
+): value is OperationScope {
+  if (!value || typeof value !== 'object') return false;
+  const scope = value as Partial<OperationScope>;
+  return typeof scope.dateFrom === 'string'
+    && typeof scope.dateTo === 'string'
+    && scope.storeName === storeName
+    && scope.marketplaceCode === context.marketplace
+    && scope.currency === context.currency;
 }
 
 export function shouldStartLoginRestoreForAuthority(

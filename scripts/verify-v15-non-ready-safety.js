@@ -12,12 +12,20 @@ const {
   validateAdversarialNodeEnvSelectionContract,
 } = require('./smoke-package-adversarial-node-env');
 const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
+const { validatePackageLaunchSmokeEvidence } = require('./smoke-package-launch');
+const {
+  EXPECTED_OVERLAY_CHECK_IDS,
+  EXPECTED_PACKAGE_UI_WORKSPACES,
+  PACKAGE_UI_WIDE_PROFILE,
+  evaluatePackageUiEvidenceCompleteness,
+} = require('./package-ui-evidence');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
 const bundleRoot = path.join(root, 'output', 'delivery-bundles');
 const finalReadinessPattern = /^final-readiness-(?:\d{4}-\d{2}-\d{2}|\d{10,})\.json$/i;
 const packageLaunchSmokePattern = /^package-launch-smoke-\d+\.json$/i;
+const DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT = 100;
 const DIAGNOSTIC_RENDERER_ENTRY_LIMIT = 100;
 const expectedNonReadyGateIds = new Set([
   'report-collection-delivery',
@@ -282,6 +290,39 @@ function bundleSourceFileMatches(manifest, bundleManifestPath, sourcePath) {
     && sha256(sourcePath) === String(record.sha256 || '').toUpperCase();
 }
 
+function packageUiReferencedArtifactsAreBundled(packageUi, manifest, bundleManifestPath) {
+  const artifacts = [];
+  const pushArtifact = (artifact) => {
+    if (artifact?.path) artifacts.push(artifact);
+  };
+  for (const run of packageUi?.runs || []) {
+    for (const screenshot of run?.screenshots || []) pushArtifact(screenshot);
+    for (const overlay of run?.overlayChecks || []) pushArtifact(overlay?.screenshot);
+    for (const workspace of run?.workspaceChecks || []) {
+      pushArtifact(workspace?.inspectorEvidence?.screenshot);
+    }
+    for (const subview of run?.subviewChecks || []) pushArtifact(subview?.screenshot);
+    pushArtifact(run?.schedulerReadOnlyRuntime?.artifact);
+  }
+  for (const screenshot of packageUi?.wideProfile?.screenshots || []) pushArtifact(screenshot);
+  for (const workspace of packageUi?.wideProfile?.workspaceChecks || []) {
+    pushArtifact(workspace?.inspectorEvidence?.screenshot);
+  }
+  pushArtifact(packageUi?.wideProfile?.schedulerReadOnlyRuntime?.artifact);
+  if (artifacts.length === 0) return false;
+
+  return artifacts.every((artifact) => {
+    if (!validArtifact(artifact)) return false;
+    const record = Array.isArray(manifest?.files)
+      ? manifest.files.find((item) => samePath(item?.sourcePath, artifact.path) && item?.bundlePath)
+      : null;
+    return Boolean(record)
+      && Number(record.sizeBytes || 0) === Number(artifact.sizeBytes || 0)
+      && String(record.sha256 || '').toUpperCase() === String(artifact.sha256 || '').toUpperCase()
+      && bundleSourceFileMatches(manifest, bundleManifestPath, artifact.path);
+  });
+}
+
 function viewportMatchesBoundedContract(run, requestedViewport, expectedDeviceScaleFactor) {
   const actualWidth = Number(run?.viewport?.width);
   const actualHeight = Number(run?.viewport?.height);
@@ -367,6 +408,7 @@ function processIsolationIsStrictlyValid(evidence, expectedProfilePath = null) {
 function redactDiagnosticSecrets(value) {
   return String(value || '')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_ACCOUNT]')
     .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gi, '[REDACTED_API_KEY]')
     .replace(/([?&](?:api[_-]?key|access[_-]?token|authorization|cookie|password|pwd|secret|session(?:[_-]?(?:id|key|token))?|token|username|user[_-]?name|account)=)[^&#\s]*/gi, '$1[REDACTED]')
     .replace(/(--(?:api[-_]?key|access[-_]?token|authorization|cookie|password|passwd|pwd|secret|session(?:[-_]?(?:id|key|token))?|token|username|user[-_]?name|account))(\s*=\s*|\s+)(?:"[^"]*"|'[^']*'|[^\s]+)/gi, '$1$2[REDACTED]')
@@ -386,9 +428,91 @@ function diagnosticValueIsSanitized(value, depth = 0) {
   if (Array.isArray(value)) return value.every((item) => diagnosticValueIsSanitized(item, depth + 1));
   if (typeof value !== 'object') return false;
   return Object.entries(value).every(([entryKey, item]) => (
-    !/^(?:api[_-]?key|password|passwd|pwd|secret|token|access[_-]?token|authorization|cookie|set-cookie|session(?:[_-]?(?:id|key|token))?|username|user_name|account|commandline)$/i.test(entryKey)
+    !/^(?:api[_-]?key|password|passwd|pwd|secret|token|access[_-]?token|authorization|cookie|set-cookie|session(?:[_-]?(?:id|key|token))?|username|user[_-]?name|account|commandline)$/i.test(entryKey)
     && diagnosticValueIsSanitized(item, depth + 1)
   ));
+}
+
+function electronLifecycleIsStrictlyValid(lifecycle, startedAt, completedAt) {
+  const events = lifecycle?.events;
+  const runnerCloseRequestedAt = Date.parse(lifecycle?.runnerCloseRequestedAt);
+  const processExitAt = Date.parse(lifecycle?.processExit?.at);
+  const terminalKinds = new Set([
+    'electron-app-closed',
+    'electron-context-closed',
+    'electron-process-exit',
+    'window-closed',
+    'window-crashed',
+  ]);
+  let previousEventAt = startedAt;
+  const eventsValid = Array.isArray(events)
+    && events.length >= 3
+    && events.length <= DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT
+    && events.every((event) => {
+      const at = Date.parse(event?.at);
+      const valid = Number.isFinite(at)
+        && at >= startedAt
+        && at <= completedAt
+        && at >= previousEventAt
+        && typeof event?.kind === 'string'
+        && event.kind.length > 0
+        && event.kind.length <= 80
+        && typeof event?.phase === 'string'
+        && event.phase.length > 0
+        && event.phase.length <= 160
+        && typeof event?.runnerCloseRequested === 'boolean'
+        && (!terminalKinds.has(event.kind) || event.runnerCloseRequested === true);
+      previousEventAt = Number.isFinite(at) ? at : previousEventAt;
+      return valid;
+    });
+  const runnerCloseEvents = Array.isArray(events)
+    ? events.filter((event) => event.kind === 'runner-close-requested')
+    : [];
+  const processExitEvents = Array.isArray(events)
+    ? events.filter((event) => event.kind === 'electron-process-exit')
+    : [];
+  const runnerCloseIndex = Array.isArray(events)
+    ? events.findIndex((event) => event.kind === 'runner-close-requested')
+    : -1;
+  const processExitIndex = Array.isArray(events)
+    ? events.findIndex((event) => event.kind === 'electron-process-exit')
+    : -1;
+  return lifecycle?.limit === DIAGNOSTIC_LIFECYCLE_ENTRY_LIMIT
+    && lifecycle?.droppedCount === 0
+    && lifecycle?.unexpectedCloseObserved === false
+    && Number.isFinite(runnerCloseRequestedAt)
+    && runnerCloseRequestedAt >= startedAt
+    && runnerCloseRequestedAt <= completedAt
+    && lifecycle?.processExit?.code === 0
+    && lifecycle?.processExit?.signal === null
+    && lifecycle?.processExit?.runnerCloseRequested === true
+    && Number.isFinite(processExitAt)
+    && processExitAt >= runnerCloseRequestedAt
+    && processExitAt <= completedAt
+    && eventsValid
+    && events.some((event, index) => (
+      event.kind === 'window-attached'
+      && event.runnerCloseRequested === false
+      && index < runnerCloseIndex
+    ))
+    && events.every((event, index) => (
+      event.kind !== 'window-attached'
+      || (event.runnerCloseRequested === false && index < runnerCloseIndex)
+    ))
+    && runnerCloseEvents.length === 1
+    && runnerCloseEvents[0].runnerCloseRequested === true
+    && runnerCloseEvents[0].at === lifecycle.runnerCloseRequestedAt
+    && processExitEvents.length === 1
+    && processExitEvents[0].runnerCloseRequested === true
+    && processExitEvents[0].code === lifecycle.processExit.code
+    && processExitEvents[0].signal === lifecycle.processExit.signal
+    && processExitEvents[0].at === lifecycle.processExit.at
+    && runnerCloseIndex >= 0
+    && processExitIndex === events.length - 1
+    && events.every((event, index) => (
+      !terminalKinds.has(event.kind) || index > runnerCloseIndex
+    ))
+    && !events.some((event) => event.kind === 'window-crashed');
 }
 
 function runDiagnosticsAreStrictlyValid(diagnostics, run, expectedProfileId) {
@@ -401,6 +525,7 @@ function runDiagnosticsAreStrictlyValid(diagnostics, run, expectedProfileId) {
   const renderer = diagnostics?.renderer;
   const successfulLoginOutcomes = new Set([
     'existing-authenticated-session',
+    'interactive-operator-login',
     'saved-credentials-auto-login',
     'saved-credentials-login',
   ]);
@@ -427,7 +552,7 @@ function runDiagnosticsAreStrictlyValid(diagnostics, run, expectedProfileId) {
       && typeof attempt?.retryable === 'boolean'
       && (attempt.message === null || typeof attempt.message === 'string')
     ));
-  return diagnostics?.schemaVersion === 'package-ui-run-diagnostics/v1'
+  return diagnostics?.schemaVersion === 'package-ui-run-diagnostics/v2'
     && diagnostics?.profileId === expectedProfileId
     && Number.isFinite(startedAt)
     && Number.isFinite(completedAt)
@@ -447,6 +572,7 @@ function runDiagnosticsAreStrictlyValid(diagnostics, run, expectedProfileId) {
     && Array.isArray(renderer?.pageErrors)
     && renderer.pageErrors.length <= DIAGNOSTIC_RENDERER_ENTRY_LIMIT
     && renderer.pageErrors.length === 0
+    && electronLifecycleIsStrictlyValid(diagnostics.lifecycle, startedAt, completedAt)
     && Array.isArray(run?.consoleErrors)
     && run.consoleErrors.length === 0
     && Array.isArray(run?.pageErrors)
@@ -473,7 +599,7 @@ function packageUiEvidenceIsStrictlyValid({
     const expectedScales = new Map([[100, 1], [125, 1.25]]);
     const requestedProfileBrowserPath = packageUi.requested?.profileBrowserUserDataDir;
     const expectedProfileBrowserPath = packageUi.requested?.userDataDir
-      ? path.join(packageUi.requested.userDataDir, 'storage', 'browser-data')
+      ? path.join(packageUi.requested.userDataDir, 'stores')
       : null;
     const profileBrowserPathBound = Boolean(requestedProfileBrowserPath)
       && Boolean(expectedProfileBrowserPath)
@@ -496,53 +622,65 @@ function packageUiEvidenceIsStrictlyValid({
         && Array.isArray(run?.pageErrors)
         && run.pageErrors.length === 0
         && Array.isArray(run?.screenshots)
-        && run.screenshots.length >= 8
+        && run.screenshots.length >= EXPECTED_PACKAGE_UI_WORKSPACES.length
         && Array.isArray(run?.workspaceChecks)
-        && run.workspaceChecks.length >= 8
+        && run.workspaceChecks.length >= EXPECTED_PACKAGE_UI_WORKSPACES.length
         && run.workspaceChecks.every((item) => item?.passed === true)
         && Array.isArray(run?.overlayChecks)
-        && run.overlayChecks.length >= 3
+        && run.overlayChecks.length >= EXPECTED_OVERLAY_CHECK_IDS.length
         && run.overlayChecks.every((item) => item?.passed === true)
       ));
     const wideProfile = packageUi.wideProfile;
-    const wideWorkspaceNames = new Set(['product', 'diagnosis']);
+    const wideWorkspaceKeys = new Set(PACKAGE_UI_WIDE_PROFILE.workspaces.map(
+      (item) => `${item.workspace}/${item.subview}`,
+    ));
     const wideWorkspaceChecks = Array.isArray(wideProfile?.workspaceChecks) ? wideProfile.workspaceChecks : [];
     const wideScreenshots = Array.isArray(wideProfile?.screenshots) ? wideProfile.screenshots : [];
-    const wideProfileComplete = packageUi.requested?.wideProfile?.id === 'wide-1400x900-100'
-      && packageUi.requested?.wideProfile?.viewport?.width === 1400
-      && packageUi.requested?.wideProfile?.viewport?.height === 900
-      && Number(packageUi.requested?.wideProfile?.deviceScaleFactor) === 1
-      && wideProfile?.profileId === 'wide-1400x900-100'
+    const wideProfileComplete = packageUi.requested?.wideProfile?.id === PACKAGE_UI_WIDE_PROFILE.id
+      && packageUi.requested?.wideProfile?.viewport?.width === PACKAGE_UI_WIDE_PROFILE.viewport.width
+      && packageUi.requested?.wideProfile?.viewport?.height === PACKAGE_UI_WIDE_PROFILE.viewport.height
+      && Number(packageUi.requested?.wideProfile?.deviceScaleFactor)
+        === PACKAGE_UI_WIDE_PROFILE.deviceScaleFactor
+      && wideProfile?.profileId === PACKAGE_UI_WIDE_PROFILE.id
       && wideProfile?.passed === true
-      && wideProfile?.viewport?.width === 1400
-      && wideProfile?.viewport?.height === 900
-      && Number(wideProfile?.actualDeviceScaleFactor) === 1
+      && wideProfile?.viewport?.width === PACKAGE_UI_WIDE_PROFILE.viewport.width
+      && wideProfile?.viewport?.height === PACKAGE_UI_WIDE_PROFILE.viewport.height
+      && Number(wideProfile?.actualDeviceScaleFactor) === PACKAGE_UI_WIDE_PROFILE.deviceScaleFactor
       && wideProfile?.viewportContract?.passed === true
       && wideProfile?.identity?.passed === true
       && processIsolationIsStrictlyValid(wideProfile?.packageProcessIsolation)
       && processIsolationIsStrictlyValid(wideProfile?.profileProcessIsolation, requestedProfileBrowserPath)
-      && runDiagnosticsAreStrictlyValid(wideProfile?.diagnostics, wideProfile, 'wide-1400x900-100')
+      && runDiagnosticsAreStrictlyValid(wideProfile?.diagnostics, wideProfile, PACKAGE_UI_WIDE_PROFILE.id)
       && Array.isArray(wideProfile?.consoleErrors)
       && wideProfile.consoleErrors.length === 0
       && Array.isArray(wideProfile?.pageErrors)
       && wideProfile.pageErrors.length === 0
-      && wideWorkspaceChecks.length === wideWorkspaceNames.size
-      && new Set(wideWorkspaceChecks.map((item) => item?.workspace)).size === wideWorkspaceNames.size
+      && wideWorkspaceChecks.length === wideWorkspaceKeys.size
+      && new Set(wideWorkspaceChecks.map(
+        (item) => `${item?.workspace}/${item?.subview}`,
+      )).size === wideWorkspaceKeys.size
       && wideWorkspaceChecks.every((item) => (
-        wideWorkspaceNames.has(item?.workspace)
+        wideWorkspaceKeys.has(`${item?.workspace}/${item?.subview}`)
         && item?.passed === true
-        && item?.experienceEvidence?.passed === true
-        && item?.inspectorEvidence?.passed === true
-        && item?.inspectorEvidence?.inspector?.mode === 'inline'
-        && item?.inspectorEvidence?.inspector?.ariaModal !== 'true'
-        && /^[A-F0-9]{64}$/.test(String(item?.inspectorEvidence?.screenshot?.sha256 || ''))
+        && item?.compositeEvidence?.passed === true
+        && item?.keyboardEvidence?.passed === true
+        && item?.settleEvidence?.passed === true
       ))
-      && wideScreenshots.length === wideWorkspaceNames.size
-      && new Set(wideScreenshots.map((item) => item?.workspace)).size === wideWorkspaceNames.size
+      && wideScreenshots.length === wideWorkspaceKeys.size
+      && new Set(wideScreenshots.map(
+        (item) => `${item?.workspace}/${item?.subview}`,
+      )).size === wideWorkspaceKeys.size
       && wideScreenshots.every((item) => (
-        wideWorkspaceNames.has(item?.workspace)
+        wideWorkspaceKeys.has(`${item?.workspace}/${item?.subview}`)
         && /^[A-F0-9]{64}$/.test(String(item?.sha256 || ''))
       ));
+    const currentPackageUiCompleteness = packageUi.schemaVersion === 8
+      ? evaluatePackageUiEvidenceCompleteness(packageUi)
+      : null;
+    const packageUiSchemaContractValid = packageUi.schemaVersion === 8
+      && currentPackageUiCompleteness?.passed === true
+      && Array.isArray(currentPackageUiCompleteness.violations)
+      && currentPackageUiCompleteness.violations.length === 0;
     const generatedAt = Date.parse(packageUi.generatedAt);
     const completedAt = Date.parse(packageUi.completedAt);
     const smokeGeneratedAt = Date.parse(smoke?.generatedAt);
@@ -594,8 +732,10 @@ function packageUiEvidenceIsStrictlyValid({
     const bundled = manifest.uiEvidence?.packageUiManifest?.present === true
       && samePath(manifest.uiEvidence?.packageUiManifest?.sourcePath, filePath)
       && bundleSourceFileMatches(manifest, bundleManifestPath, filePath);
+    const referencedArtifactsBundled = packageUi.schemaVersion === 8
+      && packageUiReferencedArtifactsAreBundled(packageUi, manifest, bundleManifestPath);
     return packageUi.kind === 'package-ui-evidence'
-      && Number(packageUi.schemaVersion || 0) >= 5
+      && packageUiSchemaContractValid
       && packageUi.passed === true
       && Array.isArray(packageUi.violations)
       && packageUi.violations.length === 0
@@ -617,6 +757,7 @@ function packageUiEvidenceIsStrictlyValid({
       && profileDatabaseProvenanceValid
       && processIsolated
       && profileProcessIsolated
+      && referencedArtifactsBundled
       && bundled;
   } catch {
     return false;
@@ -627,12 +768,14 @@ function readValidPackageLaunchSmoke(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return false;
   try {
     const smoke = readJson(filePath);
+    const strictValidation = validatePackageLaunchSmokeEvidence(smoke);
     const unpacked = smoke.artifacts?.unpacked;
     const portable = smoke.artifacts?.portable;
     const checks = Array.isArray(smoke.checks) ? smoke.checks : [];
     const hasCheck = (kind) => checks.some((item) => item?.kind === kind && item.ok === true);
 
-    const valid = smoke.kind === 'package-launch-smoke'
+    const valid = strictValidation.passed === true
+      && smoke.kind === 'package-launch-smoke'
       && smoke.passed === true
       && Number.isFinite(Date.parse(smoke.generatedAt))
       && validArtifact(unpacked)
@@ -1003,4 +1146,10 @@ function main() {
   console.log('\nNON_READY_SAFETY verified.');
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  packageUiReferencedArtifactsAreBundled,
+};

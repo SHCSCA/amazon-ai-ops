@@ -32,6 +32,30 @@ function viewCapability(
   };
 }
 
+const PRODUCT_ACTIONS = [
+  ['objects.products.view', 'view'],
+  ['objects.products.create', 'create'],
+  ['objects.products.update', 'update'],
+  ['objects.products.archive', 'archive'],
+  ['objects.events.view', 'view'],
+  ['objects.events.create', 'create'],
+  ['objects.events.update', 'update'],
+  ['objects.events.delete', 'delete'],
+] as const satisfies ReadonlyArray<readonly [string, MissionControlCapabilityAction]>;
+
+function productCapabilities(
+  state: MissionControlCapabilityProjection['state'],
+): MissionControlCapabilityProjection[] {
+  return PRODUCT_ACTIONS.map(([capabilityId, action]) => ({
+    capabilityId,
+    workspace: 'objects',
+    view: 'objects/products',
+    action,
+    state,
+    detail: `${capabilityId} ${state}`,
+  }));
+}
+
 const STORE_ACTIONS = [
   ['objects.store.view', 'view'],
   ['objects.store.create', 'create'],
@@ -59,7 +83,7 @@ describe('ObjectsWorkspace integration', () => {
     const markup = renderToStaticMarkup(
       <LegacyWorkspace
         capabilities={[
-          viewCapability('LEGACY_ADAPTER'),
+          ...productCapabilities('PRODUCTION_NATIVE'),
           ...storeCapabilities('PRODUCTION_NATIVE'),
         ]}
         description="对象工作区"
@@ -76,20 +100,25 @@ describe('ObjectsWorkspace integration', () => {
     expect(markup.match(/<h1/g)).toHaveLength(1);
     expect(markup).toContain('店铺与广告对象');
     expect(markup).toContain('STORE CRUD');
-    expect(markup).toContain('PRODUCT DIRECTORY ADAPTER');
+    expect(markup).not.toContain('PRODUCT DIRECTORY ADAPTER');
     expect(markup).toContain('产品与经营目标');
-    expect(markup.indexOf('STORE CRUD')).toBeLessThan(markup.indexOf('PRODUCT DIRECTORY ADAPTER'));
+    expect(markup).toContain('产品与成本');
+    expect(markup).toContain('运营事件');
     expect(markup).toContain('data-objects-domain="store"');
     expect(markup).toContain('data-objects-domain="products"');
     expect(markup).toContain('US / USD');
     expect(markup).toContain('profile-one');
   });
 
-  it('keeps native Store CRUD visible while failing the product adapter closed', () => {
+  it('keeps native Store CRUD visible but fails the product surface closed when its exact view capability is blocked', () => {
     const markup = renderToStaticMarkup(
       <LegacyWorkspace
         capabilities={[
-          viewCapability('BLOCKED'),
+          ...productCapabilities('PRODUCTION_NATIVE').map((capability) => (
+            capability.capabilityId === 'objects.products.view'
+              ? { ...capability, state: 'BLOCKED' as const, detail: 'objects.products.view BLOCKED' }
+              : capability
+          )),
           ...storeCapabilities('PRODUCTION_NATIVE'),
         ]}
         description="对象工作区"
@@ -104,24 +133,26 @@ describe('ObjectsWorkspace integration', () => {
     );
 
     expect(markup).toContain('STORE CRUD REMAINS');
-    expect(markup).toContain('产品适配未授权');
+    expect(markup).toContain('当前对象视图未获授权');
+    expect(markup).not.toContain('产品与成本');
+    expect(markup).not.toContain('aria-label="对象类型"');
     expect(markup).toContain('objects.products.view BLOCKED');
     expect(markup).not.toContain('SHOULD NOT MOUNT');
     expect(markup).not.toContain('执行成功');
   });
 
-  it('does not alter the legacy boundary for the other Objects subviews', () => {
+  it('mounts the native advertising-object surface instead of the old target configuration route', () => {
     const markup = renderToStaticMarkup(
       <LegacyWorkspace
         capabilities={[{
-          ...viewCapability('LEGACY_ADAPTER'),
+          ...viewCapability('PRODUCTION_NATIVE'),
           capabilityId: 'objects.targets.view',
           view: 'objects/targets',
           legacyRoute: 'product-config',
         }]}
         description="目标维护"
         intent={{ workspace: 'objects', subview: 'targets' }}
-        legacySlot={<div>TARGET ADAPTER</div>}
+        legacySlot={<div>OLD TARGET ADAPTER</div>}
         route="product-config"
         storeContext={context}
         storeCrudSlot={<div>STORE CRUD SHOULD NOT DUPLICATE</div>}
@@ -130,16 +161,48 @@ describe('ObjectsWorkspace integration', () => {
       />,
     );
 
-    expect(markup).toContain('TARGET ADAPTER');
+    expect(markup).toContain('广告对象事实');
+    expect(markup).toContain('Campaign');
+    expect(markup).not.toContain('OLD TARGET ADAPTER');
     expect(markup).not.toContain('STORE CRUD SHOULD NOT DUPLICATE');
     expect(markup).not.toContain('data-objects-domain="store"');
+    expect(markup).toContain('data-objects-domain="targets"');
+  });
+
+  it('never mounts native object mutations from a LEGACY_ADAPTER projection', () => {
+    const markup = renderToStaticMarkup(
+      <ObjectsWorkspace
+        capabilities={productCapabilities('LEGACY_ADAPTER')}
+        storeContext={context}
+      />,
+    );
+
+    expect(markup).toContain('当前对象视图未获授权');
+    expect(markup).toContain('objects.products.create');
+    expect(markup).not.toContain('新建产品');
+    expect(markup).not.toContain('记录事件');
+  });
+
+  it('fails the whole product/event mutation surface closed when one exact action is missing', () => {
+    const markup = renderToStaticMarkup(
+      <ObjectsWorkspace
+        capabilities={productCapabilities('PRODUCTION_NATIVE').filter(
+          (capability) => capability.capabilityId !== 'objects.events.delete',
+        )}
+        storeContext={context}
+      />,
+    );
+
+    expect(markup).toContain('objects.events.delete');
+    expect(markup).not.toContain('新建产品');
+    expect(markup).not.toContain('删除');
   });
 
   it('mounts real Store CRUD only when every required action is PRODUCTION_NATIVE', () => {
     const markup = renderToStaticMarkup(
       <ObjectsWorkspace
         capabilities={[
-          viewCapability('LEGACY_ADAPTER'),
+          viewCapability('PRODUCTION_NATIVE'),
           ...storeCapabilities('PRODUCTION_NATIVE'),
         ]}
         legacyContent={<div>PRODUCT ADAPTER</div>}

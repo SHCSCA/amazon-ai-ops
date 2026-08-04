@@ -42,13 +42,42 @@ function isNumericField(fieldName: string): boolean {
 }
 
 function parseNumeric(value: any): number {
-  if (typeof value === 'number') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : Number.NaN;
   if (typeof value === 'string') {
-    const cleaned = value.replace(/[¥$,，￥%\s]/g, '').trim();
-    const num = parseFloat(cleaned);
-    return isNaN(num) ? 0 : num;
+    const candidate = value.trim();
+    if (!candidate) return 0;
+    // Currency and percent markers are accepted only at their grammatical
+    // boundaries. Thousands separators must form complete three-digit groups;
+    // never delete arbitrary punctuation/whitespace because that would turn
+    // corrupt values such as "1$2", "1,2,3", or "12 34" into valid numbers.
+    const match = candidate.match(
+      /^([+-]?)([$¥￥]?)((?:\d{1,3}(?:[,，]\d{3})+|\d+)(?:\.\d*)?|\.\d+)(%?)$/,
+    );
+    if (!match) return Number.NaN;
+    const normalized = `${match[1]}${match[3].replace(/[，,]/g, '')}`;
+    const num = Number(normalized);
+    return Number.isFinite(num) ? num : Number.NaN;
   }
-  return 0;
+  if (value === null || value === undefined) return 0;
+  return Number.NaN;
+}
+
+function valueForField(row: Record<string, any>, field: string): any {
+  const entry = Object.entries(row).find(([key]) => key.toLowerCase() === field.toLowerCase());
+  return entry?.[1];
+}
+
+function isValidDateValue(value: any): boolean {
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0;
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return parsed.toISOString().slice(0, 10) === trimmed;
+  }
+  return true;
 }
 
 export function validateMetrics(row: Record<string, any>, rowIndex: number): ValidationError[] {
@@ -57,21 +86,32 @@ export function validateMetrics(row: Record<string, any>, rowIndex: number): Val
   // 检查必填字段
   for (const field of REQUIRED_FIELDS) {
     const hasField = Object.keys(row).some(k => k.toLowerCase() === field.toLowerCase());
-    if (!hasField || row[field] === null || row[field] === undefined || row[field] === '') {
+    const value = valueForField(row, field);
+    if (!hasField || value === null || value === undefined || value === '') {
       errors.push({
         field,
         message: `Missing required field: ${field}`,
         row: rowIndex,
-        value: row[field],
+        value,
       });
     }
+  }
+
+  const dateValue = valueForField(row, 'date');
+  if (dateValue !== null && dateValue !== undefined && dateValue !== '' && !isValidDateValue(dateValue)) {
+    errors.push({
+      field: 'date',
+      message: `Invalid date value: ${dateValue}`,
+      row: rowIndex,
+      value: dateValue,
+    });
   }
 
   // 检查数值字段
   for (const [key, value] of Object.entries(row)) {
     if (isNumericField(key) && value !== null && value !== undefined && value !== '') {
       const parsed = parseNumeric(value);
-      if (isNaN(parsed)) {
+      if (!Number.isFinite(parsed)) {
         errors.push({
           field: key,
           message: `Invalid numeric value: ${value}`,

@@ -17,14 +17,34 @@ import type {
 import {
   DurableStoreSessionGenerationAuthority,
   StoreCoordinator,
+  type OperatorWorkspaceSelectionStorage,
   type StoreAuthorityRepository,
   type StoreSessionGenerationStorage,
 } from './store-coordinator';
 
 class MemoryStoreRepository implements StoreAuthorityRepository {
   readonly rows = new Map<StoreId, StoreRecord>();
+  readonly connections = new Map<StoreCapabilityId, StoreConnection>();
   lastCreatedConnectionInput: (CreateStoreConnectionInput & { id: StoreCapabilityId }) | null = null;
   lastUpdatedConnectionInput: UpdateStoreConnectionInput | null = null;
+
+  transaction<T>(work: () => T): T {
+    const rowSnapshot = new Map([...this.rows].map(([key, value]) => [key, { ...value }]));
+    const connectionSnapshot = new Map([...this.connections].map(([key, value]) => [key, { ...value }]));
+    const createdInputSnapshot = this.lastCreatedConnectionInput;
+    const updatedInputSnapshot = this.lastUpdatedConnectionInput;
+    try {
+      return work();
+    } catch (error) {
+      this.rows.clear();
+      for (const [key, value] of rowSnapshot) this.rows.set(key, value);
+      this.connections.clear();
+      for (const [key, value] of connectionSnapshot) this.connections.set(key, value);
+      this.lastCreatedConnectionInput = createdInputSnapshot;
+      this.lastUpdatedConnectionInput = updatedInputSnapshot;
+      throw error;
+    }
+  }
 
   listStores(input?: ListStoresInput): StoreRecord[] {
     return [...this.rows.values()].filter((store) => input?.includeArchived || store.status !== 'archived');
@@ -67,29 +87,54 @@ class MemoryStoreRepository implements StoreAuthorityRepository {
 
   createConnection(input: CreateStoreConnectionInput & { id: StoreCapabilityId }): StoreConnection {
     this.lastCreatedConnectionInput = input;
-    return {
+    const connection: StoreConnection = {
       ...input,
       status: 'not_configured',
       createdAt: '2026-07-22T00:00:00.000Z',
       updatedAt: '2026-07-22T00:00:00.000Z',
     };
+    this.connections.set(connection.id, connection);
+    return connection;
   }
 
   updateConnection(input: UpdateStoreConnectionInput): StoreConnection {
     this.lastUpdatedConnectionInput = input;
-    return {
+    const existing = this.connections.get(input.id)!;
+    const submittedAccountLabel = input.accountLabel === undefined
+      ? existing.accountLabel
+      : input.accountLabel.trim() || undefined;
+    const submittedExternalAccountId = input.externalAccountId === undefined
+      ? existing.externalAccountId
+      : input.externalAccountId.trim() || undefined;
+    const identityChanged = (
+      input.accountLabel !== undefined
+      && submittedAccountLabel !== existing.accountLabel
+    ) || (
+      input.externalAccountId !== undefined
+      && submittedExternalAccountId !== existing.externalAccountId
+    );
+    const connection: StoreConnection = {
+      ...existing,
       ...input,
-      provider: 'lingxing',
-      status: 'ready',
-      createdAt: '2026-07-22T00:00:00.000Z',
+      ...(identityChanged ? {
+        externalAccountId: undefined,
+        status: 'not_configured' as const,
+        lastVerifiedAt: undefined,
+        lastFailureCode: undefined,
+        session: undefined,
+      } : {}),
       updatedAt: '2026-07-22T00:01:00.000Z',
     };
+    this.connections.set(connection.id, connection);
+    return connection;
   }
 
-  removeConnection(_input: RemoveStoreConnectionInput): void {}
+  removeConnection(input: RemoveStoreConnectionInput): void {
+    this.connections.delete(input.id);
+  }
 
-  listConnections(_storeId: StoreId): StoreConnection[] {
-    return [];
+  listConnections(storeId: StoreId): StoreConnection[] {
+    return [...this.connections.values()].filter((connection) => connection.storeId === storeId);
   }
 
   listSessionMetadata(_storeId: StoreId): StoreSessionMetadata[] {
@@ -132,23 +177,50 @@ class MemoryGenerationStorage implements StoreSessionGenerationStorage {
 
 class MemorySessions {
   private readonly generations = new Map<StoreId, number>();
+  readonly advanceManyCalls: StoreId[][] = [];
+  failNextAdvance = false;
 
   current(storeId: StoreId): number {
     return this.generations.get(storeId) ?? 0;
   }
 
   advance(storeId: StoreId): number {
+    if (this.failNextAdvance) {
+      this.failNextAdvance = false;
+      throw new Error('injected generation write failure');
+    }
     const next = this.current(storeId) + 1;
     this.generations.set(storeId, next);
     return next;
   }
 
   advanceMany(storeIds: readonly StoreId[]): ReadonlyMap<StoreId, number> {
+    this.advanceManyCalls.push([...storeIds]);
     return new Map(storeIds.map((storeId) => [storeId, this.advance(storeId)]));
   }
 
   assertCurrent(context: { storeId: StoreId; sessionGeneration: number }): void {
     if (this.current(context.storeId) !== context.sessionGeneration) throw new Error('stale generation');
+  }
+}
+
+class MemorySelectionStorage implements OperatorWorkspaceSelectionStorage {
+  value: unknown = null;
+  readonly writes: unknown[] = [];
+  clearCount = 0;
+
+  read(): unknown {
+    return this.value;
+  }
+
+  write(selection: unknown): void {
+    this.value = selection;
+    this.writes.push(selection);
+  }
+
+  clear(): void {
+    this.value = null;
+    this.clearCount += 1;
   }
 }
 
@@ -159,15 +231,21 @@ function createHarness() {
   const repository = new MemoryStoreRepository();
   const sessions = new MemorySessions();
   let id = 0;
+  let now = new Date('2026-07-22T06:00:00.000Z');
   const coordinator = new StoreCoordinator({
     repository,
     sessions,
-    now: () => new Date('2026-07-22T06:00:00.000Z'),
+    now: () => now,
     createStoreId: () => asStoreId(`store-${++id}`),
     createBrowserProfileId: (storeId) => asProfileId(`browser-${storeId}`),
     createStoreCapabilityId: () => 'capability-1' as StoreCapabilityId,
   });
-  return { coordinator, repository, sessions };
+  return {
+    coordinator,
+    repository,
+    sessions,
+    setNow(value: string) { now = new Date(value); },
+  };
 }
 
 describe('StoreCoordinator', () => {
@@ -195,6 +273,18 @@ describe('StoreCoordinator', () => {
     expect(() => coordinator.assertStoreContext(firstView.context)).toThrow(/stale generation/);
   });
 
+  it('invalidates a captured context when the US business date rolls over', () => {
+    const { coordinator, setNow } = createHarness();
+    const store = coordinator.createStore({ displayName: 'One' });
+    const beforeMidnight = coordinator.switchStore(store.storeId).context;
+
+    setNow('2026-07-22T08:00:00.000Z');
+
+    expect(() => coordinator.assertActiveStoreContext(beforeMidnight))
+      .toThrow(/store context no longer matches Main-process store authority/);
+    expect(coordinator.getActiveStoreContext()?.businessDate).toBe('2026-07-22');
+  });
+
   it('does not silently rebind a captured context to the current UI store', () => {
     const { coordinator } = createHarness();
     const first = coordinator.createStore({ displayName: 'One' });
@@ -214,9 +304,16 @@ describe('StoreCoordinator', () => {
     const { coordinator } = createHarness();
     const row = coordinator.createStore({ displayName: 'One' });
     expect(() => coordinator.createStore({ displayName: 'DE', marketplace: 'DE' as never })).toThrow(/US only/);
-    expect(() => coordinator.updateStore({ storeId: row.storeId, patch: {} })).toThrow(/at least one field/);
+    expect(() => coordinator.updateStore({
+      storeId: row.storeId,
+      patch: {},
+      expectedUpdatedAt: row.updatedAt,
+    })).toThrow(/at least one field/);
     coordinator.switchStore(row.storeId);
-    const archived = coordinator.archiveStore({ storeId: row.storeId });
+    const archived = coordinator.archiveStore({
+      storeId: row.storeId,
+      expectedUpdatedAt: row.updatedAt,
+    });
     expect(archived.status).toBe('archived');
     expect(coordinator.getActiveStoreContext()).toBeNull();
   });
@@ -226,8 +323,117 @@ describe('StoreCoordinator', () => {
     const row = coordinator.createStore({ displayName: 'One' });
     const connection = coordinator.createConnection({ storeId: row.storeId, provider: 'lingxing' });
     expect(connection.id).toBe('capability-1');
-    coordinator.updateStore({ storeId: row.storeId, patch: { status: 'inactive' } });
+    coordinator.updateStore({
+      storeId: row.storeId,
+      patch: { status: 'inactive' },
+      expectedUpdatedAt: row.updatedAt,
+    });
     expect(() => coordinator.createConnection({ storeId: row.storeId, provider: 'amazon_ads' })).toThrow(/not active/);
+  });
+
+  it('invalidates the active StoreContext whenever a connection mapping changes', () => {
+    const { coordinator } = createHarness();
+    const row = coordinator.createStore({ displayName: 'One' });
+    const initial = coordinator.switchStore(row.storeId).context;
+
+    const connection = coordinator.createConnection({
+      storeId: row.storeId,
+      provider: 'amazon_ads',
+      accountLabel: 'old-account',
+      externalAccountId: 'profile-old',
+    });
+    expect(() => coordinator.assertActiveStoreContext(initial)).toThrow(/stale generation/);
+
+    const afterCreate = coordinator.getActiveStoreContext()!;
+    const rebound = coordinator.updateConnection({
+      id: connection.id,
+      storeId: row.storeId,
+      accountLabel: 'old-account',
+      externalAccountId: 'profile-new',
+      expectedUpdatedAt: connection.updatedAt,
+    });
+    expect(rebound).toEqual(expect.objectContaining({
+      accountLabel: 'old-account',
+      status: 'not_configured',
+    }));
+    expect(rebound.externalAccountId).toBeUndefined();
+    expect(() => coordinator.assertActiveStoreContext(afterCreate)).toThrow(/stale generation/);
+
+    const afterUpdate = coordinator.getActiveStoreContext()!;
+    coordinator.removeConnection({
+      id: connection.id,
+      storeId: row.storeId,
+      expectedUpdatedAt: rebound.updatedAt,
+    });
+    expect(() => coordinator.assertActiveStoreContext(afterUpdate)).toThrow(/stale generation/);
+  });
+
+  it('rolls back store and connection writes when durable generation advancement fails', () => {
+    const { coordinator, repository, sessions } = createHarness();
+    const store = coordinator.createStore({ displayName: 'One' });
+    const initialStore = repository.getStore(store.storeId)!;
+
+    sessions.failNextAdvance = true;
+    expect(() => coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { businessTimezone: 'America/New_York' },
+      expectedUpdatedAt: store.updatedAt,
+    })).toThrow(/injected generation write failure/);
+    expect(repository.getStore(store.storeId)).toEqual(initialStore);
+
+    sessions.failNextAdvance = true;
+    expect(() => coordinator.createConnection({
+      storeId: store.storeId,
+      provider: 'lingxing',
+      accountLabel: 'should-not-persist',
+    })).toThrow(/injected generation write failure/);
+    expect(repository.listConnections(store.storeId)).toEqual([]);
+    expect(sessions.current(store.storeId)).toBe(0);
+  });
+
+  it('keeps display-name updates outside authority generation and advances only real authority changes', () => {
+    const { coordinator, repository, sessions } = createHarness();
+    const store = coordinator.createStore({ displayName: 'One' });
+    const initialContext = coordinator.switchStore(store.storeId).context;
+    const initialGeneration = sessions.current(store.storeId);
+
+    sessions.failNextAdvance = true;
+    const renamed = coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { displayName: 'Renamed' },
+      expectedUpdatedAt: store.updatedAt,
+    });
+    expect(renamed.displayName).toBe('Renamed');
+    expect(sessions.current(store.storeId)).toBe(initialGeneration);
+    expect(coordinator.assertActiveStoreContext(initialContext)).toEqual(initialContext);
+
+    expect(() => coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { businessTimezone: 'America/New_York' },
+      expectedUpdatedAt: renamed.updatedAt,
+    })).toThrow(/injected generation write failure/);
+    expect(repository.getStore(store.storeId)).toMatchObject({
+      displayName: 'Renamed',
+      businessTimezone: 'America/Los_Angeles',
+    });
+    expect(sessions.current(store.storeId)).toBe(initialGeneration);
+
+    const timezoneChanged = coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { businessTimezone: 'America/New_York' },
+      expectedUpdatedAt: renamed.updatedAt,
+    });
+    expect(sessions.current(store.storeId)).toBe(initialGeneration + 1);
+    expect(() => coordinator.assertActiveStoreContext(initialContext)).toThrow();
+
+    const reboundContext = coordinator.getActiveStoreContext()!;
+    coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { businessTimezone: 'America/New_York' },
+      expectedUpdatedAt: timezoneChanged.updatedAt,
+    });
+    expect(sessions.current(store.storeId)).toBe(initialGeneration + 1);
+    expect(coordinator.assertActiveStoreContext(reboundContext)).toEqual(reboundContext);
   });
 
   it('strips Renderer-only connection state before calling the repository', () => {
@@ -246,6 +452,7 @@ describe('StoreCoordinator', () => {
       id: 'capability-1',
       storeId: row.storeId,
       accountLabel: 'updated@example.com',
+      expectedUpdatedAt: '2026-07-22T00:00:00.000Z',
       status: 'ready',
       lastVerifiedAt: 'forged',
       lastFailureCode: 'forged',
@@ -257,13 +464,58 @@ describe('StoreCoordinator', () => {
       provider: 'lingxing',
       accountLabel: 'operator@example.com',
       externalAccountId: undefined,
+      collectionStoreName: undefined,
     });
     expect(repository.lastUpdatedConnectionInput).toEqual({
       id: 'capability-1',
       storeId: row.storeId,
       accountLabel: 'updated@example.com',
       externalAccountId: undefined,
+      collectionStoreName: undefined,
+      expectedUpdatedAt: '2026-07-22T00:00:00.000Z',
     });
+  });
+
+  it('does not inherit verified readiness or external identity when rebinding an account label', () => {
+    const { coordinator, repository } = createHarness();
+    const store = coordinator.createStore({ displayName: 'One' });
+    const connection = coordinator.createConnection({
+      storeId: store.storeId,
+      provider: 'lingxing',
+      accountLabel: 'identity-a',
+      externalAccountId: 'external-a',
+    });
+    repository.connections.set(connection.id, {
+      ...connection,
+      status: 'ready',
+      lastVerifiedAt: '2026-07-22T02:00:00.000Z',
+      session: {
+        storeId: store.storeId,
+        browserProfileId: store.browserProfileId,
+        provider: 'lingxing',
+        status: 'ready',
+        sessionGeneration: 2,
+        observedAt: '2026-07-22T02:00:00.000Z',
+        accountLabel: 'identity-a',
+        externalAccountId: 'external-a',
+      },
+    });
+
+    const rebound = coordinator.updateConnection({
+      id: connection.id,
+      storeId: store.storeId,
+      accountLabel: 'identity-b',
+      externalAccountId: 'external-a',
+      expectedUpdatedAt: connection.updatedAt,
+    });
+
+    expect(rebound).toEqual(expect.objectContaining({
+      accountLabel: 'identity-b',
+      status: 'not_configured',
+    }));
+    expect(rebound.externalAccountId).toBeUndefined();
+    expect(rebound.lastVerifiedAt).toBeUndefined();
+    expect(rebound.session).toBeUndefined();
   });
 
   it('persists generation watermarks across authority reconstruction', () => {
@@ -298,5 +550,289 @@ describe('StoreCoordinator', () => {
     expect(storage.transactionWrites.at(-1)).toEqual([first.storeId, second.storeId]);
     expect(sessions.current(first.storeId)).toBe(2);
     expect(sessions.current(second.storeId)).toBe(1);
+  });
+
+  it('performs null, cross-store, same-store and restore collection transitions with atomic generations', () => {
+    const { coordinator, sessions } = createHarness();
+    const first = coordinator.createStore({ displayName: 'One' });
+    const second = coordinator.createStore({ displayName: 'Two' });
+    const target = (record: StoreRecord) => ({
+      storeId: record.storeId,
+      browserProfileId: record.browserProfileId,
+      marketplace: 'US' as const,
+      currency: 'USD' as const,
+      businessTimezone: 'America/Los_Angeles' as const,
+    });
+    const transition = (
+      previous: ReturnType<typeof coordinator.getCollectionAuthority>,
+      record: StoreRecord | null,
+    ) => coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous,
+      target: record ? target(record) : null,
+    });
+
+    const nullToFirst = transition({ activeStoreId: null, context: null }, first);
+    expect(nullToFirst).toMatchObject({
+      previous: { activeStoreId: null, context: null },
+      current: { activeStoreId: first.storeId, context: { sessionGeneration: 1 } },
+      targetGenerationBefore: 0,
+      targetGenerationAfter: 1,
+    });
+
+    const sameFirst = transition(nullToFirst.current, first);
+    expect(sameFirst).toMatchObject({
+      previous: { context: { sessionGeneration: 1 } },
+      current: { activeStoreId: first.storeId, context: { sessionGeneration: 2 } },
+      targetGenerationBefore: 1,
+      targetGenerationAfter: 2,
+    });
+    expect(sessions.advanceManyCalls.at(-1)).toEqual([first.storeId]);
+
+    const firstToSecond = transition(sameFirst.current, second);
+    expect(firstToSecond).toMatchObject({
+      previous: { activeStoreId: first.storeId, context: { sessionGeneration: 2 } },
+      current: { activeStoreId: second.storeId, context: { sessionGeneration: 1 } },
+      targetGenerationBefore: 0,
+      targetGenerationAfter: 1,
+    });
+    expect(sessions.advanceManyCalls.at(-1)).toEqual([first.storeId, second.storeId]);
+
+    const restoreFirst = transition(firstToSecond.current, first);
+    expect(restoreFirst).toMatchObject({
+      previous: { activeStoreId: second.storeId, context: { sessionGeneration: 1 } },
+      current: { activeStoreId: first.storeId, context: { sessionGeneration: 4 } },
+      targetGenerationBefore: 3,
+      targetGenerationAfter: 4,
+    });
+    expect(sessions.advanceManyCalls.at(-1)).toEqual([second.storeId, first.storeId]);
+
+    const restoreNull = transition(restoreFirst.current, null);
+    expect(restoreNull).toMatchObject({
+      previous: { activeStoreId: first.storeId, context: { sessionGeneration: 4 } },
+      current: { activeStoreId: null, context: null },
+      targetGenerationBefore: null,
+      targetGenerationAfter: null,
+    });
+    expect(sessions.current(first.storeId)).toBe(5);
+  });
+
+  it('rejects forged capabilities, stale authority, UTC targets and duplicate active profiles', () => {
+    const { coordinator, repository } = createHarness();
+    const first = coordinator.createStore({ displayName: 'One' });
+    const second = coordinator.createStore({ displayName: 'Two' });
+    const firstTarget = {
+      storeId: first.storeId,
+      browserProfileId: first.browserProfileId,
+      marketplace: 'US' as const,
+      currency: 'USD' as const,
+      businessTimezone: 'America/Los_Angeles' as const,
+    };
+
+    expect(() => coordinator.transitionForCollection({
+      capability: Object.freeze({}) as never,
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous: { activeStoreId: null, context: null },
+      target: firstTarget,
+    })).toThrow(/live Main capability/);
+
+    const selected = coordinator.switchStore(first.storeId).context;
+    coordinator.reconnectStore(first.storeId);
+    expect(() => coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous: { activeStoreId: first.storeId, context: selected },
+      target: firstTarget,
+    })).toThrow(/stale/);
+
+    expect(() => coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous: coordinator.getCollectionAuthority(),
+      target: { ...firstTarget, businessTimezone: 'UTC' as never },
+    })).toThrow(/US\/USD\/LA/);
+
+    repository.rows.set(second.storeId, { ...second, browserProfileId: first.browserProfileId });
+    expect(() => coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous: coordinator.getCollectionAuthority(),
+      target: firstTarget,
+    })).toThrow(/more than one active store/);
+  });
+
+  it('never auto-selects a lone active store and restores only after an explicit switch', () => {
+    const repository = new MemoryStoreRepository();
+    const sessions = new MemorySessions();
+    const selection = new MemorySelectionStorage();
+    const coordinator = new StoreCoordinator({
+      repository,
+      sessions,
+      selectionStorage: selection,
+      createStoreId: () => asStoreId('store-one'),
+      createBrowserProfileId: () => asProfileId('browser-store-one'),
+      now: () => new Date('2026-08-04T12:00:00.000Z'),
+    });
+    const row = coordinator.createStore({ displayName: 'One' });
+
+    expect(coordinator.getActiveStoreContext()).toBeNull();
+    expect(coordinator.getOperatorWorkspaceSelection()).toBeNull();
+    expect(selection.writes).toHaveLength(0);
+    expect(sessions.current(row.storeId)).toBe(0);
+
+    expect(coordinator.restoreOperatorWorkspaceSelectionAfterRecovery()).toBeNull();
+    expect(coordinator.getActiveStoreContext()).toBeNull();
+    expect(selection.writes).toHaveLength(0);
+    expect(sessions.current(row.storeId)).toBe(0);
+
+    expect(coordinator.switchStore({ storeId: row.storeId, marketplace: 'US' })).toMatchObject({
+      store: { storeId: row.storeId },
+      context: { storeId: row.storeId, sessionGeneration: 1 },
+    });
+    expect(coordinator.getOperatorWorkspaceSelection()).toMatchObject({
+      storeId: row.storeId,
+      marketplace: 'US',
+    });
+    expect(coordinator.getActiveStoreContext()).toMatchObject({
+      storeId: row.storeId,
+      sessionGeneration: 1,
+    });
+    expect(selection.writes).toHaveLength(1);
+
+    const restarted = new StoreCoordinator({ repository, sessions, selectionStorage: selection });
+    expect(restarted.getActiveStoreContext()).toBeNull();
+    expect(restarted.restoreOperatorWorkspaceSelectionAfterRecovery()).toMatchObject({
+      storeId: row.storeId,
+      marketplace: 'US',
+    });
+    expect(restarted.getActiveStoreContext()).toMatchObject({ sessionGeneration: 1 });
+    expect(selection.writes).toHaveLength(1);
+  });
+
+  it('does not guess among multiple stores or replace an invalid persisted selection', () => {
+    const repository = new MemoryStoreRepository();
+    const sessions = new MemorySessions();
+    const selection = new MemorySelectionStorage();
+    repository.createStore({
+      storeId: asStoreId('store-one'),
+      browserProfileId: asProfileId('browser-one'),
+      displayName: 'One',
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+    });
+    repository.createStore({
+      storeId: asStoreId('store-two'),
+      browserProfileId: asProfileId('browser-two'),
+      displayName: 'Two',
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+    });
+    const multi = new StoreCoordinator({ repository, sessions, selectionStorage: selection });
+    expect(multi.restoreOperatorWorkspaceSelectionAfterRecovery()).toBeNull();
+    expect(selection.writes).toHaveLength(0);
+
+    selection.value = { schemaVersion: 1, storeId: 'missing', marketplace: 'US', selectedAt: 'bad' };
+    const stale = new StoreCoordinator({ repository, sessions, selectionStorage: selection });
+    expect(stale.restoreOperatorWorkspaceSelectionAfterRecovery()).toBeNull();
+    expect(stale.getActiveStoreContext()).toBeNull();
+  });
+
+  it('keeps automation separate from operator selection and advances lifecycle generations once', () => {
+    const repository = new MemoryStoreRepository();
+    const sessions = new MemorySessions();
+    const selection = new MemorySelectionStorage();
+    let id = 0;
+    const coordinator = new StoreCoordinator({
+      repository,
+      sessions,
+      selectionStorage: selection,
+      createStoreId: () => asStoreId(`store-${++id}`),
+      createBrowserProfileId: (storeId) => asProfileId(`browser-${storeId}`),
+    });
+    const first = coordinator.createStore({ displayName: 'One' });
+    const second = coordinator.createStore({ displayName: 'Two' });
+    coordinator.switchStore({ storeId: first.storeId, marketplace: 'US' });
+    const selected = coordinator.getOperatorWorkspaceSelection();
+    const previous = coordinator.getCollectionAuthority();
+    coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous,
+      target: {
+        storeId: second.storeId,
+        browserProfileId: second.browserProfileId,
+        marketplace: 'US',
+        currency: 'USD',
+        businessTimezone: 'America/Los_Angeles',
+      },
+    });
+    expect(coordinator.getOperatorWorkspaceSelection()).toEqual(selected);
+    expect(selection.writes).toHaveLength(1);
+
+    const beforeArchive = sessions.current(first.storeId);
+    coordinator.archiveStore({
+      storeId: first.storeId,
+      expectedUpdatedAt: first.updatedAt,
+    });
+    expect(sessions.current(first.storeId)).toBe(beforeArchive + 1);
+    expect(coordinator.getOperatorWorkspaceSelection()).toBeNull();
+    coordinator.archiveStore({
+      storeId: first.storeId,
+      expectedUpdatedAt: first.updatedAt,
+    });
+    expect(sessions.current(first.storeId)).toBe(beforeArchive + 1);
+    coordinator.restoreStore({
+      storeId: first.storeId,
+      expectedUpdatedAt: first.updatedAt,
+    });
+    expect(sessions.current(first.storeId)).toBe(beforeArchive + 2);
+    coordinator.restoreStore({
+      storeId: first.storeId,
+      expectedUpdatedAt: first.updatedAt,
+    });
+    expect(sessions.current(first.storeId)).toBe(beforeArchive + 2);
+  });
+
+  it('keeps package UI restore strictly read-only', () => {
+    const repository = new MemoryStoreRepository();
+    const sessions = new MemorySessions();
+    const selection = new MemorySelectionStorage();
+    const row = repository.createStore({
+      storeId: asStoreId('store-one'),
+      browserProfileId: asProfileId('browser-one'),
+      displayName: 'One',
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+    });
+    const coordinator = new StoreCoordinator({
+      repository,
+      sessions,
+      selectionStorage: selection,
+      selectionPersistence: 'read_only',
+    });
+    selection.value = {
+      schemaVersion: 1,
+      storeId: row.storeId,
+      marketplace: 'US',
+      selectedAt: '2026-08-04T12:00:00.000Z',
+    };
+    expect(coordinator.restoreOperatorWorkspaceSelectionAfterRecovery()).toMatchObject({
+      storeId: row.storeId,
+    });
+    expect(coordinator.getActiveStoreContext()).toMatchObject({ sessionGeneration: 0 });
+    expect(selection.writes).toHaveLength(0);
+    expect(() => coordinator.switchStore({ storeId: row.storeId, marketplace: 'US' }))
+      .toThrow(/read-only/);
+    expect(selection.writes).toHaveLength(0);
   });
 });

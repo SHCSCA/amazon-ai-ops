@@ -2,6 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import type Database from 'better-sqlite3';
+import {
+  isReadbackStoreSecurityError,
+  readStoreScopedReadbackEvidenceFile,
+  resolveStoreScopedReadbackReference,
+  type StoreScopedReadbackAccess,
+} from './readback-store-authority';
 
 export interface DeliveryEvidenceStatusScope {
   dateFrom?: string;
@@ -41,19 +47,26 @@ export interface DeliveryEvidenceStatus {
 
 export function getDeliveryEvidenceStatus(input: {
   db: Database.Database | null | undefined;
+  storeId: string;
   readbackDir: string;
+  readbackAccess?: StoreScopedReadbackAccess;
   releaseDir?: string;
   scope: DeliveryEvidenceStatusScope;
 }): DeliveryEvidenceStatus {
   return {
-    listing: getListingEvidenceStatus(input.db, input.scope),
-    readback: getReadbackEvidenceStatus(input.readbackDir, input.scope),
+    listing: getListingEvidenceStatus(input.db, input.storeId, input.scope),
+    readback: getReadbackEvidenceStatus(input.readbackDir, input.scope, input.readbackAccess),
     package: getPackageEvidenceStatus(input.releaseDir || ''),
   };
 }
 
-function getListingEvidenceStatus(db: Database.Database | null | undefined, scope: DeliveryEvidenceStatusScope): DeliveryEvidenceStatus['listing'] {
-  if (!db) {
+function getListingEvidenceStatus(
+  db: Database.Database | null | undefined,
+  storeIdInput: string,
+  scope: DeliveryEvidenceStatusScope,
+): DeliveryEvidenceStatus['listing'] {
+  const storeId = normalize(storeIdInput);
+  if (!db || !storeId) {
     return {
       readReady: false,
       draftReady: false,
@@ -66,17 +79,19 @@ function getListingEvidenceStatus(db: Database.Database | null | undefined, scop
   }
   const asin = normalize(scope.asin);
   const contentRows = safeQueryAll<any>(db, `
-    SELECT asin, store_name, marketplace_code, title, bullets_json, backend_terms, source_url, screenshot_path, updated_at
+    SELECT store_id, asin, store_name, marketplace_code, title, bullets_json, backend_terms, source_url, screenshot_path, updated_at
     FROM listing_content
-    ${asin ? 'WHERE upper(asin) = upper(@asin)' : ''}
+    WHERE store_id = @storeId
+    ${asin ? 'AND upper(asin) = upper(@asin)' : ''}
     ORDER BY datetime(updated_at) DESC, id DESC
-  `, asin ? { asin } : {});
+  `, asin ? { storeId, asin } : { storeId });
   const draftRows = safeQueryAll<any>(db, `
-    SELECT asin, store_name, marketplace_code, source, ai_fallback_reason, updated_at
+    SELECT store_id, asin, store_name, marketplace_code, source, ai_fallback_reason, updated_at
     FROM listing_drafts
-    ${asin ? 'WHERE upper(asin) = upper(@asin)' : ''}
+    WHERE store_id = @storeId
+    ${asin ? 'AND upper(asin) = upper(@asin)' : ''}
     ORDER BY datetime(updated_at) DESC, id DESC
-  `, asin ? { asin } : {});
+  `, asin ? { storeId, asin } : { storeId });
   const scopedContentRows = contentRows.filter((row) => listingRowMatchesScope(row, scope));
   const scopedDraftRows = draftRows.filter((row) => listingRowMatchesScope(row, scope));
   const fullContentRows = scopedContentRows.filter((row) => listingContentIsFull(row));
@@ -98,10 +113,14 @@ function getListingEvidenceStatus(db: Database.Database | null | undefined, scop
   };
 }
 
-function getReadbackEvidenceStatus(readbackDir: string, scope: DeliveryEvidenceStatusScope): DeliveryEvidenceStatus['readback'] {
-  const files = listReadbackJsonFiles(readbackDir);
+function getReadbackEvidenceStatus(
+  readbackDir: string,
+  scope: DeliveryEvidenceStatusScope,
+  readbackAccess?: StoreScopedReadbackAccess,
+): DeliveryEvidenceStatus['readback'] {
+  const files = listReadbackJsonFiles(readbackDir, readbackAccess);
   const matching = files
-    .map((filePath) => readReadbackFile(filePath))
+    .map((filePath) => readReadbackFile(filePath, readbackAccess))
     .filter((item): item is { filePath: string; payload: any; updatedAt: string } => Boolean(item))
     .filter((item) => readbackMatchesScope(item.payload, scope))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -170,8 +189,7 @@ function listingContentIsFull(row: any): boolean {
 }
 
 function listingRowMatchesScope(row: any, scope: DeliveryEvidenceStatusScope): boolean {
-  return Boolean(normalize(scope.asin))
-    && matchesOptional(scope.storeName, row?.store_name)
+  return matchesOptional(scope.storeName, row?.store_name)
     && matchesOptional(scope.marketplaceCode, row?.marketplace_code);
 }
 
@@ -186,19 +204,60 @@ function parseJsonArray(value: unknown): unknown[] {
   }
 }
 
-function listReadbackJsonFiles(readbackDir: string): string[] {
-  if (!readbackDir || !fs.existsSync(readbackDir)) return [];
-  return fs.readdirSync(readbackDir)
-    .filter((name) => /^real-ad-execution-readback-.*\.json$/i.test(name))
-    .map((name) => path.join(readbackDir, name));
+function listReadbackJsonFiles(
+  readbackDir: string,
+  readbackAccess?: StoreScopedReadbackAccess,
+): string[] {
+  if (!readbackDir) return [];
+  if (readbackAccess && path.resolve(readbackDir) !== path.resolve(readbackAccess.rootDir)) {
+    throw new Error('READBACK_DELIVERY_ROOT_MISMATCH: delivery evidence must use the current store readback root.');
+  }
+  if (!fs.existsSync(readbackDir)) return [];
+  if (!readbackAccess) {
+    return fs.readdirSync(readbackDir)
+      .filter((name) => /^real-ad-execution-readback-.*\.json$/i.test(name))
+      .map((name) => path.join(readbackDir, name));
+  }
+  const files: string[] = [];
+  const visit = (directory: string): void => {
+    resolveStoreScopedReadbackReference(readbackAccess, directory, 'root');
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error('READBACK_UNSAFE_FILESYSTEM_ENTRY: delivery evidence must not traverse links or junctions.');
+      }
+      if (entry.isDirectory()) {
+        visit(entryPath);
+      } else if (entry.isFile() && /^real-ad-execution-readback-.*\.json$/i.test(entry.name)) {
+        files.push(resolveStoreScopedReadbackReference(readbackAccess, entryPath, 'root'));
+      }
+    }
+  };
+  for (const entry of fs.readdirSync(readbackDir, { withFileTypes: true })) {
+    const entryPath = path.join(readbackDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error('READBACK_UNSAFE_FILESYSTEM_ENTRY: delivery evidence must not traverse links or junctions.');
+    }
+    if (entry.isDirectory()) visit(entryPath);
+    else if (entry.isFile() && /^real-ad-execution-readback-.*\.json$/i.test(entry.name)) {
+      files.push(resolveStoreScopedReadbackReference(readbackAccess, entryPath, 'root'));
+    }
+  }
+  return files;
 }
 
-function readReadbackFile(filePath: string): { filePath: string; payload: any; updatedAt: string } | null {
+function readReadbackFile(
+  filePath: string,
+  readbackAccess?: StoreScopedReadbackAccess,
+): { filePath: string; payload: any; updatedAt: string } | null {
   try {
-    const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    const updatedAt = String(payload?.readback?.readAt || payload?.createdAt || fs.statSync(filePath).mtime.toISOString());
-    return { filePath, payload, updatedAt };
-  } catch {
+    const authorized = readbackAccess
+      ? readStoreScopedReadbackEvidenceFile(readbackAccess, filePath, 'root')
+      : { filePath, payload: JSON.parse(fs.readFileSync(filePath, 'utf8')) };
+    const updatedAt = String(authorized.payload?.readback?.readAt || authorized.payload?.createdAt || fs.statSync(authorized.filePath).mtime.toISOString());
+    return { filePath: authorized.filePath, payload: authorized.payload, updatedAt };
+  } catch (error) {
+    if (readbackAccess && isReadbackStoreSecurityError(error)) throw error;
     return null;
   }
 }

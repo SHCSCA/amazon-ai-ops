@@ -1,176 +1,259 @@
-import React, { useEffect, useState } from 'react';
-import { ProgressiveDetails } from '../components/progressive-details';
-import { KpiCard, PageHeader, Panel, StateLightGrid, StatusPill } from '../components/ui';
-import { TaskBanner } from '../components/workspace';
-import { PAGE_HEADER_TITLES } from '../page-header-copy';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Archive,
+  ArrowsClockwise,
+  CalendarBlank,
+  CheckCircle,
+  Clock,
+  Database,
+  Play,
+  ShieldCheck,
+  WarningCircle,
+  X,
+} from '@phosphor-icons/react';
+import {
+  missionControlContextKey,
+  type MissionControlCapabilityProjection,
+  type StoreCollectionScheduleProjection,
+  type StoreCollectionScheduleRunResult,
+  type StoreCollectionScheduleState,
+  type StoreContextEnvelope,
+} from '@amazon-ai-ops/shared-types';
+import {
+  PageFrame,
+  SummaryStrip,
+  TaskBanner,
+  WorkbenchPanel,
+  WorkspaceState,
+  type WorkspaceTone,
+} from '../components/workspace';
 import type { AppRoute } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 
-interface ScheduledTaskView {
-  name: string;
-  cron?: string;
-  enabled?: boolean;
-  nextRun?: string;
-  lastRun?: string;
-  lastResult?: string;
+export const STORE_AUTOMATION_CAPABILITY_IDS = {
+  view: 'settings.scheduler.view',
+  runNow: 'settings.scheduler.run-now',
+  retentionPreview: 'settings.scheduler.retention-preview',
+} as const;
+
+export interface StoreEvidenceRetentionBlockerView {
+  code: string;
+  detail: string;
 }
 
-function taskLabel(name: string): string {
-  const labels: Record<string, string> = {
-    daily_report_download: '每日广告报表下载',
-    daily_recommendation_generate: '每日优化建议生成',
-    daily_report_generate: '每日运营报告生成',
-    data_cleanup: '本地数据清理',
-  };
-  return labels[name] || name;
+/**
+ * Renderer-safe subset of the Main-only retention manifest. Candidate and
+ * protected file names deliberately stay out of component state and the DOM.
+ */
+export interface StoreEvidenceRetentionSummary {
+  schemaVersion: 1;
+  mode: 'dry-run';
+  deletionSupported: false;
+  generatedAt: string;
+  storeId: string;
+  profileId: string;
+  marketplace: 'US';
+  currency: 'USD';
+  retentionDays: number;
+  cutoffAt: string;
+  scanSafe: boolean;
+  candidateCount: number;
+  candidateBytes: number;
+  protectedCount: number;
+  blockers: readonly StoreEvidenceRetentionBlockerView[];
 }
 
-export function taskPurpose(name: string): string {
-  const labels: Record<string, string> = {
-    daily_report_download: '从领星下载当前计划范围的广告报表，不负责审批或执行广告动作。',
-    daily_recommendation_generate: '基于已导入真实指标生成待处理建议池；需复核建议不会自动审批，也不会写入 Amazon Ads。',
-    daily_report_generate: '生成本地运营汇总和证据材料，不改变业务数据。',
-    data_cleanup: '清理本地临时文件和过期缓存，不删除交付证据包。',
-  };
-  return labels[name] || '本地计划任务。执行结果必须继续满足真实数据、审批和回读门槛。';
+interface RawStoreEvidenceRetentionManifest {
+  schemaVersion?: unknown;
+  mode?: unknown;
+  deletionSupported?: unknown;
+  generatedAt?: unknown;
+  storeId?: unknown;
+  profileId?: unknown;
+  marketplace?: unknown;
+  currency?: unknown;
+  retentionDays?: unknown;
+  cutoffAt?: unknown;
+  expiryBasis?: unknown;
+  applyable?: unknown;
+  scanSafe?: unknown;
+  candidateCount?: unknown;
+  candidateBytes?: unknown;
+  protectedScopeCount?: unknown;
+  protectedFileCount?: unknown;
+  blockerCount?: unknown;
+  blockers?: unknown;
 }
 
-export function formatCronForOperator(cron?: string): string {
-  const value = String(cron || '').trim();
-  if (!value) return '-';
-  const parts = value.split(/\s+/);
-  if (parts.length === 5 && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') {
-    const minute = Number(parts[0]);
-    const hour = Number(parts[1]);
-    if (Number.isInteger(minute) && minute >= 0 && minute <= 59 && Number.isInteger(hour) && hour >= 0 && hour <= 23) {
-      return `每天 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-    }
-  }
-  return `高级计划：${value}`;
+export interface StoreAutomationRendererApi {
+  getStoreCollectionSchedule(context: StoreContextEnvelope): Promise<StoreCollectionScheduleProjection>;
+  runStoreCollectionScheduleNow(context: StoreContextEnvelope): Promise<StoreCollectionScheduleRunResult>;
+  previewStoreEvidenceRetention(context: StoreContextEnvelope): Promise<RawStoreEvidenceRetentionManifest>;
 }
 
-function formatDate(value?: string): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+export interface SchedulerPageProps {
+  storeContext: StoreContextEnvelope;
+  capabilities: readonly MissionControlCapabilityProjection[];
+  previewMode?: boolean;
+  api?: StoreAutomationRendererApi | null;
 }
 
-type SchedulerTaskPanelTone = 'ready' | 'pending' | 'warning' | 'blocked';
-
-interface SchedulerActionButtonInput {
-  active: boolean;
-  baseClassName: string;
+export const STORE_AUTOMATION_STATES: readonly {
+  state: StoreCollectionScheduleState;
   label: string;
-  busyLabel: string;
-  disabled?: boolean;
-  groupBusy?: boolean;
+  detail: string;
+}[] = [
+  { state: 'not_configured', label: '未配置', detail: '先在 AI 与本地设置创建当前店铺配置。' },
+  { state: 'archived', label: '已归档', detail: '配置不再生效，需先恢复。' },
+  { state: 'waiting', label: '等待计划', detail: '等待店铺业务时区的配置时间。' },
+  { state: 'due', label: '计划已到', detail: '调度器可认领本业务日采集。' },
+  { state: 'claimed', label: '正在采集', detail: '已持久认领，使用可见浏览器执行。' },
+  { state: 'succeeded', label: '已完成', detail: '同一店铺、业务日与采集口径不重复认领。' },
+  { state: 'failed', label: '失败关闭', detail: '同一 fingerprint 不重试，等待人工排查。' },
+] as const;
+
+const SCHEDULE_STATES = new Set<StoreCollectionScheduleState>(
+  STORE_AUTOMATION_STATES.map((item) => item.state),
+);
+
+export function readStoreAutomationRendererApi(target: unknown = globalThis): StoreAutomationRendererApi | null {
+  const candidate = (target as { electronAPI?: Partial<StoreAutomationRendererApi> } | null)?.electronAPI;
+  if (!candidate) return null;
+  return (
+    typeof candidate.getStoreCollectionSchedule === 'function'
+    && typeof candidate.runStoreCollectionScheduleNow === 'function'
+    && typeof candidate.previewStoreEvidenceRetention === 'function'
+  )
+    ? candidate as StoreAutomationRendererApi
+    : null;
 }
 
-export interface SchedulerActionButtonView {
-  ariaBusy?: true;
-  className: string;
-  disabled: boolean;
-  label: string;
-  showSpinner: boolean;
-}
-
-export function schedulerActionButtonView({
-  active,
-  baseClassName,
-  label,
-  busyLabel,
-  disabled = false,
-  groupBusy = false,
-}: SchedulerActionButtonInput): SchedulerActionButtonView {
+export function resolveStoreAutomationAccess(
+  capabilities: readonly MissionControlCapabilityProjection[],
+  previewMode: boolean,
+) {
+  const allowed = (capabilityId: string, productionStates: readonly MissionControlCapabilityProjection['state'][]) => {
+    const capability = capabilities.find((item) => (
+      item.capabilityId === capabilityId
+      && item.workspace === 'settings'
+      && item.view === 'settings/scheduler'
+    ));
+    const states = previewMode ? ['PROTOTYPE_ONLY'] : productionStates;
+    return {
+      allowed: Boolean(capability && states.includes(capability.state)),
+      capability,
+    };
+  };
   return {
-    ariaBusy: active ? true : undefined,
-    className: [baseClassName, active ? 'button-loading' : ''].filter(Boolean).join(' '),
-    disabled: Boolean(disabled || active || groupBusy),
-    label: active ? busyLabel : label,
-    showSpinner: active,
+    view: allowed(STORE_AUTOMATION_CAPABILITY_IDS.view, ['LEGACY_ADAPTER', 'PRODUCTION_NATIVE']),
+    runNow: allowed(STORE_AUTOMATION_CAPABILITY_IDS.runNow, ['PRODUCTION_NATIVE']),
+    retentionPreview: allowed(STORE_AUTOMATION_CAPABILITY_IDS.retentionPreview, ['PRODUCTION_NATIVE']),
   };
 }
 
-export function buildSchedulerTaskPanelState(input: {
-  tasks: ScheduledTaskView[];
-  loading: boolean;
-  message?: string;
-  pendingRunTask?: ScheduledTaskView | null;
-  runningTaskName?: string;
-}) {
-  const enabledTaskCount = input.tasks.filter((task) => task.enabled).length;
-  const nextTask = [...input.tasks]
-    .filter((task) => task.nextRun)
-    .sort((left, right) => Date.parse(left.nextRun || '') - Date.parse(right.nextRun || ''))[0];
-  const pending = input.pendingRunTask || null;
-  const running = Boolean(input.runningTaskName);
-  const failed = Boolean(input.message && input.message.includes('失败'));
-
-  let title = enabledTaskCount ? '本地调度已开启' : '先检查本地调度状态';
-  let detail = enabledTaskCount
-    ? `当前有 ${enabledTaskCount} 个本地任务启用；自动化只负责下载、导入、生成本地材料，不会批准或写入 Amazon Ads。`
-    : '定时任务默认不代表广告执行权限；先刷新状态，再按任务职责决定是否启用或手动触发。';
-  let primaryActionLabel = '刷新调度状态';
-  let primaryBusyLabel = '正在刷新...';
-  let primaryActionBusy = input.loading;
-  let primaryActionDisabled = false;
-  let mode: 'refresh' | 'confirm-run' = 'refresh';
-  let feedbackLabel = enabledTaskCount ? '等待下一次本地唤起' : '全部任务可控';
-  let feedbackDetail = nextTask
-    ? `${taskLabel(nextTask.name)} / ${formatDate(nextTask.nextRun)}`
-    : '暂无可见下次运行时间；可按需启用任务。';
-  let feedbackTone: SchedulerTaskPanelTone = enabledTaskCount ? 'ready' : 'pending';
-  const secondaryActions: Array<{ label: string; route?: AppRoute; kind?: 'cancel-run'; disabled?: boolean }> = [
-    { label: '查看交付验收', route: 'delivery' },
-    { label: 'AI 设置', route: 'settings' },
-  ];
-
-  if (input.loading) {
-    title = '正在读取本地调度状态';
-    detail = '正在从主进程读取本地任务、下次运行时间和最近结果，按钮已锁定防止重复刷新。';
-    feedbackLabel = '刷新中';
-    feedbackDetail = '读取完成后会更新任务表和安全边界摘要。';
-    feedbackTone = 'pending';
+export function schedulerRunNowPolicy(
+  projection: StoreCollectionScheduleProjection | null,
+): { allowed: boolean; reason: string } {
+  if (!projection) return { allowed: false, reason: '尚未读取当前店铺计划。' };
+  switch (projection.state) {
+    case 'waiting':
+    case 'due':
+      return { allowed: true, reason: '需要二次确认；Main 会再次复核当前 StoreContext。' };
+    case 'not_configured':
+      return { allowed: false, reason: '当前店铺尚未配置，请先前往 AI 与本地设置。' };
+    case 'archived':
+      return { allowed: false, reason: '当前店铺配置已归档，请先恢复配置。' };
+    case 'claimed':
+      return { allowed: false, reason: '当前店铺已有采集任务执行中，禁止重复触发。' };
+    case 'succeeded':
+      return { allowed: false, reason: '同一店铺、业务日与采集口径已完成，幂等边界禁止重复触发。' };
+    case 'failed':
+      return {
+        allowed: false,
+        reason: '同一店铺、业务日与采集口径已失败关闭且不重试；调整触发时间不会绕过幂等，只有回看窗口变化才会形成新 fingerprint。',
+      };
   }
+}
 
-  if (pending) {
-    title = `确认触发：${taskLabel(pending.name)}`;
-    detail = `${taskPurpose(pending.name)} 本次只触发本地任务，仍不能绕过真实报表、人工审批和结果核对。`;
-    primaryActionLabel = '执行本地任务';
-    primaryBusyLabel = '正在执行...';
-    primaryActionBusy = running;
-    primaryActionDisabled = running;
-    mode = 'confirm-run';
-    feedbackLabel = running ? '正在执行本地任务' : '等待人工确认';
-    feedbackDetail = running
-      ? `${taskLabel(pending.name)} 已进入主进程执行。`
-      : '第一次点击只打开确认，不会立即运行；确认后也不会批准建议或写入广告账户。';
-    feedbackTone = running ? 'pending' : 'warning';
-    secondaryActions.splice(0, secondaryActions.length, { label: '返回任务列表', kind: 'cancel-run', disabled: running });
+export function storeAutomationRequestMatches(
+  sequence: number,
+  currentSequence: number,
+  capturedAuthorityKey: string,
+  currentAuthorityKey: string,
+): boolean {
+  return sequence === currentSequence && capturedAuthorityKey === currentAuthorityKey;
+}
+
+export function normalizeRetentionSummary(
+  value: RawStoreEvidenceRetentionManifest,
+  context: StoreContextEnvelope,
+): StoreEvidenceRetentionSummary {
+  if (!value || typeof value !== 'object') throw new Error('证据保留预览返回了无效对象。');
+  const storeId = String(value.storeId ?? '');
+  const profileId = String(value.profileId ?? '');
+  const blockers = Array.isArray(value.blockers)
+    ? value.blockers.map((item) => {
+        if (!item || typeof item !== 'object') throw new Error('证据保留阻塞项格式无效。');
+        const blocker = item as { code?: unknown; detail?: unknown };
+        const code = String(blocker.code ?? '').trim();
+        const detail = String(blocker.detail ?? '').trim();
+        if (!code || !detail) throw new Error('证据保留阻塞项不完整。');
+        return { code, detail };
+      })
+    : [];
+  const retentionDays = Number(value.retentionDays);
+  const candidateCount = Number(value.candidateCount);
+  const candidateBytes = Number(value.candidateBytes);
+  const protectedScopeCount = Number(value.protectedScopeCount);
+  const protectedFileCount = Number(value.protectedFileCount);
+  const blockerCount = Number(value.blockerCount);
+  const generatedAt = String(value.generatedAt ?? '');
+  const cutoffAt = String(value.cutoffAt ?? '');
+  if (
+    value.schemaVersion !== 1
+    || value.mode !== 'dry-run'
+    || value.deletionSupported !== false
+    || storeId !== String(context.storeId)
+    || profileId !== String(context.browserProfileId)
+    || value.marketplace !== 'US'
+    || value.currency !== 'USD'
+    || value.expiryBasis !== 'mtime-before-cutoff'
+    || !Number.isInteger(retentionDays)
+    || retentionDays < 30
+    || !Number.isInteger(candidateCount)
+    || candidateCount < 0
+    || !Number.isFinite(candidateBytes)
+    || candidateBytes < 0
+    || !Number.isInteger(protectedScopeCount)
+    || protectedScopeCount < 0
+    || !Number.isInteger(protectedFileCount)
+    || protectedFileCount < 0
+    || !Number.isInteger(blockerCount)
+    || blockerCount !== blockers.length
+    || !validTimestamp(generatedAt)
+    || !validTimestamp(cutoffAt)
+    || value.applyable !== false
+    || typeof value.scanSafe !== 'boolean'
+    || value.scanSafe !== (blockers.length === 0)
+  ) {
+    throw new Error('证据保留预览未通过当前店铺、US/USD 或 dry-run 安全校验。');
   }
-
-  if (failed) {
-    feedbackLabel = '调度动作失败';
-    feedbackDetail = input.message || '请检查主进程任务状态。';
-    feedbackTone = 'blocked';
-  } else if (input.message && !pending) {
-    feedbackLabel = '调度动作已记录';
-    feedbackDetail = input.message;
-    feedbackTone = 'ready';
-  }
-
   return {
-    title,
-    detail,
-    primaryActionLabel,
-    primaryBusyLabel,
-    primaryActionBusy,
-    primaryActionDisabled,
-    mode,
-    feedbackLabel,
-    feedbackDetail,
-    feedbackTone,
-    secondaryActions,
+    schemaVersion: 1,
+    mode: 'dry-run',
+    deletionSupported: false,
+    generatedAt,
+    storeId,
+    profileId,
+    marketplace: 'US',
+    currency: 'USD',
+    retentionDays,
+    cutoffAt,
+    scanSafe: value.scanSafe,
+    candidateCount,
+    candidateBytes,
+    protectedCount: protectedScopeCount + protectedFileCount,
+    blockers,
   };
 }
 
@@ -178,305 +261,681 @@ function navigate(route: AppRoute) {
   window.dispatchEvent(new CustomEvent<AppRoute>('amazon-ai-ops:navigate', { detail: route }));
 }
 
-export function SchedulerPage() {
-  const [tasks, setTasks] = useState<ScheduledTaskView[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState('');
-  const [pendingRunTask, setPendingRunTask] = useState<ScheduledTaskView | null>(null);
-  const [runningTaskName, setRunningTaskName] = useState('');
-  const [togglingTaskName, setTogglingTaskName] = useState('');
+function validTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Boolean(value && Number.isFinite(timestamp));
+}
 
-  async function loadTasks(options: { clearMessage?: boolean } = {}) {
+function validateScheduleProjection(
+  value: StoreCollectionScheduleProjection,
+  context: StoreContextEnvelope,
+): StoreCollectionScheduleProjection {
+  if (
+    !value
+    || typeof value !== 'object'
+    || String(value.storeId) !== String(context.storeId)
+    || String(value.businessDate) !== String(context.businessDate)
+    || !SCHEDULE_STATES.has(value.state)
+    || typeof value.enabled !== 'boolean'
+    || typeof value.detail !== 'string'
+  ) {
+    throw new Error('店铺计划投影与当前 StoreContext 不一致，已失败关闭。');
+  }
+  return value;
+}
+
+function stateTone(state?: StoreCollectionScheduleState): WorkspaceTone {
+  if (state === 'succeeded') return 'confirmed';
+  if (state === 'failed' || state === 'archived') return 'blocked';
+  if (state === 'due' || state === 'claimed' || state === 'not_configured') return 'attention';
+  return 'neutral';
+}
+
+function stateLabel(state?: StoreCollectionScheduleState): string {
+  return STORE_AUTOMATION_STATES.find((item) => item.state === state)?.label ?? '等待读取';
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function taskCopy(
+  projection: StoreCollectionScheduleProjection | null,
+  loading: boolean,
+  error: string | null,
+) {
+  if (loading) {
+    return {
+      title: '正在读取当前店铺自动化',
+      detail: 'Main 正在复核 StoreContext、运行配置与本业务日幂等记录。',
+      tone: 'neutral' as WorkspaceTone,
+    };
+  }
+  if (error || !projection) {
+    return {
+      title: '当前店铺自动化已失败关闭',
+      detail: error ?? '没有可验证的店铺计划投影。',
+      tone: 'blocked' as WorkspaceTone,
+    };
+  }
+  const copies: Record<StoreCollectionScheduleState, { title: string; detail: string }> = {
+    not_configured: {
+      title: '先创建当前店铺运行配置',
+      detail: '计划时间、回看窗口和证据保留期必须先在 AI 与本地设置中按店铺保存。',
+    },
+    archived: {
+      title: '当前店铺运行配置已归档',
+      detail: '自动采集已停止；恢复配置前不会认领任何本业务日任务。',
+    },
+    waiting: {
+      title: `等待 ${projection.scheduleLocalTime ?? '配置时间'} 自动采集`,
+      detail: '计划按当前店铺业务时区解释；也可二次确认后立即触发一次。',
+    },
+    due: {
+      title: '当前店铺计划已到执行时间',
+      detail: 'Main 将在可见领星会话就绪后持久认领；重复认领会被拒绝。',
+    },
+    claimed: {
+      title: '当前店铺采集正在执行',
+      detail: '任务已持久认领并绑定当前浏览器 Profile；切店不会接收该结果。',
+    },
+    succeeded: {
+      title: '本业务日采集已完成',
+      detail: '同一店铺、业务日与采集口径不会再次执行；调整触发时间不会绕过幂等，只有回看窗口变化才形成新的 fingerprint。',
+    },
+    failed: {
+      title: '本业务日采集已失败关闭',
+      detail: '同一店铺、业务日与采集口径不重试；调整触发时间不会绕过幂等，只有回看窗口变化才会形成新 fingerprint。',
+    },
+  };
+  return { ...copies[projection.state], tone: stateTone(projection.state) };
+}
+
+export function SchedulerPage({
+  storeContext,
+  capabilities,
+  previewMode = false,
+  api: explicitApi,
+}: SchedulerPageProps) {
+  const api = explicitApi === undefined ? readStoreAutomationRendererApi(window) : explicitApi;
+  const authorityKey = missionControlContextKey(storeContext);
+  const access = useMemo(
+    () => resolveStoreAutomationAccess(capabilities, previewMode),
+    [capabilities, previewMode],
+  );
+  const [projection, setProjection] = useState<StoreCollectionScheduleProjection | null>(null);
+  const [retention, setRetention] = useState<StoreEvidenceRetentionSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [retentionLoading, setRetentionLoading] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [confirmRun, setConfirmRun] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retentionError, setRetentionError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const requestSequence = useRef(0);
+  const confirmDialogRef = useRef<HTMLElement | null>(null);
+  const confirmReturnFocusRef = useRef<HTMLElement | null>(null);
+
+  const isCurrentRequest = (sequence: number, key: string) => (
+    storeAutomationRequestMatches(sequence, requestSequence.current, key, authorityKey)
+  );
+
+  async function loadRetention(
+    context: StoreContextEnvelope,
+    sequence: number,
+    key: string,
+  ) {
+    if (!api || !access.retentionPreview.allowed) return;
+    setRetentionLoading(true);
+    setRetentionError(null);
+    try {
+      const raw = await api.previewStoreEvidenceRetention(context);
+      const next = normalizeRetentionSummary(raw, context);
+      if (isCurrentRequest(sequence, key)) setRetention(next);
+    } catch (caught) {
+      if (isCurrentRequest(sequence, key)) {
+        setRetention(null);
+        setRetentionError(toUserFacingError(caught, '读取证据保留预览失败。'));
+      }
+    } finally {
+      if (isCurrentRequest(sequence, key)) setRetentionLoading(false);
+    }
+  }
+
+  async function loadCurrentStore(options: { keepMessage?: boolean } = {}) {
+    const sequence = ++requestSequence.current;
+    const key = authorityKey;
+    const context = storeContext;
     setLoading(true);
-    if (options.clearMessage !== false) setMessage('');
-    try {
-      const rows = await (window as any).electronAPI?.getScheduledTasks?.();
-      setTasks(Array.isArray(rows) ? rows : []);
-    } catch (caught) {
-      setMessage(toUserFacingError(caught, '读取定时任务失败。'));
-    } finally {
+    setRetentionLoading(false);
+    setError(null);
+    setProjection(null);
+    setRetention(null);
+    setRetentionError(null);
+    setConfirmRun(false);
+    if (!options.keepMessage) setMessage(null);
+    if (!access.view.allowed) {
       setLoading(false);
+      setError(access.view.capability?.detail ?? '当前店铺自动化视图未获 Main 能力授权。');
+      return;
     }
-  }
-
-  async function toggleTask(task: ScheduledTaskView) {
-    try {
-      setPendingRunTask(null);
-      setTogglingTaskName(task.name);
-      await (window as any).electronAPI?.setTaskEnabled?.(task.name, !task.enabled);
-      setMessage(`${taskLabel(task.name)} 已${task.enabled ? '停用' : '启用'}。`);
-      await loadTasks({ clearMessage: false });
-    } catch (caught) {
-      setMessage(`更新任务失败：${toUserFacingError(caught, '更新任务失败。')}`);
-    } finally {
-      setTogglingTaskName('');
+    if (!api) {
+      setLoading(false);
+      setError('Store Automation API 未完整接入，已失败关闭。');
+      return;
     }
-  }
-
-  function requestRunNow(task: ScheduledTaskView) {
-    setMessage('');
-    setPendingRunTask(task);
-  }
-
-  async function confirmRunNow() {
-    if (!pendingRunTask) return;
-    const task = pendingRunTask;
-    setRunningTaskName(task.name);
     try {
-      await (window as any).electronAPI?.runTaskNow?.(task.name);
-      setMessage(`${taskLabel(task.name)} 已执行完成。真实报表、审批和回读门槛仍然生效。`);
-      setPendingRunTask(null);
-      await loadTasks({ clearMessage: false });
+      const next = validateScheduleProjection(
+        await api.getStoreCollectionSchedule(context),
+        context,
+      );
+      if (!isCurrentRequest(sequence, key)) return;
+      setProjection(next);
+      if (next.state !== 'not_configured' && next.state !== 'archived') {
+        await loadRetention(context, sequence, key);
+      }
     } catch (caught) {
-      setMessage(`立即执行失败：${toUserFacingError(caught, '立即执行失败。')}`);
+      if (isCurrentRequest(sequence, key)) {
+        setError(toUserFacingError(caught, '读取当前店铺自动化失败。'));
+      }
     } finally {
-      setRunningTaskName('');
+      if (isCurrentRequest(sequence, key)) setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadTasks();
-    const interval = window.setInterval(loadTasks, 30000);
-    return () => window.clearInterval(interval);
-  }, []);
+    setProjection(null);
+    setRetention(null);
+    setError(null);
+    setRetentionError(null);
+    setRetentionLoading(false);
+    setMessage(null);
+    setConfirmRun(false);
+    setRunning(false);
+    void loadCurrentStore();
+    return () => {
+      requestSequence.current += 1;
+    };
+    // The authority key includes every store/profile/session field that may
+    // authorize a result; a changed key invalidates all prior async responses.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authorityKey, access.view.allowed, access.retentionPreview.allowed, api]);
 
-  const enabledTaskCount = tasks.filter((task) => task.enabled).length;
-  const nextTask = [...tasks]
-    .filter((task) => task.nextRun)
-    .sort((left, right) => Date.parse(left.nextRun || '') - Date.parse(right.nextRun || ''))[0];
-  const lastTask = [...tasks]
-    .filter((task) => task.lastRun)
-    .sort((left, right) => Date.parse(right.lastRun || '') - Date.parse(left.lastRun || ''))[0];
-  const taskPanelState = buildSchedulerTaskPanelState({
-    tasks,
-    loading,
-    message,
-    pendingRunTask,
-    runningTaskName,
-  });
-  const schedulerControlBusy = Boolean(loading || runningTaskName || togglingTaskName);
-  const refreshControlButton = schedulerActionButtonView({
-    active: loading && !runningTaskName && !togglingTaskName,
-    baseClassName: 'primary-button',
-    busyLabel: '正在刷新...',
-    groupBusy: schedulerControlBusy,
-    label: '刷新调度状态',
-  });
+  useEffect(() => {
+    if (!confirmRun) return undefined;
+    confirmDialogRef.current
+      ?.querySelector<HTMLElement>('[data-confirm-initial]')
+      ?.focus();
+    return () => {
+      confirmReturnFocusRef.current?.focus();
+      confirmReturnFocusRef.current = null;
+    };
+  }, [confirmRun]);
+
+  function openRunConfirmation() {
+    confirmReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setConfirmRun(true);
+  }
+
+  function handleConfirmDialogKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key === 'Escape' && !running) {
+      event.preventDefault();
+      setConfirmRun(false);
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const controls = [...(confirmDialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? [])];
+    if (controls.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  async function runNow() {
+    if (!api || running || !projection || !access.runNow.allowed) return;
+    const policy = schedulerRunNowPolicy(projection);
+    if (!policy.allowed) return;
+    const sequence = ++requestSequence.current;
+    const context = storeContext;
+    const key = authorityKey;
+    setRunning(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api.runStoreCollectionScheduleNow(context);
+      const next = validateScheduleProjection(result.projection, context);
+      if (!isCurrentRequest(sequence, key)) return;
+      setProjection(next);
+      setConfirmRun(false);
+      setMessage(
+        result.duplicate
+          ? 'Main 已识别同一业务日幂等记录，本次没有重复执行。'
+          : next.state === 'succeeded'
+            ? '当前店铺本业务日采集已完成。'
+            : next.state === 'failed'
+              ? '采集失败关闭；同一采集口径的 fingerprint 不会自动重试。'
+              : '当前店铺采集已由 Main 受理。',
+      );
+      if (next.state !== 'not_configured' && next.state !== 'archived') {
+        await loadRetention(context, sequence, key);
+      }
+    } catch (caught) {
+      if (isCurrentRequest(sequence, key)) {
+        setConfirmRun(false);
+        setError(toUserFacingError(caught, '立即触发当前店铺采集失败。'));
+      }
+    } finally {
+      if (isCurrentRequest(sequence, key)) setRunning(false);
+    }
+  }
+
+  const runPolicy = schedulerRunNowPolicy(projection);
+  const task = taskCopy(projection, loading, error);
+  const needsConfig = projection?.state === 'not_configured' || projection?.state === 'archived';
+  const runNowDisabledReason = !access.runNow.allowed
+    ? access.runNow.capability?.detail ?? '立即采集能力未获 Main 授权。'
+    : runPolicy.reason;
+  const primaryAction = needsConfig
+    ? {
+        actionId: 'settings.scheduler.open-config',
+        label: '前往 AI 与本地设置',
+        onClick: () => navigate('settings'),
+      }
+    : runPolicy.allowed
+      ? {
+          actionId: STORE_AUTOMATION_CAPABILITY_IDS.runNow,
+          label: '立即采集',
+          onClick: openRunConfirmation,
+          disabled: !access.runNow.allowed || running,
+          disabledReason: !access.runNow.allowed ? runNowDisabledReason : undefined,
+        }
+      : {
+          actionId: 'settings.scheduler.refresh',
+          label: '刷新当前店铺',
+          busy: loading,
+          busyLabel: '读取中…',
+          onClick: () => { void loadCurrentStore(); },
+          disabled: running,
+          disabledReason: projection?.state === 'failed'
+            ? '仅刷新状态，不会重试同一店铺、业务日与采集口径的失败任务。'
+            : undefined,
+        };
+
   return (
-    <div>
-      <PageHeader
-        eyebrow="系统"
-        title={PAGE_HEADER_TITLES.scheduler}
-        description="查看和控制本地自动化任务。定时任务不能绕过真实报表、人工审批和结果核对门槛。"
-      />
-
-      <div className="business-stack">
+    <PageFrame
+      className="mission-control-store-automation"
+      description="按当前店铺、美国站、USD 与业务日管理领星自动采集；所有结果都由 Main 复核 StoreContext。"
+      pageId="store-automation"
+      title="当前店铺自动化"
+      task={(
         <TaskBanner
-          eyebrow="本地自动化"
-          title={taskPanelState.title}
-          description={taskPanelState.detail}
-          tone={taskPanelState.feedbackTone === 'ready'
-            ? 'confirmed'
-            : taskPanelState.feedbackTone === 'blocked'
-              ? 'blocked'
-              : 'attention'}
-          status={<StatusPill tone={taskPanelState.feedbackTone}>{taskPanelState.feedbackLabel}</StatusPill>}
-          primaryAction={{
-            label: taskPanelState.primaryActionLabel,
-            busy: taskPanelState.primaryActionBusy,
-            busyLabel: taskPanelState.primaryBusyLabel,
-            disabled: taskPanelState.primaryActionDisabled || Boolean(togglingTaskName),
-            disabledReason: togglingTaskName ? '正在更新任务启停状态，请稍候。' : undefined,
-            onClick: taskPanelState.mode === 'confirm-run'
-              ? () => { void confirmRunNow(); }
-              : () => { void loadTasks(); },
-          }}
-          secondaryActions={taskPanelState.secondaryActions.map((action) => ({
-            label: action.label,
-            disabled: action.disabled,
-            onClick: action.kind === 'cancel-run'
-              ? () => setPendingRunTask(null)
-              : () => { if (action.route) navigate(action.route); },
-          }))}
-          meta={taskPanelState.feedbackDetail}
+          eyebrow={previewMode ? 'PROTOTYPE_ONLY · 当前店铺计划' : '当前店铺计划'}
+          title={task.title}
+          description={task.detail}
+          tone={task.tone}
+          status={<span>{stateLabel(projection?.state)}</span>}
+          primaryAction={primaryAction}
+          secondaryActions={[
+            {
+              actionId: 'settings.scheduler.refresh-secondary',
+              label: '刷新',
+              busy: loading,
+              busyLabel: '读取中…',
+              disabled: running,
+              onClick: () => { void loadCurrentStore(); },
+            },
+          ]}
+          meta={message ?? projection?.detail ?? runNowDisabledReason}
         />
+      )}
+      summary={(
+        <SummaryStrip
+          ariaLabel="当前店铺自动化范围"
+          items={[
+            {
+              id: 'store',
+              label: '店铺范围',
+              value: String(storeContext.storeId),
+              detail: 'Amazon US · USD',
+              tone: 'confirmed',
+            },
+            {
+              id: 'business-date',
+              label: '业务日',
+              value: storeContext.businessDate,
+              detail: '按店铺业务时区',
+            },
+            {
+              id: 'timezone',
+              label: '业务时区',
+              value: storeContext.businessTimezone,
+              detail: `会话代次 ${storeContext.sessionGeneration}`,
+            },
+            {
+              id: 'revision',
+              label: '配置版本',
+              value: projection?.configRevision ? `r${projection.configRevision}` : '未生效',
+              detail: projection?.scheduleLocalTime ? `每日 ${projection.scheduleLocalTime}` : '等待配置',
+              tone: projection?.configRevision ? 'confirmed' : 'attention',
+            },
+          ]}
+        />
+      )}
+    >
+      {error && <div className="mission-control-store-error" role="alert">{error}</div>}
 
-        <Panel title="任务列表" tone={enabledTaskCount ? 'success' : 'warning'}>
-          <div className="table-wrap">
-            <table className="business-table">
-              <thead>
-                <tr>
-                  <th>任务</th>
-                  <th>计划</th>
-                  <th>状态</th>
-                  <th>下次执行</th>
-                  <th>上次执行</th>
-                  <th>最近结果</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tasks.map((task) => {
-                  const toggleButton = schedulerActionButtonView({
-                    active: togglingTaskName === task.name,
-                    baseClassName: 'secondary-button compact-button',
-                    busyLabel: task.enabled ? '停用中...' : '启用中...',
-                    groupBusy: schedulerControlBusy,
-                    label: task.enabled ? '停用' : '启用',
-                  });
-                  const runNowButton = schedulerActionButtonView({
-                    active: runningTaskName === task.name,
-                    baseClassName: 'secondary-button compact-button',
-                    busyLabel: '执行中...',
-                    groupBusy: schedulerControlBusy,
-                    label: '立即执行',
-                  });
-
-                  return (
-                    <tr key={task.name}>
-                      <td>
-                        <strong>{taskLabel(task.name)}</strong>
-                        <div className="muted-cell">{taskPurpose(task.name)}</div>
-                      </td>
-                      <td>
-                        <strong>{formatCronForOperator(task.cron)}</strong>
-                        {task.cron && <div className="muted-cell">Cron：{task.cron}</div>}
-                      </td>
-                      <td><StatusPill tone={task.enabled ? 'ready' : 'pending'}>{task.enabled ? '已启用' : '已停用'}</StatusPill></td>
-                      <td>{formatDate(task.nextRun)}</td>
-                      <td>{formatDate(task.lastRun)}</td>
-                      <td>{task.lastResult || '-'}</td>
-                      <td>
-                        <div className="table-action-row">
-                          <button aria-busy={toggleButton.ariaBusy} className={toggleButton.className} disabled={toggleButton.disabled} onClick={() => toggleTask(task)} type="button">
-                            {toggleButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-                            <span>{toggleButton.label}</span>
-                          </button>
-                          <button aria-busy={runNowButton.ariaBusy} className={runNowButton.className} disabled={runNowButton.disabled} onClick={() => requestRunNow(task)} type="button">
-                            {runNowButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-                            <span>{runNowButton.label}</span>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {!tasks.length && (
-                  <tr>
-                    <td colSpan={7}>{loading ? '正在读取任务...' : '当前没有可显示的定时任务。'}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+      <WorkbenchPanel
+        className="mission-control-automation-plan"
+        description="七个状态构成同一 fingerprint 生命周期；同一店铺、业务日与采集口径的失败终态不会回到等待。"
+        status={<span>{stateLabel(projection?.state)} · 7 状态</span>}
+        title="本业务日计划"
+      >
+        {loading ? (
+          <WorkspaceState
+            description="正在读取当前店铺计划、配置版本与幂等记录。"
+            kind="loading"
+            title="正在核对计划"
+          />
+        ) : !projection ? (
+          <WorkspaceState
+            action={{ label: '重新读取', onClick: () => { void loadCurrentStore(); } }}
+            description={error ?? '当前店铺没有可验证的计划投影。'}
+            kind="error"
+            title="计划投影不可用"
+          />
+        ) : (
+          <div className="mission-control-automation-state-grid" role="list" aria-label="店铺自动化七状态计划">
+            {STORE_AUTOMATION_STATES.map((item, index) => {
+              const active = item.state === projection.state;
+              return (
+                <article
+                  aria-current={active ? 'step' : undefined}
+                  className="mission-control-automation-state"
+                  data-active={active || undefined}
+                  data-state={item.state}
+                  key={item.state}
+                  role="listitem"
+                >
+                  <span>{index + 1}</span>
+                  <div>
+                    <strong>{item.label}</strong>
+                    <small>{item.detail}</small>
+                  </div>
+                  {active && <CheckCircle aria-hidden="true" size={18} weight="fill" />}
+                </article>
+              );
+            })}
           </div>
-          {message && <p className={message.includes('失败') ? 'blocked-line' : 'muted-line'}>{message}</p>}
-        </Panel>
-
-        <ProgressiveDetails title="调度状态、安全边界和任务职责">
-        <div className="kpi-row scheduler-prototype-status-grid" aria-label="自动任务摘要">
-          <KpiCard
-            label="启用任务"
-            value={`${enabledTaskCount}/${tasks.length}`}
-            detail={enabledTaskCount ? '按本地计划排队' : '全部停用'}
-            tone={enabledTaskCount ? 'ready' : 'pending'}
-          />
-          <KpiCard
-            label="下次运行"
-            value={nextTask ? taskLabel(nextTask.name) : '暂无'}
-            detail={nextTask?.nextRun || '等待调度'}
-            tone={nextTask ? 'ready' : 'pending'}
-          />
-          <KpiCard
-            label="最近执行"
-            value={lastTask ? taskLabel(lastTask.name) : '尚无'}
-            detail={lastTask?.lastRun || '未记录'}
-            tone={lastTask ? 'ready' : 'pending'}
-          />
-          <KpiCard label="安全边界" value="不写广告" detail="只创建本地待审建议" tone="warning" />
-        </div>
-
-        <Panel title="本地调度控制器" tone={enabledTaskCount ? 'success' : 'warning'}>
-          <StateLightGrid
-            items={[
-              {
-                label: '启用任务',
-                value: `${enabledTaskCount}/${tasks.length}`,
-                detail: enabledTaskCount ? '按本地计划排队' : '全部停用',
-                tone: enabledTaskCount ? 'ready' : 'warning',
-              },
-              {
-                label: '下次唤起',
-                value: nextTask ? formatDate(nextTask.nextRun) : '-',
-                detail: nextTask ? taskLabel(nextTask.name) : '暂无可见计划',
-                tone: nextTask ? 'ready' : 'pending',
-              },
-              {
-                label: '最近执行',
-                value: lastTask ? taskLabel(lastTask.name) : '-',
-                detail: lastTask ? formatDate(lastTask.lastRun) : '尚无执行记录',
-                tone: lastTask?.lastResult?.includes('失败') ? 'blocked' : lastTask ? 'ready' : 'pending',
-              },
-              {
-                label: '当前动作',
-                value: pendingRunTask ? taskLabel(pendingRunTask.name) : '等待操作',
-                detail: pendingRunTask ? '需要确认后才会触发' : '表格中控制开关或立即执行',
-                tone: pendingRunTask ? 'warning' : 'pending',
-              },
-            ]}
-          />
-          <div className="action-row">
-            <button aria-busy={refreshControlButton.ariaBusy} className={refreshControlButton.className} disabled={refreshControlButton.disabled} onClick={() => loadTasks()} type="button">
-              {refreshControlButton.showSpinner && <span className="button-spinner" aria-hidden="true" />}
-              <span>{refreshControlButton.label}</span>
-            </button>
+        )}
+        {projection && (
+          <div
+            aria-label="当前采集窗口"
+            className="mission-control-automation-window"
+            data-business-date={projection.businessDate}
+            data-currency={storeContext.currency}
+            data-marketplace={storeContext.marketplace}
+            data-schedule-enabled={String(projection.enabled)}
+            data-schedule-state={projection.state}
+            data-store-id={projection.storeId}
+            role="list"
+          >
+            <AutomationFact
+              icon={<CalendarBlank aria-hidden="true" size={18} />}
+              label="采集日期"
+              value={projection.dateStart && projection.dateEnd
+                ? `${projection.dateStart} → ${projection.dateEnd}`
+                : '等待活动配置'}
+            />
+            <AutomationFact
+              icon={<Clock aria-hidden="true" size={18} />}
+              label="每日计划"
+              value={projection.scheduleLocalTime
+                ? `${projection.scheduleLocalTime} · ${storeContext.businessTimezone}`
+                : '当前未启用'}
+            />
+            <AutomationFact
+              icon={<Database aria-hidden="true" size={18} />}
+              label="最近认领"
+              value={projection.lastAttempt
+                ? `${projection.lastAttempt.trigger === 'manual' ? '人工触发' : '计划触发'} · ${projection.lastAttempt.state}`
+                : '尚无本业务日认领'}
+            />
+            <AutomationFact
+              icon={<ShieldCheck aria-hidden="true" size={18} />}
+              label="失败策略"
+              value={projection.state === 'failed' ? '同采集口径关闭 · 不重试' : 'UNKNOWN / 失败均人工核对'}
+            />
           </div>
-        </Panel>
+        )}
+      </WorkbenchPanel>
 
-        <Panel title="自动化安全边界" tone="warning">
-          <div className="context-summary-grid">
-            <div>
-              <span>允许自动做</span>
-              <strong>下载、导入、生成本地建议</strong>
-              <p>任务只能处理真实报表、量化指标、本地报告和待处理建议池；需复核项不会自动批准。</p>
+      <WorkbenchPanel
+        className="mission-control-retention-preview"
+        description="只读扫描当前店铺 Store Capsule。页面只接收汇总，不显示候选文件名，也不提供任何变更入口。"
+        status={<span>DRY-RUN · deletionSupported=false</span>}
+        title="证据保留预览"
+        toolbar={(
+          <button
+            aria-busy={retentionLoading || undefined}
+            className="workspace-button workspace-button--secondary"
+            data-capability-id={STORE_AUTOMATION_CAPABILITY_IDS.retentionPreview}
+            disabled={
+              retentionLoading
+              || running
+              || needsConfig
+              || !access.retentionPreview.allowed
+              || !api
+            }
+            onClick={() => {
+              const sequence = ++requestSequence.current;
+              void loadRetention(storeContext, sequence, authorityKey);
+            }}
+            title={!access.retentionPreview.allowed
+              ? access.retentionPreview.capability?.detail ?? '证据保留预览能力未授权。'
+              : undefined}
+            type="button"
+          >
+            <ArrowsClockwise aria-hidden="true" size={16} />
+            {retentionLoading ? '扫描中…' : '刷新只读预览'}
+          </button>
+        )}
+      >
+        {needsConfig ? (
+          <WorkspaceState
+            action={{ label: '前往 AI 与本地设置', onClick: () => navigate('settings') }}
+            description={projection?.state === 'archived'
+              ? '恢复当前店铺配置后，才能按其证据保留天数生成只读预览。'
+              : '创建当前店铺配置并设置证据保留天数后，再生成只读预览。'}
+            kind="disabled"
+            title={projection?.state === 'archived' ? '运行配置已归档' : '尚无运行配置'}
+          />
+        ) : !access.retentionPreview.allowed ? (
+          <WorkspaceState
+            description={access.retentionPreview.capability?.detail ?? 'Main 未授权当前店铺证据保留预览。'}
+            kind="blocked"
+            title="只读预览未获授权"
+          />
+        ) : retentionLoading && !retention ? (
+          <WorkspaceState
+            description="正在按当前店铺证据保留期扫描 screenshots 与 traces；不会修改文件。"
+            kind="loading"
+            title="正在生成 dry-run"
+          />
+        ) : retentionError ? (
+          <WorkspaceState
+            action={{
+              label: '重新扫描',
+              onClick: () => {
+                const sequence = ++requestSequence.current;
+                void loadRetention(storeContext, sequence, authorityKey);
+              },
+            }}
+            description={retentionError}
+            kind="error"
+            title="证据保留预览失败"
+          />
+        ) : retention ? (
+          <>
+            <div
+              aria-label="证据保留 dry-run 摘要"
+              className="mission-control-retention-metrics"
+              data-blocker-count={retention.blockers.length}
+              data-browser-profile-id={retention.profileId}
+              data-candidate-count={retention.candidateCount}
+              data-currency={retention.currency}
+              data-marketplace={retention.marketplace}
+              data-store-id={retention.storeId}
+              role="list"
+            >
+              <RetentionMetric icon={<Archive aria-hidden="true" size={18} />} label="保留期" value={`${retention.retentionDays} 天`} />
+              <RetentionMetric icon={<CalendarBlank aria-hidden="true" size={18} />} label="截止时间" value={new Date(retention.cutoffAt).toLocaleString()} />
+              <RetentionMetric icon={<Database aria-hidden="true" size={18} />} label="候选汇总" value={`${retention.candidateCount} 项 · ${formatBytes(retention.candidateBytes)}`} />
+              <RetentionMetric icon={<ShieldCheck aria-hidden="true" size={18} />} label="受保护" value={`${retention.protectedCount} 项 · 永不进入候选`} />
             </div>
-            <div>
-              <span>禁止自动做</span>
-              <strong>批准或写入广告账户</strong>
-              <p>定时任务不会自动改 bid、否词、暂停投放或批量操作 Amazon Ads。</p>
-            </div>
-            <div>
-              <span>真实执行要求</span>
-              <strong>审批 + 截图 + 回读</strong>
-              <p>任何广告动作仍需绑定目标、人工审批、执行前/执行后和回读证据。</p>
-            </div>
-            <div>
-              <span>失败处理</span>
-              <strong>看最近结果</strong>
-              <p>失败不会静默通过；先处理登录、真实报表或导入指标缺口。</p>
-            </div>
-          </div>
-        </Panel>
-
-        <Panel title="任务职责">
-          <div className="context-summary-grid">
-            {tasks.map((task) => (
-              <div key={task.name}>
-                <span>{task.enabled ? '已启用' : '已停用'}</span>
-                <strong>{taskLabel(task.name)}</strong>
-                <p>{taskPurpose(task.name)}</p>
-              </div>
-            ))}
-            {!tasks.length && (
+            <div
+              className="mission-control-retention-safety"
+              data-scan-safe={retention.scanSafe}
+              role={retention.blockers.length ? 'alert' : 'status'}
+            >
+              {retention.blockers.length ? <WarningCircle aria-hidden="true" size={20} /> : <ShieldCheck aria-hidden="true" size={20} />}
               <div>
-                <span>暂无任务</span>
-                <strong>{loading ? '正在读取' : '未配置'}</strong>
-                <p>{loading ? '正在读取本地计划任务。' : '当前没有可显示的定时任务。'}</p>
+                <strong>{retention.blockers.length ? `${retention.blockers.length} 个安全阻塞项` : '只读扫描通过安全检查'}</strong>
+                <p>
+                  {retention.blockers.length
+                    ? '存在阻塞时 manifest 仅用于排查；当前版本始终不支持删除或应用。'
+                    : '候选仅作容量规划；当前版本始终不支持删除或应用。'}
+                </p>
               </div>
+            </div>
+            {retention.blockers.length > 0 && (
+              <ul className="mission-control-retention-blockers" aria-label="证据保留阻塞项">
+                {retention.blockers.map((blocker, index) => (
+                  <li key={`${blocker.code}-${index}`}>
+                    <code>{blocker.code}</code>
+                    <span>{blocker.detail}</span>
+                  </li>
+                ))}
+              </ul>
             )}
-          </div>
-        </Panel>
-        </ProgressiveDetails>
-      </div>
+          </>
+        ) : (
+          <WorkspaceState
+            description="等待当前店铺计划读取完成后生成只读汇总。"
+            kind="empty"
+            title="尚无证据保留预览"
+          />
+        )}
+      </WorkbenchPanel>
+
+      {confirmRun && projection && (
+        <div className="mission-control-dialog-backdrop">
+          <section
+            aria-describedby="store-automation-confirm-description"
+            aria-labelledby="store-automation-confirm-title"
+            aria-modal="true"
+            className="mission-control-dialog mission-control-dialog--confirm"
+            onKeyDown={handleConfirmDialogKeyDown}
+            ref={confirmDialogRef}
+            role="alertdialog"
+          >
+            <header>
+              <div>
+                <span>RUN NOW · STORE CONTEXT ONLY</span>
+                <h2 id="store-automation-confirm-title">立即触发当前店铺采集？</h2>
+                <p id="store-automation-confirm-description">
+                  店铺 {String(storeContext.storeId)} · {storeContext.businessDate} ·
+                  {' '}{projection.dateStart} 至 {projection.dateEnd}。Main 会再次核对可见领星会话与采集口径。
+                </p>
+              </div>
+              <button
+                aria-label="关闭立即采集确认"
+                className="mission-control-dialog__close"
+                disabled={running}
+                onClick={() => setConfirmRun(false)}
+                type="button"
+              >
+                <X aria-hidden="true" size={18} />
+              </button>
+            </header>
+            <div className="mission-control-automation-confirm-boundary">
+              <WarningCircle aria-hidden="true" size={20} />
+              <p>同一店铺、业务日与采集口径一旦形成终态就不重试；调整触发时间不会绕过幂等，只有回看窗口变化才会形成新 fingerprint。</p>
+            </div>
+            <footer>
+              <button
+                className="workspace-button workspace-button--secondary"
+                data-confirm-initial
+                disabled={running}
+                onClick={() => setConfirmRun(false)}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                aria-busy={running || undefined}
+                className="workspace-button workspace-button--primary"
+                data-capability-id={STORE_AUTOMATION_CAPABILITY_IDS.runNow}
+                disabled={running || !runPolicy.allowed || !access.runNow.allowed}
+                onClick={() => { void runNow(); }}
+                type="button"
+              >
+                <Play aria-hidden="true" size={16} weight="fill" />
+                {running ? '正在触发…' : '确认立即采集'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+    </PageFrame>
+  );
+}
+
+function AutomationFact({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="mission-control-automation-fact" role="listitem">
+      <span>{icon}</span>
+      <div><small>{label}</small><strong>{value}</strong></div>
+    </div>
+  );
+}
+
+function RetentionMetric({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="mission-control-retention-metric" role="listitem">
+      <span>{icon}</span>
+      <div><small>{label}</small><strong>{value}</strong></div>
     </div>
   );
 }

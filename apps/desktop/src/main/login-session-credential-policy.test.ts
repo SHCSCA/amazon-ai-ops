@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { decideLoginSessionCredentialPolicy } from './login-session-credential-policy';
+import {
+  decideLoginSessionCredentialPolicy,
+  isPackageUiSavedSessionContinuationAllowed,
+} from './login-session-credential-policy';
 
 describe('login session credential policy', () => {
   it('preserves the secure credential and distrusts the requested username when a typed login reuses ERP state', () => {
@@ -78,5 +81,63 @@ describe('login session credential policy', () => {
       sessionIdentityVerified: true,
       trustRequestedUsername: true,
     });
+  });
+
+  it('allows one unverified saved-session continuation only inside the package UI read-only runtime', () => {
+    const policy = decideLoginSessionCredentialPolicy({
+      credentialSource: 'saved',
+      erpSessionReused: true,
+      rememberPassword: true,
+    });
+    expect(isPackageUiSavedSessionContinuationAllowed({
+      credentialSource: 'saved',
+      erpSessionReused: true,
+      packageUiReadOnlyRuntime: true,
+      policy,
+    })).toBe(true);
+    expect(isPackageUiSavedSessionContinuationAllowed({
+      credentialSource: 'saved',
+      erpSessionReused: true,
+      packageUiReadOnlyRuntime: false,
+      policy,
+    })).toBe(false);
+  });
+
+  it('rejects typed, non-reused, verified, or non-Main-managed continuations even in evidence mode', () => {
+    const unverifiedSavedPolicy = decideLoginSessionCredentialPolicy({
+      credentialSource: 'saved',
+      erpSessionReused: true,
+      rememberPassword: true,
+    });
+    expect(isPackageUiSavedSessionContinuationAllowed({
+      credentialSource: 'typed',
+      erpSessionReused: true,
+      packageUiReadOnlyRuntime: true,
+      policy: unverifiedSavedPolicy,
+    })).toBe(false);
+    expect(isPackageUiSavedSessionContinuationAllowed({
+      credentialSource: 'saved',
+      erpSessionReused: false,
+      packageUiReadOnlyRuntime: true,
+      policy: unverifiedSavedPolicy,
+    })).toBe(false);
+    expect(isPackageUiSavedSessionContinuationAllowed({
+      credentialSource: 'saved',
+      erpSessionReused: true,
+      packageUiReadOnlyRuntime: true,
+      policy: {
+        ...unverifiedSavedPolicy,
+        credentialPersistence: 'saved',
+      },
+    })).toBe(false);
+    expect(isPackageUiSavedSessionContinuationAllowed({
+      credentialSource: 'saved',
+      erpSessionReused: true,
+      packageUiReadOnlyRuntime: true,
+      policy: {
+        ...unverifiedSavedPolicy,
+        sessionIdentityVerified: true,
+      },
+    })).toBe(false);
   });
 });

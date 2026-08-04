@@ -23,7 +23,7 @@ const PAGE_FILES = [
 const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   {
     pageFile: 'App.tsx',
-    markers: ['LoginPage', '登录并进入 Ads', 'ERP 广告入口'],
+    markers: ['LoginPage', '登录并进入 Ads', '登录与广告授权工作台', 'Amazon Ads Profile ID'],
   },
   {
     pageFile: 'pages/dashboard-page.tsx',
@@ -35,7 +35,7 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/operation-scope-page.tsx',
-    markers: ['operation-scope-confirm-panel', '范围字段确认', 'operation-scope-field-card', '后续读取与影响页面', 'openScopeEditor'],
+    markers: ['operation-scope-confirm-panel', '范围字段确认', 'operation-scope-field-card', '后续读取与影响页面', 'operation-scope-editor-panel', 'saveOperationScope(storeContext'],
   },
   {
     pageFile: 'pages/data-collection-page.tsx',
@@ -79,11 +79,11 @@ const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   },
   {
     pageFile: 'pages/scheduler-page.tsx',
-    markers: ['scheduler-prototype-status-grid', '本地调度控制器', '自动化安全边界', '任务列表'],
+    markers: ['PageFrame', 'TaskBanner', 'SummaryStrip', '当前店铺自动化', '本业务日计划', '证据保留预览'],
   },
   {
     pageFile: 'pages/settings-page.tsx',
-    markers: ['settings-ai-workbench', 'settings-ai-contract-copy-folded', 'AI 服务连接', '规则阈值与动作边界', 'FormTable'],
+    markers: ['settings-ai-workbench', 'settings-ai-contract-copy-folded', 'AI 服务连接', '系统回退规则（兼容）', 'FormTable'],
   },
   {
     pageFile: 'pages/delivery-page.tsx',
@@ -112,6 +112,7 @@ describe('prototype parity design system integration', () => {
         'pages/listing-optimization-page.tsx': ['listing-optimization-page-stack', 'listing-editor-panel', 'listing-draft-panel'],
         'pages/approval-page.tsx': ['approval-workbench-head', 'approval-table'],
         'pages/readback-page.tsx': ['PageFrame', 'TaskBanner', 'readback-step-tabs', 'WorkbenchPanel'],
+        'pages/scheduler-page.tsx': ['PageFrame', 'TaskBanner', 'SummaryStrip', 'WorkbenchPanel', 'mission-control-automation-state-grid', 'mission-control-retention-preview'],
         'pages/settings-page.tsx': ['settings-ai-workbench', 'settings-ai-contract-copy-folded'],
         'pages/delivery-page.tsx': ['delivery-summary-workbench', 'delivery-summary-hero'],
       };

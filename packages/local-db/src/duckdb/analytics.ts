@@ -1,5 +1,5 @@
-import { Database } from 'duckdb';
 import * as path from 'path';
+import { Database, type DuckDbDatabase } from './runtime';
 
 function getUserDataPath(): string {
   return process.env.AMAZON_AI_OPS_USER_DATA
@@ -8,9 +8,9 @@ function getUserDataPath(): string {
       : path.join(process.env.HOME || '', 'AmazonAIOps'));
 }
 
-let _db: Database | null = null;
+let _db: DuckDbDatabase | null = null;
 
-export function initDuckDb(dbPath?: string): Database {
+export function initDuckDb(dbPath?: string): DuckDbDatabase {
   const finalPath = dbPath || path.join(getUserDataPath(), 'app-data', 'analytics.duckdb');
 
   _db = new Database(finalPath);
@@ -82,7 +82,7 @@ export function initDuckDb(dbPath?: string): Database {
   return _db;
 }
 
-export function getDuckDb(): Database {
+export function getDuckDb(): DuckDbDatabase {
   if (!_db) {
     throw new Error('DuckDB not initialized. Call initDuckDb() first.');
   }

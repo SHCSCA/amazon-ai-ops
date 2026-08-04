@@ -1,4 +1,4 @@
-import type { ActionRecommendation } from '@amazon-ai-ops/shared-types';
+import type { ActionRecommendation, StoreId } from '@amazon-ai-ops/shared-types';
 
 export interface DailyReportRecommendationSummaryInput {
   total: number;
@@ -13,8 +13,12 @@ export interface DailyReportRecommendationSummary {
 }
 
 export interface DailyReportRecommendationCountReader {
-  countByDate(date: string): number;
-  countByDateAndStatus(date: string, status: ActionRecommendation['status']): number;
+  countByDateForStore(storeId: StoreId, date: string): number;
+  countByDateAndStatusForStore(
+    storeId: StoreId,
+    date: string,
+    status: ActionRecommendation['status'],
+  ): number;
 }
 
 export function buildDailyReportRecommendationSummary(
@@ -30,16 +34,17 @@ export function buildDailyReportRecommendationSummary(
 
 export function readDailyReportRecommendationSummary(
   reader: DailyReportRecommendationCountReader | null | undefined,
+  storeId: StoreId,
   date: string,
 ): DailyReportRecommendationSummary {
   if (!reader) {
     return buildDailyReportRecommendationSummary({ total: 0, statusCounts: {} });
   }
   return buildDailyReportRecommendationSummary({
-    total: reader.countByDate(date),
+    total: reader.countByDateForStore(storeId, date),
     statusCounts: {
-      pending: reader.countByDateAndStatus(date, 'pending'),
-      executed: reader.countByDateAndStatus(date, 'executed'),
+      pending: reader.countByDateAndStatusForStore(storeId, date, 'pending'),
+      executed: reader.countByDateAndStatusForStore(storeId, date, 'executed'),
     },
   });
 }

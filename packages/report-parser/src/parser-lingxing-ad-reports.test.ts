@@ -5,9 +5,16 @@ import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import { ReportParser } from './parser';
 
-function parseRows(rows: Array<Record<string, unknown>>) {
+function parseRows(
+  rows: Array<Record<string, unknown>>,
+  options: { reportType?: string } = {},
+) {
   const worksheet = XLSX.utils.json_to_sheet(rows);
-  return (new ReportParser() as any).parseSheet(worksheet, 'AAO_20260501_20260525_search_term.xlsx', {});
+  return (new ReportParser() as any).parseSheet(
+    worksheet,
+    'AAO_20260501_20260525_search_term.xlsx',
+    options,
+  );
 }
 
 describe('ReportParser Lingxing ad report rows', () => {
@@ -103,4 +110,117 @@ describe('ReportParser Lingxing ad report rows', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('distinguishes a schema-valid zero-row report from an empty or unrelated file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-zero-row-report-'));
+    const validPath = path.join(dir, 'keyword-empty.csv');
+    const invalidPath = path.join(dir, 'unrelated-empty.csv');
+    fs.writeFileSync(
+      validPath,
+      '日期,广告活动,广告组,关键词,展现量,点击量,花费-本币,广告订单,广告销售额-本币\n',
+      'utf8',
+    );
+    fs.writeFileSync(invalidPath, '备注,负责人\n', 'utf8');
+
+    try {
+      const valid = new ReportParser().autoParse(validPath, { reportType: 'keyword' });
+      const invalid = new ReportParser().autoParse(invalidPath, { reportType: 'keyword' });
+
+      expect(valid).toMatchObject({
+        success: true,
+        schemaValid: true,
+        totalRows: 0,
+        data: [],
+      });
+      expect(valid.headers).toContain('日期');
+      expect(invalid).toMatchObject({
+        success: false,
+        schemaValid: false,
+        totalRows: 0,
+        data: [],
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['abc', '2026-05-25', 'cost'],
+    ['12USD', '2026-05-25', 'cost'],
+    ['12.3.4', '2026-05-25', 'cost'],
+    ['1$2', '2026-05-25', 'cost'],
+    ['1,2,3', '2026-05-25', 'cost'],
+    ['12 34', '2026-05-25', 'cost'],
+    ['3.12', '2026-13-40', 'date'],
+  ])('rejects invalid metric/date values instead of coercing them to zero: %s / %s', (
+    cost,
+    date,
+    expectedField,
+  ) => {
+    const result = parseRows([{
+      '店铺名称': 'FT-US',
+      '广告活动': 'Campaign A',
+      '广告组': 'Ad Group A',
+      '关键词': 'smart lock',
+      '日期': date,
+      '曝光量': '20',
+      '点击': '2',
+      '花费-本币': cost,
+      '广告销售额-本币': '49.99',
+      '广告订单': '1',
+    }]);
+
+    expect(result.success).toBe(false);
+    expect(result.validation.valid).toBe(false);
+    expect(result.validation.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: expectedField }),
+    ]));
+    expect(result.data).toHaveLength(0);
+  });
+
+  it('accepts a boundary currency marker and correctly grouped thousands', () => {
+    const result = parseRows([{
+      '店铺名称': 'FT-US',
+      '广告活动': 'Campaign A',
+      '广告组': 'Ad Group A',
+      '关键词': 'smart lock',
+      '日期': '2026-05-25',
+      '曝光量': '1,234',
+      '点击': '2',
+      '花费-本币': '$1,234.50',
+      '广告销售额-本币': '$2,000.00',
+      '广告订单': '1',
+    }], { reportType: 'keyword' });
+
+    expect(result.success).toBe(true);
+    expect(result.data[0]).toMatchObject({
+      impressions: 1234,
+      cost: 1234.5,
+      sales: 2000,
+      reportType: 'keyword',
+    });
+  });
+
+  it.each([false, true])(
+    'rejects a filename-declared keyword report whose %s-row columns identify search terms',
+    (withDataRow) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-wrong-report-type-'));
+      const filePath = path.join(dir, 'keyword_2026-05-01_2026-05-25.csv');
+      const lines = [
+        '日期,广告活动,广告组,用户搜索词,展现量,点击量,花费,订单,销售额',
+      ];
+      if (withDataRow) {
+        lines.push('2026-05-25,Campaign A,Ad Group A,smart lock,20,2,3.12,1,49.99');
+      }
+      fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+
+      try {
+        const result = new ReportParser().autoParse(filePath, { reportType: 'keyword' });
+        expect(result).toMatchObject({ success: false, schemaValid: false });
+        expect(result.data).toHaveLength(0);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

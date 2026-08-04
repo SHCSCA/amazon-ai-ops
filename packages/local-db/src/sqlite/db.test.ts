@@ -2,8 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
-import { initSqlite } from './db';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { initGuardedExistingSqlite, initSqlite } from './db';
 import { ProductRepository } from './repositories/product-repo';
 
 const tempDirs: string[] = [];
@@ -91,7 +91,7 @@ describe('initSqlite v1.5 schema', () => {
       const productId = productRepo.insert({
         marketplace_code: 'US',
         store_name: 'FT-US-US',
-        asin: 'B001',
+        asin: 'B0DBTEST01',
         parent_asin: '',
         msku: 'MSKU-1',
         sku: 'SKU-1',
@@ -114,7 +114,7 @@ describe('initSqlite v1.5 schema', () => {
 
       expect(products).toEqual([
         expect.objectContaining({
-          asin: 'B001',
+          asin: 'B0DBTEST01',
           cost: expect.objectContaining({
             currentPrice: 39.99,
             purchaseCost: 12.5,
@@ -131,13 +131,13 @@ describe('initSqlite v1.5 schema', () => {
     try {
       const productRepo = new ProductRepository(db);
       const productId = productRepo.insert({
-        marketplace_code: 'US', store_name: 'FT-US-US', asin: 'B001', parent_asin: '', msku: '', sku: '',
+        marketplace_code: 'US', store_name: 'FT-US-US', asin: 'B0DBTEST01', parent_asin: '', msku: '', sku: '',
         title: 'Atomic batch product', product_stage: 'scaling', status: 'active',
       });
       productRepo.updateCost(productId, { productId, targetAcos: 0.25 });
 
       expect(() => productRepo.updateTargetAcosMany([
-        { asin: 'B001', storeName: 'FT-US-US', marketplaceCode: 'US', targetAcos: 0.35 },
+        { asin: 'B0DBTEST01', storeName: 'FT-US-US', marketplaceCode: 'US', targetAcos: 0.35 },
         { asin: 'MISSING', storeName: 'FT-US-US', marketplaceCode: 'US', targetAcos: 0.35 },
       ])).toThrow('MISSING');
       expect(productRepo.getCost(productId)?.targetAcos).toBe(0.25);
@@ -287,7 +287,7 @@ describe('initSqlite v1.5 schema', () => {
     }
   });
 
-  it('deduplicates legacy ad_daily_metrics rows and enforces unique daily report identity', () => {
+  it('preserves conflicting legacy ad metrics in quarantine and blocks silent reauthorization', () => {
     const dbPath = tempDbPath();
     const legacyDb = new Database(dbPath);
     try {
@@ -339,24 +339,49 @@ describe('initSqlite v1.5 schema', () => {
     const upgradedDb = initSqlite(dbPath);
     try {
       const row = upgradedDb.prepare(`
-        SELECT COUNT(*) AS rowCount, SUM(cost) AS totalCost, SUM(clicks) AS totalClicks
+        SELECT COUNT(*) AS rowCount,
+               SUM(cost) AS totalCost,
+               SUM(clicks) AS totalClicks,
+               SUM(store_authority_quarantined) AS quarantinedCount
         FROM ad_daily_metrics
         WHERE batch_id = 'batch_1'
           AND source_file = 'C:/reports/user-search-term.xlsx'
-      `).get() as { rowCount: number; totalCost: number; totalClicks: number };
-      expect(row).toEqual({ rowCount: 1, totalCost: 42.25, totalClicks: 33 });
+      `).get() as {
+        rowCount: number;
+        totalCost: number;
+        totalClicks: number;
+        quarantinedCount: number;
+      };
+      expect(row).toEqual({
+        rowCount: 2,
+        totalCost: 83.75,
+        totalClicks: 65,
+        quarantinedCount: 2,
+      });
+      expect(upgradedDb.prepare(`
+        SELECT reason, COUNT(*) AS count
+        FROM store_migration_quarantine
+        WHERE source_table = 'ad_daily_metrics' AND status = 'pending'
+        GROUP BY reason
+      `).all()).toEqual([{ reason: 'identity_content_conflict', count: 2 }]);
+      const { storeId } = upgradedDb.prepare(`
+        SELECT store_id AS storeId
+        FROM ad_daily_metrics
+        WHERE batch_id = 'batch_1'
+        LIMIT 1
+      `).get() as { storeId: string };
 
       expect(() => upgradedDb.prepare(`
         INSERT INTO ad_daily_metrics (
-          batch_id, report_type, date, store_name, marketplace_code, asin, msku,
+          store_id, batch_id, report_type, date, store_name, marketplace_code, asin, msku,
           campaign_name, ad_group_name, targeting, search_term, match_type,
           impressions, clicks, cost, orders, sales, acos, cpc, cvr, source_file
         ) VALUES (
-          'batch_1', 'user_search_term', '2026-06-12', 'FT-US-US', 'US', 'B001', '',
+          ?, 'batch_1', 'user_search_term', '2026-06-12', 'FT-US-US', 'US', 'B001', '',
           'Campaign', 'Ad group', '', 'smart lock outdoor', 'exact',
           1000, 34, 43.00, 0, 0, 0, 1.26, 0, 'C:/reports/user-search-term.xlsx'
         )
-      `).run()).toThrow(/UNIQUE|constraint/i);
+      `).run(storeId)).toThrow(/pending ad metric identity conflict/i);
     } finally {
       upgradedDb.close();
     }
@@ -399,11 +424,11 @@ describe('initSqlite v1.5 schema', () => {
       `);
       legacyDb.prepare(`
         INSERT INTO products (marketplace_code, store_name, asin, parent_asin, msku, sku, title, product_stage, status)
-        VALUES ('US', 'FT-US-US', 'B001', 'OLD-PARENT', 'OLD-MSKU', 'OLD-SKU', 'Old product', 'launch', 'active')
+        VALUES ('US', 'FT-US-US', 'B0DBTEST01', 'B0PARENT01', 'OLD-MSKU', 'OLD-SKU', 'Old product', 'launch', 'active')
       `).run();
       legacyDb.prepare(`
         INSERT INTO products (marketplace_code, store_name, asin, parent_asin, msku, sku, title, product_stage, status)
-        VALUES ('US', 'FT-US-US', 'B001', 'KEEP-PARENT', 'KEEP-MSKU', 'KEEP-SKU', 'Keep product', 'scaling', 'active')
+        VALUES ('US', 'FT-US-US', 'B0DBTEST01', 'B0PARENT02', 'KEEP-MSKU', 'KEEP-SKU', 'Keep product', 'scaling', 'active')
       `).run();
       legacyDb.prepare(`
         INSERT INTO product_costs (product_id, purchase_cost, target_acos)
@@ -423,31 +448,31 @@ describe('initSqlite v1.5 schema', () => {
       const products = upgradedDb.prepare(`
         SELECT asin, parent_asin AS parentAsin, title, product_stage AS productStage
         FROM products
-        WHERE asin = 'B001' AND store_name = 'FT-US-US' AND marketplace_code = 'US'
+        WHERE asin = 'B0DBTEST01' AND store_name = 'FT-US-US' AND marketplace_code = 'US'
       `).all() as Array<{ asin: string; parentAsin: string; title: string; productStage: string }>;
 
       expect(products).toEqual([
         {
-          asin: 'B001',
-          parentAsin: 'KEEP-PARENT',
+          asin: 'B0DBTEST01',
+          parentAsin: 'B0PARENT02',
           title: 'Keep product',
           productStage: 'scaling',
         },
       ]);
 
       productRepo.upsert({
-        asin: 'B001',
+        asin: 'B0DBTEST01',
         store_name: 'FT-US-US',
         marketplace_code: 'US',
-        parent_asin: 'NEW-PARENT',
+        parent_asin: 'B0PARENT03',
         msku: 'NEW-MSKU',
         sku: 'NEW-SKU',
         title: 'Updated product',
         product_stage: 'harvest',
         status: 'paused',
       });
-      const updated = productRepo.findByAsin('B001', 'FT-US-US', 'US');
-      expect(updated?.parent_asin).toBe('NEW-PARENT');
+      const updated = productRepo.findByAsin('B0DBTEST01', 'FT-US-US', 'US');
+      expect(updated?.parent_asin).toBe('B0PARENT03');
       expect(updated?.product_stage).toBe('harvest');
       expect(updated?.status).toBe('paused');
 
@@ -476,7 +501,7 @@ describe('initSqlite v1.5 schema', () => {
       const withCosts = productRepo.findAllWithCosts('FT-US-US');
       expect(withCosts).toEqual([
         expect.objectContaining({
-          asin: 'B001',
+          asin: 'B0DBTEST01',
           title: 'Updated product',
           cost: expect.objectContaining({
             purchaseCost: 13.5,
@@ -486,6 +511,217 @@ describe('initSqlite v1.5 schema', () => {
       ]);
     } finally {
       upgradedDb.close();
+    }
+  });
+});
+
+describe('initGuardedExistingSqlite', () => {
+  it('requires an existing database file and never creates a missing authority DB', () => {
+    const dbPath = tempDbPath();
+    const guard = vi.fn();
+
+    expect(() => initGuardedExistingSqlite(dbPath, guard)).toThrow();
+    expect(fs.existsSync(dbPath)).toBe(false);
+    expect(guard).not.toHaveBeenCalled();
+  });
+
+  it('rejects an asynchronous guard before any migration can run', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    legacyDb.close();
+    let unexpected: ReturnType<typeof initGuardedExistingSqlite> | null = null;
+    let failure: unknown = null;
+
+    try {
+      unexpected = initGuardedExistingSqlite(dbPath, async () => 'not-synchronous');
+    } catch (error) {
+      failure = error;
+    } finally {
+      unexpected?.database.close();
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/synchronous/i);
+    const inspected = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      expect(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'schema_migrations'
+      `).get()).toEqual({ count: 0 });
+    } finally {
+      inspected.close();
+    }
+  });
+
+  it('runs the guard against the existing v0 database before migrations', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec(`
+        CREATE TABLE legacy_probe (
+          id INTEGER PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        INSERT INTO legacy_probe (id, value) VALUES (1, 'before-migration');
+      `);
+    } finally {
+      legacyDb.close();
+    }
+
+    const observed = initGuardedExistingSqlite(dbPath, ({ database, resolvedPath }) => {
+      const migrationsTable = database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'schema_migrations'
+      `).get() as { count: number };
+      const probe = database.prepare(`
+        SELECT value FROM legacy_probe WHERE id = 1
+      `).get() as { value: string };
+
+      return {
+        migrationsTableCount: migrationsTable.count,
+        probeValue: probe.value,
+        resolvedPath,
+      };
+    });
+
+    try {
+      expect(observed.guardResult).toEqual({
+        migrationsTableCount: 0,
+        probeValue: 'before-migration',
+        resolvedPath: path.resolve(dbPath),
+      });
+      expect(observed.database.prepare(`
+        SELECT MAX(version) AS version
+        FROM schema_migrations
+        WHERE status = 'applied'
+      `).get()).toEqual({ version: 11 });
+    } finally {
+      observed.database.close();
+    }
+  });
+
+  it('denies a competing SQLite writer while the guard holds the takeover lock', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec(`
+        CREATE TABLE legacy_probe (
+          id INTEGER PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        INSERT INTO legacy_probe (id, value) VALUES (1, 'unchanged');
+      `);
+    } finally {
+      legacyDb.close();
+    }
+
+    const initialized = initGuardedExistingSqlite(dbPath, () => {
+      const competitor = new Database(dbPath, { fileMustExist: true, timeout: 0 });
+      try {
+        expect(() => competitor.prepare(`
+          UPDATE legacy_probe SET value = 'competing-write' WHERE id = 1
+        `).run()).toThrow(/locked/i);
+      } finally {
+        competitor.close();
+      }
+      return 'exclusive-writer-denied';
+    });
+
+    try {
+      expect(initialized.guardResult).toBe('exclusive-writer-denied');
+      expect(initialized.database.prepare(`
+        SELECT value FROM legacy_probe WHERE id = 1
+      `).get()).toEqual({ value: 'unchanged' });
+    } finally {
+      initialized.database.close();
+    }
+  });
+
+  it('rolls back and closes without publishing a global database when the guard fails', async () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec(`
+        CREATE TABLE legacy_probe (
+          id INTEGER PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        INSERT INTO legacy_probe (id, value) VALUES (1, 'original');
+      `);
+    } finally {
+      legacyDb.close();
+    }
+    const before = fs.readFileSync(dbPath);
+    vi.resetModules();
+    const isolatedDbModule = await import('./db');
+
+    expect(() => isolatedDbModule.initGuardedExistingSqlite(dbPath, ({ database }) => {
+      database.prepare(`
+        UPDATE legacy_probe SET value = 'must-rollback' WHERE id = 1
+      `).run();
+      throw new Error('synthetic guard rejection');
+    })).toThrow(/synthetic guard rejection/);
+
+    expect(fs.readFileSync(dbPath)).toEqual(before);
+    expect(() => isolatedDbModule.getSqliteDb()).toThrow(/not initialized/i);
+
+    const inspected = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      expect(inspected.prepare(`
+        SELECT value FROM legacy_probe WHERE id = 1
+      `).get()).toEqual({ value: 'original' });
+      expect(inspected.prepare(`
+        SELECT COUNT(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'schema_migrations'
+      `).get()).toEqual({ count: 0 });
+    } finally {
+      inspected.close();
+    }
+  });
+
+  it('returns the exact guarded connection and keeps its exclusive lock through initialization', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec('CREATE TABLE legacy_probe (id INTEGER PRIMARY KEY)');
+    } finally {
+      legacyDb.close();
+    }
+
+    let guardedConnection: Database.Database | null = null;
+    const guardToken = { admitted: true };
+    const initialized = initGuardedExistingSqlite(dbPath, ({ database }) => {
+      guardedConnection = database;
+      return { database, token: guardToken };
+    });
+
+    const competitor = new Database(dbPath, { fileMustExist: true, timeout: 0 });
+    try {
+      expect(initialized.database).toBe(guardedConnection);
+      expect(initialized.guardResult).toEqual({
+        database: initialized.database,
+        token: guardToken,
+      });
+      expect(initialized.database.inTransaction).toBe(false);
+      expect(initialized.database.pragma('locking_mode', { simple: true })).toBe('exclusive');
+      expect(() => competitor.exec(`
+        INSERT INTO legacy_probe (id) VALUES (1)
+      `)).toThrow(/locked/i);
+    } finally {
+      competitor.close();
+      initialized.database.close();
+    }
+
+    const afterClose = new Database(dbPath, { fileMustExist: true, timeout: 0 });
+    try {
+      expect(() => afterClose.exec(`
+        INSERT INTO legacy_probe (id) VALUES (1)
+      `)).not.toThrow();
+    } finally {
+      afterClose.close();
     }
   });
 });

@@ -2,36 +2,55 @@
 
 ## Scope
 
-This guide covers the v1.5 local workflow for:
+This guide covers the current local-first Mission Control workflow for:
 
+- Multiple independent Amazon US / USD stores.
 - Lingxing advertising report collection batch records.
 - Search Term / SQP / keyword report import.
+- Store, product, target-and-cost, advertising-object, keyword, Listing, and operation-event CRUD.
+- AI/rule diagnosis, manual approval, and policy-auto authorization.
+- Controlled Amazon Ads UI execution with before / after / reload readback.
 - Listing content import or manual entry.
 - Keyword opportunity analysis.
 - Listing suggestions, drafts, accept / ignore status, and exports.
 
-The app remains local-first. It does not connect to Amazon SP-API or Amazon Ads API, and it does not automatically modify Amazon Listing content.
+The app remains local-first and Windows-only. The first release supports Amazon US and USD only. It does not use Amazon SP-API or Amazon Ads API, and it never automatically submits Listing drafts. Authorized low-risk advertising changes may be executed through the visible Ads UI, but only after a store-scoped manual or policy-auto grant, a fresh preflight check, and a complete before / after / reload readback. Any ambiguous or `UNKNOWN` state stops execution.
 
 ## Start
 
-1. Open Amazon AI Ops Agent.
-2. Log in to Lingxing ERP through the visible browser session. The desktop app validates ERP first and then enters the Ads system through the ERP `广告` entry; it should not start by directly opening an Ads URL. After login, the header shows the ERP/Ads session status, including the Ads page title or URL when available. The verified Ads home after ERP entry is `https://ads.lingxing.com/home`, and the verified Ads download center is `https://ads.lingxing.com/ak_download/download_center/download_report_log/index`.
+1. Open Amazon AI Ops Agent. If no store is selected, the app stays at Store Gate instead of silently choosing a store.
+2. Use the left-side `店铺与站点` surface to create or maintain a store. Store name and local identity are configurable; marketplace and currency are fixed to US / USD in this release. Creating a store does not select it and does not start a Profile or job. Click `切换并登录` only after checking the target store. Archived stores can be restored, but cannot be used for collection or execution while archived.
+3. Log in to Lingxing ERP through that store's visible browser Profile. The desktop app validates ERP first and then enters the Ads system through the ERP `广告` entry; it should not start by directly opening an Ads URL. After login, the header shows the ERP/Ads session status, including the Ads page title or URL when available. The verified Ads home after ERP entry is `https://ads.lingxing.com/home`, and the verified Ads download center is `https://ads.lingxing.com/ak_download/download_center/download_report_log/index`.
    While login is running, the submit button switches to `正在确认 ERP 和 Ads 会话...`, shows a spinner, exposes `aria-busy=true`, and blocks duplicate submission. The account/password save notice stays in the fixed status line and only describes local encrypted storage; it does not mean credentials are written into repo files or visible renderer state.
-3. Use the 8 visible workspaces in the left menu. When a workspace has several tools, choose its tab at the top of the workspace:
-   - `今日任务`: review the current work context, data health, report coverage, imported rows, AI state, pending decisions, USD spend/sales/orders, ACOS, and the next safe action.
-   - `产品工作台` -> `产品` / `目标与成本` / `运营事件`: select and lock the current product, maintain cost and advertising targets, and record the business context that affects later diagnosis.
-   - `数据准备` -> `工作范围` / `报表采集` / `导入检查`: confirm date/store/site/batch/ASIN scope, obtain all 8 real Lingxing Ads reports, and verify their per-report SQLite import state. Import writes lock sorting and row actions until the refreshed authoritative data returns.
-   - `广告诊断`: inspect DB-backed advertising metrics, focus filters, rule thresholds, and AI strategy interpretation for the current scope.
-   - `建议与审批` -> `待判断` / `待审批` / `已决策`: review suggested actions, make explicit human decisions, and inspect decided records. Approval still does not mean Ads execution.
-   - `结果核对`: select an approved action, record approval and before/after manual Ads UI evidence, enter the refreshed value, and export local readback evidence for that specific action.
-   - `关键词与 Listing` -> `关键词机会` / `Listing 草案`: review deduplicated keyword opportunities and prepare local-only Listing drafts. Drafts are never submitted to Amazon or written back to Lingxing.
-   - `系统与交付` -> `AI 与规则` / `定时任务` / `交付验收`: configure AI and local rules, inspect local automation, and verify package/readiness evidence. `交付验收` is a proof page, not a daily operation workbench.
+4. Use the 10 visible workspaces in the left menu. Each workspace keeps the active store visible and never mixes another store's facts or Profile:
+   - `今日任务`: review readiness, blockers, USD metrics, pending decisions, active execution, and the next safe action.
+   - `任务中心`: create and maintain Missions, facts, plans, checkpoints, pause/resume state, and linked evidence.
+   - `决策与审批`: review AI/rule proposals, alternatives, manual approval, policy authorization source, rejected/decided history, and MissionGrants.
+   - `经营实验`: create hypotheses, metric/guardrail definitions, observation windows, conclusions, and evidence links.
+   - `实时执行`: inspect the exact store/object/action, preflight result, grant and kill-switch state; start only an authorized action and verify before / after / reload.
+   - `因果记忆`: search the append-only causal timeline for the current store and follow references back to facts, decisions, experiments, executions, and outcomes.
+   - `店铺与广告对象`: maintain products, targets/costs, advertising objects, keywords, Listing versions, and operation events with standard create/read/update/archive or restore actions.
+   - `数据采集`: confirm scope, create/edit/archive collection jobs, use the visible Lingxing download center, and verify all 8 per-type downloads, imports, identities, and reconciliations.
+   - `策略与风控`: version store/object policies, choose manual or policy-auto mode, maintain budgets/limits, inspect risk blocks, and operate the kill switch.
+   - `系统设置`: configure AI/local runtime, per-store scheduling, connection state, diagnostics, and delivery evidence. Delivery evidence is proof, not a daily workbench.
 
-   Legacy deep links may still use old route names for compatibility, but those names are not separate items in the current left menu. Follow the workspace and tab labels above when navigating in the final package.
+   Legacy deep links may still use old route names for compatibility, but those names are not separate items in the current left menu. Follow the workspace and tab labels above when navigating in the current package.
 
-## Current external-security P1 candidate
+## Current Mission Control candidate
 
-The current 2026-07-17 package is still `APP_NEEDS_WORK`, not `APP_READY`, but the three former external-distribution P1 findings are closed. Main-window navigation and redirects accept only the exact development document or packaged renderer document; development behavior additionally requires `!app.isPackaged`. Child windows are denied inside the app, and only userinfo-free `http(s)` links may be handed to the system browser. Saved Lingxing passwords are decrypted and consumed only in Electron Main; the Renderer receives username/non-secret status, keeps the password input empty, and uses ready/warning/blocked/typed login feedback. Legacy plaintext settings migrate transactionally into `safeStorage`; unavailable, corrupt, or failed migration states require safe re-entry without returning plaintext to the UI.
+The package built from source commit `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda` remains `APP_NEEDS_WORK`, not `APP_READY`. Internal interaction evidence, 5/5 current business smoke, win-unpacked/portable launch, 11/11 package security boundaries, adversarial `NODE_ENV`, and 14 workspace/project typechecks pass. The exact hashes and evidence paths are recorded in `docs/MISSION_CONTROL_RELEASE_STATUS_2026-08-04.md`.
+
+Formal package UI schema v8 still needs visible operator handoff for the current package. The runner uses the bundled independent Playwright Chromium but must not read, type, or click secrets. The real authority DB migration, current per-store Lingxing 8/8 runs, two-store seven-US-business-day observation, manual Ads canary, policy-auto Ads canary, current eight-gate aggregation, and matching strict bundle are also incomplete. Old 7/8 or 4/8 results, manifests, snapshots and bundles do not authorize the current package.
+
+### Store isolation and execution modes
+
+- Treat the active store as an authority boundary, not a visual filter. Every DB command, browser lease, Profile, collection job, policy, MissionGrant, execution and evidence item must carry the same current `storeId` and revision.
+- `人工审批` requires a human decision for the current proposal before a grant exists. `AI 全自动` means a proposal may receive policy-auto authority only when the currently enabled store/object policy, confidence, budget, limit and kill-switch checks all pass; it does not bypass safety checks.
+- The first real automatic action is deliberately narrow: an authorized keyword-bid decrease. The executor reruns preflight immediately before writing, serializes UI actions, captures distinct before / after / reload evidence and verifies the reloaded value. Cross-store, stale, ambiguous or `UNKNOWN` state stops the run and requires operator review.
+
+## Historical external-security P1 candidate
+
+The 2026-07-17 package remained `APP_NEEDS_WORK`, not `APP_READY`, but the three former external-distribution P1 findings were closed. Main-window navigation and redirects accept only the exact development document or packaged renderer document; development behavior additionally requires `!app.isPackaged`. Child windows are denied inside the app, and only userinfo-free `http(s)` links may be handed to the system browser. Saved Lingxing passwords are decrypted and consumed only in Electron Main; the Renderer receives username/non-secret status, keeps the password input empty, and uses ready/warning/blocked/typed login feedback. Legacy plaintext settings migrate transactionally into `safeStorage`; unavailable, corrupt, or failed migration states require safe re-entry without returning plaintext to the UI.
 
 The final regression is `output\codex-evidence\full-vitest-external-security-p1-20260717-final.json` (584/584 suites, 1992/1992 tests). Package launch passed at `output\codex-evidence\package-launch-smoke-1784276358829.json`; package security passed 11/11 at `output\codex-evidence\package-security-boundaries-20260717-p1.json`; business smoke passed at `output\codex-evidence\current-business-ui-smoke-1784276952256.json`; and package UI schema v5 passed at `output\codex-evidence\package-ui-evidence-20260717-p1\2026-07-17T08-21-12-482Z\manifest.json` for 100%/125% (8 workspaces + 3 overlays each) plus the wide Product/Diagnosis profile. Current identity is installer `A08715C80D660DDA615324FC146A164C5D3C19232BE6E55E90859348C9C01637`, portable `E8961E89B53A19F1C11D9A0DAFCC1797B0DE7C90B7972196B52D0F9F062FE1FE`, win-unpacked EXE `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`, app content `8A9132109B9C2C6A4C1AA6A1EB18EFC675E53403004CF7000CC6C2A5C01AFF34`, and main bundle `74046AD904EE2DFFB77E892367F7D38E0BD695F89A5F7A88BE6EF97A848035B9`. Final readiness remains `output\codex-evidence\final-readiness-20260717-external-security-p1-non-ready.json` (`APP_NEEDS_WORK`, 7/8).
 
@@ -39,7 +58,7 @@ Task 8B is now the only external completion blocker: use a current positive reco
 
 ### Superseded UI P2 baseline
 
-The 2026-07-17 task-first build exposes 8 visible workspaces and preserves the v2 readback authority contract, fail-closed delivery gating, per-report data truth, encrypted AI Key persistence, and scheduler/product persistence hardening. The UI P2 pass gives the Diagnosis Inspector a readable two-column fact strip, stable date/trend wrapping, and stronger supporting-text contrast. It also records explicit DEV-only evidence for error/retry, AI-busy, and AI-busy with reduced motion. The final full regression passes 170/170 test files, 576/576 suites, and 1950/1950 tests using the forks-based Vitest default that avoids the observed Windows thread-pool teardown false failure. Runtime evidence records 46/46 workspace targets and 5/5 business UI smoke scripts. The final Windows candidate passed win-unpacked/portable launch smoke, two isolated real-package UI runs at 100% and 125%, and a 1400×900 Product/Diagnosis wide profile. The schema-v5 package manifest covers 30 PNG files with zero console, page, or dropped diagnostics; every run records zero matching product/profile-browser processes before and after, and the protected SQLite DB hash is unchanged. Shutdown is bounded and ordered scheduler -> browser -> DB, so a stalled browser cleanup cannot prevent DB closure or the controlled quit. Formal analysis requires both 8/8 report files and 8/8 per-type imports, and the latest real batch `batch_20260625013151957_ajw0nb` satisfies all 8 imported report types with 6827 imported rows. The 1879 rows shown on the product page are the current ASIN's metrics, not the database-wide total. Business readiness was `APP_NEEDS_WORK`: within the formal readiness model, 7/8 gates passed and only `real-ad-execution-readback` failed against authority DB `C:\Users\wz\AppData\Roaming\@amazon-ai-ops\desktop\amazon-ai-ops.db`. At that superseded snapshot, three baseline security P1 items were still open; the current external-security candidate above closes them.
+The 2026-07-17 task-first build exposed 8 visible workspaces and preserved the v2 readback authority contract, fail-closed delivery gating, per-report data truth, encrypted AI Key persistence, and scheduler/product persistence hardening. The UI P2 pass gave the Diagnosis Inspector a readable two-column fact strip, stable date/trend wrapping, and stronger supporting-text contrast. It also recorded explicit DEV-only evidence for error/retry, AI-busy, and AI-busy with reduced motion. The final full regression passed 170/170 test files, 576/576 suites, and 1950/1950 tests using the forks-based Vitest default that avoided the observed Windows thread-pool teardown false failure. Runtime evidence recorded 46/46 workspace targets and 5/5 business UI smoke scripts. That Windows candidate passed win-unpacked/portable launch smoke, two isolated real-package UI runs at 100% and 125%, and a 1400×900 Product/Diagnosis wide profile. The schema-v5 package manifest covered 30 PNG files with zero console, page, or dropped diagnostics; every run recorded zero matching product/profile-browser processes before and after, and the protected SQLite DB hash was unchanged. Shutdown was bounded and ordered scheduler -> browser -> DB, so a stalled browser cleanup could not prevent DB closure or the controlled quit. Formal analysis required both 8/8 report files and 8/8 per-type imports, and the historical real batch `batch_20260625013151957_ajw0nb` satisfied all 8 imported report types with 6827 imported rows. The 1879 rows shown on the product page were the selected ASIN's metrics, not the database-wide total. Business readiness was `APP_NEEDS_WORK`: within that formal readiness model, 7/8 gates passed and only `real-ad-execution-readback` failed against authority DB `C:\Users\wz\AppData\Roaming\@amazon-ai-ops\desktop\amazon-ai-ops.db`. At that superseded snapshot, three baseline security P1 items were still open; the later historical external-security candidate closed them.
 
 | Superseded UI P2 package fact | Historical value |
 |---|---|

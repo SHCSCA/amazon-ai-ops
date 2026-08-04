@@ -1,6 +1,6 @@
-import { Database, Connection } from 'duckdb';
+import { Connection, type DuckDbDatabase } from '../runtime';
 
-export function createAdSummaryQueries(db: Database) {
+export function createAdSummaryQueries(db: DuckDbDatabase) {
   // DuckDB 1.x: Database.all(sql, callback) or Connection.all(sql)
   const getAll = (sql: string): Array<Record<string, unknown>> => {
     const conn = new Connection(db);

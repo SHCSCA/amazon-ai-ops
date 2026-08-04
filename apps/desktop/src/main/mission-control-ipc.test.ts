@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  missionControlContextKey,
   normalizeStoreContextEnvelope,
   type MissionControlQueryRequest,
   type StoreContextEnvelope,
@@ -34,6 +35,37 @@ function query(context: StoreContextEnvelope, extra: Record<string, unknown> = {
   };
 }
 
+function today(context = fixtureContext()) {
+  return {
+    storeId: context.storeId,
+    authorityKey: missionControlContextKey(context),
+    businessDate: context.businessDate,
+    marketplace: 'US' as const,
+    currency: 'USD' as const,
+    generatedAt: '2026-07-22T12:00:00.000Z',
+    facts: {
+      productCount: 0,
+      configuredProductCount: 0,
+      collectionJobCount: 0,
+      importedMetricRows: 0,
+      operationEventsToday: 0,
+      browserSessionReady: false,
+    },
+    readiness: [],
+    blockers: ['fixture'],
+    attentionItems: [],
+    nextAction: {
+      id: 'collect',
+      label: '采集',
+      detail: 'fixture',
+      targetView: 'collection/reports' as const,
+      requiredCapabilityId: 'collection.reports.view',
+      available: false,
+      blockerCode: 'FIXTURE_BLOCKED',
+    },
+  };
+}
+
 function adapter(queryImpl?: MissionControlAdapter['query']): MissionControlAdapter {
   return {
     query: queryImpl ?? (() => ({
@@ -45,6 +77,7 @@ function adapter(queryImpl?: MissionControlAdapter['query']): MissionControlAdap
           manualApprovalAvailable: true,
           policyAutoAvailable: false,
         },
+        today: today(),
       },
     })),
     command: () => ({
@@ -113,6 +146,7 @@ describe('Mission Control IPC authority boundary', () => {
             manualApprovalAvailable: true,
             policyAutoAvailable: false,
           },
+          today: today(),
         },
       };
     });

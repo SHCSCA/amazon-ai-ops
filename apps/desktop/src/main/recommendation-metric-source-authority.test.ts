@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import Database from 'better-sqlite3';
-import type { ActionRecommendation } from '@amazon-ai-ops/shared-types';
+import { normalizeStoreId, type ActionRecommendation } from '@amazon-ai-ops/shared-types';
 import { afterEach, describe, expect, it } from 'vitest';
 import { assertRecommendationMetricSourceAuthority } from './recommendation-metric-source-authority';
 
@@ -13,6 +13,7 @@ afterEach(() => {
 });
 
 function createFixture(reportType = 'keyword', fileName = '01_关键词报表_202607.xlsx') {
+  const storeId = normalizeStoreId('store-one');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-source-authority-'));
   tempDirs.push(dir);
   const sourceFile = path.join(dir, fileName);
@@ -21,6 +22,7 @@ function createFixture(reportType = 'keyword', fileName = '01_关键词报表_20
   db.exec(`
     CREATE TABLE ad_daily_metrics (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id TEXT,
       batch_id TEXT,
       report_type TEXT,
       date TEXT,
@@ -37,11 +39,11 @@ function createFixture(reportType = 'keyword', fileName = '01_关键词报表_20
   `);
   db.prepare(`
     INSERT INTO ad_daily_metrics (
-      batch_id, report_type, date, store_name, marketplace_code, asin,
+      store_id, batch_id, report_type, date, store_name, marketplace_code, asin,
       campaign_name, ad_group_name, targeting, search_term, source_file, source_row
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    'batch_current', reportType, '2026-06-23', 'FT-US-US', 'US', 'B0TESTASIN',
+    storeId, 'batch_current', reportType, '2026-06-23', 'Historical Display Name', 'US', 'B0TESTASIN',
     'Campaign A', 'Ad Group A', 'door lock', 'customer query', sourceFile, 611,
   );
   const scope = {
@@ -89,10 +91,38 @@ function createFixture(reportType = 'keyword', fileName = '01_关键词报表_20
     riskLevel: 'APPROVAL',
     status: 'pending',
   };
-  return { db, recommendation, scope, sourceFile };
+  return { db, storeId, recommendation, scope, sourceFile };
 }
 
 describe('recommendation metric source authority', () => {
+  it('keeps historical metric authority after the logical store display name is renamed', () => {
+    const fixture = createFixture();
+    try {
+      expect(assertRecommendationMetricSourceAuthority(fixture.db, {
+        storeId: fixture.storeId,
+        recommendation: { ...fixture.recommendation, storeName: 'Old Logical Name' },
+        scope: { ...fixture.scope, storeName: 'New Logical Name' },
+        allowedSourceFiles: [fixture.sourceFile],
+      })).toMatchObject({ sourceRow: 611 });
+    } finally {
+      fixture.db.close();
+    }
+  });
+
+  it('rejects the same batch/source row when Main authority belongs to another store', () => {
+    const fixture = createFixture();
+    try {
+      expect(() => assertRecommendationMetricSourceAuthority(fixture.db, {
+        storeId: normalizeStoreId('store-two'),
+        recommendation: fixture.recommendation,
+        scope: fixture.scope,
+        allowedSourceFiles: [fixture.sourceFile],
+      })).toThrow(/实际命中 0 条/);
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it.each([
     ['keyword', '01_关键词报表_202607.xlsx'],
     ['auto_targeting', '2026-07-auto-targeting-export.xlsx'],
@@ -101,6 +131,7 @@ describe('recommendation metric source authority', () => {
     const fixture = createFixture(reportType, fileName);
     try {
       expect(assertRecommendationMetricSourceAuthority(fixture.db, {
+        storeId: fixture.storeId,
         recommendation: fixture.recommendation,
         scope: fixture.scope,
         allowedSourceFiles: [fixture.sourceFile],
@@ -117,7 +148,6 @@ describe('recommendation metric source authority', () => {
 
   it.each([
     ['batch', { batchId: 'batch_other' }],
-    ['store', { storeName: 'OTHER-US' }],
     ['marketplace', { marketplaceCode: 'CA' }],
     ['asin', { asin: 'B0OTHERASIN' }],
     ['date', { dateTo: '2026-06-22' }],
@@ -125,6 +155,7 @@ describe('recommendation metric source authority', () => {
     const fixture = createFixture();
     try {
       expect(() => assertRecommendationMetricSourceAuthority(fixture.db, {
+        storeId: fixture.storeId,
         recommendation: fixture.recommendation,
         scope: { ...fixture.scope, ...scopePatch },
         allowedSourceFiles: [fixture.sourceFile],
@@ -139,6 +170,7 @@ describe('recommendation metric source authority', () => {
     try {
       fixture.recommendation.evidence.reportType = 'product_targeting';
       expect(() => assertRecommendationMetricSourceAuthority(fixture.db, {
+        storeId: fixture.storeId,
         recommendation: fixture.recommendation,
         scope: fixture.scope,
         allowedSourceFiles: [fixture.sourceFile],
@@ -152,6 +184,7 @@ describe('recommendation metric source authority', () => {
     const fixture = createFixture('user_search_term', '01_用户搜索词报告.xlsx');
     try {
       expect(() => assertRecommendationMetricSourceAuthority(fixture.db, {
+        storeId: fixture.storeId,
         recommendation: fixture.recommendation,
         scope: fixture.scope,
         allowedSourceFiles: [fixture.sourceFile],
@@ -167,17 +200,18 @@ describe('recommendation metric source authority', () => {
     fs.writeFileSync(secondFile, 'second report');
     fixture.db.prepare(`
       INSERT INTO ad_daily_metrics (
-        batch_id, report_type, date, store_name, marketplace_code, asin,
+        store_id, batch_id, report_type, date, store_name, marketplace_code, asin,
         campaign_name, ad_group_name, targeting, search_term, source_file, source_row
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      'batch_current', 'keyword', '2026-06-23', 'FT-US-US', 'US', 'B0TESTASIN',
+      fixture.storeId, 'batch_current', 'keyword', '2026-06-23', 'Historical Display Name', 'US', 'B0TESTASIN',
       'Campaign A', 'Ad Group A', 'door lock', '', secondFile, 611,
     );
     delete fixture.recommendation.evidence.sourceFile;
     fixture.recommendation.evidence.sourceFiles = [fixture.sourceFile, secondFile];
     try {
       expect(() => assertRecommendationMetricSourceAuthority(fixture.db, {
+        storeId: fixture.storeId,
         recommendation: fixture.recommendation,
         scope: fixture.scope,
         allowedSourceFiles: [fixture.sourceFile, secondFile],

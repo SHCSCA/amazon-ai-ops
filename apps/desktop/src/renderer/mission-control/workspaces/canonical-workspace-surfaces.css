@@ -173,18 +173,25 @@
   margin-top: 14px;
 }
 
+.mission-control-workspace-root .canonical-chain-item {
+  min-width: 0;
+}
+
 .mission-control-workspace-root .canonical-chain-step {
   position: relative;
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) 14px;
   grid-template-areas: "icon title arrow" "icon detail arrow";
   align-items: center;
+  width: 100%;
   min-height: 66px;
   gap: 2px 7px;
   padding: 8px;
   border: 1px solid #dce4f0;
   border-radius: 8px;
   background: #fbfcfe;
+  color: inherit;
+  text-align: left;
 }
 
 .mission-control-workspace-root .canonical-chain-step > span {
@@ -275,6 +282,10 @@
   color: #bc3434;
 }
 
+.mission-control-workspace-root .canonical-health-rail li > b[data-tone="attention"] {
+  color: #9a620a;
+}
+
 .mission-control-workspace-root .canonical-next-actions {
   border: 1px solid #dce3ee;
   border-radius: 9px;
@@ -306,10 +317,54 @@
   display: grid;
 }
 
+.mission-control-workspace-root .canonical-next-actions .canonical-preview-notice {
+  margin-top: 8px;
+}
+
 .mission-control-workspace-root .canonical-next-actions small {
   color: #69758b;
   font-size: 12px;
 }
+
+.mission-control-workspace-root .canonical-analysis-status {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(330px, 1.15fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 9px;
+  border: 1px solid #cfe0f8;
+  border-radius: 8px;
+  background: #f7faff;
+  padding: 10px;
+}
+
+.mission-control-workspace-root .canonical-analysis-status > div {
+  display: grid;
+  gap: 2px;
+}
+
+.mission-control-workspace-root .canonical-analysis-status > div > span {
+  color: #1f5bc9;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .07em;
+}
+
+.mission-control-workspace-root .canonical-analysis-status > div > strong { font-size: 13px; }
+
+.mission-control-workspace-root .canonical-analysis-status dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.mission-control-workspace-root .canonical-analysis-status dl > div {
+  padding: 0 9px;
+  border-left: 1px solid #dbe5f3;
+}
+
+.mission-control-workspace-root .canonical-analysis-status dt { color: #71809a; font-size: 10px; }
+.mission-control-workspace-root .canonical-analysis-status dd { margin: 2px 0 0; font-size: 11px; font-weight: 700; }
 
 .mission-control-workspace-root .canonical-contract-strip {
   display: grid;
@@ -902,5 +957,14 @@
   .mission-control-workspace-root .canonical-preview-notice > small {
     width: 100%;
     flex-basis: 100%;
+  }
+
+  .mission-control-workspace-root .canonical-analysis-status {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .mission-control-workspace-root .canonical-analysis-status dl {
+    grid-column: 1 / -1;
+    order: 3;
   }
 }

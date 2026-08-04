@@ -12,8 +12,8 @@ describe('buildCollectionActionSummary', () => {
       insertedRows: 0,
       currentImportedRows: 0,
       failedCount: 0,
-      downloadDir: 'C:/downloads/batch_1',
-      manifestPath: 'C:/downloads/batch_1/manifest.json',
+      downloadArtifactId: 'artifact:v1:download-batch-1',
+      manifestArtifactId: 'artifact:v1:manifest-batch-1',
     });
 
     expect(summary.statusLabel).toBe('已下载，待导入');
@@ -23,7 +23,8 @@ describe('buildCollectionActionSummary', () => {
     expect(summary.facts).toContain('本次新增真实文件 8 个');
     expect(summary.facts).toContain('当前 DB 指标 0 行');
     expect(summary.nextAction).toBe('点击“导入已下载表格”，把 xlsx/xls/csv 写入日级广告指标。');
-    expect(summary.primaryPathLabel).toBe('打开本次下载目录');
+    expect(summary.primaryArtifactLabel).toBe('打开本次下载目录');
+    expect(summary.primaryArtifactId).toBe('artifact:v1:download-batch-1');
   });
 
   it('does not claim the current action downloaded files when only existing local reports are present', () => {
@@ -36,8 +37,8 @@ describe('buildCollectionActionSummary', () => {
       insertedRows: 0,
       currentImportedRows: 0,
       failedCount: 0,
-      downloadDir: 'C:/downloads/batch_1',
-      manifestPath: 'C:/downloads/batch_1/manifest.json',
+      downloadArtifactId: 'artifact:v1:download-batch-1',
+      manifestArtifactId: 'artifact:v1:manifest-batch-1',
     });
 
     expect(summary.statusLabel).toBe('已下载，待导入');
@@ -55,7 +56,7 @@ describe('buildCollectionActionSummary', () => {
       insertedRows: 0,
       currentImportedRows: 0,
       failedCount: 2,
-      manifestPath: 'C:/downloads/batch_1/manifest.json',
+      manifestArtifactId: 'artifact:v1:manifest-batch-1',
     });
 
     expect(summary.statusLabel).toBe('未拿到真实报表');
@@ -64,7 +65,8 @@ describe('buildCollectionActionSummary', () => {
     expect(summary.blockers).toContain('没有真实报表文件');
     expect(summary.blockers).toContain('有 2 个失败项');
     expect(summary.nextAction).toBe('打开 Manifest 和失败原因，确认领星 ready 行、页面模型、日期、店铺和站点后重试。');
-    expect(summary.primaryPathLabel).toBe('打开本次 Manifest');
+    expect(summary.primaryArtifactLabel).toBe('打开本次 Manifest');
+    expect(summary.primaryArtifactId).toBe('artifact:v1:manifest-batch-1');
   });
 
   it('marks import success as ready for ad quantification', () => {
@@ -77,8 +79,8 @@ describe('buildCollectionActionSummary', () => {
       insertedRows: 96,
       currentImportedRows: 96,
       failedCount: 0,
-      downloadDir: 'C:/downloads/batch_1',
-      manifestPath: 'C:/downloads/batch_1/manifest.json',
+      downloadArtifactId: 'artifact:v1:download-batch-1',
+      manifestArtifactId: 'artifact:v1:manifest-batch-1',
     });
 
     expect(summary.statusLabel).toBe('可查看广告表现');

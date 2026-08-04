@@ -1,3 +1,5 @@
+import type { RendererArtifactId } from './types';
+
 export type CollectionActionSummaryTone = 'ready' | 'pending' | 'warning' | 'blocked';
 export type CollectionActionSummaryMode = 'download-existing' | 'recreate-selected' | 'recreate-full' | 'import';
 
@@ -10,8 +12,8 @@ export interface CollectionActionSummaryInput {
   insertedRows: number;
   currentImportedRows: number;
   failedCount: number;
-  downloadDir?: string;
-  manifestPath?: string;
+  downloadArtifactId?: RendererArtifactId;
+  manifestArtifactId?: RendererArtifactId;
 }
 
 export interface CollectionActionSummary {
@@ -21,8 +23,8 @@ export interface CollectionActionSummary {
   facts: string[];
   blockers: string[];
   nextAction: string;
-  primaryPathLabel: string;
-  primaryPath?: string;
+  primaryArtifactLabel: string;
+  primaryArtifactId?: RendererArtifactId;
 }
 
 export function buildCollectionActionSummary(input: CollectionActionSummaryInput): CollectionActionSummary {
@@ -47,8 +49,8 @@ export function buildCollectionActionSummary(input: CollectionActionSummaryInput
       facts,
       blockers: [],
       nextAction: '查看广告表现，复核花费、订单、ACOS 和产品阶段。',
-      primaryPathLabel: input.downloadDir ? actionDirectoryLabel(input.mode) : '打开本次 Manifest',
-      primaryPath: input.downloadDir || input.manifestPath,
+      primaryArtifactLabel: input.downloadArtifactId ? actionDirectoryLabel(input.mode) : '打开本次 Manifest',
+      primaryArtifactId: input.downloadArtifactId || input.manifestArtifactId,
     };
   }
 
@@ -65,8 +67,8 @@ export function buildCollectionActionSummary(input: CollectionActionSummaryInput
       nextAction: hasNewActionFiles
         ? '点击“导入已下载表格”，把 xlsx/xls/csv 写入日级广告指标。'
         : '打开真实报表目录确认 xlsx/xls/csv 后，点击“导入已下载表格”。',
-      primaryPathLabel: input.downloadDir ? actionDirectoryLabel(input.mode) : '打开本次 Manifest',
-      primaryPath: input.downloadDir || input.manifestPath,
+      primaryArtifactLabel: input.downloadArtifactId ? actionDirectoryLabel(input.mode) : '打开本次 Manifest',
+      primaryArtifactId: input.downloadArtifactId || input.manifestArtifactId,
     };
   }
 
@@ -77,8 +79,8 @@ export function buildCollectionActionSummary(input: CollectionActionSummaryInput
     facts,
     blockers,
     nextAction: '打开 Manifest 和失败原因，确认领星 ready 行、页面模型、日期、店铺和站点后重试。',
-    primaryPathLabel: input.manifestPath ? '打开本次 Manifest' : '查看失败原因',
-    primaryPath: input.manifestPath,
+    primaryArtifactLabel: input.manifestArtifactId ? '打开本次 Manifest' : '查看失败原因',
+    primaryArtifactId: input.manifestArtifactId,
   };
 }
 

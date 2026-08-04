@@ -560,7 +560,7 @@ function api(): Record<string, any> {
   return ((window as any).electronAPI || {}) as Record<string, any>;
 }
 
-export function SettingsPage() {
+export function SettingsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [aiSettings, setAiSettings] = useState<AiProviderSettings>(DEFAULT_AI_SETTINGS);
   const [ruleConfig, setRuleConfig] = useState<SettingsRuleConfig>(DEFAULT_RULE_CONFIG);
   const [aiStatus, setAiStatus] = useState<AiConnectionStatus>('unconfigured');
@@ -594,7 +594,7 @@ export function SettingsPage() {
     baseClassName: 'primary-button',
     busyLabel: '保存中...',
     disabled: !canSaveRules,
-    label: '保存规则阈值',
+    label: '保存系统回退规则',
   });
   const clearAiKeyButton = settingsLocalActionButtonView({
     action: 'clear-ai-key',
@@ -842,7 +842,7 @@ export function SettingsPage() {
     setMessage('');
     try {
       await apiSurface.saveRuleConfig(ruleConfig);
-      setMessage('广告表现阈值已保存。');
+      setMessage('系统回退规则已保存。');
     } catch (caught) {
       setMessage(`阈值保存失败：${toUserFacingError(caught, '阈值保存失败。')}`);
     } finally {
@@ -873,11 +873,13 @@ export function SettingsPage() {
 
   return (
     <div>
-      <PageHeader
-        eyebrow="系统"
-        title={PAGE_HEADER_TITLES.settings}
-        description="连接 AI 服务、确认固定输出合同、维护规则边界；表单和支持信息默认收起。API Key 全程脱敏。"
-      />
+      {!embedded && (
+        <PageHeader
+          eyebrow="系统"
+          title={PAGE_HEADER_TITLES.settings}
+          description="维护系统级 AI 连接和兼容回退规则；店铺运行参数在同页上方按店铺独立保存。API Key 全程脱敏。"
+        />
+      )}
 
       <div className="business-stack">
         <TaskBanner
@@ -937,7 +939,7 @@ export function SettingsPage() {
           </div>
         </Panel>
 
-        <Panel title="规则阈值与动作边界">
+        <Panel title="系统回退规则（兼容）">
           <div className="settings-rule-summary">
             <div>
               <span>目标利润线</span>
@@ -961,7 +963,7 @@ export function SettingsPage() {
             </div>
           </div>
           <div className="settings-panel-action-line">
-            <span>阈值用于生成建议和解释，不会直接写入广告账户。</span>
+            <span>店铺配置会覆盖目标 ACOS 与 AI 开关；这里仅维护未覆盖字段的系统回退值，不会直接写入广告账户。</span>
             <button className="secondary-button" disabled={savingRules} onClick={() => setSettingsModal('rules')} type="button">
               编辑规则阈值
             </button>
@@ -1100,7 +1102,7 @@ export function SettingsPage() {
             >
               <header className="settings-modal-header">
                 <div>
-                  <span>AI 与规则设置</span>
+                  <span>系统 AI 与回退规则</span>
                   <h2 id="settings-modal-title">
                     {settingsModal === 'ai-contract'
                       ? 'AI 输出合同和字段'

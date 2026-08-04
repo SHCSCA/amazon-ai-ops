@@ -10,10 +10,9 @@
     "build:main": "node scripts/build-main.js && node -e \"require('fs').copyFileSync('dist/main/index.cjs','dist/main/index.js')\"",
     "build:preload": "node scripts/build-preload.js && node -e \"require('fs').copyFileSync('dist/preload/index.cjs','dist/preload/index.js')\"",
     "build:renderer": "vite build",
-    "prepare:native:electron": "set npm_execpath=&& set NPM_CLI_JS=&& pnpm --filter @amazon-ai-ops/desktop exec electron-builder install-app-deps",
-    "prebuild": "pnpm run prepare:native:electron",
-    "build": "npm run build:main && npm run build:preload && npm run build:renderer && electron-builder",
-    "build:win": "npm run build",
+    "stage:playwright-chromium": "node scripts/stage-playwright-chromium.js",
+    "build": "node ../../scripts/build-windows-package.js",
+    "build:win": "node ../../scripts/build-windows-package.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -21,6 +20,7 @@
     "@tanstack/react-virtual": "^3.14.3",
     "better-sqlite3": "^11.10.0",
     "bindings": "^1.5.0",
+    "duckdb": "^1.1.0",
     "file-uri-to-path": "^1.0.0",
     "playwright": "^1.40.0",
     "playwright-core": "^1.60.0"

@@ -49,13 +49,90 @@ export function resolveLegacyCapability(
   ));
 }
 
+const EXACT_ROUTE_REQUIREMENTS: Partial<Record<AppRoute, ReadonlyArray<{
+  capabilityId: string;
+  action: MissionControlCapabilityProjection['action'];
+}>>> = {
+  'operation-scope': [
+    { capabilityId: 'collection.scope.view', action: 'view' },
+    { capabilityId: 'collection.scope.update', action: 'update' },
+  ],
+  'data-collection': [
+    { capabilityId: 'collection.reports.view', action: 'view' },
+    { capabilityId: 'collection.reports.start', action: 'start' },
+    { capabilityId: 'collection.reports.resume', action: 'resume' },
+    { capabilityId: 'collection.reports.cancel', action: 'pause' },
+    { capabilityId: 'collection.reports.import', action: 'import' },
+    { capabilityId: 'collection.reports.open-artifact', action: 'view' },
+  ],
+  'data-import-validation': [
+    { capabilityId: 'collection.import-check.view', action: 'view' },
+    { capabilityId: 'collection.import-check.import', action: 'import' },
+    { capabilityId: 'collection.import-check.export', action: 'export' },
+    { capabilityId: 'collection.import-check.open-artifact', action: 'view' },
+  ],
+  'scheduler': [
+    { capabilityId: 'settings.scheduler.view', action: 'view' },
+    { capabilityId: 'settings.scheduler.run-now', action: 'start' },
+    { capabilityId: 'settings.scheduler.retention-preview', action: 'view' },
+  ],
+};
+
+/**
+ * A legacy route may contain real mutations even though its navigation entry
+ * is a view. Production mounts it only when every exact action is projected
+ * for the same canonical view; DEV prototype routes keep their isolated
+ * in-memory boundary.
+ */
+export function resolveLegacyRouteCapability(
+  capabilities: readonly MissionControlCapabilityProjection[],
+  route: AppRoute,
+  intent: NavigationIntent,
+  previewMode = false,
+): MissionControlCapabilityProjection | undefined {
+  const viewCapability = resolveLegacyCapability(capabilities, route, intent);
+  if (!viewCapability || previewMode || viewCapability.state !== 'LEGACY_ADAPTER') return viewCapability;
+  const requirements = EXACT_ROUTE_REQUIREMENTS[route];
+  if (!requirements?.length) return viewCapability;
+  const view = `${intent.workspace}/${intent.subview}`;
+  const missing = requirements.filter((requirement) => !capabilities.some((capability) => (
+    capability.capabilityId === requirement.capabilityId
+    && capability.view === view
+    && capability.action === requirement.action
+    && (
+      (capability.state === 'LEGACY_ADAPTER' && capability.legacyRoute === route)
+      || capability.state === 'PRODUCTION_NATIVE'
+    )
+  )));
+  if (missing.length === 0) return viewCapability;
+  return {
+    ...viewCapability,
+    state: 'BLOCKED',
+    blockerCode: 'EXACT_LEGACY_ACTION_CAPABILITIES_MISSING',
+    detail: `该页面含真实写操作，缺少精确动作授权：${missing.map((item) => item.capabilityId).join('、')}。`,
+  };
+}
+
 function LegacyRoutePage({
   route,
   intent,
   nextSafeAction,
   readbackAuthority,
   previewScenarioId,
-}: Pick<LegacyAdapterRouterProps, 'route' | 'intent' | 'nextSafeAction' | 'readbackAuthority' | 'previewScenarioId'>) {
+  storeContext,
+  capabilities,
+  previewMode,
+}: Pick<
+  LegacyAdapterRouterProps,
+  | 'route'
+  | 'intent'
+  | 'nextSafeAction'
+  | 'readbackAuthority'
+  | 'previewScenarioId'
+  | 'storeContext'
+  | 'capabilities'
+  | 'previewMode'
+>) {
   switch (route) {
     case 'dashboard':
       return <DashboardPage nextSafeAction={nextSafeAction} />;
@@ -66,7 +143,7 @@ function LegacyRoutePage({
     case 'operation-events':
       return <OperationEventsPage />;
     case 'operation-scope':
-      return <OperationScopePage />;
+      return <OperationScopePage storeContext={storeContext} />;
     case 'data-collection':
       return <DataCollectionPage />;
     case 'data-import-validation':
@@ -84,9 +161,15 @@ function LegacyRoutePage({
     case 'listing-optimization':
       return <ListingOptimizationPage />;
     case 'settings':
-      return <SettingsPage />;
+      return <SettingsPage embedded />;
     case 'scheduler':
-      return <SchedulerPage />;
+      return (
+        <SchedulerPage
+          capabilities={capabilities}
+          previewMode={previewMode}
+          storeContext={storeContext}
+        />
+      );
     case 'delivery':
       return <DeliveryPage />;
     default: {
@@ -97,7 +180,12 @@ function LegacyRoutePage({
 }
 
 export function LegacyAdapterRouter(props: LegacyAdapterRouterProps) {
-  const capability = resolveLegacyCapability(props.capabilities, props.route, props.intent);
+  const capability = resolveLegacyRouteCapability(
+    props.capabilities,
+    props.route,
+    props.intent,
+    props.previewMode,
+  );
   return (
     <LegacyAdapterBoundary
       capability={capability}
@@ -108,10 +196,13 @@ export function LegacyAdapterRouter(props: LegacyAdapterRouterProps) {
     >
       <LegacyRoutePage
         intent={props.intent}
+        capabilities={props.capabilities}
         nextSafeAction={props.nextSafeAction}
+        previewMode={props.previewMode}
         previewScenarioId={props.previewScenarioId}
         readbackAuthority={props.readbackAuthority}
         route={props.route}
+        storeContext={props.storeContext}
       />
     </LegacyAdapterBoundary>
   );

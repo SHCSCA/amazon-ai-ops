@@ -4,9 +4,10 @@ import { ProgressiveDetails } from '../components/progressive-details';
 import { PageHeader, Panel, StatusPill } from '../components/ui';
 import { PAGE_HEADER_TITLES } from '../page-header-copy';
 import { buildDeliveryReadinessMatrix, buildDeliveryReadinessMatrixInput } from '../delivery-readiness-matrix';
+import { useMissionControlStoreContext } from '../mission-control/store-context';
 import { READBACK_REPAIR_INTENT_EVENT, READBACK_REPAIR_INTENT_STORAGE_KEY, type ReadbackRepairIntent } from '../readback-repair-intent';
 import { useScopeStore } from '../scope-store';
-import type { AiDiagnosisRunView, AppRoute, BusinessDataPipeline, DeliveryEvidenceStatusView, DeliveryReadinessGate, DeliveryReadinessView, OperationScope, RecommendationView } from '../types';
+import type { AiDiagnosisRunView, AppRoute, BusinessDataPipeline, BusinessEvidenceArtifact, DeliveryEvidenceStatusView, DeliveryReadinessGate, DeliveryReadinessView, OperationScope, RecommendationView, RendererArtifactId } from '../types';
 import { toUserFacingError } from '../user-facing-error';
 import { notifyWorkflowInvalidated } from '../workflow-invalidation';
 import type { WorkflowEventTarget } from '../workflow-invalidation';
@@ -359,9 +360,30 @@ export function deliverySummaryStatusLabel(input: {
   return input.previewOnly ? '开发预览' : '当前阻断';
 }
 
-function evidenceFolder(data: BusinessDataPipeline | null): string {
-  const paths = data?.collection?.evidencePaths || [];
-  return paths.find((item) => item.kind === 'folder')?.path || data?.collection?.latestBatch?.downloadDir || DELIVERY_BUNDLE_PATH;
+type DeliveryCollectionArtifact = Pick<BusinessEvidenceArtifact, 'artifactId' | 'displayName' | 'kind' | 'label'>;
+
+function collectionFolderArtifact(data: BusinessDataPipeline | null): DeliveryCollectionArtifact | null {
+  const artifactId = data?.collection?.fileAudit?.downloadArtifactId
+    || data?.collection?.latestBatch?.downloadArtifactId;
+  if (artifactId) {
+    const displayName = data?.collection?.fileAudit?.downloadDisplayName
+      || data?.collection?.latestBatch?.downloadDisplayName
+      || '原始报表目录';
+    return { artifactId, displayName, kind: 'folder', label: '原始报表目录' };
+  }
+  return (data?.collection?.evidenceArtifacts || []).find((item) => item.kind === 'folder') || null;
+}
+
+function collectionManifestArtifact(data: BusinessDataPipeline | null): DeliveryCollectionArtifact | null {
+  const artifactId = data?.collection?.fileAudit?.manifestArtifactId
+    || data?.collection?.latestBatch?.manifestArtifactId;
+  if (artifactId) {
+    const displayName = data?.collection?.fileAudit?.manifestDisplayName
+      || data?.collection?.latestBatch?.manifestDisplayName
+      || '采集清单';
+    return { artifactId, displayName, kind: 'audit', label: '采集清单' };
+  }
+  return (data?.collection?.evidenceArtifacts || []).find((item) => item.kind === 'audit') || null;
 }
 
 export function deliveryTextForDisplay(text: string): string {
@@ -396,9 +418,9 @@ function uniqueDisplayTexts(items: Array<string | undefined>): string[] {
 
 export function packageEvidenceSummary(packageEvidence: DeliveryEvidenceStatusView['package'] | null | undefined): string {
   if (!packageEvidence?.installerAvailable) return '安装包未记录';
-  const filePath = packageEvidence.portablePath || packageEvidence.installerPath || '安装包路径不可用';
+  const packageLocation = packageEvidence.portablePath || packageEvidence.installerPath || '安装包路径不可用';
   const hash = packageEvidence.sha256 ? ` / SHA-256 ${packageEvidence.sha256.slice(0, 12)}...` : ' / SHA-256 未记录';
-  return `${filePath}${hash}`;
+  return `${packageLocation}${hash}`;
 }
 
 export function canExportDeliveryBundle(
@@ -445,8 +467,8 @@ function directoryFromPath(value: string): string {
 
 function packageEvidenceBrief(packageEvidence: DeliveryEvidenceStatusView['package'] | null | undefined): string {
   if (!packageEvidence?.installerAvailable) return '安装包未记录';
-  const filePath = packageEvidence.portablePath || packageEvidence.installerPath || '';
-  const pathLabel = filePath ? compactDeliveryPath(filePath) : '安装包路径不可用';
+  const packageLocation = packageEvidence.portablePath || packageEvidence.installerPath || '';
+  const pathLabel = packageLocation ? compactDeliveryPath(packageLocation) : '安装包路径不可用';
   const hash = packageEvidence.sha256 ? ` / SHA-256 ${packageEvidence.sha256.slice(0, 12)}...` : ' / SHA-256 未记录';
   return `${pathLabel}${hash}`;
 }
@@ -673,9 +695,9 @@ export function buildDeliveryItems(
       actions: missingReports.length > 0
         ? missingReports.map((item) => `下载并导入${item.label}。`)
         : hasRealFiles
-          ? ['在交付包中保留原始文件路径和导入记录。']
+          ? ['在交付包中保留原始报表工件标识和导入记录。']
           : ['先从领星下载真实广告报表，再进入量化和交付验收。'],
-      evidence: files.map((file) => `${file.displayName}: ${file.filePath || file.fileName}（${file.importedRows} 行）`),
+      evidence: files.map((file) => `${file.displayName}: ${file.artifactDisplayName || file.fileName || '工件名称不可用'}（${file.importedRows} 行）`),
     },
     {
       title: '广告指标入库',
@@ -761,6 +783,7 @@ export function buildDeliveryItems(
 
 export function DeliveryPage() {
   const scope = useScopeStore((state) => state.scope);
+  const storeAuthority = useMissionControlStoreContext();
   const [data, setData] = useState<BusinessDataPipeline | null>(null);
   const [readiness, setReadiness] = useState<DeliveryReadinessView | null>(null);
   const [message, setMessage] = useState('');
@@ -784,12 +807,14 @@ export function DeliveryPage() {
 
   const apiSurface = useMemo(() => api(), []);
   const canOpenPath = typeof apiSurface.openReportPath === 'function';
+  const canOpenArtifact = typeof apiSurface.openReportArtifact === 'function';
   const items = useMemo(() => buildDeliveryItems(data, readiness, deliveryEvidenceStatus), [data, deliveryEvidenceStatus, readiness]);
-  const reportFolder = evidenceFolder(data);
+  const reportFolderArtifact = collectionFolderArtifact(data);
+  const reportManifestArtifact = collectionManifestArtifact(data);
   const finalManifestPath = readiness?.path || '';
   const realFiles = data?.collection?.realReportFiles || [];
-  const reportDownloadDir = data?.collection?.fileAudit?.downloadDir || reportFolder;
-  const collectionManifestPath = data?.collection?.fileAudit?.manifestPath || data?.collection?.latestBatch?.manifestPath || '';
+  const reportDownloadLabel = reportFolderArtifact?.displayName || '目录工件不可用';
+  const collectionManifestLabel = reportManifestArtifact?.displayName || '清单工件不可用';
   const quant = data?.quant;
   const importedRows = readNumber(data?.collection?.fileAudit?.importedRowCount, readNumber(quant?.importedRows));
   const manifestReady = readiness?.appReady && readiness?.manifestDriven;
@@ -997,6 +1022,31 @@ export function DeliveryPage() {
     try {
       await apiSurface.openReportPath(targetPath);
       setMessage(`${label}已请求打开，路径见详情。`);
+    } catch (caught) {
+      setMessage(compactDeliveryMessage(toUserFacingError(caught, `${label}打开失败。`)));
+    } finally {
+      setOpeningPathKey(null);
+    }
+  }
+
+  async function openArtifact(artifactId: RendererArtifactId | '', label: string) {
+    if (openingPathKey) return;
+    if (!artifactId) {
+      setMessage(`${label}不可用：当前没有已登记的文件或目录工件。`);
+      return;
+    }
+    if (!canOpenArtifact) {
+      setMessage(`${label}不可用：不透明工件打开能力未接入。`);
+      return;
+    }
+    const artifactKey = deliveryPathActionKey(label, `artifact:${artifactId}`);
+    setOpeningPathKey(artifactKey);
+    setMessage(`${label}打开中...`);
+    try {
+      const storeContext = storeAuthority.authoritativeContext;
+      if (!storeContext) throw new Error('当前店铺权威不可用。');
+      await apiSurface.openReportArtifact(artifactId, { ...storeContext });
+      setMessage(`${label}已请求打开。`);
     } catch (caught) {
       setMessage(compactDeliveryMessage(toUserFacingError(caught, `${label}打开失败。`)));
     } finally {
@@ -1226,9 +1276,9 @@ export function DeliveryPage() {
       `范围：${summarizeScope(data, scope)}`,
       '最终验收通过且安装包证据已记录时，才可声明可以交付。',
       `真实报表文件：${realFiles.length}`,
-      `真实报表目录：${reportDownloadDir || '不可用'}`,
-      `真实报表清单：${collectionManifestPath || '不可用'}`,
-      ...realFiles.slice(0, 8).map((file) => `原始文件：${file.displayName || file.reportType} / ${file.filePath || file.fileName || '-'}`),
+      `真实报表目录工件：${reportDownloadLabel}`,
+      `真实报表清单工件：${collectionManifestLabel}`,
+      ...realFiles.slice(0, 8).map((file) => `原始文件：${file.displayName || file.reportType} / ${file.artifactDisplayName || file.fileName || '工件名称不可用'}`),
       `导入指标行数：${importedRows}`,
       `最终验收汇总：${finalManifestPath || '最终验收汇总尚未生成'}`,
       `安装包：${packageSummary}`,
@@ -1346,6 +1396,35 @@ export function DeliveryPage() {
         className={view.className}
         disabled={view.disabled}
         onClick={() => openPath(input.targetPath, messageLabel)}
+        type="button"
+      >
+        {view.showSpinner && <span aria-hidden="true" className="button-spinner" />}
+        <span>{view.label}</span>
+      </button>
+    );
+  }
+
+  function renderOpenArtifactButton(input: {
+    artifactId?: RendererArtifactId;
+    className?: string;
+    idleLabel: string;
+    messageLabel?: string;
+  }) {
+    const messageLabel = input.messageLabel || input.idleLabel;
+    const artifactId = input.artifactId || '';
+    const view = deliveryOpenPathButtonView({
+      activePathKey: openingPathKey,
+      baseClassName: input.className,
+      disabled: !artifactId || !canOpenArtifact,
+      idleLabel: input.idleLabel,
+      pathKey: deliveryPathActionKey(messageLabel, `artifact:${artifactId}`),
+    });
+    return (
+      <button
+        aria-busy={view.ariaBusy}
+        className={view.className}
+        disabled={view.disabled}
+        onClick={() => openArtifact(artifactId, messageLabel)}
         type="button"
       >
         {view.showSpinner && <span aria-hidden="true" className="button-spinner" />}
@@ -1473,7 +1552,8 @@ export function DeliveryPage() {
         <ProgressiveDetails title="文件位置与支持入口">
           <div className="delivery-action-row">
             {renderOpenPathButton({ idleLabel: '打开交付包', targetPath: deliveryBundleOpenPath })}
-            {renderOpenPathButton({ idleLabel: '打开证据目录', targetPath: reportFolder })}
+            {renderOpenArtifactButton({ artifactId: reportFolderArtifact?.artifactId, idleLabel: '打开证据目录' })}
+            {renderOpenArtifactButton({ artifactId: reportManifestArtifact?.artifactId, idleLabel: '打开采集清单' })}
             {renderOpenPathButton({ disabled: !packageDirectory, idleLabel: '打开安装包目录', targetPath: packageDirectory })}
             {renderOpenPathButton({ idleLabel: '打开最终验收汇总', targetPath: finalManifestPath })}
             <button aria-busy={exportReconciliationButton.ariaBusy} className={exportReconciliationButton.className} disabled={exportReconciliationButton.disabled} onClick={exportDataReconciliation} type="button">
@@ -1488,11 +1568,11 @@ export function DeliveryPage() {
             </div>
             <div>
               <span>真实文件目录</span>
-              <strong>{reportDownloadDir || '目录不可用'}</strong>
+              <strong>{reportDownloadLabel}</strong>
             </div>
             <div>
               <span>采集清单</span>
-              <strong>{collectionManifestPath || '不可用'}</strong>
+              <strong>{collectionManifestLabel}</strong>
             </div>
             <div>
               <span>最终验收汇总</span>
@@ -1751,7 +1831,8 @@ export function DeliveryPage() {
             <p>最终验收生成时间：{readiness?.generatedAt || '不可用'}</p>
             <p>最终验收检查时间：{readiness?.checkedAt || '不可用'}</p>
             <p>验收项汇总：{readiness?.gatesSummary ? `${readiness.gatesSummary.passed}/${readiness.gatesSummary.total} 通过` : '不可用'}</p>
-            <p>证据目录：{reportFolder}</p>
+            <p>证据目录工件：{reportDownloadLabel}</p>
+            <p>采集清单工件：{collectionManifestLabel}</p>
             <p>交付包目标：{DELIVERY_BUNDLE_PATH}</p>
           </div>
         </ProgressiveDetails>

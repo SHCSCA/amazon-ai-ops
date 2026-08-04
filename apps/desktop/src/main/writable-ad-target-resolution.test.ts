@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import Database from 'better-sqlite3';
+import { normalizeStoreId } from '@amazon-ai-ops/shared-types';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   assertCurrentWritableAdTargetAuthority,
@@ -15,6 +16,7 @@ afterEach(() => {
 });
 
 function createFixture() {
+  const storeId = normalizeStoreId('store-one');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-writable-target-'));
   tempDirs.push(dir);
   const sourceFile = path.join(dir, 'keyword.xlsx');
@@ -25,6 +27,7 @@ function createFixture() {
   db.exec(`
     CREATE TABLE ad_daily_metrics (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id TEXT,
       batch_id TEXT,
       report_type TEXT,
       date TEXT,
@@ -41,15 +44,16 @@ function createFixture() {
   `);
   db.prepare(`
     INSERT INTO ad_daily_metrics (
-      batch_id, report_type, date, store_name, marketplace_code, asin,
+      store_id, batch_id, report_type, date, store_name, marketplace_code, asin,
       campaign_name, ad_group_name, targeting, match_type, source_file, source_row
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    'batch_current', 'keyword', '2026-06-23', 'FT-US-US', 'US', 'B0TESTASIN',
+    storeId, 'batch_current', 'keyword', '2026-06-23', 'Historical Display Name', 'US', 'B0TESTASIN',
     'Campaign A', 'Ad Group A', 'door lock', 'exact', sourceFile, 611,
   );
   return {
     db,
+    storeId,
     sourceFile,
     identityProofPath,
     scope: {
@@ -73,10 +77,37 @@ function createFixture() {
 }
 
 describe('writable Ads target authority', () => {
+  it('uses store_id authority across display-name changes and ignores another store same batch/source row', () => {
+    const fixture = createFixture();
+    fixture.db.prepare(`
+      INSERT INTO ad_daily_metrics (
+        store_id, batch_id, report_type, date, store_name, marketplace_code, asin,
+        campaign_name, ad_group_name, targeting, match_type, source_file, source_row
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'store-two', 'batch_current', 'keyword', '2026-06-23', 'Other Store', 'US', 'B0TESTASIN',
+      'Campaign A', 'Ad Group A', 'door lock', 'exact', fixture.sourceFile, 611,
+    );
+    try {
+      expect(resolveWritableAdTargetAuthority(fixture.db, {
+        storeId: fixture.storeId,
+        scope: { ...fixture.scope, storeName: 'Renamed Logical Store' },
+        candidate: fixture.candidate,
+        allowedSourceFiles: [fixture.sourceFile],
+        syntheticRecommendationEntityId: 'Campaign A_Ad Group A_door lock',
+        verifiedBy: 'Alice',
+        verifiedAt: '2026-07-16T03:00:00.000Z',
+      })).toMatchObject({ sourceRow: 611, entityName: 'door lock' });
+    } finally {
+      fixture.db.close();
+    }
+  });
+
   it('resolves one current-batch keyword row into a canonical writable target', () => {
     const fixture = createFixture();
     try {
       const result = resolveWritableAdTargetAuthority(fixture.db, {
+        storeId: fixture.storeId,
         scope: fixture.scope,
         candidate: fixture.candidate,
         allowedSourceFiles: [fixture.sourceFile],
@@ -112,6 +143,7 @@ describe('writable Ads target authority', () => {
     const fixture = createFixture();
     try {
       expect(() => resolveWritableAdTargetAuthority(fixture.db, {
+        storeId: fixture.storeId,
         scope: fixture.scope,
         candidate: { ...fixture.candidate, ...candidateOverride } as any,
         allowedSourceFiles: [fixture.sourceFile],
@@ -128,6 +160,7 @@ describe('writable Ads target authority', () => {
     const fixture = createFixture();
     try {
       const target = resolveWritableAdTargetAuthority(fixture.db, {
+        storeId: fixture.storeId,
         scope: fixture.scope,
         candidate: fixture.candidate,
         allowedSourceFiles: [fixture.sourceFile],
@@ -137,6 +170,7 @@ describe('writable Ads target authority', () => {
       });
 
       expect(() => assertCurrentWritableAdTargetAuthority(fixture.db, {
+        storeId: fixture.storeId,
         scope: fixture.scope,
         target: { ...target, entityName: 'forged target' },
         allowedSourceFiles: [fixture.sourceFile],

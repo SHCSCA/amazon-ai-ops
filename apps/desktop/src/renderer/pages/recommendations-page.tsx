@@ -280,12 +280,12 @@ function firstNonEmptyStrings(...values: Array<string[] | undefined>): string[] 
   return [];
 }
 
-function normalizeReportSourcePath(filePath: unknown): string {
-  return String(filePath || '').trim().replace(/\\/g, '/').toLowerCase();
+function normalizeReportSourcePath(sourceRef: unknown): string {
+  return String(sourceRef || '').trim().replace(/\\/g, '/').toLowerCase();
 }
 
-function isRealReportSourceFile(filePath: unknown): boolean {
-  return /\.(xlsx|xls|csv)$/i.test(String(filePath || '').trim().split(/[?#]/)[0]);
+function isRealReportSourceFile(sourceRef: unknown): boolean {
+  return /\.(xlsx|xls|csv)$/i.test(String(sourceRef || '').trim().split(/[?#]/)[0]);
 }
 
 function hasPositiveSourceRow(value: unknown): boolean {
@@ -321,7 +321,10 @@ function recommendationEvidenceIssues(rec: RecommendationView, currentBatchId?: 
   if (recSourceFiles.length && Array.isArray(allowedSourceFiles) && allowedSourceFiles.length > 0) {
     const allowed = new Set(allowedSourceFiles.map(normalizeReportSourcePath));
     const allSourcesCurrent = recSourceFiles.every((file) => allowed.has(normalizeReportSourcePath(file)));
-    if (!allSourcesCurrent) issues.push('来源文件不属于当前数据批次真实报表');
+    if (!allSourcesCurrent) {
+      issues.push('来源文件不属于当前数据批次真实报表');
+      issues.push('未能与当前批次的不透明报表工件对应（旧路径证据已阻断）');
+    }
   }
   if (!rec.evidence?.campaignName) issues.push('缺广告活动');
   if (!rec.evidence?.adGroupName) issues.push('缺广告组');
@@ -947,7 +950,9 @@ export function RecommendationsPage() {
   const realReportCount = realReportCoverageCount(data?.collection);
   const importedReportTypeCount = importedReportTypeCoverageCount(data?.collection);
   const currentRealReportSourceFiles = useMemo(
-    () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
+    () => (data?.collection.realReportFiles || [])
+      .map((file) => file.artifactDisplayName || file.fileName || file.displayName)
+      .filter(Boolean),
     [data?.collection.realReportFiles],
   );
   const actionableMetricRows = data?.quant.actionableRows ?? 0;

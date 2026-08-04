@@ -31,6 +31,12 @@ export type SessionGeneration = number;
 
 export type StoreStatus = 'active' | 'inactive' | 'archived';
 
+/** Minimal logical scope used by store/site selectors and read-only projections. */
+export interface StoreScopeRef {
+  storeId: StoreId;
+  marketplace: UsMarketplace;
+}
+
 export interface UsStoreIdentity {
   storeId: StoreId;
   browserProfileId: BrowserProfileId;
@@ -110,6 +116,12 @@ export interface StoreConnection {
   status: StoreConnectionStatus;
   accountLabel?: string;
   externalAccountId?: string;
+  /** Canonical, Renderer-safe provider identity used for cross-store uniqueness checks. */
+  normalizedExternalAccountId?: string;
+  /** Exact visible Lingxing download-center store selector; never an account identifier. */
+  collectionStoreName?: string;
+  /** Canonical selector value for deterministic matching; Lingxing only. */
+  normalizedCollectionStoreName?: string;
   lastVerifiedAt?: string;
   lastFailureCode?: string;
   session?: StoreSessionMetadata;
@@ -143,7 +155,7 @@ export interface UpdateStorePatch {
 export interface UpdateStoreInput {
   storeId: StoreId;
   patch: UpdateStorePatch;
-  expectedUpdatedAt?: string;
+  expectedUpdatedAt: string;
 }
 
 export interface GetStoreInput {
@@ -158,13 +170,13 @@ export interface ListStoresInput {
 /** Delete semantics are archival in V1; there is no hard-delete command. */
 export interface ArchiveStoreInput {
   storeId: StoreId;
-  expectedUpdatedAt?: string;
+  expectedUpdatedAt: string;
   reason?: string;
 }
 
 export interface RestoreStoreInput {
   storeId: StoreId;
-  expectedUpdatedAt?: string;
+  expectedUpdatedAt: string;
 }
 
 export interface CreateStoreConnectionInput {
@@ -172,6 +184,7 @@ export interface CreateStoreConnectionInput {
   provider: StoreConnectionProvider;
   accountLabel?: string;
   externalAccountId?: string;
+  collectionStoreName?: string;
 }
 
 export interface UpdateStoreConnectionInput {
@@ -179,11 +192,14 @@ export interface UpdateStoreConnectionInput {
   storeId: StoreId;
   accountLabel?: string;
   externalAccountId?: string;
+  collectionStoreName?: string;
+  expectedUpdatedAt: string;
 }
 
 export interface RemoveStoreConnectionInput {
   id: StoreCapabilityId;
   storeId: StoreId;
+  expectedUpdatedAt: string;
 }
 
 export type StoreContractErrorCode =
@@ -210,6 +226,8 @@ export class StoreContractError extends Error {
 
 const LOGICAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const BUSINESS_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const MAX_PROVIDER_EXTERNAL_ACCOUNT_ID_LENGTH = 256;
+const PROVIDER_EXTERNAL_ACCOUNT_ID_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
 function normalizeLogicalId(
   value: unknown,
@@ -281,6 +299,74 @@ export function normalizeUsdCurrency(value: unknown = USD_CURRENCY): UsCurrency 
   const normalized = typeof value === 'string' ? value.trim().toUpperCase() : value;
   assertUsdCurrency(normalized);
   return normalized;
+}
+
+/**
+ * Canonical identity key for provider account bindings.
+ *
+ * Raw labels remain available for operator display, while this value is the
+ * only key that may participate in cross-store uniqueness. V1 providers use
+ * the same locale-independent case fold, kept behind the provider switch so a
+ * later provider can adopt a stricter identity rule without changing existing
+ * keys.
+ */
+export function normalizeProviderExternalAccountId(
+  provider: StoreConnectionProvider,
+  value: unknown,
+): string | undefined {
+  if (provider !== 'lingxing' && provider !== 'amazon_ads') {
+    throw new StoreContractError(
+      'INVALID_STORE_IDENTITY',
+      'Unsupported store connection provider identity',
+    );
+  }
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new StoreContractError(
+      'INVALID_STORE_IDENTITY',
+      'Provider external account id must be a string',
+    );
+  }
+
+  const compatibilityNormalized = value.normalize('NFKC').trim();
+  if (!compatibilityNormalized) return undefined;
+  if (
+    compatibilityNormalized.length > MAX_PROVIDER_EXTERNAL_ACCOUNT_ID_LENGTH
+    || PROVIDER_EXTERNAL_ACCOUNT_ID_CONTROL_CHARACTERS.test(compatibilityNormalized)
+  ) {
+    throw new StoreContractError(
+      'INVALID_STORE_IDENTITY',
+      `Provider external account id must be at most ${MAX_PROVIDER_EXTERNAL_ACCOUNT_ID_LENGTH} characters without control characters`,
+    );
+  }
+  switch (provider) {
+    case 'lingxing':
+    case 'amazon_ads':
+      return compatibilityNormalized.toLowerCase();
+  }
+}
+
+/** Canonical key for the visible Lingxing download-center store selector. */
+export function normalizeLingxingCollectionStoreName(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') {
+    throw new StoreContractError(
+      'INVALID_STORE_IDENTITY',
+      'Lingxing collection store name must be a string',
+    );
+  }
+  const compatibilityNormalized = value.normalize('NFKC').trim();
+  if (!compatibilityNormalized) return undefined;
+  if (
+    compatibilityNormalized.length > MAX_PROVIDER_EXTERNAL_ACCOUNT_ID_LENGTH
+    || PROVIDER_EXTERNAL_ACCOUNT_ID_CONTROL_CHARACTERS.test(compatibilityNormalized)
+  ) {
+    throw new StoreContractError(
+      'INVALID_STORE_IDENTITY',
+      `Lingxing collection store name must be at most ${MAX_PROVIDER_EXTERNAL_ACCOUNT_ID_LENGTH} characters without control characters`,
+    );
+  }
+  return compatibilityNormalized.toLowerCase();
 }
 
 export function normalizeBusinessTimezone(

@@ -82,21 +82,23 @@ export function verifyDownloadedFile(
     return { valid: false, fileSizeBytes: stat.size, errorMessage: '文件过小，可能下载失败' };
   }
 
-  if (options.expectedFilenameKeyword && !basename.toLowerCase().includes(options.expectedFilenameKeyword.toLowerCase())) {
-    if (!options.expectedReportType) {
-      return { valid: false, fileSizeBytes: stat.size, errorMessage: `文件名未包含预期关键词：${options.expectedFilenameKeyword}` };
-    }
+  if (options.expectedReportType) {
     const inspection = inspectReportFileContent(filePath, options.expectedReportType);
     if (!inspection.matched) {
       const reason = inspection.readable
-        ? '文件内容表头也无法识别为对应报表'
+        ? '文件内容表头也无法识别为对应报表（声明类型必须由列语义唯一确认）'
         : `文件内容不可读取：${inspection.errorMessage || 'unknown error'}`;
       return {
         valid: false,
         fileSizeBytes: stat.size,
-        errorMessage: `文件名未包含预期关键词：${options.expectedFilenameKeyword}，${reason}`,
+        errorMessage: reason,
       };
     }
+  } else if (
+    options.expectedFilenameKeyword
+    && !basename.toLowerCase().includes(options.expectedFilenameKeyword.toLowerCase())
+  ) {
+    return { valid: false, fileSizeBytes: stat.size, errorMessage: `文件名未包含预期关键词：${options.expectedFilenameKeyword}` };
   }
 
   return { valid: true, fileSizeBytes: stat.size };

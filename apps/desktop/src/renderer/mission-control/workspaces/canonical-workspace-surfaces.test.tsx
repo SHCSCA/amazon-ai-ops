@@ -52,7 +52,6 @@ describe('canonical workspace store isolation', () => {
     ['decisions', 'decisions/approval', 'DEC-US-022', 'DEC-US-122', 'USD 1.20 → 1.08', 'USD 1.48 → 1.30'],
     ['decisions', 'decisions/decided', 'DEC-US-019', 'DEC-US-119', 'USD 36.00 / 日', 'USD 42.00 / 日'],
     ['experiments', 'experiments/ledger', 'EXPERIMENT · EXP-US-014', 'EXPERIMENT · EXP-US-022', 'ACOS 46.8%', 'ACOS 52.4%'],
-    ['execution', 'execution/live', 'smart lock bedroom', 'garage door opener wifi', 'USD 1.08', 'USD 1.30'],
     ['memory', 'memory/timeline', '降低出价 10%', '降低出价 12%', 'US-SP-SHC001-Exact', 'US-SP-SHC002-Garage'],
     ['policy', 'policy/rules', 'POL-SHC001-US · v3', 'POL-SHC002-US · v2', '≤ 20%', '≤ 8%'],
   ] as const)(
@@ -82,6 +81,17 @@ describe('canonical workspace store isolation', () => {
       expect(shc002).not.toContain(shc001Fact);
     },
   );
+
+  it('keeps the execution preview scoped by StoreContext without canonical fixture leakage', () => {
+    const first = renderSurface('execution', shc001Context, 'execution/live');
+    const second = renderSurface('execution', shc002Context, 'execution/live');
+    expect(first).toContain('preview-store-shc001');
+    expect(first).not.toContain('preview-store-shc002');
+    expect(second).toContain('preview-store-shc002');
+    expect(second).not.toContain('preview-store-shc001');
+    expect(first).toContain('只演示降价且单次不超过 10%');
+    expect(second).not.toContain(['USD 1.08', '1.30'].join(' → '));
+  });
 
   it('derives an isolated neutral fixture for an additional configured store', () => {
     const third = renderSurface('today', {
@@ -126,15 +136,13 @@ describe('canonical workspace store isolation', () => {
 
 describe('canonical execution responsive containment', () => {
   it('switches the execution room to one column by content width and keeps the wide object table scrollable', () => {
-    const css = readFileSync(new URL('./canonical-workspace-surfaces.css', import.meta.url), 'utf8');
+    const css = readFileSync(new URL('./execution-workspace.css', import.meta.url), 'utf8');
     const markup = renderSurface('execution', shc001Context, 'execution/live');
 
-    expect(css).toMatch(/container-name:\s*canonical-workspace/);
-    expect(css).toMatch(/container-type:\s*inline-size/);
-    expect(css).toMatch(/@container canonical-workspace \(max-width:\s*1040px\)[\s\S]*?\.canonical-execution-room\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-    expect(css).toMatch(/\.canonical-browser-table-scroll\s*\{[\s\S]*?overflow-x:\s*auto/);
-    expect(css).toMatch(/\.canonical-browser-table\s*\{[\s\S]*?width:\s*max\(100%,\s*680px\)/);
-    expect(markup).toContain('class="canonical-browser-table-scroll"');
-    expect(markup).toContain('tabindex="0"');
+    expect(css).toMatch(/container:\s*execution-workspace\s*\/\s*inline-size/);
+    expect(css).toMatch(/@container execution-workspace \(max-width:\s*820px\)[\s\S]*?\.execution-cockpit\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    expect(css).toMatch(/\.execution-object-grid\s*\{[\s\S]*?overflow-x:\s*auto/);
+    expect(markup).toContain('class="execution-object-grid"');
+    expect(markup).toContain('class="execution-console"');
   });
 });

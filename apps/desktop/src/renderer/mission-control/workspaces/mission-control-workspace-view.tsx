@@ -5,10 +5,13 @@ import { MissionControlWorkspaceTabs } from './mission-control-workspace-tabs';
 import { subviewDefinitionForIntent } from './registry';
 import type { MissionControlWorkspaceViewProps } from './types';
 import { capabilityForAction } from '../components';
+import { TodayWorkspace } from './today-workspace';
+import { ObjectsWorkspace } from './objects-workspace';
 
 const CANONICAL_KIND_BY_VIEW = {
   'today/overview': 'today',
   'missions/overview': 'missions',
+  'missions/facts': 'missions',
   'decisions/recommendations': 'decisions',
   'decisions/approval': 'decisions',
   'decisions/decided': 'decisions',
@@ -23,7 +26,11 @@ export function MissionControlWorkspaceView({
   storeContext,
   capabilities,
   autonomy,
+  today,
+  bridgePhase,
+  bridgeError,
   previewMode,
+  onRefreshAuthority,
   onNavigate,
   legacySlot,
   storeCrudSlot,
@@ -37,7 +44,39 @@ export function MissionControlWorkspaceView({
   const useCanonicalSurface = definition.kind === 'canonical'
     || (Boolean(kind) && !legacyAuthorityReady);
   let content: React.ReactNode;
-  if (useCanonicalSurface) {
+  if (definition.view === 'today/overview' && viewCapability?.state !== 'LEGACY_ADAPTER') {
+    const expectedState = previewMode ? 'PROTOTYPE_ONLY' : 'PRODUCTION_NATIVE';
+    const capabilityReady = viewCapability?.state === expectedState;
+    const capabilityError = capabilities === undefined
+      ? null
+      : capabilityReady
+        ? null
+        : !previewMode && viewCapability?.state === 'PROTOTYPE_ONLY'
+          ? '当前不是显式开发预览，PROTOTYPE_ONLY 今日投影已失败关闭。'
+          : viewCapability?.state === 'BLOCKED'
+            ? `今日控制面已失败关闭：${viewCapability.detail}`
+            : `今日视图需要 ${expectedState} 能力，当前投影为 ${viewCapability?.state ?? 'MISSING'}。`;
+    content = (
+      <TodayWorkspace
+        capabilities={capabilities}
+        error={capabilityError || bridgeError || (capabilityReady && !today && bridgePhase === 'ready' ? 'Main 未返回当前店铺的今日真实投影。' : null)}
+        loading={bridgePhase === 'loading' || bridgePhase === 'idle' || capabilities === undefined}
+        onNavigate={onNavigate}
+        previewMode={previewMode}
+        projection={capabilityReady ? today ?? null : null}
+        storeContext={storeContext}
+      />
+    );
+  } else if (definition.view === 'today/events') {
+    content = (
+      <ObjectsWorkspace
+        activeSubview="events"
+        capabilities={capabilities}
+        previewMode={previewMode}
+        storeContext={storeContext}
+      />
+    );
+  } else if (useCanonicalSurface) {
     if (!kind) {
       throw new Error(`Canonical Mission Control view ${definition.view} has no renderer`);
     }
@@ -46,6 +85,7 @@ export function MissionControlWorkspaceView({
         autonomy={autonomy}
         capabilities={capabilities}
         kind={kind}
+        onRefreshAuthority={onRefreshAuthority}
         previewMode={previewMode}
         storeContext={storeContext}
         view={definition.view}

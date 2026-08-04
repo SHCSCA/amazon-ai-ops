@@ -14,7 +14,8 @@ describe('preload business update bridge', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
     const loginContractSource = fs.readFileSync(path.join(__dirname, '../shared/login-contract.ts'), 'utf8');
 
-    expect(source).toContain("getSavedLoginCredentialStatus: () => ipcRenderer.invoke('browser:get-saved-credential-status')");
+    expect(source).toContain('getSavedLoginCredentialStatus: (): Promise<StoreScopedSavedLoginCredentialStatus> =>');
+    expect(source).toContain("ipcRenderer.invoke('browser:get-saved-credential-status') as Promise<StoreScopedSavedLoginCredentialStatus>");
     expect(source).toContain('BrowserLoginRequest');
     expect(loginContractSource).toContain("credentialSource: 'saved'");
     expect(loginContractSource).toContain("credentialSource: 'typed'");
@@ -23,10 +24,104 @@ describe('preload business update bridge', () => {
     expect(source).not.toContain("ipcRenderer.invoke('browser:get-saved-credentials')");
   });
 
+  it('exposes authoritative Lingxing collection progress and recovery without leaking ipcRenderer', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('AuthoritativeLingxingCollectionRange');
+    expect(source).toContain('requestId: string');
+    expect(source).toContain('storeContext: StoreContextEnvelope');
+    expect(source).toContain("ipcRenderer.on('lingxing-collection:progress', handler)");
+    expect(source).toContain("ipcRenderer.removeListener('lingxing-collection:progress', handler)");
+    expect(source).toContain("ipcRenderer.invoke('v1_5:reports:list-lingxing-collection-jobs', input)");
+    expect(source).toContain("ipcRenderer.invoke('v1_5:reports:resume-lingxing-collection', input)");
+    expect(source).toContain("ipcRenderer.invoke('v1_5:reports:cancel-lingxing-collection', input)");
+    expect(source).toContain('type LingxingCollectionCancelInput = {');
+    expect(source).toContain('jobId: string');
+    expect(source).toContain('requestId: string');
+  });
+
+  it('requires full StoreContext authority for both business report import mutations', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('type AuthoritativeBusinessImportScope = BusinessUiScope & {');
+    expect(source).toContain('storeContext: StoreContextEnvelope');
+    expect(source).toContain('importCurrentBusinessReports: (scope: AuthoritativeBusinessImportScope) =>');
+    expect(source).toContain('importLocalBusinessReportFiles: (scope: AuthoritativeBusinessImportScope) =>');
+    expect(source).toContain("ipcRenderer.invoke('v1_5:business-ui:import-current-reports', scope)");
+    expect(source).toContain("ipcRenderer.invoke('v1_5:business-ui:import-local-report-files', scope)");
+  });
+
+  it('requires StoreContext authority for operation-scope reads and writes', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('getOperationScope: (storeContext: StoreContextEnvelope) =>');
+    expect(source).toContain("ipcRenderer.invoke('settings:get-operation-scope', storeContext)");
+    expect(source).toContain('saveOperationScope: (storeContext: StoreContextEnvelope, scope: any) =>');
+    expect(source).toContain("ipcRenderer.invoke('settings:save-operation-scope', { storeContext, scope })");
+    expect(source).not.toContain("ipcRenderer.invoke('settings:get-operation-scope')");
+  });
+
+  it('exposes typed store runtime config CRUD only through complete StoreContext requests', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    expect(source).toContain('StoreRuntimeConfigProjection');
+    for (const channel of ['get', 'create', 'update', 'archive', 'restore']) {
+      expect(source).toContain(`ipcRenderer.invoke('store-runtime-config:${channel}', { storeContext`);
+    }
+    expect(source).toContain('UpdateStoreRuntimeConfigInput');
+    expect(source).toContain('ArchiveStoreRuntimeConfigInput');
+    expect(source).toContain('RestoreStoreRuntimeConfigInput');
+    expect(source).not.toContain("ipcRenderer.invoke('store-runtime-config:get')");
+  });
+
+  it('exposes store collection schedule operations only through complete StoreContext requests', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('StoreCollectionScheduleProjection');
+    expect(source).toContain('StoreCollectionScheduleRunResult');
+    expect(source).toContain('getStoreCollectionSchedule: (');
+    expect(source).toContain('runStoreCollectionScheduleNow: (');
+    expect(source).toContain("ipcRenderer.invoke('store-collection-scheduler:get', { storeContext })");
+    expect(source).toContain("ipcRenderer.invoke('store-collection-scheduler:run-now', { storeContext })");
+    expect(source).not.toContain("ipcRenderer.invoke('store-collection-scheduler:get')");
+    expect(source).not.toContain("ipcRenderer.invoke('store-collection-scheduler:run-now')");
+  });
+
+  it('exposes retention as a typed StoreContext-only dry-run preview', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const start = source.indexOf('previewStoreEvidenceRetention:');
+    const end = source.indexOf('getStoreCollectionSchedule:', start);
+    const bridge = source.slice(start, end);
+
+    expect(bridge).toContain('storeContext: StoreContextEnvelope');
+    expect(bridge).toContain('Promise<StoreEvidenceRetentionPreviewSummary>');
+    expect(bridge).toContain("ipcRenderer.invoke('store-evidence-retention:preview', { storeContext })");
+    expect(bridge).not.toMatch(/absolutePath|referencedPaths|retentionDays|candidates|protectedFiles|relativePath|delete|apply/i);
+    expect(source).not.toContain("from '../main/store-evidence-retention'");
+  });
+
+  it('opens collection and import artifacts by opaque id under the current StoreContext', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const reportsStart = source.indexOf('// Reports');
+    const reportsEnd = source.indexOf('// v1.5 Product Config', reportsStart);
+    const reportsBridge = source.slice(reportsStart, reportsEnd);
+
+    expect(reportsBridge).toContain('openReportArtifact: (artifactId: string, storeContext: StoreContextEnvelope) =>');
+    expect(reportsBridge).toContain("ipcRenderer.invoke('v1_5:reports:open-artifact', { artifactId, storeContext })");
+    expect(reportsBridge).not.toContain('openReportPath');
+    expect(reportsBridge).not.toContain("ipcRenderer.invoke('v1_5:reports:open-path'");
+    expect(reportsBridge).not.toContain('selectReportFile');
+    expect(reportsBridge).not.toContain('parseReport:');
+    expect(reportsBridge).not.toContain('downloadReport:');
+    expect(reportsBridge).toContain('exportDataReconciliationArtifacts:');
+    expect(reportsBridge).toContain("ipcRenderer.invoke('v1_5:business-ui:export-data-reconciliation-artifacts', scope)");
+  });
+
   it('uses the shared non-secret login result contract across the IPC bridge', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
 
-    expect(source).toContain("import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract'");
+    expect(source).toContain('BrowserLoginRequest,');
+    expect(source).toContain('BrowserLoginResult,');
+    expect(source).toContain("} from '../shared/login-contract'");
     expect(source).toContain('browserLogin: (request: BrowserLoginRequest): Promise<BrowserLoginResult> =>');
     expect(source).toContain("ipcRenderer.invoke('browser:login', request) as Promise<BrowserLoginResult>");
   });
@@ -73,6 +168,15 @@ describe('preload business update bridge', () => {
     expect(source).not.toContain('exportAdReadbackEvidence: (input: any)');
   });
 
+  it('keeps readback path inputs opaque and does not expose a renderer-selected output directory', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('type ReadbackArtifactReference = string;');
+    expect(source).toContain('prepareAdReadbackSession: (input: { sourcePath: ReadbackArtifactReference }) =>');
+    expect(source).not.toContain('sourcePath: string; outDir?: string');
+    expect(source).toContain('sessionDir?: ReadbackArtifactReference');
+  });
+
   it('exposes typed logical store CRUD and switching without profile paths or secrets', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
 
@@ -80,12 +184,65 @@ describe('preload business update bridge', () => {
     expect(source).toContain('StoreWorkspaceView');
     expect(source).toContain("ipcRenderer.invoke('stores:create', input)");
     expect(source).toContain("ipcRenderer.invoke('stores:connections:create', input)");
-    expect(source).toContain("ipcRenderer.invoke('stores:switch', { storeId })");
+    expect(source).toContain('switchStore: (scope: StoreScopeRef)');
+    expect(source).toContain("ipcRenderer.invoke('stores:switch', scope)");
+    expect(source).toContain("ipcRenderer.invoke('stores:get-selection')");
+    expect(source).toContain("ipcRenderer.invoke('stores:daily-status:list', input)");
     expect(source).toContain("ipcRenderer.invoke('stores:get-active-context')");
+    expect(source).toContain("ipcRenderer.invoke('stores:get-active-workspace-view')");
+    expect(source).toContain("ipcRenderer.invoke('package-ui-evidence:database-checkpoint', { phase })");
     expect(source).toContain("ipcRenderer.on('store-context:changed', handler)");
+    expect(source).toContain('(callback: (view: StoreWorkspaceView | null) => void)');
+    expect(source).toContain('view: StoreWorkspaceView | null');
     const storeBridgeStart = source.indexOf('listStores:');
     const settingsStart = source.indexOf('// Settings', storeBridgeStart);
     const storeBridge = source.slice(storeBridgeStart, settingsStart);
     expect(storeBridge).not.toMatch(/profilePath|userDataDir|cookie|password|token/i);
+  });
+
+  it('exposes only context-authorized product, event, ad-fact, and Listing object operations', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    const objectsStart = source.indexOf('// Main-authorized product and operation-event objects');
+    const settingsStart = source.indexOf('// Settings', objectsStart);
+    const objectsBridge = source.slice(objectsStart, settingsStart);
+
+    expect(objectsBridge).toContain('storeContext: StoreContextEnvelope');
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-objects:products:list', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-objects:products:create', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-objects:products:update', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-objects:products:archive', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-objects:operation-events:list', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-objects:operation-events:create', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-objects:operation-events:update', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-objects:operation-events:delete', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-ad-listing:ad-objects:list', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-ad-listing:keyword-facts:list', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-ad-listing:listing:create', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-ad-listing:listing:update', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-ad-listing:listing:delete', { storeContext, input })");
+    expect(objectsBridge).toContain("ipcRenderer.invoke('store-ad-listing:listing-versions:list', { storeContext, input })");
+    expect(objectsBridge).toContain('StoreProductUpdateInput');
+    expect(objectsBridge).toContain('StoreOperationEventUpdateInput');
+    expect(objectsBridge).toContain('StoreListingContentUpdateInput');
+    expect(objectsBridge).not.toContain("ipcRenderer.invoke('products:get'");
+    expect(objectsBridge).not.toContain("ipcRenderer.invoke('operation-events:list'");
+    expect(objectsBridge).not.toMatch(/sourceFile|screenshotPath|browserProfile|cookie|password|token/);
+  });
+
+  it('does not expose retired unscoped object or path-bearing keyword bridges', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+    for (const channel of [
+      'products:get',
+      'products:add',
+      'products:save-config',
+      'products:bulk-update-target-acos',
+      'operation-events:list',
+      'operation-events:create',
+      'operation-events:update',
+      'operation-events:delete',
+      'v1_5:business-ui:keyword-opportunities',
+    ]) {
+      expect(source).not.toContain(`ipcRenderer.invoke('${channel}'`);
+    }
   });
 });

@@ -5,6 +5,7 @@ import userDataModule from './evidence-user-data.js';
 const {
   EVIDENCE_MODE_ENV,
   EVIDENCE_USER_DATA_DIR_ENV,
+  PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV,
   PACKAGE_LAUNCH_SMOKE_MODE,
   PACKAGE_UI_EVIDENCE_MODE,
   inspectPackagedUserDataOverrideContract,
@@ -66,8 +67,16 @@ describe('packaged evidence userData script contract', () => {
     const indexSource = readFileSync('apps/desktop/src/main/index.ts', 'utf8');
     expect(mainSource).toContain(`EVIDENCE_MODE_ENV = '${EVIDENCE_MODE_ENV}'`);
     expect(mainSource).toContain(`EVIDENCE_USER_DATA_DIR_ENV = '${EVIDENCE_USER_DATA_DIR_ENV}'`);
+    expect(mainSource).toContain(
+      `PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV =\n  '${PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV}'`,
+    );
     expect(indexSource.indexOf('configureEvidenceUserDataPath(app);')).toBeGreaterThan(-1);
     expect(indexSource.indexOf('configureEvidenceUserDataPath(app);')).toBeLessThan(indexSource.indexOf("app.getPath('userData')"));
+    expect(indexSource).toContain(
+      "packageUiFreshTypedProofRequired = packageUiReadOnlyRuntime\n  && process.env[PACKAGE_UI_REQUIRE_FRESH_TYPED_PROOF_ENV] === '1'",
+    );
+    expect(indexSource).toContain('freshTypedProofRequired: packageUiFreshTypedProofRequired');
+    expect(indexSource).toContain('packageUiEvidenceMode: packageUiReadOnlyRuntime');
   });
 
   it('recognizes the main-process source contract that must survive into the packaged bundle', () => {

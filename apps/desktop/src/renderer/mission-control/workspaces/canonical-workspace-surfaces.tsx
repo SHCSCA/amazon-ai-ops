@@ -24,6 +24,7 @@ import {
   canonicalWorkspaceFixtureForStore,
   type CanonicalWorkspaceFixture,
 } from './canonical-workspace-fixtures';
+import { ExecutionWorkspace } from './execution-workspace';
 
 export type CanonicalWorkspaceSurfaceKind =
   | 'today'
@@ -297,41 +298,13 @@ function ExperimentSurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
 }
 
 function ExecutionSurface(props: ResolvedCanonicalWorkspaceSurfaceProps) {
-  if (!props.previewEnabled) {
-    return (
-      <div className="canonical-execution-room" data-canonical-surface="execution">
-        <section className="canonical-browser-frame"><header><Browser size={17} /><strong>可见领星浏览器</strong><span>未连接</span></header><EmptyAuthority description="没有 Main 会话、授权与串行写入合同时不展示成功执行。" reason={props.blockedReason} title="暂无可授权执行项" /></section>
-        <aside className="canonical-execution-detail"><h3>动作与回读</h3><p>UNKNOWN 必须停止并进入人工对账。</p></aside>
-      </div>
-    );
-  }
-  const { fixture } = props;
   return (
-    <div data-canonical-surface="execution">
-      <PreviewNotice fixture={fixture} onInspectBoundary={props.onInspectBoundary} />
-      <div className="canonical-execution-toolbar">
-        <div><span>执行队列 · {fixture.batchId}</span><strong>{fixture.primaryAsin} · 1 项等待真实授权</strong></div>
-        <div role="group" aria-label="执行控制"><DisabledAction reason={props.blockedReason}>开始可见执行</DisabledAction><DisabledAction reason={props.blockedReason}>人工接管</DisabledAction><DisabledAction reason={props.blockedReason}>紧急停止</DisabledAction></div>
-      </div>
-      <div className="canonical-execution-room">
-        <section className="canonical-browser-frame">
-          <header><Browser size={17} /><strong>领星广告管理 · 可见浏览器</strong><span data-tone="blocked">Authority 未接入</span></header>
-          <div className="canonical-browser-address"><LockKey size={14} />lingxing.example.invalid / ads / keywords</div>
-          <div className="canonical-browser-table-scroll" aria-label="执行对象预览横向滚动区" role="region" tabIndex={0}>
-            <div className="canonical-browser-table" role="table" aria-label="执行对象预览">
-              <div role="row"><span>对象</span><span>当前出价</span><span>目标出价</span><span>变化</span><span>状态</span></div>
-              <div role="row"><span><strong>{fixture.execution.searchTerm}</strong><small>{fixture.execution.campaign}</small></span><span>USD {fixture.execution.currentBid}</span><span>USD {fixture.execution.targetBid}</span><span>{fixture.execution.change}</span><span>等待授权</span></div>
-            </div>
-          </div>
-        </section>
-        <aside className="canonical-execution-detail">
-          <h3>动作与回读</h3>
-          <dl><div><dt>before</dt><dd>待捕获</dd></div><div><dt>after</dt><dd>待捕获</dd></div><div><dt>reload</dt><dd>待验证</dd></div><div><dt>未知结果</dt><dd>停止并人工对账</dd></div></dl>
-          <DisabledAction reason={props.blockedReason}>应用 USD {fixture.execution.targetBid}</DisabledAction>
-          <DisabledAction reason={props.blockedReason}>Reload 并验证</DisabledAction>
-        </aside>
-      </div>
-    </div>
+    <ExecutionWorkspace
+      blockedReason={props.blockedReason}
+      onInspectBoundary={props.onInspectBoundary}
+      previewEnabled={props.previewEnabled}
+      storeContext={props.storeContext}
+    />
   );
 }
 

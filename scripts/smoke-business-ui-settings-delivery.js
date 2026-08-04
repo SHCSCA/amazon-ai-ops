@@ -1,1420 +1,379 @@
-const fs = require('fs');
-const http = require('http');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 const { chromium } = require('./playwright-loader');
-const { navigateLegacyRoute, openScopeEditor } = require('./business-ui-smoke-navigation');
+const {
+  enterPreviewStore,
+  installPreviewApiBridge,
+  navigateLegacyRoute,
+  startBusinessUiDevServer,
+  switchPreviewStore,
+} = require('./business-ui-smoke-navigation');
 
 const root = path.resolve(__dirname, '..');
-const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
-const rendererIndex = path.join(rendererDir, 'index.html');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
-const NAV_RE = {
-  dashboard: /今日看板|仪表盘/,
-  delivery: /最终验收就绪门|交付验收/,
-  recommendations: /建议与审批/,
-  settings: /AI与规则|AI 与规则|设置/,
-};
-const HEADING_RE = {
-  dashboard: /今日任务/,
-  delivery: /最终验收就绪门|交付验收/,
-  recommendations: /建议与审批/,
-  settings: /AI 与规则|设置/,
-};
+const previewScenario = 'delivery-ready';
 
 function fail(message, details) {
   throw new Error(details ? `${message}: ${details}` : message);
-}
-
-function startStaticServer(directory) {
-  const mimeTypes = new Map([
-    ['.html', 'text/html; charset=utf-8'],
-    ['.js', 'text/javascript; charset=utf-8'],
-    ['.css', 'text/css; charset=utf-8'],
-    ['.json', 'application/json; charset=utf-8'],
-    ['.png', 'image/png'],
-    ['.svg', 'image/svg+xml'],
-  ]);
-
-  const server = http.createServer((request, response) => {
-    const requestUrl = new URL(request.url || '/', 'http://127.0.0.1');
-    const pathname = decodeURIComponent(requestUrl.pathname === '/' ? '/index.html' : requestUrl.pathname);
-    const targetPath = path.resolve(path.join(directory, pathname));
-    const relative = path.relative(path.resolve(directory), targetPath);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      response.writeHead(403);
-      response.end('Forbidden');
-      return;
-    }
-    if (!fs.existsSync(targetPath) || !fs.statSync(targetPath).isFile()) {
-      response.writeHead(404);
-      response.end('Not found');
-      return;
-    }
-    response.writeHead(200, { 'Content-Type': mimeTypes.get(path.extname(targetPath)) || 'application/octet-stream' });
-    fs.createReadStream(targetPath).pipe(response);
-  });
-
-  return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      resolve({ url: `http://127.0.0.1:${address.port}/index.html?preview=1&scenario=delivery-ready`, close: () => server.close() });
-    });
-  });
 }
 
 async function bodyText(page) {
   return page.locator('body').innerText();
 }
 
-async function expectVisible(page, text) {
-  const matches = page.getByText(text, { exact: true });
-  let locator = matches.first();
-  try {
-    const count = await matches.count();
-    let visibleMatch = null;
-    for (let index = 0; index < count; index += 1) {
-      const candidate = matches.nth(index);
-      if (await candidate.isVisible()) {
-        visibleMatch = candidate;
-        break;
-      }
+async function expectBodyText(page, text, key) {
+  const content = await bodyText(page);
+  if (!content.includes(text)) fail(`Expected body text missing: ${text}`, key);
+}
+
+async function expectNoBodyText(page, text, key) {
+  const content = await bodyText(page);
+  if (content.includes(text)) fail(`Unexpected body text: ${text}`, key);
+}
+
+async function expectWorkspace(page, heading, subview) {
+  await page.getByRole('heading', { name: heading, level: 1, exact: true })
+    .waitFor({ state: 'visible', timeout: 10_000 });
+  const rootNode = page.locator(
+    `[data-workspace-evidence-root][data-workspace="settings"][data-workspace-subview="${subview}"]`,
+  );
+  await rootNode.waitFor({ state: 'visible', timeout: 10_000 });
+  if (await rootNode.count() !== 1) {
+    fail('Expected exactly one settings workspace evidence root', subview);
+  }
+}
+
+async function assertUsUsdOnly(page, key, { allowPreviewReadyWarning = false } = {}) {
+  const content = await bodyText(page);
+  for (const forbidden of ['USDT', 'CNY', '人民币', '¥', 'APP_NEEDS_WORK']) {
+    if (content.includes(forbidden)) fail(`Non-US/USD or raw readiness text is visible: ${forbidden}`, key);
+  }
+  if (content.includes('APP_READY')) {
+    if (!allowPreviewReadyWarning || !content.includes('不可视为 APP_READY')) {
+      fail('False APP_READY state is visible', key);
     }
-    if (!visibleMatch) throw new Error(`No visible match found among ${count} exact text nodes`);
-    locator = visibleMatch;
-    await locator.scrollIntoViewIfNeeded({ timeout: 5000 });
-    await locator.waitFor({ state: 'visible', timeout: 5000 });
-  } catch (error) {
-    const textContent = await bodyText(page).catch(() => '');
-    const visibility = await locator.evaluateAll((nodes) => nodes.map((node) => {
-      const ancestors = [];
-      let current = node;
-      while (current instanceof HTMLElement && ancestors.length < 8) {
-        const style = window.getComputedStyle(current);
-        ancestors.push({
-          className: current.className,
-          display: style.display,
-          open: current instanceof HTMLDetailsElement ? current.open : undefined,
-          tag: current.tagName,
-          visibility: style.visibility,
-        });
-        current = current.parentElement;
-      }
-      return ancestors;
-    })).catch(() => []);
-    fail(`Expected visible text missing: ${text}`, JSON.stringify({
-      bodyIncludesText: textContent.includes(text),
-      bodySample: textContent.slice(0, 1800),
-      originalError: error instanceof Error ? error.message : String(error),
-      visibility,
-    }, null, 2));
+  }
+  const fixedMarketScope = await page.getByLabel('美国站，美元').innerText();
+  if (!fixedMarketScope.includes('US') || !fixedMarketScope.includes('USD')) {
+    fail('Mission Control top bar lost the fixed Amazon US / USD scope', key);
   }
 }
 
-async function expectInBody(page, text, key) {
-  const textContent = await bodyText(page);
-  if (!textContent.includes(text)) fail(`Expected body text missing: ${text}`, key);
+async function switchStore(page, storeId, storeName) {
+  await switchPreviewStore(page, storeId, storeName);
+  await page.locator(`[data-authority-key*="${storeId}"]`).waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-async function deliveryMessageText(page) {
-  return page.evaluate(() => {
-    const panels = Array.from(document.querySelectorAll('.ui-panel'));
-    const panel = panels.find((element) => element.querySelector('h3')?.textContent?.includes('交付消息'));
-    return panel?.textContent || '';
-  });
+async function clickButton(page, name, options = {}) {
+  const button = page.getByRole('button', { name, exact: options.exact ?? true }).first();
+  await button.waitFor({ state: 'visible', timeout: 10_000 });
+  await button.dispatchEvent('click');
 }
 
-async function assertDeliveryMessageHasNoLongPath(page, key) {
-  const textContent = await deliveryMessageText(page);
-  if (/[A-Za-z]:[\\/]|output[\\/]/i.test(textContent)) {
-    fail('Delivery message should not expose long paths outside collapsed details', JSON.stringify({ key, textContent }, null, 2));
+async function fillRuntimeConfig(page, values) {
+  const field = (label) => page.locator('.mission-control-config-form label')
+    .filter({ hasText: label })
+    .locator('input')
+    .first();
+  if (values.collectionScheduleLocalTime !== undefined) {
+    await field('每日采集时间').fill(values.collectionScheduleLocalTime);
   }
-}
-
-async function assertBlockedDeliveryExportButton(page, key) {
-  const exportButton = page.getByRole('button', { name: '导出交付包' });
-  if (await exportButton.count() === 0) {
-    return;
+  if (values.collectionLookbackDays !== undefined) {
+    await field('采集回看天数').fill(String(values.collectionLookbackDays));
   }
-  const state = await exportButton.first().evaluate((element) => {
-    const button = element;
-    return {
-      ariaDisabled: button.getAttribute('aria-disabled'),
-      className: button.className,
-      cursor: window.getComputedStyle(button).cursor,
-      disabled: button.disabled === true,
-      title: button.getAttribute('title') || '',
-    };
-  });
-  if (!state.disabled || state.ariaDisabled !== 'true' || !state.className.includes('delivery-export-blocked') || state.cursor !== 'no-drop') {
-    fail('Blocked delivery export button should be physically disabled with red no-drop feedback', JSON.stringify({ key, state }, null, 2));
+  if (values.analysisWindowDays !== undefined) {
+    await field('量化分析窗口').fill(String(values.analysisWindowDays));
   }
-  if (!state.title.includes('最终验收通过且安装包证据已记录后才能导出交付包')) {
-    fail('Blocked delivery export button should explain the package-aware readiness condition', JSON.stringify({ key, state }, null, 2));
+  if (values.defaultTargetAcosPercent !== undefined) {
+    await field('默认目标 ACOS').fill(String(values.defaultTargetAcosPercent));
   }
-}
-
-async function expandDetails(page, summaryText) {
-  const summary = page.locator('summary').filter({ hasText: summaryText }).first();
-  await summary.waitFor({ state: 'visible', timeout: 5000 });
-  const isOpen = await summary.evaluate((node) => Boolean(node.parentElement?.hasAttribute('open')));
-  if (!isOpen) await summary.click();
-  const openState = await summary.evaluate((node) => {
-    const states = [];
-    let details = node.closest('details');
-    while (details) {
-      states.push({ open: details.open, summary: details.querySelector(':scope > summary')?.textContent?.trim() || '' });
-      details = details.parentElement?.closest('details') || null;
-    }
-    return states;
-  });
-  if (openState.some((item) => !item.open)) {
-    fail('Progressive details did not stay open', JSON.stringify({ summaryText, openState }, null, 2));
+  if (values.minimumRecommendationConfidencePercent !== undefined) {
+    await field('最低建议置信度').fill(String(values.minimumRecommendationConfidencePercent));
   }
-}
-
-async function assertSettingsMainSectionOrder(page) {
-  const sectionTitles = await page.evaluate(() => {
-    const stack = document.querySelector('.business-stack');
-    if (!stack) return [];
-    return Array.from(stack.children).flatMap((element) => {
-      if (element.classList.contains('ui-panel')) {
-        const heading = element.querySelector(':scope > .panel-title-row > h3');
-        return heading?.textContent?.trim() ? [heading.textContent.trim()] : [];
-      }
-      if (element.classList.contains('progressive-details')) {
-        const summary = element.querySelector(':scope > summary');
-        return summary?.textContent?.trim() ? [summary.textContent.trim()] : [];
-      }
-      return Array.from(element.querySelectorAll(':scope > .progressive-details > summary'))
-        .map((summary) => summary.textContent?.trim() || '')
-        .filter(Boolean);
-    });
-  });
-  const expectedPrefix = ['AI 服务连接', '规则阈值与动作边界'];
-  if (sectionTitles[0] !== expectedPrefix[0] || sectionTitles[1] !== expectedPrefix[1]) {
-    fail('Settings page should show normal AI connection first and rule boundaries second', JSON.stringify({ sectionTitles }, null, 2));
+  if (values.evidenceRetentionDays !== undefined) {
+    await field('证据保留期').fill(String(values.evidenceRetentionDays));
   }
-  for (const advancedTitle of ['AI 调用记录与支持信息', '安全策略', '本地支持路径', '支持检查工具']) {
-    const index = sectionTitles.indexOf(advancedTitle);
-    if (index !== -1 && index < expectedPrefix.length) {
-      fail('Settings advanced sections should follow the normal settings sections', JSON.stringify({ advancedTitle, sectionTitles }, null, 2));
+  if (values.aiRecommendationsEnabled !== undefined) {
+    const toggle = field('AI 调整建议');
+    if (await toggle.isChecked() !== values.aiRecommendationsEnabled) {
+      await toggle.setChecked(values.aiRecommendationsEnabled);
     }
   }
 }
 
-async function screenshotScrollableContent(page, screenshotPath) {
-  await page.evaluate(() => {
-    const shell = document.querySelector('.app-shell');
-    const body = document.querySelector('.app-body');
-    const content = document.querySelector('.app-content');
-    for (const element of [shell, body, content]) {
-      if (!(element instanceof HTMLElement)) continue;
-      element.dataset.smokeOldStyle = element.getAttribute('style') || '';
-    }
-    if (shell instanceof HTMLElement) shell.style.height = 'auto';
-    if (body instanceof HTMLElement) body.style.alignItems = 'stretch';
-    if (content instanceof HTMLElement) {
-      content.scrollTo({ top: 0, left: 0 });
-      content.style.height = `${content.scrollHeight}px`;
-      content.style.overflow = 'visible';
-    }
-  });
+async function capture(page, evidence, key, runId) {
+  const screenshotPath = path.join(
+    evidenceDir,
+    `business-ui-settings-delivery-${key}-${runId}.png`,
+  );
   await page.screenshot({ path: screenshotPath, fullPage: true });
-  await page.evaluate(() => {
-    for (const element of document.querySelectorAll('[data-smoke-old-style]')) {
-      if (!(element instanceof HTMLElement)) continue;
-      const oldStyle = element.dataset.smokeOldStyle || '';
-      if (oldStyle) element.setAttribute('style', oldStyle);
-      else element.removeAttribute('style');
-      delete element.dataset.smokeOldStyle;
-    }
-  });
-}
-
-async function assertAbsent(page, text, key) {
-  const textContent = await bodyText(page);
-  if (textContent.includes(text)) fail(`Unexpected visible text: ${text}`, key);
-}
-
-async function assertGlobalGuards(page, key, options = {}) {
-  const forbiddenTexts = ['v1.5 工作台', 'pnpm run verify:ad-readback', 'pnpm run verify:ai-live', '查看技术命令', '¥', '￥', 'RMB', 'CNY', '人民币'];
-  if (!options.allowRawStatus) forbiddenTexts.push('APP_READY', 'APP_NEEDS_WORK');
-  for (const forbiddenText of forbiddenTexts) {
-    await assertAbsent(page, forbiddenText, key);
-  }
+  evidence.pages[key] = {
+    assertion: 'PASS',
+    screenshotPath,
+    bodyTextSample: (await bodyText(page)).slice(0, 2_000),
+  };
 }
 
 async function main() {
-  if (!fs.existsSync(rendererIndex)) {
-    fail('Renderer build not found. Run pnpm --filter @amazon-ai-ops/desktop run build:renderer first', rendererIndex);
-  }
-
   fs.mkdirSync(evidenceDir, { recursive: true });
   const runId = Date.now();
-  const evidence = { generatedAt: new Date().toISOString(), rendererIndex, pages: {}, consoleErrors: [], actionLog: [] };
+  const evidence = {
+    schemaVersion: 2,
+    generatedAt: new Date().toISOString(),
+    scenario: previewScenario,
+    runtime: {
+      mode: 'dev-preview-memory-only',
+      credentialsUsed: false,
+      amazonAdsWrites: false,
+    },
+    pages: {},
+    actionLog: [],
+    consoleErrors: [],
+  };
 
-  let server;
   let browser;
-
+  let server;
   try {
-    server = await startStaticServer(rendererDir);
+    server = await startBusinessUiDevServer(root, previewScenario);
     browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: { width: 1480, height: 1080 } });
+    const page = await browser.newPage({ viewport: { width: 1480, height: 980 } });
+
     page.on('console', (message) => {
       if (message.type() === 'error') evidence.consoleErrors.push(message.text());
     });
-
-  await page.addInitScript(() => {
-    const pipeline = {
-      scope: {
-        dateFrom: '2026-06-01',
-        dateTo: '2026-06-12',
-        storeName: 'FT-US-US',
-        marketplaceCode: 'US',
-        currency: 'USD',
-        batchId: 'mock_delivery_batch',
-      },
-      generatedAt: '2026-06-12T10:00:00.000Z',
-      collection: {
-        status: 'partial',
-        latestBatch: {
-          id: 'mock_delivery_batch',
-          status: 'partial',
-          dateStart: '2026-06-01',
-          dateEnd: '2026-06-12',
-          storeName: 'FT-US-US',
-          marketplaceCode: 'US',
-          downloadDir: 'C:/evidence/reports',
-          manifestPath: 'C:/wrong/lingxing-batch-manifest.json',
-        },
-        sourceBatchIds: ['mock_delivery_batch'],
-        availableBatches: [{
-          id: 'mock_delivery_batch',
-          status: 'completed_with_errors',
-          dateStart: '2026-06-01',
-          dateEnd: '2026-06-12',
-          storeName: 'FT-US-US',
-          marketplaceCode: 'US',
-          downloadDir: 'C:/evidence/reports',
-          manifestPath: 'C:/wrong/lingxing-batch-manifest.json',
-          createdAt: '2026-06-12T09:30:00.000Z',
-          completedAt: '2026-06-12T09:55:00.000Z',
-          totalFileRecords: 3,
-          realReportFileCount: 1,
-          importedRowCount: 18,
-          missingReportLabels: ['关键词报告', '用户搜索词报告'],
-        }],
-        reportOptions: [
-          { type: 'campaign', label: '广告活动报告', status: 'ready', realFileAvailable: true, importedRows: 18 },
-          { type: 'keyword', label: '关键词报告', status: 'missing', realFileAvailable: false, importedRows: 0 },
-          { type: 'user_search_term', label: '用户搜索词报告', status: 'missing', realFileAvailable: false, importedRows: 0 },
-        ],
-        realReportFiles: [
-          {
-            id: 'campaign-file',
-            reportType: 'campaign',
-            displayName: '广告活动报告',
-            status: 'downloaded',
-            filePath: 'C:/evidence/reports/campaign.xlsx',
-            folderPath: 'C:/evidence/reports',
-            fileName: 'campaign.xlsx',
-            fileSizeBytes: 2048,
-            importedRows: 18,
-            updatedAt: '2026-06-12T09:55:00.000Z',
-          },
-        ],
-        evidencePaths: [
-          { label: '报表目录', path: 'C:/evidence/reports', kind: 'folder' },
-          { label: 'final readiness', path: 'output/codex-evidence/final-readiness-2026-06-12.json', kind: 'audit' },
-        ],
-        fileAudit: {
-          totalFileRecords: 3,
-          downloadedFileRecords: 1,
-          existingFileRecords: 3,
-          realReportFileCount: 1,
-          importedRowCount: 18,
-          rejectedEvidenceFileCount: 2,
-          missingReportLabels: ['关键词报告', '用户搜索词报告'],
-          downloadDir: 'C:/evidence/reports',
-          manifestPath: 'C:/wrong/lingxing-batch-manifest.json',
-        },
-        blockers: ['缺少关键词报告和用户搜索词报告。'],
-        audit: {
-          databaseReady: true,
-          acceptedExtensions: ['.xlsx', '.xls', '.csv'],
-          rejectedEvidenceExtensions: ['.json', '.png', '.html'],
-          notes: ['mock smoke delivery state'],
-        },
-      },
-      quant: {
-        hasImportedMetrics: true,
-        importedRows: 12,
-        totalSpend: 128.45,
-        totalSales: 310.9,
-        totalOrders: 9,
-        totalClicks: 188,
-        totalImpressions: 12300,
-        acos: 0.413,
-        cvr: 0.047,
-        cpc: 0.68,
-        wastedSpend: 12.25,
-        highRiskCount: 1,
-        diagnostics: [
-          {
-            portfolioName: 'D6 Portfolio',
-            campaignName: 'D6-auto-test',
-            adGroupName: 'D6-ad-group',
-            asin: 'B0TESTASIN',
-            objectType: 'keyword',
-            objectName: 'motion sensor wall light',
-            spend: 25.5,
-            sales: 98.25,
-            orders: 4,
-            clicks: 36,
-            acos: 0.2595,
-            cvr: 0.111,
-            cpc: 0.71,
-            diagnosis: '可量化但未形成最终审批回读。',
-            suggestedDirection: '进入人工审批和只读回读链路。',
-          },
-        ],
-        blockers: ['缺少真实广告回读聚合证据。'],
-      },
-    };
-
-    const failedReadiness = {
-      available: true,
-      path: 'C:/final/final-readiness-needs-work.json',
-      exists: true,
-      status: 'APP_NEEDS_WORK',
-      appReady: false,
-      manifestDriven: true,
-      generatedAt: '2026-06-12T10:10:00.000Z',
-      checkedAt: '2026-06-12T10:11:00.000Z',
-      gatesSummary: { total: 2, passed: 1, failed: 1 },
-      missing: ['缺少真实广告回读聚合证据。'],
-      actionItems: ['补齐真实广告回读后重新运行最终验收。'],
-      gates: [
-        { name: 'report_collection', ok: true, status: 'passed', message: '报表已进入候选证据。', evidencePath: 'C:/evidence/reports/campaign.xlsx' },
-        { name: 'ad_readback', ok: false, status: 'blocked', message: '缺少真实广告回读聚合证据。', evidencePath: 'C:/final/readback-missing.json' },
-      ],
-    };
-    const missingReadiness = {
-      available: false,
-      path: null,
-      exists: false,
-      status: 'APP_NEEDS_WORK',
-      appReady: false,
-      manifestDriven: false,
-      generatedAt: undefined,
-      checkedAt: undefined,
-      gatesSummary: { total: 0, passed: 0, failed: 0 },
-      missing: ['最终验收汇总尚未生成'],
-      actionItems: ['运行最终验收，生成 output/codex-evidence/final-readiness-*.json。'],
-      gates: [],
-      message: '最终验收汇总尚未生成',
-    };
-    const fakeReadyReadiness = {
-      available: true,
-      path: 'C:/final/final-readiness-fake-ready.json',
-      exists: true,
-      status: 'APP_READY',
-      appReady: false,
-      manifestDriven: true,
-      generatedAt: '2026-06-12T10:13:00.000Z',
-      checkedAt: '2026-06-12T10:14:00.000Z',
-      gatesSummary: { total: 1, passed: 1, failed: 0 },
-      missing: ['最终验收未通过，不能声明可交付。'],
-      actionItems: ['重新运行最终验收，确认 appReady=true。'],
-      gates: [
-        { name: 'status_consistency', ok: true, status: 'passed', message: '状态字段被故意设置为可交付，但最终验收未通过。' },
-      ],
-    };
-    const nonManifestReadyReadiness = {
-      available: true,
-      path: 'C:/final/final-readiness-non-manifest.json',
-      exists: true,
-      status: 'APP_READY',
-      appReady: true,
-      manifestDriven: false,
-      generatedAt: '2026-06-12T10:14:30.000Z',
-      checkedAt: '2026-06-12T10:14:45.000Z',
-      gatesSummary: { total: 1, passed: 1, failed: 0 },
-      missing: ['最终验收汇总不是本次验收来源，不能声明可交付。'],
-      actionItems: ['重新生成最终验收汇总，并用该汇总运行最终验收。'],
-      gates: [
-        { name: 'manifest_mode', ok: false, status: 'blocked', message: '最终验收汇总不是本次验收来源，不能声明可交付。' },
-      ],
-    };
-    const passedReadiness = {
-      available: true,
-      path: 'C:/final/final-readiness-ready.json',
-      exists: true,
-      status: 'APP_READY',
-      appReady: true,
-      manifestDriven: true,
-      previewOnly: false,
-      generatedAt: '2026-06-12T10:15:00.000Z',
-      checkedAt: '2026-06-12T10:16:00.000Z',
-      gatesSummary: { total: 2, passed: 2, failed: 0 },
-      failures: [],
-      missing: [],
-      actionItems: [],
-      gates: [
-        { name: 'report_collection', ok: true, status: 'passed', message: '真实报表验收通过。', evidencePath: 'C:/evidence/reports/campaign.xlsx' },
-        { name: 'ad_readback', ok: true, status: 'passed', message: '真实广告回读验收通过。', evidencePath: 'C:/final/readback-pass.json' },
-      ],
-    };
-
-    window.__businessUiActionLog = [];
-    window.__deliveryReadinessMode = 'fail';
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: {
-        writeText: async (text) => {
-          window.__businessUiActionLog.push({ type: 'clipboard', text: String(text || '') });
-        },
-      },
+    page.on('pageerror', (error) => {
+      evidence.consoleErrors.push(`pageerror: ${error.message}`);
     });
-    window.__mockSettings = {
-      aiApiKey: '',
-      aiKeyConfigured: true,
-      aiBaseUrl: 'https://api.deepseek.com',
-      aiModel: 'deepseek-v4-flash',
-      aiTemperature: '0.3',
-      aiMaxTokens: '700',
-      aiLastTestStatus: '',
-      aiLastTestAt: '',
-      aiLastTestBaseUrl: '',
-      aiLastTestModel: '',
-      aiLastTestMessage: '',
-    };
-    window.electronAPI = {
-      getState: async () => ({
-        isLoggedIn: true,
-        currentStore: 'FT-US-US',
-        loginSession: { erpSessionReused: true, adsTitle: 'Amazon AI Ops' },
-      }),
-      browserLogout: async () => ({ success: true }),
-      getBusinessUiDataPipeline: async (scope) => {
-        window.__businessUiActionLog.push({ type: 'getBusinessUiDataPipeline', scope });
-        return {
-          ...pipeline,
-          scope: { ...pipeline.scope, ...(scope || {}), currency: 'USD' },
-        };
-      },
-      getBusinessBatchOptions: async () => pipeline.collection.availableBatches,
-      getDeliveryEvidenceStatus: async (scope) => {
-        window.__businessUiActionLog.push({ type: 'getDeliveryEvidenceStatus', scope });
-        return {
-          listing: {
-            readReady: true,
-            draftReady: true,
-            contentCount: 1,
-            fullContentCount: 1,
-            draftCount: 2,
-            aiDraftCount: 1,
-            ruleFallbackDraftCount: 1,
-            latestAsin: 'B0TESTASIN',
-            latestUpdatedAt: '2026-06-12T10:10:00.000Z',
-          },
-          readback: window.__deliveryReadinessMode === 'pass'
-            ? {
-              verifiedCount: 1,
-              latestStatus: 'PASS',
-              latestJsonPath: 'C:/final/readback-pass.json',
-              latestUpdatedAt: '2026-06-12T10:16:00.000Z',
-            }
-            : {
-              verifiedCount: 0,
-              latestStatus: 'NEEDS_WORK',
-              latestJsonPath: 'C:/final/readback-missing.json',
-              latestUpdatedAt: '2026-06-12T10:11:00.000Z',
-            },
-          package: window.__deliveryReadinessMode === 'pass'
-            ? {
-              installerAvailable: true,
-              installerPath: 'C:/release/AmazonAIOpsAgent-1.5.0.exe',
-              portablePath: 'C:/release/AmazonAIOpsAgent-1.5.0-portable.exe',
-              sha256: 'D9C181C09B32A1FBC5095281E1DBB788C1C8B9FAE36FA81F31B70E5BF319D1D2',
-              latestBuiltAt: '2026-06-18T10:16:00.000Z',
-            }
-            : {
-              installerAvailable: false,
-            },
-        };
-      },
-      getSettings: async () => ({ ...window.__mockSettings, aiApiKey: '' }),
-      listAiDiagnosisRuns: async (params) => {
-        window.__businessUiActionLog.push({ type: 'listAiDiagnosisRuns', params });
-        return [{
-          id: 801,
-          promptKey: 'ad_strategy_diagnosis',
-          promptVersion: 'ad_strategy_diagnosis_v1',
-          model: 'deepseek-v4-flash',
-          scope: params || {},
-          evidencePackSummary: { total: 4, metric: 1, operationEvent: 1, productContext: 1, ruleCandidate: 1 },
-          diagnosis: { source: 'ai', lifecycleStage: 'keyword_exploration', summary: '测试阶段诊断已脱敏。' },
-          insights: [{ entityType: 'search_term', entityName: 'delivery smoke insight', actionType: 'observe' }],
-          formalRecommendationCount: 1,
-          success: true,
-          createdAt: '2026-06-15T06:03:00.000Z',
-        }];
-      },
-      listAiCallLogs: async (params) => {
-        window.__businessUiActionLog.push({ type: 'listAiCallLogs', params });
-        return [{
-          id: 501,
-          promptKey: 'ad_strategy_diagnosis',
-          promptVersion: 'ad_strategy_diagnosis_v1',
-          model: 'deepseek-v4-flash',
-          inputHash: 'hash_ai_audit_1',
-          schemaVersion: 'ad_strategy_diagnosis_v1',
-          evidencePackSummary: { total: 4, metric: 1, operationEvent: 1, productContext: 1, ruleCandidate: 1 },
-          outputJson: '{"schemaVersion":"ad_strategy_diagnosis_v1","evidencePackSummary":{"total":4},"output":{"summary":"已脱敏"}}',
-          success: true,
-          createdAt: '2026-06-15T06:01:00.000Z',
-        }, {
-          id: 502,
-          promptKey: 'listing_rewrite',
-          promptVersion: 'listing_rewrite_v1',
-          model: 'deepseek-v4-flash',
-          inputHash: 'hash_ai_audit_2',
-          schemaVersion: 'listing_rewrite_v1',
-          evidencePackSummary: { total: 1, listingDraft: 1, keywordCount: 2 },
-          outputJson: '{"output":{"summary":"sk-***REDACTED***"}}',
-          success: false,
-          errorMessage: 'AI response was not valid JSON',
-          createdAt: '2026-06-15T06:02:00.000Z',
-        }];
-      },
-      getRuleConfig: async () => ({
-        targetAcos: 0.25,
-        highAcosThreshold: 0.4,
-        noOrderClickThreshold: 30,
-        minSpend: 10,
-        bidAdjustPercent: 0.1,
-        maxBidDecrement: 0.2,
-        maxCpc: 5,
-        minCpc: 0.02,
-        enableAutoLowerBid: false,
-        enableAutoAddNegative: false,
-        brandWordWhitelist: ['brand'],
-        coreWordWhitelist: ['core'],
-      }),
-      getRecommendations: async (filter) => {
-        window.__businessUiActionLog.push({ type: 'getRecommendations', filter });
-        if (filter?.status === 'pending') {
-          return [{
-            id: 9101,
-            actionType: 'lower_bid',
-            entityType: 'keyword',
-            entityName: 'motion sensor wall light',
-            currentValue: '1.50',
-            recommendedValue: '1.35',
-            reason: 'AI+规则建议测试数据。',
-            acos: 0.413,
-            clicks: 36,
-            cost: 25.5,
-            riskLevel: 'medium',
-            status: 'pending',
-            confidence: 0.72,
-            evidence: {
-              explanationSource: 'ai',
-              aiModel: 'deepseek-v4-flash',
-              aiEvidenceRefs: ['metric:delivery:keyword:1'],
-            },
-          }];
-        }
-        if (filter?.status === 'approved') {
-          return [{
-            id: 9102,
-            actionType: 'lower_bid',
-            entityType: 'keyword',
-            entityName: 'approved delivery smoke keyword',
-            currentValue: '1.70',
-            recommendedValue: '1.50',
-            reason: '已审批测试数据。',
-            acos: 0.39,
-            clicks: 42,
-            cost: 30.2,
-            riskLevel: 'medium',
-            status: 'approved',
-            confidence: 0.75,
-            evidence: { explanationSource: 'ai', aiEvidenceRefs: ['metric:delivery:keyword:2'] },
-          }];
-        }
-        if (filter?.status === 'needs_review') {
-          return [{
-            id: 9103,
-            actionType: 'lower_bid',
-            entityType: 'keyword',
-            entityName: 'review delivery smoke keyword',
-            currentValue: '1.80',
-            recommendedValue: '1.65',
-            reason: 'AI 阶段判断需要人工复核。',
-            acos: 0.52,
-            clicks: 48,
-            cost: 42.8,
-            riskLevel: 'APPROVAL',
-            status: 'needs_review',
-            confidence: 0.68,
-            evidence: {
-              explanationSource: 'ai',
-              aiStrategySource: 'ai',
-              aiLifecycleStageRequiresReview: true,
-              aiLifecycleStageInvalidReasons: ['AI 阶段判断缺少有效可回查证据。'],
-              aiEvidenceRefs: ['metric:delivery:keyword:3'],
-            },
-          }];
-        }
-        return [];
-      },
-      saveSettings: async (settings) => {
-        window.__businessUiActionLog.push({ type: 'saveSettings', settings });
-        if (settings.clearAiKey) {
-          window.__mockSettings = {
-            ...window.__mockSettings,
-            ...settings,
-            aiApiKey: '',
-            aiKeyConfigured: false,
-            aiLastTestStatus: '',
-            aiLastTestAt: '',
-            aiLastTestBaseUrl: '',
-            aiLastTestModel: '',
-            aiLastTestMessage: '',
-          };
-          return { success: true };
-        }
-        window.__mockSettings = {
-          ...window.__mockSettings,
-          ...settings,
-          aiApiKey: settings.aiApiKey || window.__mockSettings.aiApiKey,
-          aiKeyConfigured: true,
-        };
-        return { success: true };
-      },
-      saveRuleConfig: async (config) => {
-        window.__businessUiActionLog.push({ type: 'saveRuleConfig', config });
-        return { success: true };
-      },
-      testAiSettings: async () => {
-        window.__mockSettings = {
-          ...window.__mockSettings,
-          aiLastTestStatus: 'available',
-          aiLastTestAt: '2026-06-15T06:00:00.000Z',
-          aiLastTestBaseUrl: window.__mockSettings.aiBaseUrl,
-          aiLastTestModel: window.__mockSettings.aiModel,
-          aiLastTestMessage: `AI 连接测试通过：${window.__mockSettings.aiModel}`,
-        };
-        return { success: true, message: `AI 连接测试通过：${window.__mockSettings.aiModel}` };
-      },
-      getStoragePaths: async () => ({
-        settingsPath: 'C:/Users/wz/AppData/Roaming/Amazon AI Ops/settings.json',
-        evidenceDir: 'C:/Users/wz/Desktop/py/amazon-ai-ops/output/codex-evidence',
-        downloadsDir: 'C:/Users/wz/AppData/Roaming/Amazon AI Ops/storage/downloads',
-        exportsDir: 'C:/Users/wz/AppData/Roaming/Amazon AI Ops/storage/exports',
-        deliveryDir: 'C:/Users/wz/AppData/Roaming/Amazon AI Ops/storage/exports/delivery-bundles',
-        localDbPath: 'C:/Users/wz/AppData/Roaming/Amazon AI Ops/amazon-ai-ops.db',
-      }),
-      getDeliveryReadiness: async () => {
-        if (window.__deliveryReadinessMode === 'pass') return passedReadiness;
-        if (window.__deliveryReadinessMode === 'missing') return missingReadiness;
-        if (window.__deliveryReadinessMode === 'fake-ready') return fakeReadyReadiness;
-        if (window.__deliveryReadinessMode === 'non-manifest-ready') return nonManifestReadyReadiness;
-        return failedReadiness;
-      },
-      refreshFinalReadiness: async (input) => {
-        const readiness = input?.adReadbackPath
-          ? {
-            ...passedReadiness,
-            path: 'C:/final/final-readiness-with-readback-pass.json',
-            generatedAt: '2026-06-12T10:21:00.000Z',
-            checkedAt: '2026-06-12T10:21:00.000Z',
-          }
-          : {
-            ...failedReadiness,
-            path: 'C:/final/final-readiness-refreshed.json',
-            generatedAt: '2026-06-12T10:20:00.000Z',
-            checkedAt: '2026-06-12T10:20:00.000Z',
-          };
-        const result = {
-          success: true,
-          evidenceManifestPath: input?.adReadbackPath
-            ? 'C:/final/v15-final-readiness-evidence-manifest-with-readback-pass.json'
-            : 'C:/final/v15-final-readiness-evidence-manifest-refreshed.json',
-          finalReadinessPath: readiness.path,
-          readiness,
-        };
-        window.__businessUiActionLog.push({ type: 'refreshFinalReadiness', input, result });
-        return result;
-      },
-      prepareAdReadbackSession: async (input) => {
-        const result = {
-          sessionDir: 'C:/final/readback-missing-session',
-          sourceCandidatePath: input?.sourcePath || '',
-          passEvidencePath: 'C:/final/readback-missing-session/real-ad-execution-readback-pass.json',
-          checklistPath: 'C:/final/readback-missing-session/operator-checklist.md',
-          locatorGuidePath: 'C:/final/readback-missing-session/ads-ui-locator.md',
-          sessionInputPath: 'C:/final/readback-missing-session/session-input.json',
-          sessionInputGuidePath: 'C:/final/readback-missing-session/session-input-guide.md',
-        };
-        window.__businessUiActionLog.push({ type: 'prepareAdReadbackSession', input, result });
-        return result;
-      },
-      verifyAdReadbackSession: async (input) => {
-        const result = {
-          sessionDir: input?.sessionDir || '',
-          ready: true,
-          captureReady: false,
-          checks: [
-            { label: 'session folder exists', passed: true, details: input?.sessionDir || '' },
-            { label: 'session input exists', passed: true, details: 'session-input.json' },
-          ],
-          issues: [],
-          unresolvedFields: ['approverName', 'beforeValue', 'afterValue', 'readbackEvidencePath'],
-          captureMissingFields: [
-            { field: 'approverName', label: '审批人', group: '审批' },
-            { field: 'beforeValue', label: '现场出价', group: '执行前' },
-            { field: 'afterValue', label: '现场出价', group: '执行后' },
-            { field: 'readbackEvidencePath', label: '刷新回读截图文件', group: '回读' },
-          ],
-          captureIssues: ['填写文件仍有未填写项：审批/审批人、执行前/现场出价、执行后/现场出价、回读/刷新回读截图文件'],
-        };
-        window.__businessUiActionLog.push({ type: 'verifyAdReadbackSession', input, result });
-        return result;
-      },
-      fillAdReadbackSession: async (input) => {
-        const result = {
-          sessionDir: input?.sessionDir || '',
-          jsonPath: 'C:/final/readback-missing-session/real-ad-execution-readback-pass.json',
-          markdownPath: 'C:/final/readback-missing-session/real-ad-execution-readback-pass.md',
-          status: 'PASS',
-          readyForVerifier: true,
-          issues: [],
-        };
-        window.__businessUiActionLog.push({ type: 'fillAdReadbackSession', input, result });
-        return result;
-      },
-      verifyAdReadbackEvidence: async (input) => {
-        const result = {
-          status: 'PASS',
-          ready: true,
-          ok: true,
-          verified: true,
-          issues: [],
-          checks: [{ label: 'readback evidence passed', passed: true, details: input?.evidencePath || '' }],
-        };
-        window.__businessUiActionLog.push({ type: 'verifyAdReadbackEvidence', input, result });
-        return result;
-      },
-      exportDeliveryBundle: async (scope) => {
-        const result = window.__deliveryReadinessMode === 'pass'
-          ? {
-            success: true,
-            bundleDir: 'C:/exports/delivery/v15-ready-bundle',
-            manifestPath: 'C:/exports/delivery/v15-ready-bundle/delivery-bundle-manifest.json',
-            status: 'APP_READY',
-            dataReconciliation: {
-              jsonPath: 'C:/exports/delivery/v15-ready-bundle/data-reconciliation.json',
-              markdownPath: 'C:/exports/delivery/v15-ready-bundle/data-reconciliation.md',
-              canonicalSource: 'canonical_user_search_term',
-              canonical: {
-                rows: 18,
-                spend: 170.25,
-                orders: 3,
-                sales: 240.5,
-                clicks: 120,
-                impressions: 8000,
-                currency: 'USD',
-              },
-              blockers: [],
-            },
-          }
-          : { success: false, status: 'APP_NEEDS_WORK', message: '最终验收汇总未通过，不能导出可交付包。' };
-        window.__businessUiActionLog.push({ type: 'exportDeliveryBundle', scope, result });
-        return result;
-      },
-      exportDataReconciliation: async (scope) => {
-        const result = {
-          success: true,
-          jsonPath: 'C:/exports/data-reconciliation/mock-delivery.json',
-          markdownPath: 'C:/exports/data-reconciliation/mock-delivery.md',
-          canonicalSource: 'canonical_user_search_term',
-          canonical: {
-            rows: 18,
-            spend: 170.25,
-            orders: 3,
-            sales: 240.5,
-            clicks: 120,
-            impressions: 8000,
-            currency: 'USD',
-          },
-          blockers: ['缺少关键词报告和用户搜索词报告。'],
-        };
-        window.__businessUiActionLog.push({ type: 'exportDataReconciliation', scope, result });
-        return result;
-      },
-      openReportPath: async (targetPath) => {
-        window.__businessUiActionLog.push({ type: 'openReportPath', targetPath });
-        return { success: true };
-      },
-    };
-  });
 
-  await page.goto(server.url, { waitUntil: 'networkidle' });
-  await assertGlobalGuards(page, 'initial');
+    await page.addInitScript(() => {
+      window.__settingsDeliverySmokeActions = [];
+      const wrapPreview = (type, method) => async (...args) => {
+        window.__settingsDeliverySmokeActions.push({
+          type,
+          storeId: args[0]?.storeId || args[0]?.storeContext?.storeId || null,
+          input: args[1] || null,
+        });
+        return window.__businessUiPreviewApiBase[method](...args);
+      };
+      window.__businessUiSmokeOverrides = {
+        createStoreRuntimeConfig: wrapPreview('createStoreRuntimeConfig', 'createStoreRuntimeConfig'),
+        updateStoreRuntimeConfig: wrapPreview('updateStoreRuntimeConfig', 'updateStoreRuntimeConfig'),
+        archiveStoreRuntimeConfig: wrapPreview('archiveStoreRuntimeConfig', 'archiveStoreRuntimeConfig'),
+        restoreStoreRuntimeConfig: wrapPreview('restoreStoreRuntimeConfig', 'restoreStoreRuntimeConfig'),
+      };
+    });
+    await installPreviewApiBridge(page);
+    await page.goto(server.url, { waitUntil: 'networkidle' });
+    await enterPreviewStore(page);
 
-  await navigateLegacyRoute(page, 'settings');
-  await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
-  await expectVisible(page, '待测试');
-  await expectVisible(page, '已配置（已隐藏）');
-  await expectVisible(page, '已配置，待测试');
-  await expectVisible(page, 'AI 输出合同由系统固定，页面只读取已校验字段；人设只影响表达风格，不改变字段结构。');
-  for (const text of ['广告诊断 v1', '广告解释 v1', 'Listing 草案 v1', '异常回退规则']) {
-    await expectVisible(page, text);
-  }
-  await assertAbsent(page, '广告诊断、广告建议解释和 Listing 草案都会要求 AI 返回标准 JSON', 'settings-primary-ai-contract-copy');
-  for (const text of ['AI 服务连接', '规则阈值与动作边界', '高级诊断与本地支持']) {
-    await expectVisible(page, text);
-  }
-  await assertSettingsMainSectionOrder(page);
-  await assertAbsent(page, '最近 AI 是否参与', 'settings-ai-audit-collapsed');
-  await assertAbsent(page, 'AI response was not valid JSON', 'settings-ai-audit-collapsed');
-  await assertAbsent(page, '设置路径', 'settings-storage-collapsed');
-  await assertAbsent(page, 'AI 连接：确认 Provider、Base URL、模型和脱敏 Key 状态。', 'settings-diagnostics-collapsed');
-  await assertAbsent(page, 'sk-1234567890abcdef', 'settings-ai-audit');
-  const auditCalls = await page.evaluate(() => (window.__businessUiActionLog || []).filter((item) => item.type === 'listAiCallLogs'));
-  if (!auditCalls.some((item) => item.params?.limit === 5)) {
-    fail('Settings page did not request recent AI call logs', JSON.stringify(auditCalls));
-  }
-  const settingsTextBeforeDetails = await bodyText(page);
-  if (settingsTextBeforeDetails.includes('pnpm run verify:ai-live')) {
-    fail('Settings diagnostic commands are visible');
-  }
-  await assertGlobalGuards(page, 'settings');
-  const settingsScreenshotPath = path.join(evidenceDir, `business-ui-settings-delivery-settings-${runId}.png`);
-  await screenshotScrollableContent(page, settingsScreenshotPath);
-  evidence.pages.settings = {
-    label: '设置',
-    screenshotPath: settingsScreenshotPath,
-    bodyTextSample: (await bodyText(page)).slice(0, 2200),
-  };
-  await expandDetails(page, '高级诊断与本地支持');
-  for (const text of ['AI 调用记录与支持信息', '安全策略', '本地支持路径', '支持检查工具']) {
-    await expectVisible(page, text);
-  }
-  await expectVisible(page, '最近 AI 是否参与');
-  await expectVisible(page, '最近 AI 调用失败');
-  await expectVisible(page, '检查模型、Base URL、固定输出格式和证据包');
-  await assertAbsent(page, '标准 JSON 输出格式', 'settings-ai-audit-operator-copy');
-  await expectVisible(page, 'AI response was not valid JSON');
-  await expectVisible(page, '日志数量');
-  await expectVisible(page, '广告策略诊断');
-  await expectInBody(page, 'Listing 草案', 'settings-ai-audit');
-  await expectVisible(page, '输出格式 广告策略诊断 v1');
-  await expectVisible(page, '输出格式 Listing 草案 v1');
-  await assertAbsent(page, 'ad_strategy_diagnosis', 'settings-ai-audit');
-  await assertAbsent(page, 'listing_rewrite', 'settings-ai-audit');
-  await assertAbsent(page, 'schema ad_strategy_diagnosis_v1', 'settings-ai-audit');
-  await expectVisible(page, '证据包 4 条');
-  await expectVisible(page, '草案证据 1 条');
-  await expectVisible(page, '成功');
-  await expectVisible(page, '失败');
-  await page.getByText('AI 连接：确认 Provider、Base URL、模型和脱敏 Key 状态。', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByRole('button', { name: '编辑连接', exact: true }).click();
-  const aiConnectionDialog = page.getByRole('dialog', { name: '编辑 AI 连接和输出参数' });
-  await aiConnectionDialog.waitFor({ state: 'visible', timeout: 5000 });
-  await page.getByPlaceholder('DeepSeek 或 OpenAI Compatible API Key').fill('test-redacted-smoke-key');
-  await page.getByRole('button', { name: '保存 AI 设置' }).click();
-  await page.waitForFunction(
-    () => (window.__businessUiActionLog || []).some((item) => item.type === 'saveSettings'),
-    null,
-    { timeout: 5000 },
-  );
-  await page.getByText('AI 设置已保存', { exact: false }).waitFor({ timeout: 5000 });
-  await page.getByPlaceholder('DeepSeek 或 OpenAI Compatible API Key').evaluate((node) => {
-    if (node.value !== '') throw new Error(`API key input should be cleared after save, got: ${node.value}`);
-  });
-  await expectVisible(page, '已配置（已隐藏）');
-  await aiConnectionDialog.getByRole('button', { name: '关闭', exact: true }).click();
-  await page.getByRole('button', { name: '测试当前连接', exact: true }).click();
-  await page.waitForFunction(() => document.body.innerText.includes('AI 连接测试通过'), null, { timeout: 5000 });
-  await expectVisible(page, 'AI 可用');
-  await navigateLegacyRoute(page, 'delivery');
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
-  await navigateLegacyRoute(page, 'settings');
-  await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
-  await expectVisible(page, 'AI 可用');
-  await page.getByRole('button', { name: '编辑连接', exact: true }).click();
-  await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
-  await page.getByRole('dialog', { name: '编辑 AI 连接和输出参数' }).getByRole('button', { name: '关闭', exact: true }).click();
-  await navigateLegacyRoute(page, 'dashboard');
-  await page.getByRole('heading', { name: HEADING_RE.dashboard, level: 1 }).waitFor();
-  await expectVisible(page, '下一安全动作');
-  await expectVisible(page, '选择运营产品');
-  await expectVisible(page, '风险对象队列');
-  await navigateLegacyRoute(page, 'recommendations');
-  await page.getByRole('heading', { name: HEADING_RE.recommendations, level: 1 }).waitFor();
-  await page.locator('[data-workspace="decisions"][data-workspace-subview="recommendations"]').waitFor();
-  await expectInBody(page, '批准不等于执行', 'legacy recommendations route safety boundary');
-  await page.getByRole('row', { name: /motion sensor wall light/ }).click();
-  await expectVisible(page, '来源与技术明细');
-  await page.getByText('来源与技术明细', { exact: true }).click();
-  await expectVisible(page, 'deepseek-v4-flash');
-  await navigateLegacyRoute(page, 'settings');
-  await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
-  await expectVisible(page, 'AI 可用');
-  await page.getByRole('button', { name: '查看输出合同', exact: true }).click();
-  await expectVisible(page, '广告诊断 v1');
-  await expectVisible(page, '系统固定');
-  await assertAbsent(page, 'ad_strategy_diagnosis_v1', 'settings-advanced-contract-tags');
-  await assertAbsent(page, 'ad_action_reason_v1', 'settings-advanced-contract-tags');
-  await assertAbsent(page, 'listing_rewrite_v1', 'settings-advanced-contract-tags');
-  await page.getByRole('dialog', { name: 'AI 输出合同和字段' }).getByRole('button', { name: '关闭', exact: true }).first().click();
-  await page.getByRole('button', { name: '编辑连接', exact: true }).click();
-  await page.getByLabel('AI 人设与表达风格').fill('你是中文亚马逊广告表现运营顾问。必须输出简体中文，并引用证据说明判断。');
-  await page.getByRole('button', { name: '保存 AI 设置' }).click();
-  await page.getByText('AI 设置已保存', { exact: false }).waitFor({ timeout: 5000 });
-  await page.getByRole('dialog', { name: '编辑 AI 连接和输出参数' }).getByRole('button', { name: '关闭', exact: true }).click();
-  await expectVisible(page, 'AI 可用');
-  await navigateLegacyRoute(page, 'delivery');
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
-  await navigateLegacyRoute(page, 'settings');
-  await page.getByRole('heading', { name: HEADING_RE.settings, level: 1 }).waitFor();
-  await expectVisible(page, 'AI 可用');
-  await page.getByRole('button', { name: '编辑连接', exact: true }).click();
-  await page.getByText('AI 连接测试通过', { exact: false }).first().waitFor({ timeout: 5000 });
-  const savedAiSettingsCalls = await page.evaluate(() => (window.__businessUiActionLog || []).filter((item) => item.type === 'saveSettings'));
-  const latestAiSave = savedAiSettingsCalls[savedAiSettingsCalls.length - 1];
-  if (!latestAiSave?.settings?.aiPersona?.includes('中文亚马逊广告表现运营顾问')) {
-    fail('AI persona save did not include configured persona', JSON.stringify(latestAiSave));
-  }
-  if (latestAiSave?.settings?.aiLastTestStatus !== 'available') {
-    fail('Saving AI persona after a successful test should preserve available status', JSON.stringify(latestAiSave));
-  }
-  await page.getByRole('button', { name: '清除本地 AI Key' }).click();
-  await page.getByText('AI Key 已清除', { exact: false }).waitFor({ timeout: 5000 });
-  await page.getByRole('dialog', { name: '编辑 AI 连接和输出参数' }).getByRole('button', { name: '关闭', exact: true }).click();
-  await expectVisible(page, '未配置');
-  const clearKeySave = (await page.evaluate(() => (window.__businessUiActionLog || []).filter((item) => item.type === 'saveSettings')))
-    .find((item) => item.settings?.clearAiKey === true);
-  if (!clearKeySave) {
-    fail('Clearing AI key should save with clearAiKey=true', JSON.stringify(await page.evaluate(() => window.__businessUiActionLog || [])));
-  }
-  await expandDetails(page, '高级诊断与本地支持');
-  for (const text of ['设置路径', '证据目录', '下载目录', '导出目录', '交付包目录', '本地数据库', '品牌词白名单', '核心词白名单']) {
-    if (!['品牌词白名单', '核心词白名单'].includes(text)) await expectVisible(page, text);
-  }
-  await page.getByRole('button', { name: '编辑规则阈值', exact: true }).click();
-  await expectVisible(page, '品牌词白名单');
-  await expectVisible(page, '核心词白名单');
-  for (const text of ['目标利润线', '风险线', '无订单浪费', '动作边界', '最高 CPC', '最低 CPC', '降价建议', '否词建议']) {
-    await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
-  }
-  await page.getByLabel('高 ACOS 阈值').fill('0.10');
-  await page.getByRole('button', { name: '保存规则阈值' }).click();
-  await page.getByText('阈值保存已阻断：高 ACOS 阈值不能低于目标 ACOS。', { exact: false }).waitFor({ timeout: 5000 });
-  const saveCountBeforeValid = await page.evaluate(() => (window.__businessUiActionLog || []).filter((item) => item.type === 'saveRuleConfig').length);
-  if (saveCountBeforeValid !== 0) {
-    fail('Invalid rule config should not call saveRuleConfig', String(saveCountBeforeValid));
-  }
-  await page.getByLabel('高 ACOS 阈值').fill('0.40');
-  await page.getByLabel('品牌词白名单').fill('brand one,brand two');
-  await page.getByLabel('核心词白名单').fill('core one\ncore two');
-  await page.getByRole('button', { name: '保存规则阈值' }).click();
-  await page.waitForFunction(
-    () => (window.__businessUiActionLog || []).some((item) => item.type === 'saveRuleConfig'),
-    null,
-    { timeout: 5000 },
-  );
-  await page.getByRole('dialog', { name: '编辑规则阈值、动作边界和白名单' }).getByRole('button', { name: '关闭', exact: true }).click();
+    await navigateLegacyRoute(page, 'settings');
+    await expectWorkspace(page, '店铺与运行设置', 'ai-and-local');
+    await assertUsUsdOnly(page, 'settings-shc001');
+    for (const text of [
+      '店铺运行配置',
+      '当前店铺独立保存采集、量化与 AI 建议参数',
+      '08:00 · 回看 14 天',
+      '30 天 · 目标 ACOS 28%',
+      '启用 · ≥ 72%',
+      '365 天',
+      'US / USD',
+      'AI 服务连接',
+      '系统回退规则（兼容）',
+      '不会直接写入广告账户',
+    ]) {
+      await expectBodyText(page, text, 'settings-shc001');
+    }
 
-  const deliveryBatchSelect = await openScopeEditor(page);
-  await deliveryBatchSelect.selectOption('mock_delivery_batch');
-  await page.waitForFunction(() => document.body.innerText.includes('mock_delivery_batch'), null, { timeout: 5000 });
-  await page.getByLabel('开始日期').fill('2026-06-14');
-  await page.getByRole('button', { name: '保存范围' }).click();
-  await page.getByText('开始日期不能晚于结束日期。', { exact: true }).waitFor({ timeout: 5000 });
-  for (const text of ['2026-06-01', '2026-06-12', 'FT-US-US', 'US']) {
-    await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
-  }
-  await page.getByLabel('开始日期').fill('2026-06-02');
-  await page.getByLabel('结束日期').fill('2026-06-13');
-  await page.getByLabel('店铺').fill('  FT-US-TEST  ');
-  await page.getByLabel('站点').fill('  CA  ');
-  await page.getByText('修改日期、店铺或站点会自动清空旧批次；如需固定历史批次，请重新输入批次 ID。', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByRole('button', { name: '保存范围' }).click();
-  for (const text of ['2026-06-02', '2026-06-13', 'FT-US-TEST', 'CA']) {
-    await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
-  }
+    await clickButton(page, '编辑配置');
+    await page.getByRole('heading', { name: '编辑店铺运行配置', level: 2, exact: true })
+      .waitFor({ state: 'visible' });
+    await fillRuntimeConfig(page, {
+      collectionScheduleLocalTime: '07:45',
+      collectionLookbackDays: 17,
+      defaultTargetAcosPercent: 31.5,
+      minimumRecommendationConfidencePercent: 79,
+      evidenceRetentionDays: 400,
+    });
+    await clickButton(page, '保存变更');
+    await page.getByRole('heading', { name: '编辑店铺运行配置', level: 2, exact: true })
+      .waitFor({ state: 'hidden', timeout: 10_000 });
+    for (const text of [
+      'r2 · 生效中',
+      '07:45 · 回看 17 天',
+      '30 天 · 目标 ACOS 31.5%',
+      '启用 · ≥ 79%',
+      '400 天',
+      '2 个版本',
+    ]) {
+      await expectBodyText(page, text, 'settings-shc001-updated');
+    }
 
-  await navigateLegacyRoute(page, 'delivery');
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
-  for (const text of [
-    '交付摘要',
-    '还不能交付',
-    '当前阻断',
-    '刷新最终验收',
-    '复制摘要',
-    '最终验收',
-    '1/2 通过',
-    '真实数据',
-    '1 个文件 / 18 行',
-    '真实数据闭环：1/8 类真实广告报表',
-  ]) {
-    await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
-  }
-  await expandDetails(page, '文件位置与支持入口');
-  await expandDetails(page, '广告回读补证');
-  await expandDetails(page, '业务闭环矩阵');
-  await expandDetails(page, '最终证据清单');
-  await expandDetails(page, '完整业务证据项');
-  await expandDetails(page, '技术支持细节');
-  for (const text of [
-    '业务闭环矩阵：已闭合 2/7',
-    '完整业务证据项',
-    '原始广告报表',
-    '广告指标入库',
-    '广告表现',
-    'AI 业务证据',
-    '优化建议证据',
-    '审批与回读',
-    '关键词机会',
-    'Listing 草案证据',
-    '安装包',
-  ]) {
-    await expectVisible(page, text);
-  }
-  for (const text of [
-    '矩阵只说明当前日期、店铺、站点和批次的业务环节；最终是否可交付仍以最终验收汇总为准。',
-    '真实数据闭环未完成，不能进入正式交付',
-    '真实数据闭环',
-    'AI 证据链',
-    '运营上下文',
-    'Listing 草案证据',
-    '建议与审批',
-    '结果核对',
-    '最终交付包',
-    '最终验收汇总尚未证明真实 AI 连接、广告 AI 解释和 Listing AI 草案。',
-    '1 条待审批，1 条已批准，1 条复核中；后续必须进入结果核对。',
-    '先完成真实报表下载和 DB 日级指标导入',
-    '最终证据清单',
-    '这里列出最终验收汇总采用的证据文件。',
-    'FT-US-TEST / CA / 2026-06-02 - 2026-06-13 / USD',
-    '真实数据',
-    '采集清单',
-    'C:/wrong/lingxing-batch-manifest.json',
-    'C:/evidence/reports/campaign.xlsx',
-    '当前范围已有 18 行广告指标。',
-    '缺少关键词报告和用户搜索词报告。',
-    '缺少真实广告回读聚合证据。',
-    '广告回读补证',
-    '创建回读工作包',
-    '打开候选证据',
-    '打开交付包',
-    '打开证据目录',
-    '打开安装包目录',
-    '打开最终验收汇总',
-    '导出数据口径核对',
-    '技术支持细节',
-  ]) {
-    await page.getByText(text, { exact: false }).first().waitFor({ timeout: 5000 });
-  }
-  await assertGlobalGuards(page, 'delivery');
-  const deliveryScreenshotPath = path.join(evidenceDir, `business-ui-settings-delivery-delivery-${runId}.png`);
-  await screenshotScrollableContent(page, deliveryScreenshotPath);
-  evidence.pages.delivery = {
-    label: '交付验收',
-    screenshotPath: deliveryScreenshotPath,
-    bodyTextSample: (await bodyText(page)).slice(0, 2600),
-  };
+    await clickButton(page, '编辑规则阈值');
+    await page.getByRole('heading', {
+      name: '编辑规则阈值、动作边界和白名单',
+      level: 2,
+      exact: true,
+    }).waitFor({ state: 'visible' });
+    for (const text of [
+      '目标 ACOS',
+      '高 ACOS 阈值',
+      '最低花费',
+      '降价比例',
+      '只生成建议，不自动写入 Ads',
+      '执行仍走审批和回读',
+    ]) {
+      await expectBodyText(page, text, 'settings-rules');
+    }
+    const previewRuleSave = page.getByRole('button', { name: '保存系统回退规则', exact: true });
+    if (!await previewRuleSave.isDisabled()) {
+      fail('Dev preview must not persist system-level fallback rules');
+    }
+    await clickButton(page, '取消');
+    await capture(page, evidence, 'settings-shc001-updated', runId);
 
-  await page.getByRole('button', { name: '刷新最终验收' }).click();
-  await page.getByText('最终验收已刷新，仍未就绪', { exact: false }).waitFor({ timeout: 5000 });
-  await assertDeliveryMessageHasNoLongPath(page, 'delivery-refresh-final-readiness');
-  await expectVisible(page, '最终验收刷新结果');
-  await expandDetails(page, '最终验收刷新结果');
-  await expectVisible(page, 'C:/final/v15-final-readiness-evidence-manifest-refreshed.json');
-  await expectVisible(page, 'C:/final/final-readiness-refreshed.json');
-  await expectVisible(page, '最终验收已生成诊断文件，但仍有验收项未通过，不能声明可交付。');
-  await page.getByRole('button', { name: '创建回读工作包' }).click();
-  await page.getByText('回读工作包已创建', { exact: false }).waitFor({ timeout: 5000 });
-  await assertDeliveryMessageHasNoLongPath(page, 'delivery-create-readback-work-package');
-  await expectVisible(page, 'C:/final/readback-missing-session');
-  await expectVisible(page, 'C:/final/readback-missing-session/session-input.json');
-  await expectVisible(page, 'C:/final/readback-missing-session/session-input-guide.md');
-  await expectVisible(page, 'C:/final/readback-missing-session/operator-checklist.md');
-  await expectVisible(page, 'C:/final/readback-missing-session/ads-ui-locator.md');
-  await page.getByRole('button', { name: '打开候选证据' }).click();
-  await page.getByRole('button', { name: '打开回读工作包' }).click();
-  await page.getByRole('button', { name: '打开操作清单' }).click();
-  await page.getByRole('button', { name: '打开广告后台定位单' }).click();
-  await page.getByRole('button', { name: '打开待填写文件' }).click();
-  await page.getByRole('button', { name: '打开填写说明' }).click();
-  await page.getByRole('button', { name: '检查工作包' }).click();
-  await page.getByText('回读工作包结构已通过，但现场证据仍待填写', { exact: false }).waitFor({ timeout: 5000 });
-  await assertDeliveryMessageHasNoLongPath(page, 'delivery-check-readback-work-package');
-  await expectVisible(page, '工作包检查：结构通过，现场证据待填写');
-  await expectVisible(page, '还需填写：审批/审批人、执行前/现场出价、执行后/现场出价、回读/刷新回读截图文件');
-  await page.getByRole('button', { name: '生成回读证据' }).click();
-  await page.getByText('回读证据已生成，可进入校验', { exact: false }).waitFor({ timeout: 5000 });
-  await assertDeliveryMessageHasNoLongPath(page, 'delivery-fill-readback-work-package');
-  await expectVisible(page, '回读证据生成：可校验');
-  await page.getByRole('button', { name: '校验回读证据' }).click();
-  await page.getByText('回读证据校验通过', { exact: false }).waitFor({ timeout: 5000 });
-  await assertDeliveryMessageHasNoLongPath(page, 'delivery-verify-readback-evidence');
-  await expectVisible(page, '回读证据校验：通过');
-  await assertBlockedDeliveryExportButton(page, 'delivery-export-blocked');
-  await assertAbsent(page, 'APP_NEEDS_WORK', 'delivery-export-message');
-  await assertAbsent(page, 'READY 交付包', 'delivery-export-message');
-  await page.getByRole('button', { name: '导出数据口径核对' }).click();
-  await page.getByText('数据口径核对报告已导出', { exact: false }).waitFor({ timeout: 5000 });
-  await assertDeliveryMessageHasNoLongPath(page, 'delivery-export-data-reconciliation');
-  await expectVisible(page, '数据口径导出结果');
-  await expandDetails(page, '数据口径导出结果');
-  await expectVisible(page, '权威口径');
-  await expectVisible(page, '用户搜索词权威口径');
-  await expectVisible(page, 'DB 汇总');
-  await expectVisible(page, '18 行 / 170.25 USD / 3 单');
-  await expectVisible(page, '报告数据文件');
-  await expectVisible(page, 'C:/exports/data-reconciliation/mock-delivery.json');
-  await expectVisible(page, '报告说明文件');
-  await expectVisible(page, 'C:/exports/data-reconciliation/mock-delivery.md');
-  await expectVisible(page, '打开说明文件');
-  await expectVisible(page, '打开数据文件');
-  await page.getByRole('button', { name: '打开证据目录' }).click();
-  await page.getByRole('button', { name: '打开最终验收汇总' }).click();
-  await page.getByRole('button', { name: '打开说明文件' }).click();
-  await page.getByRole('button', { name: '打开数据文件' }).click();
-  await page.getByRole('button', { name: '复制摘要' }).click();
-  await page.getByRole('button', { name: '用回读证据刷新最终验收' }).click();
-  await page.getByText('已使用回读证据刷新并通过最终验收', { exact: false }).waitFor({ timeout: 5000 });
-  await assertDeliveryMessageHasNoLongPath(page, 'delivery-refresh-with-readback');
-  await expandDetails(page, '最终验收刷新结果');
-  await expectVisible(page, 'C:/final/v15-final-readiness-evidence-manifest-with-readback-pass.json');
-  await expectVisible(page, 'C:/final/final-readiness-with-readback-pass.json');
-  evidence.actionLog = await page.evaluate(() => window.__businessUiActionLog || []);
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '').includes('C:/evidence/reports'))) {
-    fail('Open evidence folder did not call openReportPath');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'prepareAdReadbackSession' && String(item.input?.sourcePath || '') === 'C:/final/readback-missing.json')) {
-    fail('Readback blocker did not prepare a session from the failed gate candidate path');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/final/readback-missing.json')) {
-    fail('Open readback candidate did not call openReportPath');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/final/readback-missing-session')) {
-    fail('Open readback session directory did not call openReportPath');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/final/readback-missing-session/operator-checklist.md')) {
-    fail('Open readback session checklist did not call openReportPath');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/final/readback-missing-session/ads-ui-locator.md')) {
-    fail('Open readback Ads UI locator did not call openReportPath');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/final/readback-missing-session/session-input.json')) {
-    fail('Open readback session input did not call openReportPath');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/final/readback-missing-session/session-input-guide.md')) {
-    fail('Open readback session input guide did not call openReportPath');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'verifyAdReadbackSession' && String(item.input?.sessionDir || '') === 'C:/final/readback-missing-session')) {
-    fail('Readback session check did not call verifyAdReadbackSession with the session directory');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'fillAdReadbackSession' && String(item.input?.sessionDir || '') === 'C:/final/readback-missing-session')) {
-    fail('Readback session fill did not call fillAdReadbackSession with the session directory');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'verifyAdReadbackEvidence' && String(item.input?.evidencePath || '') === 'C:/final/readback-missing-session/real-ad-execution-readback-pass.json')) {
-    fail('Generated readback evidence was not sent to verifyAdReadbackEvidence');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'refreshFinalReadiness' && String(item.input?.adReadbackPath || '') === 'C:/final/readback-missing-session/real-ad-execution-readback-pass.json')) {
-    fail('Final readiness refresh did not use the generated readback evidence path');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/final/final-readiness-refreshed.json')) {
-    fail('Open final manifest did not call the refreshed final readiness manifest path');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'exportDataReconciliation'
-    && item.scope?.dateFrom === '2026-06-02'
-    && item.scope?.dateTo === '2026-06-13'
-    && item.scope?.storeName === 'FT-US-TEST'
-    && item.scope?.marketplaceCode === 'CA')) {
-    fail('Data reconciliation export did not use the edited global scope', JSON.stringify(evidence.actionLog.filter((item) => item.type === 'exportDataReconciliation')));
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/exports/data-reconciliation/mock-delivery.md')) {
-    fail('Open reconciliation markdown did not call openReportPath');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '') === 'C:/exports/data-reconciliation/mock-delivery.json')) {
-    fail('Open reconciliation json did not call openReportPath');
-  }
-  if (evidence.actionLog.some((item) => item.type === 'openReportPath' && String(item.targetPath || '').includes('lingxing-batch-manifest'))) {
-    fail('Open final manifest fell back to Lingxing batch manifest');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'clipboard' && String(item.text || '').includes('交付状态：还不能交付'))) {
-    fail('Copy summary did not write business-readable not-ready summary');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'clipboard'
-    && String(item.text || '').includes('最终验收通过且安装包证据已记录时，才可声明可以交付。'))) {
-    fail('Copy summary did not explain package-aware delivery criteria');
-  }
-  if (evidence.actionLog.some((item) => item.type === 'clipboard'
-    && String(item.text || '').includes('最终验收汇总是交付状态的唯一来源'))) {
-    fail('Copy summary still uses stale final-readiness-only delivery criteria');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'clipboard'
-    && String(item.text || '').includes('真实报表目录：C:/evidence/reports')
-    && String(item.text || '').includes('真实报表清单：C:/wrong/lingxing-batch-manifest.json')
-    && String(item.text || '').includes('原始文件：广告活动报告 / C:/evidence/reports/campaign.xlsx'))) {
-    fail('Copy summary did not include report directory, manifest, and original file path');
-  }
-  if (evidence.actionLog.some((item) => item.type === 'clipboard' && /APP_(READY|NEEDS_WORK)/.test(String(item.text || '')))) {
-    fail('Copy summary leaked raw APP status', JSON.stringify(evidence.actionLog.filter((item) => item.type === 'clipboard')));
-  }
-  const editedScopeRequests = evidence.actionLog.filter((item) => item.type === 'getBusinessUiDataPipeline'
-    && item.scope?.dateFrom === '2026-06-02'
-    && item.scope?.dateTo === '2026-06-13'
-    && item.scope?.storeName === 'FT-US-TEST'
-    && item.scope?.marketplaceCode === 'CA');
-  if (!editedScopeRequests.length) {
-    fail('Delivery page did not request business data with the edited global scope', JSON.stringify(evidence.actionLog.filter((item) => item.type === 'getBusinessUiDataPipeline')));
-  }
-  if (editedScopeRequests.some((item) => item.scope?.batchId === 'mock_delivery_batch')) {
-    fail('Edited global scope retained stale batch id after date/store/site changed', JSON.stringify(editedScopeRequests));
-  }
-  const savedAiSettings = evidence.actionLog.find((item) => item.type === 'saveSettings')?.settings;
-  if (!savedAiSettings || savedAiSettings.aiApiKey !== 'test-redacted-smoke-key') {
-    fail('AI settings save did not receive the typed key before UI cleared it', JSON.stringify(savedAiSettings));
-  }
-  const savedRuleConfig = evidence.actionLog.find((item) => item.type === 'saveRuleConfig')?.config;
-  if (!savedRuleConfig || savedRuleConfig.brandWordWhitelist.join('|') !== 'brand one|brand two' || savedRuleConfig.coreWordWhitelist.join('|') !== 'core one|core two') {
-    fail('Brand/core whitelist fields were not saved independently', JSON.stringify(savedRuleConfig));
-  }
-  if (evidence.actionLog.some((item) => item.type === 'exportDeliveryBundle')) {
-    fail('Blocked delivery export should not call export API before final readiness and package evidence are both recorded');
-  }
-  if (!evidence.actionLog.some((item) => item.type === 'refreshFinalReadiness')) {
-    fail('Refresh final readiness button did not call refresh API');
-  }
+    await switchStore(page, 'preview-store-shc002', 'SHC002-US');
+    await expectWorkspace(page, '店铺与运行设置', 'ai-and-local');
+    for (const text of [
+      'r2 · 生效中',
+      '09:30 · 回看 21 天',
+      '180 天',
+      'US / USD',
+    ]) {
+      await expectBodyText(page, text, 'settings-shc002-isolated');
+    }
+    for (const storeOneValue of ['07:45 · 回看 17 天', '400 天']) {
+      await expectNoBodyText(page, storeOneValue, 'settings-shc002-isolated');
+    }
 
-  await page.evaluate(() => {
-    window.__deliveryReadinessMode = 'missing';
-  });
-  await navigateLegacyRoute(page, 'settings');
-  await navigateLegacyRoute(page, 'delivery');
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
-  await expandDetails(page, '文件位置与支持入口');
-  await page.getByText('最终验收汇总尚未生成', { exact: false }).first().waitFor({ timeout: 5000 });
-  await page.getByRole('button', { name: '打开最终验收汇总' }).click();
-  await page.getByText('最终验收汇总尚未生成。', { exact: false }).first().waitFor({ timeout: 5000 });
-  await assertGlobalGuards(page, 'delivery-missing');
+    await clickButton(page, '编辑配置');
+    await fillRuntimeConfig(page, {
+      evidenceRetentionDays: 210,
+      aiRecommendationsEnabled: false,
+    });
+    await clickButton(page, '保存变更');
+    await page.getByRole('heading', { name: '编辑店铺运行配置', level: 2, exact: true })
+      .waitFor({ state: 'hidden', timeout: 10_000 });
+    for (const text of ['r3 · 生效中', '210 天', '已关闭']) {
+      await expectBodyText(page, text, 'settings-shc002-updated');
+    }
 
-  await page.evaluate(() => {
-    window.__deliveryReadinessMode = 'fake-ready';
-  });
-  await navigateLegacyRoute(page, 'settings');
-  await navigateLegacyRoute(page, 'delivery');
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
-  await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expandDetails(page, '完整业务证据项');
-  await page.getByText('最终验收未通过，不能声明可交付。', { exact: true }).waitFor({ timeout: 5000 });
-  await assertGlobalGuards(page, 'delivery-fake-ready');
+    await clickButton(page, '归档');
+    await page.getByRole('heading', { name: '归档当前店铺配置？', level: 2, exact: true })
+      .waitFor({ state: 'visible' });
+    await expectBodyText(page, '配置会停止生效但保留全部版本，可随时恢复；不会影响其他店铺。', 'settings-archive-confirm');
+    await clickButton(page, '确认归档');
+    await expectBodyText(page, 'r4 · 已归档', 'settings-shc002-archived');
+    await clickButton(page, '恢复配置');
+    await expectBodyText(page, 'r5 · 生效中', 'settings-shc002-restored');
+    await expectBodyText(page, '4 个版本', 'settings-shc002-restored');
+    await capture(page, evidence, 'settings-shc002-restored', runId);
 
-  await page.evaluate(() => {
-    window.__deliveryReadinessMode = 'non-manifest-ready';
-  });
-  await navigateLegacyRoute(page, 'settings');
-  await navigateLegacyRoute(page, 'delivery');
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
-  await page.locator('main').getByText('还不能交付', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expandDetails(page, '完整业务证据项');
-  await expandDetails(page, '最终证据清单');
-  await page.getByText('最终验收汇总不是本次验收来源，不能声明可交付。', { exact: true }).first().waitFor({ timeout: 5000 });
-  for (const text of [
-    '最终验收汇总已接受 AI 相关证据。',
-    '最终验收汇总已接受优化建议证据。',
-    '最终验收汇总已接受审批和回读证据。',
-    '最终验收汇总已接受关键词机会证据。',
-    '最终验收汇总已接受 Listing AI 草案证据。',
-    '最终验收项已通过。',
-    '可以进入安装包/校验码交付步骤。',
-  ]) {
-    await assertAbsent(page, text, 'delivery-non-manifest-ready');
-  }
-  await assertGlobalGuards(page, 'delivery-non-manifest-ready');
+    await navigateLegacyRoute(page, 'scheduler');
+    await expectWorkspace(page, '当前店铺自动化', 'scheduler');
+    for (const text of [
+      '本业务日计划',
+      '失败关闭',
+      '同一店铺、业务日与采集口径的失败终态不会回到等待',
+      '证据保留预览',
+      'DRY-RUN · deletionSupported=false',
+      '同采集口径关闭 · 不重试',
+      '210 天',
+      '当前版本始终不支持删除或应用',
+    ]) {
+      await expectBodyText(page, text, 'scheduler-shc002');
+    }
+    await assertUsUsdOnly(page, 'scheduler-shc002');
+    await capture(page, evidence, 'scheduler-shc002-failed-closed', runId);
 
-  await page.evaluate(() => {
-    window.__deliveryReadinessMode = 'pass';
-  });
-  await navigateLegacyRoute(page, 'settings');
-  await navigateLegacyRoute(page, 'delivery');
-  await page.getByRole('heading', { name: HEADING_RE.delivery, level: 1 }).waitFor();
-  await page.getByText('可以交付', { exact: true }).first().waitFor({ timeout: 5000 });
-  await page.getByText('交付包摘要', { exact: false }).waitFor({ timeout: 5000 });
-  await page.getByText('AmazonAIOpsAgent-1.5.0-portable.exe / SHA-256 D9C181C09B32...', { exact: false }).first().waitFor({ timeout: 5000 });
-  await expandDetails(page, '最终证据清单');
-  await page.getByText('C:/final/readback-pass.json', { exact: true }).waitFor({ timeout: 5000 });
-  await page.getByText('真实广告回读验收通过。', { exact: true }).first().waitFor({ timeout: 5000 });
-  await expandDetails(page, '文件位置与支持入口');
-  await page.waitForTimeout(250);
-  const exportBundleState = await page.evaluate(() => {
-    const element = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === '导出交付包');
-    return element ? {
-      className: element.className,
-      disabled: element.disabled,
-      text: element.textContent?.trim() || '',
-      title: element.getAttribute('title') || '',
-    } : null;
-  });
-  if (!exportBundleState || exportBundleState.disabled) {
-    fail('Ready delivery workspace is missing its primary export action', JSON.stringify({
-      mode: await page.evaluate(() => window.__deliveryReadinessMode),
-      exportBundleState,
-      buttons: await page.evaluate(() => Array.from(document.querySelectorAll('button')).map((button) => ({
-        disabled: button.disabled,
-        text: button.textContent?.trim() || '',
-      }))),
-      deliveryCalls: (await page.evaluate(() => window.__businessUiActionLog || [])).filter((item) => (
-        item.type === 'getDeliveryReadiness' || item.type === 'getDeliveryEvidenceStatus'
-      )),
-    }, null, 2));
-  }
-  await page.locator('button').filter({ hasText: /^导出交付包$/ }).first().click();
-  await page.getByText('交付包已导出', { exact: false }).waitFor({ timeout: 5000 });
-  await page.getByText('已包含当前范围数据口径核对', { exact: false }).waitFor({ timeout: 5000 });
-  await assertDeliveryMessageHasNoLongPath(page, 'delivery-pass-export-bundle');
-  await expectVisible(page, '数据口径导出结果');
-  await expandDetails(page, '数据口径导出结果');
-  await expectVisible(page, '用户搜索词权威口径');
-  await expectVisible(page, '18 行 / 170.25 USD / 3 单');
-  await expectVisible(page, 'C:/exports/delivery/v15-ready-bundle/data-reconciliation.json');
-  await expectVisible(page, 'C:/exports/delivery/v15-ready-bundle/data-reconciliation.md');
-  await assertGlobalGuards(page, 'delivery-pass');
-  evidence.actionLog = await page.evaluate(() => window.__businessUiActionLog || []);
-  const readyBundleExports = evidence.actionLog.filter((item) => item.type === 'exportDeliveryBundle'
-    && item.result?.success
-    && item.scope?.dateFrom === '2026-06-02'
-    && item.scope?.dateTo === '2026-06-13'
-    && item.scope?.storeName === 'FT-US-TEST'
-    && item.scope?.marketplaceCode === 'CA');
-  if (!readyBundleExports.length) {
-    fail('READY delivery bundle export did not receive the edited global scope', JSON.stringify(evidence.actionLog.filter((item) => item.type === 'exportDeliveryBundle')));
-  }
-  if (!readyBundleExports.some((item) => item.result?.dataReconciliation?.jsonPath?.includes('data-reconciliation.json'))) {
-    fail('READY delivery bundle export did not surface data reconciliation files', JSON.stringify(readyBundleExports));
-  }
+    await switchStore(page, 'preview-store-shc001', 'SHC001-US');
+    await expectWorkspace(page, '当前店铺自动化', 'scheduler');
+    for (const text of [
+      '07:45',
+      '等待计划',
+      '400 天',
+      '只读扫描通过安全检查',
+    ]) {
+      await expectBodyText(page, text, 'scheduler-shc001-isolated');
+    }
+    for (const storeTwoValue of ['09:30', '210 天']) {
+      await expectNoBodyText(page, storeTwoValue, 'scheduler-shc001-isolated');
+    }
+    await capture(page, evidence, 'scheduler-shc001-waiting', runId);
 
-    if (evidence.consoleErrors.length > 0) fail('Renderer emitted console errors', evidence.consoleErrors.join('\n'));
+    await navigateLegacyRoute(page, 'settings');
+    await expectWorkspace(page, '店铺与运行设置', 'ai-and-local');
+    for (const text of ['r2 · 生效中', '07:45 · 回看 17 天', '400 天']) {
+      await expectBodyText(page, text, 'settings-shc001-roundtrip');
+    }
+    await expectNoBodyText(page, '210 天', 'settings-shc001-roundtrip');
+
+    await navigateLegacyRoute(page, 'delivery');
+    await expectWorkspace(page, '交付验收', 'delivery');
+    for (const text of [
+      '交付摘要',
+      '仅开发预览',
+      '仅开发预览已走通',
+      '不可视为 APP_READY',
+      '也不能满足真实导出或验收 gate',
+      '开发预览',
+      '还不能交付',
+      '最终验收',
+      '未就绪',
+      '交付包',
+      '阻断',
+    ]) {
+      await expectBodyText(page, text, 'delivery-preview-only');
+    }
+    await assertUsUsdOnly(page, 'delivery-preview-only', { allowPreviewReadyWarning: true });
+
+    const exportButtons = page.getByRole('button', { name: '导出交付包', exact: true });
+    const exportCount = await exportButtons.count();
+    for (let index = 0; index < exportCount; index += 1) {
+      if (!await exportButtons.nth(index).isDisabled()) {
+        fail('Preview-only delivery must not enable delivery bundle export', `button ${index + 1}`);
+      }
+    }
+    await capture(page, evidence, 'delivery-preview-only', runId);
+
+    evidence.actionLog = await page.evaluate(() => window.__settingsDeliverySmokeActions || []);
+    const actionTypes = evidence.actionLog.map((item) => item.type);
+    for (const requiredAction of [
+      'updateStoreRuntimeConfig',
+      'archiveStoreRuntimeConfig',
+      'restoreStoreRuntimeConfig',
+    ]) {
+      if (!actionTypes.includes(requiredAction)) {
+        fail('Required runtime config CRUD action missing', requiredAction);
+      }
+    }
+    const storeOneUpdates = evidence.actionLog.filter((item) =>
+      item.type === 'updateStoreRuntimeConfig' && item.storeId === 'preview-store-shc001');
+    const storeTwoUpdates = evidence.actionLog.filter((item) =>
+      item.type === 'updateStoreRuntimeConfig' && item.storeId === 'preview-store-shc002');
+    if (storeOneUpdates.length !== 1 || storeTwoUpdates.length !== 1) {
+      fail('Runtime config writes were not isolated by store', JSON.stringify(evidence.actionLog));
+    }
+    if (evidence.actionLog.some((item) =>
+      /credential|password|amazon.?ads|execute|exportDeliveryBundle/i.test(String(item.type)))) {
+      fail('Smoke crossed the approved memory-only settings boundary', JSON.stringify(evidence.actionLog));
+    }
+    if (evidence.consoleErrors.length > 0) {
+      fail('Renderer emitted console errors', evidence.consoleErrors.join('\n'));
+    }
   } finally {
     if (browser) await browser.close().catch(() => {});
-    if (server) server.close();
+    if (server) await server.close().catch(() => {});
   }
 
-  const evidencePath = path.join(evidenceDir, `business-ui-settings-delivery-smoke-${runId}.json`);
+  const evidencePath = path.join(
+    evidenceDir,
+    `business-ui-settings-delivery-smoke-${runId}.json`,
+  );
   fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
   console.log(`[PASS] business UI settings/delivery smoke evidence: ${evidencePath}`);
 }
 
 main().catch((error) => {
-  console.error(`[FAIL] ${error.message}`);
+  console.error(`[FAIL] ${error.stack || error.message}`);
   process.exit(1);
 });

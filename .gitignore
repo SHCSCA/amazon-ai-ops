@@ -33,6 +33,7 @@ npm-debug.log*
 # Electron
 .electron-builder*
 builder-debug.yml
+apps/desktop/playwright-browsers/
 
 # Temporary files
 *.tmp

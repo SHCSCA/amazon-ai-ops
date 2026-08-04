@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   MISSION_CONTROL_VIEW_IDS,
   normalizeMissionControlCommandRequest,
@@ -9,6 +9,7 @@ import {
   createMissionControlLegacyAdapter,
   MISSION_CONTROL_CAPABILITIES,
 } from './mission-control-legacy-adapter';
+import { buildMissionControlTodayProjection } from './mission-control-today-projection';
 
 const context = normalizeStoreContextEnvelope({
   storeId: 'store-one',
@@ -37,31 +38,101 @@ describe('Mission Control legacy adapter', () => {
       .toBe(response.data.capabilities.length);
     expect(response.data.capabilities.filter((row) => row.state === 'PRODUCTION_NATIVE')
       .map((row) => row.capabilityId)).toEqual([
+        'today.events.view',
+        'today.events.create',
+        'today.events.update',
+        'today.events.archive',
+        'today.events.restore',
+        'objects.products.view',
+        'objects.products.create',
+        'objects.products.update',
+        'objects.products.archive',
+        'objects.events.view',
+        'objects.events.create',
+        'objects.events.update',
+        'objects.events.delete',
         'objects.store.view',
         'objects.store.create',
         'objects.store.update',
         'objects.store.archive',
         'objects.store.restore',
         'objects.store.switch',
+        'objects.targets.view',
+        'objects.keywords.view',
+        'objects.listing.view',
+        'objects.listing.create',
+        'objects.listing.update',
+        'objects.listing.delete',
       ]);
-    expect(response.data.capabilities.some((row) => row.state === 'LEGACY_ADAPTER')).toBe(false);
+    expect(response.data.capabilities.filter((row) => row.state === 'LEGACY_ADAPTER')
+      .map((row) => row.capabilityId)).toEqual([
+        'collection.scope.view',
+        'collection.scope.update',
+        'collection.reports.view',
+        'collection.reports.start',
+        'collection.reports.resume',
+        'collection.reports.cancel',
+        'collection.reports.import',
+        'collection.reports.open-artifact',
+        'collection.import-check.view',
+        'collection.import-check.import',
+        'collection.import-check.export',
+        'collection.import-check.open-artifact',
+      ]);
     expect(response.data.capabilities.some((row) => row.state === 'PROTOTYPE_ONLY')).toBe(false);
     expect(response.data.capabilities.find((row) => (
       row.view === 'objects/products' && row.action === 'view'
     ))).toEqual(expect.objectContaining({
       capabilityId: 'objects.products.view',
-      state: 'BLOCKED',
+      state: 'PRODUCTION_NATIVE',
     }));
+    expect(response.data.capabilities.filter((row) => row.view === 'today/events')).toEqual([
+      expect.objectContaining({ capabilityId: 'today.events.view', action: 'view', state: 'PRODUCTION_NATIVE' }),
+      expect.objectContaining({ capabilityId: 'today.events.create', action: 'create', state: 'PRODUCTION_NATIVE' }),
+      expect.objectContaining({ capabilityId: 'today.events.update', action: 'update', state: 'PRODUCTION_NATIVE' }),
+      expect.objectContaining({ capabilityId: 'today.events.archive', action: 'archive', state: 'PRODUCTION_NATIVE' }),
+      expect.objectContaining({ capabilityId: 'today.events.restore', action: 'restore', state: 'PRODUCTION_NATIVE' }),
+    ]);
     expect(response.data.capabilities
-      .filter((row) => row.legacyRoute)
+      .filter((row) => row.legacyRoute && row.state === 'BLOCKED')
       .every((row) => row.state === 'BLOCKED'
         && row.blockerCode === 'STORE_SCOPED_LEGACY_ADAPTER_NOT_IMPLEMENTED')).toBe(true);
+    expect(response.data.capabilities.find((row) => row.capabilityId === 'today.overview.view')?.state)
+      .toBe('BLOCKED');
     expect(response.data.autonomy).toEqual(expect.objectContaining({
       currentMode: 'manual_approval',
       manualApprovalAvailable: true,
       policyAutoAvailable: false,
       policyAutoBlockerCode: 'POLICY_AUTO_AUTHORITY_NOT_IMPLEMENTED',
     }));
+  });
+
+  it('marks Today native only when its Main provider exists and authorizes a real target capability', async () => {
+    const adapter = createMissionControlLegacyAdapter({
+      buildTodayProjection: (authoritativeContext) => buildMissionControlTodayProjection({
+        context: authoritativeContext,
+        products: [],
+        collectionJobs: [],
+        reportImportProofs: [],
+        importedMetricRows: 0,
+        operationEventsToday: 0,
+        browserSessionReady: false,
+      }),
+    });
+    const response = await adapter.query(normalizeMissionControlQueryRequest({
+      query: 'workspace-bootstrap',
+      requestId: 'bootstrap-today-provider',
+      contextEpoch: 4,
+      context,
+    }), context);
+
+    expect(response.data.capabilities.find((row) => row.capabilityId === 'today.overview.view')?.state)
+      .toBe('PRODUCTION_NATIVE');
+    expect(response.data.today.nextAction).toMatchObject({
+      targetView: 'objects/products',
+      requiredCapabilityId: 'objects.products.view',
+      available: true,
+    });
   });
 
   it('keeps policy auto blocked and treats manual approval as an idempotent no-op', async () => {
@@ -89,6 +160,231 @@ describe('Mission Control legacy adapter', () => {
     expect(manual).toEqual(expect.objectContaining({
       status: 'NOOP',
       currentMode: 'manual_approval',
+    }));
+  });
+
+  it('projects the durable policy runtime and changes modes with a Main-side CAS revision', async () => {
+    let runtime: {
+      mode: 'manual_approval' | 'policy_auto';
+      killSwitch: boolean;
+      circuitBreakerState: 'closed' | 'open' | 'half_open';
+      activePolicyVersionId?: string;
+      revision: number;
+      canAutoExecute: boolean;
+    } = {
+      mode: 'manual_approval',
+      killSwitch: false,
+      circuitBreakerState: 'closed' as const,
+      activePolicyVersionId: 'policy-version-one',
+      revision: 8,
+      canAutoExecute: true,
+    };
+    const setAutonomyMode = vi.fn((_context, input: {
+      expectedRevision: number;
+      mode: 'manual_approval' | 'policy_auto';
+    }) => {
+      expect(input.expectedRevision).toBe(8);
+      runtime = { ...runtime, mode: input.mode, revision: 9 };
+      return runtime;
+    });
+    const adapter = createMissionControlLegacyAdapter({
+      analysisAuthorityReady: true,
+      missionDomain: {
+        getAutonomyProjection: () => runtime,
+        setAutonomyMode,
+      },
+    });
+    const bootstrap = await adapter.query(normalizeMissionControlQueryRequest({
+      query: 'workspace-bootstrap',
+      requestId: 'bootstrap-policy-ready',
+      contextEpoch: 4,
+      context,
+    }), context);
+
+    expect(bootstrap.data.autonomy).toEqual({
+      currentMode: 'manual_approval',
+      manualApprovalAvailable: true,
+      policyAutoAvailable: true,
+    });
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'missions.mission.create'))
+      .toEqual(expect.objectContaining({ state: 'PRODUCTION_NATIVE' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'policy.runtime.mode.set'))
+      .toEqual(expect.objectContaining({ state: 'PRODUCTION_NATIVE' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'missions.checkpoint.create'))
+      .toEqual(expect.objectContaining({ state: 'PRODUCTION_NATIVE', action: 'create' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'policy.kill-switch.clear'))
+      .toEqual(expect.objectContaining({ state: 'PRODUCTION_NATIVE', action: 'disable' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'execution.queue.start'))
+      .toEqual(expect.objectContaining({ state: 'BLOCKED' }));
+    expect(bootstrap.data.capabilities.find((row) => row.capabilityId === 'decisions.grants.issue'))
+      .toEqual(expect.objectContaining({
+        state: 'PRODUCTION_NATIVE',
+        view: 'decisions/decided',
+      }));
+
+    const response = await adapter.command(normalizeMissionControlCommandRequest({
+      command: 'set-autonomy-mode',
+      requestId: 'mode-policy-ready',
+      contextEpoch: 4,
+      context,
+      payload: { mode: 'policy_auto' },
+    }), context);
+    expect(response).toEqual(expect.objectContaining({
+      status: 'APPLIED',
+      currentMode: 'policy_auto',
+    }));
+    expect(setAutonomyMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('promotes only implemented execution capabilities when execution authority is ready', async () => {
+    const implementedExecutionCapabilities = [
+      'execution.queue.view',
+      'execution.queue.start',
+      'execution.queue.cancel',
+      'execution.queue.takeover',
+      'execution.evidence.view',
+    ];
+    const blocked = await createMissionControlLegacyAdapter().query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-execution-blocked',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(blocked.data.capabilities
+      .filter((row) => row.workspace === 'execution' && row.state === 'PRODUCTION_NATIVE'))
+      .toEqual([]);
+
+    const ready = await createMissionControlLegacyAdapter({ executionAuthorityReady: true }).query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-execution-ready',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(ready.data.capabilities
+      .filter((row) => row.workspace === 'execution' && row.state === 'PRODUCTION_NATIVE')
+      .map((row) => row.capabilityId))
+      .toEqual(implementedExecutionCapabilities);
+    expect(ready.data.capabilities
+      .filter((row) => row.workspace === 'execution' && !implementedExecutionCapabilities.includes(row.capabilityId))
+      .every((row) => row.state === 'BLOCKED'))
+      .toBe(true);
+  });
+
+  it('keeps the system AI page adapted while promoting store runtime CRUD only when Main is ready', async () => {
+    const expected = [
+      'settings.ai-and-local.view',
+      'settings.store-config.create',
+      'settings.store-config.update',
+      'settings.store-config.archive',
+      'settings.store-config.restore',
+    ];
+    const blocked = await createMissionControlLegacyAdapter().query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-settings-blocked',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(blocked.data.capabilities
+      .filter((row) => expected.includes(row.capabilityId))
+      .every((row) => row.state === 'BLOCKED'))
+      .toBe(true);
+
+    const ready = await createMissionControlLegacyAdapter({ storeRuntimeConfigReady: true }).query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-settings-ready',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(ready.data.capabilities.find((row) => row.capabilityId === 'settings.ai-and-local.view'))
+      .toMatchObject({ state: 'LEGACY_ADAPTER', legacyRoute: 'settings' });
+    expect(ready.data.capabilities
+      .filter((row) => row.workspace === 'settings' && row.state === 'PRODUCTION_NATIVE')
+      .map((row) => row.capabilityId))
+      .toEqual(expected.slice(1));
+  });
+
+  it('keeps the scheduler view behind the compatibility route while promoting exact store automation actions', async () => {
+    const blocked = await createMissionControlLegacyAdapter().query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-store-automation-blocked',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(blocked.data.capabilities
+      .filter((row) => row.view === 'settings/scheduler')
+      .every((row) => row.state === 'BLOCKED'))
+      .toBe(true);
+
+    const ready = await createMissionControlLegacyAdapter({ storeAutomationReady: true }).query(
+      normalizeMissionControlQueryRequest({
+        query: 'workspace-bootstrap',
+        requestId: 'bootstrap-store-automation-ready',
+        contextEpoch: 4,
+        context,
+      }),
+      context,
+    );
+    expect(ready.data.capabilities.find((row) => row.capabilityId === 'settings.scheduler.view'))
+      .toMatchObject({
+        state: 'LEGACY_ADAPTER',
+        legacyRoute: 'scheduler',
+        action: 'view',
+      });
+    expect(ready.data.capabilities.find((row) => row.capabilityId === 'settings.scheduler.run-now'))
+      .toMatchObject({
+        state: 'PRODUCTION_NATIVE',
+        action: 'start',
+      });
+    expect(ready.data.capabilities.find((row) => row.capabilityId === 'settings.scheduler.retention-preview'))
+      .toMatchObject({
+        state: 'PRODUCTION_NATIVE',
+        action: 'view',
+      });
+  });
+
+  it('keeps policy auto unavailable when the durable kill switch is active', async () => {
+    const adapter = createMissionControlLegacyAdapter({
+      missionDomain: {
+        getAutonomyProjection: () => ({
+          mode: 'manual_approval',
+          killSwitch: true,
+          circuitBreakerState: 'closed',
+          activePolicyVersionId: 'policy-version-one',
+          revision: 3,
+          canAutoExecute: false,
+        }),
+        setAutonomyMode: vi.fn(() => {
+          throw new Error('must not write while blocked');
+        }),
+      },
+    });
+    const response = await adapter.command(normalizeMissionControlCommandRequest({
+      command: 'set-autonomy-mode',
+      requestId: 'mode-policy-killed',
+      contextEpoch: 4,
+      context,
+      payload: { mode: 'policy_auto' },
+    }), context);
+
+    expect(response).toEqual(expect.objectContaining({
+      status: 'BLOCKED',
+      currentMode: 'manual_approval',
+      blockerCode: 'POLICY_KILL_SWITCH_ACTIVE',
     }));
   });
 

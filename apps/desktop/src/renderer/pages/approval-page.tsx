@@ -85,12 +85,12 @@ function sourceFiles(rec: RecommendationView): string {
   return rec.evidence?.sourceFiles?.length ? rec.evidence.sourceFiles.join(', ') : '-';
 }
 
-function isRealReportSourceFile(filePath: unknown): boolean {
-  return /\.(xlsx|xls|csv)$/i.test(String(filePath || '').trim().split(/[?#]/)[0]);
+function isRealReportSourceFile(sourceRef: unknown): boolean {
+  return /\.(xlsx|xls|csv)$/i.test(String(sourceRef || '').trim().split(/[?#]/)[0]);
 }
 
-function normalizeSourceFile(filePath: unknown): string {
-  return String(filePath || '').trim().replace(/\\/g, '/').toLowerCase();
+function normalizeSourceFile(sourceRef: unknown): string {
+  return String(sourceRef || '').trim().replace(/\\/g, '/').toLowerCase();
 }
 
 function sameSourceFiles(left: unknown, right: unknown): boolean {
@@ -100,7 +100,7 @@ function sameSourceFiles(left: unknown, right: unknown): boolean {
   const leftFiles = normalize(left);
   const rightFiles = normalize(right);
   return leftFiles.length === rightFiles.length
-    && leftFiles.every((filePath, index) => filePath === rightFiles[index]);
+    && leftFiles.every((sourceRef, index) => sourceRef === rightFiles[index]);
 }
 
 function sameTimestamp(left: unknown, right: unknown): boolean {
@@ -195,7 +195,10 @@ export function approvalMissing(
   if (recommendationSourceFiles.length && Array.isArray(allowedSourceFiles) && allowedSourceFiles.length > 0) {
     const allowed = new Set(allowedSourceFiles.map(normalizeSourceFile));
     const allSourcesCurrent = recommendationSourceFiles.every((file) => allowed.has(normalizeSourceFile(file)));
-    if (!allSourcesCurrent) missing.push('来源文件不属于当前数据批次真实报表');
+    if (!allSourcesCurrent) {
+      missing.push('来源文件不属于当前数据批次真实报表');
+      missing.push('未能与当前批次的不透明报表工件对应（旧路径证据已阻断）');
+    }
   }
   requirePositiveNumber(rec.evidence?.sourceRow, '来源行号');
   requireValue(rec.evidence?.campaignName, '广告活动');
@@ -667,7 +670,9 @@ export function ApprovalPage() {
   const completedDecisionFocusTargetRef = useRef<HTMLElement | null>(null);
   const currentBatchId = scope.batchId || data?.collection.latestBatch?.id;
   const currentRealReportSourceFiles = useMemo(
-    () => (data?.collection.realReportFiles || []).map((file) => file.filePath).filter(Boolean),
+    () => (data?.collection.realReportFiles || [])
+      .map((file) => file.artifactDisplayName || file.fileName || file.displayName)
+      .filter(Boolean),
     [data?.collection.realReportFiles],
   );
   const selectedMissing = useMemo(

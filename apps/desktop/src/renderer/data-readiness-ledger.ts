@@ -35,7 +35,9 @@ export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataR
     .filter((item) => item.realFileAvailable)
     .map((item) => item.type)).size;
   const importedReportTypeCount = new Set(input.reportOptions
-    .filter((item) => item.realFileAvailable && Number(item.importedRows || 0) > 0)
+    .filter((item) => item.realFileAvailable && (
+      isImportedOrBeyond(item.status) || Number(item.importedRows || 0) > 0
+    ))
     .map((item) => item.type)).size;
   // The per-report option ledger is the authority for coverage. A global row total
   // cannot prove that every required report type has been imported.
@@ -66,7 +68,6 @@ export function buildDataReadinessLedger(input: DataReadinessLedgerInput): DataR
 
   if (realReportFileCount >= requiredReportCount
     && importedReportCount >= requiredReportCount
-    && importedRowCount > 0
     && realFilesWithoutRows === 0) {
     return {
       status: 'ready',
@@ -144,7 +145,7 @@ function buildReadinessStages(input: DataReadinessLedgerInput & {
     input.reportOptions.filter((item) => isCreatedOrBeyond(item.status) || item.realFileAvailable || item.importedRows > 0).length,
   );
   const usable = input.realReportFileCount >= input.requiredReportCount
-    && input.importedRowCount > 0
+    && input.importedReportCount >= input.requiredReportCount
     && input.realFilesWithoutRows === 0;
 
   return [
@@ -171,11 +172,13 @@ function buildReadinessStages(input: DataReadinessLedgerInput & {
       title: '日级指标已入库',
       status: countStatus(input.importedReportCount, input.requiredReportCount),
       value: `${input.importedReportCount}/${input.requiredReportCount} 类 · ${input.importedRowCount} 行`,
-      detail: input.importedReportCount >= input.requiredReportCount && input.importedRowCount > 0
-        ? '每类真实报表都已形成每日广告事实，后续分析只读取入库指标。'
+      detail: input.importedReportCount >= input.requiredReportCount
+        ? input.importedRowCount > 0
+          ? '每类真实报表都已形成每日广告事实，后续分析只读取入库指标。'
+          : '每类真实报表都已验证入库；当前日期范围是可追溯的 0 行业务零状态。'
         : input.importedRowCount > 0
           ? '已有部分日级广告事实，但尚未覆盖全部必需报表类型。'
-        : '真实报表尚未形成可分析的日级指标。',
+          : '真实报表尚未形成可分析的日级指标。',
     },
     {
       key: 'usable',
@@ -197,4 +200,8 @@ function countStatus(count: number, total: number): DataReadinessStage['status']
 
 function isCreatedOrBeyond(status: string): boolean {
   return /created|ready|downloaded|imported|completed|complete/i.test(status);
+}
+
+function isImportedOrBeyond(status: string): boolean {
+  return /imported|completed|complete|succeeded/i.test(status);
 }

@@ -16,54 +16,55 @@ const store: StoreRecord = {
 };
 
 function render(overrides: Partial<Parameters<typeof MissionControlStoreGateView>[0]> = {}) {
-  return renderToStaticMarkup(<MissionControlStoreGateView
-    phase="needs-selection"
-    stores={[]}
-    error={null}
-    selectedStoreId=""
-    onSelectedStoreIdChange={vi.fn()}
-    onConfirm={vi.fn()}
-    onRetry={vi.fn()}
-    createDisplayName=""
-    onCreateDisplayNameChange={vi.fn()}
-    creating={false}
-    createError={null}
-    onCreate={vi.fn()}
-    {...overrides}
-  >
-    <div>workspace</div>
-  </MissionControlStoreGateView>);
+  return renderToStaticMarkup(
+    <MissionControlStoreGateView
+      error={null}
+      onCreate={vi.fn(async () => store)}
+      onRetry={vi.fn()}
+      onSwitch={vi.fn()}
+      phase="needs-selection"
+      stores={[]}
+      {...overrides}
+    >
+      <div>workspace</div>
+    </MissionControlStoreGateView>,
+  );
 }
 
 describe('Mission Control StoreGate', () => {
-  it('has no zero-store dead end and keeps US/USD/timezone fixed', () => {
+  it('keeps the shared left StoreScopeSwitcher as the only create and switch entry', () => {
     const markup = render();
     expect(markup).toContain('data-state="needs-selection"');
-    expect(markup).toContain('mission-control-store-gate__card--create');
-    expect(markup).toContain('创建美国站店铺');
-    expect(markup).toContain('<strong>US</strong>');
-    expect(markup).toContain('<strong>USD</strong>');
-    expect(markup).toContain('<strong>America/Los_Angeles</strong>');
-    expect(markup).toContain('创建后仍需由你明确选择并确认进入');
+    expect(markup).toContain('class="store-scope-switcher');
+    expect(markup).toContain('新增店铺');
+    expect(markup).toContain('先从左侧选择或新增店铺');
+    expect(markup).toContain('创建后保持未选择');
+    expect(markup).not.toContain('mission-control-store-gate__card--create');
+    expect(markup).not.toContain('mission-control-store-gate__create-form');
+    expect(markup).not.toContain('<select');
+    expect(markup).not.toContain('管理店铺');
   });
 
-  it('never preselects a store and requires explicit confirmation', () => {
+  it('requires an explicit switch-and-login action even when there is exactly one store', () => {
     const markup = render({ stores: [store] });
-    expect(markup).toContain('<option value="" selected="">请选择店铺</option>');
-    expect(markup).toContain('进入所选店铺');
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>进入所选店铺/);
+    expect(markup).toContain('SHC001');
+    expect(markup).toContain('切换并登录');
+    expect(markup).not.toContain('aria-selected="true"');
+    expect(markup).not.toContain('进入所选店铺');
   });
 
-  it('exposes stable busy and error states for styling', () => {
-    expect(render({ phase: 'loading' })).toContain('data-state="loading"');
-    const createBusy = render({ creating: true, createDisplayName: 'SHC002' });
-    expect(createBusy).toContain('aria-busy="true"');
-    expect(createBusy).toContain('创建中…');
-    const failed = render({ createError: '名称已存在' });
-    expect(failed).toContain('mission-control-store-gate__error');
-    expect(failed).toContain('名称已存在');
-    const loadFailed = render({ phase: 'error', error: 'Main unavailable' });
-    expect(loadFailed).toContain('data-state="error"');
-    expect(loadFailed).toContain('重新读取');
+  it('exposes safe loading, switching, and error states without a second CRUD form', () => {
+    expect(render({ phase: 'loading' })).toContain('正在读取店铺范围');
+    expect(render({ phase: 'switching', stores: [store] })).toContain('正在切换店铺');
+    const failed = render({ phase: 'error', error: 'Main unavailable' });
+    expect(failed).toContain('店铺上下文暂不可用');
+    expect(failed).toContain('Main unavailable');
+    expect(failed).toContain('重试');
+    expect(failed).not.toContain('mission-control-store-gate__create-form');
+  });
+
+  it('renders the real workspace only after Main reports a ready authority', () => {
+    const markup = render({ phase: 'ready', stores: [store] });
+    expect(markup).toBe('<div>workspace</div>');
   });
 });

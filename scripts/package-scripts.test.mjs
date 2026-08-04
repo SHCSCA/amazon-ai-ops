@@ -11,7 +11,9 @@ describe('root package smoke scripts', () => {
   it('prepares the shared SQLite native module for Node before Vitest runs', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
-    expect(packageJson.scripts['prepare:native:node']).toBe('pnpm --filter @amazon-ai-ops/local-db rebuild');
+    expect(packageJson.scripts['prepare:native:node'])
+      .toBe('node scripts/prepare-native-runtime.js --mode=node');
+    expect(packageJson.scripts['prepare:native:node']).not.toMatch(/pnpm|rebuild|duckdb/i);
     expect(packageJson.scripts.pretest).toBe('pnpm run prepare:native:node');
     expect(packageJson.scripts.test).toBe('vitest run');
   });
@@ -26,13 +28,27 @@ describe('root package smoke scripts', () => {
     });
   });
 
-  it('prepares the shared SQLite native module for Electron before desktop package construction', () => {
+  it('uses one locked orchestrator with isolated Electron binding injection', () => {
     const desktopPackageJson = JSON.parse(fs.readFileSync(path.join(root, 'apps', 'desktop', 'package.json'), 'utf8'));
+    const electronBuilder = fs.readFileSync(path.join(root, 'electron-builder.yml'), 'utf8');
+    const orchestrator = fs.readFileSync(path.join(root, 'scripts', 'build-windows-package.js'), 'utf8');
+    const afterPack = fs.readFileSync(path.join(root, 'scripts', 'electron-builder-after-pack.js'), 'utf8');
 
-    expect(desktopPackageJson.scripts['prepare:native:electron'])
-      .toBe('set npm_execpath=&& set NPM_CLI_JS=&& pnpm --filter @amazon-ai-ops/desktop exec electron-builder install-app-deps');
-    expect(desktopPackageJson.scripts.prebuild).toBe('pnpm run prepare:native:electron');
-    expect(desktopPackageJson.scripts.build).toContain('electron-builder');
+    expect(desktopPackageJson.scripts['prepare:native:electron']).toBeUndefined();
+    expect(desktopPackageJson.scripts.prebuild).toBeUndefined();
+    expect(desktopPackageJson.scripts.postbuild).toBeUndefined();
+    expect(desktopPackageJson.scripts.build)
+      .toBe('node ../../scripts/build-windows-package.js');
+    expect(desktopPackageJson.scripts['build:win'])
+      .toBe('node ../../scripts/build-windows-package.js');
+    expect(orchestrator).toContain('withNativeRuntimeLock');
+    expect(orchestrator).toContain('withPreparedIsolatedElectronRuntime');
+    expect(orchestrator).toContain("mode: 'package'");
+    expect(orchestrator).not.toMatch(/install-app-deps|pnpm rebuild/i);
+    expect(electronBuilder).toMatch(/\bnpmRebuild:\s*false\b/);
+    expect(electronBuilder).toContain('afterPack: ../../scripts/electron-builder-after-pack.js');
+    expect(afterPack).toContain('AAO_STAGED_SQLITE_BINDING');
+    expect(afterPack).toContain('fs.unlinkSync(existingTarget)');
   });
 
   it('routes the legacy v1.5 UI smoke command to the current business UI suite', () => {
@@ -100,6 +116,20 @@ describe('root package smoke scripts', () => {
       .toBeLessThan(exporter.indexOf('scripts/fill-ad-readback-session.js'));
     expect(exporter.indexOf('scripts/fill-ad-readback-session.js'))
       .toBeLessThan(exporter.indexOf('scripts/fill-ad-readback-evidence.js'));
+  });
+
+  it('exposes the WAL-safe Mission Control authority snapshot exporter', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+    expect(packageJson.scripts['export:s7-authority-snapshot'])
+      .toBe('node scripts/export-mission-control-authority-snapshot.js');
+  });
+
+  it('exposes the read-only Mission Control execution canary evidence exporter', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+    expect(packageJson.scripts['export:s7-execution-canary'])
+      .toBe('node scripts/export-mission-control-execution-canary-evidence.js');
   });
 
   it('documents the independent readback value and stable target identity inputs', () => {

@@ -102,6 +102,20 @@ describe('ten-workspace information architecture', () => {
     expect(resolveNavigationTarget(DEFAULT_WORKSPACE_INTENTS.experiments)).toBeNull();
   });
 
+  it('opens data collection at scope while preserving the legacy reports deep link', () => {
+    const collectionWorkspace = VISIBLE_WORKSPACES.find((workspace) => workspace.id === 'collection');
+    const scopeIntent = { workspace: 'collection', subview: 'scope' } as const;
+    const reportsIntent = { workspace: 'collection', subview: 'reports' } as const;
+
+    expect(DEFAULT_WORKSPACE_INTENTS.collection).toEqual(scopeIntent);
+    expect(collectionWorkspace?.defaultIntent).toEqual(scopeIntent);
+    expect(normalizeNavigationTarget(collectionWorkspace?.defaultIntent)).toEqual(scopeIntent);
+    expect(resolveNavigationTarget(collectionWorkspace?.defaultIntent)).toBe('operation-scope');
+
+    expect(normalizeNavigationTarget('data-collection')).toEqual(reportsIntent);
+    expect(resolveNavigationTarget(reportsIntent)).toBe('data-collection');
+  });
+
   it('publishes the complete operator-facing tab contract', () => {
     expect(Object.keys(WORKSPACE_SUBVIEW_TABS)).toEqual([
       'today', 'missions', 'decisions', 'execution', 'objects', 'collection', 'settings',

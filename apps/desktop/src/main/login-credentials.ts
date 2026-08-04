@@ -1,3 +1,5 @@
+import { normalizeStoreId } from '@amazon-ai-ops/shared-types';
+
 export const LEGACY_LOGIN_MIGRATION_MARKER = 'amazon-ai-ops:legacy-login-migration/v1';
 
 export interface LoginCredentialStore {
@@ -38,6 +40,39 @@ const LOGIN_USERNAME_KEY = 'login_username';
 const LOGIN_REMEMBER_PASSWORD_KEY = 'login_remember_password';
 const LOGIN_PASSWORD_ENCRYPTED_KEY = 'login_password_encrypted';
 const LEGACY_LOGIN_PASSWORD_KEY = 'login_password';
+const STORE_LOGIN_CREDENTIAL_KEY_PREFIX = 'store_login_credentials:v1';
+const LOGIN_CREDENTIAL_KEYS = new Set<string>([
+  LOGIN_USERNAME_KEY,
+  LOGIN_REMEMBER_PASSWORD_KEY,
+  LOGIN_PASSWORD_ENCRYPTED_KEY,
+  LEGACY_LOGIN_PASSWORD_KEY,
+]);
+
+/**
+ * Adapt the existing Main-only credential flow to one logical store namespace.
+ */
+export function createStoreScopedLoginCredentialStore(
+  baseStore: LoginCredentialStore,
+  storeIdInput: unknown,
+): LoginCredentialStore {
+  const storeId = normalizeStoreId(storeIdInput);
+  const keyPrefix = `${STORE_LOGIN_CREDENTIAL_KEY_PREFIX}:${storeId}:`;
+
+  const scopedKey = (key: string): string => {
+    if (!LOGIN_CREDENTIAL_KEYS.has(key)) {
+      throw new Error('Unsupported login credential storage key.');
+    }
+    return `${keyPrefix}${key}`;
+  };
+
+  const scopedStore: LoginCredentialStore = {
+    get: (key: string): string | null => baseStore.get(scopedKey(key)),
+    set: (key: string, value: string): void => baseStore.set(scopedKey(key), value),
+    delete: (key: string): void => baseStore.delete(scopedKey(key)),
+    transaction: <T>(work: () => T): T => baseStore.transaction(work),
+  };
+  return Object.freeze(scopedStore);
+}
 
 interface MigrationOutcome {
   credentialState: Extract<LoginCredentialState, 'migrated' | 'encryption_unavailable' | 'migration_failed'>;

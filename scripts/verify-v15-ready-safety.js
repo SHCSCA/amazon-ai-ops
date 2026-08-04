@@ -12,6 +12,7 @@ const {
   validateAdversarialNodeEnvSelectionContract,
 } = require('./smoke-package-adversarial-node-env');
 const { validatePackageSecurityEvidence } = require('./smoke-package-security-boundaries');
+const { validatePackageLaunchSmokeEvidence } = require('./smoke-package-launch');
 
 const root = path.resolve(__dirname, '..');
 const evidenceDir = path.join(root, 'output', 'codex-evidence');
@@ -142,6 +143,13 @@ function completeBundlePackageIndex(index, bundleManifestPath, finalIndex) {
 function completePackageLaunchSmoke(smoke, finalIndex) {
   if (smoke?.present !== true || smoke.passed !== true) return false;
   if (!smoke.evidencePath || !fs.existsSync(smoke.evidencePath) || !fs.statSync(smoke.evidencePath).isFile()) return false;
+  let sourceEvidence;
+  try {
+    sourceEvidence = readJson(smoke.evidencePath);
+  } catch {
+    return false;
+  }
+  if (!validatePackageLaunchSmokeEvidence(sourceEvidence).passed) return false;
   const portablePackage = (finalIndex?.packages || []).find((item) => item.kind === 'portable');
   const checks = Array.isArray(smoke.checks) ? smoke.checks : [];
   const hasCheck = (kind) => checks.some((item) => item?.kind === kind && item.ok === true);
@@ -153,10 +161,23 @@ function completePackageLaunchSmoke(smoke, finalIndex) {
       && sha256(artifact.path) === String(artifact.sha256 || '').toUpperCase();
   };
   const portable = smoke.artifacts?.portable;
-  return validArtifact(smoke.artifacts?.unpacked)
+  const sourceChecks = Array.isArray(sourceEvidence.checks) ? sourceEvidence.checks : [];
+  const sourceHasCheck = (kind) => sourceChecks.some((item) => item?.kind === kind && item.ok === true);
+  const artifactMatchesSource = (recorded, source) => (
+    path.resolve(recorded?.path || '') === path.resolve(source?.path || '')
+    && Number(recorded?.sizeBytes || 0) === Number(source?.sizeBytes || 0)
+    && String(recorded?.sha256 || '').toUpperCase()
+      === String(source?.sha256 || '').toUpperCase()
+  );
+  return String(smoke.generatedAt || '') === String(sourceEvidence.generatedAt || '')
+    && validArtifact(smoke.artifacts?.unpacked)
     && validArtifact(portable)
     && hasCheck('win-unpacked')
     && hasCheck('portable')
+    && sourceHasCheck('win-unpacked')
+    && sourceHasCheck('portable')
+    && artifactMatchesSource(smoke.artifacts?.unpacked, sourceEvidence.artifacts?.unpacked)
+    && artifactMatchesSource(portable, sourceEvidence.artifacts?.portable)
     && Boolean(portablePackage)
     && path.resolve(portable.path) === path.resolve(portablePackage.sourcePath)
     && Number(portable.sizeBytes || 0) === Number(portablePackage.sizeBytes || 0)

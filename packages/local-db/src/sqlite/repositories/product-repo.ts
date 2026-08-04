@@ -1,5 +1,10 @@
 import type { Database } from 'better-sqlite3';
-import type { ProductCost, StoreId } from '@amazon-ai-ops/shared-types';
+import {
+  canonicalizeAmazonAsin,
+  inspectAmazonAsin,
+  type ProductCost,
+  type StoreId,
+} from '@amazon-ai-ops/shared-types';
 
 export interface Product {
   id: number;
@@ -22,6 +27,7 @@ export interface ProductWithCost extends Product {
 
 export interface StoreScopedProduct extends Product {
   storeId: StoreId;
+  asinValid: boolean;
 }
 
 export interface StoreScopedProductWithCost extends StoreScopedProduct {
@@ -43,23 +49,64 @@ export interface StoreProductTargetAcosUpdate {
 export class ProductRepository {
   constructor(private db: Database) {}
 
+  /**
+   * Serializes a revision read, comparison, mutation, and readback under one
+   * IMMEDIATE transaction. Requiring the expected revision at this repository
+   * boundary prevents Main mutation paths from silently falling back to a
+   * read-then-write sequence outside the database lock.
+   */
+  runImmediateRevisionTransaction<T>(
+    expectedRevision: string,
+    operation: () => T,
+  ): T {
+    if (!expectedRevision.trim()) throw new Error('expectedRevision is required for a CAS transaction.');
+    return this.db.transaction(operation).immediate();
+  }
+
   /** @deprecated Legacy unscoped write. Stage 2 must use upsertForStore. */
   upsert(product: Partial<Product> & { asin: string; store_name: string; marketplace_code: string }): number {
-    const stmt = this.db.prepare(`
-      INSERT INTO products (asin, store_name, marketplace_code, parent_asin, msku, sku, title, product_stage, status)
-      VALUES (@asin, @store_name, @marketplace_code, @parent_asin, @msku, @sku, @title, @product_stage, @status)
-      ON CONFLICT(asin, store_name, marketplace_code) 
-      DO UPDATE SET 
-        parent_asin = excluded.parent_asin,
-        title = excluded.title,
-        msku = excluded.msku,
-        sku = excluded.sku,
-        product_stage = excluded.product_stage,
-        status = excluded.status,
-        updated_at = datetime('now')
-    `);
-    const result = stmt.run(product);
-    return result.lastInsertRowid as number;
+    const routedStoreId = this.resolveLegacyWriteStoreId(product.store_name, product.marketplace_code);
+    if (routedStoreId) return this.upsertForStore(routedStoreId, product);
+    const params = this.normalizeProductParams(undefined, product);
+    const upsert = this.db.transaction(() => {
+      const existing = this.db.prepare(`
+        SELECT id
+        FROM products
+        WHERE store_id IS NULL
+          AND upper(trim(asin)) = @asin
+          AND lower(trim(store_name)) = lower(trim(@store_name))
+          AND upper(trim(marketplace_code)) = @marketplace_code
+        LIMIT 1
+      `).get(params) as { id: number } | undefined;
+      if (existing) {
+        this.db.prepare(`
+          UPDATE products
+          SET parent_asin = @parent_asin,
+              title = @title,
+              msku = @msku,
+              sku = @sku,
+              product_stage = @product_stage,
+              status = @status,
+              updated_at = datetime('now')
+          WHERE id = @id AND store_id IS NULL
+        `).run({ ...params, id: existing.id });
+        this.quarantineLegacyProduct(existing.id, params);
+        return existing.id;
+      }
+      const result = this.db.prepare(`
+        INSERT INTO products (
+          asin, store_name, marketplace_code, parent_asin, msku, sku,
+          title, product_stage, status
+        ) VALUES (
+          @asin, @store_name, @marketplace_code, @parent_asin, @msku, @sku,
+          @title, @product_stage, @status
+        )
+      `).run(params);
+      const productId = Number(result.lastInsertRowid);
+      this.quarantineLegacyProduct(productId, params);
+      return productId;
+    });
+    return upsert.immediate();
   }
 
   upsertForStore(
@@ -67,23 +114,12 @@ export class ProductRepository {
     product: Partial<Product> & { asin: string; store_name: string; marketplace_code: string },
   ): number {
     this.assertLegacyStoreIdentity(storeId, product.store_name, product.marketplace_code);
-    const params = {
-      storeId,
-      asin: product.asin,
-      store_name: product.store_name,
-      marketplace_code: product.marketplace_code,
-      parent_asin: product.parent_asin ?? '',
-      msku: product.msku ?? '',
-      sku: product.sku ?? '',
-      title: product.title ?? '',
-      product_stage: product.product_stage ?? '',
-      status: product.status ?? 'active',
-    };
+    const params = this.normalizeProductParams(storeId, product);
     const upsert = this.db.transaction(() => {
       const existing = this.db.prepare(`
         SELECT id
         FROM products
-        WHERE store_id = @storeId AND upper(asin) = upper(@asin)
+        WHERE store_id = @storeId AND upper(trim(asin)) = @asin
         LIMIT 1
       `).get(params) as { id: number } | undefined;
 
@@ -127,11 +163,13 @@ export class ProductRepository {
   }
 
   findByAsinForStore(storeId: StoreId, asin: string): StoreScopedProduct | undefined {
+    const normalizedAsin = inspectAmazonAsin(asin).canonical;
+    if (!normalizedAsin) return undefined;
     const row = this.db.prepare(`
       SELECT * FROM products
-      WHERE store_id = ? AND upper(asin) = upper(?)
+      WHERE store_id = ? AND upper(trim(asin)) = ?
       LIMIT 1
-    `).get(storeId, asin) as Record<string, unknown> | undefined;
+    `).get(storeId, normalizedAsin) as Record<string, unknown> | undefined;
     return row ? this.mapStoreScopedProduct(row) : undefined;
   }
 
@@ -204,9 +242,13 @@ export class ProductRepository {
         targetAcos: 'target_acos',
         targetTacos: 'target_tacos',
       };
-      const unknownKeys = Object.keys(cost).filter(
-        (key) => !['id', 'productId', 'updatedAt'].includes(key) && !(key in costColumns),
-      );
+      const forbiddenKeys = Object.keys(cost).filter((key) => (
+        ['id', 'productId', 'updatedAt'].includes(key)
+      ));
+      if (forbiddenKeys.length > 0) {
+        throw new Error(`产品成本元数据不可由调用方覆盖：${forbiddenKeys.join(', ')}。`);
+      }
+      const unknownKeys = Object.keys(cost).filter((key) => !(key in costColumns));
       if (unknownKeys.length > 0) throw new Error(`不支持的产品成本字段：${unknownKeys.join(', ')}。`);
       const entries = Object.entries(cost).filter(
         ([key, value]) => key in costColumns && value !== undefined,
@@ -215,7 +257,7 @@ export class ProductRepository {
       const fields = entries.map(([key]) => `${costColumns[key]} = @${key}`);
       const columns = entries.map(([key]) => costColumns[key]);
       const values = entries.map(([key]) => `@${key}`);
-      const params = { storeId, productId, ...cost };
+      const params = { ...cost, storeId, productId };
       const existing = this.db.prepare(`
         SELECT product_id
         FROM product_costs
@@ -303,7 +345,7 @@ export class ProductRepository {
     updates: StoreProductTargetAcosUpdate[],
   ): StoreScopedProductWithCost[] {
     const updateMany = this.db.transaction((targets: StoreProductTargetAcosUpdate[]) => targets.map((target) => {
-      const asin = String(target.asin || '').trim();
+      const asin = canonicalizeAmazonAsin(target.asin);
       const targetAcos = Number(target.targetAcos);
       if (!asin) throw new Error('批量目标 ACOS 更新需要 ASIN。');
       if (!Number.isFinite(targetAcos) || targetAcos <= 0 || targetAcos > 1) {
@@ -311,7 +353,7 @@ export class ProductRepository {
       }
       const product = this.findByAsinForStore(storeId, asin);
       if (!product?.id) throw new Error(`当前店铺未找到产品 ${asin}，批量更新已回滚。`);
-      if (!this.updateCostForStore(storeId, product.id, { productId: product.id, targetAcos })) {
+      if (!this.updateCostForStore(storeId, product.id, { targetAcos })) {
         throw new Error(`产品 ${asin} 不属于当前店铺，批量更新已回滚。`);
       }
       return { ...product, cost: this.getCostForStore(storeId, product.id) };
@@ -323,12 +365,17 @@ export class ProductRepository {
   // Desktop 主进程使用的方法
   /** @deprecated Legacy unscoped write. Stage 2 must use insertForStore. */
   insert(product: Omit<Product, 'id' | 'created_at' | 'updated_at'>): number {
+    const routedStoreId = this.resolveLegacyWriteStoreId(product.store_name, product.marketplace_code);
+    if (routedStoreId) return this.insertForStore(routedStoreId, product);
+    const params = this.normalizeProductParams(undefined, product);
     const stmt = this.db.prepare(`
       INSERT INTO products (store_name, marketplace_code, asin, parent_asin, msku, sku, title, product_stage, status)
       VALUES (@store_name, @marketplace_code, @asin, @parent_asin, @msku, @sku, @title, @product_stage, @status)
     `);
-    const result = stmt.run(product);
-    return result.lastInsertRowid as number;
+    const result = stmt.run(params);
+    const productId = Number(result.lastInsertRowid);
+    this.quarantineLegacyProduct(productId, params);
+    return productId;
   }
 
   insertForStore(
@@ -336,6 +383,7 @@ export class ProductRepository {
     product: Omit<Product, 'id' | 'created_at' | 'updated_at'>,
   ): number {
     this.assertLegacyStoreIdentity(storeId, product.store_name, product.marketplace_code);
+    const params = this.normalizeProductParams(storeId, product);
     const result = this.db.prepare(`
       INSERT INTO products (
         store_id, store_name, marketplace_code, asin, parent_asin, msku, sku,
@@ -344,14 +392,57 @@ export class ProductRepository {
         @storeId, @store_name, @marketplace_code, @asin, @parent_asin, @msku, @sku,
         @title, @product_stage, @status
       )
-    `).run({ ...product, storeId });
+    `).run(params);
     return Number(result.lastInsertRowid);
   }
 
+  /**
+   * Creates the product row and its optional cost/target row as one durable
+   * store-scoped write. A rejected cost payload must not leave behind a
+   * half-created product that the renderer would later mistake for success.
+   */
+  insertWithCostForStore(
+    storeId: StoreId,
+    product: Omit<Product, 'id' | 'created_at' | 'updated_at'>,
+    cost?: Partial<ProductCost>,
+  ): number {
+    const insert = this.db.transaction(() => {
+      const productId = this.insertForStore(storeId, product);
+      if (cost && !this.updateCostForStore(storeId, productId, cost)) {
+        throw new Error('产品成本写入未应用，产品创建已回滚。');
+      }
+      return productId;
+    });
+    return insert.immediate();
+  }
+
+  /**
+   * Updates identity fields and optional cost/target fields atomically. This
+   * keeps optimistic-revision writes all-or-nothing even when the cost row is
+   * rejected after the product row has been prepared.
+   */
+  upsertWithCostForStore(
+    storeId: StoreId,
+    product: Partial<Product> & { asin: string; store_name: string; marketplace_code: string },
+    cost?: Partial<ProductCost>,
+  ): number {
+    const update = this.db.transaction(() => {
+      const productId = this.upsertForStore(storeId, product);
+      if (cost && !this.updateCostForStore(storeId, productId, cost)) {
+        throw new Error('产品成本写入未应用，产品更新已回滚。');
+      }
+      return productId;
+    });
+    return update.immediate();
+  }
+
   private mapStoreScopedProduct(row: Record<string, unknown>): StoreScopedProduct {
+    const asin = inspectAmazonAsin(row.asin);
     return {
       ...(row as unknown as Product),
+      asin: asin.canonical,
       storeId: row.store_id as StoreId,
+      asinValid: asin.valid,
     };
   }
 
@@ -398,5 +489,91 @@ export class ProductRepository {
     ) {
       throw new Error(`店铺标识与 store_id ${storeId} 的权威记录不一致。`);
     }
+  }
+
+  private normalizeProductParams(
+    storeId: StoreId | undefined,
+    product: Partial<Product> & { asin: string; store_name: string; marketplace_code: string },
+  ): Record<string, unknown> {
+    const marketplaceCode = String(product.marketplace_code ?? '').trim().toUpperCase();
+    if (marketplaceCode !== 'US') throw new Error('产品仅支持美国站（US）。');
+    const storeName = String(product.store_name ?? '').trim().replace(/\s+/g, ' ');
+    if (!storeName) throw new Error('产品店铺名称不能为空。');
+    const parentAsinInput = String(product.parent_asin ?? '').trim();
+    return {
+      storeId,
+      asin: canonicalizeAmazonAsin(product.asin),
+      store_name: storeName,
+      marketplace_code: marketplaceCode,
+      parent_asin: parentAsinInput ? canonicalizeAmazonAsin(parentAsinInput) : '',
+      msku: String(product.msku ?? '').trim(),
+      sku: String(product.sku ?? '').trim(),
+      title: String(product.title ?? '').trim(),
+      product_stage: String(product.product_stage ?? '').trim(),
+      status: String(product.status ?? 'active').trim() || 'active',
+    };
+  }
+
+  private resolveLegacyWriteStoreId(storeName: string, marketplaceCode: string): StoreId | undefined {
+    const stores = this.db.prepare(`
+      SELECT store_id AS storeId
+      FROM stores
+      WHERE marketplace = upper(trim(?))
+        AND (
+          lower(trim(display_name)) = lower(trim(?))
+          OR (
+            legacy_store_name_normalized = lower(trim(?))
+            AND legacy_marketplace_code_normalized = upper(trim(?))
+          )
+        )
+      ORDER BY store_id
+    `).all(marketplaceCode, storeName, storeName, marketplaceCode) as Array<{ storeId: StoreId }>;
+    if (stores.length === 0) {
+      const authorityExists = this.db.prepare('SELECT 1 FROM stores LIMIT 1').get();
+      if (authorityExists) {
+        throw new Error('无法将旧产品店铺标识解析为唯一 store_id，已拒绝无范围写入。');
+      }
+      return undefined;
+    }
+    if (stores.length > 1) {
+      throw new Error('旧产品店铺标识匹配多个 store_id，已拒绝可能串店的写入。');
+    }
+    return stores[0].storeId;
+  }
+
+  private quarantineLegacyProduct(productId: number, params: Record<string, unknown>): void {
+    const migration = this.db.prepare(`
+      SELECT status FROM schema_migrations WHERE version = 3
+    `).get() as { status: string } | undefined;
+    if (migration?.status !== 'applied') return;
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO store_migration_quarantine (
+        migration_version, source_table, source_row_id, reason,
+        normalized_store_name, normalized_marketplace_code,
+        candidate_store_ids_json, source_identity_json,
+        status, created_at, updated_at
+      ) VALUES (
+        3, 'products', @sourceRowId, 'unresolved_product_owner',
+        @normalizedStoreName, @normalizedMarketplaceCode,
+        '[]', @sourceIdentityJson,
+        'pending', @createdAt, @updatedAt
+      )
+      ON CONFLICT(migration_version, source_table, source_row_id) DO UPDATE SET
+        source_identity_json = excluded.source_identity_json,
+        updated_at = excluded.updated_at
+      WHERE store_migration_quarantine.status = 'pending'
+    `).run({
+      sourceRowId: String(productId),
+      normalizedStoreName: String(params.store_name ?? '').trim().toLowerCase() || null,
+      normalizedMarketplaceCode: String(params.marketplace_code ?? '').trim().toUpperCase() || null,
+      sourceIdentityJson: JSON.stringify({
+        storeName: params.store_name,
+        marketplaceCode: params.marketplace_code,
+        asin: params.asin,
+      }),
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 }

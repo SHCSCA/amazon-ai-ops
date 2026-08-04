@@ -1,15 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
-import { cleanupAppResources, createBeforeQuitCoordinator } from './app-shutdown';
+import {
+  cleanupAppResources,
+  createBeforeQuitCoordinator,
+  invokeShutdownOperationNow,
+} from './app-shutdown';
 
 function deferred(): {
   promise: Promise<void>;
   resolve: () => void;
+  reject: (error: unknown) => void;
 } {
   let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 describe('before-quit coordinator', () => {
@@ -48,6 +55,7 @@ describe('before-quit coordinator', () => {
 
     const firstCompletion = handleBeforeQuit({ preventDefault: firstPreventDefault });
     const repeatedCompletion = handleBeforeQuit({ preventDefault: repeatedPreventDefault });
+    await Promise.resolve();
 
     expect(firstPreventDefault).toHaveBeenCalledOnce();
     expect(repeatedPreventDefault).toHaveBeenCalledOnce();
@@ -57,6 +65,34 @@ describe('before-quit coordinator', () => {
     cleanup.resolve();
     await firstCompletion;
 
+    expect(requestQuit).toHaveBeenCalledOnce();
+  });
+
+  it('publishes the cleanup promise before a synchronous cleanup re-enters before-quit', async () => {
+    const requestQuit = vi.fn();
+    const firstPreventDefault = vi.fn();
+    const reenteredPreventDefault = vi.fn();
+    let handleBeforeQuit!: ReturnType<typeof createBeforeQuitCoordinator>;
+    let reenteredCompletion: ReturnType<typeof handleBeforeQuit>;
+    const cleanup = vi.fn(() => {
+      reenteredCompletion = handleBeforeQuit({ preventDefault: reenteredPreventDefault });
+    });
+    handleBeforeQuit = createBeforeQuitCoordinator({
+      cleanup,
+      requestQuit,
+      reportError: vi.fn(),
+      cleanupFailurePolicy: 'fail-closed',
+    });
+
+    const firstCompletion = handleBeforeQuit({ preventDefault: firstPreventDefault });
+    await Promise.resolve();
+
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(reenteredCompletion).toBe(firstCompletion);
+    await firstCompletion;
+
+    expect(firstPreventDefault).toHaveBeenCalledOnce();
+    expect(reenteredPreventDefault).toHaveBeenCalledOnce();
     expect(requestQuit).toHaveBeenCalledOnce();
   });
 
@@ -81,6 +117,39 @@ describe('before-quit coordinator', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
+  it('reports a controlled quit adapter failure and admits a later safe retry', async () => {
+    const quitError = new Error('app.quit failed');
+    const cleanup = vi.fn();
+    const reportError = vi.fn();
+    const requestQuit = vi.fn()
+      .mockImplementationOnce(() => {
+        throw quitError;
+      })
+      .mockImplementationOnce(() => undefined);
+    const firstPreventDefault = vi.fn();
+    const retryPreventDefault = vi.fn();
+    const handleBeforeQuit = createBeforeQuitCoordinator({
+      cleanup,
+      requestQuit,
+      reportError,
+      cleanupFailurePolicy: 'fail-closed',
+    });
+
+    await expect(handleBeforeQuit({ preventDefault: firstPreventDefault }))
+      .resolves.toBeUndefined();
+
+    expect(firstPreventDefault).toHaveBeenCalledOnce();
+    expect(reportError).toHaveBeenCalledWith(quitError);
+    expect(cleanup).toHaveBeenCalledOnce();
+
+    await expect(handleBeforeQuit({ preventDefault: retryPreventDefault }))
+      .resolves.toBeUndefined();
+
+    expect(retryPreventDefault).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(requestQuit).toHaveBeenCalledTimes(2);
+  });
+
   it('reports a cleanup failure and still requests the controlled quit', async () => {
     const cleanupError = new Error('cleanup failed');
     const reportError = vi.fn();
@@ -97,6 +166,69 @@ describe('before-quit coordinator', () => {
 
     expect(reportError).toHaveBeenCalledWith(cleanupError);
     expect(requestQuit).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a strict failed quit blocked and retries cleanup on the next quit attempt', async () => {
+    const firstCleanup = deferred();
+    const cleanupError = new Error('shutdown barrier failed');
+    const cleanup = vi.fn()
+      .mockImplementationOnce(() => firstCleanup.promise)
+      .mockResolvedValueOnce(undefined);
+    const reportError = vi.fn();
+    const requestQuit = vi.fn();
+    const firstPreventDefault = vi.fn();
+    const repeatedPreventDefault = vi.fn();
+    const retryPreventDefault = vi.fn();
+    const handleBeforeQuit = createBeforeQuitCoordinator({
+      cleanup,
+      requestQuit,
+      reportError,
+      cleanupFailurePolicy: 'fail-closed',
+    });
+
+    const firstCompletion = handleBeforeQuit({ preventDefault: firstPreventDefault });
+    const repeatedCompletion = handleBeforeQuit({ preventDefault: repeatedPreventDefault });
+    await Promise.resolve();
+
+    expect(repeatedCompletion).toBe(firstCompletion);
+    expect(cleanup).toHaveBeenCalledOnce();
+
+    firstCleanup.reject(cleanupError);
+    await firstCompletion;
+
+    expect(firstPreventDefault).toHaveBeenCalledOnce();
+    expect(repeatedPreventDefault).toHaveBeenCalledOnce();
+    expect(reportError).toHaveBeenCalledWith(cleanupError);
+    expect(requestQuit).not.toHaveBeenCalled();
+
+    await handleBeforeQuit({ preventDefault: retryPreventDefault });
+
+    expect(retryPreventDefault).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(requestQuit).toHaveBeenCalledOnce();
+  });
+});
+
+describe('shutdown operation admission barrier', () => {
+  it('invokes shutdown admission in the current call stack', async () => {
+    const invocationOrder: string[] = [];
+    const operation = invokeShutdownOperationNow(async () => {
+      invocationOrder.push('admission-closed');
+    });
+
+    invocationOrder.push('after-construction');
+
+    expect(invocationOrder).toEqual(['admission-closed', 'after-construction']);
+    await expect(operation).resolves.toBeUndefined();
+  });
+
+  it('converts a synchronous shutdown exception into a rejected promise', async () => {
+    const failure = new Error('synchronous shutdown failure');
+    const operation = invokeShutdownOperationNow(() => {
+      throw failure;
+    });
+
+    await expect(operation).rejects.toBe(failure);
   });
 });
 

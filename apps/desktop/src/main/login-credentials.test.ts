@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createStoreScopedLoginCredentialStore,
   LEGACY_LOGIN_MIGRATION_MARKER,
   readSavedLoginCredentialStatus,
   resolveSavedLoginPassword,
@@ -311,5 +312,227 @@ describe('login credential persistence', () => {
       passwordAvailable: false,
       credentialState: 'none',
     });
+  });
+});
+
+describe('store-scoped login credential persistence', () => {
+  it('does not expose Store A credentials while Store B is active', () => {
+    const baseStore = new MemorySettingsStore();
+    const storeA = createStoreScopedLoginCredentialStore(baseStore, 'store-a');
+    const storeB = createStoreScopedLoginCredentialStore(baseStore, 'store-b');
+
+    saveLoginCredentials(storeA, {
+      username: 'seller-a@example.com',
+      password: 'store-a-password',
+      rememberPassword: true,
+    }, cipher);
+
+    expect(readSavedLoginCredentialStatus(storeB, cipher)).toEqual({
+      username: '',
+      rememberPassword: false,
+      passwordAvailable: false,
+      credentialState: 'none',
+    });
+    expect(() => resolveSavedLoginPassword(storeB, cipher, 'seller-a@example.com'))
+      .toThrow();
+  });
+
+  it('preserves each store credential when switching A to B and back to A', () => {
+    const baseStore = new MemorySettingsStore();
+    const storeA = createStoreScopedLoginCredentialStore(baseStore, 'store-a');
+    const storeB = createStoreScopedLoginCredentialStore(baseStore, 'store-b');
+
+    saveLoginCredentials(storeA, {
+      username: 'seller-a@example.com',
+      password: 'store-a-password',
+      rememberPassword: true,
+    }, cipher);
+    saveLoginCredentials(storeB, {
+      username: 'seller-b@example.com',
+      password: 'store-b-password',
+      rememberPassword: true,
+    }, cipher);
+
+    expect(resolveSavedLoginPassword(storeB, cipher, 'seller-b@example.com'))
+      .toBe('store-b-password');
+    expect(resolveSavedLoginPassword(storeA, cipher, 'seller-a@example.com'))
+      .toBe('store-a-password');
+  });
+
+  it('clears Store A without changing Store B credentials', () => {
+    const baseStore = new MemorySettingsStore();
+    const storeA = createStoreScopedLoginCredentialStore(baseStore, 'store-a');
+    const storeB = createStoreScopedLoginCredentialStore(baseStore, 'store-b');
+    saveLoginCredentials(storeA, {
+      username: 'seller-a@example.com',
+      password: 'store-a-password',
+      rememberPassword: true,
+    }, cipher);
+    saveLoginCredentials(storeB, {
+      username: 'seller-b@example.com',
+      password: 'store-b-password',
+      rememberPassword: true,
+    }, cipher);
+
+    saveLoginCredentials(storeA, {
+      username: 'seller-a@example.com',
+      rememberPassword: false,
+    }, cipher);
+
+    expect(readSavedLoginCredentialStatus(storeA, cipher)).toEqual({
+      username: 'seller-a@example.com',
+      rememberPassword: false,
+      passwordAvailable: false,
+      credentialState: 'none',
+    });
+    expect(resolveSavedLoginPassword(storeB, cipher, 'seller-b@example.com'))
+      .toBe('store-b-password');
+  });
+
+  it('uses the shared normalized store ID for the credential namespace', () => {
+    const baseStore = new MemorySettingsStore();
+    const normalizedOnCreate = createStoreScopedLoginCredentialStore(baseStore, ' Store-A ');
+    saveLoginCredentials(normalizedOnCreate, {
+      username: 'seller-a@example.com',
+      password: 'store-a-password',
+      rememberPassword: true,
+    }, cipher);
+
+    const canonical = createStoreScopedLoginCredentialStore(baseStore, 'store-a');
+
+    expect(resolveSavedLoginPassword(canonical, cipher, 'seller-a@example.com'))
+      .toBe('store-a-password');
+  });
+
+  it('touches only canonical store-prefixed credential keys', () => {
+    const baseStore = new MemorySettingsStore();
+    const storeA = createStoreScopedLoginCredentialStore(baseStore, 'store-a');
+    saveLoginCredentials(storeA, {
+      username: 'seller-a@example.com',
+      password: 'store-a-password',
+      rememberPassword: true,
+    }, cipher);
+
+    expect([...baseStore.values.keys()].sort()).toEqual([
+      'store_login_credentials:v1:store-a:login_password_encrypted',
+      'store_login_credentials:v1:store-a:login_remember_password',
+      'store_login_credentials:v1:store-a:login_username',
+    ]);
+    const before = [...baseStore.values.entries()];
+    expect(() => storeA.set('ai_api_key', 'not-a-login-credential')).toThrow(
+      'Unsupported login credential storage key',
+    );
+    expect([...baseStore.values.entries()]).toEqual(before);
+  });
+
+  it.each([
+    '../store-a',
+    'C:\\profiles\\store-a',
+    'store/a',
+    '',
+  ])('rejects illegal or path-like store ID %j without writing', (storeId) => {
+    const baseStore = new MemorySettingsStore();
+    baseStore.set('unrelated', 'preserved');
+    const before = [...baseStore.values.entries()];
+
+    expect(() => createStoreScopedLoginCredentialStore(baseStore, storeId)).toThrow();
+    expect([...baseStore.values.entries()]).toEqual(before);
+  });
+
+  it('does not leak or migrate unscoped legacy and encrypted credentials into a store', () => {
+    const baseStore = new MemorySettingsStore();
+    baseStore.set('login_username', 'global@example.com');
+    baseStore.set('login_remember_password', 'true');
+    baseStore.set('login_password_encrypted', 'global-ciphertext');
+    baseStore.set('login_password', 'global-legacy-password');
+    const before = [...baseStore.values.entries()];
+    const storeA = createStoreScopedLoginCredentialStore(baseStore, 'store-a');
+
+    expect(readSavedLoginCredentialStatus(storeA, cipher)).toEqual({
+      username: '',
+      rememberPassword: false,
+      passwordAvailable: false,
+      credentialState: 'none',
+    });
+    expect(() => resolveSavedLoginPassword(storeA, cipher, 'global@example.com')).toThrow();
+    expect([...baseStore.values.entries()]).toEqual(before);
+  });
+
+  it('migrates a scoped legacy password without crossing into another store', () => {
+    const baseStore = new MemorySettingsStore();
+    const storeA = createStoreScopedLoginCredentialStore(baseStore, 'store-a');
+    const storeB = createStoreScopedLoginCredentialStore(baseStore, 'store-b');
+    storeA.set('login_username', 'legacy-a@example.com');
+    storeA.set('login_password', 'legacy-store-a-password');
+
+    expect(readSavedLoginCredentialStatus(storeA, cipher)).toEqual({
+      username: 'legacy-a@example.com',
+      rememberPassword: true,
+      passwordAvailable: true,
+      credentialState: 'migrated',
+    });
+    expect(storeA.get('login_password')).toBeNull();
+    expect(resolveSavedLoginPassword(storeA, cipher, 'legacy-a@example.com'))
+      .toBe('legacy-store-a-password');
+    expect(readSavedLoginCredentialStatus(storeB, cipher).credentialState).toBe('none');
+  });
+
+  it('rolls back the complete scoped credential tuple when its transaction fails', () => {
+    const baseStore = new MemorySettingsStore();
+    const storeA = createStoreScopedLoginCredentialStore(baseStore, 'store-a');
+    saveLoginCredentials(storeA, {
+      username: 'old-a@example.com',
+      password: 'old-store-a-password',
+      rememberPassword: true,
+    }, cipher);
+    const before = [...baseStore.values.entries()];
+    baseStore.failTransactionAfterWork = true;
+
+    expect(() => saveLoginCredentials(storeA, {
+      username: 'new-a@example.com',
+      password: 'new-store-a-password',
+      rememberPassword: true,
+    }, cipher)).toThrow('simulated transaction failure');
+
+    expect([...baseStore.values.entries()]).toEqual(before);
+    expect(resolveSavedLoginPassword(storeA, cipher, 'old-a@example.com'))
+      .toBe('old-store-a-password');
+  });
+
+  it('keeps scoped status and decryption errors free of password material and ciphertext', () => {
+    const baseStore = new MemorySettingsStore();
+    const storeA = createStoreScopedLoginCredentialStore(baseStore, 'store-a');
+    const password = 'store-a-secret-material';
+    saveLoginCredentials(storeA, {
+      username: 'seller-a@example.com',
+      password,
+      rememberPassword: true,
+    }, cipher);
+    const ciphertext = storeA.get('login_password_encrypted')!;
+    const leakyCipher: LoginCredentialCipher = {
+      ...cipher,
+      decrypt: () => {
+        throw new Error(`unsafe boundary detail: ${password} ${ciphertext}`);
+      },
+    };
+
+    const credentialStatus = readSavedLoginCredentialStatus(storeA, leakyCipher);
+    let resolutionError: unknown;
+    try {
+      resolveSavedLoginPassword(storeA, leakyCipher, 'seller-a@example.com');
+    } catch (error) {
+      resolutionError = error;
+    }
+    const serializedStatus = JSON.stringify(credentialStatus);
+    const errorMessage = resolutionError instanceof Error
+      ? resolutionError.message
+      : String(resolutionError);
+
+    expect(credentialStatus.credentialState).toBe('encrypted_corrupt');
+    expect(resolutionError).toBeInstanceOf(Error);
+    expect(serializedStatus).not.toContain(password);
+    expect(serializedStatus).not.toContain(ciphertext);
+    expect(errorMessage).not.toContain(password);
+    expect(errorMessage).not.toContain(ciphertext);
   });
 });

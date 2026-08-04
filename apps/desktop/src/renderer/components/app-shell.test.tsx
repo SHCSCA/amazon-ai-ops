@@ -148,7 +148,7 @@ describe('Mission Control top-level shell', () => {
     sessionGeneration: 3,
   } as StoreContextEnvelope;
 
-  it('renders a real store selector with fixed US and USD context', () => {
+  it('renders a read-only topbar authority summary and leaves switching to the sidebar control', () => {
     const markup = renderToStaticMarkup(
       <MissionControlShell
         activeIntent={{ workspace: 'today', subview: 'overview' }}
@@ -163,7 +163,9 @@ describe('Mission Control top-level shell', () => {
       </MissionControlShell>,
     );
 
-    expect(markup).toContain('aria-label="切换店铺"');
+    expect(markup).toContain('aria-label="当前店铺权威摘要"');
+    expect(markup).not.toContain('aria-label="切换店铺"');
+    expect(markup).toContain('aria-label="店铺与站点"');
     expect(markup).toContain('SHC001 · 美国站');
     expect(markup).toContain('>US<');
     expect(markup).toContain('>USD<');

@@ -12,7 +12,11 @@ const REQUIRED_REPORT_TYPES = [
   'user_search_term',
 ] as const;
 
-function completeReportFiles() {
+function completeReportFiles(): Array<{
+  reportType: (typeof REQUIRED_REPORT_TYPES)[number];
+  importedRows: number;
+  status?: string;
+}> {
   return REQUIRED_REPORT_TYPES.map((reportType) => ({
     reportType,
     importedRows: 10,
@@ -37,6 +41,17 @@ describe('formal business data gate', () => {
       requiredReportTypes: REQUIRED_REPORT_TYPES,
       realReportFiles,
     })).toThrow('AI 阶段诊断被阻断：仅有 7/8 类真实报表形成 DB 日级指标');
+  });
+
+  it('accepts a receipt-backed zero-row report as imported business truth', () => {
+    const realReportFiles = completeReportFiles();
+    realReportFiles[7] = { ...realReportFiles[7], importedRows: 0, status: 'imported' };
+
+    expect(assertFormalBusinessWorkflowReady({
+      workflow: 'diagnosis',
+      requiredReportTypes: REQUIRED_REPORT_TYPES,
+      realReportFiles,
+    })).toMatchObject({ importedReportTypeCount: 8 });
   });
 
   it('blocks keyword opportunities when duplicate files do not cover 8 distinct report types', () => {

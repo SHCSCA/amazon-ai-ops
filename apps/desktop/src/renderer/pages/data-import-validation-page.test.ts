@@ -5,7 +5,7 @@ import {
   dataImportBusyLabel,
   dataImportExportButtonView,
   dataImportFileLabel,
-  dataImportOpenPathButtonView,
+  dataImportOpenArtifactButtonView,
   buildDataImportTableFeedback,
   dataImportTableFeedbackClass,
   dataImportTableRefreshRowClass,
@@ -21,7 +21,8 @@ function row(overrides: Partial<DataImportReportRow>): DataImportReportRow {
     type: 'campaign',
     label: '广告活动报告',
     fileName: '',
-    filePath: '',
+    artifactId: '',
+    fileExtension: '',
     fileHash: '',
     fileSizeBytes: 0,
     importedRows: 0,
@@ -41,7 +42,7 @@ describe('data import report table sorting', () => {
     const state = buildDataImportTaskState({
       realReportCount: 8,
       importedRows: 96,
-      reportFolder: 'C:/reports',
+      reportFolderArtifactId: 'artifact:v1:reports',
       readiness: { status: 'blocked', canEnterDiagnosis: false, nextStep: 'import' },
     });
 
@@ -49,12 +50,28 @@ describe('data import report table sorting', () => {
     expect(state.detail).not.toContain('已写入 SQLite');
   });
 
+  it('presents a fully proven zero-row import as a valid zero-data state', () => {
+    const state = buildDataImportTaskState({
+      realReportCount: 8,
+      importedReportTypeCount: 8,
+      importedRows: 0,
+      reportFolderArtifactId: 'artifact:v1:reports',
+      readiness: { status: 'ready', canEnterDiagnosis: true, nextStep: 'diagnose' },
+    });
+
+    expect(state.primaryActionLabel).toBe('查看广告表现');
+    expect(state.detail).toContain('真实零数据状态');
+    expect(state.detail).not.toContain('未入库');
+  });
+
   it('wires the import task model and ledger gate into one first-screen task banner', () => {
     const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
     const header = source.slice(source.indexOf('<PageHeader'), source.indexOf('/>', source.indexOf('<PageHeader')) + 2);
     const primaryPanel = source.slice(source.indexOf('className="data-import-primary-panel"'), source.indexOf('</Panel>', source.indexOf('className="data-import-primary-panel"')));
 
-    expect(source).toContain('const taskState = buildDataImportTaskState({');
+    expect(source).toContain('const computedTaskState = buildDataImportTaskState({');
+    expect(source).toContain('const taskState: DataImportTaskState = collectionJobsLoading');
+    expect(source).toContain('buildProductionCollectionLineageReadiness({');
     expect(source.match(/<TaskBanner/g)).toHaveLength(1);
     expect(source).toContain('title={taskState.title}');
     expect(source).toContain('description={taskState.detail}');
@@ -66,14 +83,44 @@ describe('data import report table sorting', () => {
   it('keeps report file cells readable by showing a short file name', () => {
     expect(dataImportFileLabel(row({
       fileName: 'campaign.xlsx',
-      filePath: 'D:/preview/reports/campaign.xlsx',
     }))).toBe('campaign.xlsx');
 
     expect(dataImportFileLabel(row({
-      filePath: 'D:\\preview\\reports\\user_search_term.xlsx',
-    }))).toBe('user_search_term.xlsx');
+      artifactId: 'artifact:v1:user-search-term',
+    }))).toBe('缺少真实文件');
 
     expect(dataImportFileLabel(row({}))).toBe('缺少真实文件');
+  });
+
+  it('uses opaque artifacts for report, manifest, diagnostic, and reconciliation access', () => {
+    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+
+    for (const forbidden of ['filePath', 'folderPath', 'downloadDir', 'manifestPath', 'jsonPath', 'markdownPath']) {
+      expect(source).not.toContain(forbidden);
+    }
+    expect(source).toContain('openReportArtifact');
+    expect(source).toContain('exportDataReconciliationArtifacts');
+    expect(source).toContain('jsonArtifactId');
+  });
+
+  it('accepts a schema-valid zero-row receipt without treating row count as an import error', () => {
+    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('inserted <= 0');
+    expect(source).toContain('parsedFiles <= 0 || errors > 0');
+    expect(source).toContain('零行回执已登记');
+  });
+
+  it('keeps production readiness bound to store task lineage instead of aggregate same-date files', () => {
+    const source = readFileSync(new URL('./data-import-validation-page.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('listLingxingCollectionJobs({');
+    expect(source).toContain('limit: 100');
+    expect(source).toContain('file.batchId === binding.expectedBatchId');
+    expect(source).toContain('dataLedger.canEnterDiagnosis && lineageReadiness.canEnterDiagnosis');
+    expect(source).toContain('聚合检测到');
+    expect(source).toContain('其他批次不参与放行');
+    expect(source).toContain('DEV 预览不会注入伪造任务、lineage 或入库成功');
   });
 
   it('sorts report rows without mutating the original order', () => {
@@ -182,7 +229,10 @@ describe('data import table micro-feedback', () => {
     expect(source).toContain('setTableRefreshing');
     expect(source).toContain('dataImportTableRefreshRowClass(tableRefreshing)');
     expect(source).toContain('dataImportFileLabel(row)');
-    expect(source).toContain('title={row.filePath}');
+    expect(source).not.toContain('title={row.filePath}');
+    expect(source).toContain('row.artifactId');
+    expect(source).toContain('openReportArtifact');
+    expect(source).not.toContain('openReportPath');
     expect(source).toContain('}, 200)');
     expect(styles).toContain('.data-import-table-refreshing');
     expect(styles).toContain('.data-import-table-locked');
@@ -241,16 +291,16 @@ describe('data import action micro-feedback', () => {
     expect(active.className).toContain('button-loading');
   });
 
-  it('uses the shared busy contract while opening local report paths', () => {
-    const active = dataImportOpenPathButtonView({
-      activePathKey: '打开报表目录:C:/reports',
+  it('uses the shared busy contract while opening store-bound report artifacts', () => {
+    const active = dataImportOpenArtifactButtonView({
+      activeArtifactKey: '打开报表目录:artifact:v1:reports',
       idleLabel: '打开报表目录',
-      pathKey: '打开报表目录:C:/reports',
+      artifactKey: '打开报表目录:artifact:v1:reports',
     });
-    const lockedPeer = dataImportOpenPathButtonView({
-      activePathKey: '打开报表目录:C:/reports',
+    const lockedPeer = dataImportOpenArtifactButtonView({
+      activeArtifactKey: '打开报表目录:artifact:v1:reports',
       idleLabel: '打开对账说明文件',
-      pathKey: '打开对账说明文件:C:/reports/reconcile.md',
+      artifactKey: '打开对账说明文件:artifact:v1:reconcile',
     });
 
     expect(active.label).toBe('打开中...');

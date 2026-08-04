@@ -1,4 +1,8 @@
-import type { LingxingReportDefinition } from '@amazon-ai-ops/shared-types';
+import type {
+  LingxingCreateReportOutcome,
+  LingxingCreatedReportIdentity,
+  LingxingReportDefinition,
+} from '@amazon-ai-ops/shared-types';
 
 export interface DownloadCenterFailureEvidence {
   screenshotPath?: string;
@@ -9,9 +13,21 @@ export interface DownloadCenterFailureEvidence {
 
 export interface DownloadCenterAutomationPort {
   navigateToDownloadCenter(): Promise<void>;
-  createReport(report: LingxingReportDefinition, dateRange: { start: string; end: string }): Promise<void>;
-  waitForReportReady(report: LingxingReportDefinition, dateRange: { start: string; end: string }): Promise<void>;
-  downloadReport(report: LingxingReportDefinition, downloadDir: string, dateRange: { start: string; end: string }): Promise<string>;
+  createReport(
+    report: LingxingReportDefinition,
+    dateRange: { start: string; end: string },
+  ): Promise<LingxingCreateReportOutcome>;
+  waitForReportReady(
+    report: LingxingReportDefinition,
+    dateRange: { start: string; end: string },
+    createdReportIdentity?: LingxingCreatedReportIdentity,
+  ): Promise<void>;
+  downloadReport(
+    report: LingxingReportDefinition,
+    downloadDir: string,
+    dateRange: { start: string; end: string },
+    createdReportIdentity?: LingxingCreatedReportIdentity,
+  ): Promise<string>;
   startAttemptTrace?(
     report: LingxingReportDefinition,
     dateRange: { start: string; end: string },
@@ -33,24 +49,31 @@ export interface DownloadCenterAutomationPort {
 export class DownloadCenterPage {
   constructor(private readonly port: DownloadCenterAutomationPort) {}
 
-  async createAndDownload(
-    report: LingxingReportDefinition,
-    dateRange: { start: string; end: string },
-    downloadDir: string,
-  ): Promise<string> {
+  async navigate(): Promise<void> {
     await this.port.navigateToDownloadCenter();
-    await this.port.createReport(report, dateRange);
-    await this.port.waitForReportReady(report, dateRange);
-    return this.port.downloadReport(report, downloadDir, dateRange);
   }
 
-  async downloadExisting(
+  async create(
+    report: LingxingReportDefinition,
+    dateRange: { start: string; end: string },
+  ): Promise<LingxingCreateReportOutcome> {
+    return this.port.createReport(report, dateRange);
+  }
+
+  async waitUntilReady(
+    report: LingxingReportDefinition,
+    dateRange: { start: string; end: string },
+    createdReportIdentity?: LingxingCreatedReportIdentity,
+  ): Promise<void> {
+    await this.port.waitForReportReady(report, dateRange, createdReportIdentity);
+  }
+
+  async download(
     report: LingxingReportDefinition,
     dateRange: { start: string; end: string },
     downloadDir: string,
+    createdReportIdentity?: LingxingCreatedReportIdentity,
   ): Promise<string> {
-    await this.port.navigateToDownloadCenter();
-    await this.port.waitForReportReady(report, dateRange);
-    return this.port.downloadReport(report, downloadDir, dateRange);
+    return this.port.downloadReport(report, downloadDir, dateRange, createdReportIdentity);
   }
 }

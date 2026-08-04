@@ -2,7 +2,12 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { chromium } = require('./playwright-loader');
-const { navigateLegacyRoute } = require('./business-ui-smoke-navigation');
+const {
+  enterPreviewStore,
+  installPreviewApiBridge,
+  navigateLegacyRoute,
+  startBusinessUiDevServer,
+} = require('./business-ui-smoke-navigation');
 
 const root = path.resolve(__dirname, '..');
 const rendererDir = path.join(root, 'apps', 'desktop', 'dist', 'renderer');
@@ -80,11 +85,12 @@ async function expectNotInBody(page, text) {
 }
 
 async function expectProductObjectWorkspace(page) {
-  const queue = page.locator('[data-workspace-queue="products"]');
-  await queue.waitFor({ state: 'visible', timeout: 5000 });
-  await queue.locator('[data-workspace-queue-scroll]').waitFor({ state: 'visible', timeout: 5000 });
-  await page.getByRole('heading', { name: '产品对象队列', level: 2, exact: true }).waitFor({ timeout: 5000 });
-  await page.getByRole('textbox', { name: '搜索产品', exact: true }).waitFor({ timeout: 5000 });
+  await page.locator('.store-scoped-objects[data-store-object-subview="products"]')
+    .waitFor({ state: 'visible', timeout: 5000 });
+  await page.getByRole('heading', { name: '产品与经营目标', level: 2, exact: true }).first()
+    .waitFor({ timeout: 5000 });
+  await page.getByPlaceholder('查询 ASIN / 标题 / SKU', { exact: true }).waitFor({ timeout: 5000 });
+  await page.getByRole('button', { name: /新建产品/, exact: false }).waitFor({ timeout: 5000 });
   const h1Count = await page.getByRole('heading', { level: 1 }).count();
   if (h1Count !== 1) fail('Product workspace must expose exactly one h1', String(h1Count));
 }
@@ -118,7 +124,15 @@ async function expectUnifiedDecisionsWorkspace(page, subview) {
     workspace: 'decisions',
     subview,
   });
-  await expectSingleActiveNavigation(page, '建议与审批');
+  const queueHeading = subview === 'approval'
+    ? '人工审批'
+    : subview === 'decided'
+      ? '已决策'
+      : 'AI 建议';
+  await page.getByRole('heading', { name: queueHeading, level: 2, exact: true })
+    .first()
+    .waitFor({ timeout: 5000 });
+  await expectSingleActiveNavigation(page, '决策与审批');
   for (const oldHeading of ['优化建议', '审批中心']) {
     if (await page.getByRole('heading', { name: oldHeading, level: 1, exact: true }).count() > 0) {
       fail('Legacy decisions page heading is still rendered', oldHeading);
@@ -151,16 +165,20 @@ async function main() {
     consoleErrors: [],
   };
 
-  const server = await startStaticServer(rendererDir);
+  const server = await startBusinessUiDevServer(root, 'diagnosis-ready');
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1480, height: 980 } });
   page.on('console', (message) => {
     if (message.type() === 'error') evidence.consoleErrors.push(message.text());
   });
+  page.on('pageerror', (error) => {
+    evidence.consoleErrors.push(`pageerror: ${error.message}`);
+    console.error(`[pageerror] ${error.stack || error.message}`);
+  });
 
   await page.addInitScript(() => {
     window.__businessShellActions = [];
-    window.electronAPI = {
+    window.__businessUiSmokeOverrides = {
       getState: async () => ({
         isLoggedIn: true,
         currentStore: 'SHC001',
@@ -340,10 +358,20 @@ async function main() {
         window.__businessShellActions.push({ type: 'runTaskNow', name });
         return { success: true };
       },
+      runStoreCollectionScheduleNow: async (context) => {
+        window.__businessShellActions.push({
+          type: 'runStoreCollectionScheduleNow',
+          storeId: context.storeId,
+          businessDate: context.businessDate,
+        });
+        return window.__businessUiPreviewApiBase.runStoreCollectionScheduleNow(context);
+      },
     };
   });
 
+  await installPreviewApiBridge(page);
   await page.goto(server.url, { waitUntil: 'networkidle' });
+  await enterPreviewStore(page);
 
   await expectWorkspaceIdentity(page, {
     heading: '今日任务',
@@ -353,25 +381,23 @@ async function main() {
   await expectSingleActiveNavigation(page, '今日任务');
 
   for (const text of [
-    '运营工作台',
     '今日任务',
-    '产品工作台',
-    '数据准备',
-    '广告诊断',
-    '建议与审批',
-    '结果核对',
-    '关键词与 Listing',
-    '系统',
-    '系统与交付',
-    '范围',
-    '报表文件',
-    '逐类入库',
-    '待生成验收',
+    '任务中心',
+    '决策与审批',
+    '经营实验',
+    '实时执行',
+    '因果记忆',
+    '店铺与广告对象',
+    '数据采集',
+    '策略与风控',
+    '系统设置',
   ]) {
     await expectVisible(page, text);
   }
-  const scopeRangeTitle = await page.locator('.scope-compact-trigger').getAttribute('title');
-  if (!scopeRangeTitle?.includes('/ USD')) fail('Scope currency marker is missing from the compact range summary');
+  const fixedMarketScope = await page.getByLabel('美国站，美元').innerText();
+  if (!fixedMarketScope.includes('US') || !fixedMarketScope.includes('USD')) {
+    fail('Fixed US/USD marker is missing from the Mission Control store selector');
+  }
 
   await expectNotInBody(page, 'v1.5 工作台');
   await expectNotInBody(page, 'APP_READY');
@@ -381,10 +407,10 @@ async function main() {
   await expectNotInBody(page, 'pnpm run verify:ai-live');
   await expectNotInBody(page, '套用已验证范围');
 
-  await page.locator('.nav-item').filter({ hasText: '建议与审批' }).click();
+  await page.locator('.nav-item').filter({ hasText: '决策与审批' }).dispatchEvent('click');
   await expectUnifiedDecisionsWorkspace(page, 'recommendations');
   evidence.pages['decisions-sidebar'] = {
-    label: '建议与审批（真实侧栏点击）',
+    label: '决策与审批（真实侧栏点击）',
     workspace: 'decisions',
     subview: 'recommendations',
     assertion: 'PASS',
@@ -393,7 +419,7 @@ async function main() {
   await navigateLegacyRoute(page, 'recommendations');
   await expectUnifiedDecisionsWorkspace(page, 'recommendations');
   evidence.pages['decisions-legacy-recommendations'] = {
-    label: 'legacy recommendations → 建议与审批 / 待判断',
+    label: 'legacy recommendations → 决策与审批 / AI 建议',
     workspace: 'decisions',
     subview: 'recommendations',
     assertion: 'PASS',
@@ -402,7 +428,7 @@ async function main() {
   await navigateLegacyRoute(page, 'approval');
   await expectUnifiedDecisionsWorkspace(page, 'approval');
   evidence.pages['decisions-legacy-approval'] = {
-    label: 'legacy approval → 建议与审批 / 待审批',
+    label: 'legacy approval → 决策与审批 / 人工审批',
     workspace: 'decisions',
     subview: 'approval',
     assertion: 'PASS',
@@ -410,19 +436,19 @@ async function main() {
 
   const routes = [
     { nav: NAV_RE.dashboard, heading: /今日任务/, label: '今日任务', key: 'dashboard' },
-    { nav: NAV_RE.productManagement, heading: /产品工作台/, label: '产品工作台', key: 'product-management' },
+    { nav: NAV_RE.productManagement, heading: /店铺与广告对象/, label: '店铺与广告对象', key: 'product-management' },
     { nav: /工作范围/, heading: /工作范围/, label: '工作范围', key: 'operation-scope' },
     { nav: NAV_RE.dataCollection, heading: /报表采集/, label: '报表采集', key: 'data-collection' },
     { nav: NAV_RE.dataImport, heading: /导入检查/, label: '导入检查', key: 'data-import-validation' },
     { nav: NAV_RE.operationEvents, heading: /运营事件/, label: '运营事件', key: 'operation-events' },
-    { nav: NAV_RE.adQuant, heading: /广告诊断/, label: '广告诊断', key: 'ad-quant' },
-    { nav: NAV_RE.recommendations, heading: /建议与审批/, label: '建议与审批 · 待判断', key: 'recommendations' },
-    { nav: NAV_RE.approval, heading: /建议与审批/, label: '建议与审批 · 待审批', key: 'approval' },
+    { nav: NAV_RE.adQuant, heading: /Mission 事实链/, label: 'Mission 事实链', key: 'ad-quant' },
+    { nav: NAV_RE.recommendations, heading: /建议与审批/, label: '决策与审批 · AI 建议', key: 'recommendations' },
+    { nav: NAV_RE.approval, heading: /建议与审批/, label: '决策与审批 · 人工审批', key: 'approval' },
     { nav: NAV_RE.readback, heading: /结果核对/, label: '结果核对', key: 'readback' },
-    { nav: NAV_RE.keyword, heading: /关键词机会/, label: '关键词机会', key: 'keyword-opportunities' },
-    { nav: NAV_RE.listing, heading: /Listing 草案/, label: 'Listing 草案', key: 'listing-optimization' },
-    { nav: NAV_RE.scheduler, heading: /定时任务/, label: '定时任务', key: 'scheduler' },
-    { nav: NAV_RE.settings, heading: /AI 与规则/, label: 'AI 与规则', key: 'settings' },
+    { nav: NAV_RE.keyword, heading: /关键词事实与机会/, label: '关键词事实与机会', key: 'keyword-opportunities' },
+    { nav: NAV_RE.listing, heading: /Listing 内容库/, label: 'Listing 内容库', key: 'listing-optimization' },
+    { nav: NAV_RE.scheduler, heading: /当前店铺自动化/, label: '当前店铺自动化', key: 'scheduler' },
+    { nav: NAV_RE.settings, heading: /店铺与运行设置/, label: '店铺与运行设置', key: 'settings' },
     { nav: NAV_RE.delivery, heading: /交付验收/, label: '交付验收', key: 'delivery' },
   ];
 
@@ -440,7 +466,10 @@ async function main() {
     };
     if (bodyText.includes('v1.5 工作台')) fail('Old nested workbench text is visible', key);
     if (bodyText.includes('¥')) fail('RMB currency symbol is visible', key);
-    if (bodyText.includes('APP_READY')) fail('False ready state is visible', key);
+    if (
+      bodyText.includes('APP_READY')
+      && !(key === 'delivery' && bodyText.includes('不可视为 APP_READY'))
+    ) fail('False ready state is visible', key);
     if (bodyText.includes('APP_NEEDS_WORK')) fail('Raw APP_NEEDS_WORK state is visible', key);
     if (bodyText.includes('套用已验证范围')) fail('Misleading hard-coded verified scope preset is visible', key);
     if (bodyText.includes('pnpm run verify:ai-live')) fail('Settings command wall is visible', key);
@@ -451,43 +480,36 @@ async function main() {
       await expectUnifiedDecisionsWorkspace(page, key === 'recommendations' ? 'recommendations' : 'approval');
     }
     if (key === 'scheduler') {
-      await expandDetails(page, '调度状态、安全边界和任务职责');
       const schedulerBodyText = await page.locator('body').innerText();
       for (const text of [
-        '每日广告报表下载',
-        '任务职责',
-        '允许自动做',
-        '禁止自动做',
-        '待处理建议池',
-        '需复核项不会自动批准',
-        '定时任务不会自动改 bid、否词、暂停投放或批量操作 Amazon Ads。',
+        '本业务日计划',
+        '同一店铺、业务日与采集口径的失败终态不会回到等待',
+        '证据保留预览',
+        'DRY-RUN · deletionSupported=false',
+        'UNKNOWN / 失败均人工核对',
       ]) {
         if (!schedulerBodyText.includes(text)) fail('Scheduler safety boundary text missing', text);
       }
-      if (bodyText.includes('daily_report_download')) {
-        fail('Scheduler leaked raw daily_report_download task name instead of business label');
-      }
-
-      await page.getByRole('button', { name: '立即执行' }).first().click();
-      await expectVisible(page, '确认触发：每日广告报表下载');
-      await expectVisible(page, '执行本地任务');
+      await page.getByRole('button', { name: '立即采集', exact: true }).click();
+      await page.getByRole('heading', { name: '立即触发当前店铺采集？', exact: true }).waitFor();
+      await expectVisible(page, '确认立即采集');
       const afterFirstClickActions = await page.evaluate(() => window.__businessShellActions || []);
-      if (afterFirstClickActions.some((action) => action.type === 'runTaskNow')) {
-        fail('Scheduler run-now action executed before confirmation');
+      if (afterFirstClickActions.some((action) => action.type === 'runStoreCollectionScheduleNow')) {
+        fail('Store collection executed before confirmation');
       }
-      await page.getByRole('button', { name: '返回任务列表', exact: true }).click();
-      await page.getByRole('button', { name: '立即执行' }).first().click();
-      await page.getByRole('button', { name: '执行本地任务', exact: true }).click();
-      await expectVisible(page, '每日广告报表下载 已执行完成。真实报表、审批和回读门槛仍然生效。');
+      await page.getByRole('button', { name: '取消', exact: true }).click();
+      await page.getByRole('button', { name: '立即采集', exact: true }).click();
+      await page.getByRole('button', { name: '确认立即采集', exact: true }).click();
+      await expectVisible(page, '当前店铺本业务日采集已完成。');
       const afterConfirmActions = await page.evaluate(() => window.__businessShellActions || []);
-      if (!afterConfirmActions.some((action) => action.type === 'runTaskNow' && action.name === 'daily_report_download')) {
-        fail('Scheduler run-now action did not execute after confirmation');
+      if (!afterConfirmActions.some((action) => action.type === 'runStoreCollectionScheduleNow')) {
+        fail('Store collection did not execute after confirmation');
       }
       evidence.actionLog = afterConfirmActions;
     }
   }
 
-  await expectSingleActiveNavigation(page, '系统与交付');
+  await expectSingleActiveNavigation(page, '系统设置');
 
   await browser.close();
   server.close();

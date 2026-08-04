@@ -9,6 +9,7 @@ export type FormalBusinessWorkflow =
 export interface FormalBusinessReportFile {
   reportType: string;
   importedRows: number;
+  status?: string;
 }
 
 export interface FormalBusinessWorkflowReadinessInput {
@@ -53,7 +54,8 @@ export function assertFormalBusinessWorkflowReady(
   );
   const importedReportTypes = new Set(
     input.realReportFiles
-      .filter((file) => Number.isFinite(Number(file.importedRows)) && Number(file.importedRows) > 0)
+      .filter((file) => file.status === 'imported'
+        || (Number.isFinite(Number(file.importedRows)) && Number(file.importedRows) > 0))
       .map((file) => String(file.reportType || '').trim())
       .filter((reportType) => requiredReportTypeSet.has(reportType)),
   );

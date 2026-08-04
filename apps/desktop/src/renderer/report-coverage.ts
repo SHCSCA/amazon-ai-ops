@@ -5,6 +5,7 @@ interface ReportCoverageCollectionLike {
   realReportFiles?: unknown[] | null;
   reportOptions?: Array<{
     type?: string | null;
+    status?: string | null;
     realFileAvailable?: boolean | null;
     importedRows?: number | null;
   }> | null;
@@ -29,7 +30,10 @@ export function importedReportTypeCoverageCount(
 ): number {
   const importedTypes = new Set(
     (collection?.reportOptions || [])
-      .filter((report) => report.realFileAvailable === true && Number(report.importedRows || 0) > 0)
+      .filter((report) => report.realFileAvailable === true && (
+        Number(report.importedRows || 0) > 0
+        || /imported|completed|complete|succeeded/i.test(String(report.status || ''))
+      ))
       .map((report) => String(report.type || '').trim())
       .filter(Boolean),
   );

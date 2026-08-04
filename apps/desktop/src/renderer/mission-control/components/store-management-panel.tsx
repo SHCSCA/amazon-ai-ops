@@ -1,10 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Archive,
   ArrowCounterClockwise,
   Check,
   PencilSimple,
-  Plus,
   Storefront,
   X,
 } from '@phosphor-icons/react';
@@ -12,6 +11,8 @@ import type {
   ArchiveStoreInput,
   CreateStoreInput,
   RestoreStoreInput,
+  StoreConnection,
+  StoreConnectionProvider,
   StoreId,
   StoreRecord,
   UpdateStoreInput,
@@ -27,6 +28,7 @@ import {
   WorkspaceState,
   type PriorityDataTableColumn,
 } from '../../components/workspace';
+import { useOverlayFocusScope } from '../../components/workspace/overlay-focus-scope';
 
 export const STORE_MANAGEMENT_CAPABILITY_IDS = {
   view: 'objects.store.view',
@@ -37,17 +39,20 @@ export const STORE_MANAGEMENT_CAPABILITY_IDS = {
   switch: 'objects.store.switch',
 } as const;
 
-type StoreMutation = 'create' | 'update' | 'archive' | 'restore' | 'switch';
+type StoreMutation = 'update' | 'archive' | 'restore';
 
 export type StoreManagementPanelProps = {
   stores: readonly StoreRecord[];
   activeStoreId?: StoreId | string | null;
-  onCreate: (input: CreateStoreInput) => Promise<unknown> | unknown;
   onUpdate: (input: UpdateStoreInput) => Promise<unknown> | unknown;
   onArchive: (input: ArchiveStoreInput) => Promise<unknown> | unknown;
   onRestore: (input: RestoreStoreInput) => Promise<unknown> | unknown;
-  onSwitch: (storeId: StoreId) => Promise<unknown> | unknown;
+  connections?: readonly StoreConnection[];
+  onBindLingxing?: (accountLabel: string, collectionStoreName: string) => Promise<StoreConnection> | StoreConnection;
+  onBindAmazonAds?: (externalAccountId: string) => Promise<StoreConnection> | StoreConnection;
+  onUnbindConnection?: (connection: StoreConnection) => Promise<void> | void;
   error?: string | null;
+  syncWarning?: string | null;
 };
 
 export type StoreDraft = {
@@ -64,10 +69,8 @@ export function validateStoreDraft(draft: StoreDraft): StoreDraftErrors {
   if (!displayName) errors.displayName = '请输入店铺名称。';
   else if (displayName.length > 120) errors.displayName = '店铺名称不能超过 120 个字符。';
 
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: draft.businessTimezone }).format(0);
-  } catch {
-    errors.businessTimezone = '请输入有效的 IANA 时区。';
+  if (draft.businessTimezone !== DEFAULT_US_BUSINESS_TIMEZONE) {
+    errors.businessTimezone = '首版业务时区固定为 America/Los_Angeles。';
   }
   if (draft.status !== 'active' && draft.status !== 'inactive') {
     errors.status = '店铺状态无效。';
@@ -80,7 +83,7 @@ export function buildCreateStoreInput(draft: StoreDraft): CreateStoreInput {
     displayName: draft.displayName.trim(),
     marketplace: US_MARKETPLACE,
     currency: USD_CURRENCY,
-    businessTimezone: draft.businessTimezone,
+    businessTimezone: DEFAULT_US_BUSINESS_TIMEZONE,
   };
 }
 
@@ -91,7 +94,6 @@ export function buildUpdateStoreInput(
   const patch: UpdateStoreInput['patch'] = {};
   const displayName = draft.displayName.trim();
   if (displayName !== store.displayName) patch.displayName = displayName;
-  if (draft.businessTimezone !== store.businessTimezone) patch.businessTimezone = draft.businessTimezone;
   if (draft.status !== store.status) patch.status = draft.status;
   if (Object.keys(patch).length === 0) return null;
   return {
@@ -141,25 +143,112 @@ function StoreStatus({ store }: { store: StoreRecord }) {
 export function StoreManagementPanel({
   stores,
   activeStoreId,
-  onCreate,
   onUpdate,
   onArchive,
   onRestore,
-  onSwitch,
+  connections = [],
+  onBindLingxing,
+  onBindAmazonAds,
+  onUnbindConnection,
   error: externalError,
+  syncWarning,
 }: StoreManagementPanelProps) {
-  const [editor, setEditor] = useState<{ store: StoreRecord | null; draft: StoreDraft } | null>(null);
+  const [editor, setEditor] = useState<{ store: StoreRecord; draft: StoreDraft } | null>(null);
   const [confirmArchive, setConfirmArchive] = useState<StoreRecord | null>(null);
   const [errors, setErrors] = useState<StoreDraftErrors>({});
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [pending, setPending] = useState<{ action: StoreMutation; storeId?: string } | null>(null);
+  const [connectionPending, setConnectionPending] = useState<StoreConnectionProvider | `unbind:${StoreConnectionProvider}` | null>(null);
+  const [confirmUnbind, setConfirmUnbind] = useState<StoreConnection | null>(null);
+  const [connectionFeedback, setConnectionFeedback] = useState<string | null>(null);
+  const [lingxingAccountLabel, setLingxingAccountLabel] = useState('');
+  const [lingxingCollectionStoreName, setLingxingCollectionStoreName] = useState('');
+  const [amazonAdsExternalAccountId, setAmazonAdsExternalAccountId] = useState('');
   const rows = useMemo(() => [...stores].sort((left, right) => {
     if (left.status === 'archived' && right.status !== 'archived') return 1;
     if (right.status === 'archived' && left.status !== 'archived') return -1;
     return left.displayName.localeCompare(right.displayName, 'zh-CN');
   }), [stores]);
-  const busy = pending !== null;
+  const busy = pending !== null || connectionPending !== null;
   const visibleError = runtimeError ?? externalError ?? null;
+  const activeStore = rows.find((store) => String(store.storeId) === String(activeStoreId ?? '')) ?? null;
+  const lingxingConnection = connections.find((connection) => connection.provider === 'lingxing');
+  const amazonAdsConnection = connections.find((connection) => connection.provider === 'amazon_ads');
+  const connectionUnbindFocus = useOverlayFocusScope<HTMLDivElement, HTMLElement>({
+    dismissDisabled: connectionPending !== null,
+    onDismiss: () => setConfirmUnbind(null),
+    open: confirmUnbind !== null,
+  });
+
+  useEffect(() => {
+    setLingxingAccountLabel(lingxingConnection?.accountLabel ?? '');
+    setLingxingCollectionStoreName(lingxingConnection?.collectionStoreName ?? '');
+    setAmazonAdsExternalAccountId(amazonAdsConnection?.externalAccountId ?? '');
+    setConnectionFeedback(null);
+    setConfirmUnbind(null);
+  }, [
+    activeStoreId,
+    amazonAdsConnection?.externalAccountId,
+    amazonAdsConnection?.id,
+    lingxingConnection?.accountLabel,
+    lingxingConnection?.collectionStoreName,
+    lingxingConnection?.id,
+  ]);
+
+  const bindLingxing = async () => {
+    if (!onBindLingxing || connectionPending) return;
+    if (!lingxingAccountLabel.trim() || !lingxingCollectionStoreName.trim()) {
+      setRuntimeError('领星映射必须同时填写登录账号和下载中心店铺名称。');
+      return;
+    }
+    setConnectionPending('lingxing');
+    setRuntimeError(null);
+    setConnectionFeedback(null);
+    try {
+      await onBindLingxing(lingxingAccountLabel.trim(), lingxingCollectionStoreName.trim());
+      setConnectionFeedback('Main 已提交领星账号与下载中心店铺名称映射。');
+    } catch (operationError) {
+      setRuntimeError(errorMessage(operationError));
+    } finally {
+      setConnectionPending(null);
+    }
+  };
+
+  const bindAmazonAds = async () => {
+    if (!onBindAmazonAds || connectionPending) return;
+    if (!amazonAdsExternalAccountId.trim()) {
+      setRuntimeError('请输入 Amazon Ads Profile ID。');
+      return;
+    }
+    setConnectionPending('amazon_ads');
+    setRuntimeError(null);
+    setConnectionFeedback(null);
+    try {
+      await onBindAmazonAds(amazonAdsExternalAccountId.trim());
+      setConnectionFeedback('Main 已提交 Amazon Ads Profile 映射。');
+    } catch (operationError) {
+      setRuntimeError(errorMessage(operationError));
+    } finally {
+      setConnectionPending(null);
+    }
+  };
+
+  const unbind = async (connection: StoreConnection) => {
+    if (!onUnbindConnection || connectionPending) return;
+    const provider = connection.provider;
+    setConnectionPending(`unbind:${provider}`);
+    setRuntimeError(null);
+    setConnectionFeedback(null);
+    try {
+      await onUnbindConnection(connection);
+      setConfirmUnbind(null);
+      setConnectionFeedback(`${provider === 'lingxing' ? '领星' : 'Amazon Ads'} 映射已解绑；保存密码未被清除。`);
+    } catch (operationError) {
+      setRuntimeError(errorMessage(operationError));
+    } finally {
+      setConnectionPending(null);
+    }
+  };
 
   const run = async (action: StoreMutation, operation: () => Promise<unknown> | unknown, storeId?: string) => {
     if (busy) return;
@@ -167,7 +256,7 @@ export function StoreManagementPanel({
     setRuntimeError(null);
     try {
       await operation();
-      if (action === 'create' || action === 'update') setEditor(null);
+      if (action === 'update') setEditor(null);
       if (action === 'archive') setConfirmArchive(null);
     } catch (operationError) {
       setRuntimeError(errorMessage(operationError));
@@ -181,11 +270,6 @@ export function StoreManagementPanel({
     const nextErrors = validateStoreDraft(editor.draft);
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
-
-    if (!editor.store) {
-      await run('create', () => onCreate(buildCreateStoreInput(editor.draft)));
-      return;
-    }
 
     const input = buildUpdateStoreInput(editor.store, editor.draft);
     if (!input) {
@@ -236,21 +320,8 @@ export function StoreManagementPanel({
       align: 'right',
       cell: (store) => {
         const rowBusy = pending?.storeId === String(store.storeId);
-        const isActive = String(activeStoreId ?? '') === String(store.storeId);
         return (
           <div className="mission-control-store-actions" role="group" aria-label={`${store.displayName}店铺操作`}>
-            {store.status !== 'archived' && (
-              <button
-                className="workspace-button workspace-button--secondary"
-                data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.switch}
-                disabled={busy || isActive}
-                onClick={() => run('switch', () => onSwitch(store.storeId), String(store.storeId))}
-                title={isActive ? '当前已在该店铺数据域' : '切换后将清空旧店铺的页面状态'}
-                type="button"
-              >
-                {rowBusy && pending?.action === 'switch' ? '切换中…' : isActive ? '当前店铺' : '切换'}
-              </button>
-            )}
             {store.status !== 'archived' && (
               <button
                 aria-label={`编辑 ${store.displayName}`}
@@ -297,21 +368,131 @@ export function StoreManagementPanel({
   return (
     <div className="mission-control-store-management" data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.view}>
       <WorkbenchPanel
+        description="映射只属于当前 Store + Amazon US；提交后采用 Main 回传值，后台再同步权威视图。解绑映射不会清除本机保存的密码。"
+        status={<span>{activeStore ? `${activeStore.displayName} · US` : '等待当前店铺'}</span>}
+        title="当前店铺连接映射"
+      >
+        {!activeStore ? (
+          <WorkspaceState
+            description="先从左侧“店铺与站点”显式选择一个运行中的美国站店铺。"
+            kind="blocked"
+            title="尚无当前店铺 authority"
+          />
+        ) : (
+          <div className="store-connection-mapping-grid">
+            <section aria-labelledby="store-lingxing-mapping-title" className="store-connection-mapping">
+              <header>
+                <div>
+                  <strong id="store-lingxing-mapping-title">领星 ERP</strong>
+                  <span data-connection-state={lingxingConnection?.status || 'missing'}>
+                    {lingxingConnection ? '已建立映射' : '尚未绑定'}
+                  </span>
+                </div>
+                <small>登录账号与下载中心当前可见店铺名称缺一不可。</small>
+              </header>
+              <label>
+                <span>登录账号</span>
+                <input
+                  disabled={busy}
+                  maxLength={256}
+                  onChange={(event) => setLingxingAccountLabel(event.currentTarget.value)}
+                  placeholder="领星登录账号"
+                  value={lingxingAccountLabel}
+                />
+              </label>
+              <label>
+                <span>领星下载中心店铺名称</span>
+                <input
+                  disabled={busy}
+                  maxLength={256}
+                  onChange={(event) => setLingxingCollectionStoreName(event.currentTarget.value)}
+                  placeholder="必须与领星下载中心显示完全一致"
+                  value={lingxingCollectionStoreName}
+                />
+              </label>
+              <div className="store-connection-stable-identity" role="status" aria-live="polite">
+                <span>稳定身份（Main 首次新鲜登录识别）</span>
+                <output aria-label="领星稳定身份只读状态">
+                  {lingxingConnection?.externalAccountId
+                    ? `已识别：${lingxingConnection.externalAccountId}`
+                    : '待首次新鲜登录识别'}
+                </output>
+              </div>
+              <div className="store-connection-mapping__actions">
+                <button
+                  aria-busy={connectionPending === 'lingxing' || undefined}
+                  className="workspace-button workspace-button--primary"
+                  disabled={busy || !onBindLingxing}
+                  onClick={() => void bindLingxing()}
+                  type="button"
+                >
+                  {connectionPending === 'lingxing' ? '提交中…' : lingxingConnection ? '更新领星映射' : '创建领星映射'}
+                </button>
+                {lingxingConnection && (
+                  <button
+                    className="workspace-button workspace-button--secondary"
+                    disabled={busy || !onUnbindConnection}
+                    onClick={() => setConfirmUnbind({ ...lingxingConnection })}
+                    type="button"
+                  >
+                    解绑
+                  </button>
+                )}
+              </div>
+            </section>
+
+            <section aria-labelledby="store-amazon-ads-mapping-title" className="store-connection-mapping">
+              <header>
+                <div>
+                  <strong id="store-amazon-ads-mapping-title">Amazon Ads</strong>
+                  <span data-connection-state={amazonAdsConnection?.status || 'missing'}>
+                    {amazonAdsConnection ? '已建立映射' : '尚未绑定'}
+                  </span>
+                </div>
+                <small>Profile ID 来自当前 ads.lingxing.com 广告账户。</small>
+              </header>
+              <label>
+                <span>Amazon Ads Profile ID</span>
+                <input
+                  disabled={busy}
+                  maxLength={256}
+                  onChange={(event) => setAmazonAdsExternalAccountId(event.currentTarget.value)}
+                  placeholder="profile_id"
+                  value={amazonAdsExternalAccountId}
+                />
+              </label>
+              <div className="store-connection-mapping__actions">
+                <button
+                  aria-busy={connectionPending === 'amazon_ads' || undefined}
+                  className="workspace-button workspace-button--primary"
+                  disabled={busy || !onBindAmazonAds}
+                  onClick={() => void bindAmazonAds()}
+                  type="button"
+                >
+                  {connectionPending === 'amazon_ads' ? '提交中…' : amazonAdsConnection ? '更新 Ads 映射' : '创建 Ads 映射'}
+                </button>
+                {amazonAdsConnection && (
+                  <button
+                    className="workspace-button workspace-button--secondary"
+                    disabled={busy || !onUnbindConnection}
+                    onClick={() => setConfirmUnbind({ ...amazonAdsConnection })}
+                    type="button"
+                  >
+                    解绑
+                  </button>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
+        {connectionFeedback && <div className="store-connection-feedback" role="status">{connectionFeedback}</div>}
+        {syncWarning && <div className="store-post-commit-sync-warning" role="status">{syncWarning}</div>}
+      </WorkbenchPanel>
+
+      <WorkbenchPanel
         description="第一版固定 Amazon US / USD。每个店铺使用独立数据域、浏览器 Profile 与会话代次。"
         status={<span>{rows.length} 个店铺</span>}
         title="店铺数据域"
-        toolbar={(
-          <button
-            className="workspace-button workspace-button--primary"
-            data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.create}
-            disabled={busy}
-            onClick={() => { setErrors({}); setRuntimeError(null); setEditor({ store: null, draft: initialDraft() }); }}
-            type="button"
-          >
-            <Plus aria-hidden="true" size={16} />
-            新建店铺
-          </button>
-        )}
       >
         {visibleError && <div className="mission-control-store-error" role="alert">{visibleError}</div>}
         <PriorityDataTable
@@ -341,13 +522,13 @@ export function StoreManagementPanel({
             <header>
               <div>
                 <span>STORE AUTHORITY</span>
-                <h2 id="mission-control-store-editor-title">{editor.store ? '编辑店铺' : '新建美国站店铺'}</h2>
+                <h2 id="mission-control-store-editor-title">编辑店铺</h2>
                 <p id="mission-control-store-editor-description">站点和币种固定为 US / USD，数据将由 Main 按店铺隔离。</p>
               </div>
               <button aria-label="关闭店铺编辑器" className="mission-control-dialog__close" disabled={busy} onClick={() => setEditor(null)} type="button"><X aria-hidden="true" size={18} /></button>
             </header>
             <div className="mission-control-store-form">
-              {editor.store && <label><span>店铺 ID</span><input readOnly value={String(editor.store.storeId)} /></label>}
+              <label><span>店铺 ID</span><input readOnly value={String(editor.store.storeId)} /></label>
               <label>
                 <span>店铺名称</span>
                 <input
@@ -363,36 +544,34 @@ export function StoreManagementPanel({
               <label>
                 <span>业务时区</span>
                 <input
-                  onChange={(event) => setEditor((current) => current ? { ...current, draft: { ...current.draft, businessTimezone: event.target.value } } : current)}
+                  readOnly
                   value={editor.draft.businessTimezone}
                 />
                 {errors.businessTimezone && <small role="alert">{errors.businessTimezone}</small>}
               </label>
-              {editor.store && (
-                <label>
-                  <span>运行状态</span>
-                  <select
-                    onChange={(event) => setEditor((current) => current ? { ...current, draft: { ...current.draft, status: event.target.value as StoreDraft['status'] } } : current)}
-                    value={editor.draft.status}
-                  >
-                    <option value="active">运行中</option>
-                    <option value="inactive">已停用</option>
-                  </select>
-                </label>
-              )}
+              <label>
+                <span>运行状态</span>
+                <select
+                  onChange={(event) => setEditor((current) => current ? { ...current, draft: { ...current.draft, status: event.target.value as StoreDraft['status'] } } : current)}
+                  value={editor.draft.status}
+                >
+                  <option value="active">运行中</option>
+                  <option value="inactive">已停用</option>
+                </select>
+              </label>
             </div>
             <footer>
               <button className="workspace-button workspace-button--secondary" disabled={busy} onClick={() => setEditor(null)} type="button">取消</button>
               <button
-                aria-busy={pending?.action === 'create' || pending?.action === 'update' || undefined}
+                aria-busy={pending?.action === 'update' || undefined}
                 className="workspace-button workspace-button--primary"
-                data-capability-id={editor.store ? STORE_MANAGEMENT_CAPABILITY_IDS.update : STORE_MANAGEMENT_CAPABILITY_IDS.create}
+                data-capability-id={STORE_MANAGEMENT_CAPABILITY_IDS.update}
                 disabled={busy}
                 onClick={saveEditor}
                 type="button"
               >
                 <Check aria-hidden="true" size={16} />
-                {pending?.action === 'create' || pending?.action === 'update' ? '保存中…' : editor.store ? '保存变更' : '创建数据域'}
+                {pending?.action === 'update' ? '保存中…' : '保存变更'}
               </button>
             </footer>
           </section>
@@ -421,6 +600,64 @@ export function StoreManagementPanel({
               >
                 <Archive aria-hidden="true" size={16} />
                 {pending?.action === 'archive' ? '归档中…' : '确认归档'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {confirmUnbind && (
+        <div
+          className="mission-control-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !connectionPending) setConfirmUnbind(null);
+          }}
+          ref={connectionUnbindFocus.overlayRootRef}
+          role="presentation"
+        >
+          <section
+            aria-describedby="store-connection-unbind-description"
+            aria-labelledby="store-connection-unbind-title"
+            aria-modal="true"
+            className="mission-control-dialog mission-control-dialog--confirm"
+            onMouseDown={(event) => event.stopPropagation()}
+            ref={connectionUnbindFocus.surfaceRef}
+            role="alertdialog"
+            tabIndex={-1}
+          >
+            <header>
+              <div>
+                <span>REMOVE STORE MAPPING</span>
+                <h2 id="store-connection-unbind-title">
+                  解绑{confirmUnbind.provider === 'lingxing' ? '领星下载中心店铺映射' : 'Amazon Ads Profile'}？
+                </h2>
+                <p id="store-connection-unbind-description">
+                  Main 会使该 provider 会话失效。解绑不等于清除本机保存的领星密码。
+                </p>
+                <dl className="store-connection-unbind-facts">
+                  <div><dt>账号</dt><dd>{confirmUnbind.accountLabel || '未记录'}</dd></div>
+                  {confirmUnbind.provider === 'lingxing' ? (
+                    <>
+                      <div><dt>下载中心店铺名称</dt><dd>{confirmUnbind.collectionStoreName || '未记录'}</dd></div>
+                      <div><dt>稳定身份</dt><dd>{confirmUnbind.externalAccountId || '待首次新鲜登录识别'}</dd></div>
+                    </>
+                  ) : (
+                    <div><dt>Profile ID</dt><dd>{confirmUnbind.externalAccountId || '未记录'}</dd></div>
+                  )}
+                </dl>
+              </div>
+            </header>
+            <footer>
+              <button disabled={Boolean(connectionPending)} onClick={() => setConfirmUnbind(null)} type="button">取消</button>
+              <button
+                aria-busy={connectionPending === `unbind:${confirmUnbind.provider}` || undefined}
+                autoFocus
+                className="workspace-button workspace-button--primary"
+                disabled={Boolean(connectionPending)}
+                onClick={() => void unbind(confirmUnbind)}
+                type="button"
+              >
+                {connectionPending === `unbind:${confirmUnbind.provider}` ? '解绑中…' : '确认解绑映射'}
               </button>
             </footer>
           </section>

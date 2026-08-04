@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 
 export interface BusinessReportImportCoverageScope {
+  storeId: string;
   dateFrom: string;
   dateTo: string;
   storeName: string;
@@ -20,13 +21,15 @@ export function countImportedRowsForReportFile(
   if (sourceFiles.length === 0) return 0;
 
   let sql = `
-    date >= ?
+    store_id = ?
+    AND date >= ?
     AND date <= ?
     AND COALESCE(store_name, '') = COALESCE(?, '')
     AND COALESCE(marketplace_code, '') = COALESCE(?, '')
     AND source_file IN (${sourceFiles.map(() => '?').join(', ')})
   `;
   const params: string[] = [
+    input.scope.storeId,
     input.scope.dateFrom,
     input.scope.dateTo,
     input.scope.storeName,

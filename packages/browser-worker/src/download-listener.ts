@@ -1,29 +1,35 @@
-import { Page } from 'playwright';
-import * as path from 'path';
+import type { Page } from 'playwright';
 import * as fs from 'fs';
 import type { DownloadFile } from '@amazon-ai-ops/shared-types';
+import type { StoreCapsulePaths } from './store-profile';
+import { ensureStoreCapsulePaths } from './store-profile';
+import { resolveStoreCapsuleDownloadTarget } from './store-download';
 
 export class DownloadListener {
   private downloads: DownloadFile[] = [];
-  private downloadPath: string;
+  private readonly storeCapsule: StoreCapsulePaths;
+  private readonly targetDirectory: string | undefined;
 
-  constructor(downloadPath: string) {
-    this.downloadPath = downloadPath;
-    fs.mkdirSync(this.downloadPath, { recursive: true });
+  constructor(storeCapsule: StoreCapsulePaths, targetDirectory?: string) {
+    this.storeCapsule = ensureStoreCapsulePaths(storeCapsule);
+    this.targetDirectory = targetDirectory;
   }
 
   async startListening(page: Page): Promise<void> {
     page.on('download', async (download) => {
-      const filename = download.suggestedFilename();
-      const filepath = path.join(this.downloadPath, filename);
+      const target = resolveStoreCapsuleDownloadTarget(
+        this.storeCapsule,
+        download.suggestedFilename(),
+        this.targetDirectory,
+      );
       
-      await download.saveAs(filepath);
+      await download.saveAs(target.path);
       
       this.downloads.push({
-        path: filepath,
-        filename,
+        path: target.path,
+        filename: target.filename,
         mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        size: fs.statSync(filepath).size,
+        size: fs.statSync(target.path).size,
         downloadedAt: new Date().toISOString(),
       });
     });

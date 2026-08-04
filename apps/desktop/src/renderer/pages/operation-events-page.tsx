@@ -244,7 +244,7 @@ export function operationEventRowDeleteButtonView(input: {
     ariaBusy: active ? true : undefined,
     className: ['secondary-button compact-button', active ? 'button-loading' : ''].filter(Boolean).join(' '),
     disabled: locked,
-    label: active ? '删除中...' : '删除',
+    label: active ? '归档中...' : '归档',
     showSpinner: active,
   };
 }
@@ -446,17 +446,17 @@ export function OperationEventsPage() {
     }
   }
 
-  async function deleteEvent(id: number) {
+  async function archiveEvent(id: number) {
     if (deletingEventId != null) return;
     setDeletingEventId(id);
     setError('');
-    setMessage('正在删除运营事件...');
+    setMessage('正在归档运营事件...');
     try {
       await (window as any).electronAPI.deleteOperationEvent(id);
-      setMessage('运营事件已删除。');
+      setMessage('运营事件已归档，历史记录仍保留。');
       await loadEvents();
     } catch (caught) {
-      setError(toUserFacingError(caught, '删除运营事件失败'));
+      setError(toUserFacingError(caught, '归档运营事件失败'));
     } finally {
       setDeletingEventId(null);
     }
@@ -583,7 +583,7 @@ export function OperationEventsPage() {
                             className={deleteButton.className}
                             disabled={deleteButton.disabled}
                             onClick={() => {
-                              void deleteEvent(event.id);
+                              void archiveEvent(event.id);
                             }}
                             type="button"
                           >

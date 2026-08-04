@@ -46,4 +46,19 @@ describe('report coverage helpers', () => {
     expect(importedReportTypeCoverageCount(fullyImported)).toBe(8);
     expect(hasFormalReportCoverage(fullyImported)).toBe(true);
   });
+
+  it('counts a persisted imported receipt even when a valid report has zero business rows', () => {
+    const emptyButImported = {
+      fileAudit: { realReportFileCount: 8 },
+      reportOptions: Array.from({ length: 8 }, (_, index) => ({
+        type: `report-${index}`,
+        status: 'imported',
+        realFileAvailable: true,
+        importedRows: 0,
+      })),
+    };
+
+    expect(importedReportTypeCoverageCount(emptyButImported)).toBe(8);
+    expect(hasFormalReportCoverage(emptyButImported)).toBe(true);
+  });
 });

@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION = 'mission-control-ui-evidence/v1';
+const MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION = 'mission-control-ui-evidence/v2';
 const MISSION_CONTROL_UI_EVIDENCE_KIND = 'mission-control-ui-evidence';
 const EXPECTED_MISSION_CONTROL_SCALES = Object.freeze([100, 125]);
 const EXPECTED_MISSION_CONTROL_STORE_IDS = Object.freeze(['SHC001', 'SHC002']);
@@ -10,42 +10,52 @@ const EXPECTED_MISSION_CONTROL_STORE_IDS = Object.freeze(['SHC001', 'SHC002']);
 const MISSION_CONTROL_WORKSPACE_CONTRACT = Object.freeze({
   today: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'today', subview: 'overview', view: 'today/overview' }),
+    heading: '今日任务',
     tabs: Object.freeze(['overview', 'events']),
   }),
   missions: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'missions', subview: 'overview', view: 'missions/overview' }),
+    heading: '任务中心',
     tabs: Object.freeze(['overview', 'facts']),
   }),
   decisions: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'decisions', subview: 'recommendations', view: 'decisions/recommendations' }),
+    heading: '建议与审批',
     tabs: Object.freeze(['recommendations', 'approval', 'decided']),
   }),
   experiments: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'experiments', subview: 'ledger', view: 'experiments/ledger' }),
+    heading: '经营实验',
     tabs: Object.freeze(['ledger']),
   }),
   execution: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'execution', subview: 'live', view: 'execution/live' }),
+    heading: '实时执行',
     tabs: Object.freeze(['live', 'evidence']),
   }),
   memory: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'memory', subview: 'timeline', view: 'memory/timeline' }),
+    heading: '因果记忆',
     tabs: Object.freeze(['timeline']),
   }),
   objects: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'objects', subview: 'products', view: 'objects/products' }),
+    heading: '店铺与广告对象',
     tabs: Object.freeze(['products', 'targets', 'keywords', 'listing']),
   }),
   collection: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'collection', subview: 'scope', view: 'collection/scope' }),
+    heading: '工作范围',
     tabs: Object.freeze(['scope', 'reports', 'import-check']),
   }),
   policy: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'policy', subview: 'rules', view: 'policy/rules' }),
+    heading: '策略与风控',
     tabs: Object.freeze(['rules']),
   }),
   settings: Object.freeze({
     defaultIntent: Object.freeze({ workspace: 'settings', subview: 'ai-and-local', view: 'settings/ai-and-local' }),
+    heading: '店铺与运行设置',
     tabs: Object.freeze(['ai-and-local', 'scheduler', 'delivery']),
   }),
 });
@@ -63,7 +73,7 @@ const EXPECTED_MISSION_CONTROL_WORKSPACES = Object.freeze(
 const MISSION_CONTROL_UI_EVIDENCE_JSON_SCHEMA = Object.freeze({
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   $id: MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION,
-  title: 'Mission Control Stage2 UI evidence',
+  title: 'Mission Control Stage7 UI evidence',
   type: 'object',
   required: [
     'kind',
@@ -72,6 +82,7 @@ const MISSION_CONTROL_UI_EVIDENCE_JSON_SCHEMA = Object.freeze({
     'status',
     'readinessImpact',
     'finalReadinessCredit',
+    'source',
     'workspaceCaptures',
     'storeGateCapture',
     'storeIsolationCapture',
@@ -81,9 +92,33 @@ const MISSION_CONTROL_UI_EVIDENCE_JSON_SCHEMA = Object.freeze({
     kind: { const: MISSION_CONTROL_UI_EVIDENCE_KIND },
     schemaVersion: { const: MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION },
     generatedAt: { type: 'string', format: 'date-time' },
-    status: { const: 'STAGE2_UI_EVIDENCE' },
+    status: { const: 'STAGE7_UI_EVIDENCE' },
     readinessImpact: { const: 'NO_FINAL_READINESS_CREDIT' },
     finalReadinessCredit: { const: false },
+    source: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'runtime',
+        'scenario',
+        'runnerSha256',
+        'contractSha256',
+        'rendererTreeSha256',
+        'realLoginAccessed',
+        'authorityDatabaseAccessed',
+        'adsWriteAttempted',
+      ],
+      properties: {
+        runtime: { const: 'vite-dev-preview' },
+        scenario: { const: 'diagnosis-ready' },
+        runnerSha256: { type: 'string', pattern: '^[A-Fa-f0-9]{64}$' },
+        contractSha256: { type: 'string', pattern: '^[A-Fa-f0-9]{64}$' },
+        rendererTreeSha256: { type: 'string', pattern: '^[A-Fa-f0-9]{64}$' },
+        realLoginAccessed: { const: false },
+        authorityDatabaseAccessed: { const: false },
+        adsWriteAttempted: { const: false },
+      },
+    },
     workspaceCaptures: {
       type: 'array',
       minItems: 20,
@@ -134,11 +169,12 @@ const MISSION_CONTROL_UI_EVIDENCE_JSON_SCHEMA = Object.freeze({
     },
     autonomy: {
       type: 'object',
-      required: ['currentMode', 'policyAutoAvailable', 'policyAutoState', 'policyAutoBlockerCode'],
+      required: ['currentMode', 'manualApprovalAvailable', 'policyAutoAvailable', 'policyAutoState'],
       properties: {
-        currentMode: { const: 'manual_approval' },
-        policyAutoAvailable: { const: false },
-        policyAutoState: { const: 'BLOCKED' },
+        currentMode: { enum: ['manual_approval', 'policy_auto'] },
+        manualApprovalAvailable: { const: true },
+        policyAutoAvailable: { type: 'boolean' },
+        policyAutoState: { enum: ['AVAILABLE', 'BLOCKED'] },
         policyAutoBlockerCode: { type: 'string', minLength: 1 },
       },
     },
@@ -191,6 +227,76 @@ function isAbsoluteScreenshotPath(value) {
 
 function isSha256(value) {
   return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
+}
+
+function sha256File(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function sha256Tree(rootDir) {
+  const files = [];
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(absolutePath);
+      } else if (entry.isFile()) {
+        files.push(absolutePath);
+      }
+    }
+  };
+  visit(rootDir);
+  files.sort((left, right) => left.localeCompare(right, 'en'));
+  const hash = crypto.createHash('sha256');
+  for (const filePath of files) {
+    hash.update(path.relative(rootDir, filePath).replace(/\\/g, '/'));
+    hash.update('\0');
+    hash.update(fs.readFileSync(filePath));
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+function currentMissionControlUiEvidenceSourceHashes(repoRoot = path.resolve(__dirname, '..')) {
+  return {
+    runnerSha256: sha256File(path.join(repoRoot, 'scripts', 'run-mission-control-ui-evidence.js')),
+    contractSha256: sha256File(__filename),
+    rendererTreeSha256: sha256Tree(path.join(repoRoot, 'apps', 'desktop', 'src', 'renderer')),
+  };
+}
+
+function canonicalMissionControlEvidenceJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalMissionControlEvidenceJson).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalMissionControlEvidenceJson(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function fingerprintMissionControlEvidenceValue(value) {
+  return crypto
+    .createHash('sha256')
+    .update(canonicalMissionControlEvidenceJson(value))
+    .digest('hex');
+}
+
+function missionControlBusinessFactSentinels(projection) {
+  if (!isRecord(projection)) return [];
+  const values = [
+    projection.scope?.asin,
+    projection.scope?.batchId,
+    ...(Array.isArray(projection.productAsins) ? projection.productAsins : []),
+    ...(Array.isArray(projection.keywordFacts)
+      ? projection.keywordFacts.flatMap((fact) => [fact?.asin, fact?.keyword])
+      : []),
+  ];
+  return [...new Set(values.filter((value) => (
+    typeof value === 'string' && value.trim().length > 0
+  )).map((value) => value.trim()))].sort((left, right) => left.localeCompare(right, 'en-US'));
 }
 
 function isPositiveInteger(value) {
@@ -344,7 +450,7 @@ function validateMarketAuthority(authority, authorityPath, violations, expectedS
       violations,
       'MARKETPLACE_NOT_US',
       `${authorityPath}.marketplace`,
-      'Mission Control Stage2 evidence is US-only.',
+      'Mission Control Stage7 evidence is US-only.',
       { actual: authority.marketplace, expected: 'US' },
     );
   }
@@ -353,7 +459,7 @@ function validateMarketAuthority(authority, authorityPath, violations, expectedS
       violations,
       'CURRENCY_NOT_USD',
       `${authorityPath}.currency`,
-      'Mission Control Stage2 evidence must use USD.',
+      'Mission Control Stage7 evidence must use USD.',
       { actual: authority.currency, expected: 'USD' },
     );
   }
@@ -365,23 +471,32 @@ function validateAutonomy(capture, capturePath, violations) {
     addViolation(violations, 'AUTONOMY_EVIDENCE_MISSING', `${capturePath}.autonomy`, 'Capture must include autonomy authority.');
     return;
   }
+  const validMode = autonomy.currentMode === 'manual_approval' || autonomy.currentMode === 'policy_auto';
+  const availabilityConsistent = (
+    autonomy.policyAutoAvailable === true && autonomy.policyAutoState === 'AVAILABLE'
+  ) || (
+    autonomy.policyAutoAvailable === false
+    && autonomy.policyAutoState === 'BLOCKED'
+    && typeof autonomy.policyAutoBlockerCode === 'string'
+    && autonomy.policyAutoBlockerCode.trim().length > 0
+  );
+  const activeModeAuthorized = autonomy.currentMode !== 'policy_auto' || autonomy.policyAutoAvailable === true;
   if (
-    autonomy.currentMode !== 'manual_approval'
-    || autonomy.policyAutoAvailable !== false
-    || autonomy.policyAutoState !== 'BLOCKED'
-    || typeof autonomy.policyAutoBlockerCode !== 'string'
-    || autonomy.policyAutoBlockerCode.trim().length === 0
+    !validMode
+    || autonomy.manualApprovalAvailable !== true
+    || !availabilityConsistent
+    || !activeModeAuthorized
   ) {
     addViolation(
       violations,
-      'POLICY_AUTO_NOT_BLOCKED',
+      'AUTONOMY_AUTHORITY_INCONSISTENT',
       `${capturePath}.autonomy`,
-      'Stage2 evidence must prove policy-auto is unavailable and visibly BLOCKED under manual approval.',
+      'Stage7 evidence must show manual approval and policy-auto availability consistently with the Main authority projection.',
     );
   }
 }
 
-function validateHeading(capture, capturePath, violations) {
+function validateHeading(capture, capturePath, violations, expectedHeading) {
   const h1 = capture.h1;
   if (!isRecord(h1) || h1.count !== 1 || typeof h1.text !== 'string' || h1.text.trim().length === 0) {
     addViolation(
@@ -389,7 +504,100 @@ function validateHeading(capture, capturePath, violations) {
       'H1_CONTRACT_INVALID',
       `${capturePath}.h1`,
       'Workspace capture must expose exactly one non-empty h1.',
+      { actual: h1, expected: expectedHeading || 'one non-empty h1' },
     );
+    return;
+  }
+  if (typeof expectedHeading === 'string' && h1.text !== expectedHeading) {
+    addViolation(
+      violations,
+      'H1_CONTRACT_INVALID',
+      `${capturePath}.h1.text`,
+      `Workspace h1 must exactly match the registered heading: ${expectedHeading}.`,
+      { actual: h1.text, expected: expectedHeading },
+    );
+  }
+}
+
+function validateSourceProvenance(source, violations, options = {}) {
+  if (!isRecord(source)) {
+    addViolation(
+      violations,
+      'SOURCE_PROVENANCE_MISSING',
+      'source',
+      'Stage7 evidence must include its preview-only source provenance.',
+    );
+    return;
+  }
+  const expectedKeys = [
+    'adsWriteAttempted',
+    'authorityDatabaseAccessed',
+    'contractSha256',
+    'realLoginAccessed',
+    'rendererTreeSha256',
+    'runnerSha256',
+    'runtime',
+    'scenario',
+  ];
+  if (!sameStringArray(Object.keys(source).sort(), expectedKeys)) {
+    addViolation(
+      violations,
+      'SOURCE_PROVENANCE_FIELDS_INVALID',
+      'source',
+      'Source provenance must contain exactly the registered v2 fields.',
+      { actual: Object.keys(source).sort(), expected: expectedKeys },
+    );
+  }
+  if (source.runtime !== 'vite-dev-preview') {
+    addViolation(
+      violations,
+      'SOURCE_RUNTIME_UNSAFE',
+      'source.runtime',
+      'Stage7 evidence must come from the Vite development preview runtime.',
+      { actual: source.runtime, expected: 'vite-dev-preview' },
+    );
+  }
+  if (source.scenario !== 'diagnosis-ready') {
+    addViolation(
+      violations,
+      'SOURCE_SCENARIO_UNSAFE',
+      'source.scenario',
+      'Stage7 evidence must use the fixed diagnosis-ready preview scenario.',
+      { actual: source.scenario, expected: 'diagnosis-ready' },
+    );
+  }
+  for (const key of ['runnerSha256', 'contractSha256', 'rendererTreeSha256']) {
+    if (!isSha256(source[key])) {
+      addViolation(
+        violations,
+        'SOURCE_SHA256_INVALID',
+        `source.${key}`,
+        `${key} must be a 64-character SHA-256 digest.`,
+      );
+    } else if (
+      isRecord(options.expectedSourceHashes)
+      && isSha256(options.expectedSourceHashes[key])
+      && source[key].toLowerCase() !== options.expectedSourceHashes[key].toLowerCase()
+    ) {
+      addViolation(
+        violations,
+        'SOURCE_SHA256_MISMATCH',
+        `source.${key}`,
+        `${key} must match the current Stage7 evidence source bytes.`,
+        { actual: source[key], expected: options.expectedSourceHashes[key] },
+      );
+    }
+  }
+  for (const key of ['realLoginAccessed', 'authorityDatabaseAccessed', 'adsWriteAttempted']) {
+    if (source[key] !== false) {
+      addViolation(
+        violations,
+        'SOURCE_ACCESS_CLAIM_UNSAFE',
+        `source.${key}`,
+        `${key} must be exactly false for preview-only Stage7 evidence.`,
+        { actual: source[key], expected: false },
+      );
+    }
   }
 }
 
@@ -463,7 +671,7 @@ function validateWorkspaceCapture(capture, capturePath, violations, options = {}
   }
   validateScreenshot(capture, capturePath, violations, options);
   validateViewport(capture, capturePath, violations);
-  validateHeading(capture, capturePath, violations);
+  validateHeading(capture, capturePath, violations, contract?.heading);
   validateMarketAuthority(
     capture.authority,
     `${capturePath}.authority`,
@@ -519,6 +727,58 @@ function validateStoreGateCapture(capture, violations, options = {}) {
   validateErrors(capture, capturePath, violations);
 }
 
+function validateBusinessFactProjection(projection, projectionPath, violations) {
+  const invalid = (message) => addViolation(
+    violations,
+    'STORE_ISOLATION_FACT_PROJECTION_INVALID',
+    projectionPath,
+    message,
+  );
+  if (!isRecord(projection)) {
+    invalid('Store isolation must include a normalized business fact projection.');
+    return false;
+  }
+  if (!sameStringArray(Object.keys(projection).sort(), ['keywordFacts', 'productAsins', 'scope'])) {
+    invalid('Business fact projection may contain only scope, productAsins, and keywordFacts.');
+    return false;
+  }
+  if (
+    !isRecord(projection.scope)
+    || !sameStringArray(Object.keys(projection.scope).sort(), ['asin', 'batchId'])
+    || typeof projection.scope.asin !== 'string'
+    || !projection.scope.asin.trim()
+    || typeof projection.scope.batchId !== 'string'
+    || !projection.scope.batchId.trim()
+  ) {
+    invalid('Business fact scope must include non-empty asin and batchId sentinels.');
+    return false;
+  }
+  if (
+    !Array.isArray(projection.productAsins)
+    || projection.productAsins.length === 0
+    || projection.productAsins.some((asin) => typeof asin !== 'string' || !asin.trim())
+  ) {
+    invalid('Business fact projection must include non-empty product ASIN facts.');
+    return false;
+  }
+  if (
+    !Array.isArray(projection.keywordFacts)
+    || projection.keywordFacts.length === 0
+    || projection.keywordFacts.some((fact) => (
+      !isRecord(fact)
+      || !sameStringArray(Object.keys(fact).sort(), ['asin', 'keyword'])
+      || typeof fact.asin !== 'string'
+      || !fact.asin.trim()
+      || typeof fact.keyword !== 'string'
+      || !fact.keyword.trim()
+    ))
+  ) {
+    invalid('Business fact projection must include normalized ASIN and keyword facts.');
+    return false;
+  }
+  return true;
+}
+
 function validateStoreIsolationCapture(capture, violations, options = {}) {
   const capturePath = 'storeIsolationCapture';
   validateWorkspaceCapture(capture, capturePath, violations, {
@@ -559,12 +819,18 @@ function validateStoreIsolationCapture(capture, violations, options = {}) {
       'SHC002 capture must not expose SHC001 or any leaked store identity.',
     );
   }
+  const normalizedFromBrowserProfileId = typeof isolation.fromBrowserProfileId === 'string'
+    ? isolation.fromBrowserProfileId.trim()
+    : '';
+  const normalizedToBrowserProfileId = typeof isolation.toBrowserProfileId === 'string'
+    ? isolation.toBrowserProfileId.trim()
+    : '';
   if (
-    typeof isolation.fromBrowserProfileId !== 'string'
-    || typeof isolation.toBrowserProfileId !== 'string'
-    || !isolation.fromBrowserProfileId
-    || !isolation.toBrowserProfileId
-    || isolation.fromBrowserProfileId === isolation.toBrowserProfileId
+    !normalizedFromBrowserProfileId
+    || !normalizedToBrowserProfileId
+    || isolation.fromBrowserProfileId !== normalizedFromBrowserProfileId
+    || isolation.toBrowserProfileId !== normalizedToBrowserProfileId
+    || normalizedFromBrowserProfileId === normalizedToBrowserProfileId
   ) {
     addViolation(
       violations,
@@ -573,16 +839,101 @@ function validateStoreIsolationCapture(capture, violations, options = {}) {
       'The two stores must use distinct non-empty browser profile identities.',
     );
   }
+
+  const expectedFromIdentityFingerprint = fingerprintMissionControlEvidenceValue({
+    browserProfileId: isolation.fromBrowserProfileId,
+    storeId: transition?.fromStoreId,
+  });
+  const expectedToIdentityFingerprint = fingerprintMissionControlEvidenceValue({
+    browserProfileId: isolation.toBrowserProfileId,
+    storeId: transition?.toStoreId,
+  });
   if (
-    !isSha256(isolation.fromStoreScopedFingerprint)
-    || !isSha256(isolation.toStoreScopedFingerprint)
-    || isolation.fromStoreScopedFingerprint === isolation.toStoreScopedFingerprint
+    !isSha256(isolation.fromIdentityFingerprint)
+    || !isSha256(isolation.toIdentityFingerprint)
+    || isolation.fromIdentityFingerprint !== expectedFromIdentityFingerprint
+    || isolation.toIdentityFingerprint !== expectedToIdentityFingerprint
+    || isolation.fromIdentityFingerprint === isolation.toIdentityFingerprint
+  ) {
+    addViolation(
+      violations,
+      'STORE_ISOLATION_IDENTITY_FINGERPRINT_INVALID',
+      `${capturePath}.isolation`,
+      'Identity fingerprints must match the separately recorded store and browser profile identities.',
+    );
+  }
+
+  const fromProjectionValid = validateBusinessFactProjection(
+    isolation.fromBusinessFactProjection,
+    `${capturePath}.isolation.fromBusinessFactProjection`,
+    violations,
+  );
+  const toProjectionValid = validateBusinessFactProjection(
+    isolation.toBusinessFactProjection,
+    `${capturePath}.isolation.toBusinessFactProjection`,
+    violations,
+  );
+  const expectedFromFactsFingerprint = fromProjectionValid
+    ? fingerprintMissionControlEvidenceValue(isolation.fromBusinessFactProjection)
+    : null;
+  const expectedToFactsFingerprint = toProjectionValid
+    ? fingerprintMissionControlEvidenceValue(isolation.toBusinessFactProjection)
+    : null;
+  if (
+    !isSha256(isolation.fromBusinessFactsFingerprint)
+    || !isSha256(isolation.toBusinessFactsFingerprint)
+    || (expectedFromFactsFingerprint && isolation.fromBusinessFactsFingerprint !== expectedFromFactsFingerprint)
+    || (expectedToFactsFingerprint && isolation.toBusinessFactsFingerprint !== expectedToFactsFingerprint)
+  ) {
+    addViolation(
+      violations,
+      'STORE_ISOLATION_FACT_FINGERPRINT_MISMATCH',
+      `${capturePath}.isolation`,
+      'Business fact fingerprints must be recomputable from the normalized projections.',
+    );
+  }
+  if (
+    expectedFromFactsFingerprint
+    && expectedToFactsFingerprint
+    && expectedFromFactsFingerprint === expectedToFactsFingerprint
   ) {
     addViolation(
       violations,
       'STORE_ISOLATION_FACTS_NOT_DISTINCT',
       `${capturePath}.isolation`,
-      'The two stores must have distinct SHA-256 store-scoped fact fingerprints.',
+      'The two stores must have distinct business facts independent of store or browser profile identity.',
+    );
+  }
+
+  const expectedFromSentinels = missionControlBusinessFactSentinels(
+    isolation.fromBusinessFactProjection,
+  );
+  const expectedToSentinels = missionControlBusinessFactSentinels(
+    isolation.toBusinessFactProjection,
+  );
+  const sharedSentinels = expectedFromSentinels.filter((sentinel) => (
+    expectedToSentinels.includes(sentinel)
+  ));
+  if (
+    expectedFromSentinels.length === 0
+    || expectedToSentinels.length === 0
+    || !sameStringArray(isolation.fromBusinessFactSentinels, expectedFromSentinels)
+    || !sameStringArray(isolation.toBusinessFactSentinels, expectedToSentinels)
+    || !Array.isArray(isolation.leakedBusinessFactSentinels)
+    || isolation.leakedBusinessFactSentinels.length > 0
+    || sharedSentinels.length > 0
+  ) {
+    addViolation(
+      violations,
+      'STORE_ISOLATION_BUSINESS_FACT_LEAK_DETECTED',
+      `${capturePath}.isolation`,
+      'Business fact sentinels must be normalized, store-specific, and absent after switching stores.',
+      {
+        leakedSentinels: Array.isArray(isolation.leakedBusinessFactSentinels)
+          ? isolation.leakedBusinessFactSentinels
+          : [],
+        sharedSentinels,
+      },
     );
   }
 }
@@ -659,7 +1010,7 @@ function evaluateMissionControlUiEvidenceManifest(value, options = {}) {
     addViolation(violations, 'GENERATED_AT_INVALID', 'generatedAt', 'generatedAt must be an ISO-compatible timestamp.');
   }
   if (
-    value.status !== 'STAGE2_UI_EVIDENCE'
+    value.status !== 'STAGE7_UI_EVIDENCE'
     || value.readinessImpact !== 'NO_FINAL_READINESS_CREDIT'
     || value.finalReadinessCredit !== false
   ) {
@@ -667,9 +1018,10 @@ function evaluateMissionControlUiEvidenceManifest(value, options = {}) {
       violations,
       'READINESS_SCOPE_UNSAFE',
       'status',
-      'Stage2 UI evidence must explicitly carry no final production-readiness credit.',
+      'Stage7 UI evidence must explicitly carry no final production-readiness credit.',
     );
   }
+  validateSourceProvenance(value.source, violations, options);
 
   if (!Array.isArray(value.workspaceCaptures)) {
     addViolation(violations, 'WORKSPACE_CAPTURES_MISSING', 'workspaceCaptures', 'workspaceCaptures must be an array.');
@@ -740,7 +1092,10 @@ function main(argv = process.argv.slice(2)) {
   }
   const absolutePath = path.resolve(inputPath);
   const manifest = JSON.parse(fs.readFileSync(absolutePath, 'utf8'));
-  const result = evaluateMissionControlUiEvidenceManifest(manifest, { verifyScreenshotFiles: true });
+  const result = evaluateMissionControlUiEvidenceManifest(manifest, {
+    expectedSourceHashes: currentMissionControlUiEvidenceSourceHashes(),
+    verifyScreenshotFiles: true,
+  });
   if (!result.passed) {
     for (const violation of result.violations) {
       console.error(`[FAIL] ${violation.code} ${violation.path}: ${violation.message}`);
@@ -770,10 +1125,14 @@ module.exports = {
   MISSION_CONTROL_UI_EVIDENCE_JSON_SCHEMA,
   MISSION_CONTROL_UI_EVIDENCE_SCHEMA_VERSION,
   MISSION_CONTROL_WORKSPACE_CONTRACT,
+  canonicalMissionControlEvidenceJson,
+  currentMissionControlUiEvidenceSourceHashes,
   evaluateMissionControlUiEvidenceManifest,
+  fingerprintMissionControlEvidenceValue,
   isAbsoluteScreenshotPath,
   isSha256,
   main,
+  missionControlBusinessFactSentinels,
   validateMissionControlUiEvidenceManifest,
   validateMinimumWindowCapture,
 };

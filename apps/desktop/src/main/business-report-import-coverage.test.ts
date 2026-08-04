@@ -8,6 +8,7 @@ describe('business report import coverage', () => {
     try {
       db.exec(`
         CREATE TABLE ad_daily_metrics (
+          store_id TEXT,
           date TEXT NOT NULL,
           store_name TEXT,
           marketplace_code TEXT,
@@ -18,14 +19,16 @@ describe('business report import coverage', () => {
       `);
       const insert = db.prepare(`
         INSERT INTO ad_daily_metrics
-          (date, store_name, marketplace_code, asin, source_file, batch_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+          (store_id, date, store_name, marketplace_code, asin, source_file, batch_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
-      insert.run('2026-06-01', 'FT-US-US', 'US', '', 'C:/reports/campaign.xlsx', 'batch_current');
-      insert.run('2026-06-01', 'FT-US-US', 'US', 'B0OTHER', 'C:/reports/campaign.xlsx', 'batch_old');
+      insert.run('store-one', '2026-06-01', 'FT-US-US', 'US', '', 'C:/reports/campaign.xlsx', 'batch_current');
+      insert.run('store-one', '2026-06-01', 'FT-US-US', 'US', 'B0OTHER', 'C:/reports/campaign.xlsx', 'batch_old');
+      insert.run('store-two', '2026-06-01', 'FT-US-US', 'US', '', 'C:/reports/campaign.xlsx', 'batch_current');
 
       expect(countImportedRowsForReportFile(db, {
         scope: {
+          storeId: 'store-one',
           dateFrom: '2026-05-21',
           dateTo: '2026-06-23',
           storeName: 'FT-US-US',

@@ -21,6 +21,7 @@ export interface LingxingAcceptanceAuditInput {
   batch: LingxingReportBatch;
   files: LingxingReportFile[];
   diagnostic?: DownloadCenterDiagnosticResult;
+  diagnosticTarget?: { storeName?: string; marketplaceCode?: string };
   diagnosticEvidenceReadiness?: DownloadCenterDiagnosticEvidenceReadiness;
   manifest?: { appVersion?: string; generatedAt?: string; batch?: Partial<LingxingReportBatch>; files?: Array<Partial<LingxingReportFile>> };
   fileExists?: (filePath: string) => boolean;
@@ -136,7 +137,7 @@ export function auditLingxingAcceptanceEvidence(input: LingxingAcceptanceAuditIn
         : hasFailedManifestProblem ? 'failed' : 'incomplete',
       detail: manifestProblems.length === 0 ? 'manifest matches batch and files' : manifestProblems.map((problem) => problem.detail).join('; '),
     },
-    diagnosticCheck(input.batch, input.diagnostic, input.diagnosticEvidenceReadiness),
+    diagnosticCheck(input.batch, input.diagnostic, input.diagnosticEvidenceReadiness, input.diagnosticTarget),
   ];
 
   return {
@@ -177,6 +178,7 @@ function diagnosticCheck(
   batch: LingxingReportBatch,
   diagnostic?: DownloadCenterDiagnosticResult,
   diagnosticEvidenceReadiness?: DownloadCenterDiagnosticEvidenceReadiness,
+  diagnosticTarget?: { storeName?: string; marketplaceCode?: string },
 ): AcceptanceCheck {
   if (!diagnostic) {
     return {
@@ -199,14 +201,15 @@ function diagnosticCheck(
       detail: `diagnostic date range ${diagnostic.dateStart || 'unknown'} to ${diagnostic.dateEnd || 'unknown'} does not match batch`,
     };
   }
+  const expectedTarget = diagnosticTarget ?? batch;
   if (
-    normalizeOptionalScope(diagnostic.storeName) !== normalizeOptionalScope(batch.storeName)
-    || normalizeOptionalScope(diagnostic.marketplaceCode) !== normalizeOptionalScope(batch.marketplaceCode)
+    normalizeOptionalScope(diagnostic.storeName) !== normalizeOptionalScope(expectedTarget.storeName)
+    || normalizeOptionalScope(diagnostic.marketplaceCode) !== normalizeOptionalScope(expectedTarget.marketplaceCode)
   ) {
     return {
       name: 'download_center_diagnostic',
       status: 'incomplete',
-      detail: `diagnostic store/site scope ${diagnostic.storeName || 'not specified'}/${diagnostic.marketplaceCode || 'not specified'} does not match batch ${batch.storeName || 'not specified'}/${batch.marketplaceCode || 'not specified'}`,
+      detail: `diagnostic store/site scope ${diagnostic.storeName || 'not specified'}/${diagnostic.marketplaceCode || 'not specified'} does not match authorized target ${expectedTarget.storeName || 'not specified'}/${expectedTarget.marketplaceCode || 'not specified'}`,
     };
   }
   if (!diagnosticEvidenceReadiness?.ready) {

@@ -1464,6 +1464,27 @@ button:disabled {
   border-left-color: var(--green);
 }
 
+.operation-scope-editor-panel .form-table {
+  margin-top: 2px;
+}
+
+.operation-scope-locked-authority {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+}
+
+.operation-scope-locked-authority strong {
+  margin-right: auto;
+  color: var(--text);
+}
+
+.operation-scope-editor-actions {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
 .operation-scope-card {
   display: grid;
   gap: 10px;

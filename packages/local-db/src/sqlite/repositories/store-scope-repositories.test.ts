@@ -176,6 +176,17 @@ describe('store-scoped legacy repositories', () => {
     expect(db.prepare('SELECT store_id FROM product_costs WHERE product_id = ?').get(productA))
       .toEqual({ store_id: storeA });
 
+    expect(() => repo.updateCostForStore(storeA, productA, {
+      productId: productB,
+      targetAcos: 0.4,
+    })).toThrow(/元数据不可由调用方覆盖.*productId/);
+    expect(db.prepare(`
+      SELECT product_id
+      FROM product_costs
+      WHERE store_id = ? AND product_id = ?
+    `).get(storeA, productB)).toBeUndefined();
+    expect(repo.getCostForStore(storeA, productA)?.targetAcos).toBe(0.3);
+
     expect(() => repo.insertForStore(storeA, product('Shop Beta', 'split brain')))
       .toThrow(/权威记录不一致/);
     expect(() => repo.insertForStore(inactiveStore, product('Shop Inactive', 'inactive')))
@@ -183,9 +194,63 @@ describe('store-scoped legacy repositories', () => {
 
     const storeC = normalizeStoreId('store-c');
     insertStore(db, storeC, 'profile-c', 'Shop Alpha', 'active');
-    expect(() => repo.insertForStore(storeC, product('Shop Alpha', 'legacy unique collision')))
-      .toThrow();
+    const productC = repo.insertForStore(storeC, product('Shop Alpha', 'Same-name store product'));
+    expect(repo.findByAsinForStore(storeC, 'B0SAMEASIN')).toEqual(expect.objectContaining({
+      id: productC,
+      storeId: storeC,
+      title: 'Same-name store product',
+    }));
     expect(repo.findByAsinForStore(storeA, 'B0SAMEASIN')?.title).toBe('Alpha product');
+    expect(() => repo.insertForStore(storeA, {
+      ...product('Shop Alpha', 'Invalid parent ASIN'),
+      asin: 'B0PARENT01',
+      parent_asin: 'ßßßßß',
+    })).toThrow(/ASIN must be exactly 10 ASCII/);
+    expect(repo.findByAsinForStore(storeA, 'B0PARENT01')).toBeUndefined();
+
+    const updatedProductC = repo.upsertForStore(storeC, {
+      ...product('Shop Alpha', 'Updated in same store'),
+      asin: '  b0sameasin  ',
+    });
+    expect(updatedProductC).toBe(productC);
+    expect(repo.findAllForStore(storeC)).toHaveLength(1);
+    expect(repo.findByAsinForStore(storeC, 'B0SAMEASIN')?.title).toBe('Updated in same store');
+    expect(() => repo.insertForStore(storeC, {
+      ...product('Shop Alpha', 'Duplicate in same store'),
+      asin: ' b0sameasin ',
+    })).toThrow(/UNIQUE|constraint/i);
+    expect(repo.findByAsinForStore(storeA, 'B0SAMEASIN')?.title).toBe('Alpha product');
+  });
+
+  it('rolls back combined product and cost writes when the cost payload is rejected', () => {
+    const { db, storeA } = createHarness();
+    const repo = new ProductRepository(db);
+    const invalidCost = {
+      targetAcos: 0.3,
+      unsupportedCostField: 1,
+    } as unknown as { targetAcos: number };
+
+    expect(() => repo.insertWithCostForStore(
+      storeA,
+      product('Shop Alpha', 'Must roll back'),
+      invalidCost,
+    )).toThrow(/不支持的产品成本字段/);
+    expect(repo.findAllForStore(storeA)).toHaveLength(0);
+
+    const productId = repo.insertWithCostForStore(
+      storeA,
+      product('Shop Alpha', 'Original title'),
+      { targetAcos: 0.25 },
+    );
+    expect(repo.getCostForStore(storeA, productId)?.targetAcos).toBe(0.25);
+
+    expect(() => repo.upsertWithCostForStore(
+      storeA,
+      product('Shop Alpha', 'Must not persist'),
+      invalidCost,
+    )).toThrow(/不支持的产品成本字段/);
+    expect(repo.findByAsinForStore(storeA, 'B0SAMEASIN')?.title).toBe('Original title');
+    expect(repo.getCostForStore(storeA, productId)?.targetAcos).toBe(0.25);
   });
 
   it('isolates same-batch ad metrics for reads and deletes', () => {

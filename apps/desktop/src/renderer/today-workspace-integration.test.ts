@@ -27,10 +27,14 @@ describe('Task 5A Today workspace integration', () => {
 
   it('keeps the authoritative next action inside Today instead of duplicating it globally', () => {
     const app = rendererSource('./App.tsx');
+    const workspaceView = rendererSource('./mission-control/workspaces/mission-control-workspace-view.tsx');
+    const today = rendererSource('./mission-control/workspaces/today-workspace.tsx');
 
     expect(app).not.toContain('<NextSafeActionHandoff action={nextSafeAction}');
-    expect(app).toContain('<DashboardPage nextSafeAction={nextSafeAction} />');
-    expect(app).toContain('nextSafeAction: NextSafeAction');
+    expect(app).toContain('today={missionControl.today}');
+    expect(workspaceView).toContain('projection={capabilityReady ? today ?? null : null}');
+    expect(today).toContain('safeProjection.nextAction');
+    expect(today).toContain('<TaskBanner');
   });
 
   it('removes the duplicate sidebar brand while retaining the eight-workspace navigation', () => {

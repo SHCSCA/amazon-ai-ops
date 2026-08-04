@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   EVIDENCE_MODE_ENV,
   EVIDENCE_USER_DATA_DIR_ENV,
+  PACKAGE_LAUNCH_WINDOW_READY_MARKER,
   PACKAGE_LAUNCH_SMOKE_MODE,
   PACKAGE_UI_EVIDENCE_MODE,
   configureEvidenceUserDataPath,
+  isPackageLaunchWindowReadyMarker,
   validateEvidenceUserDataPath,
 } from './evidence-user-data-path';
 
@@ -18,6 +20,29 @@ function fakeIo(realPath?: string) {
 }
 
 describe('evidence userData path contract', () => {
+  it('validates the launch-smoke window-ready marker against the exact Main/window/profile identity', () => {
+    const marker = {
+      kind: 'package-launch-window-ready',
+      schemaVersion: 1,
+      pid: 321,
+      browserWindowId: 7,
+      evidenceMode: PACKAGE_LAUNCH_SMOKE_MODE,
+      userDataDir: 'D:\\Temp\\amazon-ai-ops-package-launch-smoke\\run-1',
+      rendererUrl: 'file:///D:/App/resources/app.asar/dist/renderer/index.html',
+      generatedAt: '2026-07-23T08:00:00.000Z',
+    };
+
+    expect(PACKAGE_LAUNCH_WINDOW_READY_MARKER).toBe('package-launch-window-ready.json');
+    expect(isPackageLaunchWindowReadyMarker(marker, {
+      pid: 321,
+      browserWindowId: 7,
+      userDataDir: 'd:\\temp\\amazon-ai-ops-package-launch-smoke\\run-1\\',
+    })).toBe(true);
+    expect(isPackageLaunchWindowReadyMarker({ ...marker, rendererUrl: '' })).toBe(false);
+    expect(isPackageLaunchWindowReadyMarker({ ...marker, evidenceMode: 'package-ui' })).toBe(false);
+    expect(isPackageLaunchWindowReadyMarker(marker, { pid: 999 })).toBe(false);
+  });
+
   it('does not read or override userData during an ordinary application launch', () => {
     const app = { getPath: vi.fn(), setPath: vi.fn() };
     expect(configureEvidenceUserDataPath(app, {}, fakeIo())).toEqual({

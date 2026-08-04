@@ -6,6 +6,8 @@ import {
   normalizeBrowserProfileId,
   normalizeBusinessDate,
   normalizeSessionGeneration,
+  normalizeProviderExternalAccountId,
+  normalizeLingxingCollectionStoreName,
   normalizeStoreContextEnvelope,
   normalizeStoreId,
   normalizeUsStoreIdentity,
@@ -54,6 +56,24 @@ describe('V1 US store contract', () => {
     expect(normalizeSessionGeneration(12)).toBe(12);
     expect(() => normalizeSessionGeneration(-1)).toThrow(/non-negative safe integer/);
     expect(() => normalizeSessionGeneration('1')).toThrow(/non-negative safe integer/);
+  });
+
+  it('normalizes provider external identities with trim, NFKC, and deterministic case folding', () => {
+    expect(normalizeProviderExternalAccountId('lingxing', '  Store-ABC  ')).toBe('store-abc');
+    expect(normalizeProviderExternalAccountId('lingxing', 'ＳＴＯＲＥ－ＡＢＣ')).toBe('store-abc');
+    expect(normalizeProviderExternalAccountId('amazon_ads', ' Profile-123 ')).toBe('profile-123');
+    expect(normalizeProviderExternalAccountId('amazon_ads', '   ')).toBeUndefined();
+    expect(() => normalizeProviderExternalAccountId('lingxing', 'x'.repeat(257)))
+      .toThrow(/at most 256/);
+    expect(() => normalizeProviderExternalAccountId('amazon_ads', 'profile\u0000id'))
+      .toThrow(/control characters/);
+  });
+
+  it('normalizes a Lingxing collection selector separately from stable provider identity', () => {
+    expect(normalizeLingxingCollectionStoreName('  ＳＨＣ－美国店  ')).toBe('shc-美国店');
+    expect(normalizeLingxingCollectionStoreName('   ')).toBeUndefined();
+    expect(() => normalizeLingxingCollectionStoreName('store\u007fname'))
+      .toThrow(/control characters/);
   });
 
   it('normalizes a complete store context without accepting a local path field', () => {

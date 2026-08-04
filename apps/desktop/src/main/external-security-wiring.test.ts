@@ -3,6 +3,18 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+const providerActiveIdentitySource = fs.readFileSync(
+  path.join(__dirname, 'provider-active-identity.ts'),
+  'utf8',
+);
+const browserLoginProviderConnectionSource = fs.readFileSync(
+  path.join(__dirname, 'browser-login-provider-connections.ts'),
+  'utf8',
+);
+const browserLoginRequestSource = fs.readFileSync(
+  path.join(__dirname, 'browser-login-request.ts'),
+  'utf8',
+);
 
 describe('Electron external-distribution security wiring', () => {
   it('installs navigation, redirect, and external-open guards before loading the renderer', () => {
@@ -30,11 +42,18 @@ describe('Electron external-distribution security wiring', () => {
   });
 
   it('exposes saved-credential status only and resolves saved passwords inside Main', () => {
-    expect(source).toContain("ipcMain.handle('browser:get-saved-credential-status'");
-    expect(source).toContain('resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username)');
+    expect(source).toContain("registerTrackedIpcHandler('browser:get-saved-credential-status'");
+    expect(source).toContain('createStoreScopedLoginCredentialStore(state.settingsRepo, initialContext.storeId)');
+    expect(source).toContain('createStoreScopedLoginCredentialStore(state.settingsRepo, loginContext.storeId)');
+    expect(source).toContain('createStoreScopedLoginCredentialStore(state.settingsRepo, capturedContext.storeId)');
+    expect(source).toContain('storeId: capturedContext?.storeId ?? null');
+    expect(source).not.toContain('resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username)');
     expect(source).toContain('handleBrowserLogin(normalizeBrowserLoginRequest(input))');
-    expect(source).toContain("typeof candidate.rememberPassword !== 'boolean'");
-    expect(source).not.toContain("ipcMain.handle('browser:get-saved-credentials'");
+    expect(browserLoginRequestSource).toContain("typeof candidate.rememberPassword !== 'boolean'");
+    expect(source).toContain('normalizeBrowserLoginRequest(input)');
+    expect(source).toContain('state.storeCoordinator.assertActiveStoreContext(request.storeContext)');
+    expect(source).toContain('request.amazonAdsProfileId');
+    expect(source).not.toContain("registerTrackedIpcHandler('browser:get-saved-credentials'");
     expect(source).not.toContain('password: saved');
   });
 
@@ -47,27 +66,100 @@ describe('Electron external-distribution security wiring', () => {
   it('applies the session credential policy before persisting or trusting a login identity', () => {
     expect(source).toContain('decideLoginSessionCredentialPolicy({');
     expect(source).toContain('credentialAction === \'save\' || credentialAction === \'clear\'');
-    expect(source).toContain('if (!credentialPolicy.sessionIdentityVerified)');
-    expect(source).toContain('assertProviderIdentity(connections.lingxing');
-    expect(source).toContain('assertProviderIdentity(connections.amazon_ads');
+    expect(source).toContain('isPackageUiSavedSessionContinuationAllowed({');
+    expect(source).toContain('packageUiReadOnlyRuntime,');
+    expect(source).toContain(
+      '&& !packageUiSavedSessionContinuationAllowed',
+    );
+    expect(source).toContain('await assertProviderPageActiveIdentity({');
+    expect(source).toContain('connection: connections.lingxing,');
+    expect(source).toContain('connection: adsConnection,');
+    expect(source).toContain(
+      "credentialSubmission: request.credentialSource === 'typed' && needsLogin",
+    );
+    expect(source).toContain('credentialsSubmitted: true,');
+    expect(source).not.toContain('assertProviderIdentity(');
+    expect(source).not.toMatch(
+      /assertProviderPageActiveIdentity\(\{[\s\S]*?(?:bodyText|title):\s*erpLoginState\./,
+    );
     expect(source.match(/assertBrowserLoginAttempt\(attemptId, loginContext\)/g)?.length).toBeGreaterThanOrEqual(2);
     expect(source).toContain('credentialPersistence: credentialPolicy.credentialPersistence');
+    expect(source).toContain('credentialSource: request.credentialSource');
     expect(source).toContain('sessionIdentityVerified: credentialPolicy.sessionIdentityVerified');
+    expect(source).not.toContain('sessionIdentityVerified: true,');
   });
 
-  it('binds browser controllers to one store context and two provider-specific profiles', () => {
-    expect(source).toContain('interface StoreBrowserRuntime');
-    expect(source).toContain('context: StoreContextEnvelope;');
+  it('keeps active identity evidence Main-only and exact-match bounded', () => {
+    expect(source).toContain('PROVIDER_ACTIVE_IDENTITY_DOM_PROBES.map');
+    expect(source).toContain("element.closest('[hidden], [aria-hidden=\"true\"], [inert]')");
+    expect(source).toContain('.slice(0, 2)');
+    expect(providerActiveIdentitySource).toContain("origin: 'https://erp.lingxing.com'");
+    expect(providerActiveIdentitySource).toContain("queryParameters: ['seller_id', 'store_id']");
+    expect(providerActiveIdentitySource).toContain("origin: 'https://ads.lingxing.com'");
+    expect(providerActiveIdentitySource).toContain("queryParameters: ['profile_id']");
+    expect(providerActiveIdentitySource).toContain('stableProfileEvidence.length === 0');
+    expect(providerActiveIdentitySource).toContain(
+      'stableProfileEvidence.some((candidate) => candidate !== expectedProfileId)',
+    );
+    expect(providerActiveIdentitySource).not.toContain('bodyText');
+    expect(providerActiveIdentitySource).not.toContain('document.title');
+    expect(providerActiveIdentitySource).not.toContain('innerText');
+
+    const loginResultStart = source.indexOf('const loginResult: BrowserLoginResult');
+    const loginResultEnd = source.indexOf('state.loginSession = loginResult', loginResultStart);
+    const rendererLoginResult = source.slice(loginResultStart, loginResultEnd);
+    expect(rendererLoginResult).not.toContain('domObservations');
+    expect(rendererLoginResult).not.toContain('activeIdentity');
+    expect(rendererLoginResult).not.toContain('identityCandidates');
+  });
+
+  it('binds browser controllers to one registry candidate and two provider-specific profiles', () => {
+    expect(source).not.toContain('interface StoreBrowserRuntime');
+    expect(source).not.toContain('state.browserRuntime');
+    expect(source).toContain('const visibleBrowserRuntimeRegistry = new VisibleBrowserRuntimeRegistry()');
     expect(source).toContain('userDataDir: capsule.lingxingProfileDir');
     expect(source).toContain('userDataDir: capsule.amazonAdsProfileDir');
-    expect(source).toContain("browserRuntimeController('amazon_ads')");
+    expect(source).toContain("purpose: 'operator_full'");
+    expect(source).toContain('amazonAds: amazonAdsController');
+    expect(source).toContain('amazonAds: capsule.amazonAdsProfileDir');
+    expect(source).toContain('legacy-amazon-ads-screenshot:${label}');
+    expect(source).toContain("runtime.purpose !== 'operator_full'");
     expect(source).not.toContain("path.join(STORAGE_DIR, 'browser-data')");
   });
 
-  it('captures screenshots inside the active store capsule and closes by store id', () => {
+  it('requires both provider identity mappings at the Main login boundary while keeping an unavailable Ads session blocked', () => {
+    const connectionContract = browserLoginProviderConnectionSource;
+    expect(connectionContract).toContain('if (!lingxing)');
+    expect(connectionContract).toContain('if (!amazonAds)');
+    expect(connectionContract).toContain("normalizeProviderExternalAccountId(\n    'amazon_ads'");
+    expect(connectionContract).toContain('必须先配置 Amazon Ads Profile 连接');
+    expect(connectionContract).toContain('Amazon Ads 连接缺少 Profile ID');
+    expect(connectionContract).toContain(
+      'return { lingxing, amazon_ads: amazonAds, lingxingIdentityReadiness }',
+    );
+
+    const loginStart = source.indexOf('async function handleBrowserLogin');
+    const loginEnd = source.indexOf('async function handleBrowserLogout', loginStart);
+    const login = source.slice(loginStart, loginEnd);
+    expect(login).toContain('requireBrowserLoginProviderConnections');
+    expect(login).toContain('request.amazonAdsProfileId');
+    expect(login).toContain('waitForLingxingAdsSessionReady');
+    expect(login).toContain('AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS');
+    expect(login).toContain('adsSessionReady: Boolean(adsSession)');
+    const packageLogin = source.slice(
+      source.indexOf('async function handleBrowserLogin'),
+      source.indexOf('async function performBrowserLoginInUserLane'),
+    );
+    expect(packageLogin).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
+    expect(packageLogin).toContain('package UI evidence cannot start a real account login');
+  });
+
+  it('captures screenshots inside the active store capsule and closes through exact registry proof', () => {
     expect(source).toContain('storeCapsuleFor(store).screenshotsDir');
     expect(source).toContain('controller.screenshotToPath(screenshotPath, label)');
-    expect(source).toContain('state.browserRuntime?.context.storeId === store.storeId');
+    expect(source).toContain('visibleBrowserRuntimeRegistry.strictCloseCurrent(runtime.context)');
+    expect(source).toContain('visibleBrowserRuntimeRegistry.consumeEmptyProof(proof)');
+    expect(source).not.toContain('state.browserRuntime');
     expect(source).not.toContain('state.currentStore === store.displayName');
   });
 

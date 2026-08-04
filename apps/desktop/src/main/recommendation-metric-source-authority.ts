@@ -4,10 +4,12 @@ import type Database from 'better-sqlite3';
 import type {
   ActionRecommendation,
   RecommendationReviewScope,
+  StoreId,
 } from '@amazon-ai-ops/shared-types';
 import type { RecommendationMetricSourceAuthority } from './recommendation-writable-target-policy';
 
 export interface AssertRecommendationMetricSourceAuthorityInput {
+  storeId: StoreId;
   recommendation: ActionRecommendation;
   scope: RecommendationReviewScope;
   allowedSourceFiles: string[];
@@ -83,8 +85,7 @@ export function assertRecommendationMetricSourceAuthority(
     return fail('建议的原子来源文件与来源文件集合不一致。');
   }
   if (
-    normalized(recommendation.storeName) !== normalized(scope.storeName)
-    || normalized(recommendation.marketplaceCode) !== normalized(scope.marketplaceCode)
+    normalized(recommendation.marketplaceCode) !== normalized(scope.marketplaceCode)
     || normalizedAsin(recommendation.asin || evidence.asin) !== normalizedAsin(scope.asin)
     || text(evidence.batchId) !== text(scope.batchId)
   ) {
@@ -103,19 +104,19 @@ export function assertRecommendationMetricSourceAuthority(
       source_file AS sourceFile,
       source_row AS sourceRow
     FROM ad_daily_metrics
-    WHERE batch_id = ?
+    WHERE store_id = ?
+      AND batch_id = ?
       AND date >= ?
       AND date <= ?
-      AND COALESCE(store_name, '') = COALESCE(?, '')
       AND COALESCE(marketplace_code, '') = COALESCE(?, '')
       AND upper(COALESCE(asin, '')) = upper(?)
       AND source_file IN (${candidates.map(() => '?').join(', ')})
       AND source_row = ?
   `).all(
+    input.storeId,
     text(scope.batchId),
     text(scope.dateFrom),
     text(scope.dateTo),
-    text(scope.storeName),
     text(scope.marketplaceCode),
     text(scope.asin),
     ...candidates,
