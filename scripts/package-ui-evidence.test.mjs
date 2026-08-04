@@ -185,6 +185,7 @@ describe('workspace authentication probe', () => {
   it('selects the first explicit active Store Gate option deterministically without retaining an unbounded label', () => {
     expect(selectDeterministicEvidenceStoreCandidate([
       { label: '请选择店铺', value: '' },
+      { disabled: true, label: '已停用店铺', value: 'store-disabled' },
       { label: '  SHC001\u0000 · US · USD  ', value: ' store-us-001 ' },
       { label: 'SHC002 · US · USD', value: 'store-us-002' },
     ])).toEqual({
@@ -210,10 +211,10 @@ describe('workspace authentication probe', () => {
       source.indexOf('async function elementDescriptor'),
     );
 
-    expect(storeGateBody).toContain("page.locator('#mission-control-store-name')");
-    expect(storeGateBody).toContain("page.getByRole('button', { name: '创建美国站店铺', exact: true })");
-    expect(storeGateBody).toContain("page.locator('#mission-control-store-select')");
-    expect(storeGateBody).toContain("page.getByRole('button', { name: '进入所选店铺', exact: true })");
+    expect(storeGateBody).toContain("getByRole('dialog', { name: '新增美国站店铺' })");
+    expect(storeGateBody).toContain("getByRole('button', { name: '创建店铺', exact: true })");
+    expect(storeGateBody).toContain(".store-scope-switcher__option[data-store-scope-id]");
+    expect(storeGateBody).toContain("hasText: '切换并登录'");
     expect(storeGateBody).toContain('created-and-selected-isolated-evidence-store');
     expect(storeGateBody).toContain('selected-existing-store');
     expect(storeGateBody).not.toMatch(/window\.(?:api|electron|electronAPI)|ipcRenderer|stores:create/);

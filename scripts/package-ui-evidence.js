@@ -8707,6 +8707,7 @@ async function ensureEvidenceLingxingConnection(page, loginDiagnostics) {
 function selectDeterministicEvidenceStoreCandidate(options) {
   if (!Array.isArray(options)) return null;
   for (const option of options) {
+    if (option?.disabled === true) continue;
     const value = String(option?.value || '').trim();
     if (!value) continue;
     return {
@@ -8736,14 +8737,14 @@ async function waitForPackageEntrySurface(page, timeoutMs = 30_000) {
     ) {
       return { kind: 'login' };
     }
-    const storeGate = document.querySelector('main.mission-control-store-gate');
+    const storeGate = document.querySelector('.mission-control-store-gate-shell');
     if (storeGate?.getAttribute('data-state') === 'needs-selection') {
       return { kind: 'store-gate' };
     }
     if (storeGate?.getAttribute('data-state') === 'error') {
       return {
         kind: 'store-gate-error',
-        message: storeGate.querySelector('.mission-control-store-gate__error')?.textContent || '',
+        message: storeGate.querySelector('[role="alert"]')?.textContent || '',
       };
     }
     return null;
@@ -8751,40 +8752,65 @@ async function waitForPackageEntrySurface(page, timeoutMs = 30_000) {
   return handle.jsonValue();
 }
 
+async function openPackageStoreScopeSwitcher(page) {
+  const dialog = page.getByRole('dialog', { name: '店铺与站点选择器' });
+  if (!await dialog.isVisible().catch(() => false)) {
+    const trigger = page.locator(
+      'section[aria-label="店铺与站点"] .store-scope-switcher__trigger',
+    ).first();
+    await trigger.waitFor({ state: 'visible', timeout: 10_000 });
+    await trigger.click();
+  }
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  return dialog;
+}
+
+async function packageStoreOptionById(page, storeId) {
+  const dialog = await openPackageStoreScopeSwitcher(page);
+  const options = dialog.locator('.store-scope-switcher__option[data-store-scope-id]');
+  const count = await options.count();
+  for (let index = 0; index < count; index += 1) {
+    const option = options.nth(index);
+    if (await option.getAttribute('data-store-scope-id') === storeId) return option;
+  }
+  return null;
+}
+
 async function ensureEvidenceStoreContext(page, diagnostics) {
   const storeGateDiagnostics = beginStoreGateDiagnostics(diagnostics);
-  const storeSelect = page.locator('#mission-control-store-select');
-  let candidates = [];
-  if (await storeSelect.count() > 0) {
-    await storeSelect.waitFor({ state: 'visible', timeout: 10_000 });
-    candidates = await storeSelect.locator('option').evaluateAll((options) =>
-      options.map((option) => ({
-        label: option.textContent || '',
-        value: option.value || '',
-      })));
-  }
+  const storeDialog = await openPackageStoreScopeSwitcher(page);
+  const storeOptions = storeDialog.locator(
+    '.store-scope-switcher__option[data-store-scope-id]',
+  );
+  const candidates = await storeOptions.evaluateAll((options) => options.map((option) => ({
+    disabled: option instanceof HTMLButtonElement ? option.disabled : true,
+    label: option.querySelector('strong')?.textContent || '',
+    value: option.getAttribute('data-store-scope-id') || '',
+  })));
 
   let candidate = selectDeterministicEvidenceStoreCandidate(candidates);
   let createdEvidenceStore = false;
+  let switchButton = null;
   if (!candidate) {
-    const storeNameInput = page.locator('#mission-control-store-name');
-    const createButton = page.getByRole('button', { name: '创建美国站店铺', exact: true });
+    const addButton = storeDialog.getByRole('button', { name: '新增店铺', exact: true });
+    await addButton.click();
+    const createDialog = page.getByRole('dialog', { name: '新增美国站店铺' });
+    const storeNameInput = createDialog.getByRole('textbox', { name: '店铺名称', exact: true });
+    const createButton = createDialog.getByRole('button', { name: '创建店铺', exact: true });
     await storeNameInput.waitFor({ state: 'visible', timeout: 10_000 });
     await storeNameInput.fill(PACKAGE_UI_EVIDENCE_STORE_DISPLAY_NAME);
     await createButton.waitFor({ state: 'visible', timeout: 10_000 });
     await createButton.click();
     const creationHandle = await page.waitForFunction((displayName) => {
-      const error = document.querySelector('.mission-control-store-gate__create-form .mission-control-store-gate__error');
+      const dialog = document.querySelector('[role="dialog"][aria-labelledby="store-scope-create-title"]');
+      const error = dialog?.querySelector('.store-scope-create-feedback [role="alert"]');
       if (error?.textContent?.trim()) {
         return { kind: 'error', message: error.textContent.trim() };
       }
-      const options = Array.from(document.querySelectorAll('#mission-control-store-select option'));
-      const option = options.find((item) => (
-        item.value
-        && (item.textContent || '').trim().startsWith(`${displayName} ·`)
-      ));
-      return option
-        ? { kind: 'created', label: option.textContent || '', value: option.value }
+      const switchButton = dialog?.querySelector('button[data-store-scope-id]');
+      const storeId = switchButton?.getAttribute('data-store-scope-id') || '';
+      return storeId && dialog?.textContent?.includes(`${displayName} 已创建`)
+        ? { kind: 'created', label: displayName, value: storeId }
         : null;
     }, PACKAGE_UI_EVIDENCE_STORE_DISPLAY_NAME, { timeout: 15_000 });
     const creation = await creationHandle.jsonValue();
@@ -8799,24 +8825,24 @@ async function ensureEvidenceStoreContext(page, diagnostics) {
     }
     candidate = selectDeterministicEvidenceStoreCandidate([creation]);
     createdEvidenceStore = true;
+    switchButton = createDialog.locator('button[data-store-scope-id]').filter({
+      hasText: '切换并登录',
+    }).first();
   }
   if (!candidate) {
     completeStoreGateDiagnostics(storeGateDiagnostics, 'selection-failed');
     fail('Store Gate did not expose an active US/USD store for the isolated Package UI profile.');
   }
 
-  const currentStoreSelect = page.locator('#mission-control-store-select');
-  await currentStoreSelect.waitFor({ state: 'visible', timeout: 10_000 });
-  await currentStoreSelect.selectOption(candidate.value);
-  const confirmButton = page.getByRole('button', { name: '进入所选店铺', exact: true });
-  await page.waitForFunction(() => {
-    const button = Array.from(document.querySelectorAll('button')).find((item) =>
-      item.textContent?.trim() === '进入所选店铺');
-    return Boolean(button && !button.disabled);
-  }, undefined, { timeout: 10_000 });
-  await confirmButton.click();
+  if (!switchButton) switchButton = await packageStoreOptionById(page, candidate.value);
+  if (!switchButton) {
+    completeStoreGateDiagnostics(storeGateDiagnostics, 'selection-failed');
+    fail('Store Gate option disappeared before the explicit switch action.');
+  }
 
   const selectedStore = boundedEvidenceStoreReference(candidate, createdEvidenceStore);
+  await switchButton.waitFor({ state: 'visible', timeout: 10_000 });
+  await switchButton.click();
   const outcomeHandle = await page.waitForFunction(() => {
     if (document.querySelector('nav[aria-label="主业务导航"]')) return { kind: 'workspace' };
     if (
@@ -8826,11 +8852,11 @@ async function ensureEvidenceStoreContext(page, diagnostics) {
     ) {
       return { kind: 'login' };
     }
-    const storeGate = document.querySelector('main.mission-control-store-gate');
+    const storeGate = document.querySelector('.mission-control-store-gate-shell');
     if (storeGate?.getAttribute('data-state') === 'error') {
       return {
         kind: 'store-gate-error',
-        message: storeGate.querySelector('.mission-control-store-gate__error')?.textContent || '',
+        message: storeGate.querySelector('[role="alert"]')?.textContent || '',
       };
     }
     return null;

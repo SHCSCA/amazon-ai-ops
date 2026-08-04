@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CaretDown,
   CheckCircle,
@@ -120,6 +120,7 @@ export function StoreScopeSwitcher({
   const [creating, setCreating] = useState(false);
   const [pendingStoreId, setPendingStoreId] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const previousInitiallyExpanded = useRef(initiallyExpanded);
   const listedStores = useMemo(
     () => [...stores].sort((left, right) => {
       const statusOrder = { active: 0, inactive: 1, archived: 2 } as const;
@@ -131,6 +132,11 @@ export function StoreScopeSwitcher({
   const switching = phase === 'switching' || pendingStoreId !== null;
   const listBusy = phase === 'loading' || dailyStatusPhase === 'loading';
   const currentStatus = activeStore ? statusForStore(dailyStatuses, activeStore) : undefined;
+
+  useEffect(() => {
+    if (initiallyExpanded && !previousInitiallyExpanded.current) setExpanded(true);
+    previousInitiallyExpanded.current = initiallyExpanded;
+  }, [initiallyExpanded]);
 
   const closeCreate = () => {
     if (creating) return;
@@ -307,6 +313,7 @@ export function StoreScopeSwitcher({
                     className="store-scope-switcher__option"
                     data-overall={status?.overall || 'unknown'}
                     data-overlay-initial-focus={selected ? '' : undefined}
+                    data-store-scope-id={String(store.storeId)}
                     disabled={switching || store.status !== 'active'}
                     key={`${store.storeId}:${store.marketplace}`}
                     onClick={() => void requestSwitch(store)}
@@ -438,6 +445,7 @@ export function StoreScopeSwitcher({
               {createdStore ? (
                 <button
                   className="workspace-button workspace-button--primary"
+                  data-store-scope-id={String(createdStore.storeId)}
                   disabled={switching}
                   onClick={() => void requestSwitch(createdStore).then((switched) => {
                     if (switched) closeCreate();

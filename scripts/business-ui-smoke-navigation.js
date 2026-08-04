@@ -87,11 +87,66 @@ async function installPreviewApiBridge(page) {
   });
 }
 
-async function enterPreviewStore(page, storeLabel = 'SHC001-US · US · USD') {
-  if (await page.locator('.app-shell').isVisible().catch(() => false)) return;
-  const selector = page.locator('#mission-control-store-select');
+function storeDisplayName(storeLabel) {
+  return String(storeLabel || '').split('·')[0].trim();
+}
+
+async function openStoreScopeSwitcher(page) {
+  const dialog = page.getByRole('dialog', { name: '店铺与站点选择器' });
+  if (!await dialog.isVisible().catch(() => false)) {
+    const trigger = page.locator(
+      'section[aria-label="店铺与站点"] .store-scope-switcher__trigger',
+    ).first();
+    await trigger.waitFor({ state: 'visible', timeout: 15_000 });
+    await trigger.click();
+  }
+  await dialog.waitFor({ state: 'visible', timeout: 15_000 });
+  return dialog;
+}
+
+async function visibleStoreOption(page, { storeId, storeName }) {
+  const dialog = await openStoreScopeSwitcher(page);
+  const options = dialog.locator('.store-scope-switcher__option[data-store-scope-id]');
+  await options.first().waitFor({ state: 'visible', timeout: 15_000 });
+  const count = await options.count();
+  for (let index = 0; index < count; index += 1) {
+    const option = options.nth(index);
+    const optionStoreId = await option.getAttribute('data-store-scope-id');
+    const optionName = String(await option.locator('strong').first().textContent() || '').trim();
+    if ((storeId && optionStoreId === storeId) || (!storeId && optionName === storeName)) {
+      return option;
+    }
+  }
+  throw new Error(`Store switcher did not expose ${storeName || storeId}.`);
+}
+
+async function switchPreviewStore(page, storeId, storeName) {
+  const currentStoreId = await page.locator('.mission-control-shell[data-store-context]')
+    .getAttribute('data-store-context')
+    .catch(() => null);
+  if (currentStoreId === storeId) return;
+  const option = await visibleStoreOption(page, { storeId, storeName });
+  await option.click();
+  await page.waitForFunction(async ({ expectedId, expectedName }) => {
+    const shellStoreId = document.querySelector('.mission-control-shell[data-store-context]')
+      ?.getAttribute('data-store-context');
+    const getContext = window.electronAPI?.getActiveStoreContext;
+    const context = typeof getContext === 'function' ? await getContext() : null;
+    return shellStoreId === expectedId
+      && (!getContext || context?.storeId === expectedId)
+      && document.body.innerText.includes(expectedName);
+  }, { expectedId: storeId, expectedName: storeName }, { timeout: 15_000 });
+}
+
+async function enterPreviewStore(page, storeLabel = 'SHC001-US') {
+  if (await page.locator('nav[aria-label="主业务导航"]').isVisible().catch(() => false)) return;
+  const displayName = storeDisplayName(storeLabel);
+  const gate = page.locator('.mission-control-store-gate-shell[data-state="needs-selection"]');
   try {
-    await selector.waitFor({ state: 'visible', timeout: 15_000 });
+    await gate.waitFor({ state: 'visible', timeout: 15_000 });
+    const option = await visibleStoreOption(page, { storeName: displayName });
+    await option.click();
+    await page.locator('nav[aria-label="主业务导航"]').waitFor({ state: 'visible', timeout: 15_000 });
   } catch (error) {
     const body = await page.locator('body').innerText().catch(() => '');
     throw new Error([
@@ -100,9 +155,6 @@ async function enterPreviewStore(page, storeLabel = 'SHC001-US · US · USD') {
       error instanceof Error ? error.message : String(error),
     ].join('\n'));
   }
-  await selector.selectOption({ label: storeLabel });
-  await page.getByRole('button', { name: '进入所选店铺', exact: true }).click();
-  await page.locator('.app-shell').waitFor({ state: 'visible', timeout: 15_000 });
 }
 
 async function openScopeEditor(page) {
@@ -127,4 +179,5 @@ module.exports = {
   openScopeEditor,
   setManualScopeBatch,
   startBusinessUiDevServer,
+  switchPreviewStore,
 };

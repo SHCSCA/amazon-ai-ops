@@ -141,6 +141,8 @@ describe('StoreScopeSwitcher', () => {
     );
 
     expect(markup).toContain('role="listbox"');
+    expect(markup).toContain('data-store-scope-id="store-one"');
+    expect(markup).toContain('data-store-scope-id="store-two"');
     expect(markup).toContain('Northstar Home');
     expect(markup).toContain('Harbor Living');
     expect(markup).toContain('下载 8 / 8');
@@ -187,6 +189,7 @@ describe('StoreScopeSwitcher', () => {
     expect(createBlock).toContain('await onCreate(buildFixedUsStoreInput(displayName))');
     expect(createBlock).not.toContain('requestSwitch');
     expect(source).toContain('切换并登录');
+    expect(source).toContain('if (initiallyExpanded && !previousInitiallyExpanded.current) setExpanded(true)');
     expect(source).toContain('useOverlayFocusScope');
     expect(source).toContain("document.addEventListener('mousedown'");
   });

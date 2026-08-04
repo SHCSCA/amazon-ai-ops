@@ -6,6 +6,7 @@ const {
   installPreviewApiBridge,
   navigateLegacyRoute,
   startBusinessUiDevServer,
+  switchPreviewStore,
 } = require('./business-ui-smoke-navigation');
 
 const root = path.resolve(__dirname, '..');
@@ -59,18 +60,7 @@ async function assertUsUsdOnly(page, key, { allowPreviewReadyWarning = false } =
 }
 
 async function switchStore(page, storeId, storeName) {
-  const selector = page.getByLabel('切换店铺');
-  await selector.selectOption(storeId);
-  await page.waitForFunction(
-    ({ id, name }) => {
-      const select = document.querySelector('select[aria-label="切换店铺"]');
-      return select instanceof HTMLSelectElement
-        && select.value === id
-        && select.selectedOptions[0]?.textContent?.trim() === name;
-    },
-    { id: storeId, name: storeName },
-    { timeout: 10_000 },
-  );
+  await switchPreviewStore(page, storeId, storeName);
   await page.locator(`[data-authority-key*="${storeId}"]`).waitFor({ state: 'visible', timeout: 10_000 });
 }
 

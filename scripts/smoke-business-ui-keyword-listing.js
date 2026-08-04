@@ -6,6 +6,7 @@ const {
   installPreviewApiBridge,
   navigateLegacyRoute,
   startBusinessUiDevServer,
+  switchPreviewStore,
 } = require('./business-ui-smoke-navigation');
 
 const root = path.resolve(__dirname, '..');
@@ -62,7 +63,7 @@ async function waitForStore(page, storeId, storeName) {
 }
 
 async function switchStore(page, storeId, storeName) {
-  await page.getByLabel('切换店铺').selectOption(storeId);
+  await switchPreviewStore(page, storeId, storeName);
   await waitForStore(page, storeId, storeName);
 }
 

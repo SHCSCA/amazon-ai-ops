@@ -6,6 +6,7 @@ const {
   enterPreviewStore,
   installPreviewApiBridge,
   startBusinessUiDevServer,
+  switchPreviewStore,
 } = require('./business-ui-smoke-navigation');
 const {
   EXPECTED_MISSION_CONTROL_SCALES,
@@ -28,10 +29,12 @@ const PREVIEW_SCENARIO = 'diagnosis-ready';
 const STORE_ID_MAP = Object.freeze({
   'preview-store-shc001': 'SHC001',
   'preview-store-shc002': 'SHC002',
+  'shc001-us': 'SHC001',
+  'shc002-us': 'SHC002',
 });
 const STORE_LABEL_MAP = Object.freeze({
-  SHC001: 'SHC001-US · US · USD',
-  SHC002: 'SHC002-US · US · USD',
+  SHC001: 'SHC001-US',
+  SHC002: 'SHC002-US',
 });
 const WORKSPACE_LABELS = Object.freeze({
   today: '今日任务',
@@ -435,19 +438,26 @@ async function captureWorkspace(page, runtimeErrors, outputDir, workspace, scale
 }
 
 async function captureStoreGate(page, runtimeErrors, outputDir) {
-  const gate = page.locator('main.mission-control-store-gate[data-state="needs-selection"]');
+  const gate = page.locator('.mission-control-store-gate-shell[data-state="needs-selection"]');
   await gate.waitFor({ state: 'visible', timeout: 15_000 });
+  await gate.locator('.store-scope-switcher__option[data-store-scope-id]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 15_000 });
   const dom = await gate.evaluate((root) => {
     const compact = (value) => String(value || '').replace(/\s+/g, ' ').trim();
     const headings = Array.from(root.querySelectorAll('h1'));
-    const options = Array.from(root.querySelectorAll('#mission-control-store-select option'))
-      .filter((option) => option.value)
-      .map((option) => ({ label: compact(option.textContent), value: option.value }));
+    const options = Array.from(root.querySelectorAll('.store-scope-switcher__option[data-store-scope-id]'))
+      .map((option) => ({
+        label: compact(option.querySelector('strong')?.textContent),
+        selected: option.getAttribute('aria-selected') === 'true',
+        value: option.getAttribute('data-store-scope-id') || '',
+      }))
+      .filter((option) => option.value);
     return {
       bodyText: compact(root.textContent),
       h1: { count: headings.length, text: compact(headings[0]?.textContent) },
       options,
-      selectedValue: root.querySelector('#mission-control-store-select')?.value || '',
+      selectedValue: options.find((option) => option.selected)?.value || '',
     };
   });
   if (!dom.bodyText.includes('US') || !dom.bodyText.includes('USD')) {
@@ -515,14 +525,7 @@ async function readVisiblePageText(page) {
 }
 
 async function switchStore(page, rawStoreId) {
-  const selector = page.getByLabel('切换店铺');
-  await selector.selectOption(rawStoreId);
-  await page.waitForFunction(async (expectedStoreId) => {
-    const shellStoreId = document.querySelector('.mission-control-shell[data-store-context]')
-      ?.getAttribute('data-store-context');
-    const context = await window.electronAPI?.getActiveStoreContext?.();
-    return shellStoreId === expectedStoreId && context?.storeId === expectedStoreId;
-  }, rawStoreId, { timeout: 15_000 });
+  await switchPreviewStore(page, rawStoreId, STORE_LABEL_MAP[canonicalStoreId(rawStoreId)]);
 }
 
 async function captureStoreIsolation(page, runtimeErrors, outputDir) {

@@ -33,6 +33,13 @@ async function expectHeading(page, name) {
     .waitFor({ state: 'visible', timeout: 15_000 });
 }
 
+async function expectDecisionSubview(page, queueHeading) {
+  await expectHeading(page, '建议与审批');
+  await page.getByRole('heading', { name: queueHeading, level: 2, exact: true })
+    .first()
+    .waitFor({ state: 'visible', timeout: 15_000 });
+}
+
 async function assertWorkspace(page, workspace, subview) {
   const locator = page.locator(
     `[data-workspace-evidence-root][data-workspace="${workspace}"][data-workspace-subview="${subview}"]`,
@@ -103,7 +110,7 @@ async function main() {
     await enterPreviewStore(page);
 
     await navigateLegacyRoute(page, 'recommendations');
-    await expectHeading(page, 'AI 建议');
+    await expectDecisionSubview(page, 'AI 建议');
     await assertWorkspace(page, 'decisions', 'recommendations');
     await assertGlobalGuards(page, 'decisions-recommendations');
     await expectVisibleText(page, '建议本身不代表已获执行授权');
@@ -119,7 +126,7 @@ async function main() {
     await capture(page, evidence, 'decisions-recommendations', 'AI 建议与 Decision CRUD', runId);
 
     await navigateLegacyRoute(page, 'approval');
-    await expectHeading(page, '人工审批');
+    await expectDecisionSubview(page, '人工审批');
     await assertWorkspace(page, 'decisions', 'approval');
     await assertGlobalGuards(page, 'decisions-approval');
     await expectVisibleText(page, '批准只形成 Decision 状态，不代表已写入 Amazon Ads');
@@ -127,7 +134,7 @@ async function main() {
     await capture(page, evidence, 'decisions-approval', '人工审批与不可变历史', runId);
 
     await navigateLegacyRoute(page, { workspace: 'decisions', subview: 'decided' });
-    await expectHeading(page, '已决策');
+    await expectDecisionSubview(page, '已决策');
     await assertWorkspace(page, 'decisions', 'decided');
     await assertGlobalGuards(page, 'decisions-decided');
     await expectVisibleText(page, '整批授权一次');

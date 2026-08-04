@@ -120,10 +120,18 @@ async function expectSingleActiveNavigation(page, label) {
 
 async function expectUnifiedDecisionsWorkspace(page, subview) {
   await expectWorkspaceIdentity(page, {
-    heading: subview === 'approval' ? '人工审批' : 'AI 建议',
+    heading: '建议与审批',
     workspace: 'decisions',
     subview,
   });
+  const queueHeading = subview === 'approval'
+    ? '人工审批'
+    : subview === 'decided'
+      ? '已决策'
+      : 'AI 建议';
+  await page.getByRole('heading', { name: queueHeading, level: 2, exact: true })
+    .first()
+    .waitFor({ timeout: 5000 });
   await expectSingleActiveNavigation(page, '决策与审批');
   for (const oldHeading of ['优化建议', '审批中心']) {
     if (await page.getByRole('heading', { name: oldHeading, level: 1, exact: true }).count() > 0) {
@@ -434,8 +442,8 @@ async function main() {
     { nav: NAV_RE.dataImport, heading: /导入检查/, label: '导入检查', key: 'data-import-validation' },
     { nav: NAV_RE.operationEvents, heading: /运营事件/, label: '运营事件', key: 'operation-events' },
     { nav: NAV_RE.adQuant, heading: /Mission 事实链/, label: 'Mission 事实链', key: 'ad-quant' },
-    { nav: NAV_RE.recommendations, heading: /AI 建议/, label: '决策与审批 · AI 建议', key: 'recommendations' },
-    { nav: NAV_RE.approval, heading: /人工审批/, label: '决策与审批 · 人工审批', key: 'approval' },
+    { nav: NAV_RE.recommendations, heading: /建议与审批/, label: '决策与审批 · AI 建议', key: 'recommendations' },
+    { nav: NAV_RE.approval, heading: /建议与审批/, label: '决策与审批 · 人工审批', key: 'approval' },
     { nav: NAV_RE.readback, heading: /结果核对/, label: '结果核对', key: 'readback' },
     { nav: NAV_RE.keyword, heading: /关键词事实与机会/, label: '关键词事实与机会', key: 'keyword-opportunities' },
     { nav: NAV_RE.listing, heading: /Listing 内容库/, label: 'Listing 内容库', key: 'listing-optimization' },
