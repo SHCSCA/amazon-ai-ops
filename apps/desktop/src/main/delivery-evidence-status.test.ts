@@ -3,7 +3,20 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import { getDeliveryEvidenceStatus } from './delivery-evidence-status';
+import { getDeliveryEvidenceStatus as getDeliveryEvidenceStatusImpl } from './delivery-evidence-status';
+
+const TEST_STORE_ID = 'store-current';
+
+type DeliveryEvidenceInput = Parameters<typeof getDeliveryEvidenceStatusImpl>[0];
+
+function getDeliveryEvidenceStatus(
+  input: Omit<DeliveryEvidenceInput, 'storeId'> & { storeId?: string },
+) {
+  return getDeliveryEvidenceStatusImpl({
+    ...input,
+    storeId: input.storeId ?? TEST_STORE_ID,
+  });
+}
 
 describe('getDeliveryEvidenceStatus', () => {
   const tempDirs: string[] = [];
@@ -503,6 +516,7 @@ describe('getDeliveryEvidenceStatus', () => {
   it('does not mark listing evidence ready when stored listing belongs to another store or marketplace', () => {
     const db = createDb({
       listingContent: [{
+        store_id: 'store-other',
         asin: 'B0TESTASIN',
         store_name: 'OTHER-STORE',
         marketplace_code: 'US',
@@ -514,6 +528,7 @@ describe('getDeliveryEvidenceStatus', () => {
         updated_at: '2026-06-12T10:00:00.000Z',
       }],
       listingDrafts: [{
+        store_id: 'store-other',
         asin: 'B0TESTASIN',
         store_name: 'OTHER-STORE',
         marketplace_code: 'US',
@@ -521,6 +536,7 @@ describe('getDeliveryEvidenceStatus', () => {
         ai_fallback_reason: null,
         updated_at: '2026-06-12T10:10:00.000Z',
       }, {
+        store_id: 'store-other',
         asin: 'B0TESTASIN',
         store_name: 'OTHER-STORE',
         marketplace_code: 'US',
@@ -542,11 +558,13 @@ describe('getDeliveryEvidenceStatus', () => {
       },
     });
 
-    expect(status.listing.contentCount).toBe(1);
-    expect(status.listing.draftCount).toBe(2);
+    expect(status.listing.contentCount).toBe(0);
+    expect(status.listing.draftCount).toBe(0);
     expect(status.listing.readReady).toBe(false);
     expect(status.listing.draftReady).toBe(false);
     expect(status.listing.ruleFallbackDraftCount).toBe(0);
+    expect(status.listing.latestAsin).toBeUndefined();
+    expect(status.listing.latestUpdatedAt).toBeUndefined();
   });
 
   function makeTempDir(): string {
@@ -560,10 +578,11 @@ function createDb(data: { listingContent: any[]; listingDrafts: any[] }) {
   return {
     prepare(sql: string) {
       return {
-        all(params: { asin?: string }) {
+        all(params: { asin?: string; storeId?: string }) {
           const rows = sql.includes('FROM listing_content') ? data.listingContent : data.listingDrafts;
-          if (!params.asin) return rows;
-          return rows.filter((row) => String(row.asin || '').toUpperCase() === String(params.asin || '').toUpperCase());
+          const storeRows = rows.filter((row) => String(row.store_id ?? TEST_STORE_ID) === String(params.storeId));
+          if (!params.asin) return storeRows;
+          return storeRows.filter((row) => String(row.asin || '').toUpperCase() === String(params.asin || '').toUpperCase());
         },
       };
     },

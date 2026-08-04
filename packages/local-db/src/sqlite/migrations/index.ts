@@ -117,3 +117,18 @@ export {
 export type {
   CollectionResumeAuthorityMigrationResult,
 } from './0010-collection-resume-authority';
+export {
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
+  LINGXING_COLLECTION_STORE_NAME_SQL_FUNCTION,
+  STORE_PROVIDER_IDENTITY_SQL_FUNCTION,
+  STORE_PROVIDER_IDENTITY_UNIQUE_INDEX,
+  StoreProviderIdentityAuthorityMigrationError,
+  installStoreProviderIdentitySqlFunction,
+  runStoreProviderIdentityAuthorityMigration,
+  verifyStoreProviderIdentityAuthoritySchema,
+} from './0011-store-provider-identity-authority';
+export type {
+  StoreProviderIdentityAuthorityMigrationResult,
+} from './0011-store-provider-identity-authority';

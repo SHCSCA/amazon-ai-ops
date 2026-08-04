@@ -454,10 +454,10 @@ describe('StoreManagementPanel', () => {
     updatedAt: '2026-07-22T00:00:00.000Z',
   } as StoreRecord;
 
-  it('validates display name and IANA timezone before calling typed handlers', () => {
+  it('validates display name and locks the V1 business timezone to Los Angeles', () => {
     expect(validateStoreDraft({ displayName: '', businessTimezone: 'not/a-zone', status: 'active' })).toEqual({
       displayName: '请输入店铺名称。',
-      businessTimezone: '请输入有效的 IANA 时区。',
+      businessTimezone: '首版业务时区固定为 America/Los_Angeles。',
     });
     expect(validateStoreDraft({
       displayName: 'Northstar Home',
@@ -476,7 +476,7 @@ describe('StoreManagementPanel', () => {
       displayName: 'New US Store',
       marketplace: 'US',
       currency: 'USD',
-      businessTimezone: 'America/New_York',
+      businessTimezone: 'America/Los_Angeles',
     });
     expect(buildUpdateStoreInput(store, {
       displayName: 'Northstar Home Updated',
@@ -517,22 +517,35 @@ describe('StoreManagementPanel', () => {
         <StoreManagementPanel
           activeStoreId={store.storeId}
           onArchive={vi.fn()}
-          onCreate={vi.fn()}
           onRestore={vi.fn()}
-          onSwitch={vi.fn()}
           onUpdate={vi.fn()}
           stores={[store, archived]}
         />
       </div>,
     );
     expect(markup).toContain('US / USD');
-    expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.create);
     expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.update);
     expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.archive);
     expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.restore);
-    expect(markup).toContain(STORE_MANAGEMENT_CAPABILITY_IDS.switch);
+    expect(markup).not.toContain('新建店铺');
+    expect(markup).not.toContain('>切换<');
     expect(markup).not.toContain('永久删除');
     expect(markup).not.toContain('hard-delete');
+  });
+
+  it('keeps Lingxing stable identity read-only and freezes exact unbind facts', () => {
+    const source = readFileSync(
+      new URL('../components/store-management-panel.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain('lingxingConnection?.collectionStoreName');
+    expect(source).toContain('aria-label="领星稳定身份只读状态"');
+    expect(source).toContain("setConfirmUnbind({ ...lingxingConnection })");
+    expect(source).toContain("setConfirmUnbind({ ...amazonAdsConnection })");
+    expect(source).toContain('confirmUnbind.collectionStoreName');
+    expect(source).toContain('confirmUnbind.externalAccountId');
+    expect(source).toContain('待首次新鲜登录识别');
+    expect(source).not.toMatch(/onChange=.*externalAccountId/);
   });
 });
 

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { normalizeStoreId } from '@amazon-ai-ops/shared-types';
 import {
   buildDailyReportRecommendationSummary,
   readDailyReportRecommendationSummary,
@@ -38,6 +39,7 @@ describe('daily report recommendation summary', () => {
   });
 
   it('reads pending and executed counts without treating approved rows as executed', () => {
+    const storeId = normalizeStoreId('store-a');
     const counts = {
       pending: 1,
       approved: 5,
@@ -45,9 +47,11 @@ describe('daily report recommendation summary', () => {
     } as const;
 
     expect(readDailyReportRecommendationSummary({
-      countByDate: () => 9,
-      countByDateAndStatus: (_date, status) => counts[status as keyof typeof counts] || 0,
-    }, '2026-07-14')).toEqual({
+      countByDateForStore: (candidateStoreId) => candidateStoreId === storeId ? 9 : 0,
+      countByDateAndStatusForStore: (candidateStoreId, _date, status) => (
+        candidateStoreId === storeId ? counts[status as keyof typeof counts] || 0 : 0
+      ),
+    }, storeId, '2026-07-14')).toEqual({
       total: 9,
       auto: 0,
       pending: 1,
@@ -63,8 +67,9 @@ describe('daily report recommendation summary', () => {
     );
 
     expect(dailyReportBlock).toContain(
-      'recommendationsSummary: readDailyReportRecommendationSummary(state.recommendationRepo, today)',
+      'recommendationsSummary: readDailyReportRecommendationSummary(',
     );
-    expect(dailyReportBlock).not.toContain("countByDateAndStatus(today, 'approved')");
+    expect(dailyReportBlock).toContain('context.storeId,');
+    expect(dailyReportBlock).not.toContain('countByDateAndStatus(');
   });
 });

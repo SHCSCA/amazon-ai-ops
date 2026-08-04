@@ -14,7 +14,8 @@ describe('preload business update bridge', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
     const loginContractSource = fs.readFileSync(path.join(__dirname, '../shared/login-contract.ts'), 'utf8');
 
-    expect(source).toContain("getSavedLoginCredentialStatus: () => ipcRenderer.invoke('browser:get-saved-credential-status')");
+    expect(source).toContain('getSavedLoginCredentialStatus: (): Promise<StoreScopedSavedLoginCredentialStatus> =>');
+    expect(source).toContain("ipcRenderer.invoke('browser:get-saved-credential-status') as Promise<StoreScopedSavedLoginCredentialStatus>");
     expect(source).toContain('BrowserLoginRequest');
     expect(loginContractSource).toContain("credentialSource: 'saved'");
     expect(loginContractSource).toContain("credentialSource: 'typed'");
@@ -118,7 +119,9 @@ describe('preload business update bridge', () => {
   it('uses the shared non-secret login result contract across the IPC bridge', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
 
-    expect(source).toContain("import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract'");
+    expect(source).toContain('BrowserLoginRequest,');
+    expect(source).toContain('BrowserLoginResult,');
+    expect(source).toContain("} from '../shared/login-contract'");
     expect(source).toContain('browserLogin: (request: BrowserLoginRequest): Promise<BrowserLoginResult> =>');
     expect(source).toContain("ipcRenderer.invoke('browser:login', request) as Promise<BrowserLoginResult>");
   });
@@ -165,6 +168,15 @@ describe('preload business update bridge', () => {
     expect(source).not.toContain('exportAdReadbackEvidence: (input: any)');
   });
 
+  it('keeps readback path inputs opaque and does not expose a renderer-selected output directory', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
+
+    expect(source).toContain('type ReadbackArtifactReference = string;');
+    expect(source).toContain('prepareAdReadbackSession: (input: { sourcePath: ReadbackArtifactReference }) =>');
+    expect(source).not.toContain('sourcePath: string; outDir?: string');
+    expect(source).toContain('sessionDir?: ReadbackArtifactReference');
+  });
+
   it('exposes typed logical store CRUD and switching without profile paths or secrets', () => {
     const source = fs.readFileSync(path.join(__dirname, 'index.ts'), 'utf8');
 
@@ -172,11 +184,16 @@ describe('preload business update bridge', () => {
     expect(source).toContain('StoreWorkspaceView');
     expect(source).toContain("ipcRenderer.invoke('stores:create', input)");
     expect(source).toContain("ipcRenderer.invoke('stores:connections:create', input)");
-    expect(source).toContain("ipcRenderer.invoke('stores:switch', { storeId })");
+    expect(source).toContain('switchStore: (scope: StoreScopeRef)');
+    expect(source).toContain("ipcRenderer.invoke('stores:switch', scope)");
+    expect(source).toContain("ipcRenderer.invoke('stores:get-selection')");
+    expect(source).toContain("ipcRenderer.invoke('stores:daily-status:list', input)");
     expect(source).toContain("ipcRenderer.invoke('stores:get-active-context')");
     expect(source).toContain("ipcRenderer.invoke('stores:get-active-workspace-view')");
     expect(source).toContain("ipcRenderer.invoke('package-ui-evidence:database-checkpoint', { phase })");
     expect(source).toContain("ipcRenderer.on('store-context:changed', handler)");
+    expect(source).toContain('(callback: (view: StoreWorkspaceView | null) => void)');
+    expect(source).toContain('view: StoreWorkspaceView | null');
     const storeBridgeStart = source.indexOf('listStores:');
     const settingsStart = source.indexOf('// Settings', storeBridgeStart);
     const storeBridge = source.slice(storeBridgeStart, settingsStart);

@@ -10,7 +10,9 @@ import type {
   ExportAdReadbackEvidenceRequest,
   LingxingCollectionJobSnapshot,
   LingxingCollectionProgressEvent,
+  ListStoreDailyStatusesInput,
   ListStoresInput,
+  OperatorWorkspaceSelection,
   RestoreStoreInput,
   RestoreStoreRuntimeConfigInput,
   RemoveStoreConnectionInput,
@@ -22,6 +24,8 @@ import type {
   StoreEvidenceRetentionPreviewSummary,
   StoreId,
   StoreRecord,
+  StoreScopeRef,
+  StoreDailyStatusListProjection,
   StoreRuntimeConfigProjection,
   StoreConnection,
   StoreWorkspaceView,
@@ -29,7 +33,11 @@ import type {
   UpdateStoreInput,
   UpdateStoreRuntimeConfigInput,
 } from '@amazon-ai-ops/shared-types';
-import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
+import type {
+  BrowserLoginRequest,
+  BrowserLoginResult,
+  StoreScopedSavedLoginCredentialStatus,
+} from '../shared/login-contract';
 import type {
   StoreOperationEventCreateInput,
   StoreOperationEventDeleteInput,
@@ -97,6 +105,10 @@ type AuthoritativeBusinessImportScope = BusinessUiScope & {
   storeContext: StoreContextEnvelope;
 };
 
+// Opaque compatibility reference. Main reduces any legacy absolute value to a
+// current-store-capsule-relative identifier before touching the filesystem.
+type ReadbackArtifactReference = string;
+
 ipcRenderer.on('business-ui:data-updated', () => {
   window.dispatchEvent(new Event('business-ui:data-updated'));
 });
@@ -132,10 +144,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('stores:connections:update', input) as Promise<StoreConnection>,
   removeStoreConnection: (input: RemoveStoreConnectionInput): Promise<{ success: true }> =>
     ipcRenderer.invoke('stores:connections:remove', input) as Promise<{ success: true }>,
-  switchStore: (storeId: StoreId): Promise<StoreWorkspaceView> =>
-    ipcRenderer.invoke('stores:switch', { storeId }) as Promise<StoreWorkspaceView>,
+  switchStore: (scope: StoreScopeRef): Promise<StoreWorkspaceView> =>
+    ipcRenderer.invoke('stores:switch', scope) as Promise<StoreWorkspaceView>,
   reconnectStore: (storeId: StoreId): Promise<StoreWorkspaceView> =>
     ipcRenderer.invoke('stores:reconnect', { storeId }) as Promise<StoreWorkspaceView>,
+  getOperatorWorkspaceSelection: (): Promise<OperatorWorkspaceSelection | null> =>
+    ipcRenderer.invoke('stores:get-selection') as Promise<OperatorWorkspaceSelection | null>,
+  listStoreDailyStatuses: (
+    input: ListStoreDailyStatusesInput,
+  ): Promise<StoreDailyStatusListProjection> =>
+    ipcRenderer.invoke('stores:daily-status:list', input) as Promise<StoreDailyStatusListProjection>,
   getActiveStoreContext: (): Promise<StoreContextEnvelope | null> =>
     ipcRenderer.invoke('stores:get-active-context') as Promise<StoreContextEnvelope | null>,
   getActiveStoreWorkspaceView: (): Promise<StoreWorkspaceView | null> =>
@@ -283,7 +301,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('store-collection-scheduler:run-now', { storeContext }) as Promise<StoreCollectionScheduleRunResult>,
 
   // Browser
-  getSavedLoginCredentialStatus: () => ipcRenderer.invoke('browser:get-saved-credential-status'),
+  getSavedLoginCredentialStatus: (): Promise<StoreScopedSavedLoginCredentialStatus> =>
+    ipcRenderer.invoke('browser:get-saved-credential-status') as Promise<StoreScopedSavedLoginCredentialStatus>,
   browserLogin: (request: BrowserLoginRequest): Promise<BrowserLoginResult> =>
     ipcRenderer.invoke('browser:login', request) as Promise<BrowserLoginResult>,
   browserLogout: () => ipcRenderer.invoke('browser:logout'),
@@ -395,15 +414,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   executeRecommendation: (id: number) => ipcRenderer.invoke('recommendations:execute', id),
   exportAdReadbackEvidence: (input: ExportAdReadbackEvidenceRequest) =>
     ipcRenderer.invoke('recommendations:export-ad-readback-evidence', input),
-  prepareAdReadbackSession: (input: { sourcePath: string; outDir?: string }) =>
+  prepareAdReadbackSession: (input: { sourcePath: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:prepare-ad-readback-session', input),
-  verifyAdReadbackSession: (input: { sessionDir: string }) =>
+  verifyAdReadbackSession: (input: { sessionDir: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:verify-ad-readback-session', input),
-  fillAdReadbackSession: (input: { sessionDir: string }) =>
+  fillAdReadbackSession: (input: { sessionDir: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:fill-ad-readback-session', input),
-  verifyAdReadbackEvidence: (input: { evidencePath: string }) =>
+  verifyAdReadbackEvidence: (input: { evidencePath: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:verify-ad-readback-evidence', input),
-  saveReadbackCapture: (input: { slot: 'approval' | 'before' | 'after' | 'readback'; dataUrl: string; fileName?: string; sessionDir?: string }) =>
+  saveReadbackCapture: (input: { slot: 'approval' | 'before' | 'after' | 'readback'; dataUrl: string; fileName?: string; sessionDir?: ReadbackArtifactReference }) =>
     ipcRenderer.invoke('recommendations:save-readback-capture', input),
 
   // Scheduler
@@ -441,8 +460,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('v1_5:listing:export-drafts', { drafts, format }),
 
   // Event listeners
-  onStoreContextChanged: (callback: (view: StoreWorkspaceView) => void) => {
-    const handler = (_: unknown, view: StoreWorkspaceView) => callback(view);
+  onStoreContextChanged: (callback: (view: StoreWorkspaceView | null) => void) => {
+    const handler = (_: unknown, view: StoreWorkspaceView | null) => callback(view);
     ipcRenderer.on('store-context:changed', handler);
     return () => ipcRenderer.removeListener('store-context:changed', handler);
   },

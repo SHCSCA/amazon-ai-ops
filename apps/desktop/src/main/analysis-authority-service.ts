@@ -141,11 +141,10 @@ export class AnalysisAuthorityService {
     if (!mission) throw new Error('Mission analysis blocked: Mission was not found in the active store.');
     if (mission.status !== 'active') throw new Error('Mission analysis blocked: Mission must be active.');
     const batch = this.db.prepare(`
-      SELECT store_name AS storeName, marketplace_code AS marketplaceCode,
+      SELECT marketplace_code AS marketplaceCode,
              date_start AS dateFrom, date_end AS dateTo
       FROM lingxing_report_batches WHERE store_id = ? AND id = ? AND status = 'completed'
     `).get(context.storeId, mission.dataBatchId) as {
-      storeName: string;
       marketplaceCode: string;
       dateFrom: string;
       dateTo: string;
@@ -159,6 +158,18 @@ export class AnalysisAuthorityService {
     }
     const dateFrom = batch.dateFrom;
     const dateTo = batch.dateTo;
+    const store = this.db.prepare(`
+      SELECT display_name AS displayName, marketplace, status
+      FROM stores
+      WHERE store_id = ?
+    `).get(context.storeId) as {
+      displayName: string;
+      marketplace: string;
+      status: string;
+    } | undefined;
+    if (!store || store.status !== 'active' || store.marketplace !== 'US' || !store.displayName.trim()) {
+      throw new Error('Mission analysis blocked: active logical US store authority is unavailable.');
+    }
     const asin = mission.productId?.toUpperCase();
     const capturedAuthority = this.captureGenerationAuthority();
     if (!capturedAuthority || typeof capturedAuthority.generateRecommendations !== 'function') {
@@ -183,7 +194,7 @@ export class AnalysisAuthorityService {
     const generation = await generationAuthority.generateRecommendations({
       dateFrom,
       dateTo,
-      storeName: batch.storeName,
+      storeName: store.displayName,
       marketplaceCode: 'US',
       asin,
       batchId: mission.dataBatchId,
@@ -192,7 +203,7 @@ export class AnalysisAuthorityService {
     if (generation.scope.storeId !== context.storeId
       || generation.scope.batchId !== mission.dataBatchId
       || generation.scope.marketplaceCode !== 'US'
-      || generation.scope.storeName !== batch.storeName
+      || generation.scope.storeName !== store.displayName
       || generation.scope.dateFrom !== dateFrom
       || generation.scope.dateTo !== dateTo
       || normalizedOptionalText(generation.scope.asin) !== normalizedOptionalText(asin)) {
@@ -603,6 +614,7 @@ export class AnalysisAuthorityService {
         batchId: evidencePackage.dataBatchId,
       };
       const canonical = assertCurrentWritableAdTargetAuthority(this.db, {
+        storeId: context.storeId,
         scope,
         target,
         allowedSourceFiles,

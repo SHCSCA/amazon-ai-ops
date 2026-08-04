@@ -24,7 +24,16 @@ export function normalizeBrowserLoginRequest(input: unknown): BrowserLoginReques
     throw new Error('请输入有效的 Amazon Ads Profile ID。');
   }
   const authority = { amazonAdsProfileId, storeContext };
+  if (
+    candidate.resetLingxingSessionForEnrollment !== undefined
+    && typeof candidate.resetLingxingSessionForEnrollment !== 'boolean'
+  ) {
+    throw new Error('领星会话重置确认值无效。');
+  }
   if (candidate.credentialSource === 'saved') {
+    if (candidate.resetLingxingSessionForEnrollment === true) {
+      throw new Error('领星首次绑定会话重置必须使用本次手动输入的凭证。');
+    }
     if (candidate.rememberPassword !== true) {
       throw new Error('保存凭证登录必须保持“记住密码”开启。');
     }
@@ -48,5 +57,8 @@ export function normalizeBrowserLoginRequest(input: unknown): BrowserLoginReques
     credentialSource: 'typed',
     password,
     rememberPassword: candidate.rememberPassword,
+    ...(candidate.resetLingxingSessionForEnrollment === true
+      ? { resetLingxingSessionForEnrollment: true }
+      : {}),
   };
 }

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
+  TARGET_VERSION,
   collectRowCounts,
   evaluateBusinessRowPreservation,
   loadLocalDbRuntime,
@@ -9,6 +10,15 @@ const {
   requireSqlite,
   sha256File,
 } = require('./migrate-current-user-db.js');
+const {
+  inspectStoreProviderIdentityV11Schema,
+  migrationContract,
+  migrationRowsMatchProductionContract,
+  migrationV1ChecksumWhitelist,
+} = require('./verify-production-authority-selection.js');
+
+// These check-code identifiers are part of the schema-v1 evidence ABI. Their
+// validation is intentionally bound to TARGET_VERSION, currently v11.
 
 function parseS7VerifierArgs(argv) {
   const args = { manifest: '', out: '' };
@@ -34,7 +44,9 @@ function verifyS7MigrationBackupRestore(manifestPath) {
 
   add('MANIFEST_SCHEMA_VALID', manifest.kind === 's7-offline-db-upgrade'
     && manifest.schemaVersion === 1
-    && manifest.passed === true, 'offline migration evidence schema v1');
+    && manifest.passed === true
+    && manifest.targetVersion === TARGET_VERSION,
+  `offline migration evidence schema v1 targeting v${TARGET_VERSION}`);
   add('SOURCE_AND_OUTPUT_PATHS_DISTINCT', Boolean(
     manifest.source?.path
     && manifest.workingDatabase?.path
@@ -54,7 +66,15 @@ function verifyS7MigrationBackupRestore(manifestPath) {
   verifyBoundFile(checks, 'RESTORED_COPY', manifest.restore?.destinationPath, manifest.restore?.sha256);
 
   const Database = requireSqlite();
+  const expectedMigrationRows = migrationContract().map((record) => ({
+    version: Number(record.version),
+    name: String(record.name),
+    checksum: String(record.checksum),
+    status: 'applied',
+  }));
+  const allowedV1Checksums = migrationV1ChecksumWhitelist(expectedMigrationRows);
   let upgraded;
+  let upgradedMigrationRows;
   let evaluatedBusinessRowPreservation;
   try {
     upgraded = new Database(manifest.workingDatabase.path, { readonly: true, fileMustExist: true });
@@ -67,18 +87,27 @@ function verifyS7MigrationBackupRestore(manifestPath) {
       upgradedRowCounts,
       manifest.source?.listingMergeBaseline,
     );
-    const appliedVersions = upgraded.prepare(`
-      SELECT version FROM schema_migrations WHERE status = 'applied' ORDER BY version
-    `).all().map((row) => Number(row.version));
+    upgradedMigrationRows = normalizeMigrationRows(upgraded.prepare(`
+      SELECT version, name, checksum, status
+      FROM schema_migrations
+      ORDER BY version
+    `).all());
+    const v11Schema = inspectStoreProviderIdentityV11Schema(upgraded);
     add('UPGRADED_INTEGRITY_OK', upgradedIntegrity === 'ok', `integrity=${upgradedIntegrity}`);
     add('UPGRADED_FOREIGN_KEYS_OK', foreignKeyViolations.length === 0, `violations=${foreignKeyViolations.length}`);
-    add('MIGRATIONS_1_TO_9_APPLIED', JSON.stringify(appliedVersions) === JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8, 9]), appliedVersions.join(','));
+    add('MIGRATIONS_1_TO_9_APPLIED',
+      migrationRowsMatchProductionContract(
+        upgradedMigrationRows,
+        expectedMigrationRows,
+        allowedV1Checksums,
+      ) && v11Schema.passed === true,
+      `records=${JSON.stringify(upgradedMigrationRows)}; v11Schema=${JSON.stringify(v11Schema.violations)}`);
 
     const runtime = loadLocalDbRuntime();
     const repository = new runtime.StoreRepository(upgraded);
     let preflight;
     try {
-      preflight = repository.getMigrationRecoveryPreflight(9);
+      preflight = repository.getMigrationRecoveryPreflight(TARGET_VERSION);
       add('V9_BACKUP_PREFLIGHT_OK', preflight.canRestore === true, preflight.blockers.join(' '));
       add('V9_BACKUP_SOURCE_VERSION_BOUND', preflight.sourceVersion === manifest.source.version,
         `source=${manifest.source.version}, backup=${preflight.sourceVersion}`);
@@ -125,10 +154,17 @@ function verifyS7MigrationBackupRestore(manifestPath) {
     if (restored?.open) restored.close();
   }
 
-  const migrationRecords = Array.isArray(manifest.migrations) ? manifest.migrations : [];
-  add('EVIDENCE_MIGRATION_RECORDS_BOUND', migrationRecords.length === 9
-    && migrationRecords.every((record, index) => Number(record.version) === index + 1 && record.status === 'applied'),
-  `records=${migrationRecords.length}`);
+  const migrationRecords = Array.isArray(manifest.migrations)
+    ? normalizeMigrationRows(manifest.migrations)
+    : [];
+  add('EVIDENCE_MIGRATION_RECORDS_BOUND',
+    migrationRowsMatchProductionContract(
+      migrationRecords,
+      expectedMigrationRows,
+      allowedV1Checksums,
+    )
+      && sameJsonValue(migrationRecords, upgradedMigrationRows),
+    `records=${JSON.stringify(migrationRecords)}`);
   add('BUSINESS_ROWS_PRESERVED', Array.isArray(manifest.preservationFailures)
     && manifest.preservationFailures.length === 0
     && manifest.businessRowPreservation?.passed === true
@@ -186,6 +222,15 @@ function sameNumericRecord(left, right) {
 function sameJsonValue(left, right) {
   if (left === undefined || right === undefined) return false;
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function normalizeMigrationRows(rows) {
+  return rows.map((record) => ({
+    version: Number(record?.version),
+    name: String(record?.name ?? ''),
+    checksum: String(record?.checksum ?? ''),
+    status: String(record?.status ?? '').toLowerCase(),
+  }));
 }
 
 function samePath(left, right) {

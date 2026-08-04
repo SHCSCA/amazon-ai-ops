@@ -1,3 +1,8 @@
+import {
+  normalizeLingxingCollectionStoreName,
+  normalizeProviderExternalAccountId,
+} from '@amazon-ai-ops/shared-types';
+
 export type ProviderIdentityConnection = Readonly<{
   provider: 'lingxing' | 'amazon_ads';
   accountLabel?: string;
@@ -51,6 +56,30 @@ export const PROVIDER_ACTIVE_IDENTITY_DOM_PROBES = [
     id: 'active-seller-id',
     selector: '[data-active-seller-id]',
     attribute: 'data-active-seller-id',
+    providers: ['lingxing'],
+  },
+  {
+    id: 'current-store-id',
+    selector: '[data-current-store-id]',
+    attribute: 'data-current-store-id',
+    providers: ['lingxing'],
+  },
+  {
+    id: 'active-store-id',
+    selector: '[data-active-store-id]',
+    attribute: 'data-active-store-id',
+    providers: ['lingxing'],
+  },
+  {
+    id: 'current-store-name',
+    selector: '[data-current-store-name]',
+    attribute: 'data-current-store-name',
+    providers: ['lingxing'],
+  },
+  {
+    id: 'active-store-name',
+    selector: '[data-active-store-name]',
+    attribute: 'data-active-store-name',
     providers: ['lingxing'],
   },
   {
@@ -115,7 +144,7 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 const URL_IDENTITY_POLICIES = {
   lingxing: {
     origin: 'https://erp.lingxing.com',
-    queryParameters: ['account_id', 'seller_id', 'store_id'],
+    queryParameters: ['seller_id', 'store_id'],
   },
   amazon_ads: {
     origin: 'https://ads.lingxing.com',
@@ -125,13 +154,6 @@ const URL_IDENTITY_POLICIES = {
   ProviderIdentityConnection['provider'],
   { origin: string; queryParameters: readonly string[] }
 >;
-
-const DOM_PROBE_BY_ID: ReadonlyMap<string, ProviderActiveIdentityDomProbe> = new Map(
-  PROVIDER_ACTIVE_IDENTITY_DOM_PROBES.map((probe) => [
-    probe.id,
-    probe as ProviderActiveIdentityDomProbe,
-  ]),
-);
 
 function boundedNormalizedIdentity(value: unknown): string | null {
   if (
@@ -173,41 +195,233 @@ function readUrlIdentityCandidates(
   }
 }
 
+const LINGXING_STABLE_ID_PROBES = new Set([
+  'current-seller-id',
+  'active-seller-id',
+  'current-store-id',
+  'active-store-id',
+]);
+
+const LINGXING_STORE_NAME_PROBES = new Set([
+  'current-store-name',
+  'active-store-name',
+]);
+
+const LINGXING_ACCOUNT_LABEL_PROBES = new Set([
+  'current-account-label',
+  'active-account-label',
+  'aria-current-account-label',
+  'data-active-account-label',
+]);
+
+const AMAZON_ADS_PROFILE_ID_PROBES = new Set([
+  'current-profile-id',
+  'active-profile-id',
+]);
+
+const AMAZON_ADS_ACCOUNT_LABEL_PROBES = new Set([
+  'current-account-label',
+  'active-account-label',
+  'aria-current-account-label',
+  'data-active-account-label',
+]);
+
+function normalizeAmazonAdsProfileIdentity(value: unknown): string | null {
+  try {
+    return normalizeProviderExternalAccountId('amazon_ads', value) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function readLingxingStableExternalAccountIdEvidence(input: Readonly<{
+  pageUrl: string;
+  domObservations: readonly ProviderActiveIdentityDomObservation[];
+}>): string {
+  let url: URL;
+  try {
+    url = new URL(input.pageUrl);
+  } catch {
+    throw new Error('领星稳定店铺身份无法从受信页面唯一读取，登录已阻断。');
+  }
+  if (url.origin !== URL_IDENTITY_POLICIES.lingxing.origin
+    || url.username
+    || url.password
+    || input.domObservations.length > MAX_DOM_OBSERVATIONS) {
+    throw new Error('领星稳定店铺身份无法从受信页面唯一读取，登录已阻断。');
+  }
+  const candidates: unknown[] = [];
+  for (const parameter of ['seller_id', 'store_id'] as const) {
+    const values = url.searchParams.getAll(parameter);
+    if (values.length > 1) {
+      throw new Error('领星页面存在冲突的稳定店铺身份，登录已阻断。');
+    }
+    if (values.length === 1) candidates.push(values[0]);
+  }
+  for (const observation of input.domObservations) {
+    if (LINGXING_STABLE_ID_PROBES.has(observation.probeId)) {
+      candidates.push(observation.value);
+    }
+  }
+  let normalized: string[];
+  try {
+    normalized = candidates.map((candidate) => {
+      const value = normalizeProviderExternalAccountId('lingxing', candidate);
+      if (!value) throw new Error('empty Lingxing stable identity');
+      return value;
+    });
+  } catch {
+    throw new Error('领星稳定店铺身份包含无效证据，登录已阻断。');
+  }
+  const unique = [...new Set(normalized)];
+  if (unique.length === 0) {
+    throw new Error('领星稳定店铺身份无法从受信页面唯一读取，登录已阻断。');
+  }
+  if (unique.length !== 1) {
+    throw new Error('领星页面存在冲突的稳定店铺身份，登录已阻断。');
+  }
+  return unique[0];
+}
+
+export function requireLingxingTypedStableIdentityEnrollment(input: Readonly<{
+  accountLabel: string;
+  collectionStoreName: string;
+  credentialSubmission: ProviderCredentialSubmission | undefined;
+  pageUrl: string;
+  domObservations: readonly ProviderActiveIdentityDomObservation[];
+}>): string {
+  const submission = input.credentialSubmission;
+  const expectedUsername = boundedNormalizedIdentity(input.accountLabel);
+  const submittedUsername = submission
+    ? boundedNormalizedIdentity(submission.username)
+    : null;
+  if (!submission
+    || submission.credentialSource !== 'typed'
+    || !submission.credentialsSubmitted
+    || !expectedUsername
+    || submittedUsername !== expectedUsername) {
+    throw new Error('领星稳定身份首次绑定必须使用与连接账号一致的本次手动登录凭证。');
+  }
+  assertLingxingCollectionStoreNameEvidence({
+    expectedCollectionStoreName: input.collectionStoreName,
+    domObservations: input.domObservations,
+  });
+  return readLingxingStableExternalAccountIdEvidence(input);
+}
+
+export function assertLingxingCollectionStoreNameEvidence(input: Readonly<{
+  expectedCollectionStoreName: string;
+  domObservations: readonly ProviderActiveIdentityDomObservation[];
+}>): void {
+  let expected: string | undefined;
+  let candidates: string[];
+  try {
+    expected = normalizeLingxingCollectionStoreName(input.expectedCollectionStoreName);
+    candidates = input.domObservations
+      .filter((observation) => LINGXING_STORE_NAME_PROBES.has(observation.probeId))
+      .map((observation) => {
+        const value = normalizeLingxingCollectionStoreName(observation.value);
+        if (!value) throw new Error('empty Lingxing collection store name');
+        return value;
+      });
+  } catch {
+    throw new Error('领星当前可见店铺名称证据无效，稳定身份绑定已阻断。');
+  }
+  if (!expected || candidates.length === 0) {
+    throw new Error('无法从可信页面唯一读取领星当前店铺名称，稳定身份绑定已阻断。');
+  }
+  const unique = [...new Set(candidates)];
+  if (unique.length !== 1 || unique[0] !== expected) {
+    throw new Error('领星当前可见店铺名称与配置的下载中心店铺名称不一致，稳定身份绑定已阻断。');
+  }
+}
+
 export function assertProviderActiveIdentity(
   input: AssertProviderActiveIdentityInput,
 ): void {
-  const expected = [input.connection.externalAccountId, input.connection.accountLabel]
-    .map(boundedNormalizedIdentity)
-    .filter((value): value is string => Boolean(value));
-  const urlCandidates = readUrlIdentityCandidates(input.connection.provider, input.pageUrl);
-  if (!urlCandidates) {
-    throw new Error(`${input.connection.provider} 当前账户身份与当前店铺连接不匹配，浏览器会话已拒绝。`);
+  if (input.connection.provider === 'lingxing') {
+    assertLingxingActiveIdentity(input);
+    return;
   }
-  if (input.domObservations.length > MAX_DOM_OBSERVATIONS) {
-    throw new Error(`${input.connection.provider} 当前账户身份与当前店铺连接不匹配，浏览器会话已拒绝。`);
-  }
-  const domCandidates = input.domObservations
-    .flatMap((observation) => {
-      const probe = DOM_PROBE_BY_ID.get(observation.probeId);
-      if (!probe || !probe.providers.includes(input.connection.provider)) return [];
-      return [observation.value];
-    });
-  const submittedUsername = input.connection.provider === 'lingxing'
-    && input.credentialSubmission?.credentialSource === 'typed'
-    && input.credentialSubmission.credentialsSubmitted
-    ? [input.credentialSubmission.username]
-    : [];
-  const normalizedCandidates = [...urlCandidates, ...domCandidates, ...submittedUsername]
-    .map(boundedNormalizedIdentity);
-  if (normalizedCandidates.some((value) => value === null)) {
-    throw new Error(`${input.connection.provider} 当前账户身份与当前店铺连接不匹配，浏览器会话已拒绝。`);
-  }
-  const candidates = normalizedCandidates as string[];
-  const expectedSet = new Set(expected);
-  if (
-    candidates.length > 0
-    && candidates.every((candidate) => expectedSet.has(candidate))
-  ) return;
+  assertAmazonAdsActiveIdentity(input);
+}
 
-  throw new Error(`${input.connection.provider} 当前账户身份与当前店铺连接不匹配，浏览器会话已拒绝。`);
+function assertAmazonAdsActiveIdentity(input: AssertProviderActiveIdentityInput): void {
+  const fail = (): never => {
+    throw new Error('amazon_ads 当前账户身份与当前店铺连接不匹配，浏览器会话已拒绝。');
+  };
+  if (input.domObservations.length > MAX_DOM_OBSERVATIONS) fail();
+  const expectedProfileId = normalizeAmazonAdsProfileIdentity(input.connection.externalAccountId);
+  if (!expectedProfileId) fail();
+  const urlCandidates = readUrlIdentityCandidates('amazon_ads', input.pageUrl);
+  if (urlCandidates === null) {
+    throw new Error('amazon_ads 当前账户身份与当前店铺连接不匹配，浏览器会话已拒绝。');
+  }
+  const stableProfileEvidence = [
+    ...urlCandidates,
+    ...input.domObservations
+      .filter((observation) => AMAZON_ADS_PROFILE_ID_PROBES.has(observation.probeId))
+      .map((observation) => observation.value),
+  ].map(normalizeAmazonAdsProfileIdentity);
+  if (
+    stableProfileEvidence.length === 0
+    || stableProfileEvidence.some((candidate) => candidate !== expectedProfileId)
+  ) {
+    fail();
+  }
+
+  const labelEvidence = input.domObservations
+    .filter((observation) => AMAZON_ADS_ACCOUNT_LABEL_PROBES.has(observation.probeId))
+    .map((observation) => boundedNormalizedIdentity(observation.value));
+  if (labelEvidence.some((candidate) => candidate === null)) fail();
+  if (labelEvidence.length > 0 && input.connection.accountLabel) {
+    const expectedLabel = boundedNormalizedIdentity(input.connection.accountLabel);
+    if (!expectedLabel || labelEvidence.some((candidate) => candidate !== expectedLabel)) fail();
+  }
+}
+
+function assertLingxingActiveIdentity(input: AssertProviderActiveIdentityInput): void {
+  if (input.domObservations.length > MAX_DOM_OBSERVATIONS
+    || readUrlIdentityCandidates('lingxing', input.pageUrl) === null) {
+    throw new Error('lingxing 当前账户身份与当前店铺连接不匹配，浏览器会话已拒绝。');
+  }
+  const expectedStableId = normalizeProviderExternalAccountId(
+    'lingxing',
+    input.connection.externalAccountId,
+  );
+  if (expectedStableId) {
+    const observedStableId = readLingxingStableExternalAccountIdEvidence(input);
+    if (observedStableId !== expectedStableId) {
+      throw new Error('lingxing 当前稳定店铺身份与当前店铺连接不匹配，浏览器会话已拒绝。');
+    }
+  }
+
+  const expectedAccountLabel = input.connection.accountLabel
+    ? boundedNormalizedIdentity(input.connection.accountLabel)
+    : null;
+  const observedAccountLabels = input.domObservations
+    .filter((observation) => LINGXING_ACCOUNT_LABEL_PROBES.has(observation.probeId))
+    .map((observation) => boundedNormalizedIdentity(observation.value));
+  if (observedAccountLabels.some((value) => value === null)
+    || (observedAccountLabels.length > 0
+      && (!expectedAccountLabel
+        || observedAccountLabels.some((value) => value !== expectedAccountLabel)))) {
+    throw new Error('lingxing 当前登录账号与当前店铺连接不匹配，浏览器会话已拒绝。');
+  }
+
+  const submission = input.credentialSubmission;
+  let typedAccountVerified = false;
+  if (submission !== undefined) {
+    const submittedUsername = boundedNormalizedIdentity(submission.username);
+    if (submission.credentialSource !== 'typed'
+      || !submission.credentialsSubmitted
+      || !expectedAccountLabel
+      || submittedUsername !== expectedAccountLabel) {
+      throw new Error('lingxing 本次提交账号与当前店铺连接不匹配，浏览器会话已拒绝。');
+    }
+    typedAccountVerified = true;
+  }
+  if (!expectedStableId && observedAccountLabels.length === 0 && !typedAccountVerified) {
+    throw new Error('lingxing 当前账户身份与当前店铺连接不匹配，浏览器会话已拒绝。');
+  }
 }

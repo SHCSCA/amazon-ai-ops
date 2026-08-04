@@ -67,6 +67,7 @@ function createHarness(options: {
     captured: CapturedAnalysisGenerationAuthority,
   ) => CapturedAnalysisGenerationAuthority;
   onAutomaticGrantIssued?: AnalysisAuthorityServiceOptions['onAutomaticGrantIssued'];
+  batchStoreName?: string;
 } = {}): Harness {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'amazon-ai-ops-analysis-service-'));
   tempDirs.push(directory);
@@ -101,9 +102,9 @@ function createHarness(options: {
       id, date_start, date_end, store_name, marketplace_code, status,
       download_dir, created_at, completed_at, store_id, request_id,
       browser_profile_id, business_date, session_generation
-    ) VALUES ('batch-1', '2026-07-01', '2026-07-22', 'US Store One', 'US', 'completed',
+    ) VALUES ('batch-1', '2026-07-01', '2026-07-22', ?, 'US', 'completed',
       ?, ?, ?, 'store-one', 'request-1', 'profile-one', '2026-07-22', 4)
-  `).run(path.join(directory, 'reports'), NOW, NOW);
+  `).run(options.batchStoreName ?? 'US Store One', path.join(directory, 'reports'), NOW, NOW);
   const reportPaths = seedImportAuthority(database, directory);
   const proofPath = path.join(directory, 'proof.png');
   fs.writeFileSync(proofPath, Buffer.from('verified visible Ads identity proof'));
@@ -488,6 +489,14 @@ function seedPriorGrant(
 }
 
 describe('AnalysisAuthorityService', () => {
+  it('uses the logical Store display name when the Lingxing selector snapshot has a different name', async () => {
+    const harness = createHarness({ batchStoreName: 'Lingxing External Selector Name' });
+
+    await expect(runRequest(harness)).resolves.toMatchObject({
+      generatedRecommendations: 1,
+    });
+  });
+
   it('runs real recommendation generation into a path-free evidence/proposal/Decision projection', async () => {
     const harness = createHarness();
     const result = await runRequest(harness);

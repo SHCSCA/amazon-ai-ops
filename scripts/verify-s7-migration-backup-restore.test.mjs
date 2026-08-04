@@ -1,14 +1,17 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { spawnSync } from 'child_process';
 import { createRequire } from 'module';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
   OFFLINE_MIGRATION_USAGE,
+  TARGET_VERSION,
   evaluateBusinessRowPreservation,
   executeOfflineMigration,
+  executeLockedWorkingCopy,
   inspectOfflineMigration,
   loadLocalDbRuntime,
   main: migrationMain,
@@ -20,6 +23,7 @@ const {
   parseS7VerifierArgs,
   verifyS7MigrationBackupRestore,
 } = require('./verify-s7-migration-backup-restore.js');
+const { legacyV1Checksum } = require('./verify-production-authority-selection.js');
 
 const tempDirectories = [];
 
@@ -147,6 +151,76 @@ describe('S7 offline migration and recovery verifier', () => {
     expect(fs.existsSync(manifestPath)).toBe(false);
   }, 30_000);
 
+  it('rejects a mutated Node migration plan targetVersion before creating any work artifact', () => {
+    const value = offlineMigrationFixture();
+
+    expect(() => executeOfflineMigration(value.args, {
+      afterInspection(plan) {
+        plan.targetVersion = TARGET_VERSION - 1;
+      },
+    })).toThrow(new RegExp(`targetVersion must be exactly ${TARGET_VERSION}`));
+
+    expect(sha256File(value.sourcePath)).toBe(value.sourceSha256);
+    expect(fs.existsSync(value.workDir)).toBe(false);
+    expect(fs.existsSync(value.manifestPath)).toBe(false);
+  }, 30_000);
+
+  it('rejects a wrong locked-worker targetVersion before touching any supplied path', () => {
+    const root = tempDirectory();
+    expect(() => executeLockedWorkingCopy(
+      {
+        targetVersion: TARGET_VERSION - 1,
+        workingDatabasePath: path.join(root, 'missing-working.db'),
+        restoreDatabasePath: path.join(root, 'must-not-exist-restore.db'),
+      },
+      path.join(root, 'must-not-exist-manifest.tmp'),
+      path.join(root, 'missing-lease.json'),
+    )).toThrow(new RegExp(`targetVersion must be exactly ${TARGET_VERSION}`));
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
+  it.each([10, 10.9, 11.1])(
+    'rejects PowerShell lease targetVersion %s with zero helper residue',
+    (targetVersion) => {
+    if (process.platform !== 'win32') return;
+    const root = tempDirectory();
+    const requestPath = path.join(root, 'wrong-target-request.json');
+    fs.writeFileSync(requestPath, JSON.stringify({
+      kind: 's7-offline-migration-lease-request',
+      schemaVersion: 1,
+      plan: { targetVersion },
+    }));
+    const helper = path.resolve('scripts/run-s7-offline-migration-lease.ps1');
+    const powershell = process.env.SystemRoot
+      ? path.join(
+        process.env.SystemRoot,
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+        'powershell.exe',
+      )
+      : 'powershell.exe';
+
+    const result = spawnSync(powershell, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      helper,
+      '-RequestPath',
+      requestPath,
+    ], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`)
+      .toMatch(new RegExp(`targetVersion must be exactly ${TARGET_VERSION}`));
+    expect(fs.readdirSync(root)).toEqual(['wrong-target-request.json']);
+    },
+    30_000,
+  );
+
   it('fails closed when another database handle prevents the Windows offline lease', () => {
     const value = offlineMigrationFixture();
     const blocker = fs.openSync(value.sourcePath, 'r');
@@ -190,7 +264,7 @@ describe('S7 offline migration and recovery verifier', () => {
     expect(fs.readdirSync(value.workDir)).toEqual(['offline-upgrade-evidence.json']);
   }, 30_000);
 
-  it('upgrades only a bound v7 copy and independently verifies its pre-v9 restore', () => {
+  it('upgrades only a bound v7 copy and independently verifies its pre-v11 restore', () => {
     const root = tempDirectory();
     const sourceDirectory = path.join(root, 'source');
     const workDir = path.join(root, 'work');
@@ -213,7 +287,7 @@ describe('S7 offline migration and recovery verifier', () => {
       kind: 's7-offline-db-upgrade-plan',
       mode: 'dry-run',
       source: { version: 7, sha256: sourceSha256 },
-      targetVersion: 9,
+      targetVersion: TARGET_VERSION,
     });
     expect(sha256File(sourcePath)).toBe(sourceSha256);
     expect(fs.readdirSync(sourceDirectory).sort()).toEqual(sourceDirectoryEntries);
@@ -233,9 +307,9 @@ describe('S7 offline migration and recovery verifier', () => {
       kind: 's7-offline-db-upgrade',
       passed: true,
       source: { version: 7, sha256: sourceSha256 },
-      targetVersion: 9,
+      targetVersion: TARGET_VERSION,
       preservationFailures: [],
-      recoveryPreflight: { canRestore: true, sourceVersion: 7, targetVersion: 9 },
+      recoveryPreflight: { canRestore: true, sourceVersion: 7, targetVersion: TARGET_VERSION },
       restore: { version: 7, integrityCheck: 'ok' },
     });
     expect(sha256File(sourcePath)).toBe(sourceSha256);
@@ -247,6 +321,117 @@ describe('S7 offline migration and recovery verifier', () => {
     expect(verification.passed).toBe(true);
     expect(verification.summary.failed).toBe(0);
     expect(verification.checks.map((check) => check.code)).toContain('MIGRATIONS_1_TO_9_APPLIED');
+
+    const pristineWorkingDatabase = fs.readFileSync(evidence.workingDatabase.path);
+    const pristineManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const resetArtifacts = () => {
+      fs.writeFileSync(evidence.workingDatabase.path, pristineWorkingDatabase);
+      fs.writeFileSync(manifestPath, `${JSON.stringify(pristineManifest, null, 2)}\n`);
+    };
+    const rewriteManifestForCurrentWorkingCopy = (mutate) => {
+      const manifest = structuredClone(pristineManifest);
+      mutate?.(manifest);
+      manifest.workingDatabase.upgradedSha256 = sha256File(evidence.workingDatabase.path);
+      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    };
+
+    const tamperedLedger = new (requireSqlite())(evidence.workingDatabase.path);
+    try {
+      tamperedLedger.prepare(`
+        UPDATE schema_migrations SET checksum = 'tampered-v11-checksum' WHERE version = ?
+      `).run(TARGET_VERSION);
+    } finally {
+      tamperedLedger.close();
+    }
+    rewriteManifestForCurrentWorkingCopy();
+    expect(verifyS7MigrationBackupRestore(manifestPath).checks).toContainEqual(
+      expect.objectContaining({ code: 'MIGRATIONS_1_TO_9_APPLIED', passed: false }),
+    );
+
+    resetArtifacts();
+    const extraLedger = new (requireSqlite())(evidence.workingDatabase.path);
+    try {
+      extraLedger.exec(`
+        INSERT INTO schema_migrations (
+          version, name, checksum, status, started_at, applied_at,
+          error_message, manifest_json, result_json
+        )
+        SELECT 12, 'unexpected-v12', 'unexpected-v12', 'applied', started_at, applied_at,
+          NULL, '{}', '{}'
+        FROM schema_migrations WHERE version = 11
+      `);
+    } finally {
+      extraLedger.close();
+    }
+    rewriteManifestForCurrentWorkingCopy();
+    expect(verifyS7MigrationBackupRestore(manifestPath).checks).toContainEqual(
+      expect.objectContaining({ code: 'MIGRATIONS_1_TO_9_APPLIED', passed: false }),
+    );
+
+    resetArtifacts();
+    const missingV11Trigger = new (requireSqlite())(evidence.workingDatabase.path);
+    try {
+      missingV11Trigger.exec(
+        'DROP TRIGGER trg_store_connections_external_identity_insert',
+      );
+    } finally {
+      missingV11Trigger.close();
+    }
+    rewriteManifestForCurrentWorkingCopy();
+    expect(verifyS7MigrationBackupRestore(manifestPath).checks).toContainEqual(
+      expect.objectContaining({ code: 'MIGRATIONS_1_TO_9_APPLIED', passed: false }),
+    );
+
+    resetArtifacts();
+    const legacyV1Database = new (requireSqlite())(evidence.workingDatabase.path);
+    try {
+      legacyV1Database.prepare(`
+        UPDATE schema_migrations SET checksum = ? WHERE version = 1
+      `).run(legacyV1Checksum());
+    } finally {
+      legacyV1Database.close();
+    }
+    rewriteManifestForCurrentWorkingCopy((manifest) => {
+      manifest.migrations[0].checksum = legacyV1Checksum();
+    });
+    expect(verifyS7MigrationBackupRestore(manifestPath).passed).toBe(true);
+
+    resetArtifacts();
+    const mismatchedLegacyV1Database = new (requireSqlite())(evidence.workingDatabase.path);
+    try {
+      mismatchedLegacyV1Database.prepare(`
+        UPDATE schema_migrations SET checksum = ? WHERE version = 1
+      `).run(legacyV1Checksum());
+    } finally {
+      mismatchedLegacyV1Database.close();
+    }
+    rewriteManifestForCurrentWorkingCopy();
+    expect(verifyS7MigrationBackupRestore(manifestPath).checks).toContainEqual(
+      expect.objectContaining({ code: 'EVIDENCE_MIGRATION_RECORDS_BOUND', passed: false }),
+    );
+
+    resetArtifacts();
+    rewriteManifestForCurrentWorkingCopy((manifest) => {
+      manifest.migrations[TARGET_VERSION - 1].name = 'tampered-v11-name';
+    });
+    expect(verifyS7MigrationBackupRestore(manifestPath).checks).toContainEqual(
+      expect.objectContaining({ code: 'EVIDENCE_MIGRATION_RECORDS_BOUND', passed: false }),
+    );
+
+    resetArtifacts();
+    rewriteManifestForCurrentWorkingCopy((manifest) => {
+      manifest.migrations.push({
+        version: 12,
+        name: 'unexpected-v12',
+        checksum: 'unexpected-v12',
+        status: 'applied',
+      });
+    });
+    expect(verifyS7MigrationBackupRestore(manifestPath).checks).toContainEqual(
+      expect.objectContaining({ code: 'EVIDENCE_MIGRATION_RECORDS_BOUND', passed: false }),
+    );
+
+    resetArtifacts();
 
     fs.appendFileSync(evidence.restore.destinationPath, 'tampered');
     const tampered = verifyS7MigrationBackupRestore(manifestPath);
@@ -403,7 +588,11 @@ function createV7Source(databasePath) {
   const database = runtime.initSqlite(databasePath);
   try {
     database.pragma('foreign_keys = OFF');
-    const executionTables = [
+    const postV7Tables = [
+      'lingxing_collection_resume_events',
+      'lingxing_collection_resume_active_claims',
+      'lingxing_collection_resume_attempts',
+      'report_import_metric_evidence',
       'ad_execution_domain_reconciliations',
       'ad_execution_evidence',
       'ad_execution_events',
@@ -412,8 +601,31 @@ function createV7Source(databasePath) {
       'ad_keyword_alias_resolutions',
       'ad_keyword_identity_versions',
     ];
-    for (const table of executionTables) database.exec(`DROP TABLE IF EXISTS "${table}"`);
-    database.prepare('DELETE FROM schema_migrations WHERE version IN (8, 9)').run();
+    for (const trigger of [
+      'trg_stores_v1_authority_insert',
+      'trg_stores_v1_authority_update',
+      'trg_store_connections_external_identity_insert',
+      'trg_store_connections_external_identity_update',
+      'trg_store_connections_collection_store_name_insert',
+      'trg_store_connections_collection_store_name_update',
+    ]) {
+      database.exec(`DROP TRIGGER IF EXISTS "${trigger}"`);
+    }
+    database.exec('DROP INDEX IF EXISTS idx_store_connections_provider_external_identity_unique');
+    database.prepare(`
+      UPDATE store_connections
+      SET external_account_id = collection_store_name
+      WHERE provider = 'lingxing' AND collection_store_name IS NOT NULL
+    `).run();
+    for (const column of [
+      'normalized_collection_store_name',
+      'collection_store_name',
+      'normalized_external_account_id',
+    ]) {
+      database.exec(`ALTER TABLE store_connections DROP COLUMN "${column}"`);
+    }
+    for (const table of postV7Tables) database.exec(`DROP TABLE IF EXISTS "${table}"`);
+    database.prepare('DELETE FROM schema_migrations WHERE version >= 8').run();
     database.prepare(`
       INSERT INTO app_settings (key, value, updated_at)
       VALUES ('s7-script-sentinel', 'preserve-me', '2026-07-23T00:00:00.000Z')
@@ -421,6 +633,12 @@ function createV7Source(databasePath) {
     database.pragma('foreign_keys = ON');
   } finally {
     database.close();
+  }
+  for (const suffix of [
+    `.pre-upgrade-to-v${TARGET_VERSION}.bak`,
+    `.pre-upgrade-to-v${TARGET_VERSION}.manifest.json`,
+  ]) {
+    fs.rmSync(`${databasePath}${suffix}`, { force: true });
   }
 }
 

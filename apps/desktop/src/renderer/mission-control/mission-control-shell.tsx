@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
-  CaretDown,
   CheckCircle,
   MagnifyingGlass,
   PlugsConnected,
@@ -18,11 +17,17 @@ import type {
   MissionControlAutonomyMode,
   MissionControlAutonomyProjection,
   MissionControlCapabilityProjection,
+  CreateStoreInput,
   StoreContextEnvelope,
-  StoreId,
+  StoreDailyStatusProjection,
   StoreRecord,
+  StoreScopeRef,
 } from '@amazon-ai-ops/shared-types';
 import { Sidebar, workspaceCapabilityState } from '../components/app-shell';
+import {
+  StoreScopeSwitcher,
+  type StoreScopeSwitcherProps,
+} from '../components/store-scope-switcher';
 import { VISIBLE_WORKSPACES } from '../navigation';
 import type { NavigationIntent } from '../navigation';
 
@@ -40,12 +45,18 @@ export interface MissionControlShellProps {
   stores: readonly StoreRecord[];
   activeStore?: StoreRecord | null;
   authoritativeContext: StoreContextEnvelope;
-  storePhase?: string;
+  storePhase?: StoreScopeSwitcherProps['phase'];
   storeError?: string | null;
+  storeSyncWarning?: string | null;
+  dailyStatuses?: readonly StoreDailyStatusProjection[];
+  dailyStatusPhase?: 'idle' | 'loading' | 'ready' | 'error';
+  dailyStatusError?: string | null;
   capabilities?: readonly MissionControlCapabilityProjection[];
   autonomy?: MissionControlAutonomyProjection | null;
   onNavigate: (intent: NavigationIntent) => void;
-  onSwitchStore: (storeId: StoreId) => Promise<unknown> | unknown;
+  onSwitchStore: (scope: StoreScopeRef) => Promise<unknown> | unknown;
+  onCreateStore?: (input: CreateStoreInput) => Promise<StoreRecord> | StoreRecord;
+  onRetryStores?: () => Promise<unknown> | unknown;
   onSetAutonomyMode?: (mode: MissionControlAutonomyMode) => Promise<unknown> | unknown;
   onLogout: () => Promise<unknown> | unknown;
   brandBadges?: React.ReactNode;
@@ -68,10 +79,16 @@ export function MissionControlShell({
   authoritativeContext,
   storePhase = 'ready',
   storeError,
+  storeSyncWarning,
+  dailyStatuses = [],
+  dailyStatusPhase = 'idle',
+  dailyStatusError,
   capabilities = [],
   autonomy = DEFAULT_BLOCKED_AUTONOMY,
   onNavigate,
   onSwitchStore,
+  onCreateStore,
+  onRetryStores,
   onSetAutonomyMode,
   onLogout,
   brandBadges,
@@ -84,13 +101,11 @@ export function MissionControlShell({
   const projection = autonomy ?? DEFAULT_BLOCKED_AUTONOMY;
   const [pendingMode, setPendingMode] = useState<MissionControlAutonomyMode | null>(null);
   const [modeFeedback, setModeFeedback] = useState('');
-  const [storeSwitchError, setStoreSwitchError] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const [globalPopover, setGlobalPopover] = useState<'boundaries' | 'help' | null>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
-  const storeBusy = storePhase === 'switching' || storePhase === 'loading' || storePhase === 'refreshing';
   const activeStoreId = String(authoritativeContext.storeId);
   const autoBlockerId = 'mission-control-auto-mode-blocker';
   const visibleCommandItems = useMemo(() => {
@@ -156,15 +171,6 @@ export function MissionControlShell({
     }
   }
 
-  async function requestStoreSwitch(storeId: StoreId) {
-    setStoreSwitchError('');
-    try {
-      await onSwitchStore(storeId);
-    } catch (error) {
-      setStoreSwitchError(error instanceof Error ? error.message : '店铺切换失败');
-    }
-  }
-
   return (
     <div
       className={`app-shell mission-control-shell${sidebarCollapsed ? ' mission-control-sidebar-collapsed' : ''}`}
@@ -184,34 +190,23 @@ export function MissionControlShell({
           </span>
         </div>
 
-        <label
-          className="mission-control-topbar-select mission-control-store-select"
-          data-error={storeError || storeSwitchError ? 'true' : undefined}
-          title={storeError || storeSwitchError || activeStore?.displayName || activeStoreId}
+        <div
+          aria-label="当前店铺权威摘要"
+          className="mission-control-topbar-select mission-control-store-select mission-control-store-select--readonly"
+          data-error={storeError ? 'true' : undefined}
+          role="status"
+          title={storeError || activeStore?.displayName || activeStoreId}
         >
           <Storefront aria-hidden="true" size={17} weight="duotone" />
           <span className="mission-control-store-field">
-            <span className="sr-only">当前店铺</span>
-            <select
-              aria-label="切换店铺"
-              disabled={storeBusy}
-              onChange={(event) => {
-                const nextId = event.target.value as StoreId;
-                if (nextId && nextId !== authoritativeContext.storeId) void requestStoreSwitch(nextId);
-              }}
-              value={activeStoreId}
-            >
-              {stores.filter((store) => store.status === 'active').map((store) => (
-                <option key={store.storeId} value={store.storeId}>{store.displayName}</option>
-              ))}
-            </select>
+            <strong>{activeStore?.displayName || activeStoreId}</strong>
+            <small>Main authority</small>
           </span>
           <span className="mission-control-fixed-scope" aria-label="美国站，美元">
             <span>US</span>
             <span>USD</span>
           </span>
-          {storeBusy ? <span className="mission-control-scope-progress" role="status">切换中</span> : <CaretDown aria-hidden="true" size={14} />}
-        </label>
+        </div>
 
         <div className="mission-control-product-scope" aria-label="当前产品范围">
           <Target aria-hidden="true" size={17} weight="duotone" />
@@ -343,22 +338,46 @@ export function MissionControlShell({
         </div>
       </header>
 
-      {(storeError || storeSwitchError || !activeStore) && (
+      {(storeError || !activeStore) && (
         <div className="mission-control-shell-alert" role="alert">
           <Warning aria-hidden="true" size={16} weight="fill" />
-          <span>{storeError || storeSwitchError || '当前店铺记录不可用，所有店铺级动作已停止。'}</span>
+          <span>{storeError || '当前店铺记录不可用，所有店铺级动作已停止。'}</span>
+        </div>
+      )}
+      {storeSyncWarning && (
+        <div className="mission-control-shell-alert mission-control-shell-alert--warning" role="status">
+          <Warning aria-hidden="true" size={16} weight="fill" />
+          <span>{storeSyncWarning}</span>
         </div>
       )}
 
       <div className="app-body mission-control-body">
         <Sidebar
           activeIntent={activeIntent}
-          activeStore={activeStore}
           capabilities={capabilities}
           collapsed={sidebarCollapsed}
           onNavigate={onNavigate}
           onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
           pendingIntent={pendingIntent}
+          storeScopeControl={(
+            <StoreScopeSwitcher
+              activeStore={activeStore}
+              authoritativeContext={authoritativeContext}
+              collapsed={sidebarCollapsed}
+              dailyStatusError={dailyStatusError}
+              dailyStatusPhase={dailyStatusPhase}
+              dailyStatuses={dailyStatuses}
+              error={storeError}
+              onCreate={onCreateStore ?? (() => Promise.reject(new Error('店铺创建接口不可用。')))}
+              onManage={() => onNavigate(
+                VISIBLE_WORKSPACES.find((item) => item.id === 'objects')!.defaultIntent,
+              )}
+              onRetry={onRetryStores ?? (() => undefined)}
+              onSwitch={onSwitchStore}
+              phase={storePhase}
+              stores={stores}
+            />
+          )}
         />
         <main
           className={`app-content mission-control-content${routeHandoff ? ' app-content-navigating' : ''}`}

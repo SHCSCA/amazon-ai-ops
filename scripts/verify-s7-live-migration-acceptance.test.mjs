@@ -17,6 +17,7 @@ const {
   validateS7LiveMigrationAcceptanceReceipt,
 } = require('./verify-s7-live-migration-acceptance.js');
 const {
+  TARGET_VERSION,
   collectRowCounts,
   evaluateBusinessRowPreservation,
   loadLocalDbRuntime,
@@ -97,14 +98,14 @@ describe('S7 live migration acceptance receipt CLI', () => {
         failed: 0,
         integrityCheck: 'ok',
         foreignKeyViolationCount: 0,
-        migrationCount: 9,
+        migrationCount: TARGET_VERSION,
         businessRowPreservation: {
           passed: true,
           failureCount: 0,
         },
         recovery: {
           sourceVersion: 7,
-          targetVersion: 9,
+          targetVersion: TARGET_VERSION,
           backupIntegrityCheck: 'ok',
           schemaFingerprintMatches: true,
           tableRowCountsMatch: true,
@@ -230,15 +231,16 @@ describe('S7 live migration acceptance receipt CLI', () => {
   }, 30_000);
 
   it.each([
-    ['missing migration 9', (database) => {
-      database.prepare('DELETE FROM schema_migrations WHERE version = 9').run();
+    ['missing migration 11', (database) => {
+      database.prepare('DELETE FROM schema_migrations WHERE version = ?')
+        .run(TARGET_VERSION);
     }],
-    ['old migration 9 checksum', (database) => {
+    ['old migration 11 checksum', (database) => {
       database.prepare(`
         UPDATE schema_migrations
-        SET checksum = 'store-authority-quarantine-repair-v9-old'
-        WHERE version = 9
-      `).run();
+        SET checksum = 'store-provider-identity-authority-v11-old'
+        WHERE version = ?
+      `).run(TARGET_VERSION);
     }],
   ])('rejects a live database with %s', async (_label, mutate) => {
     const value = acceptanceFixture();
@@ -246,6 +248,18 @@ describe('S7 live migration acceptance receipt CLI', () => {
 
     await expect(run(cliArgs(value), quietContext(value)))
       .rejects.toThrow(/LIVE_MIGRATIONS_1_TO_9_CURRENT/);
+    expect(fs.existsSync(value.outPath)).toBe(false);
+    expect(captureDirectories(value.captureParent)).toEqual([]);
+  }, 30_000);
+
+  it('rejects a live v11 ledger when the provider-identity trigger contract is incomplete', async () => {
+    const value = acceptanceFixture();
+    mutateLiveDatabase(value.dbPath, (database) => {
+      database.exec('DROP TRIGGER trg_store_connections_external_identity_insert');
+    });
+
+    await expect(run(cliArgs(value), quietContext(value)))
+      .rejects.toThrow(/LIVE_V11_STORE_PROVIDER_IDENTITY_SCHEMA_CURRENT/);
     expect(fs.existsSync(value.outPath)).toBe(false);
     expect(captureDirectories(value.captureParent)).toEqual([]);
   }, 30_000);
@@ -264,9 +278,9 @@ describe('S7 live migration acceptance receipt CLI', () => {
     expect(fs.existsSync(value.outPath)).toBe(false);
   }, 30_000);
 
-  it('rejects a migration 9 backup path that is not the fixed adjacent live path', async () => {
+  it('rejects a migration 11 backup path that is not the fixed adjacent live path', async () => {
     const value = acceptanceFixture();
-    mutateMigration9Manifest(value.dbPath, (upgradeBackup) => {
+    mutateTargetMigrationManifest(value.dbPath, (upgradeBackup) => {
       upgradeBackup.backupPath = path.join(value.root, 'detached-backup.bak');
     });
 
@@ -275,9 +289,9 @@ describe('S7 live migration acceptance receipt CLI', () => {
     expect(fs.existsSync(value.outPath)).toBe(false);
   }, 30_000);
 
-  it('rejects a migration 9 backup whose file hash was tampered', async () => {
+  it('rejects a migration 11 backup whose file hash was tampered', async () => {
     const value = acceptanceFixture();
-    const backupPath = `${value.dbPath}.pre-upgrade-to-v9.bak`;
+    const backupPath = `${value.dbPath}.pre-upgrade-to-v${TARGET_VERSION}.bak`;
     fs.appendFileSync(backupPath, Buffer.from('tampered-backup'));
 
     await expect(run(cliArgs(value), quietContext(value)))
@@ -395,7 +409,7 @@ describe('S7 live migration acceptance receipt CLI', () => {
   it('rejects an adjacent final upgrade manifest marked reused', async () => {
     const value = acceptanceFixture();
     const adjacentManifestPath =
-      `${value.dbPath}.pre-upgrade-to-v9.manifest.json`;
+      `${value.dbPath}.pre-upgrade-to-v${TARGET_VERSION}.manifest.json`;
     const adjacent = readJson(adjacentManifestPath);
     adjacent.status = 'reused';
     writeJson(adjacentManifestPath, adjacent);
@@ -407,7 +421,7 @@ describe('S7 live migration acceptance receipt CLI', () => {
 
   it('accepts reused embedded upgrade metadata when the adjacent final manifest is created', async () => {
     const value = acceptanceFixture();
-    mutateMigration9Manifest(value.dbPath, (upgradeBackup) => {
+    mutateTargetMigrationManifest(value.dbPath, (upgradeBackup) => {
       upgradeBackup.status = 'reused';
     });
 
@@ -648,7 +662,10 @@ function acceptanceFixture() {
 
   const runtime = loadLocalDbRuntime();
   const workingDatabasePath = path.join(offlineWorkRoot, 'working-upgraded.db');
-  const restoreDatabasePath = path.join(offlineWorkRoot, 'restored-pre-v9.db');
+  const restoreDatabasePath = path.join(
+    offlineWorkRoot,
+    `restored-pre-v${TARGET_VERSION}.db`,
+  );
   fs.copyFileSync(dbPath, workingDatabasePath, fs.constants.COPYFILE_EXCL);
   const migrated = runtime.initSqlite(workingDatabasePath);
   let migrations;
@@ -669,12 +686,12 @@ function acceptanceFixture() {
     targetMigrationManifest = JSON.parse(migrated.prepare(`
       SELECT manifest_json AS manifestJson
       FROM schema_migrations
-      WHERE version = 9
-    `).get().manifestJson);
+      WHERE version = ?
+    `).get(TARGET_VERSION).manifestJson);
     recoveryPreflight = new runtime.StoreRepository(migrated)
-      .getMigrationRecoveryPreflight(9);
+      .getMigrationRecoveryPreflight(TARGET_VERSION);
     restore = new runtime.StoreRepository(migrated)
-      .restoreMigrationBackupTo(restoreDatabasePath, 9);
+      .restoreMigrationBackupTo(restoreDatabasePath, TARGET_VERSION);
     businessRowPreservation = evaluateBusinessRowPreservation(
       migrated,
       sourceRowCounts,
@@ -722,7 +739,7 @@ function acceptanceFixture() {
       workingCopySha256: sourceSha256,
       lockHeldThroughFinalPublish: true,
     },
-    targetVersion: 9,
+    targetVersion: TARGET_VERSION,
     workingDatabase: {
       path: workingDatabasePath,
       sourceCopySha256: sourceSha256,
@@ -771,7 +788,34 @@ function createV7Source(databasePath) {
   const database = runtime.initSqlite(databasePath);
   try {
     database.pragma('foreign_keys = OFF');
+    for (const trigger of [
+      'trg_stores_v1_authority_insert',
+      'trg_stores_v1_authority_update',
+      'trg_store_connections_external_identity_insert',
+      'trg_store_connections_external_identity_update',
+      'trg_store_connections_collection_store_name_insert',
+      'trg_store_connections_collection_store_name_update',
+    ]) {
+      database.exec(`DROP TRIGGER IF EXISTS "${trigger}"`);
+    }
+    database.exec('DROP INDEX IF EXISTS idx_store_connections_provider_external_identity_unique');
+    database.prepare(`
+      UPDATE store_connections
+      SET external_account_id = collection_store_name
+      WHERE provider = 'lingxing' AND collection_store_name IS NOT NULL
+    `).run();
+    for (const column of [
+      'normalized_collection_store_name',
+      'collection_store_name',
+      'normalized_external_account_id',
+    ]) {
+      database.exec(`ALTER TABLE store_connections DROP COLUMN "${column}"`);
+    }
     for (const table of [
+      'lingxing_collection_resume_events',
+      'lingxing_collection_resume_active_claims',
+      'lingxing_collection_resume_attempts',
+      'report_import_metric_evidence',
       'ad_execution_domain_reconciliations',
       'ad_execution_evidence',
       'ad_execution_events',
@@ -782,7 +826,7 @@ function createV7Source(databasePath) {
     ]) {
       database.exec(`DROP TABLE IF EXISTS "${table}"`);
     }
-    database.prepare('DELETE FROM schema_migrations WHERE version IN (8, 9)').run();
+    database.prepare('DELETE FROM schema_migrations WHERE version >= 8').run();
     database.prepare(`
       INSERT INTO app_settings (key, value, updated_at)
       VALUES ('s7-live-acceptance-sentinel', 'preserve-me', '2026-07-29T00:00:00.000Z')
@@ -790,6 +834,12 @@ function createV7Source(databasePath) {
     database.pragma('foreign_keys = ON');
   } finally {
     database.close();
+  }
+  for (const suffix of [
+    `.pre-upgrade-to-v${TARGET_VERSION}.bak`,
+    `.pre-upgrade-to-v${TARGET_VERSION}.manifest.json`,
+  ]) {
+    fs.rmSync(`${databasePath}${suffix}`, { force: true });
   }
 }
 
@@ -843,19 +893,19 @@ function mutateLiveDatabase(databasePath, mutate) {
   }
 }
 
-function mutateMigration9Manifest(databasePath, mutate) {
+function mutateTargetMigrationManifest(databasePath, mutate) {
   mutateLiveDatabase(databasePath, (database) => {
     const row = database.prepare(`
       SELECT manifest_json AS manifestJson
       FROM schema_migrations
-      WHERE version = 9
-    `).get();
+      WHERE version = ?
+    `).get(TARGET_VERSION);
     const manifest = JSON.parse(row.manifestJson);
     mutate(manifest.upgradeBackup);
     database.prepare(`
       UPDATE schema_migrations
       SET manifest_json = ?
-      WHERE version = 9
-    `).run(JSON.stringify(manifest));
+      WHERE version = ?
+    `).run(JSON.stringify(manifest), TARGET_VERSION);
   });
 }

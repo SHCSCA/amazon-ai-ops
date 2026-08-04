@@ -130,12 +130,20 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('data-login-connection-status');
     expect(loginPage).toContain('data-state={loginConnectionState}');
     expect(loginPage).toContain('data-package-ui-evidence-action="bind-lingxing-connection"');
-    expect(loginPage).toContain('绑定当前领星账号');
-    expect(loginPage).toContain('更新当前领星账号绑定');
+    expect(loginPage).toContain('领星下载中心店铺名称');
+    expect(loginPage).toContain('必须与领星下载中心显示完全一致');
+    expect(loginPage).toContain('data-package-ui-evidence-field="lingxing-shop-identity"');
+    expect(loginPage).toContain('绑定领星账号与店铺');
+    expect(loginPage).toContain('更新领星账号与店铺绑定');
     expect(loginPage).toContain('领星连接已绑定');
     expect(loginPage).toContain('disabled={loading || !loginWorkbenchReady}');
     expect(loginPage).toContain('lingxingConnection?.accountLabel?.trim() === username.trim()');
-    expect(loginPage).toContain('store.bindLingxingConnection(username.trim())');
+    expect(loginPage).toContain('lingxingConnection?.normalizedCollectionStoreName === normalizedLingxingCollectionStoreName');
+    expect(loginPage).toContain('store.bindLingxingConnection(username.trim(), lingxingCollectionStoreName.trim())');
+    expect(loginPage).toContain('setConfirmUnbindConnection({ ...lingxingConnection })');
+    expect(loginPage).toContain('待首次新鲜登录识别');
+    expect(loginPage).toContain('aria-label="领星稳定身份只读状态"');
+    expect(loginPage).not.toMatch(/<input[\s\S]{0,180}value=\{lingxingConnection\?\.externalAccountId/);
     expect(loginPage).not.toMatch(/data-[\\w-]*(?:user|account)[\\w-]*=\\{?username/i);
   });
 
@@ -158,8 +166,9 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('绑定 Amazon Ads Profile');
     expect(loginPage).toContain('更新 Amazon Ads Profile 绑定');
     expect(loginPage).toContain('Amazon Ads Profile 已绑定');
-    expect(loginPage).toContain('amazonAdsConnection?.externalAccountId?.trim() === amazonAdsProfileId.trim()');
+    expect(loginPage).toContain('amazonAdsConnection?.normalizedExternalAccountId === normalizedAmazonAdsProfileId');
     expect(loginPage).toContain('store.bindAmazonAdsConnection(amazonAdsProfileId)');
+    expect(loginPage).toContain('setConfirmUnbindConnection({ ...amazonAdsConnection })');
     expect(loginPage).toContain('const loginConnectionsReady = lingxingConnectionReady && amazonAdsConnectionReady');
     expect(loginPage).toContain('disabled={loading || !loginWorkbenchReady}');
     expect(loginPage).not.toMatch(/type="password"[\s\S]{0,200}value=\{amazonAdsProfileId\}/);
@@ -178,7 +187,7 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('data-login-workbench-step="authorize"');
     expect(loginPage).toContain('本次正式证据首轮必须重新输入密码并勾选“记住密码”');
     expect(loginPage).toContain('需要刷新登录身份时，请重新输入密码并勾选“记住密码”');
-    expect(loginPage).toContain('分别确认领星账号和 Amazon Ads Profile ID');
+    expect(loginPage).toContain('同时确认领星登录账号、下载中心店铺名称与 Amazon Ads Profile ID');
     expect(loginPage).toContain('保持 Electron 主窗口打开');
     expect(loginPage).toContain('独立 Playwright Chromium');
     expect(loginPage).toContain('Package UI 证据采集器不会读取、填写或点击你的账号密码');
@@ -193,6 +202,10 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('暂不能登录，请先处理以下项目');
     expect(loginPage).toContain('未就绪：请先在步骤 1 输入领星用户名。');
     expect(loginPage).toContain('未就绪：请填写 ads.lingxing.com 当前广告账户的 profile_id。');
+    expect(loginPage).toContain('允许重置当前店铺领星会话');
+    expect(loginPage).toContain('不会删除 Profile、报表或其他店铺数据');
+    expect(loginPage).toContain("String(saved.storeId ?? '') !== String(requestedStoreId ?? '')");
+    expect(loginPage).toContain('store.activeStore?.storeId');
   });
 
   it('does not erase a typed Ads profile id on an unrelated same-store authority revision', () => {
@@ -265,6 +278,7 @@ describe('login micro-response contract', () => {
       savedCredentialUsername: 'operator@example.com',
       savedPasswordAvailable: true,
       storeContext: LOGIN_STORE_CONTEXT,
+      lingxingCollectionStoreName: 'SHC001-US',
       username: 'operator@example.com',
     })).toEqual({
       amazonAdsProfileId: '1234567890',
@@ -278,12 +292,25 @@ describe('login micro-response contract', () => {
   it('requires typed password when the username or remember choice no longer matches saved state', () => {
     expect(buildBrowserLoginRequest({
       amazonAdsProfileId: '1234567890',
+      credentialSource: 'typed',
+      password: 'typed-for-this-login',
+      rememberPassword: false,
+      savedCredentialUsername: 'saved-user',
+      savedPasswordAvailable: false,
+      storeContext: LOGIN_STORE_CONTEXT,
+      lingxingCollectionStoreName: '',
+      username: 'changed-user',
+    })).toBeNull();
+
+    expect(buildBrowserLoginRequest({
+      amazonAdsProfileId: '1234567890',
       credentialSource: 'saved',
       password: '',
       rememberPassword: true,
       savedCredentialUsername: 'saved-user',
       savedPasswordAvailable: true,
       storeContext: LOGIN_STORE_CONTEXT,
+      lingxingCollectionStoreName: 'SHC001-US',
       username: 'changed-user',
     })).toBeNull();
 
@@ -295,6 +322,7 @@ describe('login micro-response contract', () => {
       savedCredentialUsername: 'saved-user',
       savedPasswordAvailable: true,
       storeContext: LOGIN_STORE_CONTEXT,
+      lingxingCollectionStoreName: 'SHC001-US',
       username: 'changed-user',
     })).toEqual({
       amazonAdsProfileId: '1234567890',
@@ -304,6 +332,36 @@ describe('login micro-response contract', () => {
       rememberPassword: false,
       storeContext: LOGIN_STORE_CONTEXT,
     });
+
+    expect(buildBrowserLoginRequest({
+      amazonAdsProfileId: '1234567890',
+      credentialSource: 'typed',
+      password: 'fresh-enrollment-password',
+      resetLingxingSessionForEnrollment: true,
+      rememberPassword: false,
+      savedCredentialUsername: 'saved-user',
+      savedPasswordAvailable: true,
+      storeContext: LOGIN_STORE_CONTEXT,
+      lingxingCollectionStoreName: 'SHC001-US',
+      username: 'saved-user',
+    })).toMatchObject({
+      credentialSource: 'typed',
+      resetLingxingSessionForEnrollment: true,
+      storeContext: LOGIN_STORE_CONTEXT,
+    });
+
+    expect(buildBrowserLoginRequest({
+      amazonAdsProfileId: '1234567890',
+      credentialSource: 'saved',
+      password: '',
+      resetLingxingSessionForEnrollment: true,
+      rememberPassword: true,
+      savedCredentialUsername: 'saved-user',
+      savedPasswordAvailable: true,
+      storeContext: LOGIN_STORE_CONTEXT,
+      lingxingCollectionStoreName: 'SHC001-US',
+      username: 'saved-user',
+    })).toBeNull();
   });
 
   it('uses warning and blocked feedback instead of green success for unavailable credentials', () => {

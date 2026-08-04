@@ -12,6 +12,7 @@ import {
   OPERATION_EVENT_ARCHIVE_MIGRATION_VERSION,
   OperationEventArchiveMigrationError,
 } from './0005-operation-event-archive';
+import { STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION } from './0011-store-provider-identity-authority';
 
 const tempDirs: string[] = [];
 
@@ -92,7 +93,7 @@ describe('operation event archive migration v5', () => {
         sql: expect.stringMatching(/store_id, archived_at, event_date DESC, id DESC/i),
       }));
       expect(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get())
-        .toEqual({ count: 9 });
+        .toEqual({ count: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION });
     } finally {
       database.close();
     }

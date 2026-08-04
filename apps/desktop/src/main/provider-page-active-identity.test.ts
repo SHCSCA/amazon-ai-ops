@@ -3,6 +3,7 @@ import {
   inspectLingxingProviderPageIdentity,
   type ProviderIdentityPageLike,
 } from './provider-page-active-identity';
+import { PROVIDER_ACTIVE_IDENTITY_DOM_PROBES } from './provider-active-identity';
 
 function page(input: {
   url?: string;
@@ -50,6 +51,18 @@ describe('inspectLingxingProviderPageIdentity', () => {
     });
     expect(currentPage.evaluate).toHaveBeenCalledOnce();
     expect(Object.isFrozen(result.domObservations)).toBe(true);
+  });
+
+  it('uses the shared canonical external-id normalization for visible page evidence', async () => {
+    await expect(inspectLingxingProviderPageIdentity({
+      page: page({
+        domObservations: [
+          { probeId: 'current-seller-id', value: '  SELLER-001  ' },
+        ],
+      }),
+      connection,
+      mode: 'collection_only',
+    })).resolves.toMatchObject({ status: 'ready' });
   });
 
   it.each([
@@ -137,9 +150,12 @@ describe('inspectLingxingProviderPageIdentity', () => {
   });
 
   it('rejects unbounded DOM payloads instead of truncating attacker-controlled output', async () => {
+    const maximumLingxingObservations = PROVIDER_ACTIVE_IDENTITY_DOM_PROBES
+      .filter((probe) => probe.providers.some((provider) => provider === 'lingxing'))
+      .length * 2;
     await expect(inspectLingxingProviderPageIdentity({
       page: page({
-        domObservations: Array.from({ length: 25 }, (_, index) => ({
+        domObservations: Array.from({ length: maximumLingxingObservations + 1 }, (_, index) => ({
           probeId: `probe-${index}`,
           value: 'SHC001',
         })),

@@ -321,8 +321,8 @@ describe('recommendation approval policy', () => {
       expect(handler).toContain('applyRecommendationDecision({');
       expect(handler).toContain('assertRecommendationDecisionRevision(');
       expect(handler.indexOf('assertRecommendationDecisionRevision(')).toBeLessThan(handler.indexOf('applyRecommendationDecision({'));
-      expect(handler).toContain('updateStatusWithEvidenceIfCurrent(');
-      expect(handler.indexOf('applyRecommendationDecision({')).toBeLessThan(handler.indexOf('updateStatusWithEvidenceIfCurrent('));
+      expect(handler).toContain('updateStatusWithEvidenceIfCurrentForStore(');
+      expect(handler.indexOf('applyRecommendationDecision({')).toBeLessThan(handler.indexOf('updateStatusWithEvidenceIfCurrentForStore('));
       expect(handler).toContain('recommendation.status');
       expect(handler).toContain('requestedRevision');
       expect(handler).toContain('expectedRevision');

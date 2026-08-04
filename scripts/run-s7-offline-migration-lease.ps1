@@ -5,6 +5,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ExpectedTargetVersion = 11
 
 Add-Type -TypeDefinition @'
 using System;
@@ -205,6 +206,20 @@ if ($request.kind -ne 's7-offline-migration-lease-request' -or
     $request.schemaVersion -ne 1) {
   throw 'Offline lease request contract is invalid.'
 }
+$targetVersionValue = $request.plan.targetVersion
+$targetVersionIsInteger = $targetVersionValue -is [sbyte] -or
+  $targetVersionValue -is [byte] -or
+  $targetVersionValue -is [int16] -or
+  $targetVersionValue -is [uint16] -or
+  $targetVersionValue -is [int32] -or
+  $targetVersionValue -is [uint32] -or
+  $targetVersionValue -is [int64] -or
+  $targetVersionValue -is [uint64]
+if (-not $targetVersionIsInteger -or
+    [int64]$targetVersionValue -ne $ExpectedTargetVersion) {
+  throw "Offline lease plan targetVersion must be exactly $ExpectedTargetVersion."
+}
+$targetVersion = [int]$targetVersionValue
 
 $sourcePath = Get-FullPath ([string]$request.plan.source.path)
 $workingPath = Get-FullPath ([string]$request.plan.workingDatabasePath)
@@ -386,8 +401,8 @@ finally {
     foreach ($suffix in @('-wal', '-shm', '-journal')) {
       Remove-OwnedFile "$workingPath$suffix"
     }
-    Remove-OwnedFile "$workingPath.pre-upgrade-to-v9.bak"
-    Remove-OwnedFile "$workingPath.pre-upgrade-to-v9.manifest.json"
+    Remove-OwnedFile "$workingPath.pre-upgrade-to-v$targetVersion.bak"
+    Remove-OwnedFile "$workingPath.pre-upgrade-to-v$targetVersion.manifest.json"
     Remove-OwnedFile $restorePath
     foreach ($suffix in @('-wal', '-shm', '-journal')) {
       Remove-OwnedFile "$restorePath$suffix"

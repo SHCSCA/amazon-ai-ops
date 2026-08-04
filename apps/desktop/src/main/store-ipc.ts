@@ -2,11 +2,15 @@ import type {
   ArchiveStoreInput,
   CreateStoreConnectionInput,
   CreateStoreInput,
+  ListStoreDailyStatusesInput,
   ListStoresInput,
+  OperatorWorkspaceSelection,
   RestoreStoreInput,
   RemoveStoreConnectionInput,
   StoreContextEnvelope,
   StoreRecord,
+  StoreScopeRef,
+  StoreDailyStatusListProjection,
   StoreWorkspaceView,
   UpdateStoreConnectionInput,
   UpdateStoreInput,
@@ -34,6 +38,8 @@ export const STORE_IPC_CHANNELS = [
   'stores:connections:remove',
   'stores:switch',
   'stores:reconnect',
+  'stores:get-selection',
+  'stores:daily-status:list',
   'stores:get-active-context',
   'stores:get-active-workspace-view',
 ] as const;
@@ -45,6 +51,7 @@ export interface IpcHandlerRegistrar {
 export interface StoreIpcMutationScope {
   operation: string;
   targetStoreId?: string;
+  targetMarketplace?: 'US';
 }
 
 type MaybePromise<Value> = Value | Promise<Value>;
@@ -67,6 +74,12 @@ interface StoreMutationPhases<Result> {
   after?(result: Result, activeContext: StoreContextEnvelope | null): MaybePromise<void>;
 }
 
+export interface StorePostCommitFailure {
+  operation: string;
+  targetStoreId?: string;
+  error: unknown;
+}
+
 export interface StoreIpcEvents {
   /**
    * Main must claim the shared user/automation mutation lane synchronously
@@ -80,14 +93,21 @@ export interface StoreIpcEvents {
     context: StoreContextEnvelope,
     operation: string,
   ): MaybePromise<void>;
-  onStoreChanged?(view: StoreWorkspaceView): MaybePromise<void>;
+  onStoreChanged?(view: StoreWorkspaceView | null): MaybePromise<void>;
   onStoreRecordChanged?(store: StoreRecord): MaybePromise<void>;
+  /** Reports a projection/publication failure after the authority write committed. */
+  onPostCommitFailure?(failure: StorePostCommitFailure): MaybePromise<void>;
+}
+
+export interface StoreDailyStatusIpcReader {
+  list(input: ListStoreDailyStatusesInput): StoreDailyStatusListProjection;
 }
 
 export function registerStoreIpcHandlers(
   ipc: IpcHandlerRegistrar,
   coordinator: StoreCoordinator,
   events: StoreIpcEvents = {},
+  dailyStatusReader?: StoreDailyStatusIpcReader,
 ): void {
   ipc.handle('stores:list', (_event, input) =>
     coordinator.listStores(asOptionalObject(input) as ListStoresInput | undefined));
@@ -116,11 +136,13 @@ export function registerStoreIpcHandlers(
         'stores:update',
       ),
       mutate: () => coordinator.updateStore(request),
-      after: async (store) => {
+      after: async (store, previousActiveContext) => {
         await events.onStoreRecordChanged?.(store);
         const activeView = coordinator.getActiveStoreWorkspaceView();
         if (activeView?.store.storeId === store.storeId) {
           await events.onStoreChanged?.(activeView);
+        } else if (previousActiveContext?.storeId === store.storeId) {
+          await events.onStoreChanged?.(null);
         }
       },
     });
@@ -138,8 +160,12 @@ export function registerStoreIpcHandlers(
         'stores:archive',
       ),
       mutate: () => coordinator.archiveStore(request),
-      after: async (store) => {
+      after: async (store, previousActiveContext) => {
         await events.onStoreRecordChanged?.(store);
+        if (previousActiveContext?.storeId === store.storeId
+          && coordinator.getActiveStoreContext() === null) {
+          await events.onStoreChanged?.(null);
+        }
       },
     });
   });
@@ -178,6 +204,7 @@ export function registerStoreIpcHandlers(
   });
   ipc.handle('stores:connections:update', (_event, input) => {
     const request = readUpdateConnectionInput(input);
+    assertRendererStableExternalAccountIdPreflight(coordinator, request);
     return runStoreMutation(coordinator, events, {
       operation: 'stores:connections:update',
       targetStoreId: optionalStoreId(request.storeId),
@@ -222,18 +249,19 @@ export function registerStoreIpcHandlers(
     });
   });
   ipc.handle('stores:switch', (_event, input) => {
-    const storeId = readStoreId(input);
+    const scope = readStoreScopeRef(input);
     return runStoreMutation(coordinator, events, {
       operation: 'stores:switch',
-      targetStoreId: optionalStoreId(storeId),
+      targetStoreId: optionalStoreId(scope.storeId),
+      targetMarketplace: scope.marketplace,
     }, {
-      preflight: () => preflightStoreTransition(coordinator, storeId, 'stores:switch'),
+      preflight: () => preflightStoreTransition(coordinator, scope, 'stores:switch'),
       before: (activeContext) => guardCurrentActiveStoreMutation(
         activeContext,
         events,
         'stores:switch',
       ),
-      mutate: () => coordinator.switchStore(storeId),
+      mutate: () => coordinator.switchStore(scope),
       after: async (view) => {
         await events.onStoreChanged?.(view);
       },
@@ -262,6 +290,12 @@ export function registerStoreIpcHandlers(
       },
     });
   });
+  ipc.handle('stores:get-selection', (): OperatorWorkspaceSelection | null =>
+    coordinator.getOperatorWorkspaceSelection());
+  ipc.handle('stores:daily-status:list', (_event, input): StoreDailyStatusListProjection => {
+    if (!dailyStatusReader) throw new Error('STORE_DAILY_STATUS_READER_NOT_INITIALIZED');
+    return dailyStatusReader.list(readDailyStatusListInput(input));
+  });
   ipc.handle('stores:get-active-context', (): StoreContextEnvelope | null =>
     coordinator.getActiveStoreContext());
   ipc.handle('stores:get-active-workspace-view', (): StoreWorkspaceView | null =>
@@ -274,12 +308,14 @@ async function runStoreMutation<Result>(
   input: {
     operation: string;
     targetStoreId?: string;
+    targetMarketplace?: 'US';
   },
   phases: StoreMutationPhases<Result>,
 ): Promise<Result> {
   const scope: StoreIpcMutationScope = {
     operation: input.operation,
     ...(input.targetStoreId ? { targetStoreId: input.targetStoreId } : {}),
+    ...(input.targetMarketplace ? { targetMarketplace: input.targetMarketplace } : {}),
   };
   // The authority snapshot must be read only after Main has claimed the
   // shared user/automation lane. Reading it before `withUserStoreMutation`
@@ -303,7 +339,11 @@ async function runStoreMutation<Result>(
       return expectedStoreMutationRejection(error);
     }
 
-    await phases.after?.(result, activeContext);
+    try {
+      await phases.after?.(result, activeContext);
+    } catch (error) {
+      await reportPostCommitFailure(events, scope, error);
+    }
     return result;
   };
   const outcome = events.withUserStoreMutation
@@ -311,6 +351,53 @@ async function runStoreMutation<Result>(
     : await invoke();
   if (isExpectedStoreMutationRejection(outcome)) throw outcome.error;
   return outcome;
+}
+
+async function reportPostCommitFailure(
+  events: StoreIpcEvents,
+  scope: StoreIpcMutationScope,
+  error: unknown,
+): Promise<void> {
+  const failure = Object.freeze({
+    operation: scope.operation,
+    ...(scope.targetStoreId ? { targetStoreId: scope.targetStoreId } : {}),
+    error,
+  });
+  try {
+    if (events.onPostCommitFailure) {
+      await events.onPostCommitFailure(failure);
+      return;
+    }
+  } catch (reportingError) {
+    console.error('[StoreIPC] post-commit failure reporter failed', reportingError);
+  }
+  console.error(
+    `[StoreIPC] ${scope.operation} committed but post-commit publication failed`,
+    error,
+  );
+}
+
+/**
+ * Main-lane target validation. Call this after claiming the shared mutation
+ * lane and before closing the currently visible browser runtime.
+ */
+export function assertStoreIpcMutationTargetPreflight(
+  coordinator: StoreCoordinator,
+  scope: StoreIpcMutationScope,
+  activeContext: StoreContextEnvelope | null,
+): void {
+  if (scope.operation === 'stores:switch') {
+    if (!scope.targetStoreId || !scope.targetMarketplace) {
+      throw new StoreCoordinatorError(
+        'STORE_CONTEXT_MISMATCH',
+        'store switch target requires an exact store and marketplace scope',
+      );
+    }
+    preflightStoreTransition(coordinator, {
+      storeId: normalizeStoreId(scope.targetStoreId),
+      marketplace: normalizeUsMarketplace(scope.targetMarketplace),
+    }, 'stores:switch', activeContext);
+  }
 }
 
 const SAFE_COORDINATOR_MUTATION_CODES: Readonly<Record<
@@ -334,8 +421,18 @@ readonly StoreRepositoryError['code'][]
   'stores:update': ['STORE_ARCHIVED', 'STORE_CONFLICT', 'INVALID_STORE_INPUT'],
   'stores:archive': ['STORE_CONFLICT'],
   'stores:restore': ['STORE_CONFLICT'],
-  'stores:connections:create': ['STORE_CONFLICT', 'INVALID_STORE_INPUT'],
-  'stores:connections:update': ['CONNECTION_NOT_FOUND', 'INVALID_STORE_INPUT'],
+  'stores:connections:create': [
+    'STORE_CONFLICT',
+    'CONNECTION_CONFLICT',
+    'EXTERNAL_ACCOUNT_ALREADY_BOUND',
+    'INVALID_STORE_INPUT',
+  ],
+  'stores:connections:update': [
+    'CONNECTION_NOT_FOUND',
+    'CONNECTION_CONFLICT',
+    'EXTERNAL_ACCOUNT_ALREADY_BOUND',
+    'INVALID_STORE_INPUT',
+  ],
   'stores:connections:remove': ['CONNECTION_NOT_FOUND', 'SESSION_GENERATION_STALE'],
 });
 
@@ -358,7 +455,9 @@ function isExpectedStorePreflightError(
 ): error is StoreCoordinatorError {
   if (!(error instanceof StoreCoordinatorError)) return false;
   if (operation === 'stores:switch') {
-    return error.code === 'STORE_NOT_FOUND' || error.code === 'STORE_NOT_ACTIVE';
+    return error.code === 'STORE_NOT_FOUND'
+      || error.code === 'STORE_NOT_ACTIVE'
+      || error.code === 'STORE_CONTEXT_MISMATCH';
   }
   if (operation === 'stores:reconnect') {
     return error.code === 'STORE_NOT_FOUND'
@@ -397,13 +496,23 @@ async function guardCurrentActiveStoreMutation(
 
 function preflightStoreTransition(
   coordinator: StoreCoordinator,
-  storeId: ReturnType<typeof normalizeStoreId>,
+  storeScopeOrId: StoreScopeRef | ReturnType<typeof normalizeStoreId>,
   operation: 'stores:switch' | 'stores:reconnect',
   activeContext: StoreContextEnvelope | null = null,
 ): void {
+  const scope = typeof storeScopeOrId === 'string'
+    ? { storeId: storeScopeOrId, marketplace: 'US' as const }
+    : storeScopeOrId;
+  const storeId = scope.storeId;
   const store = coordinator.getStore(storeId);
   if (store.status !== 'active') {
     throw new StoreCoordinatorError('STORE_NOT_ACTIVE', `store ${storeId} is not active`);
+  }
+  if (store.marketplace !== scope.marketplace) {
+    throw new StoreCoordinatorError(
+      'STORE_CONTEXT_MISMATCH',
+      'store scope marketplace does not match Main-process store authority',
+    );
   }
   if (operation === 'stores:reconnect' && activeContext?.storeId !== storeId) {
     throw new StoreCoordinatorError(
@@ -427,6 +536,36 @@ async function guardActiveStoreMutation(
 function readStoreId(value: unknown): ReturnType<typeof normalizeStoreId> {
   if (typeof value === 'string') return normalizeStoreId(value);
   return normalizeStoreId(asObject(value).storeId);
+}
+
+function readStoreScopeRef(value: unknown): StoreScopeRef {
+  const input = asObject(value);
+  if (!hasOwn(input, 'marketplace')) {
+    throw new StoreCoordinatorError(
+      'STORE_CONTEXT_MISMATCH',
+      'store scope marketplace is required',
+    );
+  }
+  return Object.freeze({
+    storeId: normalizeStoreId(input.storeId),
+    marketplace: normalizeUsMarketplace(input.marketplace),
+  });
+}
+
+function readDailyStatusListInput(value: unknown): ListStoreDailyStatusesInput {
+  const input = asObject(value);
+  if (!hasOwn(input, 'marketplace')) throw new TypeError('marketplace is required');
+  if (input.includeInactive !== undefined && typeof input.includeInactive !== 'boolean') {
+    throw new TypeError('includeInactive must be a boolean');
+  }
+  if (input.includeArchived !== undefined && typeof input.includeArchived !== 'boolean') {
+    throw new TypeError('includeArchived must be a boolean');
+  }
+  return {
+    marketplace: normalizeUsMarketplace(input.marketplace),
+    ...(input.includeInactive === undefined ? {} : { includeInactive: input.includeInactive }),
+    ...(input.includeArchived === undefined ? {} : { includeArchived: input.includeArchived }),
+  };
 }
 
 function readCreateStoreInput(value: unknown): CreateStoreInput {
@@ -455,31 +594,31 @@ function readUpdateStoreInput(value: unknown): UpdateStoreInput {
   if (Object.keys(patch).length === 0) {
     throw new StoreCoordinatorError('EMPTY_STORE_PATCH', 'store update requires at least one field');
   }
-  const expectedUpdatedAt = readOptionalRevision(input.expectedUpdatedAt);
+  const expectedUpdatedAt = readRequiredRevision(input.expectedUpdatedAt);
   return {
     storeId: normalizeStoreId(input.storeId),
     patch,
-    ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+    expectedUpdatedAt,
   };
 }
 
 function readArchiveStoreInput(value: unknown): ArchiveStoreInput {
   const input = asObject(value);
-  const expectedUpdatedAt = readOptionalRevision(input.expectedUpdatedAt);
+  const expectedUpdatedAt = readRequiredRevision(input.expectedUpdatedAt);
   const reason = readOptionalText(input.reason, 'reason');
   return {
     storeId: normalizeStoreId(input.storeId),
-    ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+    expectedUpdatedAt,
     ...(reason ? { reason } : {}),
   };
 }
 
 function readRestoreStoreInput(value: unknown): RestoreStoreInput {
   const input = asObject(value);
-  const expectedUpdatedAt = readOptionalRevision(input.expectedUpdatedAt);
+  const expectedUpdatedAt = readRequiredRevision(input.expectedUpdatedAt);
   return {
     storeId: normalizeStoreId(input.storeId),
-    ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+    expectedUpdatedAt,
   };
 }
 
@@ -534,28 +673,14 @@ function optionalStoreId(value: unknown): string | undefined {
 
 function readCreateConnectionInput(value: unknown): CreateStoreConnectionInput {
   const input = asObject(value);
+  const provider = readConnectionProvider(input.provider);
   const hasAccountLabel = input.accountLabel !== undefined;
   const hasExternalAccountId = input.externalAccountId !== undefined;
-  const accountLabel = hasAccountLabel
-    ? readProviderIdentity(input.accountLabel, 'accountLabel')
-    : undefined;
-  const externalAccountId = hasExternalAccountId
-    ? readProviderIdentity(input.externalAccountId, 'externalAccountId')
-    : undefined;
-  return {
-    storeId: normalizeStoreId(input.storeId),
-    provider: readConnectionProvider(input.provider),
-    ...(hasAccountLabel ? { accountLabel } : {}),
-    ...(hasExternalAccountId ? { externalAccountId } : {}),
-  };
-}
-
-function readUpdateConnectionInput(value: unknown): UpdateStoreConnectionInput {
-  const input = asObject(value);
-  const hasAccountLabel = input.accountLabel !== undefined;
-  const hasExternalAccountId = input.externalAccountId !== undefined;
-  if (!hasAccountLabel && !hasExternalAccountId) {
-    throw new TypeError('connection update requires accountLabel or externalAccountId');
+  const hasCollectionStoreName = input.collectionStoreName !== undefined;
+  if (provider === 'lingxing' && hasExternalAccountId) {
+    throw new TypeError(
+      'Lingxing externalAccountId is Main-enrolled identity and cannot be supplied by Renderer',
+    );
   }
   const accountLabel = hasAccountLabel
     ? readProviderIdentity(input.accountLabel, 'accountLabel')
@@ -563,20 +688,75 @@ function readUpdateConnectionInput(value: unknown): UpdateStoreConnectionInput {
   const externalAccountId = hasExternalAccountId
     ? readProviderIdentity(input.externalAccountId, 'externalAccountId')
     : undefined;
+  const collectionStoreName = hasCollectionStoreName
+    ? readProviderIdentity(input.collectionStoreName, 'collectionStoreName')
+    : undefined;
+  return {
+    storeId: normalizeStoreId(input.storeId),
+    provider,
+    ...(hasAccountLabel ? { accountLabel } : {}),
+    ...(hasExternalAccountId ? { externalAccountId } : {}),
+    ...(hasCollectionStoreName ? { collectionStoreName } : {}),
+  };
+}
+
+function assertRendererStableExternalAccountIdPreflight(
+  coordinator: StoreCoordinator,
+  request: UpdateStoreConnectionInput,
+): void {
+  if (request.externalAccountId === undefined) return;
+  const connection = coordinator.getConnection(request.storeId, request.id);
+  if (connection?.provider === 'lingxing') {
+    throw new TypeError(
+      'Lingxing externalAccountId is Main-enrolled identity and cannot be supplied by Renderer',
+    );
+  }
+}
+
+function readUpdateConnectionInput(value: unknown): UpdateStoreConnectionInput {
+  const input = asObject(value);
+  const hasAccountLabel = input.accountLabel !== undefined;
+  const hasExternalAccountId = input.externalAccountId !== undefined;
+  const hasCollectionStoreName = input.collectionStoreName !== undefined;
+  if (!hasAccountLabel && !hasExternalAccountId && !hasCollectionStoreName) {
+    throw new TypeError(
+      'connection update requires accountLabel, externalAccountId, or collectionStoreName',
+    );
+  }
+  const accountLabel = hasAccountLabel
+    ? readProviderIdentity(input.accountLabel, 'accountLabel')
+    : undefined;
+  const externalAccountId = hasExternalAccountId
+    ? readProviderIdentity(input.externalAccountId, 'externalAccountId')
+    : undefined;
+  const collectionStoreName = hasCollectionStoreName
+    ? readProviderIdentity(input.collectionStoreName, 'collectionStoreName')
+    : undefined;
+  const expectedUpdatedAt = readRequiredRevision(input.expectedUpdatedAt);
   return {
     id: normalizeStoreCapabilityId(input.id),
     storeId: normalizeStoreId(input.storeId),
     ...(hasAccountLabel ? { accountLabel } : {}),
     ...(hasExternalAccountId ? { externalAccountId } : {}),
+    ...(hasCollectionStoreName ? { collectionStoreName } : {}),
+    expectedUpdatedAt,
   };
 }
 
 function readRemoveConnectionInput(value: unknown): RemoveStoreConnectionInput {
   const input = asObject(value);
+  const expectedUpdatedAt = readRequiredRevision(input.expectedUpdatedAt);
   return {
     id: normalizeStoreCapabilityId(input.id),
     storeId: normalizeStoreId(input.storeId),
+    expectedUpdatedAt,
   };
+}
+
+function readRequiredRevision(value: unknown): string {
+  const revision = readOptionalRevision(value);
+  if (!revision) throw new TypeError('expectedUpdatedAt is required');
+  return revision;
 }
 
 function readConnectionProvider(value: unknown): CreateStoreConnectionInput['provider'] {

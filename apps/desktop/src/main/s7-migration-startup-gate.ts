@@ -7,6 +7,10 @@ import {
   ANALYSIS_AUTHORITY_MIGRATION_CHECKSUM,
   ANALYSIS_AUTHORITY_MIGRATION_NAME,
   ANALYSIS_AUTHORITY_MIGRATION_VERSION,
+  COLLECTION_RESUME_AUTHORITY_MIGRATION_CHECKSUM,
+  COLLECTION_RESUME_AUTHORITY_MIGRATION_NAME,
+  COLLECTION_RESUME_AUTHORITY_MIGRATION_VERSION,
+  COLLECTION_RESUME_AUTHORITY_TABLES,
   EXECUTION_AUTHORITY_MIGRATION_CHECKSUM,
   EXECUTION_AUTHORITY_MIGRATION_NAME,
   EXECUTION_AUTHORITY_MIGRATION_VERSION,
@@ -31,6 +35,11 @@ import {
   STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
   STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
   STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
+  verifyCollectionResumeAuthoritySchema,
+  verifyStoreProviderIdentityAuthoritySchema,
 } from '@amazon-ai-ops/local-db/src/sqlite/migrations';
 
 export const S7_STARTUP_GATE_DIRECTORY = '.s7-main-startup-gate';
@@ -85,7 +94,7 @@ const WINDOWS_TRUSTED_INSTALLER_SID =
 const FULL_CONTROL_MASK = 2032127n;
 const WINDOWS_WRITE_RIGHTS_MASK =
   0x00000002n | 0x00000004n | 0x00000100n | 0x00010000n | 0x00040000n | 0x00080000n;
-const POST_MIGRATION_TARGET_VERSION = 9;
+const POST_MIGRATION_TARGET_VERSION = STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION;
 
 const POST_MIGRATION_CONTRACT = Object.freeze([
   {
@@ -133,6 +142,16 @@ const POST_MIGRATION_CONTRACT = Object.freeze([
     name: STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
     checksum: STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
   },
+  {
+    version: COLLECTION_RESUME_AUTHORITY_MIGRATION_VERSION,
+    name: COLLECTION_RESUME_AUTHORITY_MIGRATION_NAME,
+    checksum: COLLECTION_RESUME_AUTHORITY_MIGRATION_CHECKSUM,
+  },
+  {
+    version: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
+    name: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
+    checksum: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
+  },
 ]);
 
 const POST_MIGRATION_REQUIRED_TABLES = Object.freeze([
@@ -160,6 +179,7 @@ const POST_MIGRATION_REQUIRED_TABLES = Object.freeze([
   'ad_execution_batches',
   'ad_execution_jobs',
   'ad_execution_evidence',
+  ...COLLECTION_RESUME_AUTHORITY_TABLES,
 ]);
 
 export interface S7FileIdentity {
@@ -822,6 +842,15 @@ function defaultInspectPostMigrationAuthority(filePath: string): S7PostMigration
       fail(
         'S7_STARTUP_GATE_AUTHORITY_DRIFT',
         'Authority migration ledger name/checksum/status contract drifted.',
+      );
+    }
+    try {
+      verifyCollectionResumeAuthoritySchema(database);
+      verifyStoreProviderIdentityAuthoritySchema(database);
+    } catch {
+      fail(
+        'S7_STARTUP_GATE_AUTHORITY_DRIFT',
+        'Authority v10/v11 exact schema contract drifted.',
       );
     }
     return {
@@ -2601,7 +2630,7 @@ export function enforceS7MainStartupGate(
       } catch {
         fail(
           'S7_STARTUP_GATE_LEGACY_DATABASE_BLOCKED',
-          'Existing authority is not the complete current v9 schema/ledger contract and requires the approved S7 migration operator.',
+          'Existing authority is not the complete current v11 schema/ledger contract and requires the approved S7 migration operator.',
         );
       }
     }

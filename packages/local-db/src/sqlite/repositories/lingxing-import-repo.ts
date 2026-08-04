@@ -14,6 +14,7 @@ import type {
 } from '@amazon-ai-ops/shared-types';
 import {
   LINGXING_COLLECTION_IMPORT_STATES,
+  normalizeLingxingCollectionStoreName,
   normalizeStoreContextEnvelope,
 } from '@amazon-ai-ops/shared-types';
 import {
@@ -1929,7 +1930,13 @@ export class LingxingImportRepository {
           throw new Error('同一导入运行包含重复的广告指标数据粒度，拒绝覆盖后伪造行数。');
         }
         metricIdentities.add(identity);
-        this.insertMetricRow(storeId, authority, normalizedInput.batchId, metric);
+        this.insertMetricRow(
+          storeId,
+          authority,
+          normalizedInput.batchId,
+          batchWindow.storeName,
+          metric,
+        );
       }
 
       assertExactReportImportCoverage(normalizedInput);
@@ -2638,10 +2645,21 @@ export class LingxingImportRepository {
 
   private getStoreAuthority(storeId: StoreId): StoreAuthority {
     const row = this.db.prepare(`
-      SELECT display_name AS displayName, marketplace, currency, status
-           , browser_profile_id AS browserProfileId,
-             business_timezone AS businessTimezone
-      FROM stores WHERE store_id = ?
+      SELECT stores.display_name AS displayName,
+             stores.marketplace,
+             stores.currency,
+             stores.status,
+             stores.browser_profile_id AS browserProfileId,
+             stores.business_timezone AS businessTimezone,
+             (
+               SELECT connection.collection_store_name
+               FROM store_connections AS connection
+               WHERE connection.store_id = stores.store_id
+                 AND connection.provider = 'lingxing'
+               LIMIT 1
+             ) AS lingxingCollectionStoreName
+      FROM stores
+      WHERE stores.store_id = ?
     `).get(storeId) as StoreAuthority | undefined;
     if (!row) throw new Error(`未知店铺 ${storeId}。`);
     if (row.marketplace !== 'US' || row.currency !== 'USD') {
@@ -2693,6 +2711,17 @@ export class LingxingImportRepository {
 
   private assertBatchInput(storeId: StoreId, authority: StoreAuthority, batch: LingxingReportBatch): void {
     requiredText(batch.id, 'batch.id');
+    const existing = this.db.prepare(`
+      SELECT store_id AS storeId, store_name AS storeName
+      FROM lingxing_report_batches
+      WHERE id = ?
+    `).get(batch.id) as {
+      storeId?: string | null;
+      storeName?: string | null;
+    } | undefined;
+    if (existing && existing.storeId !== storeId) {
+      throw new Error(`领星批次 ${batch.id} 已属于其他店铺或尚未完成归属确认。`);
+    }
     if (batch.storeId && String(batch.storeId) !== String(storeId)) {
       throw new Error('领星批次 storeId 与当前权威店铺不一致。');
     }
@@ -2703,8 +2732,28 @@ export class LingxingImportRepository {
       && (!Number.isSafeInteger(Number(batch.sessionGeneration)) || Number(batch.sessionGeneration) < 0)) {
       throw new Error('领星批次 sessionGeneration 无效。');
     }
-    if (batch.storeName && normalizeIdentity(batch.storeName) !== normalizeIdentity(authority.displayName)) {
-      throw new Error('领星批次店铺名称与 store_id 的权威记录不一致。');
+    const submittedStoreName = batch.storeName ?? null;
+    if (existing) {
+      if ((existing.storeName ?? null) !== submittedStoreName) {
+        throw new Error(
+          'LINGXING_BATCH_AUTHORITY_IMMUTABLE: 既有批次的外部店铺名称快照不可改写。',
+        );
+      }
+    } else if (submittedStoreName !== null) {
+      const normalizedSubmitted = normalizeBatchStoreName(
+        submittedStoreName,
+        '领星批次 storeName',
+      );
+      const allowedNames = [
+        authority.displayName,
+        authority.lingxingCollectionStoreName,
+      ].filter((value): value is string => Boolean(value))
+        .map((value) => normalizeBatchStoreName(value, '店铺权威名称'));
+      if (!allowedNames.includes(normalizedSubmitted)) {
+        throw new Error(
+          '领星批次店铺名称既不匹配当前 collection selector，也不匹配本地逻辑店铺名。',
+        );
+      }
     }
     if (batch.marketplaceCode && batch.marketplaceCode.trim().toUpperCase() !== authority.marketplace) {
       throw new Error('领星批次站点与 store_id 的权威记录不一致。');
@@ -2777,6 +2826,7 @@ export class LingxingImportRepository {
       || existing.dateEnd !== next.dateEnd
       || existing.createdAt !== next.createdAt
       || existing.marketplaceCode !== next.marketplaceCode
+      || existing.storeName !== next.storeName
       || (existing.requestId !== null && existing.requestId !== next.requestId)
       || (existing.browserProfileId !== null
         && existing.browserProfileId !== next.browserProfileId)
@@ -2940,14 +2990,17 @@ export class LingxingImportRepository {
     storeId: StoreId,
     authority: StoreAuthority,
     batchId: string,
+    batchStoreName: string | null,
     metric: AdDailyMetrics,
   ): void {
+    const expectedStoreName = batchStoreName ?? authority.displayName;
     if (metric.batchId !== batchId) throw new Error('广告指标 batchId 与导入运行批次不一致。');
     if (
-      normalizeIdentity(metric.storeName) !== normalizeIdentity(authority.displayName)
+      normalizeBatchStoreName(metric.storeName, '广告指标 storeName')
+        !== normalizeBatchStoreName(expectedStoreName, '批次 storeName')
       || metric.marketplaceCode.trim().toUpperCase() !== authority.marketplace
       || String(metric.currency ?? 'USD').trim().toUpperCase() !== authority.currency
-    ) throw new Error('指标店铺标识与 store_id 的权威记录不一致。');
+    ) throw new Error('指标店铺标识与 store_id 绑定批次的权威记录不一致。');
     for (const [label, value] of [
       ['impressions', metric.impressions],
       ['clicks', metric.clicks],
@@ -2994,21 +3047,23 @@ export class LingxingImportRepository {
   private assertBatchOwnership(
     storeId: StoreId,
     batchId: string,
-  ): { dateStart: string; dateEnd: string } {
+  ): { dateStart: string; dateEnd: string; storeName: string | null } {
     const row = this.db.prepare(`
-      SELECT store_id AS storeId, date_start AS dateStart, date_end AS dateEnd
+      SELECT store_id AS storeId, date_start AS dateStart, date_end AS dateEnd,
+             store_name AS storeName
       FROM lingxing_report_batches
       WHERE id = ?
     `).get(batchId) as {
       storeId?: string | null;
       dateStart?: string | null;
       dateEnd?: string | null;
+      storeName?: string | null;
     } | undefined;
     if (!row || row.storeId !== storeId) throw new Error(`报表批次 ${batchId} 不属于店铺 ${storeId}。`);
     const dateStart = canonicalIsoDate(row.dateStart, '批次 dateStart');
     const dateEnd = canonicalIsoDate(row.dateEnd, '批次 dateEnd');
     if (dateStart > dateEnd) throw new Error('报表批次日期窗口无效。');
-    return { dateStart, dateEnd };
+    return { dateStart, dateEnd, storeName: row.storeName ?? null };
   }
 
   private findExistingRun(
@@ -3045,6 +3100,7 @@ export class LingxingImportRepository {
 
 interface StoreAuthority {
   displayName: string;
+  lingxingCollectionStoreName?: string | null;
   browserProfileId: string;
   businessTimezone: string;
   marketplace: string;
@@ -4426,8 +4482,14 @@ function pathFreeText(value: string): string {
     .replace(/\/(?:Users|home|tmp|var|opt|mnt)\/[^\s"'<>]*/g, '[local-path-redacted]');
 }
 
-function normalizeIdentity(value: string): string {
-  return value.trim().replace(/\s+/g, ' ').toLowerCase();
+function normalizeBatchStoreName(value: unknown, label: string): string {
+  try {
+    const normalized = normalizeLingxingCollectionStoreName(value);
+    if (normalized) return normalized;
+  } catch {
+    // Convert shared contract failures into the repository's domain language.
+  }
+  throw new Error(`${label} 无效。`);
 }
 
 function boundedPositiveInteger(value: number, fallback: number, max: number): number {

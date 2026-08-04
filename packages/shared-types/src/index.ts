@@ -11,6 +11,7 @@ export * from './v1_5';
 export * from './operation-event';
 export * from './ad-readback';
 export * from './store';
+export * from './store-daily-status';
 export * from './mission-control';
 export * from './lingxing-collection';
 export * from './asin';

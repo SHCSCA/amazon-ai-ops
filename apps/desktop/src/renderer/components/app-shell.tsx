@@ -76,7 +76,7 @@ export function Sidebar({
   pendingIntent = null,
   capabilities = [],
   collapsed = false,
-  activeStore,
+  storeScopeControl,
   onToggleCollapsed,
   onNavigate,
 }: {
@@ -84,12 +84,7 @@ export function Sidebar({
   pendingIntent?: NavigationIntent | null;
   capabilities?: readonly MissionControlCapabilityProjection[];
   collapsed?: boolean;
-  activeStore?: {
-    storeId: string;
-    displayName: string;
-    marketplace: 'US';
-    currency: 'USD';
-  } | null;
+  storeScopeControl?: React.ReactNode;
   onToggleCollapsed?: () => void;
   onNavigate: (intent: NavigationIntent) => void;
 }) {
@@ -105,6 +100,7 @@ export function Sidebar({
       data-navigation-busy={navigationBusy || undefined}
     >
       <div className="app-sidebar-scroll">
+        {storeScopeControl}
         {NAVIGATION_SECTION_DEFINITIONS.map((section, groupIndex) => {
           const groupLabelId = navGroupLabelId(groupIndex);
 
@@ -163,38 +159,17 @@ export function Sidebar({
         })}
       </div>
 
-      {(onToggleCollapsed || activeStore) && (
+      {onToggleCollapsed && (
         <div className="app-sidebar-footer">
-          {onToggleCollapsed && (
-            <button
-              aria-label={collapsed ? '展开主导航' : '收起主导航'}
-              className="sidebar-collapse-button"
-              onClick={onToggleCollapsed}
-              type="button"
-            >
-              <SidebarSimple aria-hidden="true" size={18} />
-              <span>{collapsed ? '展开' : '收起导航'}</span>
-            </button>
-          )}
-          {activeStore && (
-            <button
-              aria-label={`打开 ${activeStore.displayName} 的店铺与广告对象`}
-              className="sidebar-store-card"
-              onClick={() => onNavigate(
-                VISIBLE_WORKSPACES.find((item) => item.id === 'objects')!.defaultIntent,
-              )}
-              title={`${activeStore.displayName} · ${activeStore.storeId}`}
-              type="button"
-            >
-              <span className="sidebar-store-icon" aria-hidden="true">
-                <Storefront size={17} weight="duotone" />
-              </span>
-              <span className="sidebar-store-copy">
-                <strong>{activeStore.displayName}</strong>
-                <small>美国站 · USD · 独立数据域</small>
-              </span>
-            </button>
-          )}
+          <button
+            aria-label={collapsed ? '展开主导航' : '收起主导航'}
+            className="sidebar-collapse-button"
+            onClick={onToggleCollapsed}
+            type="button"
+          >
+            <SidebarSimple aria-hidden="true" size={18} />
+            <span>{collapsed ? '展开' : '收起导航'}</span>
+          </button>
         </div>
       )}
     </nav>

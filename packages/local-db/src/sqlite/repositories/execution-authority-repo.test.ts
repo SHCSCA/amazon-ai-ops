@@ -86,9 +86,9 @@ function seedStage5Authority(
   database.prepare(`
     INSERT INTO store_connections (
       id, store_id, provider, status, account_label, external_account_id,
-      last_verified_at, created_at, updated_at
+      normalized_external_account_id, last_verified_at, created_at, updated_at
     ) VALUES ('conn-ads-one', 'store-one', 'amazon_ads', 'ready', 'Ads One',
-      'ads-account-1', ?, ?, ?)
+      'ads-account-1', 'ads-account-1', ?, ?, ?)
   `).run(NOW, NOW, NOW);
   database.prepare(`
     INSERT INTO store_session_metadata (
@@ -1192,9 +1192,9 @@ function seedSecondStoreAuthority(database: Database.Database): StoreContextEnve
   ).run(NOW);
   database.prepare(`INSERT INTO store_connections (
     id, store_id, provider, status, account_label, external_account_id,
-    last_verified_at, created_at, updated_at
+    normalized_external_account_id, last_verified_at, created_at, updated_at
   ) SELECT 'conn-ads-two', 'store-two', provider, status, 'Ads Two', 'ads-account-2',
-    last_verified_at, created_at, updated_at FROM store_connections
+    'ads-account-2', last_verified_at, created_at, updated_at FROM store_connections
     WHERE store_id = 'store-one' AND provider = 'amazon_ads'`
   ).run();
   database.prepare(`INSERT INTO store_session_metadata (

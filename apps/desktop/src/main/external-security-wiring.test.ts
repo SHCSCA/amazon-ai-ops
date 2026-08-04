@@ -43,7 +43,11 @@ describe('Electron external-distribution security wiring', () => {
 
   it('exposes saved-credential status only and resolves saved passwords inside Main', () => {
     expect(source).toContain("registerTrackedIpcHandler('browser:get-saved-credential-status'");
-    expect(source).toContain('resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username)');
+    expect(source).toContain('createStoreScopedLoginCredentialStore(state.settingsRepo, initialContext.storeId)');
+    expect(source).toContain('createStoreScopedLoginCredentialStore(state.settingsRepo, loginContext.storeId)');
+    expect(source).toContain('createStoreScopedLoginCredentialStore(state.settingsRepo, capturedContext.storeId)');
+    expect(source).toContain('storeId: capturedContext?.storeId ?? null');
+    expect(source).not.toContain('resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username)');
     expect(source).toContain('handleBrowserLogin(normalizeBrowserLoginRequest(input))');
     expect(browserLoginRequestSource).toContain("typeof candidate.rememberPassword !== 'boolean'");
     expect(source).toContain('normalizeBrowserLoginRequest(input)');
@@ -90,10 +94,13 @@ describe('Electron external-distribution security wiring', () => {
     expect(source).toContain("element.closest('[hidden], [aria-hidden=\"true\"], [inert]')");
     expect(source).toContain('.slice(0, 2)');
     expect(providerActiveIdentitySource).toContain("origin: 'https://erp.lingxing.com'");
-    expect(providerActiveIdentitySource).toContain("queryParameters: ['account_id', 'seller_id', 'store_id']");
+    expect(providerActiveIdentitySource).toContain("queryParameters: ['seller_id', 'store_id']");
     expect(providerActiveIdentitySource).toContain("origin: 'https://ads.lingxing.com'");
     expect(providerActiveIdentitySource).toContain("queryParameters: ['profile_id']");
-    expect(providerActiveIdentitySource).toContain('candidates.every((candidate) => expectedSet.has(candidate))');
+    expect(providerActiveIdentitySource).toContain('stableProfileEvidence.length === 0');
+    expect(providerActiveIdentitySource).toContain(
+      'stableProfileEvidence.some((candidate) => candidate !== expectedProfileId)',
+    );
     expect(providerActiveIdentitySource).not.toContain('bodyText');
     expect(providerActiveIdentitySource).not.toContain('document.title');
     expect(providerActiveIdentitySource).not.toContain('innerText');
@@ -124,10 +131,12 @@ describe('Electron external-distribution security wiring', () => {
     const connectionContract = browserLoginProviderConnectionSource;
     expect(connectionContract).toContain('if (!lingxing)');
     expect(connectionContract).toContain('if (!amazonAds)');
-    expect(connectionContract).toContain('if (!amazonAds.externalAccountId?.trim())');
+    expect(connectionContract).toContain("normalizeProviderExternalAccountId(\n    'amazon_ads'");
     expect(connectionContract).toContain('必须先配置 Amazon Ads Profile 连接');
     expect(connectionContract).toContain('Amazon Ads 连接缺少 Profile ID');
-    expect(connectionContract).toContain('return { lingxing, amazon_ads: amazonAds }');
+    expect(connectionContract).toContain(
+      'return { lingxing, amazon_ads: amazonAds, lingxingIdentityReadiness }',
+    );
 
     const loginStart = source.indexOf('async function handleBrowserLogin');
     const loginEnd = source.indexOf('async function handleBrowserLogout', loginStart);

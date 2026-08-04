@@ -10,6 +10,7 @@ import {
   REPORT_IMPORT_AUTHORITY_TABLES,
   REPORT_IMPORT_PROGRESS_TABLES,
 } from './0002-report-import-authority';
+import { STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION } from './0011-store-provider-identity-authority';
 
 const directories: string[] = [];
 
@@ -73,7 +74,7 @@ describe('report import authority migration v2', () => {
       `).get(REPORT_IMPORT_AUTHORITY_MIGRATION_VERSION);
       expect(second).toEqual(first);
       expect(reopened.prepare(`SELECT COUNT(*) AS count FROM schema_migrations`).get())
-        .toEqual({ count: 9 });
+        .toEqual({ count: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION });
     } finally {
       reopened.close();
     }

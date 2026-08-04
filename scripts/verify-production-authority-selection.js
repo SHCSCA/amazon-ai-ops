@@ -11,6 +11,7 @@ const {
   SQLITE_AUTHORITY_CURRENTNESS_SCHEMA_VERSION,
   runReadonlySqliteOnlineBackupSync,
 } = require('./sqlite-authority-currentness');
+const { TARGET_VERSION } = require('./migrate-current-user-db');
 
 const ROOT = path.resolve(__dirname, '..');
 const requireFromLocalDb = createRequire(
@@ -18,7 +19,7 @@ const requireFromLocalDb = createRequire(
 );
 const KIND = 'production-authority-selection-preflight';
 const SCHEMA_VERSION = 'production-authority-selection-preflight/v1';
-const TARGET_MIGRATION_VERSION = 9;
+const TARGET_MIGRATION_VERSION = TARGET_VERSION;
 const PACKAGED_APP_NAME = '@amazon-ai-ops/desktop';
 const SIDECAR_SUFFIXES = Object.freeze(['-wal', '-shm', '-journal']);
 const REQUIRED_TABLES = Object.freeze([
@@ -46,6 +47,144 @@ const REQUIRED_TABLES = Object.freeze([
   'ad_execution_batches',
   'ad_execution_jobs',
   'ad_execution_evidence',
+  'report_import_metric_evidence',
+  'lingxing_collection_resume_attempts',
+  'lingxing_collection_resume_active_claims',
+  'lingxing_collection_resume_events',
+]);
+const V11_STORE_PROVIDER_IDENTITY_COLUMNS = Object.freeze([
+  Object.freeze({
+    name: 'normalized_external_account_id',
+    type: 'TEXT',
+    notNull: 0,
+    defaultValue: null,
+    primaryKey: 0,
+  }),
+  Object.freeze({
+    name: 'collection_store_name',
+    type: 'TEXT',
+    notNull: 0,
+    defaultValue: null,
+    primaryKey: 0,
+  }),
+  Object.freeze({
+    name: 'normalized_collection_store_name',
+    type: 'TEXT',
+    notNull: 0,
+    defaultValue: null,
+    primaryKey: 0,
+  }),
+]);
+const V11_STORE_PROVIDER_IDENTITY_INDEX = Object.freeze({
+  name: 'idx_store_connections_provider_external_identity_unique',
+  table: 'store_connections',
+  unique: 1,
+  partial: 1,
+  columns: Object.freeze(['provider', 'normalized_external_account_id']),
+  sql: `
+    CREATE UNIQUE INDEX idx_store_connections_provider_external_identity_unique
+    ON store_connections(provider, normalized_external_account_id)
+    WHERE normalized_external_account_id IS NOT NULL
+  `,
+});
+const V11_STORE_PROVIDER_IDENTITY_TRIGGERS = Object.freeze({
+  trg_stores_v1_authority_insert: `
+    CREATE TRIGGER trg_stores_v1_authority_insert
+    BEFORE INSERT ON stores
+    WHEN NEW.marketplace <> 'US'
+      OR NEW.currency <> 'USD'
+      OR NEW.business_timezone <> 'America/Los_Angeles'
+    BEGIN
+      SELECT RAISE(ABORT, 'store authority must remain US/USD/America/Los_Angeles');
+    END
+  `,
+  trg_stores_v1_authority_update: `
+    CREATE TRIGGER trg_stores_v1_authority_update
+    BEFORE UPDATE OF marketplace, currency, business_timezone ON stores
+    WHEN NEW.marketplace <> 'US'
+      OR NEW.currency <> 'USD'
+      OR NEW.business_timezone <> 'America/Los_Angeles'
+    BEGIN
+      SELECT RAISE(ABORT, 'store authority must remain US/USD/America/Los_Angeles');
+    END
+  `,
+  trg_store_connections_external_identity_insert: `
+    CREATE TRIGGER trg_store_connections_external_identity_insert
+    BEFORE INSERT ON store_connections
+    WHEN (NEW.external_account_id IS NULL AND NEW.normalized_external_account_id IS NOT NULL)
+      OR (NEW.external_account_id IS NOT NULL AND NEW.normalized_external_account_id IS NULL)
+      OR (NEW.external_account_id IS NOT NULL
+        AND (
+          normalize_store_provider_external_identity(NEW.provider, NEW.external_account_id) IS NULL
+          OR NEW.normalized_external_account_id <>
+            normalize_store_provider_external_identity(NEW.provider, NEW.external_account_id)))
+    BEGIN
+      SELECT RAISE(ABORT, 'provider external identity raw/normalized mismatch');
+    END
+  `,
+  trg_store_connections_external_identity_update: `
+    CREATE TRIGGER trg_store_connections_external_identity_update
+    BEFORE UPDATE OF provider, external_account_id, normalized_external_account_id
+    ON store_connections
+    WHEN (NEW.external_account_id IS NULL AND NEW.normalized_external_account_id IS NOT NULL)
+      OR (NEW.external_account_id IS NOT NULL AND NEW.normalized_external_account_id IS NULL)
+      OR (NEW.external_account_id IS NOT NULL
+        AND (
+          normalize_store_provider_external_identity(NEW.provider, NEW.external_account_id) IS NULL
+          OR NEW.normalized_external_account_id <>
+            normalize_store_provider_external_identity(NEW.provider, NEW.external_account_id)))
+    BEGIN
+      SELECT RAISE(ABORT, 'provider external identity raw/normalized mismatch');
+    END
+  `,
+  trg_store_connections_collection_store_name_insert: `
+    CREATE TRIGGER trg_store_connections_collection_store_name_insert
+    BEFORE INSERT ON store_connections
+    WHEN (NEW.provider = 'amazon_ads'
+        AND (NEW.collection_store_name IS NOT NULL
+          OR NEW.normalized_collection_store_name IS NOT NULL))
+      OR (NEW.provider = 'lingxing' AND (
+        (NEW.collection_store_name IS NULL
+          AND NEW.normalized_collection_store_name IS NOT NULL)
+        OR (NEW.collection_store_name IS NOT NULL
+          AND NEW.normalized_collection_store_name IS NULL)
+        OR (NEW.collection_store_name IS NOT NULL
+          AND (
+            normalize_lingxing_collection_store_name(NEW.collection_store_name) IS NULL
+            OR NEW.normalized_collection_store_name <>
+              normalize_lingxing_collection_store_name(NEW.collection_store_name)))))
+    BEGIN
+      SELECT RAISE(ABORT, 'Lingxing collection store selector raw/normalized/provider mismatch');
+    END
+  `,
+  trg_store_connections_collection_store_name_update: `
+    CREATE TRIGGER trg_store_connections_collection_store_name_update
+    BEFORE UPDATE OF provider, collection_store_name, normalized_collection_store_name
+    ON store_connections
+    WHEN (NEW.provider = 'amazon_ads'
+        AND (NEW.collection_store_name IS NOT NULL
+          OR NEW.normalized_collection_store_name IS NOT NULL))
+      OR (NEW.provider = 'lingxing' AND (
+        (NEW.collection_store_name IS NULL
+          AND NEW.normalized_collection_store_name IS NOT NULL)
+        OR (NEW.collection_store_name IS NOT NULL
+          AND NEW.normalized_collection_store_name IS NULL)
+        OR (NEW.collection_store_name IS NOT NULL
+          AND (
+            normalize_lingxing_collection_store_name(NEW.collection_store_name) IS NULL
+            OR NEW.normalized_collection_store_name <>
+              normalize_lingxing_collection_store_name(NEW.collection_store_name)))))
+    BEGIN
+      SELECT RAISE(ABORT, 'Lingxing collection store selector raw/normalized/provider mismatch');
+    END
+  `,
+});
+const V11_STORE_PROVIDER_IDENTITY_ROW_INVARIANTS = Object.freeze([
+  'stores are US/USD/America/Los_Angeles',
+  'provider external identity raw/normalized values are NFKC+trim+lower paired',
+  'provider external identity ownership is unique per provider',
+  'Lingxing selector raw/normalized values are NFKC+trim+lower paired',
+  'amazon_ads connections do not carry Lingxing selectors',
 ]);
 const SINGLE_VALUE_OPTIONS = new Set([
   'db',
@@ -211,6 +350,227 @@ function tableNames(database) {
   `).all().map((row) => String(row.name)));
 }
 
+function canonicalSql(value) {
+  const source = String(value ?? '');
+  let output = '';
+  let quoted = false;
+  let pendingSpace = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (quoted) {
+      output += character;
+      if (character === "'" && source[index + 1] === "'") {
+        output += source[index + 1];
+        index += 1;
+      } else if (character === "'") {
+        quoted = false;
+      }
+      continue;
+    }
+    if (character === "'") {
+      if (pendingSpace && output.length > 0) output += ' ';
+      pendingSpace = false;
+      quoted = true;
+      output += character;
+    } else if (/\s/.test(character)) {
+      pendingSpace = output.length > 0;
+    } else {
+      if (pendingSpace && output.length > 0) output += ' ';
+      pendingSpace = false;
+      output += character;
+    }
+  }
+  return output.trim().replace(/;$/, '').trimEnd();
+}
+
+function storeProviderIdentityV11SchemaContract() {
+  return {
+    targetVersion: 11,
+    columns: V11_STORE_PROVIDER_IDENTITY_COLUMNS.map((column) => ({ ...column })),
+    uniquePartialIndex: {
+      name: V11_STORE_PROVIDER_IDENTITY_INDEX.name,
+      table: V11_STORE_PROVIDER_IDENTITY_INDEX.table,
+      unique: true,
+      partial: true,
+      columns: [...V11_STORE_PROVIDER_IDENTITY_INDEX.columns],
+      where: 'normalized_external_account_id IS NOT NULL',
+    },
+    triggers: Object.keys(V11_STORE_PROVIDER_IDENTITY_TRIGGERS),
+    rowInvariants: [...V11_STORE_PROVIDER_IDENTITY_ROW_INVARIANTS],
+  };
+}
+
+function normalizeV11Identity(value, label) {
+  if (value === null) return null;
+  if (typeof value !== 'string') throw new Error(`${label} must be a string or NULL`);
+  const raw = value.trim();
+  if (!raw) return null;
+  const normalized = raw.normalize('NFKC').trim();
+  if (!normalized) return null;
+  if (normalized.length > 256 || /[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new Error(`${label} exceeds the v11 identity boundary`);
+  }
+  return normalized.toLowerCase();
+}
+
+function inspectStoreProviderIdentityV11Rows(database) {
+  const violations = [];
+  const stores = database.prepare(`
+    SELECT store_id, marketplace, currency, business_timezone
+    FROM stores
+    WHERE marketplace <> 'US'
+       OR currency <> 'USD'
+       OR business_timezone <> 'America/Los_Angeles'
+    ORDER BY store_id
+  `).all();
+  for (const row of stores) {
+    violations.push(
+      `store ${row.store_id} has unsupported authority ${row.marketplace}/${row.currency}/${row.business_timezone}`,
+    );
+  }
+
+  const rows = database.prepare(`
+    SELECT id, store_id, provider, external_account_id,
+      normalized_external_account_id, collection_store_name,
+      normalized_collection_store_name
+    FROM store_connections
+    ORDER BY provider, id
+  `).all();
+  const owners = new Map();
+  for (const row of rows) {
+    try {
+      if (row.provider !== 'lingxing' && row.provider !== 'amazon_ads') {
+        violations.push(`connection ${row.id} has unsupported provider ${row.provider}`);
+        continue;
+      }
+      const expectedExternal = normalizeV11Identity(
+        row.external_account_id,
+        `connection ${row.id} external identity`,
+      );
+      const persistedExternal = row.normalized_external_account_id ?? null;
+      if ((row.external_account_id === null) !== (persistedExternal === null)
+        || persistedExternal !== expectedExternal) {
+        violations.push(`connection ${row.id} has inconsistent raw/normalized provider identity`);
+      }
+      const expectedSelector = normalizeV11Identity(
+        row.collection_store_name,
+        `connection ${row.id} Lingxing selector`,
+      );
+      const persistedSelector = row.normalized_collection_store_name ?? null;
+      if (row.provider === 'amazon_ads'
+        && (row.collection_store_name !== null || persistedSelector !== null)) {
+        violations.push(`amazon_ads connection ${row.id} carries a Lingxing selector`);
+      }
+      if ((row.collection_store_name === null) !== (persistedSelector === null)
+        || persistedSelector !== expectedSelector) {
+        violations.push(`connection ${row.id} has inconsistent raw/normalized Lingxing selector`);
+      }
+      if (expectedExternal !== null) {
+        const key = `${row.provider}\u0000${expectedExternal}`;
+        const owner = owners.get(key);
+        if (owner) {
+          violations.push(
+            `provider identity ${row.provider}/${expectedExternal} has multiple owners ${owner.id}/${row.id}`,
+          );
+        } else {
+          owners.set(key, row);
+        }
+      }
+    } catch (error) {
+      violations.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return violations;
+}
+
+function inspectStoreProviderIdentityV11Schema(database) {
+  const violations = [];
+  const table = database.prepare(`
+    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'store_connections'
+  `).get();
+  if (!table) {
+    return {
+      ...storeProviderIdentityV11SchemaContract(),
+      passed: false,
+      violations: ['store_connections table is missing'],
+      rowInvariantViolations: ['row invariants could not be evaluated'],
+    };
+  }
+
+  const tableColumns = database.pragma('table_info("store_connections")');
+  for (const expected of V11_STORE_PROVIDER_IDENTITY_COLUMNS) {
+    const actual = tableColumns.find((column) => String(column.name) === expected.name);
+    if (
+      !actual
+      || String(actual.type ?? '').toUpperCase() !== expected.type
+      || Number(actual.notnull) !== expected.notNull
+      || (actual.dflt_value ?? null) !== expected.defaultValue
+      || Number(actual.pk) !== expected.primaryKey
+    ) {
+      violations.push(`column ${expected.name} is missing or differs from the v11 contract`);
+    }
+  }
+
+  const index = database.prepare(`
+    SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name = ?
+  `).get(V11_STORE_PROVIDER_IDENTITY_INDEX.name);
+  const indexList = database.pragma('index_list("store_connections")');
+  const indexFlags = indexList.find(
+    (candidate) => String(candidate.name) === V11_STORE_PROVIDER_IDENTITY_INDEX.name,
+  );
+  const indexColumns = index
+    ? database.pragma(`index_xinfo("${V11_STORE_PROVIDER_IDENTITY_INDEX.name}")`)
+      .filter((column) => Number(column.key) === 1)
+      .sort((left, right) => Number(left.seqno) - Number(right.seqno))
+      .map((column) => String(column.name))
+    : [];
+  if (
+    !index
+    || Number(indexFlags?.unique) !== V11_STORE_PROVIDER_IDENTITY_INDEX.unique
+    || Number(indexFlags?.partial) !== V11_STORE_PROVIDER_IDENTITY_INDEX.partial
+    || JSON.stringify(indexColumns) !== JSON.stringify(V11_STORE_PROVIDER_IDENTITY_INDEX.columns)
+    || canonicalSql(index.sql) !== canonicalSql(V11_STORE_PROVIDER_IDENTITY_INDEX.sql)
+  ) {
+    violations.push(`index ${V11_STORE_PROVIDER_IDENTITY_INDEX.name} is missing or differs from the v11 contract`);
+  }
+
+  for (const [name, expectedSql] of Object.entries(V11_STORE_PROVIDER_IDENTITY_TRIGGERS)) {
+    const trigger = database.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?
+    `).get(name);
+    if (!trigger || canonicalSql(trigger.sql) !== canonicalSql(expectedSql)) {
+      violations.push(`trigger ${name} is missing or differs from the v11 contract`);
+    }
+  }
+
+  let rowInvariantViolations = [];
+  if (violations.some((violation) => violation.startsWith('column '))) {
+    rowInvariantViolations = ['row invariants could not be evaluated against incomplete v11 columns'];
+  } else {
+    try {
+      rowInvariantViolations = inspectStoreProviderIdentityV11Rows(database);
+    } catch (error) {
+      rowInvariantViolations = [error instanceof Error ? error.message : String(error)];
+    }
+  }
+  violations.push(...rowInvariantViolations);
+
+  return {
+    ...storeProviderIdentityV11SchemaContract(),
+    passed: violations.length === 0,
+    violations,
+    rowInvariantViolations,
+  };
+}
+
+function assertStoreProviderIdentityV11Schema(database, label = 'v11 store provider identity schema') {
+  const inspection = inspectStoreProviderIdentityV11Schema(database);
+  if (!inspection.passed) {
+    fail(`${label} is invalid: ${inspection.violations.join('; ')}`);
+  }
+  return inspection;
+}
+
 function migrationContract(migrationsRoot = path.join(
   ROOT,
   'packages',
@@ -221,17 +581,17 @@ function migrationContract(migrationsRoot = path.join(
 )) {
   const rows = [];
   for (const fileName of fs.readdirSync(migrationsRoot)
-    .filter((name) => /^000\d-.*\.ts$/.test(name) && !name.endsWith('.test.ts'))
+    .filter((name) => /^\d{4}-.*\.ts$/.test(name) && !name.endsWith('.test.ts'))
     .sort()) {
     const source = fs.readFileSync(path.join(migrationsRoot, fileName), 'utf8');
     const version = source.match(
       /export const [A-Z0-9_]+_MIGRATION_VERSION = (\d+);/,
     );
     const name = source.match(
-      /export const [A-Z0-9_]+_MIGRATION_NAME = '([^']+)';/,
+      /export const [A-Z0-9_]+_MIGRATION_NAME\s*=\s*'([^']+)';/,
     );
     const checksums = [...source.matchAll(
-      /export const (?!LEGACY_)[A-Z0-9_]+_MIGRATION_CHECKSUM = '([^']+)';/g,
+      /export const (?!LEGACY_)[A-Z0-9_]+_MIGRATION_CHECKSUM\s*=\s*'([^']+)';/g,
     )];
     if (!version || !name || checksums.length !== 1) {
       fail(`Could not read the production migration contract from ${fileName}.`);
@@ -250,6 +610,49 @@ function migrationContract(migrationsRoot = path.join(
     fail(`Production migration contract must contain versions 1..${TARGET_MIGRATION_VERSION}.`);
   }
   return rows;
+}
+
+function legacyV1Checksum(migrationsRoot = path.join(
+  ROOT,
+  'packages',
+  'local-db',
+  'src',
+  'sqlite',
+  'migrations',
+)) {
+  const source = fs.readFileSync(
+    path.join(migrationsRoot, '0001-store-authority.ts'),
+    'utf8',
+  );
+  const match = source.match(
+    /export const LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM = '([^']+)';/,
+  );
+  if (!match) fail('Could not read the explicit legacy v1 migration checksum contract.');
+  return match[1];
+}
+
+function migrationV1ChecksumWhitelist(contract = migrationContract()) {
+  if (!Array.isArray(contract) || contract[0]?.version !== 1) {
+    fail('Production migration v1 checksum policy requires a complete migration contract.');
+  }
+  return new Set([contract[0].checksum, legacyV1Checksum()]);
+}
+
+function migrationRowsMatchProductionContract(
+  actual,
+  expected = migrationContract(),
+  allowedV1Checksums = migrationV1ChecksumWhitelist(expected),
+) {
+  return Array.isArray(actual)
+    && actual.length === expected.length
+    && actual.every((row, index) => (
+      Number(row?.version) === expected[index].version
+      && String(row?.name ?? '') === expected[index].name
+      && (expected[index].version === 1
+        ? allowedV1Checksums.has(String(row?.checksum ?? ''))
+        : String(row?.checksum ?? '') === expected[index].checksum)
+      && String(row?.status ?? '').toLowerCase() === 'applied'
+    ));
 }
 
 function migrationInspection(database, tables, contract = migrationContract()) {
@@ -344,12 +747,15 @@ function migrationInspection(database, tables, contract = migrationContract()) {
     : 'LEGACY_SCHEMA_MIGRATIONS';
   const rowsByVersion = new Map(normalizedRows.map((row) => [row.version, row]));
   const duplicateVersions = normalizedRows.length !== rowsByVersion.size;
+  const allowedV1Checksums = migrationV1ChecksumWhitelist(contract);
   const migrations = contract.map((expected) => {
     const actual = rowsByVersion.get(expected.version);
     const status = actual
       && actual.status === 'applied'
       && actual.name === expected.name
-      && actual.checksum === expected.checksum
+      && (expected.version === 1
+        ? allowedV1Checksums.has(actual.checksum)
+        : actual.checksum === expected.checksum)
       ? 'APPLIED'
       : actual
         ? 'MISMATCH'
@@ -359,9 +765,13 @@ function migrationInspection(database, tables, contract = migrationContract()) {
   const extraVersions = recordedVersions.filter(
     (version) => !contract.some((expected) => expected.version === version),
   );
-  const targetReady = !duplicateVersions
+  const ledgerTargetReady = !duplicateVersions
     && extraVersions.length === 0
     && migrations.every((row) => row.status === 'APPLIED');
+  const v11Schema = ledgerTargetReady
+    ? inspectStoreProviderIdentityV11Schema(database)
+    : null;
+  const targetReady = ledgerTargetReady && v11Schema?.passed === true;
 
   return {
     family,
@@ -377,6 +787,8 @@ function migrationInspection(database, tables, contract = migrationContract()) {
     duplicateVersions,
     extraVersions,
     migrations,
+    ledgerTargetReady,
+    v11Schema,
   };
 }
 
@@ -979,12 +1391,22 @@ module.exports = {
   SCHEMA_VERSION,
   TARGET_MIGRATION_VERSION,
   REQUIRED_TABLES,
+  V11_STORE_PROVIDER_IDENTITY_COLUMNS,
+  V11_STORE_PROVIDER_IDENTITY_INDEX,
+  V11_STORE_PROVIDER_IDENTITY_ROW_INVARIANTS,
+  V11_STORE_PROVIDER_IDENTITY_TRIGGERS,
+  assertStoreProviderIdentityV11Schema,
   assertSafeOutputPath,
+  inspectStoreProviderIdentityV11Schema,
   inspectProductionAuthoritySelection,
+  legacyV1Checksum,
   migrationContract,
   migrationInspection,
+  migrationRowsMatchProductionContract,
+  migrationV1ChecksumWhitelist,
   parseArgs,
   run,
+  storeProviderIdentityV11SchemaContract,
   usage,
   writeJsonAtomicExclusive,
 };

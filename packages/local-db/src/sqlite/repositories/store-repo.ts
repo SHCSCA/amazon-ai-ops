@@ -3,6 +3,8 @@ import {
   DEFAULT_US_BUSINESS_TIMEZONE,
   normalizeBrowserProfileId,
   normalizeBusinessTimezone,
+  normalizeLingxingCollectionStoreName,
+  normalizeProviderExternalAccountId,
   normalizeSessionGeneration,
   normalizeStoreCapabilityId,
   normalizeStoreId,
@@ -29,11 +31,13 @@ import {
 } from '@amazon-ai-ops/shared-types';
 import {
   STORE_AUTHORITY_MIGRATION_VERSION,
+  STORE_PROVIDER_IDENTITY_UNIQUE_INDEX,
   STORE_SCOPED_LEGACY_TABLES,
   getStoreMigrationRecoveryPreflight,
   getUpgradeBackupRecoveryPreflight,
   restoreStoreMigrationBackupTo,
   restoreUpgradeBackupTo,
+  installStoreProviderIdentitySqlFunction,
   upgradeBackupFromMigrationManifest,
   type SchemaMigrationRecord,
   type SchemaMigrationManifest,
@@ -62,6 +66,15 @@ export interface UpdateStoreConnectionRecordInput extends UpdateStoreConnectionI
   status?: StoreConnectionStatus;
   lastVerifiedAt?: string;
   lastFailureCode?: string;
+}
+
+/** Main-only first enrollment from trusted, visible Lingxing page evidence. */
+export interface EnrollLingxingStableExternalAccountInput {
+  id: StoreCapabilityId;
+  storeId: StoreId;
+  provider: 'lingxing';
+  externalAccountId: string;
+  expectedUpdatedAt: string;
 }
 
 export interface StoreArchivePreflight {
@@ -100,6 +113,8 @@ export type StoreRepositoryErrorCode =
   | 'STORE_CONFLICT'
   | 'INVALID_STORE_INPUT'
   | 'CONNECTION_NOT_FOUND'
+  | 'CONNECTION_CONFLICT'
+  | 'EXTERNAL_ACCOUNT_ALREADY_BOUND'
   | 'SESSION_GENERATION_STALE'
   | 'SESSION_PROFILE_MISMATCH'
   | 'MIGRATION_NOT_FOUND'
@@ -118,7 +133,9 @@ export class StoreRepositoryError extends Error {
 }
 
 export class StoreRepository {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Database) {
+    installStoreProviderIdentitySqlFunction(db);
+  }
 
   transaction<T>(work: () => T): T {
     return this.db.transaction(work).immediate();
@@ -128,9 +145,9 @@ export class StoreRepository {
     const storeId = normalizeStoreId(input.storeId);
     const browserProfileId = normalizeBrowserProfileId(input.browserProfileId);
     const displayName = normalizeDisplayName(input.displayName);
-    const marketplace = normalizeUsMarketplace(input.marketplace);
-    const currency = normalizeUsdCurrency(input.currency);
-    const businessTimezone = normalizeBusinessTimezone(
+    const marketplace = normalizeV1Marketplace(input.marketplace);
+    const currency = normalizeV1Currency(input.currency);
+    const businessTimezone = normalizeV1BusinessTimezone(
       input.businessTimezone ?? DEFAULT_US_BUSINESS_TIMEZONE,
     );
     const status = input.status ?? 'active';
@@ -208,10 +225,11 @@ export class StoreRepository {
     assertExpectedUpdatedAt(existing, input.expectedUpdatedAt);
 
     const fields: string[] = [];
+    const updatedAt = nextTimestamp(existing.updatedAt);
     const params: Record<string, unknown> = {
       storeId,
       expectedRevision: existing.updatedAt,
-      updatedAt: nextTimestamp(existing.updatedAt),
+      updatedAt,
     };
     if (input.patch.displayName !== undefined) {
       fields.push('display_name = @displayName');
@@ -219,7 +237,7 @@ export class StoreRepository {
     }
     if (input.patch.businessTimezone !== undefined) {
       fields.push('business_timezone = @businessTimezone');
-      params.businessTimezone = normalizeBusinessTimezone(input.patch.businessTimezone);
+      params.businessTimezone = normalizeV1BusinessTimezone(input.patch.businessTimezone);
     }
     if (input.patch.status !== undefined) {
       if (input.patch.status !== 'active' && input.patch.status !== 'inactive') {
@@ -232,20 +250,28 @@ export class StoreRepository {
       throw new StoreRepositoryError('INVALID_STORE_INPUT', 'Store update patch cannot be empty.');
     }
     fields.push('updated_at = @updatedAt');
-    const updated = this.db.prepare(`
-      UPDATE stores
-      SET ${fields.join(', ')}
-      WHERE store_id = @storeId
-        AND updated_at = @expectedRevision
-        AND status <> 'archived'
-    `).run(params);
-    if (updated.changes !== 1) {
-      throw new StoreRepositoryError(
-        'STORE_CONFLICT',
-        `Store ${storeId} changed after it was read; reload before retrying.`,
-      );
-    }
-    return this.requireStore(storeId);
+
+    const update = this.db.transaction(() => {
+      const updated = this.db.prepare(`
+        UPDATE stores
+        SET ${fields.join(', ')}
+        WHERE store_id = @storeId
+          AND updated_at = @expectedRevision
+          AND status <> 'archived'
+      `).run(params);
+      if (updated.changes !== 1) {
+        throw new StoreRepositoryError(
+          'STORE_CONFLICT',
+          `Store ${storeId} changed after it was read; reload before retrying.`,
+        );
+      }
+      if (existing.status === 'active' && input.patch.status === 'inactive') {
+        this.invalidateStoreSessions(existing, 'store_inactive', updatedAt);
+        this.markStoreConnectionsAttentionRequired(storeId, 'store_inactive', updatedAt);
+      }
+      return this.requireStore(storeId);
+    });
+    return update();
   }
 
   getArchivePreflight(storeIdInput: StoreId): StoreArchivePreflight {
@@ -285,27 +311,8 @@ export class StoreRepository {
         SET status = 'archived', archived_at = @archivedAt, updated_at = @updatedAt
         WHERE store_id = @storeId
       `).run({ storeId, archivedAt: now, updatedAt: now });
-      this.db.prepare(`
-        UPDATE store_session_metadata
-        SET status = 'signed_out',
-            session_generation = session_generation + 1,
-            observed_at = @observedAt,
-            updated_at = @updatedAt
-        WHERE store_id = @storeId
-      `).run({ storeId, observedAt: now, updatedAt: now });
-      this.db.prepare(`
-        UPDATE store_connections
-        SET status = CASE
-              WHEN status = 'not_configured' THEN status
-              ELSE 'attention_required'
-            END,
-            last_failure_code = CASE
-              WHEN status = 'not_configured' THEN last_failure_code
-              ELSE 'store_archived'
-            END,
-            updated_at = @updatedAt
-        WHERE store_id = @storeId
-      `).run({ storeId, updatedAt: now });
+      this.invalidateStoreSessions(existing, 'store_archived', now);
+      this.markStoreConnectionsAttentionRequired(storeId, 'store_archived', now);
       return this.requireStore(storeId);
     });
     return archive();
@@ -369,15 +376,33 @@ export class StoreRepository {
     const store = this.requireWritableStore(input.storeId);
     const provider = normalizeProvider(input.provider);
     const status = normalizeConnectionStatus(input.status ?? 'not_configured');
+    const externalIdentity = nullableExternalAccountIdentity(
+      provider,
+      input.externalAccountId,
+    );
+    if (provider === 'lingxing' && externalIdentity.raw !== null) {
+      throw new StoreRepositoryError(
+        'INVALID_STORE_INPUT',
+        'Lingxing stable externalAccountId must be enrolled from trusted visible-page evidence.',
+      );
+    }
+    const collectionSelector = nullableCollectionStoreName(
+      provider,
+      input.collectionStoreName,
+    );
     const now = new Date().toISOString();
     try {
       this.db.prepare(`
         INSERT INTO store_connections (
           id, store_id, provider, status, account_label, external_account_id,
-          last_verified_at, last_failure_code, created_at, updated_at
+          normalized_external_account_id, collection_store_name,
+          normalized_collection_store_name, last_verified_at,
+          last_failure_code, created_at, updated_at
         ) VALUES (
           @id, @storeId, @provider, @status, @accountLabel, @externalAccountId,
-          @lastVerifiedAt, @lastFailureCode, @createdAt, @updatedAt
+          @normalizedExternalAccountId, @collectionStoreName,
+          @normalizedCollectionStoreName, @lastVerifiedAt,
+          @lastFailureCode, @createdAt, @updatedAt
         )
       `).run({
         id,
@@ -385,7 +410,10 @@ export class StoreRepository {
         provider,
         status,
         accountLabel: nullableProviderIdentity(input.accountLabel, 'accountLabel'),
-        externalAccountId: nullableProviderIdentity(input.externalAccountId, 'externalAccountId'),
+        externalAccountId: externalIdentity.raw,
+        normalizedExternalAccountId: externalIdentity.normalized,
+        collectionStoreName: collectionSelector.raw,
+        normalizedCollectionStoreName: collectionSelector.normalized,
         lastVerifiedAt: optionalTimestamp(input.lastVerifiedAt),
         lastFailureCode: nullableText(input.lastFailureCode),
         createdAt: now,
@@ -393,8 +421,14 @@ export class StoreRepository {
       });
     } catch (error) {
       if (isSqliteConstraint(error)) {
+        if (isExternalAccountAlreadyBoundConstraint(error)) {
+          throw new StoreRepositoryError(
+            'EXTERNAL_ACCOUNT_ALREADY_BOUND',
+            `The ${provider} external account is already bound to another store.`,
+          );
+        }
         throw new StoreRepositoryError(
-          'STORE_CONFLICT',
+          'CONNECTION_CONFLICT',
           `Store ${store.storeId} already has a ${provider} connection or the capability id is in use.`,
         );
       }
@@ -405,81 +439,261 @@ export class StoreRepository {
 
   updateConnection(input: UpdateStoreConnectionRecordInput): StoreConnection {
     const id = normalizeStoreCapabilityId(input.id);
-    const store = this.requireWritableStore(input.storeId);
-    const update = this.db.transaction(() => {
-      const existing = this.requireConnection(store.storeId, id);
-      const submittedAccountLabel = input.accountLabel === undefined
-        ? existing.accountLabel ?? null
-        : nullableProviderIdentity(input.accountLabel, 'accountLabel');
-      const submittedExternalAccountId = input.externalAccountId === undefined
-        ? existing.externalAccountId ?? null
-        : nullableProviderIdentity(input.externalAccountId, 'externalAccountId');
-      const accountLabelChanged = input.accountLabel !== undefined
-        && submittedAccountLabel !== (existing.accountLabel ?? null);
-      const externalAccountIdChanged = input.externalAccountId !== undefined
-        && submittedExternalAccountId !== (existing.externalAccountId ?? null);
-      const identityChanged = accountLabelChanged || externalAccountIdChanged;
-      const fields: string[] = [];
-      const params: Record<string, unknown> = {
-        id,
-        storeId: store.storeId,
-        updatedAt: new Date().toISOString(),
-      };
-      if (input.accountLabel !== undefined) {
-        fields.push('account_label = @accountLabel');
-        params.accountLabel = submittedAccountLabel;
-      }
-      if (identityChanged) {
-        if (!accountLabelChanged && externalAccountIdChanged) {
-          fields.push('external_account_id = @externalAccountId');
-          params.externalAccountId = submittedExternalAccountId;
-        } else {
-          fields.push('external_account_id = NULL');
+    const storeId = normalizeStoreId(input.storeId);
+    const store = this.requireWritableStore(storeId);
+    const existing = this.requireConnection(store.storeId, id);
+    assertExpectedConnectionUpdatedAt(existing, input.expectedUpdatedAt);
+    const submittedAccountLabel = input.accountLabel === undefined
+      ? existing.accountLabel ?? null
+      : nullableProviderIdentity(input.accountLabel, 'accountLabel');
+    const submittedExternalIdentity = input.externalAccountId === undefined
+      ? {
+          raw: existing.externalAccountId ?? null,
+          normalized: existing.normalizedExternalAccountId ?? null,
         }
+      : nullableExternalAccountIdentity(existing.provider, input.externalAccountId);
+    if (
+      existing.provider === 'lingxing'
+      && input.externalAccountId !== undefined
+      && submittedExternalIdentity.raw !== null
+    ) {
+      throw new StoreRepositoryError(
+        'INVALID_STORE_INPUT',
+        'Lingxing stable externalAccountId must be enrolled from trusted visible-page evidence.',
+      );
+    }
+    const submittedCollectionSelector = input.collectionStoreName === undefined
+      ? {
+          raw: existing.collectionStoreName ?? null,
+          normalized: existing.normalizedCollectionStoreName ?? null,
+        }
+      : nullableCollectionStoreName(existing.provider, input.collectionStoreName);
+    const accountLabelChanged = input.accountLabel !== undefined
+      && submittedAccountLabel !== (existing.accountLabel ?? null);
+    const externalAccountIdChanged = input.externalAccountId !== undefined
+      && submittedExternalIdentity.normalized
+        !== (existing.normalizedExternalAccountId ?? null);
+    const collectionStoreNameChanged = input.collectionStoreName !== undefined
+      && submittedCollectionSelector.normalized
+        !== (existing.normalizedCollectionStoreName ?? null);
+    const stableExternalIdentityRequiresReset = accountLabelChanged
+      || (existing.provider === 'lingxing' && collectionStoreNameChanged);
+    const identityChanged = accountLabelChanged
+      || externalAccountIdChanged
+      || collectionStoreNameChanged;
+    const fields: string[] = [];
+    const params: Record<string, unknown> = {
+      id,
+      storeId: store.storeId,
+      expectedRevision: existing.updatedAt,
+      updatedAt: nextTimestamp(existing.updatedAt),
+    };
+    if (input.accountLabel !== undefined) {
+      fields.push('account_label = @accountLabel');
+      params.accountLabel = submittedAccountLabel;
+    }
+    if (stableExternalIdentityRequiresReset) {
+      if (input.externalAccountId === undefined) {
         fields.push(
-          "status = 'not_configured'",
-          'last_verified_at = NULL',
-          'last_failure_code = NULL',
+          'external_account_id = NULL',
+          'normalized_external_account_id = NULL',
         );
       } else {
-        for (const [inputKey, column] of [
-          ['externalAccountId', 'external_account_id'],
-          ['lastFailureCode', 'last_failure_code'],
-        ] as const) {
-          if (input[inputKey] !== undefined) {
-            fields.push(`${column} = @${inputKey}`);
-            params[inputKey] = inputKey === 'externalAccountId'
-              ? nullableProviderIdentity(input[inputKey], 'externalAccountId')
-              : nullableText(input[inputKey]);
-          }
-        }
-        if (input.lastVerifiedAt !== undefined) {
-          fields.push('last_verified_at = @lastVerifiedAt');
-          params.lastVerifiedAt = optionalTimestamp(input.lastVerifiedAt);
-        }
-        if (input.status !== undefined) {
-          fields.push('status = @status');
-          params.status = normalizeConnectionStatus(input.status);
-        }
+        fields.push(
+          'external_account_id = @externalAccountId',
+          'normalized_external_account_id = @normalizedExternalAccountId',
+        );
+        params.externalAccountId = submittedExternalIdentity.raw;
+        params.normalizedExternalAccountId = submittedExternalIdentity.normalized;
       }
-      if (fields.length === 0) {
-        throw new StoreRepositoryError('INVALID_STORE_INPUT', 'Connection update cannot be empty.');
+    } else if (input.externalAccountId !== undefined) {
+      fields.push(
+        'external_account_id = @externalAccountId',
+        'normalized_external_account_id = @normalizedExternalAccountId',
+      );
+      params.externalAccountId = submittedExternalIdentity.raw;
+      params.normalizedExternalAccountId = submittedExternalIdentity.normalized;
+    }
+    if (accountLabelChanged) {
+      if (input.collectionStoreName === undefined) {
+        fields.push(
+          'collection_store_name = NULL',
+          'normalized_collection_store_name = NULL',
+        );
+      } else {
+        fields.push(
+          'collection_store_name = @collectionStoreName',
+          'normalized_collection_store_name = @normalizedCollectionStoreName',
+        );
+        params.collectionStoreName = submittedCollectionSelector.raw;
+        params.normalizedCollectionStoreName = submittedCollectionSelector.normalized;
       }
-      fields.push('updated_at = @updatedAt');
-      this.db.prepare(`
+    } else if (input.collectionStoreName !== undefined) {
+      fields.push(
+        'collection_store_name = @collectionStoreName',
+        'normalized_collection_store_name = @normalizedCollectionStoreName',
+      );
+      params.collectionStoreName = submittedCollectionSelector.raw;
+      params.normalizedCollectionStoreName = submittedCollectionSelector.normalized;
+    }
+    if (identityChanged) {
+      fields.push(
+        "status = 'not_configured'",
+        'last_verified_at = NULL',
+        "last_failure_code = 'connection_identity_changed'",
+      );
+    } else {
+      if (input.lastFailureCode !== undefined) {
+        fields.push('last_failure_code = @lastFailureCode');
+        params.lastFailureCode = nullableText(input.lastFailureCode);
+      }
+      if (input.lastVerifiedAt !== undefined) {
+        fields.push('last_verified_at = @lastVerifiedAt');
+        params.lastVerifiedAt = optionalTimestamp(input.lastVerifiedAt);
+      }
+      if (input.status !== undefined) {
+        fields.push('status = @status');
+        params.status = normalizeConnectionStatus(input.status);
+      }
+    }
+    if (fields.length === 0) {
+      throw new StoreRepositoryError('INVALID_STORE_INPUT', 'Connection update cannot be empty.');
+    }
+    fields.push('updated_at = @updatedAt');
+
+    const update = this.db.transaction(() => {
+      const currentStore = this.requireWritableStore(storeId);
+      const updated = this.db.prepare(`
         UPDATE store_connections
         SET ${fields.join(', ')}
-        WHERE id = @id AND store_id = @storeId
+        WHERE id = @id AND store_id = @storeId AND updated_at = @expectedRevision
       `).run(params);
+      if (updated.changes !== 1) {
+        throw new StoreRepositoryError(
+          'CONNECTION_CONFLICT',
+          `Connection ${id} changed after it was read; reload before retrying.`,
+        );
+      }
       if (identityChanged) {
-        this.db.prepare(`
-          DELETE FROM store_session_metadata
-          WHERE store_id = ? AND provider = ?
-        `).run(store.storeId, existing.provider);
+        this.invalidateProviderSession(
+          currentStore,
+          existing.provider,
+          'connection_identity_changed',
+          String(params.updatedAt),
+        );
+      }
+      return this.requireConnection(currentStore.storeId, id);
+    });
+    try {
+      return update();
+    } catch (error) {
+      if (error instanceof StoreRepositoryError) throw error;
+      if (isSqliteConstraint(error)) {
+        if (isExternalAccountAlreadyBoundConstraint(error)) {
+          throw new StoreRepositoryError(
+            'EXTERNAL_ACCOUNT_ALREADY_BOUND',
+            'The provider external account is already bound to another store.',
+          );
+        }
+        throw new StoreRepositoryError(
+          'CONNECTION_CONFLICT',
+          `Connection ${id} could not be updated because its authority changed.`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  enrollLingxingStableExternalAccount(
+    input: EnrollLingxingStableExternalAccountInput,
+  ): StoreConnection {
+    const id = normalizeStoreCapabilityId(input.id);
+    const storeId = normalizeStoreId(input.storeId);
+    if (input.provider !== 'lingxing') {
+      throw new StoreRepositoryError(
+        'INVALID_STORE_INPUT',
+        'Stable Lingxing identity enrollment requires provider lingxing.',
+      );
+    }
+    if (typeof input.expectedUpdatedAt !== 'string' || !input.expectedUpdatedAt) {
+      throw new StoreRepositoryError(
+        'INVALID_STORE_INPUT',
+        'Stable Lingxing identity enrollment requires an exact connection revision.',
+      );
+    }
+    const externalIdentity = nullableExternalAccountIdentity(
+      'lingxing',
+      input.externalAccountId,
+    );
+    if (externalIdentity.raw === null || externalIdentity.normalized === null) {
+      throw new StoreRepositoryError(
+        'INVALID_STORE_INPUT',
+        'Stable Lingxing externalAccountId cannot be empty.',
+      );
+    }
+    const enroll = this.db.transaction(() => {
+      const store = this.requireWritableStore(storeId);
+      const existing = this.requireConnection(store.storeId, id);
+      if (existing.provider !== 'lingxing') {
+        throw new StoreRepositoryError(
+          'INVALID_STORE_INPUT',
+          'Stable Lingxing identity enrollment cannot target another provider.',
+        );
+      }
+      if (existing.externalAccountId !== undefined
+        || existing.normalizedExternalAccountId !== undefined
+        || existing.updatedAt !== input.expectedUpdatedAt) {
+        throw new StoreRepositoryError(
+          'CONNECTION_CONFLICT',
+          `Connection ${id} is no longer eligible for first stable identity enrollment.`,
+        );
+      }
+      const updatedAt = nextTimestamp(existing.updatedAt);
+      const updated = this.db.prepare(`
+        UPDATE store_connections
+        SET external_account_id = @externalAccountId,
+            normalized_external_account_id = @normalizedExternalAccountId,
+            updated_at = @updatedAt
+        WHERE id = @id
+          AND store_id = @storeId
+          AND provider = 'lingxing'
+          AND updated_at = @expectedUpdatedAt
+          AND external_account_id IS NULL
+          AND normalized_external_account_id IS NULL
+      `).run({
+        id,
+        storeId: store.storeId,
+        expectedUpdatedAt: input.expectedUpdatedAt,
+        externalAccountId: externalIdentity.raw,
+        normalizedExternalAccountId: externalIdentity.normalized,
+        updatedAt,
+      });
+      if (updated.changes !== 1) {
+        throw new StoreRepositoryError(
+          'CONNECTION_CONFLICT',
+          `Connection ${id} changed before stable identity enrollment completed.`,
+        );
       }
       return this.requireConnection(store.storeId, id);
     });
-    return update();
+    try {
+      return enroll();
+    } catch (error) {
+      if (error instanceof StoreRepositoryError) throw error;
+      if (isSqliteConstraint(error) && isExternalAccountAlreadyBoundConstraint(error)) {
+        throw new StoreRepositoryError(
+          'EXTERNAL_ACCOUNT_ALREADY_BOUND',
+          'The Lingxing stable external account is already bound to another store.',
+        );
+      }
+      if (isSqliteConstraint(error)) {
+        throw new StoreRepositoryError(
+          'CONNECTION_CONFLICT',
+          `Connection ${id} could not complete stable identity enrollment.`,
+        );
+      }
+      throw error;
+    }
   }
 
   getConnection(storeIdInput: StoreId, provider: StoreConnectionProvider): StoreConnection | undefined {
@@ -502,50 +716,21 @@ export class StoreRepository {
   removeConnection(input: RemoveStoreConnectionInput): void {
     const id = normalizeStoreCapabilityId(input.id);
     const storeId = normalizeStoreId(input.storeId);
-    const store = this.requireWritableStore(storeId);
     const remove = this.db.transaction(() => {
+      const store = this.requireWritableStore(storeId);
       const connection = this.requireConnection(storeId, id);
+      assertExpectedConnectionUpdatedAt(connection, input.expectedUpdatedAt);
       const now = new Date().toISOString();
-      const tombstone = this.db.prepare(`
-        INSERT INTO store_session_metadata (
-          store_id, provider, browser_profile_id, status, session_generation,
-          observed_at, account_label, external_account_id, verified_at,
-          expires_at, failure_code, updated_at
-        ) VALUES (
-          @storeId, @provider, @browserProfileId, 'signed_out', 0,
-          @observedAt, NULL, NULL, NULL,
-          NULL, 'connection_removed', @updatedAt
-        )
-        ON CONFLICT(store_id, provider) DO UPDATE SET
-          browser_profile_id = excluded.browser_profile_id,
-          status = 'signed_out',
-          session_generation = store_session_metadata.session_generation + 1,
-          observed_at = excluded.observed_at,
-          verified_at = NULL,
-          expires_at = NULL,
-          failure_code = 'connection_removed',
-          updated_at = excluded.updated_at
-        WHERE store_session_metadata.session_generation < @maxGeneration
-        RETURNING session_generation
-      `).get({
-        storeId,
-        provider: connection.provider,
-        browserProfileId: store.browserProfileId,
-        observedAt: now,
-        updatedAt: now,
-        maxGeneration: Number.MAX_SAFE_INTEGER,
-      }) as { session_generation: number } | undefined;
-      if (!tombstone) {
-        throw new StoreRepositoryError(
-          'SESSION_GENERATION_STALE',
-          `Session generation for store ${storeId} cannot advance beyond ${Number.MAX_SAFE_INTEGER}.`,
-        );
-      }
+      this.invalidateProviderSession(store, connection.provider, 'connection_removed', now);
       const result = this.db.prepare(`
-        DELETE FROM store_connections WHERE id = ? AND store_id = ?
-      `).run(id, storeId);
+        DELETE FROM store_connections
+        WHERE id = @id AND store_id = @storeId AND updated_at = @expectedUpdatedAt
+      `).run({ id, storeId, expectedUpdatedAt: connection.updatedAt });
       if (result.changes !== 1) {
-        throw new StoreRepositoryError('CONNECTION_NOT_FOUND', `Connection ${id} was not found.`);
+        throw new StoreRepositoryError(
+          'CONNECTION_CONFLICT',
+          `Connection ${id} changed before it could be removed.`,
+        );
       }
     });
     remove();
@@ -1005,6 +1190,100 @@ export class StoreRepository {
     return session;
   }
 
+  private invalidateStoreSessions(
+    store: StoreRecord,
+    failureCode: 'store_inactive' | 'store_archived',
+    observedAt: string,
+  ): void {
+    const providers = this.db.prepare(`
+      SELECT provider FROM store_connections WHERE store_id = ?
+      UNION
+      SELECT provider FROM store_session_metadata WHERE store_id = ?
+      ORDER BY provider
+    `).all(store.storeId, store.storeId) as Array<{ provider: StoreConnectionProvider }>;
+    for (const row of providers) {
+      this.invalidateProviderSession(
+        store,
+        normalizeProvider(row.provider),
+        failureCode,
+        observedAt,
+      );
+    }
+  }
+
+  private invalidateProviderSession(
+    store: StoreRecord,
+    provider: StoreConnectionProvider,
+    failureCode:
+      | 'connection_identity_changed'
+      | 'connection_removed'
+      | 'store_inactive'
+      | 'store_archived',
+    observedAt: string,
+  ): void {
+    const tombstone = this.db.prepare(`
+      INSERT INTO store_session_metadata (
+        store_id, provider, browser_profile_id, status, session_generation,
+        observed_at, account_label, external_account_id, verified_at,
+        expires_at, failure_code, updated_at
+      ) VALUES (
+        @storeId, @provider, @browserProfileId, 'signed_out', 0,
+        @observedAt, NULL, NULL, NULL,
+        NULL, @failureCode, @updatedAt
+      )
+      ON CONFLICT(store_id, provider) DO UPDATE SET
+        browser_profile_id = excluded.browser_profile_id,
+        status = 'signed_out',
+        session_generation = store_session_metadata.session_generation + 1,
+        observed_at = excluded.observed_at,
+        account_label = NULL,
+        external_account_id = NULL,
+        verified_at = NULL,
+        expires_at = NULL,
+        failure_code = excluded.failure_code,
+        updated_at = excluded.updated_at
+      WHERE store_session_metadata.session_generation < @maxGeneration
+      RETURNING session_generation
+    `).get({
+      storeId: store.storeId,
+      provider,
+      browserProfileId: store.browserProfileId,
+      observedAt,
+      failureCode,
+      updatedAt: observedAt,
+      maxGeneration: Number.MAX_SAFE_INTEGER,
+    }) as { session_generation: number } | undefined;
+    if (!tombstone) {
+      throw new StoreRepositoryError(
+        'SESSION_GENERATION_STALE',
+        `Session generation for store ${store.storeId} cannot advance beyond ${Number.MAX_SAFE_INTEGER}.`,
+      );
+    }
+  }
+
+  private markStoreConnectionsAttentionRequired(
+    storeId: StoreId,
+    failureCode: 'store_inactive' | 'store_archived',
+    updatedAt: string,
+  ): void {
+    this.db.prepare(`
+      UPDATE store_connections
+      SET status = CASE
+            WHEN status = 'not_configured' THEN status
+            ELSE 'attention_required'
+          END,
+          last_failure_code = CASE
+            WHEN status = 'not_configured' THEN last_failure_code
+            ELSE @failureCode
+          END,
+          updated_at = CASE
+            WHEN status = 'not_configured' THEN updated_at
+            ELSE @updatedAt
+          END
+      WHERE store_id = @storeId
+    `).run({ storeId, failureCode, updatedAt });
+  }
+
   private mapConnection(row: ConnectionRow): StoreConnection {
     const storeId = normalizeStoreId(row.store_id);
     const provider = normalizeProvider(row.provider);
@@ -1015,6 +1294,9 @@ export class StoreRepository {
       status: normalizeConnectionStatus(row.status),
       accountLabel: optionalText(row.account_label),
       externalAccountId: optionalText(row.external_account_id),
+      normalizedExternalAccountId: optionalText(row.normalized_external_account_id),
+      collectionStoreName: optionalText(row.collection_store_name),
+      normalizedCollectionStoreName: optionalText(row.normalized_collection_store_name),
       lastVerifiedAt: optionalText(row.last_verified_at),
       lastFailureCode: optionalText(row.last_failure_code),
       session: this.getSessionMetadata(storeId, provider),
@@ -1052,6 +1334,9 @@ interface ConnectionRow {
   status: string;
   account_label: string | null;
   external_account_id: string | null;
+  normalized_external_account_id: string | null;
+  collection_store_name: string | null;
+  normalized_collection_store_name: string | null;
   last_verified_at: string | null;
   last_failure_code: string | null;
   created_at: string;
@@ -1161,11 +1446,11 @@ function mapStore(row: StoreRow): StoreRecord {
   return {
     storeId: normalizeStoreId(row.store_id),
     browserProfileId: normalizeBrowserProfileId(row.browser_profile_id),
-    marketplace: normalizeUsMarketplace(row.marketplace),
-    currency: normalizeUsdCurrency(row.currency),
+    marketplace: normalizeV1Marketplace(row.marketplace),
+    currency: normalizeV1Currency(row.currency),
     displayName: row.display_name,
     status: row.status,
-    businessTimezone: normalizeBusinessTimezone(row.business_timezone),
+    businessTimezone: normalizeV1BusinessTimezone(row.business_timezone),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: optionalText(row.archived_at),
@@ -1236,11 +1521,35 @@ function mapQuarantine(row: QuarantineRow): StoreMigrationQuarantineRecord {
   };
 }
 
-function assertExpectedUpdatedAt(store: StoreRecord, expectedUpdatedAt?: string): void {
-  if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== store.updatedAt) {
+function assertExpectedUpdatedAt(store: StoreRecord, expectedUpdatedAt: unknown): void {
+  if (typeof expectedUpdatedAt !== 'string' || expectedUpdatedAt.trim() === '') {
+    throw new StoreRepositoryError(
+      'STORE_CONFLICT',
+      `Store ${store.storeId} requires an exact expectedUpdatedAt revision.`,
+    );
+  }
+  if (expectedUpdatedAt !== store.updatedAt) {
     throw new StoreRepositoryError(
       'STORE_CONFLICT',
       `Store ${store.storeId} changed after it was read; reload before retrying.`,
+    );
+  }
+}
+
+function assertExpectedConnectionUpdatedAt(
+  connection: StoreConnection,
+  expectedUpdatedAt: unknown,
+): void {
+  if (typeof expectedUpdatedAt !== 'string' || expectedUpdatedAt.trim() === '') {
+    throw new StoreRepositoryError(
+      'INVALID_STORE_INPUT',
+      `Connection ${connection.id} requires an exact expectedUpdatedAt revision.`,
+    );
+  }
+  if (expectedUpdatedAt !== connection.updatedAt) {
+    throw new StoreRepositoryError(
+      'CONNECTION_CONFLICT',
+      `Connection ${connection.id} changed after it was read; reload before retrying.`,
     );
   }
 }
@@ -1263,6 +1572,47 @@ function normalizeDisplayName(value: unknown): string {
   }
   if (normalized.length > 200) {
     throw new StoreRepositoryError('INVALID_STORE_INPUT', 'Display name cannot exceed 200 characters.');
+  }
+  return normalized;
+}
+
+function normalizeV1Marketplace(value: unknown = 'US'): 'US' {
+  try {
+    return normalizeUsMarketplace(value);
+  } catch {
+    throw new StoreRepositoryError(
+      'INVALID_STORE_INPUT',
+      'V1 store authority supports the US marketplace only.',
+    );
+  }
+}
+
+function normalizeV1Currency(value: unknown = 'USD'): 'USD' {
+  try {
+    return normalizeUsdCurrency(value);
+  } catch {
+    throw new StoreRepositoryError(
+      'INVALID_STORE_INPUT',
+      'V1 store authority supports USD only.',
+    );
+  }
+}
+
+function normalizeV1BusinessTimezone(value: unknown): string {
+  let normalized: string;
+  try {
+    normalized = normalizeBusinessTimezone(value);
+  } catch {
+    throw new StoreRepositoryError(
+      'INVALID_STORE_INPUT',
+      `V1 store authority requires ${DEFAULT_US_BUSINESS_TIMEZONE}.`,
+    );
+  }
+  if (normalized !== DEFAULT_US_BUSINESS_TIMEZONE) {
+    throw new StoreRepositoryError(
+      'INVALID_STORE_INPUT',
+      `V1 store authority requires ${DEFAULT_US_BUSINESS_TIMEZONE}.`,
+    );
   }
   return normalized;
 }
@@ -1333,6 +1683,48 @@ function nullableProviderIdentity(value: unknown, label: string): string | null 
   return normalized;
 }
 
+function nullableExternalAccountIdentity(
+  provider: StoreConnectionProvider,
+  value: unknown,
+): { raw: string | null; normalized: string | null } {
+  const raw = nullableProviderIdentity(value, 'externalAccountId');
+  try {
+    return {
+      raw,
+      normalized: normalizeProviderExternalAccountId(provider, raw) ?? null,
+    };
+  } catch {
+    throw new StoreRepositoryError(
+      'INVALID_STORE_INPUT',
+      'externalAccountId could not be normalized for the selected provider.',
+    );
+  }
+}
+
+function nullableCollectionStoreName(
+  provider: StoreConnectionProvider,
+  value: unknown,
+): { raw: string | null; normalized: string | null } {
+  const raw = nullableProviderIdentity(value, 'collectionStoreName');
+  if (provider === 'amazon_ads' && raw !== null) {
+    throw new StoreRepositoryError(
+      'INVALID_STORE_INPUT',
+      'collectionStoreName is available for Lingxing connections only.',
+    );
+  }
+  try {
+    return {
+      raw,
+      normalized: normalizeLingxingCollectionStoreName(raw) ?? null,
+    };
+  } catch {
+    throw new StoreRepositoryError(
+      'INVALID_STORE_INPUT',
+      'collectionStoreName could not be normalized for Lingxing collection.',
+    );
+  }
+}
+
 function parseJson<T>(value: string | null | undefined): T | undefined {
   if (!value) return undefined;
   try {
@@ -1349,6 +1741,14 @@ function isSqliteConstraint(error: unknown): boolean {
     && 'code' in error
     && String((error as { code?: unknown }).code).startsWith('SQLITE_CONSTRAINT'),
   );
+}
+
+function isExternalAccountAlreadyBoundConstraint(error: unknown): boolean {
+  if (!isSqliteConstraint(error)) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(
+    'store_connections.provider, store_connections.normalized_external_account_id',
+  ) || message.includes(STORE_PROVIDER_IDENTITY_UNIQUE_INDEX);
 }
 
 function quoteIdentifier(value: string): string {

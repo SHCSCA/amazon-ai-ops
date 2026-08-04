@@ -1844,9 +1844,9 @@ function seedAuthority(
   ).run(NOW);
   database.prepare(`INSERT INTO store_connections (
     id, store_id, provider, status, account_label, external_account_id,
-    last_verified_at, created_at, updated_at
+    normalized_external_account_id, last_verified_at, created_at, updated_at
   ) VALUES ('conn-ads-one', 'store-one', 'amazon_ads', 'ready', 'Ads One',
-    'ads-account-1', ?, ?, ?)`
+    'ads-account-1', 'ads-account-1', ?, ?, ?)`
   ).run(NOW, NOW, NOW);
   database.prepare(`INSERT INTO store_session_metadata (
     store_id, provider, browser_profile_id, status, session_generation,

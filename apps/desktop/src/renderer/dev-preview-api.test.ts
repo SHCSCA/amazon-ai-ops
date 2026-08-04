@@ -238,7 +238,7 @@ describe('preview scenario contract', () => {
       const scenario = PREVIEW_SCENARIOS![id];
       const api = createBrowserPreviewElectronApi!('SHC001', id);
       const [store] = await api.listStores();
-      const view = await api.switchStore(store.storeId);
+      const view = await api.switchStore({ storeId: store.storeId, marketplace: store.marketplace });
       const scope = await api.getOperationScope(view.context);
       const [pipeline, batchOptions, recommendations, evidenceStatus, delivery] = await Promise.all([
         api.getBusinessUiDataPipeline(),
@@ -308,7 +308,7 @@ describe('preview scenario contract', () => {
   it('ships native object rows plus a 100-row diagnosis surface for scroll-owner validation', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [store] = await api.listStores();
-    const view = await api.switchStore(store.storeId);
+    const view = await api.switchStore({ storeId: store.storeId, marketplace: store.marketplace });
     const [pipeline, products, events] = await Promise.all([
       api.getBusinessUiDataPipeline(),
       api.listStoreProducts(view.context),
@@ -355,7 +355,7 @@ describe('preview scenario contract', () => {
     for (const id of ['missing-scope', 'missing-reports', 'pending-import'] as const) {
       const api = createApi('SHC001', id);
       const [store] = await api.listStores();
-      const context = (await api.switchStore(store.storeId)).context;
+      const context = (await api.switchStore({ storeId: store.storeId, marketplace: store.marketplace })).context;
       const [pipeline, keywordFacts] = await Promise.all([
         api.getBusinessUiDataPipeline(),
         api.listStoreKeywordFacts(context, { limit: 20 }),
@@ -502,7 +502,7 @@ describe('preview scenario contract', () => {
   it('opens only registered report artifacts under the current store authority', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [firstStore, secondStore] = await api.listStores();
-    const firstView = await api.switchStore(firstStore.storeId);
+    const firstView = await api.switchStore({ storeId: firstStore.storeId, marketplace: firstStore.marketplace });
     const pipeline = await api.getBusinessUiDataPipeline();
     const artifactId = pipeline.collection.realReportFiles[0].artifactId;
 
@@ -511,7 +511,7 @@ describe('preview scenario contract', () => {
       artifactId,
       previewOnly: true,
     });
-    const secondView = await api.switchStore(secondStore.storeId);
+    const secondView = await api.switchStore({ storeId: secondStore.storeId, marketplace: secondStore.marketplace });
     await expect(api.openReportArtifact(artifactId, firstView.context)).rejects.toThrow(/STORE_CONTEXT_MISMATCH|权威|上下文|失效/);
     await expect(api.openReportArtifact('artifact:v1:unknown', secondView.context)).rejects.toThrow(/不存在|失效/);
   });
@@ -1082,7 +1082,7 @@ describe('browser preview bootstrap integration', () => {
     });
     expect(await getPreviewRecommendations(target.electronAPI)).toHaveLength(2);
     const [store] = await target.electronAPI.listStores();
-    const storeView = await target.electronAPI.switchStore(store.storeId);
+    const storeView = await target.electronAPI.switchStore({ storeId: store.storeId, marketplace: store.marketplace });
     expect(target.electronAPI.missionDomain).toBeTruthy();
     await expect(target.electronAPI.missionDomain.missions.list(storeView.context, { includeArchived: true }))
       .resolves.toHaveLength(7);
@@ -1168,7 +1168,7 @@ describe('Mission Control development preview bridge', () => {
     const stores = await api.listStores();
     const contexts: any[] = [];
     const unsubscribe = api.onStoreContextChanged((view: any) => contexts.push(view.context));
-    const view = await api.switchStore(stores[0].storeId);
+    const view = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const response = await api.missionControl.query({
       query: 'workspace-bootstrap', requestId: 'preview-query', contextEpoch: 7, context: view.context,
     });
@@ -1196,14 +1196,14 @@ describe('Mission Control development preview bridge', () => {
   it('simulates a visible store connection binding without accepting secrets or creating duplicates', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [store] = await api.listStores();
-    const switched = await api.switchStore(store.storeId);
+    const switched = await api.switchStore({ storeId: store.storeId, marketplace: store.marketplace });
     expect(switched.connections).toEqual([]);
 
     const first = await api.createStoreConnection({
       storeId: store.storeId,
       provider: 'lingxing',
       accountLabel: 'preview-operator',
-      externalAccountId: 'preview-external-a',
+      collectionStoreName: 'Preview Download Store',
       password: 'must-not-cross-preview-boundary',
       token: 'must-not-cross-preview-boundary',
     } as any);
@@ -1221,16 +1221,19 @@ describe('Mission Control development preview bridge', () => {
         id: first.id,
         provider: 'lingxing',
         accountLabel: 'preview-operator',
-        externalAccountId: 'preview-external-a',
+        collectionStoreName: 'Preview Download Store',
         status: 'not_configured',
       })],
     }));
+    expect(first.externalAccountId).toBeUndefined();
     expect(JSON.stringify({ first, active })).not.toMatch(/password|token|cookie|profilePath|userDataDir/i);
 
     const updated = await api.updateStoreConnection({
       id: first.id,
       storeId: store.storeId,
+      expectedUpdatedAt: first.updatedAt,
       accountLabel: 'preview-operator-updated',
+      collectionStoreName: 'Preview Download Store Updated',
       password: 'must-not-cross-preview-boundary',
     } as any);
     const updatedView = await api.getActiveStoreWorkspaceView();
@@ -1242,18 +1245,56 @@ describe('Mission Control development preview bridge', () => {
       expect.objectContaining({
         id: first.id,
         accountLabel: 'preview-operator-updated',
+        collectionStoreName: 'Preview Download Store Updated',
         status: 'not_configured',
+        lastFailureCode: 'connection_identity_changed',
       }),
     ]);
     expect(updated.externalAccountId).toBeUndefined();
     expect(updated.session).toBeUndefined();
     expect(JSON.stringify({ updated, updatedView })).not.toMatch(/password|token|cookie|profilePath|userDataDir/i);
+
+    const ads = await api.createStoreConnection({
+      storeId: store.storeId,
+      provider: 'amazon_ads',
+      externalAccountId: 'preview-profile-1',
+    });
+    const loginView = await api.getActiveStoreWorkspaceView();
+    const login = await api.browserLogin({
+      amazonAdsProfileId: 'preview-profile-1',
+      credentialSource: 'typed',
+      password: 'must-not-cross-preview-boundary',
+      rememberPassword: false,
+      storeContext: loginView!.context,
+      username: 'preview-operator-updated',
+    });
+    const enrolledView = await api.getActiveStoreWorkspaceView();
+    const enrolled = enrolledView!.connections.find((connection: any) => connection.provider === 'lingxing');
+    expect(enrolled).toEqual(expect.objectContaining({
+      collectionStoreName: 'Preview Download Store Updated',
+      externalAccountId: expect.stringContaining('DEV-PREVIEW-STABLE-'),
+    }));
+    expect(login).toEqual(expect.objectContaining({
+      sessionIdentityVerified: false,
+      adsSessionReady: false,
+      adsUnavailableReason: expect.stringContaining('不代表真实'),
+    }));
+    await expect(api.removeStoreConnection({
+      id: ads.id,
+      storeId: store.storeId,
+      expectedUpdatedAt: 'stale-revision',
+    })).rejects.toThrow('PREVIEW_STORE_CONNECTION_CONFLICT');
+    await expect(api.removeStoreConnection({
+      id: ads.id,
+      storeId: store.storeId,
+      expectedUpdatedAt: ads.updatedAt,
+    })).resolves.toEqual({ success: true });
   });
 
   it('marks every store-scoped object preview capability as prototype-only', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [store] = await api.listStores();
-    const view = await api.switchStore(store.storeId);
+    const view = await api.switchStore({ storeId: store.storeId, marketplace: store.marketplace });
     const response = await api.missionControl.query({
       query: 'workspace-bootstrap', requestId: 'preview-object-capabilities', contextEpoch: 1, context: view.context,
     });
@@ -1296,7 +1337,7 @@ describe('Mission Control development preview bridge', () => {
   it('keeps versioned product CRUD isolated by the complete active StoreContext', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const stores = await api.listStores();
-    const firstView = await api.switchStore(stores[0].storeId);
+    const firstView = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const first = await api.createStoreProduct(firstView.context, {
       asin: 'B0PREVIEW9',
       title: 'First preview store product',
@@ -1316,7 +1357,7 @@ describe('Mission Control development preview bridge', () => {
       cost: expect.objectContaining({ currentPrice: 39.99, purchaseCost: 8.5, targetAcos: 0.3 }),
     }));
 
-    const secondView = await api.switchStore(stores[1].storeId);
+    const secondView = await api.switchStore({ storeId: stores[1].storeId, marketplace: stores[1].marketplace });
     const second = await api.createStoreProduct(secondView.context, {
       asin: 'B0PREVIEW9',
       title: 'Second preview store product',
@@ -1333,7 +1374,7 @@ describe('Mission Control development preview bridge', () => {
     expect((await api.listStoreProducts(secondView.context)).some((row: any) => row.id === first.id)).toBe(false);
     await expect(api.listStoreProducts(firstView.context)).rejects.toThrow('PREVIEW_MISSION_CONTROL_STORE_CONTEXT_MISMATCH');
 
-    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    const refreshedFirst = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const current = (await api.listStoreProducts(refreshedFirst.context, { includeArchived: true }))
       .find((row: any) => row.id === first.id);
     const updated = await api.updateStoreProduct(refreshedFirst.context, {
@@ -1368,7 +1409,7 @@ describe('Mission Control development preview bridge', () => {
   it('supports store-owned operation-event CRUD with revision CAS', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const stores = await api.listStores();
-    const firstView = await api.switchStore(stores[0].storeId);
+    const firstView = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const created = await api.createStoreOperationEvent(firstView.context, {
       eventDate: firstView.context.businessDate,
       eventType: 'coupon',
@@ -1404,10 +1445,10 @@ describe('Mission Control development preview bridge', () => {
       asin: 'b0event001', dateFrom: '2026-07-01', dateTo: '2026-07-31', limit: 20,
     })).toEqual([expect.objectContaining({ id: created.id, title: 'Preview coupon reviewed' })]);
 
-    const secondView = await api.switchStore(stores[1].storeId);
+    const secondView = await api.switchStore({ storeId: stores[1].storeId, marketplace: stores[1].marketplace });
     expect((await api.listStoreOperationEvents(secondView.context, { limit: 200 }))
       .some((row: any) => row.id === created.id)).toBe(false);
-    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    const refreshedFirst = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const archived = await api.deleteStoreOperationEvent(refreshedFirst.context, {
       id: updated.id,
       expectedRevision: updated.revision,
@@ -1459,7 +1500,7 @@ describe('Mission Control development preview bridge', () => {
   it('projects store-isolated US/USD advertising objects and keyword facts', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const stores = await api.listStores();
-    const firstView = await api.switchStore(stores[0].storeId);
+    const firstView = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const firstByKind = await Promise.all(
       ['campaign', 'ad_group', 'target', 'search_term'].map((kind) => (
         api.listStoreAdObjects(firstView.context, { kind, limit: 20 })
@@ -1483,7 +1524,7 @@ describe('Mission Control development preview bridge', () => {
       asin: firstKeywords[0].asin, query: firstKeywords[0].keyword, limit: 5,
     })).toEqual([expect.objectContaining({ keyword: firstKeywords[0].keyword })]);
 
-    const secondView = await api.switchStore(stores[1].storeId);
+    const secondView = await api.switchStore({ storeId: stores[1].storeId, marketplace: stores[1].marketplace });
     const secondTargets = await api.listStoreAdObjects(secondView.context, { kind: 'target', limit: 20 });
     const secondKeywords = await api.listStoreKeywordFacts(secondView.context, { limit: 20 });
     expect(secondTargets.every((row: any) => row.storeId === stores[1].storeId)).toBe(true);
@@ -1495,7 +1536,7 @@ describe('Mission Control development preview bridge', () => {
   it('keeps Listing CRUD and durable versions isolated with revision CAS', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const stores = await api.listStores();
-    const firstView = await api.switchStore(stores[0].storeId);
+    const firstView = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const first = await api.createStoreListingContent(firstView.context, {
       asin: 'B0LISTP009',
       title: 'First store preview Listing',
@@ -1529,7 +1570,7 @@ describe('Mission Control development preview bridge', () => {
       title: 'First store preview Listing',
     })]);
 
-    const secondView = await api.switchStore(stores[1].storeId);
+    const secondView = await api.switchStore({ storeId: stores[1].storeId, marketplace: stores[1].marketplace });
     const second = await api.createStoreListingContent(secondView.context, {
       asin: 'B0LISTP009', title: 'Second store preview Listing',
     });
@@ -1538,7 +1579,7 @@ describe('Mission Control development preview bridge', () => {
     expect((await api.listStoreListingContent(secondView.context, { limit: 250 }))
       .some((row: any) => row.id === first.id)).toBe(false);
 
-    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    const refreshedFirst = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const current = await api.getStoreListingContent(refreshedFirst.context, { id: first.id });
     const updated = await api.updateStoreListingContent(refreshedFirst.context, {
       id: current.id,
@@ -1592,7 +1633,7 @@ describe('Mission Control development preview bridge', () => {
   it('exposes a clearly marked empty collection-job bridge without inventing production records', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [store] = await api.listStores();
-    const view = await api.switchStore(store.storeId);
+    const view = await api.switchStore({ storeId: store.storeId, marketplace: store.marketplace });
 
     expect(api.lingxingCollectionJobsPreviewOnly).toBe(true);
     expect(await api.listLingxingCollectionJobs({ storeContext: view.context, limit: 12 })).toEqual([]);
@@ -1613,12 +1654,12 @@ describe('Mission Control development preview bridge', () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const stores = await api.listStores();
 
-    const firstView = await api.switchStore(stores[0].storeId);
+    const firstView = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const firstScope = await api.getOperationScope(firstView.context);
     const firstProducts = await api.listStoreProducts(firstView.context);
     const firstPipeline = await api.getBusinessUiDataPipeline();
 
-    const secondView = await api.switchStore(stores[1].storeId);
+    const secondView = await api.switchStore({ storeId: stores[1].storeId, marketplace: stores[1].marketplace });
     const secondScope = await api.getOperationScope(secondView.context);
     const secondProducts = await api.listStoreProducts(secondView.context);
     const secondPipeline = await api.getBusinessUiDataPipeline();
@@ -1635,7 +1676,7 @@ describe('Mission Control development preview bridge', () => {
     expect(JSON.stringify(secondPipeline)).not.toContain(firstScope.storeName);
     expect(JSON.stringify(secondPipeline)).not.toContain('D:/preview/shc002/shc002/');
 
-    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    const refreshedFirst = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     expect(await api.getOperationScope(refreshedFirst.context)).toEqual(firstScope);
     expect((await api.listStoreProducts(refreshedFirst.context))[0].asin).toBe(firstProducts[0].asin);
   });
@@ -1644,7 +1685,7 @@ describe('Mission Control development preview bridge', () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const stores = await api.listStores();
 
-    const firstView = await api.switchStore(stores[0].storeId);
+    const firstView = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     const firstSchedule = await api.getStoreCollectionSchedule(firstView.context);
     const firstRetention = await api.previewStoreEvidenceRetention(firstView.context);
     expect(firstSchedule).toMatchObject({
@@ -1671,7 +1712,7 @@ describe('Mission Control development preview bridge', () => {
       projection: { storeId: stores[0].storeId, state: 'succeeded' },
     });
 
-    const secondView = await api.switchStore(stores[1].storeId);
+    const secondView = await api.switchStore({ storeId: stores[1].storeId, marketplace: stores[1].marketplace });
     const secondSchedule = await api.getStoreCollectionSchedule(secondView.context);
     const secondRetention = await api.previewStoreEvidenceRetention(secondView.context);
     expect(secondSchedule).toMatchObject({
@@ -1697,7 +1738,7 @@ describe('Mission Control development preview bridge', () => {
     await expect(api.getStoreCollectionSchedule(firstView.context))
       .rejects.toThrow(/STORE_CONTEXT_MISMATCH|StoreContext|CONTEXT/i);
 
-    const refreshedFirst = await api.switchStore(stores[0].storeId);
+    const refreshedFirst = await api.switchStore({ storeId: stores[0].storeId, marketplace: stores[0].marketplace });
     expect(await api.getStoreCollectionSchedule(refreshedFirst.context)).toMatchObject({
       storeId: stores[0].storeId,
       state: 'succeeded',
@@ -1720,7 +1761,7 @@ describe('Mission Control development preview bridge', () => {
   it('projects all scheduler preview actions as explicit PROTOTYPE_ONLY capabilities', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [store] = await api.listStores();
-    const view = await api.switchStore(store.storeId);
+    const view = await api.switchStore({ storeId: store.storeId, marketplace: store.marketplace });
     const response = await api.missionControl.query({
       query: 'workspace-bootstrap',
       requestId: 'preview-store-automation-capabilities',
@@ -1751,7 +1792,7 @@ describe('Mission Control development preview bridge', () => {
   it('binds all 16 legacy preview pages to their exact route projection without opening production', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [store] = await api.listStores();
-    const storeView = await api.switchStore(store.storeId);
+    const storeView = await api.switchStore({ storeId: store.storeId, marketplace: store.marketplace });
     const response = await api.missionControl.query({
       query: 'workspace-bootstrap',
       requestId: 'preview-legacy-routes',
@@ -1812,7 +1853,7 @@ describe('Mission Control development preview bridge', () => {
   it('shares the explicit preview Policy runtime with the shell and strictly rejects extra request fields', async () => {
     const api = previewExports().createBrowserPreviewElectronApi!('SHC001', 'diagnosis-ready');
     const [store] = await api.listStores();
-    const view = await api.switchStore(store.storeId);
+    const view = await api.switchStore({ storeId: store.storeId, marketplace: store.marketplace });
     const applied = await api.missionControl.command({
       command: 'set-autonomy-mode',
       requestId: 'preview-auto',

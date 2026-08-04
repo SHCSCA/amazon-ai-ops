@@ -4,6 +4,7 @@ import * as path from 'path';
 import type Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  normalizeStoreCapabilityId,
   normalizeStoreId,
   normalizeStoreContextEnvelope,
   type AdDailyMetrics,
@@ -13,6 +14,7 @@ import {
   type StoreId,
 } from '@amazon-ai-ops/shared-types';
 import { initSqlite } from '../db';
+import { StoreRepository } from './store-repo';
 import {
   fingerprintLingxingCollectionAuthorityProof,
   LingxingImportRepository,
@@ -1507,6 +1509,90 @@ describe('LingxingImportRepository', () => {
     expect(repository.listFileSnapshotsForStore(storeA, 'run-shared')).toEqual([
       expect.objectContaining({ storeId: storeA, batchId: 'batch-a', fileName: 'keyword-2026-07-21.xlsx' }),
     ]);
+  });
+
+  it('binds new batches to the current Lingxing selector while preserving historical selector snapshots', () => {
+    const { database, repository, storeA, storeB } = createHarness();
+    const storeRepository = new StoreRepository(database);
+    const connection = storeRepository.createConnection({
+      id: normalizeStoreCapabilityId('cap-selector-snapshot-a'),
+      storeId: storeA,
+      provider: 'lingxing',
+      collectionStoreName: 'Lingxing US Store',
+    });
+    const historical = terminalCollection(
+      storeA,
+      'profile-a',
+      'Lingxing US Store',
+      'batch-selector-history',
+    );
+    const committed = repository.commitCollectionTerminalForStore(storeA, historical);
+    expect(committed.batch).toMatchObject({
+      storeId: storeA,
+      storeName: 'Lingxing US Store',
+      browserProfileId: 'profile-a',
+      sessionGeneration: 3,
+      marketplaceCode: 'US',
+    });
+
+    storeRepository.updateConnection({
+      id: connection.id,
+      storeId: storeA,
+      expectedUpdatedAt: connection.updatedAt,
+      collectionStoreName: 'Lingxing US Store Renamed',
+    });
+
+    expect(repository.getCollectionSnapshotForStore(storeA, historical.batch.id)?.batch.storeName)
+      .toBe('Lingxing US Store');
+    expect(repository.saveCollectionSnapshotForStore(storeA, historical).batch.storeName)
+      .toBe('Lingxing US Store');
+    expect(() => repository.saveCollectionSnapshotForStore(storeA, {
+      ...historical,
+      batch: {
+        ...historical.batch,
+        storeName: 'Lingxing US Store Renamed',
+      },
+    })).toThrow(/LINGXING_BATCH_AUTHORITY_IMMUTABLE/);
+    expect(repository.commitImportForStore(
+      storeA,
+      importInput('Lingxing US Store', historical.batch.id, {
+        runId: 'run-selector-history',
+        idempotencyKey: 'selector-history-key',
+      }),
+    ).deduplicated).toBe(false);
+    expect(repository.listAdMetricsForStore(storeA, historical.batch.id)).toEqual([
+      expect.objectContaining({
+        storeId: storeA,
+        storeName: 'Lingxing US Store',
+      }),
+    ]);
+
+    expect(() => repository.saveCollectionSnapshotForStore(
+      storeA,
+      collectionSnapshot(storeA, 'Lingxing US Store', 'batch-stale-selector-forged'),
+    )).toThrow(/既不匹配当前 collection selector.*本地逻辑店铺名/);
+    expect(() => repository.saveCollectionSnapshotForStore(
+      storeA,
+      collectionSnapshot(storeA, 'Arbitrary Third Name', 'batch-third-name-forged'),
+    )).toThrow(/既不匹配当前 collection selector.*本地逻辑店铺名/);
+
+    expect(repository.saveCollectionSnapshotForStore(
+      storeA,
+      collectionSnapshot(storeA, 'Lingxing US Store Renamed', 'batch-current-selector'),
+    ).batch.storeName).toBe('Lingxing US Store Renamed');
+    expect(repository.saveCollectionSnapshotForStore(
+      storeA,
+      collectionSnapshot(storeA, 'Shop Alpha', 'batch-logical-local-import'),
+    ).batch.storeName).toBe('Shop Alpha');
+
+    expect(repository.getCollectionSnapshotForStore(storeB, historical.batch.id)).toBeUndefined();
+    expect(() => repository.commitImportForStore(
+      storeB,
+      importInput('Lingxing US Store', historical.batch.id, {
+        runId: 'run-cross-store-selector-history',
+        idempotencyKey: 'cross-store-selector-history-key',
+      }),
+    )).toThrow(/不属于店铺/);
   });
 
   it('deduplicates an identical import by store and rejects idempotency-key payload drift', () => {

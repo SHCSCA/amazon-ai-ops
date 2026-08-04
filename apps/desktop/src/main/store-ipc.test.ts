@@ -21,7 +21,8 @@ const activeContext = normalizeStoreContextEnvelope({
 function createCoordinator(): StoreCoordinator {
   return {
     listStores: vi.fn(() => []),
-    getStore: vi.fn((storeId) => ({ storeId, status: 'active' })),
+    getStore: vi.fn((storeId) => ({ storeId, status: 'active', marketplace: 'US' })),
+    getConnection: vi.fn((storeId, id) => ({ id, storeId, provider: 'amazon_ads' })),
     createStore: vi.fn(),
     updateStore: vi.fn(),
     archiveStore: vi.fn(),
@@ -33,6 +34,7 @@ function createCoordinator(): StoreCoordinator {
     reconnectStore: vi.fn(() => ({ store: { storeId: 'store-one' }, context: activeContext })),
     getActiveStoreContext: vi.fn(() => activeContext),
     getActiveStoreWorkspaceView: vi.fn(() => null),
+    getOperatorWorkspaceSelection: vi.fn(() => null),
   } as unknown as StoreCoordinator;
 }
 
@@ -41,7 +43,8 @@ describe('store IPC boundary', () => {
     const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
     const coordinator = {
       listStores: vi.fn(() => []),
-      getStore: vi.fn((storeId) => ({ storeId, status: 'active' })),
+      getStore: vi.fn((storeId) => ({ storeId, status: 'active', marketplace: 'US' })),
+      getConnection: vi.fn((storeId, id) => ({ id, storeId, provider: 'amazon_ads' })),
       createStore: vi.fn(),
       updateStore: vi.fn(),
       archiveStore: vi.fn(),
@@ -53,6 +56,7 @@ describe('store IPC boundary', () => {
       reconnectStore: vi.fn(),
       getActiveStoreContext: vi.fn(() => null),
       getActiveStoreWorkspaceView: vi.fn(() => null),
+      getOperatorWorkspaceSelection: vi.fn(() => null),
     } as unknown as StoreCoordinator;
     const onStoreChanged = vi.fn();
 
@@ -62,8 +66,12 @@ describe('store IPC boundary', () => {
 
     expect([...handlers.keys()]).toEqual(STORE_IPC_CHANNELS);
     expect([...handlers.keys()].some((channel) => /path|profile|cookie|password/i.test(channel))).toBe(false);
-    const result = await handlers.get('stores:switch')?.({}, { storeId: 'store-one' });
-    expect(coordinator.switchStore).toHaveBeenCalledWith('store-one');
+    const result = await handlers.get('stores:switch')?.({}, {
+      storeId: 'store-one', marketplace: 'US',
+    });
+    expect(coordinator.switchStore).toHaveBeenCalledWith({
+      storeId: 'store-one', marketplace: 'US',
+    });
     expect(onStoreChanged).toHaveBeenCalledWith(result);
   });
 
@@ -95,6 +103,7 @@ describe('store IPC boundary', () => {
     const coordinator = {
       listStores: vi.fn(),
       getStore: vi.fn(),
+      getConnection: vi.fn((storeId, id) => ({ id, storeId, provider: 'amazon_ads' })),
       createStore: vi.fn(),
       updateStore: vi.fn(),
       archiveStore: vi.fn(),
@@ -106,6 +115,7 @@ describe('store IPC boundary', () => {
       reconnectStore: vi.fn(),
       getActiveStoreContext: vi.fn(),
       getActiveStoreWorkspaceView: vi.fn(() => null),
+      getOperatorWorkspaceSelection: vi.fn(() => null),
     } as unknown as StoreCoordinator;
     const laneCall = vi.fn();
     async function withUserStoreMutation<Result>(
@@ -136,11 +146,74 @@ describe('store IPC boundary', () => {
       { withUserStoreMutation },
     );
 
-    expect(() => handlers.get('stores:switch')?.({}, { storeId: 'C:\\renderer-profile' }))
+    expect(() => handlers.get('stores:switch')?.({}, {
+      storeId: 'C:\\renderer-profile', marketplace: 'US',
+    }))
       .toThrow(/storeId/i);
 
     expect(withUserStoreMutation).not.toHaveBeenCalled();
     expect(coordinator.switchStore).not.toHaveBeenCalled();
+  });
+
+  it('requires an explicit US marketplace for switch and rejects a Main scope mismatch pre-write', async () => {
+    const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
+    const coordinator = createCoordinator();
+    const withUserStoreMutation = vi.fn(async (_scope, work) => work());
+    registerStoreIpcHandlers(
+      { handle: (channel, handler) => handlers.set(channel, handler) },
+      coordinator,
+      { withUserStoreMutation },
+    );
+
+    expect(() => handlers.get('stores:switch')?.({}, { storeId: 'store-two' }))
+      .toThrow(/marketplace is required/);
+    expect(withUserStoreMutation).not.toHaveBeenCalled();
+
+    vi.mocked(coordinator.getStore).mockReturnValue({
+      storeId: 'store-two',
+      status: 'active',
+      marketplace: 'CA',
+    } as never);
+    await expect(handlers.get('stores:switch')?.({}, {
+      storeId: 'store-two', marketplace: 'US',
+    })).rejects.toMatchObject({ code: 'STORE_CONTEXT_MISMATCH' });
+    expect(coordinator.switchStore).not.toHaveBeenCalled();
+  });
+
+  it('reads selection and cross-store daily status outside the mutation lane', () => {
+    const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
+    const coordinator = createCoordinator();
+    const selection = {
+      schemaVersion: 1,
+      storeId: 'store-one',
+      marketplace: 'US',
+      selectedAt: '2026-07-23T00:00:00.000Z',
+    };
+    vi.mocked(coordinator.getOperatorWorkspaceSelection).mockReturnValue(selection as never);
+    const withUserStoreMutation = vi.fn(async (_scope, work) => work());
+    const dailyStatusReader = {
+      list: vi.fn(() => ({
+        schemaVersion: 1,
+        marketplace: 'US',
+        generatedAt: '2026-07-23T00:00:00.000Z',
+        stores: [],
+      })),
+    };
+    registerStoreIpcHandlers(
+      { handle: (channel, handler) => handlers.set(channel, handler) },
+      coordinator,
+      { withUserStoreMutation },
+      dailyStatusReader as never,
+    );
+
+    expect(handlers.get('stores:get-selection')?.({})).toEqual(selection);
+    expect(handlers.get('stores:daily-status:list')?.({}, {
+      marketplace: 'US', includeInactive: true, includeArchived: true,
+    })).toMatchObject({ marketplace: 'US', stores: [] });
+    expect(dailyStatusReader.list).toHaveBeenCalledWith({
+      marketplace: 'US', includeInactive: true, includeArchived: true,
+    });
+    expect(withUserStoreMutation).not.toHaveBeenCalled();
   });
 
   it('rejects an unsupported Renderer marketplace before claiming the shared mutation lane', () => {
@@ -193,7 +266,26 @@ describe('store IPC boundary', () => {
     {
       label: 'archived update status',
       channel: 'stores:update',
-      input: { storeId: 'store-one', patch: { status: 'archived' } },
+      input: {
+        storeId: 'store-one',
+        patch: { status: 'archived' },
+        expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
+      },
+    },
+    {
+      label: 'missing update revision',
+      channel: 'stores:update',
+      input: { storeId: 'store-one', patch: { displayName: 'Renamed' } },
+    },
+    {
+      label: 'missing archive revision',
+      channel: 'stores:archive',
+      input: { storeId: 'store-one' },
+    },
+    {
+      label: 'missing restore revision',
+      channel: 'stores:restore',
+      input: { storeId: 'store-one' },
     },
     {
       label: 'invalid expected revision',
@@ -231,6 +323,16 @@ describe('store IPC boundary', () => {
       input: { id: 'connection-one', storeId: 'store-one', externalAccountId: 'x'.repeat(257) },
     },
     {
+      label: 'missing connection update revision',
+      channel: 'stores:connections:update',
+      input: { id: 'connection-one', storeId: 'store-one', accountLabel: 'operator' },
+    },
+    {
+      label: 'missing connection remove revision',
+      channel: 'stores:connections:remove',
+      input: { id: 'connection-one', storeId: 'store-one' },
+    },
+    {
       label: 'missing remove capability id',
       channel: 'stores:connections:remove',
       input: { storeId: 'store-one' },
@@ -254,11 +356,51 @@ describe('store IPC boundary', () => {
     expect(withUserStoreMutation).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['stores:connections:create', {
+      storeId: 'store-one',
+      provider: 'lingxing',
+      accountLabel: 'operator',
+      externalAccountId: 'renderer-forged-stable-id',
+    }, 'createConnection'],
+    ['stores:connections:update', {
+      id: 'connection-one',
+      storeId: 'store-one',
+      externalAccountId: 'renderer-forged-stable-id',
+      expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
+    }, 'updateConnection'],
+  ] as const)('rejects Renderer Lingxing stable identity on %s before browser transition or DB write', (
+    channel,
+    input,
+    mutation,
+  ) => {
+    const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
+    const coordinator = createCoordinator();
+    vi.mocked(coordinator.getConnection).mockReturnValue({
+      id: 'connection-one',
+      storeId: 'store-one',
+      provider: 'lingxing',
+    } as never);
+    const withUserStoreMutation = vi.fn(async (_scope, work) => work());
+    const beforeActiveStoreMutation = vi.fn();
+    registerStoreIpcHandlers(
+      { handle: (registeredChannel, handler) => handlers.set(registeredChannel, handler) },
+      coordinator,
+      { withUserStoreMutation, beforeActiveStoreMutation },
+    );
+
+    expect(() => handlers.get(channel)?.({}, input)).toThrow(/Main-enrolled identity/);
+    expect(withUserStoreMutation).not.toHaveBeenCalled();
+    expect(beforeActiveStoreMutation).not.toHaveBeenCalled();
+    expect(coordinator[mutation]).not.toHaveBeenCalled();
+  });
+
   it('rebuilds connection commands from an explicit Renderer-safe field allowlist', async () => {
     const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
     const coordinator = {
       listStores: vi.fn(),
       getStore: vi.fn(),
+      getConnection: vi.fn((storeId, id) => ({ id, storeId, provider: 'amazon_ads' })),
       createStore: vi.fn(),
       updateStore: vi.fn(),
       archiveStore: vi.fn(),
@@ -275,12 +417,14 @@ describe('store IPC boundary', () => {
     const forged = {
       id: ' CAPABILITY-One ',
       storeId: ' Store-One ',
-      provider: ' LINGXING ',
+      provider: ' AMAZON_ADS ',
       accountLabel: ' operator@example.com ',
       externalAccountId: ' external-one ',
+      collectionStoreName: ' US Main Store ',
       status: 'ready',
       lastVerifiedAt: 'forged',
       lastFailureCode: 'forged',
+      expectedUpdatedAt: ' 2026-07-23T00:00:00.000Z ',
     };
 
     await handlers.get('stores:connections:create')?.({}, forged);
@@ -289,19 +433,23 @@ describe('store IPC boundary', () => {
 
     expect(coordinator.createConnection).toHaveBeenCalledWith({
       storeId: 'store-one',
-      provider: 'lingxing',
+      provider: 'amazon_ads',
       accountLabel: 'operator@example.com',
       externalAccountId: 'external-one',
+      collectionStoreName: 'US Main Store',
     });
     expect(coordinator.updateConnection).toHaveBeenCalledWith({
       id: 'capability-one',
       storeId: 'store-one',
       accountLabel: 'operator@example.com',
       externalAccountId: 'external-one',
+      collectionStoreName: 'US Main Store',
+      expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     });
     expect(coordinator.removeConnection).toHaveBeenCalledWith({
       id: 'capability-one',
       storeId: 'store-one',
+      expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     });
   });
 
@@ -376,16 +524,16 @@ describe('store IPC boundary', () => {
   });
 
   it.each([
-    ['stores:switch', { storeId: 'store-two' }, 'switchStore'],
+    ['stores:switch', { storeId: 'store-two', marketplace: 'US' }, 'switchStore'],
     ['stores:reconnect', { storeId: 'store-one' }, 'reconnectStore'],
     ['stores:connections:create', {
-      storeId: 'store-one', provider: 'lingxing', accountLabel: 'operator', externalAccountId: 'external-one',
+      storeId: 'store-one', provider: 'amazon_ads', accountLabel: 'operator', externalAccountId: 'external-one',
     }, 'createConnection'],
     ['stores:connections:update', {
-      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', externalAccountId: 'external-one',
+      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', externalAccountId: 'external-one', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     }, 'updateConnection'],
     ['stores:connections:remove', {
-      id: 'connection-one', storeId: 'store-one',
+      id: 'connection-one', storeId: 'store-one', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     }, 'removeConnection'],
   ] as const)('runs the active execution guard before %s mutates coordinator state', async (
     channel,
@@ -410,16 +558,16 @@ describe('store IPC boundary', () => {
   });
 
   it.each([
-    ['stores:switch', { storeId: 'store-two' }, 'switchStore'],
+    ['stores:switch', { storeId: 'store-two', marketplace: 'US' }, 'switchStore'],
     ['stores:reconnect', { storeId: 'store-one' }, 'reconnectStore'],
     ['stores:connections:create', {
       storeId: 'store-one', provider: 'amazon_ads', accountLabel: 'operator', externalAccountId: 'external-one',
     }, 'createConnection'],
     ['stores:connections:update', {
-      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', externalAccountId: 'external-one',
+      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', externalAccountId: 'external-one', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     }, 'updateConnection'],
     ['stores:connections:remove', {
-      id: 'connection-one', storeId: 'store-one',
+      id: 'connection-one', storeId: 'store-one', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     }, 'removeConnection'],
   ] as const)('does not mutate coordinator state when the active execution guard rejects %s', async (
     channel,
@@ -467,12 +615,19 @@ describe('store IPC boundary', () => {
     await handlers.get('stores:update')?.({}, {
       storeId: 'store-one',
       patch: { displayName: 'Updated' },
+      expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     });
-    await handlers.get('stores:archive')?.({}, { storeId: 'store-one' });
-    await handlers.get('stores:restore')?.({}, { storeId: 'store-one' });
+    await handlers.get('stores:archive')?.({}, {
+      storeId: 'store-one',
+      expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
+    });
+    await handlers.get('stores:restore')?.({}, {
+      storeId: 'store-one',
+      expectedUpdatedAt: '2026-07-24T00:00:00.000Z',
+    });
     await handlers.get('stores:connections:create')?.({}, {
       storeId: 'store-one',
-      provider: 'lingxing',
+      provider: 'amazon_ads',
       accountLabel: 'operator',
       externalAccountId: 'external-one',
     });
@@ -481,12 +636,14 @@ describe('store IPC boundary', () => {
       storeId: 'store-one',
       accountLabel: 'operator',
       externalAccountId: 'external-one',
+      expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     });
     await handlers.get('stores:connections:remove')?.({}, {
       id: 'connection-one',
       storeId: 'store-one',
+      expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     });
-    await handlers.get('stores:switch')?.({}, { storeId: 'store-two' });
+    await handlers.get('stores:switch')?.({}, { storeId: 'store-two', marketplace: 'US' });
     await handlers.get('stores:reconnect')?.({}, { storeId: 'store-one' });
     handlers.get('stores:list')?.({}, undefined);
     handlers.get('stores:get-active-context')?.({});
@@ -505,7 +662,7 @@ describe('store IPC boundary', () => {
     expect(scopes.find(({ operation }) => operation === 'stores:create'))
       .not.toHaveProperty('targetStoreId');
     expect(scopes.find(({ operation }) => operation === 'stores:switch'))
-      .toMatchObject({ targetStoreId: 'store-two' });
+      .toMatchObject({ targetStoreId: 'store-two', targetMarketplace: 'US' });
     expect(withUserStoreMutation).toHaveBeenCalledTimes(9);
   });
 
@@ -529,7 +686,7 @@ describe('store IPC boundary', () => {
       { withUserStoreMutation, beforeActiveStoreMutation },
     );
 
-    await handlers.get('stores:switch')?.({}, { storeId: 'store-two' });
+    await handlers.get('stores:switch')?.({}, { storeId: 'store-two', marketplace: 'US' });
 
     expect(withUserStoreMutation).toHaveBeenCalledOnce();
     expect(beforeActiveStoreMutation).toHaveBeenCalledWith(nextContext, 'stores:switch');
@@ -548,7 +705,7 @@ describe('store IPC boundary', () => {
       { beforeActiveStoreMutation: () => guard },
     );
 
-    const mutation = handlers.get('stores:switch')?.({}, { storeId: 'store-two' });
+    const mutation = handlers.get('stores:switch')?.({}, { storeId: 'store-two', marketplace: 'US' });
     await Promise.resolve();
     expect(coordinator.switchStore).not.toHaveBeenCalled();
 
@@ -585,7 +742,7 @@ describe('store IPC boundary', () => {
       },
     );
 
-    const mutation = handlers.get('stores:switch')?.({}, { storeId: 'store-two' });
+    const mutation = handlers.get('stores:switch')?.({}, { storeId: 'store-two', marketplace: 'US' });
     await Promise.resolve();
     await Promise.resolve();
     expect(order).toEqual(['claimed', 'callback-started']);
@@ -600,10 +757,11 @@ describe('store IPC boundary', () => {
     ]);
   });
 
-  it('propagates post-mutation callback failure through the mutation lane', async () => {
+  it('reports a post-commit callback failure without misreporting the committed mutation', async () => {
     const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
     const coordinator = createCoordinator();
     const withUserStoreMutation = vi.fn(async (_scope, work) => work());
+    const onPostCommitFailure = vi.fn();
     registerStoreIpcHandlers(
       { handle: (channel, handler) => handlers.set(channel, handler) },
       coordinator,
@@ -612,14 +770,20 @@ describe('store IPC boundary', () => {
         onStoreChanged: async () => {
           throw new Error('runtime close readback failed');
         },
+        onPostCommitFailure,
       },
     );
 
     await expect(
-      handlers.get('stores:switch')?.({}, { storeId: 'store-two' }),
-    ).rejects.toThrow('runtime close readback failed');
+      handlers.get('stores:switch')?.({}, { storeId: 'store-two', marketplace: 'US' }),
+    ).resolves.toMatchObject({ store: { storeId: 'store-two' } });
     expect(coordinator.switchStore).toHaveBeenCalledOnce();
     expect(withUserStoreMutation).toHaveBeenCalledOnce();
+    expect(onPostCommitFailure).toHaveBeenCalledWith(expect.objectContaining({
+      operation: 'stores:switch',
+      targetStoreId: 'store-two',
+      error: expect.objectContaining({ message: 'runtime close readback failed' }),
+    }));
   });
 
   it.each([
@@ -703,7 +867,7 @@ describe('store IPC boundary', () => {
     );
 
     await expect(
-      handlers.get('stores:switch')?.({}, { storeId: 'store-missing' }),
+      handlers.get('stores:switch')?.({}, { storeId: 'store-missing', marketplace: 'US' }),
     ).rejects.toBe(error);
 
     expect(laneRejected).toBeUndefined();
@@ -821,7 +985,10 @@ describe('store IPC boundary', () => {
       );
 
       await expect(
-        handlers.get(channel)?.({}, { storeId: 'store-one' }),
+        handlers.get(channel)?.({}, {
+          storeId: 'store-one',
+          ...(channel === 'stores:switch' ? { marketplace: 'US' } : {}),
+        }),
       ).rejects.toBe(error);
 
       expect(laneResolved).toBeUndefined();
@@ -829,14 +996,13 @@ describe('store IPC boundary', () => {
     },
   );
 
-  it.each(['before', 'after'] as const)(
-    'keeps a recognized %s-mutation callback failure inside the shared mutation lane',
-    async (phase) => {
+  it('keeps a recognized pre-mutation callback failure inside the shared mutation lane', async () => {
       const handlers = new Map<string, (event: unknown, input?: unknown) => unknown>();
       const coordinator = createCoordinator();
-      const error = phase === 'before'
-        ? new StoreCoordinatorError('STORE_CONTEXT_MISMATCH', 'runtime close proof failed')
-        : new StoreRepositoryError('STORE_CONFLICT', 'authority readback failed');
+      const error = new StoreCoordinatorError(
+        'STORE_CONTEXT_MISMATCH',
+        'runtime close proof failed',
+      );
       let laneResolved: unknown;
       let laneRejected: unknown;
       async function withUserStoreMutation<Result>(
@@ -857,22 +1023,16 @@ describe('store IPC boundary', () => {
         coordinator,
         {
           withUserStoreMutation,
-          beforeActiveStoreMutation: phase === 'before'
-            ? async () => { throw error; }
-            : undefined,
-          onStoreChanged: phase === 'after'
-            ? async () => { throw error; }
-            : undefined,
+          beforeActiveStoreMutation: async () => { throw error; },
         },
       );
 
       await expect(
-        handlers.get('stores:switch')?.({}, { storeId: 'store-two' }),
+        handlers.get('stores:switch')?.({}, { storeId: 'store-two', marketplace: 'US' }),
       ).rejects.toBe(error);
 
       expect(laneResolved).toBeUndefined();
       expect(laneRejected).toBe(error);
-      expect(coordinator.switchStore).toHaveBeenCalledTimes(phase === 'before' ? 0 : 1);
-    },
-  );
+      expect(coordinator.switchStore).not.toHaveBeenCalled();
+  });
 });

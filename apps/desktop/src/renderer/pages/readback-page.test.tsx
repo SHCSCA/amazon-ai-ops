@@ -85,6 +85,19 @@ describe('readback workflow invalidation contract', () => {
 });
 
 describe('readback task-first workspace frame', () => {
+  it('does not report path-open success when the production bridge is unavailable', () => {
+    const source = readFileSync(new URL('./readback-page.tsx', import.meta.url), 'utf8');
+    const openFlow = source.slice(
+      source.indexOf('async function openReadbackPath'),
+      source.indexOf('async function openExportResult'),
+    );
+
+    expect(openFlow).toContain("if (typeof openReportPath !== 'function')");
+    expect(openFlow).toContain('当前安全版本未提供路径打开能力');
+    expect(openFlow).toContain('await openReportPath(targetPath)');
+    expect(openFlow).not.toContain('openReportPath?.(targetPath)');
+  });
+
   it('asks for an approved action before presenting screenshot repair as the main task', () => {
     const repairAction = {
       blocker: 'screenshot' as const,

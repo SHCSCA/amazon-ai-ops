@@ -1,12 +1,23 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { adReadbackEvidenceToMarkdown, buildAdReadbackEvidence } from './ad-readback-evidence';
+import {
+  assertPathInsideReadbackSession,
+  assertPathInsideStoreCapsule,
+  assertReadbackStoreBinding,
+  ensureStoreScopedReadbackDirectory,
+  isReadbackStoreSecurityError,
+  resolveStoreScopedReadbackReference,
+  withReadbackStoreBinding,
+  type StoreScopedReadbackAccess,
+} from './readback-store-authority';
 
 type ReadbackCandidate = Record<string, any>;
 
 export interface PrepareAdReadbackSessionInput {
   sourcePath: string;
   outDir?: string;
+  storeAccess?: StoreScopedReadbackAccess;
 }
 
 export interface PreparedAdReadbackSession {
@@ -81,6 +92,103 @@ function defaultSessionDir(sourcePath: string): string {
 function isInside(childPath: string, parentPath: string): boolean {
   const relative = path.relative(path.resolve(parentPath), path.resolve(childPath));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function samePath(left: string, right: string): boolean {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function assertStoreScopedCandidate(
+  candidate: ReadbackCandidate,
+  access: StoreScopedReadbackAccess,
+): void {
+  assertReadbackStoreBinding(candidate.storeBinding, access);
+  if (!unresolved(candidate.target?.identityProofPath)) {
+    assertPathInsideStoreCapsule(access, candidate.target.identityProofPath);
+  }
+  for (const sourceFile of sourceFiles(candidate)) {
+    assertPathInsideStoreCapsule(access, sourceFile);
+  }
+}
+
+function assertStoreScopedSessionPaths(
+  sessionDir: string,
+  paths: Record<string, any>,
+  access: StoreScopedReadbackAccess,
+): { sourceCandidatePath: string; passEvidencePath: string } {
+  const requiredFields = [
+    'storeBinding',
+    'sessionDir',
+    'sourceCandidatePath',
+    'passEvidencePath',
+    'approvalsDir',
+    'beforeScreenshotsDir',
+    'afterScreenshotsDir',
+    'readbackScreenshotsDir',
+    'locatorGuidePath',
+    'sessionInputGuidePath',
+  ];
+  const missingFields = requiredFields.filter((field) => !paths[field]);
+  if (missingFields.length > 0) {
+    throw new Error(`READBACK_SESSION_MANIFEST_INVALID: missing ${missingFields.join(', ')}.`);
+  }
+  assertReadbackStoreBinding(paths.storeBinding, access);
+  const expectedSessionDir = resolveStoreScopedReadbackReference(access, sessionDir, 'sessions');
+  if (!samePath(expectedSessionDir, sessionDir) || !samePath(String(paths.sessionDir || ''), sessionDir)) {
+    throw new Error('READBACK_SESSION_PATH_MISMATCH: session manifest does not identify the current store session directory.');
+  }
+  const sourceCandidatePath = resolveStoreScopedReadbackReference(
+    access,
+    String(paths.sourceCandidatePath || ''),
+    'candidates',
+  );
+  if (!samePath(sourceCandidatePath, String(paths.sourceCandidatePath || ''))) {
+    throw new Error('READBACK_SOURCE_PATH_MISMATCH: source candidate is outside the current store candidate directory.');
+  }
+  const expectedPaths: Record<string, string> = {
+    passEvidencePath: path.join(sessionDir, 'real-ad-execution-readback-pass.json'),
+    approvalsDir: path.join(sessionDir, 'approvals'),
+    beforeScreenshotsDir: path.join(sessionDir, 'screenshots', 'before'),
+    afterScreenshotsDir: path.join(sessionDir, 'screenshots', 'after'),
+    readbackScreenshotsDir: path.join(sessionDir, 'screenshots', 'readback'),
+    locatorGuidePath: path.join(sessionDir, 'ads-ui-locator.md'),
+    sessionInputGuidePath: path.join(sessionDir, 'session-input-guide.md'),
+  };
+  for (const [field, expected] of Object.entries(expectedPaths)) {
+    assertPathInsideReadbackSession(sessionDir, String(paths[field] || ''));
+    const canonical = resolveStoreScopedReadbackReference(access, String(paths[field] || ''), 'root');
+    if (!samePath(canonical, expected) || !samePath(String(paths[field] || ''), expected)) {
+      throw new Error(`READBACK_SESSION_PATH_MISMATCH: ${field} is not the Main-derived session path.`);
+    }
+  }
+  return {
+    sourceCandidatePath,
+    passEvidencePath: expectedPaths.passEvidencePath,
+  };
+}
+
+function assertStoreScopedSessionInput(
+  sessionDir: string,
+  input: Record<string, any>,
+  access?: StoreScopedReadbackAccess,
+): void {
+  if (!access) return;
+  const pathFields = [
+    'approvalArtifactPath',
+    'beforeScreenshotPath',
+    'afterScreenshotPath',
+    'readbackEvidencePath',
+  ];
+  for (const field of pathFields) {
+    if (!unresolved(input[field])) {
+      assertPathInsideReadbackSession(sessionDir, input[field]);
+      resolveStoreScopedReadbackReference(access, input[field], 'root');
+    }
+  }
 }
 
 function collectFiles(dirPath: string): string[] {
@@ -349,11 +457,14 @@ function buildLocatorGuide(candidate: ReadbackCandidate, paths: PreparedAdReadba
 }
 
 export function prepareAdReadbackSession(input: PrepareAdReadbackSessionInput): PreparedAdReadbackSession {
-  const sourceCandidatePath = path.resolve(input.sourcePath || '');
+  const sourceCandidatePath = input.storeAccess
+    ? resolveStoreScopedReadbackReference(input.storeAccess, input.sourcePath, 'candidates')
+    : path.resolve(input.sourcePath || '');
   if (!sourceCandidatePath || !fs.existsSync(sourceCandidatePath)) {
     throw new Error(`Candidate JSON not found: ${sourceCandidatePath || '<missing>'}`);
   }
   const candidate = readJson(sourceCandidatePath);
+  if (input.storeAccess) assertStoreScopedCandidate(candidate, input.storeAccess);
   if (candidate.kind !== 'real-ad-execution-readback') {
     throw new Error(`Unsupported candidate kind: ${candidate.kind || '<missing>'}`);
   }
@@ -366,12 +477,20 @@ export function prepareAdReadbackSession(input: PrepareAdReadbackSessionInput): 
   if (unresolved(candidate.target?.identityProofPath)) {
     throw new Error('Candidate target.identityProofPath is required before preparing a readback session.');
   }
-  const identityProofPath = path.resolve(String(candidate.target.identityProofPath).trim());
+  const identityProofPath = input.storeAccess
+    ? assertPathInsideStoreCapsule(input.storeAccess, candidate.target.identityProofPath)
+    : path.resolve(String(candidate.target.identityProofPath).trim());
   if (!isFile(identityProofPath)) {
     throw new Error(`Candidate target identity proof file does not exist: ${identityProofPath}`);
   }
 
-  const sessionDir = path.resolve(input.outDir || defaultSessionDir(sourceCandidatePath));
+  const sessionDir = input.storeAccess
+    ? resolveStoreScopedReadbackReference(
+        input.storeAccess,
+        input.outDir || `${path.basename(sourceCandidatePath, path.extname(sourceCandidatePath))}-session`,
+        'sessions',
+      )
+    : path.resolve(input.outDir || defaultSessionDir(sourceCandidatePath));
   const result: PreparedAdReadbackSession = {
     sessionDir,
     sourceCandidatePath,
@@ -388,11 +507,19 @@ export function prepareAdReadbackSession(input: PrepareAdReadbackSessionInput): 
     sourceReportsCopied: false,
   };
 
-  ensureDir(result.sessionDir);
-  ensureDir(result.approvalsDir);
-  ensureDir(result.beforeScreenshotsDir);
-  ensureDir(result.afterScreenshotsDir);
-  ensureDir(result.readbackScreenshotsDir);
+  if (input.storeAccess) {
+    ensureStoreScopedReadbackDirectory(input.storeAccess, result.sessionDir);
+    ensureStoreScopedReadbackDirectory(input.storeAccess, result.approvalsDir);
+    ensureStoreScopedReadbackDirectory(input.storeAccess, result.beforeScreenshotsDir);
+    ensureStoreScopedReadbackDirectory(input.storeAccess, result.afterScreenshotsDir);
+    ensureStoreScopedReadbackDirectory(input.storeAccess, result.readbackScreenshotsDir);
+  } else {
+    ensureDir(result.sessionDir);
+    ensureDir(result.approvalsDir);
+    ensureDir(result.beforeScreenshotsDir);
+    ensureDir(result.afterScreenshotsDir);
+    ensureDir(result.readbackScreenshotsDir);
+  }
 
   const pathsFile = path.join(result.sessionDir, 'session-paths.json');
   fs.writeFileSync(pathsFile, `${JSON.stringify({
@@ -407,6 +534,7 @@ export function prepareAdReadbackSession(input: PrepareAdReadbackSessionInput): 
     sessionInputGuidePath: result.sessionInputGuidePath,
     sourceReports: sourceFiles(candidate),
     sourceReportsCopied: false,
+    ...(input.storeAccess ? { storeBinding: { ...input.storeAccess.binding } } : {}),
   }, null, 2)}\n`, 'utf8');
   fs.writeFileSync(result.sessionInputPath, `${JSON.stringify(buildSessionInput(result, candidate), null, 2)}\n`, 'utf8');
   fs.writeFileSync(result.checklistPath, buildChecklist(candidate, result), 'utf8');
@@ -441,11 +569,21 @@ function requireResolvedSessionInput(input: Record<string, any>): string[] {
   return missing;
 }
 
-function inspectSessionCaptureInput(sessionDir: string): { captureReady: boolean; unresolvedFields: string[]; captureMissingFields: ReadbackCaptureMissingField[]; captureIssues: string[] } {
+function inspectSessionCaptureInput(
+  sessionDir: string,
+  storeAccess?: StoreScopedReadbackAccess,
+): {
+  captureInputValid: boolean;
+  captureReady: boolean;
+  unresolvedFields: string[];
+  captureMissingFields: ReadbackCaptureMissingField[];
+  captureIssues: string[];
+} {
   const inputPath = path.join(sessionDir, 'session-input.json');
   if (!isFile(inputPath)) {
     const missing = captureMissingFields(['session-input.json']);
     return {
+      captureInputValid: false,
       captureReady: false,
       unresolvedFields: ['session-input.json'],
       captureMissingFields: missing,
@@ -455,9 +593,11 @@ function inspectSessionCaptureInput(sessionDir: string): { captureReady: boolean
 
   try {
     const input = readJson(inputPath);
+    assertStoreScopedSessionInput(sessionDir, input, storeAccess);
     const unresolvedFields = requireResolvedSessionInput(input);
     const missing = captureMissingFields(unresolvedFields);
     return {
+      captureInputValid: true,
       captureReady: unresolvedFields.length === 0,
       unresolvedFields,
       captureMissingFields: missing,
@@ -468,6 +608,7 @@ function inspectSessionCaptureInput(sessionDir: string): { captureReady: boolean
   } catch (error) {
     const missing = captureMissingFields(['session-input.json']);
     return {
+      captureInputValid: false,
       captureReady: false,
       unresolvedFields: ['session-input.json'],
       captureMissingFields: missing,
@@ -476,8 +617,11 @@ function inspectSessionCaptureInput(sessionDir: string): { captureReady: boolean
   }
 }
 
-export function fillAdReadbackSession(sessionDir: string): FilledAdReadbackSession {
-  const verification = verifyAdReadbackSession(sessionDir);
+export function fillAdReadbackSession(
+  sessionDir: string,
+  storeAccess?: StoreScopedReadbackAccess,
+): FilledAdReadbackSession {
+  const verification = verifyAdReadbackSession(sessionDir, storeAccess);
   if (!verification.ready) {
     return {
       sessionDir: verification.sessionDir,
@@ -491,6 +635,10 @@ export function fillAdReadbackSession(sessionDir: string): FilledAdReadbackSessi
 
   const paths = readJson(path.join(verification.sessionDir, 'session-paths.json'));
   const input = readJson(path.join(verification.sessionDir, 'session-input.json'));
+  if (storeAccess) {
+    assertStoreScopedSessionPaths(verification.sessionDir, paths, storeAccess);
+    assertStoreScopedSessionInput(verification.sessionDir, input, storeAccess);
+  }
   const unresolvedFields = requireResolvedSessionInput(input);
   if (unresolvedFields.length > 0) {
     return {
@@ -504,8 +652,9 @@ export function fillAdReadbackSession(sessionDir: string): FilledAdReadbackSessi
   }
 
   const candidate = readJson(String(paths.sourceCandidatePath || ''));
+  if (storeAccess) assertStoreScopedCandidate(candidate, storeAccess);
   const afterValue = String(input.afterValue || '');
-  const evidence = buildAdReadbackEvidence({
+  const evidenceInput = {
     authority: candidate.authority || {},
     target: candidate.target || {},
     source: candidate.source || {},
@@ -553,7 +702,10 @@ export function fillAdReadbackSession(sessionDir: string): FilledAdReadbackSessi
       executedBy: input.executedBy,
       appExecutorUsed: false,
     },
-  });
+  };
+  const evidence = storeAccess
+    ? withReadbackStoreBinding(buildAdReadbackEvidence(evidenceInput), storeAccess)
+    : buildAdReadbackEvidence(evidenceInput);
 
   const jsonPath = path.resolve(String(paths.passEvidencePath || path.join(verification.sessionDir, 'real-ad-execution-readback-pass.json')));
   const markdownPath = jsonPath.replace(/\.json$/i, '.md');
@@ -571,8 +723,25 @@ export function fillAdReadbackSession(sessionDir: string): FilledAdReadbackSessi
   };
 }
 
-export function verifyAdReadbackSession(sessionDir: string): VerifiedAdReadbackSession {
-  const resolvedSessionDir = path.resolve(sessionDir || '');
+export function verifyAdReadbackSession(
+  sessionDir: string,
+  storeAccess?: StoreScopedReadbackAccess,
+): VerifiedAdReadbackSession {
+  if (storeAccess && (typeof sessionDir !== 'string' || !sessionDir.trim())) {
+    return {
+      sessionDir: storeAccess.sessionsDir,
+      ready: false,
+      captureReady: false,
+      checks: [{ label: 'session reference exists', passed: false, details: '<missing>' }],
+      issues: ['session reference exists: <missing>'],
+      unresolvedFields: ['session-input.json'],
+      captureMissingFields: captureMissingFields(['session-input.json']),
+      captureIssues: ['session-input.json 不存在，尚未能判断现场证据填写状态。'],
+    };
+  }
+  const resolvedSessionDir = storeAccess
+    ? resolveStoreScopedReadbackReference(storeAccess, sessionDir, 'sessions')
+    : path.resolve(sessionDir || '');
   const checks: VerifiedAdReadbackSession['checks'] = [];
   const addCheck = (label: string, passed: boolean, details?: string) => {
     checks.push({ label, passed, details });
@@ -583,16 +752,26 @@ export function verifyAdReadbackSession(sessionDir: string): VerifiedAdReadbackS
   addCheck('session-paths.json exists', isFile(pathsFile), pathsFile);
 
   let paths: Record<string, any> = {};
+  let scopedPaths: { sourceCandidatePath: string; passEvidencePath: string } | null = null;
   if (isFile(pathsFile)) {
     try {
       paths = readJson(pathsFile);
+      if (storeAccess) scopedPaths = assertStoreScopedSessionPaths(resolvedSessionDir, paths, storeAccess);
     } catch (error) {
+      if (storeAccess && isReadbackStoreSecurityError(error)) throw error;
       addCheck('session-paths.json is readable JSON', false, error instanceof Error ? error.message : String(error));
+      paths = {};
     }
   }
 
-  const sourceCandidatePath = path.resolve(String(paths.sourceCandidatePath || ''));
-  const passEvidencePath = path.resolve(String(paths.passEvidencePath || ''));
+  const sourceCandidatePath = scopedPaths?.sourceCandidatePath
+    ?? (storeAccess
+      ? path.join(resolvedSessionDir, 'missing-source-candidate.json')
+      : path.resolve(String(paths.sourceCandidatePath || '')));
+  const passEvidencePath = scopedPaths?.passEvidencePath
+    ?? (storeAccess
+      ? path.join(resolvedSessionDir, 'real-ad-execution-readback-pass.json')
+      : path.resolve(String(paths.passEvidencePath || '')));
   addCheck('source candidate JSON exists', isFile(sourceCandidatePath), sourceCandidatePath);
   addCheck('pass output is separate from source candidate', Boolean(passEvidencePath && sourceCandidatePath !== passEvidencePath), passEvidencePath);
   addCheck('pass output is inside session folder', Boolean(passEvidencePath && isInside(passEvidencePath, resolvedSessionDir)), passEvidencePath);
@@ -600,6 +779,7 @@ export function verifyAdReadbackSession(sessionDir: string): VerifiedAdReadbackS
   if (isFile(sourceCandidatePath)) {
     try {
       const candidate = readJson(sourceCandidatePath);
+      if (storeAccess) assertStoreScopedCandidate(candidate, storeAccess);
       addCheck(
         'source candidate is NEEDS_WORK',
         candidate.kind === 'real-ad-execution-readback' && candidate.status === 'NEEDS_WORK',
@@ -613,7 +793,9 @@ export function verifyAdReadbackSession(sessionDir: string): VerifiedAdReadbackS
       );
       const identityProofPath = unresolved(target.identityProofPath)
         ? ''
-        : path.resolve(String(target.identityProofPath).trim());
+        : storeAccess
+          ? assertPathInsideStoreCapsule(storeAccess, target.identityProofPath)
+          : path.resolve(String(target.identityProofPath).trim());
       addCheck(
         'target identity proof file exists',
         Boolean(identityProofPath && isFile(identityProofPath)),
@@ -645,8 +827,13 @@ export function verifyAdReadbackSession(sessionDir: string): VerifiedAdReadbackS
   const rawFiles = collectFiles(resolvedSessionDir).filter(hasSpreadsheetExtension);
   addCheck('raw report files are not copied into session', rawFiles.length === 0, rawFiles.join(', '));
 
-  const issues = checks.filter((check) => !check.passed).map((check) => check.details ? `${check.label}: ${check.details}` : check.label);
-  const capture = inspectSessionCaptureInput(resolvedSessionDir);
+  const structuralIssues = checks
+    .filter((check) => !check.passed)
+    .map((check) => check.details ? `${check.label}: ${check.details}` : check.label);
+  const capture = inspectSessionCaptureInput(resolvedSessionDir, storeAccess);
+  const issues = capture.captureInputValid
+    ? structuralIssues
+    : [...structuralIssues, ...capture.captureIssues];
   return {
     sessionDir: resolvedSessionDir,
     ready: issues.length === 0,

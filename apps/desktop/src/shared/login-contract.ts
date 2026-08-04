@@ -1,4 +1,23 @@
-import type { StoreContextEnvelope } from '@amazon-ai-ops/shared-types';
+import type { StoreContextEnvelope, StoreId } from '@amazon-ai-ops/shared-types';
+
+export type SavedLoginCredentialState =
+  | 'none'
+  | 'encrypted_ready'
+  | 'migrated'
+  | 'encryption_unavailable'
+  | 'encrypted_corrupt'
+  | 'migration_failed';
+
+export interface StoreScopedSavedLoginCredentialStatus {
+  /** Main-captured authority. Null means no active store and therefore no credential namespace. */
+  storeId: StoreId | null;
+  username: string;
+  rememberPassword: boolean;
+  passwordAvailable: boolean;
+  credentialState: SavedLoginCredentialState;
+  packageUiEvidenceMode: boolean;
+  freshTypedProofRequired: boolean;
+}
 
 type BrowserLoginAuthority = {
   storeContext: StoreContextEnvelope;
@@ -16,6 +35,8 @@ export type BrowserLoginRequest = BrowserLoginAuthority & (
       credentialSource: 'typed';
       password: string;
       rememberPassword: boolean;
+      /** Explicit authority to clear only this store's Lingxing session state during first enrollment. */
+      resetLingxingSessionForEnrollment?: boolean;
     }
 );
 

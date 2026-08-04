@@ -26,6 +26,8 @@ const {
   REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES,
   validateS7LiveMigrationAcceptanceReceipt,
 } = require('./verify-s7-live-migration-acceptance.js');
+const { TARGET_VERSION } = require('./migrate-current-user-db.js');
+const { legacyV1Checksum } = require('./verify-production-authority-selection.js');
 
 const roots = [];
 afterEach(() => {
@@ -242,7 +244,7 @@ function setup() {
     schemaVersion: 1,
     generatedAt: '2026-07-29T00:20:00.000Z',
     passed: true,
-    targetVersion: 9,
+    targetVersion: TARGET_VERSION,
     source: {
       path: fs.realpathSync.native(db),
       sha256: sha('v0-db'),
@@ -583,7 +585,7 @@ function setup() {
         shell: startupGatePlan.activeDocument.bindings.shell,
       });
       const gateClosed = gateArtifact(startupGatePlan.closedPath);
-      schema = 9;
+      schema = TARGET_VERSION;
       closed = true;
       return {
         outcome: 'close',
@@ -775,7 +777,7 @@ function writePassingAcceptance(s, packet, name = 'acceptance.json') {
     ...(kind === 'offline-working'
       ? {
           foreignKeyViolationCount: 0,
-          migrationCount: 9,
+          migrationCount: TARGET_VERSION,
           businessRowPreservationPassed: true,
           recoveryCanRestore: true,
         }
@@ -802,7 +804,7 @@ function writePassingAcceptance(s, packet, name = 'acceptance.json') {
         realPath: database.realPath,
         sha256: database.sha256,
         sizeBytes: database.sizeBytes,
-        logicalSnapshotSha256: sha('synthetic-logical-v9'),
+        logicalSnapshotSha256: sha(`synthetic-logical-v${TARGET_VERSION}`),
         logicalSnapshotSizeBytes: database.sizeBytes,
       },
       authoritySelection: inputArtifact(packet.bindings.authoritySelection),
@@ -820,7 +822,7 @@ function writePassingAcceptance(s, packet, name = 'acceptance.json') {
       failed: 0,
       integrityCheck: 'ok',
       foreignKeyViolationCount: 0,
-      migrationCount: 9,
+      migrationCount: TARGET_VERSION,
       requiredTableCount: postMigrationAuthorityContract().requiredTables.length,
       offlineArtifacts: {
         pathsDistinct: true,
@@ -835,12 +837,12 @@ function writePassingAcceptance(s, packet, name = 'acceptance.json') {
       },
       recovery: {
         sourceVersion: 0,
-        targetVersion: 9,
-        backupPath: path.join(s.root, 'accepted-v9-backup.db'),
-        backupSha256: sha('accepted-v9-backup'),
+        targetVersion: TARGET_VERSION,
+        backupPath: path.join(s.root, `accepted-v${TARGET_VERSION}-backup.db`),
+        backupSha256: sha(`accepted-v${TARGET_VERSION}-backup`),
         backupSizeBytes: 8192,
-        manifestPath: path.join(s.root, 'accepted-v9-backup.manifest.json'),
-        manifestSha256: sha('accepted-v9-backup-manifest'),
+        manifestPath: path.join(s.root, `accepted-v${TARGET_VERSION}-backup.manifest.json`),
+        manifestSha256: sha(`accepted-v${TARGET_VERSION}-backup-manifest`),
         backupIntegrityCheck: 'ok',
         schemaFingerprintMatches: true,
         tableRowCountsMatch: true,
@@ -2294,10 +2296,10 @@ public static class S7SyntheticTarget {
     expect(result.receipt.postCloseEvidence.database).toMatchObject({
       passed: true,
       method: 'bracketed-stable-main-file-and-readonly-schema',
-      schemaVersion: 9,
+      schemaVersion: TARGET_VERSION,
       snapshot: {
         database: { sha256: sha('v0-db') },
-        schemaVersion: 9,
+        schemaVersion: TARGET_VERSION,
       },
     });
     const env = s.getTargetEnvironment();
@@ -2651,6 +2653,92 @@ public static class S7SyntheticTarget {
     await expect(
       run(finalizeArgs(finalizationPacket, prepared.receipt.confirmation.token), s.context),
     ).rejects.toThrow(/FINALIZED|one-time|replay/i);
+  });
+
+  it('blocks finalization when the current authority no longer matches the exact v11 schema contract', async () => {
+    const s = setup();
+    const approved = await prepare(s);
+    const launchReceipt = path.join(s.launchOutputRoot, 'launch.json');
+    await run(
+      executeArgs(approved.packetPath, approved.token, launchReceipt),
+      s.context,
+    );
+    const acceptanceReceipt = writePassingAcceptance(s, approved.packet);
+    s.context.inspectPostMigrationAuthority = () => {
+      const contract = clone(postMigrationAuthorityContract());
+      contract.storeProviderIdentityV11.triggers.pop();
+      return contract;
+    };
+    const finalizationPacket = path.join(
+      s.finalizationOutputRoot,
+      'invalid-v11-schema-finalization.json',
+    );
+
+    await expect(run(
+      prepareFinalizationArgs(
+        s,
+        approved.packetPath,
+        launchReceipt,
+        acceptanceReceipt,
+        finalizationPacket,
+      ),
+      s.context,
+    )).rejects.toThrow(/exact production v11 contract/i);
+    expect(fs.existsSync(finalizationPacket)).toBe(false);
+    expect(fs.existsSync(s.getStartupGatePlan().finalizedPath)).toBe(false);
+  });
+
+  it('allows the explicit legacy v1 checksum through finalization while rejecting unknown v1', async () => {
+    const s = setup();
+    const legacyRows = clone(postMigrationAuthorityContract().migrationRows);
+    legacyRows[0].checksum = legacyV1Checksum();
+    const legacyAuthority = postMigrationAuthorityContract(legacyRows);
+    s.context.inspectPostMigrationAuthority = () => clone(legacyAuthority);
+    const approved = await prepare(s);
+    const launchReceipt = path.join(s.launchOutputRoot, 'legacy-v1-launch.json');
+    await run(executeArgs(approved.packetPath, approved.token, launchReceipt), s.context);
+    const acceptanceReceipt = writePassingAcceptance(s, approved.packet, 'legacy-v1.json');
+    const finalizationPacket = path.join(s.finalizationOutputRoot, 'legacy-v1.json');
+    const prepared = await run(prepareFinalizationArgs(
+      s,
+      approved.packetPath,
+      launchReceipt,
+      acceptanceReceipt,
+      finalizationPacket,
+    ), s.context);
+    const finalized = await run(
+      finalizeArgs(finalizationPacket, prepared.receipt.confirmation.token),
+      s.context,
+    );
+    expect(finalized.exitCode).toBe(0);
+    expect(finalized.receipt.authority.migrationRows[0].checksum).toBe(legacyV1Checksum());
+
+    const unknownRows = clone(postMigrationAuthorityContract().migrationRows);
+    unknownRows[0].checksum = 'unknown-v1-checksum';
+    expect(() => postMigrationAuthorityContract(unknownRows))
+      .toThrow(/exact allowed v1/i);
+  });
+
+  it('blocks finalization when the authority contract hash is not self-bound to its rows', async () => {
+    const s = setup();
+    const approved = await prepare(s);
+    const launchReceipt = path.join(s.launchOutputRoot, 'hash-drift-launch.json');
+    await run(executeArgs(approved.packetPath, approved.token, launchReceipt), s.context);
+    const acceptanceReceipt = writePassingAcceptance(s, approved.packet, 'hash-drift.json');
+    s.context.inspectPostMigrationAuthority = () => ({
+      ...clone(postMigrationAuthorityContract()),
+      contractSha256: 'A'.repeat(64),
+    });
+    const finalizationPacket = path.join(s.finalizationOutputRoot, 'hash-drift.json');
+
+    await expect(run(prepareFinalizationArgs(
+      s,
+      approved.packetPath,
+      launchReceipt,
+      acceptanceReceipt,
+      finalizationPacket,
+    ), s.context)).rejects.toThrow(/exact production v11 contract/i);
+    expect(fs.existsSync(finalizationPacket)).toBe(false);
   });
 
   it('rejects incomplete or internally inconsistent acceptance receipts before finalization', async () => {

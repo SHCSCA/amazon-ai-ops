@@ -102,14 +102,17 @@ describe('Mission Control runtime composition', () => {
     expect(requestNavigate).not.toContain('resolveNavigationTarget');
   });
 
-  it('binds the real Store Authority CRUD panel instead of a decorative slot', () => {
+  it('keeps create/switch on the shell scope control while binding real management mutations', () => {
     const source = appSource();
     expect(source).toContain('<StoreManagementPanel');
-    expect(source).toContain('onCreate={store.createStore}');
+    expect(source).toContain('onCreateStore={store.createStore}');
     expect(source).toContain('onUpdate={store.updateStore}');
     expect(source).toContain('onArchive={store.archiveStore}');
     expect(source).toContain('onRestore={store.restoreStore}');
-    expect(source).toContain('onSwitch={store.switchStore}');
+    expect(source).toContain('onSwitchStore={store.switchStore}');
+    const panel = source.slice(source.indexOf('<StoreManagementPanel'), source.indexOf('/>', source.indexOf('<StoreManagementPanel')));
+    expect(panel).not.toContain('onCreate=');
+    expect(panel).not.toContain('onSwitch=');
   });
 
   it('binds the Main-authorized store runtime configuration panel to the active authority', () => {

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type Database from 'better-sqlite3';
 import type {
   AdReadbackAuthorityScope,
+  StoreId,
   WritableAdTargetEvidence,
   WritableAdEntityType,
 } from '@amazon-ai-ops/shared-types';
@@ -18,6 +19,7 @@ export interface WritableAdTargetCandidate {
 }
 
 export interface ResolveWritableAdTargetAuthorityInput {
+  storeId: StoreId;
   scope: AdReadbackAuthorityScope;
   candidate: WritableAdTargetCandidate;
   allowedSourceFiles: string[];
@@ -27,6 +29,7 @@ export interface ResolveWritableAdTargetAuthorityInput {
 }
 
 export interface AssertCurrentWritableAdTargetAuthorityInput {
+  storeId: StoreId;
   scope: AdReadbackAuthorityScope;
   target: WritableAdTargetEvidence;
   allowedSourceFiles: string[];
@@ -111,21 +114,21 @@ export function resolveWritableAdTargetAuthority(
       source_file AS sourceFile,
       source_row AS sourceRow
     FROM ad_daily_metrics
-    WHERE batch_id = ?
+    WHERE store_id = ?
+      AND batch_id = ?
       AND report_type = ?
       AND date >= ?
       AND date <= ?
-      AND COALESCE(store_name, '') = COALESCE(?, '')
       AND COALESCE(marketplace_code, '') = COALESCE(?, '')
       AND upper(COALESCE(asin, '')) = upper(?)
       AND source_file IN (${candidates.map(() => '?').join(', ')})
       AND source_row = ?
   `).all(
+    input.storeId,
     text(input.scope.batchId),
     entityType,
     text(input.scope.dateFrom),
     text(input.scope.dateTo),
-    text(input.scope.storeName),
     text(input.scope.marketplaceCode),
     text(input.scope.asin),
     ...candidates,
@@ -168,6 +171,7 @@ export function assertCurrentWritableAdTargetAuthority(
   input: AssertCurrentWritableAdTargetAuthorityInput,
 ): WritableAdTargetEvidence {
   const canonical = resolveWritableAdTargetAuthority(db, {
+    storeId: input.storeId,
     scope: input.scope,
     candidate: input.target,
     allowedSourceFiles: input.allowedSourceFiles,

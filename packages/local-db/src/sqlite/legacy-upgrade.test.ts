@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { initSqlite } from './db';
 import {
   EXECUTION_AUTHORITY_TABLES,
+  COLLECTION_RESUME_AUTHORITY_TABLES,
   prepareUpgradeBackup,
-  STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
-  STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
-  STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
+  STORE_PROVIDER_IDENTITY_UNIQUE_INDEX,
   type UpgradeBackupManifest,
 } from './migrations';
 import { StoreRepository } from './repositories/store-repo';
@@ -22,8 +24,8 @@ afterEach(() => {
   }
 });
 
-describe('representative legacy database upgrade to migration 9', () => {
-  it('preserves v7 business rows and binds one restorable pre-v9 snapshot for migrations 8 and 9', () => {
+describe('representative legacy database upgrade to migration 11', () => {
+  it('preserves v7 business rows and binds one restorable pre-v11 snapshot for migrations 8 through 11', () => {
     const databasePath = createRepresentativeV7Fixture();
 
     const upgraded = initSqlite(databasePath);
@@ -31,7 +33,7 @@ describe('representative legacy database upgrade to migration 9', () => {
     try {
       expect(upgraded.prepare(`
         SELECT version, status FROM schema_migrations ORDER BY version
-      `).all()).toEqual(Array.from({ length: 9 }, (_, index) => ({
+      `).all()).toEqual(Array.from({ length: 11 }, (_, index) => ({
         version: index + 1,
         status: 'applied',
       })));
@@ -43,13 +45,13 @@ describe('representative legacy database upgrade to migration 9', () => {
 
       const migration = upgraded.prepare(`
         SELECT manifest_json AS manifestJson
-        FROM schema_migrations WHERE version = 9
+        FROM schema_migrations WHERE version = 11
       `).get() as { manifestJson: string };
       upgradeBackup = (JSON.parse(migration.manifestJson) as { upgradeBackup: UpgradeBackupManifest }).upgradeBackup;
       expect(upgradeBackup).toMatchObject({
         status: 'created',
         sourceVersion: 7,
-        targetVersion: 9,
+        targetVersion: 11,
         integrityCheck: 'ok',
         backupIntegrityCheck: 'ok',
       });
@@ -57,16 +59,16 @@ describe('representative legacy database upgrade to migration 9', () => {
       expect(upgradeBackup.tableRowCounts.products).toBeGreaterThanOrEqual(1);
 
       const repository = new StoreRepository(upgraded);
-      expect(repository.getMigrationRecoveryPreflight(9)).toMatchObject({
+      expect(repository.getMigrationRecoveryPreflight(11)).toMatchObject({
         canRestore: true,
         sourceVersion: 7,
-        targetVersion: 9,
+        targetVersion: 11,
         schemaFingerprintMatches: true,
         tableRowCountsMatch: true,
       });
-      const restoredPath = path.join(path.dirname(databasePath), 'restored-pre-v9.db');
-      expect(repository.restoreMigrationBackupTo(restoredPath, 9)).toMatchObject({
-        version: 9,
+      const restoredPath = path.join(path.dirname(databasePath), 'restored-pre-v11.db');
+      expect(repository.restoreMigrationBackupTo(restoredPath, 11)).toMatchObject({
+        version: 11,
         destinationPath: path.resolve(restoredPath),
         integrityCheck: 'ok',
       });
@@ -94,30 +96,30 @@ describe('representative legacy database upgrade to migration 9', () => {
     expect(fs.existsSync(upgradeBackup!.manifestPath!)).toBe(true);
   });
 
-  it('reuses the same bound snapshot after a recorded interrupted v9 attempt', () => {
+  it('reuses the same bound snapshot after a recorded interrupted v11 attempt', () => {
     const databasePath = createRepresentativeV7Fixture();
     const interrupted = new Database(databasePath);
     interrupted.pragma('journal_mode = WAL');
     interrupted.pragma('foreign_keys = ON');
     try {
       const backup = prepareUpgradeBackup(interrupted, {
-        targetVersion: STORE_AUTHORITY_REPAIR_MIGRATION_VERSION,
-        targetName: STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
-        targetChecksum: STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
+        targetVersion: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
+        targetName: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
+        targetChecksum: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
       });
       interrupted.prepare(`
         INSERT INTO schema_migrations (
           version, name, checksum, status, started_at, applied_at,
           error_message, manifest_json, result_json
-        ) VALUES (9, ?, ?, 'failed', ?, NULL, 'simulated process interruption', ?, '{}')
+        ) VALUES (11, ?, ?, 'failed', ?, NULL, 'simulated process interruption', ?, '{}')
       `).run(
-        STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
-        STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
+        STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
+        STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
         '2026-07-27T00:00:00.000Z',
         JSON.stringify({
-          version: 9,
-          name: STORE_AUTHORITY_REPAIR_MIGRATION_NAME,
-          checksum: STORE_AUTHORITY_REPAIR_MIGRATION_CHECKSUM,
+          version: 11,
+          name: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_NAME,
+          checksum: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_CHECKSUM,
           startedAt: '2026-07-27T00:00:00.000Z',
           upgradeBackup: backup,
         }),
@@ -129,7 +131,7 @@ describe('representative legacy database upgrade to migration 9', () => {
     const recovered = initSqlite(databasePath);
     try {
       const row = recovered.prepare(`
-        SELECT status, manifest_json AS manifestJson FROM schema_migrations WHERE version = 9
+        SELECT status, manifest_json AS manifestJson FROM schema_migrations WHERE version = 11
       `).get() as { status: string; manifestJson: string };
       const manifest = JSON.parse(row.manifestJson) as { upgradeBackup: UpgradeBackupManifest };
       expect(row.status).toBe('applied');
@@ -150,10 +152,27 @@ function createRepresentativeV7Fixture(): string {
   const current = initSqlite(databasePath);
   try {
     current.pragma('foreign_keys = OFF');
+    current.exec(`
+      DROP TRIGGER IF EXISTS trg_stores_v1_authority_insert;
+      DROP TRIGGER IF EXISTS trg_stores_v1_authority_update;
+      DROP TRIGGER IF EXISTS trg_store_connections_external_identity_insert;
+      DROP TRIGGER IF EXISTS trg_store_connections_external_identity_update;
+      DROP TRIGGER IF EXISTS trg_store_connections_collection_store_name_insert;
+      DROP TRIGGER IF EXISTS trg_store_connections_collection_store_name_update;
+      DROP INDEX IF EXISTS ${STORE_PROVIDER_IDENTITY_UNIQUE_INDEX};
+    `);
+    for (const table of [...COLLECTION_RESUME_AUTHORITY_TABLES].reverse()) {
+      current.exec(`DROP TABLE IF EXISTS "${table}"`);
+    }
     for (const table of [...EXECUTION_AUTHORITY_TABLES].reverse()) {
       current.exec(`DROP TABLE IF EXISTS "${table}"`);
     }
-    current.prepare(`DELETE FROM schema_migrations WHERE version IN (8, 9)`).run();
+    current.exec(`
+      ALTER TABLE store_connections DROP COLUMN normalized_collection_store_name;
+      ALTER TABLE store_connections DROP COLUMN collection_store_name;
+      ALTER TABLE store_connections DROP COLUMN normalized_external_account_id;
+    `);
+    current.prepare(`DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11)`).run();
     current.prepare(`
       INSERT INTO app_settings (key, value, updated_at)
       VALUES ('legacy-business-sentinel', 'preserve-after-v8', '2026-07-22T00:00:00.000Z')

@@ -21,8 +21,12 @@ const {
 const {
   PACKAGED_APP_NAME,
   REQUIRED_TABLES,
+  assertStoreProviderIdentityV11Schema,
   inspectProductionAuthoritySelection,
   migrationContract,
+  migrationRowsMatchProductionContract,
+  migrationV1ChecksumWhitelist,
+  storeProviderIdentityV11SchemaContract,
 } = require('./verify-production-authority-selection');
 const {
   readJsonArtifact,
@@ -31,7 +35,11 @@ const {
 const {
   verifyS7MigrationBackupRestore,
 } = require('./verify-s7-migration-backup-restore');
-const { requireSqlite, readAppliedVersion } = require('./migrate-current-user-db');
+const {
+  TARGET_VERSION,
+  requireSqlite,
+  readAppliedVersion,
+} = require('./migrate-current-user-db');
 
 const ROOT = path.resolve(__dirname, '..');
 const CANONICAL_EXE = path.join(
@@ -56,7 +64,6 @@ const KIND = 's7-live-migration-launch-operator';
 const SCHEMA_VERSION = 's7-live-migration-launch-operator/v2';
 const PACKET_KIND = 's7-live-migration-approval-packet';
 const PACKET_SCHEMA_VERSION = 's7-live-migration-approval-packet/v2';
-const TARGET_VERSION = 9;
 const REQUIRED_SOURCE_VERSION = 0;
 const SIDECARS = Object.freeze(['-wal', '-shm', '-journal']);
 const MAX_PACKAGE_UI_AGE_MS = 48 * 60 * 60 * 1000;
@@ -1247,23 +1254,34 @@ function defaultReadSchema(dbPath) {
   }
 }
 
-function postMigrationAuthorityContract() {
-  const rows = migrationContract().map((row) => ({
+function postMigrationAuthorityContract(actualRows) {
+  const productionContract = migrationContract();
+  const rows = (actualRows ?? productionContract).map((row) => ({
     version: Number(row.version),
     name: String(row.name),
     checksum: String(row.checksum),
-    status: 'applied',
+    status: String(row.status ?? 'applied').toLowerCase(),
   }));
+  if (!migrationRowsMatchProductionContract(
+    rows,
+    productionContract,
+    migrationV1ChecksumWhitelist(productionContract),
+  )) {
+    fail(`Post-migration authority ledger is not the exact allowed v1..v${TARGET_VERSION} contract.`);
+  }
+  const storeProviderIdentityV11 = storeProviderIdentityV11SchemaContract();
   return {
     targetVersion: TARGET_VERSION,
     integrityCheck: 'ok',
     foreignKeyViolationCount: 0,
     migrationRows: rows,
     requiredTables: [...REQUIRED_TABLES],
+    storeProviderIdentityV11,
     contractSha256: sha256(stableJson({
       targetVersion: TARGET_VERSION,
-      migrationRows: rows.map(({ status, ...row }) => row),
+      migrationRows: rows,
       requiredTables: REQUIRED_TABLES,
+      storeProviderIdentityV11,
     })),
   };
 }
@@ -1294,13 +1312,16 @@ function defaultInspectPostMigrationAuthority(dbPath) {
       checksum: String(row.checksum),
       status: String(row.status),
     }));
-    const expected = postMigrationAuthorityContract();
+    assertStoreProviderIdentityV11Schema(
+      database,
+      'Post-migration authority v11 store provider identity schema',
+    );
+    const expected = postMigrationAuthorityContract(migrationRows);
     if (
       integrityRows.length !== 1
       || integrityCheck !== 'ok'
       || foreignKeyViolations.length !== 0
       || REQUIRED_TABLES.some((name) => !tableNames.has(name))
-      || stableJson(migrationRows) !== stableJson(expected.migrationRows)
     ) {
       fail('Post-migration authority schema/ledger/checksum/invariants are not current.');
     }
@@ -1581,7 +1602,7 @@ function validateMigrationInputs(migration, verification, db, context) {
     || normalizeSha(manifest?.source?.sha256, 'Offline migration source SHA') !== db.sha256
     || manifest?.source?.version !== REQUIRED_SOURCE_VERSION
   ) {
-    fail('Offline migration manifest is not a passing exact v0-to-v9 rehearsal for this DB.');
+    fail(`Offline migration manifest is not a passing exact v0-to-v${TARGET_VERSION} rehearsal for this DB.`);
   }
   exactPassingChecks(verification.value, 'Supplied migration verification receipt');
   if (
@@ -3985,7 +4006,7 @@ function collectFinalizationEvidence(input, context) {
     ) !== database.sha256
     || Number(acceptance?.inputs?.database?.sizeBytes) !== database.sizeBytes
   ) {
-    fail('Readonly acceptance does not bind the current v9 authority database.');
+    fail(`Readonly acceptance does not bind the current v${TARGET_VERSION} authority database.`);
   }
   for (const [label, acceptanceArtifact, approvedArtifact] of [
     [
@@ -4023,9 +4044,10 @@ function collectFinalizationEvidence(input, context) {
     || !Array.isArray(authority?.migrationRows)
     || authority.migrationRows.length !== TARGET_VERSION
     || !Array.isArray(authority?.requiredTables)
-    || stableJson(authority) !== stableJson(postMigrationAuthorityContract())
+    || stableJson(authority)
+      !== stableJson(postMigrationAuthorityContract(authority.migrationRows))
   ) {
-    fail('Finalization authority contract is not the exact production v9 contract.');
+    fail(`Finalization authority contract is not the exact production v${TARGET_VERSION} contract.`);
   }
 
   const startupGate = launch.startupGate;

@@ -6,6 +6,7 @@ import type {
   CreateStoreConnectionInput,
   CreateStoreInput,
   ListStoresInput,
+  OperatorWorkspaceSelection,
   RestoreStoreInput,
   RemoveStoreConnectionInput,
   StoreCapabilityId,
@@ -13,6 +14,7 @@ import type {
   StoreContextEnvelope,
   StoreId,
   StoreRecord,
+  StoreScopeRef,
   StoreSessionMetadata,
   StoreWorkspaceView,
   UpdateStoreConnectionInput,
@@ -22,6 +24,7 @@ import {
   DEFAULT_US_BUSINESS_TIMEZONE,
   normalizeBrowserProfileId,
   normalizeBusinessTimezone,
+  normalizeOperatorWorkspaceSelection,
   normalizeSessionGeneration,
   normalizeStoreCapabilityId,
   normalizeStoreContextEnvelope,
@@ -69,6 +72,17 @@ export interface StoreSessionGenerationStorage {
   transaction<T>(work: () => T): T;
   read(storeId: StoreId): number | undefined;
   write(storeId: StoreId, sessionGeneration: number): void;
+}
+
+/**
+ * Logical operator selection stored in the same authority database as stores
+ * and generations. Production implementations must participate in the
+ * StoreAuthorityRepository transaction that surrounds write/clear.
+ */
+export interface OperatorWorkspaceSelectionStorage {
+  read(): unknown;
+  write(selection: OperatorWorkspaceSelection): void;
+  clear(): void;
 }
 
 declare const collectionTransitionCapabilityBrand: unique symbol;
@@ -166,6 +180,9 @@ export interface StoreCoordinatorOptions {
   createStoreId?: () => StoreId;
   createBrowserProfileId?: (storeId: StoreId) => BrowserProfileId;
   createStoreCapabilityId?: () => StoreCapabilityId;
+  selectionStorage?: OperatorWorkspaceSelectionStorage;
+  /** Package-UI evidence may restore in memory but must never write app_settings. */
+  selectionPersistence?: 'read_write' | 'read_only';
 }
 
 export class StoreCoordinatorError extends Error {
@@ -201,8 +218,11 @@ export class StoreCoordinator {
   private readonly createStoreId: () => StoreId;
   private readonly createBrowserProfileId: (storeId: StoreId) => BrowserProfileId;
   private readonly createStoreCapabilityId: () => StoreCapabilityId;
+  private readonly selectionStorage: OperatorWorkspaceSelectionStorage;
+  private readonly selectionPersistence: 'read_write' | 'read_only';
   private readonly collectionTransitionCapabilities = new WeakSet<object>();
   private activeStoreId: StoreId | null = null;
+  private operatorSelection: OperatorWorkspaceSelection | null = null;
 
   constructor(options: StoreCoordinatorOptions) {
     this.repository = options.repository;
@@ -214,6 +234,13 @@ export class StoreCoordinator {
       ?? ((storeId) => `browser-${storeId}` as BrowserProfileId);
     this.createStoreCapabilityId = options.createStoreCapabilityId
       ?? (() => `capability-${randomUUID()}` as StoreCapabilityId);
+    let memorySelection: OperatorWorkspaceSelection | null = null;
+    this.selectionStorage = options.selectionStorage ?? {
+      read: () => memorySelection,
+      write: (selection) => { memorySelection = selection; },
+      clear: () => { memorySelection = null; },
+    };
+    this.selectionPersistence = options.selectionPersistence ?? 'read_write';
   }
 
   listStores(input?: ListStoresInput): StoreRecord[] {
@@ -240,6 +267,15 @@ export class StoreCoordinator {
     return this.requireStore(normalizeStoreId(storeIdInput));
   }
 
+  /** Main-only lookup used for provider-aware mutation preflight. */
+  getConnection(storeIdInput: unknown, connectionIdInput: unknown): StoreConnection | undefined {
+    const storeId = normalizeStoreId(storeIdInput);
+    const connectionId = normalizeStoreCapabilityId(connectionIdInput);
+    this.requireStore(storeId);
+    return this.repository.listConnections(storeId)
+      .find((connection) => connection.id === connectionId);
+  }
+
   createStore(input: CreateStoreInput): StoreRecord {
     const displayName = normalizeDisplayName(input?.displayName);
     const marketplace = normalizeUsMarketplace(input?.marketplace);
@@ -261,7 +297,7 @@ export class StoreCoordinator {
 
   updateStore(input: UpdateStoreInput): StoreRecord {
     const storeId = normalizeStoreId(input?.storeId);
-    this.requireStore(storeId);
+    const before = this.requireStore(storeId);
     const patch = input?.patch ?? {};
     const normalizedPatch: UpdateStoreInput['patch'] = {};
     if (Object.prototype.hasOwnProperty.call(patch, 'displayName')) {
@@ -279,15 +315,29 @@ export class StoreCoordinator {
     if (Object.keys(normalizedPatch).length === 0) {
       throw new StoreCoordinatorError('EMPTY_STORE_PATCH', 'store update requires at least one field');
     }
+    const changesAuthority = (
+      normalizedPatch.businessTimezone !== undefined
+      && normalizedPatch.businessTimezone !== before.businessTimezone
+    ) || (
+      normalizedPatch.status !== undefined
+      && normalizedPatch.status !== before.status
+    );
+    const clearsSelection = this.operatorSelection?.storeId === storeId
+      && normalizedPatch.status === 'inactive';
     const updated = this.repository.transaction(() => {
       const result = this.repository.updateStore({
         storeId,
         patch: normalizedPatch,
         expectedUpdatedAt: input.expectedUpdatedAt,
       });
-      this.sessions.advance(storeId);
+      if (changesAuthority) this.sessions.advance(storeId);
+      if (clearsSelection) {
+        this.assertSelectionWritable();
+        this.selectionStorage.clear();
+      }
       return result;
     });
+    if (clearsSelection) this.operatorSelection = null;
     if (this.activeStoreId === storeId && updated.status !== 'active') {
       this.activeStoreId = null;
     }
@@ -296,13 +346,19 @@ export class StoreCoordinator {
 
   archiveStore(input: ArchiveStoreInput): StoreRecord {
     const storeId = normalizeStoreId(input?.storeId);
-    this.requireStore(storeId);
+    const before = this.requireStore(storeId);
     const wasActive = this.activeStoreId === storeId;
+    const wasSelected = this.operatorSelection?.storeId === storeId;
     const archived = this.repository.transaction(() => {
       const result = this.repository.archiveStore({ ...input, storeId });
-      if (wasActive) this.sessions.advance(storeId);
+      if (before.status !== 'archived') this.sessions.advance(storeId);
+      if (wasSelected) {
+        this.assertSelectionWritable();
+        this.selectionStorage.clear();
+      }
       return result;
     });
+    if (wasSelected) this.operatorSelection = null;
     if (wasActive) {
       this.activeStoreId = null;
     }
@@ -311,8 +367,12 @@ export class StoreCoordinator {
 
   restoreStore(input: RestoreStoreInput): StoreRecord {
     const storeId = normalizeStoreId(input?.storeId);
-    this.requireStore(storeId);
-    return this.repository.restoreStore({ ...input, storeId });
+    const before = this.requireStore(storeId);
+    return this.repository.transaction(() => {
+      const restored = this.repository.restoreStore({ ...input, storeId });
+      if (before.status !== restored.status) this.sessions.advance(storeId);
+      return restored;
+    });
   }
 
   createConnection(input: CreateStoreConnectionInput): StoreConnection {
@@ -325,6 +385,7 @@ export class StoreCoordinator {
         provider: input?.provider,
         accountLabel: input?.accountLabel,
         externalAccountId: input?.externalAccountId,
+        collectionStoreName: input?.collectionStoreName,
       });
       this.sessions.advance(storeId);
       return connection;
@@ -340,6 +401,8 @@ export class StoreCoordinator {
         storeId,
         accountLabel: input?.accountLabel,
         externalAccountId: input?.externalAccountId,
+        collectionStoreName: input?.collectionStoreName,
+        expectedUpdatedAt: input?.expectedUpdatedAt,
       });
       this.sessions.advance(storeId);
       return connection;
@@ -350,21 +413,47 @@ export class StoreCoordinator {
     const storeId = normalizeStoreId(input?.storeId);
     this.requireActiveStore(storeId);
     this.repository.transaction(() => {
-      this.repository.removeConnection({ id: input?.id, storeId });
+      this.repository.removeConnection({
+        id: input?.id,
+        storeId,
+        expectedUpdatedAt: input?.expectedUpdatedAt,
+      });
       this.sessions.advance(storeId);
     });
   }
 
-  switchStore(storeIdInput: unknown): StoreWorkspaceView {
-    const storeId = normalizeStoreId(storeIdInput);
-    const store = this.requireActiveStore(storeId);
-    const storesToAdvance = this.activeStoreId && this.activeStoreId !== storeId
-      ? [this.activeStoreId, storeId]
-      : [storeId];
-    const advanced = this.sessions.advanceMany(storesToAdvance);
-    const sessionGeneration = advanced.get(storeId)!;
-    this.activeStoreId = storeId;
-    return this.buildWorkspaceView(store, sessionGeneration);
+  switchStore(scopeInput: StoreScopeRef | StoreId): StoreWorkspaceView {
+    const scope = normalizeStoreScopeRefForCoordinator(scopeInput);
+    const previousActiveStoreId = this.activeStoreId;
+    const selectedAt = this.now().toISOString();
+    const selection: OperatorWorkspaceSelection = Object.freeze({
+      schemaVersion: 1,
+      storeId: scope.storeId,
+      marketplace: scope.marketplace,
+      selectedAt,
+    });
+    const view = this.repository.transaction(() => {
+      // Re-read inside the transaction immediately before any write. Renderer
+      // scope is a selector, never authority.
+      const store = this.requireActiveStore(scope.storeId);
+      this.assertStoreMatchesScope(store, scope);
+      const storesToAdvance = previousActiveStoreId && previousActiveStoreId !== scope.storeId
+        ? [previousActiveStoreId, scope.storeId]
+        : [scope.storeId];
+      const advanced = this.sessions.advanceMany(storesToAdvance);
+      const workspace = this.buildWorkspaceView(store, advanced.get(scope.storeId)!);
+      this.assertSelectionWritable();
+      this.selectionStorage.write(selection);
+      return workspace;
+    });
+    this.activeStoreId = scope.storeId;
+    this.operatorSelection = selection;
+    return view;
+  }
+
+  /** Durable logical choice; automation authority transitions never update it. */
+  getOperatorWorkspaceSelection(): OperatorWorkspaceSelection | null {
+    return this.operatorSelection ? Object.freeze({ ...this.operatorSelection }) : null;
   }
 
   reconnectStore(storeIdInput: unknown): StoreWorkspaceView {
@@ -569,6 +658,61 @@ export class StoreCoordinator {
     return store;
   }
 
+  private assertStoreMatchesScope(store: StoreRecord, scope: StoreScopeRef): void {
+    if (store.storeId !== scope.storeId || store.marketplace !== scope.marketplace) {
+      throw new StoreCoordinatorError(
+        'STORE_CONTEXT_MISMATCH',
+        'store scope marketplace does not match Main-process store authority',
+      );
+    }
+  }
+
+  private assertSelectionWritable(): void {
+    if (this.selectionPersistence !== 'read_write') {
+      throw new StoreCoordinatorError(
+        'STORE_CONTEXT_MISMATCH',
+        'operator workspace selection is read-only in this runtime',
+      );
+    }
+  }
+
+  /**
+   * Startup-only restore point. Main calls this after durable collection and
+   * execution recovery confirms, so an operator selection cannot pre-empt the
+   * startup automation authority lane.
+   */
+  restoreOperatorWorkspaceSelectionAfterRecovery(): OperatorWorkspaceSelection | null {
+    if (this.operatorSelection) return this.getOperatorWorkspaceSelection();
+    let persisted: unknown;
+    try {
+      persisted = this.selectionStorage.read();
+    } catch {
+      // A storage read failure is an unknown authority state. Do not guess a
+      // different store even if only one row currently looks active.
+      return null;
+    }
+    if (persisted !== null && persisted !== undefined) {
+      try {
+        const selection = normalizeOperatorWorkspaceSelection(persisted);
+        const store = this.repository.getStore(selection.storeId);
+        if (!store || !isSelectableOperatorStore(store)) return null;
+        this.assertStoreMatchesScope(store, selection);
+        if (this.activeStoreId && this.activeStoreId !== store.storeId) return null;
+        this.activeStoreId = store.storeId;
+        this.operatorSelection = selection;
+      } catch {
+        // Corrupt, stale, inactive or cross-marketplace selections stay
+        // unresolved. Startup must not silently choose another store.
+      }
+      return this.getOperatorWorkspaceSelection();
+    }
+
+    // No persisted operator choice means no operator authority, even when only
+    // one active Store exists. Creation and startup recovery must never behave
+    // like an implicit switch or advance that Store's session generation.
+    return null;
+  }
+
   private normalizeCollectionAuthority(value: unknown): StoreCoordinatorAuthorityReadback {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new StoreCoordinatorError('STORE_CONTEXT_MISMATCH', 'collection authority must be an object');
@@ -659,6 +803,46 @@ function normalizeDisplayName(value: unknown): string {
     );
   }
   return normalized;
+}
+
+function normalizeStoreScopeRefForCoordinator(
+  value: StoreScopeRef | StoreId,
+): StoreScopeRef {
+  // Main-only callers from older internal tests may pass an already-canonical
+  // StoreId. Renderer IPC never receives this compatibility branch: it parses
+  // an explicit {storeId, marketplace} before calling the coordinator.
+  if (typeof value === 'string') {
+    return Object.freeze({
+      storeId: normalizeStoreId(value),
+      marketplace: normalizeUsMarketplace('US'),
+    });
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new StoreCoordinatorError('STORE_CONTEXT_MISMATCH', 'store scope must be an object');
+  }
+  if (value.marketplace === undefined) {
+    throw new StoreCoordinatorError(
+      'STORE_CONTEXT_MISMATCH',
+      'store scope marketplace is required',
+    );
+  }
+  return Object.freeze({
+    storeId: normalizeStoreId(value.storeId),
+    marketplace: normalizeUsMarketplace(value.marketplace),
+  });
+}
+
+function isSelectableOperatorStore(store: StoreRecord): boolean {
+  try {
+    return store.status === 'active'
+      && store.marketplace === 'US'
+      && store.currency === 'USD'
+      && store.businessTimezone === DEFAULT_US_BUSINESS_TIMEZONE
+      && normalizeStoreId(store.storeId) === store.storeId
+      && normalizeBrowserProfileId(store.browserProfileId) === store.browserProfileId;
+  } catch {
+    return false;
+  }
 }
 
 function businessDateFor(now: Date, timeZone: string): BusinessDate {

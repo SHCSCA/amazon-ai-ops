@@ -17,6 +17,7 @@ import type {
 import {
   DurableStoreSessionGenerationAuthority,
   StoreCoordinator,
+  type OperatorWorkspaceSelectionStorage,
   type StoreAuthorityRepository,
   type StoreSessionGenerationStorage,
 } from './store-coordinator';
@@ -203,6 +204,26 @@ class MemorySessions {
   }
 }
 
+class MemorySelectionStorage implements OperatorWorkspaceSelectionStorage {
+  value: unknown = null;
+  readonly writes: unknown[] = [];
+  clearCount = 0;
+
+  read(): unknown {
+    return this.value;
+  }
+
+  write(selection: unknown): void {
+    this.value = selection;
+    this.writes.push(selection);
+  }
+
+  clear(): void {
+    this.value = null;
+    this.clearCount += 1;
+  }
+}
+
 const asStoreId = (value: string) => value as StoreId;
 const asProfileId = (value: string) => value as BrowserProfileId;
 
@@ -283,9 +304,16 @@ describe('StoreCoordinator', () => {
     const { coordinator } = createHarness();
     const row = coordinator.createStore({ displayName: 'One' });
     expect(() => coordinator.createStore({ displayName: 'DE', marketplace: 'DE' as never })).toThrow(/US only/);
-    expect(() => coordinator.updateStore({ storeId: row.storeId, patch: {} })).toThrow(/at least one field/);
+    expect(() => coordinator.updateStore({
+      storeId: row.storeId,
+      patch: {},
+      expectedUpdatedAt: row.updatedAt,
+    })).toThrow(/at least one field/);
     coordinator.switchStore(row.storeId);
-    const archived = coordinator.archiveStore({ storeId: row.storeId });
+    const archived = coordinator.archiveStore({
+      storeId: row.storeId,
+      expectedUpdatedAt: row.updatedAt,
+    });
     expect(archived.status).toBe('archived');
     expect(coordinator.getActiveStoreContext()).toBeNull();
   });
@@ -295,7 +323,11 @@ describe('StoreCoordinator', () => {
     const row = coordinator.createStore({ displayName: 'One' });
     const connection = coordinator.createConnection({ storeId: row.storeId, provider: 'lingxing' });
     expect(connection.id).toBe('capability-1');
-    coordinator.updateStore({ storeId: row.storeId, patch: { status: 'inactive' } });
+    coordinator.updateStore({
+      storeId: row.storeId,
+      patch: { status: 'inactive' },
+      expectedUpdatedAt: row.updatedAt,
+    });
     expect(() => coordinator.createConnection({ storeId: row.storeId, provider: 'amazon_ads' })).toThrow(/not active/);
   });
 
@@ -318,6 +350,7 @@ describe('StoreCoordinator', () => {
       storeId: row.storeId,
       accountLabel: 'old-account',
       externalAccountId: 'profile-new',
+      expectedUpdatedAt: connection.updatedAt,
     });
     expect(rebound).toEqual(expect.objectContaining({
       accountLabel: 'old-account',
@@ -327,7 +360,11 @@ describe('StoreCoordinator', () => {
     expect(() => coordinator.assertActiveStoreContext(afterCreate)).toThrow(/stale generation/);
 
     const afterUpdate = coordinator.getActiveStoreContext()!;
-    coordinator.removeConnection({ id: connection.id, storeId: row.storeId });
+    coordinator.removeConnection({
+      id: connection.id,
+      storeId: row.storeId,
+      expectedUpdatedAt: rebound.updatedAt,
+    });
     expect(() => coordinator.assertActiveStoreContext(afterUpdate)).toThrow(/stale generation/);
   });
 
@@ -339,7 +376,8 @@ describe('StoreCoordinator', () => {
     sessions.failNextAdvance = true;
     expect(() => coordinator.updateStore({
       storeId: store.storeId,
-      patch: { displayName: 'Should Roll Back' },
+      patch: { businessTimezone: 'America/New_York' },
+      expectedUpdatedAt: store.updatedAt,
     })).toThrow(/injected generation write failure/);
     expect(repository.getStore(store.storeId)).toEqual(initialStore);
 
@@ -351,6 +389,51 @@ describe('StoreCoordinator', () => {
     })).toThrow(/injected generation write failure/);
     expect(repository.listConnections(store.storeId)).toEqual([]);
     expect(sessions.current(store.storeId)).toBe(0);
+  });
+
+  it('keeps display-name updates outside authority generation and advances only real authority changes', () => {
+    const { coordinator, repository, sessions } = createHarness();
+    const store = coordinator.createStore({ displayName: 'One' });
+    const initialContext = coordinator.switchStore(store.storeId).context;
+    const initialGeneration = sessions.current(store.storeId);
+
+    sessions.failNextAdvance = true;
+    const renamed = coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { displayName: 'Renamed' },
+      expectedUpdatedAt: store.updatedAt,
+    });
+    expect(renamed.displayName).toBe('Renamed');
+    expect(sessions.current(store.storeId)).toBe(initialGeneration);
+    expect(coordinator.assertActiveStoreContext(initialContext)).toEqual(initialContext);
+
+    expect(() => coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { businessTimezone: 'America/New_York' },
+      expectedUpdatedAt: renamed.updatedAt,
+    })).toThrow(/injected generation write failure/);
+    expect(repository.getStore(store.storeId)).toMatchObject({
+      displayName: 'Renamed',
+      businessTimezone: 'America/Los_Angeles',
+    });
+    expect(sessions.current(store.storeId)).toBe(initialGeneration);
+
+    const timezoneChanged = coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { businessTimezone: 'America/New_York' },
+      expectedUpdatedAt: renamed.updatedAt,
+    });
+    expect(sessions.current(store.storeId)).toBe(initialGeneration + 1);
+    expect(() => coordinator.assertActiveStoreContext(initialContext)).toThrow();
+
+    const reboundContext = coordinator.getActiveStoreContext()!;
+    coordinator.updateStore({
+      storeId: store.storeId,
+      patch: { businessTimezone: 'America/New_York' },
+      expectedUpdatedAt: timezoneChanged.updatedAt,
+    });
+    expect(sessions.current(store.storeId)).toBe(initialGeneration + 1);
+    expect(coordinator.assertActiveStoreContext(reboundContext)).toEqual(reboundContext);
   });
 
   it('strips Renderer-only connection state before calling the repository', () => {
@@ -369,6 +452,7 @@ describe('StoreCoordinator', () => {
       id: 'capability-1',
       storeId: row.storeId,
       accountLabel: 'updated@example.com',
+      expectedUpdatedAt: '2026-07-22T00:00:00.000Z',
       status: 'ready',
       lastVerifiedAt: 'forged',
       lastFailureCode: 'forged',
@@ -380,12 +464,15 @@ describe('StoreCoordinator', () => {
       provider: 'lingxing',
       accountLabel: 'operator@example.com',
       externalAccountId: undefined,
+      collectionStoreName: undefined,
     });
     expect(repository.lastUpdatedConnectionInput).toEqual({
       id: 'capability-1',
       storeId: row.storeId,
       accountLabel: 'updated@example.com',
       externalAccountId: undefined,
+      collectionStoreName: undefined,
+      expectedUpdatedAt: '2026-07-22T00:00:00.000Z',
     });
   });
 
@@ -419,6 +506,7 @@ describe('StoreCoordinator', () => {
       storeId: store.storeId,
       accountLabel: 'identity-b',
       externalAccountId: 'external-a',
+      expectedUpdatedAt: connection.updatedAt,
     });
 
     expect(rebound).toEqual(expect.objectContaining({
@@ -577,5 +665,174 @@ describe('StoreCoordinator', () => {
       previous: coordinator.getCollectionAuthority(),
       target: firstTarget,
     })).toThrow(/more than one active store/);
+  });
+
+  it('never auto-selects a lone active store and restores only after an explicit switch', () => {
+    const repository = new MemoryStoreRepository();
+    const sessions = new MemorySessions();
+    const selection = new MemorySelectionStorage();
+    const coordinator = new StoreCoordinator({
+      repository,
+      sessions,
+      selectionStorage: selection,
+      createStoreId: () => asStoreId('store-one'),
+      createBrowserProfileId: () => asProfileId('browser-store-one'),
+      now: () => new Date('2026-08-04T12:00:00.000Z'),
+    });
+    const row = coordinator.createStore({ displayName: 'One' });
+
+    expect(coordinator.getActiveStoreContext()).toBeNull();
+    expect(coordinator.getOperatorWorkspaceSelection()).toBeNull();
+    expect(selection.writes).toHaveLength(0);
+    expect(sessions.current(row.storeId)).toBe(0);
+
+    expect(coordinator.restoreOperatorWorkspaceSelectionAfterRecovery()).toBeNull();
+    expect(coordinator.getActiveStoreContext()).toBeNull();
+    expect(selection.writes).toHaveLength(0);
+    expect(sessions.current(row.storeId)).toBe(0);
+
+    expect(coordinator.switchStore({ storeId: row.storeId, marketplace: 'US' })).toMatchObject({
+      store: { storeId: row.storeId },
+      context: { storeId: row.storeId, sessionGeneration: 1 },
+    });
+    expect(coordinator.getOperatorWorkspaceSelection()).toMatchObject({
+      storeId: row.storeId,
+      marketplace: 'US',
+    });
+    expect(coordinator.getActiveStoreContext()).toMatchObject({
+      storeId: row.storeId,
+      sessionGeneration: 1,
+    });
+    expect(selection.writes).toHaveLength(1);
+
+    const restarted = new StoreCoordinator({ repository, sessions, selectionStorage: selection });
+    expect(restarted.getActiveStoreContext()).toBeNull();
+    expect(restarted.restoreOperatorWorkspaceSelectionAfterRecovery()).toMatchObject({
+      storeId: row.storeId,
+      marketplace: 'US',
+    });
+    expect(restarted.getActiveStoreContext()).toMatchObject({ sessionGeneration: 1 });
+    expect(selection.writes).toHaveLength(1);
+  });
+
+  it('does not guess among multiple stores or replace an invalid persisted selection', () => {
+    const repository = new MemoryStoreRepository();
+    const sessions = new MemorySessions();
+    const selection = new MemorySelectionStorage();
+    repository.createStore({
+      storeId: asStoreId('store-one'),
+      browserProfileId: asProfileId('browser-one'),
+      displayName: 'One',
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+    });
+    repository.createStore({
+      storeId: asStoreId('store-two'),
+      browserProfileId: asProfileId('browser-two'),
+      displayName: 'Two',
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+    });
+    const multi = new StoreCoordinator({ repository, sessions, selectionStorage: selection });
+    expect(multi.restoreOperatorWorkspaceSelectionAfterRecovery()).toBeNull();
+    expect(selection.writes).toHaveLength(0);
+
+    selection.value = { schemaVersion: 1, storeId: 'missing', marketplace: 'US', selectedAt: 'bad' };
+    const stale = new StoreCoordinator({ repository, sessions, selectionStorage: selection });
+    expect(stale.restoreOperatorWorkspaceSelectionAfterRecovery()).toBeNull();
+    expect(stale.getActiveStoreContext()).toBeNull();
+  });
+
+  it('keeps automation separate from operator selection and advances lifecycle generations once', () => {
+    const repository = new MemoryStoreRepository();
+    const sessions = new MemorySessions();
+    const selection = new MemorySelectionStorage();
+    let id = 0;
+    const coordinator = new StoreCoordinator({
+      repository,
+      sessions,
+      selectionStorage: selection,
+      createStoreId: () => asStoreId(`store-${++id}`),
+      createBrowserProfileId: (storeId) => asProfileId(`browser-${storeId}`),
+    });
+    const first = coordinator.createStore({ displayName: 'One' });
+    const second = coordinator.createStore({ displayName: 'Two' });
+    coordinator.switchStore({ storeId: first.storeId, marketplace: 'US' });
+    const selected = coordinator.getOperatorWorkspaceSelection();
+    const previous = coordinator.getCollectionAuthority();
+    coordinator.transitionForCollection({
+      capability: coordinator.issueCollectionTransitionCapability(),
+      reason: 'collection_automation',
+      mode: 'collection_only',
+      previous,
+      target: {
+        storeId: second.storeId,
+        browserProfileId: second.browserProfileId,
+        marketplace: 'US',
+        currency: 'USD',
+        businessTimezone: 'America/Los_Angeles',
+      },
+    });
+    expect(coordinator.getOperatorWorkspaceSelection()).toEqual(selected);
+    expect(selection.writes).toHaveLength(1);
+
+    const beforeArchive = sessions.current(first.storeId);
+    coordinator.archiveStore({
+      storeId: first.storeId,
+      expectedUpdatedAt: first.updatedAt,
+    });
+    expect(sessions.current(first.storeId)).toBe(beforeArchive + 1);
+    expect(coordinator.getOperatorWorkspaceSelection()).toBeNull();
+    coordinator.archiveStore({
+      storeId: first.storeId,
+      expectedUpdatedAt: first.updatedAt,
+    });
+    expect(sessions.current(first.storeId)).toBe(beforeArchive + 1);
+    coordinator.restoreStore({
+      storeId: first.storeId,
+      expectedUpdatedAt: first.updatedAt,
+    });
+    expect(sessions.current(first.storeId)).toBe(beforeArchive + 2);
+    coordinator.restoreStore({
+      storeId: first.storeId,
+      expectedUpdatedAt: first.updatedAt,
+    });
+    expect(sessions.current(first.storeId)).toBe(beforeArchive + 2);
+  });
+
+  it('keeps package UI restore strictly read-only', () => {
+    const repository = new MemoryStoreRepository();
+    const sessions = new MemorySessions();
+    const selection = new MemorySelectionStorage();
+    const row = repository.createStore({
+      storeId: asStoreId('store-one'),
+      browserProfileId: asProfileId('browser-one'),
+      displayName: 'One',
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+    });
+    const coordinator = new StoreCoordinator({
+      repository,
+      sessions,
+      selectionStorage: selection,
+      selectionPersistence: 'read_only',
+    });
+    selection.value = {
+      schemaVersion: 1,
+      storeId: row.storeId,
+      marketplace: 'US',
+      selectedAt: '2026-08-04T12:00:00.000Z',
+    };
+    expect(coordinator.restoreOperatorWorkspaceSelectionAfterRecovery()).toMatchObject({
+      storeId: row.storeId,
+    });
+    expect(coordinator.getActiveStoreContext()).toMatchObject({ sessionGeneration: 0 });
+    expect(selection.writes).toHaveLength(0);
+    expect(() => coordinator.switchStore({ storeId: row.storeId, marketplace: 'US' }))
+      .toThrow(/read-only/);
+    expect(selection.writes).toHaveLength(0);
   });
 });

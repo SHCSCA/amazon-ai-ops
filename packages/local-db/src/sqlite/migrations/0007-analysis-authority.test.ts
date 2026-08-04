@@ -10,6 +10,7 @@ import {
   ANALYSIS_AUTHORITY_TABLES,
   AnalysisAuthorityMigrationError,
 } from './0007-analysis-authority';
+import { STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION } from './0011-store-provider-identity-authority';
 
 const tempDirs: string[] = [];
 
@@ -49,7 +50,7 @@ describe('Analysis authority migration v7', () => {
       expect(columns).not.toContain('file_path');
       expect(columns).not.toContain('source_file');
       expect(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get())
-        .toEqual({ count: 9 });
+        .toEqual({ count: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION });
       expect(database.pragma('foreign_key_check')).toEqual([]);
     } finally {
       database.close();

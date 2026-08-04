@@ -79,16 +79,21 @@ function assertLegacyBindingCurrent(
   const batchId = requiredText(evidence.batchId);
   const batch = db.prepare(`
     SELECT date_start AS dateFrom, date_end AS dateTo,
-           store_name AS storeName, marketplace_code AS marketplaceCode
+           marketplace_code AS marketplaceCode
     FROM lingxing_report_batches
     WHERE store_id = ? AND id = ? AND status = 'completed'
   `).get(context.storeId, batchId) as {
     dateFrom: string;
     dateTo: string;
-    storeName: string;
     marketplaceCode: string;
   } | undefined;
   if (!batch || batch.marketplaceCode !== 'US') throw new Error('completed US batch missing');
+  const store = db.prepare(`
+    SELECT display_name AS displayName
+    FROM stores
+    WHERE store_id = ? AND marketplace = 'US' AND status = 'active'
+  `).get(context.storeId) as { displayName: string } | undefined;
+  if (!store?.displayName) throw new Error('active logical store missing');
 
   const run = db.prepare(`
     SELECT run_id AS runId
@@ -109,18 +114,20 @@ function assertLegacyBindingCurrent(
   const scope = {
     dateFrom: batch.dateFrom,
     dateTo: batch.dateTo,
-    storeName: batch.storeName,
+    storeName: store.displayName,
     marketplaceCode: 'US',
     asin: recommendation.asin,
     batchId,
   };
   assertAuditScope(audit, scope, recommendation);
   const sourceAuthority = assertRecommendationMetricSourceAuthority(db, {
+    storeId: context.storeId,
     recommendation,
     scope,
     allowedSourceFiles,
   });
   const canonical = assertCurrentWritableAdTargetAuthority(db, {
+    storeId: context.storeId,
     scope,
     target,
     allowedSourceFiles,
@@ -167,7 +174,6 @@ function assertAuditScope(
   if (
     audit.scope.dateFrom !== scope.dateFrom
     || audit.scope.dateTo !== scope.dateTo
-    || normalized(audit.scope.storeName) !== normalized(scope.storeName)
     || audit.scope.marketplaceCode !== 'US'
     || normalized(audit.scope.asin) !== normalized(scope.asin)
     || audit.scope.batchId !== scope.batchId

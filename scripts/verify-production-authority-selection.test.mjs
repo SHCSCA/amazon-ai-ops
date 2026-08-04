@@ -69,7 +69,25 @@ function writeDatabase(filePath, migration = 'current') {
       `);
       for (const table of verifier.REQUIRED_TABLES) {
         if (table === 'schema_migrations' || table === 'stores') continue;
-        database.exec(`CREATE TABLE "${table}" (id TEXT PRIMARY KEY)`);
+        if (table === 'store_connections') {
+          database.exec(`
+            CREATE TABLE store_connections (
+              id TEXT PRIMARY KEY,
+              store_id TEXT NOT NULL,
+              provider TEXT NOT NULL,
+              external_account_id TEXT,
+              normalized_external_account_id TEXT,
+              collection_store_name TEXT,
+              normalized_collection_store_name TEXT
+            )
+          `);
+        } else {
+          database.exec(`CREATE TABLE "${table}" (id TEXT PRIMARY KEY)`);
+        }
+      }
+      database.exec(verifier.V11_STORE_PROVIDER_IDENTITY_INDEX.sql);
+      for (const sql of Object.values(verifier.V11_STORE_PROVIDER_IDENTITY_TRIGGERS)) {
+        database.exec(sql);
       }
     } else if (migration === 'legacy') {
       database.exec('CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)');
@@ -162,7 +180,7 @@ describe('production authority selection preflight', () => {
               integrity: 'ok',
               migration: {
                 family: 'S7_SCHEMA_MIGRATIONS',
-                highestAppliedVersion: 9,
+                highestAppliedVersion: verifier.TARGET_MIGRATION_VERSION,
                 targetReady: true,
               },
             },
@@ -397,8 +415,8 @@ describe('production authority selection preflight', () => {
     const value = fixture();
     const database = new Database(value.dbPath);
     database.prepare(`
-      UPDATE schema_migrations SET checksum = 'tampered' WHERE version = 9
-    `).run();
+      UPDATE schema_migrations SET checksum = 'tampered' WHERE version = ?
+    `).run(verifier.TARGET_MIGRATION_VERSION);
     database.close();
     value.expectedSha256 = sha256(value.dbPath);
 
@@ -416,6 +434,126 @@ describe('production authority selection preflight', () => {
           },
         },
       },
+    });
+  });
+
+  it.each([
+    ['one of the three v11 columns is missing', (database) => {
+      for (const name of Object.keys(verifier.V11_STORE_PROVIDER_IDENTITY_TRIGGERS)) {
+        database.exec(`DROP TRIGGER "${name}"`);
+      }
+      database.exec(`DROP INDEX "${verifier.V11_STORE_PROVIDER_IDENTITY_INDEX.name}"`);
+      database.exec('ALTER TABLE store_connections DROP COLUMN normalized_collection_store_name');
+    }],
+    ['the v11 index is not the unique partial index', (database) => {
+      database.exec(`DROP INDEX "${verifier.V11_STORE_PROVIDER_IDENTITY_INDEX.name}"`);
+      database.exec(`
+        CREATE INDEX ${verifier.V11_STORE_PROVIDER_IDENTITY_INDEX.name}
+        ON store_connections(provider, normalized_external_account_id)
+      `);
+    }],
+    ['one of the six v11 triggers is missing', (database) => {
+      database.exec('DROP TRIGGER trg_store_connections_external_identity_insert');
+    }],
+    ['a quoted provider literal changes case', (database) => {
+      const name = 'trg_store_connections_collection_store_name_insert';
+      database.exec(`DROP TRIGGER "${name}"`);
+      database.exec(
+        verifier.V11_STORE_PROVIDER_IDENTITY_TRIGGERS[name]
+          .replace("'amazon_ads'", "'AMAZON_ADS'"),
+      );
+    }],
+  ])('fails closed when %s despite a current migration ledger', async (_label, mutate) => {
+    const value = fixture();
+    const database = new Database(value.dbPath);
+    try {
+      mutate(database);
+    } finally {
+      database.close();
+    }
+    value.expectedSha256 = sha256(value.dbPath);
+
+    const result = await verifier.run(args(value), context(value));
+    expect(result.evidence).toMatchObject({
+      status: 'SELECTED_RECOVERY_REQUIRED',
+      selection: {
+        selected: {
+          sqlite: {
+            state: 'RECOVERY_REQUIRED',
+            migration: {
+              ledgerTargetReady: true,
+              targetReady: false,
+              v11Schema: { passed: false },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it('fails closed on a bad existing timezone after the protecting trigger is restored', async () => {
+    const value = fixture();
+    const database = new Database(value.dbPath);
+    try {
+      database.prepare(`
+        INSERT INTO stores (
+          store_id, browser_profile_id, marketplace, currency, status, business_timezone
+        ) VALUES ('row-invariant-store', 'row-invariant-profile', 'US', 'USD', 'active',
+          'America/Los_Angeles')
+      `).run();
+      const triggerName = 'trg_stores_v1_authority_update';
+      const triggerSql = database.prepare(`
+        SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?
+      `).get(triggerName).sql;
+      database.exec(`DROP TRIGGER ${triggerName}`);
+      database.prepare(`
+        UPDATE stores SET business_timezone = 'UTC' WHERE store_id = 'row-invariant-store'
+      `).run();
+      database.exec(triggerSql);
+    } finally {
+      database.close();
+    }
+    value.expectedSha256 = sha256(value.dbPath);
+
+    const result = await verifier.run(args(value), context(value));
+    expect(result.evidence.selection.selected.sqlite.migration).toMatchObject({
+      ledgerTargetReady: true,
+      targetReady: false,
+      v11Schema: {
+        passed: false,
+        rowInvariantViolations: [expect.stringMatching(/unsupported authority.*UTC/i)],
+      },
+    });
+  });
+
+  it('fails closed on a forged normalized provider identity after its trigger is restored', async () => {
+    const value = fixture();
+    const database = new Database(value.dbPath);
+    try {
+      const triggerNames = [
+        'trg_store_connections_external_identity_insert',
+        'trg_store_connections_collection_store_name_insert',
+      ];
+      const triggerSql = triggerNames.map((triggerName) => database.prepare(`
+        SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?
+      `).get(triggerName).sql);
+      for (const triggerName of triggerNames) database.exec(`DROP TRIGGER ${triggerName}`);
+      database.prepare(`
+        INSERT INTO store_connections (
+          id, store_id, provider, external_account_id, normalized_external_account_id
+        ) VALUES ('forged-identity', 'row-invariant-store', 'amazon_ads',
+          ' Profile-ABC ', 'forged')
+      `).run();
+      for (const sql of triggerSql) database.exec(sql);
+    } finally {
+      database.close();
+    }
+    value.expectedSha256 = sha256(value.dbPath);
+
+    const result = await verifier.run(args(value), context(value));
+    expect(result.evidence.selection.selected.sqlite.migration.v11Schema).toMatchObject({
+      passed: false,
+      rowInvariantViolations: [expect.stringMatching(/inconsistent raw\/normalized provider identity/i)],
     });
   });
 

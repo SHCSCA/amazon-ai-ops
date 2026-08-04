@@ -1,5 +1,12 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import type { StoreId, StoreRecord } from '@amazon-ai-ops/shared-types';
+import type { ReactNode } from 'react';
+import type {
+  CreateStoreInput,
+  StoreContextEnvelope,
+  StoreDailyStatusProjection,
+  StoreRecord,
+  StoreScopeRef,
+} from '@amazon-ai-ops/shared-types';
+import { StoreScopeSwitcher } from '../components/store-scope-switcher';
 import {
   useMissionControlStoreContext,
   type MissionControlStorePhase,
@@ -7,156 +14,132 @@ import {
 
 export interface MissionControlStoreGateViewProps {
   phase: MissionControlStorePhase;
-  stores: StoreRecord[];
+  stores: readonly StoreRecord[];
+  activeStore?: StoreRecord | null;
+  authoritativeContext?: StoreContextEnvelope | null;
+  dailyStatuses?: readonly StoreDailyStatusProjection[];
+  dailyStatusPhase?: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
-  selectedStoreId: string;
-  onSelectedStoreIdChange(storeId: string): void;
-  onConfirm(): void;
-  onRetry(): void;
-  createDisplayName: string;
-  onCreateDisplayNameChange(displayName: string): void;
-  creating: boolean;
-  createError: string | null;
-  onCreate(): void;
+  dailyStatusError?: string | null;
+  onSwitch(scope: StoreScopeRef): Promise<unknown> | unknown;
+  onCreate(input: CreateStoreInput): Promise<StoreRecord> | StoreRecord;
+  onRetry(): Promise<unknown> | unknown;
   children: ReactNode;
+}
+
+function gateCopy(phase: MissionControlStorePhase, error: string | null) {
+  if (phase === 'loading') {
+    return {
+      eyebrow: 'STORE AUTHORITY · MAIN',
+      title: '正在读取店铺范围',
+      description: '店铺范围确认完成前，不会进入登录、采集、分析或执行流程。',
+    };
+  }
+  if (phase === 'switching') {
+    return {
+      eyebrow: 'STORE AUTHORITY · SWITCHING',
+      title: '正在切换店铺',
+      description: 'Main 正在切换独立数据域与浏览器 Profile；完成后再进入该店铺登录。',
+    };
+  }
+  if (phase === 'error') {
+    return {
+      eyebrow: 'STORE AUTHORITY · BLOCKED',
+      title: '店铺上下文暂不可用',
+      description: error || '请在左侧“店铺与站点”入口重试，所有店铺级动作当前均已停止。',
+    };
+  }
+  return {
+    eyebrow: 'STORE AUTHORITY · US / USD',
+    title: '先从左侧选择或新增店铺',
+    description: '新增只创建独立店铺数据域，不会自动切换。请对目标店铺明确点击“切换并登录”，再继续运营任务。',
+  };
 }
 
 export function MissionControlStoreGateView(props: MissionControlStoreGateViewProps) {
   if (props.phase === 'ready') return <>{props.children}</>;
-  if (props.phase === 'loading' || props.phase === 'switching') {
-    return (
-      <main className="mission-control-store-gate" data-state={props.phase} aria-busy="true" aria-live="polite">
-        <section className="mission-control-store-gate__card mission-control-store-gate__card--loading">
-          <p className="mission-control-store-gate__status">正在读取 Main 授权店铺上下文…</p>
-        </section>
-      </main>
-    );
-  }
-  if (props.phase === 'error') {
-    return (
-      <main className="mission-control-store-gate" data-state="error" role="alert">
-        <section className="mission-control-store-gate__card mission-control-store-gate__card--error">
-          <h1 className="mission-control-store-gate__title">店铺上下文暂不可用</h1>
-          <p className="mission-control-store-gate__error">{props.error || '无法读取店铺上下文。'}</p>
-          <button className="mission-control-store-gate__retry" type="button" onClick={props.onRetry}>重新读取</button>
-        </section>
-      </main>
-    );
-  }
+  const copy = gateCopy(props.phase, props.error);
+  const busy = props.phase === 'loading' || props.phase === 'switching';
 
-  const activeStores = props.stores.filter((store) => store.status === 'active');
   return (
-    <main className="mission-control-store-gate" data-state="needs-selection" aria-labelledby="mission-control-store-gate-title">
-      <section className="mission-control-store-gate__card mission-control-store-gate__card--selection">
-        <header className="mission-control-store-gate__header">
-          <p className="mission-control-store-gate__eyebrow">MISSION CONTROL · US / USD</p>
-          <h1 className="mission-control-store-gate__title" id="mission-control-store-gate-title">选择本次运营店铺</h1>
-          <p className="mission-control-store-gate__description">首次进入必须明确选择。系统不会自动绑定店铺，也不会跨店铺复用数据或浏览器会话。</p>
-        </header>
-        <div className="mission-control-store-gate__selection-form">
-          {activeStores.length === 0 ? (
-            <p className="mission-control-store-gate__status" role="status">暂无可用店铺。创建后仍需由你明确选择并确认进入。</p>
-          ) : (
-            <>
-              <label className="mission-control-store-gate__label" htmlFor="mission-control-store-select">美国站店铺</label>
-              <select
-                className="mission-control-store-gate__select"
-                id="mission-control-store-select"
-                value={props.selectedStoreId}
-                onChange={(event) => props.onSelectedStoreIdChange(event.currentTarget.value)}
-              >
-                <option value="">请选择店铺</option>
-                {activeStores.map((store) => (
-                  <option key={store.storeId} value={store.storeId}>
-                    {store.displayName} · US · USD
-                  </option>
-                ))}
-              </select>
-              <button className="mission-control-store-gate__confirm" type="button" disabled={!props.selectedStoreId} onClick={props.onConfirm}>
-                进入所选店铺
-              </button>
-            </>
-          )}
+    <div
+      aria-busy={busy || undefined}
+      className="mission-control-shell mission-control-store-gate-shell"
+      data-state={props.phase}
+    >
+      <header className="mission-control-store-gate-shell__topbar">
+        <div className="mission-control-store-gate-shell__brand">
+          <span aria-hidden="true">A</span>
+          <div>
+            <strong>运营巡航台</strong>
+            <small>Amazon US · USD</small>
+          </div>
         </div>
-      </section>
-      <section className="mission-control-store-gate__card mission-control-store-gate__card--create" aria-labelledby="mission-control-store-create-title">
-        <h2 className="mission-control-store-gate__subtitle" id="mission-control-store-create-title">创建美国站店铺</h2>
-        <form className="mission-control-store-gate__create-form" onSubmit={(event) => { event.preventDefault(); props.onCreate(); }}>
-          <label className="mission-control-store-gate__label" htmlFor="mission-control-store-name">店铺名称</label>
-          <input
-            className="mission-control-store-gate__input"
-            id="mission-control-store-name"
-            value={props.createDisplayName}
-            maxLength={120}
-            placeholder="例如 SHC001"
-            disabled={props.creating}
-            onChange={(event) => props.onCreateDisplayNameChange(event.currentTarget.value)}
-          />
-          <div className="mission-control-store-gate__fixed-fields" aria-label="固定站点配置">
-            <span>站点 <strong>US</strong></span>
-            <span>币种 <strong>USD</strong></span>
-            <span>业务时区 <strong>America/Los_Angeles</strong></span>
+        <span className="mission-control-store-gate-shell__authority">店铺范围待确认</span>
+      </header>
+
+      <div className="app-body mission-control-body mission-control-store-gate-shell__body">
+        <nav aria-label="店铺范围导航" className="app-sidebar mission-control-store-gate__sidebar">
+          <div className="app-sidebar-scroll">
+            <StoreScopeSwitcher
+              activeStore={props.activeStore}
+              authoritativeContext={props.authoritativeContext}
+              dailyStatusError={props.dailyStatusError}
+              dailyStatusPhase={props.dailyStatusPhase}
+              dailyStatuses={props.dailyStatuses}
+              error={props.error}
+              initiallyExpanded={props.phase === 'needs-selection' || props.phase === 'error'}
+              onCreate={props.onCreate}
+              onRetry={props.onRetry}
+              onSwitch={props.onSwitch}
+              phase={props.phase}
+              stores={props.stores}
+            />
+            <section className="mission-control-store-gate__sidebar-hint" aria-label="店铺范围说明">
+              <strong>唯一店铺入口</strong>
+              <p>新增、查看和显式切换都在上方完成。选择前不开放其他业务导航。</p>
+            </section>
           </div>
-          <div className="mission-control-store-gate__feedback" aria-live="polite">
-            {props.createError ? <p className="mission-control-store-gate__error">{props.createError}</p> : null}
-          </div>
-          <button
-            className="mission-control-store-gate__create"
-            type="submit"
-            disabled={props.creating || !props.createDisplayName.trim()}
-            aria-busy={props.creating}
+        </nav>
+
+        <main
+          aria-labelledby="mission-control-store-gate-title"
+          className="app-content mission-control-content mission-control-store-gate__main"
+        >
+          <section
+            className="mission-control-store-gate__safe-state"
+            role={props.phase === 'error' ? 'alert' : 'status'}
           >
-            {props.creating ? '创建中…' : '创建美国站店铺'}
-          </button>
-        </form>
-      </section>
-    </main>
+            <span>{copy.eyebrow}</span>
+            <h1 id="mission-control-store-gate-title">{copy.title}</h1>
+            <p>{copy.description}</p>
+            <div aria-label="安全边界" className="mission-control-store-gate__boundaries">
+              <span>创建后保持未选择</span>
+              <span>切换后再登录</span>
+              <span>店铺数据相互独立</span>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
   );
 }
 
 export function MissionControlStoreGate({ children }: { children: ReactNode }) {
   const store = useMissionControlStoreContext();
-  const [selectedStoreId, setSelectedStoreId] = useState('');
-  const [createDisplayName, setCreateDisplayName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const selected = useMemo(
-    () => store.stores.find((row) => row.storeId === selectedStoreId && row.status === 'active'),
-    [selectedStoreId, store.stores],
-  );
   return (
     <MissionControlStoreGateView
+      activeStore={store.activeStore}
+      authoritativeContext={store.authoritativeContext}
+      dailyStatusError={store.dailyStatusError}
+      dailyStatusPhase={store.dailyStatusPhase}
+      dailyStatuses={store.dailyStatuses}
+      error={store.error}
+      onCreate={store.createStore}
+      onRetry={store.retryBootstrap}
+      onSwitch={store.switchStore}
       phase={store.phase}
       stores={store.stores}
-      error={store.error}
-      selectedStoreId={selectedStoreId}
-      onSelectedStoreIdChange={setSelectedStoreId}
-      onConfirm={() => {
-        if (selected) void store.switchStore(selected.storeId as StoreId).catch(() => undefined);
-      }}
-      onRetry={() => { void store.retryBootstrap(); }}
-      createDisplayName={createDisplayName}
-      onCreateDisplayNameChange={setCreateDisplayName}
-      creating={creating}
-      createError={createError}
-      onCreate={() => {
-        const displayName = createDisplayName.trim();
-        if (!displayName || creating) return;
-        setCreating(true);
-        setCreateError(null);
-        void store.createStore({
-          displayName,
-          marketplace: 'US',
-          currency: 'USD',
-          businessTimezone: 'America/Los_Angeles',
-        }).then(() => {
-          setCreateDisplayName('');
-        }).catch((error: unknown) => {
-          setCreateError(error instanceof Error ? error.message : String(error));
-        }).finally(() => {
-          setCreating(false);
-        });
-      }}
     >
       {children}
     </MissionControlStoreGateView>

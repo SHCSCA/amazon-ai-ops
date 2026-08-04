@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const TARGET_VERSION = 9;
+const TARGET_VERSION = 11;
 const SCRIPT_SCHEMA_VERSION = 1;
 const INSPECTION_TEMP_PREFIX = `amazon-ai-ops-s7-inspection-${process.pid}-`;
 const OFFLINE_MIGRATION_USAGE = `Usage:
@@ -189,6 +189,7 @@ function inspectOfflineMigration(args) {
 function executeOfflineMigration(args, hooks = {}) {
   const plan = inspectOfflineMigration({ ...args, execute: true });
   invokeOfflineMigrationHook(hooks, 'afterInspection', plan);
+  assertTargetVersion(plan, 'Offline migration plan');
   assertOfflineSourceIdentity(
     plan.source.path,
     plan.source.offlineIdentity,
@@ -285,6 +286,7 @@ function executeOfflineMigration(args, hooks = {}) {
   const evidence = readJsonFile(plan.manifestPath, 'published migration manifest');
   if (
     evidence?.passed !== true
+    || evidence?.targetVersion !== TARGET_VERSION
     || normalizeSha256(evidence?.source?.sha256, 'manifest source SHA-256')
       !== plan.source.sha256
     || evidence?.offlineLease?.method !== 'windows-file-share-none'
@@ -299,6 +301,7 @@ function executeLockedWorkingCopy(plan, temporaryManifestPath, leaseProofPath) {
   if (!plan || typeof plan !== 'object') {
     throw new Error('Locked migration plan is invalid.');
   }
+  assertTargetVersion(plan, 'Locked migration plan');
   if (!path.isAbsolute(plan.workingDatabasePath || '')
     || !path.isAbsolute(plan.restoreDatabasePath || '')
     || !path.isAbsolute(temporaryManifestPath || '')
@@ -422,6 +425,12 @@ function executeLockedWorkingCopy(plan, temporaryManifestPath, leaseProofPath) {
   evidence.workingDatabase.upgradedSha256 = sha256File(plan.workingDatabasePath);
   writeTextExclusive(temporaryManifestPath, `${JSON.stringify(evidence, null, 2)}\n`);
   return evidence;
+}
+
+function assertTargetVersion(plan, label) {
+  if (!Number.isInteger(plan?.targetVersion) || plan.targetVersion !== TARGET_VERSION) {
+    throw new Error(`${label} targetVersion must be exactly ${TARGET_VERSION}.`);
+  }
 }
 
 function executeLockedPlanRequest(requestPath) {

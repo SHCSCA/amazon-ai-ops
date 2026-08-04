@@ -10,6 +10,7 @@ import {
   EXECUTION_AUTHORITY_TABLES,
   ExecutionAuthorityMigrationError,
 } from './0008-execution-authority';
+import { STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION } from './0011-store-provider-identity-authority';
 import type { UpgradeBackupManifest } from './types';
 
 const tempDirs: string[] = [];
@@ -46,7 +47,7 @@ describe('Execution authority migration v8', () => {
       };
       expect(parsedManifest.upgradeBackup).toMatchObject({
         kind: 'schema-upgrade-backup',
-        targetVersion: 9,
+        targetVersion: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
       });
       const tables = new Set((database.prepare(`
         SELECT name FROM sqlite_master WHERE type = 'table'
@@ -88,7 +89,7 @@ describe('Execution authority migration v8', () => {
         name: 'trg_ad_execution_domain_reconciliations_append_only_update',
       });
       expect(database.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get())
-        .toEqual({ count: 9 });
+        .toEqual({ count: STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION });
       expect(database.pragma('foreign_key_check')).toEqual([]);
     } finally {
       database.close();

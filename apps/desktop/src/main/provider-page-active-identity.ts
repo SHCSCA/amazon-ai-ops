@@ -1,4 +1,5 @@
 import type { StoreConnection } from '@amazon-ai-ops/shared-types';
+import { normalizeProviderExternalAccountId } from '@amazon-ai-ops/shared-types';
 import {
   assertProviderActiveIdentity,
   PROVIDER_ACTIVE_IDENTITY_DOM_PROBES,
@@ -49,7 +50,9 @@ type PageObservationPayload = {
 
 const MAX_TITLE_LENGTH = 512;
 const MAX_BODY_TEXT_LENGTH = 8_192;
-const MAX_OBSERVATIONS = PROVIDER_ACTIVE_IDENTITY_DOM_PROBES.length * 2;
+const MAX_OBSERVATIONS = PROVIDER_ACTIVE_IDENTITY_DOM_PROBES
+  .filter((probe) => probe.providers.some((provider) => provider === 'lingxing'))
+  .length * 2;
 const MAX_IDENTITY_VALUE_LENGTH = 256;
 const PAGE_OBSERVATION_TIMEOUT_MS = 5_000;
 
@@ -165,12 +168,10 @@ export async function inspectLingxingProviderPageIdentity(
 }
 
 const TRUSTED_EXTERNAL_ID_PROBES = new Set([
-  'current-account-id',
-  'active-account-id',
   'current-seller-id',
   'active-seller-id',
-  'aria-current-account-id',
-  'data-active-account-id',
+  'current-store-id',
+  'active-store-id',
 ]);
 
 function hasExactExternalAccountEvidence(
@@ -179,13 +180,18 @@ function hasExactExternalAccountEvidence(
   observations: readonly ProviderActiveIdentityDomObservation[],
 ): boolean {
   if (externalAccountId === undefined) return false;
-  const expected = normalizedExternalId(externalAccountId);
+  let expected: string | undefined;
+  try {
+    expected = normalizeProviderExternalAccountId('lingxing', externalAccountId);
+  } catch {
+    return false;
+  }
   if (!expected) return false;
   const candidates: string[] = [];
   try {
     const url = new URL(pageUrl);
     if (url.origin !== new URL(getLingxingSessionNavigationPlan().initialUrl).origin) return false;
-    for (const parameter of ['account_id', 'seller_id', 'store_id']) {
+    for (const parameter of ['seller_id', 'store_id']) {
       const values = url.searchParams.getAll(parameter);
       if (values.length > 1) return false;
       if (values.length === 1) candidates.push(values[0]);
@@ -199,22 +205,16 @@ function hasExactExternalAccountEvidence(
       candidates.push(observation.value);
     }
   }
-  const normalized = candidates.map(normalizedExternalId);
-  return normalized.length > 0
-    && normalized.every((candidate) => candidate === expected);
-}
-
-function normalizedExternalId(value: unknown): string | null {
-  if (typeof value !== 'string'
-    || value.length < 1
-    || value.length > MAX_IDENTITY_VALUE_LENGTH
-    || /[\u0000-\u001f\u007f]/.test(value)) {
-    return null;
+  let normalized: Array<string | undefined>;
+  try {
+    normalized = candidates.map((candidate) => (
+      normalizeProviderExternalAccountId('lingxing', candidate)
+    ));
+  } catch {
+    return false;
   }
-  const normalized = value.normalize('NFKC').toLocaleLowerCase('en-US').trim();
-  return normalized && normalized.length <= MAX_IDENTITY_VALUE_LENGTH
-    ? normalized
-    : null;
+  return normalized.length > 0
+    && normalized.every((candidate) => Boolean(candidate) && candidate === expected);
 }
 
 function unverified(

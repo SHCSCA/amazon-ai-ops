@@ -47,6 +47,33 @@ describe('browser login request authority boundary', () => {
     });
   });
 
+  it('rejects session-reset authority on a saved-credential request', () => {
+    expect(() => normalizeBrowserLoginRequest({
+      amazonAdsProfileId: '1234567890',
+      credentialSource: 'saved',
+      rememberPassword: true,
+      resetLingxingSessionForEnrollment: true,
+      storeContext,
+      username: 'operator@example.com',
+    })).toThrow(/必须使用本次手动输入/);
+  });
+
+  it('retains an explicit typed-login confirmation for store-bound Lingxing session reset', () => {
+    expect(normalizeBrowserLoginRequest({
+      amazonAdsProfileId: '1234567890',
+      resetLingxingSessionForEnrollment: true,
+      credentialSource: 'typed',
+      password: 'typed-password',
+      rememberPassword: true,
+      storeContext,
+      username: 'operator@example.com',
+    })).toMatchObject({
+      resetLingxingSessionForEnrollment: true,
+      credentialSource: 'typed',
+      storeContext,
+    });
+  });
+
   it.each([
     ['missing store context', { storeContext: undefined }, /store context/i],
     ['missing Ads Profile ID', { amazonAdsProfileId: '' }, /Profile ID/],
@@ -54,6 +81,7 @@ describe('browser login request authority boundary', () => {
     ['control character in Ads Profile ID', { amazonAdsProfileId: 'profile\u0000id' }, /Profile ID/],
     ['invalid credential source', { credentialSource: 'renderer-secret' }, /凭证来源/],
     ['missing typed password', { password: '' }, /领星密码/],
+    ['invalid session reset confirmation', { resetLingxingSessionForEnrollment: 'yes' }, /重置确认值/],
   ])('rejects %s', (_label, patch, message) => {
     expect(() => normalizeBrowserLoginRequest({
       amazonAdsProfileId: '1234567890',

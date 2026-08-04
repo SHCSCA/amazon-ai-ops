@@ -81,9 +81,15 @@ import type {
 import {
   canonicalizeAmazonAsin,
   missionControlContextKey,
+  normalizeLingxingCollectionStoreName,
+  normalizeProviderExternalAccountId,
   normalizeStoreId,
 } from '@amazon-ai-ops/shared-types';
-import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
+import type {
+  BrowserLoginRequest,
+  BrowserLoginResult,
+  StoreScopedSavedLoginCredentialStatus,
+} from '../shared/login-contract';
 import { buildDownloadedReportEvidenceIndex, isPathInsideDirectory, isPathWithinRealDirectory, isSafeManifestPath, readLingxingManifestForAudit, safeFileSegment } from './acceptance-audit-export';
 import { createBeforeQuitCoordinator, invokeShutdownOperationNow } from './app-shutdown';
 import { createAppLifecycleRecoveryController } from './app-lifecycle-recovery';
@@ -106,6 +112,7 @@ import {
 import { summarizeBusinessReportCoverage } from './business-report-coverage';
 import { requireBrowserLoginProviderConnections } from './browser-login-provider-connections';
 import { normalizeBrowserLoginRequest } from './browser-login-request';
+import { recoverLingxingEnrollmentSession } from './lingxing-enrollment-session-recovery';
 import { countImportedRowsForReportFile } from './business-report-import-coverage';
 import {
   configureEvidenceUserDataPath,
@@ -152,6 +159,16 @@ import {
 import { assertRecommendationMetricSourceAuthority } from './recommendation-metric-source-authority';
 import { fillAdReadbackSession, prepareAdReadbackSession, verifyAdReadbackSession, type FilledAdReadbackSession, type PreparedAdReadbackSession, type VerifiedAdReadbackSession } from './ad-readback-session';
 import { saveReadbackCaptureFile, type ReadbackCaptureSlot, type SavedReadbackCapture } from './ad-readback-capture';
+import {
+  assertStoreScopedReadbackEvidenceData,
+  createStoreScopedReadbackAccess,
+  ensureStoreScopedReadbackDirectories,
+  latestStoreScopedReadbackCandidate,
+  readStoreScopedReadbackEvidenceFile,
+  resolveStoreScopedReadbackReference,
+  withReadbackStoreBinding,
+  type StoreScopedReadbackAccess,
+} from './readback-store-authority';
 import { refreshFinalReadiness } from './final-readiness-refresh';
 import { getDeliveryEvidenceStatus, getPackageEvidenceStatus } from './delivery-evidence-status';
 import { annotateRecommendationsWithStrategy, bindRecommendationsToScopeAsin, buildAdStrategyDiagnosisInput, createAiOnlyRecommendationsFromDecisions } from './ad-recommendation-ai-context';
@@ -169,6 +186,7 @@ import { buildListingAiCallLogInput, buildListingRewritePrompt, parseAiDraftResp
 import { buildAdActionReasonAiCallLogInput, type AdActionExplanationForLog } from './ad-action-ai-call-log';
 import { mergeAdActionExplanationEvidence } from './ad-action-explanation-merge';
 import {
+  createStoreScopedLoginCredentialStore,
   readSavedLoginCredentialStatus,
   resolveSavedLoginPassword,
   saveLoginCredentials,
@@ -180,8 +198,11 @@ import {
   isPackageUiSavedSessionContinuationAllowed,
 } from './login-session-credential-policy';
 import {
+  assertLingxingCollectionStoreNameEvidence,
   assertProviderActiveIdentity,
   PROVIDER_ACTIVE_IDENTITY_DOM_PROBES,
+  readLingxingStableExternalAccountIdEvidence,
+  requireLingxingTypedStableIdentityEnrollment,
   type ProviderCredentialSubmission,
 } from './provider-active-identity';
 import {
@@ -228,7 +249,11 @@ import {
   DurableStoreSessionGenerationAuthority,
   StoreCoordinator,
 } from './store-coordinator';
-import { registerStoreIpcHandlers } from './store-ipc';
+import {
+  assertStoreIpcMutationTargetPreflight,
+  registerStoreIpcHandlers,
+} from './store-ipc';
+import { StoreDailyStatusProjectionReader } from './store-daily-status-projection-reader';
 import { registerMissionControlIpcHandlers } from './mission-control-ipc';
 import { registerMissionDomainIpcHandlers } from './mission-domain-ipc';
 import { MissionDomainService } from './mission-domain-service';
@@ -263,7 +288,10 @@ import { StoreCollectionPolicySuppressionController } from './store-collection-p
 import {
   createStoreCollectionProductionComposition,
 } from './store-collection-production-composition';
-import type { StoreCollectionMainRuntime } from './store-collection-main-runtime';
+import {
+  StoreCollectionMainRuntimeError,
+  type StoreCollectionMainRuntime,
+} from './store-collection-main-runtime';
 import type { StoreCollectionOrchestrator } from './store-collection-orchestrator';
 import type { StoreCollectionSchedulerReadModel } from './store-collection-scheduler-read-model';
 import {
@@ -322,6 +350,7 @@ interface AppState {
   lingxingCollectionCoordinator: LingxingCollectionCoordinator | null;
   lingxingCollectionOperations: CollectionOperationGuard | null;
   storeCoordinator: StoreCoordinator | null;
+  storeDailyStatusReader: StoreDailyStatusProjectionReader | null;
   storeScopedAdListingService: StoreScopedAdListingService | null;
   storeRuntimeConfigService: StoreRuntimeConfigService | null;
   storeEvidenceRetentionService: StoreEvidenceRetentionPreviewService | null;
@@ -357,6 +386,7 @@ const state: AppState = {
   lingxingCollectionCoordinator: null,
   lingxingCollectionOperations: null,
   storeCoordinator: null,
+  storeDailyStatusReader: null,
   storeScopedAdListingService: null,
   storeRuntimeConfigService: null,
   storeEvidenceRetentionService: null,
@@ -484,6 +514,7 @@ const DOWNLOAD_CENTER_PAGE_MODEL_FILENAME = 'lingxing-download-center.json';
 const DOWNLOAD_CENTER_PAGE_MODEL_OVERRIDE_FILENAME = 'lingxing-download-center.override.json';
 const DB_PATH = path.join(USER_DATA_DIR, 'amazon-ai-ops.db');
 const STORE_SESSION_GENERATION_SETTING_PREFIX = 'store_session_generation:';
+const OPERATOR_WORKSPACE_SELECTION_SETTING_KEY = 'operator_workspace_selection:v1';
 const APP_VERSION = '1.5.0';
 const RECOMMENDATION_METRIC_LOAD_LIMIT = 5000;
 const LINGXING_REPORT_TYPE_SET = new Set<string>(LINGXING_AD_REPORTS.map((report) => report.type));
@@ -495,6 +526,20 @@ function storeCapsuleFor(store: { storeId: string; browserProfileId: string }): 
     store.storeId,
     store.browserProfileId,
   ));
+}
+
+function currentStoreScopedReadbackAccess(
+  capturedContext?: StoreContextEnvelope,
+): StoreScopedReadbackAccess {
+  if (!state.storeCoordinator) {
+    throw new Error('READBACK_STORE_CONTEXT_UNAVAILABLE: store authority is not initialized.');
+  }
+  const current = capturedContext ?? state.storeCoordinator.getActiveStoreContext();
+  if (!current) {
+    throw new Error('READBACK_STORE_CONTEXT_UNAVAILABLE: select an active store before using readback evidence.');
+  }
+  const context = state.storeCoordinator.assertActiveStoreContext(current);
+  return createStoreScopedReadbackAccess(context, storeCapsuleFor(context));
 }
 
 function storeEvidenceRetentionReferencesFor(
@@ -954,6 +999,40 @@ async function initApp(): Promise<void> {
   const storeCoordinator = new StoreCoordinator({
     repository: state.storeRepo,
     sessions: storeSessions,
+    selectionStorage: {
+      read: () => {
+        const raw = state.settingsRepo!.get(OPERATOR_WORKSPACE_SELECTION_SETTING_KEY);
+        if (raw === null) return null;
+        try {
+          return JSON.parse(raw) as unknown;
+        } catch {
+          return raw;
+        }
+      },
+      write: (selection) => {
+        if (packageUiReadOnlyRuntime) {
+          throw new Error('PACKAGE_UI_EVIDENCE_READ_ONLY: operator selection write rejected');
+        }
+        state.settingsRepo!.set(
+          OPERATOR_WORKSPACE_SELECTION_SETTING_KEY,
+          JSON.stringify(selection),
+        );
+      },
+      clear: () => {
+        if (packageUiReadOnlyRuntime) {
+          throw new Error('PACKAGE_UI_EVIDENCE_READ_ONLY: operator selection clear rejected');
+        }
+        state.settingsRepo!.delete(OPERATOR_WORKSPACE_SELECTION_SETTING_KEY);
+      },
+    },
+    selectionPersistence: packageUiReadOnlyRuntime ? 'read_only' : 'read_write',
+  });
+  const storeDailyStatusReader = new StoreDailyStatusProjectionReader({
+    stores: state.storeRepo,
+    imports: state.lingxingImportRepo,
+    generations: storeSessions,
+    selection: storeCoordinator,
+    readTransaction: (work) => state.db!.transaction(work).deferred(),
   });
   const analysisAuthorityRepo = new AnalysisAuthorityRepository(state.db);
   const missionDomainRepo = new MissionDomainRepository(state.db, {
@@ -1093,6 +1172,7 @@ async function initApp(): Promise<void> {
   // succeeded. IPC registration later in startup therefore never observes a
   // half-initialized Mission/Analysis/Execution authority.
   state.storeCoordinator = storeCoordinator;
+  state.storeDailyStatusReader = storeDailyStatusReader;
   state.analysisAuthorityRepo = analysisAuthorityRepo;
   state.missionDomainRepo = missionDomainRepo;
   state.missionDomainService = missionDomainService;
@@ -1136,6 +1216,17 @@ async function initApp(): Promise<void> {
     const executionRecovery = executionAuthorityService.recoverStartup();
     console.log('[App] init:execution-recovery', JSON.stringify(executionRecovery));
   }
+  const restoredSelection = storeCoordinator.restoreOperatorWorkspaceSelectionAfterRecovery();
+  const restoredWorkspace = restoredSelection
+    ? storeCoordinator.getActiveStoreWorkspaceView()
+    : null;
+  state.currentStore = restoredWorkspace?.store.displayName ?? '';
+  console.log('[App] init:operator-workspace-selection', JSON.stringify({
+    restored: Boolean(restoredSelection),
+    storeId: restoredSelection?.storeId ?? null,
+    marketplace: restoredSelection?.marketplace ?? null,
+    persistence: packageUiReadOnlyRuntime ? 'read_only' : 'read_write',
+  }));
   readAiSettingsForMain();
   console.log('[App] init:repositories-ready');
 
@@ -1276,17 +1367,20 @@ function emptySavedLoginCredentialStatus(): SavedLoginCredentialStatus {
   };
 }
 
-type SavedLoginCredentialRuntimeStatus = SavedLoginCredentialStatus & {
-  packageUiEvidenceMode: boolean;
-  freshTypedProofRequired: boolean;
-};
-
-function handleGetSavedLoginCredentialStatus(): SavedLoginCredentialRuntimeStatus {
-  const credentialStatus = state.settingsRepo
-    ? readSavedLoginCredentialStatus(state.settingsRepo, electronLoginCredentialCipher)
+function handleGetSavedLoginCredentialStatus(): StoreScopedSavedLoginCredentialStatus {
+  const activeContext = state.storeCoordinator?.getActiveStoreContext() ?? null;
+  const capturedContext = activeContext && state.storeCoordinator
+    ? state.storeCoordinator.assertActiveStoreContext(activeContext)
+    : null;
+  const credentialStatus = state.settingsRepo && capturedContext
+    ? readSavedLoginCredentialStatus(
+        createStoreScopedLoginCredentialStore(state.settingsRepo, capturedContext.storeId),
+        electronLoginCredentialCipher,
+      )
     : emptySavedLoginCredentialStatus();
   return {
     ...credentialStatus,
+    storeId: capturedContext?.storeId ?? null,
     packageUiEvidenceMode: packageUiReadOnlyRuntime,
     freshTypedProofRequired: packageUiFreshTypedProofRequired,
   };
@@ -1334,7 +1428,7 @@ async function assertProviderPageActiveIdentity(input: {
   page: NonNullable<ReturnType<BrowserController['getPage']>>;
   pageUrl: string;
   credentialSubmission?: ProviderCredentialSubmission;
-}): Promise<void> {
+}): Promise<{ lingxingStableExternalAccountId?: string }> {
   const probes = PROVIDER_ACTIVE_IDENTITY_DOM_PROBES.map((probe) => ({
     id: probe.id,
     selector: probe.selector,
@@ -1358,12 +1452,49 @@ async function assertProviderPageActiveIdentity(input: {
         })
     ))
   ), probes);
+  if (input.connection.provider === 'lingxing') {
+    if (!input.connection.collectionStoreName) {
+      throw new Error('领星连接缺少下载中心店铺名称，登录已阻断。');
+    }
+    const expectedStableId = normalizeProviderExternalAccountId(
+      'lingxing',
+      input.connection.externalAccountId,
+    );
+    if (!expectedStableId) {
+      if (!input.connection.accountLabel) {
+        throw new Error('领星稳定身份首次绑定缺少连接账号，登录已阻断。');
+      }
+      return {
+        lingxingStableExternalAccountId: requireLingxingTypedStableIdentityEnrollment({
+          accountLabel: input.connection.accountLabel,
+          collectionStoreName: input.connection.collectionStoreName,
+          credentialSubmission: input.credentialSubmission,
+          pageUrl: input.pageUrl,
+          domObservations,
+        }),
+      };
+    }
+    assertLingxingCollectionStoreNameEvidence({
+      expectedCollectionStoreName: input.connection.collectionStoreName,
+      domObservations,
+    });
+    const observedStableId = readLingxingStableExternalAccountIdEvidence({
+      pageUrl: input.pageUrl,
+      domObservations,
+    });
+    if (observedStableId !== expectedStableId) {
+      throw new Error('领星页面稳定店铺身份与当前连接不一致，登录已阻断。');
+    }
+  }
   assertProviderActiveIdentity({
     connection: input.connection,
     pageUrl: input.pageUrl,
     domObservations,
     credentialSubmission: input.credentialSubmission,
   });
+  return input.connection.provider === 'lingxing'
+    ? { lingxingStableExternalAccountId: input.connection.externalAccountId }
+    : {};
 }
 
 function adsSessionResultFromPageState(pageState: { url: string; title?: string }): AdsSessionResult {
@@ -1607,6 +1738,15 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
   }
   const preflightContext = state.storeCoordinator.assertActiveStoreContext(request.storeContext);
   state.executionAuthorityService.assertStoreMutationAllowed(preflightContext);
+  if (!state.storeRepo) throw new Error('店铺连接仓储尚未初始化。');
+  const preflightConnections = requireBrowserLoginProviderConnections(
+    state.storeRepo.listConnections(preflightContext.storeId),
+    request.amazonAdsProfileId,
+  );
+  if (preflightConnections.lingxingIdentityReadiness === 'enrollment_pending'
+    && request.credentialSource !== 'typed') {
+    throw new Error('领星稳定身份尚未建立，请手动输入本次凭证完成首次绑定。');
+  }
   const outcome: BrowserLoginTransitionOutcome = await state.storeCollectionMainRuntime.withUserStoreMutation(
     { operation: 'browser:login', targetStoreId: String(preflightContext.storeId) },
     () => runUserVisibleBrowserTransition({
@@ -1680,7 +1820,11 @@ async function performBrowserLoginInUserLane(
         if (!state.settingsRepo) {
           throw new Error('本机凭证存储尚未就绪，请重新输入密码。');
         }
-        return resolveSavedLoginPassword(state.settingsRepo, electronLoginCredentialCipher, username);
+        return resolveSavedLoginPassword(
+          createStoreScopedLoginCredentialStore(state.settingsRepo, initialContext.storeId),
+          electronLoginCredentialCipher,
+          username,
+        );
       })()
     : request.password;
 
@@ -1699,6 +1843,7 @@ async function performBrowserLoginInUserLane(
     connections: {
       lingxing: StoreConnection;
       amazon_ads: StoreConnection;
+      lingxingIdentityReadiness: 'configured' | 'enrollment_pending';
     };
   };
   try {
@@ -1746,8 +1891,48 @@ async function performBrowserLoginInUserLane(
     const page = getControllerPageOrThrow(lingxingController);
     const accountInput = page.locator('input[name="account"], input[placeholder*="用户名"], input[placeholder*="手机号"]').first();
     const passwordInput = page.locator('input[name="pwd"], input[type="password"]').first();
-    const needsLogin = await accountInput.isVisible({ timeout: 5000 }).catch(() => false);
-    const erpSessionReused = !needsLogin;
+    let needsLogin = await accountInput.isVisible({ timeout: 5000 }).catch(() => false);
+    let erpSessionReused = !needsLogin;
+
+    const enrollmentSessionRecovered = await recoverLingxingEnrollmentSession({
+      enrollmentPending: connections.lingxingIdentityReadiness === 'enrollment_pending',
+      sessionReused: erpSessionReused,
+      resetConfirmed: request.credentialSource === 'typed'
+        && request.resetLingxingSessionForEnrollment === true,
+      port: {
+        bringToFront: () => lingxingController.bringToFront(),
+        clearStoreSession: async () => {
+          const browserContext = lingxingController.getContext();
+          if (!browserContext) throw new Error('该店铺领星浏览器会话不存在，无法执行已确认的重置。');
+          await page.evaluate(async () => {
+            window.localStorage.clear();
+            window.sessionStorage.clear();
+            if ('caches' in window) {
+              const keys = await window.caches.keys();
+              await Promise.all(keys.map((key) => window.caches.delete(key)));
+            }
+          });
+          await browserContext.clearCookies();
+        },
+        navigateToLogin: async () => {
+          await lingxingController.navigate(navigationPlan.initialUrl);
+          await lingxingController.waitForTimeout(1000);
+        },
+        isLoginFormReady: async () => (
+          await accountInput.isVisible({ timeout: 5000 }).catch(() => false)
+          && await passwordInput.isVisible({ timeout: 5000 }).catch(() => false)
+        ),
+      },
+    });
+    if (enrollmentSessionRecovered) {
+      needsLogin = true;
+      erpSessionReused = false;
+    }
+
+    if (connections.lingxingIdentityReadiness === 'enrollment_pending'
+      && (request.credentialSource !== 'typed' || erpSessionReused)) {
+      throw new Error('领星稳定身份首次绑定必须使用本次手动输入凭证完成可见登录。');
+    }
 
     if (needsLogin) {
       await accountInput.fill(username);
@@ -1782,10 +1967,19 @@ async function performBrowserLoginInUserLane(
     ) {
       throw new Error('当前领星会话身份未经本次凭证验证；请在自动化浏览器中退出旧会话后重试。');
     }
-    await assertProviderPageActiveIdentity({
+    let lingxingIdentityPageUrl = erpLoginState.url;
+    if (connections.lingxingIdentityReadiness === 'enrollment_pending') {
+      await navigateToLingxingDownloadCenter(
+        lingxingController,
+        readDownloadCenterPageModel(),
+      );
+      await lingxingController.waitForTimeout(1000);
+      lingxingIdentityPageUrl = page.url();
+    }
+    const lingxingIdentityEvidence = await assertProviderPageActiveIdentity({
       connection: connections.lingxing,
       page,
-      pageUrl: erpLoginState.url,
+      pageUrl: lingxingIdentityPageUrl,
       credentialSubmission: request.credentialSource === 'typed' && needsLogin
         ? {
             credentialSource: 'typed',
@@ -1795,6 +1989,22 @@ async function performBrowserLoginInUserLane(
         : undefined,
     });
     assertBrowserLoginAttempt(attemptId, loginContext);
+
+    let lingxingConnection = connections.lingxing;
+    if (connections.lingxingIdentityReadiness === 'enrollment_pending') {
+      const enrolledExternalAccountId = lingxingIdentityEvidence.lingxingStableExternalAccountId;
+      if (!enrolledExternalAccountId) {
+        throw new Error('领星稳定身份首次绑定没有得到唯一可信证据，登录已阻断。');
+      }
+      lingxingConnection = state.storeRepo.enrollLingxingStableExternalAccount({
+        id: connections.lingxing.id,
+        storeId: loginContext.storeId,
+        provider: 'lingxing',
+        externalAccountId: enrolledExternalAccountId,
+        expectedUpdatedAt: connections.lingxing.updatedAt,
+      });
+      assertBrowserLoginAttempt(attemptId, loginContext);
+    }
 
     const { credentialAction } = credentialPolicy;
     if (
@@ -1806,7 +2016,7 @@ async function performBrowserLoginInUserLane(
       }
       try {
         saveLoginCredentials(
-          state.settingsRepo,
+          createStoreScopedLoginCredentialStore(state.settingsRepo, loginContext.storeId),
           { username, password, rememberPassword },
           electronLoginCredentialCipher,
         );
@@ -1819,13 +2029,14 @@ async function performBrowserLoginInUserLane(
     assertBrowserLoginAttempt(attemptId, loginContext);
 
     const lingxingObservedAt = new Date().toISOString();
-    state.db!.transaction(() => {
-      state.storeRepo!.updateConnection({
-        id: connections.lingxing.id,
+    const readyLingxingConnection = state.db!.transaction(() => {
+      const connection = state.storeRepo!.updateConnection({
+        id: lingxingConnection.id,
         storeId: loginContext.storeId,
         status: 'ready',
         lastVerifiedAt: lingxingObservedAt,
         lastFailureCode: '',
+        expectedUpdatedAt: lingxingConnection.updatedAt,
       });
       state.storeRepo!.saveSessionMetadata({
         storeId: loginContext.storeId,
@@ -1834,10 +2045,11 @@ async function performBrowserLoginInUserLane(
         status: 'ready',
         sessionGeneration: loginContext.sessionGeneration,
         observedAt: lingxingObservedAt,
-        accountLabel: connections.lingxing.accountLabel,
-        externalAccountId: connections.lingxing.externalAccountId,
+        accountLabel: lingxingConnection.accountLabel,
+        externalAccountId: lingxingConnection.externalAccountId,
         verifiedAt: lingxingObservedAt,
       });
+      return connection;
     })();
     assertBrowserLoginAttempt(attemptId, loginContext);
 
@@ -1856,7 +2068,7 @@ async function performBrowserLoginInUserLane(
         amazonAds: capsule.amazonAdsProfileDir,
       },
       connections: {
-        lingxing: connections.lingxing,
+        lingxing: readyLingxingConnection,
         amazonAds: connections.amazon_ads,
       },
       attempt: {
@@ -1877,7 +2089,7 @@ async function performBrowserLoginInUserLane(
 
     let adsSession: AdsSessionResult | null = null;
     let adsUnavailableReason: string | undefined;
-    const adsConnection = connections.amazon_ads;
+    let adsConnection = connections.amazon_ads;
     const adsIdentityClaim = visibleBrowserRuntimeRegistry.claimAmazonAdsIdentity({
       runtimeId: lingxingVerifiedRuntime.runtimeId,
       epoch: lingxingVerifiedRuntime.epoch,
@@ -1903,13 +2115,14 @@ async function performBrowserLoginInUserLane(
       assertBrowserLoginAttempt(attemptId, loginContext);
       adsSession = adsSessionResultFromPageState(amazonAdsState);
       const adsObservedAt = new Date().toISOString();
-      state.db!.transaction(() => {
-        state.storeRepo!.updateConnection({
+      adsConnection = state.db!.transaction(() => {
+        const connection = state.storeRepo!.updateConnection({
           id: adsConnection.id,
           storeId: loginContext.storeId,
           status: 'ready',
           lastVerifiedAt: adsObservedAt,
           lastFailureCode: '',
+          expectedUpdatedAt: adsConnection.updatedAt,
         });
         state.storeRepo!.saveSessionMetadata({
           storeId: loginContext.storeId,
@@ -1922,6 +2135,7 @@ async function performBrowserLoginInUserLane(
           externalAccountId: adsConnection.externalAccountId,
           verifiedAt: adsObservedAt,
         });
+        return connection;
       })();
       visibleBrowserRuntimeRegistry.verifyAmazonAdsIdentity(adsIdentityClaim);
     } catch {
@@ -1937,6 +2151,7 @@ async function performBrowserLoginInUserLane(
           storeId: loginContext.storeId,
           status: 'attention_required',
           lastFailureCode: 'ADS_SESSION_NOT_READY',
+          expectedUpdatedAt: adsConnection.updatedAt,
         });
         state.storeRepo!.saveSessionMetadata({
           storeId: loginContext.storeId,
@@ -2589,7 +2804,6 @@ function loadLatestImportableLingxingBatchForScope(scope: NormalizedBusinessUiSc
       AND COALESCE(request_id, '') NOT LIKE 'canary:%'
       AND date_start = @dateFrom
       AND date_end = @dateTo
-      AND store_name = @storeName
       AND marketplace_code = @marketplaceCode
     ORDER BY completed_at DESC, created_at DESC
     LIMIT 1
@@ -2712,11 +2926,10 @@ function businessMetricsWhere(
     store_id = ?
     AND date >= ?
     AND date <= ?
-    AND COALESCE(store_name, '') = COALESCE(?, '')
     AND COALESCE(marketplace_code, '') = COALESCE(?, '')
     AND ${adMetricGrainWhere(grain)}
   `;
-  const params: (string | number)[] = [scope.storeId, scope.dateFrom, scope.dateTo, scope.storeName, scope.marketplaceCode];
+  const params: (string | number)[] = [scope.storeId, scope.dateFrom, scope.dateTo, scope.marketplaceCode];
   if (scope.asin) {
     sql += ' AND upper(COALESCE(asin, \'\')) = upper(?)';
     params.push(scope.asin);
@@ -2742,9 +2955,9 @@ function businessMetricsWhere(
 
 function collectBusinessBatchScopeMismatches(batch: LingxingReportBatch, scope: NormalizedBusinessUiScope): string[] {
   const mismatches: string[] = [];
+  if ((batch.storeId || '') !== scope.storeId) mismatches.push('批次不属于当前店铺。');
   if (batch.dateStart !== scope.dateFrom) mismatches.push(`开始日期不一致：批次 ${batch.dateStart}，当前范围 ${scope.dateFrom}`);
   if (batch.dateEnd !== scope.dateTo) mismatches.push(`结束日期不一致：批次 ${batch.dateEnd}，当前范围 ${scope.dateTo}`);
-  if ((batch.storeName || '') !== (scope.storeName || '')) mismatches.push(`店铺不一致：批次 ${batch.storeName || '-'}，当前范围 ${scope.storeName || '-'}`);
   if ((batch.marketplaceCode || '') !== (scope.marketplaceCode || '')) mismatches.push(`站点不一致：批次 ${batch.marketplaceCode || '-'}，当前范围 ${scope.marketplaceCode || '-'}`);
   return mismatches;
 }
@@ -2778,7 +2991,6 @@ function loadBusinessBatchesForScope(scope: NormalizedBusinessUiScope): Business
       AND COALESCE(request_id, '') NOT LIKE 'canary:%'
       AND date_start = @dateFrom
       AND date_end = @dateTo
-      AND COALESCE(store_name, '') = COALESCE(@storeName, '')
       AND COALESCE(marketplace_code, '') = COALESCE(@marketplaceCode, '')
       AND status IN ('completed', 'completed_with_errors')
     ORDER BY completed_at DESC, created_at DESC, id DESC
@@ -3621,9 +3833,11 @@ function authorizedLingxingCollectionTarget(
   if (!connection) {
     throw new Error('当前店铺尚未配置领星连接，仅领星采集被阻断。');
   }
-  const targetStoreName = connection.externalAccountId?.trim();
-  if (!targetStoreName) {
-    throw new Error('当前店铺的领星连接缺少 externalAccountId 店铺映射，仅领星采集被阻断。');
+  const targetStoreName = connection.collectionStoreName?.trim();
+  const normalizedTargetStoreName = normalizeLingxingCollectionStoreName(targetStoreName);
+  if (!targetStoreName || !normalizedTargetStoreName
+    || connection.normalizedCollectionStoreName !== normalizedTargetStoreName) {
+    throw new Error('当前店铺缺少有效的领星下载中心店铺名称映射，仅领星采集被阻断。');
   }
   return {
     context,
@@ -8054,6 +8268,7 @@ function handleUpdateListingSuggestionStatus(id: number, status: ListingSuggesti
 }
 
 async function handleGenerateListingDrafts(suggestions: ListingSuggestion[]): Promise<ListingDraft[]> {
+  const { context: capturedStoreContext } = resolveBusinessStoreAuthority();
   validateArray(suggestions, 'suggestions', 20000);
   for (const suggestion of suggestions) {
     validateSuggestion(suggestion);
@@ -8064,7 +8279,7 @@ async function handleGenerateListingDrafts(suggestions: ListingSuggestion[]): Pr
   const aiApiKey = settings.aiApiKey;
 
   if (aiApiKey) {
-    drafts = await generateAiListingDrafts(drafts, settings);
+    drafts = await generateAiListingDrafts(drafts, settings, capturedStoreContext.storeId);
   } else {
     drafts = drafts.map((draft) => ({
       ...draft,
@@ -8075,7 +8290,11 @@ async function handleGenerateListingDrafts(suggestions: ListingSuggestion[]): Pr
   return persistListingDrafts(drafts);
 }
 
-async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<string, string>): Promise<ListingDraft[]> {
+async function generateAiListingDrafts(
+  drafts: ListingDraft[],
+  settings: Record<string, string>,
+  capturedStoreId: StoreContextEnvelope['storeId'],
+): Promise<ListingDraft[]> {
   const provider = new OpenAICompatibleProvider(buildAiProviderConfig(settings));
   const promptTemplate = readPromptTemplate('listing-rewrite.md');
   const model = settings.aiModel || settings.ai_model || 'deepseek-v4-flash';
@@ -8096,7 +8315,7 @@ async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<
         outputJson: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
         success: false,
         errorMessage: error instanceof Error ? error.message : String(error),
-      });
+      }, capturedStoreId);
       enhanced.push({
         ...draft,
         aiFallbackReason: `AI 调用异常：${error instanceof Error ? error.message : String(error)}，使用规则草案`,
@@ -8110,7 +8329,7 @@ async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<
         outputJson: response.content || JSON.stringify({ error: response.error || 'empty_content' }),
         success: false,
         errorMessage: response.error || 'AI 未返回草案内容',
-      });
+      }, capturedStoreId);
       enhanced.push({
         ...draft,
         aiFallbackReason: response.error ? `AI 生成失败：${response.error}` : 'AI 未返回草案内容，使用规则草案',
@@ -8125,7 +8344,7 @@ async function generateAiListingDrafts(drafts: ListingDraft[], settings: Record<
       outputJson: response.content,
       success: Boolean(parsed),
       errorMessage: parsed ? undefined : 'AI 响应无法解析为 listing_rewrite_v1 JSON 或中文理由校验失败',
-    });
+    }, capturedStoreId);
     enhanced.push(parsed
       ? {
           ...draft,
@@ -8150,9 +8369,9 @@ function recordListingAiCallLog(input: {
   outputJson: string;
   success: boolean;
   errorMessage?: string;
-}): void {
+}, capturedStoreId: StoreContextEnvelope['storeId']): void {
   try {
-    state.aiCallLogRepo?.insert(buildListingAiCallLogInput(input));
+    state.aiCallLogRepo?.insertForStore(capturedStoreId, buildListingAiCallLogInput(input));
   } catch (error) {
     console.warn('[AI] Failed to write Listing AI call log', error);
   }
@@ -8246,8 +8465,9 @@ async function handleTestAiSettings(settings: Record<string, unknown>) {
 
 function handleListAiCallLogs(request: any = {}) {
   if (!state.aiCallLogRepo) return [];
+  const { context } = resolveBusinessStoreAuthority();
   const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(20, Number(request.limit))) : 5;
-  return state.aiCallLogRepo.findRecent(limit);
+  return state.aiCallLogRepo.findRecentForStore(context.storeId, limit);
 }
 
 function parseNumberSetting(value: unknown, fallback: number): number {
@@ -8457,9 +8677,12 @@ function handleGetStoragePaths() {
 
 function handleGetDeliveryEvidenceStatus(input?: unknown) {
   const scope = normalizePersistedOperationScope(input || handleGetOperationScope() || {});
+  const readbackAccess = currentStoreScopedReadbackAccess();
   return getDeliveryEvidenceStatus({
     db: state.db,
-    readbackDir: path.join(EXPORTS_DIR, 'ad-readback-evidence'),
+    storeId: readbackAccess.binding.storeId,
+    readbackDir: readbackAccess.rootDir,
+    readbackAccess,
     releaseDir: path.join(REPO_ROOT_DIR, 'apps', 'desktop', 'release'),
     scope,
   });
@@ -9527,19 +9750,22 @@ async function runRecommendationGeneration(
   scope: any;
   metricsBackfill?: ReturnType<typeof backfillAdMetricsFromLatestBatchIfNeeded>;
 }> {
-  const operatorRequested = request && typeof request === 'object' && Object.keys(request).length > 0;
-  const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(1000, Number(request.limit))) : 300;
+  const submitted = request && typeof request === 'object' ? request as Record<string, unknown> : {};
+  const capturedAuthority = resolveBusinessStoreAuthority(submitted.storeContext);
+  const operatorRequested = Object.keys(submitted).length > 0;
+  const limit = Number.isFinite(Number(submitted.limit)) ? Math.max(1, Math.min(1000, Number(submitted.limit))) : 300;
   const scope = {
-    dateFrom: typeof request.dateFrom === 'string' && request.dateFrom.trim() ? request.dateFrom.trim() : undefined,
-    dateTo: typeof request.dateTo === 'string' && request.dateTo.trim() ? request.dateTo.trim() : undefined,
-    storeName: typeof request.storeName === 'string' && request.storeName.trim() ? request.storeName.trim() : operatorRequested ? undefined : state.currentStore || undefined,
-    marketplaceCode: typeof request.marketplaceCode === 'string' && request.marketplaceCode.trim() ? request.marketplaceCode.trim() : undefined,
-    asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
+    dateFrom: typeof submitted.dateFrom === 'string' && submitted.dateFrom.trim() ? submitted.dateFrom.trim() : undefined,
+    dateTo: typeof submitted.dateTo === 'string' && submitted.dateTo.trim() ? submitted.dateTo.trim() : undefined,
+    storeName: capturedAuthority.store.displayName,
+    marketplaceCode: 'US' as const,
+    asin: typeof submitted.asin === 'string' && submitted.asin.trim() ? submitted.asin.trim() : undefined,
+    storeContext: capturedAuthority.context,
     limit,
   };
 
-  if (operatorRequested && (!scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode)) {
-    throw new Error('生成优化建议需要明确填写开始日期、结束日期、店铺和站点，不能使用登录账号名代替店铺范围。');
+  if (operatorRequested && (!scope.dateFrom || !scope.dateTo)) {
+    throw new Error('生成优化建议需要明确填写开始日期和结束日期。');
   }
 
   if (!scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode) {
@@ -9601,6 +9827,7 @@ async function runRecommendationGeneration(
     recommendations,
     runtimeConfig,
     generationRuntime.aiSettings,
+    gate.scope.storeId,
   );
   const recommendationsBeforeConfidenceGate = recommendations.length;
   recommendations = recommendations.filter((recommendation) => (
@@ -9864,6 +10091,7 @@ async function enrichAdRecommendationsWithAiExplanations(
   recommendations: ActionRecommendation[],
   runtimeConfig: StoreRuntimeAnalysisConfig,
   settings: Record<string, string>,
+  capturedStoreId: StoreContextEnvelope['storeId'],
 ): Promise<ActionRecommendation[]> {
   if (recommendations.length === 0) return recommendations;
 
@@ -9909,7 +10137,7 @@ async function enrichAdRecommendationsWithAiExplanations(
         recommendation: rec,
         explanation,
         model: settings.aiModel,
-      });
+      }, capturedStoreId);
       enhanced.push(mergeAdActionExplanationEvidence({
         recommendation: rec,
         explanation,
@@ -9927,7 +10155,7 @@ async function enrichAdRecommendationsWithAiExplanations(
         recommendation: rec,
         explanation: fallbackExplanation,
         model: settings.aiModel,
-      });
+      }, capturedStoreId);
       enhanced.push(mergeAdActionExplanationEvidence({
         recommendation: rec,
         explanation: fallbackExplanation,
@@ -10059,7 +10287,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
           ? '未配置 AI Key，广告阶段诊断使用规则 fallback'
           : '当前店铺已关闭 AI 建议，广告阶段诊断使用规则 fallback',
       };
-  recordAdStrategyAiCallLog(diagnosisInput, diagnosis, settings, evidencePackSummary);
+  recordAdStrategyAiCallLog(scope.storeId, diagnosisInput, diagnosis, settings, evidencePackSummary);
   const validation = validateAiDiagnosisEvidence({
     diagnosis,
     evidencePack,
@@ -10132,7 +10360,7 @@ async function enrichAdRecommendationsWithStrategyDiagnosis(
     ...summarizeStrategyDiagnosis(mergeDiagnosis, operationEvents.length, productContexts.length, aiInsights, evidencePackSummary, evidencePackPreview),
     ...decisionDiagnostics,
   };
-  recordAdStrategyDiagnosisRun({
+  recordAdStrategyDiagnosisRun(scope.storeId, {
     diagnosis: mergeDiagnosis,
     settings,
     scope: {
@@ -10210,13 +10438,14 @@ function selectStrategyEvidencePreview(
 }
 
 function recordAdStrategyAiCallLog(
+  capturedStoreId: StoreContextEnvelope['storeId'],
   input: ReturnType<typeof buildAdStrategyDiagnosisInput>,
   diagnosis: AdStrategyDiagnosisOutput,
   settings: ReturnType<typeof normalizeAiSettings>,
   evidencePackSummary?: AiEvidencePackSummary,
 ): void {
   try {
-    state.aiCallLogRepo?.insert({
+    state.aiCallLogRepo?.insertForStore(capturedStoreId, {
       promptKey: 'ad_strategy_diagnosis',
       promptVersion: 'ad_strategy_diagnosis_v1',
       model: settings.aiModel,
@@ -10235,6 +10464,7 @@ function recordAdStrategyAiCallLog(
 function assertRecommendationWritableTargetCurrent(
   recommendation: ActionRecommendation | undefined,
   scope: {
+    storeId: StoreContextEnvelope['storeId'];
     dateFrom: string;
     dateTo: string;
     storeName: string;
@@ -10248,6 +10478,7 @@ function assertRecommendationWritableTargetCurrent(
     throw new Error('结果核对被阻断：当前建议没有经验证的 Ads 可写对象。');
   }
   const sourceAuthority = assertRecommendationMetricSourceAuthority(state.db, {
+    storeId: scope.storeId,
     recommendation,
     scope: {
       ...scope,
@@ -10256,6 +10487,7 @@ function assertRecommendationWritableTargetCurrent(
     allowedSourceFiles,
   });
   const canonicalTarget = assertCurrentWritableAdTargetAuthority(state.db, {
+    storeId: scope.storeId,
     scope,
     target: recommendation.evidence.writableTarget,
     allowedSourceFiles,
@@ -10281,10 +10513,14 @@ function validateCurrentAdReadbackEvidenceAuthority(
     evidence = JSON.parse(fs.readFileSync(path.resolve(evidencePath), 'utf8')) as Record<string, any>;
     const authority = evidence.authority || {};
     const gate = getBusinessRecommendationGate(authority, 'readback');
-    const recommendation = state.recommendationRepo?.findById(Number(authority.recommendationId));
+    const recommendation = state.recommendationRepo?.findByIdForStore(
+      gate.scope.storeId,
+      Number(authority.recommendationId),
+    );
     const sourceAuthority = assertRecommendationWritableTargetCurrent(
       recommendation,
       {
+        storeId: gate.scope.storeId,
         dateFrom: gate.scope.dateFrom,
         dateTo: gate.scope.dateTo,
         storeName: gate.scope.storeName,
@@ -10326,12 +10562,29 @@ function validateCurrentAdReadbackEvidenceAuthority(
 }
 
 function handleRefreshFinalReadiness(input?: { adReadbackPath?: string }): { success: boolean; evidenceManifestPath: string; finalReadinessPath: string; readiness: DeliveryReadinessView } {
+  const readbackAccess = currentStoreScopedReadbackAccess();
+  const requestedPath = typeof input?.adReadbackPath === 'string' && input.adReadbackPath.trim()
+    ? input.adReadbackPath
+    : undefined;
+  let adReadbackPath: string;
+  if (requestedPath) {
+    adReadbackPath = readStoreScopedReadbackEvidenceFile(readbackAccess, requestedPath, 'root').filePath;
+  } else {
+    adReadbackPath = latestStoreScopedReadbackCandidate(readbackAccess)
+      ?? resolveStoreScopedReadbackReference(
+        readbackAccess,
+        'real-ad-execution-readback-missing.json',
+        'candidates',
+      );
+  }
   const result = refreshFinalReadiness({
     repoRootDir: REPO_ROOT_DIR,
     evidenceDir: CODEX_EVIDENCE_DIR,
     releaseDir: path.join(REPO_ROOT_DIR, 'apps', 'desktop', 'release'),
     appVersion: APP_VERSION,
-    adReadbackPath: typeof input?.adReadbackPath === 'string' && input.adReadbackPath.trim() ? input.adReadbackPath : undefined,
+    // Always explicit: never allow final-readiness to fall back to the global
+    // CODEX evidence directory for a store-owned Ads readback.
+    adReadbackPath,
     validateAdReadbackAuthority: (evidencePath) => validateCurrentAdReadbackEvidenceAuthority(evidencePath, 'final-readiness'),
   });
   return {
@@ -10348,15 +10601,15 @@ function recordAdActionReasonAiCallLog(input: {
   recommendation: ActionRecommendation;
   explanation: AdActionExplanationForLog;
   model: string;
-}): void {
+}, capturedStoreId: StoreContextEnvelope['storeId']): void {
   try {
-    state.aiCallLogRepo?.insert(buildAdActionReasonAiCallLogInput(input));
+    state.aiCallLogRepo?.insertForStore(capturedStoreId, buildAdActionReasonAiCallLogInput(input));
   } catch (error) {
     console.warn('[AI] Failed to write ad action reason log', error);
   }
 }
 
-function recordAdStrategyDiagnosisRun(input: {
+function recordAdStrategyDiagnosisRun(capturedStoreId: StoreContextEnvelope['storeId'], input: {
   diagnosis: AdStrategyDiagnosisOutput;
   settings: ReturnType<typeof normalizeAiSettings>;
   scope: Record<string, unknown>;
@@ -10366,7 +10619,7 @@ function recordAdStrategyDiagnosisRun(input: {
   formalRecommendationCount: number;
 }): void {
   try {
-    state.aiDiagnosisRunRepo?.insert({
+    state.aiDiagnosisRunRepo?.insertForStore(capturedStoreId, {
       promptKey: 'ad_strategy_diagnosis',
       promptVersion: 'ad_strategy_diagnosis_v1',
       model: input.settings.aiModel,
@@ -10400,11 +10653,11 @@ function recordAdStrategyDiagnosisRun(input: {
 
 function handleListAiDiagnosisRuns(request: any = {}) {
   if (!state.aiDiagnosisRunRepo) return [];
+  const { context } = resolveBusinessStoreAuthority();
   const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(20, Number(request.limit))) : 5;
-  return state.aiDiagnosisRunRepo.findRecent({
+  return state.aiDiagnosisRunRepo.findRecentForStore(context.storeId, {
     dateFrom: typeof request.dateFrom === 'string' && request.dateFrom.trim() ? request.dateFrom.trim() : undefined,
     dateTo: typeof request.dateTo === 'string' && request.dateTo.trim() ? request.dateTo.trim() : undefined,
-    storeName: typeof request.storeName === 'string' && request.storeName.trim() ? request.storeName.trim() : undefined,
     marketplaceCode: typeof request.marketplaceCode === 'string' && request.marketplaceCode.trim() ? request.marketplaceCode.trim() : undefined,
     asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
     batchId: typeof request.batchId === 'string' && request.batchId.trim() ? request.batchId.trim() : undefined,
@@ -10438,16 +10691,18 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
   ruleCandidateCount: number;
   summary: AdStrategyGenerationSummary;
 }> {
+  const capturedAuthority = resolveBusinessStoreAuthority(request?.storeContext);
   const scope = {
     dateFrom: typeof request.dateFrom === 'string' && request.dateFrom.trim() ? request.dateFrom.trim() : undefined,
     dateTo: typeof request.dateTo === 'string' && request.dateTo.trim() ? request.dateTo.trim() : undefined,
-    storeName: typeof request.storeName === 'string' && request.storeName.trim() ? request.storeName.trim() : undefined,
-    marketplaceCode: typeof request.marketplaceCode === 'string' && request.marketplaceCode.trim() ? request.marketplaceCode.trim() : undefined,
+    storeName: capturedAuthority.store.displayName,
+    marketplaceCode: 'US' as const,
+    storeContext: capturedAuthority.context,
     asin: typeof request.asin === 'string' && request.asin.trim() ? request.asin.trim() : undefined,
     batchId: typeof request.batchId === 'string' && request.batchId.trim() ? request.batchId.trim() : undefined,
   };
-  if (!scope.dateFrom || !scope.dateTo || !scope.storeName || !scope.marketplaceCode) {
-    throw new Error('AI 阶段诊断需要明确当前操作范围：开始日期、结束日期、店铺和站点。');
+  if (!scope.dateFrom || !scope.dateTo) {
+    throw new Error('AI 阶段诊断需要明确当前操作范围：开始日期和结束日期。');
   }
 
   const gate = getBusinessRecommendationGate(scope, 'diagnosis');
@@ -10564,7 +10819,7 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
         maxTokens: parseIntegerSetting(settings.aiMaxTokens || settings.ai_max_tokens, 8192),
       }).diagnose(diagnosisInput)
     : fallbackDiagnosis;
-  recordAdStrategyAiCallLog(diagnosisInput, diagnosis, settings, evidencePackSummary);
+  recordAdStrategyAiCallLog(gate.scope.storeId, diagnosisInput, diagnosis, settings, evidencePackSummary);
   const validation = validateAiDiagnosisEvidence({
     diagnosis,
     evidencePack,
@@ -10576,7 +10831,7 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
     aiCandidates: diagnosis.aiCandidates.filter((_, index) => validation.validCandidateIndexes.includes(index)),
   };
   const evidencePackPreview = selectStrategyEvidencePreview(mergeDiagnosis, aiInsights, evidencePack);
-  recordAdStrategyDiagnosisRun({
+  recordAdStrategyDiagnosisRun(gate.scope.storeId, {
     diagnosis: mergeDiagnosis,
     settings,
     scope: gate.scope,
@@ -10598,10 +10853,12 @@ async function handleRunAdStrategyDiagnosis(request: any = {}): Promise<{
 
 function assertRecommendationCurrentDataGate(recommendationId: number): {
   recommendation: ActionRecommendation;
+  storeId: StoreContextEnvelope['storeId'];
   allowedSourceFiles: string[];
   sourceAuthority: RecommendationMetricSourceAuthority;
 } {
-  const recommendation = state.recommendationRepo?.findById(recommendationId);
+  const { context, store } = resolveBusinessStoreAuthority();
+  const recommendation = state.recommendationRepo?.findByIdForStore(context.storeId, recommendationId);
   if (!recommendation) {
     throw new Error('审批被阻断：建议不存在，请刷新后重试。');
   }
@@ -10616,12 +10873,14 @@ function assertRecommendationCurrentDataGate(recommendationId: number): {
     throw new Error(`审批被阻断：建议绑定的数据批次不存在或不可读取：${batchId}`);
   }
   const scope = {
+    storeId: context.storeId,
     dateFrom: batchResult.batch.dateStart,
     dateTo: batchResult.batch.dateEnd,
-    storeName: batchResult.batch.storeName || recommendation.storeName,
-    marketplaceCode: batchResult.batch.marketplaceCode || recommendation.marketplaceCode,
+    storeName: store.displayName,
+    marketplaceCode: 'US' as const,
     asin: recommendation.asin,
     batchId,
+    storeContext: context,
   };
   const gate = getBusinessRecommendationGate(scope, 'approval');
   const sourceAuthority = assertRecommendationWritableTargetCurrent(
@@ -10631,6 +10890,7 @@ function assertRecommendationCurrentDataGate(recommendationId: number): {
   );
   return {
     recommendation,
+    storeId: context.storeId,
     allowedSourceFiles: gate.metricSource.sourceFiles,
     sourceAuthority,
   };
@@ -10646,32 +10906,45 @@ function handleBindRecommendationWritableTarget(
   if (!state.db || !state.recommendationRepo) {
     throw new Error('Ads 对象核验被阻断：本地权威数据库尚未初始化。');
   }
-  const recommendation = state.recommendationRepo.findById(request.recommendationId);
+  const { context } = resolveBusinessStoreAuthority();
+  const recommendation = state.recommendationRepo.findByIdForStore(context.storeId, request.recommendationId);
   if (!recommendation) {
     throw new Error('Ads 对象核验被阻断：建议不存在，请刷新后重试。');
   }
-  const gate = getBusinessRecommendationGate(request.scope, 'approval');
+  const gate = getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval');
+  const resolvedScope = {
+    dateFrom: gate.scope.dateFrom,
+    dateTo: gate.scope.dateTo,
+    storeName: gate.scope.storeName,
+    marketplaceCode: gate.scope.marketplaceCode,
+    asin: gate.scope.asin || '',
+    batchId: gate.scope.batchId || '',
+  };
+  const scopedRequest = { ...request, scope: resolvedScope };
   const sourceAuthority = assertRecommendationMetricSourceAuthority(state.db, {
+    storeId: context.storeId,
     recommendation,
-    scope: request.scope,
+    scope: resolvedScope,
     allowedSourceFiles: gate.metricSource.sourceFiles,
   });
   const boundAt = new Date().toISOString();
   const result = bindRecommendationWritableTarget({
     recommendation,
-    request,
+    request: scopedRequest,
     allowedSourceFiles: gate.metricSource.sourceFiles,
     sourceAuthority,
     boundAt,
-    resolveWritableTarget: (candidate, context) => resolveWritableAdTargetAuthority(state.db!, {
-      scope: request.scope,
+    resolveWritableTarget: (candidate, bindingContext) => resolveWritableAdTargetAuthority(state.db!, {
+      storeId: context.storeId,
+      scope: resolvedScope,
       candidate,
       allowedSourceFiles: gate.metricSource.sourceFiles,
       syntheticRecommendationEntityId: recommendation.entityId,
-      verifiedBy: context.boundBy,
-      verifiedAt: context.boundAt,
+      verifiedBy: bindingContext.boundBy,
+      verifiedAt: bindingContext.boundAt,
     }),
-    persist: (evidencePatch) => state.recommendationRepo!.bindWritableTargetIfCurrent(
+    persist: (evidencePatch) => state.recommendationRepo!.bindWritableTargetIfCurrentForStore(
+      context.storeId,
       request.recommendationId,
       request.expectedRevision,
       evidencePatch,
@@ -10689,32 +10962,45 @@ function handleResolveRecommendationReview(input: ResolveRecommendationReviewReq
   if (!state.db || !state.recommendationRepo) {
     throw new Error('复核被阻断：本地权威数据库尚未初始化。');
   }
-  const recommendation = state.recommendationRepo.findById(request.recommendationId);
+  const { context } = resolveBusinessStoreAuthority();
+  const recommendation = state.recommendationRepo.findByIdForStore(context.storeId, request.recommendationId);
   if (!recommendation) {
     throw new Error('复核被阻断：建议不存在，请刷新后重试。');
   }
-  const gate = getBusinessRecommendationGate(request.scope, 'approval');
+  const gate = getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'approval');
+  const resolvedScope = {
+    dateFrom: gate.scope.dateFrom,
+    dateTo: gate.scope.dateTo,
+    storeName: gate.scope.storeName,
+    marketplaceCode: gate.scope.marketplaceCode,
+    asin: gate.scope.asin || '',
+    batchId: gate.scope.batchId || '',
+  };
+  const scopedRequest = { ...request, scope: resolvedScope };
   const sourceAuthority = assertRecommendationMetricSourceAuthority(state.db, {
+    storeId: context.storeId,
     recommendation,
-    scope: request.scope,
+    scope: resolvedScope,
     allowedSourceFiles: gate.metricSource.sourceFiles,
   });
   const reviewedAt = new Date().toISOString();
   const result = resolveRecommendationReview({
     recommendation,
-    request,
+    request: scopedRequest,
     allowedSourceFiles: gate.metricSource.sourceFiles,
     sourceAuthority,
     reviewedAt,
-    resolveWritableTarget: (candidate, context) => resolveWritableAdTargetAuthority(state.db!, {
-      scope: request.scope,
+    resolveWritableTarget: (candidate, reviewContext) => resolveWritableAdTargetAuthority(state.db!, {
+      storeId: context.storeId,
+      scope: resolvedScope,
       candidate,
       allowedSourceFiles: gate.metricSource.sourceFiles,
       syntheticRecommendationEntityId: recommendation.entityId,
-      verifiedBy: context.reviewedBy,
-      verifiedAt: context.reviewedAt,
+      verifiedBy: reviewContext.reviewedBy,
+      verifiedAt: reviewContext.reviewedAt,
     }),
-    persist: (status, evidencePatch) => state.recommendationRepo!.updateStatusWithEvidenceIfCurrent(
+    persist: (status, evidencePatch) => state.recommendationRepo!.updateStatusWithEvidenceIfCurrentForStore(
+      context.storeId,
       request.recommendationId,
       'needs_review',
       request.expectedRevision,
@@ -10729,7 +11015,7 @@ function handleResolveRecommendationReview(input: ResolveRecommendationReviewReq
 async function handleApproveRecommendation(input: any): Promise<void> {
   const { id, expectedRevision: requestedRevision, decision } = normalizeRecommendationDecisionRequest(input);
   if (!id) throw new Error('批准建议失败：缺少 recommendation id。');
-  const { recommendation, allowedSourceFiles, sourceAuthority } = assertRecommendationCurrentDataGate(id);
+  const { recommendation, storeId, allowedSourceFiles, sourceAuthority } = assertRecommendationCurrentDataGate(id);
   const expectedRevision = assertRecommendationDecisionRevision(recommendation, requestedRevision);
   applyRecommendationDecision({
     recommendation,
@@ -10737,7 +11023,8 @@ async function handleApproveRecommendation(input: any): Promise<void> {
     decision,
     approvalOptions: { allowedSourceFiles, sourceAuthority },
     persist: (status, evidencePatch) => {
-      const updated = state.recommendationRepo?.updateStatusWithEvidenceIfCurrent(
+      const updated = state.recommendationRepo?.updateStatusWithEvidenceIfCurrentForStore(
+        storeId,
         id,
         recommendation.status,
         expectedRevision,
@@ -10754,7 +11041,8 @@ async function handleApproveRecommendation(input: any): Promise<void> {
 async function handleRejectRecommendation(input: any): Promise<void> {
   const { id, expectedRevision: requestedRevision, decision } = normalizeRecommendationDecisionRequest(input);
   if (!id) throw new Error('拒绝建议失败：缺少 recommendation id。');
-  const recommendation = state.recommendationRepo?.findById(id);
+  const { context } = resolveBusinessStoreAuthority();
+  const recommendation = state.recommendationRepo?.findByIdForStore(context.storeId, id);
   if (!recommendation) {
     throw new Error('拒绝建议失败：建议不存在，请刷新后重试。');
   }
@@ -10764,7 +11052,8 @@ async function handleRejectRecommendation(input: any): Promise<void> {
     targetStatus: 'rejected',
     decision,
     persist: (status, evidencePatch) => {
-      const updated = state.recommendationRepo?.updateStatusWithEvidenceIfCurrent(
+      const updated = state.recommendationRepo?.updateStatusWithEvidenceIfCurrentForStore(
+        context.storeId,
         id,
         recommendation.status,
         expectedRevision,
@@ -10780,6 +11069,7 @@ async function handleRejectRecommendation(input: any): Promise<void> {
 
 function handleGetRecommendations(filter: any = []): any[] {
   const request = Array.isArray(filter) ? {} : (filter || {});
+  const { context } = resolveBusinessStoreAuthority(request.storeContext);
   const limit = Number.isFinite(Number(request.limit)) ? Math.max(1, Math.min(500, Number(request.limit))) : 100;
   const status = typeof request.status === 'string' && request.status.trim() ? request.status.trim() : undefined;
   const hasFullScope = Boolean(
@@ -10801,14 +11091,14 @@ function handleGetRecommendations(filter: any = []): any[] {
       marketplaceCode: request.marketplaceCode,
       asin: request.asin,
       batchId: request.batchId,
+      storeContext: context,
     }, 'recommendation-list');
   } catch {
     return [];
   }
 
-  if (state.recommendationRepo?.findByFilter) {
+  if (state.recommendationRepo) {
     const normalizedFilter = {
-      storeName: gate.scope.storeName,
       marketplaceCode: gate.scope.marketplaceCode,
       asin: gate.scope.asin,
       status,
@@ -10817,7 +11107,10 @@ function handleGetRecommendations(filter: any = []): any[] {
       page: 0,
       pageSize: limit,
     };
-    return state.recommendationRepo.findByFilter(normalizedFilter).items.filter((item) => item.evidence?.batchId === gate.scope.batchId);
+    return state.recommendationRepo
+      .findByFilterForStore(context.storeId, normalizedFilter)
+      .items
+      .filter((item) => item.evidence?.batchId === gate.scope.batchId);
   }
 
   return [];
@@ -10833,9 +11126,11 @@ function handleExportAdReadbackEvidence(input: ExportAuthorizedAdReadbackEvidenc
   authority: { recommendationId: number; revision: number; batchId: string };
 } {
   const request = input || {} as ExportAuthorizedAdReadbackEvidenceRequest;
+  const { context } = resolveBusinessStoreAuthority();
+  const readbackAccess = currentStoreScopedReadbackAccess(context);
   let gate: ReturnType<typeof getBusinessRecommendationGate>;
   try {
-    gate = getBusinessRecommendationGate(request.scope, 'readback');
+    gate = getBusinessRecommendationGate({ ...request.scope, storeContext: context }, 'readback');
   } catch (caught) {
     console.warn('[AdReadbackAuthority]', {
       stage: 'export-gate',
@@ -10844,10 +11139,14 @@ function handleExportAdReadbackEvidence(input: ExportAuthorizedAdReadbackEvidenc
     });
     throw new Error('结果核对被阻断：当前范围无法绑定真实报表批次，请刷新范围后重试。');
   }
-  const recommendation = state.recommendationRepo?.findById(Number(request.recommendationId));
+  const recommendation = state.recommendationRepo?.findByIdForStore(
+    context.storeId,
+    Number(request.recommendationId),
+  );
   const sourceAuthority = assertRecommendationWritableTargetCurrent(
     recommendation,
     {
+      storeId: gate.scope.storeId,
       dateFrom: gate.scope.dateFrom,
       dateTo: gate.scope.dateTo,
       storeName: gate.scope.storeName,
@@ -10871,9 +11170,10 @@ function handleExportAdReadbackEvidence(input: ExportAuthorizedAdReadbackEvidenc
     allowedSourceFiles: gate.metricSource.sourceFiles,
     sourceAuthority,
   });
-  const evidence = buildAdReadbackEvidence(evidenceInput);
-  const exportDir = path.join(EXPORTS_DIR, 'ad-readback-evidence');
-  fs.mkdirSync(exportDir, { recursive: true });
+  assertStoreScopedReadbackEvidenceData(evidenceInput, readbackAccess, { requireBinding: false });
+  const evidence = withReadbackStoreBinding(buildAdReadbackEvidence(evidenceInput), readbackAccess);
+  ensureStoreScopedReadbackDirectories(readbackAccess);
+  const exportDir = readbackAccess.candidatesDir;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const jsonPath = path.join(exportDir, `real-ad-execution-readback-${stamp}.json`);
   const markdownPath = jsonPath.replace(/\.json$/i, '.md');
@@ -10897,22 +11197,34 @@ function handleExportAdReadbackEvidence(input: ExportAuthorizedAdReadbackEvidenc
 }
 
 function handlePrepareAdReadbackSession(input: { sourcePath?: string; outDir?: string }): PreparedAdReadbackSession {
+  const readbackAccess = currentStoreScopedReadbackAccess();
   return prepareAdReadbackSession({
     sourcePath: String(input?.sourcePath || ''),
     outDir: typeof input?.outDir === 'string' && input.outDir.trim() ? input.outDir : undefined,
+    storeAccess: readbackAccess,
   });
 }
 
 function handleVerifyAdReadbackSession(input: { sessionDir?: string }): VerifiedAdReadbackSession {
-  return verifyAdReadbackSession(String(input?.sessionDir || ''));
+  const readbackAccess = currentStoreScopedReadbackAccess();
+  return verifyAdReadbackSession(String(input?.sessionDir || ''), readbackAccess);
 }
 
 function handleFillAdReadbackSession(input: { sessionDir?: string }): FilledAdReadbackSession {
-  return fillAdReadbackSession(String(input?.sessionDir || ''));
+  const readbackAccess = currentStoreScopedReadbackAccess();
+  return fillAdReadbackSession(String(input?.sessionDir || ''), readbackAccess);
 }
 
 function handleVerifyAdReadbackEvidence(input: { evidencePath?: string }): VerifiedAdReadbackEvidence {
-  const result = verifyAdReadbackEvidenceFile(String(input?.evidencePath || ''));
+  const readbackAccess = currentStoreScopedReadbackAccess();
+  const evidencePath = resolveStoreScopedReadbackReference(
+    readbackAccess,
+    String(input?.evidencePath || ''),
+    'root',
+  );
+  const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8')) as Record<string, unknown>;
+  assertStoreScopedReadbackEvidenceData(evidence, readbackAccess, { requireBinding: true });
+  const result = verifyAdReadbackEvidenceFile(evidencePath);
   if (!result.ready) return result;
 
   const authority = validateCurrentAdReadbackEvidenceAuthority(result.evidencePath, 'verify');
@@ -10948,17 +11260,21 @@ function handleSaveReadbackCapture(input: {
   if (!slot || !['approval', 'before', 'after', 'readback'].includes(slot)) {
     throw new Error(`Unsupported readback capture slot: ${slot || '<missing>'}`);
   }
+  const readbackAccess = currentStoreScopedReadbackAccess();
+  ensureStoreScopedReadbackDirectories(readbackAccess);
   return saveReadbackCaptureFile({
     slot,
     dataUrl: String(input?.dataUrl || ''),
     fileName: typeof input?.fileName === 'string' ? input.fileName : undefined,
     sessionDir: typeof input?.sessionDir === 'string' && input.sessionDir.trim() ? input.sessionDir : undefined,
-    fallbackRootDir: path.join(EXPORTS_DIR, 'ad-readback-captures'),
+    fallbackRootDir: readbackAccess.capturesDir,
+    storeAccess: readbackAccess,
   });
 }
 
 async function handleExecuteRecommendation(recommendationId: number): Promise<void> {
-  const recommendation = state.recommendationRepo?.findById(recommendationId);
+  const { context } = resolveBusinessStoreAuthority();
+  const recommendation = state.recommendationRepo?.findByIdForStore(context.storeId, recommendationId);
   if (!recommendation) {
     throw new Error('执行被阻断：建议不存在，请刷新后重试。');
   }
@@ -10977,7 +11293,7 @@ async function handleExecuteRecommendation(recommendationId: number): Promise<vo
   const screenshotAfter = await tryCaptureExecutionScreenshot('after');
 
   // Log execution
-  state.actionLogRepo?.insert(buildActionLogForExecution({
+  state.actionLogRepo?.insertForStore(context.storeId, buildActionLogForExecution({
     recommendationId,
     recommendation,
     executionResult,
@@ -10987,7 +11303,17 @@ async function handleExecuteRecommendation(recommendationId: number): Promise<vo
   }));
 
   if (executionOutcome.shouldMarkExecuted) {
-    state.recommendationRepo?.updateStatus(recommendationId, executionOutcome.recommendationStatus);
+    const updated = state.recommendationRepo?.updateStatusWithEvidenceIfCurrentForStore(
+      context.storeId,
+      recommendationId,
+      recommendation.status,
+      recommendation.revision ?? 0,
+      executionOutcome.recommendationStatus,
+      {},
+    );
+    if (!updated) {
+      throw new Error('执行状态冲突：建议状态已变化，请刷新后重试。');
+    }
     return;
   }
 
@@ -10999,18 +11325,20 @@ async function handleExecuteRecommendation(recommendationId: number): Promise<vo
 // ============================================================================
 
 async function runDailyReportGeneration(): Promise<void> {
-  const today = new Date().toISOString().split('T')[0];
+  const { context, store } = resolveBusinessStoreAuthority();
+  const capsule = storeCapsuleFor(store);
+  const today = context.businessDate;
 
   // Get summary data
-  const totalRevenue = state.adMetricsRepo?.getTotalSales(today) || 0;
-  const totalCost = state.adMetricsRepo?.getTotalCost(today) || 0;
+  const totalRevenue = state.adMetricsRepo?.getTotalSalesForStore(context.storeId, today) || 0;
+  const totalCost = state.adMetricsRepo?.getTotalCostForStore(context.storeId, today) || 0;
   const avgAcos = totalRevenue > 0 ? totalCost / totalRevenue : 0;
-  const totalClicks = state.adMetricsRepo?.getTotalClicks(today) || 0;
-  const totalOrders = state.adMetricsRepo?.getTotalOrders(today) || 0;
+  const totalClicks = state.adMetricsRepo?.getTotalClicksForStore(context.storeId, today) || 0;
+  const totalOrders = state.adMetricsRepo?.getTotalOrdersForStore(context.storeId, today) || 0;
 
   const summary = {
     date: today,
-    storeName: state.currentStore || 'unknown',
+    storeName: store.displayName,
     salesOverview: {
       totalRevenue,
       totalOrders,
@@ -11024,7 +11352,11 @@ async function runDailyReportGeneration(): Promise<void> {
       totalClicks,
       comparedToYesterday: 0,
     },
-    recommendationsSummary: readDailyReportRecommendationSummary(state.recommendationRepo, today),
+    recommendationsSummary: readDailyReportRecommendationSummary(
+      state.recommendationRepo,
+      context.storeId,
+      today,
+    ),
     inventoryAlerts: {
       outOfStock: 0,
       lowStock: 0,
@@ -11043,7 +11375,7 @@ async function runDailyReportGeneration(): Promise<void> {
     const report = await reportGen.generate(summary);
 
     // Save report
-    const reportPath = path.join(REPORTS_DIR, `daily_${today}.json`);
+    const reportPath = path.join(capsule.reportsDir, `daily_${today}.json`);
     fs.writeFileSync(reportPath, report);
     console.log(`[Scheduler] Daily report generated: ${reportPath}`);
   } catch (err) {
@@ -11058,6 +11390,7 @@ async function runDailyReportGeneration(): Promise<void> {
 
 function registerIpcHandlers(): void {
   if (!state.storeCoordinator) throw new Error('Store coordinator is not initialized');
+  if (!state.storeDailyStatusReader) throw new Error('Store daily status reader is not initialized');
   if (!state.missionDomainService) throw new Error('Mission domain service is not initialized');
   if (!state.analysisAuthorityService) throw new Error('Analysis authority service is not initialized');
   if (!state.executionAuthorityService) throw new Error('Execution authority service is not initialized');
@@ -11072,6 +11405,12 @@ function registerIpcHandlers(): void {
   packageUiSchedulerAudit.registerDatabaseCheckpointIpc(schedulerEvidenceIpc);
   registerStoreIpcHandlers(trackedIpcRegistrar, state.storeCoordinator, {
     withUserStoreMutation: async (scope, work) => {
+      if (packageUiReadOnlyRuntime) {
+        throw new StoreCollectionMainRuntimeError(
+          'PACKAGE_UI_READ_ONLY',
+          `Package UI read-only mode forbids ${scope.operation}`,
+        );
+      }
       const active = state.storeCoordinator!.getActiveStoreContext();
       if (active) state.executionAuthorityService!.assertStoreMutationAllowed(active);
       let transitionedActiveAuthority = false;
@@ -11079,6 +11418,11 @@ function registerIpcHandlers(): void {
         scope,
         () => {
           const laneActive = state.storeCoordinator!.getActiveStoreContext();
+          assertStoreIpcMutationTargetPreflight(
+            state.storeCoordinator!,
+            scope,
+            laneActive,
+          );
           const requiresTransition = storeMutationRequiresVisibleBrowserTransition(
             scope,
             laneActive ? String(laneActive.storeId) : undefined,
@@ -11111,6 +11455,16 @@ function registerIpcHandlers(): void {
       state.storeCoordinator!.assertActiveStoreContext(context);
     },
     onStoreChanged: async (view) => {
+      if (view === null) {
+        if (state.storeCoordinator!.getActiveStoreContext() !== null) {
+          throw new Error('STORE_CHANGED_NULL_CONFLICTS_WITH_ACTIVE_AUTHORITY');
+        }
+        lastPublishedStoreContext = null;
+        state.currentStore = '';
+        mainWindow?.webContents.send('store-context:changed', null);
+        mainWindow?.webContents.send('business-ui:data-updated');
+        return;
+      }
       const freshView = state.storeCoordinator!.getActiveStoreWorkspaceView();
       if (!freshView || freshView.store.storeId !== view.store.storeId) {
         throw new Error('STORE_CHANGED_FRESH_AUTHORITY_MISSING');
@@ -11143,7 +11497,14 @@ function registerIpcHandlers(): void {
       }
       mainWindow?.webContents.send('business-ui:data-updated');
     },
-  });
+    onPostCommitFailure: ({ operation, targetStoreId, error }) => {
+      console.error(
+        `[StoreIPC] ${operation} committed but Renderer publication failed`
+          + (targetStoreId ? ` for ${targetStoreId}` : ''),
+        error,
+      );
+    },
+  }, state.storeDailyStatusReader);
   registerMissionControlIpcHandlers(
     schedulerEvidenceIpc,
     state.storeCoordinator,
@@ -11423,21 +11784,26 @@ function registerIpcHandlers(): void {
   });
 
   // Logs
-  registerTrackedIpcHandler('logs:get', (_, { dateFrom, dateTo, limit }) =>
-    state.actionLogRepo?.findByDateRange(dateFrom, dateTo, limit) || []
-  );
+  registerTrackedIpcHandler('logs:get', (_, { dateFrom, dateTo, limit }) => {
+    const { context } = resolveBusinessStoreAuthority();
+    return state.actionLogRepo?.findByDateRangeForStore(context.storeId, dateFrom, dateTo, limit) || [];
+  });
 
   // Metrics
-  registerTrackedIpcHandler('metrics:get-recent', (_, days) =>
-    state.adMetricsRepo?.getRecent(days) || []
-  );
-  registerTrackedIpcHandler('metrics:get-summary', (_, date) => ({
-    totalSales: state.adMetricsRepo?.getTotalSales(date) || 0,
-    totalCost: state.adMetricsRepo?.getTotalCost(date) || 0,
-    totalClicks: state.adMetricsRepo?.getTotalClicks(date) || 0,
-    totalOrders: state.adMetricsRepo?.getTotalOrders(date) || 0,
-    avgAcos: 0,
-  }));
+  registerTrackedIpcHandler('metrics:get-recent', (_, days) => {
+    const { context } = resolveBusinessStoreAuthority();
+    return state.adMetricsRepo?.getRecentForStore(context.storeId, days) || [];
+  });
+  registerTrackedIpcHandler('metrics:get-summary', (_, date) => {
+    const { context } = resolveBusinessStoreAuthority();
+    return {
+      totalSales: state.adMetricsRepo?.getTotalSalesForStore(context.storeId, date) || 0,
+      totalCost: state.adMetricsRepo?.getTotalCostForStore(context.storeId, date) || 0,
+      totalClicks: state.adMetricsRepo?.getTotalClicksForStore(context.storeId, date) || 0,
+      totalOrders: state.adMetricsRepo?.getTotalOrdersForStore(context.storeId, date) || 0,
+      avgAcos: 0,
+    };
+  });
 
   registerTrackedIpcHandler('v1_5:keywords:build-opportunities', (_, { metrics, options }) =>
     handleBuildKeywordOpportunities(metrics, options)

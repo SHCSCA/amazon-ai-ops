@@ -187,8 +187,7 @@
 .mission-control-shell .mission-control-icon-button:focus-visible,
 .mission-control-shell .sidebar-collapse-button:focus-visible,
 .mission-control-shell .sidebar-store-card:focus-visible,
-.mission-control-shell .mission-control-store-gate :is(button, input, select):focus-visible,
-.mission-control-store-gate :is(button, input, select):focus-visible {
+.mission-control-store-gate-shell :is(button, input, select):focus-visible {
   outline: 2px solid var(--workspace-focus);
   outline-offset: 2px;
 }
@@ -488,6 +487,12 @@
   font-size: 11px;
   font-weight: 650;
   line-height: 18px;
+}
+
+.mission-control-shell .mission-control-shell-alert--warning {
+  border-bottom-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
 }
 
 .mission-control-shell .mission-control-body {
@@ -1483,158 +1488,161 @@
   margin: 14px;
 }
 
-.mission-control-store-gate {
-  display: grid;
-  grid-template-columns: minmax(0, 680px) minmax(300px, 420px);
-  gap: 16px;
-  align-content: center;
-  justify-content: center;
+.mission-control-store-gate-shell {
   min-height: 100vh;
   background: #f4f7fb;
-  padding: 32px;
   color: var(--workspace-text);
   font-family: var(--workspace-font-family);
 }
 
-.mission-control-store-gate[data-state="loading"],
-.mission-control-store-gate[data-state="switching"],
-.mission-control-store-gate[data-state="error"] {
-  grid-template-columns: minmax(0, 560px);
+.mission-control-store-gate-shell__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  border-bottom: 1px solid var(--workspace-border);
+  background: #fff;
+  padding: 0 22px;
 }
 
-.mission-control-store-gate .mission-control-store-gate__card {
+.mission-control-store-gate-shell__brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.mission-control-store-gate-shell__brand > span {
   display: grid;
-  gap: 16px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: #175cd3;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.mission-control-store-gate-shell__brand > div {
+  display: grid;
+  gap: 1px;
+}
+
+.mission-control-store-gate-shell__brand strong {
+  color: #172033;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.mission-control-store-gate-shell__brand small {
+  color: var(--workspace-text-secondary);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.mission-control-store-gate-shell__authority {
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  background: #fff7ed;
+  padding: 5px 9px;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.mission-control-store-gate-shell__body {
+  min-height: calc(100vh - 64px);
+}
+
+.mission-control-store-gate__sidebar .app-sidebar-scroll {
+  padding: 12px 10px;
+}
+
+.mission-control-store-gate__sidebar-hint {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  border: 1px solid #dbe7f5;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 10px;
+}
+
+.mission-control-store-gate__sidebar-hint strong {
+  color: #315b93;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.mission-control-store-gate__sidebar-hint p {
+  margin: 0;
+  color: var(--workspace-text-secondary);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.mission-control-store-gate__main {
+  display: grid;
+  min-width: 0;
+  place-items: center;
+  background: #f4f7fb;
+  padding: 32px;
+}
+
+.mission-control-store-gate__safe-state {
+  display: grid;
+  width: min(640px, 100%);
+  gap: 12px;
   border: 1px solid var(--workspace-border);
   border-radius: 12px;
   background: #fff;
-  padding: 24px;
-  box-shadow: 0 10px 30px rgb(15 23 42 / 0.08);
+  padding: 28px;
+  box-shadow: 0 10px 30px rgb(15 23 42 / 0.07);
 }
 
-.mission-control-store-gate .mission-control-store-gate__card--loading,
-.mission-control-store-gate .mission-control-store-gate__card--error {
-  justify-items: center;
-  padding: 36px 28px;
-  text-align: center;
-}
-
-.mission-control-store-gate .mission-control-store-gate__header {
-  display: grid;
-  gap: 6px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--workspace-border);
-}
-
-.mission-control-store-gate .mission-control-store-gate__eyebrow {
-  margin: 0;
+.mission-control-store-gate__safe-state > span {
   color: #315b93;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 780;
-  letter-spacing: 0.06em;
-  line-height: 18px;
+  letter-spacing: 0.08em;
+  line-height: 16px;
 }
 
-.mission-control-store-gate .mission-control-store-gate__title,
-.mission-control-store-gate .mission-control-store-gate__subtitle {
+.mission-control-store-gate__safe-state h1 {
   margin: 0;
   color: #172033;
-  font-weight: 760;
-}
-
-.mission-control-store-gate .mission-control-store-gate__title {
   font-size: 24px;
   line-height: 32px;
 }
 
-.mission-control-store-gate .mission-control-store-gate__subtitle {
-  font-size: 18px;
-  line-height: 26px;
-}
-
-.mission-control-store-gate .mission-control-store-gate__description,
-.mission-control-store-gate .mission-control-store-gate__status,
-.mission-control-store-gate .mission-control-store-gate__error,
-.mission-control-store-gate .mission-control-store-gate__feedback {
+.mission-control-store-gate__safe-state p {
   margin: 0;
+  color: var(--workspace-text-secondary);
   font-size: 13px;
-  line-height: 20px;
+  line-height: 21px;
 }
 
-.mission-control-store-gate .mission-control-store-gate__description,
-.mission-control-store-gate .mission-control-store-gate__status {
-  color: var(--workspace-text-secondary);
+.mission-control-store-gate-shell[data-state="error"] .mission-control-store-gate__safe-state > span,
+.mission-control-store-gate-shell[data-state="error"] .mission-control-store-gate__safe-state p {
+  color: #b42318;
 }
 
-.mission-control-store-gate .mission-control-store-gate__error {
-  color: #b91c1c;
+.mission-control-store-gate__boundaries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 4px;
 }
 
-.mission-control-store-gate .mission-control-store-gate__selection-form,
-.mission-control-store-gate .mission-control-store-gate__create-form {
-  display: grid;
-  gap: 10px;
-}
-
-.mission-control-store-gate .mission-control-store-gate__label {
-  color: var(--workspace-text-secondary);
-  font-size: 12px;
+.mission-control-store-gate__boundaries span {
+  border: 1px solid #dbe7f5;
+  border-radius: 999px;
+  background: #f8fbff;
+  padding: 5px 8px;
+  color: #315b93;
+  font-size: 10px;
   font-weight: 680;
-  line-height: 18px;
-}
-
-.mission-control-store-gate .mission-control-store-gate__select,
-.mission-control-store-gate .mission-control-store-gate__input {
-  width: 100%;
-  min-height: 40px;
-  border: 1px solid var(--workspace-border-strong);
-  border-radius: 7px;
-  background: #fff;
-  padding: 8px 10px;
-  color: var(--workspace-text);
-  font-size: 13px;
-  line-height: 20px;
-}
-
-.mission-control-store-gate .mission-control-store-gate__fixed-fields {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.mission-control-store-gate .mission-control-store-gate__fixed-fields > * {
-  border: 1px solid #bfdbfe;
-  border-radius: 7px;
-  background: #eff6ff;
-  padding: 8px;
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 720;
-  line-height: 18px;
-  text-align: center;
-}
-
-.mission-control-store-gate .mission-control-store-gate__confirm,
-.mission-control-store-gate .mission-control-store-gate__create,
-.mission-control-store-gate .mission-control-store-gate__retry {
-  min-height: 40px;
-  border: 1px solid var(--workspace-action);
-  border-radius: 7px;
-  background: var(--workspace-action);
-  padding: 8px 14px;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 720;
-  line-height: 20px;
-}
-
-.mission-control-store-gate .mission-control-store-gate__confirm:disabled,
-.mission-control-store-gate .mission-control-store-gate__create:disabled,
-.mission-control-store-gate .mission-control-store-gate__retry:disabled {
-  border-color: var(--workspace-border);
-  background: #e2e8f0;
-  color: #64748b;
-  cursor: not-allowed;
+  line-height: 14px;
 }
 
 /* The legacy bundle clips .nav-item-index; Mission Control restores real icons. */
@@ -2008,17 +2016,694 @@
     gap: 3px;
   }
 
-  .mission-control-store-gate {
-    grid-template-columns: minmax(0, 720px);
-    align-content: start;
+  .mission-control-store-gate__main {
     padding: 24px;
+  }
+}
+
+/* Store + marketplace is the primary sidebar authority control. Its popover is
+   fixed so the collapsed sidebar's scroll container cannot clip it. */
+.mission-control-shell .store-scope-switcher {
+  position: relative;
+  z-index: 160;
+  display: grid;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e4e9f0;
+}
+
+.mission-control-shell .store-scope-switcher__trigger {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 14px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 58px;
+  border: 1px solid #cbd8e8;
+  border-radius: 9px;
+  background: #f8fbff;
+  padding: 8px;
+  color: #253247;
+  text-align: left;
+}
+
+.mission-control-shell .store-scope-switcher__trigger:hover:not(:disabled),
+.mission-control-shell .store-scope-switcher__trigger:focus-visible {
+  border-color: #8eb6ee;
+  background: #f1f7ff;
+  outline: none;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.12);
+}
+
+.mission-control-shell .store-scope-switcher__icon {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 7px;
+  background: #e8f1ff;
+  color: #2563eb;
+}
+
+.mission-control-shell .store-scope-switcher__current {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.mission-control-shell .store-scope-switcher__current :is(small, strong, span) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-shell .store-scope-switcher__current small {
+  color: #6b7c93;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+}
+
+.mission-control-shell .store-scope-switcher__current strong {
+  color: #1e293b;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.mission-control-shell .store-scope-switcher__current span {
+  color: #5d6c80;
+  font-size: 9px;
+  line-height: 13px;
+}
+
+.mission-control-shell .store-scope-switcher__caret {
+  color: #718198;
+  transition: transform 140ms ease;
+}
+
+.mission-control-shell .store-scope-switcher__trigger[aria-expanded="true"] .store-scope-switcher__caret {
+  transform: rotate(180deg);
+}
+
+.mission-control-shell .store-scope-switcher__summary {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 3px;
+}
+
+.mission-control-shell .store-scope-switcher__summary span {
+  color: #315b93;
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.mission-control-shell .store-scope-switcher__summary span[data-overall="unknown"],
+.mission-control-shell .store-scope-switcher__summary span[data-overall="blocked"] {
+  color: #b45309;
+}
+
+.mission-control-shell .store-scope-switcher__summary small {
+  color: #7d8999;
+  font-size: 9px;
+}
+
+.mission-control-shell .store-scope-switcher__popover {
+  position: fixed;
+  z-index: 260;
+  top: calc(var(--mission-topbar-height) + 10px);
+  left: 8px;
+  display: grid;
+  width: min(338px, calc(100vw - 24px));
+  max-height: calc(100vh - var(--mission-topbar-height) - 20px);
+  overflow: auto;
+  border: 1px solid #cfd8e6;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 44px rgb(15 23 42 / 0.2);
+}
+
+.mission-control-shell .store-scope-switcher__popover > header,
+.mission-control-shell .store-scope-switcher__popover > footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 12px;
+}
+
+.mission-control-shell .store-scope-switcher__popover > header {
+  border-bottom: 1px solid #e6eaf0;
+}
+
+.mission-control-shell .store-scope-switcher__popover > header > div {
+  display: grid;
+  gap: 1px;
+}
+
+.mission-control-shell .store-scope-switcher__popover > header strong {
+  color: #1f2a3d;
+  font-size: 13px;
+}
+
+.mission-control-shell .store-scope-switcher__popover > header span {
+  color: #7b8798;
+  font-size: 10px;
+}
+
+.mission-control-shell .store-scope-switcher__popover > header button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+}
+
+.mission-control-shell .store-scope-switcher__list {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+}
+
+.mission-control-shell .store-scope-switcher__option {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px;
+  color: #34445c;
+  text-align: left;
+}
+
+.mission-control-shell .store-scope-switcher__option:hover:not(:disabled),
+.mission-control-shell .store-scope-switcher__option:focus-visible,
+.mission-control-shell .store-scope-switcher__option[aria-selected="true"] {
+  border-color: #b9d3f6;
+  background: #f4f8ff;
+  outline: none;
+}
+
+.mission-control-shell .store-scope-switcher__option-heading {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.mission-control-shell .store-scope-switcher__option-heading strong {
+  overflow: hidden;
+  color: #1f2a3d;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-shell .store-scope-switcher__option-heading span {
+  flex: none;
+  color: #2563eb;
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.mission-control-shell .store-scope-switcher__option[data-overall="unknown"] .store-scope-switcher__option-heading span,
+.mission-control-shell .store-scope-switcher__option[data-overall="blocked"] .store-scope-switcher__option-heading span {
+  color: #b45309;
+}
+
+.mission-control-shell .store-scope-switcher__option-market,
+.mission-control-shell .store-scope-switcher__option > small {
+  overflow: hidden;
+  color: #718096;
+  font-size: 9px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-shell .store-scope-switcher__health {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.mission-control-shell .store-scope-switcher__health span {
+  overflow: hidden;
+  border-radius: 4px;
+  background: #eef2f7;
+  padding: 2px 4px;
+  color: #56667c;
+  font-size: 8px;
+  line-height: 13px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-shell .store-scope-switcher__state {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin: 6px;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 9px;
+  color: #5b6b80;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.mission-control-shell .store-scope-switcher__state span {
+  min-width: 0;
+  flex: 1;
+}
+
+.mission-control-shell .store-scope-switcher__state[data-state="error"] {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.mission-control-shell .store-scope-switcher__state button,
+.mission-control-shell .store-scope-switcher__popover > footer button {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  border: 1px solid #d5dce6;
+  border-radius: 6px;
+  background: #fff;
+  padding: 5px 8px;
+  color: #40516a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mission-control-shell .store-scope-switcher__popover > footer {
+  justify-content: stretch;
+  border-top: 1px solid #e6eaf0;
+}
+
+.mission-control-shell .store-scope-switcher__popover > footer button {
+  flex: 1;
+  justify-content: center;
+}
+
+.mission-control-shell .store-scope-switcher--collapsed {
+  justify-items: center;
+  padding-bottom: 8px;
+}
+
+.mission-control-shell .store-scope-switcher--collapsed .store-scope-switcher__trigger {
+  display: inline-grid;
+  grid-template-columns: 30px;
+  width: 40px;
+  min-height: 42px;
+  justify-content: center;
+  padding: 5px;
+}
+
+.mission-control-shell .store-scope-switcher--collapsed :is(.store-scope-switcher__current, .store-scope-switcher__caret) {
+  display: none;
+}
+
+.mission-control-shell .mission-control-store-select--readonly .mission-control-store-field {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.mission-control-shell .mission-control-store-select--readonly .mission-control-store-field :is(strong, small) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-control-shell .mission-control-store-select--readonly .mission-control-store-field strong {
+  color: #253247;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.mission-control-shell .mission-control-store-select--readonly .mission-control-store-field small {
+  color: #8792a5;
+  font-size: 9px;
+  line-height: 13px;
+}
+
+.mission-control-workspace-root .store-connection-mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.mission-control-workspace-root .store-connection-mapping {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #dce3ec;
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 12px;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header {
+  display: grid;
+  gap: 3px;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header > div {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header strong {
+  color: #26344a;
+  font-size: 13px;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header span {
+  color: #315b93;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mission-control-workspace-root .store-connection-mapping > header small {
+  color: #718096;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.mission-control-workspace-root .store-connection-mapping label {
+  display: grid;
+  gap: 4px;
+  color: #5d6b7e;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.mission-control-workspace-root .store-connection-mapping input {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  padding: 7px 9px;
+  color: #253247;
+  font-size: 12px;
+}
+
+.mission-control-workspace-root .store-connection-mapping input:focus-visible {
+  border-color: #6ea0e2;
+  outline: 2px solid rgb(37 99 235 / 0.12);
+  outline-offset: 1px;
+}
+
+.mission-control-workspace-root .store-connection-stable-identity,
+.login-stable-identity {
+  display: grid;
+  gap: 3px;
+  border-left: 3px solid #94a3b8;
+  background: #f1f5f9;
+  padding: 7px 9px;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.mission-control-workspace-root .store-connection-stable-identity output,
+.login-stable-identity output {
+  overflow-wrap: anywhere;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mission-control-workspace-root .store-connection-mapping__actions {
+  display: flex;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.mission-control-workspace-root .store-connection-feedback {
+  margin: 0 14px 14px;
+  border-left: 3px solid #22c55e;
+  background: #f0fdf4;
+  padding: 8px 10px;
+  color: #166534;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.store-post-commit-sync-warning {
+  margin: 0 14px 14px;
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
+  padding: 8px 10px;
+  color: #92400e;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.login-stable-identity {
+  margin-top: 8px;
+}
+
+.login-unbind-dialog .store-connection-unbind-facts,
+.mission-control-dialog .store-connection-unbind-facts {
+  display: grid;
+  gap: 1px;
+  margin: 8px 0 0;
+  background: #e2e8f0;
+}
+
+.login-unbind-dialog .store-connection-unbind-facts > div,
+.mission-control-dialog .store-connection-unbind-facts > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.45fr) minmax(0, 1fr);
+  gap: 10px;
+  background: #f8fafc;
+  padding: 6px 8px;
+}
+
+.login-unbind-dialog .store-connection-unbind-facts :is(dt, dd),
+.mission-control-dialog .store-connection-unbind-facts :is(dt, dd) {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #475569;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.login-unbind-dialog .store-connection-unbind-facts dd,
+.mission-control-dialog .store-connection-unbind-facts dd {
+  color: #1e293b;
+  font-weight: 650;
+}
+
+.store-scope-create-backdrop,
+.login-unbind-backdrop {
+  position: fixed;
+  z-index: 420;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(23 32 51 / 0.28);
+  padding: 24px;
+}
+
+.store-scope-create-dialog,
+.login-unbind-dialog {
+  display: grid;
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 20px 48px rgb(15 23 42 / 0.22);
+}
+
+.store-scope-create-dialog > header,
+.store-scope-create-dialog > footer,
+.login-unbind-dialog > header,
+.login-unbind-dialog > footer {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 18px;
+}
+
+.store-scope-create-dialog > header,
+.login-unbind-dialog > header {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.store-scope-create-dialog > footer,
+.login-unbind-dialog > footer {
+  justify-content: flex-end;
+  border-top: 1px solid #e2e8f0;
+}
+
+.store-scope-create-dialog > header > div,
+.login-unbind-dialog > header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.store-scope-create-dialog :is(h2, p),
+.login-unbind-dialog :is(h2, p) {
+  margin: 0;
+}
+
+.store-scope-create-dialog h2,
+.login-unbind-dialog h2 {
+  color: #1f2937;
+  font-size: 18px;
+  line-height: 26px;
+}
+
+.store-scope-create-dialog p,
+.login-unbind-dialog p {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.store-scope-create-dialog > header span,
+.login-unbind-dialog > header span {
+  color: #315b93;
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.05em;
+}
+
+.store-scope-create-dialog > header button {
+  display: inline-grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #d7dee8;
+  border-radius: 7px;
+  background: #fff;
+  color: #64748b;
+}
+
+.store-scope-create-form {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.store-scope-create-form label {
+  display: grid;
+  gap: 5px;
+  color: #526177;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.store-scope-create-form input {
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: #253247;
+  font-size: 13px;
+}
+
+.store-scope-create-fixed {
+  display: grid;
+  grid-template-columns: 0.8fr 0.7fr 1.8fr;
+  gap: 8px;
+}
+
+.store-scope-create-fixed span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.store-scope-create-fixed small {
+  color: #718096;
+  font-size: 9px;
+}
+
+.store-scope-create-fixed strong {
+  overflow: hidden;
+  color: #334155;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.store-scope-create-limit,
+.store-scope-create-feedback {
+  min-height: 18px;
+  margin: 0;
+  color: #718096;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.store-scope-create-feedback [role="alert"],
+.store-scope-create-switch-error {
+  color: #b91c1c !important;
+}
+
+.store-scope-create-success {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  margin: 18px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  padding: 14px;
+  color: #15803d;
+}
+
+.store-scope-create-success > div {
+  display: grid;
+  gap: 4px;
+}
+
+.login-connection-unbind {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 1080px) {
+  .mission-control-workspace-root .store-connection-mapping-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .mission-control-shell *,
   .mission-control-workspace-root *,
-  .mission-control-store-gate * {
+  .mission-control-store-gate-shell *,
+  .store-scope-create-backdrop *,
+  .login-unbind-backdrop * {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;

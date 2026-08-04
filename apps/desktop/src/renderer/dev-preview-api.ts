@@ -18,12 +18,17 @@ import type {
   MissionControlViewId,
   MissionControlWorkspaceId,
   ProductCost,
+  RemoveStoreConnectionInput,
   StoreContextEnvelope,
+  StoreDailyStatusBlocker,
+  StoreDailyStatusListProjection,
+  StoreDailyStatusProjection,
   StoreCollectionScheduleProjection,
   StoreCollectionScheduleRunResult,
   StoreConnection,
   StoreId,
   StoreRecord,
+  StoreScopeRef,
   StoreRuntimeConfigProjection,
   StoreRuntimeConfigRecord,
   StoreRuntimeConfigValues,
@@ -33,12 +38,15 @@ import type {
 import {
   missionControlContextKey,
   normalizeBrowserProfileId,
+  normalizeLingxingCollectionStoreName,
   normalizeMissionControlCommandRequest,
   normalizeMissionControlQueryRequest,
+  normalizeProviderExternalAccountId,
   normalizeStoreContextEnvelope,
   normalizeStoreCapabilityId,
   normalizeStoreId,
 } from '@amazon-ai-ops/shared-types';
+import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
 import {
   applyRecommendationDecision,
   assertRecommendationDecisionRevision,
@@ -1956,7 +1964,7 @@ export function createBrowserPreviewElectronApi(
   const previewGenerations = new Map<StoreId, number>(
     previewStores.map((store) => [store.storeId, 0]),
   );
-  const storeContextListeners = new Set<(view: StoreWorkspaceView) => void>();
+  const storeContextListeners = new Set<(view: StoreWorkspaceView | null) => void>();
   const storeRecordListeners = new Set<(store: StoreRecord) => void>();
 
   const currentPreviewContext = (): StoreContextEnvelope | null => {
@@ -1977,6 +1985,86 @@ export function createBrowserPreviewElectronApi(
     connections: clonePreviewSnapshot(previewConnections.get(store.storeId) ?? []),
     sessions: [],
   });
+  const previewDailyStatuses = (): StoreDailyStatusListProjection => {
+    const generatedAt = new Date().toISOString();
+    const stores: StoreDailyStatusProjection[] = previewStores.map((store) => {
+      const connections = previewConnections.get(store.storeId) ?? [];
+      const lingxing = connections.find((connection) => connection.provider === 'lingxing');
+      const amazonAds = connections.find((connection) => connection.provider === 'amazon_ads');
+      const blockers: StoreDailyStatusBlocker[] = [{
+        code: 'COLLECTION_AUTHORITY_UNKNOWN',
+        severity: 'unknown',
+        detail: '仅开发预览：今日采集、导入与指标状态来自内存 fixture，不代表真实成功。',
+      }];
+      if (!lingxing) blockers.push({
+        code: 'LINGXING_BINDING_MISSING',
+        severity: 'blocking',
+        detail: '开发预览中的当前店铺尚未绑定领星账号与店铺身份。',
+        provider: 'lingxing',
+      });
+      if (lingxing && !lingxing.externalAccountId) blockers.push({
+        code: 'LINGXING_BINDING_INVALID',
+        severity: 'attention',
+        detail: '开发预览：稳定身份待模拟首次新鲜登录识别；不代表真实身份已确认。',
+        provider: 'lingxing',
+      });
+      if (!amazonAds) blockers.push({
+        code: 'AMAZON_ADS_BINDING_MISSING',
+        severity: 'blocking',
+        detail: '开发预览中的当前店铺尚未绑定 Amazon Ads Profile。',
+        provider: 'amazon_ads',
+      });
+      const businessDate = previewContext(store, previewGenerations.get(store.storeId) ?? 0).businessDate;
+      return {
+        schemaVersion: 1,
+        key: { storeId: store.storeId, marketplace: 'US', businessDate },
+        displayName: store.displayName,
+        storeStatus: store.status,
+        currency: 'USD',
+        selected: activePreviewStoreId === store.storeId,
+        eligibleForCollection: false,
+        providers: {
+          lingxing: {
+            provider: 'lingxing',
+            bindingState: lingxing ? 'unknown' : 'missing',
+            connectionStatus: lingxing?.status ?? 'missing',
+            sessionStatus: 'unknown',
+            ...(lingxing?.accountLabel ? { accountLabel: lingxing.accountLabel } : {}),
+            ...(lingxing?.externalAccountId ? { externalAccountId: lingxing.externalAccountId } : {}),
+          },
+          amazonAds: {
+            provider: 'amazon_ads',
+            bindingState: amazonAds ? 'unknown' : 'missing',
+            connectionStatus: amazonAds?.status ?? 'missing',
+            sessionStatus: 'unknown',
+            ...(amazonAds?.externalAccountId ? { externalAccountId: amazonAds.externalAccountId } : {}),
+          },
+        },
+        collection: {
+          state: 'unknown',
+          requiredReportCount: 8,
+        },
+        import: { state: 'unknown' },
+        metrics: {
+          freshness: 'unknown',
+          expectedMetricDate: String(businessDate),
+        },
+        overall: store.status === 'archived'
+          ? 'archived'
+          : store.status === 'inactive'
+            ? 'inactive'
+            : 'unknown',
+        blockers,
+        generatedAt,
+      };
+    });
+    return {
+      schemaVersion: 1,
+      marketplace: 'US',
+      generatedAt,
+      stores,
+    };
+  };
   const requirePreviewMissionAuthority = (submitted: StoreContextEnvelope) => {
     const authoritative = currentPreviewContext();
     if (!authoritative) throw new Error('PREVIEW_EXPLICIT_STORE_SELECTION_REQUIRED');
@@ -2796,6 +2884,62 @@ export function createBrowserPreviewElectronApi(
     };
   };
 
+  const previewBrowserLogin = async (request: BrowserLoginRequest): Promise<BrowserLoginResult> => {
+    const authoritative = requirePreviewMissionAuthority(request.storeContext);
+    const store = requirePreviewStore(authoritative.storeId);
+    const current = previewConnections.get(store.storeId) ?? [];
+    const lingxingIndex = current.findIndex((connection) => connection.provider === 'lingxing');
+    const lingxing = lingxingIndex >= 0 ? current[lingxingIndex] : undefined;
+    const amazonAds = current.find((connection) => connection.provider === 'amazon_ads');
+    if (
+      !lingxing
+      || lingxing.accountLabel?.trim() !== request.username.trim()
+      || !lingxing.normalizedCollectionStoreName
+    ) {
+      throw new Error('PREVIEW_LINGXING_COLLECTION_MAPPING_REQUIRED');
+    }
+    const submittedAdsProfile = normalizeProviderExternalAccountId(
+      'amazon_ads',
+      request.amazonAdsProfileId,
+    );
+    if (!submittedAdsProfile || amazonAds?.normalizedExternalAccountId !== submittedAdsProfile) {
+      throw new Error('PREVIEW_AMAZON_ADS_PROFILE_MAPPING_REQUIRED');
+    }
+    if (!lingxing.externalAccountId || !lingxing.normalizedExternalAccountId) {
+      const stableExternalAccountId = `DEV-PREVIEW-STABLE-${String(store.storeId)}`;
+      const normalizedStableExternalAccountId = normalizeProviderExternalAccountId(
+        'lingxing',
+        stableExternalAccountId,
+      )!;
+      const now = Date.now();
+      const previous = Date.parse(lingxing.updatedAt);
+      const updatedAt = new Date(Number.isFinite(previous) && now <= previous ? previous + 1 : now).toISOString();
+      const enrolled: StoreConnection = {
+        ...lingxing,
+        externalAccountId: stableExternalAccountId,
+        normalizedExternalAccountId: normalizedStableExternalAccountId,
+        updatedAt,
+      };
+      previewConnections.set(store.storeId, current.map((connection, index) =>
+        index === lingxingIndex ? enrolled : connection));
+      const generation = (previewGenerations.get(store.storeId) ?? 0) + 1;
+      previewGenerations.set(store.storeId, generation);
+      const view = previewView(store, previewContext(store, generation));
+      storeContextListeners.forEach((listener) => listener(clonePreviewSnapshot(view)));
+    }
+    return {
+      ok: true,
+      credentialSource: request.credentialSource,
+      currentStore: store.displayName,
+      erpSessionReady: true,
+      erpSessionReused: false,
+      sessionIdentityVerified: false,
+      adsSessionReady: false,
+      adsUnavailableReason: '仅开发预览：模拟首次身份识别，不代表真实 ERP 或 Ads 登录成功。',
+      credentialPersistence: 'not_saved_unverified_session',
+    };
+  };
+
   return {
     missionControl: {
       query: previewMissionQuery,
@@ -2832,13 +2976,15 @@ export function createBrowserPreviewElectronApi(
     updateStore: async (input: { storeId: StoreId; patch?: Partial<StoreRecord> }) => {
       const current = requirePreviewStore(input?.storeId);
       const patch = input?.patch ?? {};
+      if (
+        typeof patch.businessTimezone === 'string'
+        && patch.businessTimezone.trim() !== 'America/Los_Angeles'
+      ) throw new Error('PREVIEW_US_BUSINESS_TIMEZONE_FIXED');
       const next: StoreRecord = {
         ...current,
         ...(typeof patch.displayName === 'string' ? { displayName: patch.displayName.trim() } : {}),
         ...(patch.status === 'active' || patch.status === 'inactive' ? { status: patch.status } : {}),
-        ...(typeof patch.businessTimezone === 'string'
-          ? { businessTimezone: patch.businessTimezone.trim() }
-          : {}),
+        businessTimezone: 'America/Los_Angeles',
         marketplace: 'US',
         currency: 'USD',
         updatedAt: new Date().toISOString(),
@@ -2846,6 +2992,7 @@ export function createBrowserPreviewElectronApi(
       previewStores = previewStores.map((row) => row.storeId === next.storeId ? next : row);
       if (next.status !== 'active' && activePreviewStoreId === next.storeId) {
         activePreviewStoreId = null;
+        storeContextListeners.forEach((listener) => listener(null));
       }
       storeRecordListeners.forEach((listener) => listener(clonePreviewSnapshot(next)));
       return clonePreviewSnapshot(next);
@@ -2855,7 +3002,10 @@ export function createBrowserPreviewElectronApi(
       const updatedAt = new Date().toISOString();
       const next: StoreRecord = { ...current, status: 'archived', archivedAt: updatedAt, updatedAt };
       previewStores = previewStores.map((row) => row.storeId === next.storeId ? next : row);
-      if (activePreviewStoreId === next.storeId) activePreviewStoreId = null;
+      if (activePreviewStoreId === next.storeId) {
+        activePreviewStoreId = null;
+        storeContextListeners.forEach((listener) => listener(null));
+      }
       storeRecordListeners.forEach((listener) => listener(clonePreviewSnapshot(next)));
       return clonePreviewSnapshot(next);
     },
@@ -2871,8 +3021,9 @@ export function createBrowserPreviewElectronApi(
       storeRecordListeners.forEach((listener) => listener(clonePreviewSnapshot(next)));
       return clonePreviewSnapshot(next);
     },
-    switchStore: async (storeIdInput: StoreId) => {
-      const store = requirePreviewStore(storeIdInput);
+    switchStore: async (scope: StoreScopeRef) => {
+      if (!scope || scope.marketplace !== 'US') throw new Error('PREVIEW_STORE_SCOPE_MARKETPLACE_UNSUPPORTED');
+      const store = requirePreviewStore(scope.storeId);
       if (store.status !== 'active') throw new Error('预览中只能切换到 active 店铺。');
       if (activePreviewStoreId && activePreviewStoreId !== store.storeId) {
         previewGenerations.set(
@@ -2899,18 +3050,48 @@ export function createBrowserPreviewElectronApi(
       const current = previewConnections.get(store.storeId) ?? [];
       const existing = current.find((connection) => connection.provider === input.provider);
       if (existing) return clonePreviewSnapshot(existing);
+      const accountLabel = typeof input.accountLabel === 'string' ? input.accountLabel.trim() : '';
+      const externalAccountId = typeof input.externalAccountId === 'string'
+        ? input.externalAccountId.trim()
+        : '';
+      const collectionStoreName = typeof input.collectionStoreName === 'string'
+        ? input.collectionStoreName.trim()
+        : '';
+      const normalizedCollectionStoreName = normalizeLingxingCollectionStoreName(collectionStoreName);
+      const normalizedExternalAccountId = input.provider === 'amazon_ads'
+        ? normalizeProviderExternalAccountId(input.provider, externalAccountId)
+        : undefined;
+      if (
+        input.provider === 'lingxing'
+          ? !accountLabel || !normalizedCollectionStoreName || Boolean(externalAccountId)
+          : !normalizedExternalAccountId
+      ) {
+        throw new Error('PREVIEW_STORE_CONNECTION_IDENTITY_REQUIRED');
+      }
+      const duplicate = [...previewConnections.values()].flat().find((connection) => (
+        connection.provider === input.provider
+        && normalizedExternalAccountId !== undefined
+        && connection.normalizedExternalAccountId === normalizedExternalAccountId
+      ));
+      if (duplicate) throw new Error('PREVIEW_EXTERNAL_ACCOUNT_ALREADY_BOUND');
       const occurredAt = new Date().toISOString();
       const connection: StoreConnection = {
         id: normalizeStoreCapabilityId(`preview-capability-${++previewConnectionSequence}`),
         storeId: store.storeId,
         provider: input.provider,
         status: 'not_configured',
-        ...(typeof input.accountLabel === 'string' && input.accountLabel.trim()
-          ? { accountLabel: input.accountLabel.trim() }
+        ...(accountLabel
+          ? { accountLabel }
           : {}),
-        ...(typeof input.externalAccountId === 'string' && input.externalAccountId.trim()
-          ? { externalAccountId: input.externalAccountId.trim() }
-          : {}),
+        ...(input.provider === 'lingxing'
+          ? {
+              collectionStoreName,
+              normalizedCollectionStoreName,
+            }
+          : {
+              externalAccountId,
+              normalizedExternalAccountId,
+            }),
         createdAt: occurredAt,
         updatedAt: occurredAt,
       };
@@ -2930,24 +3111,60 @@ export function createBrowserPreviewElectronApi(
       const index = current.findIndex((connection) => connection.id === input?.id);
       if (index === -1) throw new Error('PREVIEW_STORE_CONNECTION_NOT_FOUND');
       const existing = current[index]!;
+      if (!input.expectedUpdatedAt || input.expectedUpdatedAt !== existing.updatedAt) {
+        throw new Error('PREVIEW_STORE_CONNECTION_CONFLICT');
+      }
       const normalizedAccountLabel = typeof input.accountLabel === 'string'
         ? input.accountLabel.trim()
         : existing.accountLabel;
-      const identityChanged = input.accountLabel !== undefined
-        && normalizedAccountLabel !== existing.accountLabel?.trim();
+      const externalAccountId = typeof input.externalAccountId === 'string'
+        ? input.externalAccountId.trim()
+        : existing.externalAccountId ?? '';
+      const collectionStoreName = typeof input.collectionStoreName === 'string'
+        ? input.collectionStoreName.trim()
+        : existing.collectionStoreName ?? '';
+      const normalizedCollectionStoreName = normalizeLingxingCollectionStoreName(collectionStoreName);
+      const normalizedExternalAccountId = existing.provider === 'amazon_ads'
+        ? normalizeProviderExternalAccountId(existing.provider, externalAccountId)
+        : existing.normalizedExternalAccountId;
+      if (
+        existing.provider === 'lingxing'
+          ? !normalizedAccountLabel || !normalizedCollectionStoreName || input.externalAccountId !== undefined
+          : !normalizedExternalAccountId
+      ) {
+        throw new Error('PREVIEW_STORE_CONNECTION_IDENTITY_REQUIRED');
+      }
+      const duplicate = [...previewConnections.values()].flat().find((connection) => (
+        connection.id !== existing.id
+        && connection.provider === existing.provider
+        && normalizedExternalAccountId !== undefined
+        && connection.normalizedExternalAccountId === normalizedExternalAccountId
+      ));
+      if (duplicate) throw new Error('PREVIEW_EXTERNAL_ACCOUNT_ALREADY_BOUND');
+      const accountLabelChanged = normalizedAccountLabel !== existing.accountLabel?.trim();
+      const collectionStoreNameChanged = existing.provider === 'lingxing'
+        && normalizedCollectionStoreName !== existing.normalizedCollectionStoreName;
+      const identityChanged = accountLabelChanged
+        || collectionStoreNameChanged
+        || normalizedExternalAccountId !== existing.normalizedExternalAccountId;
       const updated: StoreConnection = {
         ...existing,
-        ...(typeof input.accountLabel === 'string' && input.accountLabel.trim()
-          ? { accountLabel: input.accountLabel.trim() }
+        ...(normalizedAccountLabel
+          ? { accountLabel: normalizedAccountLabel }
           : {}),
-        ...(!identityChanged && typeof input.externalAccountId === 'string' && input.externalAccountId.trim()
-          ? { externalAccountId: input.externalAccountId.trim() }
-          : {}),
+        ...(existing.provider === 'lingxing'
+          ? {
+              collectionStoreName,
+              normalizedCollectionStoreName,
+              ...(accountLabelChanged
+                ? { externalAccountId: undefined, normalizedExternalAccountId: undefined }
+                : {}),
+            }
+          : { externalAccountId, normalizedExternalAccountId }),
         ...(identityChanged ? {
-          externalAccountId: undefined,
           status: 'not_configured' as const,
           lastVerifiedAt: undefined,
-          lastFailureCode: undefined,
+          lastFailureCode: 'connection_identity_changed',
           session: undefined,
         } : {}),
         updatedAt: new Date().toISOString(),
@@ -2960,13 +3177,40 @@ export function createBrowserPreviewElectronApi(
       storeContextListeners.forEach((listener) => listener(clonePreviewSnapshot(view)));
       return clonePreviewSnapshot(updated);
     },
+    removeStoreConnection: async (input: RemoveStoreConnectionInput) => {
+      const store = requirePreviewStore(input?.storeId);
+      if (store.status !== 'active' || activePreviewStoreId !== store.storeId) {
+        throw new Error('PREVIEW_ACTIVE_STORE_CONNECTION_REQUIRED');
+      }
+      const current = previewConnections.get(store.storeId) ?? [];
+      const existing = current.find((connection) => connection.id === input?.id);
+      if (!existing) {
+        throw new Error('PREVIEW_STORE_CONNECTION_NOT_FOUND');
+      }
+      if (!input.expectedUpdatedAt || input.expectedUpdatedAt !== existing.updatedAt) {
+        throw new Error('PREVIEW_STORE_CONNECTION_CONFLICT');
+      }
+      previewConnections.set(
+        store.storeId,
+        current.filter((connection) => connection.id !== input.id),
+      );
+      const generation = (previewGenerations.get(store.storeId) ?? 0) + 1;
+      previewGenerations.set(store.storeId, generation);
+      const view = previewView(store, previewContext(store, generation));
+      storeContextListeners.forEach((listener) => listener(clonePreviewSnapshot(view)));
+      return { success: true as const };
+    },
+    listStoreDailyStatuses: async (input: { marketplace: 'US' }) => {
+      if (!input || input.marketplace !== 'US') throw new Error('PREVIEW_STORE_SCOPE_MARKETPLACE_UNSUPPORTED');
+      return clonePreviewSnapshot(previewDailyStatuses());
+    },
     getActiveStoreContext: async () => clonePreviewSnapshot(currentPreviewContext()),
     getActiveStoreWorkspaceView: async () => {
       const context = currentPreviewContext();
       if (!context) return null;
       return clonePreviewSnapshot(previewView(requirePreviewStore(context.storeId), context));
     },
-    onStoreContextChanged: (callback: (view: StoreWorkspaceView) => void) => {
+    onStoreContextChanged: (callback: (view: StoreWorkspaceView | null) => void) => {
       storeContextListeners.add(callback);
       return () => storeContextListeners.delete(callback);
     },
@@ -2982,6 +3226,7 @@ export function createBrowserPreviewElectronApi(
       loginSession: { erpSessionReused: true, adsEntryMode: 'browser-preview', adsTitle: '浏览器预览模式' },
       storeContext: clonePreviewSnapshot(currentPreviewContext()),
     }),
+    browserLogin: previewBrowserLogin,
     browserLogout: async () => true,
     getOperationScope: async (storeContext: StoreContextEnvelope) => {
       const { dataset } = requirePreviewDatasetAuthority(storeContext);

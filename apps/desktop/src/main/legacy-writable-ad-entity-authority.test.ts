@@ -79,9 +79,9 @@ function createFixture(): {
   `).run(sourceFile, 'a'.repeat(64));
   db.prepare(`
     INSERT INTO ad_daily_metrics (
-      batch_id, report_type, date, store_name, marketplace_code, asin,
+      store_id, batch_id, report_type, date, store_name, marketplace_code, asin,
       campaign_name, ad_group_name, targeting, match_type, source_file, source_row
-    ) VALUES ('batch-1', 'keyword', '2026-07-22', 'US Store One', 'US', 'B0TEST',
+    ) VALUES ('store-one', 'batch-1', 'keyword', '2026-07-22', 'US Store One', 'US', 'B0TEST',
       'Campaign A', 'Ad Group A', 'door lock', 'exact', ?, 7)
   `).run(sourceFile);
   const target: WritableAdTargetEvidence = {

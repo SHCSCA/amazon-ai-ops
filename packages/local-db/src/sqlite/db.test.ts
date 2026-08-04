@@ -596,7 +596,7 @@ describe('initGuardedExistingSqlite', () => {
         SELECT MAX(version) AS version
         FROM schema_migrations
         WHERE status = 'applied'
-      `).get()).toEqual({ version: 9 });
+      `).get()).toEqual({ version: 11 });
     } finally {
       observed.database.close();
     }

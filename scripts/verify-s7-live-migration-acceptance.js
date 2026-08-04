@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
+  TARGET_VERSION,
   collectRowCounts,
   evaluateBusinessRowPreservation,
   loadLocalDbRuntime,
@@ -11,7 +12,11 @@ const {
 } = require('./migrate-current-user-db.js');
 const {
   REQUIRED_TABLES,
+  inspectStoreProviderIdentityV11Schema,
+  legacyV1Checksum,
   migrationContract,
+  migrationRowsMatchProductionContract,
+  migrationV1ChecksumWhitelist,
 } = require('./verify-production-authority-selection.js');
 const {
   CURRENTNESS_METHOD,
@@ -27,8 +32,9 @@ const OFFLINE_MIGRATION_KIND = 's7-offline-db-upgrade';
 const OFFLINE_MIGRATION_SCHEMA_VERSION = 1;
 const MIGRATION_VERIFICATION_KIND = 's7-migration-backup-restore-verification';
 const MIGRATION_VERIFICATION_SCHEMA_VERSION = 1;
-const TARGET_VERSION = 9;
 const OFFLINE_SIDECAR_SUFFIXES = Object.freeze(['-wal', '-shm', '-journal']);
+// V9-named check-code identifiers are retained as the schema-v1 evidence ABI;
+// every corresponding check is bound to TARGET_VERSION, currently v11.
 const REQUIRED_MIGRATION_VERIFICATION_CHECK_CODES = Object.freeze([
   'MANIFEST_SCHEMA_VALID',
   'SOURCE_AND_OUTPUT_PATHS_DISTINCT',
@@ -87,6 +93,7 @@ const REQUIRED_LIVE_MIGRATION_ACCEPTANCE_CHECK_CODES = Object.freeze([
   'LIVE_LOGICAL_SNAPSHOT_INTEGRITY',
   'LIVE_REQUIRED_TABLES_PRESENT',
   'LIVE_MIGRATIONS_1_TO_9_CURRENT',
+  'LIVE_V11_STORE_PROVIDER_IDENTITY_SCHEMA_CURRENT',
   'LIVE_BUSINESS_ROWS_PRESERVED',
   'LIVE_V9_UPGRADE_BACKUP_EMBEDDED',
   'LIVE_V9_UPGRADE_BACKUP_PATHS_BOUND',
@@ -870,7 +877,7 @@ function validateOfflineMigrationManifest(manifest, databaseArtifact, checks) {
       && manifest.businessRowPreservation.failures.length === 0
       && Array.isArray(manifest.preservationFailures)
       && manifest.preservationFailures.length === 0,
-    'offline manifest must bind nine applied migrations and a passed business-row preservation proof',
+    `offline manifest must bind ${TARGET_VERSION} applied migrations and a passed business-row preservation proof`,
   );
 }
 
@@ -1047,7 +1054,7 @@ function verifyOfflineMigrationArtifacts(manifest, context, checks) {
     addRequiredCheck(
       checks,
       'OFFLINE_WORKING_MIGRATIONS_CURRENT',
-      sameMigrationContract(
+      migrationRowsMatchProductionContract(
         actualMigrations,
         context.migrationContract,
         context.allowedV1Checksums,
@@ -1370,37 +1377,6 @@ function normalizeMigrationRows(rows) {
   }));
 }
 
-function legacyV1Checksum(migrationsRoot = path.join(
-  path.resolve(__dirname, '..'),
-  'packages',
-  'local-db',
-  'src',
-  'sqlite',
-  'migrations',
-)) {
-  const source = fs.readFileSync(
-    path.join(migrationsRoot, '0001-store-authority.ts'),
-    'utf8',
-  );
-  const match = source.match(
-    /export const LEGACY_STORE_AUTHORITY_MIGRATION_CHECKSUM = '([^']+)';/,
-  );
-  if (!match) fail('Could not read the explicit legacy v1 migration checksum contract.');
-  return match[1];
-}
-
-function sameMigrationContract(actual, expected, allowedV1Checksums) {
-  return actual.length === expected.length
-    && actual.every((row, index) => (
-      row.version === expected[index].version
-      && row.name === expected[index].name
-      && (row.version === 1
-        ? allowedV1Checksums.has(row.checksum)
-        : row.checksum === expected[index].checksum)
-      && row.status === 'applied'
-    ));
-}
-
 function validateUpgradeBackup(
   database,
   databaseArtifact,
@@ -1413,7 +1389,7 @@ function validateUpgradeBackup(
   try {
     migrationManifest = JSON.parse(String(targetMigrationRow.manifestJson ?? ''));
   } catch {
-    fail('LIVE_V9_UPGRADE_BACKUP_EMBEDDED: migration 9 manifest_json is malformed.');
+    fail(`LIVE_V9_UPGRADE_BACKUP_EMBEDDED: migration ${TARGET_VERSION} manifest_json is malformed.`);
   }
   const upgradeBackup = migrationManifest?.upgradeBackup;
   const targetContract = context.migrationContract.find(
@@ -1431,7 +1407,7 @@ function validateUpgradeBackup(
       && upgradeBackup?.targetVersion === TARGET_VERSION
       && upgradeBackup?.targetName === targetContract?.name
       && upgradeBackup?.targetChecksum === targetContract?.checksum,
-    'migration 9 must embed the current recoverable schema-upgrade-backup contract',
+    `migration ${TARGET_VERSION} must embed the current recoverable schema-upgrade-backup contract`,
   );
   addRequiredCheck(
     checks,
@@ -1447,16 +1423,19 @@ function validateUpgradeBackup(
     upgradeBackup.sourceVersion === offlineManifest.source.version,
     'upgrade backup sourceVersion must equal the offline source version',
   );
-  const backupArtifact = fileArtifact(fixedBackupPath, 'Migration 9 upgrade backup');
+  const backupArtifact = fileArtifact(
+    fixedBackupPath,
+    `Migration ${TARGET_VERSION} upgrade backup`,
+  );
   const sidecarManifest = readJsonArtifact(
     fixedManifestPath,
-    'Migration 9 upgrade backup manifest',
+    `Migration ${TARGET_VERSION} upgrade backup manifest`,
   );
   addRequiredCheck(
     checks,
     'LIVE_V9_UPGRADE_BACKUP_MANIFEST_MATCH',
     sameUpgradeBackupContract(upgradeBackup, sidecarManifest.value),
-    'embedded migration 9 upgradeBackup must match its adjacent manifest contract',
+    `embedded migration ${TARGET_VERSION} upgradeBackup must match its adjacent manifest contract`,
   );
 
   const repository = new context.runtime.StoreRepository(database);
@@ -1474,7 +1453,7 @@ function validateUpgradeBackup(
       && preflight.version === TARGET_VERSION
       && preflight.targetVersion === TARGET_VERSION
       && preflight.sourceVersion === offlineManifest.source.version,
-    'StoreRepository recovery preflight must allow restore for the bound v9 backup',
+    `StoreRepository recovery preflight must allow restore for the bound v${TARGET_VERSION} backup`,
   );
   addRequiredCheck(
     checks,
@@ -1583,12 +1562,21 @@ function inspectLogicalSnapshot(
     addRequiredCheck(
       checks,
       'LIVE_MIGRATIONS_1_TO_9_CURRENT',
-      sameMigrationContract(
+      migrationRowsMatchProductionContract(
         normalizedRows,
         context.migrationContract,
         context.allowedV1Checksums,
       ),
       `migrationRecordCount=${normalizedRows.length}`,
+    );
+    const v11Schema = inspectStoreProviderIdentityV11Schema(database);
+    addRequiredCheck(
+      checks,
+      'LIVE_V11_STORE_PROVIDER_IDENTITY_SCHEMA_CURRENT',
+      v11Schema.passed === true,
+      v11Schema.passed
+        ? '3 columns, one unique partial index, and all 6 authority triggers match v11'
+        : v11Schema.violations.join('; '),
     );
 
     const liveRowCounts = collectRowCounts(database);
@@ -1639,10 +1627,7 @@ function inspectLogicalSnapshot(
 function defaultContext(injectedContext = {}) {
   const currentMigrationContract = migrationContract();
   return {
-    allowedV1Checksums: new Set([
-      currentMigrationContract[0].checksum,
-      legacyV1Checksum(),
-    ]),
+    allowedV1Checksums: migrationV1ChecksumWhitelist(currentMigrationContract),
     cleanupCaptureRoot: removeCaptureRoot,
     Database: requireSqlite(),
     migrationContract: currentMigrationContract,

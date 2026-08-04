@@ -5,6 +5,10 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initGuardedExistingSqlite } from '@amazon-ai-ops/local-db/src/sqlite/db';
 import {
+  STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION,
+  STORE_PROVIDER_IDENTITY_UNIQUE_INDEX,
+} from '@amazon-ai-ops/local-db/src/sqlite/migrations';
+import {
   S7_STARTUP_GATE_ACTIVE_FILE,
   S7_STARTUP_GATE_ACTIVE_KIND,
   S7_STARTUP_GATE_ACTIVE_SCHEMA,
@@ -842,7 +846,7 @@ describe('S7 packaged Main startup exclusivity gate', () => {
     expect(fs.existsSync(shellDrift.completionPath)).toBe(false);
   });
 
-  it('holds after completion on DB replacement, ACL drift, or schema ledger drift', () => {
+  it('holds after completion on DB replacement, ACL drift, or authority schema drift', () => {
     const replaced = setupFinalizedGate();
     enforceS7MainStartupGate(replaced.normalOptions());
     const replacement = path.join(replaced.fixture.root, 'replacement.db');
@@ -884,9 +888,9 @@ describe('S7 packaged Main startup exclusivity gate', () => {
     })).toThrow(/ACL\/owner proof failed/i);
 
     for (const sql of [
-      `DELETE FROM schema_migrations WHERE version = 9`,
-      `UPDATE schema_migrations SET checksum = '${'F'.repeat(64)}' WHERE version = 9`,
-      `UPDATE schema_migrations SET status = 'started' WHERE version = 9`,
+      `DELETE FROM schema_migrations WHERE version = ${STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION}`,
+      `UPDATE schema_migrations SET checksum = '${'F'.repeat(64)}' WHERE version = ${STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION}`,
+      `UPDATE schema_migrations SET status = 'started' WHERE version = ${STORE_PROVIDER_IDENTITY_AUTHORITY_MIGRATION_VERSION}`,
     ]) {
       const ledgerDrift = setupFinalizedGate();
       enforceS7MainStartupGate(ledgerDrift.normalOptions());
@@ -895,6 +899,20 @@ describe('S7 packaged Main startup exclusivity gate', () => {
       database.close();
       expect(() => enforceS7MainStartupGate(ledgerDrift.normalOptions())).toThrow(
         /AUTHORITY_DRIFT|migration ledger|authority schema/i,
+      );
+    }
+
+    for (const sql of [
+      'DROP TRIGGER trg_lingxing_collection_resume_event_attempt_insert',
+      `DROP INDEX ${STORE_PROVIDER_IDENTITY_UNIQUE_INDEX}`,
+    ]) {
+      const schemaDrift = setupFinalizedGate();
+      enforceS7MainStartupGate(schemaDrift.normalOptions());
+      const database = new Database(schemaDrift.fixture.databasePath);
+      database.exec(sql);
+      database.close();
+      expect(() => enforceS7MainStartupGate(schemaDrift.normalOptions())).toThrow(
+        /AUTHORITY_DRIFT|exact schema contract|authority schema/i,
       );
     }
   });
@@ -1234,7 +1252,7 @@ describe('S7 packaged Main startup exclusivity gate', () => {
     }
   });
 
-  it('blocks a fake no-ACTIVE database whose only migration row claims version 9', () => {
+  it('blocks a stale fake no-ACTIVE database whose only migration row claims version 9', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 's7-normal-fake-v9-'));
     roots.push(root);
     const canonicalUserDataDir = path.join(root, 'Roaming', '@amazon-ai-ops', 'desktop');
@@ -1278,7 +1296,7 @@ describe('S7 packaged Main startup exclusivity gate', () => {
     expect(publicArtifact(after)).toEqual(publicArtifact(before));
   });
 
-  it('admits a complete no-ACTIVE v9 authority only after matching full proofs before and after lock', () => {
+  it('admits a complete no-ACTIVE v11 authority only after matching full proofs before and after lock', () => {
     const state = setupFinalizedGate();
     fs.rmSync(state.fixture.gateDirectory, { recursive: true, force: true });
     const inspectPostMigrationAuthority = vi.fn(
