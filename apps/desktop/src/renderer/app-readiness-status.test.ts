@@ -116,7 +116,7 @@ describe('login micro-response contract', () => {
     expect(typeof loginSubmitButtonView).toBe('function');
     const busy = loginSubmitButtonView!(true);
 
-    expect(busy.label).toBe('正在确认 ERP 和 Ads 会话...');
+    expect(busy.label).toBe('正在启动当前店铺连接...');
     expect(busy.loading).toBe(true);
     expect(busy.ariaBusy).toBe(true);
     expect(busy.className).toContain('login-submit-button');
@@ -125,7 +125,7 @@ describe('login micro-response contract', () => {
 
   it('requires an explicit visible Lingxing binding before login without exposing the username in DOM data', () => {
     const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
-    const loginPage = source.slice(source.indexOf('function LoginPage()'), source.indexOf('function MissionControlRuntime'));
+    const loginPage = source.slice(source.indexOf('function StoreConnectionWorkbench'), source.indexOf('function MissionControlRuntime'));
 
     expect(loginPage).toContain('data-login-connection-status');
     expect(loginPage).toContain('data-state={loginConnectionState}');
@@ -147,38 +147,32 @@ describe('login micro-response contract', () => {
     expect(loginPage).not.toMatch(/data-[\\w-]*(?:user|account)[\\w-]*=\\{?username/i);
   });
 
-  it('requires a visible US Amazon Ads Profile binding and keeps login blocked until both connections match', () => {
+  it('uses Main-detected Ads identity and exposes only the one-time confirmation action', () => {
     const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
-    const loginPage = source.slice(source.indexOf('function LoginPage()'), source.indexOf('function MissionControlRuntime'));
+    const loginPage = source.slice(source.indexOf('function StoreConnectionWorkbench'), source.indexOf('function MissionControlRuntime'));
 
     expect(loginPage).toContain("connection.provider === 'amazon_ads'");
-    expect(loginPage).toContain('aria-label="Amazon Ads Profile ID"');
-    expect(loginPage).toContain('data-package-ui-evidence-field="amazon-ads-profile-id"');
-    expect(loginPage).toContain('maxLength={256}');
-    expect(loginPage).toContain('void handleBindAmazonAdsConnection()');
-    expect(loginPage).toContain('void handleLogin()');
-    expect(loginPage).toContain('ads.lingxing.com');
-    expect(loginPage).toContain('profile_id');
+    expect(loginPage).toContain('aria-label="领星广告账户自动识别状态"');
+    expect(loginPage).toContain('data-package-ui-evidence-action="confirm-amazon-ads-identity"');
+    expect(loginPage).toContain('confirmBrowserLoginAdsIdentity');
+    expect(loginPage).toContain('confirmationToken: adsIdentityCandidate.confirmationToken');
+    expect(loginPage).toContain('确认绑定到当前店铺');
     expect(loginPage).toContain('美国站 · USD');
     expect(loginPage).toContain('data-login-amazon-ads-connection-status');
     expect(loginPage).toContain('data-state={amazonAdsConnectionState}');
-    expect(loginPage).toContain('data-package-ui-evidence-action="bind-amazon-ads-connection"');
-    expect(loginPage).toContain('绑定 Amazon Ads Profile');
-    expect(loginPage).toContain('更新 Amazon Ads Profile 绑定');
-    expect(loginPage).toContain('Amazon Ads Profile 已绑定');
-    expect(loginPage).toContain('amazonAdsConnection?.normalizedExternalAccountId === normalizedAmazonAdsProfileId');
-    expect(loginPage).toContain('store.bindAmazonAdsConnection(amazonAdsProfileId)');
     expect(loginPage).toContain('setConfirmUnbindConnection({ ...amazonAdsConnection })');
-    expect(loginPage).toContain('const loginConnectionsReady = lingxingConnectionReady && amazonAdsConnectionReady');
+    expect(loginPage).toContain('const loginConnectionsReady = lingxingConnectionReady');
     expect(loginPage).toContain('disabled={loading || !loginWorkbenchReady}');
-    expect(loginPage).not.toMatch(/type="password"[\s\S]{0,200}value=\{amazonAdsProfileId\}/);
+    expect(loginPage).not.toContain('amazonAdsProfileId');
+    expect(loginPage).not.toContain('Amazon Ads Profile ID');
+    expect(loginPage).not.toContain('profile_id');
   });
 
-  it('presents the formal login as a desktop three-step workbench with visible blockers', () => {
+  it('presents the store-scoped external connection workbench with visible blockers', () => {
     const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
-    const loginPage = source.slice(source.indexOf('function LoginPage()'), source.indexOf('function MissionControlRuntime'));
+    const loginPage = source.slice(source.indexOf('function StoreConnectionWorkbench'), source.indexOf('function MissionControlRuntime'));
 
-    expect(loginPage).toContain('aria-label="登录与双连接工作台"');
+    expect(loginPage).toContain('aria-label="当前店铺外部连接工作台"');
     expect(loginPage).toContain('data-login-workbench-store');
     expect(loginPage).toContain('当前店铺');
     expect(loginPage).toContain('美国站 · USD');
@@ -187,7 +181,7 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('data-login-workbench-step="authorize"');
     expect(loginPage).toContain('本次正式证据首轮必须重新输入密码并勾选“记住密码”');
     expect(loginPage).toContain('需要刷新登录身份时，请重新输入密码并勾选“记住密码”');
-    expect(loginPage).toContain('同时确认领星登录账号、下载中心店铺名称与 Amazon Ads Profile ID');
+    expect(loginPage).toContain('广告账户由 Main 从可见 Ads 页面自动识别');
     expect(loginPage).toContain('保持 Electron 主窗口打开');
     expect(loginPage).toContain('独立 Playwright Chromium');
     expect(loginPage).toContain('Package UI 证据采集器不会读取、填写或点击你的账号密码');
@@ -201,27 +195,36 @@ describe('login micro-response contract', () => {
     expect(loginPage).toContain('本机加密不可用，无法建立可核验的新凭证会话。');
     expect(loginPage).toContain('暂不能登录，请先处理以下项目');
     expect(loginPage).toContain('未就绪：请先在步骤 1 输入领星用户名。');
-    expect(loginPage).toContain('未就绪：请填写 ads.lingxing.com 当前广告账户的 profile_id。');
+    expect(loginPage).toContain('待识别：启动可见连接后');
+    expect(loginPage).toContain('确认前真实广告写入保持阻断');
     expect(loginPage).toContain('允许重置当前店铺领星会话');
     expect(loginPage).toContain('不会删除 Profile、报表或其他店铺数据');
     expect(loginPage).toContain("String(saved.storeId ?? '') !== String(requestedStoreId ?? '')");
     expect(loginPage).toContain('store.activeStore?.storeId');
   });
 
-  it('does not erase a typed Ads profile id on an unrelated same-store authority revision', () => {
+  it('preserves the typed credential draft when same-store connection binding refreshes authority', () => {
     const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
-    const loginPage = source.slice(source.indexOf('function LoginPage()'), source.indexOf('function MissionControlRuntime'));
-    const profileSyncStart = loginPage.indexOf(
-      'setAmazonAdsProfileId(amazonAdsConnection?.externalAccountId?.trim()',
-    );
-    const profileSyncEffect = loginPage.slice(
-      profileSyncStart,
-      loginPage.indexOf('setAmazonAdsConnectionState', profileSyncStart),
-    );
+    const loginPage = source.slice(source.indexOf('function StoreConnectionWorkbench'), source.indexOf('function MissionControlRuntime'));
 
-    expect(profileSyncEffect).toContain('store.activeStore?.storeId');
-    expect(profileSyncEffect).toContain('amazonAdsConnection?.externalAccountId');
-    expect(profileSyncEffect).not.toContain('store.authorityKey');
+    expect(source).toContain('interface StoreConnectionCredentialDraft');
+    expect(source).toContain('emptyStoreConnectionCredentialDraft(credentialDraftStoreId)');
+    expect(source).toContain('credentialDraft={scopedStoreConnectionCredentialDraft}');
+    expect(source).toContain('storeConnectionCredentialDraft.storeId === credentialDraftStoreId');
+    expect(source).toContain('setCredentialDraft={setStoreConnectionCredentialDraft}');
+    expect(loginPage).toContain('credentialDraftDirtyRef');
+    expect(loginPage).toContain('current.hydrated');
+    expect(loginPage).toContain('if (current.dirty) return { ...current, hydrated: true }');
+    expect(loginPage).toContain('同店连接刷新不会清空尚未提交的密码');
+  });
+
+  it('enters Mission Control without a global external-login gate or manual Ads identity field', () => {
+    const source = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const root = source.slice(source.indexOf('export default function App()'));
+    expect(root).toContain('<MissionControlRuntime');
+    expect(root).not.toContain('isLoggedIn ?');
+    expect(root).not.toContain('<LoginPage');
+    expect(source).not.toContain('amazonAdsProfileId');
   });
 
   it('keeps credential and loading feedback in one stable live region', () => {
@@ -271,7 +274,6 @@ describe('login micro-response contract', () => {
     })).toContain('本机安全区托管');
 
     expect(buildBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'saved',
       password: '',
       rememberPassword: true,
@@ -281,7 +283,6 @@ describe('login micro-response contract', () => {
       lingxingCollectionStoreName: 'SHC001-US',
       username: 'operator@example.com',
     })).toEqual({
-      amazonAdsProfileId: '1234567890',
       username: 'operator@example.com',
       credentialSource: 'saved',
       rememberPassword: true,
@@ -291,7 +292,6 @@ describe('login micro-response contract', () => {
 
   it('requires typed password when the username or remember choice no longer matches saved state', () => {
     expect(buildBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'typed',
       password: 'typed-for-this-login',
       rememberPassword: false,
@@ -303,7 +303,6 @@ describe('login micro-response contract', () => {
     })).toBeNull();
 
     expect(buildBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'saved',
       password: '',
       rememberPassword: true,
@@ -315,7 +314,6 @@ describe('login micro-response contract', () => {
     })).toBeNull();
 
     expect(buildBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'typed',
       password: 'typed-for-this-login',
       rememberPassword: false,
@@ -325,7 +323,6 @@ describe('login micro-response contract', () => {
       lingxingCollectionStoreName: 'SHC001-US',
       username: 'changed-user',
     })).toEqual({
-      amazonAdsProfileId: '1234567890',
       username: 'changed-user',
       credentialSource: 'typed',
       password: 'typed-for-this-login',
@@ -334,7 +331,6 @@ describe('login micro-response contract', () => {
     });
 
     expect(buildBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'typed',
       password: 'fresh-enrollment-password',
       resetLingxingSessionForEnrollment: true,
@@ -351,7 +347,6 @@ describe('login micro-response contract', () => {
     });
 
     expect(buildBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'saved',
       password: '',
       resetLingxingSessionForEnrollment: true,

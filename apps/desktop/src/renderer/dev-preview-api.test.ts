@@ -1256,14 +1256,8 @@ describe('Mission Control development preview bridge', () => {
     expect(updated.session).toBeUndefined();
     expect(JSON.stringify({ updated, updatedView })).not.toMatch(/password|token|cookie|profilePath|userDataDir/i);
 
-    const ads = await api.createStoreConnection({
-      storeId: store.storeId,
-      provider: 'amazon_ads',
-      externalAccountId: 'preview-profile-1',
-    });
     const loginView = await api.getActiveStoreWorkspaceView();
     const login = await api.browserLogin({
-      amazonAdsProfileId: 'preview-profile-1',
       credentialSource: 'typed',
       password: 'must-not-cross-preview-boundary',
       rememberPassword: false,
@@ -1280,7 +1274,19 @@ describe('Mission Control development preview bridge', () => {
       sessionIdentityVerified: false,
       adsSessionReady: false,
       adsUnavailableReason: expect.stringContaining('不代表真实'),
+      adsIdentityCandidate: expect.objectContaining({
+        confirmationToken: expect.any(String),
+        detectedExternalAccountId: expect.any(String),
+      }),
     }));
+    const confirmationView = await api.getActiveStoreWorkspaceView();
+    const confirmed = await api.confirmBrowserLoginAdsIdentity({
+      confirmationToken: login.adsIdentityCandidate!.confirmationToken,
+      storeContext: confirmationView!.context,
+    });
+    expect(confirmed).toEqual(expect.objectContaining({ adsSessionReady: true }));
+    const confirmedView = await api.getActiveStoreWorkspaceView();
+    const ads = confirmedView!.connections.find((connection: any) => connection.provider === 'amazon_ads')!;
     await expect(api.removeStoreConnection({
       id: ads.id,
       storeId: store.storeId,

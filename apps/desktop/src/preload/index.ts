@@ -36,6 +36,7 @@ import type {
 import type {
   BrowserLoginRequest,
   BrowserLoginResult,
+  ConfirmBrowserLoginAdsIdentityRequest,
   StoreScopedSavedLoginCredentialStatus,
 } from '../shared/login-contract';
 import type {
@@ -305,6 +306,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('browser:get-saved-credential-status') as Promise<StoreScopedSavedLoginCredentialStatus>,
   browserLogin: (request: BrowserLoginRequest): Promise<BrowserLoginResult> =>
     ipcRenderer.invoke('browser:login', request) as Promise<BrowserLoginResult>,
+  confirmBrowserLoginAdsIdentity: (
+    request: ConfirmBrowserLoginAdsIdentityRequest,
+  ): Promise<BrowserLoginResult> =>
+    ipcRenderer.invoke('browser:confirm-ads-identity', request) as Promise<BrowserLoginResult>,
   browserLogout: () => ipcRenderer.invoke('browser:logout'),
   browserScreenshot: (label: 'before' | 'after' | 'error') =>
     ipcRenderer.invoke('browser:screenshot', label),

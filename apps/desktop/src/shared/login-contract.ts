@@ -21,8 +21,20 @@ export interface StoreScopedSavedLoginCredentialStatus {
 
 type BrowserLoginAuthority = {
   storeContext: StoreContextEnvelope;
-  amazonAdsProfileId: string;
 };
+
+export interface BrowserLoginAdsIdentityCandidate {
+  /** Opaque Main-issued capability. It is not an Ads identity and cannot be forged into one. */
+  confirmationToken: string;
+  /** Read-only value detected from trusted ads.lingxing.com page evidence. */
+  detectedExternalAccountId: string;
+  detectedAccountLabel?: string;
+}
+
+export interface ConfirmBrowserLoginAdsIdentityRequest {
+  storeContext: StoreContextEnvelope;
+  confirmationToken: string;
+}
 
 export type BrowserLoginRequest = BrowserLoginAuthority & (
   {
@@ -58,5 +70,6 @@ export interface BrowserLoginResult {
   adsUrl?: string;
   adsTitle?: string;
   adsUnavailableReason?: string;
+  adsIdentityCandidate?: BrowserLoginAdsIdentityCandidate;
   credentialPersistence: BrowserLoginCredentialPersistence;
 }

@@ -221,30 +221,12 @@ describe('Mission Control StoreContext state', () => {
     expect(bindBlock).not.toMatch(/password|cookie|token/i);
   });
 
-  it('binds an Amazon Ads profile id, adopts the commit, and treats readback as best-effort sync', () => {
+  it('does not expose a Renderer path for supplying an Amazon Ads identity', () => {
     const source = fs.readFileSync(new URL('./store-context.tsx', import.meta.url), 'utf8');
-    const bindBlock = source.slice(
-      source.indexOf('const bindAmazonAdsConnection'),
-      source.indexOf('const value ='),
-    );
-
-    expect(source).toContain('bindAmazonAdsConnection(externalAccountId: string): Promise<StoreConnection>');
-    expect(bindBlock).toContain("connection.provider === 'amazon_ads'");
-    expect(bindBlock).toContain("provider: 'amazon_ads'");
-    expect(bindBlock).toContain('api.updateStoreConnection');
-    expect(bindBlock).toContain('externalAccountId: normalizedExternalAccountId');
-    expect(bindBlock).toContain('readActiveView()');
-    expect(bindBlock).toContain('sameStoreAuthorityIdentity');
-    expect(bindBlock).toContain('candidate.id === changed.id');
-    expect(bindBlock).toContain("candidate.status === 'not_configured'");
-    expect(bindBlock).toContain('candidate.externalAccountId?.trim() === normalizedExternalAccountId');
-    expect(bindBlock).toContain('candidate.normalizedExternalAccountId === normalizedIdentity');
-    expect(bindBlock).toContain('!candidate.lastVerifiedAt');
-    expect(bindBlock).toContain('hasExpectedIdentityResetFailure(candidate, existing)');
-    expect(bindBlock).toContain('isResetConnectionSession(candidate, existing)');
-    expect(bindBlock).toContain("dispatch({ type: 'connection-committed', connection: changed })");
-    expect(bindBlock).toContain('runBestEffortPostCommitSync');
-    expect(bindBlock).not.toMatch(/password|cookie|token/i);
+    expect(source).not.toContain('bindAmazonAdsConnection');
+    expect(source).not.toContain('normalizeAmazonAdsProfileId');
+    expect(source).not.toContain("provider: 'amazon_ads'");
+    expect(source).not.toContain('externalAccountId: normalizedExternalAccountId');
   });
 
   it('accepts only the exact identity-change tombstone and never an old ready session', () => {
@@ -267,14 +249,6 @@ describe('Mission Control StoreContext state', () => {
     expect(source).toMatch(/dispatch\(\{ type: 'authority', view \}\);[\s\S]*runBestEffortPostCommitSync\('切换店铺'/);
     expect(source).toContain('const sequence = ++dailyStatusSequenceRef.current');
     expect(source).toContain('sequence !== dailyStatusSequenceRef.current');
-  });
-
-  it('normalizes a bounded Amazon Ads profile id and rejects control characters before Main persistence', async () => {
-    const module = await import('./store-context');
-    expect(module.normalizeAmazonAdsProfileId('  1234567890  ')).toBe('1234567890');
-    expect(() => module.normalizeAmazonAdsProfileId('')).toThrow(/Profile ID/);
-    expect(() => module.normalizeAmazonAdsProfileId('a'.repeat(257))).toThrow(/256/);
-    expect(() => module.normalizeAmazonAdsProfileId('profile\u0000id')).toThrow(/控制字符/);
   });
 
   it('exposes real typed Store CRUD and never auto-switches after creation', () => {

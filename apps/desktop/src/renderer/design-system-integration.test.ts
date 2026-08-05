@@ -23,7 +23,7 @@ const PAGE_FILES = [
 const PROTOTYPE_FIRST_SCREEN_MARKERS = [
   {
     pageFile: 'App.tsx',
-    markers: ['LoginPage', '登录并进入 Ads', '登录与广告授权工作台', 'Amazon Ads Profile ID'],
+    markers: ['StoreConnectionWorkbench', '启动当前店铺连接', '当前店铺外部连接', '领星广告账户自动识别状态'],
   },
   {
     pageFile: 'pages/dashboard-page.tsx',

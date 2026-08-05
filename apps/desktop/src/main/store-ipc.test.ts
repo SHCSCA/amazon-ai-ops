@@ -419,7 +419,6 @@ describe('store IPC boundary', () => {
       storeId: ' Store-One ',
       provider: ' AMAZON_ADS ',
       accountLabel: ' operator@example.com ',
-      externalAccountId: ' external-one ',
       collectionStoreName: ' US Main Store ',
       status: 'ready',
       lastVerifiedAt: 'forged',
@@ -427,6 +426,14 @@ describe('store IPC boundary', () => {
       expectedUpdatedAt: ' 2026-07-23T00:00:00.000Z ',
     };
 
+    expect(() => handlers.get('stores:connections:create')?.({}, {
+      ...forged,
+      externalAccountId: 'renderer-forged-ads-identity',
+    })).toThrow(/Main-enrolled identity/);
+    expect(() => handlers.get('stores:connections:update')?.({}, {
+      ...forged,
+      externalAccountId: 'renderer-forged-ads-identity',
+    })).toThrow(/Main-enrolled identity/);
     await handlers.get('stores:connections:create')?.({}, forged);
     await handlers.get('stores:connections:update')?.({}, forged);
     await handlers.get('stores:connections:remove')?.({}, forged);
@@ -435,14 +442,12 @@ describe('store IPC boundary', () => {
       storeId: 'store-one',
       provider: 'amazon_ads',
       accountLabel: 'operator@example.com',
-      externalAccountId: 'external-one',
       collectionStoreName: 'US Main Store',
     });
     expect(coordinator.updateConnection).toHaveBeenCalledWith({
       id: 'capability-one',
       storeId: 'store-one',
       accountLabel: 'operator@example.com',
-      externalAccountId: 'external-one',
       collectionStoreName: 'US Main Store',
       expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     });
@@ -527,10 +532,10 @@ describe('store IPC boundary', () => {
     ['stores:switch', { storeId: 'store-two', marketplace: 'US' }, 'switchStore'],
     ['stores:reconnect', { storeId: 'store-one' }, 'reconnectStore'],
     ['stores:connections:create', {
-      storeId: 'store-one', provider: 'amazon_ads', accountLabel: 'operator', externalAccountId: 'external-one',
+      storeId: 'store-one', provider: 'amazon_ads', accountLabel: 'operator',
     }, 'createConnection'],
     ['stores:connections:update', {
-      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', externalAccountId: 'external-one', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
+      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     }, 'updateConnection'],
     ['stores:connections:remove', {
       id: 'connection-one', storeId: 'store-one', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
@@ -561,10 +566,10 @@ describe('store IPC boundary', () => {
     ['stores:switch', { storeId: 'store-two', marketplace: 'US' }, 'switchStore'],
     ['stores:reconnect', { storeId: 'store-one' }, 'reconnectStore'],
     ['stores:connections:create', {
-      storeId: 'store-one', provider: 'amazon_ads', accountLabel: 'operator', externalAccountId: 'external-one',
+      storeId: 'store-one', provider: 'amazon_ads', accountLabel: 'operator',
     }, 'createConnection'],
     ['stores:connections:update', {
-      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', externalAccountId: 'external-one', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
+      id: 'connection-one', storeId: 'store-one', accountLabel: 'operator', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     }, 'updateConnection'],
     ['stores:connections:remove', {
       id: 'connection-one', storeId: 'store-one', expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
@@ -629,13 +634,11 @@ describe('store IPC boundary', () => {
       storeId: 'store-one',
       provider: 'amazon_ads',
       accountLabel: 'operator',
-      externalAccountId: 'external-one',
     });
     await handlers.get('stores:connections:update')?.({}, {
       id: 'connection-one',
       storeId: 'store-one',
       accountLabel: 'operator',
-      externalAccountId: 'external-one',
       expectedUpdatedAt: '2026-07-23T00:00:00.000Z',
     });
     await handlers.get('stores:connections:remove')?.({}, {

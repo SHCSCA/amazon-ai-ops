@@ -4,7 +4,7 @@
 
 它把领星广告报表采集、产品级广告量化、关键词与 Listing 优化、AI + 规则建议、人工审批、Ads UI 执行回读和最终交付验收串成一个可审计的本地闭环。
 
-**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY ONLY.** 当前 Windows 包由源码提交 `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda` 构建。第一版固定 Amazon US / USD，正式桌面导航为 10 个 Mission Control 工作区；左侧 `店铺与站点` 是新增、维护与切换店铺的唯一入口，店铺 DB 范围、Lingxing/Ads Profile、会话、任务、配置、授权、执行和证据均按 Store Capsule 隔离。内部 UI、当前业务 smoke、包体启动、安全边界和敌对 `NODE_ENV` 已通过；正式 package UI schema v8、真实 authority DB 升级、每店 8/8、两店连续七个美国业务日、人工 canary 和 policy-auto canary 尚未完成。本候选尚未生成新的正式八门聚合结果或匹配 bundle；旧 `7/8`、Mission `4/8`、旧 manifest 和旧 bundle 仅为历史，不得复用为当前信用。应用内广告写入继续 fail-closed，当前不得声明 `APP_READY`。
+**DELIVERY: APP_NEEDS_WORK — INTERNAL NON_READY ONLY.** 第一版固定 Amazon US / USD，正式桌面导航为 10 个 Mission Control 工作区；应用直接进入本地运营系统，左侧 `店铺与站点` 是新增、维护与切换店铺的唯一入口。领星账号与下载中心店铺名称在当前店铺工作台内配置；广告账户不要求运营人员查找或填写 Profile ID，而是由 Electron Main 从可见 `ads.lingxing.com` 受信页面自动识别，再由用户确认绑定。店铺 DB 范围、连接身份、独立浏览器 Profile、会话、任务、配置、授权、执行和证据均按 Store Capsule 隔离。正式 package UI schema v8、真实 authority DB 升级、每店 8/8、两店连续七个美国业务日、人工 canary 和 policy-auto canary 尚未完成；旧 `7/8`、Mission `4/8`、旧 manifest 和旧 bundle 仅为历史，不得复用为当前信用。应用内广告写入继续 fail-closed，当前不得声明 `APP_READY`。
 
 ## 当前交付
 

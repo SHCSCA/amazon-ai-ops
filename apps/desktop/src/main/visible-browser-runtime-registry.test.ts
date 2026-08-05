@@ -138,6 +138,58 @@ describe('VisibleBrowserRuntimeRegistry', () => {
     expect(() => registry.verifyAmazonAdsIdentity(identityClaim)).toThrow(/replayed/);
   });
 
+  it('atomically replaces a pending Ads enrollment connection when trusted identity is confirmed', () => {
+    const registry = new VisibleBrowserRuntimeRegistry(() => 'operator-enrollment-runtime');
+    const candidate = operatorCandidate();
+    const pendingAds = {
+      ...candidate.connections!.amazonAds!,
+      status: 'not_configured' as const,
+      externalAccountId: undefined,
+      normalizedExternalAccountId: undefined,
+    };
+    const published = registry.publishCandidate({
+      ...candidate,
+      connections: { ...candidate.connections!, amazonAds: pendingAds },
+    });
+    const lingxingVerified = registry.verifyLingxingCandidate(published);
+    const identityClaim = registry.claimAmazonAdsIdentity({
+      runtimeId: lingxingVerified.runtime.runtimeId,
+      epoch: lingxingVerified.runtime.epoch,
+      context: context(),
+    });
+    const enrolledAds = {
+      ...pendingAds,
+      status: 'ready' as const,
+      externalAccountId: 'profile-auto-100',
+      normalizedExternalAccountId: 'profile-auto-100',
+      updatedAt: '2026-07-01T00:01:00.000Z',
+    };
+
+    const verified = registry.verifyAmazonAdsIdentity(identityClaim, enrolledAds);
+
+    expect(verified.providerIdentityStatus.amazonAds).toBe('verified');
+    expect(verified.connections?.amazonAds).toEqual(enrolledAds);
+    expect(Object.isFrozen(verified.connections?.amazonAds)).toBe(true);
+  });
+
+  it('rejects a confirmed Ads connection that does not belong to the exact runtime store', () => {
+    const registry = new VisibleBrowserRuntimeRegistry(() => 'operator-enrollment-runtime');
+    const published = registry.publishCandidate(operatorCandidate());
+    const lingxingVerified = registry.verifyLingxingCandidate(published);
+    const identityClaim = registry.claimAmazonAdsIdentity({
+      runtimeId: lingxingVerified.runtime.runtimeId,
+      epoch: lingxingVerified.runtime.epoch,
+      context: context(),
+    });
+    const wrongStore = {
+      ...lingxingVerified.runtime.connections!.amazonAds!,
+      storeId: 'store-two' as StoreConnection['storeId'],
+    };
+
+    expect(() => registry.verifyAmazonAdsIdentity(identityClaim, wrongStore))
+      .toThrow(/confirmed Amazon Ads connection/);
+  });
+
   it('rejects collection-only, forged, cross-context, and blocked-to-verified Ads transitions', () => {
     const collection = new VisibleBrowserRuntimeRegistry(() => 'collection-runtime');
     const collectionClaim = collection.publishCandidate(candidate());

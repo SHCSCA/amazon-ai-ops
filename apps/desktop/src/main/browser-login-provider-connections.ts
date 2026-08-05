@@ -5,16 +5,17 @@ import {
 } from '@amazon-ai-ops/shared-types';
 
 export type LingxingBrowserIdentityReadiness = 'configured' | 'enrollment_pending';
+export type AmazonAdsBrowserIdentityReadiness = 'configured' | 'enrollment_pending';
 
 export type BrowserLoginProviderConnections = Readonly<{
   lingxing: StoreConnection;
-  amazon_ads: StoreConnection;
+  amazon_ads: StoreConnection | undefined;
   lingxingIdentityReadiness: LingxingBrowserIdentityReadiness;
+  amazonAdsIdentityReadiness: AmazonAdsBrowserIdentityReadiness;
 }>;
 
 export function requireBrowserLoginProviderConnections(
   connections: readonly StoreConnection[],
-  expectedAmazonAdsProfileId: string,
 ): BrowserLoginProviderConnections {
   const lingxing = connections.find((connection) => connection.provider === 'lingxing');
   const amazonAds = connections.find((connection) => connection.provider === 'amazon_ads');
@@ -43,25 +44,21 @@ export function requireBrowserLoginProviderConnections(
   } else {
     throw new Error('领星稳定店铺身份未通过持久映射校验，浏览器登录已拒绝。');
   }
-  if (!amazonAds) {
-    throw new Error('当前店铺必须先配置 Amazon Ads Profile 连接，浏览器登录已拒绝。');
+  const adsExternalId = amazonAds
+    ? normalizeProviderExternalAccountId('amazon_ads', amazonAds.externalAccountId)
+    : undefined;
+  let amazonAdsIdentityReadiness: AmazonAdsBrowserIdentityReadiness;
+  if (!amazonAds || (!adsExternalId && !amazonAds.normalizedExternalAccountId)) {
+    amazonAdsIdentityReadiness = 'enrollment_pending';
+  } else if (adsExternalId && amazonAds.normalizedExternalAccountId === adsExternalId) {
+    amazonAdsIdentityReadiness = 'configured';
+  } else {
+    throw new Error('Amazon Ads 广告账户身份未通过持久校验，浏览器登录已拒绝。');
   }
-  const adsExternalId = normalizeProviderExternalAccountId(
-    'amazon_ads',
-    amazonAds.externalAccountId,
-  );
-  if (!adsExternalId) {
-    throw new Error('Amazon Ads 连接缺少 Profile ID，不能验证浏览器会话归属。');
-  }
-  if (amazonAds.normalizedExternalAccountId !== adsExternalId) {
-    throw new Error('Amazon Ads Profile ID 未通过持久映射校验，浏览器登录已拒绝。');
-  }
-  const expectedAdsExternalId = normalizeProviderExternalAccountId(
-    'amazon_ads',
-    expectedAmazonAdsProfileId,
-  );
-  if (!expectedAdsExternalId || adsExternalId !== expectedAdsExternalId) {
-    throw new Error('Amazon Ads Profile ID 与当前 Main 店铺权限不一致，浏览器登录已拒绝。');
-  }
-  return { lingxing, amazon_ads: amazonAds, lingxingIdentityReadiness };
+  return {
+    lingxing,
+    amazon_ads: amazonAds,
+    lingxingIdentityReadiness,
+    amazonAdsIdentityReadiness,
+  };
 }

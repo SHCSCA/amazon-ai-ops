@@ -36,28 +36,33 @@ describe('browser login provider connection authority', () => {
   });
   const amazonAds = connection('amazon_ads', { externalAccountId: '1234567890' });
 
-  it('requires both provider mappings and an explicit Ads Profile ID', () => {
-    expect(() => requireBrowserLoginProviderConnections([], '1234567890')).toThrow(/领星连接/);
+  it('requires only the store-scoped Lingxing selector before opening the visible browsers', () => {
+    expect(() => requireBrowserLoginProviderConnections([])).toThrow(/领星连接/);
     expect(() => requireBrowserLoginProviderConnections([
       connection('lingxing', { accountLabel: 'operator@example.com' }),
       amazonAds,
-    ], '1234567890')).toThrow(/同时配置登录账号与下载中心店铺名称映射/);
-    expect(() => requireBrowserLoginProviderConnections([lingxing], '1234567890')).toThrow(/Amazon Ads Profile/);
-    expect(() => requireBrowserLoginProviderConnections([
+    ])).toThrow(/同时配置登录账号与下载中心店铺名称映射/);
+    expect(requireBrowserLoginProviderConnections([lingxing])).toEqual({
       lingxing,
-      connection('amazon_ads', { accountLabel: 'label-without-profile-id' }),
-    ], '1234567890')).toThrow(/缺少 Profile ID/);
-    expect(() => requireBrowserLoginProviderConnections([
+      amazon_ads: undefined,
+      lingxingIdentityReadiness: 'configured',
+      amazonAdsIdentityReadiness: 'enrollment_pending',
+    });
+    const pendingAds = connection('amazon_ads', { accountLabel: '等待自动识别' });
+    expect(requireBrowserLoginProviderConnections([lingxing, pendingAds])).toEqual({
       lingxing,
-      amazonAds,
-    ], 'different-profile')).toThrow(/Main 店铺权限不一致/);
+      amazon_ads: pendingAds,
+      lingxingIdentityReadiness: 'configured',
+      amazonAdsIdentityReadiness: 'enrollment_pending',
+    });
   });
 
   it('returns the exact authoritative connections when both identities are present', () => {
-    expect(requireBrowserLoginProviderConnections([amazonAds, lingxing], '1234567890')).toEqual({
+    expect(requireBrowserLoginProviderConnections([amazonAds, lingxing])).toEqual({
       lingxing,
       amazon_ads: amazonAds,
       lingxingIdentityReadiness: 'configured',
+      amazonAdsIdentityReadiness: 'configured',
     });
   });
 
@@ -66,14 +71,15 @@ describe('browser login provider connection authority', () => {
     expect(() => requireBrowserLoginProviderConnections([
       unbound,
       amazonAds,
-    ], '1234567890')).toThrow(/稳定店铺身份未通过持久映射校验/);
+    ])).toThrow(/稳定店铺身份未通过持久映射校验/);
     expect(requireBrowserLoginProviderConnections([
       lingxing,
       amazonAds,
-    ], ' 1234567890 ')).toEqual({
+    ])).toEqual({
       lingxing,
       amazon_ads: amazonAds,
       lingxingIdentityReadiness: 'configured',
+      amazonAdsIdentityReadiness: 'configured',
     });
   });
 
@@ -85,10 +91,17 @@ describe('browser login provider connection authority', () => {
     expect(requireBrowserLoginProviderConnections([
       pending,
       amazonAds,
-    ], '1234567890')).toEqual({
+    ])).toEqual({
       lingxing: pending,
       amazon_ads: amazonAds,
       lingxingIdentityReadiness: 'enrollment_pending',
+      amazonAdsIdentityReadiness: 'configured',
     });
+  });
+
+  it('rejects a corrupted persisted Ads identity but never compares a Renderer-supplied ID', () => {
+    const corruptedAds = { ...amazonAds, normalizedExternalAccountId: 'different-profile' };
+    expect(() => requireBrowserLoginProviderConnections([lingxing, corruptedAds]))
+      .toThrow(/广告账户身份未通过持久校验/);
   });
 });

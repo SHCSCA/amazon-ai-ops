@@ -327,10 +327,10 @@ export function MissionControlShell({
             )}
           </div>
           <button
-            aria-label="退出登录"
+            aria-label="断开外部会话"
             className="mission-control-icon-button"
             onClick={() => void onLogout()}
-            title="退出登录"
+            title="断开外部会话"
             type="button"
           >
             <SignOut aria-hidden="true" size={19} />

@@ -46,7 +46,11 @@ import {
   normalizeStoreCapabilityId,
   normalizeStoreId,
 } from '@amazon-ai-ops/shared-types';
-import type { BrowserLoginRequest, BrowserLoginResult } from '../shared/login-contract';
+import type {
+  BrowserLoginRequest,
+  BrowserLoginResult,
+  ConfirmBrowserLoginAdsIdentityRequest,
+} from '../shared/login-contract';
 import {
   applyRecommendationDecision,
   assertRecommendationDecisionRevision,
@@ -1626,6 +1630,10 @@ export function createBrowserPreviewElectronApi(
   const previewConnections = new Map<StoreId, StoreConnection[]>(
     previewStores.map((store) => [store.storeId, []]),
   );
+  const previewAdsConfirmationTokens = new Map<string, {
+    storeId: StoreId;
+    externalAccountId: string;
+  }>();
   const previewRuntimeConfigs = new Map<StoreId, StoreRuntimeConfigProjection>();
   const defaultPreviewRuntimeValues = (): StoreRuntimeConfigValues => ({
     aiRecommendationsEnabled: true,
@@ -2012,7 +2020,7 @@ export function createBrowserPreviewElectronApi(
       if (!amazonAds) blockers.push({
         code: 'AMAZON_ADS_BINDING_MISSING',
         severity: 'blocking',
-        detail: '开发预览中的当前店铺尚未绑定 Amazon Ads Profile。',
+        detail: '开发预览中的当前店铺尚未确认自动识别的领星广告账户。',
         provider: 'amazon_ads',
       });
       const businessDate = previewContext(store, previewGenerations.get(store.storeId) ?? 0).businessDate;
@@ -2899,13 +2907,6 @@ export function createBrowserPreviewElectronApi(
     ) {
       throw new Error('PREVIEW_LINGXING_COLLECTION_MAPPING_REQUIRED');
     }
-    const submittedAdsProfile = normalizeProviderExternalAccountId(
-      'amazon_ads',
-      request.amazonAdsProfileId,
-    );
-    if (!submittedAdsProfile || amazonAds?.normalizedExternalAccountId !== submittedAdsProfile) {
-      throw new Error('PREVIEW_AMAZON_ADS_PROFILE_MAPPING_REQUIRED');
-    }
     if (!lingxing.externalAccountId || !lingxing.normalizedExternalAccountId) {
       const stableExternalAccountId = `DEV-PREVIEW-STABLE-${String(store.storeId)}`;
       const normalizedStableExternalAccountId = normalizeProviderExternalAccountId(
@@ -2928,6 +2929,13 @@ export function createBrowserPreviewElectronApi(
       const view = previewView(store, previewContext(store, generation));
       storeContextListeners.forEach((listener) => listener(clonePreviewSnapshot(view)));
     }
+    const detectedExternalAccountId = amazonAds?.externalAccountId
+      || `DEV-PREVIEW-ADS-${String(store.storeId)}`;
+    const confirmationToken = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    previewAdsConfirmationTokens.set(confirmationToken, {
+      storeId: store.storeId,
+      externalAccountId: detectedExternalAccountId,
+    });
     return {
       ok: true,
       credentialSource: request.credentialSource,
@@ -2936,7 +2944,61 @@ export function createBrowserPreviewElectronApi(
       erpSessionReused: false,
       sessionIdentityVerified: false,
       adsSessionReady: false,
-      adsUnavailableReason: '仅开发预览：模拟首次身份识别，不代表真实 ERP 或 Ads 登录成功。',
+      adsUnavailableReason: '仅开发预览：已模拟自动识别，确认前不代表真实 ERP 或 Ads 登录成功。',
+      adsIdentityCandidate: {
+        confirmationToken,
+        detectedExternalAccountId,
+        detectedAccountLabel: '预览广告账户',
+      },
+      credentialPersistence: 'not_saved_unverified_session',
+    };
+  };
+
+  const previewConfirmAdsIdentity = async (
+    request: ConfirmBrowserLoginAdsIdentityRequest,
+  ): Promise<BrowserLoginResult> => {
+    const authoritative = requirePreviewMissionAuthority(request.storeContext);
+    const pending = previewAdsConfirmationTokens.get(request.confirmationToken);
+    if (!pending || pending.storeId !== authoritative.storeId) {
+      throw new Error('PREVIEW_ADS_IDENTITY_CONFIRMATION_EXPIRED');
+    }
+    const store = requirePreviewStore(authoritative.storeId);
+    const current = previewConnections.get(store.storeId) ?? [];
+    const existing = current.find((connection) => connection.provider === 'amazon_ads');
+    const now = new Date().toISOString();
+    const ready: StoreConnection = {
+      id: existing?.id ?? normalizeStoreCapabilityId(`preview-ads-${++previewConnectionSequence}`),
+      storeId: store.storeId,
+      provider: 'amazon_ads',
+      status: 'ready',
+      accountLabel: '预览广告账户',
+      externalAccountId: pending.externalAccountId,
+      normalizedExternalAccountId: normalizeProviderExternalAccountId(
+        'amazon_ads',
+        pending.externalAccountId,
+      ),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      lastVerifiedAt: now,
+    };
+    previewConnections.set(store.storeId, [
+      ...current.filter((connection) => connection.provider !== 'amazon_ads'),
+      ready,
+    ]);
+    previewAdsConfirmationTokens.delete(request.confirmationToken);
+    const view = previewView(store, authoritative);
+    storeContextListeners.forEach((listener) => listener(clonePreviewSnapshot(view)));
+    return {
+      ok: true,
+      credentialSource: 'typed',
+      currentStore: store.displayName,
+      erpSessionReady: true,
+      erpSessionReused: false,
+      sessionIdentityVerified: false,
+      adsSessionReady: true,
+      adsEntryMode: 'erp_ads_entry',
+      adsUrl: 'https://ads.lingxing.com/home',
+      adsTitle: '仅开发预览 Ads',
       credentialPersistence: 'not_saved_unverified_session',
     };
   };
@@ -3228,6 +3290,7 @@ export function createBrowserPreviewElectronApi(
       storeContext: clonePreviewSnapshot(currentPreviewContext()),
     }),
     browserLogin: previewBrowserLogin,
+    confirmBrowserLoginAdsIdentity: previewConfirmAdsIdentity,
     browserLogout: async () => true,
     getOperationScope: async (storeContext: StoreContextEnvelope) => {
       const { dataset } = requirePreviewDatasetAuthority(storeContext);

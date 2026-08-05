@@ -37,7 +37,8 @@ describe('Mission Control StoreGate', () => {
     expect(markup).toContain('data-state="needs-selection"');
     expect(markup).toContain('class="store-scope-switcher');
     expect(markup).toContain('新增店铺');
-    expect(markup).toContain('先从左侧选择或新增店铺');
+    expect(markup).toContain('从左侧新增或选择店铺');
+    expect(markup).toContain('应用已经进入');
     expect(markup).toContain('创建后保持未选择');
     expect(markup).not.toContain('mission-control-store-gate__card--create');
     expect(markup).not.toContain('mission-control-store-gate__create-form');
@@ -45,10 +46,11 @@ describe('Mission Control StoreGate', () => {
     expect(markup).not.toContain('管理店铺');
   });
 
-  it('requires an explicit switch-and-login action even when there is exactly one store', () => {
+  it('requires an explicit store switch without presenting login as the navigation action', () => {
     const markup = render({ stores: [store] });
     expect(markup).toContain('SHC001');
-    expect(markup).toContain('切换并登录');
+    expect(markup).toContain('切换店铺');
+    expect(markup).not.toContain('切换并登录');
     expect(markup).not.toContain('aria-selected="true"');
     expect(markup).not.toContain('进入所选店铺');
   });

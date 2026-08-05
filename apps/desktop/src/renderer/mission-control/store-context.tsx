@@ -11,7 +11,6 @@ import {
 import {
   missionControlContextKey,
   normalizeLingxingCollectionStoreName,
-  normalizeProviderExternalAccountId,
   type ArchiveStoreInput,
   type CreateStoreInput,
   type RestoreStoreInput,
@@ -61,23 +60,7 @@ export interface MissionControlStoreContextValue extends MissionControlStoreStat
   archiveStore(input: ArchiveStoreInput): Promise<StoreRecord>;
   restoreStore(input: RestoreStoreInput): Promise<StoreRecord>;
   bindLingxingConnection(accountLabel: string, collectionStoreName: string): Promise<StoreConnection>;
-  bindAmazonAdsConnection(externalAccountId: string): Promise<StoreConnection>;
   unbindStoreConnection(connection: StoreConnection): Promise<void>;
-}
-
-const MAX_AMAZON_ADS_PROFILE_ID_LENGTH = 256;
-const AMAZON_ADS_PROFILE_ID_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
-
-export function normalizeAmazonAdsProfileId(externalAccountId: string): string {
-  const normalized = externalAccountId.trim();
-  if (!normalized) throw new Error('请输入 Amazon Ads Profile ID 后再绑定。');
-  if (
-    normalized.length > MAX_AMAZON_ADS_PROFILE_ID_LENGTH
-    || AMAZON_ADS_PROFILE_ID_CONTROL_CHARACTERS.test(normalized)
-  ) {
-    throw new Error('Amazon Ads Profile ID 无效：最多 256 个字符，且不能包含控制字符。');
-  }
-  return normalized;
 }
 
 export class StoreSwitchAuthorityMismatchError extends Error {
@@ -549,54 +532,6 @@ export function MissionControlStoreContextProvider({
     return changed;
   }, [api, dispatch, readActiveView, refreshDailyStatuses, runBestEffortPostCommitSync]);
 
-  const bindAmazonAdsConnection = useCallback(async (externalAccountId: string) => {
-    const activeView = stateRef.current.activeView;
-    if (!activeView) throw new Error('当前没有 Main 授权店铺，无法绑定 Amazon Ads 连接。');
-    const normalizedExternalAccountId = normalizeAmazonAdsProfileId(externalAccountId);
-    const normalizedIdentity = normalizeProviderExternalAccountId(
-      'amazon_ads',
-      normalizedExternalAccountId,
-    );
-    if (!normalizedIdentity) throw new Error('请输入 Amazon Ads Profile ID 后再绑定。');
-    const existing = activeView.connections.find((connection) => connection.provider === 'amazon_ads');
-    if (existing?.normalizedExternalAccountId === normalizedIdentity) return existing;
-    const changed = existing
-      ? await api.updateStoreConnection({
-        id: existing.id,
-        storeId: activeView.store.storeId,
-        externalAccountId: normalizedExternalAccountId,
-        expectedUpdatedAt: existing.updatedAt,
-      })
-      : await api.createStoreConnection({
-        storeId: activeView.store.storeId,
-        provider: 'amazon_ads',
-        externalAccountId: normalizedExternalAccountId,
-      });
-    dispatch({ type: 'connection-committed', connection: changed });
-    await runBestEffortPostCommitSync('保存 Amazon Ads 映射', [
-      async () => {
-        const confirmedView = await readActiveView();
-        if (!confirmedView || !sameStoreAuthorityIdentity(activeView, confirmedView)) {
-          throw new Error('店铺权限上下文已变化');
-        }
-        const confirmed = confirmedView.connections.find((candidate) =>
-          candidate.provider === 'amazon_ads'
-          && candidate.storeId === confirmedView.store.storeId
-          && candidate.id === changed.id
-          && candidate.externalAccountId?.trim() === normalizedExternalAccountId
-          && candidate.normalizedExternalAccountId === normalizedIdentity
-          && candidate.status === 'not_configured'
-          && !candidate.lastVerifiedAt
-          && hasExpectedIdentityResetFailure(candidate, existing)
-          && isResetConnectionSession(candidate, existing));
-        if (!confirmed) throw new Error('Main 权限上下文尚未回读该 Profile');
-        dispatch({ type: 'authority', view: confirmedView });
-      },
-      refreshDailyStatuses,
-    ]);
-    return changed;
-  }, [api, dispatch, readActiveView, refreshDailyStatuses, runBestEffortPostCommitSync]);
-
   const unbindStoreConnection = useCallback(async (connection: StoreConnection) => {
     const activeView = stateRef.current.activeView;
     if (!activeView) throw new Error('当前没有 Main 授权店铺，无法解绑连接。');
@@ -635,7 +570,6 @@ export function MissionControlStoreContextProvider({
     archiveStore,
     restoreStore,
     bindLingxingConnection,
-    bindAmazonAdsConnection,
     unbindStoreConnection,
   }), [
     state,
@@ -648,7 +582,6 @@ export function MissionControlStoreContextProvider({
     archiveStore,
     restoreStore,
     bindLingxingConnection,
-    bindAmazonAdsConnection,
     unbindStoreConnection,
   ]);
 

@@ -13,16 +13,14 @@ const storeContext = normalizeStoreContextEnvelope({
 });
 
 describe('browser login request authority boundary', () => {
-  it('normalizes a typed request while retaining its exact store and Ads authority', () => {
+  it('normalizes a typed request while retaining its exact store authority', () => {
     expect(normalizeBrowserLoginRequest({
-      amazonAdsProfileId: '  1234567890  ',
       credentialSource: 'typed',
       password: 'typed-password',
       rememberPassword: false,
       storeContext,
       username: '  operator@example.com  ',
     })).toEqual({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'typed',
       password: 'typed-password',
       rememberPassword: false,
@@ -33,13 +31,11 @@ describe('browser login request authority boundary', () => {
 
   it('accepts Main-managed saved credentials only with the same authority envelope', () => {
     expect(normalizeBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'saved',
       rememberPassword: true,
       storeContext,
       username: 'operator@example.com',
     })).toEqual({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'saved',
       rememberPassword: true,
       storeContext,
@@ -49,7 +45,6 @@ describe('browser login request authority boundary', () => {
 
   it('rejects session-reset authority on a saved-credential request', () => {
     expect(() => normalizeBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'saved',
       rememberPassword: true,
       resetLingxingSessionForEnrollment: true,
@@ -60,7 +55,6 @@ describe('browser login request authority boundary', () => {
 
   it('retains an explicit typed-login confirmation for store-bound Lingxing session reset', () => {
     expect(normalizeBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       resetLingxingSessionForEnrollment: true,
       credentialSource: 'typed',
       password: 'typed-password',
@@ -76,15 +70,12 @@ describe('browser login request authority boundary', () => {
 
   it.each([
     ['missing store context', { storeContext: undefined }, /store context/i],
-    ['missing Ads Profile ID', { amazonAdsProfileId: '' }, /Profile ID/],
-    ['overlong Ads Profile ID', { amazonAdsProfileId: 'a'.repeat(257) }, /Profile ID/],
-    ['control character in Ads Profile ID', { amazonAdsProfileId: 'profile\u0000id' }, /Profile ID/],
+    ['renderer-supplied Ads identity', { amazonAdsProfileId: 'profile-100' }, /由 Main 从可见页面自动识别/],
     ['invalid credential source', { credentialSource: 'renderer-secret' }, /凭证来源/],
     ['missing typed password', { password: '' }, /领星密码/],
     ['invalid session reset confirmation', { resetLingxingSessionForEnrollment: 'yes' }, /重置确认值/],
   ])('rejects %s', (_label, patch, message) => {
     expect(() => normalizeBrowserLoginRequest({
-      amazonAdsProfileId: '1234567890',
       credentialSource: 'typed',
       password: 'typed-password',
       rememberPassword: false,

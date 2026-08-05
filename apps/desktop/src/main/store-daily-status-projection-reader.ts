@@ -391,7 +391,7 @@ function readProvider(
       provider === 'lingxing' ? 'blocking' : 'attention',
       provider === 'lingxing'
         ? '领星下载中心店铺名称映射不完整或已失效。'
-        : 'Amazon Ads Profile 映射不完整或已失效。',
+        : '领星广告账户尚未自动识别确认，或当前绑定已失效。',
       provider,
     ));
   }
