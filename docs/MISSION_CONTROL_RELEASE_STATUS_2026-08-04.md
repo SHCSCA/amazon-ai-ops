@@ -1,5 +1,9 @@
 # Mission Control 当前交付状态（2026-08-04）
 
+> 2026-08-05 的便携包身份、启动修复和 authority DB 迁移状态已由
+> [PORTABLE_RECOVERY_STATUS_2026-08-05.md](./PORTABLE_RECOVERY_STATUS_2026-08-05.md) 取代。
+> 本文保留为 2026-08-04 Mission Control 候选的历史基线，不得继续引用其中包哈希作为当前包身份。
+
 ## 结论
 
 当前候选是 `APP_NEEDS_WORK`，只允许内部 NON_READY 验证与受控交接，不是 `APP_READY`。
