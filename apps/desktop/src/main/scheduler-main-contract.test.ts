@@ -152,7 +152,7 @@ describe('desktop scheduler scope contract', () => {
     expect(composition).toContain("send('business-ui:data-updated')");
   });
 
-  it('keeps package UI collection and account operations read-only with audited scheduler get', () => {
+  it('keeps package UI collection read-only while routing visible login through bounded setup', () => {
     const init = between('async function initApp', '// Browser / Session');
     const schedulerIpc = between(
       'registerStoreCollectionSchedulerIpcHandlers(',
@@ -167,7 +167,7 @@ describe('desktop scheduler scope contract', () => {
     expect(init).toContain('state.storeCollectionMainRuntime!.start()');
     expect(schedulerIpc).toContain('state.storeCollectionSchedulerReadModel!.get(context)');
     expect(schedulerIpc).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
-    expect(login).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
+    expect(login).toContain('withPackageUiSetupMutation');
     expect(source).toContain('package UI evidence cannot start or resume collection');
     expect(source).toContain('package UI evidence cannot cancel collection');
   });

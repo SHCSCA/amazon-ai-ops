@@ -150,8 +150,8 @@ describe('Electron external-distribution security wiring', () => {
       source.indexOf('async function handleBrowserLogin'),
       source.indexOf('async function performBrowserLoginInUserLane'),
     );
-    expect(packageLogin).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
-    expect(packageLogin).toContain('package UI evidence cannot start a real account login');
+    expect(packageLogin).toContain('withPackageUiSetupMutation');
+    expect(packageLogin).not.toContain('package UI evidence cannot start a real account login');
   });
 
   it('captures screenshots inside the active store capsule and closes through exact registry proof', () => {

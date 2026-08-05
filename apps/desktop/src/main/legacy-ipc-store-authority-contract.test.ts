@@ -334,10 +334,8 @@ describe('policy grant dispatch lifecycle contract', () => {
       'async function handleBrowserLogout',
     );
 
-    expect(packageLogin).toContain('if (packageUiReadOnlyRuntime)');
-    expect(packageLogin).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
-    expect(packageLogin.indexOf('if (packageUiReadOnlyRuntime)'))
-      .toBeLessThan(packageLogin.indexOf('state.storeCoordinator.assertActiveStoreContext'));
+    expect(packageLogin).toContain('withPackageUiSetupMutation');
+    expect(packageLogin).not.toContain('package UI evidence cannot start a real account login');
     expect(login).toContain('if (packageUiFreshTypedProofRequired');
     expect(login).toContain("request.credentialSource !== 'typed'");
     expect(login).toContain('request.rememberPassword !== true');

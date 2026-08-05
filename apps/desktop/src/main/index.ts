@@ -1025,7 +1025,7 @@ async function initApp(): Promise<void> {
         state.settingsRepo!.delete(OPERATOR_WORKSPACE_SELECTION_SETTING_KEY);
       },
     },
-    selectionPersistence: packageUiReadOnlyRuntime ? 'read_only' : 'read_write',
+    selectionPersistence: packageUiReadOnlyRuntime ? 'memory_only' : 'read_write',
   });
   const storeDailyStatusReader = new StoreDailyStatusProjectionReader({
     stores: state.storeRepo,
@@ -1189,7 +1189,6 @@ async function initApp(): Promise<void> {
   if (packageUiReadOnlyRuntime) {
     packageUiSchedulerAudit.recordSuppressed('startupReconcile');
     console.info('[CollectionRuntime] package-ui read-only startup recovery suppressed');
-    packageUiSchedulerAudit.capturePostBootstrapDatabaseBaseline();
   } else {
     // Resume claims carry the only exact proof that an interrupted browser
     // step may have crossed the report-creation boundary. Close them before
@@ -1608,8 +1607,20 @@ function authorizePackageUiDatabaseCheckpoint(): StoreContextEnvelope {
   if (authorized.businessTimezone !== 'America/Los_Angeles') {
     throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_TIMEZONE_REQUIRED');
   }
-  if (visibleBrowserRuntimeRegistry.read() !== null || state.isLoggedIn || state.loginSession) {
-    throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_REAL_SESSION_FORBIDDEN');
+  const visibleRuntime = visibleBrowserRuntimeRegistry.read();
+  const sessionStatePresent = Boolean(visibleRuntime || state.isLoggedIn || state.loginSession);
+  if (sessionStatePresent && (
+    !visibleRuntime
+    || visibleRuntime.purpose !== 'operator_full'
+    || !sameExactStoreContext(visibleRuntime.context, authorized)
+    || visibleRuntime.providerIdentityStatus.lingxing !== 'verified'
+    || visibleRuntime.providerIdentityStatus.amazonAds !== 'verified'
+    || state.isLoggedIn !== true
+    || state.loginSession?.ok !== true
+    || state.loginSession?.erpSessionReady !== true
+    || state.loginSession?.adsSessionReady !== true
+  )) {
+    throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_SESSION_NOT_VERIFIED');
   }
   return authorized;
 }
@@ -1727,11 +1738,6 @@ function assertBrowserLoginAttempt(attemptId: number, context: StoreContextEnvel
 }
 
 async function handleBrowserLogin(request: BrowserLoginRequest): Promise<BrowserLoginResult> {
-  if (packageUiReadOnlyRuntime) {
-    throw new Error(
-      'PACKAGE_UI_EVIDENCE_READ_ONLY: package UI evidence cannot start a real account login.',
-    );
-  }
   if (!state.storeCoordinator || !state.executionAuthorityService
     || !state.storeCollectionMainRuntime) {
     throw new Error('店铺会话运行时尚未初始化。');
@@ -1747,43 +1753,53 @@ async function handleBrowserLogin(request: BrowserLoginRequest): Promise<Browser
     && request.credentialSource !== 'typed') {
     throw new Error('领星稳定身份尚未建立，请手动输入本次凭证完成首次绑定。');
   }
-  const outcome: BrowserLoginTransitionOutcome = await state.storeCollectionMainRuntime.withUserStoreMutation(
-    { operation: 'browser:login', targetStoreId: String(preflightContext.storeId) },
-    () => runUserVisibleBrowserTransition({
-      leases: browserOperationLeases,
-      owner: 'browser-login',
-      closeRuntime: closeUserVisibleBrowserRuntimeForTransition,
-      assertRuntimeClosed: assertUserVisibleBrowserRuntimeClosed,
-      work: async () => {
+  const loginMutationScope = {
+    operation: 'browser:login',
+    targetStoreId: String(preflightContext.storeId),
+  };
+  const loginMutationWork = () => runUserVisibleBrowserTransition({
+    leases: browserOperationLeases,
+    owner: 'browser-login',
+    closeRuntime: closeUserVisibleBrowserRuntimeForTransition,
+    assertRuntimeClosed: assertUserVisibleBrowserRuntimeClosed,
+    work: async () => {
+      try {
+        return { ok: true as const, value: await performBrowserLoginInUserLane(request) };
+      } catch (error) {
+        const pendingControllers = invalidatePendingBrowserLogin();
+        const cleanup = await Promise.allSettled([
+          closeVisibleBrowserRegistryStrictly(),
+          closeBrowserControllers(pendingControllers),
+        ]);
+        const cleanupFailures = cleanup
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => result.reason);
+        clearBrowserLoginState();
         try {
-          return { ok: true as const, value: await performBrowserLoginInUserLane(request) };
-        } catch (error) {
-          const pendingControllers = invalidatePendingBrowserLogin();
-          const cleanup = await Promise.allSettled([
-            closeVisibleBrowserRegistryStrictly(),
-            closeBrowserControllers(pendingControllers),
-          ]);
-          const cleanupFailures = cleanup
-            .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-            .map((result) => result.reason);
-          clearBrowserLoginState();
-          try {
-            rereadAndPublishActiveStoreAuthority(String(preflightContext.storeId));
-          } catch (authorityError) {
-            cleanupFailures.push(authorityError);
-          }
-          if (cleanupFailures.length > 0) {
-            throw new AggregateError(
-              [error, ...cleanupFailures],
-              'login failure cleanup did not prove an empty visible-browser authority',
-            );
-          }
-          return { ok: false as const, error };
+          rereadAndPublishActiveStoreAuthority(String(preflightContext.storeId));
+        } catch (authorityError) {
+          cleanupFailures.push(authorityError);
         }
-      },
-      readFinalState: readOperatorLoginTransitionState,
-    }),
-  );
+        if (cleanupFailures.length > 0) {
+          throw new AggregateError(
+            [error, ...cleanupFailures],
+            'login failure cleanup did not prove an empty visible-browser authority',
+          );
+        }
+        return { ok: false as const, error };
+      }
+    },
+    readFinalState: readOperatorLoginTransitionState,
+  });
+  const outcome: BrowserLoginTransitionOutcome = packageUiReadOnlyRuntime
+    ? await state.storeCollectionMainRuntime.withPackageUiSetupMutation(
+        loginMutationScope,
+        loginMutationWork,
+      )
+    : await state.storeCollectionMainRuntime.withUserStoreMutation(
+        loginMutationScope,
+        loginMutationWork,
+      );
   if (!outcome.ok) throw outcome.error;
   const runtime = visibleBrowserRuntimeRegistry.read();
   if (outcome.value.adsSessionReady && runtime?.purpose === 'operator_full') {
@@ -11406,9 +11422,28 @@ function registerIpcHandlers(): void {
   registerStoreIpcHandlers(trackedIpcRegistrar, state.storeCoordinator, {
     withUserStoreMutation: async (scope, work) => {
       if (packageUiReadOnlyRuntime) {
-        throw new StoreCollectionMainRuntimeError(
-          'PACKAGE_UI_READ_ONLY',
-          `Package UI read-only mode forbids ${scope.operation}`,
+        if (
+          pendingBrowserLogin
+          || state.isLoggedIn
+          || state.loginSession
+          || visibleBrowserRuntimeRegistry.read()
+        ) {
+          throw new StoreCollectionMainRuntimeError(
+            'USER_OPERATION_BLOCKED',
+            'Package UI setup mutations are allowed only before visible login starts',
+          );
+        }
+        return state.storeCollectionMainRuntime!.withPackageUiSetupMutation(
+          scope,
+          () => {
+            const laneActive = state.storeCoordinator!.getActiveStoreContext();
+            assertStoreIpcMutationTargetPreflight(
+              state.storeCoordinator!,
+              scope,
+              laneActive,
+            );
+            return work();
+          },
         );
       }
       const active = state.storeCoordinator!.getActiveStoreContext();

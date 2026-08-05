@@ -1256,6 +1256,42 @@ describe('StoreCollectionMainRuntime', () => {
     });
   });
 
+  it('allows only bounded pre-session Package UI setup mutations on the shared lane', async () => {
+    const registry = new VisibleBrowserRuntimeRegistry(() => 'package-runtime');
+    const runtime = new StoreCollectionMainRuntime({
+      orchestrator: orchestrator(),
+      registry,
+      packageUiReadOnly: true,
+    });
+
+    for (const operation of [
+      'stores:create',
+      'stores:switch',
+      'stores:connections:create',
+      'stores:connections:update',
+      'browser:login',
+    ]) {
+      await expect(runtime.withPackageUiSetupMutation(
+        { operation },
+        async () => operation,
+      )).resolves.toBe(operation);
+    }
+    await expect(runtime.withPackageUiSetupMutation(
+      { operation: 'stores:update' },
+      async () => undefined,
+    )).rejects.toThrow(/read-only mode forbids stores:update/i);
+
+    registry.publishCandidate({
+      purpose: 'collection_only',
+      context: context(),
+      controllers: { lingxing: visibleController(() => undefined) },
+    });
+    await expect(runtime.withPackageUiSetupMutation(
+      { operation: 'stores:switch' },
+      async () => undefined,
+    )).rejects.toThrow(/before a visible browser session exists/i);
+  });
+
   it('keeps Package UI read-only while still allowing ordered safe shutdown', async () => {
     const events: string[] = [];
     const registry = new VisibleBrowserRuntimeRegistry(() => 'package-runtime');

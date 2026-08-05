@@ -835,4 +835,31 @@ describe('StoreCoordinator', () => {
       .toThrow(/read-only/);
     expect(selection.writes).toHaveLength(0);
   });
+
+  it('allows an isolated package UI Store selection only in memory', () => {
+    const repository = new MemoryStoreRepository();
+    const sessions = new MemorySessions();
+    const selection = new MemorySelectionStorage();
+    const row = repository.createStore({
+      storeId: asStoreId('store-one'),
+      browserProfileId: asProfileId('browser-one'),
+      displayName: 'One',
+      marketplace: 'US',
+      currency: 'USD',
+      businessTimezone: 'America/Los_Angeles',
+    });
+    const coordinator = new StoreCoordinator({
+      repository,
+      sessions,
+      selectionStorage: selection,
+      selectionPersistence: 'memory_only',
+    });
+
+    expect(coordinator.switchStore({ storeId: row.storeId, marketplace: 'US' }))
+      .toMatchObject({ store: { storeId: row.storeId } });
+    expect(coordinator.getOperatorWorkspaceSelection()).toMatchObject({
+      storeId: row.storeId,
+    });
+    expect(selection.writes).toHaveLength(0);
+  });
 });

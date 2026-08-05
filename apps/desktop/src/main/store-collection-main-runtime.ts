@@ -186,6 +186,14 @@ export interface StoreCollectionUserMutationScope {
   targetStoreId?: string;
 }
 
+const PACKAGE_UI_SETUP_MUTATIONS = new Set([
+  'browser:login',
+  'stores:create',
+  'stores:switch',
+  'stores:connections:create',
+  'stores:connections:update',
+]);
+
 export type StoreCollectionCancellationPath = 'active' | 'idle';
 
 export interface StoreCollectionCancellationCallbackInput {
@@ -655,6 +663,39 @@ export class StoreCollectionMainRuntime implements PolicyDispatchSuppressionRead
     }
     this.assertUserOperationAllowed();
     return this.withMutationLane('user', 'renderer-store-ipc', work);
+  }
+
+  async withPackageUiSetupMutation<Result>(
+    scopeInput: StoreCollectionUserMutationScope,
+    work: () => Promise<Result> | Result,
+  ): Promise<Result> {
+    const scope = normalizeUserMutationScope(scopeInput);
+    if (!this.packageUiReadOnly || !PACKAGE_UI_SETUP_MUTATIONS.has(scope.operation)) {
+      throw new StoreCollectionMainRuntimeError(
+        'PACKAGE_UI_READ_ONLY',
+        `Package UI read-only mode forbids ${scope.operation}`,
+      );
+    }
+    if (typeof work !== 'function') {
+      throw new StoreCollectionMainRuntimeError(
+        'INVALID_USER_MUTATION_SCOPE',
+        'package UI setup mutation callback is required',
+      );
+    }
+    this.assertSafetyKnown();
+    if (this.lifecycle === 'stopping' || this.lifecycle === 'stopped') {
+      throw new StoreCollectionMainRuntimeError(
+        'RUNTIME_STOPPING',
+        'Main collection runtime is stopping or stopped',
+      );
+    }
+    if (this.registry.read() !== null) {
+      throw new StoreCollectionMainRuntimeError(
+        'USER_OPERATION_BLOCKED',
+        'Package UI setup mutations are allowed only before a visible browser session exists',
+      );
+    }
+    return this.withMutationLane('user', 'package-ui-evidence-setup', work);
   }
 
   stopAndDrain(timeoutMs = 5_000): Promise<void> {

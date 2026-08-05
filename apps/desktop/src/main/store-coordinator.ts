@@ -181,8 +181,8 @@ export interface StoreCoordinatorOptions {
   createBrowserProfileId?: (storeId: StoreId) => BrowserProfileId;
   createStoreCapabilityId?: () => StoreCapabilityId;
   selectionStorage?: OperatorWorkspaceSelectionStorage;
-  /** Package-UI evidence may restore in memory but must never write app_settings. */
-  selectionPersistence?: 'read_write' | 'read_only';
+  /** Package-UI evidence may select in memory but must never write app_settings. */
+  selectionPersistence?: 'read_write' | 'read_only' | 'memory_only';
 }
 
 export class StoreCoordinatorError extends Error {
@@ -219,7 +219,7 @@ export class StoreCoordinator {
   private readonly createBrowserProfileId: (storeId: StoreId) => BrowserProfileId;
   private readonly createStoreCapabilityId: () => StoreCapabilityId;
   private readonly selectionStorage: OperatorWorkspaceSelectionStorage;
-  private readonly selectionPersistence: 'read_write' | 'read_only';
+  private readonly selectionPersistence: 'read_write' | 'read_only' | 'memory_only';
   private readonly collectionTransitionCapabilities = new WeakSet<object>();
   private activeStoreId: StoreId | null = null;
   private operatorSelection: OperatorWorkspaceSelection | null = null;
@@ -332,8 +332,7 @@ export class StoreCoordinator {
       });
       if (changesAuthority) this.sessions.advance(storeId);
       if (clearsSelection) {
-        this.assertSelectionWritable();
-        this.selectionStorage.clear();
+        this.clearPersistedSelection();
       }
       return result;
     });
@@ -353,8 +352,7 @@ export class StoreCoordinator {
       const result = this.repository.archiveStore({ ...input, storeId });
       if (before.status !== 'archived') this.sessions.advance(storeId);
       if (wasSelected) {
-        this.assertSelectionWritable();
-        this.selectionStorage.clear();
+        this.clearPersistedSelection();
       }
       return result;
     });
@@ -442,8 +440,7 @@ export class StoreCoordinator {
         : [scope.storeId];
       const advanced = this.sessions.advanceMany(storesToAdvance);
       const workspace = this.buildWorkspaceView(store, advanced.get(scope.storeId)!);
-      this.assertSelectionWritable();
-      this.selectionStorage.write(selection);
+      this.persistSelection(selection);
       return workspace;
     });
     this.activeStoreId = scope.storeId;
@@ -667,12 +664,27 @@ export class StoreCoordinator {
     }
   }
 
-  private assertSelectionWritable(): void {
-    if (this.selectionPersistence !== 'read_write') {
+  private persistSelection(selection: OperatorWorkspaceSelection): void {
+    if (this.selectionPersistence === 'read_only') {
       throw new StoreCoordinatorError(
         'STORE_CONTEXT_MISMATCH',
         'operator workspace selection is read-only in this runtime',
       );
+    }
+    if (this.selectionPersistence === 'read_write') {
+      this.selectionStorage.write(selection);
+    }
+  }
+
+  private clearPersistedSelection(): void {
+    if (this.selectionPersistence === 'read_only') {
+      throw new StoreCoordinatorError(
+        'STORE_CONTEXT_MISMATCH',
+        'operator workspace selection is read-only in this runtime',
+      );
+    }
+    if (this.selectionPersistence === 'read_write') {
+      this.selectionStorage.clear();
     }
   }
 
