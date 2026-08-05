@@ -20,7 +20,7 @@ describe('Main store selection and cross-store status wiring', () => {
 
   it('uses app_settings selection storage and a deferred cross-store read transaction', () => {
     expect(source).toContain("operator_workspace_selection:v1");
-    expect(source).toContain("selectionPersistence: packageUiReadOnlyRuntime ? 'read_only' : 'read_write'");
+    expect(source).toContain("selectionPersistence: packageUiReadOnlyRuntime ? 'memory_only' : 'read_write'");
     expect(source).toContain('readTransaction: (work) => state.db!.transaction(work).deferred()');
     expect(source).not.toContain('readTransaction: (work) => state.storeRepo!.transaction(work)');
   });
@@ -30,9 +30,10 @@ describe('Main store selection and cross-store status wiring', () => {
     expect(source).toContain('}, state.storeDailyStatusReader);');
   });
 
-  it('fails every store mutation closed at the Main lane entry in Package UI read-only mode', () => {
+  it('routes Package UI setup through its bounded lane before normal Store mutation authority', () => {
     const laneEntry = source.indexOf('withUserStoreMutation: async (scope, work) => {');
     const readOnlyGuard = source.indexOf('if (packageUiReadOnlyRuntime)', laneEntry);
+    const setupLane = source.indexOf('withPackageUiSetupMutation(', readOnlyGuard);
     const authorityRead = source.indexOf(
       'const active = state.storeCoordinator!.getActiveStoreContext()',
       laneEntry,
@@ -40,8 +41,9 @@ describe('Main store selection and cross-store status wiring', () => {
 
     expect(laneEntry).toBeGreaterThan(-1);
     expect(readOnlyGuard).toBeGreaterThan(laneEntry);
-    expect(readOnlyGuard).toBeLessThan(authorityRead);
-    expect(source.slice(readOnlyGuard, authorityRead)).toContain("'PACKAGE_UI_READ_ONLY'");
+    expect(setupLane).toBeGreaterThan(readOnlyGuard);
+    expect(setupLane).toBeLessThan(authorityRead);
+    expect(source.slice(readOnlyGuard, authorityRead)).toContain('visibleBrowserRuntimeRegistry.read()');
   });
 
   it('validates an exact switch target inside the lane before closing the visible runtime', () => {

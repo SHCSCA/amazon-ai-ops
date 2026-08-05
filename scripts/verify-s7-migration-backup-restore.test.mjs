@@ -237,6 +237,19 @@ describe('S7 offline migration and recovery verifier', () => {
     expect(fs.readdirSync(value.workDir)).toEqual([]);
   }, 30_000);
 
+  it('keeps the Windows offline lease stable when the source directory mixes uppercase and lowercase names', () => {
+    if (process.platform !== 'win32') return;
+    const value = offlineMigrationFixture();
+    fs.mkdirSync(path.join(value.sourceDirectory, 'Cache'));
+    fs.mkdirSync(path.join(value.sourceDirectory, 'blob_storage'));
+    const sourceDirectoryEntries = fs.readdirSync(value.sourceDirectory).sort();
+
+    const evidence = executeOfflineMigration(value.args);
+
+    expect(evidence.passed).toBe(true);
+    expect(fs.readdirSync(value.sourceDirectory).sort()).toEqual(sourceDirectoryEntries);
+  }, 30_000);
+
   it.each([
     ['after-working-copy-wal', /not offline/i],
     ['before-publish-wal', /not offline/i],

@@ -48,8 +48,6 @@ export type StoreManagementPanelProps = {
   onArchive: (input: ArchiveStoreInput) => Promise<unknown> | unknown;
   onRestore: (input: RestoreStoreInput) => Promise<unknown> | unknown;
   connections?: readonly StoreConnection[];
-  onBindLingxing?: (accountLabel: string, collectionStoreName: string) => Promise<StoreConnection> | StoreConnection;
-  onBindAmazonAds?: (externalAccountId: string) => Promise<StoreConnection> | StoreConnection;
   onUnbindConnection?: (connection: StoreConnection) => Promise<void> | void;
   error?: string | null;
   syncWarning?: string | null;
@@ -147,8 +145,6 @@ export function StoreManagementPanel({
   onArchive,
   onRestore,
   connections = [],
-  onBindLingxing,
-  onBindAmazonAds,
   onUnbindConnection,
   error: externalError,
   syncWarning,
@@ -161,9 +157,6 @@ export function StoreManagementPanel({
   const [connectionPending, setConnectionPending] = useState<StoreConnectionProvider | `unbind:${StoreConnectionProvider}` | null>(null);
   const [confirmUnbind, setConfirmUnbind] = useState<StoreConnection | null>(null);
   const [connectionFeedback, setConnectionFeedback] = useState<string | null>(null);
-  const [lingxingAccountLabel, setLingxingAccountLabel] = useState('');
-  const [lingxingCollectionStoreName, setLingxingCollectionStoreName] = useState('');
-  const [amazonAdsExternalAccountId, setAmazonAdsExternalAccountId] = useState('');
   const rows = useMemo(() => [...stores].sort((left, right) => {
     if (left.status === 'archived' && right.status !== 'archived') return 1;
     if (right.status === 'archived' && left.status !== 'archived') return -1;
@@ -181,57 +174,13 @@ export function StoreManagementPanel({
   });
 
   useEffect(() => {
-    setLingxingAccountLabel(lingxingConnection?.accountLabel ?? '');
-    setLingxingCollectionStoreName(lingxingConnection?.collectionStoreName ?? '');
-    setAmazonAdsExternalAccountId(amazonAdsConnection?.externalAccountId ?? '');
     setConnectionFeedback(null);
     setConfirmUnbind(null);
   }, [
     activeStoreId,
-    amazonAdsConnection?.externalAccountId,
     amazonAdsConnection?.id,
-    lingxingConnection?.accountLabel,
-    lingxingConnection?.collectionStoreName,
     lingxingConnection?.id,
   ]);
-
-  const bindLingxing = async () => {
-    if (!onBindLingxing || connectionPending) return;
-    if (!lingxingAccountLabel.trim() || !lingxingCollectionStoreName.trim()) {
-      setRuntimeError('领星映射必须同时填写登录账号和下载中心店铺名称。');
-      return;
-    }
-    setConnectionPending('lingxing');
-    setRuntimeError(null);
-    setConnectionFeedback(null);
-    try {
-      await onBindLingxing(lingxingAccountLabel.trim(), lingxingCollectionStoreName.trim());
-      setConnectionFeedback('Main 已提交领星账号与下载中心店铺名称映射。');
-    } catch (operationError) {
-      setRuntimeError(errorMessage(operationError));
-    } finally {
-      setConnectionPending(null);
-    }
-  };
-
-  const bindAmazonAds = async () => {
-    if (!onBindAmazonAds || connectionPending) return;
-    if (!amazonAdsExternalAccountId.trim()) {
-      setRuntimeError('请输入 Amazon Ads Profile ID。');
-      return;
-    }
-    setConnectionPending('amazon_ads');
-    setRuntimeError(null);
-    setConnectionFeedback(null);
-    try {
-      await onBindAmazonAds(amazonAdsExternalAccountId.trim());
-      setConnectionFeedback('Main 已提交 Amazon Ads Profile 映射。');
-    } catch (operationError) {
-      setRuntimeError(errorMessage(operationError));
-    } finally {
-      setConnectionPending(null);
-    }
-  };
 
   const unbind = async (connection: StoreConnection) => {
     if (!onUnbindConnection || connectionPending) return;
@@ -388,28 +337,12 @@ export function StoreManagementPanel({
                     {lingxingConnection ? '已建立映射' : '尚未绑定'}
                   </span>
                 </div>
-                <small>登录账号与下载中心当前可见店铺名称缺一不可。</small>
+                <small>连接修改与可见浏览器启动统一在上方“当前店铺外部连接”工作台完成。</small>
               </header>
-              <label>
-                <span>登录账号</span>
-                <input
-                  disabled={busy}
-                  maxLength={256}
-                  onChange={(event) => setLingxingAccountLabel(event.currentTarget.value)}
-                  placeholder="领星登录账号"
-                  value={lingxingAccountLabel}
-                />
-              </label>
-              <label>
-                <span>领星下载中心店铺名称</span>
-                <input
-                  disabled={busy}
-                  maxLength={256}
-                  onChange={(event) => setLingxingCollectionStoreName(event.currentTarget.value)}
-                  placeholder="必须与领星下载中心显示完全一致"
-                  value={lingxingCollectionStoreName}
-                />
-              </label>
+              <dl className="store-connection-unbind-facts">
+                <div><dt>登录账号</dt><dd>{lingxingConnection?.accountLabel || '未配置'}</dd></div>
+                <div><dt>下载中心店铺</dt><dd>{lingxingConnection?.collectionStoreName || '未配置'}</dd></div>
+              </dl>
               <div className="store-connection-stable-identity" role="status" aria-live="polite">
                 <span>稳定身份（Main 首次新鲜登录识别）</span>
                 <output aria-label="领星稳定身份只读状态">
@@ -419,15 +352,6 @@ export function StoreManagementPanel({
                 </output>
               </div>
               <div className="store-connection-mapping__actions">
-                <button
-                  aria-busy={connectionPending === 'lingxing' || undefined}
-                  className="workspace-button workspace-button--primary"
-                  disabled={busy || !onBindLingxing}
-                  onClick={() => void bindLingxing()}
-                  type="button"
-                >
-                  {connectionPending === 'lingxing' ? '提交中…' : lingxingConnection ? '更新领星映射' : '创建领星映射'}
-                </button>
                 {lingxingConnection && (
                   <button
                     className="workspace-button workspace-button--secondary"
@@ -444,33 +368,22 @@ export function StoreManagementPanel({
             <section aria-labelledby="store-amazon-ads-mapping-title" className="store-connection-mapping">
               <header>
                 <div>
-                  <strong id="store-amazon-ads-mapping-title">Amazon Ads</strong>
+                  <strong id="store-amazon-ads-mapping-title">领星广告账户（自动识别）</strong>
                   <span data-connection-state={amazonAdsConnection?.status || 'missing'}>
                     {amazonAdsConnection ? '已建立映射' : '尚未绑定'}
                   </span>
                 </div>
-                <small>Profile ID 来自当前 ads.lingxing.com 广告账户。</small>
+                <small>不要求运营人员查找或填写内部编号；Main 只接受受信页面证据与确认动作。</small>
               </header>
-              <label>
-                <span>Amazon Ads Profile ID</span>
-                <input
-                  disabled={busy}
-                  maxLength={256}
-                  onChange={(event) => setAmazonAdsExternalAccountId(event.currentTarget.value)}
-                  placeholder="profile_id"
-                  value={amazonAdsExternalAccountId}
-                />
-              </label>
+              <div className="store-connection-stable-identity" role="status" aria-live="polite">
+                <span>可信身份（只读）</span>
+                <output aria-label="领星广告账户自动识别身份只读状态">
+                  {amazonAdsConnection?.externalAccountId
+                    ? `已验证：${amazonAdsConnection.accountLabel || amazonAdsConnection.externalAccountId}`
+                    : '尚未确认；真实广告执行保持阻断'}
+                </output>
+              </div>
               <div className="store-connection-mapping__actions">
-                <button
-                  aria-busy={connectionPending === 'amazon_ads' || undefined}
-                  className="workspace-button workspace-button--primary"
-                  disabled={busy || !onBindAmazonAds}
-                  onClick={() => void bindAmazonAds()}
-                  type="button"
-                >
-                  {connectionPending === 'amazon_ads' ? '提交中…' : amazonAdsConnection ? '更新 Ads 映射' : '创建 Ads 映射'}
-                </button>
                 {amazonAdsConnection && (
                   <button
                     className="workspace-button workspace-button--secondary"
@@ -629,7 +542,7 @@ export function StoreManagementPanel({
               <div>
                 <span>REMOVE STORE MAPPING</span>
                 <h2 id="store-connection-unbind-title">
-                  解绑{confirmUnbind.provider === 'lingxing' ? '领星下载中心店铺映射' : 'Amazon Ads Profile'}？
+                  解绑{confirmUnbind.provider === 'lingxing' ? '领星下载中心店铺映射' : '领星广告账户'}？
                 </h2>
                 <p id="store-connection-unbind-description">
                   Main 会使该 provider 会话失效。解绑不等于清除本机保存的领星密码。
@@ -642,7 +555,7 @@ export function StoreManagementPanel({
                       <div><dt>稳定身份</dt><dd>{confirmUnbind.externalAccountId || '待首次新鲜登录识别'}</dd></div>
                     </>
                   ) : (
-                    <div><dt>Profile ID</dt><dd>{confirmUnbind.externalAccountId || '未记录'}</dd></div>
+                    <div><dt>自动识别身份</dt><dd>{confirmUnbind.externalAccountId || '未记录'}</dd></div>
                   )}
                 </dl>
               </div>

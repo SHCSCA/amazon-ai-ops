@@ -52,7 +52,9 @@ describe('Electron external-distribution security wiring', () => {
     expect(browserLoginRequestSource).toContain("typeof candidate.rememberPassword !== 'boolean'");
     expect(source).toContain('normalizeBrowserLoginRequest(input)');
     expect(source).toContain('state.storeCoordinator.assertActiveStoreContext(request.storeContext)');
-    expect(source).toContain('request.amazonAdsProfileId');
+    expect(source).not.toContain('request.amazonAdsProfileId');
+    expect(browserLoginRequestSource).toContain("hasOwnProperty.call(candidate, 'amazonAdsProfileId')");
+    expect(browserLoginRequestSource).toContain('由 Main 从可见页面自动识别');
     expect(source).not.toContain("registerTrackedIpcHandler('browser:get-saved-credentials'");
     expect(source).not.toContain('password: saved');
   });
@@ -127,31 +129,32 @@ describe('Electron external-distribution security wiring', () => {
     expect(source).not.toContain("path.join(STORAGE_DIR, 'browser-data')");
   });
 
-  it('requires both provider identity mappings at the Main login boundary while keeping an unavailable Ads session blocked', () => {
+  it('opens enrollment with only the Lingxing selector and confirms auto-detected Ads identity in Main', () => {
     const connectionContract = browserLoginProviderConnectionSource;
     expect(connectionContract).toContain('if (!lingxing)');
-    expect(connectionContract).toContain('if (!amazonAds)');
-    expect(connectionContract).toContain("normalizeProviderExternalAccountId(\n    'amazon_ads'");
-    expect(connectionContract).toContain('必须先配置 Amazon Ads Profile 连接');
-    expect(connectionContract).toContain('Amazon Ads 连接缺少 Profile ID');
-    expect(connectionContract).toContain(
-      'return { lingxing, amazon_ads: amazonAds, lingxingIdentityReadiness }',
-    );
+    expect(connectionContract).toContain("amazon_ads: StoreConnection | undefined");
+    expect(connectionContract).toContain("amazonAdsIdentityReadiness = 'enrollment_pending'");
+    expect(connectionContract).not.toContain('必须先配置 Amazon Ads Profile 连接');
 
     const loginStart = source.indexOf('async function handleBrowserLogin');
     const loginEnd = source.indexOf('async function handleBrowserLogout', loginStart);
     const login = source.slice(loginStart, loginEnd);
     expect(login).toContain('requireBrowserLoginProviderConnections');
-    expect(login).toContain('request.amazonAdsProfileId');
+    expect(login).not.toContain('request.amazonAdsProfileId');
+    expect(login).toContain('ensureAmazonAdsEnrollmentConnection');
     expect(login).toContain('waitForLingxingAdsSessionReady');
+    expect(login).toContain('waitForLingxingAdsIdentityEvidence');
+    expect(login).toContain('pendingAmazonAdsIdentityConfirmation');
+    expect(login).toContain('handleConfirmBrowserLoginAdsIdentity');
+    expect(login).toContain('verifyAmazonAdsIdentity(pending.claim, readyConnection)');
     expect(login).toContain('AMAZON_ADS_AUTHORIZATION_TIMEOUT_MS');
     expect(login).toContain('adsSessionReady: Boolean(adsSession)');
     const packageLogin = source.slice(
       source.indexOf('async function handleBrowserLogin'),
       source.indexOf('async function performBrowserLoginInUserLane'),
     );
-    expect(packageLogin).toContain('PACKAGE_UI_EVIDENCE_READ_ONLY');
-    expect(packageLogin).toContain('package UI evidence cannot start a real account login');
+    expect(packageLogin).toContain('withPackageUiSetupMutation');
+    expect(packageLogin).not.toContain('package UI evidence cannot start a real account login');
   });
 
   it('captures screenshots inside the active store capsule and closes through exact registry proof', () => {

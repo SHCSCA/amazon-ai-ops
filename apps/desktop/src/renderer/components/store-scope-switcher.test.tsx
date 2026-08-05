@@ -188,7 +188,8 @@ describe('StoreScopeSwitcher', () => {
     const createBlock = source.slice(createStart, source.indexOf('\n  return (', createStart));
     expect(createBlock).toContain('await onCreate(buildFixedUsStoreInput(displayName))');
     expect(createBlock).not.toContain('requestSwitch');
-    expect(source).toContain('切换并登录');
+    expect(source).toContain('切换店铺');
+    expect(source).not.toContain('切换并登录');
     expect(source).toContain('if (initiallyExpanded && !previousInitiallyExpanded.current) setExpanded(true)');
     expect(source).toContain('useOverlayFocusScope');
     expect(source).toContain("document.addEventListener('mousedown'");

@@ -247,6 +247,13 @@ export class PackageUiSchedulerAudit {
       throw new Error(`PACKAGE_UI_DATABASE_CHECKPOINT_ORDER_INVALID:${expectedPhase ?? 'complete'}`);
     }
     if (expectedPhase === 'post-bootstrap') {
+      // A fresh migrated profile has no implicit operator Store authority. The
+      // package evidence runner must select a visible Store first, so capture
+      // the baseline on its first Store-authorized Main IPC rather than failing
+      // startup before the Store Gate can render.
+      if (this.databaseCheckpoints.length === 0) {
+        this.capturePostBootstrapDatabaseBaseline();
+      }
       if (this.databaseCheckpoints.length !== 1) {
         throw new Error('PACKAGE_UI_DATABASE_CHECKPOINT_BASELINE_MISSING');
       }

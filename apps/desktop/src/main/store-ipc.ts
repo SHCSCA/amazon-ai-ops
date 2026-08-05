@@ -677,9 +677,9 @@ function readCreateConnectionInput(value: unknown): CreateStoreConnectionInput {
   const hasAccountLabel = input.accountLabel !== undefined;
   const hasExternalAccountId = input.externalAccountId !== undefined;
   const hasCollectionStoreName = input.collectionStoreName !== undefined;
-  if (provider === 'lingxing' && hasExternalAccountId) {
+  if (hasExternalAccountId) {
     throw new TypeError(
-      'Lingxing externalAccountId is Main-enrolled identity and cannot be supplied by Renderer',
+      `${provider} externalAccountId is Main-enrolled identity and cannot be supplied by Renderer`,
     );
   }
   const accountLabel = hasAccountLabel
@@ -706,9 +706,9 @@ function assertRendererStableExternalAccountIdPreflight(
 ): void {
   if (request.externalAccountId === undefined) return;
   const connection = coordinator.getConnection(request.storeId, request.id);
-  if (connection?.provider === 'lingxing') {
+  if (connection?.provider === 'lingxing' || connection?.provider === 'amazon_ads') {
     throw new TypeError(
-      'Lingxing externalAccountId is Main-enrolled identity and cannot be supplied by Renderer',
+      `${connection.provider} externalAccountId is Main-enrolled identity and cannot be supplied by Renderer`,
     );
   }
 }

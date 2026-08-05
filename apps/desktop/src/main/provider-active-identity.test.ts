@@ -1,11 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertProviderActiveIdentity,
+  readAmazonAdsProfileIdentityEvidence,
   readLingxingStableExternalAccountIdEvidence,
   requireLingxingTypedStableIdentityEnrollment,
 } from './provider-active-identity';
 
 describe('provider active identity', () => {
+  it('discovers one canonical Ads identity only from the trusted URL or active DOM probes', () => {
+    expect(readAmazonAdsProfileIdentityEvidence({
+      pageUrl: 'https://ads.lingxing.com/campaigns?profile_id= PROFILE-100 ',
+      domObservations: [{ probeId: 'current-profile-id', value: 'profile-100' }],
+    })).toEqual({ externalAccountId: 'profile-100' });
+  });
+
+  it('fails closed when Ads discovery has no stable identity or conflicting evidence', () => {
+    expect(() => readAmazonAdsProfileIdentityEvidence({
+      pageUrl: 'https://ads.lingxing.com/home',
+      domObservations: [{ probeId: 'current-account-label', value: 'Northstar Ads' }],
+    })).toThrow(/无法自动识别唯一广告账户/);
+    expect(() => readAmazonAdsProfileIdentityEvidence({
+      pageUrl: 'https://ads.lingxing.com/campaigns?profile_id=profile-100',
+      domObservations: [{ probeId: 'active-profile-id', value: 'profile-200' }],
+    })).toThrow(/存在冲突的广告账户身份/);
+    expect(() => readAmazonAdsProfileIdentityEvidence({
+      pageUrl: 'https://evil.example/?profile_id=profile-100',
+      domObservations: [],
+    })).toThrow(/受信页面/);
+  });
   it('does not accept an expected identity merely embedded in a URL path or unknown query value', () => {
     expect(() => assertProviderActiveIdentity({
       connection: {

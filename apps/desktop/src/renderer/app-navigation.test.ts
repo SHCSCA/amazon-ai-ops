@@ -69,19 +69,19 @@ describe('App canonical navigation events', () => {
 });
 
 describe('Mission Control runtime composition', () => {
-  it('gates store selection before login and mounts the runtime only after both are ready', () => {
+  it('gates only store selection and mounts Mission Control without an external-login page', () => {
     const source = appSource();
     const providerIndex = source.indexOf('<MissionControlStoreContextProvider>');
     const sessionBoundaryIndex = source.indexOf('<MissionControlSessionAuthorityBoundary>');
     const gateIndex = source.indexOf('<MissionControlStoreGate>');
-    const loginChoiceIndex = source.indexOf('{isLoggedIn ? (');
+    const runtimeIndex = source.indexOf('<MissionControlRuntime');
 
     expect(providerIndex).toBeGreaterThan(0);
     expect(sessionBoundaryIndex).toBeGreaterThan(providerIndex);
     expect(gateIndex).toBeGreaterThan(sessionBoundaryIndex);
-    expect(loginChoiceIndex).toBeGreaterThan(gateIndex);
-    expect(source).toContain(') : <LoginPage />}');
-    expect(source).not.toContain("if (!isLoggedIn) return <LoginPage />");
+    expect(runtimeIndex).toBeGreaterThan(gateIndex);
+    expect(source).not.toContain('{isLoggedIn ? (');
+    expect(source).not.toContain('<LoginPage');
   });
 
   it('uses the canonical workspace registry and remounts store-scoped state by authority key', () => {

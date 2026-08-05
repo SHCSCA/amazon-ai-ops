@@ -32,14 +32,14 @@ function gateCopy(phase: MissionControlStorePhase, error: string | null) {
     return {
       eyebrow: 'STORE AUTHORITY · MAIN',
       title: '正在读取店铺范围',
-      description: '店铺范围确认完成前，不会进入登录、采集、分析或执行流程。',
+      description: '正在进入运营工作台；店铺范围确认前只暂停店铺级数据与动作。',
     };
   }
   if (phase === 'switching') {
     return {
       eyebrow: 'STORE AUTHORITY · SWITCHING',
       title: '正在切换店铺',
-      description: 'Main 正在切换独立数据域与浏览器 Profile；完成后再进入该店铺登录。',
+      description: 'Main 正在切换独立数据域与浏览器 Profile；完成后直接进入该店铺工作台。',
     };
   }
   if (phase === 'error') {
@@ -51,8 +51,8 @@ function gateCopy(phase: MissionControlStorePhase, error: string | null) {
   }
   return {
     eyebrow: 'STORE AUTHORITY · US / USD',
-    title: '先从左侧选择或新增店铺',
-    description: '新增只创建独立店铺数据域，不会自动切换。请对目标店铺明确点击“切换并登录”，再继续运营任务。',
+    title: '从左侧新增或选择店铺',
+    description: '应用已经进入。先创建美国站店铺数据域，再明确切换到目标店铺；领星连接在店铺工作台内配置。',
   };
 }
 
@@ -97,7 +97,7 @@ export function MissionControlStoreGateView(props: MissionControlStoreGateViewPr
             />
             <section className="mission-control-store-gate__sidebar-hint" aria-label="店铺范围说明">
               <strong>唯一店铺入口</strong>
-              <p>新增、查看和显式切换都在上方完成。选择前不开放其他业务导航。</p>
+              <p>新增、查看和显式切换都在上方完成。店铺级业务导航会在选择后启用。</p>
             </section>
           </div>
         </nav>
@@ -115,7 +115,7 @@ export function MissionControlStoreGateView(props: MissionControlStoreGateViewPr
             <p>{copy.description}</p>
             <div aria-label="安全边界" className="mission-control-store-gate__boundaries">
               <span>创建后保持未选择</span>
-              <span>切换后再登录</span>
+              <span>切换后进入工作台</span>
               <span>店铺数据相互独立</span>
             </div>
           </section>

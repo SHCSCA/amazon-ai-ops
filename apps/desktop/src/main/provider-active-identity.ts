@@ -234,6 +234,47 @@ function normalizeAmazonAdsProfileIdentity(value: unknown): string | null {
   }
 }
 
+export function readAmazonAdsProfileIdentityEvidence(input: Readonly<{
+  pageUrl: string;
+  domObservations: readonly ProviderActiveIdentityDomObservation[];
+}>): { externalAccountId: string; accountLabel?: string } {
+  const urlCandidates = readUrlIdentityCandidates('amazon_ads', input.pageUrl);
+  if (urlCandidates === null || input.domObservations.length > MAX_DOM_OBSERVATIONS) {
+    throw new Error('Amazon Ads 广告账户只能从 ads.lingxing.com 受信页面自动识别。');
+  }
+  const rawCandidates: unknown[] = [
+    ...urlCandidates,
+    ...input.domObservations
+      .filter((observation) => AMAZON_ADS_PROFILE_ID_PROBES.has(observation.probeId))
+      .map((observation) => observation.value),
+  ];
+  const candidates = rawCandidates.map(normalizeAmazonAdsProfileIdentity);
+  if (candidates.some((candidate) => candidate === null)) {
+    throw new Error('Amazon Ads 页面包含无效的广告账户身份，自动识别已停止。');
+  }
+  const unique = [...new Set(candidates as string[])];
+  if (unique.length === 0) {
+    throw new Error('无法自动识别唯一广告账户；请在可见 Ads 窗口打开一个广告活动或广告组页面后重试。');
+  }
+  if (unique.length !== 1) {
+    throw new Error('Amazon Ads 页面存在冲突的广告账户身份，自动识别已停止。');
+  }
+  const labels = input.domObservations
+    .filter((observation) => AMAZON_ADS_ACCOUNT_LABEL_PROBES.has(observation.probeId))
+    .map((observation) => boundedNormalizedIdentity(observation.value));
+  if (labels.some((label) => label === null)) {
+    throw new Error('Amazon Ads 页面包含无效的广告账户名称，自动识别已停止。');
+  }
+  const uniqueLabels = [...new Set(labels as string[])];
+  if (uniqueLabels.length > 1) {
+    throw new Error('Amazon Ads 页面存在冲突的广告账户名称，自动识别已停止。');
+  }
+  return {
+    externalAccountId: unique[0],
+    ...(uniqueLabels[0] ? { accountLabel: uniqueLabels[0] } : {}),
+  };
+}
+
 export function readLingxingStableExternalAccountIdEvidence(input: Readonly<{
   pageUrl: string;
   domObservations: readonly ProviderActiveIdentityDomObservation[];

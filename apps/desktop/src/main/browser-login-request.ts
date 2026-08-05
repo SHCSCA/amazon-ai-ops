@@ -13,17 +13,10 @@ export function normalizeBrowserLoginRequest(input: unknown): BrowserLoginReques
     throw new Error('登录凭证的记住选项无效。');
   }
   const storeContext = normalizeStoreContextEnvelope(candidate.storeContext);
-  const amazonAdsProfileId = typeof candidate.amazonAdsProfileId === 'string'
-    ? candidate.amazonAdsProfileId.trim()
-    : '';
-  if (
-    !amazonAdsProfileId
-    || amazonAdsProfileId.length > 256
-    || /[\u0000-\u001f\u007f]/.test(amazonAdsProfileId)
-  ) {
-    throw new Error('请输入有效的 Amazon Ads Profile ID。');
+  if (Object.prototype.hasOwnProperty.call(candidate, 'amazonAdsProfileId')) {
+    throw new Error('Amazon Ads 广告账户由 Main 从可见页面自动识别，Renderer 不得提交 Profile ID。');
   }
-  const authority = { amazonAdsProfileId, storeContext };
+  const authority = { storeContext };
   if (
     candidate.resetLingxingSessionForEnrollment !== undefined
     && typeof candidate.resetLingxingSessionForEnrollment !== 'boolean'

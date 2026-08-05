@@ -320,10 +320,11 @@ describe('PackageUiSchedulerAudit', () => {
     const checkpoint = handlers.get('package-ui-evidence:database-checkpoint')!;
 
     expect(() => checkpoint({}, { phase: 'post-navigation' })).toThrow(/ORDER_INVALID/);
-    expect(() => checkpoint({}, { phase: 'post-bootstrap' })).toThrow(/BASELINE_MISSING/);
-    audit.capturePostBootstrapDatabaseBaseline();
     expect(() => checkpoint({}, { phase: 'post-bootstrap', storeId: 'forged' })).toThrow(/INVALID/);
     checkpoint({}, { phase: 'post-bootstrap' });
+    expect(audit.snapshot().databaseMutationAudit.checkpoints).toEqual([
+      expect.objectContaining({ phase: 'post-bootstrap' }),
+    ]);
     expect(() => checkpoint({}, { phase: 'post-bootstrap' })).toThrow(/ORDER_INVALID/);
     checkpoint({}, { phase: 'post-navigation' });
     expect(() => checkpoint({}, { phase: 'post-navigation' })).toThrow(/ORDER_INVALID/);

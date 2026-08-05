@@ -95,11 +95,12 @@ function Assert-RegularDirectPath(
 }
 
 function Get-DirectoryEntries([string]$DirectoryPath) {
-  return @(
+  [string[]]$entries = @(
     Get-ChildItem -LiteralPath $DirectoryPath -Force |
-      Select-Object -ExpandProperty Name |
-      Sort-Object
+      Select-Object -ExpandProperty Name
   )
+  [System.Array]::Sort($entries, [System.StringComparer]::Ordinal)
+  return $entries
 }
 
 function Assert-NoSidecars([string]$SourcePath) {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import {
+  normalizeProviderExternalAccountId,
   normalizeStoreContextEnvelope,
   type StoreConnection,
   type StoreContextEnvelope,
@@ -358,8 +359,11 @@ export class VisibleBrowserRuntimeRegistry {
     return claim;
   }
 
-  verifyAmazonAdsIdentity(claim: AmazonAdsVisibleIdentityClaim): VisibleBrowserRuntime {
-    return this.transitionAmazonAdsIdentity(claim, 'verified');
+  verifyAmazonAdsIdentity(
+    claim: AmazonAdsVisibleIdentityClaim,
+    confirmedConnection?: StoreConnection,
+  ): VisibleBrowserRuntime {
+    return this.transitionAmazonAdsIdentity(claim, 'verified', confirmedConnection);
   }
 
   blockAmazonAdsIdentity(claim: AmazonAdsVisibleIdentityClaim): VisibleBrowserRuntime {
@@ -705,6 +709,7 @@ export class VisibleBrowserRuntimeRegistry {
   private transitionAmazonAdsIdentity(
     claim: AmazonAdsVisibleIdentityClaim,
     nextStatus: Extract<AmazonAdsVisibleIdentityStatus, 'verified' | 'blocked'>,
+    confirmedConnection?: StoreConnection,
   ): VisibleBrowserRuntime {
     this.assertNotTerminalSealed();
     const record = claim && runtimeObject(claim.capability)
@@ -749,6 +754,9 @@ export class VisibleBrowserRuntimeRegistry {
         `Amazon Ads identity is already ${nextStatus}`,
       );
     }
+    const verifiedAmazonAdsConnection = nextStatus === 'verified'
+      ? assertConfirmedAmazonAdsConnection(runtime, confirmedConnection)
+      : undefined;
     const epoch = nextEpoch(this.epoch);
     const nextRuntime = freezeRuntime({
       ...runtime,
@@ -757,6 +765,12 @@ export class VisibleBrowserRuntimeRegistry {
         ...runtime.providerIdentityStatus,
         amazonAds: nextStatus,
       },
+      ...(verifiedAmazonAdsConnection && runtime.connections ? {
+        connections: {
+          ...runtime.connections,
+          amazonAds: verifiedAmazonAdsConnection,
+        },
+      } : {}),
     });
     this.assertRuntimeCas(runtime, record.epoch);
     this.revokeVisibleRuntimeClaim();
@@ -1084,6 +1098,38 @@ function assertCandidate(input: VisibleBrowserRuntimeCandidate): void {
       );
     }
   }
+}
+
+function assertConfirmedAmazonAdsConnection(
+  runtime: VisibleBrowserRuntime,
+  replacement?: StoreConnection,
+): StoreConnection {
+  const current = runtime.connections?.amazonAds;
+  const connection = replacement ?? current;
+  let normalizedExternalAccountId: string | undefined;
+  try {
+    normalizedExternalAccountId = normalizeProviderExternalAccountId(
+      'amazon_ads',
+      connection?.externalAccountId,
+    );
+  } catch {
+    normalizedExternalAccountId = undefined;
+  }
+  if (!current
+    || !connection
+    || connection.id !== current.id
+    || connection.provider !== 'amazon_ads'
+    || connection.storeId !== runtime.context.storeId
+    || connection.status !== 'ready'
+    || !normalizedExternalAccountId
+    || (replacement !== undefined
+      && connection.normalizedExternalAccountId !== normalizedExternalAccountId)) {
+    throw new VisibleBrowserRuntimeRegistryError(
+      'INVALID_RUNTIME',
+      'confirmed Amazon Ads connection must be ready and match the exact runtime store and pending capability',
+    );
+  }
+  return connection;
 }
 
 function normalizedProfileDir(value: unknown): string | null {

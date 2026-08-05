@@ -322,7 +322,7 @@ export function StoreScopeSwitcher({
                   >
                     <span className="store-scope-switcher__option-heading">
                       <strong>{store.displayName}</strong>
-                      <span>{selected ? '当前' : rowPending ? '切换中…' : '切换并登录'}</span>
+                      <span>{selected ? '当前' : rowPending ? '切换中…' : '切换店铺'}</span>
                     </span>
                     <span className="store-scope-switcher__option-market">Amazon US · USD</span>
                     <span className="store-scope-switcher__health">
@@ -399,7 +399,7 @@ export function StoreScopeSwitcher({
                 <CheckCircle aria-hidden="true" size={24} weight="fill" />
                 <div>
                   <strong>{createdStore.displayName} 已创建</strong>
-                  <p>当前店铺没有改变。需要进入新店时，请显式切换并重新登录。</p>
+                  <p>当前店铺没有改变。需要进入新店时，请显式切换；外部连接在店铺工作台内单独启动。</p>
                   {switchError && <p className="store-scope-create-switch-error" role="alert">{switchError}</p>}
                 </div>
               </div>
@@ -452,7 +452,7 @@ export function StoreScopeSwitcher({
                   })}
                   type="button"
                 >
-                  切换并登录
+                  切换到新店铺
                 </button>
               ) : (
                 <button

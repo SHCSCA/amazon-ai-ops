@@ -4,8 +4,8 @@ Date: 2026-08-04
 
 ## Current Mission Control candidate
 
-- 当前 Windows 包由源码提交 `3f6fbec3f40fe8ad5dc64f3309474c5d2ea61bda` 构建，状态保持 `APP_NEEDS_WORK` / internal NON_READY。第一版固定 Amazon US / USD；左侧 `店铺与站点` 是店铺新增、编辑、归档/恢复和显式 `切换并登录` 的唯一入口，新建店铺不会自动选中。
-- 生产代码已包含 10 个 Mission Control 工作区、Store Capsule 隔离、店铺/产品/目标与成本/广告对象/关键词/Listing/运营事件 CRUD、真实领星 8 类任务底座、人工审批与 policy-auto 双模式授权、低风险 `set_keyword_bid` 下调、执行前复核以及 before / after / reload 回读。DB 范围、Lingxing/Ads Profile、会话代次、任务、配置、授权、执行和证据均绑定 `storeId`；错店、旧 revision、歧义或 `UNKNOWN` 失败关闭。
+- 当前状态保持 `APP_NEEDS_WORK` / internal NON_READY。第一版固定 Amazon US / USD；应用直接进入 Mission Control，左侧 `店铺与站点` 是店铺新增、编辑、归档/恢复和显式 `切换店铺` 的唯一入口，新建店铺不会自动选中。外部连接在选中店铺的工作台内单独配置和启动。
+- 生产代码已包含 10 个 Mission Control 工作区、Store Capsule 隔离、店铺/产品/目标与成本/广告对象/关键词/Listing/运营事件 CRUD、真实领星 8 类任务底座、人工审批与 policy-auto 双模式授权、低风险 `set_keyword_bid` 下调、执行前复核以及 before / after / reload 回读。DB 范围、领星连接、Main 自动识别并经用户确认的 Ads 身份、独立浏览器 Profile、会话代次、任务、配置、授权、执行和证据均绑定 `storeId`；错店、旧 revision、歧义或 `UNKNOWN` 失败关闭。
 - 当前包身份：installer `EDEC273C4B6FCC172D75160E3809FD2E8618B001BC3C3855E40EDC05CB61B96A`；portable `58C6D501329547654FCBCBE429AAE2CA73738DC17B17A28A3CCEC965411DEDE4`；win-unpacked `67DC2A7036860A68E5312C212C31B8772AC463ED0289FCC44897867F55075E89`；app content `FC173A2EE64C949F2EDF4237D8B447AF2C3D721EC8F9AFDE3E97A59674C8DE43`；main bundle `9B0C43D5383F679567D74F8A63735829156926CB1290F603378A48CF7F5AF32A`。
 - 当前内部证据：`output\codex-evidence\mission-control-ui-3f6fbec3\manifest.json` 覆盖 20 个 workspace captures + Store Gate + SHC001→SHC002 隔离 + 1200×900 执行布局，共 23 PNG，但明确 `NO_FINAL_READINESS_CREDIT`；`current-business-ui-smoke-1785830923177.json` 5/5 PASS；`package-launch-smoke-1785831535965.json` PASS；`package-security-boundaries-3f6fbec3.json` 11/11 PASS；`package-adversarial-node-env-3f6fbec3.json` PASS；14 个 workspace / project typecheck PASS。
 - 当前未完成：正式 package UI schema v8 visible operator handoff、真实 authority DB 可恢复升级、每店真实 8/8、两店连续 7 个美国业务日、人工 Ads canary、policy-auto Ads canary，以及基于同一候选/authority lineage 的正式八门聚合与严格 bundle。历史 `7/8`、Mission `4/8`、旧 package UI、旧快照和旧 bundle 不提供当前信用。
